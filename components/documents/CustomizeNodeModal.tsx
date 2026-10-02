@@ -53,10 +53,12 @@ export default function CustomizeNodeModal({
   const [bgUploading, setBgUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const bgFileRef = useRef<HTMLInputElement>(null);
-  // While open, the corner dock rises above this modal to report its cover
-  // upload, and keeps clear of Save (STACK-10).
+  // Once an image upload has started here, the corner dock rises above this
+  // modal while it reports that upload — only the upload card, kept clear
+  // of Save (STACK-10). Before that the dock stays under this modal.
+  const [startedUpload, setStartedUpload] = useState(false);
   const footerRef = useRef<HTMLDivElement>(null);
-  useDockRaise(open);
+  useDockRaise(open && startedUpload);
   useDockAvoid(footerRef, open);
 
   if (!open || typeof document === "undefined") return null;
@@ -66,6 +68,7 @@ export default function CustomizeNodeModal({
 
   const handleUpload = async (file: File) => {
     if (!storagePrefix) return;
+    setStartedUpload(true);
     setUploading(true);
     try {
       const ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -82,6 +85,7 @@ export default function CustomizeNodeModal({
 
   const handleBgUpload = async (file: File) => {
     if (!storagePrefix) return;
+    setStartedUpload(true);
     setBgUploading(true);
     try {
       const ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "");

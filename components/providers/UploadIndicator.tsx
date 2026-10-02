@@ -20,6 +20,10 @@
 // card clears on its own time from the moment it finished, seen or not, as
 // it always did: behind a running batch it would otherwise wait out the
 // whole batch and then drain four at a time.
+//
+// These are the dock's `raisable` cards: while a modal that started an
+// upload is open, they lift the dock above it, and only they hold places
+// there — and the dock is raised only while one of them shows (STACK-10).
 
 import React, { useEffect, useRef, useState } from "react";
 import { subscribeUploads, type UploadActivity } from "@/lib/storage";
@@ -67,7 +71,10 @@ export default function UploadIndicator() {
   const { shown: allowance, timed } = useDockAllowances("jobs", DOCK_PRIORITY.upload, list.length, list.length === 0 ? null
     : failed > 0 ? { label: `${failed} upload${failed === 1 ? "" : "s"} failed`, tone: "error" }
     : uploading > 0 ? { label: `Uploading ${uploading} file${uploading === 1 ? "" : "s"}`, tone: "busy" }
-    : { label: "Uploads finished", tone: "ok" });
+    : { label: "Uploads finished", tone: "ok" },
+    // These cards are what a modal that started an upload raises the dock
+    // for — and, raised, the only cards that hold places (STACK-10).
+    { raisable: true });
   const shown = pickVisibleUploads(list, allowance);
 
   // A finished card clears UPLOAD_CLEAR_MS after it finished — a failure

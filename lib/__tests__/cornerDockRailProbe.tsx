@@ -3,7 +3,9 @@
 // that raises the dock and declares its action row the way the upload modals
 // do, the shared Modal with its ModalFooter (alone, and opened by a modal
 // that raises the dock), and a replica of an overlay that declares nothing
-// (the admin/assets asset editor).
+// (the admin/assets asset editor). The raising probes stand for a modal that
+// has ALREADY started an upload (`useDockRaise(true)`): the dock rises only
+// while it also shows an upload card.
 import React, { useRef } from "react";
 import { useOccupyRightRail, useDockAvoid, useDockRaise } from "@/components/ui/CornerDock";
 import { Modal, ModalFooter } from "@/components/ui/Modal";
@@ -29,8 +31,9 @@ export function ModalProbe() {
   );
 }
 
-/** An upload-starting modal composed from the shared Modal: it raises the
- *  dock while open, and its ModalFooter declares the row. */
+/** An upload-starting modal composed from the shared Modal, after it started
+ *  an upload: it raises the dock (which rises while an upload card shows),
+ *  and its ModalFooter declares the row. */
 export function RaisingModalProbe() {
   useDockRaise(true);
   return <ModalProbe />;

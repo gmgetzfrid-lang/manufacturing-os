@@ -91,11 +91,16 @@ export default function MetadataStagingModal({
   // Held for the life of one submit so Stop can abort the transfers that are
   // actually on the wire, not merely stop rendering a spinner over them.
   const abortRef = React.useRef<AbortController | null>(null);
-  // While open, the corner dock rises above this modal and reports its
-  // uploads; it keeps clear of this action row, so "Upload All" and "Stop
-  // upload" stay reachable however many cards it holds (STACK-10).
+  // Once this open has started an upload, the corner dock rises above this
+  // modal while it reports that upload — only the upload cards, kept clear
+  // of this action row, so "Upload All" and "Stop upload" stay reachable
+  // however many cards it holds (STACK-10). It stays raised after a run
+  // that left failures (the modal stays open with them) until their cards
+  // clear. Before Upload All the dock stays under this modal: a backup card
+  // or a toast never sits on the last rows' Remove / Duplicate / Status.
+  const [startedUpload, setStartedUpload] = useState(false);
   const footerRef = React.useRef<HTMLDivElement>(null);
-  useDockRaise(isOpen);
+  useDockRaise(isOpen && startedUpload);
   useDockAvoid(footerRef, isOpen);
 
   // Detect when the user has defined library columns that map to the
@@ -172,6 +177,7 @@ export default function MetadataStagingModal({
     abortRef.current = null;
     setSubmitting(false);
     setStopping(false);
+    setStartedUpload(false);
 
     // SECOND PASS — read the drawings themselves. Page-1 text often carries
     // the real drawing number + revision from the title block. Applied only
@@ -395,6 +401,7 @@ export default function MetadataStagingModal({
     }
     setSubmitting(true);
     setStopping(false);
+    setStartedUpload(true);
     const ctl = new AbortController();
     abortRef.current = ctl;
     try {

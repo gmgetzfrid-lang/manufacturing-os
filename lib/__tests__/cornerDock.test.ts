@@ -15,10 +15,26 @@ import { createRoot, type Root } from "react-dom/client";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-const up = vi.hoisted(() => ({ listeners: new Set<(e: unknown) => void>() }));
+const up = vi.hoisted(() => ({ listeners: new Set<(e: unknown) => void>(), uploadToPath: vi.fn() }));
 const nav = vi.hoisted(() => ({ push: vi.fn() }));
+const bk = vi.hoisted(() => ({ publish: (() => {}) as (p: unknown) => void }));
 vi.mock("@/lib/storage", () => ({
   subscribeUploads: (cb: (e: unknown) => void) => { up.listeners.add(cb); return () => { up.listeners.delete(cb); }; },
+  uploadToPath: up.uploadToPath,
+}));
+// The real BackupIndicator, fed by hand (STACK-10 review: a running backup
+// card over the staging grid). The staging modal's title-block pass reads
+// nothing here.
+vi.mock("@/lib/clientBackup", () => ({
+  subscribeBackup: (fn: (p: unknown) => void) => { bk.publish = fn; fn(null); return () => { bk.publish = () => {}; }; },
+  cancelBackup: () => {},
+  dismissBackup: () => bk.publish(null),
+}));
+vi.mock("@/lib/titleBlock", () => ({ readTitleBlock: async () => ({ confidence: 0 }) }));
+vi.mock("@/lib/assets", () => ({
+  createPhotoRecord: vi.fn(async () => undefined),
+  parseCapturedAtFromFilename: () => null,
+  invalidateAssetCache: () => {},
 }));
 vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams("from=graph"),
@@ -35,6 +51,9 @@ import UploadIndicator, { pickVisibleUploads } from "@/components/providers/Uplo
 import UndoToastHost from "@/components/projects/UndoToastHost";
 import BackToGraphChip from "@/components/graph/BackToGraphChip";
 import StagingTray from "@/components/documents/StagingTray";
+import MetadataStagingModal from "@/components/documents/MetadataStagingModal";
+import AssetPhotoUploader from "@/components/assets/AssetPhotoUploader";
+import BackupIndicator from "@/components/providers/BackupIndicator";
 import { Z, Z_SCALE } from "@/lib/zLayers";
 import RailProbe, { AvoidProbe, ModalProbe, RaisingModalProbe, AssetEditorProbe } from "./cornerDockRailProbe";
 
@@ -86,6 +105,7 @@ const rect = (left: number, top: number, right: number, bottom: number) =>
 beforeEach(() => {
   __resetDockForTests();
   up.listeners.clear();
+  up.uploadToPath.mockReset();
   openCenter.mockReset();
   nav.push.mockReset();
   host = document.createElement("div");
@@ -120,6 +140,19 @@ describe("allocateDock — the cap and the priority (STACK-9, RT-11, OS-4)", () 
     expect(a.visible).toEqual({ up: 2, kn: 1, toasts: 1 });
     expect(a.hidden).toBe(38 + 23);
     expect(a.hiddenTransient).toBe(23);
+  });
+
+  it("raised over an upload modal, only the upload cards hold places: a backup card, the indexing card and toasts wait behind '+N more' (STACK-10 review)", () => {
+    const list = [
+      e("bk", "jobs", 10, 1, 1), e("kn", "jobs", 20, 1, 2),
+      { ...e("up", "jobs", 30, 6, 3), raisable: true }, e("toasts", "transient", 10, 2, 4),
+    ];
+    const raised = allocateDock(list, 4, true);
+    expect(raised.visible).toEqual({ bk: 0, kn: 0, up: 4, toasts: 0 });
+    expect(raised).toMatchObject({ hidden: 2 + 1 + 1 + 2, hiddenTransient: 2, total: 10 });
+    // At rest the same cards share the places as they always did.
+    expect(allocateDock(list, 4).visible).toEqual({ bk: 1, kn: 1, up: 1, toasts: 1 });
+    expect(allocateDock(list, 4, false)).toEqual(allocateDock(list, 4));
   });
 
   it("with no jobs the messages take every place; nothing at all hides nothing", () => {
@@ -597,14 +630,196 @@ describe("STACK-10 / STACK-14 — at rest the dock is under every overlay; an up
     expect(page).toContain("relative ml-auto w-full max-w-xl");
   });
 
-  it("an upload-starting modal raises the dock above every modal while it is open, and it drops back when it closes", async () => {
+  it("a modal that started an upload raises the dock only while an upload card shows: none yet, at rest; a card, raised; cleared or closed, back at rest", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
     const tree = (open: boolean) => shell(open ? React.createElement(RaisingModalProbe, { key: "m" }) : null);
     await mount(tree(true));
+    // Raised by the modal, but nothing to report: the dock stays under it.
+    expect(dock()!.getAttribute("data-dock-raised")).toBeNull();
+    expect(Number(dock()!.style.zIndex)).toBe(Z.dock);
+    await act(async () => { upload("F1"); });
+    await flush();
     expect(dock()!.getAttribute("data-dock-raised")).toBe("1");
+    expect(Number(dock()!.style.zIndex)).toBe(Z.dockRaised);
+    // The card finishes and clears (2.5s): the modal is still open, the dock drops.
+    await act(async () => { upload("F1", "done"); });
+    await act(async () => { vi.advanceTimersByTime(2600); });
+    await flush();
+    expect(text()).not.toContain("F1.pdf");
+    expect(dock()!.getAttribute("data-dock-raised")).toBeNull();
+    expect(Number(dock()!.style.zIndex)).toBe(Z.dock);
+    await act(async () => { upload("F2"); });
+    await flush();
     expect(Number(dock()!.style.zIndex)).toBe(Z.dockRaised);
     await mount(tree(false));
     expect(dock()!.getAttribute("data-dock-raised")).toBeNull();
     expect(Number(dock()!.style.zIndex)).toBe(Z.dock);
+  });
+
+  /** The layer an element paints in: the nearest inline z-index up its tree
+   *  (the overlays and the dock set theirs from lib/zLayers). Both the dock
+   *  and the modals sit in the root stacking context, so a card can cover a
+   *  control only from a higher layer. */
+  const layerOf = (el: Element) => {
+    for (let n: Element | null = el; n; n = n.parentElement) {
+      const z = (n as HTMLElement).style?.zIndex;
+      if (z) return Number(z);
+    }
+    return 0;
+  };
+  const jobsSlot = () => dock()!.querySelector('[data-dock-slot="jobs"]')!;
+  const transientSlot = () => dock()!.querySelector('[data-dock-slot="transient"]')!;
+  const runningBackup = { phase: "files", filesDone: 120, filesTotal: 900, bytesDone: 4e8, bytesTotal: 3e9, part: 1, currentPath: "orgs/o1/docs/P-101.pdf", errors: [] };
+
+  it("the staging wizard before Upload All: a running backup card and a toast stay under it, so the last row's Remove / Duplicate / Status are never covered; Upload All raises only the upload cards (N7 review)", async () => {
+    // Chromium, the review's probe (real MetadataStagingModal, 40 staged
+    // files, grid scrolled to its end, no upload): with the dock raised on
+    // open, the last row's "Remove from batch", "Duplicate row" and Status
+    // were hit at 0 of 3 points at 1280x800, 1366x768 and 1440x900 under a
+    // backup card or one toast. On b9cdfdc, 3 of 3 at every size.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    const files = Array.from({ length: 40 }, (_, i) => new File(["x"], `A-${100 + i}.pdf`));
+    const noColumns: never[] = [];
+    let fail!: (e: Error) => void;
+    const onSubmit = vi.fn(() => new Promise<void>((_, reject) => {
+      fail = reject;
+      for (let i = 0; i < 6; i++) upload(`A-${100 + i}`);
+    }));
+    await mount(shell(
+      React.createElement(BackupIndicator),
+      // A stable column list, as the library page passes: the modal's
+      // back-fill effect runs whenever the array's identity changes.
+      React.createElement(MetadataStagingModal, { isOpen: true, files, customColumns: noColumns, onCancel: () => {}, onSubmit }),
+    ));
+    await act(async () => { bk.publish(runningBackup); toastApi({ type: "info", title: "Jane mentioned you on P-101", duration: 0 }); });
+    await flush();
+    // Before any upload: at rest, under the modal — the cards show there
+    // (dimmed behind its backdrop, as on b9cdfdc) and cover nothing.
+    expect(dock()!.getAttribute("data-dock-raised")).toBeNull();
+    expect(dock()!.getAttribute("data-dock-avoiding")).toBeNull();
+    expect(Number(dock()!.style.zIndex)).toBe(Z.dock);
+    expect(jobsSlot().textContent).toContain("Backup — file 121 of 900");
+    expect(transientSlot().textContent).toContain("Jane mentioned you on P-101");
+    const removes = document.querySelectorAll('button[title="Remove from batch"]');
+    const dups = document.querySelectorAll('button[title="Duplicate row"]');
+    expect(removes.length).toBe(40);
+    const lastRow = removes[removes.length - 1].closest("tr")!;
+    for (const control of [removes[removes.length - 1], dups[dups.length - 1], lastRow.querySelector("select")!]) {
+      expect(layerOf(control)).toBe(Z.metadataStagingModal);
+      expect(layerOf(control)).toBeGreaterThan(Number(dock()!.style.zIndex));
+    }
+    // Minimizing the backup changes nothing: the pill is under the modal too.
+    await act(async () => { (jobsSlot().querySelector('button[title^="Minimize"]') as HTMLElement).click(); });
+    await flush();
+    expect(jobsSlot().textContent).toContain("Backup 13%");
+    expect(Number(dock()!.style.zIndex)).toBe(Z.dock);
+    // An upload started somewhere else is not this modal's: still at rest.
+    await act(async () => { upload("ELSEWHERE"); });
+    await flush();
+    expect(jobsSlot().textContent).toContain("ELSEWHERE.pdf");
+    expect(Number(dock()!.style.zIndex)).toBe(Z.dock);
+    await act(async () => { upload("ELSEWHERE", "done"); });
+    await act(async () => { vi.advanceTimersByTime(2600); });
+    await flush();
+    expect(jobsSlot().textContent).not.toContain("ELSEWHERE.pdf");
+
+    // Upload All: the dock rises over the modal with the upload cards only.
+    const uploadAll = [...document.querySelectorAll("button")].find((b) => b.textContent === "Upload All")!;
+    await act(async () => { uploadAll.click(); });
+    await flush();
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(dock()!.getAttribute("data-dock-raised")).toBe("1");
+    expect(Number(dock()!.style.zIndex)).toBe(Z.dockRaised);
+    // All four places go to upload cards (at rest one would be kept for the toast).
+    expect([...jobsSlot().querySelectorAll(".rounded-xl")].filter((c) => /A-10\d\.pdf40%/.test(c.textContent ?? ""))).toHaveLength(4);
+    expect(jobsSlot().textContent).not.toContain("Backup");
+    expect(transientSlot().children.length).toBe(0);
+    const more = [...dock()!.querySelectorAll("button")].find((b) => /more/.test(b.textContent ?? ""))!;
+    expect(more.textContent).toContain("+4 more"); // 2 uploads past the cap, the backup, the toast
+
+    // The run ends with a failure: the modal stays open with it, and the
+    // failed card reports over the modal until it clears — then the dock is
+    // back at rest, under the modal, with the backup and the toast.
+    await act(async () => {
+      for (let i = 0; i < 5; i++) upload(`A-${100 + i}`, "done");
+      upload("A-105", "error", { error: "Network error" });
+      fail(new Error("Uploaded 5 of 6."));
+    });
+    await flush();
+    expect(text()).toContain("Uploaded 5 of 6.");
+    expect(Number(dock()!.style.zIndex)).toBe(Z.dockRaised);
+    expect(jobsSlot().textContent).toContain("Network error");
+    await act(async () => { vi.advanceTimersByTime(7100); });
+    await flush();
+    expect(jobsSlot().textContent).not.toContain("A-105.pdf");
+    expect(jobsSlot().textContent).not.toContain("Network error");
+    expect(document.querySelectorAll('button[title="Remove from batch"]').length).toBe(40);
+    expect(dock()!.getAttribute("data-dock-raised")).toBeNull();
+    expect(Number(dock()!.style.zIndex)).toBe(Z.dock);
+    expect(jobsSlot().textContent).toContain("Backup 13%");
+    expect(transientSlot().textContent).toContain("Jane mentioned you on P-101");
+  });
+
+  it("the photo uploader: staged photos and a backup card leave the dock under it; Upload raises it with the upload card only", async () => {
+    const created: string[] = [];
+    Object.defineProperty(URL, "createObjectURL", { value: (f: File) => { created.push(f.name); return `blob:${f.name}`; }, configurable: true });
+    Object.defineProperty(URL, "revokeObjectURL", { value: () => {}, configurable: true });
+    up.uploadToPath.mockImplementation(() => { upload("IMG_1"); return new Promise(() => {}); });
+    const asset = { id: "a1", org_id: "o1", tag: "P-101" } as unknown as React.ComponentProps<typeof AssetPhotoUploader>["asset"];
+    try {
+      await mount(shell(
+        React.createElement(BackupIndicator),
+        React.createElement(AssetPhotoUploader, { isOpen: true, asset, userId: "u1", onClose: () => {}, onUploaded: () => {} }),
+      ));
+      await act(async () => { bk.publish(runningBackup); });
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+      Object.defineProperty(input, "files", { value: [new File(["x"], "IMG_1.jpg", { type: "image/jpeg" })], configurable: true });
+      await act(async () => { input.dispatchEvent(new Event("change", { bubbles: true })); });
+      await flush();
+      expect(created).toEqual(["IMG_1.jpg"]);
+      expect(dock()!.getAttribute("data-dock-raised")).toBeNull();
+      expect(Number(dock()!.style.zIndex)).toBe(Z.dock);
+      const uploadButton = [...document.querySelectorAll("button")].find((b) => /Upload 1 photo/.test(b.textContent ?? ""))!;
+      expect(layerOf(uploadButton)).toBe(Z.assetPhotoUploader);
+      // A staged photo is not an upload: its remove X stays above the dock.
+      const photoX = [...document.querySelectorAll("button")].find((b) => b.parentElement?.className === "shrink-0" && b.className.includes("hover:text-red-600"));
+      expect(photoX).toBeDefined();
+      expect(layerOf(photoX!)).toBeGreaterThan(Number(dock()!.style.zIndex));
+      await act(async () => { uploadButton.click(); });
+      await flush();
+      expect(up.uploadToPath).toHaveBeenCalledTimes(1);
+      expect(Number(dock()!.style.zIndex)).toBe(Z.dockRaised);
+      expect(jobsSlot().textContent).toContain("IMG_1.pdf");
+      expect(jobsSlot().textContent).not.toContain("Backup");
+    } finally {
+      delete (URL as { createObjectURL?: unknown }).createObjectURL;
+      delete (URL as { revokeObjectURL?: unknown }).revokeObjectURL;
+    }
+  });
+
+  it("raised, the '+N more' still expands to everything and stays open while the cap would hide something (fold-back reads the capped allocation, not the total)", async () => {
+    await mount(shell(React.createElement(RaisingModalProbe), React.createElement(BackupIndicator)));
+    await act(async () => { bk.publish(runningBackup); toastApi({ type: "info", title: "Saved", duration: 0 }); upload("F1"); });
+    await flush();
+    expect(Number(dock()!.style.zIndex)).toBe(Z.dockRaised);
+    const button = (re: RegExp) => [...dock()!.querySelectorAll("button")].find((b) => re.test(b.textContent ?? ""));
+    expect(button(/more/)!.textContent).toContain("+2 more");
+    // Three cards in all — under the cap — yet the raised dock hides two:
+    // the expansion must not fold straight back.
+    await act(async () => { button(/more/)!.click(); });
+    await flush(6);
+    expect(jobsSlot().textContent).toContain("Backup");
+    expect(transientSlot().textContent).toContain("Saved");
+    // A fourth card arrives: four in all, still under the cap — but the
+    // raised dock would still hide two, so the expansion holds.
+    await act(async () => { upload("F2"); });
+    await flush(6);
+    expect(jobsSlot().textContent).toContain("Backup");
+    expect(jobsSlot().textContent).toContain("F2.pdf");
+    expect(button(/Show fewer/)).toBeDefined();
+    await act(async () => { button(/Show fewer/)!.click(); });
+    await flush();
+    expect(jobsSlot().textContent).not.toContain("Backup");
   });
 
   it("an overlay that raises the dock must declare its action row: every useDockRaise caller also calls useDockAvoid", () => {
@@ -617,6 +832,9 @@ describe("STACK-10 / STACK-14 — at rest the dock is under every overlay; an up
       "components/documents/MetadataStagingModal.tsx",
     ]);
     for (const f of raisers) expect(readFileSync(f, "utf8")).toMatch(/useDockAvoid\(/);
+    // Never raised on open alone: before any upload the dock belongs under
+    // the modal (N7 review — it covered the staging grid's last rows).
+    for (const f of raisers) expect(readFileSync(f, "utf8")).not.toMatch(/useDockRaise\(\s*(isOpen|open|true)\s*\)/);
   });
 });
 
@@ -705,9 +923,13 @@ describe("STACK-10 — raised, the dock keeps clear of an open modal's action ro
     try {
       await onPhone(async () => {
         await mount(shell(React.createElement(AvoidProbe)));
-        await act(async () => { upload("S1"); upload("S2"); });
+        await act(async () => { toastApi({ type: "error", title: "Server unreachable", duration: 0 }); upload("S1"); upload("S2"); });
         await flush();
-        expect(dock()!.querySelector("[data-dock-summary]")).not.toBeNull();
+        const pill = dock()!.querySelector("[data-dock-summary]")!;
+        expect(pill).not.toBeNull();
+        // Raised for the upload, the pill speaks for it — not for the toast
+        // waiting behind it (at rest an error would lead).
+        expect(pill.getAttribute("aria-label")).toBe("Uploading 2 files — 3 updates, show");
         expect(dock()!.style.bottom).toBe(`calc(${844 - 790 + 8 - 16}px - 1.5rem)`);
       });
     } finally { spy.mockRestore(); }
@@ -716,9 +938,15 @@ describe("STACK-10 — raised, the dock keeps clear of an open modal's action ro
   it("the three upload-starting modals raise the dock and declare their action rows, and the shared ModalFooter declares its row", () => {
     const src = (p: string) => readFileSync(resolve(p), "utf8");
     const staging = src("components/documents/MetadataStagingModal.tsx");
-    expect(staging).toContain("useDockRaise(isOpen);");
-    expect(src("components/assets/AssetPhotoUploader.tsx")).toContain("useDockRaise(isOpen);");
-    expect(src("components/documents/CustomizeNodeModal.tsx")).toContain("useDockRaise(open);");
+    expect(staging).toContain("useDockRaise(isOpen && startedUpload);");
+    // Latched when Upload All starts a run, cleared by every open.
+    expect(staging).toMatch(/setSubmitting\(true\);\s*setStopping\(false\);\s*setStartedUpload\(true\);/);
+    expect(staging).toMatch(/setSubmitting\(false\);\s*setStopping\(false\);\s*setStartedUpload\(false\);\s*\/\/ SECOND PASS/);
+    expect(src("components/assets/AssetPhotoUploader.tsx")).toContain('useDockRaise(isOpen && (submitting || pending.some((p) => p.status !== "pending")));');
+    const coverSrc = src("components/documents/CustomizeNodeModal.tsx");
+    expect(coverSrc).toContain("useDockRaise(open && startedUpload);");
+    expect(coverSrc.match(/setStartedUpload\(true\);\s*set(Bg)?Uploading\(true\);/g)).toHaveLength(2);
+    expect(src("components/providers/UploadIndicator.tsx")).toContain("{ raisable: true });");
     expect(src("components/ui/Modal.tsx")).not.toContain("useDockRaise");
     expect(staging).toContain("useDockAvoid(footerRef, isOpen);");
     expect(staging).toMatch(/<div ref=\{footerRef\}[^>]*>\s*<div className="text-\[11px\][^"]*">\s*\{items\.length\} file/);

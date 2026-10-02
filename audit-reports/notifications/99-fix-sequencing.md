@@ -114,14 +114,21 @@ either name while the flag is false, and the reverse (`RT-10`).*
   stay OPEN (Partial) on done-when 2 until that line lands; N3 closes them.*
 - *The corner dock rests under every overlay (`Z.dock` = 290, the old dock's
   place). It rises above every modal (`Z.dockRaised` = 750) only while a modal
-  that starts an upload is open and calls `useDockRaise(open)` (from
-  `components/ui/CornerDock.tsx`). Such a modal must also declare its action
-  row with `useDockAvoid(ref, open)`; a scan test refuses one that does not.
-  The three upload-starting modals do both. The shared `ModalFooter` declares
-  its row for any dialog opened over them (N7 edited `components/ui/Modal.tsx`'s
-  `ModalFooter`, outside its plan). A package that adds a modal that starts an
-  upload raises the dock and declares its row; no other overlay needs anything
-  (`STACK-14`, resolved).*
+  that has started an upload is open and the dock reports an upload. The modal
+  calls `useDockRaise(open && <an upload was started here>)` from
+  `components/ui/CornerDock.tsx`; a scan test refuses `useDockRaise(open)`. The
+  dock also needs a `raisable` card: `UploadIndicator`'s. Raised, only the upload
+  cards hold places; the backup, indexing and toast cards wait behind "+N more".
+  Such a modal must also declare its action row with `useDockAvoid(ref, open)`;
+  a scan test refuses one that does not. The three upload-starting modals do
+  both. The shared `ModalFooter` declares its row for any dialog opened over
+  them (N7 edited `components/ui/Modal.tsx`'s `ModalFooter`, outside its plan).
+  A package that adds a modal that starts an upload raises the dock that way and
+  declares its row. Other overlays declare nothing, because at rest the dock is
+  under them. While raised, the upload cards still cover the right end of the
+  raising modal's body above its row until the run's cards clear. `STACK-14`
+  stays OPEN (Partial) on that, and on its done-when as written, pending
+  ratification of `DEC-44 (N7)` item 4.*
 - *The corner dock is `role="region"` / `aria-live="polite"` /
   `aria-relevant="additions"`. The toast list is `role="status"`, an error toast
   is `role="alert"`, and every toast's X has `aria-label="Dismiss"`. That is

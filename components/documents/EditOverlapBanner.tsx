@@ -17,7 +17,12 @@
 //     edit intent; the latest of those — `overlapFormedAt`). Anything this
 //     banner remembers about an overlap counts only if it happened after the
 //     overlap formed. A new person joining is a new overlap; so is the same
-//     people overlapping again after it dissolved.
+//     people overlapping again after it dissolved — but only once the lapsed
+//     intent rows are gone (the daily maintenance cron prunes expired rows).
+//     Until then a re-declared intent reuses its row: lib/intents'
+//     recordIntent upserts on (document_id, user_id, kind, source) and keeps
+//     created_at, so the overlap re-forms with its old formed time, and a
+//     dismissal or "Heads-up sent" from before still covers it.
 //   - "Dismiss for now" sticks for THIS overlap across a remount and a reload
 //     (hooks/useDismissed, stamped with the overlap it dismissed).
 //   - "Heads-up sent" survives a remount. It is derived from the

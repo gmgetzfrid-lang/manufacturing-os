@@ -1,6 +1,6 @@
 # 06 · Background jobs & the bottom-right corner
 
-**14 findings** — 14 MEDIUM. `STACK-14` opened by notifications Round G N7 CORNER, 2026-10-01 — first recorded as a LOW remainder of `STACK-10`'s review fix, then corrected to a MEDIUM regression of that fix and resolved by N7's second review fix.
+**14 findings** — 14 MEDIUM. `STACK-14` opened by notifications Round G N7 CORNER, 2026-10-01 — first recorded as a LOW remainder of `STACK-10`'s review fix, then corrected to a MEDIUM regression of that fix. N7's second and third review fixes removed the regression; it stays OPEN (Partial) on its done-when as written, pending ratification of `DEC-44 (N7)` item 4.
 
 Progress and completion messaging: how many things render in that corner, whether they stack, and whether a failure is ever seen.
 
@@ -527,14 +527,15 @@ app/(protected)/documents/[libraryId]/page.tsx:2543-2547
 - **One layer module.** New `lib/zLayers.ts`: `Z` (pageChip 40, undoToast 280, dock 290, metadataStagingModal 300, customizeNodeModal 400, assetPhotoUploader 510, dialog 700, dockRaised 750, hoverPreview 800, print 9999) and `Z_SCALE`, every z-index value in use (the 2026-10-01 inventory plus the dock's two bands).
 - **The dock's bands (second review fix).** The dock is portaled to `document.body`.
   - At rest it is at `Z.dock` = 290. That is the old dock's place: over the page, its drawers, the notification center (241) and the undo toasts (280), and under every overlay from the 300 band up.
-  - While one of the three upload-starting modals is open, it calls `useDockRaise(open)` and the dock sits at `Z.dockRaised` = 750. That is above every modal, backdrop and dialog band, and below only the pointer-following hover preview (800, as before) and the print cover (9999).
+  - While one of the three upload-starting modals is open, has started an upload, and the dock shows an upload card, the dock sits at `Z.dockRaised` = 750. That is above every modal, backdrop and dialog band, and below only the pointer-following hover preview (800, as before) and the print cover (9999). Raised, only the upload cards hold places (third review fix, below).
+  - The second review fix raised the dock whenever one of the modals was open (`useDockRaise(open)`), with or without an upload. The third review showed the cost: a backup card or a toast was lifted onto the staging grid before any upload (below).
   - The first review fix kept the dock at 750 all the time. A card then covered any undeclared overlay's controls, the asset editor's Save among them (`STACK-14`).
 - **The three modals.** `MetadataStagingModal`, `AssetPhotoUploader` and `CustomizeNodeModal` read their layer from `Z` as `style={{ zIndex }}`, with the same values; Tailwind cannot generate a class from a runtime number.
 - **The cards never sit on a modal's action row (review fix).** The dock's box ignores the pointer, but its cards, its "+N more" and its phone pill take clicks, and above every modal they landed on the modal's own controls. Chromium, the real `MetadataStagingModal` with 40 staged files, "Upload All" pressed and 6 uploads reported (the reviewer's harness, rebuilt against this branch): `elementFromPoint` at the centre / right / left of the primary button hit it at none of the three points at 1280×800, 1366×768 and 1440×900, and "Stop upload" was partly covered; on phones (360, 390, 414 wide) the summary pill sat on "Upload All". Now a modal declares its action row with `useDockAvoid(ref, open)` (`components/ui/CornerDock.tsx`). The dock measures its own cards, and whenever, while it is raised, they would overlap a declared row where they sit, it sits above the row instead (`dockAvoidOffset`: the lowest card 8px above the row; a row the cards would not touch — a centred dialog's footer left of them, a phone dialog's mid-screen footer — moves nothing; a row with no room above it leaves the dock where it is). The row is re-measured on resize, on any scroll, when it or its panel changes size and when an entrance animation ends. Declared: the footers of `MetadataStagingModal`, `AssetPhotoUploader` and `CustomizeNodeModal`, and the shared `ModalFooter` (`components/ui/Modal.tsx`), so every `appConfirm` / `appAlert` / `appPrompt` too: a dialog opened over a raising modal. `ModalFooter` declares but does not raise. After, the same probe: all three points hit both buttons at 1280×800, 1366×768, 1440×900 and 1920×1080, and at 360×740, 390×844 and 414×896. At 1366×768 the four cards sit at 446–662, above the footer at 670, on top of the modal and in view. At 390×844 the pill sits at 746–776, above the footer at 784. Re-run after the second review fix, against this branch: both buttons are hit at all three points at the same seven sizes. At 1280×800 the four cards are on top of the modal, at 476–692, above the footer at 700.
 
 Inventory of what was replaced: the dock's 300 (dock and fallback; now 290 at rest, the fallback included); BackupIndicator's 300 (it now lives in the dock); UndoToastHost's 280 and BackToGraphChip's 40 (now the centre slots' layers, same values); and the three modals' 300 / 400 / 510 (same values).
 
-What moved, in full: only the dock, and since the second review fix only while an upload-starting modal is open. It used to be z-300 and first in `<main>`, so it painted under every overlay at 300 or above (a z-300 overlay later in the document won the tie). At rest, at 290, it still does: there is no tie to break, and nothing else sits between 280 and 300. The first review fix put it at 750 for good, so it painted over every overlay from the 300 band to 700:
+What moved, in full: only the dock, and since the third review fix only while an upload-starting modal is open, has started an upload, and the dock reports one. It used to be z-300 and first in `<main>`, so it painted under every overlay at 300 or above (a z-300 overlay later in the document won the tie). At rest, at 290, it still does: there is no tie to break, and nothing else sits between 280 and 300. The first review fix put it at 750 for good, so it painted over every overlay from the 300 band to 700:
 - the modals and panels — BulkEditModal, CollectionModal, ShareLinkModal and WorkflowDiagramModal (300), LibraryOrderModal (320), the shared `Modal`'s default (400), CsvImportModal, CreateColumnWizard, AssetCsvImportModal, RelationshipGraph and the admin pages' dialogs (400), FileReferenceModal (500), the policy and review modals and DocumentLinkPicker (520), AreaKnowledgePanel, UnitOpsPanels and the app dialog host (700);
 - the dropdowns, menus and tooltips in that band — ThemeMenu, StatusControl and ProgressControl (300 / 310), HelpTooltip, MentionableTextarea's list, ScheduleCalendarTileView and ExecutionGuide (300), ViewSelector and AssetPhotoPopover (400);
 - GlobalCommandPalette (600), SignatureCeremony (500) and AssetPhotoCarousel (500).
@@ -557,18 +558,47 @@ And "STACK-10 — raised, the dock keeps clear of an open modal's action row":
 
 "STACK-10 / STACK-14 — at rest the dock is under every overlay; an upload modal raises it" covers the two bands and the rule that a raiser declares its row.
 
+**Third review fix: raised only while it reports the upload.** The N7 third review probed the real `MetadataStagingModal` in Chromium with 40 staged files, the grid scrolled to its end and "Upload All" not pressed. A running backup card or one toast was lifted onto the grid: the last row's "Remove from batch", "Duplicate row" and Status select were hit at 0 of 3 points at 1280×800, 1366×768 and 1440×900 (3 of 3 on `b9cdfdc`). The minimized backup pill still covered Remove at 1280 and 1366. The dock had been raised on open, with no upload at all. Now:
+- **The modals raise only once they have started an upload.** `MetadataStagingModal` calls `useDockRaise(isOpen && startedUpload)`, latched when "Upload All" starts a run and cleared by every open. `AssetPhotoUploader` calls `useDockRaise(isOpen && (submitting || pending.some((p) => p.status !== "pending")))`. `CustomizeNodeModal` calls `useDockRaise(open && startedUpload)`, latched when a cover or background upload starts. A scan test refuses `useDockRaise(open)`, `useDockRaise(isOpen)` and `useDockRaise(true)` in any caller.
+- **The dock rises only while it reports an upload.** `raisedSnapshot()` (`components/ui/CornerDock.tsx`) requires a registered raise and a `raisable` entry with a card. `UploadIndicator` registers its cards with `useDockAllowances(…, { raisable: true })`. Once the run's cards have cleared (a "Done" 2.5 s after it finished, a failure 7 s after it shows, or on Dismiss), the dock drops back under the modal, even while the modal stays open with the run's failures. An upload started elsewhere does not raise it while the modal has started none.
+- **Raised, only the upload cards hold places.** `allocateDock(entries, cap, raised)` gives the places to the `raisable` entries alone. The backup card, the indexing card and toasts wait behind "+N more", as they waited under the modal before; a waiting toast's clock waits too. The person can still expand "+N more"; the expansion's fold-back now reads the capped allocation (`cappedHidden`) rather than the total, so a raised expansion is not folded back while the cap would hide something. On a phone the raised pill names the upload, not a toast waiting behind it.
+
+Chromium (`/opt/pw-browsers/chromium-1194`), the review's probe copied to `scratchpad/n7fix3-harness` and rebuilt against this branch, run unchanged: with a running backup, after minimizing it, and with one toast, the last row's Remove, Duplicate and Status are hit at 3 of 3 points at 1280×800, 1366×768, 1440×900 and 1920×1080, with the dock at 290 and not raised. That matches the review's run on `b9cdfdc`. An upload mode added to the same probe (backup and toast up, then "Upload All" with 6 uploads reported) gave these results:
+- **During the run.** The dock is at 750, with the 4 upload cards and "+4 more"; the backup and the toast are not in it. "Uploading…" and "Stop upload" are hit at 3 of 3 points at the four laptop sizes and at 360×740, 390×844 and 414×896. The last row's Remove, Duplicate and Status are hit at 0 of 3 points at 1280 and 1366, and at 1440 only Status at 1 of 3 (residual below); at 1920 all are hit at 3 of 3.
+- **After the 6 "Done" cards clear.** The dock is back at 290 with the backup and the toast, and the last row's controls are hit at 3 of 3 points at every laptop size. On the phones the last row's controls are off-screen to the right of the grid's horizontal scroll at every step, so the phone rows say nothing about the dock.
+
+Tests (`lib/__tests__/cornerDock.test.ts`):
+- `allocateDock` raised: 6 uploads, a backup, an indexing card and 2 toasts give the uploads all four places, with 6 hidden, 2 of them messages.
+- A modal that started an upload raises the dock only while an upload card shows: no card yet, at rest; one card, raised; the card cleared with the modal still open, at rest; a new card, raised; closed, at rest.
+- **The review's case, rendered.** The real `MetadataStagingModal` with 40 files, the real `BackupIndicator` running and a toast, before "Upload All":
+  - the dock is at `Z.dock`, not raised and not lifted, with both cards in it;
+  - the last row's Remove, Duplicate and Status sit in the modal's layer (300), above the dock;
+  - minimizing the backup changes nothing, and an upload started elsewhere leaves the dock at rest.
+
+  After "Upload All": the dock is raised with four upload cards and "+4 more", and no backup or toast card. After a failed run, the modal stays open and the failed card reports over it until it clears; then the dock is at rest again with the backup and the toast.
+- The photo uploader: a staged photo and a running backup leave the dock under it, and the photo's remove X sits above the dock. "Upload" raises the dock with the upload card only.
+- Raised, the "+N more" expansion holds while the cap would hide something.
+- On a phone, the raised pill names "Uploading 2 files" over a waiting error toast.
+
+Each was checked to fail with its fix reverted:
+- the caller's raise on open;
+- `raisedSnapshot` as `raises.size > 0`;
+- the raised allocation;
+- the fold-back rule on the total;
+- the pill's filter.
+
 **Done-when.**
-- ✓ A documented z-index scale exists, and the dock is portaled to document.body and given the top band whenever it reports an upload that a modal started. While `MetadataStagingModal`, `AssetPhotoUploader` or `CustomizeNodeModal` is open, the dock is strictly above every modal, backdrop and dialog layer (`Z.dockRaised` = 750).
-  - At rest the dock keeps the old dock's place, under every overlay from 300 up. The always-on top band of the first review fix covered undeclared overlays' controls with cards that cannot be dismissed (`STACK-14`).
+- ✓ A documented z-index scale exists. The dock is portaled to document.body and given the top band while it reports an upload that one of these modals started: `MetadataStagingModal`, `AssetPhotoUploader` or `CustomizeNodeModal` is open and has started an upload, and an upload card shows. Then the dock is strictly above every modal, backdrop and dialog layer (`Z.dockRaised` = 750), with only the upload cards in its places.
+  - Before the modal starts an upload, and once the run's cards have cleared, the dock keeps the old dock's place, under every overlay from 300 up, that modal included. The second review fix raised it whenever the modal was open, and the third review showed a backup card or a toast covering the staging grid's last rows before any upload. The always-on top band of the first review fix covered undeclared overlays' controls with cards that cannot be dismissed (`STACK-14`).
   - This is the reading of "strictly above every modal/backdrop layer" that `DEC-44 (N7)` item 4 records for the integrator to ratify.
 - ✓ MetadataStagingModal, AssetPhotoUploader (510) and CustomizeNodeModal (400) are each verified to render below the dock while an upload card shows.
 - ✓ Manual pass in Chromium: the failed card's name, "Failed" and its reason read clearly over the blurred staging overlay (harness screenshot); after the review fix the cards read over the wizard while its "Upload All" and "Stop upload" stay reachable at laptop and phone widths.
 
 **Scope / residual.**
 - **The scale lists, it does not own.** Only the layers this contract touches read from the module. `Z_SCALE` lists every other number and the scan test refuses an unlisted one, but ~150 call sites keep their own literal class (DEC-31).
-- **Over a raising modal.** Above the action row, the cards still cover the right-hand end of a tall upload modal's body (on the wizard, the status column and row icons of the rows beside them). They report over the modal by design. A finished card is dismissible; a running upload card is not.
+- **Over a raising modal, while it reports the upload.** Above the action row, the upload cards and "+N more" cover the right-hand end of a tall upload modal's body. On the wizard at 1280, 1366 and 1440 wide, that is the last rows' Remove, Duplicate and Status (Chromium, above), until the run's cards clear. A running upload card has no Dismiss. A finished card clears 2.5 s after it finished, a failure 7 s after it shows, and either on Dismiss. "Stop upload", in the declared row, is always reachable. No backup card, indexing card or toast is lifted: they wait behind "+N more" unless the person expands it. This is the part of `STACK-14`'s class that remains by design.
 - **At rest.** A card shown while any other overlay at 300 or above is open sits under it, readable once the overlay closes, as before N7.
-- `STACK-14`, the first fix's regression, is resolved by the same change.
+- `STACK-14`, the first fix's regression, is removed by the same change. It stays OPEN (Partial) on its done-when as written (see it).
 - `components/ui/Modal.tsx` is outside the plan's file list (lines in `ModalFooter`).
 - No migration.
 
@@ -712,8 +742,8 @@ Only `inFlight` parks indexing, as before. `hasUploadsInFlight()` (no cooldown) 
 ## STACK-14 · An overlay that does not declare its action row can still have a dock card over its bottom-right corner
 
 - **Severity:** MEDIUM (first recorded as LOW; corrected by N7's second review fix)
-- **Status:** RESOLVED
-- **Assigned:** notifications Round G N7 CORNER. Opened 2026-10-01 by N7's first review fix as the DEC-31 remainder of `STACK-10`. The N7 review the same day showed it was a regression that fix introduced, not a remainder, and N7 resolved it.
+- **Status:** OPEN
+- **Assigned:** notifications Round G N7 CORNER. Opened 2026-10-01 by N7's first review fix as the DEC-31 remainder of `STACK-10`. The N7 review the same day showed it was a regression that fix introduced, not a remainder. N7's second and third review fixes removed the regression; the done-when as written is not met (Partial below).
 - **Verification:** CONFIRMED (Chromium; the N7 review's harness against the branch at `77ae466` and against `b9cdfdc`)
 - **Locations:** `components/ui/CornerDock.tsx` at `77ae466` (the dock at `Z.dock` = 750 always; `useDockAvoid` opt-in). `app/(protected)/admin/assets/page.tsx:1971-2268`, the asset editor: a right-anchored z-400 drawer (`ml-auto max-w-xl h-dvh`) with Save / "Create & add photos" at its bottom-right, declaring neither a row nor a rail. `components/providers/UploadIndicator.tsx:113`: a running upload card has no Dismiss and no minimize. About 28 hand-rolled `fixed inset-0` overlays from 300 to 700, and every page that composes `Modal` with its own footer (`app/(protected)/companies/page.tsx`, `companies/[id]/page.tsx`, `projects/[id]/page.tsx`, `components/projects/ProjectWizard.tsx`).
 - **Independently verified:** ✓ by the N7 review's adversarial pass. Chromium (`/opt/pw-browsers/chromium-1194`): the real ToastProvider, CornerDock and UploadIndicator, plus a replica of the asset editor carrying its classes.
@@ -731,10 +761,10 @@ So the control stayed blocked for the length of the job. Before `STACK-10` the d
 - [ ] Every overlay from the 300 band to 700 whose action row can reach the dock's lane declares it: `useDockAvoid` on its footer, or `ModalFooter`.
 - [ ] A scan test refuses a new full-screen overlay at z ≥ 300 that does neither, with an explicit list for overlays that have no action row (a carousel, a palette).
 
-**Resolution (2026-10-01, notifications Round G).** Reproduced: the N7 review's Chromium probe (above), base build against branch build. On `77ae466` the editor's Save was covered at all three sample points at each of the three sizes, by one 5-second toast and by one running upload card (0 Dismiss buttons); on `b9cdfdc` it was reachable. The fix makes keeping clear the default. It restores the old layering everywhere and raises the dock only where `STACK-10` needs it (decision: `DEC-44 (N7)` item 4):
+**Partial (2026-10-01, notifications Round G).** Reproduced: the N7 review's Chromium probe (above), base build against branch build. On `77ae466` the editor's Save was covered at all three sample points at each of the three sizes, by one 5-second toast and by one running upload card (0 Dismiss buttons); on `b9cdfdc` it was reachable. The fix makes keeping clear the default. It restores the old layering everywhere and raises the dock only where `STACK-10` needs it (decision: `DEC-44 (N7)` item 4):
 - **`lib/zLayers.ts`.** Two bands. `Z.dock` = 290 is the dock at rest: above the drawers (60 / 70), the notification center (241) and the undo toasts (280), and below every overlay from 300 up — the old dock's place. `Z.dockRaised` = 750.
-- **`components/ui/CornerDock.tsx`.** `useDockRaise(active)` registers a raise. The dock sits at `Z.dockRaised` while any raise is registered (`data-dock-raised`), and at `Z.dock` otherwise. The action-row avoidance (`useDockAvoid`, `dockAvoidOffset`) applies only while the dock is raised; at rest the dock is under every declared overlay already.
-- **The three upload-starting modals.** `MetadataStagingModal`, `AssetPhotoUploader` and `CustomizeNodeModal` call `useDockRaise(open)` beside their `useDockAvoid`. `ModalFooter` keeps declaring its row (a dialog opened over a raising modal) but does not raise.
+- **`components/ui/CornerDock.tsx`.** `useDockRaise(active)` registers a raise. The dock sits at `Z.dockRaised` (`data-dock-raised`) while a raise is registered and an upload card shows (a `raisable` entry with a card; third review fix), and at `Z.dock` otherwise. Raised, only the upload cards hold places. The action-row avoidance (`useDockAvoid`, `dockAvoidOffset`) applies only while the dock is raised; at rest the dock is under every declared overlay already.
+- **The three upload-starting modals.** `MetadataStagingModal`, `AssetPhotoUploader` and `CustomizeNodeModal` raise the dock once they have started an upload, beside their `useDockAvoid`. The second review fix had them raise on open, `useDockRaise(open)`, and the third review showed that lifted a backup card or a toast onto the staging grid's last rows before any upload (`STACK-10`, third review fix). `ModalFooter` keeps declaring its row (a dialog opened over a raising modal) but does not raise.
 
 After, the same harness rebuilt against this branch:
 - **The asset editor.** Save is reachable at all three points at 1280×800, 1440×900 and 1920×1080, with a toast showing and with a running upload card.
@@ -744,17 +774,25 @@ After, the same harness rebuilt against this branch:
 Tests: `lib/__tests__/cornerDock.test.ts`.
 - "STACK-10 / STACK-14 — at rest the dock is under every overlay; an upload modal raises it":
   - with a running upload card, the asset editor's classes sit above the resting dock, and the probe's classes are pinned to the page source;
-  - a raising modal lifts the dock to `Z.dockRaised`, and closing it drops the dock back;
-  - every `useDockRaise` caller also calls `useDockAvoid`, and the three callers are named.
+  - a modal that started an upload lifts the dock to `Z.dockRaised` only while an upload card shows, and closing it drops the dock back (third review fix: before any card, and once the cards clear, the dock stays at rest);
+  - every `useDockRaise` caller also calls `useDockAvoid` and never raises on `open` alone, and the three callers are named;
+  - the third review's case, rendered: the staging wizard before "Upload All", with a running backup and a toast, keeps the last row's controls above the dock (`STACK-10`).
 - "a dialog on its own (appConfirm's ModalFooter, no upload modal open) leaves the dock at rest, under it — not lifted".
 - The z-scale test "at rest the dock is under every overlay from the 300 band up and over everything below it — the old dock's place".
 
 The three rendered tests (the asset editor, the raise and drop, the dialog on its own) were checked to fail with the dock forced to 750 for good.
 
 **Done-when.**
-- ✓ In substance, not as written. No overlay from 300 to 700 needs to declare its action row any more, because at rest the dock is under every one of them. The dock rises above only the three upload-starting modals, each of which declares its row, and above what can stack over them: the app dialogs, which declare theirs through `ModalFooter`.
-- ✓ In substance, not as written. The rule a scan test now enforces has the new shape: an overlay that raises the dock must declare its action row. The z-scale test refuses any value from 300 up that would not sit above the resting dock.
+- NOT met as written. No overlay from 300 to 700 declares its action row beyond the three upload-starting modals and `ModalFooter`. The change makes the item unnecessary at rest rather than meeting it: at rest the dock is under every overlay from 300 up. The dock rises only over an upload-starting modal that has started an upload, and only while it reports it. Above that modal sit only its own row (declared) and what can stack over it: the app dialogs, which declare theirs through `ModalFooter`.
+- NOT met as written. No scan test refuses an undeclared full-screen overlay at z ≥ 300. The scan tests enforce a different rule:
+  - a caller of `useDockRaise` must also call `useDockAvoid`, and must never raise on `open` alone;
+  - the z-scale test refuses any value from 300 up that would not sit above the resting dock.
 
-**Scope / residual.** While an upload-starting modal has the dock raised, an overlay opened over it that declares no row would sit under the cards. Today only the command palette can be opened there (600, top-centre, no bottom-right row). No migration.
+Remaining step: the integrator ratifies `DEC-44 (N7)` item 4 as superseding these two items (the dock rests under every overlay and rises only over an upload-starting modal while it reports that modal's upload), and closes this finding with the residual below. Otherwise a later package adds the declarations and the scan test as written.
+
+**Scope / residual.**
+- **A card over an overlay's controls still happens in one place: the raising modal's own body, while the dock reports its upload.** Above the declared action row, the upload cards and "+N more" cover the right end of the body. On the bulk-upload wizard at 1280, 1366 and 1440 wide, that is the last rows' Remove, Duplicate and Status (Chromium; `STACK-10`'s third review fix). It lasts until the run's cards clear: a running card cannot be dismissed, a finished one clears in 2.5 s and a failure 7 s after it shows. No backup card, indexing card or toast is lifted there.
+- **An undeclared overlay over a raised modal.** While the dock is raised, an overlay opened over the modal that declares no row would sit under the cards. Today only the command palette can be opened there (600, top-centre, no bottom-right row).
+- No migration.
 
 ---

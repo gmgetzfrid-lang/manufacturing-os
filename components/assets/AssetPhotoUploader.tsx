@@ -43,10 +43,13 @@ export default function AssetPhotoUploader({
   const [isDragOver, setIsDragOver] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // While open, the corner dock rises above this modal to report its
-  // uploads, and keeps clear of Upload / Cancel (STACK-10).
+  // Once these photos have started uploading (a photo past "pending": the
+  // run is going, or it left failures here), the corner dock rises above
+  // this modal while it reports the upload — only the upload cards, kept
+  // clear of Upload / Cancel (STACK-10). Before Upload, the dock stays under
+  // this modal: no backup card or toast sits on a photo's remove X.
   const footerRef = useRef<HTMLDivElement>(null);
-  useDockRaise(isOpen);
+  useDockRaise(isOpen && (submitting || pending.some((p) => p.status !== "pending")));
   useDockAvoid(footerRef, isOpen);
 
   const stagePendingFiles = useCallback((files: FileList | File[] | null) => {

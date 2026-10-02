@@ -25,10 +25,13 @@
 //     document.body. At rest it sits at `Z.dock`, where the old dock sat:
 //     over the page and its drawers, under every modal, drawer-overlay and
 //     dialog from the 300 band up — so no overlay gets a card over its own
-//     buttons. A modal that starts an upload raises it with `useDockRaise`
-//     while open: the dock then sits at `Z.dockRaised`, above every modal,
-//     backdrop and dialog, so that modal no longer paints over the cards
-//     reporting its upload (STACK-10, STACK-14).
+//     buttons. A modal that has started an upload raises it with
+//     `useDockRaise`, and the dock rises only while it reports an upload (a
+//     widget that registers `raisable`: the upload cards). Raised, it sits at
+//     `Z.dockRaised`, above every modal, backdrop and dialog, so that modal
+//     no longer paints over the cards reporting its upload — and only the
+//     upload cards hold places in it; every other card waits behind "+N
+//     more", as it waited under the modal before (STACK-10, STACK-14).
 //   - It moves out of the way. A page's bottom bar declares its height in
 //     `--dock-bottom` and the dock sits above it; a full-height right-edge
 //     drawer declares its width with `useOccupyRightRail` and the dock moves
@@ -83,6 +86,7 @@ interface Entry {
   seq: number;
   summary: DockSummary | null;
   touched: number;
+  raisable: boolean;
 }
 
 export interface DockEntryInput {
@@ -91,6 +95,9 @@ export interface DockEntryInput {
   priority: number;
   count: number;
   seq: number;
+  /** Its cards report an upload a modal started: they are the ones a raised
+   *  dock lifts over that modal (`useDockRaise`). */
+  raisable?: boolean;
 }
 
 export interface DockAllocation {
@@ -104,9 +111,26 @@ export interface DockAllocation {
 /**
  * Who gets the visible places. Jobs first (by priority, then arrival), then
  * messages; while any message is waiting one place is kept for it, so a
- * 40-file upload cannot hide every error toast. Pure — pinned by tests.
+ * 40-file upload cannot hide every error toast. `raised`: the dock is over a
+ * modal that started an upload — only `raisable` entries (the upload cards)
+ * hold places, and every other card waits behind "+N more", so a backup
+ * card or a toast is never lifted onto that modal's own controls (STACK-10).
+ * Pure — pinned by tests.
  */
-export function allocateDock(entries: DockEntryInput[], cap: number): DockAllocation {
+export function allocateDock(entries: DockEntryInput[], cap: number, raised = false): DockAllocation {
+  if (raised) {
+    const lifted = allocateDock(entries.filter((e) => e.raisable), cap);
+    const waiting = entries.filter((e) => !e.raisable && e.count > 0);
+    const waitingTotal = waiting.reduce((n, e) => n + e.count, 0);
+    const visible: Record<string, number> = {};
+    for (const e of entries) visible[e.id] = lifted.visible[e.id] ?? 0;
+    return {
+      visible,
+      hidden: lifted.hidden + waitingTotal,
+      hiddenTransient: lifted.hiddenTransient + waiting.filter((e) => e.slot === "transient").reduce((n, e) => n + e.count, 0),
+      total: lifted.total + waitingTotal,
+    };
+  }
   const order = (a: DockEntryInput, b: DockEntryInput) => a.priority - b.priority || a.seq - b.seq;
   const jobs = entries.filter((e) => e.slot === "jobs" && e.count > 0).sort(order);
   const transient = entries.filter((e) => e.slot === "transient" && e.count > 0).sort(order);
@@ -151,12 +175,13 @@ let expanded = false;
 let mobileOpen = false;
 /** The fewest cards the expanded column has held since it was opened. */
 let expandedFloor = 0;
-let cache: { version: number; mobile: boolean; alloc: DockAllocation; timed: DockAllocation } | null = null;
+type Allocations = { alloc: DockAllocation; timed: DockAllocation; capped: DockAllocation };
+let cache: ({ version: number; mobile: boolean } & Allocations) | null = null;
 /** The same, for a widget whose live count the store does not hold yet. */
-let ownCache: { version: number; mobile: boolean; byKey: Map<string, { alloc: DockAllocation; timed: DockAllocation }> } | null = null;
+let ownCache: { version: number; mobile: boolean; byKey: Map<string, Allocations> } | null = null;
 /** Declared modal action rows the dock keeps clear of, by registration. */
 const avoids = new Map<string, DockAvoidRect>();
-/** Open modals that start uploads the dock reports (`useDockRaise`). */
+/** Open modals that have started an upload the dock reports (`useDockRaise`). */
 const raises = new Set<string>();
 /** The dock's own cards, measured: their union's width and natural height. */
 let dockContent = { w: 0, h: 0 };
@@ -180,18 +205,28 @@ function isMobile(): boolean {
 }
 
 function storeList(): DockEntryInput[] {
-  return [...entries].map(([id, e]) => ({ id, slot: e.slot, priority: e.priority, count: e.count, seq: e.seq }));
+  return [...entries].map(([id, e]) => ({ id, slot: e.slot, priority: e.priority, count: e.count, seq: e.seq, raisable: e.raisable }));
 }
 
-function allocations(): { alloc: DockAllocation; timed: DockAllocation } {
+/** Raised: a modal that started an upload is open AND the dock reports an
+ *  upload (a `raisable` entry has a card). A raising modal with no upload
+ *  card showing leaves the dock at rest, under it (STACK-10 review). */
+function isRaised(list: Iterable<{ raisable?: boolean; count: number }>): boolean {
+  if (raises.size === 0) return false;
+  for (const e of list) if (e.raisable && e.count > 0) return true;
+  return false;
+}
+
+function allocations(): Allocations {
   const mobile = isMobile();
   if (cache && cache.version === version && cache.mobile === mobile) return cache;
   cache = { version, mobile, ...computeAllocations(storeList(), mobile) };
   return cache;
 }
 
-function computeAllocations(list: DockEntryInput[], mobile: boolean): { alloc: DockAllocation; timed: DockAllocation } {
-  let alloc = allocateDock(list, DOCK_VISIBLE_CAP);
+function computeAllocations(list: DockEntryInput[], mobile: boolean): Allocations {
+  const capped = allocateDock(list, DOCK_VISIBLE_CAP, isRaised(list));
+  let alloc = capped;
   if (expanded) {
     alloc = { ...alloc, visible: Object.fromEntries(list.map((e) => [e.id, e.count])), hidden: 0, hiddenTransient: 0 };
   }
@@ -204,9 +239,12 @@ function computeAllocations(list: DockEntryInput[], mobile: boolean): { alloc: D
     // Collapsed to the summary pill: no card renders.
     alloc = { visible: Object.fromEntries(list.map((e) => [e.id, 0])), hidden: alloc.total, hiddenTransient: 0, total: alloc.total };
   }
-  return { alloc, timed };
+  return { alloc, timed, capped };
 }
 function allocation(): DockAllocation { return allocations().alloc; }
+/** How many cards the cap would hide with the expander folded — what decides
+ *  whether "+N more" / "Show fewer" is worth showing at all. */
+function cappedHidden(): number { return allocations().capped.hidden; }
 
 /**
  * A widget's places, for the count it renders with NOW. A widget registers
@@ -218,7 +256,7 @@ function allocation(): DockAllocation { return allocations().alloc; }
  * answered with its live count instead; every other entry as the store has
  * it.
  */
-function allowanceFor(id: string, slot: DockSlot, priority: number, count: number, which: "alloc" | "timed" = "alloc"): number {
+function allowanceFor(id: string, slot: DockSlot, priority: number, count: number, raisable: boolean, which: "alloc" | "timed" = "alloc"): number {
   if (docks === 0) return count; // no dock (public page): the old behaviour
   const e = entries.get(id);
   if (e && e.count === count) return allocations()[which].visible[id] ?? 0;
@@ -228,7 +266,7 @@ function allowanceFor(id: string, slot: DockSlot, priority: number, count: numbe
   let mine = ownCache.byKey.get(key);
   if (!mine) {
     const list = storeList().filter((x) => x.id !== id);
-    list.push({ id, slot: e?.slot ?? slot, priority: e?.priority ?? priority, count, seq: e?.seq ?? seq + 1 });
+    list.push({ id, slot: e?.slot ?? slot, priority: e?.priority ?? priority, count, seq: e?.seq ?? seq + 1, raisable: e?.raisable ?? raisable });
     mine = computeAllocations(list, mobile);
     ownCache.byKey.set(key, mine);
   }
@@ -269,14 +307,23 @@ export function useDockAllowance(slot: DockSlot, priority: number, count: number
   return useDockAllowances(slot, priority, count, summary).shown;
 }
 
+/** Options for `useDockAllowances`. */
+export interface DockAllowanceOptions {
+  /** This widget's cards report uploads (the upload indicator): while a
+   *  modal that started an upload is open, they raise the dock over it and
+   *  are the only cards that hold places there (STACK-10). */
+  raisable?: boolean;
+}
+
 /**
  * `useDockAllowance` for a widget whose cards expire on a timer: `shown` is
  * how many cards render; `timed` is how many run their auto-dismiss clocks.
  * They differ only while a phone folds the stack into its summary pill —
  * nothing renders, but the cards the stack would show still expire on time.
  */
-export function useDockAllowances(slot: DockSlot, priority: number, count: number, summary?: DockSummary | null): { shown: number; timed: number } {
+export function useDockAllowances(slot: DockSlot, priority: number, count: number, summary?: DockSummary | null, options?: DockAllowanceOptions): { shown: number; timed: number } {
   const id = useId();
+  const raisable = !!options?.raisable;
   const label = summary?.label ?? null;
   const tone = summary?.tone ?? null;
   useLayoutEffect(() => {
@@ -288,12 +335,13 @@ export function useDockAllowances(slot: DockSlot, priority: number, count: numbe
       seq: prev?.seq ?? ++seq,
       summary: nextSummary,
       touched: changed ? ++touch : prev!.touched,
+      raisable,
     });
-    if (!prev || prev.slot !== slot || prev.priority !== priority || changed) emit();
-  }, [id, slot, priority, count, label, tone]);
+    if (!prev || prev.slot !== slot || prev.priority !== priority || prev.raisable !== raisable || changed) emit();
+  }, [id, slot, priority, count, label, tone, raisable]);
   useLayoutEffect(() => () => { entries.delete(id); emit(); }, [id]);
-  const shown = useSyncExternalStore(subscribe, () => allowanceFor(id, slot, priority, count), () => count);
-  const timed = useSyncExternalStore(subscribe, () => allowanceFor(id, slot, priority, count, "timed"), () => count);
+  const shown = useSyncExternalStore(subscribe, () => allowanceFor(id, slot, priority, count, raisable), () => count);
+  const timed = useSyncExternalStore(subscribe, () => allowanceFor(id, slot, priority, count, raisable, "timed"), () => count);
   return { shown, timed };
 }
 
@@ -365,10 +413,16 @@ export function useDockBottomInset(ref: React.RefObject<HTMLElement | null>, act
 // the old dock was: a drawer, a modal or a dialog keeps every one of its
 // controls, whatever the dock holds (STACK-14 — above them, a card that
 // cannot be dismissed covered the asset editor's Save for a whole upload).
-// A modal that starts an upload raises the dock above itself while it is
-// open (`useDockRaise`), so the cards reporting that upload are not painted
-// over. Raised, its cards, its "+N more" and its phone pill take clicks over
-// modals; on a modal whose action row reaches the bottom-right corner — the
+// A modal that has started an upload raises the dock above itself
+// (`useDockRaise`) — and the dock rises only while it reports an upload: a
+// `raisable` widget (the upload indicator) has a card. Before any upload,
+// and once its cards have cleared, the dock is back at rest under the
+// modal, so the modal's own body — the staging grid's Remove, Duplicate and
+// Status on its last rows — is never under a backup card or a toast (N7
+// review). Raised, only the upload cards hold places; every other card
+// waits behind "+N more" (`allocateDock`'s `raised`). Raised, its cards,
+// its "+N more" and its phone pill take clicks over modals; on a modal
+// whose action row reaches the bottom-right corner — the
 // bulk-upload wizard's footer on a laptop, any bottom sheet on a phone —
 // they would sit on the very controls that run the upload ("Upload All",
 // "Stop upload"). So a raising modal declares its action row
@@ -379,10 +433,13 @@ export function useDockBottomInset(ref: React.RefObject<HTMLElement | null>, act
 // stays as before: the cards report over it, readable.
 
 /**
- * While `active`, this overlay starts uploads the dock reports: the dock
- * rises to `Z.dockRaised`, above every modal, until it closes. An overlay
- * that raises the dock must also declare its action row with `useDockAvoid`
- * (lib/__tests__/cornerDock.test.ts refuses one that does not).
+ * While `active`, this overlay has started an upload the dock reports: while
+ * the dock also holds an upload card, it rises to `Z.dockRaised`, above
+ * every modal, with only the upload cards in its places. Pass `open &&` "an
+ * upload was started here" — never `open` alone: before any upload the dock
+ * belongs under the modal. An overlay that raises the dock must also
+ * declare its action row with `useDockAvoid` (lib/__tests__/cornerDock.test.ts
+ * refuses one that does not).
  */
 export function useDockRaise(active: boolean) {
   const id = useId();
@@ -394,7 +451,7 @@ export function useDockRaise(active: boolean) {
   }, [id, active]);
 }
 
-function raisedSnapshot(): boolean { return raises.size > 0; }
+function raisedSnapshot(): boolean { return isRaised(entries.values()); }
 
 /** A declared row, in viewport px. */
 export interface DockAvoidRect { top: number; bottom: number; left: number; right: number }
@@ -491,7 +548,7 @@ export function useDockAvoid(ref: React.RefObject<HTMLElement | null>, active: b
 
 function avoidSnapshot(): number {
   // At rest the dock is under every declared overlay: nothing to keep clear of.
-  if (avoids.size === 0 || raises.size === 0 || typeof window === "undefined") return 0;
+  if (avoids.size === 0 || !raisedSnapshot() || typeof window === "undefined") return 0;
   return dockAvoidOffset({
     viewportW: window.innerWidth,
     viewportH: window.innerHeight,
@@ -595,8 +652,10 @@ export function CornerDock({ onOpenCenter, occupiedRightPx = 0 }: CornerDockProp
   const client = useSyncExternalStore(subscribeClient, () => true, () => false);
   const alloc = useSyncExternalStore(subscribe, allocation, allocation);
   const rail = useSyncExternalStore(subscribe, railSnapshot, () => 0);
-  // Raised over a modal that starts an upload; at rest under every overlay.
+  // Raised over a modal that started the upload it reports; at rest under
+  // every overlay.
   const raised = useSyncExternalStore(subscribe, raisedSnapshot, () => false);
+  const wouldHide = useSyncExternalStore(subscribe, cappedHidden, () => 0);
   // Raised: above a declared modal action row when the cards would cover it.
   const avoidOffset = useSyncExternalStore(subscribe, avoidSnapshot, () => 0);
   const boxRef = React.useRef<HTMLDivElement | null>(null);
@@ -646,7 +705,7 @@ export function CornerDock({ onOpenCenter, occupiedRightPx = 0 }: CornerDockProp
   // With nothing left at all, the phone stack folds too.
   useEffect(() => {
     if (expanded) expandedFloor = Math.min(expandedFloor, alloc.total);
-    const foldExpanded = expanded && (alloc.total <= DOCK_VISIBLE_CAP || alloc.total - expandedFloor > DOCK_VISIBLE_CAP);
+    const foldExpanded = expanded && (wouldHide === 0 || alloc.total - expandedFloor > DOCK_VISIBLE_CAP);
     const foldMobile = mobileOpen && alloc.total === 0;
     if (foldExpanded || foldMobile) {
       const t = setTimeout(() => {
@@ -656,16 +715,18 @@ export function CornerDock({ onOpenCenter, occupiedRightPx = 0 }: CornerDockProp
       }, 0);
       return () => clearTimeout(t);
     }
-  }, [alloc.total]);
+  }, [alloc.total, wouldHide]);
 
   if (!client) return null;
   // Read at render: every crossing of the breakpoint emits, and a new
   // allocation re-renders the dock.
   const mobile = isMobile();
   const collapsed = mobile && !mobileOpen && alloc.total > 0;
-  const summaryEntry = collapsed ? pickSummaryEntry([...entries.values()]) : null;
+  // Raised, the pill speaks for the upload it was raised for (the cards that
+  // hold places there), never for a toast waiting behind it.
+  const summaryEntry = collapsed ? pickSummaryEntry([...entries.values()].filter((e) => !raised || e.raisable)) : null;
   const summary = summaryEntry?.summary ?? null;
-  const showMore = !collapsed && (alloc.hidden > 0 || (expanded && alloc.total > DOCK_VISIBLE_CAP));
+  const showMore = !collapsed && (alloc.hidden > 0 || (expanded && wouldHide > 0));
   const lifted = avoidOffset > 0;
 
   return createPortal(
@@ -688,7 +749,7 @@ export function CornerDock({ onOpenCenter, occupiedRightPx = 0 }: CornerDockProp
         // Lifted above a modal's action row, the offset takes the place of
         // the page bottom bar's (it is never lower than it). The layer:
         // under every overlay at rest; above every modal while one that
-        // starts an upload is open.
+        // started an upload is open and the dock reports an upload.
         zIndex: raised ? Z.dockRaised : Z.dock,
         right: `calc(${rail}px - 1.5rem)`,
         bottom: lifted ? `calc(${avoidOffset}px - 1.5rem)` : "calc(var(--dock-bottom, 0px) - 1.5rem)",
