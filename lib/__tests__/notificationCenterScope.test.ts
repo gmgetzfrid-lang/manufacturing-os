@@ -17,7 +17,11 @@
 //     raised dock moves left of it; while the upload runs, a row or the inbox
 //     link asks before it leaves the page that owns it (review fix).
 //   * "Mark these read" in a scope is a checked write: a refusal is said in
-//     the panel (review fix).
+//     the panel (review fix) — and so is an update row-level security filters
+//     down to fewer rows than were listed (no error, nothing changed; second
+//     review fix).
+//   * Escape inside the leave-confirm answers the confirm ("Stay"); the
+//     center stays open behind it (second review fix).
 //
 // The REAL Sidebar, NotificationBell, NotificationCenter and the REAL
 // attention hook render here; only the database, the session and the router
@@ -39,23 +43,30 @@ const fx = vi.hoisted(() => ({
   markMany: [] as string[][],
   markAll: 0,
   markReadCalls: 0,
-  updates: [] as Array<{ table: string; payload: Record<string, unknown>; ids: unknown }>,
+  updates: [] as Array<{ table: string; payload: Record<string, unknown>; ids: unknown; selected: string | null }>,
   updateError: null as string | null,
+  /** RLS filters the update down to these rows (no error): null = every id. */
+  updateMatches: null as string[] | null,
 }));
 
 vi.mock("@/lib/supabase", () => {
   const chain = (table: string): Record<string, unknown> => {
     const result = { data: table === "tickets" ? fx.tickets : [], error: null, count: 0 };
     const q: Record<string, unknown> = {};
-    let update: { table: string; payload: Record<string, unknown>; ids: unknown } | null = null;
+    let update: { table: string; payload: Record<string, unknown>; ids: unknown; selected: string | null } | null = null;
     for (const m of ["select", "eq", "not", "order", "limit", "is", "or", "gte"]) q[m] = () => q;
-    q.update = (payload: Record<string, unknown>) => { update = { table, payload, ids: null }; return q; };
+    q.select = (cols?: string) => { if (update) update.selected = cols ?? "*"; return q; };
+    q.update = (payload: Record<string, unknown>) => { update = { table, payload, ids: null, selected: null }; return q; };
     q.in = (_col: string, ids: unknown) => { if (update) update.ids = ids; return q; };
     q.maybeSingle = async () => ({ data: null, error: null });
     q.then = (ok: (v: unknown) => unknown, ko?: (e: unknown) => unknown) => {
       if (!update) return Promise.resolve(result).then(ok, ko);
       fx.updates.push(update);
-      return Promise.resolve({ data: null, error: fx.updateError ? { message: fx.updateError } : null }).then(ok, ko);
+      if (fx.updateError) return Promise.resolve({ data: null, error: { message: fx.updateError } }).then(ok, ko);
+      // PostgREST returns the changed rows only when asked (.select), and
+      // only the rows RLS let the update reach.
+      const reached = ((update.ids as string[] | null) ?? []).filter((id) => fx.updateMatches === null || fx.updateMatches.includes(id));
+      return Promise.resolve({ data: update.selected ? reached.map((id) => ({ id })) : null, error: null }).then(ok, ko);
     };
     return q;
   };
@@ -94,6 +105,7 @@ import { ToastProvider, useToast } from "@/components/providers/ToastProvider";
 import { Z } from "@/lib/zLayers";
 import { MARK_READ_FAILED, confirmLeaveDuringUploads } from "@/components/notifications/NotificationCenter";
 import { beginUpload, endUpload } from "@/lib/uploadActivity";
+import { DialogHost } from "@/components/providers/DialogProvider";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -147,6 +159,7 @@ beforeEach(() => {
   fx.markReadCalls = 0;
   fx.updates = [];
   fx.updateError = null;
+  fx.updateMatches = null;
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -224,6 +237,8 @@ describe("TAX-1 / TRAIL-3 / TAX-2 dw4 — a section badge opens its own section,
     expect(fx.updates[0].table).toBe("notifications");
     expect(Object.keys(fx.updates[0].payload)).toEqual(["read_at"]);
     expect([...(fx.updates[0].ids as string[])].sort()).toEqual(["n1", "n2", "n3"]);
+    // it reads back what it changed — the check against an RLS-filtered no-op
+    expect(fx.updates[0].selected).toBe("id");
     expect(fx.markMany).toHaveLength(0);
     expect(fx.markAll).toBe(0);
     expect(panel().querySelector("[data-center-mark-error]")).toBeNull();
@@ -253,6 +268,31 @@ describe("TAX-1 / TRAIL-3 / TAX-2 dw4 — a section badge opens its own section,
     await flush();
     expect(panel().querySelector("[data-center-mark-error]")).toBeNull();
     expect(fx.updates).toHaveLength(2);
+  });
+
+  it("an update RLS filters down to nothing (no error, no row changed) says so too — the silent success the check exists for; a partial one as well", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    fx.updateMatches = [];
+    await mount(React.createElement(NotificationCenterProvider, null, React.createElement(GrabCenter)));
+    await act(async () => { opener.open("all", "documents"); });
+    await flush();
+    const scoped = () => panel().querySelector('button[title="Mark the notifications in Documents read"]') as HTMLButtonElement;
+    await act(async () => { scoped().click(); });
+    await flush();
+    expect(fx.updates).toHaveLength(1);
+    expect((panel().querySelector("[data-center-mark-error]") as HTMLElement).textContent).toBe(MARK_READ_FAILED);
+    expect(listedTitles()).toHaveLength(3);
+    // two of three reached: still not a success
+    fx.updateMatches = ["n1", "n2"];
+    await act(async () => { scoped().click(); });
+    await flush();
+    expect((panel().querySelector("[data-center-mark-error]") as HTMLElement).textContent).toBe(MARK_READ_FAILED);
+    // every row reached: the line clears
+    fx.updateMatches = null;
+    await act(async () => { scoped().click(); });
+    await flush();
+    expect(panel().querySelector("[data-center-mark-error]")).toBeNull();
+    expect(fx.updates).toHaveLength(3);
   });
 
   it("the headline is the opener's number in every case (pure)", () => {
@@ -535,6 +575,56 @@ describe("RT-11 (review fix) — above an upload modal, a link asks before it le
       expect(confirm).not.toHaveBeenCalled();
       expect(clicks.list().map((c) => c.followed)).toEqual([true]);
     } finally { endUpload(); }
+  });
+
+  it("Escape inside the leave-confirm answers it ('Stay') — the center stays open behind it; 'Leave anyway' then follows the row (second review fix)", async () => {
+    // The real DialogHost: the confirm is DialogHost's Modal (z 700, mounted
+    // after the center), whose Escape handler listens on `document`.
+    await mount(React.createElement(ToastProvider, null, React.createElement(NotificationCenterProvider, null,
+      React.createElement(Shell, { raised: true }), React.createElement(GrabCenter), React.createElement(DialogHost))));
+    await act(async () => { opener.open("all"); });
+    await flush();
+    expect(Number(panel().style.zIndex)).toBe(Z.dialog);
+    const native = vi.spyOn(window, "confirm");
+    const confirmDialog = () => [...document.querySelectorAll('[role="dialog"]')].find((d) => !d.hasAttribute("data-center-panel")) as HTMLElement | undefined;
+    beginUpload();
+    try {
+      const rowLink = panel().querySelector("li a") as HTMLAnchorElement;
+      await act(async () => { rowLink.click(); });
+      await flush();
+      expect(native).not.toHaveBeenCalled();
+      const dlg = confirmDialog()!;
+      expect(dlg.textContent).toContain("An upload is still running");
+      // focus is in the confirm (its default button), as a keyboard user has it
+      expect(dlg.contains(document.activeElement)).toBe(true);
+      await act(async () => { document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
+      await flush();
+      // the confirm answered "Stay": gone, the row not followed, nothing marked…
+      expect(confirmDialog()).toBeUndefined();
+      expect(clicks.list()).toEqual([{ href: rowLink.getAttribute("href"), followed: false }]);
+      expect(fx.markReadCalls).toBe(0);
+      // …and the center is still open, at its layer, behind where the confirm was
+      expect(panel().hasAttribute("inert")).toBe(false);
+      expect(Number(panel().style.zIndex)).toBe(Z.dialog);
+
+      // asked again, "Leave anyway" follows the row
+      await act(async () => { rowLink.click(); });
+      await flush();
+      const leave = [...confirmDialog()!.querySelectorAll("button")].find((b) => b.textContent === "Leave anyway")!;
+      expect(leave.getAttribute("type")).toBe("submit");
+      // (this harness cancels every click's default to stand in for
+      // navigation, so the confirm's submit is sent directly)
+      await act(async () => { leave.closest("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+      await flush();
+      expect(clicks.list().map((c) => c.followed)).toEqual([false, false, true]);
+      expect(fx.markReadCalls).toBe(1);
+    } finally { endUpload(); }
+    // with no other dialog up, Escape still closes the center
+    await act(async () => { opener.open("all"); });
+    await flush();
+    await act(async () => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+    await flush();
+    expect(panel().hasAttribute("inert")).toBe(true);
   });
 
   it("the question reuses the reload prompt's words (pure)", async () => {

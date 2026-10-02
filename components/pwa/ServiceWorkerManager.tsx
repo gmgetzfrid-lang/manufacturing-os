@@ -41,13 +41,17 @@ export {
   subscribeWaitingWorker, waitingWorkerSnapshot, __resetWaitingWorkerForTests,
 } from "@/components/pwa/swUpdate";
 
-// The update prompt is UpdatePill's (TAX-15). On a page without the protected
-// shell it is loaded on demand, only when a worker is waiting: a static
-// import would put UpdatePill's dependencies (the dialog host, the upload
-// guard and with it the Supabase client) into every public page's root
-// bundle. That chunk is first asked for right after a deploy, when the old
-// build's chunk may already be gone, so a failed load is caught here and
-// the prompt falls back to a static button (UpdatePromptFallback below).
+// The update prompt is UpdatePill's (TAX-15). Wherever the protected shell's
+// UpdatePill is not mounted — a public page, and a protected URL before the
+// gate admits (authenticating, resolving the membership, no membership) — it
+// is loaded on demand, only when a worker is waiting: a static import would
+// put UpdatePill's dependencies (the dialog host, the upload guard and with
+// it the Supabase client) into every public page's root bundle. On demand
+// defers them, it does not avoid them: after a deploy, a public page with a
+// waiting worker loads them with the chunk. That chunk is first asked for
+// right after a deploy, when the old build's chunk may already be gone, so a
+// failed load is caught here and the prompt falls back to a static button
+// (UpdatePromptFallback below) — a deliberate second renderer of the prompt.
 const UpdatePillForWorker = React.lazy(() =>
   import("@/components/system/UpdatePill").then((m) => ({ default: m.UpdatePillForWaitingWorker })),
 );
@@ -192,8 +196,10 @@ export default function ServiceWorkerManager() {
         )}
       </div>
       {/* "A newer build exists" is UpdatePill's (TAX-15): one wording, one
-          place, one prompt. Inside the protected shell the shell's own
-          UpdatePill shows it, and nothing here is rendered or loaded. */}
+          place, one prompt. Once the protected shell is up its own
+          UpdatePill shows it, and nothing here is rendered or loaded; before
+          that (a public page, or a protected URL still behind the gate) this
+          renders it, under UpdatePromptBoundary. */}
       {updateReady && !shellUp && (
         <UpdatePromptBoundary>
           <React.Suspense fallback={null}>

@@ -19,27 +19,35 @@
 //     trace (TAX-3 dw1 / dw3; the plan's default, DEC-44 (N3)). A hold
 //     placed keeps the amber it always had.
 //   * A notification row coalesces with another about the same event — the
-//     same kind and resource within the toast provider's window — into one
-//     card with a count (`coalesceKey`, RT-11 / OS-4). The card keeps the
-//     first row's words (ToastProvider's merge), so two people posting on one
-//     document read as the first author "×2" until that merge shows the newest
-//     words — a trade-off recorded in DEC-44 (N3) item 4 and handed to
-//     ToastProvider's next holder.
-//   * A burst is one summary: at most BURST_SHOWN_MAX informational toasts
+//     same kind, the same resource and the same actor within the toast
+//     provider's window — into one card with a count (`coalesceKey`, RT-11 /
+//     OS-4). The actor is part of the event: ToastProvider's merge keeps the
+//     first card's words, so without it Carol's sign-off on P-1 would merge
+//     into Bob's and read "Bob signed off on P-1 ×2". Two people's acts on one
+//     resource stay two cards; one person's repeat (Alice posting twice) is
+//     one card that still shows the first row's words — the remainder of the
+//     trade-off in DEC-44 (N3) item 4, handed to ToastProvider's next holder.
+//   * A burst is summarized: at most BURST_SHOWN_MAX informational cards
 //     per BURST_WINDOW_MS; the rest of that window's rows become one
-//     "N more notifications" card when it closes (TAX-9 dw4). Action rows
-//     are never folded into it.
+//     "N more notifications" card when it closes (TAX-9 dw4 — two cards plus
+//     one summary, not one summary alone). A repeat of an event already on
+//     screen in the window joins its card (a count, no new card) and is not
+//     held. Action rows are never folded into the summary.
 //   * The member's "Pop-up toasts" switch (`toast_enabled`) is read through
 //     `readToastPreference` — on mount, whenever the tab comes back, and
 //     before any toast once the last read is older than PREF_FRESH_MS — and
-//     fails open (RT-10 / DEC-74 §7). Bell rows are never affected.
+//     fails open (RT-10 / DEC-74 §7): on an error, and on a read that has not
+//     answered within PREF_READ_TIMEOUT_MS (a stalled request on plant Wi-Fi
+//     with no route out must not silence every toast in the tab). A refresh
+//     never waits on an older read, and a late answer never overwrites a
+//     newer one. Bell rows are never affected.
 
 import { useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import { kindMeta } from "@/lib/notificationKinds";
 import { readToastPreference } from "@/lib/notificationPrefs";
 import { useRole } from "./RoleContext";
-import { useToast, type ToastType } from "./ToastProvider";
+import { toastCoalesceKey, useToast, type ToastType } from "./ToastProvider";
 
 /** The columns of a `notifications` INSERT the toast reads. */
 export interface ListenedRow {
@@ -48,6 +56,8 @@ export interface ListenedRow {
   title: string;
   body: string | null;
   resource_id?: string | null;
+  /** Who did it — part of the event's key (two people's acts are two). */
+  actor_user_id?: string | null;
 }
 
 export interface ToastSpec {
@@ -66,6 +76,8 @@ export const BURST_WINDOW_MS = 6000;
 export const BURST_SHOWN_MAX = 2;
 /** A toast-preference read younger than this is reused. */
 export const PREF_FRESH_MS = 5000;
+/** A toast-preference read that has not answered by then fails open. */
+export const PREF_READ_TIMEOUT_MS = 3000;
 /** The newest row ids remembered against a duplicate delivery. */
 export const SEEN_IDS_MAX = 500;
 
@@ -86,9 +98,12 @@ export function toastForRow(row: ListenedRow): ToastSpec {
     message: row.body ?? "",
     // Action-required stays until dismissed (TAX-3 dw3): 0 = no timer.
     duration: action ? 0 : NOTIFICATION_TOAST_MS,
-    // One card per event (RT-11 dw2 / OS-4 dw2). A row about no resource
-    // keeps the content key, so two unrelated messages never merge.
-    coalesceKey: row.resource_id ? `${row.kind}:${row.resource_id}` : undefined,
+    // One card per event (RT-11 dw2 / OS-4 dw2): the same kind, resource
+    // and actor. A different actor is a different event (the merged card
+    // keeps the first row's words, so it would name the wrong person). A row
+    // about no resource keeps the content key, so two unrelated messages
+    // never merge.
+    coalesceKey: row.resource_id ? `${row.kind}:${row.resource_id}:${row.actor_user_id ?? ""}` : undefined,
   };
 }
 
@@ -121,34 +136,61 @@ export function createNotificationToaster(deps: ToasterDeps) {
   const seenOrder: string[] = [];
   let pref: { value: boolean; at: number } | null = null;
   let pending: Promise<boolean> | null = null;
+  // Bumped by every refresh: a read begun before it may still answer, but
+  // never writes the cache a newer read owns.
+  let generation = 0;
+  const prefTimers = new Set<unknown>();
   let windowOpen = false;
   let shownInWindow = 0;
+  // The events (coalesce keys) given a card in this window.
+  const shownKeys = new Set<string>();
+  let burstSeq = 0;
   let held: ListenedRow[] = [];
   let timer: unknown = null;
   let stopped = false;
 
+  /** One read of the switch, failing open on an error and on a read that
+   *  has not answered within PREF_READ_TIMEOUT_MS. */
+  const readOnce = (): Promise<boolean> => new Promise<boolean>((resolve) => {
+    let settled = false;
+    let handle: unknown = null;
+    const settle = (value: boolean) => {
+      if (settled) return;
+      settled = true;
+      if (handle !== null) { clearTimer(handle); prefTimers.delete(handle); }
+      resolve(value);
+    };
+    handle = setTimer(() => settle(true), PREF_READ_TIMEOUT_MS);
+    prefTimers.add(handle);
+    let read: Promise<boolean>;
+    try { read = deps.readPreference(); } catch { read = Promise.resolve(true); }
+    read.then(settle, () => settle(true));
+  });
+
   const ensurePreference = (): Promise<boolean> => {
     if (pref && now() - pref.at < PREF_FRESH_MS) return Promise.resolve(pref.value);
-    if (!pending) {
-      pending = deps.readPreference()
-        .catch(() => true)
-        .then((value) => {
-          pref = { value, at: now() };
-          pending = null;
-          return value;
-        });
-    }
-    return pending;
+    if (pending) return pending;
+    const gen = generation;
+    const p: Promise<boolean> = readOnce().then((value) => {
+      if (gen === generation) pref = { value, at: now() };
+      if (pending === p) pending = null;
+      return value;
+    });
+    pending = p;
+    return p;
   };
 
   const flush = () => {
     timer = null;
     windowOpen = false;
     shownInWindow = 0;
+    shownKeys.clear();
     const rows = held;
     held = [];
     if (stopped || rows.length === 0 || pref?.value === false) return;
-    deps.show(rows.length === 1 ? toastForRow(rows[0]) : burstSummary(rows.length));
+    // Each summary is its own card: two windows' "3 more" never read as one
+    // "3 more ×2".
+    deps.show(rows.length === 1 ? toastForRow(rows[0]) : { ...burstSummary(rows.length), coalesceKey: `notification-burst:${++burstSeq}` });
   };
 
   const route = (row: ListenedRow) => {
@@ -158,10 +200,17 @@ export function createNotificationToaster(deps: ToasterDeps) {
     if (!windowOpen) {
       windowOpen = true;
       shownInWindow = 0;
+      shownKeys.clear();
       timer = setTimer(flush, BURST_WINDOW_MS);
     }
+    // A repeat of an event already given a card this window joins that card
+    // (ToastProvider merges it into a count) — no new card, so it is not
+    // held for the summary either.
+    const key = toastCoalesceKey(spec);
+    if (shownKeys.has(key)) { deps.show(spec); return; }
     if (shownInWindow < BURST_SHOWN_MAX) {
       shownInWindow++;
+      shownKeys.add(key);
       deps.show(spec);
       return;
     }
@@ -179,9 +228,12 @@ export function createNotificationToaster(deps: ToasterDeps) {
         if (!stopped && enabled) route(row);
       });
     },
-    /** Forget the cached preference and read it again (mount, tab return). */
+    /** Forget the cached preference and read it again (mount, tab return)
+     *  — a fresh read, never the one still in flight. */
     refreshPreference() {
+      generation++;
       pref = null;
+      pending = null;
       void ensurePreference();
     },
     stop() {
@@ -189,6 +241,8 @@ export function createNotificationToaster(deps: ToasterDeps) {
       if (timer !== null) clearTimer(timer);
       timer = null;
       held = [];
+      for (const t of prefTimers) clearTimer(t);
+      prefTimers.clear();
     },
   };
 }

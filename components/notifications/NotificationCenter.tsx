@@ -96,12 +96,22 @@ export function NotificationCenterProvider({ children }: { children: React.React
 
 /** Scoped "mark read" (TAX-1): marks the rows the view lists, as a checked
  *  write — a refused update throws, and the panel says so; never a silent
- *  success. (lib/inAppNotifications `markManyRead`, which this replaced here,
- *  does not read the error; it is not this package's file.) */
+ *  success. "Refused" includes an update row-level security filters down to
+ *  fewer rows than were listed (no error, rows unchanged): the write reads
+ *  back the ids it changed and throws when any is missing. (lib/inAppNotifications
+ *  `markManyRead`, which this replaced here, does not read the error; it is
+ *  not this package's file.) */
 export async function markTheseRead(ids: string[]): Promise<void> {
   if (ids.length === 0) return;
-  const { error } = await supabase.from("notifications").update({ read_at: new Date().toISOString() }).in("id", ids);
+  const { data, error } = await supabase
+    .from("notifications")
+    .update({ read_at: new Date().toISOString() })
+    .in("id", ids)
+    .select("id");
   if (error) throw new Error(error.message || "The update was refused.");
+  const changed = new Set(((data as Array<{ id: string }> | null) ?? []).map((r) => r.id));
+  const missed = ids.filter((id) => !changed.has(id)).length;
+  if (missed > 0) throw new Error(`The update changed ${ids.length - missed} of ${ids.length} notifications.`);
 }
 
 /** What a failed "mark read" says in the panel. */
@@ -160,11 +170,20 @@ function CenterPanel({
   useOccupyRightRail(panelRef, isOpen && aboveModal, true);
 
   // Escape closes just the center (capture — the same trick every overlay in
-  // the app uses so underlying Esc listeners don't also fire).
+  // the app uses so underlying Esc listeners don't also fire). An Escape
+  // inside another dialog — the leave-confirm a row opens over the center,
+  // or a modal opened above it — is that dialog's to answer: the center lets
+  // it through and stays open.
   useEffect(() => {
     if (!isOpen) return;
     const h = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.stopPropagation(); onClose(); }
+      if (e.key !== "Escape") return;
+      const at = e.target instanceof Element && e.target !== document.body ? e.target : document.activeElement;
+      const dialog = at?.closest('[role="dialog"], [role="alertdialog"]');
+      const panel = panelRef.current;
+      if (dialog && panel && dialog !== panel && !panel.contains(dialog)) return;
+      e.stopPropagation();
+      onClose();
     };
     window.addEventListener("keydown", h, { capture: true });
     return () => window.removeEventListener("keydown", h, { capture: true });
@@ -239,7 +258,8 @@ function CenterPanel({
     e.preventDefault();
     e.stopPropagation();
     void confirmLeaveDuringUploads().then((ok) => {
-      if (!ok || !link.isConnected) return;
+      // Closed meanwhile (the panel is inert): nothing to follow.
+      if (!ok || !link.isConnected || link.closest("[inert]")) return;
       followingRef.current = true;
       try { link.click(); } finally { followingRef.current = false; }
     });
