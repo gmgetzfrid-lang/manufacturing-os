@@ -118,7 +118,9 @@ either name while the flag is false, and the reverse (`RT-10`).*
   calls `useDockRaise(open && <an upload was started here>)` from
   `components/ui/CornerDock.tsx`; a scan test refuses `useDockRaise(open)`. The
   dock also needs a `raisable` card: `UploadIndicator`'s. Raised, only the upload
-  cards hold places; the backup, indexing and toast cards wait behind "+N more".
+  cards hold places; the backup, indexing and toast cards wait behind "+N more",
+  which offers no "Notifications" doorway; every upload failure's clock runs from
+  its event; and the dock ignores right rails (N7 fourth review).
   Such a modal must also declare its action row with `useDockAvoid(ref, open)`;
   a scan test refuses one that does not. The three upload-starting modals do
   both. The shared `ModalFooter` declares its row for any dialog opened over
@@ -138,6 +140,13 @@ either name while the flag is false, and the reverse (`RT-10`).*
   test). If N2 / N3 change the panel's width, update
   `NOTIFICATION_CENTER_RAIL_PX`, or have the panel call `useOccupyRightRail`
   itself and drop the prop.*
+- *`lib/intents.ts` (its owner; not N7's file): reset `created_at` when
+  `recordIntent` re-declares an expired edit intent, for example by deleting the
+  expired row before the upsert. Until then an overlap that re-forms before the
+  daily prune keeps its old formed time, and the overlap banner can show a false
+  "Heads-up sent ✓". `TAX-8` stays OPEN (Partial) on done-when 3 until it lands;
+  the pin in `lib/__tests__/cornerJobs.test.ts` "TAX-8 (N7 third review)" then
+  changes with it.*
 - *`app/(protected)/layout.tsx`: N7 changed the `<main>` mount block (the docks
   first) and the hook preamble of `ProtectedContent` (one line,
   `useNotificationCenter`). N4 (:239 provider) and N12 (:72) rebase on it.*

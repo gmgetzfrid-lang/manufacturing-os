@@ -17,6 +17,19 @@
 // which also parks indexing) and `transfers` (every uploadToPath transfer,
 // wherever it started — lib/storage.ts holds one per call). Only `inFlight`
 // parks indexing; both hold the warning.
+//
+// A sign-out is not held by it (N7 fourth review). RoleContext's SIGNED_OUT
+// branch clears the workspace and replaces the page with "/" — after a
+// sign-out button, a token that could not be refreshed, or a sign-out in
+// another tab. Held by this prompt, "Stay" would leave the previous
+// account's screen up in a tab with no session (a shared tablet). So the
+// guard is released on SIGNED_OUT: the redirect ends the transfers either
+// way. The listener is added once, when this module loads in a browser
+// (lib/storage imports it, and the protected layout imports UploadIndicator,
+// which imports lib/storage) — before RoleContext mounts and adds its own,
+// so the release has run before that redirect, whichever path it takes.
+
+import { supabase } from "@/lib/supabase";
 
 let inFlight = 0;
 let transfers = 0;
@@ -108,3 +121,15 @@ export async function withUploadActivity<T>(run: () => Promise<T>): Promise<T> {
   try { return await run(); }
   finally { endUpload(); }
 }
+
+/** Release the leave-page warning on SIGNED_OUT (see the header). Never
+ *  throws: no window on the server, no auth client in some tests. */
+function releaseOnSignOut() {
+  if (typeof window === "undefined") return;
+  try {
+    supabase.auth?.onAuthStateChange?.((event: string) => {
+      if (event === "SIGNED_OUT") releaseUploadUnloadGuard();
+    });
+  } catch { /* no auth client — nothing to listen to */ }
+}
+releaseOnSignOut();

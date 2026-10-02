@@ -760,6 +760,74 @@ describe("STACK-10 / STACK-14 — at rest the dock is under every overlay; an up
     expect(transientSlot().textContent).toContain("Jane mentioned you on P-101");
   });
 
+  it("raised, a failed run's cards clear in one 7s window — twelve failures over the staging wizard leave the dock at rest within 7.5s, not four at a time (N7 fourth review)", async () => {
+    // Chromium, the fourth review's probe (real MetadataStagingModal, 40
+    // files, all 12 transfers failing): a failure's clock waited until it
+    // held one of the four places, so the raised dock covered the last
+    // row's Remove and Status for 21s — ceil(12/4) x 7s; 70s for 40
+    // failures. On b9cdfdc every failure cleared 7s after its event.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    const files = Array.from({ length: 40 }, (_, i) => new File(["x"], `B-${100 + i}.pdf`));
+    const noColumns: never[] = [];
+    let fail!: (e: Error) => void;
+    const onSubmit = vi.fn(() => new Promise<void>((_, reject) => {
+      fail = reject;
+      for (let i = 0; i < 12; i++) upload(`B-${100 + i}`);
+    }));
+    await mount(shell(
+      React.createElement(MetadataStagingModal, { isOpen: true, files, customColumns: noColumns, onCancel: () => {}, onSubmit }),
+    ));
+    const uploadAll = [...document.querySelectorAll("button")].find((b) => b.textContent === "Upload All")!;
+    await act(async () => { uploadAll.click(); });
+    await flush();
+    expect(Number(dock()!.style.zIndex)).toBe(Z.dockRaised);
+    // The network drops: every transfer fails, the modal stays open with them.
+    await act(async () => {
+      for (let i = 0; i < 12; i++) upload(`B-${100 + i}`, "error", { error: "Network error" });
+      fail(new Error("Uploaded 0 of 12."));
+    });
+    await flush();
+    expect(text()).toContain("Uploaded 0 of 12.");
+    expect(Number(dock()!.style.zIndex)).toBe(Z.dockRaised);
+    expect(jobsSlot().querySelectorAll(".rounded-xl")).toHaveLength(4);
+    const more = () => [...dock()!.querySelectorAll("button")].find((b) => /more/.test(b.textContent ?? ""))?.textContent ?? null;
+    expect(more()).toContain("+8 more");
+    // Not yet: a failure still gets its full 7s.
+    await act(async () => { vi.advanceTimersByTime(6500); });
+    await flush();
+    expect(Number(dock()!.style.zIndex)).toBe(Z.dockRaised);
+    // One window: by 7.5s every failure has cleared, the dock is back at
+    // rest, and the last row's controls are above it again.
+    await act(async () => { vi.advanceTimersByTime(1000); });
+    await flush();
+    expect(jobsSlot().querySelectorAll(".rounded-xl")).toHaveLength(0);
+    expect(more()).toBeNull();
+    expect(dock()!.getAttribute("data-dock-raised")).toBeNull();
+    expect(Number(dock()!.style.zIndex)).toBe(Z.dock);
+    const removes = document.querySelectorAll('button[title="Remove from batch"]');
+    expect(removes.length).toBe(40);
+    const lastRow = removes[removes.length - 1].closest("tr")!;
+    for (const control of [removes[removes.length - 1], lastRow.querySelector("select")!]) {
+      expect(layerOf(control)).toBeGreaterThan(Number(dock()!.style.zIndex));
+    }
+  });
+
+  it("at rest the cap still holds a failure's clock until it is seen — the raised rule does not leak to an upload no modal started", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    // A modal is open that started no upload (it raises nothing): six
+    // failures from elsewhere drain four, then two, as before.
+    await mount(shell(React.createElement(ModalProbe)));
+    await act(async () => { for (let i = 0; i < 6; i++) upload(`E${i}`, "error", { error: `reason ${i}` }); });
+    await flush();
+    expect(dock()!.getAttribute("data-dock-raised")).toBeNull();
+    await act(async () => { vi.advanceTimersByTime(7100); });
+    await flush();
+    expect(jobsSlot().querySelectorAll(".rounded-xl")).toHaveLength(2);
+    await act(async () => { vi.advanceTimersByTime(7100); });
+    await flush();
+    expect(jobsSlot().querySelectorAll(".rounded-xl")).toHaveLength(0);
+  });
+
   it("the photo uploader: staged photos and a backup card leave the dock under it; Upload raises it with the upload card only", async () => {
     const created: string[] = [];
     Object.defineProperty(URL, "createObjectURL", { value: (f: File) => { created.push(f.name); return `blob:${f.name}`; }, configurable: true });
@@ -820,6 +888,39 @@ describe("STACK-10 / STACK-14 — at rest the dock is under every overlay; an up
     await act(async () => { button(/Show fewer/)!.click(); });
     await flush();
     expect(jobsSlot().textContent).not.toContain("Backup");
+  });
+
+  it("raised, the '+N more' offers no 'Notifications' doorway, and an open center's rail does not move the dock onto the modal; at rest both come back (N7 fourth review)", async () => {
+    // Chromium, the fourth review's probe: the raised dock's doorway opened
+    // the z-241 center under the z-300 staging modal (invisible), and its
+    // 480px rail moved the cards from x 976-1264 to x 496-784 at 1280x800,
+    // over the middle of the staging grid, until the hidden center closed.
+    viewport(1280, 800);
+    const tree = (raising: boolean) => React.createElement(ToastProvider, null,
+      React.createElement(CornerDock, { onOpenCenter: openCenter, occupiedRightPx: NOTIFICATION_CENTER_RAIL_PX }),
+      React.createElement(Grab),
+      React.createElement(UploadIndicator),
+      raising ? React.createElement(RaisingModalProbe, { key: "m" }) : null);
+    await mount(tree(true));
+    await act(async () => {
+      for (let i = 0; i < 6; i++) toastApi({ type: "info", title: `Doc ${i} revised`, duration: 0 });
+      for (let i = 0; i < 6; i++) upload(`U${i}`);
+    });
+    await flush();
+    expect(Number(dock()!.style.zIndex)).toBe(Z.dockRaised);
+    const button = (re: RegExp) => [...dock()!.querySelectorAll("button")].find((b) => re.test(b.textContent ?? ""));
+    // Six toasts wait behind "+N more" — yet no doorway to a center the
+    // modal would hide.
+    expect(button(/more/)!.textContent).toContain("+8 more");
+    expect(button(/Notifications/)).toBeUndefined();
+    // The center is open under the modal: the raised dock stays at the edge.
+    expect(dock()!.style.right).toBe("calc(0px - 1.5rem)");
+    // At rest (the modal gone), the doorway and the rail are back.
+    await mount(tree(false));
+    expect(Number(dock()!.style.zIndex)).toBe(Z.dock);
+    expect(dock()!.style.right).toBe("calc(480px - 1.5rem)");
+    await act(async () => { button(/Notifications/)!.click(); });
+    expect(openCenter).toHaveBeenCalledWith();
   });
 
   it("an overlay that raises the dock must declare its action row: every useDockRaise caller also calls useDockAvoid", () => {
@@ -1088,9 +1189,15 @@ describe("lib/zLayers — the scale", () => {
   it("at rest the dock is under every overlay from the 300 band up and over everything below it — the old dock's place", () => {
     // The old dock was z-[300], first in <main>: every 300-band overlay after
     // it (and every one above) painted over it; everything under 300 did not.
-    const values = [...found.keys()].filter((n) => n !== Z.dock && n !== Z.dockRaised);
-    expect(values.filter((n) => n < Z.dock).every((n) => n < 300)).toBe(true);
-    expect(values.filter((n) => n >= 300).every((n) => n > Z.dock)).toBe(true);
+    // So the dock must be the only layer between the undo toasts and the
+    // 300 band: a 291-299 overlay would sit over the resting dock and under
+    // the old one (N7 fourth review — the old assertions here could not
+    // fail). Every value in use and every value the scale lists is read.
+    const values = [...new Set([...found.keys(), ...Z_SCALE])].filter((n) => n !== Z.dock && n !== Z.dockRaised);
+    expect(values.filter((n) => n > Z.undoToast && n < 300)).toEqual([]);
+    expect(values.every((n) => n <= Z.undoToast || n >= 300)).toBe(true);
+    expect(values).toContain(300);
+    expect(values).toContain(Z.undoToast);
     expect(Z.dock).toBeGreaterThan(Z.undoToast);
     expect(Z.dock).toBeLessThan(Z.metadataStagingModal);
     // No literal claims the resting band: nothing ties with the dock.

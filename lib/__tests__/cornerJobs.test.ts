@@ -11,7 +11,7 @@ import { renderToString } from "react-dom/server";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const auth = vi.hoisted(() => ({ cb: null as null | ((event: string) => void) }));
+const auth = vi.hoisted(() => ({ cb: null as null | ((event: string) => void), cbs: [] as Array<(event: string) => void> }));
 const db = vi.hoisted(() => ({ rows: [] as Array<Record<string, unknown>>, queries: [] as Array<Array<{ m: string; a: unknown[] }>> }));
 vi.mock("@/lib/supabase", () => {
   const from = (table: string) => {
@@ -30,7 +30,7 @@ vi.mock("@/lib/supabase", () => {
       from,
       auth: {
         getSession: async () => ({ data: { session: { access_token: "t" } } }),
-        onAuthStateChange: (cb: (event: string) => void) => { auth.cb = cb; return { data: { subscription: { unsubscribe() {} } } }; },
+        onAuthStateChange: (cb: (event: string) => void) => { auth.cb = cb; auth.cbs.push(cb); return { data: { subscription: { unsubscribe() {} } } }; },
       },
     },
   };
@@ -49,6 +49,11 @@ import {
 } from "@/components/documents/EditOverlapBanner";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+/** The auth listeners added while the modules above loaded — before any
+ *  component mounted (RoleContext adds its own on mount). */
+const authAtImport = [...auth.cbs];
+const fireAuth = (event: string) => { for (const cb of auth.cbs) cb(event); };
 
 let host: HTMLDivElement;
 let root: Root;
@@ -187,6 +192,35 @@ describe("STACK-13 — a beforeunload guard while an upload is in flight", () =>
     beginTransfer();
     expect(add.mock.calls.filter((c) => c[0] === "beforeunload")).toHaveLength(1);
     endTransfer();
+  });
+
+  it("sign-out releases it: RoleContext's redirect to '/' is never held by a 'Leave site?' prompt while a transfer runs (N7 fourth review)", () => {
+    // RoleContext's SIGNED_OUT branch calls location.replace("/"). Held by
+    // the prompt, "Stay" left the previous account's screen up in a tab
+    // with no session. The release listener is added at import — before
+    // any component (RoleContext included) has mounted.
+    expect(authAtImport).toHaveLength(1);
+    const prompted = () => {
+      const ev = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(ev);
+      return ev.defaultPrevented;
+    };
+    beginTransfer();
+    expect(prompted()).toBe(true);
+    // A token refresh is not a sign-out: the guard stays.
+    authAtImport[0]("TOKEN_REFRESHED");
+    expect(prompted()).toBe(true);
+    authAtImport[0]("SIGNED_OUT");
+    expect(hasUploadsInFlight()).toBe(true); // the transfer is still counted…
+    expect(prompted()).toBe(false); // …and no beforeunload listener holds the redirect
+    beginTransfer();
+    expect(prompted()).toBe(false);
+    endTransfer(); endTransfer();
+    // Drained, the guard is armed again for the next session's uploads.
+    beginTransfer();
+    expect(prompted()).toBe(true);
+    endTransfer();
+    expect(prompted()).toBe(false);
   });
 
   it("UpdatePill asks before reloading while an upload is in flight; no upload, no question", async () => {
@@ -479,7 +513,7 @@ describe("useDismissed — localStorage keyed by account+workspace, hydration-sa
     await act(async () => { api[1](true); });
     window.localStorage.setItem("intel-status-u1-o1", "{}");
     expect(auth.cb).toBeTypeOf("function");
-    await act(async () => { auth.cb!("SIGNED_OUT"); });
+    await act(async () => { fireAuth("SIGNED_OUT"); });
     expect(window.localStorage.getItem("dismissed:u1:o1:w")).toBeNull();
     expect(host.textContent).toBe("shown");
     // Not ours to clear: RoleContext owns that key.

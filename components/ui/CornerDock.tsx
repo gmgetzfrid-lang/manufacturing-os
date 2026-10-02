@@ -17,7 +17,7 @@
 //   - A visible cap. At most DOCK_VISIBLE_CAP cards show at once, jobs first
 //     (one place is kept for messages while any are waiting); the rest
 //     collapse into one "+N more" card that expands the dock in place, and —
-//     when messages are among them — opens the notification center. A widget
+//     when messages are among them, at rest — opens the notification center. A widget
 //     asks how many of its cards it may show with `useDockAllowance` (RT-11,
 //     OS-4, STACK-9). The column is height-bounded and scrolls, so nothing
 //     can ever render above the viewport.
@@ -35,7 +35,8 @@
 //   - It moves out of the way. A page's bottom bar declares its height in
 //     `--dock-bottom` and the dock sits above it; a full-height right-edge
 //     drawer declares its width with `useOccupyRightRail` and the dock moves
-//     left of it when there is room (STACK-7, STACK-11). While raised, the
+//     left of it when there is room (STACK-7, STACK-11) — at rest; raised,
+//     it stays at the edge, over the modal that hides the drawer. While raised, the
 //     dock's cards take clicks over modals, so a raising modal declares its
 //     action row with `useDockAvoid` (as does the shared `ModalFooter`, for
 //     a dialog opened over it), and while the dock's cards would cover that
@@ -320,8 +321,12 @@ export interface DockAllowanceOptions {
  * how many cards render; `timed` is how many run their auto-dismiss clocks.
  * They differ only while a phone folds the stack into its summary pill —
  * nothing renders, but the cards the stack would show still expire on time.
+ * `raised`: the dock is over a modal that started an upload (STACK-10) — a
+ * raisable widget then runs every finished card's clock, placed or not, so
+ * a failed run's cards leave that modal's body in one window instead of
+ * draining four places at a time.
  */
-export function useDockAllowances(slot: DockSlot, priority: number, count: number, summary?: DockSummary | null, options?: DockAllowanceOptions): { shown: number; timed: number } {
+export function useDockAllowances(slot: DockSlot, priority: number, count: number, summary?: DockSummary | null, options?: DockAllowanceOptions): { shown: number; timed: number; raised: boolean } {
   const id = useId();
   const raisable = !!options?.raisable;
   const label = summary?.label ?? null;
@@ -342,7 +347,8 @@ export function useDockAllowances(slot: DockSlot, priority: number, count: numbe
   useLayoutEffect(() => () => { entries.delete(id); emit(); }, [id]);
   const shown = useSyncExternalStore(subscribe, () => allowanceFor(id, slot, priority, count, raisable), () => count);
   const timed = useSyncExternalStore(subscribe, () => allowanceFor(id, slot, priority, count, raisable, "timed"), () => count);
-  return { shown, timed };
+  const raised = useSyncExternalStore(subscribe, raisedSnapshot, () => false);
+  return { shown, timed, raised };
 }
 
 /** Render children into the dock's slot (stacked by `priority`), or fall
@@ -617,6 +623,12 @@ export function rightRailOffset(viewportWidth: number, widths: number[]): number
 }
 
 function railSnapshot(): number {
+  // Raised, the dock is over a modal whose backdrop covers every right-rail
+  // drawer (the inspector 60, history 70, the notification center 241 — all
+  // under the 300 band): it stays at the viewport's edge rather than moving
+  // left, onto that modal's body, for a drawer the modal hides (N7 fourth
+  // review).
+  if (raisedSnapshot()) return 0;
   return rightRailOffset(typeof window === "undefined" ? 0 : window.innerWidth, [...rails.values()]);
 }
 
@@ -785,7 +797,11 @@ export function CornerDock({ onOpenCenter, occupiedRightPx = 0 }: CornerDockProp
               ? <><ChevronDown className="w-3 h-3" /> Show fewer</>
               : <><ChevronUp className="w-3 h-3" /> +{alloc.hidden} more</>}
           </button>
-          {!expanded && alloc.hiddenTransient > 0 && onOpenCenter && (
+          {/* Raised, no doorway: the center would open under the modal
+              the dock is raised over — invisible — and the person would
+              see only the cards jump (N7 fourth review). Its toasts wait
+              behind "+N more" until the dock is back at rest. */}
+          {!expanded && !raised && alloc.hiddenTransient > 0 && onOpenCenter && (
             <button
               type="button"
               // No argument: the center's open(filter?) must never receive

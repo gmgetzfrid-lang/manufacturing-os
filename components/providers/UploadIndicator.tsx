@@ -24,6 +24,14 @@
 // These are the dock's `raisable` cards: while a modal that started an
 // upload is open, they lift the dock above it, and only they hold places
 // there — and the dock is raised only while one of them shows (STACK-10).
+// Raised, every failure counts as seen: its clock starts at its event, as
+// it did before the cap, whether or not it holds one of the four places.
+// The raising modal reports the run's outcome itself (the staging wizard
+// keeps the failed rows, with "Uploaded n of m"), and the raised cards sit
+// on that modal's body — waiting four at a time would keep a 40-failure
+// run's cards over the failed rows' Remove and Status for ten 7s windows
+// (N7 fourth review). Raised, a whole run's failures clear 7s after the
+// last one, and the dock drops back under the modal.
 
 import React, { useEffect, useRef, useState } from "react";
 import { subscribeUploads, type UploadActivity } from "@/lib/storage";
@@ -68,7 +76,7 @@ export default function UploadIndicator() {
   const list = Object.values(items).sort((a, b) => a._t - b._t);
   const uploading = list.filter((u) => u.status === "uploading").length;
   const failed = list.filter((u) => u.status === "error").length;
-  const { shown: allowance, timed } = useDockAllowances("jobs", DOCK_PRIORITY.upload, list.length, list.length === 0 ? null
+  const { shown: allowance, timed, raised } = useDockAllowances("jobs", DOCK_PRIORITY.upload, list.length, list.length === 0 ? null
     : failed > 0 ? { label: `${failed} upload${failed === 1 ? "" : "s"} failed`, tone: "error" }
     : uploading > 0 ? { label: `Uploading ${uploading} file${uploading === 1 ? "" : "s"}`, tone: "busy" }
     : { label: "Uploads finished", tone: "ok" },
@@ -78,15 +86,15 @@ export default function UploadIndicator() {
   const shown = pickVisibleUploads(list, allowance);
 
   // A finished card clears UPLOAD_CLEAR_MS after it finished — a failure
-  // after it is first VISIBLE (or stood for by the phone's pill) — and only
-  // if no newer event superseded it. A started clock is not paused when the
-  // card later leaves the stack.
+  // after it is first VISIBLE (or stood for by the phone's pill; while the
+  // dock is raised, at once) — and only if no newer event superseded it. A
+  // started clock is not paused when the card later leaves the stack.
   useEffect(() => {
     const sorted = Object.values(items).sort((a, b) => a._t - b._t);
-    const seen = new Set(pickVisibleUploads(sorted, timed).map((u) => u.id));
+    const seen = raised ? null : new Set(pickVisibleUploads(sorted, timed).map((u) => u.id));
     for (const u of sorted) {
       if (u.status === "uploading") continue;
-      if (u.status === "error" && !seen.has(u.id)) continue;
+      if (u.status === "error" && seen && !seen.has(u.id)) continue;
       const tk = `${u.id}:${u.status}`;
       if (timers.current.has(tk)) continue;
       const status = u.status;
@@ -101,7 +109,7 @@ export default function UploadIndicator() {
         });
       }, UPLOAD_CLEAR_MS[status]));
     }
-  }, [items, timed]);
+  }, [items, timed, raised]);
 
   useEffect(() => {
     const map = timers.current;
