@@ -21,6 +21,7 @@ import { MACHINE_ACTOR_SWEEP, MACHINE_ACTOR_ASSESSMENT } from "@/lib/checklistEn
 import { normalizeCurrency } from "@/lib/costDocs";
 import { PER_ROW_CHUNK } from "@/lib/checklists";
 import { normalizeCompanyName, barredCompanyFor } from "@/lib/bidTab";
+import { summarizeAudit } from "@/lib/timeline";
 
 const root = process.cwd();
 const migDir = join(root, "supabase", "migrations");
@@ -108,6 +109,7 @@ describe("DRLS-16 — every function this migration adds", () => {
     "cost_doc_company_behind", "company_name_key", "cost_doc_company_barred", "enforce_cost_document_award_registry", "award_quote",
     "apply_checklist_item_writes", "enforce_project_party_company_link", "enforce_quality_item_contractor",
     "audit_row_project_ref_visible", "enforce_intake_outcome_notice_server_only", "stamp_milestone_audit_project",
+    "record_milestone_scope_on_delete",
   ];
   it("each is NEW — no earlier migration defines it (so there is no older body to start from)", () => {
     for (const f of numbered().filter((x) => x < FILE)) {
@@ -115,9 +117,9 @@ describe("DRLS-16 — every function this migration adds", () => {
       for (const name of added) expect(sql, `${f} defines ${name}`).not.toMatch(new RegExp(`FUNCTION\\s+(public\\.)?${name}\\s*\\(`));
     }
   });
-  it("the two SECURITY DEFINERs (the registry rail, the milestone row's project stamp) are trigger functions, pin search_path and are revoked from PUBLIC, anon and authenticated", () => {
+  it("the three SECURITY DEFINERs (the registry rail, the milestone row's project stamp, the delete's scope row) are trigger functions, pin search_path and are revoked from PUBLIC, anon and authenticated", () => {
     const definers = [...C.matchAll(/CREATE OR REPLACE FUNCTION public\.(\w+)\([^)]*\)[\s\S]*?AS \$\$/g)].filter((m) => /SECURITY DEFINER/.test(m[0]));
-    expect(definers.map((m) => m[1])).toEqual(["enforce_cost_document_award_registry", "stamp_milestone_audit_project"]);
+    expect(definers.map((m) => m[1])).toEqual(["enforce_cost_document_award_registry", "stamp_milestone_audit_project", "record_milestone_scope_on_delete"]);
     for (const d of definers) {
       expect(d[0]).toMatch(/RETURNS trigger/);
       expect(d[0]).toMatch(/SECURITY DEFINER\s*\n\s*SET search_path = public/);
@@ -142,6 +144,10 @@ describe("DRLS-16 — every function this migration adds", () => {
       expect(fn(name)).toContain("IF auth.uid() IS NULL THEN RETURN NEW; END IF;");
       expect(C).toContain(`REVOKE ALL ON FUNCTION public.${name}() FROM anon;`);
     }
+    // the delete trigger's function passes the service role the same way, returning the row being deleted
+    expect(fn("record_milestone_scope_on_delete")).toMatch(/RETURNS trigger/);
+    expect(fn("record_milestone_scope_on_delete")).toContain("IF auth.uid() IS NULL THEN RETURN OLD; END IF;");
+    expect(C).toContain("REVOKE ALL ON FUNCTION public.record_milestone_scope_on_delete() FROM anon;");
   });
 });
 
@@ -193,28 +199,34 @@ describe("MON-12 — the registry rail on an award", () => {
     expect(ts.indexOf("project_parties")).toBeLessThan(ts.indexOf(".ilike(\"name\""));
     expect(ts).toContain("rows.length === 1");
   });
-  it("the rail judges the GATE, not the binding: an unlinked bid answers for ANY do-not-use row its name normalises to, else for the company it binds to (review major; review fix 4)", () => {
+  it("the rail judges the GATE, not the binding: a bid with no own link answers for ANY do-not-use row its name normalises to, else for the company it binds to (review major; review fixes 4 and 5)", () => {
     expect(rail).toContain("v_company := cost_doc_company_barred(NEW.org_id, NULLIF(to_jsonb(NEW) ->> 'company_id', '')::uuid, NEW.party_id, NEW.vendor_name);");
     expect(rail).not.toContain("cost_doc_company_behind(");
     const gate = fn("cost_doc_company_barred");
     expect(gate).toMatch(/LANGUAGE plpgsql STABLE\s*\n\s*SECURITY INVOKER\s*\n\s*SET search_path = public/);
-    // a standing link decides, flagged or not — the document's, then the contractor's, each in the org
+    // the document's own link decides, flagged or not; the contractor's answers only when its company is
+    // flagged (review fix 5: an ACTIVE contractor link — which the intake door picks by name — never hides
+    // a do-not-use look-alike); each only to a company of the org
     const own = gate.indexOf("FROM companies c WHERE c.id = p_company AND c.org_id = p_org;");
     const party = gate.indexOf("FROM companies c WHERE c.id = v_party_company AND c.org_id = p_org;");
+    const partyFlag = gate.indexOf("IF v_row ->> 'status' IN ('do_not_use', 'inactive') THEN RETURN v_row; END IF;");
     const names = gate.indexOf("v_key := company_name_key(p_vendor);");
     expect(own).toBeGreaterThan(0);
     expect(own).toBeLessThan(party);
-    expect(party).toBeLessThan(names);
-    // a standing link answers for its own flag, do_not_use or inactive (twice); so does the bound company (once)
-    expect(gate.split("RETURN CASE WHEN v_row ->> 'status' IN ('do_not_use', 'inactive') THEN v_row END;").length - 1).toBe(3);
+    expect(party).toBeLessThan(partyFlag);
+    expect(partyFlag).toBeLessThan(names);
+    expect(gate.slice(party, names)).not.toContain("RETURN CASE");
+    // the own link answers for its own flag, do_not_use or inactive; so does the bound company, last
+    expect(gate.split("RETURN CASE WHEN v_row ->> 'status' IN ('do_not_use', 'inactive') THEN v_row END;").length - 1).toBe(2);
     // no link: ANY do_not_use row of the org with the same key — no uniqueness, the exact name first (DEC-48's
     // gate flags do-not-use look-alikes only, as barredCompanyFor does — review fix 4: an INACTIVE look-alike
     // the quote does not bind to is not the bid's)
-    expect(gate).toContain("IF v_key <> '' THEN\n    SELECT jsonb_build_object('id', c.id, 'name', c.name, 'status', c.status) INTO v_row\n      FROM companies c\n     WHERE c.org_id = p_org AND c.status = 'do_not_use'\n       AND company_name_key(c.name) = v_key\n     ORDER BY (lower(c.name) = lower(btrim(p_vendor))) DESC NULLS LAST, c.name, c.id\n     LIMIT 1;\n    IF v_row IS NOT NULL THEN RETURN v_row; END IF;\n  END IF;");
+    expect(gate).toContain("IF v_key <> '' THEN\n    SELECT jsonb_build_object('id', c.id, 'name', c.name, 'status', c.status) INTO v_row\n      FROM companies c\n     WHERE c.org_id = p_org AND c.status = 'do_not_use'\n       AND company_name_key(c.name) = v_key\n     ORDER BY (lower(c.name) = lower(btrim(p_vendor))) DESC NULLS LAST, c.id\n     LIMIT 1;\n    IF v_row IS NOT NULL THEN RETURN v_row; END IF;\n  END IF;");
     expect(gate).not.toContain("c.status IN (");
     expect(gate).not.toMatch(/COUNT\(\*\)|v_n <> 1/);
-    // else the company the quote binds to by one exact name (cost_doc_company_behind with no link), on its own flag
-    const bound = gate.indexOf("v_row := cost_doc_company_behind(p_org, NULL, NULL, p_vendor);\n  RETURN CASE WHEN v_row ->> 'status' IN ('do_not_use', 'inactive') THEN v_row END;\nEND;");
+    // else the company the quote binds to (cost_doc_company_behind with no own link: the contractor's link,
+    // else one exact name), on its own flag — an active contractor company answers null, as the award records it
+    const bound = gate.indexOf("v_row := cost_doc_company_behind(p_org, NULL, p_party, p_vendor);\n  RETURN CASE WHEN v_row ->> 'status' IN ('do_not_use', 'inactive') THEN v_row END;\nEND;");
     expect(bound).toBeGreaterThan(gate.indexOf("IF v_row IS NOT NULL THEN RETURN v_row; END IF;"));
     // the lib's gate is the same rule: barredCompanyFor's candidates, the link deciding
     const lib = readFileSync(join(root, "lib/costDocs.ts"), "utf8");
@@ -222,19 +234,53 @@ describe("MON-12 — the registry rail on an award", () => {
     expect(look).toContain("const key = normalizeCompanyName(vendorName);");
     expect(look).toContain('.eq("status", "do_not_use")');
     expect(look).not.toContain("FLAGGED_COMPANY_STATUSES");
-    expect(look).toContain("Number(b.name.toLowerCase() === exact) - Number(a.name.toLowerCase() === exact)");
+    expect(look).toContain("Number(b.name.toLowerCase() === exact) - Number(a.name.toLowerCase() === exact) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)");
     expect(look).toContain("hits.push(...rows.filter((c) => normalizeCompanyName(c.name) === key));");
     expect(look).toContain("if (rows.length < 1000) break;");
     expect(lib).toContain('const FLAGGED_COMPANY_STATUSES = ["do_not_use", "inactive"];');
     const behind = between(lib, "async function companyBehind(", "\n}\n");
     expect(behind).toContain("if (hit.company) return { company: hit.company, barred: flaggedOrNull(hit.company) };");
-    expect(behind).toContain("const lookAlike = await flaggedLookAlike(doc.orgId, name);");
+    expect(behind.split("if (hit.company) return { company: hit.company, barred: flaggedOrNull(hit.company) };").length - 1).toBe(1); // the own link only
+    // the contractor's link: its flagged company answers; an unflagged one binds and the look-alike gate still runs
+    const partyTs = behind.slice(behind.indexOf('from("project_parties")'), behind.indexOf("const name = doc.vendorName?.trim();"));
+    expect(partyTs).toContain("if (flagged) return { company: hit.company, barred: flagged };");
+    expect(partyTs).toContain('const lookAlike = await flaggedLookAlike(doc.orgId, doc.vendorName ?? "");');
+    expect(partyTs).toContain("return { company: hit.company, barred: lookAlike.company };");
+    expect(behind.split('const lookAlike = await flaggedLookAlike(doc.orgId, doc.vendorName ?? "");').length - 1).toBe(2);
     expect(behind).toContain("if (lookAlike.error) return { company: null, barred: null, error: lookAlike.error };");
     expect(behind).toContain("return { company: bound, barred: lookAlike.company ?? (bound ? flaggedOrNull(bound) : null) };");
+    // the bid tab's own gate reads the document's own link only (QuotesPanel registryFor / barredNow) — a
+    // quote filed against a contractor whose company is active still answers for the look-alike there
+    const panel = readFileSync(join(root, "components/projects/cost/QuotesPanel.tsx"), "utf8");
+    expect(panel).toContain("barred: barredCompanyFor(e.vendorName, null, flags),");
+    expect(panel).toContain("return barredCompanyFor(vendorName, null, await listBarredCompanies(orgId));");
+    expect(between(panel, "const registryFor = (", "\n  };")).not.toMatch(/partyId|project_parties/);
+    // and the intake door picks that contractor by name, with nobody choosing (review fix 5's case)
+    const door = readFileSync(join(root, "app/api/intake/upload/route.ts"), "utf8");
+    expect(door).toContain("partyId = matchCompanyByName(company, named)?.id ?? null;");
     // the bid tab's own gate: a do-not-use look-alike flags, an inactive one does not (review fix 4's parity)
     const reg = [{ id: "a", name: "Harbor Welding", status: "active" }, { id: "old", name: "Harbor Welding, Inc.", status: "inactive" }];
     expect(barredCompanyFor("Harbor Welding", null, reg)).toBeNull();
     expect(barredCompanyFor("Harbor Welding", null, [...reg, { id: "dnu", name: "Harbor Welding LLC", status: "do_not_use" }])?.id).toBe("dnu");
+  });
+  it("two non-exact do-not-use look-alikes: the lib and the database break the tie the same way — the exact name first, then the id in byte order, no collation in either (review fix 5 minor)", () => {
+    const gate = fn("cost_doc_company_barred");
+    const order = gate.slice(gate.indexOf("ORDER BY"), gate.indexOf("LIMIT 1;"));
+    expect(order.trim()).toBe("ORDER BY (lower(c.name) = lower(btrim(p_vendor))) DESC NULLS LAST, c.id");
+    expect(order).not.toContain("c.name,");
+    const lib = readFileSync(join(root, "lib/costDocs.ts"), "utf8");
+    const look = between(lib, "async function flaggedLookAlike(", "\n}\n");
+    expect(look).not.toContain("localeCompare");
+    // the exact name as btrim reads it: spaces only (JS trim() also strips tabs and newlines)
+    expect(look).toContain('const exact = vendorName.replace(/^ +| +$/g, "").toLowerCase();');
+    expect(look).not.toContain("vendorName.trim()");
+    // and the lib hands it the vendor name as stored, not a JS-trimmed copy
+    expect(between(lib, "async function companyBehind(", "\n}\n")).not.toContain("flaggedLookAlike(doc.orgId, name)");
+    // byte order of the canonical (lower-case) uuid text is uuid order — PostgreSQL compares uuids as bytes
+    const ids = ["00000000-0000-0000-0000-0000000005d2", "00000000-0000-0000-0000-0000000005d1", "0000000a-0000-0000-0000-000000000000", "00000009-ffff-ffff-ffff-ffffffffffff"];
+    expect([...ids].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))).toEqual([
+      "00000000-0000-0000-0000-0000000005d1", "00000000-0000-0000-0000-0000000005d2", "00000009-ffff-ffff-ffff-ffffffffffff", "0000000a-0000-0000-0000-000000000000",
+    ]);
   });
   it("company_name_key is lib/bidTab.ts normalizeCompanyName in SQL: the same suffix list in the same order, the same steps, the same answers", () => {
     const key = fn("company_name_key");
@@ -533,7 +579,7 @@ describe("SEC-21 — audit_logs_admin_trail re-created from its NEWEST definitio
     expect(C).toContain(`AND NOT audit_row_project_ref_visible('MILESTONE_COMPLETED', 'document', 'x', '{"milestoneId":"00000000-0000-0000-0000-000000000000","orgLevel":true}'::jsonb)`);
     // the header no longer says rows written after the paste can be lost
     const what = between(M, "-- WHAT:", "-- NOT a widening:");
-    expect(what).toContain("§9 stamps every milestone row written from now on with\n--      its project or the org-level marker, so that is pre-migration\n--      history only.");
+    expect(what).toContain("§9 stamps every milestone row written from now on with\n--      its project or the org-level marker, and records that stamp as a\n--      signed-in caller deletes a document-scoped milestone, so the\n--      MILESTONE_DELETED row written after the delete keeps its reach even\n--      when every earlier row predates the paste — that is pre-migration\n--      history only.");
     expect(what).not.toContain("§9 stamps the project on every\n--      milestone row written from now on, so that is pre-migration history\n--      only.");
   });
   it("the newest own stamp is chosen by the server's clock, never the writer's; a project-typed delete is not traced (review minors)", () => {
@@ -550,6 +596,50 @@ describe("SEC-21 — audit_logs_admin_trail re-created from its NEWEST definitio
     const ref = fn("audit_row_project_ref_visible");
     expect(ref).toContain("CASE WHEN p_type = 'project' THEN true");
   });
+  it("a signed-in delete of a document-scoped milestone records its scope first, so its MILESTONE_DELETED row keeps its reach when every earlier row predates the paste or none exists (review fix 5)", () => {
+    const f = fn("record_milestone_scope_on_delete");
+    expect(f).toMatch(/RETURNS trigger\s*\n\s*LANGUAGE plpgsql\s*\n\s*SECURITY DEFINER\s*\n\s*SET search_path = public/);
+    // fires BEFORE the row goes, for a document-scoped milestone only, inside the one transaction
+    expect(C).toMatch(/DROP TRIGGER IF EXISTS trg_milestones_record_scope_on_delete ON milestones;\s*\nCREATE TRIGGER trg_milestones_record_scope_on_delete\s*\n\s*BEFORE DELETE ON milestones\s*\n\s*FOR EACH ROW\s*\n\s*WHEN \(OLD\.document_id IS NOT NULL\)\s*\n\s*EXECUTE FUNCTION public\.record_milestone_scope_on_delete\(\);/);
+    const idx = C.indexOf("CREATE TRIGGER trg_milestones_record_scope_on_delete");
+    expect(idx).toBeGreaterThan(C.indexOf("CREATE TRIGGER trg_audit_logs_milestone_project"));
+    expect(idx).toBeLessThan(C.indexOf("\nCOMMIT;"));
+    // the service pass first, then the org's own delete (its FK cascade) writes nothing
+    const svc = f.indexOf("IF auth.uid() IS NULL THEN RETURN OLD; END IF;");
+    const org = f.indexOf("IF NOT EXISTS (SELECT 1 FROM orgs WHERE id = OLD.org_id) THEN RETURN OLD; END IF;");
+    const ins = f.indexOf("INSERT INTO audit_logs (action, resource_type, resource_id, org_id, user_id, details)");
+    expect(svc).toBeGreaterThan(0);
+    expect(svc).toBeLessThan(org);
+    expect(org).toBeLessThan(ins);
+    expect(f).toContain("IF OLD.document_id IS NULL THEN RETURN OLD; END IF;");
+    // the row it writes: on the milestone's document — the resource lib/milestones.ts pickResource
+    // chooses for a document-scoped milestone, so the DELETED row's fallback (same resource_id) finds it —
+    // carrying the milestone's id and name, attributed to the deleter
+    expect(f).toContain("VALUES ('MILESTONE_SCOPE_RECORDED', 'document', OLD.document_id::text, OLD.org_id, auth.uid(),\n          jsonb_build_object('milestoneId', OLD.id::text, 'name', OLD.name));");
+    expect(f).not.toMatch(/projectId|orgLevel|projectIdFrom/); // section 9 stamps it — the milestone still exists
+    const ms = readFileSync(join(root, "lib/milestones.ts"), "utf8");
+    expect(between(ms, "function pickResource(", "\n}\n")).toMatch(/^function pickResource\([^)]*\) \{\n  if \(m\.documentId\) return \{ resourceType: "document" as const, resourceId: m\.documentId \};/);
+    // its action is a MILESTONE_ row: section 9's trigger stamps it, and section 9's fallback reads it
+    expect("MILESTONE_SCOPE_RECORDED".slice(0, 10)).toBe("MILESTONE_");
+    const stamp = fn("stamp_milestone_audit_project");
+    const gone = stamp.slice(stamp.indexOf("ELSIF COALESCE(NEW.resource_type, '') <> 'project' THEN"));
+    expect(gone).toContain("AND left(a.action, 10) = 'MILESTONE_'");
+    expect(gone).toContain("WHERE a.resource_id = NEW.resource_id");
+    // why: the imports write no milestone audit row at all, and the delete writes its row once the milestone is gone
+    for (const name of ["importGhostMilestones", "importMilestonesFromParsed"]) {
+      const body = between(ms, `export async function ${name}(`, "\n}\n");
+      expect(body, name).not.toMatch(/logMilestoneEvent|logAuditAction/);
+    }
+    expect(ms).toContain("The MILESTONE_DELETED audit row is written only once the row is gone");
+    // probed after the transaction, and nobody may call it
+    const probe = C.slice(C.indexOf("\nCOMMIT;"));
+    expect(probe).toContain("t.tgname = 'trg_milestones_record_scope_on_delete'");
+    expect(probe).toContain("pg_get_triggerdef(t.oid) LIKE '%BEFORE DELETE ON public.milestones%'");
+    expect(probe).toContain("NOT has_function_privilege('authenticated', 'public.record_milestone_scope_on_delete()', 'EXECUTE')");
+    // the document timeline names the row (lib/timeline.ts summarizeAudit)
+    expect(summarizeAudit({ action: "MILESTONE_SCOPE_RECORDED", details: { name: "Hydrotest" } })).toBe("Milestone deletion recorded by the database: Hydrotest");
+    expect(summarizeAudit({ action: "MILESTONE_SCOPE_RECORDED", details: {} })).toBe("Milestone deletion recorded by the database");
+  });
   it("leaves the other audit_logs policies alone", () => {
     expect(C).not.toMatch(/audit_logs_insert|audit_logs_org_access/);
   });
@@ -557,15 +647,19 @@ describe("SEC-21 — audit_logs_admin_trail re-created from its NEWEST definitio
 
 describe("the DEC-30 inventory counts everything the migration narrows (review minor)", () => {
   const inv = between(C, "CREATE TEMP TABLE prj_g_j12_inventory AS", "\nBEGIN;");
-  it("MON-12: quotes are judged as the rail judges them — the document's own link (through to_jsonb), then the contractor's, then ANY do-not-use row the vendor name normalises to, then the company it binds to by one exact name (review major; review fix 4)", () => {
+  it("MON-12: quotes are judged as the rail judges them — the document's own link (through to_jsonb), then the contractor's company when flagged, then ANY do-not-use row the vendor name normalises to, then the company it binds to (the contractor's link, else one exact name) (review major; review fixes 4 and 5)", () => {
     const rows = inv.split(/UNION ALL/).filter((r) => /inventory \(MON-12\)/.test(r));
     expect(rows).toHaveLength(2);
     for (const r of rows) expect(r).toContain("FROM prj_g_j12_quotes\n");
     const quotes = between(inv, "prj_g_j12_quotes AS MATERIALIZED (", "\n)\nSELECT 'inventory (MON-12)");
     const own = quotes.indexOf("WHERE c.id = NULLIF(to_jsonb(d) ->> 'company_id', '')::uuid AND c.org_id = d.org_id");
-    const party = quotes.indexOf("FROM project_parties pp JOIN companies c ON c.id = pp.company_id AND c.org_id = d.org_id");
+    const party = quotes.indexOf("CASE WHEN pc.status IN ('do_not_use', 'inactive') THEN pc.status END,");
     const dnu = quotes.indexOf("CASE WHEN (d.org_id, pg_temp.prj_g_j12_name_key(d.vendor_name)) IN (SELECT f.org_id, f.k FROM prj_g_j12_dnu_keys f)\n                THEN 'do_not_use' END,");
-    const exact = quotes.indexOf("CASE WHEN x.hits = 1 THEN x.status END) AS status");
+    // review fix 5: the contractor's company is the binding when its link stands (it answers null when
+    // active, as cost_doc_company_barred's last step does), else the one exact name
+    const exact = quotes.indexOf("CASE WHEN pc.id IS NOT NULL THEN pc.status WHEN x.hits = 1 THEN x.status END) AS status");
+    expect(quotes).toContain("LEFT JOIN project_parties pp ON pp.id = d.party_id\n    LEFT JOIN companies pc ON pc.id = pp.company_id AND pc.org_id = d.org_id\n");
+    expect(quotes).not.toContain("FROM project_parties pp JOIN companies c");
     expect(own).toBeGreaterThan(0);
     expect(own).toBeLessThan(party);
     expect(party).toBeLessThan(dnu);
@@ -594,7 +688,11 @@ describe("the DEC-30 inventory counts everything the migration narrows (review m
     expect(M.indexOf("CREATE OR REPLACE FUNCTION pg_temp.prj_g_j12_name_key")).toBeLessThan(M.indexOf("CREATE TEMP TABLE prj_g_j12_inventory AS"));
     expect(M.indexOf("CREATE OR REPLACE FUNCTION pg_temp.prj_g_j12_name_key")).toBeGreaterThan(M.indexOf("Apply 20261142_prj_roundG_project_audit_rows.sql first"));
   });
-  it("SEC-21: link rows with no project named, rows whose project or link is gone, and the milestone rows a later delete would hide", () => {
+  it("SEC-21: link rows with no project named, rows whose project or link is gone, the milestone rows a later delete would hide, and the milestones whose delete now writes a scope row", () => {
+    expect(inv).toContain("inventory (SEC-21): document-scoped milestones (a signed-in delete of one now first writes one MILESTONE_SCOPE_RECORDED audit row on its document");
+    expect(inv).toContain("FROM milestones WHERE document_id IS NOT NULL");
+    expect(inv).toContain("inventory (SEC-21): other BEFORE DELETE row triggers on milestones");
+    expect(inv).toContain("AND (t.tgtype & 1) = 1 AND (t.tgtype & 2) = 2 AND (t.tgtype & 8) = 8\n   AND t.tgname <> 'trg_milestones_record_scope_on_delete'");
     expect(inv).toContain("inventory (SEC-21): intake-link audit rows (project_intake_link) with no details.projectId");
     expect(inv).toContain("inventory (SEC-21): intake-link and INTAKE_* audit rows whose named project no longer exists, or link rows with no project named whose link no longer exists");
     expect(inv).toContain("NOT EXISTS (SELECT 1 FROM projects p WHERE p.id::text = lower(a.details ->> 'projectId'))");

@@ -16,20 +16,25 @@
 --      statement. The company the award must ANSWER FOR is
 --      `cost_doc_company_barred` — lib/costDocs.ts `companyBehind`'s
 --      `barred`, the bid tab's `barredCompanyFor` gate (DEC-48: binding
---      refuses ambiguity, gating does not): a link that stands decides,
---      flagged or not — the document's own registry link
---      (cost_documents.company_id, 20261096 — read through to_jsonb so a
---      database without the column is not broken), then its contractor's
---      (project_parties.company_id), each only to a company of the
---      document's own org; with no link standing, ANY do_not_use registry
---      row of the org whose name normalises as the vendor name does
+--      refuses ambiguity, gating does not): the document's own registry
+--      link (cost_documents.company_id, 20261096 — a person's choice on
+--      the bid row; read through to_jsonb so a database without the
+--      column is not broken) decides, flagged or not; its contractor's
+--      (project_parties.company_id) counts only when that company is
+--      itself flagged — an unflagged one never hides a do-not-use
+--      look-alike, because the intake door files a quote against a
+--      contractor it matched by name with nobody choosing, and the bid tab
+--      reads only the document's own link; each link only to a company of
+--      the document's own org; with no own link standing, ANY do_not_use
+--      registry row of the org whose name normalises as the vendor name does
 --      (`company_name_key` — lib/bidTab.ts normalizeCompanyName in SQL:
 --      case, '&' as 'and', punctuation and whitespace, trailing legal
 --      suffixes, a leading 'the'), so "Gulf Mechanical Inc" answers for a
 --      do-not-use "Gulf Mechanical, Inc." — DEC-48's gate, which flags
 --      do-not-use look-alikes only, as barredCompanyFor does; else the
---      company the quote binds to by ONE exact name, which answers for its
---      own `inactive` flag as it did before this migration. An inactive
+--      company the quote binds to (its contractor's link, else ONE exact
+--      name), which answers for its own `inactive` flag as it did before
+--      this migration. An inactive
 --      look-alike the quote does not bind to is not the bid's (a registry
 --      de-duplicated by marking the old row inactive leaves exactly that
 --      beside the active row). The binding (`cost_doc_company_behind`: the
@@ -120,7 +125,10 @@
 --      written); any other such row (typed `document` and written before
 --      this migration — its project can no longer be traced) is the audit
 --      roles' only. §9 stamps every milestone row written from now on with
---      its project or the org-level marker, so that is pre-migration
+--      its project or the org-level marker, and records that stamp as a
+--      signed-in caller deletes a document-scoped milestone, so the
+--      MILESTONE_DELETED row written after the delete keeps its reach even
+--      when every earlier row predates the paste — that is pre-migration
 --      history only. `audit_logs_admin_trail` is re-created from its NEWEST
 --      definition (20261142) byte for byte with ONE added clause — the type /
 --      action test inline, so a row of any other kind never calls the
@@ -159,7 +167,19 @@
 --      projectIdFrom or orgLevel the writer put on the row is replaced —
 --      never trusted, here or for a later row. The service role (auth.uid()
 --      NULL — a restore re-inserting rows) keeps its rows as written.
---      lib/milestones.ts is not changed.
+--      A milestone whose rows all predate the paste (or an imported one,
+--      which writes no milestone row at all) has no stamped row for that
+--      fallback to read, so `record_milestone_scope_on_delete` (BEFORE
+--      DELETE ON milestones, only for a document-scoped milestone — the
+--      trigger's WHEN clause; SECURITY DEFINER, search_path pinned, revoked
+--      from PUBLIC, anon and authenticated) writes one
+--      MILESTONE_SCOPE_RECORDED row on the milestone's document as a
+--      signed-in caller deletes it — stamped by the trigger above while the
+--      milestone still exists — so the MILESTONE_DELETED row written after
+--      the delete takes its project or the marker. A project- or
+--      milestone-typed milestone needs none (SEC-20 decides a project row;
+--      a milestone-typed row is org-level); the service role and the org's
+--      own delete write none. lib/milestones.ts is not changed.
 --
 -- NOT a widening: every rule here refuses or narrows. The DEC-30 inventory
 -- (aggregate counts only, never rows) is captured BEFORE the transaction and
@@ -238,26 +258,28 @@ prj_g_j12_exact_names AS MATERIALIZED (
    GROUP BY c.org_id, lower(c.name)
 ),
 prj_g_j12_quotes AS MATERIALIZED (
-  -- As the rail judges a quote (section 1, cost_doc_company_barred): a link
-  -- that stands decides — the document's own (read through to_jsonb — a
-  -- database without 20261096's column still runs), then its contractor's,
-  -- each only to a company of the document's org; with no link standing, a
-  -- do-not-use row of the org whose name normalises as the vendor name
-  -- does, else the company it binds to by one exact name (its own flag).
+  -- As the rail judges a quote (section 1, cost_doc_company_barred): the
+  -- document's own link decides (read through to_jsonb — a database without
+  -- 20261096's column still runs); its contractor's company answers only
+  -- when flagged; then a do-not-use row of the org whose name normalises as
+  -- the vendor name does; else the company it binds to (the contractor's
+  -- link, else one exact name), on its own flag. Each link only to a
+  -- company of the document's org.
   SELECT d.status AS doc_status,
          COALESCE(
            (SELECT c.status FROM companies c
              WHERE c.id = NULLIF(to_jsonb(d) ->> 'company_id', '')::uuid AND c.org_id = d.org_id),
-           (SELECT c.status FROM project_parties pp JOIN companies c ON c.id = pp.company_id AND c.org_id = d.org_id
-             WHERE pp.id = d.party_id),
+           CASE WHEN pc.status IN ('do_not_use', 'inactive') THEN pc.status END,
            CASE WHEN (d.org_id, pg_temp.prj_g_j12_name_key(d.vendor_name)) IN (SELECT f.org_id, f.k FROM prj_g_j12_dnu_keys f)
                 THEN 'do_not_use' END,
-           CASE WHEN x.hits = 1 THEN x.status END) AS status
+           CASE WHEN pc.id IS NOT NULL THEN pc.status WHEN x.hits = 1 THEN x.status END) AS status
     FROM cost_documents d
+    LEFT JOIN project_parties pp ON pp.id = d.party_id
+    LEFT JOIN companies pc ON pc.id = pp.company_id AND pc.org_id = d.org_id
     LEFT JOIN prj_g_j12_exact_names x ON x.org_id = d.org_id AND x.n = lower(btrim(d.vendor_name)) AND btrim(d.vendor_name) <> ''
    WHERE d.kind = 'quote' AND d.status IN ('draft', 'parsed', 'awarded')
 )
-SELECT 'inventory (MON-12): open quotes (draft / parsed) that answer for a do-not-use or inactive company — the document''s own link, else its contractor''s, else ANY do-not-use row its vendor name normalises to, else the company it binds to by one exact name (an award now needs the typed override, through award_quote; a direct status write is refused)' AS inventory, COUNT(*)::text AS n
+SELECT 'inventory (MON-12): open quotes (draft / parsed) that answer for a do-not-use or inactive company — the document''s own link, else its contractor''s company when flagged, else ANY do-not-use row its vendor name normalises to, else the company it binds to (the contractor''s link, else one exact name) (an award now needs the typed override, through award_quote; a direct status write is refused)' AS inventory, COUNT(*)::text AS n
   FROM prj_g_j12_quotes
  WHERE doc_status IN ('draft', 'parsed') AND status IN ('do_not_use', 'inactive')
 UNION ALL
@@ -306,7 +328,7 @@ SELECT 'inventory (SEC-21): MILESTONE_* audit rows typed milestone (org-level) w
  WHERE left(a.action, 10) = 'MILESTONE_' AND a.resource_type = 'milestone'
    AND NOT EXISTS (SELECT 1 FROM milestones m WHERE m.id::text = a.details ->> 'milestoneId')
 UNION ALL
-SELECT 'inventory (SEC-21): MILESTONE_* audit rows typed document (or untyped) with no details.projectId whose milestone is on a NON-private project (readable as now; if that milestone is later deleted they become the audit roles'' only — rows written from now on carry the project, section 9)', COUNT(*)::text
+SELECT 'inventory (SEC-21): MILESTONE_* audit rows typed document (or untyped) with no details.projectId whose milestone is on a NON-private project (readable as now; if that milestone is later deleted they become the audit roles'' only — rows written from now on carry the project, and a signed-in delete records it first, so the MILESTONE_DELETED row keeps its reach, section 9)', COUNT(*)::text
   FROM audit_logs a
   JOIN milestones m ON m.id::text = a.details ->> 'milestoneId'
   JOIN projects p ON p.id = m.project_id
@@ -314,13 +336,23 @@ SELECT 'inventory (SEC-21): MILESTONE_* audit rows typed document (or untyped) w
    AND COALESCE(a.details ->> 'projectId', '') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
    AND p.visibility IS DISTINCT FROM 'private'
 UNION ALL
-SELECT 'inventory (SEC-21): MILESTONE_* audit rows typed document (or untyped) with no details.projectId and no org-level marker whose milestone is on NO project (org-level — readable as now; if that milestone is later deleted they become the audit roles'' only — rows written from now on carry the org-level marker, section 9)', COUNT(*)::text
+SELECT 'inventory (SEC-21): MILESTONE_* audit rows typed document (or untyped) with no details.projectId and no org-level marker whose milestone is on NO project (org-level — readable as now; if that milestone is later deleted they become the audit roles'' only — rows written from now on carry the org-level marker, and a signed-in delete records it first, so the MILESTONE_DELETED row keeps its reach, section 9)', COUNT(*)::text
   FROM audit_logs a
   JOIN milestones m ON m.id::text = a.details ->> 'milestoneId'
  WHERE left(a.action, 10) = 'MILESTONE_' AND COALESCE(a.resource_type, '') NOT IN ('project', 'milestone')
    AND COALESCE(a.details ->> 'projectId', '') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
    AND NOT COALESCE(a.details @> '{"projectIdFrom": "milestone", "orgLevel": true}'::jsonb, false)
    AND m.project_id IS NULL
+UNION ALL
+SELECT 'inventory (SEC-21): document-scoped milestones (a signed-in delete of one now first writes one MILESTONE_SCOPE_RECORDED audit row on its document, carrying its project or the org-level marker, section 9)', COUNT(*)::text
+  FROM milestones WHERE document_id IS NOT NULL
+UNION ALL
+SELECT 'inventory (SEC-21): other BEFORE DELETE row triggers on milestones (they run beside section 9''s)', COUNT(*)::text
+  FROM pg_trigger t
+ WHERE NOT t.tgisinternal
+   AND t.tgrelid = 'public.milestones'::regclass
+   AND (t.tgtype & 1) = 1 AND (t.tgtype & 2) = 2 AND (t.tgtype & 8) = 8
+   AND t.tgname <> 'trg_milestones_record_scope_on_delete'
 UNION ALL
 SELECT 'inventory (SEC-21): intake-link audit rows (project_intake_link) and INTAKE_* rows naming a PRIVATE project (now readable only by those who can see it, and the audit roles)', COUNT(*)::text
   FROM audit_logs a
@@ -450,16 +482,23 @@ GRANT EXECUTE ON FUNCTION public.company_name_key(text) TO authenticated, servic
 
 -- The company an award must ANSWER FOR — the do-not-use gate (lib/bidTab.ts
 -- barredCompanyFor, lib/costDocs.ts companyBehind's `barred`; DEC-48:
--- binding refuses ambiguity, gating does not). A link that stands decides,
--- flagged or not: the document's own, else its contractor's, each only to a
--- company of the document's org. With no link standing, ANY do_not_use row
--- of the org whose name normalises as the vendor name does (DEC-48's gate
--- flags do-not-use look-alikes only — the exact name first, so the refusal
--- names the company the quote binds to when that one is barred); else the
--- company it binds to by one exact name (cost_doc_company_behind), when
--- that one is itself inactive — an inactive look-alike it does not bind to
--- is not the bid's. Returns the flagged company, or NULL when the award
--- needs no override. SECURITY INVOKER, as cost_doc_company_behind.
+-- binding refuses ambiguity, gating does not). The document's own link (a
+-- person's choice on the bid row) decides, flagged or not. Its contractor's
+-- link answers for that company's own flag, but an unflagged one never
+-- hides a do-not-use look-alike: the intake door files a quote against the
+-- contractor it matched by name (app/api/intake/upload, with nobody
+-- choosing), and the bid tab's gate reads only the document's own link.
+-- Each link counts only to a company of the document's org. Then ANY
+-- do_not_use row of the org whose name normalises as the vendor name does
+-- (DEC-48's gate flags do-not-use look-alikes only — the exact name first,
+-- so the refusal names the company the quote binds to when that one is
+-- barred; then by id, as lib/costDocs.ts flaggedLookAlike orders them, so
+-- the prompt and the override row name the same company); else the
+-- company it binds to (cost_doc_company_behind: its contractor's link,
+-- else one exact name), when that one is itself inactive — an inactive
+-- look-alike it does not bind to is not the bid's. Returns the flagged
+-- company, or NULL when the award needs no override. SECURITY INVOKER, as
+-- cost_doc_company_behind.
 CREATE OR REPLACE FUNCTION public.cost_doc_company_barred(p_org uuid, p_company uuid, p_party uuid, p_vendor text)
 RETURNS jsonb
 LANGUAGE plpgsql STABLE
@@ -483,9 +522,8 @@ BEGIN
     IF v_party_company IS NOT NULL THEN
       SELECT jsonb_build_object('id', c.id, 'name', c.name, 'status', c.status) INTO v_row
         FROM companies c WHERE c.id = v_party_company AND c.org_id = p_org;
-      IF v_row IS NOT NULL THEN
-        RETURN CASE WHEN v_row ->> 'status' IN ('do_not_use', 'inactive') THEN v_row END;
-      END IF;
+      -- A flagged contractor company answers; an unflagged one falls through.
+      IF v_row ->> 'status' IN ('do_not_use', 'inactive') THEN RETURN v_row; END IF;
     END IF;
   END IF;
   v_key := company_name_key(p_vendor);
@@ -494,18 +532,19 @@ BEGIN
       FROM companies c
      WHERE c.org_id = p_org AND c.status = 'do_not_use'
        AND company_name_key(c.name) = v_key
-     ORDER BY (lower(c.name) = lower(btrim(p_vendor))) DESC NULLS LAST, c.name, c.id
+     ORDER BY (lower(c.name) = lower(btrim(p_vendor))) DESC NULLS LAST, c.id
      LIMIT 1;
     IF v_row IS NOT NULL THEN RETURN v_row; END IF;
   END IF;
-  -- No do-not-use look-alike: the company the quote binds to answers for its own flag.
-  v_row := cost_doc_company_behind(p_org, NULL, NULL, p_vendor);
+  -- No do-not-use look-alike: the company the quote binds to (its
+  -- contractor's link, else one exact name) answers for its own flag.
+  v_row := cost_doc_company_behind(p_org, NULL, p_party, p_vendor);
   RETURN CASE WHEN v_row ->> 'status' IN ('do_not_use', 'inactive') THEN v_row END;
 END;
 $$;
 
 COMMENT ON FUNCTION public.cost_doc_company_barred(uuid, uuid, uuid, text) IS
-  'MON-12 (20261157): the do-not-use / inactive company a cost document''s award must answer for — its own registry link, else its contractor''s (a standing link decides, flagged or not), else ANY do_not_use registry row of the org its vendor name normalises to (company_name_key; DEC-48), else the company it binds to by one exact name when that one is flagged; NULL when no override is needed. SECURITY INVOKER.';
+  'MON-12 (20261157): the do-not-use / inactive company a cost document''s award must answer for — its own registry link (decides, flagged or not), else its contractor''s when that company is flagged (an unflagged one never hides a look-alike), else ANY do_not_use registry row of the org its vendor name normalises to (company_name_key; DEC-48; exact name first, then id), else the company it binds to (the contractor''s link, else one exact name) when that one is flagged; NULL when no override is needed. SECURITY INVOKER.';
 
 REVOKE ALL ON FUNCTION public.cost_doc_company_barred(uuid, uuid, uuid, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.cost_doc_company_barred(uuid, uuid, uuid, text) FROM anon;
@@ -546,7 +585,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION public.enforce_cost_document_award_registry() IS
-  'MON-12 (20261157): a signed-in move of a quote to awarded is refused while the company it answers for (cost_doc_company_barred, read as the definer: its standing link, else ANY do_not_use registry row its vendor name normalises to, else the company it binds to by one exact name) is do_not_use or inactive, unless award_quote set app.cost_doc_award_override to the document id after a typed reason. The service role passes.';
+  'MON-12 (20261157): a signed-in move of a quote to awarded is refused while the company it answers for (cost_doc_company_barred, read as the definer: its own link, else its contractor''s company when flagged, else ANY do_not_use registry row its vendor name normalises to, else the company it binds to) is do_not_use or inactive, unless award_quote set app.cost_doc_award_override to the document id after a typed reason. The service role passes.';
 
 REVOKE ALL ON FUNCTION public.enforce_cost_document_award_registry() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.enforce_cost_document_award_registry() FROM anon;
@@ -638,9 +677,10 @@ BEGIN
   END IF;
 
   -- The registry (MON-12): the company the quote binds to is what the award
-  -- records; the company it answers for (a standing link, else ANY
-  -- do-not-use row its vendor name normalises to, else the bound company's
-  -- own flag — the rail's own rule) needs the typed reason.
+  -- records; the company it answers for (its own link, else its
+  -- contractor's company when flagged, else ANY do-not-use row its vendor
+  -- name normalises to, else the bound company's own flag — the rail's own
+  -- rule) needs the typed reason.
   v_company := cost_doc_company_behind(v_doc.org_id, NULLIF(v_raw ->> 'company_id', '')::uuid, v_doc.party_id, v_doc.vendor_name);
   v_barred := cost_doc_company_barred(v_doc.org_id, NULLIF(v_raw ->> 'company_id', '')::uuid, v_doc.party_id, v_doc.vendor_name);
   v_flagged := v_barred IS NOT NULL AND v_barred ->> 'status' IN ('do_not_use', 'inactive');
@@ -978,7 +1018,9 @@ RETURNS boolean LANGUAGE sql STABLE AS $$
     -- document-scoped milestone's row); any other names no project it can
     -- still be traced to, and is the audit roles' only. (A row written after
     -- 20261157 names its project or carries the org-level marker — section
-    -- 9 — the milestone deleted or not.)
+    -- 9 — the milestone deleted or not: a signed-in delete of a
+    -- document-scoped milestone records its stamp first, for the
+    -- MILESTONE_DELETED row that follows.)
     WHEN left(COALESCE(p_action, ''), 10) = 'MILESTONE_' THEN
       CASE WHEN p_type = 'project' THEN true
            WHEN COALESCE(p_details ->> 'milestoneId', '') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
@@ -1160,6 +1202,55 @@ CREATE TRIGGER trg_audit_logs_milestone_project
   WHEN (left(NEW.action, 10) = 'MILESTONE_')
   EXECUTE FUNCTION public.stamp_milestone_audit_project();
 
+-- The fallback above needs an earlier stamped row of the same milestone and
+-- resource, and lib/milestones.ts deleteMilestone writes MILESTONE_DELETED
+-- only once the milestone is gone. A milestone whose rows all predate this
+-- migration has none, and neither has an imported one (lib/milestones.ts
+-- importMilestonesFromParsed / importGhostMilestones write no milestone
+-- row), so its MILESTONE_DELETED row would name no project and carry no
+-- marker — the audit roles' only, where members read it before 20261157.
+-- So a signed-in delete of a document-scoped milestone first records its
+-- scope: one MILESTONE_SCOPE_RECORDED row on the milestone's document (the
+-- resource lib/milestones.ts pickResource chooses for it, so the DELETED
+-- row's fallback finds it), which the trigger above stamps while the
+-- milestone still exists — its project, or the org-level marker. A
+-- project-typed or milestone-typed milestone needs none (SEC-20 decides a
+-- project row by its project; section 6 reads a milestone-typed row as
+-- org-level). A delete RLS refuses fires nothing. The service role keeps
+-- its pass (a purge or a restore writes no row) and the org's own delete
+-- (its FK cascade) writes none. SECURITY DEFINER so the row is written
+-- whatever the deleter may insert; nobody may call it.
+CREATE OR REPLACE FUNCTION public.record_milestone_scope_on_delete()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF auth.uid() IS NULL THEN RETURN OLD; END IF;              -- the service pass: a purge or a restore
+  IF OLD.document_id IS NULL THEN RETURN OLD; END IF;          -- not document-typed: nothing to carry
+  IF NOT EXISTS (SELECT 1 FROM orgs WHERE id = OLD.org_id) THEN RETURN OLD; END IF;   -- the org's own delete
+  INSERT INTO audit_logs (action, resource_type, resource_id, org_id, user_id, details)
+  VALUES ('MILESTONE_SCOPE_RECORDED', 'document', OLD.document_id::text, OLD.org_id, auth.uid(),
+          jsonb_build_object('milestoneId', OLD.id::text, 'name', OLD.name));
+  RETURN OLD;
+END;
+$$;
+
+COMMENT ON FUNCTION public.record_milestone_scope_on_delete() IS
+  'SEC-21 (20261157): as a signed-in caller deletes a document-scoped milestone, writes one MILESTONE_SCOPE_RECORDED audit row on its document (stamped by stamp_milestone_audit_project while the milestone still exists — its project or the org-level marker), so the MILESTONE_DELETED row lib/milestones.ts writes after the delete takes that stamp. The service role and the org''s own delete write none.';
+
+REVOKE ALL ON FUNCTION public.record_milestone_scope_on_delete() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.record_milestone_scope_on_delete() FROM anon;
+REVOKE ALL ON FUNCTION public.record_milestone_scope_on_delete() FROM authenticated;
+
+DROP TRIGGER IF EXISTS trg_milestones_record_scope_on_delete ON milestones;
+CREATE TRIGGER trg_milestones_record_scope_on_delete
+  BEFORE DELETE ON milestones
+  FOR EACH ROW
+  WHEN (OLD.document_id IS NOT NULL)
+  EXECUTE FUNCTION public.record_milestone_scope_on_delete();
+
 COMMIT;
 
 -- ── Verification + inventory — ONE result set (the editor shows only the last)
@@ -1194,7 +1285,7 @@ SELECT 'MON-12: cost_doc_company_behind resolves the document link, then the con
        AND NOT has_function_privilege('anon', 'public.cost_doc_company_behind(uuid,uuid,uuid,text)', 'EXECUTE'),
        NULL::text
 UNION ALL
-SELECT 'MON-12: company_name_key normalises as lib/bidTab.ts normalizeCompanyName (answers checked here), and cost_doc_company_barred gates on ANY do-not-use row the vendor name normalises to when no link stands (DEC-48), else on the company the quote binds to by one exact name — both SECURITY INVOKER, not executable by anon',
+SELECT 'MON-12: company_name_key normalises as lib/bidTab.ts normalizeCompanyName (answers checked here), and cost_doc_company_barred lets the document''s own link decide, counts a contractor''s link only when its company is flagged, then gates on ANY do-not-use row the vendor name normalises to (DEC-48; exact name first, then id), else on the company the quote binds to — both SECURITY INVOKER, not executable by anon',
        company_name_key('Gulf Mechanical, Inc.') = 'gulf mechanical'
        AND company_name_key('  gulf   MECHANICAL inc ') = 'gulf mechanical'
        AND company_name_key('The Smith & Sons Co.') = 'smith and sons'
@@ -1204,10 +1295,12 @@ SELECT 'MON-12: company_name_key normalises as lib/bidTab.ts normalizeCompanyNam
        AND (SELECT NOT prosecdef AND provolatile = 'i' FROM pg_proc WHERE proname = 'company_name_key' AND pronargs = 1)
        AND (SELECT NOT prosecdef
                    AND prosrc LIKE '%RETURN CASE WHEN v_row ->> ''status'' IN (''do_not_use'', ''inactive'') THEN v_row END;%'
+                   AND prosrc LIKE '%IF v_row ->> ''status'' IN (''do_not_use'', ''inactive'') THEN RETURN v_row; END IF;%'
                    AND prosrc LIKE '%AND company_name_key(c.name) = v_key%'
                    AND prosrc LIKE '%WHERE c.org_id = p_org AND c.status = ''do_not_use''%'
+                   AND prosrc LIKE '%ORDER BY (lower(c.name) = lower(btrim(p_vendor))) DESC NULLS LAST, c.id%'
                    AND prosrc NOT LIKE '%c.status IN (%'
-                   AND prosrc LIKE '%v_row := cost_doc_company_behind(p_org, NULL, NULL, p_vendor);%'
+                   AND prosrc LIKE '%v_row := cost_doc_company_behind(p_org, NULL, p_party, p_vendor);%'
                    AND prosrc LIKE '%WHERE c.id = p_company AND c.org_id = p_org;%'
                    AND prosrc LIKE '%WHERE c.id = v_party_company AND c.org_id = p_org;%'
               FROM pg_proc WHERE proname = 'cost_doc_company_barred' AND pronargs = 4)
@@ -1348,6 +1441,21 @@ SELECT 'SEC-21: trg_audit_logs_milestone_project fires BEFORE INSERT on audit_lo
               FROM pg_proc WHERE proname = 'stamp_milestone_audit_project' AND pronargs = 0)
        AND NOT has_function_privilege('anon', 'public.stamp_milestone_audit_project()', 'EXECUTE')
        AND NOT has_function_privilege('authenticated', 'public.stamp_milestone_audit_project()', 'EXECUTE'),
+       NULL::text
+UNION ALL
+SELECT 'SEC-21: trg_milestones_record_scope_on_delete fires BEFORE DELETE on milestones for a document-scoped milestone only; its function is SECURITY DEFINER with search_path pinned, keeps the service pass, skips the org''s own delete, writes one MILESTONE_SCOPE_RECORDED row on the milestone''s document, and nobody may call it',
+       EXISTS (SELECT 1 FROM pg_trigger t
+                WHERE t.tgrelid = 'public.milestones'::regclass AND t.tgname = 'trg_milestones_record_scope_on_delete'
+                  AND NOT t.tgisinternal AND t.tgenabled <> 'D'
+                  AND pg_get_triggerdef(t.oid) LIKE '%BEFORE DELETE ON public.milestones%'
+                  AND pg_get_triggerdef(t.oid) LIKE '%document_id IS NOT NULL%')
+       AND (SELECT prosecdef AND proconfig::text LIKE '%search_path=public%'
+                   AND prosrc LIKE '%IF auth.uid() IS NULL THEN RETURN OLD; END IF;%'
+                   AND prosrc LIKE '%IF NOT EXISTS (SELECT 1 FROM orgs WHERE id = OLD.org_id) THEN RETURN OLD; END IF;%'
+                   AND prosrc LIKE '%VALUES (''MILESTONE_SCOPE_RECORDED'', ''document'', OLD.document_id::text, OLD.org_id, auth.uid(),%'
+              FROM pg_proc WHERE proname = 'record_milestone_scope_on_delete' AND pronargs = 0)
+       AND NOT has_function_privilege('anon', 'public.record_milestone_scope_on_delete()', 'EXECUTE')
+       AND NOT has_function_privilege('authenticated', 'public.record_milestone_scope_on_delete()', 'EXECUTE'),
        NULL::text
 UNION ALL
 SELECT inventory, NULL::boolean, n FROM prj_g_j12_inventory;

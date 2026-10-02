@@ -1130,6 +1130,91 @@ describe("MON-12 / COST-8 / MON-10 — registry lookups fail closed, currencies 
     expect(entries()).toHaveLength(1);
   });
 
+  it("MON-12 (review fix 5): a contractor's ACTIVE company link never hides a do-not-use look-alike — the door-filed quote is flagged, as the bid tab flags it", async () => {
+    // The review's case: contractor "Gulf" linked by a person to the active "Gulf Mechanical"; the intake
+    // door filed a quote from "Gulf Mechanical Inc" against that contractor by name, with no own link.
+    db.tables.companies.push(
+      { id: "c-gulf", org_id: "o1", name: "Gulf Mechanical", status: "active" },
+      { id: "c-dnu", org_id: "o1", name: "Gulf Mechanical, Inc.", status: "do_not_use" },
+    );
+    db.tables.project_parties.push({ id: "pp-gulf", company_id: "c-gulf" });
+    db.tables.cost_documents.push(
+      docRow({ id: "d-door", party_id: "pp-gulf", vendor_name: "Gulf Mechanical Inc" }),
+      docRow({ id: "d-own", party_id: "pp-gulf", vendor_name: "Gulf Mechanical Inc", company_id: "c-gulf" }),
+    );
+    const refused = await awardQuote({ doc: doc({ id: "d-door", partyId: "pp-gulf", vendorName: "Gulf Mechanical Inc" }), siblings: [], costAccountId: "a1", actor });
+    expect(refused.ok).toBe(false);
+    expect(refused.error).toMatch(/Gulf Mechanical, Inc\. is flagged DO NOT USE/);
+    expect(refused.needsOverride).toEqual({ companyId: "c-dnu", companyName: "Gulf Mechanical, Inc.", status: "do_not_use" });
+    expect(db.tables.cost_documents.find((r) => r.id === "d-door")!.status).toBe("parsed");
+    expect(entries()).toHaveLength(0);
+    // the bid tab reads only the document's own link — none here — so it flags the same row
+    expect(barredCompanyFor("Gulf Mechanical Inc", null, db.tables.companies as Array<{ id: string; name: string; status: string }>)?.id).toBe("c-dnu");
+    const ok = await awardQuote({ doc: doc({ id: "d-door", partyId: "pp-gulf", vendorName: "Gulf Mechanical Inc" }), siblings: [], costAccountId: "a1", actor, overrideReason: "Only bidder the client cleared" });
+    expect(ok.ok).toBe(true);
+    // the override names the look-alike it overrode; the award records the binding — the contractor's company
+    expect(auditRows("COST_DOC_AWARD_OVERRIDE")[0].details).toMatchObject({ companyId: "c-dnu", companyStatus: "do_not_use" });
+    expect(auditRows("COST_DOC_AWARDED").at(-1)!.details).toMatchObject({ companyId: "c-gulf", override: "Only bidder the client cleared" });
+    // a person's OWN link to the active row still decides, here and in the bid tab
+    const own = await awardQuote({ doc: doc({ id: "d-own", partyId: "pp-gulf", vendorName: "Gulf Mechanical Inc" }), siblings: [], costAccountId: "a1", actor });
+    expect(own.ok).toBe(true);
+    expect(own.needsOverride).toBeUndefined();
+    expect(barredCompanyFor("Gulf Mechanical Inc", "c-gulf", db.tables.companies as Array<{ id: string; name: string; status: string }>)).toBeNull();
+    expect(auditRows("COST_DOC_AWARD_OVERRIDE")).toHaveLength(1);
+  });
+
+  it("MON-12 (review fix 5): a contractor's flagged company still answers; an active one with no look-alike binds and awards, even beside an inactive row of the vendor's exact name", async () => {
+    db.tables.companies.push(
+      { id: "c-apex", org_id: "o1", name: "Apex Industrial", status: "do_not_use" },
+      { id: "c-marlin", org_id: "o1", name: "Marlin Scaffold", status: "active" },
+      { id: "c-old", org_id: "o1", name: "Old Marlin", status: "inactive" },
+    );
+    db.tables.project_parties.push({ id: "pp-apex", company_id: "c-apex" }, { id: "pp-marlin", company_id: "c-marlin" });
+    db.tables.cost_documents.push(
+      docRow({ id: "d-apex", party_id: "pp-apex", vendor_name: "Someone Else" }),
+      docRow({ id: "d-marlin", party_id: "pp-marlin", vendor_name: "Old Marlin" }),
+    );
+    const apex = await awardQuote({ doc: doc({ id: "d-apex", partyId: "pp-apex", vendorName: "Someone Else" }), siblings: [], costAccountId: "a1", actor });
+    expect(apex.needsOverride).toEqual({ companyId: "c-apex", companyName: "Apex Industrial", status: "do_not_use" });
+    // the contractor's active company is the binding; no do-not-use look-alike; the exact-name row is not this bid's
+    const marlin = await awardQuote({ doc: doc({ id: "d-marlin", partyId: "pp-marlin", vendorName: "Old Marlin" }), siblings: [], costAccountId: "a1", actor });
+    expect(marlin.ok).toBe(true);
+    expect(marlin.needsOverride).toBeUndefined();
+    expect(auditRows("COST_DOC_AWARDED").at(-1)!.details).toMatchObject({ companyId: "c-marlin", override: null });
+    expect(auditRows("COST_DOC_AWARD_OVERRIDE")).toHaveLength(0);
+  });
+
+  it("MON-12 (review fix 5): on the contractor path the look-alike read fails closed too", async () => {
+    db.tables.companies.push({ id: "c-gulf", org_id: "o1", name: "Gulf Mechanical", status: "active" });
+    db.tables.project_parties.push({ id: "pp-gulf", company_id: "c-gulf" });
+    db.tables.cost_documents.push(docRow({ party_id: "pp-gulf", vendor_name: "Gulf Mechanical Inc" }));
+    db.fail["companies:select"] = [null, { message: "timeout" }]; // the contractor's company reads, the look-alike read fails
+    const res = await awardQuote({ doc: doc({ partyId: "pp-gulf", vendorName: "Gulf Mechanical Inc" }), siblings: [], costAccountId: "a1", actor });
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/Couldn't check the company registry/);
+    expect(entries()).toHaveLength(0);
+  });
+
+  it("MON-12 (review fix 5 minor): two NON-exact do-not-use look-alikes — the lower id is named by the prompt and by the override row, as cost_doc_company_barred orders them (never by name collation)", async () => {
+    // "Delta Tech, Inc." sorts before "Delta-Tech Ltd" by name; the lower id belongs to "Delta-Tech Ltd".
+    db.tables.companies.push(
+      { id: "00000000-0000-0000-0000-0000000005d2", org_id: "o1", name: "Delta Tech, Inc.", status: "do_not_use" },
+      { id: "00000000-0000-0000-0000-0000000005d1", org_id: "o1", name: "Delta-Tech Ltd", status: "do_not_use" },
+    );
+    expect("Delta Tech, Inc.".localeCompare("Delta-Tech Ltd")).toBeLessThan(0);
+    db.tables.cost_documents.push(docRow({ id: "d-delta", vendor_name: "Delta Tech" }));
+    const refused = await awardQuote({ doc: doc({ id: "d-delta", vendorName: "Delta Tech" }), siblings: [], costAccountId: "a1", actor });
+    expect(refused.needsOverride).toEqual({ companyId: "00000000-0000-0000-0000-0000000005d1", companyName: "Delta-Tech Ltd", status: "do_not_use" });
+    const ok = await awardQuote({ doc: doc({ id: "d-delta", vendorName: "Delta Tech" }), siblings: [], costAccountId: "a1", actor, overrideReason: "Client-directed sole source" });
+    expect(ok.ok).toBe(true);
+    expect(auditRows("COST_DOC_AWARD_OVERRIDE")[0].details).toMatchObject({ companyId: "00000000-0000-0000-0000-0000000005d1", companyName: "Delta-Tech Ltd" });
+    // an exact do-not-use name still comes first, whatever its id
+    db.tables.companies.push({ id: "00000000-0000-0000-0000-0000000005d9", org_id: "o1", name: "Delta Tech", status: "do_not_use" });
+    db.tables.cost_documents.push(docRow({ id: "d-delta2", vendor_name: "Delta Tech" }));
+    const exact = await awardQuote({ doc: doc({ id: "d-delta2", vendorName: "Delta Tech" }), siblings: [], costAccountId: "a1", actor });
+    expect(exact.needsOverride).toMatchObject({ companyId: "00000000-0000-0000-0000-0000000005d9" });
+  });
+
   it("MON-12 (review fix 3): the look-alike read fails closed, and the gate agrees with the bid tab's barredCompanyFor", async () => {
     db.tables.companies.push({ id: "c-dnu", org_id: "o1", name: "Gulf Mechanical, Inc.", status: "do_not_use" });
     db.tables.cost_documents.push(docRow({ vendor_name: "Gulf Mechanical Inc" }));

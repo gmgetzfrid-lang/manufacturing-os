@@ -532,6 +532,9 @@ export function summarizeAudit(r: Pick<AuditRow, "action" | "details">): string 
     case "MILESTONE_MISSED":    return `Milestone missed${d.name ? `: ${d.name}` : ""}`;
     case "MILESTONE_BLOCKED":   return `Milestone blocked${d.name ? `: ${d.name}` : ""}`;
     case "MILESTONE_DELETED":   return `Milestone deleted${d.name ? `: ${d.name}` : ""}`;
+    // SEC-21 (20261157): the database's own row, written as a document's
+    // milestone is deleted, so the MILESTONE_DELETED row keeps its reach.
+    case "MILESTONE_SCOPE_RECORDED": return `Milestone deletion recorded by the database${d.name ? `: ${d.name}` : ""}`;
     // SAF-6: the controls program's milestone vocabulary (PROJECT_EVENT_VOCABULARY).
     case "COST_DOC_AWARDED":    return `Quote awarded${d.vendor ? ` — ${d.vendor}` : ""}${money(d.total) ? ` (${money(d.total)})` : ""}`;
     case "COST_DOC_AWARD_OVERRIDE_DO_NOT_USE": return `Award made over a do-not-use flag${d.vendor ? ` — ${d.vendor}` : ""}`;
