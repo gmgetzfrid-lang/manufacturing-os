@@ -12,6 +12,11 @@
 // PR-6: when the server stops a batch early it says why (`stopped`: the cap,
 // or a draft it could not read) and names every row it left out
 // (`skippedRows`) — both are shown here, so a left-out row is never silent.
+// A drafted document whose AI-written field came back genuinely empty is
+// marked on its row, and nothing is made from it — downloaded or filed —
+// until that field is filled in or explicitly left blank, field by field.
+// The server never refuses an empty field: some AI fields are optional, and
+// only the person reviewing can say which.
 
 import React, { useState } from "react";
 import {
@@ -27,6 +32,22 @@ import {
   uploadTemplateFile, draftDocuments, renderDocuments, fileDocumentsToLibrary,
   type OutputTemplate, type DraftedDocument, type Placeholder, type DraftResult,
 } from "@/lib/outputTemplates";
+
+/** PR-6: the AI-written fields of a drafted document that are genuinely
+ *  empty (missing, or nothing but whitespace) — in the template's order. */
+export function emptyAiFields(doc: DraftedDocument, aiTags: readonly string[]): string[] {
+  return aiTags.filter((t) => !String(doc.values[t] ?? "").trim());
+}
+
+/** PR-6: the documents that cannot be made yet — each one's empty AI fields
+ *  not explicitly left blank. `keepBlank` holds `${docIndex}|${tag}`. */
+export function documentsBlockedByEmptyAi(
+  docs: readonly DraftedDocument[], aiTags: readonly string[], keepBlank: Readonly<Record<string, boolean>>,
+): Array<{ index: number; tags: string[] }> {
+  return docs
+    .map((d, index) => ({ index, tags: emptyAiFields(d, aiTags).filter((t) => !keepBlank[`${index}|${t}`]) }))
+    .filter((b) => b.tags.length > 0);
+}
 
 /** What the draft action sends beyond DraftResult (PR-6). */
 type DraftReply = DraftResult & {
@@ -62,6 +83,8 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
   const [nextOffset, setNextOffset] = useState<number | null>(null);
   const [stoppedNote, setStoppedNote] = useState<string | null>(null);
   const [skipped, setSkipped] = useState<Array<{ row: number; reason: string }>>([]);
+  // PR-6: AI fields the reviewer chose to leave blank, `${docIndex}|${tag}`.
+  const [keepBlank, setKeepBlank] = useState<Record<string, boolean>>({});
   const [cost, setCost] = useState(0);
   const [mapping, setMapping] = useState<{
     missing: Placeholder[]; headers: string[]; columnMap: Record<string, string>;
@@ -78,6 +101,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
 
   const fileIntoControl = async () => {
     if (!fileInto || !uid) return;
+    if (refuseEmptyAi()) return;
     setBusy("render");
     setFiling({ done: 0, total: docs.length });
     try {
@@ -116,7 +140,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
       const up = await uploadTemplateFile(orgId, file, "data");
       setSource(up);
       setDocs([]); setMapping(null); setNextOffset(null); setCost(0);
-      setStoppedNote(null); setSkipped([]);
+      setStoppedNote(null); setSkipped([]); setKeepBlank({});
     } catch (e) {
       showToast({ type: "error", title: (e as Error).message });
     } finally { setBusy(null); }
@@ -142,6 +166,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
       }
       setMapping(null);
       setDocs((prev) => (offset === 0 ? (res.documents ?? []) : [...prev, ...(res.documents ?? [])]));
+      if (offset === 0) setKeepBlank({});
       setSkipped((prev) => (offset === 0 ? (res.skippedRows ?? []) : [...prev, ...(res.skippedRows ?? [])]));
       setStoppedNote(res.stopped ?? null);
       setNextOffset(res.nextOffset ?? null);
@@ -153,6 +178,7 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
   };
 
   const render = async () => {
+    if (refuseEmptyAi()) return;
     setBusy("render");
     try {
       await renderDocuments({
@@ -178,7 +204,20 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
     setDocs((prev) => prev.map((d, i) => (i === docIndex ? { ...d, filename } : d)));
   };
 
-  const aiTags = new Set(template.placeholders.filter((p) => p.kind === "ai").map((p) => p.tag));
+  const aiTagList = template.placeholders.filter((p) => p.kind === "ai").map((p) => p.tag);
+  const aiTags = new Set(aiTagList);
+  // PR-6: documents with an empty AI field nobody chose to leave blank.
+  const blocked = documentsBlockedByEmptyAi(docs, aiTagList, keepBlank);
+  const blockedFields = blocked.reduce((n, b) => n + b.tags.length, 0);
+  function refuseEmptyAi(): boolean {
+    if (blocked.length === 0) return false;
+    showToast({
+      type: "error",
+      title: `${blocked.length} document${blocked.length === 1 ? " has" : "s have"} an empty AI-written field — fill it in, or tick "Leave it blank" on it, first.`,
+    });
+    setExpanded(blocked[0].index);
+    return true;
+  }
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4 overflow-y-auto" onClick={onClose}>
@@ -329,6 +368,20 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
                       {expanded === i ? <ChevronDown className="w-3.5 h-3.5 shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 shrink-0" />}
                       <FileText className="w-3.5 h-3.5 text-orange-600 shrink-0" />
                       <span className="text-xs font-bold text-[var(--color-text)] truncate">{d.filename}</span>
+                      {(() => {
+                        const empty = emptyAiFields(d, aiTagList);
+                        if (empty.length === 0) return null;
+                        const open = empty.filter((t) => !keepBlank[`${i}|${t}`]).length;
+                        return open > 0 ? (
+                          <span data-empty-ai={open} className="inline-flex items-center gap-0.5 text-[9px] font-black px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-300 shrink-0">
+                            <AlertTriangle className="w-2.5 h-2.5" /> {open} empty AI field{open === 1 ? "" : "s"}
+                          </span>
+                        ) : (
+                          <span data-empty-ai-kept="true" className="text-[9px] font-bold text-[var(--color-text-muted)] shrink-0">
+                            left blank on purpose
+                          </span>
+                        );
+                      })()}
                       {d.sourceRow && (
                         <span className="ml-auto text-[10px] text-[var(--color-text-muted)] shrink-0">row {d.sourceRow}</span>
                       )}
@@ -339,8 +392,12 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
                           <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)]">File name</span>
                           <Input value={d.filename} onChange={(e) => updateFilename(i, e.target.value)} className="text-xs font-mono" />
                         </label>
-                        {Object.entries(d.values).map(([tag, value]) => (
-                          <label key={tag} className="block">
+                        {[...Object.keys(d.values), ...aiTagList.filter((t) => !(t in d.values))].map((tag) => {
+                          const value = d.values[tag] ?? "";
+                          const emptyAi = aiTags.has(tag) && !value.trim();
+                          return (
+                          <div key={tag}>
+                          <label className="block">
                             <span className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-muted)] flex items-center gap-1.5">
                               {tag}
                               {aiTags.has(tag) && (
@@ -356,7 +413,21 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
                               <Input value={value} onChange={(e) => updateValue(i, tag, e.target.value)} className="text-xs" />
                             )}
                           </label>
-                        ))}
+                          {emptyAi && (
+                            <div data-empty-ai-field={tag} className="mt-1 flex items-center gap-2 flex-wrap text-[10px] text-amber-800 dark:text-amber-300">
+                              <span className="inline-flex items-center gap-1 font-bold">
+                                <AlertTriangle className="w-3 h-3" /> The AI wrote nothing here.
+                              </span>
+                              <label className="inline-flex items-center gap-1 cursor-pointer">
+                                <input type="checkbox" checked={!!keepBlank[`${i}|${tag}`]}
+                                  onChange={(e) => setKeepBlank((prev) => ({ ...prev, [`${i}|${tag}`]: e.target.checked }))} />
+                                Leave it blank in the document
+                              </label>
+                            </div>
+                          )}
+                          </div>
+                          );
+                        })}
                       </div>
                     )}
                   </li>
@@ -392,6 +463,23 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
                   <span className="text-[var(--color-text-muted)]">as Draft rev 0</span>
                 </div>
               )}
+              {blocked.length > 0 && (
+                <div role="alert" data-empty-ai-blocked={blocked.length}
+                  className="rounded-lg border-2 border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 px-3 py-2 text-[11px] text-amber-900 dark:text-amber-200 flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p>
+                      <b>{blocked.length} document{blocked.length === 1 ? " has" : "s have"} {blockedFields === 1 ? "an empty AI-written field" : `${blockedFields} empty AI-written fields`}.</b>{" "}
+                      Nothing is made until each one is filled in, or ticked &ldquo;Leave it blank&rdquo; — a blank section is
+                      never put into a document unless you say so.
+                    </p>
+                    <button type="button" onClick={() => setExpanded(blocked[0].index)}
+                      className="font-bold underline">
+                      Show the first one ({docs[blocked[0].index]?.filename})
+                    </button>
+                  </div>
+                </div>
+              )}
               {filing && (
                 <div className="text-[11px] font-bold text-orange-600 inline-flex items-center gap-1.5">
                   <Loader2 className="w-3.5 h-3.5 animate-spin" /> Filing {filing.done} of {filing.total}…
@@ -400,12 +488,12 @@ export default function GenerateModal({ orgId, template, onClose, onGenerated }:
               <div className="flex items-center justify-end gap-2">
                 <Button variant="secondary" onClick={onClose}>Close</Button>
                 {fileInto && (
-                  <Button variant="secondary" onClick={() => void fileIntoControl()} disabled={busy !== null}>
+                  <Button variant="secondary" onClick={() => void fileIntoControl()} disabled={busy !== null || blocked.length > 0}>
                     {busy === "render" && filing ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
                     File {docs.length} into library
                   </Button>
                 )}
-                <Button onClick={() => void render()} disabled={busy !== null}>
+                <Button onClick={() => void render()} disabled={busy !== null || blocked.length > 0}>
                   {busy === "render" && !filing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
                   Download {docs.length} document{docs.length === 1 ? "" : "s"}
                 </Button>

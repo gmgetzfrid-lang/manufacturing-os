@@ -267,7 +267,7 @@ ask/route.ts:1386-1393 builds `standing` from `aiInstructions` and `legendBlock`
 ## PR-6 · Template generation silently blanks every AI-written section when the model's JSON doesn't parse
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-20 AI UI REMAINDERS (done-when 3, the review-step override) — by the integrator, 2026-10-01 (at the I-05 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/templates/generate/route.ts:242-255`, `app/api/templates/generate/route.ts:205-217`, `app/api/templates/generate/route.ts:304-313`
@@ -304,6 +304,24 @@ Fix pass 2, after the second review (*corrected:* "nothing paid is discarded" he
 3. ✗ Not done here. Refusing to render a document with a genuinely empty AI field without an explicit override needs a review-screen control (an override in `GenerateModal`'s review step). This package touched the modal only to say why a batch stopped. A server refusal would block legitimately optional AI fields with no way to override.
 
 **Scope / residual.** OPEN for done-when 3. A left-out row is re-drafted by drafting again from the start (or after fixing the row's data); the dialog keeps it listed until then. In a per-row batch no drafted, paid-for row is discarded by an unreadable draft, a cap stop or a provider failure after the first row (fix pass 2); the summary document is one call, so its failure discards nothing drafted.
+
+**Resolution (2026-10-02, intelligence Round G).** Package I-20, done-when 3, in the review step only: there is no server refusal, so a legitimately optional AI field is never blocked. Reproduced first on the base (`3bf3b75`). A drafted document whose AI field came back "" (or whitespace) rendered with no mark on its collapsed row, and Download and File sent it as it was (`generateModalEmptyAi.test.ts`: 6 of 8 cases fail against the base modal; the other 2 are the REGRESSION pin and its pair).
+
+`components/templates/GenerateModal.tsx`:
+- `emptyAiFields` (`:38`) reads a document's AI-written fields that are missing or blank. `documentsBlockedByEmptyAi` (`:44`) lists the documents with such a field that nobody explicitly left blank.
+- Each collapsed review row shows "N empty AI field(s)" without being expanded, and "left blank on purpose" once every one is overridden.
+- In the expanded document, an empty AI field says "The AI wrote nothing here." and offers a per-field checkbox, "Leave it blank in the document". That checkbox is the explicit override, one field at a time. An AI field the draft left out entirely is shown too, so it can be filled in or left blank.
+- While any document is blocked, the Generate step says so (`:467`, "Nothing is made until each one is filled in, or ticked 'Leave it blank'") and offers "Show the first one". Download and "File into library" are disabled. `render()` and `fileIntoControl()` refuse through `refuseEmptyAi` (`:212`) before any request.
+- Filling the field in releases the document with no override. A new draft from the first row clears the overrides.
+
+Tests: `lib/__tests__/generateModalEmptyAi.test.ts` (rendered): the pure reading, the per-field override, the refusal of Download and File, "Show the first one", that filling in releases the document, the omitted AI field, and the REGRESSION pin (every AI field written: no mark, no refusal, Download sends the reviewed values unchanged).
+
+**Done-when.**
+1. ✓ (2026-10-01) A parse failure marks that row as failed (`skippedRows`), and no document is made for it.
+2. ✓ (2026-10-01) A failed draft is distinguishable from a genuinely empty field.
+3. ✓ A document with an empty AI field cannot be rendered or filed without an explicit per-field override in the review step.
+
+**Scope / residual.** None for this finding. The override lives in the dialog's state. A reviewer who closes the dialog drafts again and decides again.
 
 ---
 
