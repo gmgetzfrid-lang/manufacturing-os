@@ -23,25 +23,28 @@
 //                        is cached as the coarse estimate it is, drawn as
 //                        approximate and rejectable like every other.
 //
+// The AI step runs behind THE gate stack (lib/ai/aiGates — GOV-13, GOV-11):
+// the member's own key, the provider allowlist, the signed agreement and the
+// monthly cap over every op (a $0 lock and an unreadable ledger refuse). A
+// refusal skips the AI step only: the free answer — text-layer positions,
+// notOnPage, the library's 'elsewhere' hits — still comes back, said why.
 // Every model call one request makes — the coarse pass, each close-up and
-// any relocate round — is metered in ONE ai_usage_events row written after
-// the last of them (DWG-5 / GOV-8), and the monthly cap is re-consulted
-// before each extra call. The cap here counts every op this month, not only
-// knowledge questions — a local gate; lib/ai/aiGates (I-05) unifies it.
+// any relocate round — reserves its worst case BEFORE it is made (refused
+// when it no longer fits beside the month and every call in flight: the
+// refining stops there, the coarser point kept) and is metered in ONE
+// ai_usage_events row — the first call's reservation, settled to every
+// call's tokens after each one (DWG-5 / GOV-8), so a request cut short
+// part-way leaves what it spent recorded.
 //
 // ACL: the same fail-closed check as every other knowledge read — a mirror
 // of a controlled document the caller can't read never resolves here either.
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { openAiKey } from "@/lib/ai/keyVault";
 import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
 import { callAiModel, type AiProviderId } from "@/lib/ai/providerCall";
-import {
-  ALLOWED_PROVIDERS, AGREEMENT_VERSION, buildAgreementText, estimateCostUsd, addUsage, ZERO_USAGE, type AiUsage,
-} from "@/lib/ai/pricing";
-import { getCapUsd, capIsLocked, recordAskUsage, monthStartIso } from "@/lib/ai/usageServer";
-import { isAiUsageUnavailable } from "@/lib/ai/gateError";
+import { addUsage, ZERO_USAGE, type AiUsage } from "@/lib/ai/pricing";
+import { assertAiGates, GovernedCallError, type AiGatePass, type AiReservation } from "@/lib/ai/aiGates";
 import { VISION_MODEL } from "@/lib/knowledgeVision";
 import {
   LOCATE_SYSTEM, buildLocateUser, buildRelocateUser, parseLocateResponse, type TagPosition,
@@ -68,24 +71,36 @@ function bad(msg: string, status = 400) {
   return NextResponse.json({ error: msg }, { status });
 }
 
-/** This user's spend this month across EVERY op (asks, vision indexing,
- *  locate, …) — the local cap gate until lib/ai/aiGates lands (I-05 / GOV-1).
- *  Read to exhaustion (PostgREST caps a page at its max-rows). Null when the
- *  ledger cannot be read: the caller refuses rather than assume $0. */
-async function monthSpendAllOps(orgId: string, userId: string): Promise<number | null> {
-  let total = 0;
-  for (let from = 0; ; ) {
-    const { data, error } = await supabaseAdmin
-      .from("ai_usage_events").select("est_cost_usd")
-      .eq("org_id", orgId).eq("user_id", userId).gte("created_at", monthStartIso())
-      .order("id", { ascending: true })
-      .range(from, from + 999);
-    if (error) return null;
-    const rows = (data ?? []) as Array<{ est_cost_usd: number | null }>;
-    for (const r of rows) total += Number(r.est_cost_usd ?? 0) || 0;
-    if (rows.length === 0) return total;
-    from += rows.length;
+/** What the free answer says when the gate stack refuses the AI step — the
+ *  sentence each refusal answered with before it moved onto aiGates. */
+function skipFor(e: GovernedCallError): Record<string, unknown> {
+  const d = e.details ?? {};
+  if (e.status === 412) {
+    return {
+      skipped: "These tags came from an AI-read sheet, so pointing at them needs your own AI key " +
+        "(add one in AI settings). The sheet still opens at the right page.",
+    };
   }
+  if (e.status === 428) {
+    // PR-12, locate limb: pointing sends the rendered page to the provider.
+    return {
+      skipped: "Pointing at AI-read tags sends this page's image to your AI provider. Read and accept the " +
+        "AI acceptable-use agreement first (ask any Knowledge question to see it) — the sheet still opens at the right page.",
+      agreementRequired: true,
+      agreementText: d.agreementText,
+      agreementVersion: d.agreementVersion,
+    };
+  }
+  // GOV-3: a $0 cap locks — refused before the first call, at $0 spent too.
+  if (e.status === 402 && d.locked === true) {
+    return { skipped: "Your monthly AI cap is set to $0, so AI is locked for you until someone who manages AI caps raises it — the sheet still opens at the right page." };
+  }
+  if (e.status === 402 && typeof d.spentUsd === "number" && typeof d.capUsd === "number" && !("reservedUsd" in d)) {
+    return { skipped: `Monthly AI budget reached ($${d.spentUsd.toFixed(2)} of $${d.capUsd.toFixed(2)}) — the sheet still opens at the right page.` };
+  }
+  // GOV-4: an unreadable ledger or cap refuses the AI step, never the free answer.
+  if (e.status === 503) return { skipped: `${e.message} The sheet still opens at the right page.` };
+  return { skipped: `${e.message.replace(/\.$/, "")} — the sheet still opens at the right page.` };
 }
 
 /** A thrown provider call may still carry the usage the provider reported
@@ -253,100 +268,27 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // ── Vision locate ──────────────────────────────────────────────────────
-  const { data: conn } = await supabaseAdmin
-    .from("ai_connections").select("provider, model, api_key")
-    .eq("org_id", orgId).eq("user_id", user.id).maybeSingle();
-  if (!conn || !ALLOWED_PROVIDERS.includes(conn.provider as AiProviderId)) {
-    return NextResponse.json({
-      positions: [...found.values()],
-      notOnPage: trulyAbsent,
-      elsewhere,
-      skipped: "These tags came from an AI-read sheet, so pointing at them needs your own AI key " +
-        "(add one in AI settings). The sheet still opens at the right page.",
-    });
-  }
-  const provider = conn.provider as AiProviderId;
-  const model = VISION_MODEL[provider] ?? (conn.model as string);
-
-  // ── Acceptable-use agreement (PR-12, locate limb): pointing sends the
-  //    rendered page to the provider, so the user must have signed — the
-  //    same record the ask route checks. A pre-migration DB (no table)
-  //    skips the gate, as there. The free answer still comes back.
-  {
-    const { data: agree, error: agreeError } = await supabaseAdmin
-      .from("ai_key_agreements").select("id")
-      .eq("org_id", orgId).eq("user_id", user.id)
-      .eq("scope", "use").eq("agreement_version", AGREEMENT_VERSION)
-      .limit(1);
-    const tableMissing = !!agreeError &&
-      (agreeError.code === "42P01" || /does not exist/i.test(agreeError.message));
-    if (agreeError && !tableMissing) {
-      return NextResponse.json({
-        positions: [...found.values()], notOnPage: trulyAbsent, elsewhere,
-        skipped: "Couldn't confirm your AI acceptable-use agreement right now — the sheet still opens at the right page.",
-      });
-    }
-    if (!tableMissing && (agree ?? []).length === 0) {
-      return NextResponse.json({
-        positions: [...found.values()], notOnPage: trulyAbsent, elsewhere,
-        skipped: "Pointing at AI-read tags sends this page's image to your AI provider. Read and accept the " +
-          "AI acceptable-use agreement first (ask any Knowledge question to see it) — the sheet still opens at the right page.",
-        agreementRequired: true,
-        agreementText: buildAgreementText(provider),
-        agreementVersion: AGREEMENT_VERSION,
-      });
-    }
-  }
-
-  // ── Monthly cap: every op this month counts (local gate, GOV-1's default;
-  //    I-05's aiGates unifies it). A ledger that cannot be read refuses.
-  //    I-05's MERGE GATE (applied by the integrator at the I-05 merge):
-  //    getCapUsd throws a 503 GovernedCallError when the cap table cannot be
-  //    read — that refuses the AI step, never the free answer (GOV-4).
-  let spentUsd: number | null;
-  let cap: number;
+  // ── Vision locate, behind the gate stack (GOV-13 / GOV-11) ─────────────
+  //    own key → allowlist → agreement → the cap over every op. A refusal
+  //    skips the AI step only: the free answer still comes back.
+  const free = () => ({ positions: [...found.values()], notOnPage: trulyAbsent, elsewhere });
+  let gate: AiGatePass;
   try {
-    [spentUsd, cap] = await Promise.all([monthSpendAllOps(orgId, user.id), getCapUsd(orgId, user.id)]);
+    gate = await assertAiGates({ orgId, userId: user.id, op: "drawingLocate" });
   } catch (e) {
-    if (!isAiUsageUnavailable(e)) throw e;
-    return NextResponse.json({
-      positions: [...found.values()], notOnPage: trulyAbsent, elsewhere,
-      skipped: `${(e as Error).message} The sheet still opens at the right page.`,
-    });
+    if (!(e instanceof GovernedCallError)) throw e;
+    return NextResponse.json({ ...free(), ...skipFor(e) });
   }
-  // GOV-3: a $0 cap locks. It is refused before the first call, at $0 spent
-  // too — monthSpendAllOps has no lock floor, so overCap alone admits it.
-  if (capIsLocked(cap)) {
-    return NextResponse.json({
-      positions: [...found.values()], notOnPage: trulyAbsent, elsewhere,
-      skipped: "Your monthly AI cap is set to $0, so AI is locked for you until someone who manages AI caps raises it — the sheet still opens at the right page.",
-    });
-  }
-  if (spentUsd === null) {
-    return NextResponse.json({
-      positions: [...found.values()], notOnPage: trulyAbsent, elsewhere,
-      skipped: "Couldn't read your AI usage this month, so nothing was sent — the sheet still opens at the right page.",
-    });
-  }
-  /** Over the cap once this much more is spent. */
-  const overCap = (more: AiUsage) => cap > 0 && spentUsd + estimateCostUsd(model, more) >= cap;
-  if (overCap(ZERO_USAGE)) {
-    return NextResponse.json({
-      positions: [...found.values()],
-      notOnPage: trulyAbsent,
-      elsewhere,
-      skipped: `Monthly AI budget reached ($${spentUsd.toFixed(2)} of $${cap.toFixed(2)}) — ` +
-        "the sheet still opens at the right page.",
-    });
-  }
+  const provider = gate.connection.provider as AiProviderId;
+  const model = VISION_MODEL[provider] ?? gate.connection.model;
 
-  // Every model call this request makes, summed, and metered ONCE after the
-  // last of them (finally — a throw part-way still records what was spent).
+  // Every model call this request makes reserves its worst case first and
+  // folds its tokens into ONE metering row (the first call's reservation,
+  // settled after every call — a throw part-way still records what it spent).
   let spent: AiUsage = ZERO_USAGE;
-  let calls = 0;
+  let row: AiReservation | null = null;
   let failed = false;
-  const meter = (u: AiUsage | null) => { if (u) { spent = addUsage(spent, u); calls++; } };
+  const meter = (u: AiUsage | null) => { if (u) spent = addUsage(spent, u); };
 
   try {
     ensurePdfPolyfills();
@@ -359,12 +301,15 @@ export async function POST(req: NextRequest) {
       canvasImport: () => import("@napi-rs/canvas"),
     });
     const pageB64 = Buffer.from(img as ArrayBuffer).toString("base64");
-    /** One metered model call; a throw keeps whatever usage it carries. */
+    /** One reserved, metered model call (GOV-13): its worst case is
+     *  reserved before it is made — a GovernedCallError when it does not
+     *  fit — and its tokens, a throw's included, fold into the one row. */
     const ask = async (userText: string, image: string, maxTokens: number) => {
+      const reservation = await gate.reserve({ inputChars: LOCATE_SYSTEM.length + userText.length, images: 1, maxTokens, model });
       try {
         const res = await callAiModel({
           provider, model,
-          apiKey: openAiKey(conn.api_key as string),
+          apiKey: gate.connection.apiKey,
           system: LOCATE_SYSTEM,
           user: userText,
           maxTokens,
@@ -376,9 +321,21 @@ export async function POST(req: NextRequest) {
       } catch (e) {
         meter(usageOf(e));
         throw e;
+      } finally {
+        if (!row) row = reservation;
+        else await reservation.release();
+        await row.settle({ usage: spent, ok: true });
       }
     };
-    const out = await ask(buildLocateUser(toLocate, doc.name as string, page), pageB64, 500);
+    let out;
+    try {
+      out = await ask(buildLocateUser(toLocate, doc.name as string, page), pageB64, 500);
+    } catch (e) {
+      // The coarse pass did not fit the month (or the ledger cannot be
+      // read): nothing was sent — said as the gate's refusal.
+      if (e instanceof GovernedCallError) return NextResponse.json({ ...free(), ...skipFor(e) });
+      throw e;
+    }
 
     let located = parseLocateResponse(out.text, toLocate);
 
@@ -404,6 +361,8 @@ export async function POST(req: NextRequest) {
     //    nothing is cached. A point no close-up checked (beyond REFINE_MAX,
     //    or once the loop stops on time, cap, a provider error or the canvas)
     //    keeps its coarse estimate — refuted by nothing, cached as approximate.
+    //    Each extra call reserves its own worst case first (GOV-13): one that
+    //    no longer fits ends the refining there, as the clock does.
     const REFINE_MAX = 4;
     const CROP_DIVISORS = [3, 9];
     /** Room each extra call needs to render, call, and still return. */
@@ -414,8 +373,9 @@ export async function POST(req: NextRequest) {
       const base = await loadImage(Buffer.from(img as ArrayBuffer));
       for (const pos of located.slice(0, REFINE_MAX)) {
         for (const divisor of CROP_DIVISORS) {
-          // The cap is re-consulted before every extra call (DWG-5).
-          if (!roomForACall() || overCap(spent)) break;
+          // Each extra call is reserved before it is made (GOV-13 / DWG-5): a
+          // refusal throws inside ask, below, and ends the refining.
+          if (!roomForACall()) break;
           const cw = Math.max(200, Math.round(base.width / divisor));
           const ch = Math.max(200, Math.round(base.height / divisor));
           const cx = Math.min(Math.max(Math.round(pos.nx * base.width - cw / 2), 0), base.width - cw);
@@ -433,7 +393,7 @@ export async function POST(req: NextRequest) {
               cropB64, 200,
             );
             fp = parseLocateResponse(fine.text, [pos.tag])[0];
-          } catch { break; /* provider error: keep the coarser point */ }
+          } catch { break; /* provider error, or the cap: keep the coarser point */ }
           if (!fp) {
             // Not seen up close. The first close-up refutes the coarse
             // point; a later one only fails to tighten an already-confirmed
@@ -451,14 +411,14 @@ export async function POST(req: NextRequest) {
       const wrong: Record<string, [number, number]> = {};
       for (const p of located) if (unconfirmed.has(p.tag)) wrong[p.tag] = [p.nx, p.ny];
       let relocated: TagPosition[] = [];
-      if (roomForACall() && !overCap(spent)) {
+      if (roomForACall()) {
         try {
           const again = await ask(
             buildRelocateUser([...unconfirmed], doc.name as string, page, wrong), pageB64, 300);
           relocated = parseLocateResponse(again.text, [...unconfirmed])
             // The same wrong spot again is not a second opinion.
             .filter((r) => Math.hypot(r.nx - wrong[r.tag][0], r.ny - wrong[r.tag][1]) > 0.02);
-        } catch { /* no second opinion — the unconfirmed points are dropped below */ }
+        } catch { /* no second opinion (a provider error, or the cap) — the unconfirmed points are dropped below */ }
       }
       const byTag = new Map(relocated.map((r) => [r.tag, r]));
       located = located.flatMap((p) => !unconfirmed.has(p.tag) ? [p] : byTag.has(p.tag) ? [byTag.get(p.tag)!] : []);
@@ -492,10 +452,10 @@ export async function POST(req: NextRequest) {
       skipped: `Couldn't point at those tags: ${(e as Error).message}`,
     });
   } finally {
-    // ONE metering row covering every call this request made — written
-    // after the last of them, so nothing spent goes unrecorded (DWG-5).
-    if (calls > 0) {
-      await recordAskUsage({ orgId, userId: user.id, provider, model, usage: spent, ok: !failed, op: "drawingLocate" });
-    }
+    // ONE metering row covering every call this request made — the first
+    // call's reservation, settled once more with the request's outcome
+    // (DWG-5): nothing spent goes unrecorded.
+    const metered = row as AiReservation | null;
+    if (metered) await metered.settle({ usage: spent, ok: !failed });
   }
 }

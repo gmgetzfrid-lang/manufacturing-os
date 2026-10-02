@@ -62,7 +62,9 @@ const PENDING: Record<string, string> = {
   // app/api/flows/read/route.ts left this list with intelligence Round G
   // I-09: it runs assertAiGates before the render and calls the model
   // through governedAiCall with its page images — GATED, checked below.
-  "app/api/knowledge/locate/route.ts": "I-07 — locate adopts aiGates with the refine-pass metering (GOV-8 / DWG-5)",
+  // app/api/knowledge/locate/route.ts left this list with intelligence
+  // Round G I-18 (GOV-13): it runs assertAiGates before its first call and
+  // reserves every call (coarse, close-ups, relocate) — GATED, checked below.
   // app/api/knowledge/ingest/route.ts left this list in I-05's fix pass 5:
   // its vision context now checks the agreement (the GOV-11 verifier's sixth
   // route), so it is INLINE — checked below.
@@ -104,6 +106,15 @@ describe("GOV-11 / PR-12 — every provider call is behind the gates, or named",
     const inline = [...callers, ...indirect].filter((f) => !HELPERS[f] && !PENDING[f] && !usesGates(src(f)));
     expect(inline.length).toBeGreaterThan(0);
     for (const f of inline) expect(missingGates(src(f)), f).toEqual([]);
+  });
+
+  it("locate runs aiGates and reserves every call it makes (GOV-13, I-18) — no longer PENDING", () => {
+    const f = "app/api/knowledge/locate/route.ts";
+    expect(PENDING[f]).toBeUndefined();
+    expect(usesGates(src(f))).toBe(true);
+    const s = src(f);
+    expect(s.indexOf("await assertAiGates(")).toBeLessThan(s.indexOf("await callAiModel("));
+    expect(s.indexOf("await gate.reserve(")).toBeLessThan(s.indexOf("await callAiModel("));
   });
 
   it("the routes this package owns run aiGates: governedAiCall, /api/ai/connection, /api/templates/generate", () => {

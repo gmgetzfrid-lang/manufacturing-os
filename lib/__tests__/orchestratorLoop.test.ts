@@ -65,6 +65,7 @@ vi.mock("@/lib/orchestrator/tools", () => {
 });
 
 import { runOrchestrator, systemPrompt, type ModelCall } from "@/lib/orchestrator/loop";
+import { GovernedCallError } from "@/lib/ai/gateError";
 import type { ToolContext } from "@/lib/orchestrator/tools";
 
 const CTX: ToolContext = {
@@ -363,5 +364,62 @@ describe("systemPrompt", () => {
   it("folds in the org's own instructions when there are any", () => {
     expect(systemPrompt("Always cite the unit number.")).toContain("Always cite the unit number.");
     expect(systemPrompt()).not.toContain("SITE INSTRUCTIONS");
+  });
+});
+
+describe("GOV-13 / ORCH-7 — a round whose reservation is refused is a stop, never a provider failure", () => {
+  const refusal = (status: number, message: string) => new GovernedCallError(message, status);
+
+  it("refused before the FIRST round — nothing run, nothing spent — is thrown to the caller, which answers its status", async () => {
+    const model: ModelCall = async () => { throw refusal(402, "This call could cost up to $0.20 and $0.05 is left of your $10.00 monthly AI cap, so it was not made."); };
+    await expect(runOrchestrator({ question: "q", ctx: CTX, call: model })).rejects.toMatchObject({ status: 402 });
+    const busy: ModelCall = async () => { throw refusal(429, "You already have 3 of these running — wait for one to finish."); };
+    await expect(runOrchestrator({ question: "q", ctx: CTX, call: busy })).rejects.toMatchObject({ status: 429 });
+  });
+
+  it("refused at a LATER round, the run stops there with what it gathered — said as the cap, with no closing call (it would need a reservation too)", async () => {
+    const prompts: string[] = [];
+    let n = 0;
+    const model: ModelCall = async (_s, user) => {
+      prompts.push(user);
+      if (n++ === 0) return { text: callFor("relief valves"), usage: { inputTokens: 100, outputTokens: 10 } };
+      throw refusal(402, "Monthly AI budget reached ($10.00 of $10.00).");
+    };
+    const run = await runOrchestrator({ question: "q", ctx: CTX, call: model });
+    expect(run.stoppedBecause).toBe("the monthly AI cap");
+    expect(run.answer).toMatch(/^I stopped before the next step: Monthly AI budget reached \(\$10\.00 of \$10\.00\)\. What I gathered so far is listed below/);
+    expect(run.steps).toHaveLength(1);
+    expect(run.usage).toEqual({ inputTokens: 100, outputTokens: 10 });
+    expect(prompts).toHaveLength(2);
+    expect(prompts.some((p) => p.includes("STOP CALLING TOOLS"))).toBe(false);
+  });
+
+  it("a ledger that cannot be read, or the in-flight limit, part-way is said as that", async () => {
+    for (const [status, reason] of [[503, "AI usage could not be read"], [429, "too many assistant runs at once"]] as const) {
+      let n = 0;
+      const model: ModelCall = async () => {
+        if (n++ === 0) return { text: callFor(`q${status}`), usage: { inputTokens: 1, outputTokens: 1 } };
+        throw refusal(status, "refused");
+      };
+      expect((await runOrchestrator({ question: "q", ctx: CTX, call: model })).stoppedBecause).toBe(reason);
+    }
+  });
+
+  it("the closing round refused: the honest fallback, with the loop's own stop reason — never a crash", async () => {
+    let n = 0;
+    const model: ModelCall = async (_s, user) => {
+      if (user.includes("STOP CALLING TOOLS")) throw refusal(402, "Monthly AI budget reached ($10.00 of $10.00).");
+      return { text: callFor(`q${n++}`), usage: { inputTokens: 1, outputTokens: 1 } };
+    };
+    const run = await runOrchestrator({ question: "q", ctx: CTX, call: model, maxSteps: 2 });
+    expect(run.stoppedBecause).toBe("reached the tool-call limit");
+    expect(run.answer).toMatch(/I couldn't finish this one/);
+    expect(run.steps).toHaveLength(2);
+  });
+
+  it("REGRESSION: a provider failure is still a provider failure", async () => {
+    const model: ModelCall = async () => { throw new Error("Anthropic rejected the API key."); };
+    const run = await runOrchestrator({ question: "q", ctx: CTX, call: model });
+    expect(run.stoppedBecause).toBe("provider error");
   });
 });
