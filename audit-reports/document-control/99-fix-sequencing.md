@@ -497,6 +497,38 @@ one-paste migration:
   which re-creates the same guard again — P16 and P20 each start from the
   newest body at their time and paste after it.)*
 
+⚠ **Paste order — P20 RETIRED-DOCUMENT HOLD LIMBS (2026-10-02).** One
+one-paste migration:
+- `20261174_dc_roundF_retired_hold_limbs.sql` (`REV-24`) — **after
+  `20261165` (required)**, so after `20261164`, `20261159`, `20261151`,
+  `20261144`, `20261130` and `20261070` too. Its first statement refuses to
+  run, changing nothing, without `20261165`'s guard and
+  `put_back_retired_issue`. `20261165` waits on `20261164`, which waits on
+  the held `20261159` (paste guide row 119), so this file waits with them.
+  It re-creates `enforce_document_publish_guard` from `20261165`'s body
+  (every P19, P18, REV-22 limb 1, RG-14, REV-20 and REV-18 rule kept) and
+  adds two limbs. Nothing else is created or re-created. **Never re-paste
+  `20261165`, `20261164`, `20261159`, `20261151`, `20261144`, `20261139`,
+  `20261105` or any earlier guard migration after it** — each drops the P20
+  rule.
+- **Deploy order: none.** It refuses no write the app makes legitimately:
+  no app path moves a retired document's pointer, and the dialog and the
+  status editors already answer the new-door sentence. The app carrying P19
+  must already be deployed, as `20261165` requires.
+- **After the paste:** Document Control's bare move of a held Superseded /
+  Archived / Void document's current revision is refused ("…release the
+  hold before issuing it, or publish over it with Document Control's
+  recorded override."); `publish_revision`'s recorded force still passes.
+  The exit into an issue status of a held retirement whose stamp names
+  another revision is refused for everyone ("…release the hold before
+  issuing it."). No door forces it: the hold is released first, and the
+  Draft restore stays open to Document Control. A legacy reversal of such a
+  source over a carried hold rolls back. The inventory counts both
+  populations.
+- **P16 (`REV-21`) and P20 re-create the same guard.** Whichever is pasted
+  second starts from the other's body (the lineDiff scan finds it) and
+  pastes after it.
+
 ⚠ **Deploy note — P12 (operators, public-surfaces `SHR-11`).** Before
 deploying the app carrying P12, a self-hosted deployment (the Docker image,
 `next start`) must set `NEXT_PUBLIC_SITE_URL` to its public address — a
