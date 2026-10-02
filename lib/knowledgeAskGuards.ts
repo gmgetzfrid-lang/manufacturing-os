@@ -25,27 +25,31 @@ export const columnsMissing = (e: PgErr | null | undefined, ...columns: string[]
     && columns.some((c) => new RegExp(`(^|[^a-z0-9_])${c}($|[^a-z0-9_])`, "i").test(e.message ?? ""));
 
 /** ASK-11: write one knowledge_questions row, retrying ONLY for the columns
- *  a pre-migration database lacks — `context` (20261153), then the later
- *  columns `row` adds over `core` (mode, missing_docs, thread_id: 20260912 /
- *  20261008). Each retry keeps every column the error did not name, so a
- *  database that has `context` but not `thread_id` still records what reached
- *  the model. Any other error is returned for the caller to say (never a
- *  silent retry that drops the context). */
+ *  a pre-migration database lacks — `context` (20261153) and the columns
+ *  `row` adds over `core` (mode, missing_docs, thread_id: 20260912 /
+ *  20261008). Each retry drops only the column the error names and keeps
+ *  every other one (fix pass 6: naming any one of mode / missing_docs /
+ *  thread_id dropped all three), so a database that has `context` but not
+ *  `thread_id` still records what reached the model, and one that has `mode`
+ *  but not `thread_id` still records the mode. At most one retry per such
+ *  column. Any other error — one naming a `core` column included — is
+ *  returned for the caller to say (never a silent retry that drops the
+ *  context). */
 export async function insertAnswerRow<R extends { error: PgErr | null }>(
   insert: (values: Record<string, unknown>) => PromiseLike<R>,
   row: Record<string, unknown>,
   core: Record<string, unknown>,
   context: object | null,
 ): Promise<R> {
-  let withContext = context !== null;
-  let r = await insert(withContext ? { ...row, context } : row);
-  if (r.error && withContext && columnsMissing(r.error, "context")) {
-    withContext = false;
-    r = await insert(row);
-  }
-  if (r.error && columnsMissing(r.error, "mode", "missing_docs", "thread_id")) {
-    r = await insert(withContext ? { ...core, context } : core);
-    if (r.error && withContext && columnsMissing(r.error, "context")) r = await insert(core);
+  let values: Record<string, unknown> = context !== null ? { ...row, context } : { ...row };
+  const droppable = Object.keys(values).filter((c) => !(c in core));
+  let r = await insert(values);
+  for (let i = 0; i < droppable.length && r.error; i++) {
+    const err = r.error;
+    const named = droppable.filter((c) => c in values && columnsMissing(err, c));
+    if (named.length === 0) break;
+    values = Object.fromEntries(Object.entries(values).filter(([c]) => !named.includes(c)));
+    r = await insert(values);
   }
   return r;
 }

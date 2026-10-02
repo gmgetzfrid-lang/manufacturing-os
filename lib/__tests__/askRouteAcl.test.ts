@@ -1092,6 +1092,22 @@ describe("ASK-5 — a thread's earlier turns come from the record, never from th
     expect(rowsOf("knowledge_questions")).toHaveLength(2);
   });
 
+  it("reproduction → fix (fix pass 6): a database with mode but not thread_id (20260912 applied, 20261008 not) saves an internet answer WITH its mode, and a library answer with its mode and context", async () => {
+    seed({ knowledge_documents: [kdoc(K_OPEN)], knowledge_chunks: [kchunk(K_OPEN, OPEN_TEXT, { id: "c-open" })] });
+    db.missingColumns.knowledge_questions = ["thread_id"];
+    h.script = [{ text: "API 510 is the pressure vessel inspection code.", usage: { inputTokens: 200, outputTokens: 30 } }];
+    expect((await (await ask({ question: "What is API 510?", mode: "internet", threadId: THREAD })).json()).saved).toBeUndefined();
+    // Fix pass 5 fell back to the core set: mode NULL, so the record took the
+    // web answer for a library answer that recorded nothing.
+    expect(rowsOf("knowledge_questions")[0]).toMatchObject({ question: "What is API 510?", mode: "internet" });
+    h.script = [QUERY_GEN, REFINE_NONE, answer()];
+    expect((await (await ask({ question: "What is the relief valve set pressure?", threadId: THREAD })).json()).saved).toBeUndefined();
+    const lib = rowsOf("knowledge_questions")[1];
+    expect(lib).toMatchObject({ mode: "library", missing_docs: null });
+    expect((lib.context as { documents: string[] }).documents).toEqual([K_OPEN]);
+    expect(rowsOf("knowledge_questions").every((r) => !("thread_id" in r))).toBe(true);
+  });
+
   it("reproduction → fix: a 'Nothing matches' turn records what reached the model, so a teammate is shown it — and the turn after it is not withheld", async () => {
     seed({ knowledge_documents: [kdoc(K_OPEN)], knowledge_chunks: [kchunk(K_OPEN, OPEN_TEXT, { id: "c-open" })] });
     h.script = [{ text: '["flare tip velocity"]', usage: { inputTokens: 100, outputTokens: 10 } }, REFINE_NONE];

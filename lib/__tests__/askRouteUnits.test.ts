@@ -184,18 +184,46 @@ describe("ASK-11 — insertAnswerRow retries only for the column the error names
     expect(d.writes.at(-1)).toEqual(row);
   });
 
-  it("reproduction → fix: context but no thread_id (20261153 pasted before 20261008) — the core set KEEPS the context", async () => {
+  it("reproduction → fix: context but no thread_id (20261153 pasted before 20261008) — the retry KEEPS the context, and (fix pass 6) mode and missing_docs", async () => {
     const d = dbLacking(["thread_id"]);
     expect((await insertAnswerRow(d.insert, row, core, context)).error).toBeNull();
-    expect(d.writes.at(-1)).toEqual({ ...core, context });
+    // Fix pass 5 fell back to the core set: { ...core, context } — mode lost.
+    expect(d.writes.at(-1)).toEqual({ ...core, mode: "library", missing_docs: null, context });
+    expect(d.writes).toHaveLength(2);
   });
 
-  it("neither (in either order the database names them): the core set alone", async () => {
+  it("reproduction → fix (fix pass 6): mode but no thread_id (20260912 applied, 20261008 not) — an internet answer keeps its mode", async () => {
+    const web = { ...core, mode: "internet", thread_id: "T" };
+    for (const ctx of [null, context]) {
+      const d = dbLacking(["thread_id"]);
+      expect((await insertAnswerRow(d.insert, web, core, ctx)).error).toBeNull();
+      expect(d.writes.at(-1)).toEqual(ctx ? { ...core, mode: "internet", context: ctx } : { ...core, mode: "internet" });
+    }
+  });
+
+  it("neither (in either order the database names them): each named column dropped, every other kept", async () => {
     for (const lacks of [["context", "thread_id"], ["thread_id", "context"]]) {
       const d = dbLacking(lacks);
       expect((await insertAnswerRow(d.insert, row, core, context)).error).toBeNull();
-      expect(d.writes.at(-1)).toEqual(core);
+      expect(d.writes.at(-1)).toEqual({ ...core, mode: "library", missing_docs: null });
+      expect(d.writes).toHaveLength(3);
     }
+    // Before 20260912 too: the core set, after one retry per missing column.
+    const d = dbLacking(["context", "mode", "missing_docs", "thread_id"]);
+    expect((await insertAnswerRow(d.insert, row, core, context)).error).toBeNull();
+    expect(d.writes.at(-1)).toEqual(core);
+    expect(d.writes).toHaveLength(5);
+  });
+
+  it("fix pass 6: an error naming a core column after a retry is returned — never a retry that drops it", async () => {
+    let n = 0;
+    const writes: Array<Record<string, unknown>> = [];
+    const insert = async (values: Record<string, unknown>) => {
+      writes.push(values);
+      return { error: ++n === 1 ? missing("thread_id") : missing("question") };
+    };
+    expect((await insertAnswerRow(insert, row, core, context)).error).toEqual(missing("question"));
+    expect(writes).toHaveLength(2);
   });
 
   it("reproduction → fix: any other error — another column's 42703, a PGRST204 naming another column, a type error — is returned after ONE write, never retried without the context", async () => {
@@ -210,10 +238,10 @@ describe("ASK-11 — insertAnswerRow retries only for the column the error names
     }
   });
 
-  it("no context to record (a complete web answer): the row as given", async () => {
+  it("no context to record (a complete web answer): the row as given, less only the column the database lacks", async () => {
     const d = dbLacking(["mode"]);
     expect((await insertAnswerRow(d.insert, row, core, null)).error).toBeNull();
-    expect(d.writes).toEqual([row, core]);
+    expect(d.writes).toEqual([row, { ...core, thread_id: "T", missing_docs: null }]);
   });
 });
 
