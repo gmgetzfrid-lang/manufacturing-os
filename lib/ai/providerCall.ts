@@ -33,10 +33,32 @@ export const PROVIDER_MODEL_SUGGESTIONS: Record<AiProviderId, string[]> = {
 };
 
 export class AiCallError extends Error {
-  constructor(message: string, public readonly status: number) {
+  constructor(
+    message: string,
+    public readonly status: number,
+    /** GOV-8: the tokens the provider reported for a call that still failed
+     *  (a refusal, an empty answer) — spent, so a caller meters them. Absent
+     *  when the provider reported none (an HTTP error, a timeout). */
+    public readonly usage?: { inputTokens: number; outputTokens: number },
+  ) {
     super(message);
     this.name = "AiCallError";
   }
+}
+
+/** ASK-3: why the provider stopped, in one vocabulary across providers.
+ *  "max_tokens" — the output ceiling cut the answer off (Anthropic
+ *  stop_reason "max_tokens", OpenAI finish_reason "length", Gemini
+ *  finishReason "MAX_TOKENS"); "end" — the model finished on its own; any
+ *  other provider value is passed through as reported. */
+export type AiStopReason = "end" | "max_tokens" | (string & {});
+
+function normalizeStopReason(raw: string | null | undefined): AiStopReason | undefined {
+  if (!raw) return undefined;
+  const r = raw.toLowerCase();
+  if (r === "max_tokens" || r === "length") return "max_tokens";
+  if (r === "end_turn" || r === "stop" || r === "stop_sequence") return "end";
+  return r;
 }
 
 function friendly(provider: AiProviderId, status: number, detail: string): AiCallError {
@@ -98,6 +120,11 @@ export interface AiCallResult {
   liveWeb: boolean;
   /** Exact token counts from the provider's response — feeds spend metering. */
   usage: { inputTokens: number; outputTokens: number };
+  /** ASK-3: why the provider stopped (normalized; see AiStopReason). */
+  stopReason?: AiStopReason;
+  /** ASK-3: true when the output ceiling cut the answer off — the text is a
+   *  partial answer, never to be presented, stored or rated as complete. */
+  truncated?: boolean;
 }
 
 export interface AiCallImage {
@@ -209,7 +236,7 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
       usage.inputTokens += data.usage?.input_tokens ?? 0;
       usage.outputTokens += data.usage?.output_tokens ?? 0;
       if (data.stop_reason === "refusal") {
-        throw new AiCallError("The model declined to answer this question.", 422);
+        throw new AiCallError("The model declined to answer this question.", 422, { ...usage });
       }
       if (data.stop_reason !== "pause_turn") break;
       messages.push({ role: "assistant", content: data.content ?? [] });
@@ -222,13 +249,14 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
       const why = data.stop_reason === "max_tokens"
         ? "the answer-length budget ran out before any text was produced"
         : `no text in the response (stop_reason: ${data.stop_reason ?? "unknown"})`;
-      throw new AiCallError(`The model returned an empty answer — ${why}. Try again.`, 502);
+      throw new AiCallError(`The model returned an empty answer — ${why}. Try again.`, 502, { ...usage });
     }
     const webSources = dedupeSources(
       blocks.flatMap((b) => b.citations ?? [])
         .map((c) => ({ url: c.url ?? "", title: c.title ?? null })),
     );
-    return { text, webSources, liveWeb: !!webSearch, usage };
+    const stopReason = normalizeStopReason(data.stop_reason);
+    return { text, webSources, liveWeb: !!webSearch, usage, stopReason, truncated: stopReason === "max_tokens" };
   }
 
   if (provider === "openai") {
@@ -258,19 +286,18 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
     });
     if (!res.ok) throw friendly(provider, res.status, await res.text().catch(() => ""));
     const data = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
+      choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
       usage?: { prompt_tokens?: number; completion_tokens?: number };
     };
-    const text = data.choices?.[0]?.message?.content ?? "";
-    if (!text.trim()) throw new AiCallError("The model returned an empty answer — try again.", 502);
-    // No live web tool on chat completions — model knowledge only.
-    return {
-      text, webSources: [], liveWeb: false,
-      usage: {
-        inputTokens: data.usage?.prompt_tokens ?? 0,
-        outputTokens: data.usage?.completion_tokens ?? 0,
-      },
+    const usage = {
+      inputTokens: data.usage?.prompt_tokens ?? 0,
+      outputTokens: data.usage?.completion_tokens ?? 0,
     };
+    const text = data.choices?.[0]?.message?.content ?? "";
+    if (!text.trim()) throw new AiCallError("The model returned an empty answer — try again.", 502, usage);
+    const stopReason = normalizeStopReason(data.choices?.[0]?.finish_reason);
+    // No live web tool on chat completions — model knowledge only.
+    return { text, webSources: [], liveWeb: false, usage, stopReason, truncated: stopReason === "max_tokens" };
   }
 
   // gemini
@@ -292,22 +319,22 @@ export async function callAiModel(input: AiCallInput): Promise<AiCallResult> {
   const data = (await res.json()) as {
     candidates?: Array<{
       content?: { parts?: Array<{ text?: string }> };
+      finishReason?: string;
       groundingMetadata?: { groundingChunks?: Array<{ web?: { uri?: string; title?: string } }> };
     }>;
     usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
   };
+  const usage = {
+    inputTokens: data.usageMetadata?.promptTokenCount ?? 0,
+    outputTokens: data.usageMetadata?.candidatesTokenCount ?? 0,
+  };
   const candidate = data.candidates?.[0];
   const text = (candidate?.content?.parts ?? []).map((p) => p.text ?? "").join("");
-  if (!text.trim()) throw new AiCallError("The model returned an empty answer — try again.", 502);
+  if (!text.trim()) throw new AiCallError("The model returned an empty answer — try again.", 502, usage);
   const webSources = dedupeSources(
     (candidate?.groundingMetadata?.groundingChunks ?? [])
       .map((g) => ({ url: g.web?.uri ?? "", title: g.web?.title ?? null })),
   );
-  return {
-    text, webSources, liveWeb: !!webSearch,
-    usage: {
-      inputTokens: data.usageMetadata?.promptTokenCount ?? 0,
-      outputTokens: data.usageMetadata?.candidatesTokenCount ?? 0,
-    },
-  };
+  const stopReason = normalizeStopReason(candidate?.finishReason);
+  return { text, webSources, liveWeb: !!webSearch, usage, stopReason, truncated: stopReason === "max_tokens" };
 }

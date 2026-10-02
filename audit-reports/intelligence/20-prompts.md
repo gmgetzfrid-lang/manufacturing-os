@@ -181,7 +181,7 @@ Migration:45-49 `CREATE POLICY answer_skills_insert ON answer_skills FOR INSERT 
 ## PR-4 · DRAWING FACTS tells the model to trust counts as deterministic when the tags underneath came from a cheap-tier transcription
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/knowledge/ask/route.ts:1055-1061`, `app/api/knowledge/ask/route.ts:943-956`, `lib/knowledgeVision.ts:26-30`, `lib/knowledgeIngest.ts:214-230`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: the aggregation is deterministic but its inputs are a cheap-tier OCR pass, and I read the whole DRAWING FACTS block (route.ts:1055-1100) — it carries caveats for unrecognized prefixes and unloaded references but nothing at all about vision provenance or transcription error, while explicitly telling the model to prefer the census over the passages. ask/route.ts:943-956 confirms the census reads knowledge_page_entities, the same table those vision-derived rows land in.
@@ -204,6 +204,23 @@ ask/route.ts:1055-1057 is the quoted header; :1059-1061 is the declared-identity
 - [ ] the 'TRUST these for counts' instruction is conditioned on the text-layer share, and the 'READ, not inferred' clause counts only text-layer title blocks
 - [ ] the equipment table in the UI marks vision-sourced rows
 
+**Resolution (2026-10-01, intelligence Round G).** Reproduced first (DEC-29): with the base route (`4dd0df7`) swapped back in, 53 of the 92 cases in the new `lib/__tests__/askRouteAcl.test.ts`, `askRouteHonesty.test.ts` and `askRouteUnits.test.ts` fail — every case named below as a reproduction among them — and the REGRESSION pin (an org under its cap, agreement signed, key saved: the same answer, citations, memory row and one metering row) passes on both. The code fact is what was fixed — the prompt's wording; nothing here claims how a model weighs it (DEC-29). Using `knowledge_documents.vision_pages`:
+
+- The DRAWING FACTS say how many sheets' tags came (at least in part) from an AI transcription of the page image ("… : 2 of 4").
+- "TRUST them for counts and totals" is said only when no sheet behind the census was AI-transcribed (and the census is whole, `ASK-2`); otherwise the rule reads "Prefer them over the passages for counts and totals, but some sheets' tags were transcribed from page images by an AI model during indexing: a count that includes them is only as good as that transcription — say so when you give one, and treat a title-block identity read that way as unconfirmed."
+- "drawing number/sheet/rev were READ, not inferred" counts only text-layer title blocks; identities read off an AI transcription are counted separately as "unconfirmed".
+- The equipment table marks each sheet an AI transcribed (`viaVision`), and `EquipmentTablePanel` shows "AI-read" beside it.
+- Fix pass 4 (review minor, with `GOV-9`): the read of the sheets behind the facts fell back without `vision_pages` on ANY error whose message mentioned a column, so an ambiguous-column error over AI-read sheets produced a census that counted no transcribed sheet and said TRUST. Only a database without `vision_pages` (42703, or PGRST204 naming it — `columnsMissing`) reads the sheets without it now; any other failure sends no facts at all.
+
+Tests: `askRouteHonesty.test.ts` "PR-4: sheets read by AI vision are counted, their title blocks are unconfirmed, and 'trust' becomes a hedge", "reproduction → fix (fix pass 4): PR-4 — a read of the sheets that fails with a column-mentioning error sends no facts, never a census that saw no AI-read sheet and says TRUST" (fails against fix pass 3's route, `f93fe4e`) and its control "a database without vision_pages counts the sheets as before"; `askRouteUnits.test.ts` "PR-4: the equipment table marks a sheet an AI transcribed".
+
+**Done-when.**
+1. ✓ The block reports how many sheets behind the census were AI-transcribed.
+2. ✓ "TRUST" is conditioned on the sheets being text-layer (any transcribed sheet turns it into the hedge), and "READ, not inferred" counts only text-layer title blocks.
+3. ✓ The equipment table in the UI marks vision-sourced sheets.
+
+**Scope / residual.** `vision_pages` is per document, so a sheet with one transcribed page counts as transcribed. Per-chunk provenance on passages is `GOV-9`.
+
 ---
 
 <a id="pr-5"></a>
@@ -211,7 +228,7 @@ ask/route.ts:1055-1057 is the quoted header; :1059-1061 is the declared-identity
 ## PR-5 · Document text is spliced into the SYSTEM prompt undelimited — legend sheets are the highest-privilege injection channel
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `app/api/knowledge/ask/route.ts:1365-1393`, `app/api/knowledge/ask/route.ts:1386-1389`, `app/api/knowledge/ask/route.ts:1530`, `lib/orchestrator/loop.ts:108-119`, `lib/knowledgeText.ts:17-31`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: raw chunk text from an attached PDF lands inside the SYSTEM prompt, undelimited, under an 'authoritative' label — strictly higher privilege than the numbered passages in the user turn. lib/knowledgeText.ts:17-31 sanitizeStorageText strips only lone surrogates and C0 controls, so no instruction-bearing text is removed anywhere in the chain. Legend ids come from library AI feature settings plus the site codebook (route.ts:151-154), matching the finding's description of who can plant one; the analogous undelimited splice in lib/orchestrator/loop.ts:108-119 is correctly cited too.
@@ -233,6 +250,15 @@ ask/route.ts:1386-1393 builds `standing` from `aiInstructions` and `legendBlock`
 - [ ] all document-derived text (passages, legend, tool results) is wrapped in an explicit delimiter the prompt names, with the delimiter sequence stripped from the content before insertion
 - [ ] the legend block moves out of the system prompt into the user turn alongside the passages
 - [ ] the answer prompt states that text inside the delimited regions is data and must never be followed as instruction
+
+**Resolution (2026-10-01, intelligence Round G).** SUSPECTED as a model-behaviour claim; the code fact — document text in the system prompt, undelimited, under "authoritative" — was reproduced and is fixed (`askRouteHonesty.test.ts` "ASK-4 / PR-5 …" fails against the base route `4dd0df7`). Same change as `ASK-4` (full detail there; `DEC-83` item 4): passages, legend sheets, drawing facts and every document-derived name ride the user turn between `<<<DOCUMENT DATA` / `DOCUMENT DATA>>>`, the markers are stripped from document text before it is inserted, harness-looking lines are neutralised, and the system prompt states that the fenced text is data and never an instruction. The refine round's preview is fenced the same way. Fix pass 2: so is the conversation so far. An earlier answer quotes its documents, and the first fix pass sent the earlier turns ahead of the fence, unsanitised, so a passage's injected line echoed into an answer came back unfenced on the follow-up. The turns now open the fence ("CONVERSATION SO FAR", each through `asDocumentData`) in the answer prompt and in query generation, with a system sentence naming them (`askRouteHonesty.test.ts` "reproduction → fix: a thread's earlier answer that echoed an injected line rides INSIDE the fence …"). Fix pass 3: the focus chips — the refine round's clarify options, written by the model from the passages, or the scope checklist's connector refs — rode outside the fence as "ASPECTS THE USER CHOSE", and the records called them the asker's own words; each label now goes through `asName` inside the fence, in the answer prompt and in query generation, with rules that say they are labels, never instructions (`askRouteHonesty.test.ts` "reproduction → fix: an aspect label the user picked (model-written from the documents) rides INSIDE the fence …"). The orchestrator's tool results were fenced by `ORCH-9` (a per-run id, `lib/orchestrator/loop.ts`).
+
+**Done-when.**
+1. ✓ All document-derived text in the ask route (passages, legend, entity text, names, and earlier answers that quote documents, fix pass 2) is inside a named delimiter with the delimiter stripped from the content; tool results in the orchestrator are inside `ORCH-9`'s fence.
+2. ✓ The legend block is out of the system prompt and in the user turn.
+3. ✓ The answer prompt states that delimited text is data and must never be followed as instruction.
+
+**Scope / residual.** Whether a model resists text inside the fence is not claimed (DEC-29).
 
 ---
 
@@ -368,6 +394,7 @@ Tests: `lib/__tests__/flowsRead.test.ts` ("parseFlowReply — PR-8 …"), `lib/_
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** user decision first (done-when 2, `DEC-83` item 6: re-derive the arithmetic server-side, or stop presenting the computed number), recorded in the intelligence plan's userHeld; the package is named once the user decides — by the integrator, 2026-10-02 (at the I-03 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** SUSPECTED
 - **Locations:** `app/api/knowledge/ask/route.ts:1442-1450`, `app/api/knowledge/ask/route.ts:1429-1441`, `app/api/knowledge/ask/route.ts:1501-1502`, `app/api/knowledge/ask/route.ts:1739-1744`, `app/api/knowledge/ask/route.ts:605-635`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by absence: nothing recomputes, range-checks, or unit-checks the model's arithmetic, and the answer is persisted verbatim (:1739-1744) and rendered like any other. The mandatory 'Check:' line (rendered as its own block at app/(protected)/knowledge/[id]/page.tsx:379) only points the reader at table cells — it does not verify the substitution, so it is not a compensating control for a units slip.
@@ -389,6 +416,19 @@ ask/route.ts:1442-1450, the full calcProtocol string. The only post-processing o
 - [ ] answers containing a computation are marked in the response payload as unverified arithmetic and rendered with that label, not as a plain cited answer
 - [ ] either the substitution step is re-evaluated server-side from the transcribed formula and inputs, or the product stops presenting model arithmetic as a deliverable
 - [ ] an answer carrying a computation is excluded from the PROVEN GROUND reinforcement path unless a human explicitly verified the numbers
+
+**Partial (2026-10-01, intelligence Round G).** SUSPECTED as to model accuracy; confirmed by absence that nothing checked the arithmetic, and that is what changed (`askRouteHonesty.test.ts` "an answer that works a substitution to a result → arithmetic: 'unverified' …" fails against the base route `4dd0df7`). `answerHasComputation` (`lib/knowledgeAskGuards.ts`) marks an answer that carries model arithmetic — a substitution worked to a result ("285 × 1.5 = 427.5"), an "Applied to your case" section, or values the user supplied — and the route returns `arithmetic: "unverified"` and stores it on the row (`context.arithmetic`). The answer surface shows "Unverified arithmetic — check every step" ("The AI worked these numbers itself and nothing in the app re-derived them — check every substitution and unit against the cited pages before you use the result."). A rated answer carrying it never seats proven ground. A bare `**Need:**` answer is not marked.
+
+Fix pass (same day): the first detector let any fraction or ratio count as an operation whenever "= number" appeared later on the same line, so ordinary lookups ("Use **3/4 in** bolts; torque = `250 ft-lb`", "Flange class 150/300: max pressure = 285 psig", "2 x 4 spacing per Table 121.5 = 10 ft") were labelled, recorded as arithmetic and kept out of proven ground. The detector now asks for a chain of numbers joined by operators that runs straight into "= number" on one line — each operand may carry brackets and one engineering unit, value chips (`` ` ``, `**`) are read through, and a fraction that is a size ("3/4 in", "1/2\"", "NPS 1-1/2") is a value, never a division. Its operand grammar consumes whitespace only with the token after it, so a line splits into operands one way only and there is no exponential backtracking. It is not linear (corrected in I-03 fix pass 2): the pattern is tried from every start position, so the time grows with the square of one line's length. The review measured about 0.35–0.85 s for a 16,000-character single line, about the most an answer holds, and 1.3 s for 31,000.
+
+Tests: `askRouteHonesty.test.ts` "PR-9 — model arithmetic is marked unverified …" ("an answer that works a substitution to a result …", "answerHasComputation: substitutions and user inputs count; tags, dates and plain values do not", "reproduction → fix: a lookup is not arithmetic — fractions, pressure classes and sizes before an '=' elsewhere on the line are never flagged", "an ordinary lookup answer through the route carries no arithmetic flag — on the response or the row", "the detector is linear enough for a whole answer …"); `askRouteAcl.test.ts` "ASK-3 / PR-9: a rated answer that was cut off, or carries unverified arithmetic, seats nothing" and (fix pass 4) "reproduction → fix (fix pass 4): a proven-ground read that fails with an error that merely mentions a column seats nothing — never rows read again without their partial / unverified-arithmetic marks" (the proven-ground read used to retry without `context` on any error mentioning a column, so a rated answer marked `arithmetic: "unverified"` seated its pages; now only a database without `context` does — `columnsMissing` — and any other failure seats no page; it fails against fix pass 3's route, `f93fe4e`); `askRouteUnits.test.ts` "PR-9: an answer with unverified arithmetic carries the label".
+
+**Done-when.**
+1. ✓ Marked in the payload as unverified arithmetic and rendered with that label — for answers that work a substitution, and (fix pass) not for ordinary lookups.
+2. ✗ Not done. The label is done-when 1, not this limb: the answer still presents the model's arithmetic in full, as a result, and nothing re-derives it server-side. Meeting it needs either a server-side evaluator for the transcribed formula and inputs, or a product call to stop showing the model's computed result as the answer (for example, showing the formula and inputs and withholding the number) — a decision this package does not take (`DEC-83` item 6).
+3. ✓ An answer carrying a computation is excluded from proven ground (there is no human-verified path, so always) — once `20261153` is pasted (see below).
+
+**Scope / residual.** OPEN on done-when 2 (re-derive, or stop presenting the result — needs a decision). The detector is a pattern over the answer text: arithmetic written in prose ("one and a half times 285 gives 427"), or a substitution with free text between its operands and the "=", is not caught. Until `20261153` is pasted the flag is on the response but not stored, so a rated arithmetic answer could still seat proven ground; until then only the page's own rating flow stands in the way.
 
 ---
 

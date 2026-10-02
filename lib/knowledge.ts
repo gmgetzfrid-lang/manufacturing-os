@@ -114,6 +114,12 @@ export interface KnowledgeCitation {
   tier?: "governing" | "reference";
   url?: string;
   title?: string;
+  /** GOV-9: the quote is an AI model's transcription of the page image, not
+   *  the document's text layer — the answer surface marks it. */
+  source?: "vision";
+  sourceModel?: string | null;
+  /** IEDGE-4: the controlled revision a mirror's page was read from. */
+  sourceRev?: string;
 }
 
 export type AskMode = "library" | "internet";
@@ -156,6 +162,27 @@ export interface KnowledgeAnswer {
    *  asks for equipment lists/tables. Deterministic data, never model
    *  output; every sheet reference opens the drawing with the tag ringed. */
   equipmentTable?: EquipmentTable;
+  /** ASK-3: the model's output ceiling cut this answer off (its last line
+   *  says so); it is not offered for rating. */
+  partial?: boolean;
+  /** PR-9: the answer carries arithmetic the model did and nothing re-derived. */
+  arithmetic?: "unverified";
+  /** IRLS-13: the Reasoning Skills that rode this answer's prompt. */
+  skills?: Array<{ id: string | null; name: string; builtinKey: string | null }>;
+  /** SEM-3 / SEM-6: libraries searched by meaning, how many contributed, and
+   *  why any that has a meaning index could not be searched. */
+  meaningSearch?: { libraries: number; searched: number; contributed: number; notes: string[] };
+  /** ASK-6: the caution a model-written request carries (the card shows it). */
+  assistantCaution?: string;
+  /** ASK-11: the answer could not be saved to the library's record. */
+  saved?: false;
+  saveError?: string;
+  /** ASK-7: the prompt was over its size budget and was cut (the answer says so). */
+  trimmed?: { passages: number; fullText: string[] };
+  /** ASK-5: this many of the asker's earlier turns in the conversation were
+   *  not sent with the question (a document one drew on is no longer
+   *  readable to them, or was removed) — the answer's last line says so. */
+  historyWithheld?: number;
 }
 
 export interface EquipmentTable {
@@ -173,9 +200,16 @@ export interface EquipmentTable {
         documentId: string; documentName: string; page: number;
         /** "SHT 3" when the title block declared it, else "p.N". */
         sheetLabel?: string;
+        /** PR-4: this sheet's tags came (at least in part) from an AI
+         *  transcription of the page image. */
+        viaVision?: boolean;
       }>;
     }>;
   }>;
+  /** ASK-2: the tag census stopped at its ceiling and this many of the
+   *  library's sheets were not counted — the register is a floor, not the
+   *  whole set (a tag on an uncounted sheet is not listed). */
+  partial?: { uncountedSheets: number };
 }
 
 export interface KnowledgeQuestion {
@@ -191,6 +225,8 @@ export interface KnowledgeQuestion {
   /** The reader asked it. Continuing someone else's conversation starts a
    *  new thread seeded with their turns — never appends to theirs. */
   mine?: boolean;
+  /** IEDGE-4: a document it cites has been revised since it was given. */
+  revisedSince?: boolean;
 }
 
 /** A page of the team's record as THIS reader may see it. `withheld` counts
@@ -1086,12 +1122,15 @@ export interface PastAsk {
   id: string; library_id: string; question: string; answer: string;
   user_name: string | null; created_at: string;
   citations: unknown;
+  /** IEDGE-4: a document it cites has been revised since it was given. */
+  revisedSince?: boolean;
 }
 
 /** One row as /api/knowledge/history returns it. */
 interface HistoryRowWire {
   id: string; libraryId: string; threadId: string | null; question: string; answer: string | null;
   citations: unknown; userName: string | null; mode: AskMode; createdAt: string; mine: boolean;
+  revisedSince?: boolean;
 }
 
 const toQuestion = (r: HistoryRowWire): KnowledgeQuestion => ({
@@ -1104,6 +1143,7 @@ const toQuestion = (r: HistoryRowWire): KnowledgeQuestion => ({
   mode: r.mode === "internet" ? "internet" : "library",
   createdAt: r.createdAt,
   mine: r.mine === true,
+  ...(r.revisedSince ? { revisedSince: true } : {}),
 });
 
 export async function searchAskHistory(
@@ -1121,6 +1161,7 @@ export async function searchAskHistory(
     return (out.rows ?? []).filter((r) => typeof r.answer === "string").map((r) => ({
       id: r.id, library_id: r.libraryId, question: r.question, answer: r.answer as string,
       user_name: r.userName ?? null, created_at: r.createdAt, citations: r.citations,
+      ...(r.revisedSince ? { revisedSince: true } : {}),
     })).slice(0, Math.max(0, limit));
   } catch {
     return [];

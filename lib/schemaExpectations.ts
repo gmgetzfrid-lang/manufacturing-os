@@ -235,6 +235,7 @@ export const EXPECTED_COLUMNS: readonly ColumnExpectation[] = [
   // intelligence I-19 (ORCH-9 criterion 3): until it is pasted the assistant
   // stores proposals without the flag and its cards carry no note.
   { table: "orchestrator_proposals", column: "tainted", migration: "20261158_intel_roundG_orchestrator_taint.sql", feature: "Assistant proposals flagged when suggested after reading document text" },
+  { table: "knowledge_questions", column: "context", migration: "20261153_intel_roundG_ask_answer_context.sql", feature: "Library answers record what reached the model (a teammate sees a stored answer only when they may read every document in it)" },
   // intelligence I-09 (IEDGE-8): until it is pasted every dismissal is settled.
   { table: "process_flows", column: "source_version_id", migration: "20261155_intel_roundG_process_flows_authority.sql", feature: "Process flows — the revision a PFD proposal was read from (a dismissal binds that reading; IEDGE-8)" },
 ];

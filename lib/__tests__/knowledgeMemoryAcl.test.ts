@@ -53,7 +53,7 @@ vi.mock("@/lib/supabase", async () => {
 });
 
 import { POST as historyPost } from "@/app/api/knowledge/history/route";
-import { citedKnowledgeDocIds, planVisibleHistory, readableKnowledgeDocIds, type StoredAnswerRow } from "@/lib/knowledgeHistory";
+import { citedKnowledgeDocIds, knowledgeDocAccess, planVisibleHistory, readableKnowledgeDocIds, type StoredAnswerRow } from "@/lib/knowledgeHistory";
 import {
   searchAskHistory, listKnowledgeQuestions, loadConversation, askKnowledgeLibrary,
   askContextHistory, persistedThread, restoredSeeded, ASK_CONTEXT_TURNS,
@@ -212,6 +212,14 @@ describe("the rule — an answer is as restricted as its most restricted CITED s
     const ids = [K_UP, K_OPEN, K_PRIV, K_GONE, K_FOREIGN, "not-a-uuid"];
     expect([...await readableKnowledgeDocIds(pv, ids)].sort()).toEqual([K_UP, K_OPEN].sort());
     expect([...await readableKnowledgeDocIds(pe, ids)].sort()).toEqual([K_UP, K_OPEN, K_PRIV].sort());
+  });
+  it("knowledgeDocAccess: the same readable set, and `gone` names only the uuid-shaped ids that resolve to no document (never a foreign or malformed one)", async () => {
+    const { loadPrincipal } = await import("@/lib/knowledgeAccess");
+    const pv = (await loadPrincipal(ORG, V))!;
+    const ids = [K_UP, K_OPEN, K_PRIV, K_GONE, K_FOREIGN, "not-a-uuid"];
+    const access = await knowledgeDocAccess(pv, ids);
+    expect([...access.readable].sort()).toEqual([K_UP, K_OPEN].sort());
+    expect([...access.gone]).toEqual([K_GONE]);
   });
   it("a knowledge-documents read error throws (the route then fails closed)", async () => {
     const { loadPrincipal } = await import("@/lib/knowledgeAccess");

@@ -133,6 +133,11 @@ route, the ingest drain and the codebook import catch it (I-05). The ask
 unhandled 500. They refuse their AI work either way, but the sentence is lost.
 Each maps `GovernedCallError` onto its response as it adopts `assertAiGates`.
 
+*Landed 2026-10-01 (intelligence Round G, I-03): the ask route's limb. It runs
+`assertAiGates` and maps `GovernedCallError`, so a ledger that cannot be read
+answers the 503 sentence, before the first call and mid-ask alike
+(`askRouteHonesty.test.ts` "GOV-4: …").*
+
 ⛔ **MERGE GATE for I-05 — locate keeps its non-AI output when the cap
 table cannot be read, and refuses a $0 lock before its first call** (`GOV-4`,
 `GOV-3`; I-07's file, merged at `d466a59`).
@@ -243,6 +248,12 @@ they adopt the gate stack, or have `embeddingConnectionFrom` return null for
 a provider off `ALLOWED_EMBEDDING_PROVIDERS`; test a stored
 `embedding_provider` off the list is never spent.
 
+*Landed 2026-10-01 (intelligence Round G, I-03): the ask route's query
+embedding. It is spent only on a provider in `ALLOWED_EMBEDDING_PROVIDERS` and
+behind `assertAiGates({ op: "knowledgeEmbed", key: "embedding" })`
+(`askRouteHonesty.test.ts` "GOV-6 limb: an embeddings key on a provider off the
+allowlist is never spent"). The embed route and the drain remain I-02 / I-02b's.*
+
 **The lock's copy on the older routes — I-03 / I-04 / I-02 / I-07 limbs**
 (`GOV-3`). A $0 cap is a lock that does not reset, but the ask, orchestrator
 and embed routes print "Monthly AI budget reached — $0.00 of your $0.00 cap.
@@ -251,6 +262,45 @@ reached ($0.00 of $0.00)". Each owner branches on `capIsLocked(cap)` (or a
 refusal's `details.locked`) and says "Your monthly AI cap is set to $0, so AI
 is locked for you until someone who manages AI caps raises it" — never the
 reset — as `/api/templates/generate` does (I-05).
+
+*Landed 2026-10-01 (intelligence Round G, I-03): the ask route's limb. A locked
+member's refusal says "Your monthly AI cap is set to $0, so AI is locked for you
+until someone who manages AI caps raises it" and never the reset; a reached cap
+says it resets on the 1st (`askRouteHonesty.test.ts` "GOV-3: …").*
+
+**A cut-off answer cannot be rated — the feedback route's limb** (`ASK-3`,
+I-03 fix pass 2; no package owns `app/api/knowledge/feedback/route.ts`). The
+ask route gives a cut-off answer no `questionId`, so the page offers no rating,
+but `/api/knowledge/feedback` rates any row its asker names by id, and the
+history route returns ids. The rating acts on nothing: proven ground, its one
+reader, skips a row whose `context.partial` is true or whose answer ends with
+`CUT_OFF_LINE`. Limb, for whichever package next edits the feedback route, or
+the integrator: select `id, user_id, context` (retry without `context` on a
+missing column), and when `context?.partial === true` refuse with
+`bad("A cut-off answer cannot be rated — ask a narrower question for a complete one.", 409)`
+before the update. Test: a partial row is refused 409 and keeps `rating` null;
+a complete row is rated as before.
+
+*Landed 2026-10-01 (intelligence Round G, I-03 fix pass 3): the review asked for
+the limb on this branch, and no package owns the route. The feedback route
+selects `answer` and `context` (retrying without `context` on a database before
+`20261153`) and refuses with that 409 when `context.partial` is true or the
+answer contains `CUT_OFF_LINE`; clearing a rating (0) is still allowed
+(`askRouteHonesty.test.ts` "reproduction → fix: a rating POSTed by id for a
+cut-off answer is refused (409) …" and "on a database before 20261153 … by its
+cut-off line").*
+
+**Known overlap — `components/knowledge/AiSettingsModal.tsx`** (`SEM-3`
+done-when 4, I-03; the file is also in I-20's list). The integrator's orphan
+sweep gave I-03 `SEM-3`'s remainder, including "the removal dialog must say
+vectors work again only with a key for the provider that built them". I-03's
+only change to the file is that message, in `EmbeddingKeyEditor`'s removal
+confirm: "Vectors already built stay in place, but they work again only with a
+key for the provider that built them — a key for another provider cannot search
+them until the library's index is rebuilt with it." Whichever of I-03 and I-20
+merges second keeps both: I-20's edits, and this message
+(`askRouteUnits.test.ts` "SEM-3: removing the embeddings key never promises …"
+pins it).
 
 ⛔ **MERGE GATE for I-05 / I-02b — a $0 cap is a refusal to every reader of
 `/api/ai/usage`** (`GOV-3`; I-02b's code, I-02b runs in parallel).

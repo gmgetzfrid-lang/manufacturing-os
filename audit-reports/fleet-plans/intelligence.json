@@ -737,7 +737,9 @@
         "IEDGE-6 (remainder re-owned by the integrator 2026-10-01, orphan sweep: entity_mentions_source_readable hides a mention only where the document ROW is hidden; 'node_visible is true for normal visibility, so mentions in normal-visibility documents with allow-list or deny ACLs, and in private …)",
         "KACL-7 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Mirror rows of normal-visibility documents with allow-list ACLs / role-team denies, and of private drafts, still reach every member; file_key is still returned to the browser for source-linked mirrors.)",
         "IRLS-9 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Mentions in normal-visibility documents with allow-list / role-team deny ACLs, and in private drafts, still reach every member until node_visible carries those rules; no repository test runs the policy against a database.)",
-        "public-surfaces VFY-7 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Done-when 1 (a normalized candidate match) and 3 (a chooser when there is more than one exact normalized match). On HEAD, app/(protected)/documents/page.tsx:108-109 searches with searchDocuments and silently takes …)"
+        "public-surfaces VFY-7 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Done-when 1 (a normalized candidate match) and 3 (a chooser when there is more than one exact normalized match). On HEAD, app/(protected)/documents/page.tsx:108-109 searches with searchDocuments and silently takes …)",
+        "KACL-9 (remainder re-owned by the integrator 2026-10-02 at the I-03 merge: done-when 3 — one function (lib/aiBoundary.ts aiReadability) at every door, a test per door: the orchestrator's tools (lib/orchestrator/tools.ts), the link proposer (lib/linkProposerServer.ts) and drawing / locate (app/api/knowledge/drawing, app/api/knowledge/locate) still test ai_excluded directly)",
+        "KACL-10 (remainder re-owned by the integrator 2026-10-02 at the I-03 merge: the exclusion flip vs syncKnowledgeLibrarySources race (lib/knowledgeSourceSync.ts, app/api/knowledge/exclusion), the sync's fail-open ai_excluded read (`if (!error) …`), and the drawing / locate doors folding the boundary at query time)"
       ],
       "severityMix": "0 CRITICAL / 2 HIGH / 5 MEDIUM / 1 LOW",
       "files": [
@@ -938,7 +940,8 @@
       "name": "I-16 CODEBOOK LIFECYCLE — a code renamed in place cascades atomically; a server-side re-decode with a preview; a codebook version stamped on derived codes (CB-5, CB-6)",
       "findings": [
         "CB-5 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'codes are still not editable in place, and there is no cascade rewriting assets.unit_code, the unit part of assets.code and process_flows refs. It is a multi-table rename that must be atomic (a SECURITY DEFINER function gated …)",
-        "CB-6 (remainder re-owned by the integrator 2026-10-01, orphan sweep: A server-side, admin-triggered re-decode job with a preview diff (today the plan runs in the browser under the user's RLS), and a codebook version on codebook_config/codebook_entries with assets recording the version their …)"
+        "CB-6 (remainder re-owned by the integrator 2026-10-01, orphan sweep: A server-side, admin-triggered re-decode job with a preview diff (today the plan runs in the browser under the user's RLS), and a codebook version on codebook_config/codebook_entries with assets recording the version their …)",
+        "ASK-8 (remainder re-owned by the integrator 2026-10-02 at the I-03 merge: done-when 2 — legendDocIds validated on write: saveLibraryAiFeatures → knowledge_library_save_ai_features (lib/knowledge.ts, re-created from its newest body, 20261121's) and the codebook save (app/(protected)/admin/codebook) accept only uuid-shaped ids of the org's own knowledge documents; the ask route's read is already scoped)"
       ],
       "files": [
         "new migration: rename_codebook_code SECURITY DEFINER (is_org_controller, one transaction, rewriting assets.unit_code, the unit part of assets.code, process_flows references and units.codebook_code — must pass 20261128 §6 trg_codebook_entries_guard_in_use; REVOKE from PUBLIC, anon); a codebook version on codebook_config / codebook_entries and the derivation version on assets (DEC-30 inventory, counts only)",
@@ -1019,7 +1022,9 @@
       "findings": [
         "HUB-6 (remainder re-owned by the integrator 2026-10-01 at the I-05 merge: done-when 2 — the library Ask header in app/(protected)/knowledge/[id]/page.tsx invites the first playbook when instructionCount is 0; I-02 / I-02b, its owners, have merged)",
         "PR-6 (remainder re-owned by the integrator 2026-10-01 at the I-05 merge: done-when 3 — GenerateModal's review step refuses to render a document with a genuinely empty AI field without an explicit per-field override; never a server refusal that would block legitimately optional fields)",
-        "GOV-14 (remainder re-owned by the integrator 2026-10-01 at the I-05 merge: done-when 3 — an audit row names the request that stamped an embed build (app/api/knowledge/embed/route.ts); done-when 4 — one place lists every build running on a member's key, e.g. in AI settings)"
+        "GOV-14 (remainder re-owned by the integrator 2026-10-01 at the I-05 merge: done-when 3 — an audit row names the request that stamped an embed build (app/api/knowledge/embed/route.ts); done-when 4 — one place lists every build running on a member's key, e.g. in AI settings)",
+        "SEM-1 (remainder re-owned by the integrator 2026-10-02 at the I-03 merge: done-when 2 — saving a different embedding model or provider in components/knowledge/AiSettingsModal.tsx confirms that existing vectors stop answering and OFFERS the reset (names the libraries, or links each library's Rebuild))",
+        "IRLS-13 (remainder re-owned by the integrator 2026-10-02 at the I-03 merge: done-when 2's orchestrator half — app/api/orchestrator/route.ts switches from loadAnswerSkillsBlock to loadAnswerSkills (lib/answerSkillsServer.ts), returns `skills`, and the orchestrator's answer surface names them, as the ask route does)"
       ],
       "files": [
         "app/(protected)/knowledge/[id]/page.tsx (the Ask header's empty state)",
@@ -1085,6 +1090,7 @@
     "ING-4": "paste 20261122 (then a controller presses the re-index button per DEC-58)",
     "ING-7": "paste 20261122",
     "SEM-9": "paste 20261121 and send back its last row (recall@12 vs exact scan; >= 0.90 closes it, below turns it back into code work)",
-    "GAP-305": "paste 20261138, run the unit-identity decode on /admin/scope, paste 20261138 again and send back the disagreement inventory"
+    "GAP-305": "paste 20261138, run the unit-identity decode on /admin/scope, paste 20261138 again and send back the disagreement inventory",
+    "PR-9": "decide done-when 2 (DEC-83 item 6): re-derive the model's arithmetic server-side (an evaluator for the transcribed formula and inputs), or stop presenting the model's computed number as the answer (show the formula and inputs, withhold the result); the label 'arithmetic: unverified' is done-when 1 and has landed"
   }
 }

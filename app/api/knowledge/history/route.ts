@@ -42,12 +42,22 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { loadPrincipal } from "@/lib/knowledgeAccess";
 import {
-  citedKnowledgeDocIds, isUuid, planVisibleHistory, readableKnowledgeDocIds, type StoredAnswerRow,
+  citedKnowledgeDocIds, contextKnowledgeDocIds, isUuid, planVisibleHistory, knowledgeDocAccess,
+  type StoredAnswerRow,
 } from "@/lib/knowledgeHistory";
+import { columnsMissing } from "@/lib/knowledgeAskGuards";
 
 export const runtime = "nodejs";
 
+/** `context` (20261153, intelligence Round G I-03) records every knowledge
+ *  document that reached the model for an answer; a database without it
+ *  reads the columns before it, and its rows are judged by their citations. */
+const CONTEXT_COLUMNS = "id, org_id, library_id, thread_id, user_id, user_name, question, answer, citations, mode, created_at, context";
 const COLUMNS = "id, org_id, library_id, thread_id, user_id, user_name, question, answer, citations, mode, created_at";
+/** A database without thread_id / mode (before 20261008 / 20260912) — with
+ *  `context` when it has that column, so its rows are still judged by
+ *  everything that reached the model. */
+const CORE_CONTEXT_COLUMNS = "id, org_id, library_id, user_id, user_name, question, answer, citations, created_at, context";
 const CORE_COLUMNS = "id, org_id, library_id, user_id, user_name, question, answer, citations, created_at";
 
 /** Ask memory: the default number of matches, the page it reads them in, and
@@ -60,10 +70,16 @@ function bad(msg: string, status = 400) {
   return NextResponse.json({ error: msg }, { status });
 }
 
-/** Pre-migration databases lack thread_id / mode (20261008 / 20260912): read
- *  the core set instead of failing the whole history. */
-const missingColumn = (e: { code?: string; message?: string } | null) =>
-  !!e && (e.code === "42703" || e.code === "PGRST204" || /thread_id|mode/.test(e.message ?? ""));
+/** A database before 20261153: the `context` column is missing — an
+ *  undefined column (42703) or schema-cache miss (PGRST204) NAMING it. */
+const missingContext = (e: { code?: string; message: string } | null) => columnsMissing(e, "context");
+/** A database before 20261008 / 20260912: thread_id or mode is missing —
+ *  named the same way. Only these two take a reduced column set; any other
+ *  error (a timeout, an ambiguous column, a miss on another column) answers
+ *  500 with no rows, never rows read without their context (I-03 fix pass
+ *  5: any 42703, any PGRST204 or any message mentioning "mode" used to
+ *  re-read WITHOUT context, so a row was judged by its citations alone). */
+const missingThreadColumns = (e: { code?: string; message: string } | null) => columnsMissing(e, "thread_id", "mode");
 
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -97,11 +113,24 @@ export async function POST(req: NextRequest) {
   type Read = { rows: StoredAnswerRow[]; error: string | null };
   const base = (columns: string) => supabaseAdmin.from("knowledge_questions").select(columns)
     .eq("org_id", orgId).eq("library_id", libraryId);
+  // Which column set this database answers to (context first: 20261153).
+  let columns = CONTEXT_COLUMNS;
   const run = async (
     build: (columns: string) => PromiseLike<{ data: unknown; error: { code?: string; message: string } | null }>,
   ): Promise<Read> => {
-    let res = await build(COLUMNS);
-    if (missingColumn(res.error)) res = await build(CORE_COLUMNS);
+    let res = await build(columns);
+    if (columns === CONTEXT_COLUMNS && missingContext(res.error)) {
+      columns = COLUMNS;
+      res = await build(columns);
+    }
+    if ((columns === CONTEXT_COLUMNS || columns === COLUMNS) && missingThreadColumns(res.error)) {
+      columns = columns === CONTEXT_COLUMNS ? CORE_CONTEXT_COLUMNS : CORE_COLUMNS;
+      res = await build(columns);
+    }
+    if (columns === CORE_CONTEXT_COLUMNS && missingContext(res.error)) {
+      columns = CORE_COLUMNS;
+      res = await build(columns);
+    }
     if (res.error) return { rows: [], error: res.error.message };
     return { rows: (res.data ?? []) as StoredAnswerRow[], error: null };
   };
@@ -121,10 +150,15 @@ export async function POST(req: NextRequest) {
     const CONTEXT_PAGE = 1000;
     for (let i = 0; i < threadIds.length; i += 10) {
       const chunk = threadIds.slice(i, i + 10);
-      const { data, error } = await supabaseAdmin.from("knowledge_questions").select(COLUMNS)
+      const threadRead = (cols: string) => supabaseAdmin.from("knowledge_questions").select(cols)
         .eq("org_id", orgId).eq("library_id", libraryId)
         .in("thread_id", chunk)
         .order("created_at", { ascending: true }).limit(CONTEXT_PAGE);
+      let { data, error } = await threadRead(columns);
+      if (error && columns === CONTEXT_COLUMNS && missingContext(error)) {
+        columns = COLUMNS;
+        ({ data, error } = await threadRead(columns));
+      }
       if (error) throw new Error(error.message);
       const got = (data ?? []) as unknown as StoredAnswerRow[];
       threadRows.push(...got);
@@ -133,9 +167,16 @@ export async function POST(req: NextRequest) {
         for (const t of chunk) unseenAfter.set(t, last);
       }
     }
-    const cited = [...rows, ...threadRows].flatMap((r) => citedKnowledgeDocIds(r.citations));
-    const readable = await readableKnowledgeDocIds(principal, cited);
-    const plan = planVisibleHistory(rows, threadRows, readable, user.id);
+    // Every document a row cites AND every document its recorded context says
+    // reached the model (ASK-1 / KACL-1 / IEDGE-5) is judged for this reader;
+    // a context document deleted since withholds a teammate's view, never the
+    // asker's own row — and nobody's when the row records it as an upload
+    // (lib/knowledgeHistory planVisibleHistory).
+    const cited = [...rows, ...threadRows].flatMap((r) => [
+      ...citedKnowledgeDocIds(r.citations), ...contextKnowledgeDocIds(r.context),
+    ]);
+    const { readable, gone } = await knowledgeDocAccess(principal, cited);
+    const plan = planVisibleHistory(rows, threadRows, readable, user.id, gone);
     const unchecked = (r: StoredAnswerRow) =>
       !!r.thread_id && unseenAfter.has(r.thread_id) && r.created_at > (unseenAfter.get(r.thread_id) as string);
     const visible = plan.visible.filter((r) => !unchecked(r));
@@ -165,9 +206,14 @@ export async function POST(req: NextRequest) {
       const page = async (from: number): Promise<Read> => {
         const to = from + SEARCH_PAGE - 1;
         if (fts) {
-          const res = await base(COLUMNS)
+          const search = (cols: string) => base(cols)
             .textSearch("search_tsv", q, { type: "websearch", config: "english" })
             .order("created_at", { ascending: false }).order("id", { ascending: false }).range(from, to);
+          let res = await search(columns);
+          if (res.error && columns === CONTEXT_COLUMNS && missingContext(res.error)) {
+            columns = COLUMNS;
+            res = await search(columns);
+          }
           if (!res.error) return { rows: (res.data ?? []) as unknown as StoredAnswerRow[], error: null };
           if (from > 0) return { rows: [], error: res.error.message };
           fts = false;
@@ -192,6 +238,43 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // IEDGE-4: an answer whose cited mirror has been revised since it was
+  // given is badged — its quotes and pages are the old revision's. The sync
+  // re-points a mirror when its controlled document's VERSION changes
+  // (source_version_id), so the version a citation recorded is compared; a
+  // citation that recorded only the revision label compares the label. A
+  // cited document that no longer exists is not "revised" and is not badged.
+  // Read only for citations that recorded either (since I-03); a database
+  // without the source columns (pre-20260917) badges nothing.
+  type Pin = { documentId?: unknown; sourceRev?: unknown; sourceVersionId?: unknown };
+  const pinsOf = (r: StoredAnswerRow): Array<Pin & { documentId: string }> =>
+    (Array.isArray(r.citations) ? r.citations as Pin[] : []).filter((c): c is Pin & { documentId: string } =>
+      typeof c?.documentId === "string" && isUuid(c.documentId)
+      && (typeof c.sourceVersionId === "string" || typeof c.sourceRev === "string"));
+  const revised = new Set<string>();
+  {
+    const ids = [...new Set(visible.flatMap((r) => pinsOf(r).map((c) => c.documentId)))];
+    const current = new Map<string, { rev: string | null; version: string | null }>();
+    let readable = true;
+    for (let i = 0; i < ids.length && readable; i += 100) {
+      const { data, error } = await supabaseAdmin.from("knowledge_documents")
+        .select("id, source_rev, source_version_id").in("id", ids.slice(i, i + 100));
+      if (error) { readable = false; break; }
+      for (const d of (data ?? []) as Array<{ id: string; source_rev: string | null; source_version_id: string | null }>) {
+        current.set(d.id, { rev: d.source_rev ?? null, version: d.source_version_id ?? null });
+      }
+    }
+    const revisedSince = (c: Pin & { documentId: string }): boolean => {
+      const now = current.get(c.documentId);
+      if (!now) return false;
+      if (typeof c.sourceVersionId === "string" && now.version) return now.version !== c.sourceVersionId;
+      return typeof c.sourceRev === "string" && now.rev !== c.sourceRev;
+    };
+    if (readable) {
+      for (const r of visible) if (pinsOf(r).some(revisedSince)) revised.add(r.id);
+    }
+  }
+
   return NextResponse.json({
     rows: visible.map((r) => ({
       id: r.id,
@@ -206,6 +289,7 @@ export async function POST(req: NextRequest) {
       // Continuing a conversation keeps its thread only when it is the
       // reader's own; a teammate's turns seed a NEW conversation.
       mine: !!r.user_id && r.user_id === user.id,
+      ...(revised.has(r.id) ? { revisedSince: true } : {}),
     })),
     // Never for a search: a count of withheld MATCHES is an oracle over the
     // text of answers the reader may not see.

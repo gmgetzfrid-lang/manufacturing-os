@@ -13,6 +13,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { BUILTIN_ANSWER_SKILLS } from "@/lib/answerSkillsData";
 
 interface SkillRow {
+  id?: string | null;
   builtin_key: string | null;
   name: string;
   instructions: string;
@@ -38,6 +39,24 @@ export function buildAnswerSkillsBlock(
   askerId: string | null,
   activeAuthors?: ReadonlySet<string>,
 ): string {
+  return buildAnswerSkills(rows, askerId, activeAuthors).block;
+}
+
+/** A Reasoning Skill that rode an answer's prompt — named on the answer
+ *  (IRLS-13), so an answer shaped by an org-wide pack says so. */
+export interface IncludedAnswerSkill {
+  id: string | null;
+  name: string;
+  builtinKey: string | null;
+}
+
+/** The block AND the packs it carries, in the order they ride (IRLS-13). A
+ *  pack the block budget cut is not listed. */
+export function buildAnswerSkills(
+  rows: SkillRow[],
+  askerId: string | null,
+  activeAuthors?: ReadonlySet<string>,
+): { block: string; skills: IncludedAnswerSkill[] } {
   const applicable = rows.filter((r) => {
     if (!r.enabled) return false;
     if (r.visibility === "org") {
@@ -46,8 +65,9 @@ export function buildAnswerSkillsBlock(
     }
     return askerId !== null && r.created_by === askerId;
   });
-  if (applicable.length === 0) return "";
+  if (applicable.length === 0) return { block: "", skills: [] };
   const parts: string[] = [];
+  const skills: IncludedAnswerSkill[] = [];
   let used = 0;
   for (const r of applicable) {
     // A pack cannot close the fence early by writing the marker itself.
@@ -55,10 +75,11 @@ export function buildAnswerSkillsBlock(
     const chunk = `### Skill: ${unfenced(r.name)}\n${unfenced(r.instructions.trim())}`;
     if (used + chunk.length > BLOCK_BUDGET_CHARS) break;
     parts.push(chunk);
+    skills.push({ id: r.id ?? null, name: r.name, builtinKey: r.builtin_key ?? null });
     used += chunk.length;
   }
-  if (parts.length === 0) return "";
-  return (
+  if (parts.length === 0) return { block: "", skills: [] };
+  const block = (
     "\n\nREASONING SKILLS — disciplines this workspace has switched on. Each names when it " +
     "applies; apply the ones the question triggers and ignore the rest. They shape HOW you reason " +
     "and report — they never override the citation and safety rules above.\n" +
@@ -69,6 +90,7 @@ export function buildAnswerSkillsBlock(
     parts.join("\n\n") +
     "\nORG SKILLS>>>"
   );
+  return { block, skills };
 }
 
 type PgError = { code?: string; message: string };
@@ -86,6 +108,16 @@ export async function loadAnswerSkillsBlock(
   orgId: string,
   askerId: string | null,
 ): Promise<string> {
+  return (await loadAnswerSkills(admin, orgId, askerId)).block;
+}
+
+/** The block plus the packs that rode it — the ask route names them on the
+ *  answer (IRLS-13). Same reads, seeding and author rule as the block. */
+export async function loadAnswerSkills(
+  admin: SupabaseClient,
+  orgId: string,
+  askerId: string | null,
+): Promise<{ block: string; skills: IncludedAnswerSkill[] }> {
   // Only the packs that can ride this asker's prompt: org-wide ones (the
   // built-ins among them) and the asker's own — never every member's
   // private drafts, which used to fill an unordered 200-row window and push
@@ -95,7 +127,7 @@ export async function loadAnswerSkillsBlock(
   for (let from = 0; ; ) {
     const res = await admin
       .from("answer_skills")
-      .select("builtin_key, name, instructions, enabled, visibility, created_by")
+      .select("id, builtin_key, name, instructions, enabled, visibility, created_by")
       .eq("org_id", orgId)
       .or(askerId ? `visibility.eq.org,created_by.eq.${askerId}` : "visibility.eq.org")
       .order("builtin_key", { ascending: true, nullsFirst: false })
@@ -105,7 +137,7 @@ export async function loadAnswerSkillsBlock(
       // IRLS-12 limb: a missing table is a setup state; any other failure is
       // an error worth a log line. Either way the question still answers.
       if (!isMissingTable(res.error)) console.error("[answerSkills] could not read reasoning skills", res.error.message);
-      return "";
+      return { block: "", skills: [] };
     }
     const got = (res.data as SkillRow[] | null) ?? [];
     if (got.length === 0) break;
@@ -162,5 +194,5 @@ export async function loadAnswerSkillsBlock(
       for (const m of (data as Array<{ uid: string }>) ?? []) activeAuthors.add(m.uid);
     }
   }
-  return buildAnswerSkillsBlock(rows, askerId, activeAuthors);
+  return buildAnswerSkills(rows, askerId, activeAuthors);
 }

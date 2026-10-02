@@ -469,7 +469,8 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
       title: "Remove your embeddings key?",
       message:
         "Meaning-based search stops for you; keyword search is unaffected. Vectors already built "
-        + "stay in place and start working again as soon as you add a key back.",
+        + "stay in place, but they work again only with a key for the provider that built them — "
+        + "a key for another provider cannot search them until the library's index is rebuilt with it.",
       confirmLabel: "Remove key",
     });
     if (!ok) return;

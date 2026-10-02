@@ -9,23 +9,43 @@
 // (loadPrincipal + readableControlledDocIds — never a parallel evaluator).
 //
 // The rule, fail-safe for what a row records: an answer is as restricted as
-// its most restricted CITED source. A row is shown only when every document
-// it cites resolves, now, to a document the reader may read (a row does not
-// record passages retrieved but not cited, nor drawing facts — until the ask
-// route records them, an answer citing some readable documents is judged by
-// those alone; ASK-1 / KACL-1 / IEDGE-5 stay open on it):
+// its most restricted SOURCE. A row is shown only when every document it
+// cites — and, on a row the ask route wrote with its context (20261153,
+// intelligence Round G I-03), every knowledge document whose passages, legend
+// text, page images or drawing facts reached the model — resolves, now, to a
+// document the reader may read. A row whose context could not be recorded in
+// full (more documents than ANSWER_CONTEXT_DOC_CAP) or whose conversation
+// history came from the client unverified (ASK-5) proves nothing about its
+// sources and is its asker's alone. A context document deleted since (held
+// back from the AI, removed by a sync, deleted by a member, replaced by its
+// next revision) cannot be judged any more:
+//   - one the row records as an UPLOAD (`uploads`, I-03 fix pass 5) was
+//     readable by every member when the answer was given (uploads are
+//     org-readable by design — DEC-83 item 1 / KACL-6), so its
+//     deletion withholds nobody's view;
+//   - any other (a MIRROR, whose controlled document's ACL can no longer be
+//     read, or a document the row does not record as an upload) proves
+//     nothing to a teammate, so their view is withheld; its asker read it
+//     when the answer was given, so it never hides the asker's own row (they
+//     read their own rows directly anyway — knowledge_questions_select).
+// A row written before
+// 20261153 carries no context and is judged by what it cites, as before:
 //   - an upload-origin knowledge document of the reader's org — readable (the
 //     same content as the PDF every member can open, by design);
 //   - a mirror of a controlled document — readable when
 //     readableControlledDocIds admits its controlled document;
 //   - anything else (a knowledge document since deleted or held back from the
 //     AI, another org's id, a malformed id) — NOT readable: nothing proves it.
-// A library answer that cites NO document proves nothing about its sources:
-// the model may have answered from retrieved passages without a [n] marker
-// (or with invented markers the ask route stripped), and a "Nothing matches"
-// row names the asker's own indexing gaps. The row records only what it
-// cites, so such a row is shown to its asker alone (and to controllers). An
-// internet-mode answer (web sources only) is shown to everyone.
+// A library answer that cites NO document, on a row written without its
+// context, proves nothing about its sources: the model may have answered from
+// retrieved passages without a [n] marker (or with invented markers the ask
+// route stripped), and a "Nothing matches" row names the asker's own indexing
+// gaps. Such a row records only what it cites, so it is shown to its asker
+// alone (and to controllers). A row WITH its context (the ask route writes
+// one on every library answer, "Nothing matches" included, since I-03) is
+// judged by that context like any other — every document that reached the
+// model readable. An internet-mode answer (web sources only) is shown to
+// everyone.
 // A conversation carries its earlier turns into every later answer (the ask
 // sends them back as context), so once a turn is withheld every later turn
 // of the same thread is withheld too. A conversation continued from someone
@@ -51,6 +71,62 @@ export interface StoredAnswerRow {
   citations?: unknown;
   mode?: string | null;
   created_at: string;
+  /** knowledge_questions.context (20261153) — what reached the model. */
+  context?: unknown;
+}
+
+/** The most knowledge documents one row's context records. A larger set is
+ *  recorded as incomplete, which keeps the row its asker's alone. */
+export const ANSWER_CONTEXT_DOC_CAP = 2000;
+
+/** knowledge_questions.context, as the ask route writes it (ASK-1 / KACL-1 /
+ *  IEDGE-5, ASK-3, ASK-5, PR-9, IRLS-13; migration 20261153). */
+export interface AnswerContext {
+  v: 1;
+  /** Every knowledge document whose passages, legend text, page images or
+   *  drawing facts reached the model for this answer. */
+  documents: string[];
+  /** Those of `documents` that were UPLOADS (no controlled document behind
+   *  them — readable by every member) when the answer was given (I-03 fix
+   *  pass 5). Deleting one later withholds no reader's view; a recorded
+   *  document NOT listed here that is gone withholds a teammate's view. A
+   *  context without the list treats every gone document as a possible
+   *  mirror (fail-safe). */
+  uploads?: string[];
+  /** False when there were more than ANSWER_CONTEXT_DOC_CAP of them. */
+  complete: boolean;
+  /** Where the conversation context came from: the record of the asker's own
+   *  thread, unverified client input, or none. */
+  history: "none" | "thread" | "client";
+  /** ASK-3: the answer stopped at the model's length limit. */
+  partial?: boolean;
+  /** PR-9: the answer carries arithmetic nothing re-derived. */
+  arithmetic?: "unverified";
+  /** IRLS-13: the Reasoning Skills that rode the prompt. */
+  skills?: string[];
+}
+
+/** Read a stored context; null for a row written before 20261153 (or a value
+ *  that is not one) — such a row is judged by its citations alone. */
+export function parseAnswerContext(raw: unknown): AnswerContext | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const c = raw as Record<string, unknown>;
+  if (!Array.isArray(c.documents)) return null;
+  return {
+    v: 1,
+    documents: c.documents.filter((d): d is string => typeof d === "string" && d.length > 0),
+    complete: c.complete === true,
+    history: c.history === "thread" || c.history === "client" ? c.history : "none",
+    ...(Array.isArray(c.uploads) ? { uploads: c.uploads.filter((d): d is string => typeof d === "string" && d.length > 0) } : {}),
+    ...(c.partial === true ? { partial: true } : {}),
+    ...(c.arithmetic === "unverified" ? { arithmetic: "unverified" as const } : {}),
+    ...(Array.isArray(c.skills) ? { skills: c.skills.filter((x): x is string => typeof x === "string") } : {}),
+  };
+}
+
+/** The knowledge documents a stored row's context says reached the model. */
+export function contextKnowledgeDocIds(raw: unknown): string[] {
+  return parseAnswerContext(raw)?.documents ?? [];
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -83,19 +159,44 @@ const byTime = (a: StoredAnswerRow, b: StoredAnswerRow) =>
  * withheld, because the earlier answer rode along as its context.
  * `readerUid` is the reader: a library answer citing no document is shown to
  * its asker only (null = nobody's own — every such row is withheld).
+ * `gone` are the ids that resolve to no knowledge document at all
+ * (`knowledgeDocAccess`): a recorded CONTEXT document among them does not
+ * withhold the reader's own row, nor anyone's when the row records it as an
+ * upload (`uploads` — every member could read it when the answer was given);
+ * any other one still withholds a teammate's view.
  */
 export function planVisibleHistory(
   rows: readonly StoredAnswerRow[],
   threadRows: readonly StoredAnswerRow[],
   readable: ReadonlySet<string>,
   readerUid: string | null,
+  gone: ReadonlySet<string> = new Set(),
 ): { visible: StoredAnswerRow[]; withheld: StoredAnswerRow[] } {
   const citesUnreadable = (r: StoredAnswerRow) => {
     const cited = citedKnowledgeDocIds(r.citations);
     if (cited.some((id) => !readable.has(id))) return true;
-    // Nothing cited: a web answer is safe; a library answer proves nothing
-    // about the passages it was built from, so only its asker sees it.
-    if (cited.length === 0 && r.mode !== "internet") return !readerUid || r.user_id !== readerUid;
+    const ownRow = !!readerUid && r.user_id === readerUid;
+    // What reached the model, recorded since 20261153: every one must be
+    // readable too, and a context that is incomplete or rests on unverified
+    // client history proves nothing, so only its asker sees the row. A
+    // context document deleted since cannot be judged now: one recorded as an
+    // upload was every member's to read when the answer was given, so it
+    // withholds no one (I-03 fix pass 5 — before, replacing any one tagged
+    // upload hid every answer that carried the drawing facts from the whole
+    // team); any other withholds a teammate's view, never the asker's own row.
+    const ctx = parseAnswerContext(r.context);
+    if (ctx) {
+      const wasUpload = new Set(ctx.uploads ?? []);
+      const judgedGone = (id: string) => gone.has(id) && (ownRow || wasUpload.has(id));
+      if (ctx.documents.some((id) => !readable.has(id) && !judgedGone(id))) return true;
+      if ((!ctx.complete || ctx.history === "client") && !ownRow) return true;
+    }
+    // Nothing cited: a web answer is safe; a library answer WITHOUT a
+    // recorded context proves nothing about the passages it was built from,
+    // so only its asker sees it. One with a context ("Nothing matches", or an
+    // answer that cited nothing) has just been judged by everything that
+    // reached the model — the same proof a citing answer gets.
+    if (cited.length === 0 && r.mode !== "internet" && !ctx) return !ownRow;
     return false;
   };
 
@@ -123,8 +224,28 @@ export function planVisibleHistory(
   return { visible, withheld };
 }
 
+/** What a reader may do with a set of knowledge-document ids now. */
+export interface KnowledgeDocAccess {
+  /** The ids the reader may read. */
+  readable: Set<string>;
+  /** The uuid-shaped ids that resolve to no knowledge document at all —
+   *  deleted since (an exclusion from the AI, a sync removal, a member's
+   *  delete). Never readable; see planVisibleHistory for what they withhold. */
+  gone: Set<string>;
+}
+
+/** Which of these knowledge-document ids may the principal read now — the
+ *  readable set of `knowledgeDocAccess`, with the same failure rules. */
+export async function readableKnowledgeDocIds(
+  principal: KnowledgePrincipal,
+  kdocIds: readonly string[],
+): Promise<Set<string>> {
+  return (await knowledgeDocAccess(principal, kdocIds)).readable;
+}
+
 /**
- * Which of these knowledge-document ids may the principal read now? Throws on
+ * Which of these knowledge-document ids may the principal read now, and which
+ * no longer exist? Throws on
  * a failed read of knowledge_documents — the caller fails CLOSED (serves
  * nothing) rather than serving an unfiltered answer. A failed read of the
  * controlled documents themselves admits none of them (closed).
@@ -140,13 +261,14 @@ export function planVisibleHistory(
  * again here, a failure throws (closed), and the mirrors are judged with the
  * teams actually read — until loadPrincipal throws on that read (handed over).
  */
-export async function readableKnowledgeDocIds(
+export async function knowledgeDocAccess(
   principal: KnowledgePrincipal,
   kdocIds: readonly string[],
-): Promise<Set<string>> {
+): Promise<KnowledgeDocAccess> {
   const readable = new Set<string>();
+  const gone = new Set<string>();
   const ids = [...new Set(kdocIds)].filter(isUuid);
-  if (ids.length === 0) return readable;
+  if (ids.length === 0) return { readable, gone };
 
   const rows: Array<{ id: string; org_id: string; source_document_id: string | null }> = [];
   for (let i = 0; i < ids.length; i += 100) {
@@ -157,6 +279,8 @@ export async function readableKnowledgeDocIds(
     if (error) throw new Error(`knowledge documents unreadable: ${error.message}`);
     rows.push(...((data ?? []) as typeof rows));
   }
+  const found = new Set(rows.map((r) => r.id));
+  for (const id of ids) if (!found.has(id)) gone.add(id);
 
   const mirrors = new Map<string, string>(); // knowledge doc id → controlled doc id
   for (const r of rows) {
@@ -173,7 +297,7 @@ export async function readableKnowledgeDocIds(
     const ok = await readableControlledDocIds(reader, [...new Set(mirrors.values())]);
     for (const [kid, dcId] of mirrors) if (ok.has(dcId)) readable.add(kid);
   }
-  return readable;
+  return { readable, gone };
 }
 
 /** The two reads loadDcLandscape depends on and does not check: the org's
