@@ -124,9 +124,9 @@ export interface PriorSupersessionFields {
  *
  *  REV-23 (P19): the status put-back goes through put_back_retired_issue
  *  (20261165) — the same write, run as the caller, recorded
- *  (REV_HOLD_OVERRIDDEN) when Document Control puts a held source back into
- *  the issue the split / merge stamped, which the guard no longer admits
- *  bare — and the direct write only while the function is absent. */
+ *  (REV_HOLD_OVERRIDDEN) when Document Control puts a held source it retired
+ *  back into the issue the split / merge stamped, which the guard no longer
+ *  admits bare — and the direct write only while the function is absent. */
 export async function restoreSupersededSource(
   sourceDocId: string,
   priorStatus: string,
@@ -135,10 +135,12 @@ export async function restoreSupersededSource(
   prior: PriorSupersessionFields = {},
 ): Promise<void> {
   const now = new Date().toISOString();
+  // The rollback puts back the state from before the flip: it asks for the
+  // pass — given only for the retirement this actor just made.
   const door = await putBackRetiredIssue({
     documentId: sourceDocId, status: priorStatus, door: "lifecycle_rollback",
     reason: "A split or merge that retired this document did not complete; its rollback put the document back.",
-    supersession: prior,
+    supersession: prior, forceHold: true,
   });
   if (door.kind === "refused") {
     throw new Error(`source ${sourceDocId} is still Superseded — restore it to ${priorStatus} (${door.reason})`);

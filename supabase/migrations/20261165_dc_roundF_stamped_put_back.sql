@@ -31,11 +31,20 @@
 --               lib/documentLifecycle/common.ts restoreSupersededSource,
 --               'reversal_rollback' lib/documentLifecycle/reverse.ts
 --               putStatusBack). When the caller is Document Control
---               (is_org_controller), the document is in the retirement that
---               door leaves (Archived for the un-archive, Superseded for the
---               rollbacks), its stamp names its current revision, the status
---               asked is an issue status and an active hold stands — exactly
---               the write the guard below now refuses bare — it sets the
+--               (is_org_controller) and asks for the force (p_force_hold —
+--               never implied: the un-archive dialog passes it only after
+--               Document Control has seen the active holds and confirmed
+--               restoring over them; the rollbacks pass it, as they put back
+--               the state from before the operation), the document is in
+--               the retirement that door leaves (Archived for the
+--               un-archive, Superseded for the rollbacks), for a rollback
+--               that retirement is the caller's own (superseded_by_user is
+--               the session — every app retirement these rollbacks undo is
+--               written by the same actor in the same flow, so the recorded
+--               door names a rollback only where one can be), its stamp
+--               names its current revision, the status asked is an issue
+--               status and an active hold stands — exactly the write the
+--               guard below now refuses bare — it sets the
 --               transaction-local flag app.publish_hold_override to the
 --               document's id immediately before that write, clears it
 --               immediately after, and records the pass in the same
@@ -43,8 +52,10 @@
 --               the reason, the stamp, the revision, the prior and new
 --               status), as publish_revision's, finalize_reviewed_promote's
 --               and restore_reversed_source's recorded forces do — and
---               answers restored_over_hold. Anyone else's call is exactly the
---               bare write (no flag, no record; it answers restored);
+--               answers restored_over_hold. Anyone else's call — and any
+--               call without p_force_hold, or a rollback of a retirement
+--               someone else made — is exactly the bare write (no flag, no
+--               record; it answers restored, or the guard refuses it);
 --           (2) enforce_document_publish_guard binds the stamped put-back
 --               too: a controller's v_restoring write WITHOUT the flag naming
 --               that document is the new door — refused over an active hold
@@ -84,7 +95,8 @@
 -- counts only, captured BEFORE the transaction): the retired documents whose
 -- stamp names their current revision (the stamped put-back's population);
 -- those of them under an active hold now; of those held ones, the Archived
--- (the un-archive dialog restores them through the recorded door), the
+-- (the un-archive dialog restores them through the recorded door, once
+-- Document Control confirms restoring over the hold it shows), the
 -- Superseded (a failed operation's rollback or the reversal puts one back
 -- through a recorded door; a status edit into an issue now needs the hold
 -- released) and the Void (no recorded door — the hold released first);
@@ -153,7 +165,7 @@ SELECT 'inventory (before apply): of those, under an active hold now (Document C
        COUNT(*)::text
   FROM stamped WHERE held
 UNION ALL
-SELECT 'inventory (before apply): of those held ones, Archived (the un-archive dialog restores one through the recorded door)',
+SELECT 'inventory (before apply): of those held ones, Archived (the un-archive dialog restores one through the recorded door, once Document Control confirms restoring over the hold it shows)',
        COUNT(*)::text
   FROM stamped WHERE held AND status = 'Archived'
 UNION ALL
@@ -184,6 +196,7 @@ CREATE OR REPLACE FUNCTION put_back_retired_issue(
   p_status text,
   p_via text,
   p_reason text DEFAULT NULL,
+  p_force_hold boolean DEFAULT false,
   p_superseded_at timestamptz DEFAULT NULL,
   p_superseded_by_user uuid DEFAULT NULL,
   p_supersession_reason text DEFAULT NULL,
@@ -199,6 +212,7 @@ DECLARE
   v_stamped uuid;
   v_version uuid;
   v_rev     text;
+  v_retired_by uuid;
   v_forced  boolean := false;
   v_n       integer;
 BEGIN
@@ -218,8 +232,8 @@ BEGIN
   END IF;
 
   -- The document, as the caller sees it.
-  SELECT true, d.org_id, d.status, d.retired_issue_status, d.retired_issue_version_id, d.current_version_id, d.rev
-    INTO v_found, v_org, v_status, v_stamp, v_stamped, v_version, v_rev
+  SELECT true, d.org_id, d.status, d.retired_issue_status, d.retired_issue_version_id, d.current_version_id, d.rev, d.superseded_by_user
+    INTO v_found, v_org, v_status, v_stamp, v_stamped, v_version, v_rev, v_retired_by
     FROM documents d WHERE d.id = p_document_id;
   IF v_found IS NULL THEN
     RETURN 'no_match';
@@ -231,13 +245,22 @@ BEGIN
   -- retirement took away (the stamp names the current revision, and this
   -- write moves no pointer: v_restoring), out of the retirement this door
   -- leaves (Archived for the un-archive, Superseded for the rollbacks),
-  -- while a hold stands. The issue test is a superset of
+  -- while a hold stands — and only when the caller asks for the force
+  -- (p_force_hold: an override over a hold is chosen, never implied — the
+  -- un-archive dialog sends it only after Document Control confirmed
+  -- restoring over the holds it showed; the rollbacks send it) and, for a
+  -- rollback, only for a retirement the caller made (superseded_by_user =
+  -- the session: the supersede, the split / merge saga and the reversal's
+  -- park all write their actor there, so a 'rollback' in the record is one
+  -- the caller's own retirement can be). The issue test is a superset of
   -- is_controlled_issue_status (whose EXECUTE no client role holds — this
   -- function runs as the caller): it trims spaces only, so a status the
   -- predicate calls an issue is always one here; a status padded with other
   -- whitespace could only record a pass the guard did not need. Anything
   -- else is the bare write below, judged by the guard as before.
-  IF v_status = (CASE WHEN p_via = 'unarchive' THEN 'Archived' ELSE 'Superseded' END)
+  IF COALESCE(p_force_hold, false)
+     AND v_status = (CASE WHEN p_via = 'unarchive' THEN 'Archived' ELSE 'Superseded' END)
+     AND (p_via = 'unarchive' OR v_retired_by = v_uid)
      AND v_stamped IS NOT NULL
      AND v_stamped = v_version
      AND btrim(p_status) NOT IN ('Draft', 'In Review', 'Superseded', 'Void', 'Archived')
@@ -308,12 +331,12 @@ BEGIN
   RETURN CASE WHEN v_forced THEN 'restored_over_hold' ELSE 'restored' END;
 END;
 $$;
-COMMENT ON FUNCTION put_back_retired_issue(uuid, text, text, text, timestamptz, uuid, text, text) IS
-  'REV-23 (20261165): the app''s put-back of a stamped retirement — the un-archive (lib/revisions.ts unarchiveDocument, p_via unarchive) and the rollbacks of a failed supersede, split / merge or reversal (undoFailedSupersede, restoreSupersededSource, the reversal''s putStatusBack; supersede_rollback, lifecycle_rollback, reversal_rollback), each writing the app''s own fields. SECURITY INVOKER: the caller''s row-level policies and trg_document_publish_guard decide the write exactly as for a bare UPDATE. For Document Control putting back into an issue status the revision a stamped retirement took away, out of that door''s retirement, while a hold is active, the write runs under the transaction-local flag app.publish_hold_override (the only way the guard admits a controller''s stamped put-back over a hold) and the pass is recorded as REV_HOLD_OVERRIDDEN in the same transaction. Returns restored_over_hold (that recorded pass), restored (the bare write) or no_match; refuses a call with no session.';
+COMMENT ON FUNCTION put_back_retired_issue(uuid, text, text, text, boolean, timestamptz, uuid, text, text) IS
+  'REV-23 (20261165): the app''s put-back of a stamped retirement — the un-archive (lib/revisions.ts unarchiveDocument, p_via unarchive) and the rollbacks of a failed supersede, split / merge or reversal (undoFailedSupersede, restoreSupersededSource, the reversal''s putStatusBack; supersede_rollback, lifecycle_rollback, reversal_rollback), each writing the app''s own fields. SECURITY INVOKER: the caller''s row-level policies and trg_document_publish_guard decide the write exactly as for a bare UPDATE. For Document Control asking for the force (p_force_hold: the un-archive dialog after an explicit confirmation over the holds it showed; the rollbacks) and putting back into an issue status the revision a stamped retirement took away, out of that door''s retirement (for a rollback, a retirement the caller made: superseded_by_user = the session), while a hold is active, the write runs under the transaction-local flag app.publish_hold_override (the only way the guard admits a controller''s stamped put-back over a hold) and the pass is recorded as REV_HOLD_OVERRIDDEN in the same transaction. Returns restored_over_hold (that recorded pass), restored (the bare write) or no_match; refuses a call with no session.';
 -- DRLS-16: authenticated only (the app's put-backs run in a signed-in
 -- session); the body refuses a NULL uid as well.
-REVOKE ALL ON FUNCTION put_back_retired_issue(uuid, text, text, text, timestamptz, uuid, text, text) FROM PUBLIC, anon, service_role;
-GRANT EXECUTE ON FUNCTION put_back_retired_issue(uuid, text, text, text, timestamptz, uuid, text, text) TO authenticated;
+REVOKE ALL ON FUNCTION put_back_retired_issue(uuid, text, text, text, boolean, timestamptz, uuid, text, text) FROM PUBLIC, anon, service_role;
+GRANT EXECUTE ON FUNCTION put_back_retired_issue(uuid, text, text, text, boolean, timestamptz, uuid, text, text) TO authenticated;
 
 -- ── 2. REV-23: the publish guard — 20261164 body + the P19 block ────────────
 CREATE OR REPLACE FUNCTION enforce_document_publish_guard()
@@ -492,9 +515,12 @@ BEGIN
   -- reversal's un-park (lib/documentLifecycle/reverse.ts putStatusBack) —
   -- now go through put_back_retired_issue (20261165), which sets the
   -- transaction-local flag app.publish_hold_override to the document's id
-  -- around its own status write — for Document Control only, only for the
-  -- put-back of the revision the retirement took away into an issue status,
-  -- only while a hold is active — and records REV_HOLD_OVERRIDDEN in the
+  -- around its own status write — for Document Control only, only when the
+  -- caller asks for the force (p_force_hold: the un-archive dialog after an
+  -- explicit confirmation over the holds it showed; the rollbacks), only for
+  -- the put-back of the revision the retirement took away into an issue
+  -- status (for a rollback, of a retirement the caller made), only while a
+  -- hold is active — and records REV_HOLD_OVERRIDDEN in the
   -- same transaction (the legacy reversal's restore_reversed_source,
   -- 20261164, sets the same flag around its put-back of a held source,
   -- stamped or not). So a controller's stamped put-back without that flag
@@ -883,21 +909,21 @@ SELECT 'the guard is SECURITY DEFINER with search_path pinned, no client role ma
                       AND t.tgrelid = 'documents'::regclass AND p.proname = 'enforce_document_publish_guard'),
        NULL
 UNION ALL
-SELECT 'REV-23 (P19): put_back_retired_issue has one signature (8 arguments), runs as the CALLER (SECURITY INVOKER, search_path pinned); authenticated may execute it, PUBLIC, anon and service_role may not',
+SELECT 'REV-23 (P19): put_back_retired_issue has one signature (9 arguments), runs as the CALLER (SECURITY INVOKER, search_path pinned); authenticated may execute it, PUBLIC, anon and service_role may not',
        (SELECT COUNT(*) FROM pg_proc WHERE proname = 'put_back_retired_issue') = 1
        AND EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-                    WHERE n.nspname = 'public' AND p.proname = 'put_back_retired_issue' AND p.pronargs = 8
+                    WHERE n.nspname = 'public' AND p.proname = 'put_back_retired_issue' AND p.pronargs = 9
                       AND NOT p.prosecdef AND p.proconfig @> ARRAY['search_path=public'] AND p.proacl IS NOT NULL)
-       AND has_function_privilege('authenticated', 'put_back_retired_issue(uuid, text, text, text, timestamptz, uuid, text, text)', 'EXECUTE')
-       AND NOT has_function_privilege('anon', 'put_back_retired_issue(uuid, text, text, text, timestamptz, uuid, text, text)', 'EXECUTE')
-       AND NOT has_function_privilege('service_role', 'put_back_retired_issue(uuid, text, text, text, timestamptz, uuid, text, text)', 'EXECUTE')
+       AND has_function_privilege('authenticated', 'put_back_retired_issue(uuid, text, text, text, boolean, timestamptz, uuid, text, text)', 'EXECUTE')
+       AND NOT has_function_privilege('anon', 'put_back_retired_issue(uuid, text, text, text, boolean, timestamptz, uuid, text, text)', 'EXECUTE')
+       AND NOT has_function_privilege('service_role', 'put_back_retired_issue(uuid, text, text, text, boolean, timestamptz, uuid, text, text)', 'EXECUTE')
        AND NOT EXISTS (SELECT 1 FROM pg_proc p, aclexplode(p.proacl) x
                         WHERE p.proname = 'put_back_retired_issue' AND x.grantee = 0 AND x.privilege_type = 'EXECUTE'),
        NULL
 UNION ALL
-SELECT 'REV-23 (P19): put_back_retired_issue refuses a call with no session, sets the flag only for Document Control''s put-back of a held stamped retirement into an issue status, around its own write, clears it, records REV_HOLD_OVERRIDDEN and answers restored_over_hold',
+SELECT 'REV-23 (P19): put_back_retired_issue refuses a call with no session, sets the flag only for Document Control''s put-back of a held stamped retirement into an issue status when the caller asks for the force (p_force_hold) — for a rollback, of a retirement the caller made — around its own write, clears it, records REV_HOLD_OVERRIDDEN and answers restored_over_hold',
        (SELECT prosrc LIKE '%IF v_uid IS NULL THEN%RAISE EXCEPTION%'
-           AND prosrc LIKE '%IF v_status = (CASE WHEN p_via = ''unarchive'' THEN ''Archived'' ELSE ''Superseded'' END)%AND v_stamped IS NOT NULL%AND v_stamped = v_version%AND btrim(p_status) NOT IN (''Draft'', ''In Review'', ''Superseded'', ''Void'', ''Archived'')%AND is_org_controller(v_org)%AND EXISTS (SELECT 1 FROM document_holds h%v_forced := true;%'
+           AND prosrc LIKE '%IF COALESCE(p_force_hold, false)%AND v_status = (CASE WHEN p_via = ''unarchive'' THEN ''Archived'' ELSE ''Superseded'' END)%AND (p_via = ''unarchive'' OR v_retired_by = v_uid)%AND v_stamped IS NOT NULL%AND v_stamped = v_version%AND btrim(p_status) NOT IN (''Draft'', ''In Review'', ''Superseded'', ''Void'', ''Archived'')%AND is_org_controller(v_org)%AND EXISTS (SELECT 1 FROM document_holds h%v_forced := true;%'
            AND prosrc LIKE '%PERFORM set_config(''app.publish_hold_override'', p_document_id%IF p_via = ''unarchive'' THEN%UPDATE documents%ELSE%UPDATE documents%END IF;%PERFORM set_config(''app.publish_hold_override'', '''', true);%'
            AND prosrc LIKE '%VALUES (''REV_HOLD_OVERRIDDEN''%''via'', p_via%''stampedPutBack'', true%'
            AND prosrc LIKE '%RETURN CASE WHEN v_forced THEN ''restored_over_hold'' ELSE ''restored'' END;%'

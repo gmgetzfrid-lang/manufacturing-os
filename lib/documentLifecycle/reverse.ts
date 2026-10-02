@@ -217,10 +217,13 @@ async function readStatusSnapshot(docId: string): Promise<StatusSnapshot> {
  *  source put back to Superseded is the bare write through it. The direct
  *  write only while the function is absent. */
 async function putStatusBack(docId: string, snap: StatusSnapshot, actorUserId: string): Promise<void> {
+  // The un-park puts back the state from before the park: it asks for the
+  // pass — given only for a park this actor made (parkAsSuperseded writes
+  // the actor as superseded_by_user).
   const door = await putBackRetiredIssue({
     documentId: docId, status: snap.status, door: "reversal_rollback",
     reason: "A reversal that parked this document did not complete; its rollback put the document back.",
-    supersession: snap,
+    supersession: snap, forceHold: true,
   });
   if (door.kind === "landed") return;
   if (door.kind === "refused") throw new Error(`${docId} could not be put back to ${snap.status} (${door.reason})`);

@@ -2087,10 +2087,15 @@ export async function archiveDocument(input: ArchiveInput): Promise<void> {
 // therefore go through put_back_retired_issue (SECURITY INVOKER: the same
 // write, run as the caller under their row-level policies and the guard),
 // which — for Document Control putting back a held stamped retirement into
-// an issue status, and only then — sets the flag around its own write and
-// records REV_HOLD_OVERRIDDEN in the same transaction. Anyone else's call is
-// exactly the bare write. Each caller keeps its own direct write for a
-// database without the function (PGRST202 / 42883), byte for byte as before.
+// an issue status, when the caller asks for the force (forceHold — the
+// un-archive dialog only after Document Control confirmed restoring over the
+// holds it showed; the rollbacks always, as they put back the state from
+// before the operation) and, for a rollback, only for a retirement the
+// caller made (superseded_by_user = the session), and only then — sets the
+// flag around its own write and records REV_HOLD_OVERRIDDEN in the same
+// transaction. Anyone else's call is exactly the bare write. Each caller
+// keeps its own direct write for a database without the function (PGRST202 /
+// 42883), byte for byte as before.
 
 /** Which put-back is being made — put_back_retired_issue's p_via, and the
  *  write it makes: the un-archive's (the archive fields cleared) or a
@@ -2131,14 +2136,18 @@ export function isMissingPutBackRpc(e: { code?: string | null; message?: string 
 /** REV-23 (P19): put a retired document back through put_back_retired_issue
  *  — the write the caller would make (the un-archive's, or a rollback's with
  *  the supersession fields it names), recorded when Document Control puts a
- *  held, stamped retirement back into an issue status. Never throws: the
- *  caller turns `refused` into its own refusal and makes its direct write on
- *  `absent`. */
+ *  held, stamped retirement back into an issue status AND asks for the force
+ *  (`forceHold` — an override over a hold is chosen, never implied: without
+ *  it the write is the bare one, which the guard refuses over a hold for
+ *  Document Control). Never throws: the caller turns `refused` into its own
+ *  refusal and makes its direct write on `absent`. */
 export async function putBackRetiredIssue(input: {
   documentId: string;
   status: string;
   door: RetiredIssuePutBackDoor;
   reason?: string | null;
+  /** Ask for Document Control's recorded pass over an active hold (p_force_hold). */
+  forceHold?: boolean;
   supersession?: PutBackSupersessionFields;
 }): Promise<RetiredIssuePutBack> {
   const s = input.supersession;
@@ -2147,6 +2156,7 @@ export async function putBackRetiredIssue(input: {
     p_status: input.status,
     p_via: input.door,
     p_reason: input.reason?.trim() || null,
+    p_force_hold: input.forceHold === true,
     ...(input.door === "unarchive" ? {} : {
       p_superseded_at: s?.superseded_at ?? null,
       p_superseded_by_user: s?.superseded_by_user ?? null,
@@ -2198,7 +2208,13 @@ export async function unarchiveRestoreDefault(documentId: string): Promise<{
   return { status: "Issued", basis: "unknown" };
 }
 
-export async function unarchiveDocument(input: ArchiveInput & { restoreStatus?: string }): Promise<StatusIssueOutcome> {
+export async function unarchiveDocument(input: ArchiveInput & {
+  restoreStatus?: string;
+  /** REV-23 (P19): Document Control confirmed restoring over the active
+   *  holds the dialog showed — the recorded pass (put_back_retired_issue's
+   *  p_force_hold). Never set without that confirmation. */
+  forceHold?: boolean;
+}): Promise<StatusIssueOutcome> {
   const { doc, reason, orgId, actorUserId, actorEmail, actorRole, restoreStatus } = input;
   if (!doc.id) throw new Error("Document is missing an id");
   if (restoreStatus && !(UNARCHIVE_RESTORE_STATUSES as readonly string[]).includes(restoreStatus)) {
@@ -2215,10 +2231,16 @@ export async function unarchiveDocument(input: ArchiveInput & { restoreStatus?: 
   const notRestored = "The document was NOT restored — you don't have authority to change it, or it is no longer visible to you. Nothing was changed.";
   // REV-23 (P19): through put_back_retired_issue (20261165) — the same write,
   // run as the caller, recorded (REV_HOLD_OVERRIDDEN) when Document Control
-  // un-archives a held, stamped document into an issue status, which the
-  // guard no longer admits bare. Its refusal is this restore's refusal; the
+  // un-archives a held, stamped document into an issue status having
+  // confirmed restoring over the hold (forceHold), which the guard no longer
+  // admits bare. Without that confirmation the write is the bare one — over
+  // a hold the guard refuses it in the new-door sentence, and the dialog
+  // offers the Draft restore. Its refusal is this restore's refusal; the
   // direct write below only while the function is absent.
-  const door = await putBackRetiredIssue({ documentId: doc.id, status: restoredStatus, door: "unarchive", reason: reason?.trim() || "Restored from archive" });
+  const door = await putBackRetiredIssue({
+    documentId: doc.id, status: restoredStatus, door: "unarchive", reason: reason?.trim() || "Restored from archive",
+    forceHold: input.forceHold === true,
+  });
   if (door.kind === "refused") {
     throw new Error(door.noRow ? notRestored : `The document was NOT restored (${door.reason}) — nothing was changed.`);
   }
@@ -2636,9 +2658,12 @@ async function undoFailedSupersede(opts: {
   const { docId, prior, failure } = opts;
   const priorStatus = String(prior.status ?? "Issued");
   let restoreProblem: string | null = null;
+  // The rollback puts back the state from before the supersede (its own
+  // force over a hold, if any, was the supersede's): it asks for the pass —
+  // given only for the retirement this actor just made.
   const door = await putBackRetiredIssue({
     documentId: docId, status: priorStatus, door: "supersede_rollback",
-    reason: `The supersede was rolled back: ${failure.message}`, supersession: prior,
+    reason: `The supersede was rolled back: ${failure.message}`, supersession: prior, forceHold: true,
   });
   if (door.kind === "refused") restoreProblem = door.reason;
   if (door.kind === "absent") {

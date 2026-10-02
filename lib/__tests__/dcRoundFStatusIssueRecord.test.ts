@@ -40,7 +40,11 @@ vi.mock("@/lib/supabase", () => ({
     return {
       ...real,
       // REV-23 (P19): a database before 20261165 has no put_back_retired_issue — the un-archive is then the direct write these tests pin (the recorded door is driven in dcRoundFStampedPutBack.test.ts).
-      rpc: async (fn: string) => ({ data: null, error: { code: "PGRST202", message: `Could not find the function public.${fn}` } }),
+      // Only that function answers (P19 review fix): any other RPC fails loudly, as it did before this mock had an rpc at all, so a new one cannot hide here.
+      rpc: async (fn: string) => {
+        if (fn !== "put_back_retired_issue") throw new Error(`rpc ${fn} is not mocked in this test`);
+        return { data: null, error: { code: "PGRST202", message: `Could not find the function public.${fn}` } };
+      },
       from: (t: string) => {
         const b = real.from(t) as unknown as { select: (c: string) => unknown; update: (p: Row) => unknown };
         if (t === "document_review_signoffs" && state.failSignoffsRead) {

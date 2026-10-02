@@ -13,6 +13,13 @@
 //   included). On a database without the function (PGRST202 / 42883) each
 //   put-back is the direct write it always was.
 //
+//   P19 review fix: the door forces only when the caller asks for it
+//   (p_force_hold — the un-archive dialog after Document Control confirmed
+//   restoring over the holds it showed; the rollbacks always), and a
+//   rollback only for a retirement the caller made (superseded_by_user = the
+//   session), so an override is never implied and a recorded "rollback" is
+//   always one the caller's own retirement can be.
+//
 // There is no database here: enforce_document_publish_guard (20261165),
 // put_back_retired_issue (20261165) and restore_reversed_source (20261164) are
 // TRANSCRIBED below — each branch pinned to the SQL text it mirrors, in order
@@ -277,6 +284,7 @@ describe("the transcriptions are the SQL's (20261165 / 20261164, in order)", () 
 
   it("the put-back: every branch the RPC transcription mirrors is in put_back_retired_issue, in this order", () => {
     const fragments = [
+      "  p_force_hold boolean DEFAULT false,",
       "LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$",
       "  v_uid     uuid := auth.uid();",
       "  IF v_uid IS NULL THEN\n    RAISE EXCEPTION",
@@ -286,8 +294,8 @@ describe("the transcriptions are the SQL's (20261165 / 20261164, in order)", () 
       `'${S_PB_DOOR}'`,
       "  IF btrim(COALESCE(p_status, '')) = '' THEN",
       `'${S_PB_STATUS}'`,
-      "  SELECT true, d.org_id, d.status, d.retired_issue_status, d.retired_issue_version_id, d.current_version_id, d.rev\n    INTO v_found, v_org, v_status, v_stamp, v_stamped, v_version, v_rev\n    FROM documents d WHERE d.id = p_document_id;\n  IF v_found IS NULL THEN\n    RETURN 'no_match';\n  END IF;",
-      "  IF v_status = (CASE WHEN p_via = 'unarchive' THEN 'Archived' ELSE 'Superseded' END)\n     AND v_stamped IS NOT NULL\n     AND v_stamped = v_version\n     AND btrim(p_status) NOT IN ('Draft', 'In Review', 'Superseded', 'Void', 'Archived')\n     AND is_org_controller(v_org)\n     AND EXISTS (SELECT 1 FROM document_holds h\n                  WHERE h.document_id = p_document_id AND h.released_at IS NULL) THEN\n    v_forced := true;\n  END IF;",
+      "  SELECT true, d.org_id, d.status, d.retired_issue_status, d.retired_issue_version_id, d.current_version_id, d.rev, d.superseded_by_user\n    INTO v_found, v_org, v_status, v_stamp, v_stamped, v_version, v_rev, v_retired_by\n    FROM documents d WHERE d.id = p_document_id;\n  IF v_found IS NULL THEN\n    RETURN 'no_match';\n  END IF;",
+      "  IF COALESCE(p_force_hold, false)\n     AND v_status = (CASE WHEN p_via = 'unarchive' THEN 'Archived' ELSE 'Superseded' END)\n     AND (p_via = 'unarchive' OR v_retired_by = v_uid)\n     AND v_stamped IS NOT NULL\n     AND v_stamped = v_version\n     AND btrim(p_status) NOT IN ('Draft', 'In Review', 'Superseded', 'Void', 'Archived')\n     AND is_org_controller(v_org)\n     AND EXISTS (SELECT 1 FROM document_holds h\n                  WHERE h.document_id = p_document_id AND h.released_at IS NULL) THEN\n    v_forced := true;\n  END IF;",
       "  IF v_forced THEN\n    PERFORM set_config('app.publish_hold_override', p_document_id::text, true);\n  END IF;\n  IF p_via = 'unarchive' THEN\n    UPDATE documents\n       SET status = p_status,\n           archived_at = NULL,\n           archived_by = NULL,\n           archive_reason = NULL,\n           updated_at = now(),\n           updated_by = v_uid\n     WHERE id = p_document_id;\n    GET DIAGNOSTICS v_n = ROW_COUNT;\n  ELSE\n    UPDATE documents\n       SET status = p_status,\n           superseded_at = p_superseded_at,\n           superseded_by_user = p_superseded_by_user,\n           supersession_reason = p_supersession_reason,\n           supersession_moc = p_supersession_moc,\n           updated_at = now(),\n           updated_by = v_uid\n     WHERE id = p_document_id;\n    GET DIAGNOSTICS v_n = ROW_COUNT;\n  END IF;\n  IF v_forced THEN\n    PERFORM set_config('app.publish_hold_override', '', true);\n  END IF;\n  IF v_n = 0 THEN\n    RETURN 'no_match';\n  END IF;",
       "  IF v_forced THEN\n    INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, user_email, details)\n    VALUES ('REV_HOLD_OVERRIDDEN', p_document_id::text, 'document', v_org, v_uid,",
       "              'via', p_via,",
@@ -353,7 +361,9 @@ async function putBackRetiredIssueSql(a: Record<string, unknown>): Promise<RpcAn
   const doc = T("documents").find((d) => d.id === a.p_document_id && d.org_id === ORG);
   if (!doc) return { data: "no_match", error: null };
   const before = { status: doc.status, stamp: doc.retired_issue_status ?? null, version: doc.current_version_id, rev: doc.rev };
-  const forced = doc.status === (via === "unarchive" ? "Archived" : "Superseded")
+  const forced = a.p_force_hold === true
+    && doc.status === (via === "unarchive" ? "Archived" : "Superseded")
+    && (via === "unarchive" || (has(doc.superseded_by_user) && doc.superseded_by_user === uid))
     && has(doc.retired_issue_version_id) && doc.retired_issue_version_id === doc.current_version_id
     && !PB_NOT_ISSUE.includes(String(a.p_status).replace(/^ +| +$/g, ""))
     && isController() && activeHolds(String(doc.id)).length > 0;
@@ -515,7 +525,7 @@ describe("REV-23 (P19) — the app's put-backs still complete over a hold, throu
     });
     expect(state.flag).toBe("");
     expect(audit("SUPERSEDE_DOC")).toHaveLength(0);
-    expect(putBackCalls()[0].args).toMatchObject({ p_document_id: "p1", p_status: "Issued", p_via: "supersede_rollback", p_superseded_at: null, p_supersession_reason: null });
+    expect(putBackCalls()[0].args).toMatchObject({ p_document_id: "p1", p_status: "Issued", p_via: "supersede_rollback", p_force_hold: true, p_superseded_at: null, p_supersession_reason: null });
   });
 
   it("a publisher's failed supersede (no hold) is put back as before — through the function, the bare write, nothing recorded; a re-run on a Superseded document keeps its first supersession", async () => {
@@ -562,13 +572,13 @@ describe("REV-23 (P19) — the app's put-backs still complete over a hold, throu
     expect(overrides()).toEqual([]);
   });
 
-  it("Document Control un-archives a held, stamped document (archived through archiveDocument, then held): restored to Issued, exactly one REV_HOLD_OVERRIDDEN (unarchive, the reason), the ARCHIVE_DOC un-archive event says so, the put-back keeps its clocks", async () => {
+  it("Document Control un-archives a held, stamped document (archived through archiveDocument, then held), having confirmed restoring over the hold (forceHold — the dialog's confirmation): restored to Issued, exactly one REV_HOLD_OVERRIDDEN (unarchive, the reason), the ARCHIVE_DOC un-archive event says so, the put-back keeps its clocks", async () => {
     const d = seedDoc("a1");
     const refusals = bindGuard();
     await archiveDocument({ doc: asRecord(d), reason: "superseded on site", orgId: ORG, actorUserId: ME });
     expect(docRow("a1")).toMatchObject({ status: "Archived", retired_issue_status: "Issued", retired_issue_version_id: "a1-v3" });
     seedHold("a1");
-    const outcome = await unarchiveDocument({ doc: asRecord(docRow("a1")), reason: "  back in force  ", orgId: ORG, actorUserId: ME, restoreStatus: "Issued" });
+    const outcome = await unarchiveDocument({ doc: asRecord(docRow("a1")), reason: "  back in force  ", orgId: ORG, actorUserId: ME, restoreStatus: "Issued", forceHold: true });
     expect(refusals).toEqual([]);
     expect(docRow("a1")).toMatchObject({ status: "Issued", archived_at: null, archived_by: null, archive_reason: null, retired_issue_status: null });
     expect(overrides("a1")).toHaveLength(1);
@@ -577,7 +587,7 @@ describe("REV-23 (P19) — the app's put-backs still complete over a hold, throu
     expect(unarchived).toHaveLength(1);
     expect(unarchived[0].details).toMatchObject({ restoredStatus: "Issued", holdOverridden: "REV_HOLD_OVERRIDDEN" });
     expect(outcome).toMatchObject({ issued: true, putBack: true });
-    expect(putBackCalls()[0].args).toEqual({ p_document_id: "a1", p_status: "Issued", p_via: "unarchive", p_reason: "back in force" });
+    expect(putBackCalls()[0].args).toEqual({ p_document_id: "a1", p_status: "Issued", p_via: "unarchive", p_reason: "back in force", p_force_hold: true });
   });
 
   it("un-archive with no hold — by Document Control and by the owner (publisher tier) — restored, nothing recorded, the event carries no hold mark", async () => {
@@ -770,7 +780,7 @@ describe("REV-23 (P19) — put_back_retired_issue sets the flag only for its doo
     await retire("e2", "Superseded");
     seedHold("e1"); seedHold("e2");
     bindGuard();
-    expect(await putBackRetiredIssueSql({ p_document_id: "e1", p_status: "Issued", p_via: "unarchive", p_reason: " r " })).toEqual({ data: "restored_over_hold", error: null });
+    expect(await putBackRetiredIssueSql({ p_document_id: "e1", p_status: "Issued", p_via: "unarchive", p_reason: " r ", p_force_hold: true })).toEqual({ data: "restored_over_hold", error: null });
     expect(overrides("e1")).toHaveLength(1);
     expect(state.flag).toBe("");
     const { supabase } = await import("@/lib/supabase");
@@ -785,7 +795,7 @@ describe("REV-23 (P19) — put_back_retired_issue sets the flag only for its doo
     seedHold("e3");
     state.roles = ["Engineer"]; state.publisher = true;
     bindGuard();
-    expect((await putBackRetiredIssueSql({ p_document_id: "e3", p_status: "Issued", p_via: "unarchive" })).error?.message).toBe(S_PUBLISHER_HOLD);
+    expect((await putBackRetiredIssueSql({ p_document_id: "e3", p_status: "Issued", p_via: "unarchive", p_force_hold: true })).error?.message).toBe(S_PUBLISHER_HOLD);
     expect(await putBackRetiredIssueSql({ p_document_id: "e4", p_status: "Issued", p_via: "unarchive" })).toEqual({ data: "restored", error: null });
     expect(docRow("e3").status).toBe("Archived");
     expect(overrides()).toEqual([]);
@@ -804,11 +814,11 @@ describe("REV-23 (P19) — put_back_retired_issue sets the flag only for its doo
     bindGuard();
     const cases: Array<[string, string]> = [["f1", "supersede_rollback"], ["f2", "unarchive"], ["f3", "supersede_rollback"], ["f4", "unarchive"], ["f5", "unarchive"]];
     for (const [id, via] of cases) {
-      expect((await putBackRetiredIssueSql({ p_document_id: id, p_status: "Issued", p_via: via })).error?.message, `${id} ${via}`).toBe(S_NEW_DOOR_HOLD);
+      expect((await putBackRetiredIssueSql({ p_document_id: id, p_status: "Issued", p_via: via, p_force_hold: true })).error?.message, `${id} ${via}`).toBe(S_NEW_DOOR_HOLD);
     }
     // the residual: a stamp naming another revision is not v_restoring — no flag, and the guard admits the bare write as before (REV-23's Scope)
-    expect(await putBackRetiredIssueSql({ p_document_id: "f6", p_status: "Issued", p_via: "unarchive" })).toEqual({ data: "restored", error: null });
-    expect(await putBackRetiredIssueSql({ p_document_id: "f1", p_status: "Draft", p_via: "unarchive" })).toEqual({ data: "restored", error: null });
+    expect(await putBackRetiredIssueSql({ p_document_id: "f6", p_status: "Issued", p_via: "unarchive", p_force_hold: true })).toEqual({ data: "restored", error: null });
+    expect(await putBackRetiredIssueSql({ p_document_id: "f1", p_status: "Draft", p_via: "unarchive", p_force_hold: true })).toEqual({ data: "restored", error: null });
     expect(overrides()).toEqual([]);
   });
 
@@ -819,6 +829,77 @@ describe("REV-23 (P19) — put_back_retired_issue sets the flag only for its doo
     expect((await putBackRetiredIssueSql({ p_document_id: "x", p_status: "Issued", p_via: "status_edit" })).error).toMatchObject({ message: S_PB_DOOR });
     expect((await putBackRetiredIssueSql({ p_document_id: "x", p_status: "  ", p_via: "unarchive" })).error).toMatchObject({ message: S_PB_STATUS });
     expect((await putBackRetiredIssueSql({ p_document_id: "x", p_status: "Issued", p_via: "unarchive" })).data).toBe("no_match");
+  });
+});
+
+// ─── P19 review fix: the force is chosen; a rollback names only the caller's own retirement ─
+describe("REV-23 (P19 review fix) — an override over a hold is chosen, never implied; a recorded rollback is the caller's own", () => {
+  it("Document Control's un-archive of a held, stamped document WITHOUT the dialog's confirmation sends no force: refused in the new-door sentence (the dialog then offers the Draft restore), nothing written or recorded; the Draft restore lands, unrecorded; with the confirmation, the recorded pass", async () => {
+    await retire("k1", "Archived");
+    seedHold("k1");
+    const refusals = bindGuard();
+    await expect(unarchiveDocument({ doc: asRecord(docRow("k1")), reason: "", orgId: ORG, actorUserId: ME, restoreStatus: "Issued" }))
+      .rejects.toThrow(`The document was NOT restored (${S_NEW_DOOR_HOLD}) — nothing was changed.`);
+    expect(refusals).toEqual([S_NEW_DOOR_HOLD]);
+    expect(docRow("k1")).toMatchObject({ status: "Archived", retired_issue_status: "Issued" });
+    expect(putBackCalls()[0].args).toMatchObject({ p_via: "unarchive", p_force_hold: false });
+    expect(overrides()).toEqual([]);
+    expect(audit("ARCHIVE_DOC")).toEqual([]);
+    expect(isIssueRefusal(S_NEW_DOOR_HOLD)).toBe(true); // the sentence the dialog answers (afterIssueRefusal: the Draft restore for a controller)
+    // forceHold on a Draft restore asks nothing: no issue, no flag, no record
+    await unarchiveDocument({ doc: asRecord(docRow("k1")), reason: "", orgId: ORG, actorUserId: ME, restoreStatus: "Draft", forceHold: true });
+    expect(docRow("k1").status).toBe("Draft");
+    expect(overrides()).toEqual([]);
+    // the confirmed restore of another held archive is the recorded pass
+    await retire("k2", "Archived");
+    seedHold("k2");
+    await unarchiveDocument({ doc: asRecord(docRow("k2")), reason: "", orgId: ORG, actorUserId: ME, restoreStatus: "Issued", forceHold: true });
+    expect(docRow("k2").status).toBe("Issued");
+    expect(overrides("k2")).toHaveLength(1);
+  });
+
+  it("the door without p_force_hold sets no flag for any door: a held stamped Archived or Superseded document put back to Issued is refused over the hold, nothing recorded", async () => {
+    await retire("k3", "Archived");
+    await retire("k4", "Superseded");
+    seedHold("k3"); seedHold("k4");
+    bindGuard();
+    expect((await putBackRetiredIssueSql({ p_document_id: "k3", p_status: "Issued", p_via: "unarchive" })).error?.message).toBe(S_NEW_DOOR_HOLD);
+    for (const via of ["supersede_rollback", "lifecycle_rollback", "reversal_rollback"]) {
+      expect((await putBackRetiredIssueSql({ p_document_id: "k4", p_status: "Issued", p_via: via, p_force_hold: false })).error?.message, via).toBe(S_NEW_DOOR_HOLD);
+    }
+    expect(docRow("k3").status).toBe("Archived");
+    expect(docRow("k4").status).toBe("Superseded");
+    expect(overrides()).toEqual([]);
+    expect(state.flag).toBeNull();
+  });
+
+  it("a rollback door over a retirement SOMEONE ELSE made sets no flag — Document Control cannot label a deliberate un-supersede over a hold as an automatic compensation: refused over the hold, nothing recorded; the controller who made the retirement gets the recorded rollback", async () => {
+    await retire("k5", "Superseded"); // retired by u1 (superseded_by_user = u1)
+    seedHold("k5");
+    bindGuard();
+    state.session = "u2"; // another Document Control member
+    for (const via of ["supersede_rollback", "lifecycle_rollback", "reversal_rollback"]) {
+      expect((await putBackRetiredIssueSql({ p_document_id: "k5", p_status: "Issued", p_via: via, p_reason: "rollback", p_force_hold: true })).error?.message, via).toBe(S_NEW_DOOR_HOLD);
+    }
+    expect(docRow("k5").status).toBe("Superseded");
+    expect(overrides()).toEqual([]);
+    // a supersession that names nobody (retired by the service role, or written before superseded_by_user) is nobody's rollback either
+    docRow("k5").superseded_by_user = null;
+    state.session = ME;
+    expect((await putBackRetiredIssueSql({ p_document_id: "k5", p_status: "Issued", p_via: "supersede_rollback", p_force_hold: true })).error?.message).toBe(S_NEW_DOOR_HOLD);
+    docRow("k5").superseded_by_user = ME;
+    expect(await putBackRetiredIssueSql({ p_document_id: "k5", p_status: "Issued", p_via: "supersede_rollback", p_force_hold: true })).toEqual({ data: "restored_over_hold", error: null });
+    expect(overrides("k5")).toHaveLength(1);
+    expect((overrides("k5")[0].details as Row).via).toBe("supersede_rollback");
+  });
+
+  it("the un-archive is not bound to who archived the document — it is the dialog's explicit confirmation, not a compensation: another controller's confirmed restore of a held archive is recorded", async () => {
+    await retire("k6", "Archived"); // archived by u1
+    seedHold("k6");
+    bindGuard();
+    state.session = "u2";
+    expect(await putBackRetiredIssueSql({ p_document_id: "k6", p_status: "Issued", p_via: "unarchive", p_force_hold: true })).toEqual({ data: "restored_over_hold", error: null });
+    expect(overrides("k6")[0]).toMatchObject({ user_id: "u2" });
   });
 });
 
@@ -835,7 +916,7 @@ describe("REV-23 (P19) — the app reads the door's answers, and every stamped p
     expect(isMissingPutBackRpc(null)).toBe(false);
   });
 
-  it("putBackRetiredIssue maps the answers: restored / restored_over_hold land (recorded only for the latter), no_match and anything else refuse, an error refuses, a missing function is absent; the un-archive sends its four arguments, a rollback the supersession fields too", async () => {
+  it("putBackRetiredIssue maps the answers: restored / restored_over_hold land (recorded only for the latter), no_match and anything else refuse, an error refuses, a missing function is absent; the un-archive sends its five arguments, a rollback the supersession fields too — p_force_hold false unless the caller asks", async () => {
     state.rpcMode = "canned";
     const ask = (door: "unarchive" | "supersede_rollback" = "unarchive") => putBackRetiredIssue({ documentId: "d", status: "Issued", door, reason: "  r  ", supersession: { supersession_reason: "first" } });
     state.canned = { data: "restored", error: null };
@@ -851,12 +932,14 @@ describe("REV-23 (P19) — the app reads the door's answers, and every stamped p
     state.canned = { data: null, error: { code: "PGRST202", message: "x" } };
     expect(await ask()).toEqual({ kind: "absent" });
     await ask("supersede_rollback");
+    await putBackRetiredIssue({ documentId: "d", status: "Issued", door: "unarchive", forceHold: true });
     const calls = putBackCalls();
-    expect(calls[0].args).toEqual({ p_document_id: "d", p_status: "Issued", p_via: "unarchive", p_reason: "r" });
-    expect(calls[calls.length - 1].args).toEqual({
-      p_document_id: "d", p_status: "Issued", p_via: "supersede_rollback", p_reason: "r",
+    expect(calls[0].args).toEqual({ p_document_id: "d", p_status: "Issued", p_via: "unarchive", p_reason: "r", p_force_hold: false });
+    expect(calls[calls.length - 2].args).toEqual({
+      p_document_id: "d", p_status: "Issued", p_via: "supersede_rollback", p_reason: "r", p_force_hold: false,
       p_superseded_at: null, p_superseded_by_user: null, p_supersession_reason: "first", p_supersession_moc: null,
     });
+    expect(calls[calls.length - 1].args).toEqual({ p_document_id: "d", p_status: "Issued", p_via: "unarchive", p_reason: null, p_force_hold: true });
   });
 
   it("a refusal from the door is the put-back's refusal — no direct write is tried (the un-archive's, with its no-row sentence)", async () => {

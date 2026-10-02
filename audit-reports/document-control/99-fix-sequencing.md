@@ -483,7 +483,12 @@ one-paste migration:
   (recorded as `REV_HOLD_OVERRIDDEN`), or through P18's reversal door. A bare
   PATCH or a status editor's write is refused ("…release the hold before
   issuing it."). A held stamped Void has no recorded door; it is counted by
-  the inventory.
+  the inventory. The function forces only when asked (`p_force_hold`). The
+  un-archive dialog shows Document Control the active holds and asks for an
+  explicit confirmation before it sends the force. A rollback forces only a
+  retirement the caller made. (P19 review fix: the function's signature
+  gained `p_force_hold`, nine arguments. The file has never been pasted, so
+  no older signature exists to drop.)
 - **P16 (`REV-21`) and P19 re-create the same guard.** Whichever is pasted
   second starts from the other's body (the lineDiff scan finds it) and
   pastes after it.

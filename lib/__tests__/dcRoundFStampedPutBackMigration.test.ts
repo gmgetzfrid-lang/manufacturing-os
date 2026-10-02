@@ -9,7 +9,11 @@
 //   an active hold). put_back_retired_issue (new, SECURITY INVOKER) is the
 //   app's put-back: the un-archive's write or a rollback's, under the flag
 //   only for Document Control's put-back of a held stamped retirement into an
-//   issue status, recorded as REV_HOLD_OVERRIDDEN in the same transaction.
+//   issue status, recorded as REV_HOLD_OVERRIDDEN in the same transaction —
+//   and (P19 review fix) only when the caller asks for the force
+//   (p_force_hold: the un-archive dialog after an explicit confirmation; the
+//   rollbacks) and, for a rollback, only for a retirement the caller made
+//   (superseded_by_user = the session).
 //
 // Byte fidelity: lineDiff (nothing removed; every new line is an addition)
 // AND an exact cut (the re-created body minus the addition IS the base, byte
@@ -115,8 +119,8 @@ describe("20261165 — the guard re-created from its NEWEST earlier body (found 
 });
 
 describe("20261165 — put_back_retired_issue, the stamped put-back's recorded door", () => {
-  it("SECURITY INVOKER (every read and the write run as the caller, under their policies and the guard), search_path pinned, one 8-argument signature, defined nowhere else", () => {
-    expect(P).toContain("CREATE OR REPLACE FUNCTION put_back_retired_issue(\n  p_document_id uuid,\n  p_status text,\n  p_via text,\n  p_reason text DEFAULT NULL,\n  p_superseded_at timestamptz DEFAULT NULL,\n  p_superseded_by_user uuid DEFAULT NULL,\n  p_supersession_reason text DEFAULT NULL,\n  p_supersession_moc text DEFAULT NULL\n) RETURNS text\nLANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$");
+  it("SECURITY INVOKER (every read and the write run as the caller, under their policies and the guard), search_path pinned, one 9-argument signature (p_force_hold false by default), defined nowhere else", () => {
+    expect(P).toContain("CREATE OR REPLACE FUNCTION put_back_retired_issue(\n  p_document_id uuid,\n  p_status text,\n  p_via text,\n  p_reason text DEFAULT NULL,\n  p_force_hold boolean DEFAULT false,\n  p_superseded_at timestamptz DEFAULT NULL,\n  p_superseded_by_user uuid DEFAULT NULL,\n  p_supersession_reason text DEFAULT NULL,\n  p_supersession_moc text DEFAULT NULL\n) RETURNS text\nLANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$");
     expect(P).not.toMatch(/SECURITY DEFINER/);
     expect((stripComments(M).match(/CREATE OR REPLACE FUNCTION put_back_retired_issue\(/g) ?? []).length).toBe(1);
     for (const f of files.filter((x) => x !== FILE)) expect(stripComments(mig(f)), f).not.toMatch(/FUNCTION\s+(?:public\.)?put_back_retired_issue\b/);
@@ -132,7 +136,7 @@ describe("20261165 — put_back_retired_issue, the stamped put-back's recorded d
     expect(P.indexOf("IF v_uid IS NULL THEN")).toBeLessThan(P.indexOf("IF p_via IS NULL OR p_via NOT IN ('unarchive', 'supersede_rollback', 'lifecycle_rollback', 'reversal_rollback') THEN"));
     expect(P.indexOf("IF p_via IS NULL OR p_via NOT IN")).toBeLessThan(P.indexOf("IF btrim(COALESCE(p_status, '')) = '' THEN"));
     expect(P.indexOf("IF btrim(COALESCE(p_status, '')) = '' THEN")).toBeLessThan(P.indexOf("FROM documents d WHERE d.id = p_document_id;"));
-    const SIG = "put_back_retired_issue(uuid, text, text, text, timestamptz, uuid, text, text)";
+    const SIG = "put_back_retired_issue(uuid, text, text, text, boolean, timestamptz, uuid, text, text)";
     expect(M).toContain(`REVOKE ALL ON FUNCTION ${SIG} FROM PUBLIC, anon, service_role;`);
     expect(M).toContain(`GRANT EXECUTE ON FUNCTION ${SIG} TO authenticated;`);
     expect([...stripComments(M).matchAll(/GRANT [^;]*;/g)].map((m) => m[0])).toEqual([`GRANT EXECUTE ON FUNCTION ${SIG} TO authenticated;`]);
@@ -161,14 +165,39 @@ describe("20261165 — put_back_retired_issue, the stamped put-back's recorded d
     expect(cols(putBackDirect)).toEqual(rollbackCols);
   });
 
-  it("the door: exactly the write the guard now refuses bare — Document Control, the retirement this door leaves, the stamp naming the current revision (no pointer moves: v_restoring), an issue status asked, an active hold — then, and only then, the flag", () => {
-    expect(P).toContain("  IF v_status = (CASE WHEN p_via = 'unarchive' THEN 'Archived' ELSE 'Superseded' END)\n     AND v_stamped IS NOT NULL\n     AND v_stamped = v_version\n     AND btrim(p_status) NOT IN ('Draft', 'In Review', 'Superseded', 'Void', 'Archived')\n     AND is_org_controller(v_org)\n     AND EXISTS (SELECT 1 FROM document_holds h\n                  WHERE h.document_id = p_document_id AND h.released_at IS NULL) THEN\n    v_forced := true;\n  END IF;");
+  it("the door: exactly the write the guard now refuses bare — the force asked for, Document Control, the retirement this door leaves (for a rollback, the caller's own), the stamp naming the current revision (no pointer moves: v_restoring), an issue status asked, an active hold — then, and only then, the flag", () => {
+    expect(P).toContain("  IF COALESCE(p_force_hold, false)\n     AND v_status = (CASE WHEN p_via = 'unarchive' THEN 'Archived' ELSE 'Superseded' END)\n     AND (p_via = 'unarchive' OR v_retired_by = v_uid)\n     AND v_stamped IS NOT NULL\n     AND v_stamped = v_version\n     AND btrim(p_status) NOT IN ('Draft', 'In Review', 'Superseded', 'Void', 'Archived')\n     AND is_org_controller(v_org)\n     AND EXISTS (SELECT 1 FROM document_holds h\n                  WHERE h.document_id = p_document_id AND h.released_at IS NULL) THEN\n    v_forced := true;\n  END IF;");
     expect((P.match(/v_forced := true;/g) ?? []).length).toBe(1);
     expect(P).toContain("  v_forced  boolean := false;");
     // the issue test is a SUPERSET of is_controlled_issue_status (whose EXECUTE no client role holds): the same five non-issue statuses, trimmed of spaces only
     const predicate = between(mig("20261144_dc_roundF_status_issue_transition.sql"), "CREATE OR REPLACE FUNCTION is_controlled_issue_status(p_status text)", "\n$$;");
     expect(predicate).toContain("NOT IN ('Draft', 'In Review', 'Superseded', 'Void', 'Archived');");
     expect(stripComments(P)).not.toMatch(/is_controlled_issue_status\(/);
+  });
+
+  it("P19 review fix: the force is the caller's choice and a rollback names only the caller's own retirement — p_force_hold is read nowhere but the door; the retirement's author is the row's superseded_by_user, read with the rest of the document as the caller sees it; the app asks for it from the dialog's confirmation (the un-archive) or always (the three rollbacks)", () => {
+    expect(P).toContain("  v_retired_by uuid;");
+    expect(P).toContain("  SELECT true, d.org_id, d.status, d.retired_issue_status, d.retired_issue_version_id, d.current_version_id, d.rev, d.superseded_by_user\n    INTO v_found, v_org, v_status, v_stamp, v_stamped, v_version, v_rev, v_retired_by\n    FROM documents d WHERE d.id = p_document_id;");
+    expect((stripComments(P).match(/p_force_hold/g) ?? []).length).toBe(2); // the parameter and the door
+    expect((stripComments(P).match(/v_retired_by/g) ?? []).length).toBe(3); // declared, read, compared
+    // the record is written only under the door, so the record itself says the force was asked for
+    expect((stripComments(P).match(/INSERT INTO audit_logs/g) ?? []).length).toBe(1);
+    expect(P).toContain("  IF v_forced THEN\n    INSERT INTO audit_logs");
+    const rev = src("lib/revisions.ts");
+    expect(rev).toContain("    p_force_hold: input.forceHold === true,\n");
+    expect(rev).toContain("    forceHold: input.forceHold === true,\n  });"); // unarchiveDocument: only from its caller (the dialog's confirmation)
+    const undo = rev.slice(rev.indexOf("async function undoFailedSupersede("));
+    expect(undo.slice(0, undo.indexOf('.from("documents")'))).toContain("supersession: prior, forceHold: true,");
+    const common = src("lib/documentLifecycle/common.ts");
+    const restore = common.slice(common.indexOf("export async function restoreSupersededSource("));
+    expect(restore.slice(0, restore.indexOf('.from("documents")'))).toContain("supersession: prior, forceHold: true,");
+    const reverse = src("lib/documentLifecycle/reverse.ts");
+    const putBack = reverse.slice(reverse.indexOf("async function putStatusBack("));
+    expect(putBack.slice(0, putBack.indexOf('supabase.from("documents")'))).toContain("supersession: snap, forceHold: true,");
+    // every retirement those rollbacks undo writes its actor as superseded_by_user (so the door can name it)
+    expect(rev).toMatch(/status: "Superseded",\n\s+superseded_at: now,\n\s+superseded_by_user: actorUserId,/);
+    expect(common).toMatch(/status: "Superseded",\n\s+superseded_at: now,\n\s+superseded_by_user: actor\.actorUserId,/);
+    expect(reverse).toMatch(/status: "Superseded",\n\s+superseded_at: now,\n\s+superseded_by_user: actorUserId,/);
   });
 
   it("the flag names this document immediately before its write and is cleared immediately after it, before any return", () => {
@@ -289,12 +318,12 @@ describe("20261165 — the one-paste shape", () => {
     expect(re.test(G.live.slice(G.live.indexOf("$$") + 2))).toBe(false);
   });
 
-  it("the probes cover the grants: authenticated only, PUBLIC (an explicit ACL with no PUBLIC entry), anon and service_role refused, INVOKER, pinned, 8 arguments", () => {
-    const SIG = "put_back_retired_issue(uuid, text, text, text, timestamptz, uuid, text, text)";
+  it("the probes cover the grants: authenticated only, PUBLIC (an explicit ACL with no PUBLIC entry), anon and service_role refused, INVOKER, pinned, 9 arguments", () => {
+    const SIG = "put_back_retired_issue(uuid, text, text, text, boolean, timestamptz, uuid, text, text)";
     expect(tail).toContain(`AND has_function_privilege('authenticated', '${SIG}', 'EXECUTE')`);
     expect(tail).toContain(`AND NOT has_function_privilege('anon', '${SIG}', 'EXECUTE')`);
     expect(tail).toContain(`AND NOT has_function_privilege('service_role', '${SIG}', 'EXECUTE')`);
-    expect(tail).toContain("WHERE n.nspname = 'public' AND p.proname = 'put_back_retired_issue' AND p.pronargs = 8\n                      AND NOT p.prosecdef AND p.proconfig @> ARRAY['search_path=public'] AND p.proacl IS NOT NULL)");
+    expect(tail).toContain("WHERE n.nspname = 'public' AND p.proname = 'put_back_retired_issue' AND p.pronargs = 9\n                      AND NOT p.prosecdef AND p.proconfig @> ARRAY['search_path=public'] AND p.proacl IS NOT NULL)");
     expect(tail).toContain("WHERE p.proname = 'put_back_retired_issue' AND x.grantee = 0 AND x.privilege_type = 'EXECUTE'),");
   });
 
