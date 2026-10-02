@@ -1216,7 +1216,8 @@ export default function KnowledgeLibraryPage() {
     } catch { /* storage full — chat still works, it just won't survive a reload */ }
   }, [thread, threadId, seededTurns, threadStoreKey]);
   // Org Playbooks visibility: how many standing instructions ride on asks.
-  const [instructionCount, setInstructionCount] = useState(0);
+  // null until the count is read, so the empty state below never flashes.
+  const [instructionCount, setInstructionCount] = useState<number | null>(null);
   useEffect(() => {
     if (!activeOrgId) return;
     void import("@/lib/aiInstructions").then((m) =>
@@ -1862,9 +1863,19 @@ export default function KnowledgeLibraryPage() {
                 {mode === "library"
                   ? "Answers come ONLY from the indexed documents, cited to the page."
                   : "Answers come from the internet / general knowledge — NOT your controlled documents."}
-                {instructionCount > 0 && (
+                {instructionCount !== null && instructionCount > 0 && (
                   <Link href="/admin/ai-instructions" className="ml-1.5 font-bold text-violet-700 hover:underline">
                     {instructionCount} standing instruction{instructionCount === 1 ? "" : "s"} apply
+                  </Link>
+                )}
+                {/* HUB-6: with no playbook yet the door is still shown — an
+                    invitation to write the first one, never a hidden page. */}
+                {instructionCount === 0 && (
+                  <Link href="/admin/ai-instructions" data-playbooks-empty="true"
+                    className="ml-1.5 font-bold text-violet-700 hover:underline">
+                    {isController
+                      ? "No playbooks yet — teach the AI your house rules"
+                      : "No playbooks yet — see what the AI is taught"}
                   </Link>
                 )}
               </div>

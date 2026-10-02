@@ -237,7 +237,7 @@ intelligence/page.tsx:3-10 — `// Every ✗ links directly to its fix.` intelli
 ## HUB-6 · Org Playbooks — the standing instructions folded into every AI prompt — has no sidebar entry, no tab, and no feature-atlas entry
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-20 AI UI REMAINDERS (done-when 2, the library Ask header) — by the integrator, 2026-10-01 (at the I-05 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/intelligence/setup/page.tsx:67-71`, `app/(protected)/knowledge/[id]/page.tsx:1643-1647`, `lib/featureAtlas.ts:75-105`, `components/navigation/Sidebar.tsx:252-269`
@@ -266,6 +266,14 @@ Four differently-shaped searches: `grep -rn "ai-instructions" --include=*.ts --i
 2. ✗ The library Ask header's link (`app/(protected)/knowledge/[id]/page.tsx`, `instructionCount > 0 && …`) belongs to I-02 / I-02b: an empty state there should invite the first playbook.
 
 **Scope / residual.** OPEN for done-when 2.
+
+**Resolution (2026-10-02, intelligence Round G).** Package I-20. Reproduced first on the base (`3bf3b75`): with no playbook the library Ask header rendered no link to `/admin/ai-instructions` (`instructionCount > 0 && …`), so an org with none had no door there (`hubPlaybooksEmptyState.test.ts`, the two reproduction cases fail against the base page). Now `app/(protected)/knowledge/[id]/page.tsx` (`:1873`) shows an empty state when the count is 0. A controller sees "No playbooks yet — teach the AI your house rules". Any other member sees "No playbooks yet — see what the AI is taught": the page admits every active member read-only (`lib/adminSurfaces.ts`, `entry: "*"`). The count starts as `null`, not 0, so nothing renders until it is read and the invitation never flashes over a library that has playbooks. With playbooks the header reads "N standing instruction(s) apply" as before. Tests: `lib/__tests__/hubPlaybooksEmptyState.test.ts` (rendered: the controller and member invitations, the REGRESSION pin for 1 and 3 instructions, and the no-flash case).
+
+**Done-when.**
+1. ✓ (2026-10-01) The command palette finds it.
+2. ✓ The library Ask header points at playbooks when `instructionCount === 0`, with an empty state that invites the first one.
+
+**Scope / residual.** `countActiveInstructions` (`lib/aiInstructions.ts`, outside this package's files) reads a failed count as 0. The header then shows the invitation, not nothing. Before this change it hid the link. The link still goes to the page, which lists what is really there.
 
 ---
 
