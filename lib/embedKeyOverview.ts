@@ -20,8 +20,11 @@
 //     is confirmed with the libraries named, and each one's Rebuild offered.
 //     A member whose meaning search runs on their OpenAI CHAT key (no
 //     embeddings key saved) loses it when the chat key moves to another
-//     provider or is removed: that change is confirmed the same way
-//     (embeddingLossImpact).
+//     provider or is removed. Removing the chat key deletes the member's
+//     whole connection, so a saved embeddings key goes with it; removing the
+//     embeddings key leaves the OpenAI chat key's default model, or nothing.
+//     Each of those changes is confirmed the same way (embeddingLossImpact,
+//     or embeddingSwitchImpact when the chat key takes over).
 //
 // The impact functions are pure; the fetches are the only side effects here.
 
@@ -193,19 +196,28 @@ export function embeddingSwitchImpact(
   return impact;
 }
 
-/** SEM-1: losing the embeddings setting altogether — the OpenAI chat key a
- *  member's meaning search ran on (no embeddings key saved) moves to
- *  another provider or is removed. `after` is none: every index the old
- *  provider built stops answering them, and every background build on
- *  their key ends (the drain releases a consent whose payer has no
- *  embeddings key). */
-export interface EmbeddingLossImpact extends Omit<EmbeddingSwitchImpact, "after"> { after: null }
+/** Why a member is left with no embeddings setting at all:
+ *  - `chatKey`: meaning search ran on their OpenAI CHAT key (no embeddings
+ *    key saved), and that chat key moves to another provider or is removed;
+ *  - `connectionRemoved`: they remove their chat key while an embeddings key
+ *    is saved — the removal deletes their whole connection (DELETE
+ *    /api/ai/connection), the embeddings key with it;
+ *  - `embeddingsKeyRemoved`: they remove their embeddings key and hold no
+ *    OpenAI chat key for meaning search to fall back on. */
+export type EmbeddingLossCause = "chatKey" | "connectionRemoved" | "embeddingsKeyRemoved";
+
+/** SEM-1: losing the embeddings setting altogether (`cause`). `after` is
+ *  none: every index the old provider built stops answering them, and
+ *  every background build on their key ends (the drain releases a consent
+ *  whose payer has no embeddings key). */
+export interface EmbeddingLossImpact extends Omit<EmbeddingSwitchImpact, "after"> { after: null; cause: EmbeddingLossCause }
 
 export function embeddingLossImpact(
   before: EmbeddingSetting, overview: EmbedKeyOverview | null, unreadable: string | null = null,
+  cause: EmbeddingLossCause = "chatKey",
 ): EmbeddingLossImpact {
   const impact: EmbeddingLossImpact = {
-    before, after: null, providerChanged: true,
+    before, after: null, cause, providerChanged: true,
     stopAnswering: [], cannotGrow: [], buildsStop: [], unknown: [],
     unreadable: overview ? null : (unreadable ?? "the libraries could not be read"),
   };
@@ -225,6 +237,11 @@ export function embeddingLossImpact(
     });
   }
   return impact;
+}
+
+/** A switch to another setting, not a loss of every setting. */
+export function isSwitchImpact(i: EmbeddingSwitchImpact | EmbeddingLossImpact): i is EmbeddingSwitchImpact {
+  return i.after !== null;
 }
 
 /** Nothing to warn about: no index answers or grows on the old setting, no

@@ -347,7 +347,9 @@ describe("PM-7 — the project feed", () => {
 describe("SEC-20 — audit rows about a private project follow the project's visibility", () => {
   it("the final audit_logs set: one permissive member read, one insert, and ONE restrictive overlay that gates project / cost rows on audit_row_project_visible", () => {
     const set = pol("audit_logs");
-    const restrictive = set.filter(([, p]) => !p.permissive);
+    // intelligence Round G I-20 (20261163) adds one restrictive INSERT rule
+    // (pinned below); the read side keeps exactly one restrictive overlay.
+    const restrictive = set.filter(([, p]) => !p.permissive && (p.cmd === "SELECT" || p.cmd === "ALL"));
     expect(restrictive.map(([n]) => n)).toEqual(["audit_logs_admin_trail"]);
     const [, trail] = restrictive[0];
     expect(trail.file).toBe("supabase/migrations/20261142_prj_roundG_project_audit_rows.sql");
@@ -358,7 +360,12 @@ describe("SEC-20 — audit rows about a private project follow the project's vis
     expect(trail.body).toMatch(/\)\s*\n\s*AND \(COALESCE\(resource_type, ''\) NOT IN \('project', 'cost', 'project_checklist', 'turnover_item'\)\s*\n\s*OR audit_row_project_visible\(resource_type, resource_id\)\)\s*\n\s*\)\s*$/);
     const permissiveReads = set.filter(([, p]) => p.permissive && (p.cmd === "SELECT" || p.cmd === "ALL"));
     expect(permissiveReads.map(([n]) => n)).toEqual(["audit_logs_org_access"]);
-    expect(set.filter(([, p]) => p.cmd === "INSERT").map(([n]) => n)).toEqual(["audit_logs_insert"]);
+    expect(set.filter(([, p]) => p.cmd === "INSERT" && p.permissive).map(([n]) => n)).toEqual(["audit_logs_insert"]);
+    // the only other restrictive rule: members may not insert the embed
+    // route's consent rows (intelligence Round G I-20, GOV-14) — it reads none
+    expect(set.filter(([, p]) => !p.permissive && p.cmd !== "SELECT" && p.cmd !== "ALL").map(([n, p]) => [n, p.cmd, p.file])).toEqual([
+      ["audit_logs_embed_consent_route_only", "INSERT", "supabase/migrations/20261163_intel_roundG_embed_consent_audit_rows.sql"],
+    ]);
   });
   it("before 20261142 the overlay narrowed only the org-level trail — a project / cost row was any member's (the finding, reproduced)", () => {
     const saved = files.splice(0);

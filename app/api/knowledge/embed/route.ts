@@ -66,10 +66,14 @@
 // a row already names, or whose lookup failed (a row may name it) —
 // restored as that one was (its instant, standing flag and holds). A
 // withdrawal that switches off the caller's own standing "keep current" says
-// so. So a consent this route records or renews does not stand without a
-// row, unless the put-back itself fails or keeps being raced (the caller is
-// told). A consent stamped before these rows were written that no pass
-// renews is continued by the drain on its stamp alone.
+// so; "keep current" never writes over a consent it could not read, so it
+// never withdraws one it did not know stood. So a consent this route records
+// or renews does not stand without a row, unless the put-back itself fails
+// or keeps being raced (the caller is told). A consent stamped before these
+// rows were written that no pass renews is continued by the drain on its
+// stamp alone. Only this route writes EMBED_BUILD_CONSENT_RECORDED rows: a
+// member's own insert of one is refused (20261163), so the renewal lookup
+// never takes a member-written row for the route's record.
 
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
@@ -259,9 +263,12 @@ type ConsentUnaudited = {
 
 /** GOV-14: after a consent write, the audit row naming the request that
  *  stamped it. `before` is the marker read ahead of the write (undefined:
- *  it could not be read). A pass that renews the caller's own consent — or
- *  "keep current" over one already standing — records nothing new once a
- *  row names this payer on this library; a renewal of a consent no row
+ *  it could not be read — only a build pass goes on without it, and its
+ *  write carries the caller's own standing flag over, so a withdrawn
+ *  standing consent is still said; "keep current" refuses instead). A pass
+ *  that renews the caller's own consent — or "keep current" over one
+ *  already standing — records nothing new once a row names this payer on
+ *  this library; a renewal of a consent no row
  *  names yet (stamped before these rows were written) writes its first row,
  *  and so does one whose lookup failed (a second row is harmless, a missing
  *  one is not). When the row cannot be written — or the stamp cannot be
@@ -656,13 +663,22 @@ export async function POST(req: NextRequest) {
       if (!embedding) return bad(NO_EMBEDDING_KEY_MESSAGE, 412);
       const gated = await agreementGate();
       if (gated) return gated;
-      const prior = await readEmbedBuildMarker(libraryId);
+      // GOV-14: the consent this one replaces, read first — once more when
+      // the read fails. One that still cannot be read is never written
+      // over: were the new consent's row then to fail, the put-back could
+      // not know what to restore, and withdrawing would switch off a "keep
+      // current" the caller already had without anyone knowing it stood.
+      let prior = await readEmbedBuildMarker(libraryId);
+      if (prior.error) prior = await readEmbedBuildMarker(libraryId);
+      if (prior.error) {
+        return bad(`Couldn't read the standing consent, so nothing was changed: ${prior.error}`, 500, { standing: null });
+      }
       const err = await setEmbedBuildMarker(libraryId, user.id, { standing: true });
       if (err) return bad(`Couldn't record the standing consent: ${err}`, 500);
       // GOV-14: the consent names the request that recorded it, or is not kept.
       const unaudited = await auditConsent(req, {
         orgId, libraryId, userId: user.id, action: "keep-current",
-        before: prior.error ? undefined : prior.marker, always: true,
+        before: prior.marker, always: true,
       });
       if (unaudited) return bad(keepCurrentRefusal(unaudited), 500, { standing: null });
       return NextResponse.json({ standing: true });

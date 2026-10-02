@@ -19,6 +19,15 @@
 //     chat key moves to another provider or is removed. That save, and that
 //     removal, confirm first in the same way, naming the libraries whose
 //     index stops answering and the builds on the key that end.
+//   SEM-1 done-when 2, the removals (I-20 fix pass 3) — removing the chat key
+//     deletes the member's WHOLE connection (DELETE /api/ai/connection), so a
+//     saved embeddings key goes with it: that removal says so and names what
+//     stops, even when nothing is touched (the key itself is lost), and says
+//     how to keep the embeddings key (Verify & save the new chat key
+//     instead). Removing the embeddings key alone moves meaning search to the
+//     OpenAI chat key's default model, or ends it: that confirm names what
+//     stops too, and after a move each library's Rebuild is linked. A removal
+//     that ends a background build no longer says "Nobody else is affected".
 //   GOV-14 done-when 4 — one place lists every background build running on
 //     the member's key, each with a Stop (the route's release action, sent
 //     with onlyMine: a row read before another member's build replaced the
@@ -26,9 +35,14 @@
 //     "none running".
 //
 // REGRESSION: saving the same provider and model (a new key, or nothing new)
-// asks nothing and reads nothing first — it saves exactly as before; and a
-// chat-key change that leaves meaning search where it was (a saved
-// embeddings key, or OpenAI kept) asks nothing and reads nothing.
+// asks nothing and reads nothing first — it saves exactly as before; a
+// chat-key SAVE that leaves meaning search where it was (a saved embeddings
+// key, which a save never touches, or OpenAI kept) asks nothing and reads
+// nothing; and removing the embeddings key, with no OpenAI chat key and no
+// index or build touched, asks exactly what it asked before. (Corrected in
+// fix pass 3: this header used to count the chat key's REMOVAL with an
+// embeddings key saved among the changes that leave meaning search where it
+// was — that removal deletes the embeddings key.)
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -39,6 +53,7 @@ const kn = vi.hoisted(() => ({
   releaseBackgroundBuild: vi.fn(async () => ({ released: true })),
   saveAiConnection: vi.fn(async (_o: Record<string, unknown>) => ({ ok: true })),
   removeAiConnection: vi.fn(async (_o: string, _s: string) => ({ ok: true })),
+  removeEmbeddingKey: vi.fn(async (_o: string) => undefined),
 }));
 const ov = vi.hoisted(() => ({ getEmbedKeyOverview: vi.fn(), releaseBuildOnMyKey: vi.fn(async (_o: string, _l: string): Promise<{ released: boolean }> => ({ released: true })) }));
 const dialog = vi.hoisted(() => ({ appConfirm: vi.fn(async (_o: { title: string; message: unknown; confirmLabel?: string }) => true) }));
@@ -47,7 +62,7 @@ vi.mock("@/lib/knowledge", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/knowledge")>();
   return {
     getAiConnections: vi.fn(), saveAiConnection: kn.saveAiConnection, testAiConnection: vi.fn(), removeAiConnection: kn.removeAiConnection,
-    saveEmbeddingKey: kn.saveEmbeddingKey, removeEmbeddingKey: vi.fn(), testEmbeddingKey: vi.fn(),
+    saveEmbeddingKey: kn.saveEmbeddingKey, removeEmbeddingKey: kn.removeEmbeddingKey, testEmbeddingKey: vi.fn(),
     getAiUsage: vi.fn(), setAiCap: vi.fn(),
     releaseBackgroundBuild: kn.releaseBackgroundBuild, releaseOutcome: real.releaseOutcome,
   };
@@ -65,7 +80,7 @@ import { EmbeddingKeyEditor, BuildsOnMyKey, KeyEditor } from "@/components/knowl
 import { EMBEDDING_PROVIDERS } from "@/lib/ai/embeddings";
 import {
   embeddingSwitchImpact, effectiveEmbeddingSetting, switchImpactIsEmpty, librariesToRebuild, librariesLinkedAfterSwitch,
-  embeddingLossImpact, onChatKeyEmbeddings,
+  embeddingLossImpact, onChatKeyEmbeddings, isSwitchImpact,
   type EmbedKeyOverview,
 } from "@/lib/embedKeyOverview";
 
@@ -104,6 +119,7 @@ beforeEach(() => {
   kn.releaseBackgroundBuild.mockClear();
   kn.saveAiConnection.mockClear();
   kn.removeAiConnection.mockClear();
+  kn.removeEmbeddingKey.mockClear();
   ov.getEmbedKeyOverview.mockReset();
   ov.getEmbedKeyOverview.mockResolvedValue(OVERVIEW);
   ov.releaseBuildOnMyKey.mockReset();
@@ -216,6 +232,18 @@ describe("SEM-1 — the impact of a switch, read from the libraries (pure)", () 
     expect(u.unreadable).toBe("HTTP 500");
     expect(switchImpactIsEmpty(u)).toBe(false);
     expect(switchImpactIsEmpty(embeddingLossImpact(chat, { builds: [], indexes: [{ libraryId: "L-new", libraryName: "Empty", models: {} }] }))).toBe(true);
+  });
+  it("a loss names its cause — the chat-key fallback by default; the whole connection removed, or the embeddings key removed, when said — and is never a switch", () => {
+    const chat = effectiveEmbeddingSetting({ provider: "openai", embeddingProvider: null })!;
+    expect(embeddingLossImpact(chat, OVERVIEW).cause).toBe("chatKey");
+    const gone = embeddingLossImpact(before, OVERVIEW, null, "connectionRemoved");
+    expect(gone).toMatchObject({ cause: "connectionRemoved", after: null, before: { provider: "voyage", model: VOYAGE[1] } });
+    // the Voyage-built indexes stop answering; the build on the key ends
+    expect(gone.stopAnswering.map((l) => l.libraryName)).toEqual(["Standards", "P&IDs"]);
+    expect(gone.buildsStop.map((l) => l.libraryName)).toEqual(["P&IDs"]);
+    expect(embeddingLossImpact(before, OVERVIEW, null, "embeddingsKeyRemoved").cause).toBe("embeddingsKeyRemoved");
+    expect(isSwitchImpact(gone)).toBe(false);
+    expect(isSwitchImpact(embeddingSwitchImpact(before, { provider: "openai", model: OPENAI[0] }, OVERVIEW)!)).toBe(true);
   });
 });
 
@@ -407,8 +435,11 @@ describe("SEM-1 done-when 2, the chat-key path — moving meaning search's OpenA
     expect(dialog.appConfirm).toHaveBeenCalledTimes(1);
     expect(dialog.appConfirm.mock.calls[0][0]).toMatchObject({ title: "Remove your API key?", confirmLabel: "Remove key" });
     const text = await confirmText();
-    expect(text).toMatch(/^You won't be able to ask AI questions until you add a key again\. Nobody else is affected\./);
+    // fix pass 3: a standing build on the key ends — "Nobody else is affected" is no longer said
+    expect(text).toMatch(/^You won't be able to ask AI questions until you add a key again\. No one else's key is affected — but a background build on your key that ends stops filling that library's meaning index for everyone\./);
+    expect(text).not.toMatch(/Nobody else is affected/);
     expect(text).toMatch(/These meaning indexes stop answering your questions[\s\S]*Vendor manuals/);
+    expect(text).toMatch(/The background builds on your key end[\s\S]*Vendor manuals/);
     expect(kn.removeAiConnection).not.toHaveBeenCalled();
   });
 
@@ -421,13 +452,65 @@ describe("SEM-1 done-when 2, the chat-key path — moving meaning search's OpenA
     expect(kn.saveAiConnection).toHaveBeenCalledTimes(1);
   });
 
-  it("REGRESSION: with an embeddings key saved, switching the chat key reads nothing and asks nothing; removing it asks exactly what it asked before", async () => {
+  it("REGRESSION: with an embeddings key saved, switching the chat key reads nothing and asks nothing (a save never touches the embeddings key)", async () => {
     await renderKeyEditor(SAVED);
     await choose(0, "openai");
     await click(/Verify & save/);
     expect(ov.getEmbedKeyOverview).not.toHaveBeenCalled();
     expect(dialog.appConfirm).not.toHaveBeenCalled();
     expect(kn.saveAiConnection).toHaveBeenCalledTimes(1);
+  });
+
+  it("reproduction → fix (fix pass 3): with an embeddings key saved, removing the chat key — which deletes the embeddings key too — says so, names the indexes that stop answering and the build that ends, and how to keep the key; declining removes nothing", async () => {
+    await renderKeyEditor(SAVED);
+    dialog.appConfirm.mockResolvedValueOnce(false);
+    await click(/Remove/);
+    expect(ov.getEmbedKeyOverview).toHaveBeenCalledWith("o1", { models: true });
+    expect(dialog.appConfirm).toHaveBeenCalledTimes(1);
+    expect(dialog.appConfirm.mock.calls[0][0]).toMatchObject({ title: "Remove your API key?", confirmLabel: "Remove key" });
+    const text = await confirmText();
+    expect(text).toMatch(/^You won't be able to ask AI questions until you add a key again\. No one else's key is affected — but a background build on your key that ends stops filling that library's meaning index for everyone\./);
+    expect(text).toContain(`This also removes your embeddings key (Voyage AI, ${VOYAGE[1]}): it is saved with your chat key, and removing the chat key deletes both. After this you have no embeddings connection at all.`);
+    expect(text).toMatch(/These meaning indexes stop answering your questions\. They were built with Voyage AI, and without a Voyage AI key you cannot search them:StandardsP&IDs/);
+    expect(text).toMatch(/The background builds on your key end \(with no embeddings key, the next background run releases them\) in:P&IDs/);
+    expect(text).not.toMatch(/Vendor manuals|Empty/);
+    expect(text).toMatch(/To change your chat key and keep your embeddings key, paste the new key above and press Verify & save instead — saving replaces only the chat key\./);
+    expect(text).not.toMatch(/you have no embeddings key saved|add an embeddings key under/);
+    expect(kn.removeAiConnection).not.toHaveBeenCalled();
+  });
+
+  it("…confirming removes the key", async () => {
+    await renderKeyEditor(SAVED);
+    await click(/Remove/);
+    expect(dialog.appConfirm).toHaveBeenCalledTimes(1);
+    expect(kn.removeAiConnection).toHaveBeenCalledWith("o1", "personal");
+  });
+
+  it("…with no index and no build touched, the confirm still says the embeddings key goes (and how to keep it) — and that nobody else is affected", async () => {
+    ov.getEmbedKeyOverview.mockResolvedValue({ builds: [], indexes: [{ libraryId: "L-ven", libraryName: "Vendor manuals", models: { [OPENAI[0]]: 12 } }] });
+    await renderKeyEditor(SAVED);
+    dialog.appConfirm.mockResolvedValueOnce(false);
+    await click(/Remove/);
+    const text = await confirmText();
+    expect(text).toMatch(/^You won't be able to ask AI questions until you add a key again\. Nobody else is affected\./);
+    expect(text).toMatch(/This also removes your embeddings key \(Voyage AI, /);
+    expect(text).not.toMatch(/stop answering|builds on your key end/);
+    expect(text).toMatch(/To change your chat key and keep your embeddings key/);
+  });
+
+  it("…and an overview that cannot be read still says the embeddings key goes, and warns in general terms", async () => {
+    ov.getEmbedKeyOverview.mockRejectedValueOnce(new Error("HTTP 500"));
+    await renderKeyEditor(SAVED);
+    dialog.appConfirm.mockResolvedValueOnce(false);
+    await click(/Remove/);
+    const text = await confirmText();
+    expect(text).toMatch(/This also removes your embeddings key/);
+    expect(text).toMatch(/Which libraries are affected could not be checked \(HTTP 500\)\. Every meaning index built with Voyage AI stops answering your questions, and every background build on your key ends\./);
+    expect(text).not.toMatch(/Nobody else is affected/);
+  });
+
+  it("REGRESSION: with no AI key setting for meaning search at all (an Anthropic chat key, no embeddings key), removal reads nothing and asks exactly what it asked before", async () => {
+    await renderKeyEditor({ ...SAVED, embeddingProvider: null, embeddingModel: null, embeddingKeyLast4: null });
     await click(/Remove/);
     expect(ov.getEmbedKeyOverview).not.toHaveBeenCalled();
     expect(dialog.appConfirm.mock.calls[0][0]).toEqual({
@@ -446,6 +529,70 @@ describe("SEM-1 done-when 2, the chat-key path — moving meaning search's OpenA
     expect(ov.getEmbedKeyOverview).not.toHaveBeenCalled();
     expect(dialog.appConfirm).not.toHaveBeenCalled();
     expect(kn.saveAiConnection).toHaveBeenCalledWith(expect.objectContaining({ provider: "openai", model: "chat-model-c" }));
+  });
+});
+
+describe("SEM-1 done-when 2 — removing the embeddings key names what stops (fix pass 3)", () => {
+  async function clickRemove() {
+    const btn = [...host.querySelectorAll("button")].find((b) => /Remove/.test(b.textContent ?? ""))!;
+    await act(async () => { btn.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await settle();
+  }
+  const SEM3 = "Vectors already built stay in place, but they work again only with a key for the provider that built them — "
+    + "a key for another provider cannot search them until the library's index is rebuilt with it.";
+
+  it("reproduction → fix: no OpenAI chat key to fall back on — the confirm names the indexes that stop answering and the build that ends; declining removes nothing", async () => {
+    await renderEditor();                                   // Anthropic chat key, Voyage embeddings key
+    dialog.appConfirm.mockResolvedValueOnce(false);
+    await clickRemove();
+    expect(ov.getEmbedKeyOverview).toHaveBeenCalledWith("o1", { models: true });
+    expect(dialog.appConfirm.mock.calls[0][0]).toMatchObject({ title: "Remove your embeddings key?", confirmLabel: "Remove key" });
+    const text = await confirmText();
+    expect(text).toMatch(new RegExp(`^Meaning-based search stops for you; keyword search is unaffected\\. ${SEM3.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+    expect(text).toContain(`Your meaning-based search runs on this Voyage AI embeddings key (${VOYAGE[1]}), and you have no OpenAI chat key for it to fall back on.`);
+    expect(text).toMatch(/These meaning indexes stop answering your questions\. They were built with Voyage AI, and without a Voyage AI key you cannot search them:StandardsP&IDs/);
+    expect(text).toMatch(/The background builds on your key end \(with no embeddings key, the next background run releases them\) in:P&IDs/);
+    expect(text).toMatch(/To change this key instead, paste the new key and press Verify & save rather than Remove: a Voyage AI key searches these indexes as they are/);
+    expect(kn.removeEmbeddingKey).not.toHaveBeenCalled();
+  });
+
+  it("reproduction → fix: with an OpenAI chat key, meaning search MOVES to it — the confirm says so, names the switch's impact, and after the removal each library's Rebuild is linked", async () => {
+    await renderEditor({ ...SAVED, provider: "openai" });
+    await clickRemove();
+    const text = await confirmText();
+    expect(text).toMatch(new RegExp(`^Meaning-based search moves to your OpenAI chat key \\(${OPENAI[0].replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\); keyword search is unaffected\\.`));
+    expect(text).not.toMatch(/stops for you/);
+    expect(text).toContain(`You are switching from ${VOYAGE[1]} (Voyage AI) to ${OPENAI[0]} (OpenAI).`);
+    expect(text).toMatch(/These meaning indexes stop answering your questions\.[\s\S]*StandardsP&IDs/);
+    expect(text).toMatch(/The background builds on your key stop \(held for a model conflict\) in:P&IDs/);
+    expect(text).toMatch(/Once you switch, the libraries are linked here\./);
+    expect(kn.removeEmbeddingKey).toHaveBeenCalledWith("o1");
+    const offer = host.querySelector("[data-rebuild-offer]")!;
+    expect([...offer.querySelectorAll("a")].map((a) => a.getAttribute("href"))).toEqual(["/knowledge/L-std", "/knowledge/L-pid"]);
+  });
+
+  it("REGRESSION: no OpenAI chat key and no index or build touched — the confirm is exactly the one it always was", async () => {
+    ov.getEmbedKeyOverview.mockResolvedValueOnce({ builds: [], indexes: [{ libraryId: "L-ven", libraryName: "Vendor manuals", models: { [OPENAI[0]]: 12 } }] });
+    await renderEditor();
+    await clickRemove();
+    expect(dialog.appConfirm.mock.calls[0][0]).toEqual({
+      title: "Remove your embeddings key?",
+      message: "Meaning-based search stops for you; keyword search is unaffected. Vectors already built "
+        + "stay in place, but they work again only with a key for the provider that built them — "
+        + "a key for another provider cannot search them until the library's index is rebuilt with it.",
+      confirmLabel: "Remove key",
+    });
+    expect(kn.removeEmbeddingKey).toHaveBeenCalledTimes(1);
+    expect(host.querySelector("[data-rebuild-offer]")).toBeNull();
+  });
+
+  it("an OpenAI embeddings key on the chat key's own default model, with an OpenAI chat key, is no switch — nothing read, the chat key named", async () => {
+    await renderEditor({ ...SAVED, provider: "openai", embeddingProvider: "openai", embeddingModel: OPENAI[0] });
+    await clickRemove();
+    expect(ov.getEmbedKeyOverview).not.toHaveBeenCalled();
+    expect(dialog.appConfirm.mock.calls[0][0].message).toBe(
+      `Meaning-based search moves to your OpenAI chat key (${OPENAI[0]}); keyword search is unaffected. ${SEM3}`,
+    );
   });
 });
 

@@ -15,10 +15,12 @@
 // background builds on this key stop, names the libraries, and after the
 // switch links each one's Rebuild (SEM-1). A member whose meaning search runs
 // on their OpenAI chat key (no embeddings key) is told the same before the
-// chat key moves to another provider or is removed. Every background build
-// running on this member's key is listed in one place, each with a Stop that
-// stops it only while it is still on their key (GOV-14). Saving the same
-// model and provider asks nothing, exactly as before.
+// chat key moves to another provider or is removed; removing the chat key
+// deletes the whole connection, so a saved embeddings key goes with it and
+// the confirm says so; removing the embeddings key names what that stops
+// too. Every background build running on this member's key is listed in one
+// place, each with a Stop that stops it only while it is still on their key
+// (GOV-14). Saving the same model and provider asks nothing, exactly as before.
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
@@ -37,6 +39,7 @@ import {
 import {
   getEmbedKeyOverview, effectiveEmbeddingSetting, savedEmbeddingSetting, embeddingSwitchImpact,
   switchImpactIsEmpty, librariesLinkedAfterSwitch, onChatKeyEmbeddings, embeddingLossImpact, releaseBuildOnMyKey,
+  isSwitchImpact,
   type EmbeddingSwitchImpact, type EmbeddingLossImpact, type EmbedKeyOverview, type EmbedKeyBuild,
 } from "@/lib/embedKeyOverview";
 import { ALLOWED_PROVIDERS, PROVIDER_BLOCK_MESSAGE } from "@/lib/ai/pricing";
@@ -240,22 +243,28 @@ export function KeyEditor({ orgId, current, onChanged }: {
 
   const providerMeta = PROVIDERS.find((p) => p.id === provider) ?? PROVIDERS[0];
 
-  /** SEM-1: this member's meaning search runs on their OpenAI chat key (no
-   *  embeddings key saved), so moving it to another provider or removing it
-   *  leaves them with no embeddings connection. What that stops, read from
-   *  the libraries — null when meaning search does not ride on this key, or
-   *  when no index and no build is touched. */
+  /** SEM-1: what this change leaves of the member's embeddings connection,
+   *  read from the libraries. Moving the chat key off OpenAI ends the
+   *  meaning search that rode on it (no embeddings key saved); a saved
+   *  embeddings key is untouched by a save, which writes the chat fields
+   *  only. Removing the chat key deletes the member's whole connection
+   *  (DELETE /api/ai/connection), so it ends meaning search either way: the
+   *  chat-key fallback, or the saved embeddings key with it — that one is
+   *  said even when no index and no build is touched. Null when nothing is
+   *  lost, or when a lost chat-key fallback touches no index and no build. */
   const embeddingLoss = async (busyAs: "save" | "remove"): Promise<EmbeddingLossImpact | null> => {
     const before = effectiveEmbeddingSetting(current);
-    if (!before || !onChatKeyEmbeddings(current)) return null;
+    if (!before) return null;
+    const onChatKey = onChatKeyEmbeddings(current);
+    if (busyAs === "save" && !onChatKey) return null;
     setBusy(busyAs);
     let overview: EmbedKeyOverview | null = null;
     let unreadable: string | null = null;
     try { overview = await getEmbedKeyOverview(orgId, { models: true }); }
     catch (e) { unreadable = (e as Error).message; }
     setBusy(null);
-    const impact = embeddingLossImpact(before, overview, unreadable);
-    return switchImpactIsEmpty(impact) ? null : impact;
+    const impact = embeddingLossImpact(before, overview, unreadable, onChatKey ? "chatKey" : "connectionRemoved");
+    return switchImpactIsEmpty(impact) && impact.cause === "chatKey" ? null : impact;
   };
 
   const save = async () => {
@@ -328,9 +337,15 @@ export function KeyEditor({ orgId, current, onChanged }: {
   };
 
   const remove = async () => {
-    const removal = "You won't be able to ask AI questions until you add a key again. Nobody else is affected.";
-    // SEM-1: removing the OpenAI chat key ends the meaning search it carried.
+    // SEM-1: removing the chat key ends the meaning search it carried, or
+    // deletes the saved embeddings key with it — the confirm names what stops.
     const loss = await embeddingLoss("remove");
+    // A background build on this key that ends stops filling a library's
+    // index for everyone, so "nobody else" is said only when none can end.
+    const removal = "You won't be able to ask AI questions until you add a key again. "
+      + (loss && (loss.buildsStop.length > 0 || loss.unreadable)
+        ? "No one else's key is affected — but a background build on your key that ends stops filling that library's meaning index for everyone."
+        : "Nobody else is affected.");
     const ok = await appConfirm({
       title: "Remove your API key?",
       message: loss
@@ -449,15 +464,31 @@ export function EmbeddingSwitchWarning({ impact }: { impact: EmbeddingSwitchImpa
     </ul>
   );
   if (!after) {
-    // The OpenAI chat key the member's meaning search ran on is moving to
-    // another provider or going: no embeddings connection is left.
+    // No embeddings connection is left: the OpenAI chat key meaning search
+    // ran on is moving to another provider or going (`chatKey`); the chat
+    // key's removal deletes the saved embeddings key with it
+    // (`connectionRemoved`); or the embeddings key goes with no OpenAI chat
+    // key to fall back on (`embeddingsKeyRemoved`).
     const label = embeddingProviderLabel(before.provider);
+    const { cause } = impact;
     return (
-      <div data-embedding-switch-warning="true" data-embedding-loss="true" className="space-y-2 text-left">
-        <p>
-          Your meaning-based search runs on this {label} chat key ({before.model}) — you have no embeddings key
-          saved. After this change you have no embeddings connection at all.
-        </p>
+      <div data-embedding-switch-warning="true" data-embedding-loss="true" data-loss-cause={cause} className="space-y-2 text-left">
+        {cause === "connectionRemoved" ? (
+          <p>
+            <b>This also removes your embeddings key</b> ({label}, {before.model}): it is saved with your chat key, and
+            removing the chat key deletes both. After this you have no embeddings connection at all.
+          </p>
+        ) : cause === "embeddingsKeyRemoved" ? (
+          <p>
+            Your meaning-based search runs on this {label} embeddings key ({before.model}), and you have no OpenAI chat
+            key for it to fall back on. After this you have no embeddings connection at all.
+          </p>
+        ) : (
+          <p>
+            Your meaning-based search runs on this {label} chat key ({before.model}) — you have no embeddings key
+            saved. After this change you have no embeddings connection at all.
+          </p>
+        )}
         {impact.stopAnswering.length > 0 && (
           <div data-switch-stops-answering="true">
             <p>
@@ -485,12 +516,27 @@ export function EmbeddingSwitchWarning({ impact }: { impact: EmbeddingSwitchImpa
             {label} stops answering your questions, and every background build on your key ends.
           </p>
         )}
-        <p>
-          To keep them, add an embeddings key under <b>Meaning-based search</b> first: {/^[aeiou]/i.test(label) ? "an" : "a"}{" "}
-          {label} embeddings key searches these indexes as they are; a key for another provider needs each
-          library&apos;s index rebuilt with it — Rebuild index, in the library&apos;s meaning-index panel (Admin or
-          Doc Control). Or keep your current setting. Keyword search is unaffected.
-        </p>
+        {cause === "connectionRemoved" ? (
+          <p>
+            To change your chat key and keep your embeddings key, paste the new key above and press{" "}
+            <b>Verify &amp; save</b> instead — saving replaces only the chat key. Or keep your current setting.
+            Keyword search is unaffected.
+          </p>
+        ) : cause === "embeddingsKeyRemoved" ? (
+          <p>
+            To change this key instead, paste the new key and press <b>Verify &amp; save</b> rather than Remove:{" "}
+            {/^[aeiou]/i.test(label) ? "an" : "a"} {label} key searches these indexes as they are; a key for
+            another provider needs each library&apos;s index rebuilt with it — Rebuild index, in the library&apos;s
+            meaning-index panel (Admin or Doc Control). Or keep your current setting.
+          </p>
+        ) : (
+          <p>
+            To keep them, add an embeddings key under <b>Meaning-based search</b> first: {/^[aeiou]/i.test(label) ? "an" : "a"}{" "}
+            {label} embeddings key searches these indexes as they are; a key for another provider needs each
+            library&apos;s index rebuilt with it — Rebuild index, in the library&apos;s meaning-index panel (Admin or
+            Doc Control). Or keep your current setting. Keyword search is unaffected.
+          </p>
+        )}
       </div>
     );
   }
@@ -747,12 +793,37 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
   };
 
   const remove = async () => {
+    // SEM-1: removing the key changes the setting in effect — to the OpenAI
+    // chat key's default embeddings model when the chat key is OpenAI
+    // (embeddingConnectionFrom's fallback), otherwise to none. What that
+    // stops is read from the libraries and named in the same confirm, as a
+    // switch of model or provider is; with nothing touched, the confirm is
+    // the one it always was (the chat-key fallback's first sentence aside).
+    const before = effectiveEmbeddingSetting(current);
+    const after = effectiveEmbeddingSetting(current ? { provider: current.provider } : null);
+    let impact: EmbeddingSwitchImpact | EmbeddingLossImpact | null = null;
+    if (before && !(after && after.provider === before.provider && after.model === before.model)) {
+      setBusy("remove"); setNotice(null);
+      let overview: EmbedKeyOverview | null = null;
+      let unreadable: string | null = null;
+      try { overview = await getEmbedKeyOverview(orgId, { models: true }); }
+      catch (e) { unreadable = (e as Error).message; }
+      setBusy(null);
+      impact = after
+        ? embeddingSwitchImpact(before, after, overview, unreadable)
+        : embeddingLossImpact(before, overview, unreadable, "embeddingsKeyRemoved");
+      if (impact && switchImpactIsEmpty(impact)) impact = null;
+    }
+    const removal = (after
+      ? `Meaning-based search moves to your OpenAI chat key (${after.model}); keyword search is unaffected. `
+      : "Meaning-based search stops for you; keyword search is unaffected. ")
+      + "Vectors already built stay in place, but they work again only with a key for the provider that built them — "
+      + "a key for another provider cannot search them until the library's index is rebuilt with it.";
     const ok = await appConfirm({
       title: "Remove your embeddings key?",
-      message:
-        "Meaning-based search stops for you; keyword search is unaffected. Vectors already built "
-        + "stay in place, but they work again only with a key for the provider that built them — "
-        + "a key for another provider cannot search them until the library's index is rebuilt with it.",
+      message: impact
+        ? <div className="space-y-2 text-left"><p>{removal}</p><EmbeddingSwitchWarning impact={impact} /></div>
+        : removal,
       confirmLabel: "Remove key",
     });
     if (!ok) return;
@@ -760,6 +831,9 @@ export function EmbeddingKeyEditor({ orgId, current, onChanged }: {
     try {
       await removeEmbeddingKey(orgId);
       showToast({ type: "success", title: "Embeddings key removed." });
+      // Meaning search moved to the chat key's model: each library to
+      // rebuild is linked, as after a switch (the confirm promised it).
+      setRebuildOffer(impact && isSwitchImpact(impact) && librariesLinkedAfterSwitch(impact).length > 0 ? impact : null);
       onChanged();
     } catch (e) {
       showToast({ type: "error", title: (e as Error).message });

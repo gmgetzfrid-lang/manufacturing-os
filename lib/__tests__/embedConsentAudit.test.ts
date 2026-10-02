@@ -15,7 +15,10 @@
 //     consent was when a row names it or the lookup failed — a withdrawn
 //     standing "keep current" is said to be off, and a put-back raced by
 //     another pass of the caller's is read again, never reported as done
-//     when it was not.
+//     when it was not. "Keep current" reads the consent it replaces again
+//     when the first read fails, and never writes over one it still cannot
+//     read (fix pass 3), so it never withdraws a standing consent it did not
+//     know stood.
 //   GOV-14 done-when 4 / SEM-1 done-when 2 — `key-overview`: every
 //     background build on the CALLER's key across the workspace (the list AI
 //     settings shows, each with a Stop), and with `models` each library's
@@ -280,6 +283,73 @@ describe("GOV-14 done-when 3 — a recorded background consent names the request
       + "already had on this library is off now — switch it on again once it can be recorded.",
     );
     expect(marker()).toBeUndefined();
+  });
+
+  describe("'keep current' never writes over a consent it could not read (I-20 fix pass 3)", () => {
+    /** The library marker's first `n` reads (a select of ai_features) fail. */
+    function markerReadsFail(n: number) {
+      let left = n;
+      Object.defineProperty(admin.state.failReads, "knowledge_libraries", {
+        configurable: true, enumerable: true,
+        get() {
+          const last = [...admin.state.calls].reverse().find((c) => c.table === "knowledge_libraries" && c.method === "select");
+          if (last?.args[0] === "ai_features" && left > 0) { left--; return { message: "read timeout" }; }
+          return undefined;
+        },
+      });
+    }
+    const markerWrites = () => admin.state.calls.filter((c) => c.table === "rpc:embed_build_marker_write").length;
+
+    it("reproduction → fix: over the caller's standing, recorded consent, a marker read that fails once is read again — the consent is kept, never withdrawn, though the row write would fail", async () => {
+      admin.state.tables.knowledge_libraries[0].ai_features = { embedBuild: { userId: ME, at: "2026-09-20T00:00:00Z", standing: true } };
+      admin.state.tables.audit_logs = [{ id: "a-1", action: "EMBED_BUILD_CONSENT_RECORDED", resource_type: "knowledge_library", resource_id: LIB, user_id: ME, details: { stampedAt: "2026-09-20T00:00:00Z" } }];
+      admin.state.failWrites.audit_logs = { message: "audit down" };
+      markerReadsFail(1);
+      const { POST } = await import("@/app/api/knowledge/embed/route");
+      const res = await POST(req({ action: "keep-current", on: true }));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ standing: true });
+      expect(marker()).toMatchObject({ userId: ME, standing: true });
+    });
+
+    it("reproduction → fix: over the caller's standing consent from before this deploy (no row), a read that fails once and a row that cannot be written say keep current is off — the consent was withdrawn", async () => {
+      admin.state.tables.knowledge_libraries[0].ai_features = { embedBuild: { userId: ME, at: "2026-09-30T08:00:00Z", standing: true } };
+      admin.state.failWrites.audit_logs = { message: "audit down" };
+      markerReadsFail(1);
+      const { POST } = await import("@/app/api/knowledge/embed/route");
+      const res = await POST(req({ action: "keep-current", on: true }));
+      expect(res.status).toBe(500);
+      expect((await res.json()).error).toBe(
+        "The standing consent was not kept: its audit row could not be written (audit down). The \"keep current\" consent you "
+        + "already had on this library is off now — switch it on again once it can be recorded.",
+      );
+      expect(marker()).toBeUndefined();
+    });
+
+    it("a marker that cannot be read twice is not written over: 500, nothing changed, the standing consent as it was, no row", async () => {
+      const was = { userId: ME, at: "2026-09-20T00:00:00Z", standing: true };
+      admin.state.tables.knowledge_libraries[0].ai_features = { embedBuild: { ...was } };
+      admin.state.failWrites.audit_logs = { message: "audit down" };
+      markerReadsFail(2);
+      const { POST } = await import("@/app/api/knowledge/embed/route");
+      const res = await POST(req({ action: "keep-current", on: true }));
+      expect(res.status).toBe(500);
+      const body = await res.json();
+      expect(body).toEqual({ error: "Couldn't read the standing consent, so nothing was changed: read timeout", standing: null });
+      expect(marker()).toEqual(was);
+      expect(markerWrites()).toBe(0);
+      expect(consentRows()).toHaveLength(0);
+    });
+
+    it("REGRESSION: a read that fails once and then answers records a new standing consent exactly as before (one row)", async () => {
+      markerReadsFail(1);
+      const { POST } = await import("@/app/api/knowledge/embed/route");
+      const res = await POST(req({ action: "keep-current", on: true }, REQUEST_HEADERS));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ standing: true });
+      expect(consentRows()).toHaveLength(1);
+      expect(consentRows()[0].details).toMatchObject({ standing: true, stampedAt: marker()!.at, renewal: null, replaced: null });
+    });
   });
 
   it("a renewal whose row lookup fails writes the row anyway (a second row is harmless, a missing one is not)", async () => {
