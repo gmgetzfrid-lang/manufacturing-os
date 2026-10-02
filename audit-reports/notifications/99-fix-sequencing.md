@@ -101,10 +101,10 @@ nudge kind is added the same way. Two packages re-creating it in parallel:
 `KIND_META`, so the later-numbered one fails CI at merge until it carries both
 packages' kinds — and they are pasted in number order.*
 
-*Hand-off (2026-10-02, notifications Round G, N5 → N6): `NEDGE-3`'s invariant
-— a suspended or inactive member gets neither bell row nor email — holds for
-every `emit()` producer but not for the two ticket routes' own service-role
-`fanOut` (`app/api/tickets/comment/route.ts`,
+*Hand-off (2026-10-02, notifications Round G, N5 → N6) — **`NEDGE-14`**:
+`NEDGE-3`'s invariant — a suspended or inactive member gets neither bell row
+nor email — holds for every `emit()` producer but not for the two ticket
+routes' own service-role `fanOut` (`app/api/tickets/comment/route.ts`,
 `app/api/tickets/workflow-action/route.ts`; drafting-flow's files, whose
 `fanOut` builders N6 edits by plan). N6: both `fanOut` email lookups
 (`comment/route.ts:325`, `workflow-action/route.ts:692`) add
@@ -112,7 +112,16 @@ every `emit()` producer but not for the two ticket routes' own service-role
 members of the ticket's org before the bell insert (`activeMembersOf`,
 `lib/notify/recipients.ts`). Until then a suspended ticket watcher keeps
 getting comment and workflow emails; the bell rows are hidden from them once
-`20261161` is pasted.*
+`20261161` is pasted. The integrator mirrors this in N6's `dependsOn` /
+`findings` in `audit-reports/fleet-plans/notifications.json` (N5 does not
+edit the plan).*
+
+*Opened by N5's second review fix (2026-10-02), not this area's to sequence
+alone: **`NEDGE-15`** — `app/api/tickets/handback/route.ts`'s `emit()` runs
+on the unbound shared client and has never delivered (drafting-flow's route);
+**`NEDGE-16`** — after a restore every member is `inactive` and nothing
+asserts or repairs it (the remainder of `NEDGE-3` done-when 3 that the plan
+pointed at admin-and-org P1, which merged without it).*
 
 ---
 
