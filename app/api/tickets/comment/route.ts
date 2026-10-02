@@ -4,6 +4,7 @@ import { extractMentionUids } from "@/lib/notifications";
 import { rowToTicket, escapeHtml } from "@/lib/ticketTransitions";
 import { memberHoldsAny } from "@/lib/roleHeld";
 import { publicOrigin } from "@/lib/publicOrigin";
+import { ticketReadScope } from "@/lib/ticketReadScope";
 
 // POST /api/tickets/comment
 //
@@ -70,6 +71,17 @@ export async function POST(req: NextRequest) {
   if (!member) {
     return NextResponse.json({ error: "Forbidden: not an active member of this workspace" }, { status: 403 });
   }
+  // AUTHZ-13 (DEC-44 (DF-P1)): commenting makes the poster a watcher, and
+  // watching is one of the Contractor-only read scope's legs. A Contractor-only
+  // member may comment only on a ticket they can already read; any other ticket
+  // answers as an unreadable one does (404), and nothing is written. This
+  // route runs as the service role, so it cannot ask the database for
+  // auth.uid(). lib/ticketReadScope.ts holds the same predicate.
+  const scope = await ticketReadScope(supabaseAdmin, member, caller.id, { ...ticket, id: body.ticketId });
+  if (scope === "unknown") {
+    return NextResponse.json({ error: "Couldn't confirm you can see this request — try again in a moment" }, { status: 503 });
+  }
+  if (scope === "out") return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
   const callerEmail = (member.email as string | null) || caller.email || "Unknown";
   const callerRole = (member.role as string) || "Viewer";
   const now = new Date().toISOString();

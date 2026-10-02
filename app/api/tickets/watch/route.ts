@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { ticketReadScope } from "@/lib/ticketReadScope";
 
 // POST /api/tickets/watch  { ticketId, watching: boolean }
 //
@@ -17,6 +18,12 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 //      a conflict before reporting 409. The write bumps `last_modified` so a
 //      transition racing it fails its own CAS instead of overwriting the
 //      follow change.
+//   4. AUTHZ-13 (DEC-44 (DF-P1)): following is one of the Contractor-only
+//      read scope's legs. So a Contractor-only member may FOLLOW only a ticket
+//      they can already read; any other ticket answers as an unreadable one
+//      does (404), and nothing is written. Unfollowing is always allowed. The
+//      service role cannot ask the database (auth.uid() is NULL here);
+//      lib/ticketReadScope.ts holds the same predicate as 20261166.
 
 interface Body {
   ticketId: string;
@@ -46,12 +53,15 @@ export async function POST(req: NextRequest) {
   for (let attempt = 0; attempt < 2; attempt++) {
     const { data: row, error: loadErr } = await supabaseAdmin
       .from("tickets")
-      .select("id, org_id, watchers, last_modified, archived_at")
+      .select("id, org_id, watchers, last_modified, archived_at, requester_id, assigned_drafter_id, assigned_engineer_id")
       .eq("id", body.ticketId)
       .maybeSingle();
     if (loadErr) return NextResponse.json({ error: loadErr.message }, { status: 500 });
     if (!row) return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
-    const t = row as { org_id: string; watchers: string[] | null; last_modified: string | null; archived_at: string | null };
+    const t = row as {
+      id: string; org_id: string; watchers: string[] | null; last_modified: string | null; archived_at: string | null;
+      requester_id?: string | null; assigned_drafter_id?: string | null; assigned_engineer_id?: string | null;
+    };
     if (t.archived_at) {
       return NextResponse.json({ error: "This ticket is archived; restore it from its archive before following it." }, { status: 409 });
     }
@@ -59,13 +69,23 @@ export async function POST(req: NextRequest) {
     if (attempt === 0) {
       const { data: member } = await supabaseAdmin
         .from("org_members")
-        .select("uid")
+        .select("uid, role, roles")
         .eq("org_id", t.org_id)
         .eq("uid", caller.id)
         .eq("status", "active")
         .maybeSingle();
       if (!member) {
         return NextResponse.json({ error: "Forbidden: not an active member of this workspace" }, { status: 403 });
+      }
+      if (body.watching) {
+        const scope = await ticketReadScope(supabaseAdmin, member, caller.id, {
+          id: t.id, requesterId: t.requester_id, assignedDrafterId: t.assigned_drafter_id,
+          assignedEngineerId: t.assigned_engineer_id, watchers: t.watchers,
+        });
+        if (scope === "unknown") {
+          return NextResponse.json({ error: "Couldn't confirm you can see this request — try again in a moment" }, { status: 503 });
+        }
+        if (scope === "out") return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
       }
     }
 

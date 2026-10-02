@@ -17,10 +17,11 @@
 --         * client-writable in the shape the app still uses: priority (the
 --           queue's mark-urgent, free); last_modified (stamped, never cleared
 --           — EDGE-15); unread_by (only the caller's own marker leaves it —
---           the request page's mark-read; a pure removal is applied as
---           exactly that, an addition is refused); history (append only: the
---           entries already there are immutable, and an appended entry names
---           the caller — EVID-1 / AUTHZ-2 / PERS-1).
+--           the request page's mark-read; any client write lands as the
+--           stored array minus the caller, never an error, so a stale array
+--           still clears the caller's marker and nobody else's); history
+--           (append only: the entries already there are immutable, and an
+--           appended entry names the caller — EVID-1 / AUTHZ-2 / PERS-1).
 --       The service role (every route) passes, as before.
 --   (2) PERS-1 done-when 3: tickets_org_access (FOR ALL, USING only — the
 --       newest body is supabase/schema.sql's; no migration replaced it) is
@@ -33,7 +34,9 @@
 --       whole collection is Contractor is narrowed — to tickets they
 --       requested, are assigned to (drafter or engineer), follow, or were
 --       mentioned on — by a RESTRICTIVE SELECT policy on tickets and the same
---       scope on ticket_comments (the second copy of every thread).
+--       scope on ticket_comments (the second copy of every thread). The
+--       row-independent leg (the caller's Contractor-only orgs) runs once per
+--       statement, so no other member pays a per-row function call.
 --   (4) AUTHZ-8: post_ticket_comment re-created from its newest body
 --       (20260810): a signed-in caller's comment is stamped with THEIR uid,
 --       member email, role and the time now; unread_by and watchers are
@@ -116,13 +119,15 @@ SELECT 'inventory (before apply): EDGE-15 — tickets whose last_modified is NUL
        COUNT(*)::text
   FROM tickets WHERE last_modified IS NULL
 UNION ALL
-SELECT 'inventory (before apply): DCW-4 / HAND-3 — tickets recording a "published" deliverable the register does not back (no document_versions row of that id in the ticket''s org carrying the ticket as its provenance); a close now records them as not in the register',
+SELECT 'inventory (before apply): DCW-4 / HAND-3 — tickets with a source document recording a "published" deliverable the register does not back (no document_versions row of that id, of that source document, in the ticket''s org, carrying the ticket as its provenance — the close''s own predicate); a close now records them as not in the register',
        COUNT(*)::text
   FROM tickets t
  WHERE t.metadata -> 'deliverable' ->> 'state' = 'published'
+   AND COALESCE(t.metadata -> 'source_document' ->> 'id', '') <> ''
    AND NOT EXISTS (SELECT 1 FROM document_versions v
                     WHERE v.id::text = t.metadata -> 'deliverable' ->> 'version_id'
-                      AND v.org_id = t.org_id AND v.related_ticket_id = t.id)
+                      AND v.org_id = t.org_id AND v.related_ticket_id = t.id
+                      AND v.record_id::text = t.metadata -> 'source_document' ->> 'id')
 UNION ALL
 SELECT 'inventory (before apply): AUTHZ-13 — active members whose whole role collection is Contractor (narrowed to the tickets they requested, are assigned to, follow or were mentioned on)',
        COUNT(*)::text
@@ -192,6 +197,7 @@ ALTER TABLE tickets ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
 ALTER TABLE tickets ADD COLUMN IF NOT EXISTS deliverable_rev TEXT;
 ALTER TABLE tickets ADD COLUMN IF NOT EXISTS draft_iteration INT NOT NULL DEFAULT 0;
 ALTER TABLE ticket_comments ADD COLUMN IF NOT EXISTS mentioned_uids UUID[] DEFAULT '{}';
+ALTER TABLE ticket_comments ADD COLUMN IF NOT EXISTS org_id UUID;
 ALTER TABLE document_intents ADD COLUMN IF NOT EXISTS ticket_id UUID;
 
 -- ── 1. ticket_update_guard — re-created from 20261038 (lineDiff-pinned) ─────
@@ -288,15 +294,12 @@ BEGIN
   END IF;
 
   -- DF-P1 (PERS-1 / LEAK-4): unread_by — a client clears only its OWN unread
-  -- marker (the request page's mark-read). A write that only removes markers
-  -- is applied as exactly that: the caller leaves the array and nobody else
-  -- does, so a page reading a stale array cannot clear another reader's
-  -- marker. A write that adds anyone is refused.
+  -- marker (the request page's mark-read). Whatever array a client writes,
+  -- what lands is the stored array minus the caller: nobody else leaves it
+  -- and nobody joins it. Never an error: the page sends the whole array it
+  -- read moments earlier, and a reader who marked it read in between makes
+  -- that array stale; refusing it would leave the caller's own marker in place.
   IF NEW.unread_by IS DISTINCT FROM OLD.unread_by THEN
-    IF EXISTS (SELECT 1 FROM unnest(COALESCE(NEW.unread_by, '{}'::uuid[])) AS u(id)
-                WHERE NOT (u.id = ANY (COALESCE(OLD.unread_by, '{}'::uuid[])))) THEN
-      RAISE EXCEPTION 'tickets: unread_by is workflow-owned — you can only mark the request read for yourself';
-    END IF;
     NEW.unread_by := array_remove(COALESCE(OLD.unread_by, '{}'::uuid[]), auth.uid());
   END IF;
 
@@ -351,49 +354,69 @@ CREATE POLICY tickets_org_delete ON tickets FOR DELETE
 -- additive role, or every additive role Contractor) reads a ticket only when
 -- they requested it, are its drafter or engineer, follow it, or were
 -- mentioned on it. Everyone else keeps the org-wide read (the product model).
--- SECURITY DEFINER so the membership and mention reads do not recurse into
--- the row-level policies of the tables they read; a session-less call is
--- false (the service role bypasses row-level security and never asks). The
--- two policies bind the authenticated role only: anon reads no ticket under
--- the org policy anyway and may not execute the function (DRLS-16), so it
--- must never appear in an anon query's plan.
-CREATE OR REPLACE FUNCTION ticket_read_scope_ok(
-  p_org      uuid,
-  p_ticket   uuid,
-  p_requester uuid,
-  p_drafter  uuid,
-  p_engineer uuid,
-  p_watchers uuid[]
-) RETURNS boolean
+--
+-- Cost: the row-independent part is one call per STATEMENT, not per row.
+-- contractor_only_org_ids() returns the caller's Contractor-only orgs, and the
+-- policy reads it through a scalar sub-select, so the planner runs it once as
+-- an InitPlan. A row in any other org passes on the first leg, so a
+-- non-Contractor member pays one membership lookup per query and no
+-- per-row function call. Only the mention leg calls a function per row
+-- (ticket_mentions_me), and only for a Contractor-only caller's rows that no
+-- cheaper leg admitted. Both functions are SECURITY DEFINER (search_path
+-- pinned) so the membership and mention reads do not recurse into the
+-- row-level policies of the tables they read. With no session both answer
+-- nothing: no org, no mention. The policies bind the authenticated role only:
+-- anon reads no ticket under the org policy anyway and may not execute the
+-- functions (DRLS-16), so they never appear in an anon query's plan.
+-- /api/tickets/watch and /api/tickets/comment run as the service role and
+-- write watchers, which is one of the scope's legs. They ask
+-- lib/ticketReadScope.ts, the same predicate in TypeScript, before writing.
+CREATE OR REPLACE FUNCTION contractor_only_org_ids()
+RETURNS uuid[]
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
-  SELECT auth.uid() IS NOT NULL AND (
-    NOT EXISTS (
-      SELECT 1 FROM org_members m
-       WHERE m.org_id = p_org AND m.uid = auth.uid() AND m.status = 'active'
-         AND (CASE WHEN cardinality(m.roles) > 0 THEN m.roles ELSE ARRAY[m.role] END) <@ ARRAY['Contractor']::text[]
-    )
-    OR auth.uid() = p_requester
-    OR auth.uid() = p_drafter
-    OR auth.uid() = p_engineer
-    OR auth.uid() = ANY (COALESCE(p_watchers, '{}'::uuid[]))
-    OR EXISTS (SELECT 1 FROM ticket_comments c
-                WHERE c.ticket_id = p_ticket AND auth.uid() = ANY (COALESCE(c.mentioned_uids, '{}'::uuid[])))
+  SELECT COALESCE(array_agg(m.org_id), '{}'::uuid[])
+    FROM org_members m
+   WHERE auth.uid() IS NOT NULL
+     AND m.uid = auth.uid() AND m.status = 'active'
+     AND (CASE WHEN cardinality(m.roles) > 0 THEN m.roles ELSE ARRAY[m.role] END) <@ ARRAY['Contractor']::text[];
+$$;
+REVOKE ALL ON FUNCTION contractor_only_org_ids() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION contractor_only_org_ids() TO authenticated, service_role;
+
+CREATE OR REPLACE FUNCTION ticket_mentions_me(p_ticket uuid)
+RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT auth.uid() IS NOT NULL AND EXISTS (
+    SELECT 1 FROM ticket_comments c
+     WHERE c.ticket_id = p_ticket AND auth.uid() = ANY (COALESCE(c.mentioned_uids, '{}'::uuid[]))
   );
 $$;
-REVOKE ALL ON FUNCTION ticket_read_scope_ok(uuid, uuid, uuid, uuid, uuid, uuid[]) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION ticket_read_scope_ok(uuid, uuid, uuid, uuid, uuid, uuid[]) TO authenticated, service_role;
+REVOKE ALL ON FUNCTION ticket_mentions_me(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION ticket_mentions_me(uuid) TO authenticated, service_role;
 
 DROP POLICY IF EXISTS tickets_read_scope ON tickets;
 CREATE POLICY tickets_read_scope ON tickets
   AS RESTRICTIVE FOR SELECT TO authenticated
-  USING (ticket_read_scope_ok(org_id, id, requester_id, assigned_drafter_id, assigned_engineer_id, watchers));
+  USING (
+    NOT (org_id = ANY ((SELECT contractor_only_org_ids())::uuid[]))
+    OR requester_id = (SELECT auth.uid())
+    OR assigned_drafter_id = (SELECT auth.uid())
+    OR assigned_engineer_id = (SELECT auth.uid())
+    OR (SELECT auth.uid()) = ANY (COALESCE(watchers, '{}'::uuid[]))
+    OR ticket_mentions_me(id)
+  );
 
--- The second copy of every thread: a comment row is readable only where its
--- ticket is (the tickets policies above decide, evaluated as the caller).
+-- The second copy of every thread. A comment in an org where the caller is
+-- not Contractor-only passes on the first leg, so only a Contractor-only
+-- caller's comments consult their ticket, and the tickets policies above
+-- decide that, evaluated as the caller.
 DROP POLICY IF EXISTS ticket_comments_read_scope ON ticket_comments;
 CREATE POLICY ticket_comments_read_scope ON ticket_comments
   AS RESTRICTIVE FOR SELECT TO authenticated
-  USING (EXISTS (SELECT 1 FROM tickets t WHERE t.id = ticket_comments.ticket_id));
+  USING (
+    NOT (org_id = ANY ((SELECT contractor_only_org_ids())::uuid[]))
+    OR EXISTS (SELECT 1 FROM tickets t WHERE t.id = ticket_comments.ticket_id)
+  );
 
 -- ── 4. AUTHZ-8: post_ticket_comment — re-created from 20260810 ──────────────
 CREATE OR REPLACE FUNCTION post_ticket_comment(
@@ -622,21 +645,24 @@ SELECT 'PERS-1 done-when 3: tickets_org_access (FOR ALL) is gone; one permissive
        AND NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'tickets' AND cmd = 'ALL'),
        NULL
 UNION ALL
-SELECT 'AUTHZ-13 (DEC-44 (DF-P1)): a RESTRICTIVE read scope on tickets and on ticket_comments (authenticated); the scope function is SECURITY DEFINER with search_path pinned, executable by authenticated, not by anon or PUBLIC',
+SELECT 'AUTHZ-13 (DEC-44 (DF-P1)): a RESTRICTIVE read scope on tickets and on ticket_comments (authenticated) whose row-independent leg is a per-statement sub-select; both scope functions are SECURITY DEFINER with search_path pinned, executable by authenticated, not by anon or PUBLIC',
        EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'tickets' AND policyname = 'tickets_read_scope'
                 AND cmd = 'SELECT' AND permissive = 'RESTRICTIVE' AND roles = ARRAY['authenticated']::name[]
-                AND qual LIKE '%ticket_read_scope_ok(%')
+                AND qual LIKE '%SELECT contractor_only_org_ids()%' AND qual LIKE '%ticket_mentions_me(id)%'
+                AND qual LIKE '%requester_id = ( SELECT auth.uid()%' AND qual LIKE '%watchers%')
        AND EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'ticket_comments' AND policyname = 'ticket_comments_read_scope'
                     AND cmd = 'SELECT' AND permissive = 'RESTRICTIVE' AND roles = ARRAY['authenticated']::name[]
-                    AND qual LIKE '%FROM tickets t%')
-       AND EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-                    WHERE n.nspname = 'public' AND p.proname = 'ticket_read_scope_ok'
-                      AND p.prosecdef AND p.proconfig @> ARRAY['search_path=public']
-                      AND p.prosrc LIKE '%<@ ARRAY[''Contractor'']::text[]%')
-       AND has_function_privilege('authenticated', 'ticket_read_scope_ok(uuid, uuid, uuid, uuid, uuid, uuid[])', 'EXECUTE')
-       AND NOT has_function_privilege('anon', 'ticket_read_scope_ok(uuid, uuid, uuid, uuid, uuid, uuid[])', 'EXECUTE')
+                    AND qual LIKE '%SELECT contractor_only_org_ids()%' AND qual LIKE '%FROM tickets t%')
+       AND (SELECT COUNT(*) = 2 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+             WHERE n.nspname = 'public' AND p.proname IN ('contractor_only_org_ids', 'ticket_mentions_me')
+               AND p.prosecdef AND p.proconfig @> ARRAY['search_path=public'])
+       AND (SELECT prosrc LIKE '%<@ ARRAY[''Contractor'']::text[]%' FROM pg_proc WHERE proname = 'contractor_only_org_ids')
+       AND has_function_privilege('authenticated', 'contractor_only_org_ids()', 'EXECUTE')
+       AND NOT has_function_privilege('anon', 'contractor_only_org_ids()', 'EXECUTE')
+       AND has_function_privilege('authenticated', 'ticket_mentions_me(uuid)', 'EXECUTE')
+       AND NOT has_function_privilege('anon', 'ticket_mentions_me(uuid)', 'EXECUTE')
        AND NOT EXISTS (SELECT 1 FROM pg_proc p, aclexplode(p.proacl) x
-                        WHERE p.proname = 'ticket_read_scope_ok' AND x.grantee = 0 AND x.privilege_type = 'EXECUTE'),
+                        WHERE p.proname IN ('contractor_only_org_ids', 'ticket_mentions_me') AND x.grantee = 0 AND x.privilege_type = 'EXECUTE'),
        NULL
 UNION ALL
 SELECT 'AUTHZ-8: post_ticket_comment stamps a signed-in caller''s identity over the payload and merges unread_by / watchers (never replaces them)',

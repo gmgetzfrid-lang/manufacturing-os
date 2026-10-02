@@ -106,9 +106,6 @@ describe("20261166 — ticket_update_guard re-created from its NEWEST earlier bo
       "      END IF;",
       "    END LOOP;",
       "  IF NEW.unread_by IS DISTINCT FROM OLD.unread_by THEN",
-      "    IF EXISTS (SELECT 1 FROM unnest(COALESCE(NEW.unread_by, '{}'::uuid[])) AS u(id)",
-      "                WHERE NOT (u.id = ANY (COALESCE(OLD.unread_by, '{}'::uuid[])))) THEN",
-      "      RAISE EXCEPTION 'tickets: unread_by is workflow-owned — you can only mark the request read for yourself';",
       "    NEW.unread_by := array_remove(COALESCE(OLD.unread_by, '{}'::uuid[]), auth.uid());",
       "  IF NEW.last_modified IS NULL AND OLD.last_modified IS NOT NULL THEN",
       "    RAISE EXCEPTION 'tickets: last_modified cannot be cleared';",
@@ -143,6 +140,15 @@ describe("20261166 — ticket_update_guard re-created from its NEWEST earlier bo
     expect(G.next).toContain("IF NEW.last_modified IS NULL AND OLD.last_modified IS NOT NULL THEN");
     // priority stays free: the queue's mark-urgent writes it
     expect(G.next).not.toMatch(/NEW\.priority\b/);
+    // unread_by never raises: a stale array from the page's mark-read still
+    // clears the caller's own marker (and only that), never an error
+    const unreadBlock = between(G.next, "  IF NEW.unread_by IS DISTINCT FROM OLD.unread_by THEN", "  END IF;");
+    expect(unreadBlock).not.toContain("RAISE");
+    expect(code(unreadBlock.split("\n"))).toEqual([
+      "  IF NEW.unread_by IS DISTINCT FROM OLD.unread_by THEN",
+      "    NEW.unread_by := array_remove(COALESCE(OLD.unread_by, '{}'::uuid[]), auth.uid());",
+      "  END IF;",
+    ]);
   });
 
   it("LEAK-10 / LEAK-3 / AUTHZ-6: request_type and unit are workflow-owned (the whole DEC-13 resource)", () => {
@@ -253,17 +259,41 @@ describe("20261166 — the policies (PERS-1 done-when 3, AUTHZ-13 / DEC-44 (DF-P
   });
 
   it("AUTHZ-13: a RESTRICTIVE SELECT on tickets and on ticket_comments for the authenticated role; the scope narrows ONLY a Contractor-only collection", () => {
-    expect(M).toContain("CREATE POLICY tickets_read_scope ON tickets\n  AS RESTRICTIVE FOR SELECT TO authenticated\n  USING (ticket_read_scope_ok(org_id, id, requester_id, assigned_drafter_id, assigned_engineer_id, watchers));");
-    expect(M).toContain("CREATE POLICY ticket_comments_read_scope ON ticket_comments\n  AS RESTRICTIVE FOR SELECT TO authenticated\n  USING (EXISTS (SELECT 1 FROM tickets t WHERE t.id = ticket_comments.ticket_id));");
-    const fn = between(M, "CREATE OR REPLACE FUNCTION ticket_read_scope_ok(", "\n$$;");
-    expect(fn).toContain("LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$");
-    expect(fn).toContain("(CASE WHEN cardinality(m.roles) > 0 THEN m.roles ELSE ARRAY[m.role] END) <@ ARRAY['Contractor']::text[]");
-    expect(fn).toContain("SELECT auth.uid() IS NOT NULL AND (");
-    for (const leg of ["auth.uid() = p_requester", "auth.uid() = p_drafter", "auth.uid() = p_engineer", "auth.uid() = ANY (COALESCE(p_watchers, '{}'::uuid[]))", "auth.uid() = ANY (COALESCE(c.mentioned_uids, '{}'::uuid[]))"]) {
-      expect(fn, leg).toContain(leg);
+    expect(M).toContain([
+      "CREATE POLICY tickets_read_scope ON tickets",
+      "  AS RESTRICTIVE FOR SELECT TO authenticated",
+      "  USING (",
+      "    NOT (org_id = ANY ((SELECT contractor_only_org_ids())::uuid[]))",
+      "    OR requester_id = (SELECT auth.uid())",
+      "    OR assigned_drafter_id = (SELECT auth.uid())",
+      "    OR assigned_engineer_id = (SELECT auth.uid())",
+      "    OR (SELECT auth.uid()) = ANY (COALESCE(watchers, '{}'::uuid[]))",
+      "    OR ticket_mentions_me(id)",
+      "  );",
+    ].join("\n"));
+    expect(M).toContain([
+      "CREATE POLICY ticket_comments_read_scope ON ticket_comments",
+      "  AS RESTRICTIVE FOR SELECT TO authenticated",
+      "  USING (",
+      "    NOT (org_id = ANY ((SELECT contractor_only_org_ids())::uuid[]))",
+      "    OR EXISTS (SELECT 1 FROM tickets t WHERE t.id = ticket_comments.ticket_id)",
+      "  );",
+    ].join("\n"));
+    const orgs = between(M, "CREATE OR REPLACE FUNCTION contractor_only_org_ids()", "\n$$;");
+    expect(orgs).toContain("LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$");
+    expect(orgs).toContain("(CASE WHEN cardinality(m.roles) > 0 THEN m.roles ELSE ARRAY[m.role] END) <@ ARRAY['Contractor']::text[]");
+    expect(orgs).toContain("WHERE auth.uid() IS NOT NULL");
+    const mentions = between(M, "CREATE OR REPLACE FUNCTION ticket_mentions_me(p_ticket uuid)", "\n$$;");
+    expect(mentions).toContain("LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$");
+    expect(mentions).toContain("WHERE c.ticket_id = p_ticket AND auth.uid() = ANY (COALESCE(c.mentioned_uids, '{}'::uuid[]))");
+    for (const f of ["contractor_only_org_ids()", "ticket_mentions_me(uuid)"]) {
+      expect(M).toContain(`REVOKE ALL ON FUNCTION ${f} FROM PUBLIC, anon;`);
+      expect(M).toContain(`GRANT EXECUTE ON FUNCTION ${f} TO authenticated, service_role;`);
     }
-    expect(M).toContain("REVOKE ALL ON FUNCTION ticket_read_scope_ok(uuid, uuid, uuid, uuid, uuid, uuid[]) FROM PUBLIC, anon;");
-    expect(M).toContain("GRANT EXECUTE ON FUNCTION ticket_read_scope_ok(uuid, uuid, uuid, uuid, uuid, uuid[]) TO authenticated, service_role;");
+    // the per-row definer call of the first draft is gone
+    expect(stripComments(M)).not.toContain("ticket_read_scope_ok");
+    // the column the comments policy reads is ADDed IF NOT EXISTS first
+    expect(M.slice(0, M.indexOf("CREATE OR REPLACE FUNCTION contractor_only_org_ids()"))).toContain("ALTER TABLE ticket_comments ADD COLUMN IF NOT EXISTS org_id UUID;");
   });
 
   it("PERS-4: document_intents.ticket_id → tickets(id) ON DELETE CASCADE, in the two DEC-30 worlds; the restore's parent rule names it", () => {
@@ -298,6 +328,16 @@ describe("20261166 — DEC-30 one-paste shape", () => {
     const inv = M.slice(temp, begin);
     expect(inv).not.toMatch(/SELECT\s+\*/);
     expect((inv.match(/COUNT\(\*\)::text/g) ?? []).length).toBe(8);
+  });
+
+  it("DCW-4 / HAND-3's inventory row counts exactly what a close rewrites: a source document present, and no register version of THAT document backing the recorded id", () => {
+    const inv = M.slice(M.indexOf("CREATE TEMP TABLE df_round_g_166_before AS"), M.indexOf("\nBEGIN;\n"));
+    const row = between(inv, "SELECT 'inventory (before apply): DCW-4 / HAND-3", "UNION ALL");
+    expect(row).toContain("AND COALESCE(t.metadata -> 'source_document' ->> 'id', '') <> ''");
+    expect(row).toContain("AND v.org_id = t.org_id AND v.related_ticket_id = t.id");
+    expect(row).toContain("AND v.record_id::text = t.metadata -> 'source_document' ->> 'id')");
+    // the route reads the same four legs
+    expect(src("app/api/tickets/workflow-action/route.ts")).toContain('.eq("id", recordedState.version_id).eq("org_id", ticket.orgId)\n          .eq("record_id", closeSrc.id).eq("related_ticket_id", body.ticketId)');
   });
 
   it("LEAK-10's read-only inventory is the record's query, counts only", () => {
@@ -347,19 +387,24 @@ const state = vi.hoisted(() => ({
   errors: {} as Record<string, Array<{ code?: string; message: string } | null>>,
   r2: [] as Array<unknown>,
   rpcResult: { data: null, error: null } as { data: unknown; error: null | { code?: string; message: string } },
+  /** auth.admin.getUserById answers (uid → email, or an Error to throw). */
+  authUsers: {} as Record<string, string | Error>,
 }));
 function chain(table: string) {
   const filters: Array<[string, string, unknown]> = [];
   let head = false;
   let method: string | null = null;
   const rows = () => (state.rows[table] ?? []).filter((r) => filters.every(([op, k, v]) =>
-    op === "eq" ? r[k] === v : op === "is" ? (v === null ? r[k] == null : r[k] === v) : true)).map((r) => ({ ...r }));
+    op === "eq" ? r[k] === v
+      : op === "is" ? (v === null ? r[k] == null : r[k] === v)
+        : op === "contains" ? Array.isArray(r[k]) && (v as unknown[]).every((x) => (r[k] as unknown[]).includes(x))
+          : true)).map((r) => ({ ...r }));
   const errOf = () => (method ? state.errors[`${table}.${method}`]?.shift() ?? null : null);
   const c: Record<string, unknown> = {};
   const h: ProxyHandler<Record<string, unknown>> = {
     get(_t, prop: string) {
       if (prop === "then") return (resolve: (v: unknown) => void) => {
-        const err = errOf();
+        const err = errOf() ?? (method === null ? state.errors[`${table}.select`]?.shift() ?? null : null);
         if (err) return resolve({ data: null, error: err });
         if (head) return resolve({ data: null, error: null, count: rows().length });
         if (method === "insert") return resolve({ data: [], error: null });
@@ -372,6 +417,7 @@ function chain(table: string) {
         if (prop === "insert" || prop === "update" || prop === "upsert" || prop === "delete") method = prop;
         if (prop === "eq") filters.push(["eq", String(args[0]), args[1]]);
         if (prop === "is") filters.push(["is", String(args[0]), args[1]]);
+        if (prop === "contains") filters.push(["contains", String(args[0]), args[1]]);
         if (prop === "maybeSingle" || prop === "single") {
           const err = errOf() ?? (method === null ? state.errors[`${table}.select`]?.shift() ?? null : null);
           if (err) return Promise.resolve({ data: null, error: err });
@@ -385,7 +431,14 @@ function chain(table: string) {
 }
 vi.mock("@/lib/supabaseAdmin", () => ({
   supabaseAdmin: {
-    auth: { getUser: vi.fn(async () => state.user ? { data: { user: state.user }, error: null } : { data: { user: null }, error: { message: "bad" } }) },
+    auth: {
+      getUser: vi.fn(async () => state.user ? { data: { user: state.user }, error: null } : { data: { user: null }, error: { message: "bad" } }),
+      admin: { getUserById: vi.fn(async (uid: string) => {
+        const u = state.authUsers[uid];
+        if (u instanceof Error) throw u;
+        return u ? { data: { user: { id: uid, email: u } }, error: null } : { data: { user: null }, error: { message: "User not found" } };
+      }) },
+    },
     from: (t: string) => chain(t),
     rpc: vi.fn(async (...args: unknown[]) => { state.calls.push({ table: "rpc", method: String(args[0]), args }); return state.rpcResult; }),
   },
@@ -404,6 +457,8 @@ vi.mock("@/lib/r2", () => ({
 }));
 import { POST as workflowAction } from "@/app/api/tickets/workflow-action/route";
 import { POST as commentPost } from "@/app/api/tickets/comment/route";
+import { POST as watchPost } from "@/app/api/tickets/watch/route";
+import { isContractorOnly } from "@/lib/ticketReadScope";
 import { logAuditAction } from "@/lib/audit";
 import { listMyNotifications, countUnread } from "@/lib/inAppNotifications";
 
@@ -439,7 +494,7 @@ const legsAfterFirst = (table: string, method: string) => {
 beforeEach(() => {
   __resetCapabilityPolicyCache();
   state.user = null; state.rows = {}; state.calls = []; state.onCall = null; state.errors = {}; state.r2 = [];
-  state.rpcResult = { data: null, error: null };
+  state.rpcResult = { data: null, error: null }; state.authUsers = {};
   process.env.NEXT_PUBLIC_SUPABASE_URL = "https://x.supabase.co";
   process.env.SUPABASE_SERVICE_ROLE_KEY = "svc";
   delete process.env.CRON_SECRET;
@@ -741,31 +796,192 @@ describe("AUTHZ-14 — the gated requester's note to the engineer is required by
 });
 
 describe("DCW-4 / HAND-3 (DF-P1 limb) — a close believes a 'published' deliverable only when the register backs it", () => {
+  const DOC = "00000000-0000-4000-8000-0000000000d1";
+  const VER = "00000000-0000-4000-8000-0000000000f9";
   const closing = (metadata: Record<string, unknown>) => {
     state.user = { id: "req-1" };
     state.rows.org_members = [member("req-1", "Requester"), member("d-1", "Drafter")];
-    state.rows.documents = [{ id: "doc-1", org_id: "o1", rev: "3", document_number: "P-100" }];
+    state.rows.documents = [{ id: DOC, org_id: "o1", rev: "3", document_number: "P-100" }];
     state.rows.tickets = [ticketRow({ status: "FINAL_DRAFT", attachments: [FINAL], metadata })];
   };
   it("a hand-written 'published' state with no backing register version closes as NOT in the register — state, history line and note", async () => {
-    closing({ source_document: { id: "doc-1", documentNumber: "P-100" }, deliverable: { state: "published", version_id: "not-a-real-version", revision_label: "9", document_id: "doc-1" } });
+    closing({ source_document: { id: DOC, documentNumber: "P-100" }, deliverable: { state: "published", version_id: VER, revision_label: "9", document_id: DOC } });
     const res = await post({ ticketId: "t1", actionType: "close_ticket" });
     expect(res.status).toBe(200);
     const upd = updatesOf("tickets")[0];
-    expect((upd.metadata as { deliverable: Record<string, unknown> }).deliverable).toMatchObject({ state: "not_in_register", document_id: "doc-1", register_rev: "3" });
+    expect((upd.metadata as { deliverable: Record<string, unknown> }).deliverable).toMatchObject({ state: "not_in_register", document_id: DOC, register_rev: "3" });
     expect((upd.history as Array<{ action: string; details?: string }>).at(-1)).toMatchObject({ action: "Closed — deliverable not in the register" });
     expect((upd.history as Array<{ details?: string }>).at(-1)!.details).toMatch(/could not be matched to a revision of P-100/);
     const read = state.calls.findIndex((c) => c.table === "document_versions" && c.method === "select");
-    expect(state.calls.slice(read + 1, read + 5).map((c) => c.args)).toEqual([["id", "not-a-real-version"], ["org_id", "o1"], ["record_id", "doc-1"], ["related_ticket_id", "t1"]]);
+    expect(state.calls.slice(read + 1, read + 5).map((c) => c.args)).toEqual([["id", VER], ["org_id", "o1"], ["record_id", DOC], ["related_ticket_id", "t1"]]);
   });
 
   it("a 'published' state the register backs (a version of the source, in this org, with this ticket as provenance) closes with no note", async () => {
-    closing({ source_document: { id: "doc-1" }, deliverable: { state: "published", version_id: "v-9", revision_label: "4", document_id: "doc-1" } });
-    state.rows.document_versions = [{ id: "v-9", org_id: "o1", record_id: "doc-1", related_ticket_id: "t1" }];
+    closing({ source_document: { id: DOC }, deliverable: { state: "published", version_id: VER, revision_label: "4", document_id: DOC } });
+    state.rows.document_versions = [{ id: VER, org_id: "o1", record_id: DOC, related_ticket_id: "t1" }];
     expect((await post({ ticketId: "t1", actionType: "close_ticket" })).status).toBe(200);
     const upd = updatesOf("tickets")[0];
     expect(upd).not.toHaveProperty("metadata");
     expect((upd.history as Array<{ action: string }>).map((h) => h.action)).not.toContain("Closed — deliverable not in the register");
+  });
+
+  it("a register read that FAILS proves nothing: 503 'register_unreadable' before any write — the backed publication, the holds and the history stay as they were", async () => {
+    closing({ source_document: { id: DOC }, deliverable: { state: "published", version_id: VER, revision_label: "4", document_id: DOC } });
+    state.rows.document_versions = [{ id: VER, org_id: "o1", record_id: DOC, related_ticket_id: "t1" }];
+    state.rows.document_holds = [{ id: "h-1", document_id: DOC, origin_ticket_id: "t1", released_at: null, reason: "rev in progress" }];
+    state.errors["document_versions.select"] = [{ code: "57014", message: "canceling statement due to statement timeout" }];
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const res = await post({ ticketId: "t1", actionType: "close_ticket", holdResolution: { action: "release" } });
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ code: "register_unreadable" });
+    expect(ticketWrites()).toHaveLength(0);
+    expect(updatesOf("document_holds")).toHaveLength(0);
+    expect(insertsOf("audit_logs")).toHaveLength(0);
+    expect(insertsOf("notifications")).toHaveLength(0);
+    expect(spy.mock.calls.some((c) => String(c[0]).includes("register read failed while closing ticket t1"))).toBe(true);
+    // the register answers on the retry: the close lands and the publication stands
+    expect((await post({ ticketId: "t1", actionType: "close_ticket", holdResolution: { action: "release" } })).status).toBe(200);
+    expect(updatesOf("tickets")[0]).not.toHaveProperty("metadata");
+  });
+
+  it("a recorded id that is not a UUID cannot name a register row: unbacked with no read (no invalid-input error to block every close)", async () => {
+    closing({ source_document: { id: DOC }, deliverable: { state: "published", version_id: "not-a-real-version", revision_label: "9", document_id: DOC } });
+    expect((await post({ ticketId: "t1", actionType: "close_ticket" })).status).toBe(200);
+    expect(state.calls.filter((c) => c.table === "document_versions")).toHaveLength(0);
+    expect((updatesOf("tickets")[0].metadata as { deliverable: Record<string, unknown> }).deliverable).toMatchObject({ state: "not_in_register" });
+  });
+});
+
+describe("AUTHZ-13 — the service-role routes that write watchers honour the Contractor-only read scope", () => {
+  const CON = (over: Record<string, unknown> = {}) => member("c-1", "Contractor", ["Contractor"], over);
+  const setup = (ticketOver: Record<string, unknown> = {}, who = CON()) => {
+    state.user = { id: String(who.uid) };
+    state.rows.org_members = [who, member("req-1", "Requester"), member("d-1", "Drafter")];
+    state.rows.tickets = [ticketRow(ticketOver)];
+  };
+  const watch = (watching: boolean) => watchPost(req("/api/tickets/watch", { ticketId: "t1", watching }));
+  const comment = (text = "hi") => commentPost(req("/api/tickets/comment", { ticketId: "t1", text }));
+
+  it("isContractorOnly mirrors 20261166: the collection when non-empty, else the headline; every entry Contractor", () => {
+    expect(isContractorOnly({ role: "Contractor", roles: ["Contractor"] })).toBe(true);
+    expect(isContractorOnly({ role: "Contractor", roles: [] })).toBe(true);
+    expect(isContractorOnly({ role: "Contractor", roles: null })).toBe(true);
+    // the SQL reads `roles` when it is non-empty, so a stale headline does not widen it
+    expect(isContractorOnly({ role: "Admin", roles: ["Contractor"] })).toBe(true);
+    expect(isContractorOnly({ role: "Contractor", roles: ["Contractor", "Drafter"] })).toBe(false);
+    expect(isContractorOnly({ role: "Drafter", roles: [] })).toBe(false);
+    expect(isContractorOnly({ role: null, roles: [] })).toBe(false);
+    expect(isContractorOnly(null)).toBe(false);
+  });
+
+  it("a Contractor-only member cannot FOLLOW a ticket outside its scope: 404, nothing written; unfollowing is always allowed", async () => {
+    setup();
+    const res = await watch(true);
+    expect(res.status).toBe(404);
+    expect(ticketWrites()).toHaveLength(0);
+    // the mention leg was asked, of the comment table, as the SQL reads it
+    const i = state.calls.findIndex((c) => c.table === "ticket_comments" && c.method === "select");
+    expect(state.calls.slice(i + 1, i + 3).map((c) => [c.method, ...c.args])).toEqual([["eq", "ticket_id", "t1"], ["contains", "mentioned_uids", ["c-1"]]]);
+    // already following (e.g. added before the scope existed): leaving is fine
+    state.calls = [];
+    state.rows.tickets = [ticketRow({ watchers: ["c-1"] })];
+    expect((await watch(false)).status).toBe(200);
+    expect(updatesOf("tickets")[0].watchers).toEqual([]);
+  });
+
+  it("a Contractor-only member follows a ticket it requested, is assigned to or was mentioned on; any other role follows any ticket in its org", async () => {
+    for (const over of [{ requester_id: "c-1" }, { assigned_drafter_id: "c-1" }, { assigned_engineer_id: "c-1" }]) {
+      state.calls = [];
+      setup(over);
+      expect((await watch(true)).status, JSON.stringify(over)).toBe(200);
+      expect(updatesOf("tickets")[0].watchers).toEqual(["c-1"]);
+    }
+    state.calls = [];
+    setup();
+    state.rows.ticket_comments = [{ id: "cm-1", ticket_id: "t1", mentioned_uids: ["c-1"] }];
+    expect((await watch(true)).status).toBe(200);
+    state.calls = [];
+    setup({}, member("c-2", "Contractor", ["Contractor", "Drafter"]));
+    state.rows.ticket_comments = [];
+    expect((await watch(true)).status).toBe(200);
+    expect(state.calls.filter((c) => c.table === "ticket_comments")).toHaveLength(0);
+  });
+
+  it("a mention lookup that fails is a 503 with nothing written (never a guess either way)", async () => {
+    setup();
+    state.errors["ticket_comments.select"] = [{ message: "connection reset" }];
+    const res = await watch(true);
+    expect(res.status).toBe(503);
+    expect(ticketWrites()).toHaveLength(0);
+    // the comment route refuses the same way, before the RPC
+    state.calls = [];
+    state.errors["ticket_comments.select"] = [{ message: "connection reset" }];
+    expect((await comment("x")).status).toBe(503);
+    expect(state.calls.filter((c) => c.table === "rpc")).toHaveLength(0);
+  });
+
+  it("a Contractor-only member cannot COMMENT on a ticket outside its scope (commenting adds the poster to watchers): 404, no RPC, no write, no fan-out", async () => {
+    setup();
+    const res = await comment("drive-by");
+    expect(res.status).toBe(404);
+    expect(state.calls.filter((c) => c.table === "rpc")).toHaveLength(0);
+    expect(ticketWrites()).toHaveLength(0);
+    expect(insertsOf("notifications")).toHaveLength(0);
+    // in scope (it requested the ticket): the comment posts and it follows
+    state.calls = [];
+    setup({ requester_id: "c-1" });
+    expect((await comment("my request")).status).toBe(200);
+    const rpc = state.calls.find((c) => c.table === "rpc" && c.method === "post_ticket_comment")!;
+    expect((rpc.args[1] as { p_watchers: string[] }).p_watchers).toContain("c-1");
+  });
+});
+
+describe("SM-12 — a member row with neither a display name nor an email never takes the client's string", () => {
+  it("falls back to the account's sign-in email (local part), else a neutral label", async () => {
+    state.user = { id: "a-1" };
+    state.rows.org_members = [member("a-1", "Admin"), member("req-1", "Requester"),
+      member("d-3", "Drafter", ["Drafter"], { display_name: null, email: null })];
+    state.rows.tickets = [ticketRow({ status: "PENDING_ASSIGNMENT", assigned_drafter_id: null })];
+    state.authUsers = { "d-3": "dana.k@x.io" };
+    expect((await post({ ticketId: "t1", actionType: "assign", assignment: { id: "d-3", name: "the CEO" } })).status).toBe(200);
+    expect(updatesOf("tickets")[0]).toMatchObject({ assigned_drafter_id: "d-3", assigned_drafter_name: "dana.k" });
+    for (const answer of [new Error("auth admin down"), undefined]) {
+      state.calls = [];
+      state.authUsers = answer ? { "d-3": answer } : {};
+      state.rows.tickets = [ticketRow({ status: "PENDING_ASSIGNMENT", assigned_drafter_id: null })];
+      expect((await post({ ticketId: "t1", actionType: "assign", assignment: { id: "d-3", name: "the CEO" } })).status).toBe(200);
+      expect(updatesOf("tickets")[0].assigned_drafter_name).toBe("Unnamed member");
+      expect(JSON.stringify(updatesOf("tickets")[0])).not.toContain("the CEO");
+    }
+  });
+});
+
+describe("AUTHZ-11 — the attach_file bell and email text name the vetted record", () => {
+  it("a 10k-character file name reaches the bell row capped at 255, as stored", async () => {
+    state.user = { id: "d-1" };
+    state.rows.org_members = [member("d-1", "Drafter"), member("req-1", "Requester")];
+    state.rows.tickets = [ticketRow()];
+    const long = "x".repeat(10_000) + ".pdf";
+    const res = await post({ ticketId: "t1", actionType: "attach_file", attachment: { name: long, url: KEY("long.pdf"), type: "Reference" } });
+    expect(res.status).toBe(200);
+    const stored = (updatesOf("tickets")[0].attachments as TicketAttachment[]).at(-1)!;
+    expect(stored.name).toHaveLength(255);
+    const bell = insertsOf("notifications")[0];
+    expect(String(bell.body)).toBe(`Added Reference file: ${stored.name}`);
+    expect(String(bell.body).length).toBeLessThan(300);
+  });
+});
+
+describe("EVID-13 — stale workflow alerts are retired with the marker, and the inbox count leaves superseded rows out", () => {
+  it("the badge hook marks the stale rows it finds metadata.superseded_at (own rows, unread only), never read_at, and only when the ticket read succeeded", () => {
+    const hook = src("hooks/useTicketNotifications.ts");
+    expect(hook).toContain("const staleRows = liveErr ? [] : workflowRows");
+    expect(hook).toContain(".update({ metadata: { ...(r.metadata ?? {}), superseded_at: supersededAt } })");
+    expect(hook).toContain(".eq('id', r.id).eq('user_id', uid).is('read_at', null)");
+    expect(hook).not.toMatch(/update\(\{\s*read_at/);
+  });
+  it("lib/inbox.ts counts unread notifications with the same superseded filter as countUnread", () => {
+    expect(src("lib/inbox.ts")).toContain('.eq("user_id", userId).is("read_at", null).is("metadata->>superseded_at", null),');
   });
 });
 

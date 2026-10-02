@@ -240,12 +240,16 @@ export function useTicketNotifications() {
         //    status, or the ticket is no longer live in this workspace — and
         //    leave them out so the bell, the sidebar badge, and the portal
         //    can never disagree.
-        //    drafting-flow EVID-13 (DF-P1): leaving out is a FILTER, never a
-        //    write — read_at is the recipient's own act of opening a row (the
-        //    only "did they see it" signal), so no reconciliation stamps it.
-        //    The workflow route marks a retired alert metadata.superseded_at
-        //    (the unread list already omits those); this catches any it
-        //    missed.
+        //    drafting-flow EVID-13 (DF-P1): read_at is the recipient's own act
+        //    of opening a row (the only "did they see it" signal), so no
+        //    reconciliation stamps it. The workflow route marks a retired alert
+        //    metadata.superseded_at (the unread list already omits those). This
+        //    catches any the route missed, e.g. a ticket the shed archived or
+        //    a status reached by a path that does not fan out, and marks it
+        //    the same way, in the recipient's own session on their own rows.
+        //    Otherwise those rows would stay unread forever, fill the 50-row
+        //    window and push live alerts off it. A failed ticket read proves
+        //    nothing, so in that case nothing is marked or left out.
         const workflowRows = n.filter(
           (r) => r.resourceId
             && r.metadata
@@ -254,18 +258,27 @@ export function useTicketNotifications() {
         );
         if (workflowRows.length > 0) {
           const refIds = Array.from(new Set(workflowRows.map((r) => r.resourceId as string)));
-          const { data: liveRows } = await supabase
+          const { data: liveRows, error: liveErr } = await supabase
             .from('tickets').select('id, status').eq('org_id', activeOrgId).in('id', refIds);
           const statusById = new Map<string, string>();
           for (const row of (liveRows || []) as Array<{ id: string; status: string }>) {
             statusById.set(row.id, row.status);
           }
-          const staleIds = workflowRows
-            .filter((r) => statusById.get(r.resourceId as string) !== (r.metadata!.status as string))
-            .map((r) => r.id);
-          if (staleIds.length > 0) {
-            const staleSet = new Set(staleIds);
+          const staleRows = liveErr ? [] : workflowRows
+            .filter((r) => statusById.get(r.resourceId as string) !== (r.metadata!.status as string));
+          if (staleRows.length > 0) {
+            const staleSet = new Set(staleRows.map((r) => r.id));
             n = n.filter((r) => !staleSet.has(r.id));
+            // Best-effort: the filter above already hides them, so a refused
+            // mark never touches the feed.
+            const supersededAt = new Date().toISOString();
+            try {
+              await Promise.all(staleRows.map((r) => supabase
+                .from('notifications')
+                .update({ metadata: { ...(r.metadata ?? {}), superseded_at: supersededAt } })
+                .eq('id', r.id).eq('user_id', uid).is('read_at', null)
+                .then(() => undefined, () => undefined)));
+            } catch { /* the next load retries */ }
           }
         }
 

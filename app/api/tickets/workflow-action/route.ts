@@ -55,6 +55,10 @@ interface Body {
   holdResolution?: { action: "release" | "keep"; reason?: string | null } | null;
 }
 
+/** DCW-4 / HAND-3: the shape of a register row id (document_versions.id,
+ *  documents.id). */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** EVID-12: the actions that approve a submitted draft — their audit row
  *  names the drafts the approval was given on. */
 const APPROVING_ACTIONS: ReadonlySet<string> = new Set(["approve_draft_ifc", "engineer_approve_final", "approve_minor_correction"]);
@@ -66,6 +70,22 @@ function memberName(m: { display_name?: unknown; email?: unknown } | null | unde
   if (display) return display;
   const email = typeof m?.email === "string" ? m.email.trim() : "";
   return email ? email.split("@")[0] : null;
+}
+
+/** SM-12: the label a drafter is shown under when neither the membership row
+ *  nor the account names them. It is never the client's string. */
+const UNNAMED_MEMBER = "Unnamed member";
+
+/** SM-12: the local part of the account's sign-in email (service role), or
+ *  null when the account cannot be read or carries no email. */
+async function accountName(uid: string): Promise<string | null> {
+  try {
+    const { data, error } = await supabaseAdmin.auth.admin.getUserById(uid);
+    const email = !error && typeof data?.user?.email === "string" ? data.user.email.trim() : "";
+    return email ? email.split("@")[0] : null;
+  } catch {
+    return null;
+  }
 }
 
 /** EVID-12: what an audit row records of a file — enough to match the
@@ -420,7 +440,10 @@ export async function POST(req: NextRequest) {
       if (!mayDraft) {
         return NextResponse.json({ error: "The selected drafter does not hold drafting authority (ticket.draft_work)" }, { status: 400 });
       }
-      assigneeName = memberName(refMember as { display_name?: unknown; email?: unknown });
+      // SM-12: never the client's string. A membership row with neither a
+      // display name nor an email falls back to the account's sign-in email
+      // (its local part), else a neutral label.
+      assigneeName = memberName(refMember as { display_name?: unknown; email?: unknown }) ?? (await accountName(ref)) ?? UNNAMED_MEMBER;
       // GAP-2/DEC-12: the assigned drafter may not be the requester (3+).
       if (sodActive && ref === ticket.requesterId) {
         return NextResponse.json({ error: "Needs a second person: the requester can't draft their own request (orgs of 3+)." }, { status: 403 });
@@ -444,7 +467,7 @@ export async function POST(req: NextRequest) {
     preFilledComment: body.preFilledComment ?? undefined,
     category: body.category ?? undefined,
     isReassigning: body.isReassigning,
-    assignment: body.assignment ? { id: body.assignment.id, name: assigneeName ?? body.assignment.name } : undefined,
+    assignment: body.assignment ? { id: body.assignment.id, name: assigneeName ?? UNNAMED_MEMBER } : undefined,
     engineer: body.engineer ?? undefined,
     redlineAttachment: vetted.redlineAttachment,
     finalAttachment: vetted.finalAttachment,
@@ -478,6 +501,42 @@ export async function POST(req: NextRequest) {
       }
     } catch (e) {
       console.warn("[workflow-action] assignment-queue routing failed (non-blocking)", e);
+    }
+  }
+
+  // DCW-4 / HAND-3 (DF-P1): a close believes a recorded "published"
+  // deliverable only when the register backs it: a version of the source
+  // document, in this org, carrying this ticket as its provenance (the proof
+  // /api/tickets/handback checks before it records one). The register is read
+  // HERE, before anything is written (the hold release below is the first
+  // write). The read must SUCCEED: a row means backed, and a successful read
+  // with no row means unbacked. A failed read (a timeout, a dropped
+  // connection) proves nothing, so it is a 503 with nothing written. It never
+  // rewrites a real publication as "not in the register". An id that is not a
+  // UUID cannot name a register row: unbacked, with no read (and no
+  // invalid-input error that would block every close).
+  let unbackedPublish = false;
+  if (newStatus === "CLOSED") {
+    const closeSrc = parseSourceDocument(ticket.metadata);
+    const recordedState = deliverableStateOf(ticket.metadata);
+    if (closeSrc?.id && recordedState?.state === "published") {
+      if (!UUID_RE.test(String(recordedState.version_id)) || !UUID_RE.test(closeSrc.id)) {
+        unbackedPublish = true;
+      } else {
+        const { data: backing, error: backingErr } = await supabaseAdmin
+          .from("document_versions").select("id")
+          .eq("id", recordedState.version_id).eq("org_id", ticket.orgId)
+          .eq("record_id", closeSrc.id).eq("related_ticket_id", body.ticketId)
+          .maybeSingle();
+        if (backingErr) {
+          console.error(`[workflow-action] register read failed while closing ticket ${body.ticketId}: ${backingErr.message}`);
+          return NextResponse.json(
+            { error: "The document register could not be read to confirm this request's published deliverable, so the request was not closed. Try again in a moment.", code: "register_unreadable" },
+            { status: 503 },
+          );
+        }
+        unbackedPublish = !backing;
+      }
     }
   }
 
@@ -548,22 +607,11 @@ export async function POST(req: NextRequest) {
   if (newStatus === "CLOSED") {
     try {
       const src = parseSourceDocument(ticket.metadata);
-      // DCW-4 / HAND-3 (DF-P1): a recorded "published" deliverable is believed
-      // only when the register backs it — a version of the source document,
-      // in this org, carrying this ticket as its provenance (the proof
-      // /api/tickets/handback checks before it records one). Anything else —
-      // a hand-written state, a version id no register holds — is closed as
-      // NOT in the register, visibly, never as a green "published".
+      // DCW-4 / HAND-3 (DF-P1): `unbackedPublish` was decided above, before
+      // any write. A "published" state the register does not back (a
+      // hand-written state, a version id no register holds) closes as NOT in
+      // the register, visibly, never as a green "published".
       const recorded = deliverableStateOf(ticket.metadata);
-      let unbackedPublish = false;
-      if (src?.id && recorded?.state === "published") {
-        const { data: backing, error: backingErr } = await supabaseAdmin
-          .from("document_versions").select("id")
-          .eq("id", recorded.version_id).eq("org_id", ticket.orgId)
-          .eq("record_id", src.id).eq("related_ticket_id", body.ticketId)
-          .maybeSingle();
-        unbackedPublish = !backing || !!backingErr;
-      }
       if (src?.id && (recorded?.state !== "published" || unbackedPublish)) {
         const { data: docRow } = await supabaseAdmin
           .from("documents").select("rev, document_number").eq("id", src.id).eq("org_id", ticket.orgId).maybeSingle();
@@ -589,9 +637,11 @@ export async function POST(req: NextRequest) {
   // the ticket is in the same state waiting on the same person afterwards.
   // It must not retire the outstanding workflow alerts ("you were assigned")
   // or queue a status-change email; it leaves a comment-style bell row.
+  // AUTHZ-11: the bell and email text names the VETTED record (name trimmed
+  // and capped, type checked), never the client's claim about the file.
   const isActivity = action.action === "attach_file";
   const fanOutComment = isActivity
-    ? (body.attachment ? `Added ${body.attachment.type} file: ${body.attachment.name}` : null)
+    ? (vetted.attachment ? `Added ${vetted.attachment.type} file: ${vetted.attachment.name}` : null)
     : transitionNote;
 
   let baseQuery = supabaseAdmin

@@ -395,7 +395,7 @@ Four defects found while re-verifying (three in DF-P0's review) are not folded i
 
 ## Hand-offs from DF-P1 (Round G) that no package brief carries yet
 
-DF-P1 RAILS closed 16 of its 26 ids (code half; migration `20261166` pending paste) and left ten OPEN with owners. The rows below are remainders whose owner the fleet plan does not name, or names without this limb. The integrator appends each to the owner's brief, or re-owns it.
+DF-P1 RAILS closed 15 of its 26 ids (code half; migration `20261166` pending paste) and left eleven OPEN with owners. *(Corrected by the DF-P1 fix pass, 2026-10-02: the first count, 16 and 10, had `SM-9` as resolved. Its done-when 3 does not hold for the ticket shed's commit; see the row below.)* The rows below are remainders whose owner the fleet plan does not name, or names without this limb. The integrator appends each to the owner's brief, or re-owns it.
 
 | Finding | Owner | What the owner must add |
 |---|---|---|
@@ -405,6 +405,10 @@ DF-P1 RAILS closed 16 of its 26 ids (code half; migration `20261166` pending pas
 | `PERS-7` / `EVID-6` (call-site stand-ins) | DF-P9 (the ticket pages) and each owning package | `userId: uid \|\| 'unknown'` at `app/(protected)/requests/page.tsx:660`, `:677` and similar sites; `lib/audit.ts` now writes such a row with `user_id NULL` and `actor_kind: "system"`, which a browser session's insert policy refuses (the refusal is returned) — refuse the action for a missing uid instead. |
 | `EDGE-9` → notifications `DELIV-5` / `NEDGE-4` | notifications (records) | Both ticket routes now build email links on `publicOrigin()` or the request origin (`EDGE-9`'s Resolution); `DELIV-5`'s two-route limb closes by pointer. `ticketUrl()` stays `lib/notifications.ts`'s. |
 | `AUTHZ-7` vs roles-and-permissions `WF-1` | the user | Ratify (or reverse) `DEC-44 (DF-P1)` item 3: the workflow route refuses on an unreadable policy instead of `WF-1`'s defaults-for-that-call. |
+| `SM-7` / `EVID-12` (failure handling) vs the fleet plan | the user | Ratify (or reverse) `DEC-44 (DF-P1)` item 2. The plan's default was to refuse the transition (500) when its audit row cannot be written, unless the two writes are one RPC. DF-P1 lets the committed transition stand, marks it in `history` and answers 500 `{ code: "audit_unrecorded", applied: true }`. Reversing it means writing an attempted audit row before the compare-and-set (`DEC-44 (DF-P1)` reversal 2). |
+| `SM-7` / `EVID-12` (client handling of `audit_unrecorded`) | DF-P9 (the request page's owner) | `app/(protected)/requests/[id]/page.tsx:1428-1431` throws on the 500 and leaves the modal open, so a retried `attach_file` or `save_progress` applies a second time and the status action shows "failed" although it was applied. Read `code: "audit_unrecorded", applied: true` as applied: close the modals, refresh, and show the warning. |
+| `SM-9` (done-when 3: the ticket shed) | DF-P11 (owns `app/api/admin/ticket-shed/*`) | `app/api/admin/ticket-shed/commit/route.ts:170-178` writes `comments: [], history: []` conditioned only on `archived_at IS NULL`. Give it a `last_modified` leg captured at produce time, or re-capture the arrays and refuse when they changed, so a comment posted after capture is never wiped without being archived. `restore/route.ts:217-232` writes on an archived stub that every other writer refuses; a CAS there is symmetry, not a live race. `SM-9` stays OPEN until this lands. |
+| `EVID-13` (`lib/inbox.ts`) | notifications N4 (owns `lib/inbox.ts`) | DF-P1's fix pass added one filter to the inbox's unread notification count, `.is("metadata->>superseded_at", null)`, the same as `countUnread`. Without it, superseded workflow alerts (now marked, no longer stamped read) would be counted as unread. N4 rebases on that line and keeps the filter. |
 
 ## Verification you cannot skip
 
