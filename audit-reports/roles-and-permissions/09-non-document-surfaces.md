@@ -81,6 +81,8 @@ mutating local state — the silent-success shape is the same one described in
 3. There is a non-destructive path (suspend) as well as a destructive one.
 4. The last-admin protection still holds against both.
 
+*Cross-area note (2026-10-02, admin-and-org Round G, P0): admin-and-org `ORG-2` closes by pointer to this resolution and to `OWN-12`. All four of its criteria were verified on base `f1ac550`, the schema.sql baseline criterion by a policy-census pin in `lib/__tests__/aoRoundGP0Records.test.ts`.*
+
 ---
 
 ## SURF-2 · `/api/storage/delete` — any active member can permanently destroy any file in the org, unaudited

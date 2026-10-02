@@ -8,17 +8,17 @@
     "audit-reports/admin-and-org/04-billing.md"
   ],
   "totals": {
-    "findings": 57,
+    "findings": 59,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 5,
       "HIGH": 17,
       "MEDIUM": 28,
-      "LOW": 7
+      "LOW": 9
     },
     "by_status": {
       "OPEN": 46,
-      "RESOLVED": 11
+      "RESOLVED": 13
     }
   },
   "status_vocabulary": [
@@ -153,7 +153,7 @@
       "id": "ORG-2",
       "title": "org_members has NO DELETE policy — \"Remove from workspace\" silently deletes nothing and reports success, so an offboarded engineer keeps access to controlled drawings",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -627,7 +627,7 @@
       "id": "ORG-3",
       "title": "\"Request Access\" is a black hole with a cross-tenant leak: nothing ever reads access_requests, any Admin of any org can read every tenant's requests, anon can insert unbounded rows, and the client shows \"Request Sent\" even on a 404/409",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1440,6 +1440,32 @@
       "report": "audit-reports/admin-and-org/03-audit-log.md"
     },
     {
+      "id": "ALOG-15",
+      "title": "The capability-policy route's compare-and-set cannot see `revoke_member`'s grant strip, so a concurrent save can write a removed member's grant back",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by reading; not exercised against a live database)",
+      "blast_radius": "access control / audit integrity",
+      "related": [
+        "ALOG-12",
+        "ORG-7",
+        "DEC-20"
+      ],
+      "locations": [
+        "app/api/admin/capability-policy/route.ts:134-139"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "Admin A removes member X, who holds a personal grant, while Admin B's save, grant or revoke is between the route's read (:134) and its compare-and-set (:218). The compare-and-set matches, and B's after, built from a before that still holds X's grant, writes it back. The audit trail does show the strip: trgcapabilitypolicywriteguard writes its own CAPABILITYPOLICYCHANGED row (via: directwrite, with",
+      "area": "admin-and-org",
+      "report": "audit-reports/admin-and-org/03-audit-log.md"
+    },
+    {
       "id": "BKP-10",
       "title": "A cancelled backup still downloads a final part whose report says \"Every file verified by SHA-256\" — with no cancellation flag and no file total",
       "severity": "LOW",
@@ -1593,6 +1619,32 @@
       ],
       "refuted": false,
       "summary": "The unscoped reads mean a teammembers row is honoured against any org's aclindex that names that team id. Cross-tenant exploitation is blocked today by the permissive org policies (you must still be an active member of the target org to see its rows at all), which is why this is SUSPECTED rather than confirmed-exploitable. What IS reachable from the repo: a Manager — who cannot grant Admin (202608",
+      "area": "admin-and-org",
+      "report": "audit-reports/admin-and-org/01-org-lifecycle.md"
+    },
+    {
+      "id": "ORG-15",
+      "title": "`/admin/users` ignores the error on its members and pending-requests reads, so a failed read draws an empty roster and hides every pending request",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by reading)",
+      "blast_radius": "admin visibility",
+      "related": [
+        "ORG-3",
+        "ORG-8"
+      ],
+      "locations": [
+        "app/(protected)/admin/users/page.tsx:119-124",
+        "app/(protected)/admin/users/page.tsx:139-145"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "The pending-requests read fails (an outage, an expired session, a policy error). The Admin sees no requests card and no sign that anything failed, and a person waiting for access is not seen. Likewise a failed members read draws an empty roster. No request is lost or exposed: the rows stay in accessrequests.",
       "area": "admin-and-org",
       "report": "audit-reports/admin-and-org/01-org-lifecycle.md"
     }

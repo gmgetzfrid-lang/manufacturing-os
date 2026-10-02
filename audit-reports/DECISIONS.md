@@ -770,6 +770,8 @@ the data model is one table.
 
 **Risk:** low.
 
+*Landed 2026-10-02 (admin-and-org Round G, P0): every Acceptance line was verified on base `f1ac550`, and admin-and-org `ORG-3` is closed by pointer to roles-and-permissions `EGRESS-5` (`20261023`, live) and identity-and-session `IDENT-6`. An Admin reads only their org's requests, and the public route shares signup's per-IP window. A submitted request appears on `/admin/users`; Add approves it, and Decline frees the address. The org-name oracle remains `ORG-8`'s (admin-and-org P5).*
+
 <a id="dec-20"></a>
 ## DEC-20 · What is the revocation model?
 
@@ -802,6 +804,13 @@ member keeps every team-derived ACL grant.
 **Reversal.** None — both paths are required.
 
 **Risk:** high — pair with `OWN-12`.
+
+*Landed 2026-10-02 (admin-and-org Round G, P0): admin-and-org `ORG-2` is closed by pointer to roles-and-permissions `SURF-1` + `OWN-12` (`20261042` + `20261043`, both live). All four Acceptance lines hold on base `f1ac550`:
+- `revoke_member` removes or suspends with a real statement as definer, and every refusal raises.
+- A suspended member leaves `my_org_ids()` and `my_team_ids()`.
+- Removal clears ownership, team supervision, open checkouts, grants, rosters and follow subscriptions. It audits each ownership and supervision scope it clears (`OWNER_CLEARED` / `TEAM_SUPERVISOR_CLEARED` rows) and records the cleared-scope, ended-checkout and revoked-grant counts on `MEMBER_REMOVED`; roster and subscription deletions are not itemised.
+- The last-admin trigger fires on both paths.
+ACL rules naming a removed person are not pruned. That gap is `ORG-7` (admin-and-org P8). P8 re-creates `revoke_member` starting from `20261043`, its newest definition.*
 
 <a id="dec-21"></a>
 ## DEC-21 · Reviewer independence

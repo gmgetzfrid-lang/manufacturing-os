@@ -804,6 +804,8 @@ deleted user with a stale name string still reads as owned.
    controller fallback instead.
 3. Orphaned ownership is discoverable by an admin.
 
+*Cross-area note (2026-10-02, admin-and-org Round G, P0): admin-and-org `ORG-2` closes by pointer to this resolution and to `SURF-1`, under `DEC-20`'s pairing rule.*
+
 ---
 
 ## OWN-13 · Ownership writes swallow RLS refusals, then write a "success" audit row and notify the new owner

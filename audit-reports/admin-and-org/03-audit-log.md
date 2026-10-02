@@ -32,6 +32,7 @@ What the trail can prove, and whether every admin surface is gated server-side.
 
 - **Severity:** CRITICAL
 - **Status:** OPEN
+- **Assigned:** admin-and-org P9 (done-when 2: a capability-policy read error is said, never rendered as the shipped defaults) — by the integrator, 2026-10-02 (at the A&O P0 merge: the verify-and-record package named the owner in its Partial block; fleet plan `audit-reports/fleet-plans/admin-and-org.json`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/capabilityPolicy.ts:172-176`, `lib/capabilityPolicy.ts:229-235`, `supabase/migrations/20260901_db_hard_enforcement.sql:44-45`, `supabase/schema.sql:52-59`, `lib/orgBranding.ts:22-28`, `lib/ticketRouting.ts:48-53`, `app/(protected)/admin/requests/page.tsx:98-99`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Repo-wide search confirms the absence: no `ALTER TABLE org_configurations`, no `ADD COLUMN value`, no rename anywhere under supabase/ — the only `value JSONB` in the tree is an unrelated table in 20260920_per_user_keys_real_limits.sql:25. The read path fails silently (supabase-js returns an error object, `data?.value` is undefined, raw={} so DEFAULTS apply); the save path throws at capabilityPolicy.ts:234 `if (error) throw new Error(error.message)`; and org_capability_allows() — whose body is only planned at execution time — raises `column "value" does not exist` on every call, which is exactly what gates the document_holds INSERT/UPDATE policies (20260901:94,99,101) and the checkout force-release trigger (:115). CRITICAL is correct.
@@ -62,6 +63,52 @@ lib/capabilityPolicy.ts:173-176 — `.from("org_configurations")` / `.select("va
 **Done-when.**
 4. ✓ the `EXPECTED_COLUMNS` probe, pinned to the column the code reads.
 1-3. not this package's (P0).
+
+**Partial (2026-10-02, admin-and-org Round G, P0).** Reproduced against base `f1ac550` (DEC-29). Done-when 1 and 3 close by pointer to roles-and-permissions `DB-1` / `WF-1` (commit `65d2077`, `20261025`, applied and verified live 2026-08-24). Done-when 2 does not hold. The status stays OPEN.
+
+- **Done-when 1 holds: one column, and a round trip.** Every reader and writer of `org_configurations` names `data`. This is the full census on `f1ac550` of `.from("org_configurations")` in `app/`, `lib/`, `hooks/` and `components/`, tests excluded:
+  - the capability loaders: `lib/capabilityPolicy.ts:467-468` (strict, `.select("data")`) and `:497-498` (cached, `.select("data, updated_at")`);
+  - the only capability-policy write path, `app/api/admin/capability-policy/route.ts`. It reads `select("data, updated_at")` at `:135`, updates `{ data: after, updated_at: nowIso }` at `:221` and inserts `data: after` at `:232`;
+  - the other keys' readers, each `.select("data")`: `lib/orgBranding.ts:24`, `lib/ticketRouting.ts:69`, `lib/requestTypes.ts:58`, `lib/changeOrders.ts:289`, `hooks/useTicketNotifications.ts:176`, `app/(protected)/requests/new/page.tsx:147`, `app/(protected)/requests/[id]/page.tsx:846`, `app/(protected)/requests/page.tsx:213`, `app/api/tickets/workflow-action/route.ts:123`, and `app/(protected)/admin/requests/page.tsx:81`;
+  - the other keys' writers, each an upsert of `data`: `lib/orgBranding.ts:36` and `app/(protected)/admin/requests/page.tsx:101`.
+
+  The data export and restore name the table only in their whole-row lists (`lib/exportTables.ts:160`; `lib/dataRestore.ts:169`, the import refusal, and `:902`) and its conflict key (`:933`, `org_id,key`). Neither names a payload column.
+
+  In SQL, every definition of the evaluator from `20261025` on reads `SELECT data INTO v_val FROM org_configurations`. That covers the live one (`20261063`, LIVE) and the three pending re-creations (`20261132`, `20261136`, `20261137:111`, all marked PASTE, not yet pasted, in `audit-reports/MIGRATION-PASTE-ORDER.md`).
+
+  New pin: `lib/__tests__/aoRoundGP0Records.test.ts` "a save through the route is read back by loadCapabilityPolicyEntry — first an INSERT, then a compare-and-set UPDATE". It drives the route's `save` and then the loader, over a stand-in that honours column projection. A mutation that made the loader select `value` failed it (run in this package, then reverted). Its sibling test shows the stand-in returns nothing for `value`, so the pin is not vacuous.
+- **Done-when 3 holds: the evaluator has run against the real schema.** `20261063` was applied and verified live on 2026-09-17, with every probe true (`roles-and-permissions/README.md`, Round E). Its final SELECT runs `org_capability_allows_for(m.org_id, 'admin.audit_view', m.uid, '{}'::jsonb)` for every active member (`20261063:223`, `:229`). That call passes the membership check and executes the `org_configurations` read, and the paste returned rows instead of 42703. This is the only evidence that the read executed: `20261057:170` (live) calls the three-argument `org_capability_allows` with a nil-uuid caller, which is not a member, so it returns FALSE at the membership check (`IF v_role IS NULL THEN RETURN FALSE`, the same shape as `20261063:69-73`) before the column read runs.
+- **Done-when 4 holds** (P2, above).
+- **Done-when 2 does not hold.** `loadCapabilityPolicyEntry` still answers the shipped defaults on a read error: `lib/capabilityPolicy.ts:506` `if (error) return { policy: {}, version: null };`. That carries the same `version: null` as "nothing stored", and `loadCapabilityPolicy` (`:520-525`) hands the `{}` to its callers.
+  - This is the rule that roles-and-permissions `WF-1` done-when 2 chose: defaults for this call, never cached. It is pinned by `capabilityPolicy.test.ts` "read errors fail closed WITHOUT caching". drafting-flow `AUTHZ-7` (HIGH, OPEN, owner DF-P1) asks the opposite for the workflow-action route, which reads through this loader (`app/api/tickets/workflow-action/route.ts:142`): refuse the transition, or use the last good cached policy.
+  - The gates that must not admit on defaults read through `loadCapabilityPolicyStrict` (`:461-477`, `{ ok: false, error }`): `lib/adminGate.ts:39`, `lib/transmittals.ts:1195` and `app/api/ai/usage/route.ts:145`.
+  - The two surfaces that present the policy as the org's own do not. `components/permissions/CapabilityPolicyEditor.tsx:117` and `components/permissions/ViewAsSimulator.tsx:46`, `:96` render a failed read as the shipped defaults, and the editor can then save that grid over a stored narrowing.
+  - Every other caller of `loadCapabilityPolicy` also acts on the shipped defaults after a failed read. This is the rest of the census of loader callers outside `lib/capabilityPolicy.ts` on `f1ac550`, pinned by `aoRoundGP0Records.test.ts` "every caller of loadCapabilityPolicy / …Entry / …Strict outside the module is one the record lists":
+    - Field-facing, the stop-work notification audience. `notifyHoldChange` (`lib/holds.ts:486`, hold opened or released) and `scanStaleHolds` (`:552`, stale-hold nudges) build the policy-derived release pool with `resolveHoldAudience(orgId, policy)` (`:458-465`). After a failed read that pool follows the shipped `holds.release` default and drops per-person `holds.release` grants, so it can name different people from the org's configured release roles. Followers and the people named in `involved` are still notified (`:504`).
+    - The client holds gate, `assertHoldCapability` (`lib/holds.ts:244`), which fails open by design ("policy lookup hiccup: fail open"). The `document_holds` policies enforce through the SQL evaluator, which reads `data` itself.
+    - Client affordances, which decide what a control offers or what counts as action-required, while a server route, a strict gate or the SQL evaluator enforces: `app/(protected)/requests/page.tsx:248`, `app/(protected)/requests/[id]/page.tsx:837`, `app/(protected)/transmittals/page.tsx:118`, `app/(protected)/admin/holds/page.tsx:52`, `components/documents/HoldStrip.tsx:107`, `components/documents/InspectorPanel.tsx:185`, `components/documents/CheckoutStatusCell.tsx:66` and `hooks/useTicketNotifications.ts:167`.
+    - Through the entry: the workflow-action route (`app/api/tickets/workflow-action/route.ts:142`), which is drafting-flow `AUTHZ-7`'s (below).
+
+  **Owner: admin-and-org P9** (permissions console truth). Its plan entry names both components, each at one line (`CapabilityPolicyEditor.tsx:40`, `ViewAsSimulator.tsx:74`). Suggested shape (no decision is minted; the plan needs none):
+  - `loadCapabilityPolicyEntry` marks a PostgREST error or a throw as a read failure (for example, a flag and the error text), distinct from "nothing stored" (`version: null`, no flag), and still never caches it. That is compatible with `AUTHZ-7` done-when 1 (the loader tells "no row stored" from "lookup failed") and done-when 3 (a stale cache entry served before the defaults when a refresh fails).
+  - `CapabilityPolicyEditor` and `ViewAsSimulator` show that they could not read the org's policy, and offer no Save and no grant.
+  - The strict gates keep `loadCapabilityPolicyStrict` (`SURF-9` / `WF-20`).
+
+  **Not decided here: how a workflow action is evaluated after a failed read.** That is drafting-flow `AUTHZ-7`'s (refuse the transition, or use the last good cached policy; its package DF-P1 plans a 503 "policy unreadable" there). For that route it conflicts with roles-and-permissions `WF-1` done-when 2 (RESOLVED: the shipped defaults for that call, uncached). **The `WF-1` / `AUTHZ-7` conflict is flagged for the user's ratification.** Until the user rules, DF-P1 builds `AUTHZ-7` as its plan says. Nothing in this record, or in its pins, admits a workflow action on the defaults after a failed read.
+
+  **Plan amendment needed.** The admin-and-org plan's P9 entry lists neither `ALOG-1` nor `lib/capabilityPolicy.ts`, and the marker lives in `loadCapabilityPolicyEntry` (`lib/capabilityPolicy.ts:483-518`). The error state is in the two components beyond the lines its entry names (`CapabilityPolicyEditor.tsx:117`, `ViewAsSimulator.tsx:46`, `:96`). The integrator adds the finding and those files to P9, or re-owns this remainder.
+
+  **Under the suggested shape, the other callers keep the defaults behaviour.** The marker is on `loadCapabilityPolicyEntry`, and `loadCapabilityPolicy` returns only `.policy` (`:520-525`), so a new field reaches none of the callers listed above. P9's amendment covers the marker and the two console surfaces only. Done-when 2's text names `loadCapabilityPolicy`, so P9's close states which of two things it did. Either the wrapper keeps a documented defaults-on-error contract for callers that accept the defaults (this shape), or the wrapper changes too, in which case every caller above is in P9's scope and the plan amendment grows by those files.
+  - The hold audience (`lib/holds.ts:486`, `:552`) is the field-facing case. On a failed read, a stop-work notice reaches the default release pool, not the configured one.
+  - Under this shape, how the hold audience behaves on a failed read is outside ALOG-1's criterion and is not opened as a finding. It is recorded so that the audience's owner sees it: `lib/holds.ts` is document-control P5's file, and notifications N9's `PROD-9` is the next package to edit that audience.
+
+**Done-when.**
+1. ✓ one column everywhere; the route→loader round trip is pinned.
+2. ✗ not done: an unreadable policy still reads as the defaults at `lib/capabilityPolicy.ts:506` (owner P9; suggested shape above). Under the suggested shape, the other `loadCapabilityPolicy` callers, the hold audience among them, keep the defaults behaviour, and P9's close says so (above).
+3. ✓ executed live by `20261063`'s final SELECT.
+4. ✓ (P2).
+
+**Scope / residual.** Done-when 2 only. No application code changed in this package. The pin is a new test (commit `447bb8b`).
 
 ---
 
@@ -384,6 +431,7 @@ app/(protected)/admin/audit/page.tsx:271-274 — `<Select value={actionFilter} o
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** admin-and-org P9 (done-when 1: the editor's save carries the version it loaded; the route refuses a stale one with 409) — by the integrator, 2026-10-02 (at the A&O P0 merge: the verify-and-record package named the owner in its Partial block; fleet plan `audit-reports/fleet-plans/admin-and-org.json`).
 - **Verification:** CONFIRMED
 - **Locations:** `components/permissions/CapabilityPolicyEditor.tsx:35-43`, `components/permissions/CapabilityPolicyEditor.tsx:59-91`, `lib/capabilityPolicy.ts:161-196`, `lib/capabilityPolicy.ts:215-246`, `lib/capabilityPolicy.ts:252-283`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Every limb verified: last-writer-wins on the full `caps` object in both directions (grid save clobbers grants, grant save clobbers caps), and the audit `before` at :245 is whatever the 60-second cache held, which need never have been the row's actual prior state. Note this is currently masked by ALOG-1 — nothing persists at all — but the concurrency defect is independent of it.
@@ -408,6 +456,48 @@ lib/capabilityPolicy.ts:161-163 — `const CACHE_TTL_MS = 60_000;` / `const cach
 - [ ] The `before` recorded in CAPABILITY_POLICY_CHANGED is read from the database at write time, bypassing the cache, or is derived from the row the update actually replaced.
 - [ ] addUserGrant and revokeUserGrant modify only the grants array without republishing a stale caps grid.
 
+**Partial (2026-10-02, admin-and-org Round G, P0).** Reproduced against base `f1ac550` (DEC-29). Done-when 2 and 3 hold since roles-and-permissions `WF-11` (commit `e32b554`: every policy write goes through `POST /api/admin/capability-policy`). Done-when 1 does not hold. The status stays OPEN.
+
+- **Done-when 2 holds, through its first form: `before` is read from the database at write time, bypassing the cache.** The route reads the stored row fresh, with the service-role client and never through the cache: `app/api/admin/capability-policy/route.ts:132-139`, `before = parseStoredCapabilityPolicy(stored?.data)`. The write is a compare-and-set on that row's `updated_at` (`:218-228`). If no row matches, the route answers 409 and audits nothing.
+  - The compare-and-set catches another route write, because the route stamps `updated_at` (`:221`). It does not catch `revoke_member`'s grant strip. On removal that function rewrites the policy row's `data` without touching `updated_at` (`supabase/migrations/20261043_rp_phase6_legal_hold_and_force_release.sql:161-167`, its newest definition), and no trigger on `org_configurations` stamps it. The only one is `trg_capability_policy_write_guard` (`20261056:206-210`); neither its live function body (`20261056`) nor its newest (`20261137`, PASTE) assigns `updated_at`.
+  - So `before` is not always the row the update replaced. Suppose an Admin saves or grants after the route has read `before`, and another Admin meanwhile removes a member who holds a personal grant. The compare-and-set still matches, and `after`, built from `before`, re-stores the removed member's grant. The evaluator refuses a non-member, so nothing is admitted then. But if that person is re-added, the grant is live again, contrary to `DEC-20`'s "grants die with the membership".
+  - Pins:
+    - `sweepRoundE_policyServer.test.ts` "a DocCtrl … saves a non-critical change: CAS write, … audit row" (`d.before` equals the stored row), and its WF-16 409 case;
+    - new: `aoRoundGP0Records.test.ts` "`before` is read fresh at write time: another admin's route write, not what this process had cached". It primes the server cache with an older row, lands a concurrent route write, then saves; `before` is the concurrent row.
+- **Done-when 3 holds.** `addUserGrant` / `revokeUserGrant` (`lib/capabilityPolicy.ts:628`, `:644`) post `{ op: "grant" | "revoke", uid, cap }` with no caps. The route builds `after = { caps: before.caps ?? {}, grants: [...] }` from the fresh row (`route.ts:196`, `:200`). The failure scenario as written can no longer happen: Admin B's delegation cannot republish a stale grid over Admin A's narrowing. Pins:
+  - `sweepRoundE_policyServer.test.ts` "an Admin's grant replaces the (person, capability) pair, … keeps other live grants" (`after.caps` equals the stored caps);
+  - new: `aoRoundGP0Records.test.ts` "a grant rewrites the stored caps verbatim and touches only the grants array".
+- **Done-when 1 does not hold.** A grid save is still a whole-grid replace built from a mount-time snapshot.
+  - The editor loads once, through the 60 s browser cache (`components/permissions/CapabilityPolicyEditor.tsx:115-126`), keeps the grid in state, and on Save posts the whole joined grid (`:181`, `:216`).
+  - `CapabilityPolicyChange` `save` carries `caps` only, with no version (`lib/capabilityPolicy.ts:587-588`). The route sets `after = { caps, grants: liveGrants }` (`route.ts:159`).
+  - The route's compare-and-set uses the stamp it read in the same request (`:139`, `:223`). It catches only a write that lands between that read and the write.
+  - So a second admin's grid change made after this editor mounted is overwritten wholesale. The CAPABILITY_POLICY_CHANGED row records it truthfully (`before` is the other admin's row), but nobody is told, and the impact preview still diffs against the mount-time baseline (`CapabilityPolicyEditor.tsx:187`).
+
+  **Owner: admin-and-org P9.** Its plan entry names `CapabilityPolicyEditor.tsx` (at `:40`). Suggested shape:
+  - the editor sends the `version` that `loadCapabilityPolicyEntry` already returns (`lib/capabilityPolicy.ts:483-518`);
+  - the route refuses (409) a `save` whose version is not the row's `updated_at`, or merges per capability;
+  - the editor reloads on a 409.
+  - A version check on `updated_at`, here or in the existing compare-and-set, is blind to `revoke_member`'s grant strip (above) until `revoke_member` sets `updated_at = now()` in that `UPDATE`, re-created from `20261043`, its newest definition, or the check compares `data`. That race is the route's against a definer RPC, not this finding's criterion. It is proposed below as its own finding, owned by admin-and-org P8; P9 needs nothing from it.
+
+  **Plan amendment needed.** The admin-and-org plan's P9 entry lists neither `ALOG-12` nor the files this shape needs beyond the editor's `:40`: the editor's load and save (`CapabilityPolicyEditor.tsx:115-126`, `:216`), `app/api/admin/capability-policy/route.ts` (refuse a stale-version save) and `lib/capabilityPolicy.ts` (the `CapabilityPolicyChange` `save` op carries the version). The integrator adds the finding and those files to P9, or re-owns this remainder.
+
+**Proposed finding for the integrator (owner: admin-and-org P8): the policy route's compare-and-set cannot see `revoke_member`'s grant strip.** *(Opened by the integrator at the A&O P0 merge, 2026-10-02, as `ALOG-15`, owned by P8.)*
+- Mechanism: the strip (`20261043:161-167`) rewrites the policy row's `data` and leaves `updated_at` unchanged. The route conditions its write on the `updated_at` it read (`app/api/admin/capability-policy/route.ts:134-139`, `:218-223`).
+- Failure: an Admin removes member X, who holds a personal grant, while another Admin's save, grant or revoke is between the route's read (`:134`) and its compare-and-set (`:218`). The compare-and-set matches, `after` is built from `before`, and X's grant is written back.
+  - The CAPABILITY_POLICY_CHANGED row carries X's grant in both `before` and `after`, so it shows no grant change while the write re-adds one. *Overstated (integrator, at the merge, from the final review): the strip itself is audited — `trg_capability_policy_write_guard` writes its own `CAPABILITY_POLICY_CHANGED` row (`via: direct_write`) for `revoke_member`'s update; what the route's row does not show is the re-add.*
+  - Nothing is admitted while X is not a member, because the evaluator refuses a non-member. If X is re-added, the grant is live again, contrary to `DEC-20`'s "grants die with the membership".
+  - The window is one request's read-to-write span. Proposed severity: LOW.
+- Fix: set `updated_at = now()` in that `UPDATE`, in P8's re-creation of `revoke_member` (its plan's migration B, for `ORG-7`), starting from `20261043`, the newest definition. The route's existing compare-and-set then answers 409 in the race, with no route change.
+- Tripwire: `lib/__tests__/aoRoundGP0Records.test.ts`, `it.fails` "the grant strip stamps updated_at, so the policy route's compare-and-set sees it". It reads the newest `revoke_member` in the migrations, and P8 flips it to `it`. A plain test beside it checks that the newest definition still strips grants by rewriting `data`.
+- This package does not open the finding, because doing so changes the area README's counts and `99-fix-sequencing.md`, which it does not edit. `ORG-3`'s proposed users-page finding is handled the same way.
+
+**Done-when.**
+1. ✗ not done: grid-against-grid saves are still last-writer-wins (owner P9).
+2. ✓ through its first form: `before` is read fresh at write time, bypassing the cache. The compare-and-set catches route writes but not `revoke_member`'s grant strip, which leaves `updated_at` unchanged (the proposed finding above, owner P8).
+3. ✓ grants never republish caps.
+
+**Scope / residual.** Done-when 1 only (owner P9). Outside this finding's criteria: the `revoke_member` race, proposed above as a LOW finding owned by P8. No application code changed in this package.
+
 ---
 
 <a id="alog-13"></a>
@@ -416,6 +506,7 @@ lib/capabilityPolicy.ts:161-163 — `const CACHE_TTL_MS = 60_000;` / `const cach
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** admin-and-org P8, coordinating with intelligence I-12 (DACL-10) (all three done-whens: the console comment, the dead-column writers and readers, the recorded decision) — by the integrator, 2026-10-02 (at the A&O P0 merge: the verify-and-record package named the owner in its Partial block; fleet plan `audit-reports/fleet-plans/admin-and-org.json`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/admin/permissions/page.tsx:13-16`, `app/(protected)/admin/libraries/page.tsx:103-107`, `app/(protected)/admin/libraries/LibraryWizard.tsx:247-271`, `app/(protected)/documents/page.tsx:44-54`, `supabase/schema.sql:75-77`, `lib/libraryCollections.ts:129-131`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The console's absence claim is wrong: `read_access` (with `visible_to`) is read on every load of the documents home page and does gate which library cards a non-controller sees. The finding's 'two of them' is loose — the second column doing the filtering is `visible_to`, which is not one of the three the console names — but that does not weaken it, because the genuinely inert pair is `write_access`/`admin_access`, which /admin/libraries and LibraryWizard still present as upload/admin restrictions and no enforcement path ever consults. Both halves of the trap are therefore live.
@@ -439,6 +530,44 @@ app/(protected)/admin/permissions/page.tsx:13-16 — `// The old read/write/admi
 - [ ] The comment on /admin/permissions matches what the code does, or the legacy columns really are removed everywhere including LibraryWizard and handleSaveLibrary.
 - [ ] write_access and admin_access are either enforced or dropped from the wizard UI and the write payload.
 - [ ] The decision is recorded so the next agent does not re-derive it from the stale comment.
+
+**Partial (2026-10-02, admin-and-org Round G, P0).** Reproduced against base `f1ac550` (DEC-29). The fleet plan expected this finding to close by pointer to roles-and-permissions `DB-5`. It does not. `DB-5` made the wizard write `acl_index` from a merged ACL (`app/(protected)/admin/libraries/page.tsx:112`, `:119-120`), which is the ACL half the verifier correction above describes. None of this finding's three criteria moved. The status stays OPEN.
+
+- **Done-when 1 does not hold.** `app/(protected)/admin/permissions/page.tsx:13-16` still says "The old read/write/admin role matrix is GONE: it wrote columns (libraries.read_access/write_access/admin_access) that no policy, trigger, or query ever read … Confirmed safe to remove: no org data depended on it."
+  - The library save still writes all four columns: `app/(protected)/admin/libraries/page.tsx:116-117`, `write_access: config.writeAccess ?? [], admin_access: config.adminAccess ?? [], read_access: config.readAccess ?? "ALL", visible_to: config.visibleTo ?? []`.
+  - The documents home page still filters library cards on `read_access` and `visible_to` (`app/(protected)/documents/page.tsx:43-51`).
+- **Done-when 2 does not hold; only the UI half has moved.**
+  - The wizard no longer offers an admin picker: `adminRoles` is fixed at `["Admin", "DocCtrl"]` (`app/(protected)/admin/libraries/LibraryWizard.tsx:280`).
+  - Its upload picker (`:644-654`) builds the library's enforced ACL rules (`:281`, `:290-291`), so it is a real control.
+  - The payload still mirrors both pickers into the dead columns (`LibraryWizard.tsx:301-302` → `page.tsx:116`), and `createLibrary` writes `[]` into both on every library it creates (`lib/libraryCollections.ts:180-181`). No evaluator or policy enforces them.
+  - The library sensitive-column guard compares both: `enforce_library_sensitive_columns()` refuses a change to `write_access` or `admin_access`, as to the other guarded columns, unless the caller is an org controller, the library's owner or a manager of its ACL (`20261036:41-42`, live; re-created at `20261077:169-170`, its newest definition, PASTE). That is a guard on writes, not enforcement of what the columns say. Dropping the columns, rather than only the payload, therefore needs that function re-created from `20261077` without them first. Otherwise the trigger raises `record "new" has no field "write_access"` on every library UPDATE.
+  - **The full census on `f1ac550`** (`git grep -nE "write_access|admin_access"` outside the records; pinned by `aoRoundGP0Records.test.ts` "every source file that names write_access / admin_access is one the record lists"):
+    - Writers, two: the wizard save, `app/(protected)/admin/libraries/page.tsx:116` (fed by `LibraryWizard.tsx:301-302`), and `createLibrary`, `lib/libraryCollections.ts:180-181` (`write_access: [], admin_access: [],`).
+    - Readers, four sites in three files: the edit load, `app/(protected)/admin/libraries/page.tsx:63`, which seeds the upload picker (`LibraryWizard.tsx:244`); the library page, `app/(protected)/documents/[libraryId]/page.tsx:1460`, a named select list (`…,uniqueness_keys,write_access,admin_access,read_access,…`) mapped at `:1482`; and the documents home page, `app/(protected)/documents/page.tsx:175-176`, mapped from a `select("*")` (`:161`). Outside the wizard seed, nothing consults the mapped values; the `LibraryConfig` type carries them (`types/schema.ts:375-376`).
+    - SQL: the guard above (`20261036:41-42` live; `20261077:169-170` newest), the column definitions (`schema.sql:114-115`), and `20261036`'s probe "all guarded library columns exist" (`:369-376`, `COUNT(*) = 17`, naming both at `:373`). That probe is history in a LIVE file, never re-pasted. The guard's shape tests name both columns (`rpPhase3Migration.test.ts:30`; `dcRoundFMigration.test.ts`, which compares the 20261036 and 20261077 bodies). `roundEOwnershipMigrations.test.ts:167` pins that the library INSERT rail ignores them, because `createLibrary` writes their defaults.
+  - **What each fix needs.**
+    - Dropping them from the write payload (done-when 2's second form) needs both writers changed, `admin/libraries/page.tsx:116` (with the mirror at `LibraryWizard.tsx:301-302`) and `lib/libraryCollections.ts:180-181`. It also needs the upload picker seeded from the ACL's role rules instead of `page.tsx:63`.
+    - Dropping the columns as well needs, before the `DROP COLUMN`: the guard re-created from `20261077` without them (above); both writers gone, or every library create and wizard save is refused for an unknown column; and the named select list at `documents/[libraryId]/page.tsx:1460` changed. Otherwise that select fails with 42703 on every library open, and the page reaches the library only through its `select("*")` fallback (`:1466-1471`, written for a database that is behind on a migration). The mappings at `admin/libraries/page.tsx:63` and `documents/page.tsx:175-176` read a missing column as `[]`, so they only need removing with the type fields.
+- **Done-when 3 does not hold.** No decision is recorded.
+
+**Owner: admin-and-org P8.** It owns `admin/libraries/page.tsx` (`:183-198` only, in its plan entry), and the intelligence plan names it for "admin/libraries wizard, ALOG-13 console copy" (`audit-reports/fleet-plans/intelligence.json`, I-12's notes). P8 coordinates with intelligence I-12, which owns `DACL-10` enforcement and by default retires `read_access` / `visible_to` as enforcement.
+
+**Plan amendment needed.** The admin-and-org plan's P8 entry does not list `ALOG-13`, and its files do not cover the fix:
+- the writers: `app/(protected)/admin/libraries/page.tsx:116-117` (the payload) and `lib/libraryCollections.ts:180-181` (`createLibrary`);
+- the wizard: `app/(protected)/admin/libraries/LibraryWizard.tsx:244` and `:301-302` (the picker seed and the mirror), with the edit load at `admin/libraries/page.tsx:63`;
+- the comment: `app/(protected)/admin/permissions/page.tsx:13-16`;
+- only if the columns are dropped: `app/(protected)/documents/[libraryId]/page.tsx:1460` and `:1482`, `app/(protected)/documents/page.tsx:175-176`, `types/schema.ts:375-376`, and a migration that re-creates `enforce_library_sensitive_columns` from `20261077` first.
+
+The integrator adds the finding and those files to P8 (checking them against other packages' file lists), or re-owns this finding.
+
+Tripwire: `lib/__tests__/aoRoundGP0Records.test.ts`, `it.fails` "done-when 1: the console's 'GONE' comment does not coexist with a library write that still names write_access / admin_access". Its write side is a census over `app/`, `lib/`, `hooks/`, `components/` and `types/`, not one file, so today it sees both writers. It fails the suite the day the comment goes or every writer stops, and P8 then flips it to `it`. It is a done-when 1 tripwire only: it does not show that done-when 2 holds (the enforce-or-drop choice and the picker seed), which P8 records separately. A plain test beside it checks that the console file exists and that the census walks both writers' files, so the tripwire cannot pass vacuously.
+
+**Done-when.**
+1. ✗ the comment still asserts a removal that did not happen (owner P8).
+2. ✗ `write_access` / `admin_access` are still written, by the wizard save and by `createLibrary`, and not enforced. The admin picker is gone and the upload picker is real (owner P8).
+3. ✗ no decision recorded (owner P8, with I-12's DACL-10 default).
+
+**Scope / residual.** All three criteria are open. No application code changed in this package.
 
 ---
 
@@ -471,5 +600,31 @@ components/permissions/PermissionsExplorer.tsx:14 — `const ROLES = ["Admin", "
 - [ ] Rows that correspond to a registered capability are rendered from CAPABILITY_DEFS and the org's stored policy, not from a literal string.
 - [ ] The five mismatches above are each either corrected or shown to be intentional.
 - [ ] Any remaining hand-maintained rows are visibly marked as a documentation snapshot rather than presented as derived truth.
+
+---
+
+## ALOG-15 · The capability-policy route's compare-and-set cannot see `revoke_member`'s grant strip, so a concurrent save can write a removed member's grant back
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** admin-and-org P8 (set `updated_at = now()` in `revoke_member`'s grant strip, in P8's re-creation of `revoke_member` from its newest definition, `20261043`) — by the integrator, 2026-10-02 (at the A&O P0 merge, from P0's proposed finding; fleet plan `audit-reports/fleet-plans/admin-and-org.json`).
+- **Verification:** CONFIRMED (by reading; not exercised against a live database)
+- **Blast radius:** access control / audit integrity
+- **Locations:**
+  - `supabase/migrations/20261043_*.sql:160-167` (`revoke_member`, newest definition): `UPDATE org_configurations SET data = jsonb_set(data, '{grants}', …)` — `updated_at` is not touched.
+  - `app/api/admin/capability-policy/route.ts:134-139` (the fresh read of `data, updated_at`) and `:218-223` (the write conditioned on `.eq("updated_at", storedVersion)`).
+  - No trigger on `org_configurations` stamps `updated_at`: the only one is `trg_capability_policy_write_guard` (newest body `20261137`), which audits a signed-in write and leaves `updated_at` alone.
+- **Related:** `ALOG-12` (the editor's lost update; its record proposed this finding), `ORG-7`, `DEC-20` ("grants die with the membership")
+- **Independently verified:** — (`author`: opened by the integrator on 2026-10-02 at the admin-and-org P0 merge, from P0's proposed finding and its final review's correction; not yet challenged)
+
+**Mechanism.** The route reads the stored policy and its `updated_at`, builds `after` from that `before`, and writes only if `updated_at` is unchanged. `revoke_member` strips the removed member's personal grants by rewriting `data` without changing `updated_at`. A strip that lands between the route's read and its write is invisible to the compare-and-set.
+
+**Failure scenario.** Admin A removes member X, who holds a personal grant, while Admin B's save, grant or revoke is between the route's read (`:134`) and its compare-and-set (`:218`). The compare-and-set matches, and B's `after`, built from a `before` that still holds X's grant, writes it back. The audit trail does show the strip: `trg_capability_policy_write_guard` writes its own `CAPABILITY_POLICY_CHANGED` row (`via: direct_write`, with `before` and `after`) for `revoke_member`'s update. The route's following `CAPABILITY_POLICY_CHANGED` row then carries X's grant in both `before` and `after`, so the re-add itself is not shown as a change. Nothing is admitted while X is not a member, because the evaluator refuses a non-member. If X is re-added, the grant is live again, contrary to `DEC-20`. The window is one request's read-to-write span.
+
+**Remediation.** In P8's re-creation of `revoke_member` (its plan's migration for `ORG-7`), starting from `20261043`, the newest definition, set `updated_at = now()` in the grant-strip `UPDATE`. The route's existing compare-and-set then answers 409 in the race, with no route change.
+
+**Done when.**
+- `revoke_member`'s grant strip stamps `updated_at`, re-created from its newest definition with a lineDiff test.
+- The tripwire `lib/__tests__/aoRoundGP0Records.test.ts` "the grant strip stamps updated_at, so the policy route's compare-and-set sees it" flips from `it.fails` to `it`.
 
 ---

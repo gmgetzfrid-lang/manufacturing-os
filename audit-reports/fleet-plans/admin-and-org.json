@@ -305,7 +305,10 @@
     "ORG-13",
     "ORG-11",
     "ORG-4 residual",
-    "public-surfaces VFY-15 (added at the PS-VERIFY merge 2026-10-01: a per-org effective-date time zone beyond the deployment's facility zone \u2014 the org settings page)"
+    "public-surfaces VFY-15 (added at the PS-VERIFY merge 2026-10-01: a per-org effective-date time zone beyond the deployment's facility zone \u2014 the org settings page)",
+    "ALOG-15 (opened by the integrator 2026-10-02 at the A&O P0 merge: revoke_member's grant strip stamps updated_at so the capability-policy route's compare-and-set sees it; flip the aoRoundGP0Records.test.ts tripwire to it)",
+    "ORG-15 (opened by the integrator 2026-10-02 at the A&O P0 merge: /admin/users checks { error } on the members and pending-requests reads and shows an error state, never an empty roster or a missing card)",
+    "ORG-6 (remainder re-owned by the integrator 2026-10-02 at the A&O P0 merge: done-when 1 for 1 of 12 \u2014 acl_subject_in_bucket (20260708:21-39) has no SET search_path; one ALTER FUNCTION in P8's ORG-13 migration; flip the searchPathPin.test.ts it.fails tripwire)"
    ],
    "files": [
     "app/(protected)/admin/libraries/page.tsx:183-198",
@@ -318,7 +321,7 @@
     "lib/teams.ts",
     "app/(protected)/admin/teams/page.tsx",
     "new migration A (ORG-13): inventory cross-org team_members rows, then trigger team_members.org_id = teams.org_id",
-    "new migration B (ORG-7 + ALOG-3): revoke_member VERBATIM from 20261042 + ACL-rule pruning; optional library-delete audit trigger",
+    "new migration B (ORG-7 + ALOG-3 + ALOG-15): revoke_member re-created from its NEWEST definition (20261043 at 2026-10-02 \u2014 its \u00a70 fixed the active_collaborators type; re-creating from 20261042 brings back the 42804 bug that fails every member removal; find the newest by scanning supabase/migrations, lineDiff-tested) + ACL-rule pruning + the grant strip stamps updated_at (ALOG-15); optional library-delete audit trigger",
     "new lib/__tests__/adminOrgSurfaces.test.ts"
    ],
    "migrationsLikely": 2,
@@ -350,7 +353,9 @@
     "roles-and-permissions WF-10 (added by the integrator 2026-10-01: the 60-second server-side policy cache is invalidated when a policy, grant or membership changes \u2014 a revoked person stops acting at once)",
     "projects-and-cost QUAL-14 (added at the J2b merge 2026-10-01: the permissions console authors a project-scoped quality.sign_off rule and a per-person, per-project grant)",
     "ORG-14 (opened at the J2b merge 2026-10-01: the View-as simulator shows standing quality signers and project-scoped grantees as not holding quality.sign_off)",
-    "document-control RET-4 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Done-when 3's second table: access_recertification_events split into member SELECT and a controller/owner-bound INSERT, with no UPDATE or DELETE (A&O P9 ALOG-2). Then close by pointer. The 20261077 half (\u00a72 library attestation \u2026)"
+    "document-control RET-4 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Done-when 3's second table: access_recertification_events split into member SELECT and a controller/owner-bound INSERT, with no UPDATE or DELETE (A&O P9 ALOG-2). Then close by pointer. The 20261077 half (\u00a72 library attestation \u2026)",
+    "ALOG-1 (remainder re-owned by the integrator 2026-10-02 at the A&O P0 merge: done-when 2 \u2014 lib/capabilityPolicy.ts:506 turns a read error into the shipped defaults with version null; CapabilityPolicyEditor.tsx:117 and ViewAsSimulator.tsx:46,96 render that as the org's policy \u2014 a failed read must be said, never shown as the defaults)",
+    "ALOG-12 (remainder re-owned by the integrator 2026-10-02 at the A&O P0 merge: done-when 1 \u2014 the editor posts the whole grid from a mount-time snapshot (CapabilityPolicyEditor.tsx:115-126, :216); the save op carries no version (lib/capabilityPolicy.ts:587-588); the route (app/api/admin/capability-policy/route.ts) refuses a stale-version save with 409 instead of overwriting a second admin's change)"
    ],
    "files": [
     "components/permissions/PermissionsExplorer.tsx (capability rows rendered from CAPABILITY_DEFS + stored policy; five named mismatches corrected)",
@@ -361,7 +366,9 @@
     "components/documents/AccessRecertModal.tsx:53-67",
     "new migration (ALOG-2): access_recertification_events INSERT binds performed_by = auth.uid(), limited to owner/Admin/DocCtrl by collection; no UPDATE/DELETE for authenticated (replaces access_recert_events_member from 20260821:39-44)",
     "lib/__tests__/accessRecert.test.ts",
-    "lib/__tests__/rolePickerCensus.test.ts"
+    "lib/__tests__/rolePickerCensus.test.ts",
+    "components/permissions/CapabilityPolicyEditor.tsx load/save (:115-126, :216) and ViewAsSimulator.tsx (:46, :96) \u2014 ALOG-12 / ALOG-1 (added at the A&O P0 merge)",
+    "app/api/admin/capability-policy/route.ts (refuse a stale-version save) and lib/capabilityPolicy.ts (the save op carries the version; loadCapabilityPolicy says a read error) \u2014 ALOG-12 / ALOG-1"
    ],
    "migrationsLikely": 1,
    "dependsOn": [

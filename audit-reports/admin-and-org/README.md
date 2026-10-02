@@ -22,13 +22,13 @@ Org lifecycle and membership, export/backup/restore, the audit log and admin rai
 
 ## Findings
 
-**57 findings** — 5 CRITICAL, 17 HIGH, 28 MEDIUM, 7 LOW.
+**59 findings** — 5 CRITICAL, 17 HIGH, 28 MEDIUM, 9 LOW.
 
 | # | Report | n | Note |
 |---|---|---|---|
-| 01 | [Org lifecycle, membership & teams](./01-org-lifecycle.md) | 14 | `ORG-14` opened at the projects Round G J2b integration, 2026-10-01 |
+| 01 | [Org lifecycle, membership & teams](./01-org-lifecycle.md) | 15 | `ORG-14` opened at the projects Round G J2b integration, 2026-10-01; `ORG-15` opened by the integrator at the A&O P0 merge, 2026-10-02 |
 | 02 | [Export, backup, restore & portability](./02-backup-restore.md) | 15 | `BKP-15` (LOW) opened at the intelligence I-09 merge, 2026-10-01 |
-| 03 | [The audit log & admin rails](./03-audit-log.md) | 14 | The critic — spans all four areas from this run. |
+| 03 | [The audit log & admin rails](./03-audit-log.md) | 15 | The critic — spans all four areas from this run. `ALOG-15` opened by the integrator at the A&O P0 merge, 2026-10-02 |
 | 04 | [Billing, quotas & platform limits](./04-billing.md) | 14 |  |
 
 Every report except the critic was **adversarially verified** — a second agent

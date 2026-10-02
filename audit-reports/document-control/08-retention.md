@@ -423,6 +423,8 @@ lib/revisions.ts:1165-1168 comment + :1175 `file_url: targetVersion.fileUrl,`; a
 
 **Scope / residual.** None. `DRLS-11` (the ten further functions) closes the same way.
 
+*Cross-area note (2026-10-02, admin-and-org Round G, P0): this record's done-when 3 cites `lib/__tests__/searchPathPin.test.ts`. admin-and-org `ORG-6` found that the lint's exemption for 20261020's list ignored order. Both legal-hold guards are pinned by that ALTER alone. So re-creating either one after 20261020 without `SET search_path` would have passed the lint while the live pin was reset. The lint is now order-aware. On `f1ac550` neither guard had been re-created (final definitions `20260826`), so this record's claims held.*
+
 ---
 
 <a id="ret-10"></a>
