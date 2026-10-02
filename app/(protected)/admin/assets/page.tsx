@@ -101,8 +101,9 @@ function AssetsPageInner() {
   const [typeFilter, setTypeFilter] = useState<string>("");
   const [filterMode, setFilterMode] = useState<"all" | "with_photos" | "no_photos">("all");
   // BR-8: provenance is a filter — equipment the drawings created, awaiting
-  // a person to vouch for it.
-  const [discoveredOnly, setDiscoveredOnly] = useState(false);
+  // a person to vouch for it. The equipment sweep links here with
+  // ?discovered=1, landing with the filter on.
+  const [discoveredOnly, setDiscoveredOnly] = useState(() => searchParams.get("discovered") === "1");
   // IRLS-5: archive is reversible — the archived equipment has a list of its
   // own (it is not in the grid), where the writer tier restores it.
   const [showArchived, setShowArchived] = useState(false);
@@ -1864,8 +1865,15 @@ function AssetEditDrawer({
       confirmLabel: "Unlink",
     });
     if (!ok) return;
-    await supabase.from("document_assets").delete()
-      .eq("document_id", documentId).eq("asset_id", asset.id);
+    // AREA-2 (20261170): a link the equipment sweep read off the drawing
+    // (source 'drawing') is not deleted from here — the database refuses it
+    // and the delete matches no row. Say so instead of looking done.
+    const { data: gone, error: e } = await supabase.from("document_assets").delete()
+      .eq("document_id", documentId).eq("asset_id", asset.id).select("id");
+    if (e) setError(e.message);
+    else if (Array.isArray(gone) && gone.length === 0) {
+      setError("This link was not removed. A link the equipment sweep read off the drawing is removed by dismissing the tag in that library's Equipment sweep, so the decision is recorded.");
+    }
     refreshDocs();
   };
 

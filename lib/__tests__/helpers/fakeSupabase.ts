@@ -1,7 +1,7 @@
 // A small in-memory stand-in for the supabase-js query builder, for tests
 // that drive real data-layer functions end to end (intelligence Round G,
 // I-10). Supports the subset the registry / codebook / search modules use:
-// select (incl. head counts), eq / neq / in / is / ilike / or (col.op.value
+// select (incl. head counts), eq / neq / gt / gte / in / contains / is / ilike / or (col.op.value
 // terms), textSearch (substring over string columns), order, limit, range,
 // maybeSingle / single, insert / update / delete / upsert with returning
 // selects, not (is / eq), and(...) inside or, unique keys (23505) and an RLS switch that makes a table's writes
@@ -56,14 +56,30 @@ function orTerm(term: string): Filter {
   const and = term.match(/^and\((.*)\)$/i);
   if (and) { const inner = splitOr(and[1]).map(orTerm); return (r) => inner.every((t) => t(r)); }
   // col.op.value — value may itself contain dots (a site code "2030.22").
-  const m = term.match(/^([a-z_]+)\.(eq|ilike|like|in|is)\.(.*)$/i);
+  const m = term.match(/^([a-z_]+)\.(eq|ilike|like|in|is|gt|gte)\.(.*)$/i);
   if (!m) return () => false;
   const [, col, op, raw] = m;
   if (op === "eq") return (r) => String(r[col] ?? "") === raw;
+  if (op === "gt") return (r) => r[col] != null && String(r[col]) > raw;
+  if (op === "gte") return (r) => r[col] != null && String(r[col]) >= raw;
   if (op === "ilike" || op === "like") { const re = likeToRegex(raw); return (r) => re.test(String(r[col] ?? "")); }
   if (op === "is") return (r) => (raw === "null" ? r[col] == null : String(r[col]) === raw);
   const vals = raw.replace(/^\(|\)$/g, "").split(",").map((v) => v.replace(/^"|"$/g, ""));
   return (r) => vals.includes(String(r[col]));
+}
+
+/** JSONB containment (`@>`): every element / key of `want` is in `have`
+ *  (intelligence Round G, I-11 — the asset hub's asset_tags read). */
+function jsonContains(have: unknown, want: unknown): boolean {
+  if (typeof want === "string" && /^[[{]/.test(want.trim())) {
+    try { want = JSON.parse(want); } catch { /* a plain string */ }
+  }
+  if (Array.isArray(want)) return Array.isArray(have) && want.every((w) => have.some((h) => jsonContains(h, w)));
+  if (want && typeof want === "object") {
+    if (!have || typeof have !== "object") return false;
+    return Object.entries(want as Record<string, unknown>).every(([k, v]) => jsonContains((have as Record<string, unknown>)[k], v));
+  }
+  return have === want;
 }
 
 function splitOr(expr: string): string[] {
@@ -204,6 +220,10 @@ export function makeFakeSupabase(db: FakeDb) {
             case "delete": op = "delete"; return self;
             case "eq": { const [k, v] = args as [string, unknown]; filters.push((r) => r[k] === v); return self; }
             case "neq": { const [k, v] = args as [string, unknown]; filters.push((r) => r[k] !== v); return self; }
+            // Keyset paging (intelligence Round G, I-11): string order, as the
+            // stand-in's ids are strings.
+            case "gt": { const [k, v] = args as [string, unknown]; filters.push((r) => r[k] != null && String(r[k]) > String(v)); return self; }
+            case "gte": { const [k, v] = args as [string, unknown]; filters.push((r) => r[k] != null && String(r[k]) >= String(v)); return self; }
             case "not": {
               // .not(col, "is", null) / .not(col, "eq", v) — the two shapes the
               // intelligence modules use (I-08).
@@ -213,6 +233,7 @@ export function makeFakeSupabase(db: FakeDb) {
               return self;
             }
             case "in": { const [k, v] = args as [string, unknown[]]; filters.push((r) => v.includes(r[k])); return self; }
+            case "contains": { const [k, v] = args as [string, unknown]; filters.push((r) => jsonContains(r[k], v)); return self; }
             case "is": { const [k, v] = args as [string, unknown]; filters.push((r) => (v === null ? r[k] == null : r[k] === v)); return self; }
             case "ilike": { const [k, p] = args as [string, string]; const re = likeToRegex(p); filters.push((r) => re.test(String(r[k] ?? ""))); return self; }
             case "or": { const terms = splitOr(String(args[0])).map(orTerm); filters.push((r) => terms.some((t) => t(r))); return self; }

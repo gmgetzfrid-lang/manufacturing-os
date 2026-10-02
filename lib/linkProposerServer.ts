@@ -16,7 +16,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { extractDrawingRefs } from "@/lib/drawingText";
-import { normalizeTag } from "@/lib/codebook";
+import { normalizeTag, tagKey } from "@/lib/codebook";
 import {
   proposeOpcContinuity, proposeSharedEquipment, customSkillDrafts,
   proposeCoCitations, compileSkillPatterns, mergeDrafts, filterDrafts,
@@ -492,11 +492,14 @@ export async function runLinkProposers(
     const canonical = assetTag.get(l.asset_id);
     if (!canonical) continue;
     // Did this document reach the asset by its canonical tag, or only
-    // because someone taught the system a nickname?
-    const viaTag = normalizeTag(l.tag_text ?? "");
+    // because someone taught the system a nickname? Compared by the ONE tag
+    // grammar (GAP-310: tagKey, the registry's identity key — punctuation-
+    // blind, so "North Furnace" and "NORTH-FURNACE" are the same alias); the
+    // display spelling (`canonical`) is only what the proposal shows.
+    const viaKey = tagKey(l.tag_text ?? "");
     const aliases = aliasByAsset.get(l.asset_id) ?? [];
-    const matchedAlias = viaTag && viaTag !== canonical
-      ? aliases.find((a) => normalizeTag(a) === viaTag)
+    const matchedAlias = viaKey && viaKey !== tagKey(canonical)
+      ? aliases.find((a) => tagKey(a) === viaKey)
       : undefined;
     tagOccurrences.push({
       documentId: l.document_id,

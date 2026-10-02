@@ -1,36 +1,93 @@
 // lib/equipmentBridgeServer.ts — THE BRIDGE: AI-extracted equipment tags on
-// P&IDs flow into (1) the equipment registry and (2) the source document's
-// own equipment column, automatically.
+// P&IDs flow into (1) the equipment registry, (2) the document↔equipment
+// RELATION (document_assets, source 'drawing'), and (3) the source
+// document's own equipment column when one is mapped.
 //
-// Pipeline per drawing (runs on ingest completion + on demand for backlogs):
-//   gather   — the sheet's extracted equipment entities (knowledge_page_entities)
-//   locate   — which operating unit, decoded from the drawing number via the
-//              Site Codebook (fallback: the library's configured default unit)
-//   translate— tag + unit → full site code (E-22 in 20 → 2030.22)
-//   reconcile— match each tag against the registry; unmatched tags become
-//              DISCOVERED assets on apply (origin 'drawing', full provenance)
+// Pipeline per controlled document (runs on ingest completion + on demand for
+// backlogs):
+//   gather   — the extracted equipment entities of every knowledge copy of
+//              the document that is READY and at its CURRENT revision (BR-14:
+//              merged, never last-writer-wins; GAP-309: a superseded copy
+//              never feeds current state), plus each page's title-block
+//              identity (kind 'self') — the SHEET ADDRESS (GAP-301)
+//   locate   — which operating unit: the codebook decode of the document's
+//              own number, then the library's default — either one only when
+//              the Site Codebook holds that unit (CB-1); never a filename
+//   translate— tag + unit → full site code (E-22 in 20 → 2030.22), re-derived
+//              at apply, never read back from the stored proposal (CB-2)
+//   reconcile— match each tag against the registry by the one tag grammar
+//              (tagKey, GAP-310); unmatched tags become DISCOVERED assets on
+//              apply (origin 'drawing', full provenance) — with or without a
+//              mapped column (AREA-4 / GAP-307); a tag the Site Codebook's
+//              equipment types do not know is HELD for review, never minted
+//              (BR-13)
+//   relate   — write a document_assets row per applied tag: source 'drawing',
+//              the sheet address, the pages, who asserted it (a machine), the
+//              model when a page was AI-transcribed, the revision it was read
+//              from (GAP-304 / GAP-303)
 //   populate — merge tags into the mapped tags-column on the source document
-//              (metadata arrays; manual entries are never removed)
+//              (metadata arrays; manual entries are never removed) — KEPT:
+//              the library's chips render from it
 //
 // Invariants:
-//   * Idempotent — recompute diffs against what was already applied; re-index
-//     never duplicates chips or re-creates assets.
-//   * Additive only — the bridge never deletes a tag a human typed.
+//   * Idempotent — apply skips tags already applied or dismissed unless a
+//     person names them again (BR-5); re-running a sweep re-derives the same
+//     rows; a relation row is refreshed, never duplicated.
+//   * Additive only — the bridge never deletes a tag a human typed; a tag a
+//     person removed from the column is remembered as dismissed (BR-5).
+//   * Never auto-removed — a tag that no longer appears on the current
+//     revision marks its relation `vanished_at` for review (GAP-309).
 //   * Honest degradation — no codebook → tags still flow (no codes/units);
-//     no column mapping → suggestions wait in review; nothing guesses.
-//   * Everything audited — applied runs and discovered assets log who/what/
-//     which drawing.
+//     a degraded insert says what it dropped; a database without the
+//     relation's vocabulary (20261170) says the relation was not recorded
+//     and keeps today's column write.
+//   * Everything audited — applied runs, discovered assets and every human
+//     decision on a machine reading (dismiss, vanished review) write an
+//     audit_logs row: a correction is a row, never an overwrite (GAP-303).
+//   * AI-derived data never drives a hold, an MOC or a compliance artifact:
+//     nothing here writes one.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadCodebookAdmin } from "@/lib/codebookServer";
-import { normalizeTag, splitTag, tagToCode, parseDrawingNumber, typeForTag, type Codebook } from "@/lib/codebook";
+import {
+  normalizeTag, splitTag, tagToCode, parseDrawingNumber, typeForTag, typeCandidatesForTag, tagKey,
+  type Codebook,
+} from "@/lib/codebook";
+import { extractEquipmentTags } from "@/lib/drawingText";
+
+/** One sheet a tag was read on (GAP-301): the site's sheet address from that
+ *  page's own title block, or only the page when it declared none. */
+export interface BridgeSheet {
+  page: number;
+  /** "2002-D-10001 SHT 4" — the drawing number and sheet the title block
+   *  declares; null when the page declared no drawing number. */
+  label: string | null;
+  drawingNumber: string | null;
+  sheet: string | null;
+  /** The revision the title block declares on that page. */
+  rev: string | null;
+  /** The page's text was an AI model's transcription (GOV-9): its title
+   *  block is a reading, not an identity — shown as unconfirmed. */
+  aiRead: boolean;
+}
 
 export interface BridgeSuggestion {
   tag: string;              // normalized display form ("E-22")
   code: string | null;      // site code when derivable ("2030.22")
-  pages: number[];          // sheets/pages the tag appears on
+  /** PDF page numbers the tag was read on (not sheet numbers — see sheets). */
+  pages: number[];
   assetId: string | null;   // existing registry match
   assetStatus: "existing" | "new";
+  /** GAP-301: the sheet address of each page, from its title block. */
+  sheets?: BridgeSheet[];
+  /** BR-13: a NEW tag whose prefix no Site Codebook equipment type claims —
+   *  held for a person, never created by a bulk or automatic apply. */
+  held?: "unknown_prefix" | null;
+  /** BR-9: a person rejected this tag (it stays out of every apply). */
+  dismissed?: boolean;
+  /** The AI model that transcribed a page the tag was read on (null: the
+   *  PDF's own text layer). */
+  model?: string | null;
 }
 
 export interface BridgeConfig {
@@ -40,130 +97,666 @@ export interface BridgeConfig {
   /** Discovery mode — create registry assets for unmatched tags on apply.
    *  Defaults ON: the drawings build the registry. */
   createAssets?: boolean;
+  /** BR-8: who turned auto-apply on — the accountable identity an automatic
+   *  apply's discovered assets carry (never the nil UUID when known). */
+  autoApplyBy?: string;
+  /** BR-9: the first time a person applied or dismissed in this library. An
+   *  automatic apply with no mapped column waits for it (reviewed once). */
+  reviewedAt?: string;
+  reviewedBy?: string;
 }
 
-/** assets.tag_normalized convention (lib/assets.ts normalizeTag). */
-const assetNorm = (tag: string) => tag.toLowerCase().replace(/[^a-z0-9]+/g, "");
+/** BR-9 / BR-5: a tag a person rejected, remembered across recomputes. */
+export interface BridgeDismissal {
+  tag: string;
+  by: string | null;
+  at: string;
+  /** 'review': dismissed in the sweep; 'column': removed from the mapped
+   *  column after the Bridge applied it. */
+  via: "review" | "column";
+  /** The knowledge revision (source_version_id) it was dismissed on. */
+  revision: string | null;
+  /** The revision on which the tag was first no longer read — a later
+   *  revision that brings it back re-proposes it. */
+  absentSince?: string | null;
+}
+
+/** BR-14: a knowledge copy the proposal was computed from. */
+export interface BridgeSource {
+  knowledgeDocumentId: string;
+  status: string | null;
+  sourceVersionId: string | null;
+  sourceRev: string | null;
+  /** True when the copy was ready, at the current revision, and read whole. */
+  used: boolean;
+  why?: string;
+}
+
+export type ComputeReason =
+  | "computed" | "no_entities" | "upload_origin" | "no_twin" | "twin_not_ready" | "twin_stale" | "not_found";
+
+export interface ComputeResult {
+  documentId: string | null;
+  suggestions: BridgeSuggestion[];
+  autoApplied: boolean;
+  reason: ComputeReason;
+  /** The decoded unit, its source, and a code the codebook does not hold. */
+  unitCode?: string | null;
+  unitSource?: "document_number" | "library_default" | null;
+  unitRejected?: string | null;
+  /** GAP-309: relations marked vanished / back / superseded by this compute. */
+  revision?: { vanished: number; reappeared: number; superseded: number; complete: boolean; skipped?: string };
+  /** BR-11: a slab that stopped at its ceiling — the proposal is partial. */
+  truncated?: boolean;
+  knowledgeDocumentId?: string | null;
+}
+
+export interface RelationOutcome {
+  /** New 'drawing' rows. */
+  written: number;
+  /** 'drawing' rows refreshed (sheet, pages, revision). */
+  refreshed: number;
+  /** Pairs a person already linked (jsonb_sync / manual) — left as they are. */
+  keptHuman: number;
+  /** Why no relation was recorded (e.g. 20261170 not applied), or null. */
+  notRecorded: string | null;
+  /** The provenance columns (20261171) were missing — rows written without. */
+  provenanceDropped: boolean;
+}
+
+export interface ApplyResult {
+  appliedTags: string[];
+  createdAssets: number;
+  codesLeftBlank: string[];
+  /** AREA-4 / BR-3: discovered assets whose insert lost columns on a
+   *  pre-migration database — what each one dropped. */
+  degraded: Array<{ tag: string; dropped: string[] }>;
+  /** Tags whose asset could not be created or resolved, with the reason. */
+  failed: Array<{ tag: string; reason: string }>;
+  /** BR-13: new tags held (unknown prefix) — named, never minted. */
+  held: string[];
+  relations: RelationOutcome;
+  /** The mapped column, or null when none is mapped (discovery and the
+   *  relation still ran). */
+  column: string | null;
+  /** BR-7: codes filled on assets that had a unit but no code. */
+  codesFilled: number;
+  /** The proposal row's update failed — the work above landed. */
+  ledgerError?: string;
+}
+
+const NIL_UUID = "00000000-0000-0000-0000-000000000000";
+
+/** GAP-310: the registry's identity key — the one tag grammar (tagKey is
+ *  the database's normalize_tag()). */
+const assetNorm = (tag: string) => tagKey(tag);
 
 /** CB-10 (20261128): another asset already carries this site code — the
  *  unique index, or the one-holder trigger's refusal of an UPDATE. */
 const siteCodeTaken = (e: { message?: string } | null | undefined) =>
   !!e && /assets_org_code_unique/.test(e.message ?? "");
 
+type PgErr = { code?: string; message?: string } | null | undefined;
+const missingColumn = (e: PgErr) =>
+  !!e && (e.code === "42703" || e.code === "PGRST204" || /column [\w."]+ does not exist|could not find the .* column/i.test(e.message ?? ""));
+const checkViolation = (e: PgErr) => !!e && e.code === "23514";
+const uniqueViolation = (e: PgErr) => !!e && e.code === "23505";
+
+const PROVENANCE_COLS = ["asserted_by", "model", "source_revision", "source_version_id", "vanished_at", "superseded_at"] as const;
+const LEDGER_COLS_20261171 = ["dismissed", "sources"] as const;
+
+/** Rows per window and the ceiling of one entity slab (BR-11). */
+const PAGE_ROWS = 1000;
+export const ENTITY_CEILING = 20000;
+
+// ─── Pure helpers (exported for tests) ──────────────────────────────────────
+
+/** The title block a page declared, from the 'self' entity's raw line
+ *  ("DWG 2002-D-10001 SH 4 REV B", lib/knowledgeIngest.ts). */
+export function parseSelfRaw(raw: string | null | undefined): { drawingNumber: string | null; sheet: string | null; rev: string | null } {
+  const s = String(raw ?? "").trim();
+  const m = s.match(/^DWG\s+(\S+)(?:\s+SH\s+(\S+))?(?:\s+REV\s+(\S+))?\s*$/i);
+  if (!m) return { drawingNumber: null, sheet: null, rev: null };
+  return { drawingNumber: m[1], sheet: m[2] ?? null, rev: m[3] ?? null };
+}
+
+/** GAP-301 acceptance 1 — given a page's 'self' rows, the site sheet address.
+ *  A sheet-addressed row (`<DWG>-SH<n>`) names the sheet; the raw line also
+ *  carries the declared revision. Null label when the page declared none. */
+export function sheetAddressForPage(
+  page: number,
+  selfRows: ReadonlyArray<{ tag: string; raw?: string | null }>,
+  aiRead: boolean,
+): BridgeSheet {
+  let drawingNumber: string | null = null;
+  let sheet: string | null = null;
+  let rev: string | null = null;
+  for (const r of selfRows) {
+    const fromRaw = parseSelfRaw(r.raw);
+    const sh = String(r.tag ?? "").match(/^(.*)-SH(\w+)$/);
+    if (sh) { drawingNumber = drawingNumber ?? sh[1]; sheet = sheet ?? sh[2]; }
+    else if (r.tag) drawingNumber = drawingNumber ?? String(r.tag);
+    if (fromRaw.drawingNumber) drawingNumber = drawingNumber ?? fromRaw.drawingNumber;
+    if (fromRaw.sheet) sheet = sheet ?? fromRaw.sheet;
+    if (fromRaw.rev) rev = rev ?? fromRaw.rev;
+  }
+  const label = drawingNumber ? (sheet ? `${drawingNumber} SHT ${sheet}` : drawingNumber) : null;
+  return { page, label, drawingNumber, sheet, rev, aiRead };
+}
+
+/** How a sheet reads to a person: the address, or the page with that fact
+ *  stated; an AI-transcribed title block is marked unconfirmed (GOV-9). */
+export function sheetText(s: Pick<BridgeSheet, "page" | "label" | "aiRead">): string {
+  if (!s.label) return `page ${s.page} (no title block read)`;
+  return s.aiRead ? `${s.label} (AI-read, unconfirmed)` : s.label;
+}
+
+/** The stored sheet_label for a relation: the distinct addresses, in page
+ *  order ("2002-D-10001 SHT 4, SHT 7"), or null when no page declared one. */
+export function relationSheetLabel(sheets: ReadonlyArray<BridgeSheet> | undefined): string | null {
+  const labels: string[] = [];
+  for (const s of [...(sheets ?? [])].sort((a, b) => a.page - b.page)) {
+    if (s.label && !labels.includes(s.label)) labels.push(s.label);
+  }
+  if (labels.length === 0) return null;
+  // Same drawing number, several sheets: "2002-D-10001 SHT 4, SHT 7".
+  const out: string[] = [];
+  let lastBase: string | null = null;
+  for (const l of labels) {
+    const m = l.match(/^(.*) SHT (\S+)$/);
+    if (m && m[1] === lastBase) out.push(`SHT ${m[2]}`);
+    else { out.push(l); lastBase = m ? m[1] : null; }
+  }
+  return out.join(", ");
+}
+
+/** BR-13: the extractor's own vocabulary re-applied at the registry boundary
+ *  — the stop list, the drawing-number-middle guard and the line-number
+ *  grammar of lib/drawingText.ts extractEquipmentTags. A tag it would not
+ *  extract from its own text never crosses. */
+export function passesExtractorGate(tag: string): boolean {
+  const norm = normalizeTag(tag);
+  return extractEquipmentTags(norm).some((h) => h.tag === norm);
+}
+
+/** BR-13: the Site Codebook knows prefixes once any equipment type declares
+ *  one; a new tag no type claims is then held, not minted. An empty codebook
+ *  has no opinion (today's behaviour: the tag is created untyped). */
+export function heldForUnknownPrefix(tag: string, book: Codebook): boolean {
+  const knowsPrefixes = book.equipmentTypes.some((t) => (t.meta.tagPrefixes ?? []).some((p) => p.trim().length > 0));
+  if (!knowsPrefixes) return false;
+  return typeCandidatesForTag(tag, book).length === 0;
+}
+
+/** CB-1: a unit code is usable only when the Site Codebook holds it. */
+export function heldUnit(code: string | null | undefined, book: Codebook): string | null {
+  const c = String(code ?? "").trim();
+  if (!c) return null;
+  return book.units.some((u) => u.code === c) ? c : null;
+}
+
+/** CB-1: which unit a controlled document is in — the codebook decode of its
+ *  OWN number (never a filename or a title: those are not drawing numbers),
+ *  then the library's configured default; either only when the codebook
+ *  holds the unit. A decoded code it does not hold is reported, not used. */
+export function locateUnit(documentNumber: string | null | undefined, defaultUnitCode: string | null | undefined, book: Codebook): {
+  unitCode: string | null; source: "document_number" | "library_default" | null; rejected: string | null;
+} {
+  const num = String(documentNumber ?? "").trim();
+  let rejected: string | null = null;
+  if (num) {
+    const parsed = parseDrawingNumber(num, book);
+    if (parsed?.unitCode) {
+      if (heldUnit(parsed.unitCode, book)) return { unitCode: parsed.unitCode, source: "document_number", rejected: null };
+      rejected = parsed.unitCode;
+    }
+  }
+  const def = heldUnit(defaultUnitCode, book);
+  if (def) return { unitCode: def, source: "library_default", rejected };
+  if (!rejected && defaultUnitCode && !def) rejected = String(defaultUnitCode);
+  return { unitCode: null, source: null, rejected };
+}
+
+/** The tags currently in a mapped metadata column (array or comma list). */
+export function columnTags(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map((v) => String(v).trim()).filter(Boolean)
+    : typeof value === "string" && value.trim()
+      ? value.split(",").map((v) => v.trim()).filter(Boolean)
+      : [];
+}
+
+/** BR-9 / BR-5: carry the dismissals across a recompute. A dismissed tag
+ *  that is no longer read is marked absent on this revision; one a LATER
+ *  revision brings back after it had left is re-proposed (the dismissal
+ *  lapses). A tag read again on the same revision it went missing on was an
+ *  extraction miss: it stays dismissed. */
+export function planDismissals(input: {
+  existing: ReadonlyArray<BridgeDismissal>;
+  presentTags: ReadonlySet<string>;
+  revision: string | null;
+  now: string;
+}): { dismissed: BridgeDismissal[]; lapsed: string[] } {
+  const out: BridgeDismissal[] = [];
+  const lapsed: string[] = [];
+  for (const d of input.existing) {
+    const present = input.presentTags.has(d.tag);
+    if (!present) {
+      out.push({ ...d, absentSince: d.absentSince ?? input.revision ?? input.now });
+      continue;
+    }
+    if (d.absentSince && input.revision && d.absentSince !== input.revision) {
+      lapsed.push(d.tag); // the tag left the sheet and a later revision brought it back
+      continue;
+    }
+    out.push({ ...d, absentSince: null });
+  }
+  return { dismissed: out, lapsed };
+}
+
+const parseDismissals = (v: unknown): BridgeDismissal[] =>
+  Array.isArray(v)
+    ? (v as Array<Record<string, unknown>>).filter((d) => d && typeof d.tag === "string").map((d) => ({
+        tag: String(d.tag), by: (d.by as string | null) ?? null, at: String(d.at ?? ""),
+        via: d.via === "column" ? "column" : "review", revision: (d.revision as string | null) ?? null,
+        absentSince: (d.absentSince as string | null) ?? null,
+      }))
+    : [];
+
+// ─── Reads ──────────────────────────────────────────────────────────────────
+
+type Builder = PromiseLike<{ data: unknown; error: PgErr }> & { range: (a: number, b: number) => Builder };
+
+/** Read one ordered query window by window until an empty window or the
+ *  ceiling (BR-11: never one capped slab presented as whole). */
+async function readWindows<T>(make: () => Builder, ceiling: number): Promise<{ rows: T[]; error: PgErr; truncated: boolean }> {
+  const rows: T[] = [];
+  for (let from = 0; ; from += PAGE_ROWS) {
+    const { data, error } = await make().range(from, from + PAGE_ROWS - 1);
+    if (error) return { rows, error, truncated: false };
+    const batch = (data ?? []) as T[];
+    rows.push(...batch);
+    if (batch.length === 0) return { rows, error: null, truncated: false };
+    if (rows.length >= ceiling) return { rows: rows.slice(0, ceiling), error: null, truncated: true };
+  }
+}
+
+export async function loadBridgeConfig(admin: SupabaseClient, libraryId: string): Promise<BridgeConfig | null> {
+  if (!libraryId) return null;
+  const { data } = await admin.from("libraries").select("equipment_bridge").eq("id", libraryId).maybeSingle();
+  const raw = data?.equipment_bridge as BridgeConfig | null | undefined;
+  return raw && typeof raw === "object" ? raw : null;
+}
+
+/** An automatic apply acts when a column is mapped (as it always did), or —
+ *  with no column — once a person has reviewed the library (BR-9). */
+export function autoApplyActs(bridge: BridgeConfig | null): boolean {
+  return !!bridge?.autoApply && (!!bridge.targetColumnKey || !!bridge.reviewedAt);
+}
+
+type TwinRow = {
+  id: string; status: string | null; source_version_id: string | null; source_rev: string | null;
+  vision_failed_pages?: number[] | null; name?: string | null;
+};
+
+async function readTwins(admin: SupabaseClient, orgId: string, documentId: string): Promise<TwinRow[]> {
+  const base = "id, status, source_version_id, source_rev, name";
+  let res: { data: unknown; error: PgErr } = await admin.from("knowledge_documents").select(`${base}, vision_failed_pages`)
+    .eq("org_id", orgId).eq("source_document_id", documentId);
+  if (res.error && missingColumn(res.error)) {
+    res = await admin.from("knowledge_documents").select(base).eq("org_id", orgId).eq("source_document_id", documentId);
+  }
+  return ((res.data ?? []) as TwinRow[]);
+}
+
+type EntityRow = { document_id: string; tag: string; page: number; kind: string; raw?: string | null };
+
 // ─── Compute ────────────────────────────────────────────────────────────────
 
-export async function computeForKnowledgeDoc(admin: SupabaseClient, knowledgeDocId: string): Promise<{
-  documentId: string | null;
-  suggestions: BridgeSuggestion[];
-  autoApplied: boolean;
-} | null> {
+/** Ingest's entry: a knowledge document reached 'ready'. A copy of a
+ *  controlled document recomputes that document from every current copy
+ *  (BR-14). An upload-origin document has no controlled document to feed —
+ *  said, never a silent null (BR-3); its tags reach the registry through the
+ *  coverage report's sheet-only list (GAP-307). */
+export async function computeForKnowledgeDoc(admin: SupabaseClient, knowledgeDocId: string): Promise<ComputeResult | null> {
   const { data: kdoc } = await admin
     .from("knowledge_documents")
     .select("id, org_id, library_id, name, source_document_id")
     .eq("id", knowledgeDocId).maybeSingle();
-  if (!kdoc?.source_document_id) return null; // upload-origin docs have no column to feed
-
+  if (!kdoc) return null;
+  if (!kdoc.source_document_id) {
+    return { documentId: null, suggestions: [], autoApplied: false, reason: "upload_origin", knowledgeDocumentId: String(kdoc.id) };
+  }
   const orgId = String((kdoc as Record<string, unknown>).org_id);
-  const documentId = String(kdoc.source_document_id);
+  const out = await computeForDocument(admin, orgId, String(kdoc.source_document_id), { trigger: "ingest" });
+  return { ...out, knowledgeDocumentId: String(kdoc.id) };
+}
 
-  // Equipment entities, aggregated per tag with the pages they appear on.
-  const { data: ents } = await admin
-    .from("knowledge_page_entities")
-    .select("tag, page, kind")
-    .eq("document_id", kdoc.id)
-    .eq("kind", "equipment")
-    .limit(4000);
-  const byTag = new Map<string, Set<number>>();
-  for (const e of (ents ?? []) as Array<{ tag: string; page: number }>) {
-    const norm = normalizeTag(String(e.tag));
-    if (!splitTag(norm)) continue; // only things shaped like real tags cross the bridge
-    const pages = byTag.get(norm) ?? new Set<number>();
-    if (Number.isFinite(e.page)) pages.add(Number(e.page));
-    byTag.set(norm, pages);
-  }
-  if (byTag.size === 0) {
-    // Still record an empty computation so the sweep shows "checked, nothing".
-    await upsertSuggestions(admin, orgId, documentId, [], null);
-    return { documentId, suggestions: [], autoApplied: false };
-  }
-
-  // Which unit is this drawing? Codebook decode of the drawing number first,
-  // then the library's configured default. Never guessed.
-  const book = await loadCodebookAdmin(admin, orgId);
+export async function computeForDocument(admin: SupabaseClient, orgId: string, documentId: string, opts: { trigger?: "ingest" | "sweep" } = {}): Promise<ComputeResult> {
+  const empty = (reason: ComputeReason): ComputeResult => ({ documentId, suggestions: [], autoApplied: false, reason });
   const { data: srcDoc } = await admin
-    .from("documents").select("id, library_id, document_number, title, name, metadata")
-    .eq("id", documentId).maybeSingle();
-  if (!srcDoc) return null;
-  const bridge = await loadBridgeConfig(admin, String(srcDoc.library_id ?? ""));
-  const numberCandidates = [srcDoc.document_number, kdoc.name, srcDoc.title, srcDoc.name]
-    .map((x) => String(x ?? "").trim()).filter(Boolean);
-  let unitCode: string | null = null;
-  for (const cand of numberCandidates) {
-    const parsed = parseDrawingNumber(cand, book);
-    if (parsed?.unitCode) { unitCode = parsed.unitCode; break; }
-  }
-  if (!unitCode && bridge?.defaultUnitCode) unitCode = bridge.defaultUnitCode;
+    .from("documents").select("id, org_id, library_id, document_number, title, name, metadata, current_version_id")
+    .eq("id", documentId).eq("org_id", orgId).maybeSingle();
+  if (!srcDoc) return empty("not_found");
 
-  // Registry matches in one query per batch.
-  const norms = [...byTag.keys()].map(assetNorm);
+  // ── gather: every knowledge copy that is ready AND at the current revision.
+  const twins = await readTwins(admin, orgId, documentId);
+  if (twins.length === 0) return empty("no_twin");
+  const current = (srcDoc as { current_version_id?: string | null }).current_version_id ?? null;
+  const sources: BridgeSource[] = twins.map((t) => {
+    if (t.status !== "ready") return { knowledgeDocumentId: t.id, status: t.status, sourceVersionId: t.source_version_id, sourceRev: t.source_rev, used: false, why: "not indexed yet" };
+    if (current && t.source_version_id && t.source_version_id !== current) {
+      return { knowledgeDocumentId: t.id, status: t.status, sourceVersionId: t.source_version_id, sourceRev: t.source_rev, used: false, why: "an earlier revision" };
+    }
+    return { knowledgeDocumentId: t.id, status: t.status, sourceVersionId: t.source_version_id, sourceRev: t.source_rev, used: true };
+  });
+  const used = twins.filter((t) => sources.find((s) => s.knowledgeDocumentId === t.id)?.used);
+  if (used.length === 0) {
+    // BR-14: a copy still indexing (or one an earlier revision left behind)
+    // never downgrades a complete computation — the proposal stays as it is.
+    return empty(twins.some((t) => t.status === "ready") ? "twin_stale" : "twin_not_ready");
+  }
+  const usedIds = used.map((t) => t.id);
+  const revision = used.find((t) => t.source_version_id)?.source_version_id ?? current ?? null;
+  const revisionLabel = used.find((t) => t.source_rev)?.source_rev ?? null;
+
+  const ents = await readWindows<EntityRow>(() => admin
+    .from("knowledge_page_entities")
+    .select("id, document_id, tag, page, kind, raw")
+    .in("document_id", usedIds)
+    .in("kind", ["equipment", "self"])
+    .order("id", { ascending: true }) as unknown as Builder, ENTITY_CEILING);
+
+  // GOV-9: which pages an AI model transcribed (their title blocks are
+  // readings, never identities). A missing column (before 20261122) means
+  // nothing recorded; any other failure fails toward the warning.
+  const aiPages = new Map<string, string | null>(); // `${doc}:${page}` → model
+  let aiUnknown = false;
+  {
+    const v = await readWindows<{ document_id: string; page: number; source_model: string | null }>(() => admin
+      .from("knowledge_chunks").select("id, document_id, page, source_model")
+      .in("document_id", usedIds).eq("source", "vision")
+      .order("id", { ascending: true }) as unknown as Builder, ENTITY_CEILING);
+    if (v.error && !missingColumn(v.error)) aiUnknown = true;
+    for (const c of v.rows) aiPages.set(`${c.document_id}:${c.page}`, c.source_model ?? null);
+  }
+  const pageAiRead = (doc: string, page: number) => aiUnknown || aiPages.has(`${doc}:${page}`);
+
+  // ── the sheet address of every page (GAP-301) — merged over the copies.
+  const selfByPage = new Map<number, Array<{ tag: string; raw?: string | null; doc: string }>>();
+  for (const e of ents.rows) {
+    if (e.kind !== "self" || !Number.isFinite(e.page)) continue;
+    (selfByPage.get(e.page) ?? selfByPage.set(e.page, []).get(e.page)!).push({ tag: e.tag, raw: e.raw, doc: e.document_id });
+  }
+  const sheetCache = new Map<number, BridgeSheet>();
+  const sheetFor = (page: number, doc: string): BridgeSheet => {
+    const hit = sheetCache.get(page);
+    if (hit) return hit;
+    const rows = selfByPage.get(page) ?? [];
+    // Prefer a copy whose page was read from its text layer.
+    const textRows = rows.filter((r) => !pageAiRead(r.doc, page));
+    const pick = textRows.length > 0 ? textRows : rows;
+    const ai = pick.length > 0 ? pick.every((r) => pageAiRead(r.doc, page)) : pageAiRead(doc, page);
+    const s = sheetAddressForPage(page, pick, ai);
+    sheetCache.set(page, s);
+    return s;
+  };
+
+  // ── tags, merged over the copies (BR-14), through the extractor's gate (BR-13).
+  const byTag = new Map<string, { pages: Set<number>; models: Set<string> }>();
+  for (const e of ents.rows) {
+    if (e.kind !== "equipment") continue;
+    const norm = normalizeTag(String(e.tag));
+    if (!splitTag(norm)) continue;           // only things shaped like real tags cross the bridge
+    if (!passesExtractorGate(norm)) continue; // and only what the extractor itself would read
+    const cur = byTag.get(norm) ?? { pages: new Set<number>(), models: new Set<string>() };
+    if (Number.isFinite(e.page)) {
+      cur.pages.add(Number(e.page));
+      const model = aiPages.get(`${e.document_id}:${e.page}`);
+      if (model) cur.models.add(model);
+      else if (aiUnknown) cur.models.add("unknown");
+    }
+    byTag.set(norm, cur);
+  }
+
+  const bridge = await loadBridgeConfig(admin, String(srcDoc.library_id ?? ""));
+  const { data: existingRow } = await readLedgerRow(admin, orgId, documentId);
+  const applied: string[] = Array.isArray(existingRow?.applied) ? (existingRow!.applied as string[]) : [];
+  const plan = planDismissals({
+    existing: parseDismissals(existingRow?.dismissed),
+    presentTags: new Set(byTag.keys()),
+    revision,
+    now: new Date().toISOString(),
+  });
+  // A lapsed dismissal is re-proposed whole: it leaves `applied` too.
+  const appliedNext = applied.filter((t) => !plan.lapsed.includes(t));
+  const dismissedTags = new Set(plan.dismissed.map((d) => d.tag));
+
+  // ── locate (CB-1) and reconcile (GAP-310).
+  const book = await loadCodebookAdmin(admin, orgId);
+  const unit = locateUnit(srcDoc.document_number as string | null, bridge?.defaultUnitCode, book);
+  const keys = [...byTag.keys()].map(assetNorm);
   const found = new Map<string, string>(); // tag_normalized -> asset id
-  for (let i = 0; i < norms.length; i += 100) {
+  for (let i = 0; i < keys.length; i += 100) {
     const { data } = await admin
       .from("assets").select("id, tag_normalized")
-      .eq("org_id", orgId).in("tag_normalized", norms.slice(i, i + 100));
-    for (const a of (data ?? []) as Array<{ id: string; tag_normalized: string }>) {
-      found.set(a.tag_normalized, a.id);
-    }
+      .eq("org_id", orgId).in("tag_normalized", keys.slice(i, i + 100));
+    for (const a of (data ?? []) as Array<{ id: string; tag_normalized: string }>) found.set(a.tag_normalized, a.id);
   }
 
   const suggestions: BridgeSuggestion[] = [...byTag.entries()]
-    .map(([tag, pages]) => ({
-      tag,
-      code: tagToCode(tag, unitCode, book),
-      pages: [...pages].sort((a, b) => a - b),
-      assetId: found.get(assetNorm(tag)) ?? null,
-      assetStatus: (found.has(assetNorm(tag)) ? "existing" : "new") as "existing" | "new",
-    }))
+    .map(([tag, info]) => {
+      const pages = [...info.pages].sort((a, b) => a - b);
+      const assetId = found.get(assetNorm(tag)) ?? null;
+      const sheets = pages.map((p) => sheetFor(p, usedIds[0]));
+      return {
+        tag,
+        code: tagToCode(tag, unit.unitCode, book),
+        pages,
+        assetId,
+        assetStatus: (assetId ? "existing" : "new") as "existing" | "new",
+        sheets,
+        held: !assetId && heldForUnknownPrefix(tag, book) ? "unknown_prefix" as const : null,
+        dismissed: dismissedTags.has(tag),
+        model: [...info.models][0] ?? null,
+      };
+    })
     .sort((a, b) => a.tag.localeCompare(b.tag, undefined, { numeric: true }));
 
-  await upsertSuggestions(admin, orgId, documentId, suggestions, unitCode);
+  await upsertSuggestions(admin, orgId, documentId, suggestions, unit, {
+    applied: appliedNext, dismissed: plan.dismissed, sources,
+  });
 
-  // Auto-apply when the library opted in AND a target column is mapped.
+  // ── relate: refresh the relation of every applied tag still read on this
+  // revision (the GAP-304 backfill of tags applied before the relation
+  // existed, and the revision each row was read from), then mark what this
+  // revision no longer carries (GAP-309) — never a deletion. The relation is
+  // the record and does not follow the display column: a person removes a
+  // machine reading with Dismiss, which records the decision.
+  // A reading is complete when no slab stopped at its ceiling, no page waits
+  // on AI vision, and the index carries drawing entities at all (a copy
+  // indexed as prose cannot say a tag left the sheet).
+  const complete = !ents.truncated && ents.rows.length > 0 && used.every((t) => !(t.vision_failed_pages ?? []).length);
+  const keep = suggestions.filter((s) => appliedNext.includes(s.tag) && !s.dismissed && s.assetId);
+  if (keep.length > 0) {
+    await syncDrawingRelations(admin, orgId, documentId, keep.map((s) => ({
+      assetId: String(s.assetId), tag: s.tag, sheetLabel: relationSheetLabel(s.sheets), pages: s.pages, model: s.model ?? null,
+    })), { revision: revisionLabel, versionId: revision });
+  }
+  const truth = await markRevisionTruth(admin, documentId, new Set(byTag.keys()), revision, complete);
+
+  // GAP-314: the unit decode at create time — the document's own number,
+  // decoded by the backfill's planner (document-control P13's helper), at
+  // ingest. Best effort: a decode that cannot run never fails the Bridge.
+  if (opts.trigger === "ingest" && srcDoc.document_number) {
+    try {
+      const { decodeDocumentUnitCodes } = await import("@/lib/unitCodeDecode");
+      await decodeDocumentUnitCodes({ orgId, documentIds: [documentId] });
+    } catch { /* recorded by the next unit-identity run; the staleness count shows it */ }
+  }
+
+  // Auto-apply when the library opted in (AREA-4: a mapped column is no
+  // longer required once the library has been reviewed — BR-9).
   let autoApplied = false;
-  if (bridge?.autoApply && bridge.targetColumnKey) {
+  if (autoApplyActs(bridge) && suggestions.some((s) => !appliedNext.includes(s.tag) && !s.dismissed && !s.held)) {
     try {
       await applyForDocument(admin, { orgId, documentId, userId: null });
       autoApplied = true;
     } catch { /* stays pending for manual review — never breaks ingest */ }
   }
-  return { documentId, suggestions, autoApplied };
+  return {
+    documentId, suggestions, autoApplied,
+    reason: byTag.size === 0 ? "no_entities" : "computed",
+    unitCode: unit.unitCode, unitSource: unit.source, unitRejected: unit.rejected,
+    revision: truth, truncated: ents.truncated,
+  };
+}
+
+async function readLedgerRow(admin: SupabaseClient, orgId: string, documentId: string): Promise<{ data: Record<string, unknown> | null; error: PgErr }> {
+  let res = await admin.from("document_equipment_suggestions").select("suggested, applied, status, dismissed")
+    .eq("org_id", orgId).eq("document_id", documentId).maybeSingle();
+  if (res.error && missingColumn(res.error)) {
+    res = await admin.from("document_equipment_suggestions").select("suggested, applied, status")
+      .eq("org_id", orgId).eq("document_id", documentId).maybeSingle();
+  }
+  return { data: (res.data as Record<string, unknown> | null) ?? null, error: res.error };
 }
 
 async function upsertSuggestions(
   admin: SupabaseClient, orgId: string, documentId: string,
-  suggestions: BridgeSuggestion[], unitCode: string | null,
+  suggestions: BridgeSuggestion[],
+  unit: { unitCode: string | null; source: "document_number" | "library_default" | null; rejected: string | null },
+  ledger: { applied: string[]; dismissed: BridgeDismissal[]; sources: BridgeSource[] },
 ): Promise<void> {
   // Preserve the applied history (the idempotence base) across recomputes.
-  const { data: existing } = await admin
-    .from("document_equipment_suggestions").select("applied, status")
-    .eq("org_id", orgId).eq("document_id", documentId).maybeSingle();
-  const applied: string[] = Array.isArray(existing?.applied) ? (existing?.applied as string[]) : [];
-  const newTags = suggestions.map((s) => s.tag).filter((t) => !applied.includes(t));
-  await admin.from("document_equipment_suggestions").upsert({
+  const fresh = suggestions.filter((s) => !ledger.applied.includes(s.tag) && !s.dismissed);
+  const status = fresh.length > 0 ? "pending"
+    : ledger.applied.length > 0 ? "applied"
+    : suggestions.some((s) => s.dismissed) ? "dismissed" : "pending";
+  const row: Record<string, unknown> = {
     org_id: orgId,
     document_id: documentId,
-    suggested: suggestions.map((s) => ({ ...s, unitCode })),
-    applied,
-    status: newTags.length === 0 && applied.length > 0 ? "applied" : "pending",
+    // CB-1: the unit rides with each suggestion, with where it came from and
+    // any decoded code the codebook does not hold (shown, never used).
+    suggested: suggestions.map((s) => ({ ...s, unitCode: unit.unitCode, unitSource: unit.source, unitRejected: unit.rejected })),
+    applied: ledger.applied,
+    status,
     computed_at: new Date().toISOString(),
-  }, { onConflict: "org_id,document_id" });
+    dismissed: ledger.dismissed,
+    sources: ledger.sources,
+  };
+  let { error } = await admin.from("document_equipment_suggestions").upsert(row, { onConflict: "org_id,document_id" });
+  if (error && missingColumn(error)) {
+    // Before 20261171: the ledger has no dismissed / sources columns.
+    for (const c of LEDGER_COLS_20261171) delete row[c];
+    ({ error } = await admin.from("document_equipment_suggestions").upsert(row, { onConflict: "org_id,document_id" }));
+  }
+  if (error) throw new Error(`The proposal could not be saved: ${error.message}`);
 }
 
-async function loadBridgeConfig(admin: SupabaseClient, libraryId: string): Promise<BridgeConfig | null> {
-  if (!libraryId) return null;
-  const { data } = await admin.from("libraries").select("equipment_bridge").eq("id", libraryId).maybeSingle();
-  const raw = data?.equipment_bridge as BridgeConfig | null | undefined;
-  return raw && typeof raw === "object" ? raw : null;
+/** GAP-304: write or refresh the 'drawing' relation for these tags. A pair a
+ *  person already linked is left as it is (a human assertion stands). */
+export async function syncDrawingRelations(
+  admin: SupabaseClient, orgId: string, documentId: string,
+  items: Array<{ assetId: string; tag: string; sheetLabel: string | null; pages: number[]; model: string | null }>,
+  prov: { revision: string | null; versionId: string | null },
+): Promise<RelationOutcome> {
+  const out: RelationOutcome = { written: 0, refreshed: 0, keptHuman: 0, notRecorded: null, provenanceDropped: false };
+  if (items.length === 0) return out;
+  const byAsset = new Map<string, { id: string; source: string }>();
+  const ids = [...new Set(items.map((i) => i.assetId))];
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data, error } = await admin.from("document_assets").select("id, asset_id, source")
+      .eq("document_id", documentId).in("asset_id", ids.slice(i, i + 100));
+    if (error) { out.notRecorded = `the relation could not be read: ${error.message ?? "error"}`; return out; }
+    for (const r of (data ?? []) as Array<{ id: string; asset_id: string; source: string }>) byAsset.set(r.asset_id, { id: r.id, source: r.source });
+  }
+  let withProvenance = true;
+  const seen = new Set<string>();
+  for (const it of items) {
+    if (seen.has(it.assetId)) continue;
+    seen.add(it.assetId);
+    const existing = byAsset.get(it.assetId);
+    if (existing && existing.source !== "drawing") { out.keptHuman++; continue; }
+    const base: Record<string, unknown> = { tag_text: it.tag, sheet_label: it.sheetLabel, pages: it.pages };
+    const provenance: Record<string, unknown> = {
+      asserted_by: "machine", model: it.model, source_revision: prov.revision, source_version_id: prov.versionId,
+      vanished_at: null, superseded_at: null,
+    };
+    const write = async (patch: Record<string, unknown>) => existing
+      ? (await admin.from("document_assets").update(patch).eq("id", existing.id).eq("source", "drawing")).error
+      : (await admin.from("document_assets").insert({
+          org_id: orgId, document_id: documentId, asset_id: it.assetId, source: "drawing", ...patch,
+        })).error;
+    let err = await write(withProvenance ? { ...base, ...provenance } : base);
+    if (err && withProvenance && missingColumn(err) && PROVENANCE_COLS.some((c) => (err?.message ?? "").includes(c))) {
+      withProvenance = false; out.provenanceDropped = true;  // before 20261171
+      err = await write(base);
+    }
+    if (err && (checkViolation(err) || missingColumn(err))) {
+      // Before 20261170: no 'drawing' vocabulary, no sheet columns. The
+      // column write still happens — today's behaviour — and this is said.
+      out.notRecorded = "The document↔equipment relation was not recorded: the database does not have migration 20261170 yet.";
+      return out;
+    }
+    if (err && uniqueViolation(err)) { out.keptHuman++; continue; } // a person (or the tag sync) linked it meanwhile
+    if (err) { out.notRecorded = `the relation write was refused: ${err.message ?? "error"}`; return out; }
+    if (existing) out.refreshed++; else out.written++;
+  }
+  return out;
+}
+
+/** GAP-309: on a complete reading, relations whose tag this revision no
+ *  longer carries are marked vanished (and un-marked when it returns); a row
+ *  read from an earlier revision is marked superseded. Never deleted. */
+async function markRevisionTruth(
+  admin: SupabaseClient, documentId: string, present: ReadonlySet<string>, versionId: string | null, complete: boolean,
+): Promise<{ vanished: number; reappeared: number; superseded: number; complete: boolean; skipped?: string }> {
+  const out = { vanished: 0, reappeared: 0, superseded: 0, complete };
+  const { data, error } = await admin.from("document_assets")
+    .select("id, tag_text, vanished_at, superseded_at, source_version_id")
+    .eq("document_id", documentId).eq("source", "drawing");
+  if (error) return { ...out, skipped: missingColumn(error) ? "20261171 not applied — revision truth is not recorded yet" : (error.message ?? "read failed") };
+  const presentKeys = new Set([...present].map(assetNorm));
+  const now = new Date().toISOString();
+  for (const r of (data ?? []) as Array<{ id: string; tag_text: string | null; vanished_at: string | null; superseded_at: string | null; source_version_id: string | null }>) {
+    const isPresent = presentKeys.has(assetNorm(r.tag_text ?? ""));
+    const patch: Record<string, unknown> = {};
+    if (complete && !isPresent && !r.vanished_at) { patch.vanished_at = now; out.vanished++; }
+    if (complete && isPresent && r.vanished_at) { patch.vanished_at = null; out.reappeared++; }
+    if (versionId && r.source_version_id && r.source_version_id !== versionId && !r.superseded_at) { patch.superseded_at = now; out.superseded++; }
+    if (Object.keys(patch).length > 0) {
+      await admin.from("document_assets").update(patch).eq("id", r.id).eq("source", "drawing");
+    }
+  }
+  return out;
+}
+
+/** Remove 'drawing' relations for these tags (service role), recording what
+ *  each one was — a person's correction of a machine reading. */
+async function removeDrawingRelations(
+  admin: SupabaseClient, orgId: string, documentId: string, tags: string[], userId: string | null, action: string,
+  onlyVanished = false,
+): Promise<number> {
+  if (tags.length === 0) return 0;
+  const keys = new Set(tags.map(assetNorm));
+  const sel = await admin.from("document_assets").select("id, asset_id, tag_text, sheet_label, pages, source_revision, model, vanished_at")
+    .eq("document_id", documentId).eq("source", "drawing");
+  let rows = (sel.data ?? []) as Array<Record<string, unknown>>;
+  if (sel.error) {
+    const fallback = await admin.from("document_assets").select("id, asset_id, tag_text").eq("document_id", documentId).eq("source", "drawing");
+    if (fallback.error) return 0;
+    rows = (fallback.data ?? []) as Array<Record<string, unknown>>;
+  }
+  const doomed = rows.filter((r) => keys.has(assetNorm(String(r.tag_text ?? ""))) && (!onlyVanished || r.vanished_at));
+  if (doomed.length === 0) return 0;
+  const { error } = await admin.from("document_assets").delete().in("id", doomed.map((r) => String(r.id))).eq("source", "drawing");
+  if (error) throw new Error(`The relation could not be removed: ${error.message}`);
+  await admin.from("audit_logs").insert({
+    action, resource_type: "document", resource_id: documentId, org_id: orgId, user_id: userId,
+    details: { removed: doomed.map((r) => ({ tag: r.tag_text, assetId: r.asset_id, sheet: r.sheet_label ?? null, pages: r.pages ?? null, revision: r.source_revision ?? null, model: r.model ?? null })) },
+  }).then(() => undefined, () => undefined);
+  return doomed.length;
 }
 
 // ─── Apply ──────────────────────────────────────────────────────────────────
@@ -173,141 +766,210 @@ export async function applyForDocument(admin: SupabaseClient, input: {
   documentId: string;
   /** Null = the automatic path (post-ingest auto-apply). */
   userId: string | null;
-  /** Restrict to a subset of suggested tags (review UI); omit = all. */
+  /** Restrict to a subset of suggested tags (review UI); omit = every tag
+   *  not yet applied, not dismissed and not held. Naming a tag re-requests
+   *  it explicitly — an applied, dismissed or held tag included (BR-5/9/13). */
   tags?: string[];
-}): Promise<{ appliedTags: string[]; createdAssets: number; codesLeftBlank: string[] }> {
+}): Promise<ApplyResult> {
   const { orgId, documentId } = input;
-  const { data: row } = await admin
-    .from("document_equipment_suggestions").select("suggested, applied")
-    .eq("org_id", orgId).eq("document_id", documentId).maybeSingle();
+  const { data: row } = await readLedgerRow(admin, orgId, documentId);
   if (!row) throw new Error("No computed suggestions for this document — run the sweep first.");
   const suggested = (Array.isArray(row.suggested) ? row.suggested : []) as Array<BridgeSuggestion & { unitCode?: string | null }>;
   const alreadyApplied = new Set<string>(Array.isArray(row.applied) ? (row.applied as string[]) : []);
-  const wanted = suggested.filter((s) =>
-    (!input.tags || input.tags.includes(s.tag)));
-  if (wanted.length === 0) return { appliedTags: [], createdAssets: 0, codesLeftBlank: [] };
+  const dismissals = parseDismissals(row.dismissed);
+  const dismissedTags = new Set(dismissals.map((d) => d.tag));
+  const explicit = Array.isArray(input.tags);
+  // BR-5: never re-apply what was applied (or dismissed) unless named again.
+  const wanted = suggested.filter((s) => explicit
+    ? input.tags!.includes(s.tag)
+    : !alreadyApplied.has(s.tag) && !dismissedTags.has(s.tag) && !s.dismissed && !s.held);
+  const blank = (): ApplyResult => ({
+    appliedTags: [], createdAssets: 0, codesLeftBlank: [], degraded: [], failed: [], held: [],
+    relations: { written: 0, refreshed: 0, keptHuman: 0, notRecorded: null, provenanceDropped: false },
+    column: null, codesFilled: 0,
+  });
+  if (wanted.length === 0) return blank();
 
   const { data: doc } = await admin
-    .from("documents").select("id, library_id, metadata")
+    .from("documents").select("id, library_id, metadata, created_by")
     .eq("id", documentId).eq("org_id", orgId).maybeSingle();
   if (!doc) throw new Error("Document not found");
   const bridge = await loadBridgeConfig(admin, String(doc.library_id ?? ""));
-  const targetKey = bridge?.targetColumnKey;
-  if (!targetKey) {
-    throw new Error("No equipment column mapped for this library — pick one in the sweep dialog first.");
-  }
-
-  // ── Registry reconcile with DISCOVERY: unmatched tags become real assets,
-  //    filed under the right unit + type, provenance attached. The drawings
-  //    build the registry.
+  const targetKey = bridge?.targetColumnKey ?? null;
   const book = await loadCodebookAdmin(admin, orgId);
-  let createdAssets = 0;
-  // CB-10: tags written WITHOUT their derived site code because another
-  // asset already carries it (recorded in the audit row below).
-  const codesLeftBlank: string[] = [];
+  const result = blank();
+  result.column = targetKey;
+
+  // CB-2: the unit is re-checked against the codebook and the code
+  // re-derived from tag + unit — the stored proposal is never trusted.
+  const unitOf = (s: { unitCode?: string | null }) => heldUnit(s.unitCode ?? null, book);
+  const codeOf = (s: BridgeSuggestion & { unitCode?: string | null }) => tagToCode(s.tag, unitOf(s), book);
+
+  // Re-resolve every wanted tag against the registry now (an id in the
+  // stored proposal may be stale).
+  const resolved = new Map<string, { id: string; unit_code: string | null; code: string | null }>();
+  {
+    const keys = [...new Set(wanted.map((s) => assetNorm(s.tag)))];
+    for (let i = 0; i < keys.length; i += 100) {
+      const { data } = await admin.from("assets").select("id, tag_normalized, unit_code, code")
+        .eq("org_id", orgId).in("tag_normalized", keys.slice(i, i + 100));
+      for (const a of (data ?? []) as Array<{ id: string; tag_normalized: string; unit_code?: string | null; code?: string | null }>) {
+        resolved.set(a.tag_normalized, { id: String(a.id), unit_code: a.unit_code ?? null, code: a.code ?? null });
+      }
+    }
+  }
+  for (const s of wanted) {
+    const hit = resolved.get(assetNorm(s.tag));
+    s.assetId = hit ? hit.id : null;
+  }
+  const unitBefore = new Map<string, { unit_code: string | null; code: string | null }>();
+  for (const [, v] of resolved) unitBefore.set(v.id, { unit_code: v.unit_code, code: v.code });
+
+  // ── Registry reconcile with DISCOVERY (AREA-4: independent of the column).
+  const codesLeftBlank = new Set<string>();
   if (bridge?.createAssets !== false) {
     const typeIdByLabel = await ensureAssetTypes(admin, orgId, book, wanted);
     for (const s of wanted) {
       if (s.assetId) continue;
+      // BR-13: an unknown prefix is never minted by a bulk or automatic
+      // apply — a person names it explicitly to create it.
+      if (!explicit && heldForUnknownPrefix(s.tag, book)) { result.held.push(s.tag); continue; }
       const t = typeForTag(s.tag, book);
+      const unitCode = unitOf(s);
+      const code = codeOf(s);
       const insert = {
         org_id: orgId,
         tag: s.tag,
         tag_normalized: assetNorm(s.tag),
         type_id: t ? typeIdByLabel.get(t.label) ?? null : null,
         description: null,
-        unit_code: s.unitCode ?? null,
-        code: s.code,
+        unit_code: unitCode,
+        code,
         origin: "drawing",
-        discovered_from: { documentId, pages: s.pages },
-        created_by: input.userId ?? "00000000-0000-0000-0000-000000000000",
+        discovered_from: {
+          documentId, pages: s.pages, door: "drawing",
+          sheets: (s.sheets ?? []).map((x) => ({ page: x.page, label: x.label, aiRead: x.aiRead })),
+          auto: input.userId === null,
+        },
+        // BR-8: an accountable identity — the person who applied, else the
+        // one who turned auto-apply on, else whoever filed the drawing.
+        created_by: input.userId ?? bridge?.autoApplyBy ?? (doc as { created_by?: string | null }).created_by ?? NIL_UUID,
       };
       // Unique (org, tag_normalized) makes concurrent discovery safe: the
       // loser of a race just resolves to the winner's row.
       let { data: created, error } = await admin.from("assets").insert(insert).select("id, code").single();
       if (error && /unit_code|origin|discovered_from|column/i.test(error.message)) {
-        // Pre-migration DB: retry with the base columns only.
+        // Pre-migration DB: retry with the base columns only — and SAY what
+        // was dropped (a degraded insert is information).
         const { unit_code: _u, code: _c, origin: _o, discovered_from: _d, ...base } = insert;
         void _u; void _c; void _o; void _d;
         ({ data: created, error } = await admin.from("assets").insert(base).select("id").single());
+        if (!error && created) result.degraded.push({ tag: s.tag, dropped: ["unit_code", "code", "origin", "discovered_from"] });
       } else if (error && insert.code && siteCodeTaken(error)) {
         // CB-10: the index refused the code — another insert of it (a second
         // drawing ingested in parallel) committed after 20261128's trigger
         // looked, which sees committed rows only. Land the asset without the
         // code, once.
         ({ data: created, error } = await admin.from("assets").insert({ ...insert, code: null }).select("id, code").single());
-        if (!error && created) codesLeftBlank.push(s.tag);
+        if (!error && created) codesLeftBlank.add(s.tag);
       } else if (!error && created && insert.code && !(created as { code?: unknown }).code) {
-        codesLeftBlank.push(s.tag); // the trigger dropped a code another asset carries
+        codesLeftBlank.add(s.tag); // the trigger dropped a code another asset carries
       }
       if (error) {
         const { data: raced } = await admin.from("assets").select("id")
           .eq("org_id", orgId).eq("tag_normalized", assetNorm(s.tag)).maybeSingle();
         if (raced) { s.assetId = String(raced.id); continue; }
+        result.failed.push({ tag: s.tag, reason: error.message });
         continue; // one bad tag never sinks the batch
       }
-      if (created) { s.assetId = String(created.id); createdAssets++; }
+      if (created) { s.assetId = String(created.id); result.createdAssets++; }
     }
   }
 
-  // ── Unit backfill for MATCHED assets: a hand-made asset often ships with
-  //    blanks, but the drawing it appears on knows exactly which unit it
-  //    belongs to. Fill the blank on apply — never overwrite a human's
-  //    assignment (only rows whose unit_code is NULL are touched).
+  // ── Unit backfill for MATCHED assets that had no unit (never overwriting a
+  //    human's assignment), and — BR-7, an independent condition — the code
+  //    for matched assets that HAD a unit but no code (derived from the
+  //    asset's own filing). Each guarded by its own IS NULL.
   try {
-    const backfills = wanted.filter((s) => s.assetId && s.unitCode);
-    if (backfills.length > 0) {
-      const ids = [...new Set(backfills.map((s) => String(s.assetId)))];
-      const { data: blankRows } = await admin.from("assets")
-        .select("id, code").in("id", ids).is("unit_code", null);
-      const blank = new Map(((blankRows ?? []) as Array<{ id: string; code: string | null }>)
-        .map((b) => [b.id, b.code]));
-      for (const s of backfills) {
-        const id = String(s.assetId);
-        if (!blank.has(id)) continue;
-        const patch: Record<string, unknown> = { unit_code: s.unitCode };
-        if (!blank.get(id) && s.code) patch.code = s.code;
-        const write = async (p: Record<string, unknown>): Promise<{ message: string } | null> => {
-          try { return (await admin.from("assets").update(p).eq("id", id).is("unit_code", null)).error; }
-          catch (e) { return { message: String(e) }; }
-        };
+    for (const s of wanted) {
+      if (!s.assetId) continue;
+      const before = unitBefore.get(String(s.assetId));
+      if (!before) continue; // created just now
+      const id = String(s.assetId);
+      const write = async (p: Record<string, unknown>, guard: "unit_code" | "code"): Promise<{ message: string } | null> => {
+        try { return (await admin.from("assets").update(p).eq("id", id).is(guard, null)).error; }
+        catch (e) { return { message: String(e) }; }
+      };
+      const unitCode = unitOf(s);
+      if (!before.unit_code && unitCode) {
+        const patch: Record<string, unknown> = { unit_code: unitCode };
+        const code = codeOf(s);
+        if (!before.code && code) patch.code = code;
         // CB-10: a code another asset carries is refused (20261128) — the
         // filing is re-sent without it, and the tag recorded.
-        const err = await write(patch);
-        if (patch.code && siteCodeTaken(err) && !(await write({ unit_code: s.unitCode }))) {
-          codesLeftBlank.push(s.tag);
+        const err = await write(patch, "unit_code");
+        if (patch.code && siteCodeTaken(err) && !(await write({ unit_code: unitCode }, "unit_code"))) codesLeftBlank.add(s.tag);
+        unitBefore.set(id, { unit_code: unitCode, code: before.code });
+      } else if (before.unit_code && !before.code) {
+        const code = tagToCode(s.tag, before.unit_code, book);
+        if (code) {
+          const err = await write({ code }, "code");
+          if (!err) result.codesFilled++;
+          else if (siteCodeTaken(err)) codesLeftBlank.add(s.tag);
         }
-        blank.delete(id); // one write per asset even if it appears under several tags
+        unitBefore.set(id, { unit_code: before.unit_code, code: code ?? null });
       }
     }
   } catch { /* pre-migration DB (no unit_code column) — nothing to backfill */ }
+  result.codesLeftBlank = [...codesLeftBlank];
 
-  // ── Populate the column: array-union merge, never clobbering manual tags.
-  const metadata = (doc.metadata && typeof doc.metadata === "object" ? doc.metadata : {}) as Record<string, unknown>;
-  const current = metadata[targetKey];
-  const existingTags: string[] = Array.isArray(current)
-    ? current.map((v) => String(v).trim()).filter(Boolean)
-    : typeof current === "string" && current.trim()
-      ? current.split(",").map((v) => v.trim()).filter(Boolean)
-      : [];
-  const existingNorms = new Set(existingTags.map(assetNorm));
-  const additions = wanted.map((s) => s.tag).filter((t) => !existingNorms.has(assetNorm(t)));
-  if (additions.length > 0) {
-    const next = [...existingTags, ...additions.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))];
-    const { error: updErr } = await admin.from("documents")
-      .update({ metadata: { ...metadata, [targetKey]: next }, updated_at: new Date().toISOString() })
-      .eq("id", documentId).eq("org_id", orgId);
-    if (updErr) throw new Error(updErr.message);
+  // ── Relate (GAP-304): the relation is the record.
+  const prov = await currentReading(admin, orgId, documentId);
+  result.relations = await syncDrawingRelations(admin, orgId, documentId,
+    wanted.filter((s) => s.assetId).map((s) => ({
+      assetId: String(s.assetId), tag: s.tag, sheetLabel: relationSheetLabel(s.sheets), pages: s.pages ?? [], model: s.model ?? null,
+    })), prov);
+
+  // ── Populate the column (when one is mapped): array-union merge, never
+  //    clobbering manual tags. Kept — the drawing row's chips render from it.
+  const appliedNow = wanted.filter((s) => !result.held.includes(s.tag)).map((s) => s.tag);
+  if (targetKey) {
+    const metadata = (doc.metadata && typeof doc.metadata === "object" ? doc.metadata : {}) as Record<string, unknown>;
+    const existingTags = columnTags(metadata[targetKey]);
+    const existingNorms = new Set(existingTags.map(assetNorm));
+    const additions = appliedNow.filter((t) => !existingNorms.has(assetNorm(t)));
+    if (additions.length > 0) {
+      const next = [...existingTags, ...additions.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))];
+      const { error: updErr } = await admin.from("documents")
+        .update({ metadata: { ...metadata, [targetKey]: next }, updated_at: new Date().toISOString() })
+        .eq("id", documentId).eq("org_id", orgId);
+      if (updErr) throw new Error(updErr.message);
+    }
   }
 
-  const appliedNow = wanted.map((s) => s.tag);
   const appliedUnion = [...new Set([...alreadyApplied, ...appliedNow])];
-  await admin.from("document_equipment_suggestions").update({
+  const ledger: Record<string, unknown> = {
+    // The proposal as it stands after this apply: a tag named again is no
+    // longer dismissed or held, and a discovered tag now has its asset.
+    suggested: suggested.map((s) => (appliedNow.includes(s.tag)
+      ? { ...s, dismissed: false, held: null, assetStatus: s.assetId ? "existing" : s.assetStatus }
+      : s)),
     applied: appliedUnion,
     status: "applied",
     applied_at: new Date().toISOString(),
     applied_by: input.userId,
-  }).eq("org_id", orgId).eq("document_id", documentId);
+    // A tag named again leaves the dismissed list (BR-9).
+    dismissed: dismissals.filter((d) => !appliedNow.includes(d.tag)),
+  };
+  let { error: ledgerErr } = await admin.from("document_equipment_suggestions").update(ledger)
+    .eq("org_id", orgId).eq("document_id", documentId);
+  if (ledgerErr && missingColumn(ledgerErr)) {
+    delete ledger.dismissed;
+    ({ error: ledgerErr } = await admin.from("document_equipment_suggestions").update(ledger)
+      .eq("org_id", orgId).eq("document_id", documentId));
+  }
+  if (ledgerErr) result.ledgerError = ledgerErr.message;
+  if (input.userId) await markReviewed(admin, String(doc.library_id ?? ""), bridge, input.userId);
 
   await admin.from("audit_logs").insert({
     action: "EQUIPMENT_BRIDGE_APPLIED",
@@ -315,10 +977,187 @@ export async function applyForDocument(admin: SupabaseClient, input: {
     resource_id: documentId,
     org_id: orgId,
     user_id: input.userId,
-    details: { tags: appliedNow, createdAssets, codesLeftBlank, column: targetKey, auto: input.userId === null },
+    details: {
+      tags: appliedNow, createdAssets: result.createdAssets, codesLeftBlank: result.codesLeftBlank,
+      column: targetKey, auto: input.userId === null, degraded: result.degraded, failed: result.failed,
+      held: result.held, relations: result.relations, codesFilled: result.codesFilled,
+      revision: prov.revision, ledgerError: result.ledgerError ?? null,
+    },
   }).then(() => undefined, () => undefined);
 
-  return { appliedTags: appliedNow, createdAssets, codesLeftBlank };
+  result.appliedTags = appliedNow;
+  return result;
+}
+
+/** The revision the document's current copies were read from. */
+async function currentReading(admin: SupabaseClient, orgId: string, documentId: string): Promise<{ revision: string | null; versionId: string | null }> {
+  try {
+    const twins = await readTwins(admin, orgId, documentId);
+    const ready = twins.filter((t) => t.status === "ready");
+    const t = ready.find((x) => x.source_version_id) ?? ready[0] ?? twins[0];
+    return { revision: t?.source_rev ?? null, versionId: t?.source_version_id ?? null };
+  } catch {
+    return { revision: null, versionId: null };
+  }
+}
+
+/** BR-9: the first time a person applies or dismisses in a library. */
+async function markReviewed(admin: SupabaseClient, libraryId: string, bridge: BridgeConfig | null, userId: string): Promise<void> {
+  if (!libraryId || bridge?.reviewedAt) return;
+  await admin.from("libraries")
+    .update({ equipment_bridge: { ...(bridge ?? {}), reviewedAt: new Date().toISOString(), reviewedBy: userId } })
+    .eq("id", libraryId)
+    .then(() => undefined, () => undefined);
+}
+
+// ─── Review actions ─────────────────────────────────────────────────────────
+
+/** BR-9: a person rejects tags on one document. Remembered (never
+ *  re-applied, re-proposed only when a later revision brings the tag back
+ *  after it left); an applied tag's 'drawing' relation is removed and the
+ *  decision recorded. The column is a person's surface and is left alone. */
+export async function dismissForDocument(admin: SupabaseClient, input: {
+  orgId: string; documentId: string; userId: string; tags: string[];
+}): Promise<{ dismissed: string[]; relationsRemoved: number; remembered: boolean }> {
+  const { orgId, documentId, userId } = input;
+  const tags = [...new Set(input.tags.map((t) => normalizeTag(String(t))).filter(Boolean))];
+  if (tags.length === 0) return { dismissed: [], relationsRemoved: 0, remembered: true };
+  const { data: row } = await readLedgerRow(admin, orgId, documentId);
+  if (!row) throw new Error("No computed suggestions for this document — run the sweep first.");
+  const suggested = (Array.isArray(row.suggested) ? row.suggested : []) as Array<BridgeSuggestion & { unitCode?: string | null }>;
+  const known = new Set(suggested.map((s) => s.tag));
+  const target = tags.filter((t) => known.has(t));
+  if (target.length === 0) return { dismissed: [], relationsRemoved: 0, remembered: true };
+  const reading = await currentReading(admin, orgId, documentId);
+  const now = new Date().toISOString();
+  const prior = parseDismissals(row.dismissed).filter((d) => !target.includes(d.tag));
+  const dismissed: BridgeDismissal[] = [...prior, ...target.map((t) => ({ tag: t, by: userId, at: now, via: "review" as const, revision: reading.versionId }))];
+  const applied = (Array.isArray(row.applied) ? (row.applied as string[]) : []);
+  const nextSuggested = suggested.map((s) => (target.includes(s.tag) ? { ...s, dismissed: true } : s));
+  const fresh = nextSuggested.filter((s) => !applied.includes(s.tag) && !s.dismissed);
+  const status = fresh.length > 0 ? "pending" : applied.length > 0 ? "applied" : "dismissed";
+  let remembered = true;
+  let { error } = await admin.from("document_equipment_suggestions")
+    .update({ suggested: nextSuggested, dismissed, status })
+    .eq("org_id", orgId).eq("document_id", documentId);
+  if (error && missingColumn(error)) {
+    // Before 20261171 the ledger cannot remember a dismissal across a
+    // recompute: the flag lives on this proposal only — said to the caller.
+    remembered = false;
+    ({ error } = await admin.from("document_equipment_suggestions")
+      .update({ suggested: nextSuggested, status })
+      .eq("org_id", orgId).eq("document_id", documentId));
+  }
+  if (error) throw new Error(`The dismissal could not be saved: ${error.message}`);
+  const relationsRemoved = await removeDrawingRelations(admin, orgId, documentId, target.filter((t) => applied.includes(t)), userId, "EQUIPMENT_BRIDGE_RELATION_REMOVED");
+  await admin.from("audit_logs").insert({
+    action: "EQUIPMENT_BRIDGE_DISMISSED", resource_type: "document", resource_id: documentId, org_id: orgId, user_id: userId,
+    details: { tags: target, revision: reading.revision, relationsRemoved, remembered },
+  }).then(() => undefined, () => undefined);
+  const { data: doc } = await admin.from("documents").select("library_id").eq("id", documentId).eq("org_id", orgId).maybeSingle();
+  if (doc?.library_id) await markReviewed(admin, String(doc.library_id), await loadBridgeConfig(admin, String(doc.library_id)), userId);
+  return { dismissed: target, relationsRemoved, remembered };
+}
+
+/** GAP-309: a person reviews relations the current revision no longer
+ *  carries — 'remove' (the tag really left the sheet: the relation is
+ *  removed, what it was is recorded) or 'keep' (an extraction miss: the
+ *  mark is cleared, the decision recorded). Never automatic. */
+export async function reviewVanished(admin: SupabaseClient, input: {
+  orgId: string; documentId: string; userId: string; tags: string[]; decision: "remove" | "keep";
+}): Promise<{ changed: number }> {
+  const { orgId, documentId, userId, decision } = input;
+  const tags = [...new Set(input.tags.map((t) => normalizeTag(String(t))).filter(Boolean))];
+  if (tags.length === 0) return { changed: 0 };
+  if (decision === "remove") {
+    const changed = await removeDrawingRelations(admin, orgId, documentId, tags, userId, "EQUIPMENT_BRIDGE_VANISHED_REMOVED", true);
+    if (changed > 0) {
+      // The tag left the sheet: it is no longer an applied tag, so a later
+      // revision that carries it again proposes it to a person — never
+      // re-links it on its own.
+      const { data: row } = await readLedgerRow(admin, orgId, documentId);
+      if (row && Array.isArray(row.applied)) {
+        const gone = new Set(tags);
+        await admin.from("document_equipment_suggestions")
+          .update({ applied: (row.applied as string[]).filter((t) => !gone.has(t)) })
+          .eq("org_id", orgId).eq("document_id", documentId);
+      }
+    }
+    return { changed };
+  }
+  const keys = new Set(tags.map(assetNorm));
+  const { data, error } = await admin.from("document_assets").select("id, tag_text, vanished_at")
+    .eq("document_id", documentId).eq("source", "drawing");
+  if (error) throw new Error(missingColumn(error) ? "Revision truth needs migration 20261171." : error.message ?? "read failed");
+  const rows = ((data ?? []) as Array<{ id: string; tag_text: string | null; vanished_at: string | null }>)
+    .filter((r) => r.vanished_at && keys.has(assetNorm(r.tag_text ?? "")));
+  if (rows.length === 0) return { changed: 0 };
+  const { error: upd } = await admin.from("document_assets").update({ vanished_at: null })
+    .in("id", rows.map((r) => r.id)).eq("source", "drawing");
+  if (upd) throw new Error(`The review could not be saved: ${upd.message}`);
+  await admin.from("audit_logs").insert({
+    action: "EQUIPMENT_BRIDGE_VANISHED_KEPT", resource_type: "document", resource_id: documentId, org_id: orgId, user_id: userId,
+    details: { tags: rows.map((r) => r.tag_text), vanishedAt: rows.map((r) => r.vanished_at) },
+  }).then(() => undefined, () => undefined);
+  return { changed: rows.length };
+}
+
+/** GAP-307 — the knowledge door: a P&ID uploaded straight into a knowledge
+ *  library (no controlled document) builds the registry. A person names the
+ *  tags (from the coverage report's sheet-only list); each becomes a
+ *  discovered asset with door 'knowledge' provenance. There is no controlled
+ *  document, so there is no unit decode: the asset is created UNIT-LESS and
+ *  reported (assetCategorize's discipline — never guessed). */
+export async function discoverFromKnowledge(admin: SupabaseClient, input: {
+  orgId: string; userId: string; knowledgeDocumentId: string; tags: string[];
+}): Promise<{ created: string[]; existing: string[]; held: string[]; failed: Array<{ tag: string; reason: string }>; unitless: number }> {
+  const { orgId, userId, knowledgeDocumentId } = input;
+  const out = { created: [] as string[], existing: [] as string[], held: [] as string[], failed: [] as Array<{ tag: string; reason: string }>, unitless: 0 };
+  const { data: kdoc } = await admin.from("knowledge_documents").select("id, org_id, source_document_id, source_rev")
+    .eq("id", knowledgeDocumentId).eq("org_id", orgId).maybeSingle();
+  if (!kdoc) throw new Error("No such knowledge document in this workspace.");
+  if (kdoc.source_document_id) throw new Error("This document mirrors a controlled document — apply its tags from the equipment sweep, which also records the relation.");
+  const wantedTags = [...new Set(input.tags.map((t) => normalizeTag(String(t))).filter((t) => splitTag(t) && passesExtractorGate(t)))];
+  if (wantedTags.length === 0) return out;
+  // Only tags this document's own index carries — a person names what the
+  // sheet says, never a free-typed tag through this door.
+  const ents = await readWindows<{ tag: string; page: number }>(() => admin.from("knowledge_page_entities")
+    .select("id, tag, page").eq("document_id", knowledgeDocumentId).in("kind", ["equipment"])
+    .order("id", { ascending: true }) as unknown as Builder, ENTITY_CEILING);
+  const pagesByTag = new Map<string, Set<number>>();
+  for (const e of ents.rows) {
+    const t = normalizeTag(String(e.tag));
+    (pagesByTag.get(t) ?? pagesByTag.set(t, new Set()).get(t)!).add(Number(e.page));
+  }
+  const book = await loadCodebookAdmin(admin, orgId);
+  const typeIdByLabel = await ensureAssetTypes(admin, orgId, book, wantedTags.map((tag) => ({ tag })));
+  for (const tag of wantedTags) {
+    const pages = pagesByTag.get(tag);
+    if (!pages) { out.failed.push({ tag, reason: "This document's index does not carry the tag." }); continue; }
+    const { data: hit } = await admin.from("assets").select("id").eq("org_id", orgId).eq("tag_normalized", assetNorm(tag)).maybeSingle();
+    if (hit) { out.existing.push(tag); continue; }
+    const t = typeForTag(tag, book);
+    const { error } = await admin.from("assets").insert({
+      org_id: orgId, tag, tag_normalized: assetNorm(tag),
+      type_id: t ? typeIdByLabel.get(t.label) ?? null : null,
+      description: null, unit_code: null, code: null, origin: "drawing",
+      discovered_from: { knowledgeDocumentId, pages: [...pages].sort((a, b) => a - b), door: "knowledge", revision: kdoc.source_rev ?? null },
+      created_by: userId,
+    }).select("id").single();
+    if (error) {
+      if (uniqueViolation(error)) { out.existing.push(tag); continue; }
+      out.failed.push({ tag, reason: error.message });
+      continue;
+    }
+    out.created.push(tag);
+    out.unitless++;
+    if (!t) out.held.push(tag); // created untyped: the codebook does not know its prefix — teach it
+  }
+  await admin.from("audit_logs").insert({
+    action: "EQUIPMENT_BRIDGE_DISCOVERED", resource_type: "knowledge_document", resource_id: knowledgeDocumentId, org_id: orgId, user_id: userId,
+    details: { door: "knowledge", created: out.created, existing: out.existing, untyped: out.held, failed: out.failed, unitless: out.unitless },
+  }).then(() => undefined, () => undefined);
+  return out;
 }
 
 /** Find-or-create asset_types matching the codebook equipment-type labels
