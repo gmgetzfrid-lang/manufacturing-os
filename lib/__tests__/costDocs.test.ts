@@ -1225,7 +1225,9 @@ describe("MON-12 / COST-8 / MON-10 — registry lookups fail closed, currencies 
     db.tables.cost_documents.push(docRow({ id: "d-gulf", vendor_name: "Gulf Mechanical" }));
     const refused = await awardQuote({ doc: doc({ id: "d-gulf", vendorName: "Gulf Mechanical" }), siblings: [], costAccountId: "a1", actor });
     expect(refused.needsOverride).toMatchObject({ companyId: "00000000-0000-0000-0000-0000000006c2", companyName: "Gulf Mechanical" });
-    // the bid tab's prompt and intent row (QuotesPanel barredNow / registryFor → barredCompanyFor)
+    // the bid tab's chip, and its prompt and intent row before 20261157 (QuotesPanel registryFor and
+    // companyAwardAnswersFor's fallback → barredCompanyFor over the STORED vendor name; after the paste the
+    // prompt asks cost_doc_company_barred itself — J12 review fix 7, quotesPanelRender.test.ts)
     expect(barredCompanyFor("Gulf Mechanical", null, registry)?.id).toBe("00000000-0000-0000-0000-0000000006c2");
     // the panel's render-time list is the barred rows then the name-sorted registry — the order never decides
     expect(barredCompanyFor("Gulf Mechanical", null, [...registry].reverse())?.id).toBe("00000000-0000-0000-0000-0000000006c2");

@@ -661,9 +661,24 @@ export function matchCompanyByName<T extends { name: string }>(vendorName: strin
  *  otherwise ANY registry row the vendor name could be. Fails toward the
  *  flag — ambiguity never clears it. Of several, the exact name first
  *  (`lower(name) = lower(btrim(vendor))` — spaces trimmed only), then the
- *  id in byte order: 20261157 `cost_doc_company_barred`'s order and
- *  lib/costDocs.ts `flaggedLookAlike`'s, so the bid tab's override prompt
- *  names the company `award_quote`'s override row records. */
+ *  id in byte order: the look-alike order of 20261157
+ *  `cost_doc_company_barred` and of lib/costDocs.ts `flaggedLookAlike`.
+ *  It is not the whole gate an award applies — the database and the lib
+ *  also read the contractor's company and the bound company's own
+ *  `inactive` flag — and it answers for whatever name it is given, so the
+ *  same company as the award only for the name the award reads, the STORED
+ *  `cost_documents.vendor_name`, never the letterhead the AI read. The bid
+ *  tab's award prompt and intent row ask `cost_doc_company_barred` itself
+ *  once 20261157 is applied (QuotesPanel `companyAwardAnswersFor`) and
+ *  call this over the stored name before it; the row's chip calls it over
+ *  the stored name too.
+ *  ASCII names only: JavaScript's `toLowerCase` and Postgres `lower()`
+ *  disagree on a few non-ASCII letters (a final sigma, a dotted capital
+ *  İ — and Postgres' answer depends on the database's collation), in the
+ *  exact-name step here and in `normalizeCompanyName`'s lower-casing, so
+ *  for such a name this may break a tie, or match a look-alike, where the
+ *  database does not (20261157 `company_name_key`'s comment draws the
+ *  same ASCII line). */
 export function barredCompanyFor<T extends { id: string; name: string; status: string }>(
   vendorName: string | null | undefined, boundId: string | null | undefined, registry: T[],
 ): T | null {

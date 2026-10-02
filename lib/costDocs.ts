@@ -333,7 +333,7 @@ const FLAGGED_COMPANY_STATUSES = ["do_not_use", "inactive"];
  *    on the bid row); the contractor's link answers for its company's own
  *    flag, but an unflagged one never hides a do-not-use look-alike — the
  *    intake door files a quote against the contractor it matched by name
- *    (app/api/intake/upload, nobody choosing), and the bid tab's gate reads
+ *    (app/api/intake/upload, nobody choosing), and the bid tab's chip reads
  *    only the document's own link; then ANY do-not-use registry row the
  *    vendor name normalises to (lib/bidTab `normalizeCompanyName`, the bid
  *    tab's `barredCompanyFor` gate, DEC-48), else the bound company itself
@@ -401,10 +401,13 @@ async function companyBehind(doc: CostDocument, raw: Record<string, unknown>): P
  *  (exact name as `lower(btrim(vendor))`, which trims spaces only; then
  *  `c.id`), with no collation in either, so the lib's prompt
  *  (`needsOverride`) and the override row `award_quote` writes name the
- *  same company. The bid tab's own prompt and intent row come from
- *  lib/bidTab.ts `barredCompanyFor`, which orders its look-alikes the same
- *  way since J12 review fix pass 6 (before it the panel took the first
- *  do-not-use look-alike by id, with no exact-name preference).
+ *  same company. The bid tab's own prompt and intent row ask the award's
+ *  question at the click (components/projects/cost/QuotesPanel.tsx
+ *  `companyAwardAnswersFor`: `cost_doc_company_barred` itself once 20261157
+ *  is applied; before it this function's order through lib/bidTab.ts
+ *  `barredCompanyFor`, over the STORED vendor name — J12 review fix pass 7.
+ *  Pass 6 ordered `barredCompanyFor` this way but the panel still fed it the
+ *  letterhead the AI read, so it could name another look-alike).
  *  The read is narrowed server-side to the org's do-not-use rows whose name
  *  holds the key's longest word — every word of the key except "and"
  *  (which may stand for "&") appears, case aside, in the name as written —

@@ -249,10 +249,12 @@ describe("MON-12 — the registry rail on an award", () => {
     expect(behind.split('const lookAlike = await flaggedLookAlike(doc.orgId, doc.vendorName ?? "");').length - 1).toBe(2);
     expect(behind).toContain("if (lookAlike.error) return { company: null, barred: null, error: lookAlike.error };");
     expect(behind).toContain("return { company: bound, barred: lookAlike.company ?? (bound ? flaggedOrNull(bound) : null) };");
-    // the bid tab's own gate reads the document's own link only (QuotesPanel registryFor / barredNow) — a
-    // quote filed against a contractor whose company is active still answers for the look-alike there
+    // the bid tab's chip reads the document's own link only (QuotesPanel registryFor) — a quote filed against a
+    // contractor whose company is active still answers for the look-alike there, by the vendor name on file;
+    // its award prompt asks the database's own gate (companyAwardAnswersFor, J12 review fix 7 — below), and
+    // before 20261157 the same look-alike gate over the stored name
     const panel = readFileSync(join(root, "components/projects/cost/QuotesPanel.tsx"), "utf8");
-    expect(panel).toContain("barred: barredCompanyFor(e.vendorName, null, flags),");
+    expect(panel).toContain("const onFile = barredCompanyFor(doc.vendorName, null, flags);");
     expect(panel).toContain("return barredCompanyFor(vendorName, null, await listBarredCompanies(orgId));");
     expect(between(panel, "const registryFor = (", "\n  };")).not.toMatch(/partyId|project_parties/);
     // and the intake door picks that contractor by name, with nobody choosing (review fix 5's case)
@@ -262,6 +264,28 @@ describe("MON-12 — the registry rail on an award", () => {
     const reg = [{ id: "a", name: "Harbor Welding", status: "active" }, { id: "old", name: "Harbor Welding, Inc.", status: "inactive" }];
     expect(barredCompanyFor("Harbor Welding", null, reg)).toBeNull();
     expect(barredCompanyFor("Harbor Welding", null, [...reg, { id: "dnu", name: "Harbor Welding LLC", status: "do_not_use" }])?.id).toBe("dnu");
+  });
+  it("J12 review fix 7: the bid tab's award prompt asks cost_doc_company_barred itself — award_quote's four arguments, read from the row as stored, never the letterhead — and authenticated may EXECUTE it", () => {
+    // the grant and the invoker rights the panel's call relies on (the same caller, the same RLS as award_quote)
+    expect(C).toContain("GRANT EXECUTE ON FUNCTION public.cost_doc_company_barred(uuid, uuid, uuid, text) TO authenticated, service_role;");
+    expect(C).toContain("REVOKE ALL ON FUNCTION public.cost_doc_company_barred(uuid, uuid, uuid, text) FROM anon;");
+    expect(fn("cost_doc_company_barred")).toMatch(/LANGUAGE plpgsql STABLE\s*\n\s*SECURITY INVOKER/);
+    expect(fn("award_quote")).toContain("v_barred := cost_doc_company_barred(v_doc.org_id, NULLIF(v_raw ->> 'company_id', '')::uuid, v_doc.party_id, v_doc.vendor_name);");
+    const panel = readFileSync(join(root, "components/projects/cost/QuotesPanel.tsx"), "utf8");
+    const ask = between(panel, "export async function companyAwardAnswersFor(", "\n}\n");
+    expect(ask).toContain('await supabase.from("cost_documents").select("*").eq("id", doc.id).maybeSingle();');
+    expect(ask).toContain("const orgId = text(raw?.org_id) ?? doc.orgId;");
+    expect(ask).toContain("const companyId = text(raw?.company_id);");
+    expect(ask).toContain("const partyId = raw ? text(raw.party_id) : doc.partyId;");
+    expect(ask).toContain("const vendorName = raw ? text(raw.vendor_name) : doc.vendorName;");
+    expect(ask).toContain('supabase.rpc("cost_doc_company_barred", {\n    p_org: orgId, p_company: companyId, p_party: partyId, p_vendor: vendorName,\n  });');
+    expect(ask).not.toMatch(/parsedQuoteFrom|\.parsed\b|e\??\.vendorName/);
+    // only an absent function falls back (the lib's own test for its client sequence); any other error stops the award
+    expect(ask).toContain("if (!isMissingRpc(rpcErr)) throw new Error(userFacingReadError(rpcErr));");
+    const award = between(panel, "const award = async (", "\n  };\n");
+    expect(award).toContain("barred = await companyAwardAnswersFor(doc);");
+    expect(award).not.toContain("e?.vendorName ?? doc.vendorName");
+    expect(award).toContain("!(await recordIntent(overridden!, overrideReason, barred.status))");
   });
   it("two non-exact do-not-use look-alikes: the lib and the database break the tie the same way — the exact name first, then the id in byte order, no collation in either (review fix 5 minor)", () => {
     const gate = fn("cost_doc_company_barred");

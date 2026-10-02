@@ -17,6 +17,9 @@ const db = vi.hoisted(() => ({
   inserts: [] as Array<{ table: string; row: Record<string, unknown> }>,
   calls: [] as Array<{ table: string; method: string; args: unknown[] }>,
   single: {} as Record<string, unknown>,
+  /** What `supabase.rpc(name)` answers. Unset: the function is absent
+   *  (PGRST202) — the database before 20261157. */
+  rpc: {} as Record<string, { data: unknown; error: null | { code?: string; message: string } }>,
 }));
 const reg = vi.hoisted(() => ({ listCompanies: vi.fn(), listBarredCompanies: vi.fn(), getCompany: vi.fn() }));
 const dlg = vi.hoisted(() => ({ appPrompt: vi.fn(), appConfirm: vi.fn(), appAlert: vi.fn() }));
@@ -41,7 +44,11 @@ vi.mock("@/lib/supabase", () => {
     };
     return new Proxy({}, h);
   };
-  return { supabase: { from: (t: string) => chain(t), auth: { getSession: async () => ({ data: { session: null } }) } } };
+  const rpc = async (name: string, args: Record<string, unknown>) => {
+    db.calls.push({ table: `rpc:${name}`, method: "rpc", args: [args] });
+    return db.rpc[name] ?? { data: null, error: { code: "PGRST202", message: `Could not find the function public.${name} in the schema cache` } };
+  };
+  return { supabase: { from: (t: string) => chain(t), rpc, auth: { getSession: async () => ({ data: { session: null } }) } } };
 });
 vi.mock("@/components/providers/DialogProvider", () => dlg);
 vi.mock("@/lib/costDocs", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/costDocs")>()), ...cd }));
@@ -55,6 +62,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import QuotesPanel from "@/components/projects/cost/QuotesPanel";
 import type { CostDocument } from "@/lib/costDocs";
 import type { Company } from "@/lib/companies";
+import { barredCompanyFor } from "@/lib/bidTab";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -85,7 +93,7 @@ beforeEach(() => {
   reg.listCompanies.mockReset(); reg.getCompany.mockReset(); reg.listBarredCompanies.mockReset();
   reg.listBarredCompanies.mockResolvedValue([]);
   for (const f of [...Object.values(dlg), cd.awardQuote]) f.mockReset();
-  db.inserts = []; db.calls = []; db.single = {};
+  db.inserts = []; db.calls = []; db.single = {}; db.rpc = {};
   db.results = {
     cost_documents: { data: docs.map((d) => ({ id: d.id, company_id: null, pages_total: 3, pages_read: 3 })), error: null },
     project_parties: { data: [], error: null },
@@ -546,5 +554,146 @@ describe("SEC-19 — an expired quote link offers no Re-issue, RFQ or Copy link"
     expect(labels(dead)).toEqual(["Revoke"]);
     const live = item(/Live Bidder/);
     expect(labels(live)).toEqual(["Re-issue", "Revoke"]);
+  });
+});
+
+// projects Round G — projects-joint J12, review fix pass 7 (projects-tab MON-12 / COST-3): the bid tab's
+// prompt and its intent row (COST_DOC_AWARD_OVERRIDE_DO_NOT_USE) name the company award_quote's
+// COST_DOC_AWARD_OVERRIDE records. Cause 1: the panel checked the letterhead the AI read, while the
+// award checks the STORED vendor name — with two do-not-use look-alikes the exact-name tie-break then
+// picked a different row. Cause 2: a contractor whose linked company is flagged answers first at the
+// award; the panel only knew the name. The panel now asks the award's own question at the click
+// (companyAwardAnswersFor): the database's cost_doc_company_barred once 20261157 is applied, the same
+// steps from the client before it.
+describe("MON-12 (J12 review fix 7) — the bid tab names the company the award records", () => {
+  const GULF = company("00000000-0000-0000-0000-0000000000c1", "Gulf Mechanical", "do_not_use");           // lower id, exact to the stored name
+  const GULF_INC = company("00000000-0000-0000-0000-0000000000c2", "Gulf Mechanical, Inc.", "do_not_use"); // higher id, exact to the letterhead
+  const COASTAL = company("c-coastal", "Coastal Fabricators", "do_not_use");                               // the contractor's linked company
+  const gulfDoc = (over: Partial<CostDocument> = {}) => doc({
+    id: "gulf", vendorName: "Gulf Mechanical", currency: "EUR", totalAmount: 150_000,
+    parsed: { vendorName: "Gulf Mechanical, Inc.", total: 150_000, currency: "EUR", lineItems: [{ description: "Repipe exchanger circuits", total: 150_000, hours: 1500 }], exclusions: [] },
+    ...over,
+  });
+  const list = (d: CostDocument) => {
+    db.results.cost_documents = { data: [d, docs[1]].map((x) => ({ id: x.id, company_id: null, pages_total: 3, pages_read: 3 })), error: null };
+    return [d, docs[1]];
+  };
+  const present = (c: Company | null) => { db.rpc.cost_doc_company_barred = { data: c ? { id: c.id, name: c.name, status: c.status } : null, error: null }; };
+  const rpcCalls = () => db.calls.filter((c) => c.table === "rpc:cost_doc_company_barred").map((c) => c.args[0]);
+  const intent = () => db.inserts.find((i) => i.row.action === "COST_DOC_AWARD_OVERRIDE_DO_NOT_USE")?.row.details as Record<string, unknown> | undefined;
+  beforeEach(() => {
+    reg.listCompanies.mockResolvedValue([GULF, GULF_INC]);
+    reg.listBarredCompanies.mockResolvedValue([GULF, GULF_INC]);
+    dlg.appPrompt.mockResolvedValue("Sole bidder for the outage window");
+    dlg.appConfirm.mockResolvedValue(true);
+    cd.awardQuote.mockResolvedValue({ ok: true });
+  });
+
+  it("cause 1, before 20261157 (the function absent): the prompt, the intent row and the chip name the look-alike of the STORED vendor name — never the letterhead's", async () => {
+    const d = gulfDoc();
+    await render(list(d));
+    expect(rowOf(/Gulf Mechanical/).textContent).toMatch(/do not use\? · Gulf Mechanical(?!,)/);
+    await awardOn(/Gulf Mechanical/);
+    expect(rpcCalls()).toEqual([{ p_org: "o1", p_company: null, p_party: null, p_vendor: "Gulf Mechanical" }]);
+    expect(String(dlg.appPrompt.mock.calls[0][0].title)).toBe("Gulf Mechanical is flagged DO NOT USE");
+    expect(intent()).toMatchObject({ companyId: GULF.id, company: "Gulf Mechanical", companyStatus: "do_not_use" });
+    // what award_quote / the lib record for this row: the exact name of the stored vendor name, first
+    expect(barredCompanyFor(d.vendorName, null, [GULF_INC, GULF])?.id).toBe(GULF.id);
+    expect(cd.awardQuote.mock.calls[0][0].overrideReason).toBe("Sole bidder for the outage window");
+  });
+
+  it("cause 1, after 20261157: the database's own gate is asked with the stored name, and its answer is the one named — no client-side guess", async () => {
+    present(GULF);
+    await render(list(gulfDoc()));
+    await awardOn(/Gulf Mechanical/);
+    expect(rpcCalls()).toEqual([{ p_org: "o1", p_company: null, p_party: null, p_vendor: "Gulf Mechanical" }]);
+    expect(reg.listBarredCompanies).toHaveBeenCalledTimes(1);          // the table's own read — no fallback read at the click
+    expect(String(dlg.appPrompt.mock.calls[0][0].title)).toBe("Gulf Mechanical is flagged DO NOT USE");
+    expect(intent()).toMatchObject({ companyId: GULF.id, company: "Gulf Mechanical" });
+  });
+
+  it("cause 2, after 20261157: the contractor's flagged company — the one the database answers — is named, not the vendor name's look-alike", async () => {
+    present(COASTAL);
+    await render(list(gulfDoc({ partyId: "pp1" })));
+    await awardOn(/Gulf Mechanical/);
+    expect(rpcCalls()).toEqual([{ p_org: "o1", p_company: null, p_party: "pp1", p_vendor: "Gulf Mechanical" }]);
+    expect(String(dlg.appPrompt.mock.calls[0][0].title)).toBe("Coastal Fabricators is flagged DO NOT USE");
+    expect(intent()).toMatchObject({ companyId: "c-coastal", company: "Coastal Fabricators", companyStatus: "do_not_use" });
+  });
+
+  it("cause 2, before 20261157: the client asks the client sequence's order — the contractor's flagged company first; an ACTIVE one falls through to the look-alike (negative control)", async () => {
+    db.single.cost_documents = { id: "gulf", org_id: "o1", company_id: null, party_id: "pp1", vendor_name: "Gulf Mechanical" };
+    db.single.project_parties = { company_id: "c-coastal" };
+    reg.getCompany.mockResolvedValue(COASTAL);
+    await render(list(gulfDoc({ partyId: "pp1" })));
+    await awardOn(/Gulf Mechanical/);
+    expect(reg.getCompany).toHaveBeenCalledWith("c-coastal");
+    expect(String(dlg.appPrompt.mock.calls[0][0].title)).toBe("Coastal Fabricators is flagged DO NOT USE");
+    expect(intent()).toMatchObject({ companyId: "c-coastal" });
+
+    // negative control: the same contractor's company ACTIVE — it binds, but never hides the look-alike
+    db.inserts = []; dlg.appPrompt.mockClear();
+    reg.getCompany.mockResolvedValue({ ...COASTAL, status: "active" });
+    await awardOn(/Gulf Mechanical/);
+    expect(String(dlg.appPrompt.mock.calls[0][0].title)).toBe("Gulf Mechanical is flagged DO NOT USE");
+    expect(intent()).toMatchObject({ companyId: GULF.id });
+  });
+
+  it("before 20261157, an explicit link decides only to a company of the document's org — another org's company is skipped, as the lib's org-bound read skips it", async () => {
+    db.single.cost_documents = { id: "gulf", org_id: "o1", company_id: "c-elsewhere", party_id: null, vendor_name: "Gulf Mechanical" };
+    reg.getCompany.mockResolvedValue({ ...COASTAL, id: "c-elsewhere", orgId: "o2" });
+    await render(list(gulfDoc()));
+    await awardOn(/Gulf Mechanical/);
+    expect(String(dlg.appPrompt.mock.calls[0][0].title)).toBe("Gulf Mechanical is flagged DO NOT USE");
+    expect(intent()).toMatchObject({ companyId: GULF.id });
+    // negative control: the same link to a company of the org decides, flagged or not
+    db.inserts = []; dlg.appPrompt.mockClear(); cd.awardQuote.mockClear();
+    reg.getCompany.mockResolvedValue({ ...COASTAL, id: "c-elsewhere", orgId: "o1", status: "active" });
+    await awardOn(/Gulf Mechanical/);
+    expect(dlg.appPrompt).not.toHaveBeenCalled();
+    expect(cd.awardQuote).toHaveBeenCalledTimes(1);
+  });
+
+  it("an inactive company the database answers for is asked about as inactive, recorded as inactive, and the reason goes with the first award call", async () => {
+    present({ ...COASTAL, status: "inactive" });
+    await render(list(gulfDoc({ partyId: "pp1" })));
+    await awardOn(/Gulf Mechanical/);
+    expect(String(dlg.appPrompt.mock.calls[0][0].title)).toBe("Coastal Fabricators is marked INACTIVE");
+    expect(intent()).toMatchObject({ companyId: "c-coastal", companyStatus: "inactive" });
+    expect(cd.awardQuote).toHaveBeenCalledTimes(1);
+    expect(cd.awardQuote.mock.calls[0][0].overrideReason).toBe("Sole bidder for the outage window");
+  });
+
+  it("negative controls: the database answering null asks for no reason and records no intent; a failed call (not an absent function) stops the award with no fallback", async () => {
+    present(null);
+    await render(list(gulfDoc()));
+    await awardOn(/Gulf Mechanical/);
+    expect(dlg.appPrompt).not.toHaveBeenCalled();
+    expect(intent()).toBeUndefined();
+    expect(cd.awardQuote.mock.calls[0][0].overrideReason ?? null).toBeNull();
+
+    cd.awardQuote.mockClear();
+    db.rpc.cost_doc_company_barred = { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } };
+    await awardOn(/Gulf Mechanical/);
+    expect(cd.awardQuote).not.toHaveBeenCalled();
+    expect(reg.listBarredCompanies).toHaveBeenCalledTimes(1);          // no client-side fallback behind a real error
+    expect(errors.at(-1)).toMatch(/^Award stopped — the Known Companies registry couldn't be checked/);
+  });
+
+  it("a do-not-use row only the LETTERHEAD could be stays on the row as a hint and is not the award's gate — the award is checked against the vendor on file", async () => {
+    const apexBarred = company("c-apex", "Apex Industrial", "do_not_use");
+    reg.listCompanies.mockResolvedValue([apexBarred]);
+    reg.listBarredCompanies.mockResolvedValue([apexBarred]);
+    const d = doc({ id: "front", vendorName: "Bayline Scaffold", currency: "EUR", totalAmount: 150_000,
+      parsed: { vendorName: "Apex Industrial, Inc.", total: 150_000, currency: "EUR", lineItems: [{ description: "Repipe exchanger circuits", total: 150_000, hours: 1500 }], exclusions: [] } });
+    await render(list(d));
+    const chip = [...rowOf(/Apex Industrial, Inc\./).querySelectorAll("span")].find((s) => /letterhead: do not use\?/.test(s.textContent ?? ""))!;
+    expect(chip.textContent).toBe("letterhead: do not use? · Apex Industrial");
+    expect(chip.getAttribute("title")).toMatch(/an award is checked against the vendor name on file \("Bayline Scaffold"\), which no barred record matches/);
+    await awardOn(/Apex Industrial, Inc\./);
+    expect(rpcCalls()).toEqual([{ p_org: "o1", p_company: null, p_party: null, p_vendor: "Bayline Scaffold" }]);
+    expect(dlg.appPrompt).not.toHaveBeenCalled();
+    expect(intent()).toBeUndefined();
+    expect(cd.awardQuote).toHaveBeenCalledTimes(1);
   });
 });

@@ -59,6 +59,7 @@ import {
   type ParsedQuote, type BidEconomics,
 } from "@/lib/bidTab";
 import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
+import { isMissingRpc } from "@/lib/costDocs";
 
 /** Row columns that live beside CostDocument (landed by 20261096) — read
  *  here so the frozen lib/costDocs mapper does not need to change: the
@@ -105,6 +106,72 @@ export async function guardedCostDocWrite(input: {
     details: input.audit.details,
   });
   return { ok: true, auditError: auditErr ? userFacingError(auditErr, { embed: true }) : null };
+}
+
+/** The registry row an award must answer for (MON-12): what the override
+ *  prompt names and the intent row records. */
+export interface AwardFlag { id: string; name: string; status: string }
+
+const FLAGGED_COMPANY_STATUSES: readonly string[] = ["do_not_use", "inactive"];
+
+/**
+ * MON-12 / COST-3 — the flagged company an award of `doc` must answer for,
+ * asked AT THE CLICK (never from the lists the table rendered from) of the
+ * row as it stands: its own registry link, its contractor and its STORED
+ * vendor name (`cost_documents.vendor_name` — the AI's reading of the
+ * letterhead is never the question; the read route fills the column from
+ * the letterhead only when the row has none).
+ * - With 20261157 applied: the database's own gate, `cost_doc_company_barred`
+ *   (SECURITY INVOKER, EXECUTE granted to authenticated) — the function
+ *   `award_quote` calls under its lock with the same four arguments, as the
+ *   same caller — so the prompt and the intent row name the company that
+ *   function's `COST_DOC_AWARD_OVERRIDE` row records (an `inactive` one
+ *   included).
+ * - Before it (the function is absent — `isMissingRpc`, PGRST202 / 42883:
+ *   the same test that sends the lib's award down its client sequence): the
+ *   client sequence's own order (lib/costDocs.ts `companyBehind`) — the
+ *   explicit link to a company of the document's org decides; else the
+ *   contractor's company when it is flagged;
+ *   else ANY do-not-use row the stored vendor name normalises to
+ *   (`barredCompanyFor` over the org's barred rows, read in full). A flag
+ *   beyond that (the bound company's own `inactive`, an `inactive` explicit
+ *   link) is the lib's `needsOverride`, which names its own row's company.
+ * Null: no override needed. A failed read throws — the award stops.
+ */
+export async function companyAwardAnswersFor(doc: CostDocument): Promise<AwardFlag | null> {
+  const { data: row, error } = await supabase.from("cost_documents").select("*").eq("id", doc.id).maybeSingle();
+  if (error) throw new Error(userFacingReadError(error));
+  const raw = (row ?? null) as Record<string, unknown> | null;
+  const text = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
+  const orgId = text(raw?.org_id) ?? doc.orgId;
+  const companyId = text(raw?.company_id);          // absent before 20261096: no link can exist
+  const partyId = raw ? text(raw.party_id) : doc.partyId;
+  const vendorName = raw ? text(raw.vendor_name) : doc.vendorName;
+
+  const { data, error: rpcErr } = await supabase.rpc("cost_doc_company_barred", {
+    p_org: orgId, p_company: companyId, p_party: partyId, p_vendor: vendorName,
+  });
+  if (!rpcErr) {
+    const c = (data ?? null) as { id?: unknown; name?: unknown; status?: unknown } | null;
+    return c && typeof c.id === "string" && typeof c.name === "string" && typeof c.status === "string"
+      && FLAGGED_COMPANY_STATUSES.includes(c.status) ? { id: c.id, name: c.name, status: c.status } : null;
+  }
+  if (!isMissingRpc(rpcErr)) throw new Error(userFacingReadError(rpcErr));
+
+  if (companyId) {
+    const bound = await getCompany(companyId);
+    if (!bound) throw new Error("the linked company record couldn't be read");
+    // a link counts only to a company of the document's own org (companyBehind's org-bound read)
+    if (bound.orgId === orgId) return bound.status === "do_not_use" ? bound : null;
+  }
+  if (partyId) {
+    const { data: party, error: partyErr } = await supabase.from("project_parties").select("company_id").eq("id", partyId).maybeSingle();
+    if (partyErr) throw new Error(userFacingReadError(partyErr));
+    const partyCompanyId = text((party as { company_id?: unknown } | null)?.company_id);
+    const contractor = partyCompanyId ? await getCompany(partyCompanyId) : null;
+    if (contractor && contractor.orgId === orgId && FLAGGED_COMPANY_STATUSES.includes(contractor.status)) return contractor;
+  }
+  return barredCompanyFor(vendorName, null, await listBarredCompanies(orgId));
 }
 
 const QUOTE_LINK_DEFAULT_DAYS = 90;
@@ -561,38 +628,26 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
    *  name match (exact, else unique normalised), shown as a suggestion the
    *  human can change. BINDING refuses ambiguity; GATING does not: `barred`
    *  is the do-not-use row the bid answers for — the linked company, or
-   *  ANY row the name could be (two rows normalising alike included) —
-   *  read from the org's full barred list, never the capped name list. */
-  const registryFor = (doc: CostDocument, e: BidEconomics): { known: Company | null; bound: boolean; barred: Company | null; candidates: Company[] } => {
+   *  ANY row the vendor name ON FILE could be (two rows normalising alike
+   *  included; `doc.vendorName`, the name an award is checked against —
+   *  never the letterhead the AI read, so the chip names the row the
+   *  award's prompt names) — read from the org's full barred list, never
+   *  the capped name list. A do-not-use row only the letterhead could be
+   *  stays on the row as a hint (`letterheadOnly`), never as the gate. */
+  const registryFor = (doc: CostDocument, e: BidEconomics): { known: Company | null; bound: boolean; barred: Company | null; letterheadOnly: boolean; candidates: Company[] } => {
     const boundId = extras.get(doc.id)?.companyId ?? null;
     const flags = [...barredList, ...companies];
     if (boundId) {
       const known = companies.find((c) => c.id === boundId) ?? barredList.find((c) => c.id === boundId) ?? null;
-      return { known, bound: true, barred: barredCompanyFor(null, boundId, flags), candidates: [] };
+      return { known, bound: true, barred: barredCompanyFor(null, boundId, flags), letterheadOnly: false, candidates: [] };
     }
+    const onFile = barredCompanyFor(doc.vendorName, null, flags);
+    const letterhead = !onFile && !e.priceOnly && e.vendorName !== doc.vendorName ? barredCompanyFor(e.vendorName, null, flags) : null;
     return {
       known: matchCompanyByName(e.vendorName, companies), bound: false,
-      barred: barredCompanyFor(e.vendorName, null, flags),
+      barred: onFile ?? letterhead, letterheadOnly: !!letterhead,
       candidates: companyCandidatesByName(e.vendorName, companies),
     };
-  };
-
-  /** The do-not-use row this bid answers for AS IT STANDS NOW — the
-   *  explicit link re-read from the row, else any barred row the name
-   *  could be, from a fresh read of the org's barred rows (in full — never
-   *  the capped name list, never the in-memory list the table rendered
-   *  from). Null means nothing barred; a failed read throws (the award
-   *  stops). */
-  const barredNow = async (doc: CostDocument, vendorName: string | null): Promise<Company | null> => {
-    const { data: row, error } = await supabase.from("cost_documents").select("company_id").eq("id", doc.id).maybeSingle();
-    if (error && !missingColumn(error)) throw new Error(userFacingReadError(error));
-    const boundId = (row as { company_id?: string | null } | null)?.company_id ?? null;
-    if (boundId) {
-      const bound = await getCompany(boundId);
-      if (!bound) throw new Error("the linked company record couldn't be read");
-      return bound.status === "do_not_use" ? bound : null;
-    }
-    return barredCompanyFor(vendorName, null, await listBarredCompanies(orgId));
   };
 
   const award = async (doc: CostDocument, accountId: string) => {
@@ -620,25 +675,27 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
       return;
     }
 
-    // MON-12 / COST-3: the barred-company check reads the registry at the
-    // click (never the list this table rendered from) — the linked company,
-    // or every barred row the vendor name could be — and a failed read
-    // stops the award.
-    let barred: Company | null;
+    // MON-12 / COST-3: the barred-company check asks, at the click (never
+    // the list this table rendered from), the question the award will ask
+    // (companyAwardAnswersFor: the database's own gate once 20261157 is
+    // applied, over the stored vendor name and the row's links) — and a
+    // failed read stops the award.
+    let barred: AwardFlag | null;
     try {
-      barred = await barredNow(doc, e?.vendorName ?? doc.vendorName);
+      barred = await companyAwardAnswersFor(doc);
     } catch (err) {
       setErr(`Award stopped — the Known Companies registry couldn't be checked (${userFacingCaughtError(err, { action: "read", context: "QuotesPanel registry" }).replace(/\.$/, "")}). Reload and try again.`);
       return;
     }
     let overrideReason: string | null = null;
     if (barred) {
+      const inactive = barred.status === "inactive";
       overrideReason = (await appPrompt({
-        title: `${barred.name} is flagged DO NOT USE`,
-        message: "The registry bars this company — this bidder is linked to it, or its name matches it (if the name matches more than one registry record, link the bidder to the right one). To award anyway, state the reason — it is recorded against this award and the company's record.",
+        title: `${barred.name} is ${inactive ? "marked INACTIVE" : "flagged DO NOT USE"}`,
+        message: "The registry flags the company this award answers for — this bidder is linked to it, its contractor is, or its name matches it (if the name matches more than one registry record, link the bidder to the right one). To award anyway, state the reason — it is recorded against this award and the company's record.",
         placeholder: "Override reason (required)",
       }))?.trim() || null;
-      if (!overrideReason) { setErr(`Award stopped — ${barred.name} is flagged do-not-use and no override reason was given.`); return; }
+      if (!overrideReason) { setErr(`Award stopped — ${barred.name} is ${inactive ? "marked inactive" : "flagged do-not-use"} and no override reason was given.`); return; }
     }
 
     const warnings = [
@@ -676,7 +733,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
       return true;
     };
     let overridden: { id: string; name: string } | null = barred ? { id: barred.id, name: barred.name } : null;
-    if (barred && overrideReason && !(await recordIntent(overridden!, overrideReason, "do_not_use"))) return;
+    if (barred && overrideReason && !(await recordIntent(overridden!, overrideReason, barred.status))) return;
 
     // BID-10: every spelling of this merged field is one field, so its
     // rivals are handed to the award under one spelling and all decline.
@@ -784,7 +841,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                     const isDeclined = doc?.status === "declined";
                     const bc = bidCurrency(e.currency, currency);
                     const cur = bc.code;
-                    const { known, bound, barred, candidates } = doc ? registryFor(doc, e) : { known: null, bound: false, barred: null, candidates: [] as Company[] };
+                    const { known, bound, barred, letterheadOnly, candidates } = doc ? registryFor(doc, e) : { known: null, bound: false, barred: null, letterheadOnly: false, candidates: [] as Company[] };
                     const qmExtent = known ? readExtent(known.qualityManualPagesRead, known.qualityManualPagesTotal) : null;
                     const ext = doc ? extras.get(doc.id) ?? null : null;
                     const expired = quoteExpired(quote?.validUntil);
@@ -805,10 +862,12 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                             )}
                             {barred && (
                               <span className="ml-1.5 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border border-rose-500/50 bg-rose-500/10 text-rose-700 dark:text-rose-300"
-                                title={barred.id === known?.id
+                                title={letterheadOnly
+                                  ? `The letterhead the AI read ("${e.vendorName}") could be "${barred.name}", flagged DO NOT USE in the registry — but an award is checked against the vendor name on file${doc?.vendorName ? ` ("${doc.vendorName}")` : " (none yet)"}, which no barred record matches. If ${barred.name} sent this bid, link the bidder to it.`
+                                  : barred.id === known?.id
                                   ? "Flagged in the registry — an award needs a typed, recorded override"
                                   : `This bidder's name could be "${barred.name}", flagged DO NOT USE in the registry — link the bidder to the right record; until then an award needs a typed, recorded override`}>
-                                {barred.id === known?.id ? "do not use" : `do not use? · ${barred.name}`}
+                                {letterheadOnly ? `letterhead: do not use? · ${barred.name}` : barred.id === known?.id ? "do not use" : `do not use? · ${barred.name}`}
                               </span>
                             )}
                             {!bound && !known && candidates.length > 1 && (

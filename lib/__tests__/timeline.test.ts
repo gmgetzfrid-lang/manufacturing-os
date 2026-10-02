@@ -314,4 +314,30 @@ describe("SEC-21 (projects Round G J12, review fix 6) — the database's scope s
     // the label stays for the raw audit lists (the admin audit page shows every row)
     expect(summarizeAudit({ action: "MILESTONE_SCOPE_RECORDED", details: { name: "Hydrotest" } })).toBe("Milestone deletion recorded by the database: Hydrotest");
   });
+
+  // J12 review fix 7: the stamp is left out IN THE QUERY, before the row limit — filtered only after it,
+  // a window of `limit` rows held about half as many events (each delete's stamp took a row).
+  const pairs = (n: number) => Array.from({ length: n }, (_, i) => {
+    const at = (s: number) => `2026-09-${String(10 + i).padStart(2, "0")}T10:00:0${s}Z`;
+    return [
+      audit(`s${i}`, "MILESTONE_SCOPE_RECORDED", { resource_type: "document", resource_id: "d1", details: { milestoneId: `m${i}`, name: `Task ${i}` }, timestamp: at(0) }),
+      audit(`d${i}`, "MILESTONE_DELETED", { resource_type: "document", resource_id: "d1", details: { milestoneId: `m${i}`, name: `Task ${i}` }, timestamp: at(1) }),
+    ];
+  }).flat();
+  const stampFilter = { table: "audit_logs", method: "not", args: ["action", "in", '("MILESTONE_SCOPE_RECORDED")'] };
+  it("the document timeline's read leaves the stamp out in the query: a 4-row window is 4 deletes, not 2", async () => {
+    state.rows.audit_logs = pairs(4);
+    const events = await getDocumentTimeline({ documentId: "d1", limit: 4 });
+    expect(events.map((e) => e.summary)).toEqual(["Milestone deleted: Task 3", "Milestone deleted: Task 2", "Milestone deleted: Task 1", "Milestone deleted: Task 0"]);
+    expect(state.calls).toContainEqual(stampFilter);
+  });
+  it("the project feed's linked-document read does too", async () => {
+    state.rows.project_activity = [];
+    state.rows.cost_documents = [];
+    state.rows.project_documents = [{ id: "pd1", project_id: "p1", document_id: "d1" }];
+    state.rows.audit_logs = pairs(4);
+    const events = await getProjectTimeline({ projectId: "p1", limit: 4 });
+    expect(events.filter((e) => e.resourceId === "d1").map((e) => e.summary)).toEqual(["Milestone deleted: Task 3", "Milestone deleted: Task 2", "Milestone deleted: Task 1", "Milestone deleted: Task 0"]);
+    expect(state.calls.filter((c) => c.table === "audit_logs" && c.method === "not" && c.args[1] === "in" && c.args[2] === '("MILESTONE_SCOPE_RECORDED")')).toHaveLength(1);
+  });
 });

@@ -485,9 +485,17 @@ const pgList = (xs: string[]) => `(${xs.map((x) => `"${x}"`).join(",")})`;
  *  an event anyone did. `MILESTONE_SCOPE_RECORDED` is written as a document's
  *  milestone is deleted, beside the `MILESTONE_DELETED` row the person's
  *  delete writes, so a timeline that showed both would show the one delete
- *  twice. The document and project timelines and the Activity feed leave
- *  them out; the admin audit page shows every row. */
+ *  twice. The document and project timelines, the Activity feed and the
+ *  dashboard's Activity widget leave them out; the admin audit page shows
+ *  every row. */
 export const SCOPE_STAMP_ACTIONS: ReadonlySet<string> = new Set(["MILESTONE_SCOPE_RECORDED"]);
+/** The same set as a PostgREST `not.in` list — `.not("action", "in",
+ *  SCOPE_STAMPS_NOT_IN)` — so a capped read leaves the stamps out BEFORE its
+ *  row limit and a 100-row window is 100 events, never ~50 (J12 review fix
+ *  pass 7). `audit_logs.action` is NOT NULL, so the filter drops nothing
+ *  else. */
+export const SCOPE_STAMPS_NOT_IN = pgList([...SCOPE_STAMP_ACTIONS]);
+/** Re-applied after the read, as the project read re-applies its map. */
 const withoutScopeStamps = (rows: AuditRow[]): AuditRow[] => rows.filter((r) => !SCOPE_STAMP_ACTIONS.has(r.action));
 
 const money = (v: unknown): string | null => {
@@ -591,6 +599,7 @@ export async function getDocumentTimeline(params: DocumentTimelineParams): Promi
       .select("*")
       .eq("resource_type", "document")
       .eq("resource_id", documentId)
+      .not("action", "in", SCOPE_STAMPS_NOT_IN)
       .order("timestamp", { ascending: false })
       .limit(limit),
     supabase
@@ -782,6 +791,7 @@ export async function getProjectTimeline(params: ProjectTimelineParams): Promise
         .select("*")
         .eq("resource_type", "document")
         .in("resource_id", part)
+        .not("action", "in", SCOPE_STAMPS_NOT_IN)
         .order("timestamp", { ascending: false })
         .limit(limit)).then(withoutScopeStamps),
       readByIdChunks<VersionRow>(docIds, (part) => supabase

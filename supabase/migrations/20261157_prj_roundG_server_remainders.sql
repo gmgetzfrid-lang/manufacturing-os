@@ -488,14 +488,16 @@ GRANT EXECUTE ON FUNCTION public.company_name_key(text) TO authenticated, servic
 -- link answers for that company's own flag, but an unflagged one never
 -- hides a do-not-use look-alike: the intake door files a quote against the
 -- contractor it matched by name (app/api/intake/upload, with nobody
--- choosing), and the bid tab's gate reads only the document's own link.
+-- choosing), and the bid tab's chip reads only the document's own link.
 -- Each link counts only to a company of the document's org. Then ANY
 -- do_not_use row of the org whose name normalises as the vendor name does
 -- (DEC-48's gate flags do-not-use look-alikes only — the exact name first,
 -- so the refusal names the company the quote binds to when that one is
 -- barred; then by id, as lib/costDocs.ts flaggedLookAlike and lib/bidTab.ts
--- barredCompanyFor order them, so the lib's and the bid tab's prompts and
--- the override row name the same company); else the
+-- barredCompanyFor order them, so the lib's prompt and the override row
+-- name the same company; the bid tab's award prompt and intent row call
+-- this function itself — components/projects/cost/QuotesPanel.tsx
+-- companyAwardAnswersFor); else the
 -- company it binds to (cost_doc_company_behind: its contractor's link,
 -- else one exact name), when that one is itself inactive — an inactive
 -- look-alike it does not bind to is not the bid's. Returns the flagged

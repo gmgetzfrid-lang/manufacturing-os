@@ -21,7 +21,7 @@
 import { supabase } from "@/lib/supabase";
 import { userFacingError, userFacingReadError, userFacingCaughtError } from "@/lib/userFacingError";
 import { listBarredCompanies } from "@/lib/companies";
-import { barredCompanyFor } from "@/lib/bidTab";
+import { barredCompanyFor, companyCandidatesByName } from "@/lib/bidTab";
 
 export type CostEntryType = "commitment" | "actual" | "adjustment";
 
@@ -179,7 +179,11 @@ const REGISTRY_UNREAD_NOT_LINKED = "nothing was linked";
  * the bidder's name), so a contractor whose NAME could be a do-not-use
  * company, bound to some other company, would carry its awards past the
  * flag. Such a link needs a reason, which is recorded (returned as
- * overrideDoNotUse for the audit row).
+ * overrideDoNotUse for the audit row). A link to a company that is ITSELF
+ * one of the do-not-use rows the name could be needs none, whichever of
+ * them `barredCompanyFor` names first: that company is flagged, and a
+ * flagged contractor company answers for itself at the award
+ * (`cost_doc_company_barred`'s contractor branch; `companyBehind`'s).
  *
  * An unreadable registry refuses the write the check guards, so the refusal
  * says what did NOT happen on that path (`unreadOutcome`): on the Costs
@@ -191,9 +195,13 @@ async function partyLinkCheck(orgId: string, name: string, companyId: string, ov
   | { refused: null; overrideDoNotUse: (PartyLinkOverrideNeeded & { reason: string }) | null }
 > {
   let barred: { id: string; name: string } | null;
-  try { barred = barredCompanyFor(name, null, await listBarredCompanies(orgId)); }
-  catch (e) { return { refused: { error: `Couldn't check the company registry (${userFacingCaughtError(e, { action: "read", context: "partyLinkCheck" }).replace(/\.$/, "")}) — ${unreadOutcome}.` } }; }
-  if (!barred || barred.id === companyId) return { refused: null, overrideDoNotUse: null };
+  let linksToALookAlike: boolean;
+  try {
+    const barredRows = await listBarredCompanies(orgId);
+    barred = barredCompanyFor(name, null, barredRows);
+    linksToALookAlike = companyCandidatesByName(name, barredRows).some((c) => c.id === companyId && c.status === "do_not_use");
+  } catch (e) { return { refused: { error: `Couldn't check the company registry (${userFacingCaughtError(e, { action: "read", context: "partyLinkCheck" }).replace(/\.$/, "")}) — ${unreadOutcome}.` } }; }
+  if (!barred || linksToALookAlike) return { refused: null, overrideDoNotUse: null };
   if (overrideReason) return { refused: null, overrideDoNotUse: { companyId: barred.id, company: barred.name, reason: overrideReason } };
   return { refused: {
     error: `"${name}" could be ${barred.name}, flagged DO NOT USE in the registry. Linking it to another company needs a reason, which goes on the record.`,
