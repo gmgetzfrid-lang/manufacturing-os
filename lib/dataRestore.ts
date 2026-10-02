@@ -284,7 +284,7 @@ export const RESTORE_PARENT_RULES: Readonly<Record<string, ReadonlyArray<Restore
   document_disposition_events: fkRules("document_id>documents"),
   document_equipment_suggestions: fkRules("document_id>documents"),
   document_holds: fkRules("document_id>documents origin_ticket_id>tickets"),
-  document_intents: fkRules("document_id>documents library_id>libraries base_version_id>document_versions"),
+  document_intents: fkRules("document_id>documents library_id>libraries base_version_id>document_versions ticket_id>tickets"),
   document_markups: fkRules("document_id>documents version_id>document_versions"),
   document_related_resources: fkRules("document_id>documents target_document_id>documents"),
   document_sets: fkRules("library_id>libraries"),

@@ -111,8 +111,12 @@ describe("DRLS-16: no SECURITY DEFINER function with a NULL-uid branch is execut
     expect(anonRevokedAfter("publish_revision", defs.get("publish_revision")!)).toBe(defs.get("publish_revision")!.file);
   });
 
-  it("post_ticket_comment's only anon revoke is the hotfix (its newest body, 20260810, never revoked anon)", () => {
-    expect(anonRevokedAfter("post_ticket_comment", defs.get("post_ticket_comment")!)).toBe(HOTFIX);
+  it("post_ticket_comment's newest body (drafting-flow DF-P1, 20261166) revokes anon — and authenticated — itself, after re-creating it; before it, the hotfix was the only anon revoke (20260810 never revoked anon)", () => {
+    const DF_P1 = "20261166_df_roundG_ticket_rails.sql";
+    expect(defs.get("post_ticket_comment")!.file).toBe(DF_P1);
+    expect(anonRevokedAfter("post_ticket_comment", defs.get("post_ticket_comment")!)).toBe(DF_P1);
+    expect(text.get(DF_P1)).toMatch(/REVOKE EXECUTE ON FUNCTION post_ticket_comment\(UUID, JSONB, UUID\[\], UUID\[\]\) FROM PUBLIC, anon, authenticated;/);
+    expect(anonRevokedAfter("post_ticket_comment", { file: "20260810_archive_invariants.sql", at: 0, returns: "void", secdef: true, body: "" })).toBe(HOTFIX);
   });
 });
 
