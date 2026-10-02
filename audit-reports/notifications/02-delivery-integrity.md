@@ -367,8 +367,9 @@ CREATE POLICY notifications_org_insert ON notifications FOR INSERT WITH CHECK (
 - [ ] Either `link` is constrained to app-relative paths, or the bell refuses to render off-origin hrefs
 - [ ] System-generated notifications are distinguishable from member-generated ones by something a member cannot set
 
-**Resolution (2026-10-02, notifications Round G).** Package N5 DISPATCH-AND-WRITE-HOLES, commit `018caac`, migration `supabase/migrations/20261160_notif_roundG_write_rails.sql` — the same rail as `OS-1`, whose block records the reproduction, the PostgreSQL 16 run and the tests. **Reproduced first** on PostgreSQL 16 with `20260723`'s insert policy: an ordinary member planted a row in a colleague's bell with `kind 'ack_requested'`, `actor_user_id` = the Admin, `actor_name 'System'` and `link 'https://evil.example/login'` — accepted. **Fix (`enforce_notification_insert()`, for every signed-in writer; the service role passes untouched):**
+**Resolution (2026-10-02, notifications Round G).** Package N5 DISPATCH-AND-WRITE-HOLES, commit `018caac` (review fix `4762ad2`), migration `supabase/migrations/20261160_notif_roundG_write_rails.sql` — the same rail as `OS-1`, whose block records the reproduction, the PostgreSQL 16 run and the tests. **Reproduced first** on PostgreSQL 16 with `20260723`'s insert policy: an ordinary member planted a row in a colleague's bell with `kind 'ack_requested'`, `actor_user_id` = the Admin, `actor_name 'System'` and `link 'https://evil.example/login'` — accepted. **Fix (`enforce_notification_insert()`, for every signed-in writer; the service role passes untouched):**
 - `actor_user_id := auth.uid()` when the row names no actor, and a row naming anyone else is refused (42501) — `DELIV-6` dw1's `actor_user_id = auth.uid()`, enforced before RLS's WITH CHECK runs.
+- `created_at := now()` (review fix): a browser's row is dated when it is written, so a planted row can neither pin itself to the top of a bell with a future date nor slip `OS-1`'s rate caps with a past one.
 - The recipient must be an active member of the row's org; otherwise the row is skipped (never written, never an error that sinks a batch).
 - `kind` must be one the database's registry copy `notification_kinds()` declares — the 51 kinds of `KIND_META`, pinned by test (`DEC-44 (N5)`); a minted kind is refused (22023).
 - `link` must be NULL, empty, or app-relative: one leading '/', not '//' or '/\', no backslash, no control character — so `https:`, `javascript:`, protocol-relative and tab-smuggled hrefs are refused (22023). Every `link:` the app's producers write was censused (TypeScript AST) and starts with one '/'.
@@ -376,7 +377,7 @@ CREATE POLICY notifications_org_insert ON notifications FOR INSERT WITH CHECK (
 - `notifications_org_insert` is kept; the trigger is "the validation" its comment deferred to the app layer.
 - Exercised on PostgreSQL 16: the planted row above is refused at the actor; a minted kind and the off-site, protocol-relative, slash-backslash, tab-smuggled and `javascript:` links are refused; an app link with no actor lands stamped with the writer (see `OS-1`).
 - Verified: loop on `fleet/N5-dispatch-rails` at `018caac`: `npx tsc --noEmit` exit 0; `npx eslint` on the six changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 388 files, 7914 passed, 4 expected-fail. `next build` is the integrator's.
-- **Pending migration:** `supabase/migrations/20261160_notif_roundG_write_rails.sql` (DEC-30; one paste, `ok = true` × 12).
+- **Pending migration:** `supabase/migrations/20261160_notif_roundG_write_rails.sql` (DEC-30; one paste, `ok = true` × 14).
 
 **Done-when.**
 - ✓ The insert requires `actor_user_id = auth.uid()` (stamped when absent, refused when different) and that the recipient is an active member of the same org (a non-member recipient's row is skipped) — by the BEFORE INSERT trigger, ahead of the unchanged WITH CHECK (the plan's shape).
