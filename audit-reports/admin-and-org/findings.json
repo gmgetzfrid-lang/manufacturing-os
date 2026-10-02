@@ -17,8 +17,8 @@
       "LOW": 7
     },
     "by_status": {
-      "OPEN": 46,
-      "RESOLVED": 11
+      "OPEN": 44,
+      "RESOLVED": 13
     }
   },
   "status_vocabulary": [
@@ -153,7 +153,7 @@
       "id": "ORG-2",
       "title": "org_members has NO DELETE policy — \"Remove from workspace\" silently deletes nothing and reports success, so an offboarded engineer keeps access to controlled drawings",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -627,7 +627,7 @@
       "id": "ORG-3",
       "title": "\"Request Access\" is a black hole with a cross-tenant leak: nothing ever reads access_requests, any Admin of any org can read every tenant's requests, anon can insert unbounded rows, and the client shows \"Request Sent\" even on a 404/409",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

@@ -391,6 +391,8 @@ unbounded direct anonymous inserts. `/api/auth/signup` is rate-limited via
    worst of both; the security fixes above land regardless, and having landed
    them the remaining surface is a list view.
 
+*Cross-area note (2026-10-02, admin-and-org Round G, P0): admin-and-org `ORG-3` closes by pointer to this resolution and to identity-and-session `IDENT-6` (the page's `res.ok` check). All four criteria were verified on base `f1ac550`, and `lib/__tests__/aoRoundGP0Records.test.ts` pins the table's final policy set: one org-correlated SELECT and no INSERT.*
+
 ---
 
 ## EGRESS-6 · `document_versions` has no RESTRICTIVE UPDATE or INSERT guard

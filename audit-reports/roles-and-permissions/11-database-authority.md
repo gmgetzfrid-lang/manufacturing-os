@@ -96,6 +96,8 @@ change or the two layers will disagree about which column is real.**
 4. A smoke test executes each `SECURITY DEFINER` helper once, so this class of
    drift fails loudly at migration time rather than at first use.
 
+*Cross-area note (2026-10-02, admin-and-org Round G, P0): admin-and-org `ALOG-1` re-verified this resolution on base `f1ac550`. Two of its criteria close on it. Its done-when 1 (one column) is now pinned by a route-to-loader round trip in `lib/__tests__/aoRoundGP0Records.test.ts`. Its done-when 3 (the evaluator executed against the real schema) is shown by `20261063`'s live final SELECT. Its done-when 2 (an unreadable policy distinguishable from an unset one) does not close here; it stays OPEN with admin-and-org P9 under `DEC-82`. This record's done-when 4 is unchanged.*
+
 ---
 
 ## DB-2 · `acl_index_denies` queries `team_members.user_id`; the column is `uid`
@@ -372,6 +374,8 @@ revoking via the drawer all leave `acl` and `acl_index` consistent — and
 revoking a publish grant in the drawer causes the database guard to reject that
 user's next rev-up.
 
+*Cross-area note (2026-10-02, admin-and-org Round G, P0): the fleet plan expected admin-and-org `ALOG-13` to close by pointer to this record. It does not. This record made the wizard write `acl_index` from a merged ACL. ALOG-13 concerns the dead `write_access` / `admin_access` mirror columns and the permissions console's "GONE" comment, and neither has changed. ALOG-13 stays OPEN with admin-and-org P8.*
+
 ---
 
 ## DB-6 · Twenty `SECURITY DEFINER` functions do not set `search_path`, while their neighbours do
@@ -491,6 +495,8 @@ hazard, and the next agent should not have to re-derive it.
 
 **Done when.** Every `SECURITY DEFINER` function in the migration set pins
 `search_path`, and a lint or test asserts it for new ones.
+
+*Cross-area note (2026-10-02, admin-and-org Round G, P0): admin-and-org `ORG-6` found that the lint's exemption for 20261020's list ignored order. `CREATE OR REPLACE` resets `SET search_path`, so a later re-creation of a listed function without the clause passed the lint while the live pin was lost. Reproduced with a temporary migration, then deleted. `lib/__tests__/searchPathPin.test.ts` is now order-aware, counts a static `ALTER FUNCTION … SET search_path` as a pin, and carries three synthetic self-checks. On `f1ac550` the order-aware census still finds no unpinned live definer, so this record's claims held. ORG-6 stays OPEN only for `acl_subject_in_bucket`, which is not SECURITY DEFINER and so was never in this census. Its owner is admin-and-org P8.*
 
 ---
 

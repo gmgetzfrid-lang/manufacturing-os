@@ -136,7 +136,7 @@ The database does not bind those either, so a hand-made backup can make them nam
 ## ORG-2 · org_members has NO DELETE policy — "Remove from workspace" silently deletes nothing and reports success, so an offboarded engineer keeps access to controlled drawings
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/admin/users/page.tsx:167-187`, `supabase/migrations/20260817_org_members_escalation_and_config.sql:44-53`, `supabase/schema.sql:1013`, `supabase/schema.sql:1048-1053`, `supabase/migrations/20260831_capability_policy_and_rails.sql:73-76`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Verified as a claim of absence by repo-wide search. Corroborating intent: 20260831_capability_policy_and_rails.sql:73-76 installs a BEFORE DELETE trigger on org_members, i.e. deletion is expected to work, but nothing grants it. There is no service-role removal route either (app/api/admin/ has create-user but no remove/delete-user).
@@ -159,10 +159,36 @@ Separately, the UI offers no other revocation: the page renders `m.status` (line
 
 **Done when.**
 
-- [ ] A `org_members_delete` policy exists (Admin/Manager of the row's org, roles[]-aware like `is_org_admin_or_manager`), or removal moves to a service-role route that verifies the caller
-- [ ] `handleRemoveMember` checks the affected row count, not just `error`, and refuses to update local state when zero rows changed
-- [ ] schema.sql's `org_members_write FOR ALL` is reconciled with 20260817 so fresh and migrated databases have the same policy set
-- [ ] The users page exposes suspend/reactivate so `status` can actually be changed
+- [x] A `org_members_delete` policy exists (Admin/Manager of the row's org, roles[]-aware like `is_org_admin_or_manager`), or removal moves to a service-role route that verifies the caller
+- [x] `handleRemoveMember` checks the affected row count, not just `error`, and refuses to update local state when zero rows changed
+- [x] schema.sql's `org_members_write FOR ALL` is reconciled with 20260817 so fresh and migrated databases have the same policy set
+- [x] The users page exposes suspend/reactivate so `status` can actually be changed
+
+**Resolution (2026-10-02, admin-and-org Round G).** A record-only close, by pointer to roles-and-permissions `SURF-1` and `OWN-12`. Both were built in Phase 6 (commit `1f4991c`), together, as `DEC-20` requires.
+- Migrations: `20261042_rp_phase6_revocation_and_succession.sql`, and `20261043_rp_phase6_legal_hold_and_force_release.sql`, whose §0 repairs `revoke_member`. Both were applied and verified live on 2026-09-02 and are marked LIVE in `audit-reports/MIGRATION-PASTE-ORDER.md`.
+- App: `lib/members.ts` and `app/(protected)/admin/users/page.tsx`.
+- No code changed in this package. New pin: the ORG-2 block of `lib/__tests__/aoRoundGP0Records.test.ts`, for done-when 3 (commit `447bb8b`).
+- Reproduced: at the audit snapshot no `org_members` DELETE policy existed. On base `f1ac550` the mechanism no longer holds, as each item below shows.
+
+**Done-when.**
+- ✓ 1. `org_members_delete` exists (`20261042:34-45`). It is `FOR DELETE` for an active Admin of the row's org, by role collection (`me.role = 'Admin' OR me.roles && ARRAY['Admin']::text[]`), and never on your own row.
+  - Removal also runs through the SECURITY DEFINER RPC `revoke_member` (newest body `20261043:45-194`), which verifies the caller. Remove is the Admin's (`:77-81`). Suspend and restore are the Admin's or the Manager's, through `is_org_admin_or_manager`, and only an Admin may touch an Admin (`:82-91`). That is also the criterion's second form.
+  - It is narrower than the criterion's "Admin/Manager" for hard removal, by `DEC-20`'s design: hard removal is the Admin's, suspension the Admin's or the Manager's.
+- ✓ 2. The zero-row "success" is gone, not just detected.
+  - `handleRemoveMember` (`users/page.tsx:274-298`) no longer issues a client `delete()`. It calls `revokeMember` (`:286`).
+  - The RPC writes as definer, so RLS cannot zero-filter the statement. Each failure raises: a missing row (`20261043:66-69`), every authority refusal, and the last-admin trigger (`trg_prevent_last_admin_delete`, `20260831:74`, which this path now reaches).
+  - `lib/members.ts:34-39` throws on an RPC error, and on a result whose `mode` is not the one requested ("The change was not confirmed by the database — nothing was changed.").
+  - The page changes local state only after that call resolves (`users/page.tsx:287`).
+  - Pinned by `rpPhase6Additive.test.ts` "SURF-1 / DEC-20 — revokeMember" (including `/not confirmed/`) and "members page: suspend is the default action, remove is confirmed, both go through revokeMember; no bare delete".
+- ✓ 3. `supabase/schema.sql` is now the declared pre-migration baseline (`schema.sql:3-27`; PKG-14 / HLD-12 / DB-8). Its header says: "THIS FILE ALONE IS NOT A COMPLETE INSTALL", "run this file FIRST, then EVERY file in supabase/migrations/ … The migrations are MANDATORY", and "Never re-run this file on a live database".
+  - So the only fresh install replays `20260817:44-53`, which drops the baseline `org_members_write FOR ALL` (`schema.sql:1088`) and re-creates it `FOR INSERT`. It then replays `20261042`'s DELETE policy.
+  - The bundle that could restore over it is retired (`DB-8`: `REMEDIATION_APPLY_ALL.sql` is a stub that raises). The baseline text stays in `schema.sql` as frozen history.
+  - Pin: `aoRoundGP0Records.test.ts` "replaying schema.sql then every numbered migration leaves SELECT / UPDATE / INSERT / DELETE — the baseline FOR ALL is dropped". It runs a policy census in textual order and gets `org_members_read` SELECT, `org_members_update` UPDATE, `org_members_write` INSERT and `org_members_delete` DELETE, and no `ALL`.
+- ✓ 4. Suspend (the default action) and Restore are on the members page (`users/page.tsx:249-272`, buttons `:494-509`). Both go through `revokeMember`.
+  - Suspend writes `status = 'suspended'` (`20261043:103-111`), which `my_org_ids()` and every RLS predicate exclude.
+  - `my_team_ids()` follows active membership (`20261042`, `DEC-20`).
+
+**Scope / residual.** None for this finding. One note for the next owner: admin-and-org P8's brief says to re-create `revoke_member` "VERBATIM from 20261042". Its newest definition is `20261043:45-194`, and P8 should start from that. `20261043` §0 fixed `active_collaborators = '{}'::text[]`; 20261042's body assigned `'[]'::jsonb` there, which raises 42804.
 
 ---
 
@@ -171,7 +197,7 @@ Separately, the UI offers no other revocation: the page renders `m.status` (line
 ## ORG-3 · "Request Access" is a black hole with a cross-tenant leak: nothing ever reads access_requests, any Admin of any org can read every tenant's requests, anon can insert unbounded rows, and the client shows "Request Sent" even on a 404/409
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/signup/page.tsx:83-100`, `app/signup/page.tsx:236-241`, `app/api/auth/request-access/route.ts:1-64`, `supabase/migrations/20260819_orphan_tables_backfill.sql:15-30`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. All four sub-claims hold. Note an extra defect the finding did not name: the migration's table has no org_id column while the route inserts `org_id` (route.ts:47), so on a from-migrations rebuild the insert 500s — and the client still shows "Request Sent" because res.ok is never checked.
@@ -200,10 +226,32 @@ Separately, the UI offers no other revocation: the page renders `m.status` (line
 
 **Done when.**
 
-- [ ] `access_requests_admin_select` correlates the row to the caller's org (`is_org_admin(access_requests.org_id)`), and the table has an `org_id` column in the migration
-- [ ] An admin surface lists pending access requests and an approve action creates the member, or the Request Access mode is removed from /signup
-- [ ] `handleRequestAccess` checks `res.ok` and surfaces the route's error text
-- [ ] The route is rate-limited like /api/auth/signup, and the direct anon INSERT policy is removed in favour of service-role-only writes
+- [x] `access_requests_admin_select` correlates the row to the caller's org (`is_org_admin(access_requests.org_id)`), and the table has an `org_id` column in the migration
+- [x] An admin surface lists pending access requests and an approve action creates the member, or the Request Access mode is removed from /signup
+- [x] `handleRequestAccess` checks `res.ok` and surfaces the route's error text
+- [x] The route is rate-limited like /api/auth/signup, and the direct anon INSERT policy is removed in favour of service-role-only writes
+
+**Resolution (2026-10-02, admin-and-org Round G).** A record-only close, by pointer to:
+- roles-and-permissions `EGRESS-5`: all four `DEC-19` deliverables, commit `44711ca`, plus its 2026-08-24 completion round;
+- identity-and-session `IDENT-6`: commit `c111433`, the page half.
+
+Migration `20261023_access_requests_scope_and_limit.sql` was applied and verified live on 2026-08-24 and is marked LIVE in the paste guide. No code changed in this package. New pins: the ORG-3 block of `lib/__tests__/aoRoundGP0Records.test.ts` (commit `447bb8b`). Each item below was verified on base `f1ac550`.
+
+**Done-when.**
+- ✓ 1. `access_requests_admin_select` correlates the row to the caller's org (`20261023:26-36`): `m.org_id = access_requests.org_id AND m.uid = auth.uid() AND m.status = 'active' AND (m.role = 'Admin' OR m.roles && ARRAY['Admin']::text[])`. This is the inline, additive-roles form of `is_org_admin(access_requests.org_id)`.
+  - The migration adds `org_id uuid REFERENCES orgs(id)` (`:17`) and backfills it by org name. A row with no match stays NULL and is visible to no one.
+  - A census of every policy on the table, over `schema.sql` then the numbered migrations in order, leaves exactly this one. Pin: "done-when 1 / 4: one SELECT policy, correlated on the row's org and additive-roles aware; no INSERT policy survives".
+- ✓ 2. `/admin/users` lists the org's pending requests to Admins (`users/page.tsx:136-146` reads them; the card starts at `:373`).
+  - "Add" pre-fills the member form. `/api/admin/create-user` then marks the matching org-and-email rows `approved` (`app/api/admin/create-user/route.ts:38-46`, called at `:273` and `:351`).
+  - "Decline" goes through `/api/admin/access-requests`, which checks against the org the stored request names (`accessRequestDecline.test.ts`).
+- ✓ 3. `handleRequestAccess` checks `res.ok` and throws the route's `error` text into the page's alert before it calls `setRequestSent(true)` (`app/signup/page.tsx:102-106`; `IDENT-6`). Pin: "done-when 3: handleRequestAccess reads res.ok before it shows the success screen".
+- ✓ 4. The route shares signup's per-IP `signup_attempts` window of 8 per hour (`app/api/auth/request-access/route.ts:10`, `:18-28`, `:38-43`; signup's `SIGNUP_MAX_PER_HOUR = 8` is at `app/api/auth/signup/route.ts:11`). It records an attempt before the org lookup (`:57`).
+  - The anonymous `WITH CHECK (true)` insert policy is dropped (`20261023:43`) and no migration re-creates one, so the only writer is the service-role route (`:103`).
+  - Pins: `requestAccessRoute.test.ts` (429 before any org read or insert; an attempt recorded), and the census pin above.
+
+**Scope / residual.** None for this finding. `ORG-8` (OPEN, admin-and-org P5) holds the org-name oracle (404 versus 200) and the limiter's fail-open on a missing table (`route.ts:26`).
+
+Seen in passing and not opened: the pending-requests read does not check `{ error }` (`users/page.tsx:139-145`), so a failed read shows no card at all. That is a quiet-empty display, outside this finding's criteria. It is left for the integrator to triage.
 
 ---
 
@@ -311,6 +359,30 @@ schema.sql:1031-1034 — `CREATE OR REPLACE FUNCTION my_org_ids() RETURNS SETOF 
 
 - [ ] `my_org_ids`, `my_team_ids`, `is_org_admin`, `is_org_controller`, `is_org_admin_or_manager`, `node_visible`, `acl_subject_in_bucket`, `doc_is_visible`, `my_project_ids`, `can_manage_node`, `is_org_assign_drafters` and `next_ticket_number` all carry `SET search_path = public`
 - [ ] A CI or schema-health check fails on any SECURITY DEFINER function without a search_path pin
+
+**Partial (2026-10-02, admin-and-org Round G, P0).** Reproduced against base `f1ac550` (DEC-29) with an order-aware census. It takes the final definition of each `(name, arity)` over `schema.sql` and then every numbered migration, and applies static ALTERs and `20261020`'s ALTER list in sequence. The resolving finding is roles-and-permissions `DB-6` (commit `2af2ebe`). Eleven of the twelve helpers are pinned live, and done-when 2 holds as of this package. The twelfth helper is not pinned, so the status stays OPEN.
+
+- **Done-when 1 holds for the eleven SECURITY DEFINER helpers.**
+  - Pinned at creation: `my_team_ids()` (`20261042`), `is_org_admin(uuid)` and `can_manage_node(jsonb, uuid)` (`20261046`), `node_visible(text, jsonb, uuid)` and `doc_is_visible(uuid)` (`20261037`), the six-argument `node_visible` (`20261041`), and `next_ticket_number` (`20260724`).
+  - Pinned by `20261020`'s ALTER, over a final definition that precedes it: `my_org_ids()` (`schema.sql`), `my_project_ids()` (`20260813`), `is_org_controller(uuid)` (`20260814`), `is_org_admin_or_manager(uuid)` (`20260817`) and `is_org_assign_drafters(uuid)` (`20260818`).
+  - All of these files are LIVE. `20261020` was applied and verified live on 2026-08-24 ("zero SECURITY DEFINER functions in public without a pinned search_path"), and each later re-creation above is a LIVE file that pins at creation.
+- **Done-when 1 does not hold for the twelfth.** `acl_subject_in_bucket(jsonb, text, text, text[])` carries no `SET search_path` (`20260708_acl_rls_enforcement.sql:21-39`, `RETURNS boolean LANGUAGE sql STABLE AS $$`).
+  - It is not SECURITY DEFINER, so neither `20261020` nor the lint ever covered it.
+  - It reads only its own arguments, so there is no relation to shadow. Its only callers are `node_visible` (`20261037:83`; `20261041:80`, `:83`), whose own pin is in force while it runs. So this is the letter of the criterion, not an open path.
+  - **Owner: admin-and-org P8.** The fix is one line, `ALTER FUNCTION acl_subject_in_bucket(jsonb, text, text, text[]) SET search_path = public;`, in its ORG-13 migration (the same family: ORG-13 changes `node_visible`'s team read). That migration is not written yet, so there is nothing to paste.
+  - Tripwire: `lib/__tests__/searchPathPin.test.ts`, `it.fails` "acl_subject_in_bucket carries SET search_path = public (ORG-6 residual, owner A&O P8)". P8 flips it to `it` when the pin lands.
+- **Done-when 2 holds, as of this package.** `lib/__tests__/searchPathPin.test.ts` replays the sequence and fails on any unpinned live definer.
+  - The gap: its exemption for `20261020`'s list ignored order, but `CREATE OR REPLACE` resets `SET search_path`. Re-creating any of the eight functions that `20261020` alone pins, without the clause, passed the lint while the live function lost its pin.
+  - Reproduced: a temporary `supabase/migrations/20991231_zz_repro_unpinned.sql` that re-creates `is_org_controller(uuid)` as SECURITY DEFINER with no SET left `searchPathPin.test.ts` green (4 of 4).
+  - The change: the exemption now covers only a final definition that precedes `20261020` (`unpinnedDefiners`), a static `ALTER FUNCTION … SET search_path` counts as a pin, and three self-checks pin the rule with synthetic re-creations.
+  - The same temporary file now fails the lint, naming `is_org_controller/1 … re-created after 20261020, so its ALTER pin was reset`. The file was then deleted.
+  - On base `f1ac550` the order-aware census finds no unpinned live definer among 127.
+
+**Done-when.**
+1. ✗ for one of twelve: `acl_subject_in_bucket`. It is a SECURITY INVOKER helper with no relation reference, reached only under `node_visible`'s pin (owner P8). The eleven SECURITY DEFINER helpers ✓.
+2. ✓ the lint is order-aware and ALTER-aware, and fails on every unpinned live definer.
+
+**Scope / residual.** One `ALTER FUNCTION` line (P8). Test-only change here: `lib/__tests__/searchPathPin.test.ts` (commit `447bb8b`). No migration.
 
 ---
 

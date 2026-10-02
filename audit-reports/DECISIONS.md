@@ -115,6 +115,7 @@ about the system.
 | [DEC-79](#dec-79) | Deleting a document is refused while it carries evidence of a person's act (a confirmed distribution acknowledgment, an acknowledged or waived read-&-understood acknowledgment, a signed review sign-off), by the database for every caller (`20261149`, BEFORE DELETE on `documents`), in one plain sentence saying to archive it instead; unanswered asks and void rows are not evidence; an org delete is not bound. **Awaiting the user's ratification** — it removes a capability that worked before, and nothing is enforced until `20261149` is pasted | medium | `DRLS-14` |
 | [DEC-80](#dec-80) | The plant's process topology: the controller tier asserts a flow (anyone else's lands `proposed`, decided by a controller; the database decides, `20261155`); confirmed flows are not yet a reasoning input (`GAP-315`); endpoints are validated, not foreign-keyed, and deleting an asset removes its flows; a dismissal binds the revision it was read from; plus the PFD reader's offer and gate calls (items 4–7) | low | `FLOW-2`, `FLOW-14`, `WIRE-10`, `FLOW-6`, `IEDGE-8`, `PR-12`, `GAP-315` |
 | [DEC-81](#dec-81) | The notification kind registry: one table (`lib/notificationKinds.ts` `KIND_META`) classifies every kind, a build error for an unclassified one; sections are exactly the Sidebar's badged rows (requests / documents / projects), nine kinds deliberately bell-only; what counts as action-required (§2, the PSM obligations deferred); producer-less kinds leave the vocabulary, written-outside-the-union kinds join it; counts computed once in the hook. **§2 and §3 (the bell-only list, the `review_requested` overload) await the user's ratification** | low | `PROD-1`, `TRAIL-2`, `OS-12`, `RT-6`, `TRAIL-5`, `TAX-7`, `NEDGE-13` |
+| [DEC-82](#dec-82) | An unreadable capability policy is reported as unreadable: evaluation keeps the shipped defaults for that call (`WF-1`), strict gates refuse (`SURF-9`), and the policy editor and View-as panel show the failure and offer no Save — *provisional number* | low | `ALOG-1`, `WF-1`, `ALOG-12` |
 
 ---
 
@@ -768,6 +769,8 @@ the data model is one table.
 
 **Risk:** low.
 
+*Landed 2026-10-02 (admin-and-org Round G, P0): every Acceptance line was verified on base `f1ac550`, and admin-and-org `ORG-3` is closed by pointer to roles-and-permissions `EGRESS-5` (`20261023`, live) and identity-and-session `IDENT-6`. An Admin reads only their org's requests, and the public route shares signup's per-IP window. A submitted request appears on `/admin/users`; Add approves it, and Decline frees the address. The org-name oracle remains `ORG-8`'s (admin-and-org P5).*
+
 <a id="dec-20"></a>
 ## DEC-20 · What is the revocation model?
 
@@ -800,6 +803,13 @@ member keeps every team-derived ACL grant.
 **Reversal.** None — both paths are required.
 
 **Risk:** high — pair with `OWN-12`.
+
+*Landed 2026-10-02 (admin-and-org Round G, P0): admin-and-org `ORG-2` is closed by pointer to roles-and-permissions `SURF-1` + `OWN-12` (`20261042` + `20261043`, both live). All four Acceptance lines hold on base `f1ac550`:
+- `revoke_member` removes or suspends with a real statement as definer, and every refusal raises.
+- A suspended member leaves `my_org_ids()` and `my_team_ids()`.
+- Removal clears ownership, team supervision, open checkouts, grants and rosters, and audits each scope it clears.
+- The last-admin trigger fires on both paths.
+ACL rules naming a removed person are not pruned. That gap is `ORG-7` (admin-and-org P8). P8 re-creates `revoke_member` starting from `20261043`, its newest definition.*
 
 <a id="dec-21"></a>
 ## DEC-21 · Reviewer independence
@@ -5068,3 +5078,26 @@ dialog to close on one Escape closes its own stack in its handler.
 *Revised 2026-10-01 (notifications Round G, N2 review fix `42d5df8`): §2 defers the plan's PSM-obligation default (a discharged obligation would keep the rail red until its row was clicked); §3 records `review_requested`'s project-scoped producer and the two bell-only kinds beyond the plan's list; §5 counts raw insert calls and calls the census a ratchet, not the ban; §6 adds `counts.notifications` and the bell's mark-all rule.*
 
 *Revised 2026-10-01 (notifications Round G, N2 final-review fix `9950e29`): §2 no longer says the registry's rule keeps escalation copies FYI; Risk records that the conflict class's controller copies are actions that are never cleared, handed to `TRAIL-9`'s owner (N4); §3 names all three intake producers of `review_requested` — the quote and submission notices of `app/api/intake/upload/route.ts` beside the folded digest — and states that they now raise the Documents badge.*
+
+<a id="dec-82"></a>
+## DEC-82 · An unreadable capability policy is never shown, or saved over, as the org's policy
+
+*Minted by admin-and-org Round G, package P0 (2026-10-02), under the protocol's fail-safe rule. It reconciles two done-whens that pull apart: roles-and-permissions `WF-1` done-when 2 (a read error returns the shipped defaults for that call, uncached) and admin-and-org `ALOG-1` done-when 2 (an unreadable policy is distinguishable from an unset one). Provisional number; the integrator renumbers it on a collision. References: `ALOG-1`, `WF-1`, `SURF-9`, `WF-20`, `ALOG-12`.*
+
+**Decision. The loader reports a failed read as a failed read. What happens next depends on what the caller is for.**
+
+1. **The loader.** `loadCapabilityPolicyEntry` marks a PostgREST error or a throw as a read failure (for example, a flag and the error text). That entry is distinct from "nothing stored" (`version: null`, no flag). It is never cached, as now.
+2. **Evaluation keeps WF-1's rule.** A workflow action evaluated after a failed read uses the shipped defaults for that call, so a transient failure never blocks the drafting flow. Its audit row says the policy was unreadable, not a null version that reads as "no policy stored".
+3. **Strict gates stay strict.** The admin gate, transmittal issue and AI caps keep `loadCapabilityPolicyStrict`, which refuses on a failed read (`SURF-9` / `WF-20`).
+4. **Presenting surfaces show the failure.** `CapabilityPolicyEditor` and `ViewAsSimulator` present the policy as the org's own. On a failed read they say they could not read the org's policy, and offer no Save and no grant.
+
+**Rationale.** WF-1's reason holds: the defaults reproduce the historical hardcoded behaviour, and blocking every ticket action on a transient read error is the wrong failure. ALOG-1's reason holds too: an admin who is shown the defaults as their policy can save them and erase the org's stored narrowing without seeing it. A marker on the entry satisfies both, because only the surfaces that present the policy change.
+
+**Acceptance.**
+- An errored read and a read with no row return different entries.
+- The editor and the View-as panel render the unreadable state, with no Save and no grant.
+- A workflow action after an errored read is decided on the defaults, and its audit row says the policy was unreadable.
+
+**Reversal.** Drop the marker; the loader then answers `{}` for both cases, as it does on `f1ac550`.
+
+**Risk:** low. No decision changes. Two console surfaces show an error state on a failed read instead of the defaults. Owner of the build: admin-and-org P9, which owns both components.

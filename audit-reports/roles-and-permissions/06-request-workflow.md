@@ -77,6 +77,8 @@ which are currently masked. Read those three before shipping this.
 4. `org_configurations` is covered by `lib/schemaExpectations.ts` so
    `/api/admin/schema-health` catches this class of drift.
 
+*Cross-area note (2026-10-02, admin-and-org Round G, P0): admin-and-org `ALOG-1` closes its done-when 1 and 3 on this record. Its done-when 2 asks for more than this record's done-when 2: a failed read must be distinguishable from an unset policy, not only left uncached. `DEC-82` reconciles the two: this record's rule (defaults for that call, never cached) stands for evaluation, and the loader also reports the failure. Owner: admin-and-org P9.*
+
 ---
 
 ## WF-2 · `tickets` RLS is `FOR ALL USING (org membership)` — any member can PATCH any ticket's status
@@ -836,6 +838,8 @@ whenever the stored list had the opaque rule first — is refused as a change,
 because first-match precedence between two rules that can both match one
 resource genuinely changed; that ordering is the editor's, pre-existing, and
 not touched here.
+
+*Cross-area note (2026-10-02, admin-and-org Round G, P0): admin-and-org `ALOG-12` done-when 2 (`before` read at write time) and done-when 3 (a grant or revoke never republishes the caps grid) hold on this route, and two new pins in `lib/__tests__/aoRoundGP0Records.test.ts` cover them. Its done-when 1 does not hold: a grid save built from an editor snapshot older than the stored row is still applied, because the route's compare-and-set uses the stamp it read in the same request. ALOG-12 stays OPEN with admin-and-org P9.*
 
 ---
 
