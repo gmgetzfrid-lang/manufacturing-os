@@ -48,7 +48,7 @@ import { chunkPageText, splitPageIntoSections, ensurePdfPolyfills, CAPTION_RE,
   hasCarriedMarker, chunkerVersionOf, CHUNKER_LEGACY, CHUNKER_TABLE_AWARE, type ChunkerVersion, type PdfTextItem,
 } from "@/lib/knowledgeText";
 import {
-  isDrawingLikePage, extractEquipmentTags, extractDrawingRefs, extractTitleBlock,
+  isDrawingLikePage, extractEquipmentTags, extractDrawingRefs, extractTitleBlock, extractLineNumbers,
   parseOpcBoxes, pageNeedsVision, TEXTLESS_PAGE_MAX_CHARS, MIN_TAGS_THIN_PAGE,
 } from "@/lib/drawingText";
 import { transcribePageImage } from "@/lib/knowledgeVision";
@@ -61,6 +61,47 @@ import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
 export const PAGE_BATCH = 50;
 
 const clamp01 = (n: number): number => Math.min(1, Math.max(0, n));
+
+/** DWG-3: a text-layer position is stored as pdf.js's own point on the page
+ *  AS DRAWN — viewport.convertToViewportPoint applies /Rotate, the CropBox
+ *  origin and /UserUnit — over the drawn page's size, 0..1 from the left and
+ *  from the top, under this pos_source. Rows written before it carry 'text':
+ *  the unrotated point over the rotated viewport, which the viewer maps
+ *  through the same transform (textMarkPosition, lib/drawingLocate.ts) — so
+ *  the two encodings are told apart by their pos_source, and never rotated
+ *  twice. */
+export const TEXT_VIEWPORT_POS = "viewport";
+
+/** A fraction of the drawn page, or null when the point is off it (a glyph
+ *  the CropBox cuts away). Off-page is a fact about the glyph, never a value
+ *  to pin to an edge; only float noise at the edge is folded in. */
+const onPage = (v: number): number | null => (v >= -1e-6 && v <= 1 + 1e-6 ? clamp01(v) : null);
+
+/** DWG-8: a connector's evidence line — what the reference audit reads its
+ *  destination from — is stored whole up to this many characters. A
+ *  connector line runs to a couple of hundred (box, direction, service,
+ *  destination equipment, drawing and sheet); the old 160-character cut
+ *  took the drawing number off the end of a long one. */
+export const OPC_EVIDENCE_MAX = 400;
+/** …and, of a longer line, how much before its box token the window keeps. */
+const OPC_EVIDENCE_LEAD = 160;
+
+/** The evidence stored for connector `box` found on `line`. A line within
+ *  OPC_EVIDENCE_MAX is stored whole. A longer one is a text layer with no
+ *  line breaks — a whole sheet run together — so the window is taken around
+ *  THIS box's token: its destination survives, and the sheet's first
+ *  numbers (a title block, another connector) no longer stand in for it. A
+ *  window still at the cap may have been cut, which the audit records as
+ *  unknown, never broken (OPC_RAW_STORED_MAX in lib/drawingText.ts). */
+export function opcEvidence(line: string, box: string): string {
+  if (line.length <= OPC_EVIDENCE_MAX) return line;
+  const digits = box.replace(/\D/g, "");
+  const at = digits ? line.search(new RegExp(String.raw`\bOPC[\s#.:-]*0*${digits}\b`, "i")) : -1;
+  let start = Math.max(0, Math.min(Math.max(0, at) - OPC_EVIDENCE_LEAD, line.length - OPC_EVIDENCE_MAX));
+  const c = line.charCodeAt(start);
+  if (c >= 0xdc00 && c <= 0xdfff) start++;               // never open on half a surrogate pair
+  return truncateSafe(line.slice(start), OPC_EVIDENCE_MAX);
+}
 
 /** Vision transcription context. Present only on the user-driven ingest
  *  path: transcription spends the TRIGGERING user's own key, so a
@@ -1494,17 +1535,33 @@ export async function ingestKnowledgeDocBatch(
               nx: null, ny: null, pos_source: null,
             });
           }
+          // DWG-2: a pipe line number is kept as what it is — a line, never
+          // equipment (extractEquipmentTags refuses it by the same grammar).
+          for (const ln of extractLineNumbers(line)) {
+            entities.push({
+              org_id: cur.org_id, library_id: cur.library_id, document_id: cur.id,
+              page: p, kind: "line", tag: ln, raw: truncateSafe(line, 160), x: null, y: null,
+              nx: null, ny: null, pos_source: null,
+            });
+          }
         }
       } else if (isDrawingLikePage(pageText)) {
         // Normalized position rides along with every hit: PDF user space has
         // its origin at the BOTTOM-left and is sized in points, neither of
         // which a browser overlay can use. 0..1 from the top-left survives any
         // zoom or render width, so "show me V-3" can point straight at it.
+        // DWG-3: through pdf.js's own transform onto the page as drawn —
+        // /Rotate, the CropBox origin and /UserUnit included — so a rotated
+        // or cropped sheet's marks land where the glyphs are (they used to
+        // be divided by the rotated viewport and pinned to an edge).
         const view = page.getViewport({ scale: 1 });
-        const norm = (x: number | null, y: number | null) =>
-          x === null || y === null || !view.width || !view.height
-            ? { nx: null, ny: null }
-            : { nx: clamp01(x / view.width), ny: clamp01(1 - y / view.height) };
+        const norm = (x: number | null, y: number | null): { nx: number | null; ny: number | null } => {
+          if (x === null || y === null || !view.width || !view.height) return { nx: null, ny: null };
+          const [px, py] = view.convertToViewportPoint(x, y);
+          const nx = onPage(px / view.width);
+          const ny = onPage(py / view.height);
+          return nx === null || ny === null ? { nx: null, ny: null } : { nx, ny };
+        };
         for (const item of content.items as TextItem[]) {
           const str = (item.str ?? "").trim();
           if (str.length < 2) continue;
@@ -1515,14 +1572,21 @@ export async function ingestKnowledgeDocBatch(
             entities.push({
               org_id: cur.org_id, library_id: cur.library_id, document_id: cur.id,
               page: p, kind: "equipment", tag: hit.tag, raw: truncateSafe(str, 160), x, y,
-              nx, ny, pos_source: nx === null ? null : "text",
+              nx, ny, pos_source: nx === null ? null : TEXT_VIEWPORT_POS,
             });
           }
           for (const ref of extractDrawingRefs(str)) {
             entities.push({
               org_id: cur.org_id, library_id: cur.library_id, document_id: cur.id,
               page: p, kind: "ref", tag: ref, raw: truncateSafe(str, 160), x, y,
-              nx, ny, pos_source: nx === null ? null : "text",
+              nx, ny, pos_source: nx === null ? null : TEXT_VIEWPORT_POS,
+            });
+          }
+          for (const ln of extractLineNumbers(str)) {
+            entities.push({
+              org_id: cur.org_id, library_id: cur.library_id, document_id: cur.id,
+              page: p, kind: "line", tag: ln, raw: truncateSafe(str, 160), x, y,
+              nx, ny, pos_source: nx === null ? null : TEXT_VIEWPORT_POS,
             });
           }
         }
@@ -1535,12 +1599,14 @@ export async function ingestKnowledgeDocBatch(
       if (visionRead || isDrawingLikePage(pageText)) {
         // Off-page connector BOX NUMBERS — the small numbered box at the page
         // edge that pairs with the same number on the continuation sheet. The
-        // raw line keeps the stream/destination + drawing ref for pairing.
+        // raw line keeps the stream/destination + drawing ref for pairing —
+        // the whole line (DWG-8: opcEvidence), never one cut before its
+        // drawing number.
         for (const line of lines) {
           for (const box of parseOpcBoxes(line)) {
             entities.push({
               org_id: cur.org_id, library_id: cur.library_id, document_id: cur.id,
-              page: p, kind: "opc", tag: box, raw: truncateSafe(line, 160), x: null, y: null,
+              page: p, kind: "opc", tag: box, raw: opcEvidence(line, box), x: null, y: null,
               nx: null, ny: null, pos_source: null,
             });
           }

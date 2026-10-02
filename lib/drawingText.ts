@@ -212,10 +212,9 @@ export function extractEquipmentTags(text: string): EquipmentTagHit[] {
  *  grammar extractEquipmentTags uses to keep them OUT of the equipment
  *  count, so the two can never disagree about what a line number is.
  *
- *  Not yet written to the index: storing them as their own entity kind
- *  ('line' — "which line feeds V-3") is a call in lib/knowledgeIngest.ts,
- *  the ingest owner's file, handed over with DWG-2. Until then a line
- *  number is simply never equipment. */
+ *  Ingest stores each as its own entity kind, 'line' (lib/knowledgeIngest.ts,
+ *  DWG-2), beside the equipment tags of the same line or text item — never
+ *  counted by a census (TAG_ENTITY_KINDS leaves it out). */
 export function extractLineNumbers(text: string): string[] {
   const out = new Set<string>();
   const upper = text.toUpperCase();
@@ -515,10 +514,12 @@ export const OPC_NO_DRAWING = "NONE";
 /** Written in place of the drawing number when the connector shows only a
  *  sheet: it continues on another sheet of this same drawing. */
 export const OPC_SAME_DRAWING = "SAME";
-/** Ingest stores a connector's evidence line cut to this many characters
- *  (lib/knowledgeIngest.ts, truncateSafe(line, 160) — pinned by a test). A
- *  stored line this long may have been cut: its missing drawing number is
- *  UNKNOWN, never evidence of a broken connector. */
+/** Ingest stored a connector's evidence line cut to this many characters
+ *  (truncateSafe(line, 160)) until intelligence Round G I-06b; it now stores
+ *  the line whole up to OPC_EVIDENCE_MAX, or a window of that size around the
+ *  box (opcEvidence in lib/knowledgeIngest.ts — pinned by a test). Either
+ *  way a stored line this long may have been cut: its missing drawing number
+ *  is UNKNOWN, never evidence of a broken connector. */
 export const OPC_RAW_STORED_MAX = 160;
 
 const OPC_BOX_RE = /\bOPC[\s#.:-]*(\d{1,4})\b/g;

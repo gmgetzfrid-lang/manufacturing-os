@@ -348,8 +348,12 @@ export default function CitedPageViewer({
     }
   };
 
-  // Where each mark is drawn. A text-layer position is mapped through the
-  // page's own geometry; one that cannot be placed honestly is not drawn.
+  // Where each mark is drawn. A text-layer position stored the old way
+  // ('text': the unrotated point over the rotated viewport) is mapped through
+  // the page's own geometry; one that cannot be placed honestly is not drawn.
+  // One stored since DWG-3's ingest half ('viewport') is already pdf.js's own
+  // point on the page as drawn, and an AI estimate ('vision') is drawn where
+  // it was put — neither is mapped again.
   const placed = useMemo(() => {
     const out: Array<Mark & { x: number; y: number }> = [];
     let unplaced = 0;
@@ -565,7 +569,9 @@ export default function CitedPageViewer({
                     marks get a wider swipe and a dashed tolerance box —
                     honest about being approximate without being a blob. */}
                 {placed.marks.map((m) => {
-                  const approx = m.source !== "text";
+                  // Only a model's point is approximate; a text-layer mark
+                  // ('text' or 'viewport') is read from the PDF itself.
+                  const approx = m.source === "vision";
                   return (
                     <div key={m.tag}
                       className="absolute pointer-events-none -translate-x-1/2 -translate-y-1/2"

@@ -1805,9 +1805,11 @@ export interface TagPosition {
   /** 0..1 from the left edge / from the TOP edge. */
   nx: number;
   ny: number;
-  /** "text" = exact, from the PDF's coordinates. "vision" = the model
-   *  looked at the page and pointed — close, not surveyed. */
-  source: "text" | "vision";
+  /** "text" = exact, from the PDF's coordinates, stored before DWG-3's
+   *  ingest half (the viewer maps it through the page's rotation and crop);
+   *  "viewport" = exact, already on the page as drawn (DWG-3); "vision" =
+   *  the model looked at the page and pointed — close, not surveyed. */
+  source: "text" | "viewport" | "vision";
 }
 
 /** A tag that isn't on the open page, with where it actually lives — the
