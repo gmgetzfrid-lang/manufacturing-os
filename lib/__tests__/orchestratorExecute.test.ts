@@ -581,7 +581,11 @@ describe("ORCH-1 / PR-1 — authority at execute: the controller tier for the au
     const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     await expect(emit(ev)).resolves.toBeUndefined();
     warned.mockRestore();
-    expect(net.anon).toEqual(expect.arrayContaining([{ table: "notifications", kind: "insert" }, { table: "org_members", kind: "select" }]));
+    // Since notifications N5 (NEDGE-3) the dispatcher limits recipients to
+    // ACTIVE members first; the anon client's membership read sees nobody,
+    // so it stops before any insert — still nothing delivered.
+    expect(net.anon).toEqual(expect.arrayContaining([{ table: "org_members", kind: "select" }]));
+    expect(net.anon).not.toContainEqual({ table: "notifications", kind: "insert" });
     expect(rowsOf("notifications")).toHaveLength(0);
     expect(rowsOf("email_notifications")).toHaveLength(0);
     // The same call inside the request-scoped binding reaches the database.

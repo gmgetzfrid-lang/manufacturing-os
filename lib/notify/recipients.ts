@@ -10,6 +10,14 @@
 //
 // This finally powers the fan-out the subscriptions table was built for — the
 // `listFollowerIds` that was previously dead.
+//
+// Membership (NEDGE-3, notifications Round G N5): only an ACTIVE member of
+// the event's org is a recipient. The role pool always asked for status =
+// 'active'; the follow stores and the project roster did not, so a suspended
+// member, a restore's 'inactive' placeholder or a removed member kept every
+// watch. dispatch.ts resolveRecipients filters the final set once, centrally
+// (activeMembersOf); resolveFollowers applies the same filter itself as a
+// defence in depth, for any caller that reads followers directly.
 
 import { supabase } from "@/lib/supabase";
 
@@ -19,8 +27,39 @@ export interface ResourceRef {
   id: string;
 }
 
-/** Everyone following a resource: generic subscriptions ∪ (tickets) watchers. */
-export async function resolveFollowers(resource: ResourceRef): Promise<string[]> {
+/** How many uids one membership read carries (a long `in.(…)` list is a
+ *  long URL; the DIST-15 precedent chunks it). */
+const MEMBERSHIP_CHUNK = 150;
+
+/** The subset of `uids` that are ACTIVE members of `orgId`, in input order
+ *  (NEDGE-3). Not a member of the org, suspended, invited or inactive: out.
+ *  A read that FAILS keeps the input unchanged and logs: a transient error
+ *  must never silently drop a compliance notice, and the database refuses a
+ *  browser's row for a non-member anyway (20261160) while the read policy
+ *  hides it from one (20261161). */
+export async function activeMembersOf(orgId: string, uids: string[]): Promise<string[]> {
+  const want = Array.from(new Set(uids.filter(Boolean)));
+  if (!orgId || want.length === 0) return [];
+  const active = new Set<string>();
+  for (let i = 0; i < want.length; i += MEMBERSHIP_CHUNK) {
+    const { data, error } = await supabase
+      .from("org_members")
+      .select("uid")
+      .eq("org_id", orgId)
+      .eq("status", "active")
+      .in("uid", want.slice(i, i + MEMBERSHIP_CHUNK));
+    if (error) {
+      console.warn("[notify] active-membership read failed — recipients not filtered", error.message);
+      return want;
+    }
+    ((data as Array<{ uid: string }> | null) ?? []).forEach((m) => active.add(m.uid));
+  }
+  return want.filter((u) => active.has(u));
+}
+
+/** Everyone following a resource: generic subscriptions ∪ (tickets) watchers,
+ *  limited to active members of `orgId`. */
+export async function resolveFollowers(resource: ResourceRef, orgId: string): Promise<string[]> {
   const ids = new Set<string>();
 
   const { data: subs } = await supabase
@@ -41,7 +80,7 @@ export async function resolveFollowers(resource: ResourceRef): Promise<string[]>
     ((t?.watchers as string[] | null) ?? []).forEach((u) => ids.add(u));
   }
 
-  return Array.from(ids);
+  return activeMembersOf(orgId, Array.from(ids));
 }
 
 /** Active org members whose role — headline OR additive collection — is in `roles`. */
