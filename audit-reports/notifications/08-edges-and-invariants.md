@@ -190,6 +190,8 @@ admin/restore/begin/route.ts:68  `      status: "inactive", display_name: u.disp
 - [ ] emailsFor adds `.eq("status", "active")`
 - [ ] A test covers: suspended watcher gets neither bell nor email; active watcher gets both; and a post-restore all-inactive org is caught by an explicit assertion or a restore-completion step that reactivates members
 
+*Cross-note (2026-10-01, admin-and-org Round G, P3).* One location above is gone: `app/api/admin/restore/apply/route.ts:64`. The single-shot restore route had no caller, and admin-and-org P3 deleted it under intelligence `ILIFE-4`. The one restore door is `/api/admin/restore/begin` plus `/api/admin/restore/apply-table` (`lib/dataRestore.ts applyRestoreChunk`). `/begin` (`app/api/admin/restore/begin/route.ts`) is the only place left that inserts placeholder members as `status: "inactive"`, so this finding's restore chain reaction runs through it alone. The finding itself is unchanged and stays OPEN.
+
 ---
 
 <a id="nedge-4"></a>

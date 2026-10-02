@@ -5054,7 +5054,7 @@ dialog to close on one Escape closes its own stack in its handler.
 
 **Decision. Five calls about the full-workspace export.**
 
-1. **Admin-only, through the one gate.** The data-export admin surface (`lib/adminSurfaces.ts`) carries the restore surface's set, `["Admin"]`. Every `/api/data-export` route asks `lib/adminGate.ts authorizeAdminSurface(req, orgId, "data-export")`, and none keeps a role list of its own. That covers exporting, the run history, and creating, editing, testing or deleting a destination. An Admin is in the controller tier, so the service role's reads (every ACL-restricted document) hand the exporter nothing the app would not (`DEC-43`).
+1. **Admin-only, through the one gate.** The data-export admin surface (`lib/adminSurfaces.ts`) carries the restore surface's set, `["Admin"]`. Every `/api/data-export` route asks `lib/adminGate.ts authorizeAdminSurface(req, orgId, "data-export")`, and none keeps a role list of its own. That covers exporting, the run history, and creating, editing, testing or deleting a destination. An Admin is in the controller tier, so the service role's reads (every ACL-restricted document) hand the exporter nothing the app would not (`DEC-43`). A scheduled push runs only while the member who last confirmed its destination still holds that entry role, read by the full collection (third review fix pass). A destination a Manager or DocCtrl set up before the surface was Admin-only is skipped and recorded, never disabled, until an Admin saves it again.
 2. **A machine's audit row** (the convention the scheduled push uses now and admin-and-org P4's Stripe webhook takes):
    - `user_id` is NULL, never a string and never an invented uuid in the uuid column;
    - `user_email` is the machine's label, `system:<channel>` (`system:scheduled-export`; P4: `system:stripe-webhook`);
@@ -5062,16 +5062,18 @@ dialog to close on one Escape closes its own stack in its handler.
    - `details` names the channel and any person whose configuration the machine acted on (`configuredBy`), never as the actor.
 
    The write is CHECKED like any other audit row. A row that cannot be written is surfaced (the scheduled export fails its run), never dropped.
-3. **The record names every file that left.** An export writes its `DATA_EXPORT` row: the actor, the role, the channel, how many download links were minted, and `fileRecord { mode, count, sha256, recordId }`, where `sha256` is the SHA-256 of the sorted path list. The write is checked. What follows depends on where the export went (second review fix pass).
-   - **Handed to a person** (the JSON download, the browser Full ZIP's envelope, the manual ZIP) **or pushed to a webhook** (an external URL, whose archive is on someone else's server): `DATA_EXPORT_FILES` rows name every file, 500 to a row, with the document and revision for a revision's file, on every run (`mode: "list"`).
-   - **Pushed to a bucket destination** (scheduled, or "Run Now"): the files are named against that destination's last recorded full list, its baseline.
-     - The first push, or one whose change from the baseline would pass one row, or one that cannot read the baseline back whole and matching its digest, writes a new baseline: `DATA_EXPORT_FILES` rows of kind `baseline`, every file, with the destination and the list's digest.
+3. **The record names every file that left.** An export writes its `DATA_EXPORT` row: the actor, the role the surface admitted them by (the first of its entry roles they hold, so an Admin whose headline is Viewer is recorded as Admin; third review fix pass), the channel, how many download links were minted, and `fileRecord { mode, count, sha256, recordId }`, where `sha256` is the SHA-256 of the sorted path list. The write is checked. What follows depends on where the export went (second and third review fix passes).
+   - **Handed to a person** (the JSON download, the browser Full ZIP's envelope, the manual ZIP): `DATA_EXPORT_FILES` rows name every file, 500 to a row, with the document and revision for a revision's file, on every run (`mode: "list"`). These rows stay the workspace's (`resource_type` `org`).
+   - **Pushed to a destination** (a bucket or a webhook, scheduled or "Run Now"): the files are named against that destination's last recorded full list, its baseline.
+     - The first push writes a new baseline. So does a push whose change from the baseline would pass one row, and one that cannot read the baseline back whole and matching its digest. A baseline is `DATA_EXPORT_FILES` rows of kind `baseline`: every file, with the destination and the list's digest.
      - Any other push writes ONE `delta` row, naming the files added (with document and revision) and the paths removed, or no row when nothing changed.
      - The night's list is the baseline plus its delta, and it hashes to that night's `sha256`.
+     - These rows are the destination's: `resource_type` `export_destination`, `resource_id` its id. The next push finds its baseline through the resource-timeline index, newest first, and selects only that row's small fields.
 
-     `audit_logs` is itself exported, so a full list on every nightly push would grow every later backup without bound. After its baseline, a quiet destination adds one audit row a night.
+     `audit_logs` is itself exported and read whole by every later export, so a full list on every nightly push would grow every later backup without bound. After its baseline, a destination adds at most one audit row a night.
+   - **Each row's list is compact**: paths relative to the workspace's storage prefix, each document once, and a parallel reference keyed by revision (`[docIndex, versionId]`). About 150 bytes a file, where an object per file took about 250.
 
-   The first review fix pass recorded every destination push by count and digest alone. That was withdrawn: a digest can confirm a list but cannot rebuild one. Every write is checked, and an export that cannot be recorded is refused before anything leaves. It is a bulk `audit_logs` record; `download_audits` stays the member's own pull record (`DEC-44` §1).
+   The first review fix pass recorded every destination push by count and digest alone. That was withdrawn: a digest can confirm a list but cannot rebuild one. The second gave a webhook push the full list on every run, because its archive sits on someone else's server. The third withdrew that too. A night's list is rebuilt from the audit rows, not from the archive, so the destination's kind makes no difference, and the full list grew every later backup without bound. Every write is checked, and an export that cannot be recorded is refused before anything leaves. It is a bulk `audit_logs` record; `download_audits` stays the member's own pull record (`DEC-44` §1).
 4. **Standalone notes are carried, as before this package, until the user decides.** A standalone note (no document, project or asset) is its author's private scratchpad (`notes_standalone_own`), and the dump runs as the service role.
    - **The first two passes withheld them.** That made every backup, scheduled disaster-recovery pushes included, lose every member's notes on restore. It broke the brief's binding regression rule, and it took the data-losing side of an open decision as the default.
    - **The second review fix pass carries them** (the pre-P3 behaviour, so a restore brings them back) and counts them. The manifest notes "N private note(s) … are in this backup, so restoring it brings them back. Keep the archive as private as those notes.", and the `DATA_EXPORT` row records `details.privateNotes.carried`.
@@ -5094,16 +5096,18 @@ dialog to close on one Escape closes its own stack in its handler.
 
 **Implementation.**
 - `lib/adminSurfaces.ts`, every route under `app/api/data-export/`, and `app/(protected)/admin/data-export/page.tsx`.
-- `lib/dataExport.ts`: `countPrivateNotes`, `PRIVATE_NOTES_CARRIED`, `recordExport`, `readBucketPushBaseline` and `exportFileListDigest`.
+- `lib/dataExport.ts`: `countPrivateNotes`, `PRIVATE_NOTES_CARRIED`, `recordExport`, `readDestinationBaseline`, `exportFileListDigest`, `CompactFileList` with `fileListEntries` / `fileListRemoved`, and `DESTINATION_FILES_RESOURCE_TYPE`.
 - `lib/exportAlerts.ts` (new).
-- `lib/exportRunner.ts`: `fileRecord` by delivery — a webhook gets `"list"`, a bucket `{ destinationId }`.
+- `lib/exportRunner.ts`: `fileRecord` by delivery. Any destination (a bucket or a webhook) gets `{ destinationId }`; an export handed to a person gets `"list"`.
+- `app/api/data-export/run-scheduled/route.ts`: `configurerRoleRefusal` (§1's confirmation rule). `structured` and `run` record the admitted role (`admittedRole`).
 - Tests: `lib/__tests__/dataExportRoutes.test.ts`, `lib/__tests__/exportContractRoundTrip.test.ts` (standalone notes through export, the server ZIP and restore, all restored) and `lib/__tests__/roundE_D_rolesAdmin.test.ts`.
 
 **Acceptance.**
 - A Manager, DocCtrl or Viewer is refused 403 by every data-export handler, and an Admin is admitted.
 - The scheduled push's `DATA_EXPORT` row has `user_id` NULL, `user_email` `system:scheduled-export` and `user_role` `system`.
 - A refused `DATA_EXPORT` or `DATA_EXPORT_FILES` insert refuses the export.
-- A webhook push names every file on every run. A bucket push writes a baseline naming every file, then one delta row a night (none when nothing changed). The night's list rebuilt from the audit trail hashes to that night's `sha256`.
+- An export handed to a person names every file on every run. A push to a destination, a bucket or a webhook, writes a baseline naming every file, then at most one delta row a night (none when nothing changed). Thirty scheduled nights to a webhook, through the real builder, prove it. The night's list rebuilt from the audit trail hashes to that night's `sha256`.
+- A scheduled push whose destination a non-Admin last confirmed is skipped and recorded until an Admin saves it.
 - Every note is in every export, and a restore brings it back. The manifest and the `DATA_EXPORT` row count the private ones.
 - Every export (the JSON export included), and every destination created, enabled or re-pointed, rings the controllers.
 
@@ -5113,6 +5117,8 @@ dialog to close on one Escape closes its own stack in its handler.
 - Manager and DocCtrl lose the export page, its run history and the storage page's export buttons. The buttons now answer 403; hiding them is admin-and-org P6's.
 - An Admin's export still carries every member's private notes, as before this package. That is §4's open decision.
 - Controllers get one bell per scheduled run.
-- A webhook push writes its full file list every run.
-- A bucket push reads its baseline back from `audit_logs` on every run: two reads filtered on `details->>destinationId` / `details->>recordId`, with no index on them.
+- A destination push reads its baseline back from `audit_logs` on every run. The two reads go through the `(resource_type, resource_id, timestamp DESC)` index. They open only the delta rows newer than the baseline, plus the baseline's own parts.
+- A delta is cumulative against its baseline. A busy destination's nightly row therefore grows until it passes 500 entries, and then a new baseline is written. That is at most one row of up to 500 entries (about 75 KB) a night, plus a baseline each time that happens.
+- A person's export still writes its whole list, compact: a 50,000-file workspace adds about 7.5 MB to `audit_logs` for each one. A person's export is Admin-only and rate-limited (12 an hour).
+- A destination a Manager or DocCtrl configured before this branch stops running until an Admin saves it again. Each night's cancelled run and the card say so, but no bell rings for a skip.
 
