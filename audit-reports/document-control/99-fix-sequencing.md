@@ -240,7 +240,9 @@ in this deploy: it is armed per item only by `TRX-16`'s issue-time mark. The
 *(P22, 2026-10-07: armed — transmittals issued by the app carrying P22 mark
 each PDF the issue-time check found stampable, and the portal refuses such a
 PDF if it then cannot be stamped. Transmittals issued before that deploy
-carry no mark and keep §5's release. No migration.)*
+carry no mark and keep §5's release. No migration. A PDF the check could not
+decide (`unchecked`, or a check that did not run), and any issue made outside
+the app's issue path, still leave unmarked with no recorded yes — `TRX-17`.)*
 
 ⚠ **Paste NOW, independent of wave 2 — `DRLS-16` (CRITICAL).** The live
 11-argument `publish_revision` was never revoked from `anon`, and it reads a

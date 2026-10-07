@@ -969,7 +969,8 @@ export interface DraftStampCheck {
  *  portal cannot stamp one or more PDFs — the issuer decides (fix and
  *  re-issue, or issue anyway with `acceptedUnstampable`). TRX-15: `checked`
  *  carries the whole check, so the issuer's "Issue anyway" (`opts.checked`)
- *  still arms the files it found stampable without checking again. */
+ *  still arms the files it found stampable without checking again — and is
+ *  refused if the draft was saved since that check. */
 export class UnstampableItemsError extends Error {
   readonly code = "unstampable_items" as const;
   constructor(readonly items: ItemStampCheck[], readonly checked: DraftStampCheck | null = null) {
@@ -1067,6 +1068,12 @@ export interface IssueOutcome {
   auditError: string | null;
 }
 
+/** TRX-15: the refusal when the draft was saved after the check the issue
+ *  relies on — the issue never sends, arms or overwrites a draft edit. */
+function draftChangedRefusal(number: string): string {
+  return `${number} was not issued — the draft was changed while it was being issued (saved meanwhile, here or by someone else), and an issue never overwrites a draft edit. Nothing was sent: open the draft, check it and issue again.`;
+}
+
 /** Move a draft → issued. The database authorizes it (transmit authority per
  *  item library), completes the item snapshot, stamps the issue time and
  *  mints the portal link; this returns the row it wrote (TRX-10) or throws
@@ -1083,14 +1090,19 @@ export interface IssueOutcome {
  *
  *  TRX-15 (DEC-61 §5 as amended, ratified DEC-90 A5): the issue ARMS the
  *  portal's download-time refusal — `stampable: true` on each item the check
- *  found stampable (`armCheckedItems`), written in the issue UPDATE itself
- *  and only under an `updated_at` match on the draft as read here, so a
- *  draft edited meanwhile is refused (named), never overwritten. An
- *  issuer-accepted unstampable item, a non-PDF, an unchecked file — and
+ *  found stampable (`armCheckedItems`), written in the issue UPDATE itself.
+ *  An issuer-accepted unstampable item, a non-PDF, an unchecked file — and
  *  every item when the check could not run — carries no mark and keeps
  *  §5's release. On "Issue anyway" (`acceptedUnstampable`) the check the
  *  issuer answered (`opts.checked`, from the error) arms its stampable items
- *  without checking again, if the draft has not changed since it ran. */
+ *  without checking again — and a draft saved since that check is REFUSED
+ *  (named), never issued as a draft the issuer did not see checked.
+ *  Whenever the issue relies on a check (the one it just ran, or the one
+ *  the issuer answered) or writes the items back, the UPDATE carries an
+ *  `updated_at` match on the draft as read here, so a draft edited
+ *  meanwhile is refused (named), never issued or overwritten. Only an issue
+ *  whose check could not run, or a caller with no check to carry, keeps the
+ *  plain UPDATE (P22 review fix). */
 export async function issueTransmittal(
   id: string,
   actor: TransmittalActor,
@@ -1101,7 +1113,7 @@ export async function issueTransmittal(
   if (!draftRow || !draft) throw new Error("That transmittal no longer exists.");
   if (draft.status !== "draft") throw new Error(`${draft.number} is already ${draft.status}.`);
   await assertItemsIssuable(draft.orgId, draft.items);
-  // TRX-15: the draft as read — its marked items are written back only under this.
+  // TRX-15: the draft as read — an issue that relies on a check is bound to it.
   const readAt = typeof draftRow.updated_at === "string" && draftRow.updated_at ? draftRow.updated_at : null;
   const accepted = opts?.acceptedUnstampable ?? null;
   let checks: ItemStampCheck[] | null = null;
@@ -1115,13 +1127,21 @@ export async function issueTransmittal(
     } else {
       checks = check.items;
     }
-  } else if (opts?.checked && readAt && opts.checked.draftUpdatedAt === readAt) {
-    checks = opts.checked.items;
+  } else if (opts?.checked) {
+    // TRX-15 (P22 review fix): "Issue anyway" answers ONE check, of the draft
+    // as it then was. A draft saved since (another item, another recipient)
+    // is not what the issuer saw checked — refused before anything is
+    // written, never issued unchecked and unarmed.
+    if (opts.checked.draftUpdatedAt !== readAt) throw new Error(draftChangedRefusal(draft.number));
+    if (readAt) checks = opts.checked.items;
   }
   opts?.onPhase?.("issuing");
 
   const arming = readAt ? armCheckedItems(draftRow.items, checks) : null;
   const marked = arming !== null && arming.changed;
+  // TRX-15 (P22 review fix): bound to the draft as read whenever a check's
+  // verdict is relied on, not only when a mark is written.
+  const bound = readAt !== null && (marked || checks !== null);
   const now = new Date().toISOString();
   const patch: Record<string, unknown> = { status: "issued", issued_at: now, updated_at: now };
   if (marked) patch.items = arming.items;
@@ -1130,17 +1150,17 @@ export async function issueTransmittal(
     .update(patch)
     .eq("id", id)
     .eq("status", "draft");
-  if (marked && readAt) write = write.eq("updated_at", readAt);
+  if (bound && readAt) write = write.eq("updated_at", readAt);
   const { data, error } = await write
     .select("*")
     .maybeSingle();
   if (error) { if (isMissingTable(error)) throw new Error(MIGRATION_HINT); throw new Error(error.message); }
   if (!data) {
-    if (marked) {
+    if (bound) {
       // TRX-15: tell a draft edited meanwhile apart from the other refusals.
       const latest = await getTransmittalRow(id).catch(() => null);
       if (latest && latest.status === "draft" && latest.updated_at !== readAt) {
-        throw new Error(`${draft.number} was not issued — the draft was changed while it was being issued (saved meanwhile, here or by someone else), and an issue never overwrites a draft edit. Nothing was sent: open the draft, check it and issue again.`);
+        throw new Error(draftChangedRefusal(draft.number));
       }
     }
     throw new Error(`${draft.number} was not issued — it is no longer a draft, or you do not hold transmit authority ("Issue transmittals") for every document on it.`);

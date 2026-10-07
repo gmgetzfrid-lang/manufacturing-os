@@ -13,6 +13,11 @@
 // draft edit is refused and named, never overwritten). An issuer-accepted
 // unstampable item, a non-PDF, an unchecked file — and every item when the
 // check could not run — carries no mark.
+//
+// P22 review fix: "Issue anyway" on a draft saved since the check it answers
+// is REFUSED (named) — never issued unchecked and unarmed — and every issue
+// that relies on a check (the one it ran, or the one the issuer answered) is
+// bound to the draft read, whether or not it writes a mark.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
@@ -249,12 +254,25 @@ describe("TRX-15 (P22, DEC-90 A5) — the issue writes `stampable: true` on each
     expect((lastUpdate().patch.items as Array<Record<string, unknown>>).map((i) => i.stampable)).toEqual([true, true]);
   });
 
-  it("REGRESSION: nothing to mark (every file a non-PDF) → the UPDATE is exactly as before: status / time only, no items, no updated_at match", async () => {
+  it("nothing to mark (every file a non-PDF) → no items written, status / time only — but the UPDATE is still bound to the draft the check ran on (P22 review fix)", async () => {
     stampAnswer = { status: 200, body: { items: [{ documentId: "d1", number: "P-101", verdict: "not_pdf" }, { documentId: "d2", number: "VDS-7", verdict: "not_pdf" }] } };
     await issueTransmittal("t1", actor);
     const { patch, ops } = lastUpdate();
     expect(Object.keys(patch).sort()).toEqual(["issued_at", "status", "updated_at"]);
-    expect(eqs(ops)).toEqual([["id", "t1"], ["status", "draft"]]);
+    expect(eqs(ops)).toEqual([["id", "t1"], ["status", "draft"], ["updated_at", READ_AT]]);
+  });
+
+  it("P22 review fix: a check with nothing to mark, then a draft saved before the UPDATE → REFUSED and named; nothing issued, audited or emailed", async () => {
+    stampAnswer = { status: 200, body: { items: [{ documentId: "d1", number: "P-101", verdict: "not_pdf" }, { documentId: "d2", number: "VDS-7", verdict: "unchecked", detail: "not checked — the check ran out of time" }] } };
+    updateAnswer = { data: null, error: null }; // the updated_at match found no row
+    let reads = 0;
+    db.handlers.transmittals = (ops) => has(ops, "update") ? updateAnswer : { data: ++reads === 1 ? readRow : { ...readRow, updated_at: "2026-10-07T09:15:40.5+00:00" }, error: null };
+    await expect(issueTransmittal("t1", actor)).rejects.toThrow("TR-0107 was not issued — the draft was changed while it was being issued (saved meanwhile, here or by someone else), and an issue never overwrites a draft edit. Nothing was sent: open the draft, check it and issue again.");
+    const { patch, ops } = lastUpdate();
+    expect(patch).not.toHaveProperty("items");
+    expect(eqs(ops)).toContainEqual(["updated_at", READ_AT]);
+    expect(db.audits).toEqual([]);
+    expect(fetchMock.mock.calls.filter(([u]) => u !== "/api/transmittal/stamp-check")).toEqual([]); // no email
   });
 
   it("REGRESSION: a check that cannot run arms nothing — the issue proceeds as before, status / time only", async () => {
@@ -283,11 +301,41 @@ describe("TRX-15 (P22, DEC-90 A5) — the issue writes `stampable: true` on each
     expect(db.audits[0]).toMatchObject({ action: "TRANSMITTAL_ISSUED", details: expect.objectContaining({ unstampableAccepted: [{ documentId: "d2", number: "VDS-7", verdict: "unloadable" }] }) });
   });
 
-  it("Issue anyway on a draft that changed since the check: nothing is armed (the check no longer describes it) — the issue goes ahead as before", async () => {
+  it("P22 review fix: Issue anyway on a draft saved since the check it answers is REFUSED and named — nothing issued, armed, audited or emailed, and no second check", async () => {
+    // the check ran on the draft as it was (U0); a colleague then saved it (U1 = READ_AT) — another item, another recipient
     const checked = { draftUpdatedAt: "2026-10-07T09:00:00+00:00", items: [OK, ENCRYPTED] };
-    await issueTransmittal("t1", actor, { acceptedUnstampable: [ENCRYPTED], checked });
-    const { patch } = lastUpdate();
-    expect(patch).not.toHaveProperty("items");
+    const phases: IssuePhase[] = [];
+    await expect(issueTransmittal("t1", actor, { acceptedUnstampable: [ENCRYPTED], checked, onPhase: (p) => phases.push(p) })).rejects.toThrow("TR-0107 was not issued — the draft was changed while it was being issued (saved meanwhile, here or by someone else), and an issue never overwrites a draft edit. Nothing was sent: open the draft, check it and issue again.");
+    expect(updates()).toEqual([]);
+    expect(db.audits).toEqual([]);
+    expect(fetchMock.mock.calls).toEqual([]); // no stamp check, no email
+    expect(phases).toEqual([]);
+  });
+
+  it("P22 review fix: Issue anyway with nothing to arm (every checked PDF accepted) writes no items but is bound to the draft the issuer answered; a save in between is refused and named", async () => {
+    const checked = { draftUpdatedAt: READ_AT, items: [{ ...ENCRYPTED, documentId: "d1", number: "P-101" }, ENCRYPTED] };
+    const accepted = checked.items;
+    await issueTransmittal("t1", actor, { acceptedUnstampable: accepted, checked });
+    const first = lastUpdate();
+    expect(first.patch).not.toHaveProperty("items");
+    expect(eqs(first.ops)).toEqual([["id", "t1"], ["status", "draft"], ["updated_at", READ_AT]]);
+    expect(db.audits[0]).toMatchObject({ action: "TRANSMITTAL_ISSUED", details: expect.objectContaining({ unstampableAccepted: [{ documentId: "d1", number: "P-101", verdict: "unloadable" }, { documentId: "d2", number: "VDS-7", verdict: "unloadable" }] }) });
+    // the same yes, but the draft is saved between this read and the UPDATE
+    db.calls = []; db.audits = []; fetchMock.mockClear();
+    updateAnswer = { data: null, error: null };
+    let reads = 0;
+    db.handlers.transmittals = (ops) => has(ops, "update") ? updateAnswer : { data: ++reads === 1 ? readRow : { ...readRow, updated_at: "2026-10-07T09:16:10+00:00" }, error: null };
+    await expect(issueTransmittal("t1", actor, { acceptedUnstampable: accepted, checked })).rejects.toThrow(/TR-0107 was not issued — the draft was changed while it was being issued/);
+    expect(db.audits).toEqual([]);
+    expect(fetchMock.mock.calls).toEqual([]);
+  });
+
+  it("REGRESSION: a caller with no check to carry (acceptedUnstampable alone) on a draft with an updated_at sends status / time only, with no draft-version match, as before P22", async () => {
+    await issueTransmittal("t1", actor, { acceptedUnstampable: [ENCRYPTED] });
+    const { patch, ops } = lastUpdate();
+    expect(Object.keys(patch).sort()).toEqual(["issued_at", "status", "updated_at"]);
+    expect(eqs(ops)).toEqual([["id", "t1"], ["status", "draft"]]);
+    expect(stampCalls()).toEqual([]);
   });
 
   it("an issuer-accepted item never carries a mark, even one already on the draft item (only this issue's check arms)", async () => {
@@ -337,6 +385,9 @@ describe("TRX-15 (P22, DEC-90 A5) — the issue writes `stampable: true` on each
     // a document with a stampable and a non-stampable verdict is not armed
     expect(armCheckedItems([{ documentId: "d1" }], [OK, { ...OK, verdict: "unchecked" }]).armed).toBe(0);
     expect(armCheckedItems("not an array", [OK])).toEqual({ items: [], changed: false, armed: 0 });
-    expect(readFileSync(join(process.cwd(), "lib/transmittals.ts"), "utf8")).toMatch(/if \(marked && readAt\) write = write\.eq\("updated_at", readAt\);/);
+    const lib = readFileSync(join(process.cwd(), "lib/transmittals.ts"), "utf8");
+    expect(lib).toMatch(/const bound = readAt !== null && \(marked \|\| checks !== null\);/);
+    expect(lib).toMatch(/if \(bound && readAt\) write = write\.eq\("updated_at", readAt\);/);
+    expect(lib).toMatch(/if \(opts\.checked\.draftUpdatedAt !== readAt\) throw new Error\(draftChangedRefusal\(draft\.number\)\);/);
   });
 });
