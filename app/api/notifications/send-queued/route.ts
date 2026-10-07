@@ -11,6 +11,9 @@
 
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { publicOrigin } from "@/lib/publicOrigin";
+import { wrapEmailBody } from "@/lib/emailRender";
+import { unsubscribeUrl } from "@/lib/unsubscribeToken";
 
 // A full batch is up to MAX_BATCH sequential-ish Resend round-trips — far
 // beyond the platform's default ~10s function budget. Without this, the
@@ -31,11 +34,44 @@ const MAX_ATTEMPTS = 5;
 
 interface EmailNotificationRow {
   id: string;
+  org_id?: string | null;
+  to_user_id?: string | null;
   to_email: string;
   subject: string;
   body_text: string;
   body_html?: string | null;
   attempt_count?: number | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+/** What goes to the provider for one row (NEDGE-10, notifications Round G
+ *  N6). A MEMBER's email (anything not metadata.external — external mail is
+ *  the transmittal's own template, addressed to someone with no account, and
+ *  its to_user_id is the sender) gets:
+ *   - the one-click List-Unsubscribe header pair (RFC 8058), a link signed
+ *     for to_user_id (lib/unsubscribeToken.ts) — turning email off for the
+ *     recipient and nobody else;
+ *   - the render layer's footer and mention rule (lib/emailRender.ts
+ *     wrapEmailBody) when nothing rendered the row at queue time (no
+ *     metadata.rendered: a row queued before the layer, or by a route
+ *     outside it). The stored row is never rewritten.
+ *  An external row is sent exactly as stored, as before. */
+function outgoing(row: EmailNotificationRow, origin: string, orgName: string | null): { text: string; html?: string; headers?: Record<string, string> } {
+  const meta = row.metadata ?? {};
+  if (meta.external === true) return { text: row.body_text, html: row.body_html || undefined };
+  let text = row.body_text;
+  let html = row.body_html || undefined;
+  if (meta.rendered !== true) {
+    try {
+      const w = wrapEmailBody({ text: row.body_text, html: row.body_html, origin, orgName });
+      text = w.bodyText;
+      html = w.bodyHtml;
+    } catch { /* no origin: sent as stored, as before */ }
+  }
+  const url = row.to_user_id ? unsubscribeUrl(origin, row.to_user_id) : null;
+  return url
+    ? { text, html, headers: { "List-Unsubscribe": `<${url}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" } }
+    : { text, html };
 }
 
 export async function POST(req: Request) {
@@ -154,12 +190,26 @@ export async function POST(req: Request) {
 
   let sent = 0;
   let failed = 0;
+  // DELIV-11: one provider message, so the cron can say WHY a batch failed.
+  let errorSample: string | null = null;
+  // The public origin the unsubscribe link and the footer are built on — the
+  // configured site, else the origin this request arrived on.
+  const origin = publicOrigin() || new URL(req.url).origin;
+  // The workspace names a backstop footer carries — one read for the batch; a
+  // failed read leaves "your workspace".
+  const orgNames = new Map<string, string>();
+  const orgIds = [...new Set(queued.map((r) => r.org_id).filter((o): o is string => !!o))];
+  if (orgIds.length > 0) {
+    const { data: orgRows } = await supabase.from("orgs").select("id, name").in("id", orgIds);
+    for (const o of (orgRows as Array<{ id: string; name: string | null }> | null) ?? []) if (o.name) orgNames.set(o.id, o.name);
+  }
 
   // Small parallel chunks: 5-wide keeps a 100-row batch under ~30s without
   // slamming Resend's rate limit (a 429 lands in the failed/retry path, so
   // even a burst degrades to a later attempt, never a lost email).
   const sendOne = async (row: EmailNotificationRow) => {
     try {
+      const out = outgoing(row, origin, (row.org_id && orgNames.get(row.org_id)) || null);
       const resp = await fetch("https://api.resend.com/emails", {
         method: "POST",
         headers: {
@@ -170,8 +220,9 @@ export async function POST(req: Request) {
           from: fromEmail,
           to: row.to_email,
           subject: row.subject,
-          text: row.body_text,
-          html: row.body_html || undefined,
+          text: out.text,
+          html: out.html,
+          ...(out.headers ? { headers: out.headers } : {}),
         }),
       });
 
@@ -192,6 +243,7 @@ export async function POST(req: Request) {
     } catch (e) {
       failed++;
       const msg = (e as Error).message || String(e);
+      if (!errorSample) errorSample = msg.slice(0, 200);
       await supabase
         .from("email_notifications")
         .update({
@@ -206,7 +258,7 @@ export async function POST(req: Request) {
     await Promise.all(queued.slice(i, i + 5).map(sendOne));
   }
 
-  return NextResponse.json({ processed: queued.length, sent, failed });
+  return NextResponse.json({ processed: queued.length, sent, failed, ...(errorSample ? { errorSample } : {}) });
 }
 
 export async function GET(req: Request) {

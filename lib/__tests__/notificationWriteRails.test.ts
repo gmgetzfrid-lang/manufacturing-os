@@ -548,7 +548,7 @@ const DEDUPE_READS: Record<string, Array<{ marks: string; keys?: string[]; kinds
     { marks: '.contains("metadata", { staleSessionId: row.id })', keys: ["staleSessionId"] },
     // not a dedupe, and not safe from forged rows either (third review fix): the read has no org filter
     // and no order and is cut at .limit(2000), so browser-legal compliance rows can push other lines out
-    { marks: '.in("kind", COMPLIANCE_KINDS)', none: "not a dedupe: the compliance digest composes each recipient's list from compliance rows. Its read is cross-org, unordered and cut at 2,000 rows, so a member's browser-legal compliance rows (ack_requested, doc_superseded, review_requested), within the caps, can displace other people's and other tenants' lines — NEDGE-17, handed to N6" },
+    { marks: '.in("kind", COMPLIANCE_KINDS)', none: "not a dedupe: the compliance digest composes each recipient's list from compliance rows. Since N6 (NEDGE-17) its read is scoped to one (org, recipient), unread only and newest first, so one member's browser-legal compliance rows can add lines to a colleague's digest (within the caps) but never push another person's or another tenant's lines out" },
   ],
   // drafting-flow DF-P1 (EVID-13; classified by the integrator at the DF-P1 merge): the route
   // reads a ticket's unread workflow alerts only to mark them superseded, on the service role.
@@ -651,8 +651,11 @@ describe("20261160 — the server's dedupe watermarks: a browser can neither wri
       const pattern = isKind ? `["'\`]${token}["'\`]` : `\\b${token}\\s*:`;
       const re = new RegExp(pattern, "g");
       const where = files.filter(([, src]) => new RegExp(pattern).test(src)).map(([f]) => f);
-      // the union type in lib/inAppNotifications.ts names every kind; it writes nothing
-      expect(where.filter((f) => f !== "lib/inAppNotifications.ts"), token).toEqual([w.file]);
+      // the union type in lib/inAppNotifications.ts names every kind; it writes nothing.
+      // The storage purge (notifications N6, DELIV-8 dw3) names the server-only kinds to
+      // KEEP their rows out of a purge — a filter, not a write; maintenanceDrain.test.ts
+      // pins its lists to this function's.
+      expect(where.filter((f) => f !== "lib/inAppNotifications.ts" && f !== "app/api/admin/purge/route.ts"), token).toEqual([w.file]);
       const src = files.find(([f]) => f === w.file)![1];
       if (w.file.startsWith("app/api/")) continue;
       // in a lib file: every occurrence sits inside the named function, and only the cron calls it

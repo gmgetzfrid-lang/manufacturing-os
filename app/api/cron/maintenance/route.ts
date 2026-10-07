@@ -72,6 +72,11 @@ import {
 import { runWithServerClient } from "@/lib/serverClientScope";
 import { sweepIntakeStaging } from "@/lib/intakeStaging";
 import { emit } from "@/lib/notify/dispatch";
+import { KIND_META } from "@/lib/notificationKinds";
+import { emailAllowedByPrefs } from "@/lib/notificationPrefs";
+import { renderNotificationEmail } from "@/lib/emailRender";
+import { publicOrigin } from "@/lib/publicOrigin";
+import { formatRecordDate, formatRecordTime, orgTimeZone } from "@/lib/recordTime";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -117,6 +122,10 @@ async function handler(req: NextRequest) {
     intakeStagingSwept?: number;
     reviewHealthNudges?: number;
     verifyScansPruned?: number;
+    /** DELIV-11: what the drain did — an empty queue, a batch that failed, and
+     *  unconfigured email are three different answers here. */
+    emailDrain?: DrainReport;
+    emailDrainAfterDigest?: DrainReport;
     errors: string[];
   } = {
     releasedCheckouts: 0,
@@ -142,21 +151,13 @@ async function handler(req: NextRequest) {
   //    sibling route so the email-sending logic lives in one place.
   //    LOOP until the queue is empty (bounded): the batch cap exists to bound
   //    one request, not the day — a 400-email fan-out must not take 16 days.
+  //    DELIV-11: `processed` decides "empty", never `sent` (sent:0 is a real
+  //    answer); unconfigured email and failed sends are reported, not read as
+  //    an empty queue (drainEmailQueue).
   try {
-    const origin = req.nextUrl.origin;
-    let drained = 0;
-    for (let i = 0; i < 12; i++) {
-      const res = await fetch(`${origin}/api/notifications/send-queued`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${cronSecret}` },
-      });
-      if (!res.ok) { result.errors.push(`notifications: HTTP ${res.status}`); break; }
-      const body = (await res.json().catch(() => null)) as { sent?: number; processed?: number } | null;
-      const batch = body?.sent ?? body?.processed ?? 0;
-      drained += batch;
-      if (batch === 0) break; // queue empty
-    }
-    result.notificationsDrained = drained;
+    const drain = await drainEmailQueue(req.nextUrl.origin, 12, "notifications", result.errors);
+    result.notificationsDrained = drain.sent;
+    result.emailDrain = drain;
   } catch (e) {
     result.errors.push(`notifications: ${(e as Error).message}`);
   }
@@ -253,7 +254,7 @@ async function handler(req: NextRequest) {
             audience: { roles: ["Admin", "DocCtrl"] },
             channels: ["inapp"],
             metadata,
-          })),
+          }).then(() => undefined)),
         });
         result.reviewHealthNudges = nudged.nudged;
         if (nudged.failed > 0) intakeLine(`intake-door: ${nudged.failed} org(s) with review-health counts could not be nudged`);
@@ -275,7 +276,7 @@ async function handler(req: NextRequest) {
           audience: { involved: dd.involved, followers: false },
           channels: ["email"],
           metadata: foldedDigestMetadata(dd),
-        }))),
+        }).then(() => undefined))),
       });
       result.intakeFoldedDigests = flushed.digests;
       if (flushed.failed > 0) {
@@ -306,7 +307,7 @@ async function handler(req: NextRequest) {
   //    org's DocCtrl/Admin pool — once per session (metadata-deduped by the
   //    session id in the notification row we insert).
   try {
-    result.staleEscalations = await escalateStaleCheckouts(sb);
+    result.staleEscalations = await escalateStaleCheckouts(sb, result.errors);
   } catch (e) {
     result.errors.push(`stale-escalation: ${(e as Error).message}`);
   }
@@ -377,27 +378,29 @@ async function handler(req: NextRequest) {
   //     badge. One email per user per day summarizing their NEW compliance
   //     notices (reviews due, acks outstanding, retention flags, recerts,
   //     effective dates, reviewer nudges). Queued into email_notifications;
-  //     the drain below sends it.
+  //     the drain below sends it. Each recipient's list is read on its own
+  //     (NEDGE-17), unread items only, through the member's email
+  //     preferences (NEDGE-9), with an absolute link to their Inbox (NEDGE-4).
   try {
-    result.complianceEmails = await queueComplianceDigests(sb);
+    result.complianceEmails = await queueComplianceDigests(sb, {
+      origin: publicOrigin() || req.nextUrl.origin,
+      errors: result.errors,
+    });
   } catch (e) {
     result.errors.push(`compliance-digest: ${(e as Error).message}`);
   }
 
   // 6c. Drain anything the compliance steps just queued (step 2 ran before
-  //     they existed in this request).
-  try {
-    const origin = req.nextUrl.origin;
-    for (let i = 0; i < 6; i++) {
-      const res = await fetch(`${origin}/api/notifications/send-queued`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${cronSecret}` },
-      });
-      if (!res.ok) break;
-      const body = (await res.json().catch(() => null)) as { sent?: number; processed?: number } | null;
-      if ((body?.sent ?? body?.processed ?? 0) === 0) break;
+  //     they existed in this request). DELIV-11: reported like step 2, never
+  //     swallowed. With email unconfigured step 2 has already said so, and
+  //     this pass would only say it again.
+  if (result.emailDrain?.configured !== false) {
+    try {
+      result.emailDrainAfterDigest = await drainEmailQueue(req.nextUrl.origin, 6, "notifications (after the compliance steps)", result.errors);
+    } catch (e) {
+      result.errors.push(`notifications (after the compliance steps): ${(e as Error).message}`);
     }
-  } catch { /* the daily drain will catch up */ }
+  }
 
   // 7b. FOLDER TRASH PURGE — soft-deleted folder shells past their 30-day
   //     hold are removed for good. They're empty (contents stepped up at
@@ -500,17 +503,95 @@ async function handler(req: NextRequest) {
   return NextResponse.json(result);
 }
 
+/** What one drain pass did (DELIV-11). `queueEmpty` is true only when the
+ *  route answered processed: 0 — the queue was drained — never because a
+ *  batch sent nothing. */
+type DrainReport = {
+  batches: number;
+  attempted: number;
+  sent: number;
+  failed: number;
+  configured: boolean;
+  /** Rows left queued because email is not configured (configured: false). */
+  deferred: number | null;
+  queueEmpty: boolean;
+};
+
+/** Drain the email queue through the sibling route, up to `maxBatches`
+ *  batches, and report what happened (DELIV-11):
+ *   - `processed` decides continuation: 0 is an empty queue. `sent: 0` is a
+ *     legitimate answer, not a missing one.
+ *   - email not configured (`configured: false`): the backlog stays queued
+ *     (the route defers by design) and an error line names its size.
+ *   - failed sends: an error line names the count and one provider message.
+ *     A batch that sent nothing stops the loop — another batch would claim
+ *     the same rows again and spend their attempts inside this one run.
+ *  Every line is also logged: the platform's cron log shows console output,
+ *  not this route's JSON. */
+async function drainEmailQueue(origin: string, maxBatches: number, label: string, errors: string[]): Promise<DrainReport> {
+  const report: DrainReport = { batches: 0, attempted: 0, sent: 0, failed: 0, configured: true, deferred: null, queueEmpty: false };
+  const say = (line: string) => { errors.push(line); console.error(`[cron/maintenance] ${line}`); };
+  let sample: string | null = null;
+  for (let i = 0; i < maxBatches; i++) {
+    const res = await fetch(`${origin}/api/notifications/send-queued`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${cronSecret}` },
+    });
+    if (!res.ok) { say(`${label}: HTTP ${res.status}`); break; }
+    const body = (await res.json().catch(() => null)) as {
+      processed?: number; sent?: number; failed?: number; deferred?: number; configured?: boolean; errorSample?: string;
+    } | null;
+    if (!body) { say(`${label}: the drain answered without a JSON body — nothing is known about that batch`); break; }
+    report.batches += 1;
+    if (body.configured === false) {
+      report.configured = false;
+      report.deferred = Number(body.deferred ?? 0);
+      break;
+    }
+    const processed = Number(body.processed ?? 0);
+    const sent = Number(body.sent ?? 0);
+    report.attempted += processed;
+    report.sent += sent;
+    report.failed += Number(body.failed ?? 0);
+    if (!sample && typeof body.errorSample === "string" && body.errorSample) sample = body.errorSample;
+    if (processed === 0) { report.queueEmpty = true; break; }
+    if (sent === 0) break;
+  }
+  if (!report.configured) {
+    say(`${label}: email is not configured (RESEND_API_KEY is not set) — ${report.deferred} email(s) left queued, none sent`);
+  }
+  if (report.failed > 0) {
+    say(`${label}: ${report.failed} of ${report.attempted} send attempt(s) failed${sample ? ` — e.g. ${sample}` : ""}`);
+  }
+  return report;
+}
+
 const STALE_ESCALATION_DAYS = 14;
 
+// The escalation's raw insert stays here until notifications N14 (TAX-11's
+// tail) routes it through notify(); DELIV-7 / NEDGE-12 (N6) report its
+// failures and label its date.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function escalateStaleCheckouts(sb: SupabaseClient<any>): Promise<number> {
+async function escalateStaleCheckouts(sb: SupabaseClient<any>, errors: string[]): Promise<number> {
   const cutoff = new Date(Date.now() - STALE_ESCALATION_DAYS * 24 * 3600 * 1000).toISOString();
   const { data: staleRows, error } = await sb
     .from("checkout_sessions")
     .select("id, org_id, document_id, library_id, user_id, user_name, started_at, purpose")
     .eq("status", "active")
     .lt("started_at", cutoff);
-  if (error || !staleRows?.length) return 0;
+  if (error) {
+    errors.push(`stale-escalation: the stale checkouts could not be read — none was escalated: ${error.message}`);
+    return 0;
+  }
+  if (!staleRows?.length) return 0;
+
+  // NEDGE-12: the date in the body is labelled with its zone — the org's
+  // configured one, else UTC (lib/recordTime.ts).
+  const zones = new Map<string, Promise<string | null>>();
+  const zoneOf = (orgId: string) => {
+    if (!zones.has(orgId)) zones.set(orgId, orgTimeZone(sb, orgId));
+    return zones.get(orgId)!;
+  };
 
   let escalated = 0;
   for (const row of staleRows as Array<{
@@ -538,12 +619,13 @@ async function escalateStaleCheckouts(sb: SupabaseClient<any>): Promise<number> 
     if (recipients.length === 0) continue;
 
     const days = Math.floor((Date.now() - Date.parse(row.started_at)) / (24 * 3600 * 1000));
+    const since = formatRecordDate(row.started_at, await zoneOf(row.org_id));
     const inserts = recipients.map((uid) => ({
       org_id: row.org_id,
       user_id: uid,
       kind: "checkout_released",
       title: `Checkout held ${days} days — review needed`,
-      body: `${row.user_name || "A user"} has had a document checked out since ${new Date(row.started_at).toLocaleDateString()}${row.purpose ? ` (${row.purpose})` : ""}. Nudge them or force-release if the work is done.`,
+      body: `${row.user_name || "A user"} has had a document checked out since ${since}${row.purpose ? ` (${row.purpose})` : ""}. Nudge them or force-release if the work is done.`,
       link: row.library_id ? `/documents/${row.library_id}?doc=${row.document_id}` : "/checkouts",
       resource_type: "document",
       resource_id: row.document_id,
@@ -551,88 +633,188 @@ async function escalateStaleCheckouts(sb: SupabaseClient<any>): Promise<number> 
       metadata: { staleSessionId: row.id, escalation: true },
     }));
     const { error: insErr } = await sb.from("notifications").insert(inserts);
-    if (!insErr) escalated += 1;
+    if (insErr) {
+      // DELIV-7 dw3: reported, never only a counter that did not move.
+      errors.push(`stale-escalation: session ${row.id} — the controllers' notice was not written (retried on the next run): ${insErr.message}`);
+      continue;
+    }
+    escalated += 1;
   }
   return escalated;
 }
 
-const COMPLIANCE_KINDS = [
-  "review_due", "owner_behind",
-  "ack_requested", "ack_overdue", "ack_unsatisfiable",
-  "retention_eligible", "access_recert_due", "effective_now",
-  "review_requested", "review_overdue", "review_complete",
-  "review_alternate_activated", "deletion_requested",
-  // Manual distribution-ack requests/re-nudges ride on doc_superseded (the
-  // daily scan's nags use ack_requested/ack_overdue); voided sign-offs are
-  // obligations too.
-  "doc_superseded", "review_invalidated",
-];
+/** The compliance digest's kinds — derived from the registry's `compliance`
+ *  column (lib/notificationKinds.ts KIND_META, DEC-81 §1; TAX-5's seventh
+ *  list collapsed, N6). The set is what this file listed by hand before:
+ *  reviews due / overdue / requested / completed / invalidated / alternate
+ *  activated, owner behind, deletion requested, acknowledgments requested /
+ *  overdue / unsatisfiable, retention, access recerts, effective dates, and
+ *  doc_superseded (manual distribution-ack requests and re-nudges ride on it).
+ *  A kind flagged compliance there rides the digest; nothing here to edit. */
+const COMPLIANCE_KINDS: string[] = (Object.keys(KIND_META) as Array<keyof typeof KIND_META>)
+  .filter((k) => KIND_META[k].compliance);
 
+/** How many distinct titles one digest lists (then "…and N more"). */
+const DIGEST_LINES = 12;
+/** How many of one recipient's newest unread compliance rows are read — far
+ *  more than the digest lists; the subject's count is exact regardless. */
+const DIGEST_SCAN_PER_RECIPIENT = 200;
+const DIGEST_MEMBER_PAGE = 1000;
+const DIGEST_PREFS_CHUNK = 150;
+const DIGEST_PARALLEL = 8;
+/** The digest's share of the cron's 300 s. A run cut short says so; the
+ *  starting member rotates daily, so no one is always last. */
+const DIGEST_BUDGET_MS = 90_000;
+
+/** The daily compliance digest: one email per (org, member) listing their
+ *  UNREAD compliance notices of the last 25 hours.
+ *   - NEDGE-17: each member's list comes from a read scoped to that
+ *     (org, member) and ordered newest first — no window shared across orgs
+ *     and recipients, so one member's rows cannot push anyone else's lines
+ *     out of their digest.
+ *   - NEDGE-9: the member's preferences decide, through the app's one email
+ *     rule (lib/notificationPrefs.ts emailAllowedByPrefs — master switch,
+ *     then 'never'; the digest has no toggle of its own, DEC-74 §3), read as
+ *     the service role, so a missing row really is the defaults. A row that
+ *     cannot be read sends the digest stamped pref_gate = 'unverified'
+ *     (DEC-74 §4). An item already read in the bell is not listed.
+ *   - NEDGE-4: the email links the member's Inbox, absolute (lib/emailRender.ts).
+ *   - NEDGE-12: it is named for when it was composed — "the 25 hours to
+ *     <time> (zone)" — the org's zone when configured, else UTC.
+ *   - The per-(org, user, day) dedupe on metadata.day (the UTC day) is kept
+ *     as it was: a manual re-run never mails anyone twice.
+ *   - DELIV-7: every read and write that fails is a line in `errors`. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function queueComplianceDigests(sb: SupabaseClient<any>): Promise<number> {
-  const since = new Date(Date.now() - 25 * 3600 * 1000).toISOString();
-  const { data: rows, error } = await sb
-    .from("notifications")
-    .select("org_id, user_id, kind, title, link")
-    .in("kind", COMPLIANCE_KINDS)
-    .gt("created_at", since)
-    .limit(2000);
-  if (error || !rows?.length) return 0;
+async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: string; errors: string[] }): Promise<number> {
+  const now = Date.now();
+  const since = new Date(now - 25 * 3600 * 1000).toISOString();
+  const asOf = new Date(now).toISOString();
+  const dayKey = asOf.slice(0, 10);
+  const say = (line: string) => { opts.errors.push(`compliance-digest: ${line}`); console.error(`[cron/maintenance] compliance-digest: ${line}`); };
 
-  // One digest per (org, user).
-  const byUser = new Map<string, { orgId: string; userId: string; titles: string[] }>();
-  for (const r of rows as Array<{ org_id: string; user_id: string; title: string }>) {
-    const key = `${r.org_id}:${r.user_id}`;
-    const e = byUser.get(key) ?? { orgId: r.org_id, userId: r.user_id, titles: [] };
-    e.titles.push(r.title);
-    byUser.set(key, e);
+  // Every ACTIVE member with an address — the people a digest can reach.
+  // Ordered, so a page boundary never skips or repeats anyone.
+  type Member = { uid: string; org_id: string; email: string | null };
+  const members: Member[] = [];
+  for (let from = 0; ; from += DIGEST_MEMBER_PAGE) {
+    const { data, error } = await sb
+      .from("org_members").select("uid, org_id, email").eq("status", "active")
+      .order("org_id", { ascending: true }).order("uid", { ascending: true })
+      .range(from, from + DIGEST_MEMBER_PAGE - 1);
+    if (error) { say(`the member list could not be read — no digest was composed: ${error.message}`); return 0; }
+    const page = (data as Member[] | null) ?? [];
+    members.push(...page.filter((m) => !!m.email));
+    if (page.length < DIGEST_MEMBER_PAGE) break;
+  }
+  if (members.length === 0) return 0;
+
+  const prefs = new Map<string, Record<string, unknown>>();
+  const unverified = new Set<string>();
+  const uids = [...new Set(members.map((m) => m.uid))];
+  for (let i = 0; i < uids.length; i += DIGEST_PREFS_CHUNK) {
+    const chunk = uids.slice(i, i + DIGEST_PREFS_CHUNK);
+    const { data, error } = await sb.from("notification_preferences").select("*").in("user_id", chunk);
+    if (error) {
+      chunk.forEach((u) => unverified.add(u));
+      say(`the email preferences of ${chunk.length} member(s) could not be read — their digest is sent, stamped pref_gate=unverified: ${error.message}`);
+      continue;
+    }
+    for (const p of (data as Array<Record<string, unknown>> | null) ?? []) prefs.set(String(p.user_id), p);
   }
 
-  const userIds = [...new Set([...byUser.values()].map((e) => e.userId))];
-  const { data: members } = await sb
-    .from("org_members").select("uid, org_id, email").in("uid", userIds).eq("status", "active");
-  const emailOf = new Map(((members as Array<{ uid: string; org_id: string; email: string | null }>) ?? [])
-    .map((m) => [`${m.org_id}:${m.uid}`, m.email]));
-
-  // Respect the user's email opt-out.
-  const { data: prefs } = await sb
-    .from("notification_preferences").select("user_id, email_enabled").in("user_id", userIds);
-  const emailEnabled = new Map(((prefs as Array<{ user_id: string; email_enabled: boolean | null }>) ?? [])
-    .map((p) => [p.user_id, p.email_enabled !== false]));
+  const orgNames = new Map<string, Promise<string | null>>();
+  const nameOf = (orgId: string) => {
+    if (!orgNames.has(orgId)) {
+      orgNames.set(orgId, Promise.resolve(sb.from("orgs").select("name").eq("id", orgId).maybeSingle()).then(
+        ({ data }) => (((data as { name?: unknown } | null)?.name as string | null) ?? null), () => null));
+    }
+    return orgNames.get(orgId)!;
+  };
+  const zones = new Map<string, Promise<string | null>>();
+  const zoneOf = (orgId: string) => {
+    if (!zones.has(orgId)) zones.set(orgId, orgTimeZone(sb, orgId));
+    return zones.get(orgId)!;
+  };
 
   let queued = 0;
-  for (const e of byUser.values()) {
-    const to = emailOf.get(`${e.orgId}:${e.userId}`);
-    if (!to) continue;
-    if (emailEnabled.get(e.userId) === false) continue;
-    // Dedupe: one digest per (org, user) per day (metadata-marked).
-    const dayKey = new Date().toISOString().slice(0, 10);
-    const { data: existing } = await sb
+  const one = async (m: Member) => {
+    if (!unverified.has(m.uid) && !emailAllowedByPrefs(prefs.get(m.uid) ?? null, "compliance_digest")) return;
+    // NEDGE-17: this member's own rows, in this org, newest first.
+    const { data: rows, error, count } = await sb
+      .from("notifications").select("kind, title, created_at", { count: "exact" })
+      .in("kind", COMPLIANCE_KINDS)
+      .eq("org_id", m.org_id)
+      .eq("user_id", m.uid)
+      .is("read_at", null)
+      .gt("created_at", since)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(DIGEST_SCAN_PER_RECIPIENT);
+    if (error) { say(`${m.org_id}/${m.uid}: their compliance items could not be read — no digest for them this run: ${error.message}`); return; }
+    const list = (rows as Array<{ title: string }> | null) ?? [];
+    if (list.length === 0) return;
+
+    // Dedupe: one digest per (org, user) per day (metadata-marked). A check
+    // that fails sends anyway — a duplicate digest is better than none.
+    const { data: existing, error: dupErr } = await sb
       .from("email_notifications").select("id")
-      .eq("org_id", e.orgId)
-      .eq("to_user_id", e.userId)
+      .eq("org_id", m.org_id)
+      .eq("to_user_id", m.uid)
       .eq("event_type", "compliance_digest")
       .contains("metadata", { day: dayKey })
       .limit(1);
-    if ((existing as unknown[] | null)?.length) continue;
+    if (dupErr) say(`${m.org_id}/${m.uid}: today's earlier digest could not be checked — sent anyway: ${dupErr.message}`);
+    if ((existing as unknown[] | null)?.length) return;
 
-    const unique = [...new Set(e.titles)].slice(0, 12);
-    const more = e.titles.length - unique.length;
-    await sb.from("email_notifications").insert({
-      org_id: e.orgId,
-      to_user_id: e.userId,
-      to_email: to,
-      subject: `Compliance items need you (${e.titles.length})`,
-      body_text:
-        "These document-control items are waiting on you:\n\n" +
-        unique.map((t) => `  • ${t}`).join("\n") +
-        (more > 0 ? `\n  …and ${more} more` : "") +
-        "\n\nOpen your Inbox to act on them.",
+    const total = typeof count === "number" && count >= list.length ? count : list.length;
+    const unique = [...new Set(list.map((r) => r.title))].slice(0, DIGEST_LINES);
+    const more = total - unique.length;
+    const [orgName, zone] = await Promise.all([nameOf(m.org_id), zoneOf(m.org_id)]);
+    const subject = `Compliance items need you (${total})`;
+    const message =
+      "These document-control items are waiting on you:\n\n" +
+      unique.map((t) => `  • ${t}`).join("\n") +
+      (more > 0 ? `\n  …and ${more} more` : "") +
+      `\n\nThis digest lists your unread compliance notices from the 25 hours to ${formatRecordTime(asOf, zone)}.`;
+    let rendered: { bodyText: string; bodyHtml: string } | null = null;
+    let link: string | null = null;
+    try {
+      const r = renderNotificationEmail({ subject, body: message, link: "/inbox", linkLabel: "Open your Inbox to act on them", orgName, origin: opts.origin });
+      rendered = { bodyText: r.bodyText, bodyHtml: r.bodyHtml };
+      link = `${opts.origin.replace(/\/+$/, "")}/inbox`;
+    } catch (e) {
+      say(`${m.org_id}/${m.uid}: ${(e as Error).message} — the digest is queued without a link`);
+    }
+    const { error: insErr } = await sb.from("email_notifications").insert({
+      org_id: m.org_id,
+      to_user_id: m.uid,
+      to_email: m.email,
+      subject,
+      body_text: rendered ? rendered.bodyText : `${message}\n\nOpen your Inbox to act on them.`,
+      body_html: rendered ? rendered.bodyHtml : null,
       event_type: "compliance_digest",
-      metadata: { day: dayKey, count: e.titles.length },
+      metadata: {
+        day: dayKey, count: total,
+        ...(link ? { link, rendered: true } : {}),
+        ...(unverified.has(m.uid) ? { pref_gate: "unverified" } : {}),
+      },
       status: "queued",
     });
+    if (insErr) { say(`${m.org_id}/${m.uid}: the digest was not queued: ${insErr.message}`); return; }
     queued += 1;
+  };
+
+  // Start at a member that moves by one each day, so a run cut by its budget
+  // does not always leave the same people out.
+  const start = Math.floor(now / 86_400_000) % members.length;
+  const order = [...members.slice(start), ...members.slice(0, start)];
+  const stopAt = Date.now() + DIGEST_BUDGET_MS;
+  for (let i = 0; i < order.length; i += DIGEST_PARALLEL) {
+    if (Date.now() > stopAt) {
+      say(`stopped at its ${DIGEST_BUDGET_MS / 1000} s budget — ${order.length - i} member(s) were not reached this run`);
+      break;
+    }
+    await Promise.all(order.slice(i, i + DIGEST_PARALLEL).map(one));
   }
   return queued;
 }
