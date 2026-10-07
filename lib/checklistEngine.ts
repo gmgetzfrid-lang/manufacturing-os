@@ -60,7 +60,6 @@ export interface ProjectEvidenceState {
   turnoverAcceptedNames: string[];   // accepted turnover item names
   miChecklistComplete: boolean;      // a kind='mi' checklist completed on HUMAN sign-off (completed_basis = 'human')
   documentTitles: string[];          // project register titles+numbers (admitted documents only)
-  equipmentTags: string[];           // tags known on the project's drawings
   documents?: EvidenceDocument[];    // the same register with ids, so a chip can name its row
   /** The accepted turnover items behind turnoverAcceptedNames, so a turnover citation names its row. */
   turnoverAccepted?: Array<{ id: string; name: string }>;

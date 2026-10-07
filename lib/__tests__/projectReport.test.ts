@@ -63,7 +63,7 @@ vi.mock("@/lib/supabase", () => {
   return { supabase: { from: (t: string) => chain(t) } };
 });
 
-import { gatherReportData, renderReportHtml, parseGateSnapshot, draftLessonsLearned } from "@/lib/projectReport";
+import { gatherReportData, renderReportHtml, parseGateSnapshot, draftLessonsLearned, coReasonLabel, changeOrderLessonLine } from "@/lib/projectReport";
 import { listAccounts, listEntries, computeCostRollup, milestonePctIndex, fmtMoney } from "@/lib/costs";
 import { listChangeOrders, approvedChangesByAccount } from "@/lib/changeOrders";
 import { computeForecast } from "@/lib/costSeries";
@@ -647,5 +647,32 @@ describe("the report prints each closeout decision with its reason (GAP-405)", (
     const html = renderReportHtml(d);
     expect(html).toContain("Could not read the decisions on the record</span> — they are left out, not shown as none.");
     expect(html).not.toContain("Decisions on the record — each with the reason");
+  });
+});
+
+// projects Round G J14 — projects-tab REL-4 (the report's two remaining
+// lookups). Before: renderReportHtml printed `CO_REASON_LABEL[x.reason]`
+// and the lessons draft `CO_REASON_LABEL[r.reason]` / `why[r.reason]` —
+// a reason outside the label map printed "undefined".
+describe("REL-4 (J14) — the report's change-order lookups are total", () => {
+  it("an unmapped reason prints as itself on the report and in the lessons line, never 'undefined'", async () => {
+    onLedgerCoFixture();
+    const d = await gatherReportData("org1", "p1");
+    // The mapped reason keeps its label, exactly as before.
+    expect(renderReportHtml(d)).toContain("Field condition (found during work): $10,000");
+    d.cos.byReason.push({ reason: "weather_delay" as never, count: 1, amount: 2_500 });
+    const html = renderReportHtml(d);
+    expect(html).toContain("weather_delay: $2,500");
+    expect(html).not.toContain("undefined");
+    const money = (n: number) => fmtMoney(n, "USD");
+    expect(changeOrderLessonLine({ reason: "weather_delay", count: 1, amount: 2_500 }, money))
+      .toBe("CHANGE ORDERS (weather_delay): 1 for $2,500.00 — review individually.");
+  });
+  it("a mapped reason's lessons line is the one the draft always printed", async () => {
+    onLedgerCoFixture();
+    const draft = await draftLessonsLearned("org1", "p1");
+    expect(draft).toContain("CHANGE ORDERS (Field condition (found during work)): 1 for $10,000 — conditions found during work — consider more up-front inspection on similar jobs.");
+    expect(coReasonLabel("scope_gap")).toBe("Scope gap (missed in the bid)");
+    expect(coReasonLabel("")).toBe("");
   });
 });

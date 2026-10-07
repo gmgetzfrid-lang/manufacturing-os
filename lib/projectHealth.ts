@@ -162,7 +162,6 @@ export interface HealthPart { label: string; score: number | null; detail: strin
 
 export interface ProjectHealth {
   score: number | null;        // null = not enough data to say anything honest
-  trend: "steady";             // reserved — trend needs history rows (future)
   parts: HealthPart[];
 }
 
@@ -293,7 +292,6 @@ export function computeProjectHealth(s: ProjectStateSnapshot): ProjectHealth {
   const known = parts.filter((p) => p.score != null) as Array<HealthPart & { score: number }>;
   return {
     score: known.length ? Math.round(known.reduce((a, p) => a + p.score, 0) / known.length) : null,
-    trend: "steady",
     parts,
   };
 }

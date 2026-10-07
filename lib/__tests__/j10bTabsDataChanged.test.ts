@@ -97,7 +97,7 @@ vi.mock("@/lib/projectSnapshot", async (importOriginal) => {
 // The coach's engine is not under test: any snapshot renders a strip.
 vi.mock("@/lib/projectHealth", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/projectHealth")>();
-  return { ...real, computeProjectHealth: () => ({ score: 80, trend: "steady", parts: [] }), buildCoachItems: () => [] };
+  return { ...real, computeProjectHealth: () => ({ score: 80, parts: [] }), buildCoachItems: () => [] };
 });
 
 import CostsTab from "@/components/projects/CostsTab";

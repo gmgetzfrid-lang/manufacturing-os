@@ -427,7 +427,7 @@ export function renderReportHtml(d: ReportData): string {
           ? row("Cost performance (CPI)", `${couldNotRead} <span class="muted">— the schedule its earned value comes from could not be read</span>`)
           : "",
       d.forecastSentence ? row("Forecast", `${esc(d.forecastSentence)}${d.forecastScopeNote ? ` <span class="muted">${esc(d.forecastScopeNote)}</span>` : ""}`) : "",
-      d.cos.approvedCount > 0 ? row("Change orders", `<span class="num">${d.cos.approvedCount} approved · ${esc(money(d.cos.approvedAmount))}</span> — ${d.cos.byReason.map((x) => `${esc(CO_REASON_LABEL[x.reason])}: ${esc(money(x.amount))}`).join("; ")}`) : "",
+      d.cos.approvedCount > 0 ? row("Change orders", `<span class="num">${d.cos.approvedCount} approved · ${esc(money(d.cos.approvedAmount))}</span> — ${d.cos.byReason.map((x) => `${esc(coReasonLabel(x.reason))}: ${esc(money(x.amount))}`).join("; ")}`) : "",
       d.cos.open > 0 ? row("Awaiting decision", `<span class="flag">${d.cos.open} change order${d.cos.open === 1 ? "" : "s"} open</span>`) : "",
     ].join("\n");
 
@@ -513,6 +513,29 @@ export async function openProjectReport(orgId: string, projectId: string): Promi
 
 // ── Lessons learned ──────────────────────────────────────────────────────
 
+/** REL-4: a change-order reason as the report prints it — total, so a
+ *  reason outside the label map prints as itself, never "undefined". */
+export function coReasonLabel(reason: string): string {
+  return CO_REASON_LABEL[reason as CoReason] ?? reason;
+}
+
+/** What each change-order reason teaches the next job (the lessons draft). */
+const CO_REASON_LESSON: Record<CoReason, string> = {
+  scope_gap: "the bid missed scope — tighten the RFQ scope description and the bid-tab gap check next time",
+  field_condition: "conditions found during work — consider more up-front inspection on similar jobs",
+  owner_request: "we asked for more after award — lock scope earlier or budget an allowance",
+  design_error: "our drawings/scope were wrong — review the design check that let it through",
+  other: "review individually",
+};
+
+/** REL-4: one lessons-learned line for a change-order reason. Both lookups
+ *  are total: an unmapped reason prints as itself and is reviewed
+ *  individually, never "undefined". */
+export function changeOrderLessonLine(r: { reason: string; count: number; amount: number }, money: (n: number) => string): string {
+  const lesson = CO_REASON_LESSON[r.reason as CoReason] ?? CO_REASON_LESSON.other;
+  return `CHANGE ORDERS (${coReasonLabel(r.reason)}): ${r.count} for ${money(r.amount)} — ${lesson}.`;
+}
+
 /** Draft lessons learned from the project's exhaust — facts first, for a
  *  human to edit. Returns plain text ready for the projects.lessons_learned
  *  column. */
@@ -541,16 +564,7 @@ export async function draftLessonsLearned(orgId: string, projectId: string): Pro
     const open = r.openCommitments > 0 ? ` ${money(r.openCommitments)} of open commitments was not yet invoiced when this was drafted.` : "";
     lines.push(`COST: Finished ${money(Math.abs(left))} ${left >= 0 ? "under" : "over"} the ${money(r.revisedBudget)} budget${changes} on actual spend${cpi}.${open}`);
   }
-  for (const r of d.cos.byReason) {
-    const why: Record<CoReason, string> = {
-      scope_gap: "the bid missed scope — tighten the RFQ scope description and the bid-tab gap check next time",
-      field_condition: "conditions found during work — consider more up-front inspection on similar jobs",
-      owner_request: "we asked for more after award — lock scope earlier or budget an allowance",
-      design_error: "our drawings/scope were wrong — review the design check that let it through",
-      other: "review individually",
-    };
-    lines.push(`CHANGE ORDERS (${CO_REASON_LABEL[r.reason]}): ${r.count} for ${money(r.amount)} — ${why[r.reason]}.`);
-  }
+  for (const r of d.cos.byReason) lines.push(changeOrderLessonLine(r, money));
   const scheduleScope = truncated ? ` (counted over ${firstOf})` : "";
   if (failed.has(R.milestones)) {
     lines.push("SCHEDULE: Could not read the schedule when this draft was written — check for slipped tasks by hand.");

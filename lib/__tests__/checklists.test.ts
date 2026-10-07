@@ -441,10 +441,19 @@ describe("updateChecklistItem", () => {
     expect(ok.ok).toBe(true);
   });
 
-  it("attaching evidence alone needs no reason", async () => {
-    const res = await updateChecklistItem({ orgId: "o1", projectId: "p1", item: mapped(), patch: { addEvidence: { label: "Hydro chart", documentId: "d9" } }, actor });
+  // projects Round G J14 (REL-9 done-when 3): updateChecklistItem's
+  // `addEvidence` patch field had no caller outside this file's own test —
+  // no interface attaches evidence by hand — and was removed. A patch that
+  // is none of status / applicability / note writes nothing it was not
+  // asked to: the evidence column is never touched by this function.
+  it("REL-9 (J14): the dead addEvidence field is gone — this function never writes the evidence column", async () => {
+    const res = await updateChecklistItem({ orgId: "o1", projectId: "p1", item: mapped(), patch: { manualNote: "Hydro chart filed under E-301 by the inspector" }, actor });
     expect(res.ok).toBe(true);
-    expect((state.tables.checklist_items[0].evidence as unknown[])).toEqual([{ label: "Hydro chart", documentId: "d9", source: "manual" }]);
+    const write = itemWrites()[0] as { row?: Record<string, unknown> } | Record<string, unknown>;
+    expect(JSON.stringify(write)).not.toContain("evidence");
+    const { readFileSync } = await import("node:fs");
+    const lib = readFileSync(`${process.cwd()}/lib/checklists.ts`, "utf8");
+    expect(lib).not.toContain("addEvidence");
   });
 });
 
@@ -658,6 +667,19 @@ describe("gatherProjectEvidenceState — the evidence contract", () => {
     const s = await gatherProjectEvidenceState("o1", "p1");
     expect(s.documentTitles).toEqual(["E-301 Hydrotest Report", "E-302 Hydrotest Report"]);
     expect(s.documents!.map((d) => d.id)).toEqual(["issued", "locked"]);
+  });
+
+  // projects Round G J14 (REL-9 done-when 3): the evidence state gathered
+  // the org's asset tags (a 1,000-row read on every sweep) into
+  // `equipmentTags`, which no rule read. The read and the field are gone.
+  it("REL-9 (J14): the sweep no longer reads the asset register — no rule read equipmentTags", async () => {
+    state.tables.documents = [doc({ id: "issued", title: "E-301 Hydrotest Report", status: "Issued" })];
+    state.tables.assets = [{ id: "a1", org_id: "o1", tag: "P-101", archived: false }];
+    state.calls.length = 0;
+    const s = await gatherProjectEvidenceState("o1", "p1");
+    expect(s.documentTitles).toEqual(["E-301 Hydrotest Report"]);
+    expect("equipmentTags" in s).toBe(false);
+    expect(state.calls.some((c) => c.table === "assets")).toBe(false);
   });
 
   it("an external (intake) submission counts only once its version is approved", async () => {
