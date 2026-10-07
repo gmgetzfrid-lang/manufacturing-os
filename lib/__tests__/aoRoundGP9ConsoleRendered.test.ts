@@ -185,6 +185,32 @@ describe("ViewAsSimulator", () => {
     expect(qualityOk()).toBe("yes");
   });
 
+  it("ORG-14 (review fix): with no project picked, a base-list holder is NOT told 'every project' when a project rule replaces the base list and excludes them", async () => {
+    seed();
+    h.db.tables.org_configurations = [policyRow({ "quality.sign_off": [{ tokens: ["Safety"] }, { tokens: ["Engineer"], when: { projectId: ["p1"] } }] })];
+    await mount();
+    await pickMember("saf");
+    const li = () => host.querySelector('[data-cap="quality.sign_off"]')!.textContent ?? "";
+    expect(qualityOk()).toBe("yes");
+    expect(li()).toContain("granted where no project rule applies — not on PSSR Unit 200, whose project rule replaces the base list (pick a project)");
+    expect(li()).not.toContain("granted on every project they can see");
+    await pickProject("p1");
+    expect(qualityOk()).toBe("no"); // the database refuses them there
+    await pickProject("p2");
+    expect(qualityOk()).toBe("yes");
+    // the other way round: an Engineer outside the base list is granted on p1 by its rule
+    await pickProject("");
+    await pickMember("eng");
+    expect(qualityOk()).toBe("no");
+    expect(li()).toContain("not by the base list — granted on PSSR Unit 200 by a project rule");
+    // no project rules at all: the old sentence stands
+    __resetCapabilityPolicyCache();
+    h.db.tables.org_configurations = [policyRow({ "quality.sign_off": ["Safety"] })];
+    act(() => root.unmount()); root = createRoot(host);
+    await mount(); await pickMember("saf");
+    expect(li()).toContain("granted on every project they can see");
+  });
+
   it("ALOG-1 done-when 2: an unreadable policy is SAID, and no grant is offered", async () => {
     seed(); h.db.readError.org_configurations = { message: "upstream timeout" };
     await mount(); await pickMember("eng");

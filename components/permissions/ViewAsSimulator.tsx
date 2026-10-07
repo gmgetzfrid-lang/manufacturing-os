@@ -24,7 +24,7 @@ import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import {
   CAPABILITY_DEFS, loadCapabilityPolicyEntry, policyAllows, scopedTokensFor, addUserGrant, revokeUserGrant,
-  grantsForUser, grantActive, invalidateCapabilityPolicy, PROJECT_SCOPED_CAPS, qualitySignOffEligible,
+  grantsForUser, grantActive, invalidateCapabilityPolicy, PROJECT_SCOPED_CAPS, qualitySignOffEligible, isRuleArray,
   type CapabilityPolicy, type CapabilityId, type CapabilityResource, type LoadedCapabilityPolicy,
 } from "@/lib/capabilityPolicy";
 import { loadRequestTypeOptions, type RequestTypeOption } from "@/lib/requestTypes";
@@ -240,11 +240,39 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
               : `on ${project.name}: not eligible`,
           };
         }
-        return { ...row, why: row.ok ? "granted on every project they can see" : "per project — a project's owner always can; pick a project to see project-scoped rules" };
+        // ORG-14 (review fix): with no project picked the answer is the BASE
+        // list (plus a personal grant, which counts on every project). A rule
+        // scoped to a project REPLACES the base list there (tokensFor;
+        // quality_signoff_granted_for, 20261136), so a base-list holder can
+        // be refused on that project and a project-rule grantee admitted —
+        // name those projects instead of claiming "every project".
+        const entry = policy.caps?.["quality.sign_off"];
+        const ruled = isRuleArray(entry)
+          ? [...new Set(entry.flatMap((r) => r.when?.projectId ?? []))]
+          : [];
+        const nameOf = (id: string) => projects.find((p) => p.id === id)?.name ?? id;
+        const differs = ruled
+          .filter((pid) => policyAllows(policy, d.id, who.role, who.roles, who.uid, { projectId: pid }) !== row.ok)
+          .map(nameOf);
+        const rules = `${ruled.length} project rule${ruled.length === 1 ? "" : "s"}`;
+        if (row.ok) {
+          return {
+            ...row,
+            why: ruled.length === 0 ? "granted on every project they can see"
+              : differs.length === 0 ? `granted on every project they can see (${rules} replace the base list; none excludes them)`
+              : `granted where no project rule applies — not on ${differs.join(", ")}, whose project rule replaces the base list (pick a project)`,
+          };
+        }
+        return {
+          ...row,
+          why: differs.length > 0
+            ? `not by the base list — granted on ${differs.join(", ")} by a project rule; a project's owner always can (pick a project)`
+            : "per project — a project's owner always can; pick a project to see project-scoped rules",
+        };
       }
       return row;
     });
-  }, [who, policy, simType, simProject, project, projectMembers]);
+  }, [who, policy, simType, simProject, project, projectMembers, projects]);
 
   return (
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] mb-5 overflow-hidden">

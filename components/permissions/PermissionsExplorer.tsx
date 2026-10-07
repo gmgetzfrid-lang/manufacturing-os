@@ -111,10 +111,23 @@ export function capabilityRow(def: CapabilityDef, policy: CapabilityPolicy): Exp
 
 /** The admin surfaces whose action authority the registry states. `use`
  *  picks the registry field: the page's write authority when it declares
- *  one, otherwise who may open the page (the page is the action). */
+ *  one, otherwise who may open the page (the page is the action). `cond` is
+ *  the database's narrowing the registry cannot spell, said on the row. */
 export const SURFACE_ROWS: ReadonlyArray<{ area: string; cap: string; key: string; use: "writes" | "entry"; cond?: string }> = [
-  { area: "Admin", cap: "Change member roles, suspend or remove members", key: "users", use: "writes" },
-  { area: "Admin", cap: "Teams & team members", key: "teams", use: "entry" },
+  // ALOG-14 (review fix): suspend / restore and role changes are the users
+  // page's writes (Admin, Manager — revoke_member and the org_members UPDATE
+  // policy, where only an Admin writes a row that holds Admin, 20260817);
+  // REMOVING a member is Admin-only (revoke_member mode 'remove',
+  // org_members_delete), so it is its own snapshot row below.
+  { area: "Admin", cap: "Change member roles, suspend or restore members", key: "users", use: "writes",
+    cond: "Only an Admin can grant the Admin role or suspend / restore an Admin; removing a member is Admin-only (its own row)" },
+  // The teams page's `writes` (Admin, Document Control) is its supervisor and
+  // library-ownership controls (snapshot rows below). Creating teams and
+  // changing who is in them is the page's own audience — Admin or Manager,
+  // which is also the database's rule (teams_admin_write /
+  // team_members_admin_write, 20261046).
+  { area: "Admin", cap: "Create teams & manage team membership", key: "teams", use: "entry",
+    cond: "The teams write policy (20261046) admits Admin or Manager; a department's supervisor and library ownership are separate rows" },
   { area: "Admin", cap: "Library creation & config", key: "libraries", use: "entry" },
   { area: "Admin", cap: "Request-form & routing config", key: "requests", use: "entry" },
   { area: "Admin", cap: "Operational scope (edit)", key: "scope", use: "writes" },
@@ -140,7 +153,7 @@ export function surfaceRow(spec: (typeof SURFACE_ROWS)[number]): ExplorerRow {
   });
   return {
     key: `surface:${spec.key}:${spec.use}`, source: "surface", area: spec.area, cap: spec.cap, cells,
-    note: `${s?.path ?? spec.key} — ${spec.use === "writes" ? "its actions" : "who may open it"}`,
+    note: `${s?.path ?? spec.key} — ${spec.use === "writes" ? "its actions" : "who may open it"}${spec.cond ? ` · ${spec.cond}` : ""}`,
   };
 }
 
@@ -198,7 +211,20 @@ export const SNAPSHOT_ROWS: SnapshotRow[] = [
   // members page offers it to the same two — changing roles is the users
   // surface's writes (derived above).
   { area: "Admin", cap: "Add a member (invite)", m: "yy----------", cond: "Only an Admin can grant the Admin role" },
-  { area: "Admin", cap: "Change a department's supervisor or library ownership", m: "y-----------", cond: "The teams page allows Admin or Document Control, but only Admin and Manager can open /admin/teams" },
+  // ALOG-14 (review fix): removal is revoke_member's 'remove' mode (newest
+  // body 20261161) and org_members_delete (20261042) — Admin only.
+  { area: "Admin", cap: "Remove a member from the workspace", m: "y-----------", cond: "Admin only — revoke_member refuses anyone else; no one removes themselves" },
+  // ALOG-14 (review fix): the old single row said only Admin could reassign
+  // library ownership. Split: the supervisor swap is the teams guard
+  // (teams_guard_supervisor_change, 20261046: a controller) AND the teams
+  // write policy (Admin or Manager) — so Admin alone, or a member holding
+  // Document Control together with Manager. Library ownership is the library
+  // guard (enforce_library_sensitive_columns, 20261077 §2): a controller, the
+  // library's current owner, or a Manage Permissions grant on it — reached
+  // from the library's review policy (setOwner) and from /admin/teams
+  // (setLibraryOwnerTeam).
+  { area: "Admin", cap: "Change a department's supervisor", m: "y-----------", cond: "Needs a controller (the supervisor guard) who may also write teams (Admin or Manager): Admin, or Document Control held together with Manager" },
+  { area: "Admin", cap: "Reassign library ownership / owning team", m: "yycccccccccc", cond: "Admin / Document Control always; anyone else as the library's current owner, or with a Manage Permissions grant on it" },
   { area: "Admin", cap: "Per-library permission (ACL) drawer", m: "yy----------" },
 ];
 

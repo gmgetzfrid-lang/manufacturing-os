@@ -512,7 +512,8 @@ describe("HLD-14 — expectedReleaseIso and scanStaleHolds", () => {
     // the database admits exactly this column on an open row (HLD-5 guard, DEC-25) and gates the UPDATE on holds.release
     const m73 = mig("20261073_dc_roundF_document_holds_integrity.sql");
     expect(m73).toMatch(/-- Still open and staying open: notes, expected_release_at and/);
-    expect(lib).toMatch(/await assertHoldCapability\(String\(holdRow\.org_id\), "holds\.release"\);\s*\n\s*\n\s*const \{ data, error \} = await supabase\s*\n\s*\.from\("document_holds"\)\s*\n\s*\.update\(\{ expected_release_at: expectedReleaseAt \}\)/);
+    // (admin-and-org P9 review fix: the hold row is read CHECKED and the gate's sentence says "re-date")
+    expect(lib).toMatch(/await assertHoldCapability\(holdRow\.orgId, "holds\.release", \{ action: "redate" \}\);\s*\n\s*\n\s*const \{ data, error \} = await supabase\s*\n\s*\.from\("document_holds"\)\s*\n\s*\.update\(\{ expected_release_at: expectedReleaseAt \}\)/);
   });
   it("rides the EXISTING maintenance route as a compliance scan — no third vercel.json cron", () => {
     const route = src("app/api/cron/maintenance/route.ts");

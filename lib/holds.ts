@@ -232,26 +232,54 @@ export function expectedReleaseDate(iso: Date | number | string | null | undefin
  *  when the check itself fails, the hold is refused with a sentence saying so
  *  — nothing is written. A healthy read answers exactly as before. The
  *  document_holds policies enforce the same capability in the database
- *  (org_capability_allows, which fails closed too). */
+ *  (org_capability_allows, which fails closed too).
+ *
+ *  Review fix (AUTHZ-7): in the BROWSER (every caller today — HoldStrip,
+ *  CheckInPanel, /admin/holds) a session that cannot be read is a check that
+ *  did not run, so it refuses too; only a context with no window (a server
+ *  or cron caller with no person) is left to the database. The sentence
+ *  names what the person did — placed, released, or re-dated. */
+type HoldAction = "place" | "release" | "redate";
+const UNCHECKED_LEAD: Record<HoldAction, string> = {
+  place: "The hold was not placed: your permission to place holds",
+  release: "The hold was not released: your permission to release holds",
+  redate: "The hold's expected date was not changed: your permission to re-date holds (the release permission)",
+};
 async function assertHoldCapability(
   orgId: string,
   cap: "holds.open" | "holds.release",
-  // DEC-13 stage 2: the evaluator takes a resource; no hold caller threads
-  // one today (a hold's library is not in hand here), so the BASE list
-  // governs — which is also what the document_holds policies see through
-  // the 3-argument org_capability_allows. Both halves agree by construction.
-  resource?: import("@/lib/capabilityPolicy").CapabilityResource,
+  opts: {
+    /** What the person is doing — the refusal sentence says it. */
+    action?: HoldAction;
+    // DEC-13 stage 2: the evaluator takes a resource; no hold caller threads
+    // one today (a hold's library is not in hand here), so the BASE list
+    // governs — which is also what the document_holds policies see through
+    // the 3-argument org_capability_allows. Both halves agree by construction.
+    resource?: import("@/lib/capabilityPolicy").CapabilityResource;
+  } = {},
 ): Promise<void> {
-  const verb = cap === "holds.open" ? "placed" : "released";
-  const unchecked = (why: string) => new Error(
-    `The hold was not ${verb}: your permission to ${cap === "holds.open" ? "place" : "release"} holds could not be checked (${why}). Try again in a moment.`);
+  const resource = opts.resource;
+  const action: HoldAction = opts.action ?? (cap === "holds.open" ? "place" : "release");
+  const said = new WeakSet<Error>();
+  const unchecked = (why: string) => {
+    const e = new Error(`${UNCHECKED_LEAD[action]} could not be checked (${why}). Try again in a moment.`);
+    said.add(e);
+    return e;
+  };
   try {
-    const [{ loadCapabilityPolicyEntry, policyAllows }, { data: auth }] = await Promise.all([
+    const [{ loadCapabilityPolicyEntry, policyAllows }, { data: auth, error: authErr }] = await Promise.all([
       import("@/lib/capabilityPolicy"),
       supabase.auth.getUser(),
     ]);
-    const uid = auth.user?.id;
-    if (!uid) return; // server/cron contexts: not policy-gated here
+    const uid = auth?.user?.id;
+    if (!uid) {
+      // A browser caller is a signed-in person: no readable session is a
+      // check that did not run — refuse (DEC-89 item 3).
+      if (typeof window !== "undefined") {
+        throw unchecked(authErr?.message ? `your session could not be read: ${authErr.message}` : "no signed-in session was found");
+      }
+      return; // server/cron contexts (no window, no person): the document_holds policies decide
+    }
     const [{ data: member, error: memberErr }, loaded] = await Promise.all([
       supabase.from("org_members").select("role, roles").eq("org_id", orgId).eq("uid", uid).eq("status", "active").maybeSingle(),
       loadCapabilityPolicyEntry(orgId),
@@ -270,7 +298,7 @@ async function assertHoldCapability(
   } catch (e) {
     const msg = (e as Error)?.message ?? "";
     // A refusal, or an unchecked answer already said in words, stands.
-    if (msg.includes("Action permissions") || msg.startsWith("The hold was not ")) throw e;
+    if (msg.includes("Action permissions") || (e instanceof Error && said.has(e))) throw e;
     // Anything else — the import, the session read, the evaluator — is a
     // check that did not happen: refuse (fail closed), never fail open.
     throw unchecked(msg || "the check failed");
@@ -347,6 +375,17 @@ export async function openHold(input: OpenHoldInput): Promise<HoldRecord> {
   return rowToHold(row);
 }
 
+/** AUTHZ-7 (review fix): the hold's org, read CHECKED — the capability gate
+ *  needs it, so a failed read refuses (the gate would otherwise not run). A
+ *  row that is absent or not visible refuses with the update's own answer. */
+async function readHoldOrg(holdId: string, lead: string): Promise<{ orgId: string }> {
+  const { data, error } = await supabase
+    .from("document_holds").select("org_id").eq("id", holdId).maybeSingle();
+  if (error) throw new Error(`${lead}: the hold could not be read to check your permission (${error.message}). Try again in a moment.`);
+  if (!data?.org_id) throw new Error("Hold already released or not found.");
+  return { orgId: String(data.org_id) };
+}
+
 export interface ReleaseHoldInput {
   holdId: string;
   releasedBy: string;
@@ -363,10 +402,11 @@ export async function releaseHold(input: ReleaseHoldInput): Promise<HoldRecord> 
   const releasedReason = (input.releasedReason ?? "").trim();
   if (!releasedReason) throw new Error("A release reason is required — say what cleared the hold.");
 
-  // Policy gate first — resolve the hold's org from its row.
-  const { data: holdRow } = await supabase
-    .from("document_holds").select("org_id").eq("id", input.holdId).maybeSingle();
-  if (holdRow?.org_id) await assertHoldCapability(String(holdRow.org_id), "holds.release");
+  // Policy gate first — resolve the hold's org from its row. AUTHZ-7 (review
+  // fix): a read that fails is a gate that did not run — refuse; a row that
+  // is not there (or not visible) is the same answer the update would give.
+  const holdRow = await readHoldOrg(input.holdId, "The hold was not released");
+  await assertHoldCapability(holdRow.orgId, "holds.release", { action: "release" });
 
   const now = new Date().toISOString();
   const { data, error } = await supabase
@@ -428,9 +468,8 @@ export async function releaseHold(input: ReleaseHoldInput): Promise<HoldRecord> 
  *  event: it writes no HOLD_* audit row and sends no notification; the next
  *  aging sweep keys on the new date. */
 export async function updateHoldExpectedRelease(holdId: string, expectedReleaseAt: string | null): Promise<HoldRecord> {
-  const { data: holdRow } = await supabase
-    .from("document_holds").select("org_id").eq("id", holdId).maybeSingle();
-  if (holdRow?.org_id) await assertHoldCapability(String(holdRow.org_id), "holds.release");
+  const holdRow = await readHoldOrg(holdId, "The hold's expected date was not changed");
+  await assertHoldCapability(holdRow.orgId, "holds.release", { action: "redate" });
 
   const { data, error } = await supabase
     .from("document_holds")

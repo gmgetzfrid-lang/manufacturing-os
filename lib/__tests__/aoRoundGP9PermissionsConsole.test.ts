@@ -42,6 +42,8 @@ const db = vi.hoisted(() => ({
   throwRead: false,
   calls: [] as Array<{ table: string; kind: string }>,
   rpcError: null as null | { message: string; code?: string },
+  /** the browser client's getUser error (an auth-server blip) */
+  authError: null as null | { message: string },
 }));
 function table(name: string) {
   const filters: Array<(r: Row) => boolean> = [];
@@ -99,7 +101,7 @@ vi.mock("@/lib/supabase", () => ({
     from: (t: string) => table(t),
     auth: {
       getSession: async () => ({ data: { session: null } }),
-      getUser: async () => ({ data: { user: db.user }, error: null }),
+      getUser: async () => ({ data: { user: db.authError ? null : db.user }, error: db.authError }),
     },
   },
 }));
@@ -113,7 +115,7 @@ import {
   type CapabilityPolicy,
 } from "@/lib/capabilityPolicy";
 import { POST as policyRoute } from "@/app/api/admin/capability-policy/route";
-import { openHold } from "@/lib/holds";
+import { openHold, releaseHold, updateHoldExpectedRelease } from "@/lib/holds";
 import { POLICY_TOKENS, DORMANT_ROLES } from "@/lib/roleCapabilities";
 import { POLICY_TOKENS as EDITOR_TOKENS, tokensOutsideGrid, splitPolicyForEditor, joinPolicyFromEditor } from "@/components/permissions/CapabilityPolicyEditor";
 import { EXPLORER_COLUMNS, SURFACE_ROWS, SNAPSHOT_ROWS, explorerRows, capabilityRow } from "@/components/permissions/PermissionsExplorer";
@@ -205,7 +207,7 @@ describe("AUTHZ-7 — lib/holds.ts assertHoldCapability fails CLOSED (DEC-89 ite
   beforeEach(() => {
     __resetCapabilityPolicyCache();
     db.tables = { org_members: [{ org_id: "o1", uid: "u1", role: "Viewer", roles: ["Viewer"], status: "active" }] };
-    db.readError = {}; db.throwRead = false; db.calls = []; db.user = { id: "u1" };
+    db.readError = {}; db.throwRead = false; db.calls = []; db.user = { id: "u1" }; db.authError = null;
     // the insert is the first write after the check: stop the flow there
     db.readError.document_holds = undefined;
   });
@@ -259,6 +261,62 @@ describe("AUTHZ-7 — lib/holds.ts assertHoldCapability fails CLOSED (DEC-89 ite
     db.tables.org_members = [];
     await expect(openHold(base)).rejects.toThrow(/Your role isn't allowed to place holds/);
     expect(reachedInsert()).toBe(false);
+  });
+  // ── review fix: the two paths that still skipped the client gate ──
+  const inBrowser = async (fn: () => Promise<void>) => {
+    const g = globalThis as { window?: unknown };
+    g.window = {};
+    try { await fn(); } finally { delete g.window; }
+  };
+  const openRow = () => ({ id: "h1", org_id: "o1", document_id: "d1", reason: "Client Review", opened_by: "u0", opened_at: "2026-10-01T00:00:00Z", released_at: null, expected_release_at: null });
+  const reachedUpdate = () => db.calls.some((c) => c.table === "document_holds" && c.kind === "update");
+  it("in the browser, a session that cannot be read REFUSES (it used to return before the check); nothing is written", async () => {
+    db.tables.org_configurations = [];
+    await inBrowser(async () => {
+      db.authError = { message: "auth server unavailable" };
+      await expect(openHold(base)).rejects.toThrow(/^The hold was not placed: your permission to place holds could not be checked \(your session could not be read: auth server unavailable\)\. Try again in a moment\.$/);
+      db.authError = null; db.user = null;
+      await expect(openHold(base)).rejects.toThrow(/^The hold was not placed: .*\(no signed-in session was found\)/);
+    });
+    expect(reachedInsert()).toBe(false);
+  });
+  it("regression: with no window (a server / cron caller, no person) the gate is left to the database, as before", async () => {
+    db.tables.org_configurations = [stored({ "holds.open": ["Admin"] })];
+    db.user = null;
+    await openHold(base).catch(() => undefined);
+    expect(reachedInsert()).toBe(true);
+  });
+  it("release: a hold row that cannot be read refuses before any write (the gate needs its org); a missing row says what the update would", async () => {
+    db.tables.org_configurations = [];
+    db.tables.document_holds = [openRow()];
+    db.readError.document_holds = { message: "statement timeout" };
+    await expect(releaseHold({ holdId: "h1", releasedBy: "u1", releasedReason: "cleared" }))
+      .rejects.toThrow(/^The hold was not released: the hold could not be read to check your permission \(statement timeout\)\. Try again in a moment\.$/);
+    expect(reachedUpdate()).toBe(false);
+    db.readError = {};
+    db.tables.document_holds = [];
+    await expect(releaseHold({ holdId: "h1", releasedBy: "u1", releasedReason: "cleared" })).rejects.toThrow(/^Hold already released or not found\.$/);
+    expect(reachedUpdate()).toBe(false);
+  });
+  it("re-date: the same checked read, and a check that did not run says the DATE was not changed — not 'not released'", async () => {
+    db.tables.document_holds = [openRow()];
+    db.readError.document_holds = { message: "statement timeout" };
+    await expect(updateHoldExpectedRelease("h1", null))
+      .rejects.toThrow(/^The hold's expected date was not changed: the hold could not be read to check your permission \(statement timeout\)/);
+    db.readError = {};
+    db.readError.org_configurations = { message: "upstream timeout" };
+    await expect(updateHoldExpectedRelease("h1", null))
+      .rejects.toThrow(/^The hold's expected date was not changed: your permission to re-date holds \(the release permission\) could not be checked \(the workspace's permission policy could not be read: upstream timeout\)\. Try again in a moment\.$/);
+    expect(reachedUpdate()).toBe(false);
+    // release keeps its own sentence on the same fault
+    await expect(releaseHold({ holdId: "h1", releasedBy: "u1", releasedReason: "cleared" }))
+      .rejects.toThrow(/^The hold was not released: your permission to release holds could not be checked/);
+    expect(reachedUpdate()).toBe(false);
+    // and a healthy read re-dates as before
+    db.readError = {};
+    db.tables.org_configurations = [];
+    await updateHoldExpectedRelease("h1", null).catch(() => undefined);
+    expect(reachedUpdate()).toBe(true);
   });
   it("source: the fail-open swallow is gone", () => {
     const h = src("lib/holds.ts");
@@ -462,9 +520,67 @@ describe("ALOG-14 — the permissions explorer tells the truth", () => {
     expect(row("Equipment / asset admin pages (edit)").cells[col("DocCtrl")].v).toBe("y");
     // (5) user management split: adding a member is Admin + DocCtrl; changing roles is the users surface's writes
     expect(SNAPSHOT_ROWS.find((r) => r.cap === "Add a member (invite)")!.m).toBe("yy----------");
-    expect(row("Change member roles, suspend or remove members").cells.map((c) => c.v).join("")).toBe("y-y---------");
+    expect(row("Change member roles, suspend or restore members").cells.map((c) => c.v).join("")).toBe("y-y---------");
     // (6) recertification: the owner (◐) plus the controllers, and nobody else — as 20261188 admits
     expect(SNAPSHOT_ROWS.find((r) => r.cap === "Access recertification reviews")!.m).toBe("yycccccccccc");
+  });
+  // ── review fix: the rows the rewrite itself got wrong, pinned to the SQL ──
+  const newestDefining = (re: RegExp) => readdirSync(join(process.cwd(), "supabase/migrations"))
+    .filter((f) => /^\d{8}_.*\.sql$/.test(f)).sort()
+    .filter((f) => re.test(src(`supabase/migrations/${f}`))).pop()!;
+  const cells = (cap: string) => row(cap).cells.map((c) => c.v).join("");
+  it("library ownership is the 20261077 §2 guard: controllers, the current owner, or a Manage Permissions grant — not Admin only", () => {
+    // The newest definition of the guard is the one the row describes.
+    expect(newestDefining(/CREATE OR REPLACE FUNCTION enforce_library_sensitive_columns\(\)/)).toBe("20261077_dc_roundF_records_rails.sql");
+    const guard = src("supabase/migrations/20261077_dc_roundF_records_rails.sql");
+    expect(guard).toMatch(/IF \(NEW\.owner_user_id\s+IS DISTINCT FROM OLD\.owner_user_id[\s\S]*?OR NEW\.owner_team_id IS DISTINCT FROM OLD\.owner_team_id/);
+    expect(guard).toMatch(/IF NOT is_org_controller\(OLD\.org_id\)\s+AND OLD\.owner_user_id::text IS DISTINCT FROM auth\.uid\(\)::text\s+AND NOT can_manage_node\(OLD\.acl_index, OLD\.org_id\) THEN\s+RAISE EXCEPTION 'Not permitted to change this library''s ownership/);
+    // libraries' one policy is org membership (schema.sql) — the guard decides.
+    expect(src("supabase/schema.sql")).toMatch(/CREATE POLICY "libraries_org_access" ON libraries FOR ALL\s+USING \(org_id IN \(SELECT my_org_ids\(\)\)\);/);
+    expect(cells("Reassign library ownership / owning team")).toBe("yycccccccccc");
+    expect(row("Reassign library ownership / owning team").cells[col("Viewer")].why).toMatch(/current owner, or with a Manage Permissions grant/);
+    // The old row that said only an Admin could reassign library ownership is gone.
+    expect(rows.some((r) => /supervisor or library ownership/.test(r.cap))).toBe(false);
+  });
+  it("a department's supervisor is the teams guard AND the teams write policy (20261046): Admin, or DocCtrl held with Manager", () => {
+    expect(newestDefining(/FUNCTION teams_guard_supervisor_change\(\)/)).toBe("20261046_rp_phase6_sweep_authority_by_collection.sql");
+    expect(newestDefining(/POLICY teams_admin_write ON teams/)).toBe("20261046_rp_phase6_sweep_authority_by_collection.sql");
+    const m = src("supabase/migrations/20261046_rp_phase6_sweep_authority_by_collection.sql");
+    expect(m).toMatch(/IF NEW\.supervisor_user_id IS DISTINCT FROM OLD\.supervisor_user_id\s+AND NOT is_org_controller\(OLD\.org_id\) THEN/);
+    expect(m).toMatch(/CREATE POLICY teams_admin_write ON teams FOR ALL\s+USING \(caller_holds_any_role\(org_id, ARRAY\['Admin','Manager'\]::text\[\]\)\)/);
+    expect(cells("Change a department's supervisor")).toBe("y-----------");
+    expect(row("Change a department's supervisor").cells[col("Admin")].why).toMatch(/Document Control held together with Manager/);
+  });
+  it("creating teams and their membership is Admin or Manager — the registry's entry, and the same two the teams write policy admits", () => {
+    const t = row("Create teams & manage team membership");
+    expect(t.source).toBe("surface");
+    expect(new Set(adminSurface("teams")!.entry as string[])).toEqual(new Set(["Admin", "Manager"]));
+    expect(cells("Create teams & manage team membership")).toBe("y-y---------");
+    const m = src("supabase/migrations/20261046_rp_phase6_sweep_authority_by_collection.sql");
+    expect(m).toMatch(/CREATE POLICY team_members_admin_write ON team_members FOR ALL\s+USING \(caller_holds_any_role\(org_id, ARRAY\['Admin','Manager'\]::text\[\]\)\)/);
+    expect(t.note).toMatch(/20261046/);
+    expect(rows.some((r) => r.cap === "Teams & team members")).toBe(false);
+  });
+  it("removing a member is Admin only (revoke_member 'remove', newest body 20261161); suspend / restore stays Admin + Manager with the Admin-row rule said", () => {
+    const newest = newestDefining(/CREATE OR REPLACE FUNCTION (public\.)?revoke_member\(/);
+    expect(newest).toBe("20261161_notif_roundG_read_scope.sql");
+    const fn = src(`supabase/migrations/${newest}`);
+    expect(fn).toMatch(/IF p_mode = 'remove' THEN\s+IF NOT EXISTS \(SELECT 1 FROM org_members me WHERE me\.uid = v_actor AND me\.org_id = v_member\.org_id\s+AND me\.status = 'active' AND \(me\.role = 'Admin' OR me\.roles && ARRAY\['Admin'\]::text\[\]\)\) THEN\s+RAISE EXCEPTION 'Only an Admin can remove a member from the workspace\.';/);
+    expect(fn).toMatch(/IF NOT is_org_admin_or_manager\(v_member\.org_id\) THEN\s+RAISE EXCEPTION 'Only an Admin or Manager can suspend or restore a member\.';/);
+    expect(fn).toContain("RAISE EXCEPTION 'Only an Admin can suspend or restore an Admin.';");
+    expect(src("supabase/migrations/20261042_rp_phase6_revocation_and_succession.sql"))
+      .toMatch(/CREATE POLICY org_members_delete ON org_members\s+FOR DELETE[\s\S]*?AND \(me\.role = 'Admin' OR me\.roles && ARRAY\['Admin'\]::text\[\]\)/);
+    expect(cells("Remove a member from the workspace")).toBe("y-----------");
+    expect(SNAPSHOT_ROWS.find((r) => r.cap === "Remove a member from the workspace")).toBeDefined();
+    const users = row("Change member roles, suspend or restore members");
+    expect(users.source).toBe("surface");
+    expect(new Set(adminSurface("users")!.writes)).toEqual(new Set(["Admin", "Manager"]));
+    expect(users.note).toMatch(/Only an Admin can grant the Admin role or suspend \/ restore an Admin; removing a member is Admin-only/);
+    // the Admin-row half is the org_members UPDATE policy's (20260817): only an Admin writes a row that holds Admin
+    expect(src("supabase/migrations/20260817_org_members_escalation_and_config.sql"))
+      .toMatch(/CREATE POLICY org_members_update ON org_members\s+FOR UPDATE\s+USING \(is_org_admin_or_manager\(org_id\)\)\s+WITH CHECK \(\s+is_org_admin_or_manager\(org_id\)\s+AND \(\s+NOT \(role = 'Admin' OR roles && ARRAY\['Admin'\]::text\[\]\)\s+OR is_org_admin\(org_id\)/);
+    expect(newestDefining(/POLICY org_members_update ON org_members/)).toBe("20260817_org_members_escalation_and_config.sql");
+    expect(rows.some((r) => /suspend or remove members/.test(r.cap))).toBe(false);
   });
   it("standing holders are shown: Admin / DocCtrl always sign off quality records; anyone else is ◐ (project owner)", () => {
     const q = row("Sign off quality records");
