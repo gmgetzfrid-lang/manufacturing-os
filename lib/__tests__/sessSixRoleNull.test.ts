@@ -557,6 +557,8 @@ describe("OFF-8 — every key the app keeps in this browser is in RoleContext's 
     expect(seen("components/ui/FirstRunHint.tsx")).toContain("local:first_run_hint:…");                              // a constant + a prop
     expect(seen("app/layout.tsx")).toContain("local:mfg-os.density");                                                 // an inline script
     expect(seen(ROLE_CONTEXT)).toEqual(expect.arrayContaining(["local:manufacturingos.lastIdentity", "session:manufacturingos.lastIdentity"]));
+    // OFF-15 (PS-P6): the uid-keyed stamp list (a local arrow's template) and the legacy device-wide key (a constant, read once to move it)
+    expect(seen("components/viewers/FullScreenViewer.tsx")).toEqual(expect.arrayContaining(["local:manufacturingos.customStamps:…", "local:manufacturingos.customStamps"]));
   }, CENSUS_TIMEOUT_MS);
 
   it("per KEY, negative controls: a new key in a file that already owns rows fails until it has its own row", () => {
@@ -609,6 +611,10 @@ describe("OFF-8 — every key the app keeps in this browser is in RoleContext's 
     for (const k of ["intel-status-", "schema-gaps-"]) { expect(kind("local", k), k).toBe("cache"); expect(kind("session", k), k).toBe("cache"); }
     for (const k of ["org-graph-", "mfg-os:lib:"]) expect(kind("session", k), k).toBe("cache");
     expect(kind("local", "dismissed:")).toBe("held");
+    // OFF-15 (PS-P6): a person's uploaded stamp images are their own work, keyed by uid; the legacy device-wide list is not an account read (moved once, by the viewer)
+    expect(kind("local", "manufacturingos.customStamps:")).toBe("identity");
+    expect(CLIENT_STORAGE_INVENTORY.find((r) => r.store === "local" && r.key === "manufacturingos.customStamps:")?.class).toBe("account");
+    expect(CLIENT_STORAGE_INVENTORY.find((r) => r.store === "local" && r.key === "manufacturingos.customStamps")?.class).toBe("device");
     // which end takes which kind
     expect(["cache", "held", "identity"].map((k) => purgeTakes("all", k as "cache"))).toEqual([true, true, true]);
     expect(["cache", "held", "identity"].map((k) => purgeTakes("signout", k as "cache"))).toEqual([true, true, false]);
@@ -627,7 +633,7 @@ describe("OFF-8 — the purge", () => {
     L.setItem("manufacturingos.preferMicrosoft", "true"); L.setItem("manufacturingos.rememberSession", "true");
     L.setItem("sb-ref-auth-token", "tok");
     L.setItem("mfgos.theme.mode", "dark"); L.setItem("orgGraph:settings:o1", "{}"); L.setItem("manufacturingos.dashboard.u1", "{}");
-    L.setItem("manufacturingos.customStamps", "[]");
+    L.setItem("manufacturingos.customStamps", "[]"); L.setItem("manufacturingos.customStamps:u1", "[]");
     S.setItem("org-graph-o1", "{}"); S.setItem("mfg-os:lib:l1:o1", "{}"); S.setItem("kl-active-thread-l1", "[]");
     S.setItem("manufacturingos.silentSSOAttempted", "1"); S.setItem("manufacturingos.signInNext", "{}"); S.setItem("kl-embed-nudge-at", "1");
   };
@@ -649,7 +655,7 @@ describe("OFF-8 — the purge", () => {
     purgeAccountStorage(window.localStorage, "local", "signout");
     purgeAccountStorage(window.sessionStorage, "session", "signout");
     expect(keys(window.localStorage)).toEqual([
-      "manufacturingos.activeOrgId", "manufacturingos.activeOrgId.owner", "manufacturingos.customStamps", "manufacturingos.dashboard.u1",
+      "manufacturingos.activeOrgId", "manufacturingos.activeOrgId.owner", "manufacturingos.customStamps", "manufacturingos.customStamps:u1", "manufacturingos.dashboard.u1",
       LAST_IDENTITY_KEY, "manufacturingos.preferMicrosoft", "manufacturingos.rememberSession", "mfg-os.palette.recents", "mfgos.theme.mode",
       "orgGraph:pos3d:o1", "orgGraph:pos:o1", "orgGraph:settings:o1", "sb-ref-auth-token",
     ].sort());
@@ -668,6 +674,7 @@ describe("OFF-8 — the purge", () => {
     expect(window.localStorage.getItem("orgGraph:pos3d:o1")).toBe("{}");
     expect(window.sessionStorage.getItem("kl-active-thread-l1")).toBe("[]");
     expect(window.localStorage.getItem("dismissed:u1:o1:hint")).toBe("1");
+    expect(window.localStorage.getItem("manufacturingos.customStamps:u1")).toBe("[]");
     expect(window.localStorage.getItem(LAST_IDENTITY_KEY)).toBe("u1"); // so a different identity later still ends the held data
     expect(window.localStorage.getItem("manufacturingos.activeOrgId")).toBe("o1");
   });
@@ -758,6 +765,7 @@ describe("OFF-8 — the provider's branches, rendered", () => {
     s.member = ADMIN;
     await mount();
     seedAccount();
+    window.localStorage.setItem("manufacturingos.customStamps:u1", "[{\"id\":\"cs-1\",\"name\":\"initials.png\",\"src\":\"data:\"}]");
     expect(window.localStorage.getItem(LAST_IDENTITY_KEY)).toBe("u1");
     await act(async () => { await s.authCb!("SIGNED_OUT", null); });
     expect(window.localStorage.getItem("dismissed:u1:o1:x")).toBeNull();
@@ -767,6 +775,7 @@ describe("OFF-8 — the provider's branches, rendered", () => {
     expect(window.localStorage.getItem("orgGraph:pos:o1")).toBe("{\"doc:d1\":[1,2,0]}");
     expect(window.localStorage.getItem("mfg-os.palette.recents")).toBe("[]");
     expect(window.sessionStorage.getItem("kl-active-thread-l1")).toBe("[]");
+    expect(window.localStorage.getItem("manufacturingos.customStamps:u1")).toContain("initials.png"); // OFF-15: the person's uploaded stamps
     expect(idbDeleted).toEqual([]);
     expect(window.localStorage.getItem(LAST_IDENTITY_KEY)).toBe("u1"); // so the next DIFFERENT identity still ends them
     expect(window.localStorage.getItem("manufacturingos.preferMicrosoft")).toBe("true");
@@ -781,6 +790,7 @@ describe("OFF-8 — the provider's branches, rendered", () => {
     await mount();
     seedAccount();
     window.localStorage.setItem("orgGraph:pos3d:o1", "{\"doc:d1\":[1,2,3]}");
+    window.localStorage.setItem("manufacturingos.customStamps:u1", "[{\"id\":\"cs-1\",\"name\":\"initials.png\",\"src\":\"data:\"}]");
     await act(async () => { await s.authCb!("SIGNED_OUT", null); });
     await reload({ user: { id: "u1", email: "a@x.io" } }); // "/" → the same person signs in → a fresh provider
     expect(probe()).toBe("Admin|Admin|member|any");
@@ -788,6 +798,7 @@ describe("OFF-8 — the provider's branches, rendered", () => {
     expect(window.localStorage.getItem("orgGraph:pos3d:o1")).toBe("{\"doc:d1\":[1,2,3]}");
     expect(window.localStorage.getItem("mfg-os.palette.recents")).toBe("[]");
     expect(window.sessionStorage.getItem("kl-active-thread-l1")).toBe("[]");
+    expect(window.localStorage.getItem("manufacturingos.customStamps:u1")).toContain("initials.png"); // OFF-15: their uploaded stamps come back
     expect(idbDeleted).toEqual([]);
   });
 
@@ -796,10 +807,12 @@ describe("OFF-8 — the provider's branches, rendered", () => {
     s.member = ADMIN;
     await mount();
     seedAccount();
+    window.localStorage.setItem("manufacturingos.customStamps:u1", "[{\"id\":\"cs-1\",\"name\":\"initials.png\",\"src\":\"data:\"}]");
     await act(async () => { await s.authCb!("SIGNED_OUT", null); });
     s.member = { ...ADMIN, uid: "u2", email: "b@x.io" };
     await reload({ user: { id: "u2", email: "b@x.io" } });
     expect(probe()).toBe("Admin|Admin|member|any");
+    expect(window.localStorage.getItem("manufacturingos.customStamps:u1")).toBeNull(); // OFF-15: never offered to u2
     expect(window.localStorage.getItem("orgGraph:pos:o1")).toBeNull();
     expect(window.localStorage.getItem("mfg-os.palette.recents")).toBeNull();
     expect(window.sessionStorage.getItem("kl-active-thread-l1")).toBeNull();

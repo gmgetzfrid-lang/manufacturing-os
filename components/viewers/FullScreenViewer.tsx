@@ -122,6 +122,48 @@ const STAMPS: { label: string; tone: ColorKey }[] = [
   { label: "FOR INFO ONLY", tone: "black" },
 ];
 
+// ─── Custom stamp images, per account (public-surfaces OFF-15) ──────────
+// The stamp images a person uploads are theirs: kept in localStorage under
+// THEIR uid, never one device-wide list the next person on a shared tablet
+// is offered. CLIENT_STORAGE_INVENTORY (RoleContext) classes the uid key
+// "account" / kind "identity" — kept across the person's own sign-out for
+// their next sign-in, ended when a different identity runs the app here
+// (noteIdentity) — and the legacy device-wide key "device", read only to
+// move it once.
+type CustomStamp = { id: string; name: string; src: string };
+/** The device-wide list of before OFF-15. Never written now: the first
+ *  signed-in uid that opens the viewer with no list of its own takes it
+ *  (moved to its key, then removed) — a one-time move (OFF-15 Scope). */
+const LEGACY_CUSTOM_STAMPS_KEY = "manufacturingos.customStamps";
+const customStampsKey = (uid: string) => `manufacturingos.customStamps:${uid}`;
+
+function parseCustomStamps(raw: string | null): CustomStamp[] {
+  if (!raw) return [];
+  try {
+    const v: unknown = JSON.parse(raw);
+    return Array.isArray(v) ? (v as CustomStamp[]) : [];
+  } catch { return []; }
+}
+
+/** The signed-in person's stamps. No uid (signed out): none. On a uid's
+ *  first read — no list of its own yet — the legacy device-wide list is
+ *  MOVED to it: written under the uid first, and the legacy key removed
+ *  only once that write landed (never lose the stamps on a full store). */
+function loadCustomStamps(uid: string | null): CustomStamp[] {
+  if (!uid || typeof window === "undefined") return [];
+  try {
+    const own = window.localStorage.getItem(customStampsKey(uid));
+    if (own !== null) return parseCustomStamps(own);
+    const legacy = window.localStorage.getItem(LEGACY_CUSTOM_STAMPS_KEY);
+    if (legacy === null) return [];
+    const moved = parseCustomStamps(legacy);
+    let kept = false;
+    try { window.localStorage.setItem(customStampsKey(uid), JSON.stringify(moved)); kept = true; } catch { /* full or forbidden — leave the legacy list */ }
+    if (kept) { try { window.localStorage.removeItem(LEGACY_CUSTOM_STAMPS_KEY); } catch { /* forbidden */ } }
+    return moved;
+  } catch { return []; }
+}
+
 interface FullScreenViewerProps {
   isOpen: boolean;
   onClose: () => void;
@@ -338,21 +380,24 @@ export default function FullScreenViewer({
   const [stampMenuOpen, setStampMenuOpen] = useState(false);
   // Custom uploaded stamps (PNG/JPG) persisted to localStorage so they survive
   // refresh. Stored as data URLs — small footprint per stamp, capped at 12.
-  const [customStamps, setCustomStamps] = useState<{ id: string; name: string; src: string }[]>(() => {
-    if (typeof window === "undefined") return [];
-    try {
-      const raw = window.localStorage.getItem("manufacturingos.customStamps");
-      return raw ? JSON.parse(raw) : [];
-    } catch { return []; }
-  });
+  // OFF-15: the signed-in person's own list (keyed by uid); with no uid, no
+  // stamps are offered or written. A different person signing in while the
+  // viewer is open reads their own list, never the last person's.
+  const stampUid = currentUserId || null;
+  const [stampShelf, setStampShelf] = useState<{ uid: string | null; stamps: CustomStamp[] }>(
+    () => ({ uid: stampUid, stamps: loadCustomStamps(stampUid) }));
+  if (stampShelf.uid !== stampUid) setStampShelf({ uid: stampUid, stamps: loadCustomStamps(stampUid) });
+  const customStamps = stampShelf.uid === stampUid ? stampShelf.stamps : [];
   const stampFileInputRef = useRef<HTMLInputElement>(null);
 
-  const persistCustomStamps = (next: { id: string; name: string; src: string }[]) => {
-    setCustomStamps(next);
-    try { window.localStorage.setItem("manufacturingos.customStamps", JSON.stringify(next)); } catch {}
+  const persistCustomStamps = (next: CustomStamp[]) => {
+    if (!stampUid) return;
+    setStampShelf({ uid: stampUid, stamps: next });
+    try { window.localStorage.setItem(customStampsKey(stampUid), JSON.stringify(next)); } catch {}
   };
 
   const onUploadStamp = (file: File) => {
+    if (!stampUid) return;
     if (!file.type.startsWith("image/")) return;
     const reader = new FileReader();
     reader.onload = () => {
@@ -1392,7 +1437,8 @@ export default function FullScreenViewer({
                   <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Custom</span>
                   <button
                     onClick={() => stampFileInputRef.current?.click()}
-                    className="text-[10px] font-bold px-2 py-1 rounded-md bg-orange-600 hover:bg-orange-500 text-white"
+                    disabled={!stampUid}
+                    className="text-[10px] font-bold px-2 py-1 rounded-md bg-orange-600 hover:bg-orange-500 text-white disabled:opacity-40 disabled:cursor-not-allowed"
                   >+ Upload</button>
                   <input
                     ref={stampFileInputRef}
@@ -1407,7 +1453,7 @@ export default function FullScreenViewer({
                   />
                 </div>
                 {customStamps.length === 0 ? (
-                  <div className="text-[10px] text-slate-500 px-2 pb-2">Upload PNG/JPG/SVG stamps — saved on this device.</div>
+                  <div className="text-[10px] text-slate-500 px-2 pb-2">{stampUid ? "Upload PNG/JPG/SVG stamps — saved on this device for your account." : "Sign in to upload and use your stamps."}</div>
                 ) : (
                   <div className="grid grid-cols-3 gap-1 px-1 pb-1">
                     {customStamps.map((s) => (
