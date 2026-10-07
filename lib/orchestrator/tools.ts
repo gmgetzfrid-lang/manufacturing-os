@@ -122,26 +122,42 @@ async function readableIds(ctx: ToolContext, ids: string[]): Promise<Set<string>
   catch { return new Set(); }
 }
 
+/** I-21 fix pass 4: a deadline (a Date.now() instant) for a run of checks,
+ *  and whether a check reached it. */
+interface CheckBudget { deadline: number; outOfTime: boolean }
+
+/** Is the budget spent? Marks it so when it is. No budget is never spent. */
+function budgetSpent(budget: CheckBudget | undefined): boolean {
+  if (!budget || Date.now() <= budget.deadline) return false;
+  budget.outOfTime = true;
+  return true;
+}
+
 /** SURF-7 / IEDGE-2: which of these KNOWLEDGE documents are mirrors of a
  *  controlled document the caller may NOT read? The same hop the knowledge
  *  ask route makes. Upload-origin knowledge documents (no source) stay
  *  org-readable and are never excluded here. Fails CLOSED: if the hop cannot
- *  be evaluated, every id given is treated as unreadable. */
-async function unreadableMirrors(ctx: ToolContext, knowledgeDocIds: string[]): Promise<Set<string>> {
+ *  be evaluated, every id given is treated as unreadable. With a budget (the
+ *  line trace's, I-21 fix pass 4), no lookup starts past its deadline, and
+ *  every id not cleared by then is treated as unreadable too. */
+async function unreadableMirrors(ctx: ToolContext, knowledgeDocIds: string[], budget?: CheckBudget): Promise<Set<string>> {
   const ids = [...new Set(knowledgeDocIds.filter((id) => id && id !== "null" && id !== "undefined"))];
   if (ids.length === 0) return new Set();
   try {
     const mirrored: Array<{ id: string; source_document_id: string }> = [];
+    const unchecked: string[] = [];
     for (let i = 0; i < ids.length; i += 200) {
+      if (budgetSpent(budget)) { unchecked.push(...ids.slice(i)); break; }
       const { data, error } = await supabaseAdmin
         .from("knowledge_documents").select("id, source_document_id")
         .in("id", ids.slice(i, i + 200)).not("source_document_id", "is", null);
       if (error) throw error;
       mirrored.push(...((data ?? []) as Array<{ id: string; source_document_id: string }>));
     }
-    if (mirrored.length === 0) return new Set();
+    if (mirrored.length === 0) return new Set(unchecked);
+    if (budgetSpent(budget)) return new Set([...unchecked, ...mirrored.map((m) => m.id)]);
     const readable = await readableControlledDocIds(ctx.principal, [...new Set(mirrored.map((m) => m.source_document_id))]);
-    return new Set(mirrored.filter((m) => !readable.has(m.source_document_id)).map((m) => m.id));
+    return new Set([...unchecked, ...mirrored.filter((m) => !readable.has(m.source_document_id)).map((m) => m.id)]);
   } catch { return new Set(ids); }
 }
 
@@ -482,7 +498,7 @@ const tracePidLines: ToolDef = {
     { name: "hops", type: "number", description: "Neighbourhood radius when no end tag (default 2)." },
   ],
   async run(args, ctx) {
-    const graph = await loadLineGraph(ctx);
+    const graph = await lineGraphFor(ctx);
     // GAP-315: the confirmed process flows the graph holds (after the
     // hidden-sheet filter). The answer names them (a flow basis, `route`,
     // `confirmed_flows`) only when it rests on one: a found route with a
@@ -495,7 +511,18 @@ const tracePidLines: ToolDef = {
     const isFlow = (e: LineEdge) => e.basis === "confirmed_flow";
     // ING-10 residual / GAP-315: what the graph could not include, said — a
     // trace that read part of the index, or none of it, must not pass "no
-    // route" off as proof.
+    // route" off as proof. Each reason the graph is partial is named.
+    const partialBecause = [
+      graph.partial === "time"
+        ? `reading the drawing tag index took longer than one trace may spend on it (${LINE_GRAPH_READ_BUDGET_MS / 1000} s)` : null,
+      graph.partial === "ceiling"
+        ? `the drawing tag index holds more rows than one trace reads (${LINE_GRAPH_ROW_CEILING.toLocaleString("en-US")})` : null,
+      graph.partial === "failed"
+        ? `a page of the drawing tag index could not be read (${graph.partialFailure})` : null,
+      graph.checksOutOfTime
+        ? `checking which of the drawings you may open took longer than one trace may spend on it (${LINE_GRAPH_CHECK_BUDGET_MS / 1000} s)`
+        : null,
+    ].filter((why): why is string => !!why);
     const notes = {
       ...(graph.indexUnavailable ? {
         graph_unavailable:
@@ -503,11 +530,9 @@ const tracePidLines: ToolDef = {
           + "co-occurrence. A route not found, or a tag that \"doesn't appear\", is NOT proof — say the trace "
           + "could not be checked.",
       } : {}),
-      ...(graph.partial ? {
+      ...(partialBecause.length > 0 ? {
         graph_partial:
-          (graph.partial === "time"
-            ? `PARTIAL: reading the drawing tag index took longer than one trace may spend on it (${LINE_GRAPH_READ_BUDGET_MS / 1000} s), `
-            : `PARTIAL: the drawing tag index holds more rows than one trace reads (${LINE_GRAPH_ROW_CEILING.toLocaleString("en-US")}), `)
+          `PARTIAL: ${partialBecause.join("; and ")}, `
           + "so some sheets were not walked. A route not found, or a tag that \"doesn't appear\", is NOT proof "
           + "the equipment is unconnected — say the trace is partial.",
       } : {}),
@@ -569,14 +594,27 @@ const tracePidLines: ToolDef = {
     // elsewhere lengthening the search past its run limit). A flow anywhere
     // else in the org changes nothing here.
     const walkFlows = walk.filter(isFlow);
+    // What the drawings alone give (with no flow in the walk, that is `r`).
+    const bySheets = walkFlows.length > 0 ? tracePath(walk.filter((e) => !isFlow(e)), startTag, endTag) : r;
     const onFlow = (tag: string) => {
       const k = normalizeTag(tag);
       return walkFlows.some((e) => normalizeTag(e.from) === k || normalizeTag(e.to) === k);
     };
     const withFlows = r.found
       ? r.steps.some((s) => s.basis === "confirmed_flow")
-      : walkFlows.length > 0 && (onFlow(startTag) || onFlow(endTag)
-        || tracePath(walk.filter((e) => !isFlow(e)), startTag, endTag).reason !== r.reason);
+      : walkFlows.length > 0 && (onFlow(startTag) || onFlow(endTag) || bySheets.reason !== r.reason);
+    // I-21 fix pass 4: a route through a confirmed flow can skip a route the
+    // drawings give (a flow read off the PFD joining the two ends directly,
+    // past the tank the P&ID draws between them), and breadth-first search
+    // takes the flow's. That route stays the answer (`path`), and the
+    // drawings' own route is named beside it (`sheet_route`), with the
+    // sheets it is on, so neither its equipment nor its sheets drop out
+    // unsaid. A route through the same tags as the drawings' has none: its
+    // flow steps name their sheets (`also_on_sheet`, below).
+    const sheetRoute = withFlows && r.found && bySheets.found
+      && (bySheets.path.length !== r.path.length || bySheets.path.some((t, i) => t !== r.path[i]))
+      ? { path: bySheets.path, drawings: bySheets.drawings, crosses_sheets: bySheets.steps.some((s) => s.offPage) }
+      : null;
     // When both tags sit on ONE sheet, say so and point at the viewer —
     // that is where a human reads the drawn connection. (An automated
     // line-follower was tried, in several revisions, against real SHX
@@ -667,6 +705,7 @@ const tracePidLines: ToolDef = {
             + "invent the routing between them.",
         } : {}),
         ...(route ? { route } : {}),
+        ...(sheetRoute ? { sheet_route: sheetRoute } : {}),
         ...notes,
       },
     };
@@ -690,6 +729,9 @@ const TRACE_BASIS_WITH_FLOWS =
   + "continuation reference — sheet-level connectivity, not valve-by-valve line tracing. Proposed or "
   + "dismissed flows are never used. A \"confirmed flow\" step that lists `also_on_sheet` ALSO has its two "
   + "tags on the same drawing page of those sheets (they are in `drawings` too): name both sources for it. "
+  + "When `sheet_route` is present, the drawings alone give a DIFFERENT route between the two "
+  + "(`sheet_route.path`, on the sheets in `sheet_route.drawings`): name both routes, and do not drop the "
+  + "equipment the drawn route passes through. "
   + "A UNIT<code> tag is a whole operating unit (a Site Codebook unit), not a piece of equipment: a route "
   + "may start or end at one but never passes through one. Say which steps are confirmed flows and which "
   + "are only on the same sheet; intermediate components are only listed once line geometry is captured.";
@@ -735,6 +777,16 @@ export const LINE_GRAPH_ROW_CEILING = 50_000;
  *  flowsToLineEdges' `deadline`); past it, that read fails and is said. */
 export const LINE_GRAPH_READ_BUDGET_MS = 10_000;
 
+/** I-21 fix pass 4: the wall clock the graph's readability checks (which
+ *  sheets the caller may open, and which flow sources are the org's own) may
+ *  spend once the reads are done. No check chunk starts past it: the ids not
+ *  checked by then are treated as unreadable (fail closed) and the trace says
+ *  it is partial. It runs from the reads' end, not the trace's start, so a
+ *  read that used its whole budget (and its closing page) still has the rows
+ *  it read checked. One graph load is then bounded by the two budgets, plus a
+ *  page and a chunk already running when each runs out. */
+export const LINE_GRAPH_CHECK_BUDGET_MS = 5_000;
+
 /** What loadLineGraph built, and what it could not include. */
 interface LineGraph {
   /** Confirmed-flow edges first, then the sheet co-occurrence edges. When a
@@ -743,14 +795,23 @@ interface LineGraph {
    *  trace still cites the sheets that carry the pair (`also_on_sheet`, and
    *  `drawings`: fix pass 3). Between two different routes of equal length,
    *  breadth-first order decides, not the basis: flows in id order, then the
-   *  sheets in (document, page, tag) order. */
+   *  sheets in (document, page, tag) order. Whenever the route taken is not
+   *  the one the sheets alone give, the trace names that one too
+   *  (`sheet_route`: fix pass 4). */
   edges: LineEdge[];
   /** The trace keys of the unit ends among the flow edges (unitTraceTag). */
   units: ReadonlySet<string>;
   /** The tag index was not read to the end: past LINE_GRAPH_ROW_CEILING
-   *  rows ("ceiling") or past LINE_GRAPH_READ_BUDGET_MS ("time"). */
-  partial: "ceiling" | "time" | null;
-  /** The tag index read failed: the graph holds confirmed flows only. */
+   *  rows ("ceiling"), past LINE_GRAPH_READ_BUDGET_MS ("time"), or a page
+   *  failed after earlier pages read ("failed", fix pass 4). */
+  partial: "ceiling" | "time" | "failed" | null;
+  /** The message of the page that failed, when `partial` is "failed". */
+  partialFailure: string | null;
+  /** The readability checks ran past their time (fix pass 4): the ids not
+   *  checked were treated as unreadable, so some sheets were not walked. */
+  checksOutOfTime: boolean;
+  /** The tag index read failed on its first page: the graph holds confirmed
+   *  flows only. */
   indexUnavailable: string | null;
   /** Confirmed flows could not be read (a failed read, never a database
    *  without the flow table — that traces exactly as before). */
@@ -781,14 +842,17 @@ function equipmentWalk(graph: LineGraph, ...ends: string[]): LineEdge[] {
  * id alone, so a legacy confirmed flow (20261155 counted such rows and kept
  * them) that cites another workspace's upload would pass it, be walked, and
  * name that document's id in `drawings`. A flow citing one is not walked. A
- * failed read names every id (fails closed, as unreadableMirrors does).
+ * failed read names every id (fails closed, as unreadableMirrors does). With
+ * a budget (fix pass 4), no chunk starts past its deadline, and the ids not
+ * looked up by then are named too (fail closed).
  */
-async function notOrgsOwn(orgId: string, knowledgeDocIds: string[]): Promise<Set<string>> {
+async function notOrgsOwn(orgId: string, knowledgeDocIds: string[], budget?: CheckBudget): Promise<Set<string>> {
   const ids = [...new Set(knowledgeDocIds.filter(Boolean))];
   if (ids.length === 0) return new Set();
   try {
     const own = new Set<string>();
     for (let i = 0; i < ids.length; i += 200) {
+      if (budgetSpent(budget)) break;
       const { data, error } = await supabaseAdmin
         .from("knowledge_documents").select("id")
         .eq("org_id", orgId).in("id", ids.slice(i, i + 200));
@@ -838,7 +902,9 @@ function tagRowsAfter(r: TagRow): string {
  * READ_PAGE): the read ends on an empty page, past LINE_GRAPH_ROW_CEILING
  * rows ("ceiling"), or at LINE_GRAPH_READ_BUDGET_MS ("time": no page starts
  * past it, save the one closing page after a short one). A failed page
- * returns its error, and loadLineGraph says the index could not be read.
+ * returns its error beside the rows read before it: on the first page,
+ * loadLineGraph says the index could not be read; on a later one, it treats
+ * the failure as a stop (fix pass 4).
  */
 async function readTagIndex(orgId: string, startedAt: number):
   Promise<{ rows: TagRow[]; error: PgErr | null; stop: "ceiling" | "time" | null }> {
@@ -896,15 +962,20 @@ async function loadLineGraph(ctx: ToolContext): Promise<LineGraph> {
     // (fix pass 3): past it, the read fails and the trace says so.
     flowsToLineEdges(ctx.orgId, supabaseAdmin, { deadline: startedAt + LINE_GRAPH_READ_BUDGET_MS }),
   ]);
-  // A failed page discards every row read before it: the graph is the
+  // A page that fails after earlier pages read is a stop, like the ceiling
+  // or the time budget (fix pass 4): the rows read are kept, the sheet the
+  // last of them is in is dropped whole, and the answer says PARTIAL, naming
+  // the failure. A failure on the first page leaves no row: the graph is the
   // confirmed flows alone, and the answer says the index could not be read.
-  let rowsAll: TagRow[] = read.error ? [] : read.rows;
-  const partial: LineGraph["partial"] = read.error ? null : read.stop;
+  const readFailure = read.error ? (read.error.message || "the read failed") : null;
+  const firstPageFailed = readFailure !== null && read.rows.length === 0;
+  let rowsAll: TagRow[] = read.rows;
+  const partial: LineGraph["partial"] = readFailure !== null ? (firstPageFailed ? null : "failed") : read.stop;
   if (partial) {
     // Past the ceiling the first row beyond it names the document the
-    // ceiling cut; stopped on time, the last row read names the document
-    // that may go on. Its rows inside are dropped, so every sheet walked is
-    // walked whole.
+    // ceiling cut; stopped on time or by a failed page, the last row read
+    // names the document that may go on. Its rows inside are dropped, so
+    // every sheet walked is walked whole.
     const kept = rowsAll.slice(0, LINE_GRAPH_ROW_CEILING);
     const cut = rowsAll[LINE_GRAPH_ROW_CEILING]?.document_id ?? kept[kept.length - 1]?.document_id ?? null;
     rowsAll = kept.filter((r) => r.document_id !== cut);
@@ -915,11 +986,14 @@ async function loadLineGraph(ctx: ToolContext): Promise<LineGraph> {
   // read off a sheet the caller cannot open is not walked either, nor one
   // that cites another workspace's document (IRLS-11: a legacy row
   // 20261155 kept); a hand-drawn flow (no source sheet) is the org's shared
-  // map.
+  // map. Both checks are bounded in time (fix pass 4): no lookup starts more
+  // than LINE_GRAPH_CHECK_BUDGET_MS after the reads ended, and an id not
+  // checked by then is not walked (fail closed); the answer says PARTIAL.
   const flowDocs = [...new Set(flows.edges.map((e) => e.drawingId).filter((d): d is string => !!d))];
+  const checks: CheckBudget = { deadline: Date.now() + LINE_GRAPH_CHECK_BUDGET_MS, outOfTime: false };
   const [hidden, foreign] = await Promise.all([
-    unreadableMirrors(ctx, [...new Set([...rowsAll.map((r) => r.document_id), ...flowDocs])]),
-    notOrgsOwn(ctx.orgId, flowDocs),
+    unreadableMirrors(ctx, [...new Set([...rowsAll.map((r) => r.document_id), ...flowDocs])], checks),
+    notOrgsOwn(ctx.orgId, flowDocs, checks),
   ]);
 
   const byPage = new Map<string, { equipment: string[]; refs: string[] }>();
@@ -952,10 +1026,30 @@ async function loadLineGraph(ctx: ToolContext): Promise<LineGraph> {
     edges: [...flowEdges, ...edges],
     units: new Set(flows.unitNodes),
     partial,
-    indexUnavailable: read.error ? (read.error.message || "the read failed") : null,
+    partialFailure: partial === "failed" ? readFailure : null,
+    checksOutOfTime: checks.outOfTime,
+    indexUnavailable: firstPageFailed ? readFailure : null,
     flowsUnavailable: flows.state === "error" ? (flows.error ?? "the read failed") : null,
     flowsTruncated: flows.truncated,
   };
+}
+
+/** I-21 fix pass 4: the graph, read once per run. A run's ToolContext is one
+ *  object for all its steps (app/api/orchestrator/route.ts builds it once
+ *  and lib/orchestrator/loop.ts passes it to every call), and the graph
+ *  depends on nothing else: the org, and the caller's principal through the
+ *  readability checks. So a run that traces several pairs reads the tag
+ *  index, the flows and the checks once, and each later trace answers from
+ *  that graph, its PARTIAL or unavailable notes included. A load that throws
+ *  is not kept, so the next trace reads again. */
+const lineGraphs = new WeakMap<ToolContext, Promise<LineGraph>>();
+function lineGraphFor(ctx: ToolContext): Promise<LineGraph> {
+  const kept = lineGraphs.get(ctx);
+  if (kept) return kept;
+  const load = loadLineGraph(ctx);
+  lineGraphs.set(ctx, load);
+  load.catch(() => { if (lineGraphs.get(ctx) === load) lineGraphs.delete(ctx); });
+  return load;
 }
 
 // ─── WRITE TOOLS — proposed, never performed ───────────────────────────────

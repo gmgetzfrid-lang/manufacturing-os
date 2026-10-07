@@ -23,7 +23,11 @@
 // pair (fix pass 3: `also_on_sheet`, kept in `drawings`), so where the route
 // is the sheets' own, no sheet the base cited is lost. The tag index is paged
 // by key (a write mid-read skips no sheet), and the flow read is bounded on
-// the trace's clock.
+// the trace's clock. Where a flow's route is not the sheets' own (it skips
+// equipment the drawings put between the ends), the sheets' route is named
+// beside it (fix pass 4: `sheet_route`, the base answer's path and sheets). A
+// page that fails behind good pages is a stop, not a lost read; a run reads
+// the graph once; and the readability checks have their own time.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -207,7 +211,9 @@ vi.mock("@/lib/knowledgeAccess", () => ({
 }));
 vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn(async () => {}) }));
 
-import { toolByName, TOOLS, LINE_GRAPH_ROW_CEILING, LINE_GRAPH_READ_BUDGET_MS, type ToolContext } from "@/lib/orchestrator/tools";
+import {
+  toolByName, TOOLS, LINE_GRAPH_ROW_CEILING, LINE_GRAPH_READ_BUDGET_MS, LINE_GRAPH_CHECK_BUDGET_MS, type ToolContext,
+} from "@/lib/orchestrator/tools";
 import { flowsToLineEdges, unitTraceTag, FLOW_EDGE_CEILING, FLOW_EDGE_PAGE, FLOW_READ_OUT_OF_TIME } from "@/lib/processFlows";
 import { tracePath, traceNeighbourhood, normalizeTag, type LineEdge } from "@/lib/pidTrace";
 import type { KnowledgePrincipal } from "@/lib/knowledgeAccess";
@@ -702,6 +708,14 @@ describe("I-21 fix pass 3 — a step a confirmed flow takes keeps the sheet evid
     ]);
   });
 
+  it("a route through the same tags as the drawings' carries no `sheet_route`: its steps name their sheets", async () => {
+    seedBase({
+      knowledge_page_entities: sheetSeed(),
+      process_flows: [flow(["asset", A_P101], ["asset", A_T150], "confirmed"), flow(["asset", A_T150], ["asset", A_E204], "confirmed")],
+    });
+    expect(await trace({ start_tag: "P-101", end_tag: "E-204" })).not.toHaveProperty("sheet_route");
+  });
+
   it("a flow step on a pair no sheet carries cites no sheet for it; the sheet step beside it keeps its own", async () => {
     seedBase({
       knowledge_page_entities: [ent("k-a", 2, "equipment", "T-150"), ent("k-a", 2, "equipment", "E-204")],
@@ -713,6 +727,68 @@ describe("I-21 fix pass 3 — a step a confirmed flow takes keeps the sheet evid
       { from: "T150", to: "E204", basis: "same sheet" },
     ]);
     expect(out.drawings).toEqual(["k-c", "k-a"]);
+  });
+});
+
+describe("I-21 fix pass 4 — a confirmed flow that skips a drawn route never drops it unsaid", () => {
+  it("REGRESSION: a PFD flow joining the two ends directly keeps the drawings' route and its P&ID beside it (`sheet_route`)", async () => {
+    // The reviewer's scenario: sheetSeed (P-101 – T-150 – E-204 on the P&ID
+    // k-a) plus one AI-read confirmed flow P-101 → E-204 off the PFD k-c.
+    seedBase({
+      knowledge_page_entities: sheetSeed(),
+      process_flows: [flow(["asset", A_P101], ["asset", A_E204], "confirmed", { origin: "ai", source_document_id: "k-c" })],
+    });
+    const out = await trace({ start_tag: "P-101", end_tag: "E-204" });
+    // The flow's route is the answer, named as one…
+    expect(out).toMatchObject({ found: true, path: ["P101", "E204"], drawings: ["k-c"] });
+    expect(out.route).toEqual([{ from: "P101", to: "E204", basis: "confirmed flow", flow: "P101 feeds E204" }]);
+    // …and the drawings' own route is the base answer's, beside it.
+    expect(out.sheet_route).toEqual({ path: GOLDEN_PATH.path, drawings: GOLDEN_PATH.drawings, crosses_sheets: GOLDEN_PATH.crosses_sheets });
+    expect(String(out.basis)).toMatch(ROUTE_BASIS);
+    expect(String(out.basis)).toContain(
+      "When `sheet_route` is present, the drawings alone give a DIFFERENT route between the two "
+      + "(`sheet_route.path`, on the sheets in `sheet_route.drawings`): name both routes, and do not drop the "
+      + "equipment the drawn route passes through.",
+    );
+    // Hand-drawn, the same: the drawn route is named, k-a with it.
+    seedBase({ knowledge_page_entities: sheetSeed(), process_flows: [flow(["asset", A_P101], ["asset", A_E204], "confirmed")] });
+    const hand = await trace({ start_tag: "P-101", end_tag: "E-204" });
+    expect(hand).toMatchObject({ found: true, path: ["P101", "E204"], drawings: [] });
+    expect(hand.sheet_route).toEqual({ path: GOLDEN_PATH.path, drawings: ["k-a"], crosses_sheets: false });
+  });
+
+  it("a flow route of the same length through other equipment: the drawn route is named too, with its off-page mark", async () => {
+    // Drawn: P-101 and an off-page reference to T-150 on k-a page 1, T-150 and
+    // E-204 on page 2. Confirmed: P-101 → K-500 → E-204.
+    seedBase({
+      knowledge_page_entities: [
+        ent("k-a", 1, "equipment", "P-101"), ent("k-a", 1, "ref", "T-150"),
+        ent("k-a", 2, "equipment", "T-150"), ent("k-a", 2, "equipment", "E-204"),
+      ],
+      process_flows: [flow(["asset", A_P101], ["asset", A_K500], "confirmed"), flow(["asset", A_K500], ["asset", A_E204], "confirmed")],
+    });
+    db.tables.assets.push(...moreAssets());
+    const out = await trace({ start_tag: "P-101", end_tag: "E-204" });
+    expect(out).toMatchObject({ found: true, path: ["P101", "K500", "E204"], drawings: [], crosses_sheets: false });
+    expect(out.sheet_route).toEqual({ path: ["P101", "T150", "E204"], drawings: ["k-a"], crosses_sheets: true });
+  });
+
+  it("no drawn route between the two: no `sheet_route`; a sheet hidden from the caller is never one", async () => {
+    // The drawn route is on k-b, a mirror the Viewer cannot read.
+    seedBase({
+      knowledge_page_entities: [
+        ent("k-b", 1, "equipment", "P-101"), ent("k-b", 1, "equipment", "T-150"),
+        ent("k-b", 2, "equipment", "T-150"), ent("k-b", 2, "equipment", "E-204"),
+      ],
+      process_flows: [flow(["asset", A_P101], ["asset", A_E204], "confirmed")],
+    });
+    const viewer = await trace({ start_tag: "P-101", end_tag: "E-204" });
+    expect(viewer).toMatchObject({ found: true, path: ["P101", "E204"] });
+    expect(viewer).not.toHaveProperty("sheet_route");
+    expect(JSON.stringify(viewer)).not.toContain("k-b");
+    db.readable.add("d-hidden");
+    expect((await trace({ start_tag: "P-101", end_tag: "E-204" })).sheet_route)
+      .toEqual({ path: ["P101", "T150", "E204"], drawings: ["k-b"], crosses_sheets: false });
   });
 });
 
@@ -1101,23 +1177,45 @@ describe("ING-10 residual — a tag-index read that fails is said, never passed 
   const filler = (n: number) => Array.from({ length: n }, (_, i) =>
     ent(`k-f-${String(Math.floor(i / 1000)).padStart(4, "0")}`, (i % 1000) + 1, "self", `SELF-${i}`));
 
-  it("a page that fails after earlier pages read: the graph is the confirmed flows alone, and graph_unavailable says the trace could not be checked", async () => {
-    // T-150 and E-204 share k-a; a confirmed flow P-101 → T-150. The index
-    // fails on its second page.
+  it("a page that fails after earlier pages read is a stop (fix pass 4): the sheets read are walked, the one it cut is dropped, and graph_partial names the failure", async () => {
+    // The reviewer's scenario: P-101 and E-204 share k-a page 1, then 1,500
+    // filler rows; the second page fails. The base read one page (k-a sorts
+    // first) and found the pair.
+    seedBase({ knowledge_page_entities: [ent("k-a", 1, "equipment", "P-101"), ent("k-a", 1, "equipment", "E-204"), ...filler(1_500)] });
+    db.pageErrors.knowledge_page_entities = { from: 1_000, error: timeout };
+    const out = await trace({ start_tag: "P-101", end_tag: "E-204" });
+    expect(tagPages()).toHaveLength(2);
+    const { graph_partial: note, ...rest } = out;
+    expect(rest).toEqual({
+      found: true, path: ["P101", "E204"], drawings: ["k-a"], crosses_sheets: false, components: [],
+      reason: undefined, basis: SHEET_BASIS,
+      same_sheet: [{ sheet: "PID-100 SHT 1", page: 1 }], note: GOLDEN_SAME_SHEET.note,
+    });
+    expect(String(note)).toBe(
+      "PARTIAL: a page of the drawing tag index could not be read (canceling statement due to statement timeout), "
+      + "so some sheets were not walked. A route not found, or a tag that \"doesn't appear\", is NOT proof "
+      + "the equipment is unconnected — say the trace is partial.",
+    );
+    expect(out).not.toHaveProperty("graph_unavailable");
+  });
+
+  it("…the sheet the failed page cut is not walked, the flows still answer, and the answer says PARTIAL, never 'unavailable'", async () => {
+    // T-150 and E-204 share k-f-0000 page 1, whose rows run on past the first
+    // page; a confirmed flow P-101 → T-150. The index fails on its second page.
     seedBase({
-      knowledge_page_entities: [ent("k-a", 1, "equipment", "T-150"), ent("k-a", 1, "equipment", "E-204"), ...filler(1_500)],
+      knowledge_page_entities: [
+        ent("k-a", 1, "equipment", "P-101"), ent("k-a", 1, "equipment", "V-9"),
+        ent("k-f-0000", 1, "equipment", "T-150"), ent("k-f-0000", 1, "equipment", "E-204"), ...filler(1_500),
+      ],
       process_flows: [flow(["asset", A_P101], ["asset", A_T150], "confirmed")],
     });
     db.pageErrors.knowledge_page_entities = { from: 1_000, error: timeout };
     const out = await trace({ start_tag: "T-150", end_tag: "E-204" });
     expect(out).toMatchObject({ found: false, reason: "E-204 doesn't appear on any traced line." });
-    expect(String(out.graph_unavailable)).toBe(
-      "The drawing tag index could not be read (canceling statement due to statement timeout), so this trace has no "
-      + "sheet co-occurrence. A route not found, or a tag that \"doesn't appear\", is NOT proof — say the trace "
-      + "could not be checked.",
-    );
-    expect(out).not.toHaveProperty("graph_partial");
-    // The flows still answer what they can.
+    expect(String(out.graph_partial)).toMatch(/^PARTIAL: a page of the drawing tag index could not be read \(canceling statement due to statement timeout\)/);
+    expect(out).not.toHaveProperty("graph_unavailable");
+    // k-a, read whole before the failure, is walked; the flows still answer.
+    expect((await trace({ start_tag: "P-101", end_tag: "V-9" })).found).toBe(true);
     expect((await trace({ start_tag: "P-101", end_tag: "T-150" })).route)
       .toEqual([{ from: "P101", to: "T150", basis: "confirmed flow", flow: "P101 feeds T150" }]);
   });
@@ -1138,6 +1236,103 @@ describe("ING-10 residual — a tag-index read that fails is said, never passed 
     // The index read working again: no note.
     db.pageErrors = {};
     expect(await trace({ start_tag: "P-101", end_tag: "E-204" })).not.toHaveProperty("graph_unavailable");
+  });
+});
+
+describe("I-21 fix pass 4 — one graph a run; the graph's readability checks run on the trace's clock", () => {
+  const tool = () => toolByName("trace_pid_lines")!;
+
+  it("traces on one run's context read the tag index and the flows once; a new run reads again", async () => {
+    seedBase({ knowledge_page_entities: sheetSeed(), process_flows: [flow(["asset", A_P101], ["asset", A_K500], "confirmed")] });
+    db.tables.assets.push(...moreAssets());
+    const ctx = ctxFor(["Viewer"]);
+    const first = (await tool().run({ start_tag: "P-101", end_tag: "E-204" }, ctx)).data;
+    expect(first).toEqual(GOLDEN_PATH);
+    // sheetSeed: one page of rows, then the empty page that closes the read.
+    expect(tagPages()).toHaveLength(2);
+    const flowReads = queriesOf("process_flows").length;
+    expect(flowReads).toBeGreaterThan(0);
+    const near = (await tool().run({ start_tag: "T-150", hops: 1 }, ctx)).data;
+    const again = (await tool().run({ start_tag: "P-101", end_tag: "E-204" }, ctx)).data;
+    expect(tagPages()).toHaveLength(2);
+    expect(queriesOf("process_flows")).toHaveLength(flowReads);
+    expect(near).toEqual(GOLDEN_NEAR);
+    expect(again).toEqual(first);
+    // Another run (another context) reads the index again.
+    await tool().run({ start_tag: "P-101", end_tag: "E-204" }, ctxFor(["Viewer"]));
+    expect(tagPages()).toHaveLength(4);
+  });
+
+  it("a load that throws is not kept: the next trace on the same context reads again", async () => {
+    seedBase({ knowledge_page_entities: sheetSeed() });
+    const ctx = ctxFor(["Viewer"]);
+    db.failQuery = (table, calls) => {
+      if (table === "knowledge_page_entities" && calls.some(([m]) => m === "order")) throw new Error("socket hang up");
+      return null;
+    };
+    await expect(tool().run({ start_tag: "P-101", end_tag: "E-204" }, ctx)).rejects.toThrow("socket hang up");
+    db.failQuery = null;
+    expect((await tool().run({ start_tag: "P-101", end_tag: "E-204" }, ctx)).data).toEqual(GOLDEN_PATH);
+  });
+
+  it(`no mirror lookup starts ${LINE_GRAPH_CHECK_BUDGET_MS / 1000} s past the reads: a sheet not checked by then is not walked, and the answer says PARTIAL`, async () => {
+    // 450 sheets, so the mirror lookup is three chunks of 200. The reads cost
+    // nothing; each lookup costs 3 s: they start at 0 and 3 s; the third (at
+    // 6 s) never does, so k-z, in it, is not walked. k-a, in the first, is.
+    const many = Array.from({ length: 448 }, (_, i) => ent(`k-m-${String(i).padStart(4, "0")}`, 1, "self", `M-${i}`));
+    const rows = () => [
+      ent("k-a", 1, "equipment", "P-101"), ent("k-a", 1, "equipment", "T-150"),
+      ...many,
+      ent("k-z", 1, "equipment", "T-150"), ent("k-z", 1, "equipment", "E-204"),
+    ];
+    seedBase({ knowledge_page_entities: rows() });
+    db.costMs.knowledge_documents = 3_000;
+    const near = await trace({ start_tag: "T-150", hops: 1 });
+    // Neighbourhood mode makes no lookup of its own: these are the graph's.
+    expect(queriesOf("knowledge_documents")).toHaveLength(2);
+    expect(callArgs(queriesOf("knowledge_documents")[1], "in")[0][1]).toHaveLength(200);
+    expect(near).toMatchObject({ start: "T-150", connected: [{ tag: "P101", hops: 1 }], basis: SHEET_BASIS });
+    expect(String(near.graph_partial)).toBe(
+      "PARTIAL: checking which of the drawings you may open took longer than one trace may spend on it (5 s), "
+      + "so some sheets were not walked. A route not found, or a tag that \"doesn't appear\", is NOT proof "
+      + "the equipment is unconnected — say the trace is partial.",
+    );
+    expect(near).not.toHaveProperty("graph_unavailable");
+    // Quick lookups: every sheet is walked, nothing partial.
+    seedBase({ knowledge_page_entities: rows() });
+    db.costMs = {};
+    const whole = await trace({ start_tag: "T-150", hops: 1 });
+    expect(whole).toEqual({ start: "T-150", connected: [{ tag: "E204", hops: 1 }, { tag: "P101", hops: 1 }], basis: SHEET_BASIS });
+  });
+
+  it("…and a confirmed flow whose source the org check could not reach in time is not walked (fails closed), said the same way", async () => {
+    // A flow read off k-a (the org's own upload). The mirror lookup starts
+    // at 0 and ends at 6 s; the org check would start after it, past 5 s.
+    const flows = () => [flow(["asset", A_P101], ["asset", A_E204], "confirmed", { origin: "ai", source_document_id: "k-a" })];
+    seedBase({ process_flows: flows() });
+    db.costMs.knowledge_documents = 6_000;
+    const late = await trace({ start_tag: "P-101", end_tag: "E-204" });
+    expect(late).toMatchObject({ found: false, reason: "P-101 doesn't appear on any traced line." });
+    expect(String(late.graph_partial)).toMatch(/^PARTIAL: checking which of the drawings you may open took longer than one trace may spend on it \(5 s\)/);
+    // The org's own check: by org and id, never started.
+    expect(queriesOf("knowledge_documents").filter((q) => callArgs(q, "eq").some(([c]) => c === "org_id"))).toHaveLength(0);
+    seedBase({ process_flows: flows() });
+    db.costMs = {};
+    expect(await trace({ start_tag: "P-101", end_tag: "E-204" })).toMatchObject({ found: true, path: ["P101", "E204"], drawings: ["k-a"] });
+  });
+
+  it("…and a mirror whose readability the trace has no time left to ask is not walked either", async () => {
+    // P-101 and E-204 on k-c, a mirror the Viewer may read. The one mirror
+    // lookup ends at 6 s; the readability call would start after it.
+    const sheets = () => [ent("k-c", 1, "equipment", "P-101"), ent("k-c", 1, "equipment", "E-204")];
+    seedBase({ knowledge_page_entities: sheets() });
+    db.costMs.knowledge_documents = 6_000;
+    const late = await trace({ start_tag: "P-101", hops: 1 });
+    expect(late).toMatchObject({ start: "P-101", connected: [] });
+    expect(String(late.graph_partial)).toMatch(/^PARTIAL: checking which of the drawings you may open took longer/);
+    seedBase({ knowledge_page_entities: sheets() });
+    db.costMs = {};
+    expect(await trace({ start_tag: "P-101", hops: 1 })).toEqual({ start: "P-101", connected: [{ tag: "E204", hops: 1 }], basis: SHEET_BASIS });
   });
 });
 
@@ -1231,8 +1426,14 @@ describe("DEC-80 item 2 — nothing flow-derived drives a hold or an MOC", () =>
     const body = tools.slice(tools.indexOf("async function loadLineGraph(ctx: ToolContext)"));
     expect(body.slice(0, body.indexOf("\n}"))).toMatch(/flowsToLineEdges\(ctx\.orgId, supabaseAdmin, \{ deadline: startedAt \+ LINE_GRAPH_READ_BUDGET_MS \}\)/);
     expect(tools.match(/flowsToLineEdges\(/g)).toHaveLength(1);
-    // loadLineGraph is called once, by the trace tool, and the trace tool writes nothing.
+    // loadLineGraph is called once, by the per-run memo (fix pass 4), which
+    // the trace tool alone calls; and the trace tool writes nothing.
     expect(tools.match(/loadLineGraph\(ctx\)/g)).toHaveLength(1);
+    const memo = tools.slice(tools.indexOf("function lineGraphFor(ctx: ToolContext)"));
+    expect(memo.slice(0, memo.indexOf("\n}"))).toContain("loadLineGraph(ctx)");
+    expect(tools.match(/lineGraphFor\(ctx\)/g)).toHaveLength(1);
+    const traceBody = tools.slice(tools.indexOf("const tracePidLines"));
+    expect(traceBody.slice(0, traceBody.indexOf("\n};"))).toContain("await lineGraphFor(ctx)");
     const traceTool = TOOLS.find((t) => t.name === "trace_pid_lines")!;
     expect(traceTool.writes).toBeFalsy();
     for (const t of TOOLS.filter((x) => x.writes)) {
