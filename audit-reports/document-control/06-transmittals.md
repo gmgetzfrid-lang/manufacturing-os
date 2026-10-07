@@ -622,7 +622,7 @@ supabase/migrations/20260910_transmittal_portal.sql:12-13 — `--      from an i
 ## TRX-14 · transmittalPortalUrl builds the external link from window.location.origin, bypassing the publicOrigin() helper that exists in this repo specifically to stop that
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** the user — ratify (or reject) DEC-64 §1; no code is owed until then — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`). *Reversed by the integrator under the user's delegation, 2026-10-07 (DEC-90): a link handed to an outside party is built only on a configured canonical origin, never on whatever address the issuer's browser uses (OWASP host-header guidance), so with no configured origin the browser builds no portal link, as the server already does (fail closed); document-control P22 changes `lib/publicOrigin.ts` `recipientOrigin()`.*
 - **Assigned:** document-control P22 TRANSMITTAL STAMP ARMING & FAIL-CLOSED PORTAL ORIGIN — by the integrator, 2026-10-07 (DEC-90; fleet plan `audit-reports/fleet-plans/document-control.json`, P22).
 - **Verification:** CONFIRMED
@@ -714,6 +714,35 @@ lib/publicOrigin.ts:8-11 — `// point at the PUBLIC production domain. \`window
 - See also the DEC-61 landed note.
 
 **Integrator note (2026-10-07, DEC-90 A6).** *Reversed by the integrator under the user's delegation, 2026-10-07 (DEC-90): a link handed to an outside party is built only on a configured canonical origin, never on whatever address the issuer's browser uses (OWASP host-header guidance), so with no configured origin the browser builds no portal link, as the server already does (fail closed); document-control P22 changes `lib/publicOrigin.ts` `recipientOrigin()`.* Status stays OPEN until P22 lands. Then done-when 1 holds **as written** ("transmittalPortalUrl calls publicOrigin() and returns null/undefined when no origin is configured, so callers can refuse to email or print a hostless link"), with no departure to supersede it, and this finding can be RESOLVED on P22's record. What P22 changes: `lib/publicOrigin.ts` `recipientOrigin()` drops the browser page-origin fallback and keeps the configured origin only; `app/(protected)/transmittals/page.tsx`'s toast copy; the tests that pin the old trade (`lib/__tests__/psStampRoundF.test.ts`, `lib/__tests__/dcRoundFTransmittals.test.ts`). The replacement path for a self-hosted deployment is the one the disabled "Portal link" button already names: set `NEXT_PUBLIC_SITE_URL` (a Docker build argument) and rebuild — operator step `userHeld.TRX-14`. DEC-64 §1 is rewritten to the new rule.
+
+**Resolution (2026-10-07, document-control Round F wave 3).** Package P22 TRANSMITTAL STAMP ARMING & FAIL-CLOSED PORTAL ORIGIN, under DEC-90 A6 (DEC-64 §1's self-hosted trade reversed: a link for an outside party is built only on a configured canonical origin). Reproduced on `b0a03b1` first: with nothing configured, a browser on a self-hosted address (`https://mfgos.plant.example`, `http://mfg-server:3000`, `http://10.0.0.12:3000`) built `…/transmittal/<token>` on its own page origin (`lib/publicOrigin.ts:99-106` `recipientOrigin()` fell back to `window.location.origin` for any host `isUnreachableRecipientHost` passed), so the copy link and the cover-sheet QR carried an address that was never configured, while the server built none. The new tests below fail on `b0a03b1`.
+- `lib/publicOrigin.ts` `recipientOrigin()` is now `configuredPublicOrigin()` and nothing else — `NEXT_PUBLIC_SITE_URL`, else Vercel's production domain (`VERCEL_PROJECT_PRODUCTION_URL` on the server, its `NEXT_PUBLIC_` twin in a browser) — in a browser and on a server alike; else `""`. The browser page-origin fallback is gone. The header comment states the rule. `publicOrigin()` is unchanged (its other browser callers still get an absolute origin, PHYS-11); `isUnreachableRecipientHost()` is kept, unchanged — `/api/share/file`'s `verifyOrigin` uses it for the request host (P12, `SHR-11`).
+- Every caller of `recipientOrigin()` checked: only `lib/transmittals.ts` — `transmittalPortalUrl()` (feeds `openTransmittalSheet`'s portal block and QR, the register's copy action and `/api/transmittal/send-email`) and `portalLinkAvailable()`. Their doc comments now say what they do. On a server nothing changes (the server already used the configured origin alone). With an origin configured, every runtime and host builds exactly the link it built before.
+- `app/(protected)/transmittals/page.tsx`: with no link buildable, the issue toast says "no portal link can be built without a configured public address (NEXT_PUBLIC_SITE_URL unset) — the cover sheet carries no portal link or QR", and its email / no-email advice is `NO_PORTAL_LINK_ADVICE` ("set NEXT_PUBLIC_SITE_URL to the public site address and rebuild, then copy the portal link from this register", unchanged). The "NEXT_PUBLIC_SITE_URL is not set, so the copied link and the cover sheet use this browser's address" branch is removed, because no such link is built any more. The disabled "Portal link" button's title is "No portal link: NEXT_PUBLIC_SITE_URL is not set — set it to the public site address and rebuild". The copy action's backstop refusal names the variable too. A copied link is always one built on the configured origin, so the copy toast is a plain success.
+- `.env.example` (outside P22's file list; the operator text would otherwise be false): with nothing configured "no transmittal portal link is built at all — none emailed, none to copy, no cover-sheet QR, on any host". `audit-reports/document-control/99-fix-sequencing.md` carries the operator deploy note (`userHeld.TRX-14`).
+- Tests:
+  - `lib/__tests__/psStampRoundF.test.ts` "TRX-14 / XEDGE-5 — the portal link is built on a configured origin only (P22: never the browser's own address)":
+    - nothing configured off Vercel: no link in a browser on any host, exactly as the server, while `publicOrigin()` there is still the page (replaces the old "the browser builds the link on its own address" pin);
+    - `recipientOrigin()`'s body is `return configuredPublicOrigin();`, and the browser and the server agree on every host whenever an origin is configured;
+    - the share route still uses `isUnreachableRecipientHost`;
+    - the page pins: the new note, no "this browser's address" copy left, the disabled button and the copy refusal name `NEXT_PUBLIC_SITE_URL`.
+  - The earlier preview-host, loopback, exposure-off, production-link and `NEXT_PUBLIC_SITE_URL` tests stay green.
+  - `lib/__tests__/dcRoundFTransmittals.test.ts`:
+    - in a browser with nothing configured, on a self-hosted address, a LAN name, a `*.vercel.app` host or localhost, `recipientOrigin()` is `""`, `transmittalPortalUrl` null and `portalLinkAvailable()` false, and the cover sheet `openTransmittalSheet` writes for a LIVE link carries no `/transmittal/<token>`, no page origin and no QR;
+    - **regression:** with `NEXT_PUBLIC_SITE_URL` set, the browser builds the same configured link on every host and the sheet prints it with its QR.
+- Verified in the P22 worktree: `tsc` 0, `eslint` 0 on every touched code and test file, full `vitest` green (437 files / 9604 tests: 9597 passed, 7 expected-fail).
+
+**Done-when.**
+1. ✓ `transmittalPortalUrl` builds on the public-origin helper and returns `null` when no origin is configured, in a browser and on a server alike, so callers refuse to email, copy or print a link. The helper is `lib/publicOrigin.ts` `recipientOrigin()`: DEC-64 §1's rule for a link handed to an outside party, which is `publicOrigin()`'s configured steps (`configuredPublicOrigin()`) without its browser page fallback. `publicOrigin()` itself is not called: its last browser step is exactly the page origin this criterion excludes. The integrator's note (DEC-90 A6) reads this as the criterion holding as written. The self-hosted departure recorded at the PS-STAMP integration no longer exists.
+2. ✓ (P7, unchanged) `/api/transmittal/send-email` answers `sent: false` with no configured origin, and `openTransmittalSheet` prints the portal block only for a URL; the copy action refuses a null URL.
+3. ✓ The issue flow warns when `NEXT_PUBLIC_SITE_URL` is unset: the toast names it and the fix. A preview deploy cannot mint a portal link: with nothing configured no runtime builds one, and with Vercel's production domain configured the link is the production one.
+
+**Scope / residual.**
+- The trade, recorded in DEC-64 §1 as rewritten (DEC-90 A6): a self-hosted deployment with nothing configured loses the copy link and the cover-sheet QR it had on `b0a03b1`, until it sets `NEXT_PUBLIC_SITE_URL` (a Docker build argument) and rebuilds. Operator step `userHeld.TRX-14`; the deploy note is in `99-fix-sequencing.md`. Links already emailed or printed are unchanged.
+- The same applies to a Vercel deployment served on a custom domain with system-variable exposure off and nothing configured: its browser no longer links on that domain.
+- Unchanged: with Vercel's exposure off, a server that still receives `VERCEL_PROJECT_PRODUCTION_URL` can email a link a browser cannot build (DEC-64 §1's third trade).
+- `app/api/share/file/route.ts:42,198` still describe `isUnreachableRecipientHost` as "`recipientOrigin()`'s rule". That is a comment only, now stale. The file is outside P22's list and was left as it is.
+- `XEDGE-5`'s other link builders are not this finding's.
 
 ---
 
@@ -833,6 +862,50 @@ Tests: `lib/__tests__/transmittalPortalRoute.test.ts`:
 **Integrator note (2026-10-07, DEC-90 A5).** *Ratified by the integrator under the user's delegation, 2026-10-07 (DEC-90): an uncontrolled copy must say so (ISO 9001 §7.5.3.2), so a PDF the issue-time check found unstampable is warned at issue and goes out unstamped only on the issuer's recorded yes, and a PDF checked as stampable is refused if stamping fails at download (fail closed, retryable); document-control P22 arms it.* Status stays OPEN.
 - **Done-when 1.** As written it reads "Every PDF served by the portal carries the stamp, whatever its size — or a PDF that cannot be stamped is refused at issue with the reason." Under the ratified amendment such a PDF is *warned* at issue and released unstamped only on the issuer's recorded yes. This record already makes the amendment the criterion's closer ("It closes only with the user's ratification of the DEC-61 §5 amendment", the Partial block above), so the supersession is on the record; it is ticked only once the arming code ships. What arms it: document-control P22 writes `stampable: true` on each item the issue-time check found stampable, in the issue UPDATE, under an `updated_at` match on the draft read (`lib/transmittals.ts` `issueTransmittal`; the route's `refusesUnstampable` is already in place).
 - **Done-when 2.** The device check remains: one hidden-frame portal download on iOS Safari and one on Firefox (the `&nav=1` save and the visible fallback link) — an operator step (`userHeld.TRX-15`).
+
+**Partial (2026-10-07, document-control Round F wave 3).** Package P22 TRANSMITTAL STAMP ARMING & FAIL-CLOSED PORTAL ORIGIN, under DEC-90 A5 (the DEC-61 §5 amendment, ratified). Reproduced on `b0a03b1` first: `issueTransmittal` (`lib/transmittals.ts:1031-1061`) sent `{ status, issued_at, updated_at }` and no item mark, so `refusesUnstampable` (`app/api/transmittal/route.ts:176`) bound nothing. A PDF checked as stampable at issue that failed to stamp at download was still released unmarked (`stamp_failed`). The new tests below fail on `b0a03b1`.
+- **The issue arms the refusal.** `lib/transmittals.ts`:
+  - `issueTransmittal` reads the draft row as stored (`getTransmittalRow`, also behind `getTransmittal`).
+  - After the issue-time check it writes `stampable: true` on each item the check found `stampable`, in the issue UPDATE itself (`patch.items`), under `.eq("updated_at", <the draft read's updated_at>)` beside the existing `.eq("status", "draft")`.
+  - The marked items are the draft's own JSON, untouched except for the mark. The issue trigger (`20261133`) merges a draft item's own keys into the snapshot (`it || jsonb_build_object(…)`), so the issued item carries the mark, frozen with the record.
+  - The rule is the new pure `armCheckedItems(rawItems, checks)`. An issuer-accepted unstampable PDF (`oversize` / `unloadable`), a non-PDF, an `unchecked` file, and every item when the check could not run (`checks` null) carry **no** mark. A mark already on a draft item is removed: only this issue's check arms.
+  - When nothing changes (nothing to mark, nothing to strip), the UPDATE is exactly as before: status and time only, no `updated_at` match.
+- **A concurrent draft edit is refused, never overwritten.** When the marked write matches no row, the draft is re-read. If it is still a draft with another `updated_at`, the issuer reads "TR-0042 was not issued — the draft was changed while it was being issued (saved meanwhile, here or by someone else), and an issue never overwrites a draft edit. Nothing was sent: open the draft, check it and issue again." Otherwise the existing refusal stands. Nothing is audited and no email is attempted.
+- **"Issue anyway" still arms what was checked.**
+  - `UnstampableItemsError` carries the whole check, bound to the draft read (`checked: DraftStampCheck` = `{ draftUpdatedAt, items }`).
+  - The composer (`app/(protected)/transmittals/page.tsx`) passes it back with `acceptedUnstampable` (`checked: e.checked`). The stampable files are marked without a second check, and the accepted ones go out unstamped as today.
+  - A draft changed since that check arms nothing and issues as before.
+- **The download route needed no change** (`app/api/transmittal/route.ts`, notifications N8's file, not edited). Its `refusesUnstampable(item)` is `item.stampable === true`. The tests below prove the mark the issue writes reaches that predicate. An armed item that fails to stamp is refused (422 `unstampable`), with nothing recorded as delivered, no download counted and the refusal on the issuer's trail, and the issuer is told (P8's notice). The refusal is retryable: the same link delivers the stamped copy once the file stamps.
+- Tests:
+  - `lib/__tests__/dcRoundFP15TransmittalIssueWarn.test.ts` "TRX-15 (P22, DEC-90 A5) — …":
+    - every PDF checked stampable → each item marked in the issue UPDATE, under `["updated_at", <read>]`, with the draft's other keys kept;
+    - only stampable items are marked (`not_pdf` / `unchecked` untouched);
+    - a document listed twice is marked twice;
+    - **regression:** nothing to mark, or a check that cannot run → the UPDATE is status and time only, with no `updated_at` match;
+    - the stopped issue carries the whole check, and "Issue anyway" marks the stampable item and leaves the accepted one unmarked, with no second check and `unstampableAccepted` still recorded;
+    - a draft changed since the check arms nothing;
+    - a mark already on an accepted item is removed;
+    - a concurrent edit is refused with the sentence above and nothing issued or audited;
+    - other zero-row refusals keep their reason;
+    - the pure rule;
+    - the composer pin (`checked: e.checked`).
+  - The P15 test that pinned "no item mark" is rewritten to its regression half (an accepted re-issue with no check to carry sends status and time only).
+  - `lib/__tests__/transmittalPortalRoute.test.ts` "TRX-15 (P22) — an item the issue armed …" (items built by `armCheckedItems`, then the trigger's merge):
+    - a stamp failure on an armed item → 422 `stamp_failed`: no `download_audits` row, no download bump, no `TRANSMITTAL_PORTAL_DOWNLOAD`, `TRANSMITTAL_PORTAL_UNSTAMPABLE_REFUSED` on the trail, and the retry delivers the stamped copy;
+    - **regression:** an armed item that stamps is delivered stamped;
+    - **regression:** an issuer-accepted (`unloadable`) item, and an item issued with no check, carry no mark and go out unstamped, recorded so, with the issuer told.
+- Verified in the P22 worktree: `tsc` 0, `eslint` 0 on every touched code and test file, full `vitest` green (437 files / 9604 tests: 9597 passed, 7 expected-fail).
+
+**Done-when.**
+1. ✓ (as amended — DEC-61 §5, ratified DEC-90 A5. This record's Partial of 2026-10-01 makes the amendment this criterion's closer: "It closes only with the user's ratification of the DEC-61 §5 amendment". The integrator's note says it is "ticked only once the arming code ships", and the arming code ships here.) Every PDF the portal can stamp carries the stamp. A PDF the issue-time check finds unstampable is warned at issue, naming the item and the reason (`TRX-16`), and goes out unstamped only on the issuer's recorded yes (`unstampableAccepted`, now with no mark). A PDF the check found stampable is refused at download if it then cannot be stamped, never released unmarked. The literal first limb ("whatever its size") is not claimed: a PDF over 64 MiB is still not stamped, and it is warned at issue instead.
+2. ✗ Not done — the operator's (`userHeld.TRX-15`). One hidden-frame portal download on iOS Safari and one on Firefox (the `&nav=1` save and the visible fallback link). No browser runs in this environment. No code changed for it.
+
+**Scope / residual.**
+- Stays OPEN for done-when 2's device check only.
+- Transmittals issued before the deploy carrying P22 carry no mark and keep §5's release (recorded unstamped, issuer told). Nothing is backfilled: the issued items are frozen (`TRX-6`), and nobody checked those files at issue.
+- The mark binds the document's current file as the check read it. The issue trigger pins the current version at the UPDATE, and a pinned item whose document gained a revision in between is refused by the trigger. An unpinned item whose document gained a revision with the same label between the check and the UPDATE would carry a mark for a file the check did not read. The download would then refuse rather than release unmarked, and the issuer is told: the fail-closed side, retryable.
+- The download route's header comment (`app/api/transmittal/route.ts:34-36`: "Until TRX-16 lands no item carries the mark … awaits the user's ratification") is now stale. It is a comment only, in notifications N8's file, which P22 must not edit; whichever package next edits the route should correct it.
+- No migration.
 
 ---
 

@@ -237,6 +237,10 @@ should read amber rather than red at the cover scan (public-surfaces
 `TRX-15`'s stricter portal rule (a PDF goes out stamped or not at all) is not
 in this deploy: it is armed per item only by `TRX-16`'s issue-time mark. The
 `DEC-61` §5 amendment was ratified by the integrator under the user's delegation, 2026-10-07 (DEC-90); document-control P22 arms it.
+*(P22, 2026-10-07: armed — transmittals issued by the app carrying P22 mark
+each PDF the issue-time check found stampable, and the portal refuses such a
+PDF if it then cannot be stamped. Transmittals issued before that deploy
+carry no mark and keep §5's release. No migration.)*
 
 ⚠ **Paste NOW, independent of wave 2 — `DRLS-16` (CRITICAL).** The live
 11-argument `publish_revision` was never revoked from `anon`, and it reads a
@@ -603,6 +607,17 @@ no outside recipient can open, and the route refuses rather than issue a copy
 whose verify QR cannot work. (Before P12 such a deployment served a copy with
 no QR.) Vercel deployments are unaffected while the project exposes its
 system environment variables (the production domain answers).
+
+⚠ **Deploy note — P22 (operators, `TRX-14`; DEC-64 §1 as reversed by DEC-90
+A6).** Before deploying the app carrying P22, a self-hosted deployment must
+set `NEXT_PUBLIC_SITE_URL` (the same **build argument** as above) — the
+P12 note already requires it. Without it the transmittal portal link is no
+longer built on the issuer's browser address: the "Portal link" button is
+disabled, the cover sheet prints no portal link or QR, and the issue toast
+says to set `NEXT_PUBLIC_SITE_URL` and rebuild (the email was already
+refused there). Links already emailed or printed are unchanged. Operator
+step `userHeld.TRX-14`. Vercel deployments are unaffected while the project
+exposes its system environment variables.
 
 **Library page — lines P12 owns outside `uploadOne` (for identity `IS-P1`
 and intelligence `I-12`, which edit `app/(protected)/documents/[libraryId]/page.tsx`
