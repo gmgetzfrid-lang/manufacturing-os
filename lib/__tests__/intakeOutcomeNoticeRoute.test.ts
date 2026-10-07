@@ -311,3 +311,102 @@ describe("POST /api/intake/outcome-notice — a provider hang, and a send that d
     expect(sent).not.toHaveBeenCalled();
   });
 });
+
+// projects Round G J14 — projects-tab MON-10 done-when 2: a QUOTE's award or
+// decline takes the same route (never a second notice path). The outcome is
+// the quote's stored status; the contact is the one the org entered on the
+// quote link the quote came through (DEC-56); one notice per quote, claimed,
+// sent and recorded as a submission's notice is.
+describe("POST /api/intake/outcome-notice — a quote's award or decline (MON-10, J14)", () => {
+  const QUOTE = "66666666-6666-4666-8666-666666666666";
+  const QLINK = "77777777-7777-4777-8777-777777777777";
+  beforeEach(() => {
+    state.rows.cost_documents = [{ id: QUOTE, org_id: ORG, project_id: PROJ, kind: "quote", status: "awarded", vendor_name: "Gulf Mechanical", rfq_group: "Unit 300 Repipe", intake_link_id: QLINK, total_amount: 140000 }];
+    state.rows.project_intake_links.push({ id: QLINK, org_id: ORG, project_id: PROJ, company_name: "Gulf Mechanical", contact_email: "bids@gulfmech.example" });
+  });
+  const postQ = (body: Record<string, unknown> = {}) => post({ orgId: ORG, costDocumentId: QUOTE, ...body });
+
+  it("an award: the quote link's contact is told it was selected — no price — and the trail is the same three actions, typed cost on the quote", async () => {
+    const res = await postQ();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ sent: true, outcome: "awarded" });
+    const mail = JSON.parse((sent.mock.calls[0] as [string, { body: string }])[1].body) as { to: string; subject: string; text: string };
+    expect(mail.to).toBe("bids@gulfmech.example");
+    expect(mail.subject).toBe("Selected: Unit 300 Repipe — Unit 300");
+    expect(mail.text).toContain('your quote for "Unit 300 Repipe" on Unit 300 was selected');
+    expect(mail.text).not.toMatch(/140|\$/);
+    expect(audits()).toEqual([
+      expect.objectContaining({
+        action: "INTAKE_OUTCOME_NOTICE_CLAIMED", resource_type: "cost", resource_id: QUOTE, org_id: ORG, user_id: "u-owner",
+        details: { versionId: QUOTE, attempt: 1, costDocumentId: QUOTE, projectId: PROJ, linkId: QLINK, outcome: "awarded" },
+      }),
+      expect.objectContaining({
+        action: "INTAKE_OUTCOME_NOTIFIED", resource_type: "cost", resource_id: QUOTE,
+        details: { versionId: QUOTE, attempt: 1, costDocumentId: QUOTE, projectId: PROJ, linkId: QLINK, company: "Gulf Mechanical", outcome: "awarded" },
+      }),
+    ]);
+  });
+
+  it("a decline: 'not selected', never the internal decline reason; and once per quote", async () => {
+    state.rows.cost_documents[0].status = "declined";
+    const res = await postQ();
+    expect(await res.json()).toEqual({ sent: true, outcome: "declined" });
+    const mail = JSON.parse((sent.mock.calls[0] as [string, { body: string }])[1].body) as { subject: string; text: string };
+    expect(mail.subject).toBe("Not selected: Unit 300 Repipe — Unit 300");
+    expect(mail.text).toContain("It was not selected this time.");
+    expect(await (await postQ()).json()).toEqual({ sent: false, reason: "already" });
+    expect(sent).toHaveBeenCalledTimes(1);
+  });
+
+  it("an open quote is 409 'undecided' and sends nothing — the bid tab asks about every rival an award may have declined", async () => {
+    for (const status of ["parsed", "draft", "void"]) {
+      state.rows.cost_documents[0].status = status;
+      const res = await postQ();
+      expect(res.status).toBe(409);
+      expect((await res.json()).reason).toBe("undecided");
+    }
+    expect(sent).not.toHaveBeenCalled();
+    expect(audits()).toHaveLength(0);
+  });
+
+  it("a quote filed by hand (no link), an invoice, another org's quote or link: 404, nothing sent", async () => {
+    state.rows.cost_documents[0].intake_link_id = null;
+    expect((await postQ()).status).toBe(404);
+    state.rows.cost_documents[0].intake_link_id = QLINK;
+    state.rows.cost_documents[0].kind = "invoice";
+    expect((await postQ()).status).toBe(404);
+    state.rows.cost_documents[0].kind = "quote";
+    state.rows.cost_documents[0].org_id = "99999999-9999-4999-8999-999999999999";
+    expect((await postQ()).status).toBe(404);
+    state.rows.cost_documents[0].org_id = ORG;
+    state.rows.project_intake_links[1].org_id = "99999999-9999-4999-8999-999999999999";
+    expect((await postQ()).status).toBe(404);
+    expect(sent).not.toHaveBeenCalled();
+  });
+
+  it("who may send it: the project owner and a DocCtrl held in roles[]; a plain member is refused; no contact says so; a malformed id is a 400", async () => {
+    state.user = { id: "u-member" };
+    expect((await postQ()).status).toBe(403);
+    state.user = { id: "u-dc" };
+    expect((await postQ()).status).toBe(200);
+    state.rows.audit_logs = [];
+    state.rows.project_intake_links[1].contact_email = "  ";
+    expect(await (await postQ()).json()).toEqual({ sent: false, reason: "no_contact" });
+    expect((await post({ orgId: ORG, costDocumentId: "nope" })).status).toBe(400);
+    expect(sent).toHaveBeenCalledTimes(1);
+  });
+
+  it("a failed send is recorded and frees the next attempt, as a submission's is", async () => {
+    sent.mockImplementationOnce(async () => new Response("rate limited", { status: 429 }));
+    const res = await postQ();
+    expect(res.status).toBe(502);
+    expect(audits().map((r) => r.action)).toEqual(["INTAKE_OUTCOME_NOTICE_CLAIMED", "INTAKE_OUTCOME_NOTICE_FAILED"]);
+    expect(await (await postQ()).json()).toEqual({ sent: true, outcome: "awarded" });
+    expect(audits().filter((r) => r.action === "INTAKE_OUTCOME_NOTICE_CLAIMED").map((r) => (r.details as { attempt: number }).attempt)).toEqual([1, 2]);
+  });
+
+  it("a submission's notice still names a version: a body with both ids is the submission's (the regression path)", async () => {
+    const res = await post({ orgId: ORG, versionId: VER, costDocumentId: QUOTE });
+    expect(await res.json()).toEqual({ sent: true, outcome: "rejected" });
+  });
+});

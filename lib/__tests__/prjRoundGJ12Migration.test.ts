@@ -815,7 +815,12 @@ describe("SAF-9 — the contractor outcome notice is claimed once per attempt", 
     // the route claims with exactly these keys
     const route = readFileSync(join(root, "app/api/intake/outcome-notice/route.ts"), "utf8");
     expect(route).toContain('const CLAIMED = "INTAKE_OUTCOME_NOTICE_CLAIMED";');
-    expect(route).toContain("details: { versionId, attempt, projectId: l.project_id, linkId: l.id, outcome },");
+    // (projects Round G J14, MON-10: the claim → send → record sequence is one
+    // helper shared by a submission's notice and a quote's; the claim row's
+    // keys are still versionId — the decided record's id — and attempt.)
+    expect(route).toContain("details: { versionId: key, attempt, ...n.claimDetails },");
+    expect(route).toContain("claimDetails: { projectId: l.project_id, linkId: l.id, outcome },");
+    expect(route).toContain("key: versionId,");
     expect(route.indexOf("action: CLAIMED")).toBeLessThan(route.indexOf('await fetch("https://api.resend.com/emails"'));
   });
   it("the notice's three rows are the route's: a signed-in insert of one is refused; the route writes them as the service role (review minor)", () => {

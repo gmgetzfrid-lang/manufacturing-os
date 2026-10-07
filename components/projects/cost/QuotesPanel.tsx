@@ -79,6 +79,7 @@ import {
 } from "@/lib/bidTab";
 import { appConfirm, appPrompt } from "@/components/providers/DialogProvider";
 import { isMissingRpc } from "@/lib/costDocs";
+import { notifyQuoteOutcome } from "@/lib/intakeOutcomeNotice";
 
 /** Row columns that live beside CostDocument (landed by 20261096) — read
  *  here so the frozen lib/costDocs mapper does not need to change: the
@@ -342,6 +343,29 @@ function ackWarning(ack: NameFlag, override: AwardFlag | null): string {
     return `The letterhead the AI read ("${ack.letterhead}") could be ${c}, flagged DO NOT USE — the vendor on file is ${onFileShown(ack)}, and your acknowledgement is recorded with this award.`;
   }
   return `The vendor on file ("${ack.vendorOnFile}")${ack.letterhead ? ` and the letterhead the AI read ("${ack.letterhead}")` : ""} could be ${c}, flagged DO NOT USE — the award's override ${override ? `names ${override.name}` : "does not name it"}, and your acknowledgement is recorded with this award.`;
+}
+
+/** MON-10 (projects Round G J14): the outcomes of a quote's notice that say
+ *  nothing went wrong — told before, no contact on the link, email not set
+ *  up here, a send already under way, or (a rival the award did not
+ *  decline) not decided. The portal shows the outcome in every case. */
+const QUIET_NOTICE_REASONS: readonly string[] = ["already", "no_contact", "not_configured", "in_progress", "undecided"];
+
+/**
+ * MON-10: tell each quote's contractor how it was decided — J12's notice
+ * route (`/api/intake/outcome-notice`, `notifyQuoteOutcome`), which reads
+ * the outcome from the quote's stored status and emails only the contact
+ * the org entered on the quote link it came through (DEC-56), once. Only
+ * quotes that came through a link are asked. Returns one sentence naming
+ * the notices that failed, or null.
+ */
+export async function noticeQuoteOutcomes(orgId: string, docs: CostDocument[]): Promise<string | null> {
+  const linked = docs.filter((d) => d.kind === "quote" && !!d.intakeLinkId);
+  const answers = await Promise.all(linked.map(async (d) => ({ d, res: await notifyQuoteOutcome(orgId, d.id) })));
+  const failed = answers.filter(({ res }) => !res.sent && !QUIET_NOTICE_REASONS.includes(res.reason));
+  if (!failed.length) return null;
+  const names = failed.map(({ d, res }) => `${d.vendorName ?? d.fileName ?? "a bidder"} (${res.sent ? "" : res.reason})`);
+  return `The email telling ${failed.length === 1 ? "the bidder" : `${failed.length} bidders`} the outcome could not be sent: ${names.join(", ")} — their portal still shows it.`;
 }
 
 const QUOTE_LINK_DEFAULT_DAYS = 90;
@@ -1056,7 +1080,21 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
     } finally { setBusy(null); }
     // The warning is said AFTER onChanged: the tab's re-read clears its
     // banner first, so the warning is what stays on screen.
-    if (failure == null) { onChanged(); if (warning) setErr(warning); return; }
+    if (failure == null) {
+      onChanged();
+      // MON-10: the awarded bidder and every open rival of its RFQ group
+      // (the ones the award declines) are told — the route reads each
+      // quote's stored status, so a rival the award did not decline is
+      // skipped, and only a quote that came through a link is asked.
+      const key = (g: string | null | undefined) => (g ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+      const rivals = key(doc.rfqGroup)
+        ? siblings.filter((d) => d.id !== doc.id && d.kind === "quote" && isOpenDoc(d) && key(d.rfqGroup) === key(doc.rfqGroup))
+        : [];
+      const noticeNote = await noticeQuoteOutcomes(orgId, [doc, ...rivals]);
+      const said = [warning, noticeNote].filter((x): x is string => !!x).join(" ");
+      if (said) setErr(said);
+      return;
+    }
     if (overridden) {
       const { error } = await supabase.from("audit_logs").insert({
         action: "COST_DOC_AWARD_OVERRIDE_ABANDONED", resource_type: "cost", resource_id: doc.id,
@@ -1096,6 +1134,9 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
     } finally { setBusy(null); }
     if (failure) { setErr(failure); return; }
     onChanged();
+    // MON-10: the declined bidder is told, when its quote came through a link.
+    const noticeNote = await noticeQuoteOutcomes(orgId, [doc]);
+    if (noticeNote) setErr(noticeNote);
   };
 
   // MON-10: who is declined by hand — an open UNGROUPED quote (an award
