@@ -346,7 +346,7 @@ Integrator at merge (2026-10-01, the final review's minor). A member list the GE
 ## GOV-5 · Two background crons spend members' provider keys with a cap that structurally always reads $0
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-18 AI CAP TRANSACTION & METERING (the in-loop re-check and metering in both drains) — by the integrator, 2026-10-01 (at the I-05 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledgeEmbedDrain.ts:88-95`, `lib/knowledgeEmbedDrain.ts:102-128`, `lib/knowledgeIngest.ts:511-515`, `lib/knowledgeIngest.ts:531-592`, `lib/ai/usageServer.ts:63`
@@ -405,6 +405,35 @@ knowledgeEmbedDrain.ts:90 and knowledgeIngest.ts:512 both call `getMonthUsage`; 
 4. Partly. The gate a sponsor at 100% meets is proven at the ledger (`aiUsage.test.ts`), and the embed drain's hold at 100% is I-02's `embedDrain.test.ts`; a drain-level "zero provider calls" test for the ingest drain is I-06's.
 
 **Scope / residual.** OPEN until the drains re-check and meter inside their loops (handed to I-02 and I-06).
+
+**Resolution (2026-10-02, intelligence Round G).** Package I-18 (`541d4bf`, the interrupted implementer's partial edit of `lib/knowledgeIngest.ts` read, reworked and completed on 2026-10-07). Reproduced first (DEC-29) on the base `3015a7f`:
+- The ingest drain checked the uploader's cap once per document (`loadSponsorVision`) and metered once, after the document's last batch. An uploader AT the cap got no vision context, so the pages that need vision were consumed text-only and the document went 'ready' with them unread.
+- The embed drain checked once per library and metered once, after the library's last slice. A batch of 64 passages followed another for the run's whole budget.
+- A run killed part-way recorded nothing in either drain.
+
+Done-when:
+
+1. ✓ Both drains re-check the headroom inside the loop, by reserving each call's worst case against the payer's cap before it is made, with every other reservation in view.
+   - The ingest drain: before every page's AI vision read (`VisionContext.beforeCall`, `lib/knowledgeIngest.ts:1541`). The worst case is `visionPageWorstCaseUsd`: one image, 4,000 tokens out, the dearer of the two models `transcribePageImage` may use (`:2355`). The reservation is `visionCallMeter`'s (`:2405`).
+   - The embed drain: before every claimed batch is sent (`beforeEmbed`, `lib/knowledgeEmbedCore.ts:390`; `lib/knowledgeEmbedDrain.ts:303`). The worst case is every passage as the provider sees it plus the canary. A split re-sends passages only after a refused request, which is not billed.
+2. ✓ Both meter as they go. Each keeps ONE row, as before: the ingest drain one `knowledgeVision` row per document, the embed drain one `knowledgeEmbed` row per library per run. That row is the first reservation, settled with the running total after every call or batch, so a cron killed mid-document or mid-library has already recorded what it spent. A reservation no call used is released. A run that spent nothing leaves no row.
+3. ✓ A drain that would exceed the payer's headroom stops, leaves the work queued, and says why.
+   - The ingest drain, uploader at the cap: the pages that need vision are HELD (`vision_failed_pages`, the document 'indexing', never 'ready'). The row says "…can't be retried for you now: The uploader's monthly AI cap is reached ($X of $Y), so pages without a text layer are held for AI vision — they are read once it resets on the 1st or is raised…", or the lock's sentence for a $0 cap (`:2315`).
+   - The ingest drain, uploader under the cap with no room for the next page: that page is held with the reservation's cause on the row ("the uploader's $10.00 monthly AI cap has $0.06 left; one page could cost up to $0.11"). It is tried again on ING-6's cadence.
+   - A read-every-page library's document waits in the queue, and `fileBehind` now writes why on the row (`capHeld`, `:2540`). A queued row's reason shows on the library page.
+   - The embed drain: the library is held `cap` until the 1st with the reservation's sentence. A ledger that cannot be read holds it `error` for an hour: never released, no error run counted. The batch's passages go back to the queue untouched.
+4. ✓ Drain-level tests, zero provider calls at 100%.
+   - The ingest drain (`ingestLock.test.ts` "GOV-5 / GOV-13 (I-18)…"): at 100%, zero AI vision calls and nothing reserved; locked at $0, zero; under the cap with less headroom than one page, zero, with no reservation left standing.
+   - The embed drain (`embedDrain.test.ts` "GOV-5 / GOV-13 (I-18)…"): at 100%, zero embedding calls; under the cap without a batch's headroom, zero.
+   - Each also: two pages fit and the third is refused in the same run (ingest); crossing the cap mid-run stops at the first batch that does not fit (embed); the row carries the first call's or batch's figures while the second is at the provider (both); REGRESSION, the same reads, completion and one row with every call's tokens (both); a read-every-page library at the cap (ingest); a ledger outage (embed).
+   - Each fails against the drains before `541d4bf` (the two "at 100%" embed checks pin behaviour the pre-check already had).
+
+The same per-call reservation runs in the interactive ingest batch and in `/api/knowledge/embed` (`GOV-13`).
+
+**Scope / residual.**
+- An embed library held `cap` stays held by the drain until the 1st even if the payer's cap is raised sooner (as before). A build run from the library's panel embeds on the raised cap at once: the hold is the drain's.
+- The ingest drain's refused page is tried again on ING-6's 30-minute back-off. Each try is one refused reservation (an insert, a read, a delete) and no provider call.
+- The worst cases are deliberately high, so a payer within one page's (or one batch's) worst case of the cap is held a little before it, never past it (DEC-73 reversal 5: refuse rather than clamp).
 
 ---
 
@@ -700,7 +729,7 @@ Tests: `askRouteHonesty.test.ts` "GOV-9 — …" ("a vision chunk → AI TRANSCR
 ## GOV-10 · Doc Control — not just Admin — can raise anyone's cap, including their own, to $10,000, outside the app's capability-policy layer
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-18 AI CAP TRANSACTION & METERING (closes with `GOV-15`) — by the integrator, 2026-10-01 (at the I-05 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/ai/usage/route.ts:25-37`, `app/api/ai/usage/route.ts:107`, `app/api/ai/usage/route.ts:133-136`, `lib/capabilityPolicy.ts`
@@ -1035,6 +1064,20 @@ Noted for `GOV-15` in fix pass 11 (concurrency: out of this package's scope, and
 - `GOV-15`'s locking function replaces `capChangesSince`, `signedFigure`, `holdOwnCapAt`, `recheckOwnCap`, `writeId` / `limitRowId` and the guarded writes and put-backs (about `route.ts:258-438`, `:669-731` and `:969-1180` at fix pass 10). It deletes the app-side re-read and put-back; it should not extend them.
 - An `unchanged` answer is decided from a read, like everything else here. A figure another request writes between that read and the answer is that request's change, audited and told by it.
 
+**Resolution (2026-10-02, intelligence Round G).** Package I-18, with `GOV-15` (see its Resolution). Done-when 2 was the one Partial: the self-raise ban held for sequential requests only. A cap change is now one database transaction, `ai_cap_change` (`20261173`). It takes the workspace's cap-change lock and the rows it reads (`FOR UPDATE`), decides the ban against the figures it locked, writes, and audits in that transaction. Two cap changes in flight therefore run one after the other, each deciding from what the other committed. The app-side machinery of fix passes 5–10 is deleted, not extended.
+
+Done-when:
+
+1. ✓ As recorded (fix pass 3): `ai.manage_caps`, default Admin, critical, Admin always on it.
+2. ✓ Raising one's own cap is blocked while another active holder exists, on every path, for sequential requests (the committed T1–T10 matrix, byte-identical on `3015a7f` and at I-18's head) and for requests in flight through `ai_cap_change`. That was run on PostgreSQL 16: the reviews 5–10 interleavings in both orders, and 3,600 random changes from 12 concurrent clients. No committed change raised its actor's own cap, and the replay landed on the stored state (`GOV-15` done-when 5). The sole-holder path is unchanged: audited `soleHolder: true` by a row written first, and refused when that row cannot be written (inside the transaction now). "Their own" is still the uid the database returns.
+   - Restated (GOV-15 done-when 3): through the function a holder's self-clear that is not a raise is allowed again, as on `052271b`. One onto a higher default is refused. Until `20261173` is pasted the change runs app-side (today's sequential path, said in the server log), where the self-clear stays refused while another holder exists and changes in flight are not serialised.
+3. ✓ As recorded.
+4. ✓ As recorded (fix pass 12). The notices are sent by the route after the change lands, from the function's answer: the hold a default raise writes is named, every notice names whose cap changed, and a change to nothing is told to nobody. The race-path notices of fix passes 6–10 (put back, still held, taken back out, needs checking) went with the machinery, except "still held": the app-side path still tells it when a hold for a failed default raise cannot be taken back out.
+
+The inputs "Noted for `GOV-15`" above are closed. The tenth review's S3 (an unrecorded own raise invisible to a re-read) has no reader left: nothing re-reads. The self-clear rule is loosened under the lock. An `unchanged` answer is decided under the lock, so no other change lands between that read and the answer.
+
+**Scope / residual.** Sequential, as recorded above: two holders can raise each other's caps; a holder held on a default raise stays held until another holder raises them; a change to the default is told to the other holders only; a sole holder raises their own cap unsigned, audited first. New with `GOV-15`: until `20261173` is pasted, changes in flight are not serialised. The holder roster is read before the function's transaction, so a grant of `ai.manage_caps` landing in between is seen by the next change (`GOV-15` residual).
+
 ---
 
 <a id="gov-11"></a>
@@ -1194,7 +1237,7 @@ Tests: `keyVault.test.ts`, `aiConnectionRoute.test.ts` ("GOV-12 — keys at rest
 ## GOV-13 · The cap is a read-then-call with no reservation — concurrent requests all pass, and no single call is bounded by remaining headroom
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-18 AI CAP TRANSACTION & METERING (done-when 3, per-round reservation in the orchestrator loop, locate's refine passes and the ingest batches) — by the integrator, 2026-10-01 (at the I-05 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/ai/governedCall.ts:63-88`, `app/api/knowledge/ask/route.ts:253-280`, `app/api/orchestrator/route.ts:105-149`, `lib/orchestrator/loop.ts`
@@ -1248,6 +1291,45 @@ Tests: `aiUsage.test.ts` ("GOV-13 / ORCH-7 — reserve, then call": $9.99 of $10
 3. ✗ Multi-round paths — the orchestrator loop (I-04), locate's refine passes (I-07), the ingest batches (I-06) — re-check between rounds by reserving per round in their own files.
 
 **Scope / residual.** OPEN until the multi-round paths reserve per round. A reservation whose run dies is kept at its worst case: over-counted, never under. *Noted in fix pass 11 (concurrency):* the month is read in offset pages over the live ledger (`readMonthRows`). For a member with more than 1,000 rows this month, a reservation inserted or released between two page reads can move a row across a page boundary, and that row is not counted. A keyset cursor on (`created_at`, `id`), or one server-side sum, closes it. It belongs with the reservation work here, or with `GOV-15`'s transaction.
+
+**Resolution (2026-10-02, intelligence Round G).** Package I-18 (`e880151`, `541d4bf`). Reproduced first (DEC-29) on the base `3015a7f`:
+- The orchestrator read the cap once, ran up to six rounds, and metered once after the loop.
+- Locate re-checked `overCap(spent)` (spend already made) between its refine calls through its own `monthSpendAllOps`, with no reservation.
+- The ingest batches (the interactive route and the drain) checked the payer's cap once per request or document, then read up to four page images each, metering after the batch (the drain: after the document's last batch).
+- Re-checking done-when 1 and 2 ("✓ for every caller of aiGates") against the code found two provider paths the Partial did not name, both still read-then-call: `/api/knowledge/embed` (a slice of batches, metered once at the end) and `/api/codebook/import` (one call, metered after).
+
+Done-when:
+
+1. ✓ Every provider-calling path compares the pending call's worst case with the headroom before it is made (refusing, not clamping: DEC-73 reversal 5).
+   - `governedAiCall` and `assertAiGates(...).reserve` callers, as recorded.
+   - The orchestrator: each round, its prompt plus 2,000 tokens out (`app/api/orchestrator/route.ts:149`).
+   - Locate: each call — the coarse pass, the close-ups, the relocate (`app/api/knowledge/locate/route.ts:277`, `:308`), now behind `assertAiGates`.
+   - The ingest batches, interactive and drain: each page's AI vision read (`visionCallMeter`, `lib/knowledgeIngest.ts:2405`, asked at `:1541`).
+   - The embed route and the embed drain: each claimed batch (`beforeEmbed`, `lib/knowledgeEmbedCore.ts:390`; `app/api/knowledge/embed/route.ts:812`; `lib/knowledgeEmbedDrain.ts:303`).
+   - The codebook import: its call (`app/api/codebook/import/route.ts:121`).
+   - A provider-caller census (2026-10-07) finds no direct caller that neither reserves nor runs the gate; the helpers (`providerCall`, `embeddings`, `knowledgeVision`) are called only from those.
+2. ✓ The same paths reserve through `reserveWithinCap`. Of N calls at the boundary at most one proceeds (`aiUsage.test.ts`; `orchestratorReserve.test.ts` "six runs started at once at the cap boundary: at most ONE reaches the provider"). The month those reservations are judged against is read by key, not by offset (`readMonthRows`, `GOV-15` done-when 4), which closes this record's offset-paging residual.
+3. ✓ The multi-round paths re-check between rounds by reserving each round.
+   - The orchestrator loop: a refused round stops the run there with what it gathered and no closing call; a refusal before the first call answers its own status (402 / 429 / 503) (`lib/orchestrator/loop.ts:241`, `route.ts:193`).
+   - Locate's refine passes: a refused close-up ends the refining and keeps the coarser point.
+   - The ingest batches: a refused page is held for AI vision with the reason, and the batch's later vision pages wait with it.
+   - The embed slices: a refused batch goes back to the queue; the route says the refusal as its error, and the drain holds the library.
+   - Each path folds every round's real figures into ONE metering row (its first reservation, settled after every round), the row it always wrote, so a run killed part-way has recorded what it spent.
+
+Tests:
+- `orchestratorReserve.test.ts` (new, the real meter over an interleaving ledger): regression, at most one of six, the 429, a stop between rounds. Also `orchestratorLoop.test.ts`.
+- `intelRoundGDrawingRoutes.test.ts`: locate's folded row; a coarse pass that does not fit.
+- `ingestLock.test.ts` "GOV-5 / GOV-13 (I-18)…" (the drain) and `ingestRoute.test.ts` "GOV-13 (I-18)…" (the interactive batch: regression, a page that no longer fits).
+- `embedDrain.test.ts` "GOV-5 / GOV-13 (I-18)…" and `embedRouteReserve.test.ts` (new).
+- `aiUsageOutageIngest.test.ts` "GOV-13 (I-18) — the codebook import…".
+- `aiGateCensus.test.ts` (locate GATED; the ingest route's metering through `visionCallMeter`, which reserves and settles).
+- Against the base code (2026-10-07): 14 cases of the orchestrator and locate suites fail with `3015a7f`'s route, loop and locate. The `541d4bf` cases fail against the drains and routes before it, including the regression pins, which assert the one row's reservation shape.
+
+**Scope / residual.**
+- A reservation whose run dies is kept at its worst case: over-counted, never under (as recorded).
+- A call is refused, not shrunk, when its worst case does not fit (DEC-73 reversal 5). A member a few cents under the cap can therefore be refused a call that would have cost less than its worst case.
+- The per-call worst cases are deliberately high: text at 3 characters a token, 1,600 tokens an image, the full output ceiling, and for a page image the dearer of the two models it may use.
+- The pre-checks that were there stay in front of the reservations, with their sentences: the orchestrator's, the ingest route's, the embed route's and the codebook import's.
 
 ---
 
@@ -1434,7 +1516,7 @@ Fix pass 5 added 10 cases to `embedConsentAudit.test.ts` (61 in all), under "I-2
 ## GOV-15 · A cap change is several round trips, not one transaction: two cap changes in flight at once can still raise a holder's own cap past the self-raise ban
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-18 AI CAP TRANSACTION — by the integrator, 2026-10-01 (I-05 merge; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (I-05's reviews 5 to 10 each reproduced one interleaving of two in-flight cap changes against `app/api/ai/usage/route.ts`; each fix pass closed that one and the next review found another)
 - **Locations:** `app/api/ai/usage/route.ts` (`capChangesSince` :292, `signedFigure` :349, `holdOwnCapAt` :413, the re-reads and put-backs, `auditFirst` :969), `lib/ai/usageServer.ts` (`readMonthRows` :199), `ai_usage_limits`
@@ -1461,5 +1543,44 @@ Related rules that today exist only because of the race, and that the transactio
 Once this lands, `GOV-10` done-when 2 holds for concurrent requests too, and `GOV-10` can be RESOLVED.
 
 **Closer:** intelligence I-18 (assigned at the I-05 merge, 2026-10-01).
+
+**Resolution (2026-10-02, intelligence Round G).** Package I-18 (`df24894`; completed 2026-10-07: `43f57ac`). Reproduced first (DEC-29) on the base `3015a7f`: `app/api/ai/usage/route.ts` was 1,328 lines; the self-raise ban was decided over separate PostgREST round trips with no lock between them (`capChangesSince`, `signedFigure`, `holdOwnCapAt`, `recheckOwnCap`, `readOwnCapSource`, the guarded writes and put-backs, `writeId` / `limitRowId`), and `readMonthRows` (`lib/ai/usageServer.ts`) paged by offset.
+
+Done-when:
+
+1. ✓ `supabase/migrations/20261173_intel_roundG_ai_cap_change.sql` (new; a shape test scans the sequence and finds no earlier definition). `ai_cap_change(p_org_id, p_actor, p_target, p_cap_usd, p_clear, p_other_holders)` returns jsonb, SECURITY DEFINER with `SET search_path = public` (:120). It is every cap change: setting, raising, lowering and clearing an override (one's own or another person's), the default, a lock (0), an unlock, and the hold a default raise writes for a setter who follows the default.
+   - It takes the workspace's cap-change lock (`pg_advisory_xact_lock`, :159), so changes to rows that do not exist yet are serialised too, and `FOR UPDATE` on the default row and the target's override (or, for a default change, the actor's) (:163-171).
+   - Against those locked figures it decides the self-raise ban, the sole holder, the hold, `unchanged` and `pinnedAtDefault`, exactly as the app decided them for sequential requests; then it writes and appends `AI_CAP_CHANGED` in the same transaction.
+   - A sole holder's own raise is recorded first, and a record the log refuses changes nothing (`sole_audit_failed`, :211-219 and :271-277). Every other row is written after its change in a guarded block: a log that refuses it never undoes the change (as on `052271b`), and the row comes back in `audit_retry` for the route to try once more.
+   - DRLS-16: EXECUTE is revoked from PUBLIC, anon and authenticated and granted to service_role only (:330-333). A non-NULL `auth.uid()` is refused before anything is read (:141). The NULL uid it serves is therefore the service role's, the only grantee.
+   - Who else holds `ai.manage_caps` is read by the app through the capability policy (unchanged) and passed as `p_other_holders`. NULL means the roster could not be read; that refuses only where the decision needs it (503).
+   - DEC-30: a counts-only TEMP inventory before the transaction (:78, six counts), BEGIN … COMMIT (:107, :335), one final SELECT (check, ok, n) with seven probes. Nothing else is re-created, so no lineDiff applies (the shape test asserts the file creates exactly one function and no policy or trigger).
+2. ✓ `POST /api/ai/usage` (`app/api/ai/usage/route.ts:318`) calls the function through `lib/ai/capChange.ts` `callCapChangeFunction` (:205) and maps its answer (`outcomeFromFunction`, :172) onto the same answers and bell notices. The machinery is deleted: none of `capChangesSince`, `signedFigure`, `holdOwnCapAt`, `recheckOwnCap`, `readOwnCapSource`, `writeId` or `limitRowId` remains in `app/` or `lib/` (the route went from 1,328 lines to 429).
+   - **T1–T10 unchanged.** `git diff 3015a7f -- lib/__tests__/aiUsageRoute.test.ts`: the describe "GOV-10 — the sequential matrix…" is byte-identical, and so is every other sequential describe except two lines. The default raise's row carries no `writeId`, which this done-when deletes. The team-ledger outage test injects its failure one select earlier, because the viewer's own read is now one select: the mock answers PostgREST's exact count, which the keyset read uses; the answer asserted is the same. The matrix runs on the app-side path there (the test database has no function: PGRST202). The describe "GOV-15 — through ai_cap_change…" runs T1, T4/T10, T5 and T6/T9 through the function's answers. On PostgreSQL 16 the matrix through the function gave the test file's answers, rows and audit rows figure for figure (64 assertions; done-when 5). The one deliberate difference is T5's self-clear that is not a raise (done-when 3).
+   - **What moved in the test file** (2,294 lines on `3015a7f`; 1,229 after `df24894`; 1,270 at I-18's head). The race describe "GOV-10 — the ban holds at WRITE time…" (40 tests) went with the machinery: most of its cases were two requests in flight, a re-read or a put-back. Its sequential cases moved into "GOV-15 — app-side, until 20261173 is pasted…" (8 tests):
+     - the self-clear refusal while another holder exists (unchanged);
+     - a failed default write, whose hold is taken back out (now with no record and no `notApplied` companion: done-when 3);
+     - a hold that cannot be taken back out (unchanged);
+     - an update that matches no row (now 409, not a re-insert).
+     Two more were the tenth review's S3 as fix pass 11 restated it: a default raise whose row the log refuses still goes ahead (held, told, no row), and a row refused once lands once. `df24894` deleted them; I-18's completion restores them verbatim (`43f57ac`, "the tenth review's S3, sequential part"), and the app-side path keeps the default raise's two log tries for them. A cap that cannot be read back after a write is no longer a case: the re-read is gone. "GOV-15 — through ai_cap_change…" (8 tests) maps the function's answers.
+   - **Until `20261173` is pasted** the change runs app-side (`applyCapChangeAppSide`, `lib/ai/capChange.ts:248`): PGRST202, or a 42883 naming `ai_cap_change`, takes today's sequential reads, decisions, writes, answers and audit rows, with no re-read and no put-back. The server log says so once per process (`sayAppSideOnce`, :232). A 42883 raised inside a deployed body is a failure (500), never the app-side path.
+3. ✓ Through the function: a holder's self-clear that is not a raise (the default, read under the lock, at or below their override) is allowed and told as a clear (:196-202; `aiUsageRoute.test.ts` "T5 through the function…"; T5 on PostgreSQL 16). One onto a HIGHER default is still refused, 403, in its own sentence (`SELF_CLEAR_RAISE`). Audit-first stays only for the sole holder's own raise, on both paths. App-side (before the paste) a holder's self-clear stays refused while another holder exists, as on `3015a7f`: that path has no lock.
+4. ✓ `readMonthRows` (`lib/ai/usageServer.ts:205`) pages by key: rows in (`created_at`, `id`) order, each page after the last row read (first that instant's later ids, :218, then the later instants), each read finished by PostgREST's exact count for it. Test: `aiUsage.test.ts` "GOV-15: paged by key, not offset…" (fails on the offset read).
+5. ✓ On a throwaway PostgreSQL 16.13 (2026-10-07; initdb under `/var/lib/postgresql`, deleted afterwards). The stub schema had the real `ai_usage_limits` (20260916, both unique indexes, RLS on) and `audit_logs` (schema.sql) definitions, Supabase's roles and default function grants, and `auth.uid()` from the JWT claim.
+   - The file pasted clean: 7 × `ok = true` and the six counts. A re-paste is clean (inventory "already defined": 1).
+   - The sequential matrix through the function: 64 of 64. Rails: 17 of 17 — a refusing log; anon and authenticated "permission denied"; a signed-in session refused even when granted EXECUTE; −1, 10001 and a default clear refused.
+   - Two cap changes in flight, from the reviews 5–10 interleavings, each run in both orders, 26 runs. Session 1 holds its transaction open 2 s after the call; session 2 starts 0.5 s in. The pairs: review 5 (the holder raises the default they follow ‖ clears their own override); review 6 (two default raises by the same holder); review 7 P1 (the raise ‖ another holder clears the hold) and P2 (an own lowering ‖ another holder's lock); review 8 (a) (a workspace lock ‖ an own insert), (b) (a further lowering ‖ an own insert) and (c) (another holder clears the override ‖ an own "lowering"); review 9 (another holder's lock ‖ an own insert); review 10 S4 (another holder's raise ‖ an own lowering), S1 (an own default lowering ‖ another holder's default figure) and S3/S5 (an own default raise ‖ another holder's trim); a self-clear that is not a raise ‖ a default raise; and an own raise ‖ another holder's raise. In every run session 2 waited for session 1's lock (1.57–1.76 s). A replay of the committed changes in commit order found no change that raised its actor's own cap, and landed on the stored state (every row written in its change's transaction).
+   - Random load: 3,600 cap changes by two holders from 12 concurrent clients (pgbench; every kind: the default, one's own override, clearing it, the other's, clearing the other's). 2,085 changes committed, none raised its actor's own cap, the replay equals the stored state, and no transaction failed. A control run of the same function with the lock and `FOR UPDATE` removed failed: unique violations, and 3 self-raises in 126 changes. So the check bites.
+
+`GOV-10` done-when 2 now holds for concurrent requests too; `GOV-10` is RESOLVED with this.
+
+**Pending migration:** `supabase/migrations/20261173_intel_roundG_ai_cap_change.sql`. Not a widening: the service role could already write `ai_usage_limits` and `audit_logs` (the route did), and no client role gains anything. Paste after `20260916` (it reads `ai_usage_limits` and `audit_logs` only). It is independent of `20261137`: it never asks the capability evaluator, the app does and passes the answer. Either order with the deploy: until it is pasted the app answers as it does today (app-side, said in the server log), and the next cap change after the paste runs through the function. Its inventory row of `AI_CAP_CHANGED` rows the old race guards wrote is informational.
+
+**Scope / residual.**
+
+- Until the paste, two cap changes in flight are not serialised (the class the fix passes chased); the server log says which migration closes it.
+- The roster (`p_other_holders`) is read before the function's transaction. A grant or revoke of `ai.manage_caps` that lands between that read and the lock is seen by the next change, not this one. A holder read as the sole holder at the instant a second holder is granted raises their own cap audited `soleHolder: true`, as a sole holder does. Changing who holds the capability is a critical, Admin-only policy change, not a cap change.
+- App-side, the sequential failure cases audit as on `052271b`, not as fix passes 10–11 did. A default raise that does not land writes no record and no `notApplied` companion (done-when 3: audit-first only where it is a control). A cap that cannot be read back after a write is no longer checked: the re-read is deleted. A write that matches no row answers 409 (another person's override is no longer re-inserted).
+- Through the function, an error rolls its transaction back: 500, nothing changed, nobody told.
 
 ---

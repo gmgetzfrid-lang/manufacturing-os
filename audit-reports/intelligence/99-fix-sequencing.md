@@ -473,6 +473,58 @@ ledger past the ceiling leaves the usage GET up (the viewer's own meter and
 the default's editor) and says the team view is unavailable
 (`teamUnavailable`).
 
+**APPLIED by I-18 (intelligence Round G, 2026-10-02; completed 2026-10-07).**
+`supabase/migrations/20261173_intel_roundG_ai_cap_change.sql` adds
+`ai_cap_change`, one SECURITY DEFINER function (`search_path` pinned,
+EXECUTE for `service_role` only, a signed-in session refused). It takes the
+workspace's cap-change lock and `FOR UPDATE` on the rows it reads, decides
+the ban, the sole holder, the hold, `unchanged` and `pinnedAtDefault`,
+writes, and audits in one transaction. `lib/ai/capChange.ts` calls it and,
+until the file is pasted (PGRST202 / a 42883 naming it), makes the change
+app-side: today's sequential path, without the race machinery, said once in
+the server log. The route's machinery is deleted (1,328 lines to 429). The
+self-clear that is not a raise is allowed through the function, and
+`readMonthRows` pages by key. Verified on PostgreSQL 16 (`GOV-15`'s
+Resolution).
+
+**Paste and deploy order for `20261173`:** after `20260916`; independent of
+`20261137`; either order with the deploy (the app keeps working unpasted:
+PGRST202 / 42883 take today's path). For the integrator's
+`MIGRATION-PASTE-ORDER.md` row: not a widening; no re-created object; one
+result set of seven probes and six counts.
+
+**MERGE note — I-18's limbs in other packages' files** (intelligence Round G,
+2026-10-02). Whoever next edits each keeps the limb:
+
+- `lib/knowledgeIngest.ts` (I-06's / I-06b's). `VisionContext.beforeCall` is
+  asked before every page's AI vision call; a refusal holds the page
+  (`vision_failed_pages`) with the reason and the batch's later vision pages
+  wait with it. `visionCallMeter` reserves each page and settles every call
+  into one row. `loadSponsorVision` holds an uploader at the cap with the
+  reason (`noVisionReason`; `capHeld` for a read-every-page library, which
+  `fileBehind` writes on the row). I-06b's MERGE note items are untouched:
+  the reset reads the owed pages before any delete, the drain passes
+  `visionAllPages: sponsor.forceAllPages`, and `reindex()`'s JSON 500 is
+  the route's.
+- `app/api/knowledge/ingest/route.ts` (I-06's). Its VisionContext carries
+  `beforeCall` through `visionCallMeter`, and the meter's `finish` runs in
+  the batch's `finally`.
+- `lib/knowledgeEmbedCore.ts` (I-02's). `embedLibrarySlice`'s
+  `beforeEmbed` (after the claim, before any call; a refusal gives the
+  batch back and stops the slice) and `afterBatch`.
+- `lib/knowledgeEmbedDrain.ts` (I-02's; I-18 owned it here). Each batch
+  reserved against the payer's cap; one row per library run settled after
+  every batch; a refusal holds the library `cap` until the 1st (or `error`
+  for an hour on an unreadable ledger).
+- `app/api/knowledge/embed/route.ts` (I-02's). Each batch reserved; the
+  refusal is the answer's error; one row per request settled after every
+  batch.
+- `app/api/codebook/import/route.ts` (I-10's). The call is reserved before
+  it is made (402 with the reservation's sentence), and its row is settled
+  after.
+- Test mocks of `lib/ai/usageServer` that drive these paths take the
+  reservation stand-in `lib/__tests__/helpers/fakeUsageMeter.ts`.
+
 ---
 
 ## Do not do these

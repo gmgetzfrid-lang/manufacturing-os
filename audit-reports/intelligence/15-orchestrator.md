@@ -296,7 +296,7 @@ tools.ts:91-105 — `async run(args, ctx) { const q = String(args.query); const 
 ## ORCH-7 · The monthly cap is a single pre-flight read with no reservation or concurrency control, so parallel runs all pass it
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-18 AI CAP TRANSACTION & METERING (reserve and settle in the orchestrator; maxInFlight) — by the integrator, 2026-10-01 (at the I-05 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** SUSPECTED
 - **Locations:** `app/api/orchestrator/route.ts:105`, `app/api/orchestrator/route.ts:109`, `app/api/orchestrator/route.ts:146`, `lib/ai/usageServer.ts:106`
@@ -329,6 +329,16 @@ route.ts:105-115 — `const [monthSoFar, capUsd] = await Promise.all([getMonthUs
 3. ✓ at the ledger (`aiUsage.test.ts`, "N simultaneous runs at the cap boundary: at most one proceeds (ORCH-7)").
 
 **Scope / residual.** OPEN until I-04 wires it.
+
+**Resolution (2026-10-02, intelligence Round G).** Package I-18 (`e880151`, verified 2026-10-07). Reproduced first (DEC-29) on the base `3015a7f`: `/api/orchestrator` read `getMonthUsage` / `getCapUsd` once, ran its loop, and metered once afterwards. Nothing reserved, and nothing limited the runs in flight.
+
+Done-when:
+
+1. ✓ Every round of the loop reserves its worst case before it is made (`reserveWithinCap`: its prompt at 3 characters a token, 2,000 tokens out; `app/api/orchestrator/route.ts:149`). Every round's real tokens fold into the run's ONE `orchestrator` row: the first round's reservation, settled after every round, with later rounds' reservations released (`:176-177`). The final settle carries the run's outcome (`:208`). A refusal before the first call answers its own status, 402 / 429 / 503 (`:193`). A refusal at a later round stops the run there with what it gathered and no closing call (`lib/orchestrator/loop.ts:241`). The existing pre-check and its sentence are unchanged.
+2. ✓ The first round carries `maxInFlight`: three runs at once per person (`ORCHESTRATOR_MAX_IN_FLIGHT`, `:59`, `:154`), the fourth refused 429 before any call.
+3. ✓ At the route as well as the ledger (`orchestratorReserve.test.ts`, the real meter over a ledger that yields between statements). Six runs started at once at the cap boundary: at most ONE reaches the provider, and the rest are refused (402) before any call, leaving nothing reserved. Three in flight refuse a fourth (429), and the next is admitted once one finishes. Another person's runs are not counted. REGRESSION: an org under its cap gets the same answer and one row carrying both rounds' tokens. These cases fail against `3015a7f`'s route and loop.
+
+**Scope / residual.** A run's dead reservation is kept at its worst case (over-counted, never under: `GOV-13`). The in-flight window is ten minutes (`IN_FLIGHT_WINDOW_MS`): a run that died without settling stops counting as running after that, but its spend still counts.
 
 ---
 
