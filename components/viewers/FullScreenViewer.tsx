@@ -46,6 +46,7 @@ import CompareRevisionsModal from "@/components/documents/CompareRevisionsModal"
 import BackupViewer from "@/components/archive/BackupViewer";
 import { listVersions } from "@/lib/revisions";
 import { recordIntent } from "@/lib/intents";
+import { loadStampShelf, moveLegacyStamps, stampUploadOverDeviceBudget, writeStampList, type CustomStamp, type StampShelf } from "@/lib/customStamps";
 import QrBadge from "@/components/ui/QrBadge";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 import { supabase } from "@/lib/supabase";
@@ -122,81 +123,15 @@ const STAMPS: { label: string; tone: ColorKey }[] = [
   { label: "FOR INFO ONLY", tone: "black" },
 ];
 
-// ─── Custom stamp images, per account (public-surfaces OFF-15) ──────────
+// ─── Custom stamp images, per account (public-surfaces OFF-15 / OFF-16) ──
 // The stamp images a person uploads are theirs: kept in localStorage under
-// THEIR uid, never one device-wide list the next person on a shared tablet
-// is offered. CLIENT_STORAGE_INVENTORY (RoleContext) classes the uid key
-// "uid-scoped" — never offered to another identity, and kept: across the
-// person's own sign-out and across another person's run of the app here, as
-// their stamps were before OFF-15. The legacy device-wide key is "account" /
-// kind "identity" (whose it is is unknown), so only the identity running the
-// app here when this code arrives can take it, and the next identity change
-// ends it (noteIdentity).
-type CustomStamp = { id: string; name: string; src: string };
-/** The device-wide list of before OFF-15. Never written now (only put back
- *  when its move is refused). The first signed-in uid that opens the viewer
- *  with no list of its own takes it — removed, then written under its key —
- *  a one-time move (OFF-15 Scope); a different identity running the app here
- *  first ends it instead (RoleContext's "all" purge). */
-const LEGACY_CUSTOM_STAMPS_KEY = "manufacturingos.customStamps";
-/** Set once the legacy list has been moved on this device: after it the
- *  legacy key is never read again (a tab still running the code of before
- *  that writes it again is offered to no one). Holds no stamp and no uid. */
-const LEGACY_CUSTOM_STAMPS_MOVED_KEY = "manufacturingos.customStamps.moved";
-const customStampsKey = (uid: string) => `manufacturingos.customStamps:${uid}`;
-
-/** The stamps offered, with the uid they were read for. `legacyPending`: the
- *  legacy list is offered but the store refused its move — the person's
- *  first write that lands finishes it (persistCustomStamps). */
-type StampShelf = { uid: string | null; stamps: CustomStamp[]; legacyPending: boolean };
-
-function parseCustomStamps(raw: string | null): CustomStamp[] {
-  if (!raw) return [];
-  try {
-    const v: unknown = JSON.parse(raw);
-    return Array.isArray(v) ? (v as CustomStamp[]) : [];
-  } catch { return []; }
-}
-
-/** Write `list` under the uid IN PLACE OF the legacy list — the move, at a
- *  uid's first read and, while it is pending, at that person's next write.
- *  The legacy key is removed FIRST (a dozen data-URL images can be most of
- *  the quota, so the write needs the room the original holds), then `list`
- *  is written under the uid. Landed: the device is marked, so the legacy key
- *  is never read again. Refused: the legacy value is put back exactly as it
- *  was, and the move stays pending. */
-function moveLegacyStamps(uid: string, list: CustomStamp[]): boolean {
-  let legacy: string | null = null;
-  try {
-    legacy = window.localStorage.getItem(LEGACY_CUSTOM_STAMPS_KEY);
-    window.localStorage.removeItem(LEGACY_CUSTOM_STAMPS_KEY);
-    window.localStorage.setItem(customStampsKey(uid), JSON.stringify(list));
-  } catch {
-    if (legacy !== null) { try { window.localStorage.setItem(LEGACY_CUSTOM_STAMPS_KEY, legacy); } catch { /* the bytes it held a moment ago — not expected */ } }
-    return false;
-  }
-  try { window.localStorage.setItem(LEGACY_CUSTOM_STAMPS_MOVED_KEY, "1"); } catch { /* full — the legacy key is gone all the same */ }
-  return true;
-}
-
-/** The signed-in person's stamps. No uid (signed out): none. On a uid's
- *  first read — no list of its own yet, and the legacy list not yet moved on
- *  this device — the legacy device-wide list is MOVED to it
- *  (moveLegacyStamps); a refused move leaves the legacy list where it was
- *  and offers it, pending, to this person only. */
-function loadStampShelf(uid: string | null): StampShelf {
-  const none: StampShelf = { uid, stamps: [], legacyPending: false };
-  if (!uid || typeof window === "undefined") return none;
-  try {
-    const own = window.localStorage.getItem(customStampsKey(uid));
-    if (own !== null) return { uid, stamps: parseCustomStamps(own), legacyPending: false };
-    if (window.localStorage.getItem(LEGACY_CUSTOM_STAMPS_MOVED_KEY) !== null) return none;
-    const legacy = window.localStorage.getItem(LEGACY_CUSTOM_STAMPS_KEY);
-    if (legacy === null) return none;
-    const stamps = parseCustomStamps(legacy);
-    return { uid, stamps, legacyPending: !moveLegacyStamps(uid, stamps) };
-  } catch { return none; }
-}
+// THEIR uid (lib/customStamps.ts), never one device-wide list the next
+// person on a shared tablet is offered. The legacy device-wide list goes,
+// once, to the first identity that signs in here after OFF-15 (RoleContext's
+// noteIdentity); this viewer's first read applies the same rule when that
+// move was refused. Once a second account keeps a list on the device, an
+// upload that would take them all past the device's stamp budget is refused
+// and the menu says so (OFF-16).
 
 interface FullScreenViewerProps {
   isOpen: boolean;
@@ -421,6 +356,9 @@ export default function FullScreenViewer({
   const [stampShelf, setStampShelf] = useState<StampShelf>(() => loadStampShelf(stampUid));
   if (stampShelf.uid !== stampUid) setStampShelf(loadStampShelf(stampUid));
   const customStamps = stampShelf.uid === stampUid ? stampShelf.stamps : [];
+  // OFF-16: the uid an upload was last refused for because the device's
+  // stamp lists would pass their budget — said in the menu, to that person.
+  const [stampRefusedFor, setStampRefusedFor] = useState<string | null>(null);
   const stampFileInputRef = useRef<HTMLInputElement>(null);
 
   const persistCustomStamps = (next: CustomStamp[]) => {
@@ -433,7 +371,7 @@ export default function FullScreenViewer({
     const legacyPending = stampShelf.uid === stampUid && stampShelf.legacyPending;
     let saved = false;
     if (legacyPending) saved = moveLegacyStamps(stampUid, next);
-    else { try { window.localStorage.setItem(customStampsKey(stampUid), JSON.stringify(next)); saved = true; } catch { /* full or forbidden — ignored, as before */ } }
+    else saved = writeStampList(stampUid, next); // refused (full or forbidden): ignored, as before
     setStampShelf({ uid: stampUid, stamps: next, legacyPending: legacyPending && !saved });
   };
 
@@ -445,12 +383,18 @@ export default function FullScreenViewer({
       const src = String(reader.result || "");
       if (!src) return;
       const next = [{ id: `cs-${Date.now()}`, name: file.name, src }, ...customStamps].slice(0, 12);
+      // OFF-16: another account keeps stamps on this device and this upload
+      // would take them all past the device's budget — refused, and said;
+      // nobody's list is touched.
+      if (stampUploadOverDeviceBudget(stampUid, next)) { setStampRefusedFor(stampUid); return; }
+      setStampRefusedFor(null);
       persistCustomStamps(next);
     };
     reader.readAsDataURL(file);
   };
 
   const removeCustomStamp = (id: string) => {
+    setStampRefusedFor(null);
     persistCustomStamps(customStamps.filter((s) => s.id !== id));
   };
 
@@ -1493,6 +1437,9 @@ export default function FullScreenViewer({
                     }}
                   />
                 </div>
+                {stampUid && stampRefusedFor === stampUid && (
+                  <div role="alert" className="text-[10px] text-amber-300 px-2 pb-2">Stamp storage on this device is full, so this image was not added. Remove one of your stamps, or upload a smaller image.</div>
+                )}
                 {customStamps.length === 0 ? (
                   <div className="text-[10px] text-slate-500 px-2 pb-2">{stampUid ? "Upload PNG/JPG/SVG stamps — saved on this device for your account." : "Sign in to upload and use your stamps."}</div>
                 ) : (

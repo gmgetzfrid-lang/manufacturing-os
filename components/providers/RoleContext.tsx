@@ -9,6 +9,7 @@ import { pickBestMembership } from "@/lib/membershipSelection";
 import { readStoredOrgId, readStoredOrgIdFor, writeStoredOrgId, clearStoredOrgId } from "@/lib/workspaceDeviceState";
 import { logWorkspaceRelocation } from "@/lib/audit";
 import { normalizeEmail } from "@/lib/identity";
+import { claimLegacyStampsAtSignIn } from "@/lib/customStamps";
 
 type OrgMember = {
   orgId: string;
@@ -103,7 +104,7 @@ export const CLIENT_STORAGE_INVENTORY: readonly ClientStorageRule[] = [
   { store: "session", key: "mfg-os:lib:", match: "prefix", class: "account", kind: "cache", owners: ["app/(protected)/documents/[libraryId]/page.tsx"], why: "the library row (its access lists included) painted instantly on return" },
   { store: "session", key: "kl-active-thread-", match: "prefix", class: "account", kind: "identity", owners: ["app/(protected)/knowledge/[id]/page.tsx"], why: "the account's open ask thread — its questions and the answers drawn from its documents; kept across a sign-out in this tab for the same person, ended when another identity runs the app in this tab" },
   { store: "local", key: "dismissed:", match: "prefix", class: "account", kind: "held", owners: ["hooks/useDismissed.ts"], why: "dismissals, keyed <uid>:<org> — useDismissed also sweeps them on SIGNED_OUT" },
-  { store: "local", key: "manufacturingos.customStamps", match: "exact", class: "account", kind: "identity", owners: ["components/viewers/FullScreenViewer.tsx"], why: "the device-wide stamp list of before OFF-15 — never written now (only put back when its move is refused); whose it is is unknown, so it is kept across a sign-out and ended before a DIFFERENT identity runs the app here; until then the first signed-in uid that opens the viewer with no list of its own moves it to its own key, once (public-surfaces OFF-15 Scope)" },
+  { store: "local", key: "manufacturingos.customStamps", match: "exact", class: "account", kind: "identity", owners: ["lib/customStamps.ts"], why: "the device-wide stamp list of before OFF-15 — never written now (only put back when its move is refused); whose it is is unknown, so the first identity to sign in here since OFF-15 takes it (claimLegacyStampsAtSignIn, run by noteIdentity BEFORE any purge, so it is never dropped unread) and the device is marked; anything a tab still running the old code writes here afterwards is never read, kept across a sign-out and ended when a DIFFERENT identity runs the app here (public-surfaces OFF-15 Scope)" },
   { store: "local", key: "manufacturingos.lastIdentity", match: "exact", class: "account", kind: "identity", owners: ["components/providers/RoleContext.tsx"], why: "the uid the app last ran as in this browser, so a DIFFERENT identity booting here — after a sign-out, a reload or in a new tab — ends the last one's account data first (kept across SIGNED_OUT and evaporation; it is what lets the person's own work outlive a sign-out)" },
   { store: "session", key: "manufacturingos.lastIdentity", match: "exact", class: "account", kind: "identity", owners: ["components/providers/RoleContext.tsx"], why: "the uid THIS tab last ran as, so a different identity booting in this tab ends this tab's sessionStorage account data even when another tab already moved the browser's memory to that identity" },
   // ── workspace ──
@@ -118,7 +119,7 @@ export const CLIENT_STORAGE_INVENTORY: readonly ClientStorageRule[] = [
   { store: "session", key: "sb-", match: "prefix", class: "sign-in", owners: ["lib/supabase.ts"], why: "the same, for a session not kept signed in" },
   // ── uid-scoped ──
   { store: "local", key: "manufacturingos.dashboard.", match: "prefix", class: "uid-scoped", owners: ["lib/dashboard/config.ts"], why: "the mirror of users.dashboard_config, keyed by uid" },
-  { store: "local", key: "manufacturingos.customStamps:", match: "prefix", class: "uid-scoped", owners: ["components/viewers/FullScreenViewer.tsx"], why: "the stamp images the person uploaded, keyed by their uid (public-surfaces OFF-15) — their own work, never offered to another identity; kept across their sign-out and across another person's run of the app here, as before OFF-15, so they are there at the person's next sign-in" },
+  { store: "local", key: "manufacturingos.customStamps:", match: "prefix", class: "uid-scoped", owners: ["lib/customStamps.ts", "components/viewers/FullScreenViewer.tsx"], why: "the stamp images the person uploaded, keyed by their uid (public-surfaces OFF-15) — their own work, never offered to another identity; kept across their sign-out and across another person's run of the app here, as before OFF-15, so they are there at the person's next sign-in; all accounts' lists together are bounded per device (DEVICE_STAMP_BUDGET), and a departed person's list stays until they remove it (public-surfaces OFF-16)" },
   // ── device ──
   { store: "local", key: "mfgos.theme.mode", match: "exact", class: "device", owners: ["components/providers/ThemeProvider.tsx"], why: "light / dark" },
   { store: "local", key: "mfgos.theme.palette", match: "exact", class: "device", owners: ["components/providers/ThemeProvider.tsx"], why: "accent colours" },
@@ -137,7 +138,7 @@ export const CLIENT_STORAGE_INVENTORY: readonly ClientStorageRule[] = [
   { store: "local", key: "mfg-os.staleCheckouts.dismissedUntil", match: "exact", class: "device", owners: ["components/projects/StaleCheckoutBanner.tsx"], why: "a banner snooze time" },
   { store: "local", key: "mfg.inspector.sec.", match: "prefix", class: "device", owners: ["components/ui/CollapsibleSection.tsx"], why: "which inspector sections are folded" },
   { store: "local", key: "mfg.revup.", match: "prefix", class: "device", owners: ["components/documents/RevUpModal.tsx"], why: "the issue type last chosen in a library's rev-up" },
-  { store: "local", key: "manufacturingos.customStamps.moved", match: "exact", class: "device", owners: ["components/viewers/FullScreenViewer.tsx"], why: "set once this device's legacy stamp list has been moved to an account, so the legacy key is never read again (public-surfaces OFF-15) — holds no stamp and no uid" },
+  { store: "local", key: "manufacturingos.customStamps.moved", match: "exact", class: "device", owners: ["lib/customStamps.ts"], why: "set once this device's one-time stamp transition has run — the legacy list moved to an account, or found absent, at the first sign-in since OFF-15 — so the legacy key is never read again (public-surfaces OFF-15) — holds no stamp and no uid" },
   { store: "session", key: "kl-embed-nudge-at", match: "exact", class: "device", owners: ["lib/knowledge.ts"], why: "a throttle timestamp" },
 ];
 
@@ -369,6 +370,11 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
   const lastIdentityRef = useRef<string | null>(null);
   const noteIdentity = async (nextUid: string) => {
     if (lastIdentityRef.current === nextUid) return;
+    // OFF-15: the stamp list kept device-wide before OFF-15 (whose it is is
+    // unknown) goes to the first identity to sign in here since then, BEFORE
+    // any purge below — so a different identity's arrival never drops it
+    // unread — and the device is marked: its key is never read again.
+    claimLegacyStampsAtSignIn(nextUid);
     const browserLast = readLastIdentity("local") ?? lastIdentityRef.current;
     const tabLast = readLastIdentity("session") ?? lastIdentityRef.current;
     if (identityChangeEndsAccount(browserLast, nextUid)) {
