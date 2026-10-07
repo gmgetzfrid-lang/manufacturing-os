@@ -17,7 +17,11 @@
 // 20261144's guard never sees it (no publisher tier, hold or review limb),
 // yet it is the change that puts the document in force at the gates. The
 // editors treat it as one (isUnguardedEntryIntoForce): they say so before
-// the save and check the hold themselves. The database limb is REV-21.
+// the save and check the hold themselves. The database limb is REV-21:
+// 20261185 (document-control P16, DEC-77 §4 ratified — DEC-90 A3) makes the
+// guard judge exactly this move, status-only, as an issue — so it is
+// "unguarded" only on a database before that paste; the editors behave the
+// same either way.
 //
 // Each editor keeps its own list otherwise (DEC-31: fix the finding). One
 // test (lib/__tests__/dcRoundFP15StatusVocabulary.test.ts) pins every list:
@@ -136,7 +140,18 @@ export function notOfferedStatusNote(offered: readonly string[], current: string
  *  active hold (lib/holdGate.ts, fail closed), as the database does for a
  *  controller's issue. A document with no current revision has nothing to
  *  put in force. Compared as the gates compare (exactly): " Issued" is not
- *  in force there. */
+ *  in force there.
+ *
+ *  REV-21 (document-control P16): since 20261185 the guard judges this very
+ *  move as an issue — its REV-21 limb of v_issuing is this predicate for a
+ *  write that leaves the pointer where it is (pinned equal by test, the
+ *  in-force pair read from IN_FORCE_STATUSES): the new door's hold for
+ *  everyone, the require limb short of Document Control, the publisher
+ *  tier. The name is kept (both editors and their tests import it): before
+ *  that paste the database does not see the move, after it the database
+ *  refuses what the editors already refuse (a held document), and Document
+ *  Control — the editors' only users — passes the rest. The editors' check
+ *  stays: it is what a database before the paste has. */
 export function isUnguardedEntryIntoForce(input: {
   fromStatus: string | null | undefined; toStatus: string | null | undefined; hasCurrentRevision: boolean;
 }): boolean {

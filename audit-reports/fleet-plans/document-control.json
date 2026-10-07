@@ -704,6 +704,27 @@
     "public-surfaces PS-P7 if it has merged first (stamp text encoding changes what is 'unprintable') \u2014 either order, the second rebases"
    ],
    "sequencingNotes": "Added by the integrator 2026-10-07 at the P22 merge (DEC-31: TRX-17 had no package). notifications N9 also edits lib/transmittals.ts \u2014 whichever runs second rebases."
+  },
+  {
+   "name": "P25 STATUS-SURFACE FOLLOW-UPS \u2014 the app agrees with 20261185's guard: IFC into force is an issue on every surface, a NULL prior status is put back as what it was, and a Minor rev-up of an unreviewed IFC base is a first issue",
+   "findings": [
+    "REV-26 (opened by P16, DEC-31; package added by the integrator at the P16 merge, renamed P25 because P23 is taken: the editors' 'The database does not check this change' note, the metadata editor's refusal suffix, and whether a move into force out of IFC owes REV-19's clocks and record \u2014 decide from REV-19's door)",
+    "REV-27 (opened by P16: the un-archive dialog's 'puts that issue back' offer for an IFC-stamped archive restored into Issued, and its hold-override confirmation the database then refuses)",
+    "REV-29 (opened by P16: the rollbacks' three ?? 'Issued' fallbacks put a NULL-status document back as Issued \u2014 put it back as what it was; the database half re-creates put_back_retired_issue (20261165) and restore_reversed_source (20261164) from their NEWEST bodies to accept a NULL prior status)",
+    "REV-28 (MEDIUM; opened by P16; DECIDED by the integrator under the user's delegation at the P16 merge, 2026-10-07: option (a) \u2014 a rev-up whose OLD status is an issue status no gate reads as in force (IFC) is a first issue: in the guard (REV-17's rule / the require limb, for a non-controller without a complete roster, re-created from 20261185's body, lineDiff-pinned) and in lib/revisions.ts firstIssueGateForRevUp (so RevUpModal, setRevUp and the merge rev-up route it to review); every rev-up of a document in force (Issued / Locked, a Minor / Correction under require) works exactly as today \u2014 pinned)"
+   ],
+   "files": [
+    "components/documents/MetadataEditor.tsx, components/documents/BulkEditModal.tsx (the note and the refusal suffix)",
+    "lib/revisions.ts (unarchiveDocument / putBackFromRetirementStamp, changeDocumentStatus's IFC answer, firstIssueGateForRevUp), lib/documentLifecycle/common.ts, merge.ts, reverse.ts (the ?? 'Issued' fallbacks)",
+    "the un-archive dialog (its put-back copy and hold-override confirmation)",
+    "one migration: put_back_retired_issue and restore_reversed_source re-created to accept a NULL prior status; enforce_document_publish_guard re-created from 20261185's body with REV-28 (a) \u2014 each from its NEWEST definition, lineDiff-pinned; DEC-30 counts-only inventory; DRLS-16; exercised on PostgreSQL 16",
+    "tests: the editors' text matches the guard; an IFC-stamped un-archive offers the right restore; a NULL-status rollback restores NULL; a Minor rev-up of an unreviewed IFC base under require routes to review; regression \u2014 every rev-up, rollback and un-archive that works today works the same"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "P16 merged (20261185 \u2014 its guard body is the newest; P25's re-create starts from it)"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-07 at the P16 merge (P16 proposed it as 'P23 STATUS-SURFACE FOLLOW-UPS'; renumbered P25 because P23 DIRECT-WRITE ISSUE RECORD was added at the IS-P1 merge). 20261185 is HELD until P25's app change is deployed AND P25's put-back migration is pasted (paste guide): the integrator does not accept pasting 20261185 first. P23 and P25 both touch lib/revisions.ts and the status editors \u2014 run them one after the other (either order), the second rebases."
   }
  ],
  "crossAreaFileOverlaps": [

@@ -15,17 +15,17 @@
     "audit-reports/document-control/11-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 166,
+    "findings": 170,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 19,
       "HIGH": 54,
-      "MEDIUM": 71,
-      "LOW": 22
+      "MEDIUM": 72,
+      "LOW": 25
     },
     "by_status": {
-      "RESOLVED": 153,
-      "OPEN": 13
+      "RESOLVED": 154,
+      "OPEN": 16
     }
   },
   "status_vocabulary": [
@@ -3349,7 +3349,7 @@
       "id": "REV-21",
       "title": "Moving an existing \"IFC\" document to Issued or Locked puts it in force with no guard — the database counts IFC as an issue already, so the status-transition guard never sees the move",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (read from `20261144`'s `v_issuing` and `is_controlled_issue_status`, `lib/issueStatus.ts`, `lib/verifyVerdict.ts` and `lib/docPack.ts`; the app half's behaviour is pinned by test)",
       "blast_radius": null,
@@ -3368,6 +3368,29 @@
       ],
       "refuted": false,
       "summary": "A legacy drawing set at status \"IFC\" whose current revision was never reviewed, in a library whose policy requires sign-off. Any member with row UPDATE PATCHes status to \"Issued\" through PostgREST: the guard does not run its issue block, the drawings scan green and print into field packs, with no publisher check, no hold check (one of them is under a stop-work hold) and no review. (The app's two s",
+      "area": "document-control",
+      "report": "audit-reports/document-control/02-revisions-publish.md"
+    },
+    {
+      "id": "REV-28",
+      "title": "A Minor / Correction rev-up puts an unreviewed IFC revision's successor in force in a library that requires sign-off — RG-7's hatch assumes a reviewed base in force",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (PostgreSQL 16 case B-13 in `REV-21`'s record — the owner's pointer + IFC → Issued, a Minor revision, in a require library, ADMITTED before and after `20261185`; read from `firstIssueGateForRevUp`)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "supabase/migrations/20261185_dc_roundF_status_into_force_issue.sql:724",
+        "lib/revisions.ts:1026"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "In a library whose policy requires sign-off, a library publisher opens Rev Up on a legacy IFC sheet whose Rev 3 was never reviewed and publishes a Minor Rev 4. publishrevision writes the pointer and 'Issued' together, so this is not the REV-21 limb, and RG-7 admits a Minor change. The sheet goes into force with its unreviewed Rev 3 content, with no review and no controller involved. That is the ou",
       "area": "document-control",
       "report": "audit-reports/document-control/02-revisions-publish.md"
     },
@@ -4234,6 +4257,85 @@
       ],
       "refuted": false,
       "summary": "Issued drawing I1 is under a stop-work hold. Document Control, by two bare PATCHes, clears I1's currentversionid and then sets it to an earlier revision that was never the issued one. Both are admitted and no REVHOLDOVERRIDDEN row is written, so the register shows a revision in force over the hold that nobody recorded forcing.",
+      "area": "document-control",
+      "report": "audit-reports/document-control/02-revisions-publish.md"
+    },
+    {
+      "id": "REV-26",
+      "title": "After 20261185 a move into force out of \"IFC\" is an issue to the database, but the app still calls it unguarded and never records it as one",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (read from the code; the database refusal of the move driven against the real editors in `lib/__tests__/dcRoundFStatusIntoForce.test.ts`)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "components/documents/MetadataEditor.tsx:490",
+        "components/documents/MetadataEditor.tsx:247",
+        "components/documents/BulkEditModal.tsx:294",
+        "lib/revisions.ts:2534",
+        "lib/revisions.ts:2366",
+        "lib/issueStatus.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "After the paste, Document Control bulk-sets five legacy IFC drawings to Issued. The dialog says the database does not check the change, although it now does. The five land as before, but the audit trail holds no DOCUMENTISSUED saying who put which revision in force under which policy decision, and no acknowledgment roster opens. Every other status-change issue gets both since REV-19.",
+      "area": "document-control",
+      "report": "audit-reports/document-control/02-revisions-publish.md"
+    },
+    {
+      "id": "REV-27",
+      "title": "After 20261185 the un-archive dialog still offers an IFC-stamped archive's restore into Issued as \"the put-back of that issue\", with no restore to what it was",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (read from the code; the database's refusal driven against the real `unarchiveDocument` in `lib/__tests__/dcRoundFStatusIntoForce.test.ts`, and the dialog's default pinned there by an `it.fails` tripwire; the refusals run on PostgreSQL 16 — `REV-21`'s review fix, C-1..C-10)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/revisions.ts:2177",
+        "lib/revisions.ts:2198",
+        "lib/revisions.ts:2366",
+        "components/documents/ArchiveConfirmModal.tsx:173"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "After the paste, the owner of an IFC drawing set archived by mistake opens Un-archive in a library that requires sign-off. The dialog pre-selects Issued and says it puts the issue back. Restore is refused with the require sentence, and the only way back offered is a Draft, so the set loses its IFC status and its revision has to go through review, although restoring it as IFC (what it was) is a wri",
+      "area": "document-control",
+      "report": "audit-reports/document-control/02-revisions-publish.md"
+    },
+    {
+      "id": "REV-29",
+      "title": "A rollback puts a NULL-status document back as \"Issued\", not as what it was — and after 20261185 the guard refuses that as a new issue",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (PostgreSQL 16 — `REV-21`'s second review fix, N-1..N-7; the REAL `undoFailedSupersede` and `restoreSupersededSource` driven against the bound guard before and after `20261185` in `lib/__tests__/dcRoundFStatusIntoForce.test.ts`, with an `it.fails` tripwire for this finding)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/revisions.ts:2659",
+        "lib/documentLifecycle/common.ts:468",
+        "lib/documentLifecycle/merge.ts:272",
+        "lib/documentLifecycle/reverse.ts:169",
+        "supabase/migrations/20261165_dc_roundF_stamped_put_back.sql:229",
+        "supabase/migrations/20261164_dc_roundF_reversal_restore.sql:219"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "Before the paste: an owner supersedes a legacy NULL-status drawing whose Rev 3 was never reviewed, in a library that requires sign-off, and the lineage write fails. The rollback puts the drawing back as 'Issued', in force and unreviewed, and the error says \"The document is back to Issued\". After the paste the same rollback is refused: the drawing stays Superseded, the saga says to ask Doc Control ",
       "area": "document-control",
       "report": "audit-reports/document-control/02-revisions-publish.md"
     },
