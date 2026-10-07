@@ -18,6 +18,7 @@
 // lib/__tests__/codebook.test.ts — that's where the edge cases live.
 
 import { supabase } from "@/lib/supabase";
+import type { RedecodeRow, RedecodeSkip } from "@/lib/assetCategorize";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -561,6 +562,9 @@ function codebookWriteError(err: { code?: string; message: string }): Error {
     const what = err.message.replace(/^[\s\S]*?codebook_entries_in_use:\s*/, "").trim();
     return new Error(`Refused — ${what}. A code still in use cannot be removed or changed: refile them first (Operating areas).`);
   }
+  // ASK-8 (20261178): a legend sheet the database refused — not a knowledge
+  // document of this workspace, or not an id at all.
+  if (/legend_doc_ids_invalid/.test(err.message)) return legendRefusal(err.message);
   if (err.code === "23514" || /codebook_entries_code_digits/.test(err.message)) {
     return new Error("Unit and equipment-type codes are digits — the database refused a letter code (CB-3).");
   }
@@ -654,11 +658,58 @@ export async function saveUnitLinks(orgId: string, unitCode: string, links: Unit
 // COLLECTION since 20261046 (caller_holds_any_role, Admin + DocCtrl — what
 // is_org_controller means), and every client write in this file is checked.
 
+// ─── ASK-8: a legend sheet is a knowledge document of this workspace ───────
+
+/** A knowledge document id, as the database writes it (a uuid). */
+export const KNOWLEDGE_DOC_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The legend ids a save ADDS: the ones not already stored. A stored id is
+ *  kept as it is (it was written before the rule, or its document was
+ *  deleted since), so detaching another sheet never trips on it — the rule
+ *  20261178's assert_legend_doc_ids applies at the database. Pure. */
+export function legendIdsAdded(next: readonly unknown[], stored: readonly unknown[]): unknown[] {
+  const kept = new Set(stored.map((s) => (typeof s === "string" ? s : JSON.stringify(s))));
+  return next.filter((n) => !kept.has(typeof n === "string" ? n : JSON.stringify(n)));
+}
+
+function legendRefusal(dbMessage: string): Error {
+  const what = dbMessage.replace(/^[\s\S]*?legend_doc_ids_invalid:\s*/, "").trim();
+  return new Error(`Not saved — a legend sheet must be a document indexed in this workspace's knowledge libraries (${what}).`);
+}
+
+/** ASK-8 done-when 2, in the app: every legend id a save ADDS is uuid-shaped
+ *  and names a knowledge document of THIS org (read with the caller's
+ *  session, the org predicate explicit). Throws before anything is written;
+ *  the database says the same once 20261178 is pasted. Shared by the
+ *  codebook save (saveConfig) and the library toggles save
+ *  (lib/knowledge.ts saveLibraryAiFeatures). */
+export async function assertOrgKnowledgeDocIds(orgId: string, added: readonly unknown[]): Promise<void> {
+  if (added.length === 0) return;
+  const bad = added.find((id) => typeof id !== "string" || !KNOWLEDGE_DOC_ID_RE.test(id));
+  if (bad !== undefined) {
+    throw new Error(`Not saved — a legend sheet must be a document indexed in this workspace's knowledge libraries (${JSON.stringify(bad)} is not a knowledge document id).`);
+  }
+  const ids = [...new Set((added as string[]).map((s) => s.toLowerCase()))];
+  const { data, error } = await supabase.from("knowledge_documents").select("id").eq("org_id", orgId).in("id", ids);
+  if (error) throw new Error(`Not saved — the legend sheets could not be checked (${error.message}).`);
+  const found = new Set(((data ?? []) as Array<{ id: string }>).map((d) => String(d.id).toLowerCase()));
+  const missing = ids.find((id) => !found.has(id));
+  if (missing) throw new Error(`Not saved — a legend sheet must be a document indexed in this workspace's knowledge libraries (${missing} is not a knowledge document of this workspace).`);
+}
+
 export async function saveConfig(orgId: string, patch: {
   drawingNumber?: DrawingNumberConfig | null;
   iterableRule?: IterableRule;
   legendDocIds?: string[];
 }, userId: string): Promise<void> {
+  // ASK-8: only the ids this save ADDS are checked; nothing is written if one fails.
+  if (patch.legendDocIds !== undefined && patch.legendDocIds.length > 0) {
+    const { data: stored, error: readErr } = await supabase
+      .from("codebook_config").select("legend_doc_ids").eq("org_id", orgId).maybeSingle();
+    if (readErr) throw new Error(`Not saved — the legend sheets could not be checked (${readErr.message}).`);
+    const prior = (stored as { legend_doc_ids?: unknown } | null)?.legend_doc_ids;
+    await assertOrgKnowledgeDocIds(orgId, legendIdsAdded(patch.legendDocIds, Array.isArray(prior) ? prior : []));
+  }
   const row: Record<string, unknown> = { org_id: orgId, updated_by: userId, updated_at: new Date().toISOString() };
   if (patch.drawingNumber !== undefined) row.drawing_number = patch.drawingNumber ?? {};
   if (patch.iterableRule !== undefined) row.iterable_rule = patch.iterableRule;
@@ -709,4 +760,127 @@ export async function applyImport(orgId: string, accepted: ProposedEntry[], user
     throw new Error(`Applied ${written} of ${accepted.length}. Not applied — ${refused.slice(0, 3).join(" · ")}${refused.length > 3 ? ` (+${refused.length - 3} more)` : ""}`);
   }
   return written;
+}
+
+// ─── Lifecycle: a code renamed in place (CB-5), the server re-decode (CB-6) ─
+//
+// Both run through POST /api/admin/codebook (the codebook surface's writes
+// set; the database's is_org_controller stays the boundary). A rename is
+// one transaction in the database (20261178 rename_codebook_code): the dry
+// run answers what it will rewrite, and the apply carries those counts back
+// so it refuses if anything moved in between — preview = apply. Until
+// 20261178 is pasted the route answers `needsMigration` and the page keeps
+// today's way: add the new code, refile, remove the old one.
+
+/** The counts a rename preview shows and its apply re-checks. */
+export const RENAME_COUNT_KEYS = ["assetsFiled", "assetsCoded", "flows", "unitMappings", "adopted", "adoptedFlows"] as const;
+export type RenameCountKey = typeof RENAME_COUNT_KEYS[number];
+
+export interface RenamePreview extends Record<RenameCountKey, number> {
+  kind: "unit" | "equipment_type";
+  from: string;
+  to: string;
+  label: string;
+  /** Why the rename would be refused whole (empty: it can run). */
+  blockers: string[];
+}
+
+/** The rename's counts only — what the apply sends back as p_expected. Pure. */
+export function renameExpectedCounts(p: Partial<Record<RenameCountKey, unknown>> | null | undefined): Record<RenameCountKey, number> | null {
+  if (!p || typeof p !== "object") return null;
+  const out = {} as Record<RenameCountKey, number>;
+  for (const k of RENAME_COUNT_KEYS) {
+    const v = p[k];
+    if (typeof v !== "number" || !Number.isFinite(v)) return null;
+    out[k] = v;
+  }
+  return out;
+}
+
+/** What a rename will rewrite, in words — the confirm the page shows. Pure. */
+export function renameSummary(p: RenamePreview): string {
+  const n = (k: number, one: string, many: string) => `${k} ${k === 1 ? one : many}`;
+  const parts: string[] = [];
+  if (p.kind === "unit") parts.push(n(p.assetsFiled, "asset filed under it", "assets filed under it"));
+  parts.push(n(p.assetsCoded, "site code", "site codes"));
+  if (p.kind === "unit") {
+    parts.push(n(p.flows, "process flow", "process flows"));
+    parts.push(n(p.unitMappings, "operational-unit mapping", "operational-unit mappings"));
+  }
+  let msg = `In one step, ${p.from} becomes ${p.to} (${p.label}) and these follow it: ${parts.join(", ")}. Its label, pinned libraries and knowledge binding stay with it.`;
+  if (p.adopted > 0 || p.adoptedFlows > 0) {
+    msg += ` ${[p.adopted > 0 ? n(p.adopted, "asset already filed", "assets already filed") : null, p.adoptedFlows > 0 ? n(p.adoptedFlows, "process flow already ending", "process flows already ending") : null].filter(Boolean).join(" and ")} under ${p.to}, which the codebook does not hold today, will belong to this ${p.kind === "unit" ? "unit" : "type"}.`;
+  }
+  return msg;
+}
+
+/** A lifecycle call's answer: the value, or why not (`needsMigration`: the
+ *  database has no 20261178 yet; `changed`: preview again). */
+export type LifecycleAnswer<T> =
+  | { ok: true; value: T }
+  | { ok: false; error: string; needsMigration?: boolean; changed?: boolean };
+
+async function postLifecycle<T>(body: Record<string, unknown>): Promise<LifecycleAnswer<T>> {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    const res = await fetch("/api/admin/codebook", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` },
+      body: JSON.stringify(body),
+    });
+    const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) {
+      return {
+        ok: false, error: String(json.error ?? `HTTP ${res.status}`),
+        needsMigration: json.needsMigration === true, changed: json.changed === true,
+      };
+    }
+    return { ok: true, value: json as T };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message || "The request failed — nothing was changed." };
+  }
+}
+
+/** CB-5: preview (dryRun) or apply an in-place rename. The apply sends the
+ *  preview it was shown; the database refuses it if the counts moved. */
+export function renameCodebookCode(orgId: string, input: {
+  kind: "unit" | "equipment_type"; from: string; to: string; dryRun: boolean; expected?: RenamePreview | null;
+}): Promise<LifecycleAnswer<RenamePreview>> {
+  return postLifecycle<RenamePreview>({
+    orgId, action: input.dryRun ? "rename-preview" : "rename",
+    kind: input.kind, from: input.from, to: input.to,
+    expected: input.dryRun ? undefined : renameExpectedCounts(input.expected ?? null),
+  });
+}
+
+/** CB-6: the server re-decode's preview — every row an apply would write. */
+export interface RedecodePreview {
+  rows: RedecodeRow[];
+  skipped: RedecodeSkip[];
+  /** Hash of exactly what an apply writes; the apply refuses another plan. */
+  token: string;
+  /** The org's codebook version (null: 20261178 not pasted). */
+  codebookVersion: number | null;
+  /** Coded assets whose code was written under an earlier version (null: unknown). */
+  writtenUnderEarlier: number | null;
+}
+
+export interface RedecodeApplied {
+  written: number;
+  /** Rows whose stored code changed since the preview — left as they are. */
+  changed: number;
+  /** Rows whose derived code another asset took meanwhile (one site code is one asset). */
+  taken: number;
+  refused: number;
+  firstError: string | null;
+  /** Rows of this preview not written in this call (bounded per call). */
+  remaining: number;
+}
+
+export function previewRedecode(orgId: string): Promise<LifecycleAnswer<RedecodePreview>> {
+  return postLifecycle<RedecodePreview>({ orgId, action: "redecode-preview" });
+}
+
+export function applyRedecode(orgId: string, token: string): Promise<LifecycleAnswer<RedecodeApplied>> {
+  return postLifecycle<RedecodeApplied>({ orgId, action: "redecode-apply", token });
 }

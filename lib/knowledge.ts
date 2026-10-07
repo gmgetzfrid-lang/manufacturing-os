@@ -12,6 +12,7 @@ import { supabase } from "@/lib/supabase";
 import { uploadToPath, type UploadProgress } from "@/lib/storage";
 import { ALLOWED_PROVIDERS } from "@/lib/ai/pricing";
 import type { AiProviderId } from "@/lib/ai/providerCall";
+import { assertOrgKnowledgeDocIds, legendIdsAdded } from "@/lib/codebook";
 
 export interface KnowledgeLibrary {
   id: string;
@@ -364,6 +365,10 @@ export async function saveLibraryAiFeatures(libraryId: string, features: Knowled
   const toggles = { ...(features as Record<string, unknown>) };
   delete toggles.embedBuild;
   const fail = (error: { code?: string; message: string }): never => {
+    // ASK-8 (20261178): the database refused a legend sheet it does not hold.
+    if (/legend_doc_ids_invalid/.test(error.message)) {
+      throw new Error(`Library AI setup was not saved — a legend sheet must be a document indexed in this workspace (${error.message.replace(/^[\s\S]*?legend_doc_ids_invalid:\s*/, "").trim()}).`);
+    }
     throw new Error(
       error.code === "PGRST204" || /ai_features/.test(error.message)
         ? "AI features need migration 20260918 — run it in Supabase first."
@@ -386,6 +391,20 @@ export async function saveLibraryAiFeatures(libraryId: string, features: Knowled
     .select("ai_features").eq("id", libraryId).maybeSingle();
   if (readErr) fail(readErr);
   const marker = ((cur as { ai_features?: Record<string, unknown> | null } | null)?.ai_features ?? {}).embedBuild;
+  // ASK-8 done-when 2: before 20261178 the database checks nothing here, so
+  // the app does — a legend id this save ADDS must name a knowledge document
+  // of the library's own workspace (a stored one is kept as it is).
+  const nextLegend = Array.isArray(toggles.legendDocIds) ? (toggles.legendDocIds as unknown[]) : [];
+  const priorLegend = ((cur as { ai_features?: Record<string, unknown> | null } | null)?.ai_features ?? {}).legendDocIds;
+  const added = legendIdsAdded(nextLegend, Array.isArray(priorLegend) ? priorLegend : []);
+  if (added.length > 0) {
+    const { data: lib, error: libErr } = await supabase.from("knowledge_libraries")
+      .select("org_id").eq("id", libraryId).maybeSingle();
+    if (libErr) fail(libErr);
+    const orgId = (lib as { org_id?: string } | null)?.org_id;
+    if (!orgId) throw new Error(notSaved);
+    await assertOrgKnowledgeDocIds(orgId, added);
+  }
   const { data, error } = await supabase.from("knowledge_libraries")
     .update({ ai_features: marker !== undefined ? { ...toggles, embedBuild: marker } : toggles })
     .eq("id", libraryId).select("id");

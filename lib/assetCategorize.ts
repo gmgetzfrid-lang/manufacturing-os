@@ -240,6 +240,94 @@ export function planIdentityReview(
   return out;
 }
 
+// ─── Server re-decode (CB-6) ──────────────────────────────────────────────
+//
+// The identity review's code_rederives rows, as ONE admin-triggered job
+// (POST /api/admin/codebook, "redecode-preview" then "redecode-apply"). The
+// plan is the review's own (planIdentityReview, unchanged), narrowed to what
+// a job may write without a person's judgement: a filed asset whose stored
+// code the codebook as it stands derives differently, re-derived from its
+// own tag and filing. The filing (unit_code) is the job's INPUT and is never
+// rewritten here — a unit moves only through a rename (rename_codebook_code)
+// or a person. A code naming another unit than the filing (AREA-11) and a
+// derived code another asset already carries (CB-10) are listed, never
+// written: a person decides those under Identity review. The apply writes
+// exactly these rows, each only while the asset still carries the stored
+// code (compare-and-set) — preview = apply (redecodeDigest).
+
+export interface RedecodeRow {
+  assetId: string;
+  tag: string;
+  unitCode: string;
+  /** The stored code — the value the write re-checks before it lands. */
+  from: string;
+  /** What the codebook as it stands derives for (tag, unitCode). */
+  to: string;
+  /** The codebook version the stored code was written under (20261178);
+   *  null: written before the version existed, or the column is absent. */
+  codebookVersion: number | null;
+}
+
+export interface RedecodeSkip {
+  assetId: string;
+  tag: string;
+  from: string;
+  to: string | null;
+  /** names_other_unit — the stored code says another unit than the filing
+   *  (AREA-11); taken — another asset already carries the derived code, or
+   *  an earlier row of this plan takes it (CB-10). */
+  reason: "names_other_unit" | "taken";
+}
+
+export interface RedecodePlan {
+  rows: RedecodeRow[];
+  skipped: RedecodeSkip[];
+}
+
+/** Pure. `assets` are the rows the job may rewrite (the active registry, as
+ *  the Identity review lists it); `codeHolders` every asset of the org with
+ *  a code, archived included (who already carries a code). */
+export function planRedecode(
+  assets: ReadonlyArray<IdentityFields & { codebook_version?: number | null }>,
+  book: Codebook,
+  codeHolders: ReadonlyArray<IdentityFields & { archived?: boolean }> = assets,
+): RedecodePlan {
+  const rows: RedecodeRow[] = [];
+  const skipped: RedecodeSkip[] = [];
+  const holderOf = new Map<string, string>();
+  for (const h of codeHolders) {
+    const c = (h.code ?? "").trim() ? h.code! : null;
+    if (c && !holderOf.has(c)) holderOf.set(c, h.id);
+  }
+  const versionOf = new Map(assets.map((a) => [a.id, a.codebook_version ?? null] as const));
+  const claimed = new Set<string>();
+  for (const r of planIdentityReview(assets, book, codeHolders)) {
+    // A blank code the codebook derives is the categorizer's fill, not a re-decode.
+    if (r.kind === "derived_code_taken") continue;
+    if (r.kind === "code_names_other_unit") {
+      skipped.push({ assetId: r.assetId, tag: r.tag, from: r.code ?? "", to: r.derivedCode, reason: "names_other_unit" });
+      continue;
+    }
+    const to = r.derivedCode as string; // code_rederives: derived, and not the stored code
+    const holder = holderOf.get(to);
+    if ((holder && holder !== r.assetId) || claimed.has(to)) {
+      skipped.push({ assetId: r.assetId, tag: r.tag, from: r.code ?? "", to, reason: "taken" });
+      continue;
+    }
+    claimed.add(to);
+    rows.push({ assetId: r.assetId, tag: r.tag, unitCode: r.unitCode as string, from: r.code as string, to, codebookVersion: versionOf.get(r.assetId) ?? null });
+  }
+  return { rows, skipped };
+}
+
+/** The canonical text of what an apply would write — the route hashes it
+ *  into the preview's token and re-hashes the plan it recomputes at apply:
+ *  equal tokens, equal writes. The version is display only and left out (a
+ *  version that moved without changing any row changes nothing written). */
+export function redecodeDigest(rows: ReadonlyArray<Pick<RedecodeRow, "assetId" | "unitCode" | "from" | "to">>): string {
+  return JSON.stringify(rows.map((r) => [r.assetId, r.unitCode, r.from, r.to]));
+}
+
 /** CB-10: site codes STORED on more than one asset of the org — what keeps
  *  the unique index (assets_org_code_unique, 20261128) from being created,
  *  and what a person resolves first. Blank codes are not identities. */
