@@ -1393,7 +1393,7 @@ function GraphPageInner() {
                 )}
                 <div className="text-[10px] text-[var(--color-text-faint)]">
                   Document ↔ document or document ↔ equipment makes a LINK. Equipment ↔ equipment or
-                  Site Codebook unit ↔ unit makes a FLOW — the first feeds the second, drawn with an arrow on the Plant lens.
+                  Site Codebook unit ↔ unit makes a FLOW — the first feeds the second, drawn with an arrow on the Process layout lens.
                 </div>
               </div>
             )}

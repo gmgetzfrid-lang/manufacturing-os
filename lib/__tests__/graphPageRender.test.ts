@@ -50,6 +50,14 @@
 //   GPV-11  the route-change and Back / Forward cancels drop a pending write
 //           even when the browser is back on /graph before it comes due
 //   GM-7    a capped read whose count failed says "at least" the cap
+//
+// I-24 (GPV-4 done-when 1, DEC-88 item 1 as rewritten under DEC-90):
+//   GPV-4   the lens bar and the phone select read the four labels apart
+//           from the node types (Whole map · Process layout · Governing
+//           paper · Records & filing), beside a Filters drawer that still
+//           says "Equipment"; every existing ?lens=<key> link and a v1 blob
+//           light the same lens as before; the Connect help names the flow
+//           lens by its label
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -279,6 +287,59 @@ describe("regression pins — every existing way into /graph", () => {
     expect(last().settings.showArrows).toBe(true);
     expect(last().nodes.map((n) => n.id)).not.toContain("doc:d1");
     expect(window.location.search).toContain("lens=plant");
+    // The same lens is lit, under its label (I-24: label-only rename).
+    const lit = host.querySelector('[role="group"][aria-label="Lenses"] button[aria-pressed="true"]');
+    expect(lit?.textContent).toBe("Process layout");
+  });
+});
+
+describe("GPV-4 (I-24) — lens labels apart from the node types, as rendered; every ?lens= link lights the same lens", () => {
+  const LABELS = ["Whole map", "Process layout", "Governing paper", "Records & filing"];
+  const lensButtons = () => [...host.querySelectorAll('[role="group"][aria-label="Lenses"] button')];
+  const lensSelect = () => host.querySelector('select[aria-label="Lens"]') as HTMLSelectElement;
+
+  it("the lens bar and the phone select read the four labels; the Filters drawer still says Equipment, and the two share no word", async () => {
+    await render(page());
+    expect(lensButtons().map((b) => b.textContent)).toEqual(LABELS);
+    expect([...lensSelect().options].map((o) => o.textContent)).toEqual(LABELS);
+    await click(btn("Settings"));
+    const caption = host.querySelector('[data-testid="filter-count-caption"]')!;
+    const typeRows = [...caption.parentElement!.querySelectorAll("label > span.flex-1")].map((el) => el.textContent ?? "");
+    expect(typeRows).toContain("Equipment");
+    expect(typeRows).toContain("Documents");
+    const words = (s: string) => (s.toLowerCase().match(/[a-z]+/g) ?? []).map((w) => w.replace(/(ies|s)$/, (m) => (m === "ies" ? "y" : "")));
+    const typeWords = new Set(typeRows.flatMap(words));
+    for (const l of LABELS) expect(words(l).filter((w) => typeWords.has(w)), l).toEqual([]);
+  });
+
+  it.each([
+    ["all", "Whole map"],
+    ["plant", "Process layout"],
+    ["equipment-docs", "Governing paper"],
+    ["documents", "Records & filing"],
+  ])("?lens=%s (an existing link) applies that lens's filter and lights %s", async (key, label) => {
+    nav.params = new URLSearchParams(`lens=${key}`);
+    await render(page());
+    expect(last().settings.hiddenTypes).toEqual([...lensByKey(key)!.hidden]);
+    const lit = lensButtons().filter((b) => b.getAttribute("aria-pressed") === "true");
+    expect(lit.map((b) => b.textContent)).toEqual([label]);
+    expect(lensSelect().value).toBe(key);
+    expect(window.location.search).toContain(`lens=${encodeURIComponent(key)}`);
+  });
+
+  it("tapping a lens writes its KEY to the URL, never its label", async () => {
+    await render(page());
+    await click(lensButtons().find((b) => b.textContent === "Records & filing"));
+    expect(window.location.search).toContain("lens=documents");
+    expect(decodeURIComponent(window.location.search)).not.toContain("Records");
+  });
+
+  it("the Connect help names the flow lens by its label", async () => {
+    nav.params = new URLSearchParams("select=cbunit%3A20");
+    await render(page());
+    await click(btn("Draw a connection from this node"));
+    expect(text()).toContain("drawn with an arrow on the Process layout lens.");
+    expect(text()).not.toMatch(/\b(Plant|Process|Equipment|Documents?) lens\b/);
   });
 });
 
@@ -355,9 +416,9 @@ describe("GPV-11 — the view is in the URL, and Back to graph restores it", () 
     await render(page());
     expect(last().settings.hiddenTypes).toEqual(["plot", "plant"]);
     const lensGroup = host.querySelector('[role="group"][aria-label="Lenses"]')!;
-    // The filter is a variation of Everything — the lens says so.
-    const all = [...lensGroup.querySelectorAll("button")].find((b) => b.textContent?.includes("Everything"));
-    expect(all?.textContent).toBe("≈ Everything");
+    // The filter is a variation of Whole map — the lens says so.
+    const all = [...lensGroup.querySelectorAll("button")].find((b) => b.textContent?.includes("Whole map"));
+    expect(all?.textContent).toBe("≈ Whole map");
     await click(all);
     expect(last().settings.hiddenTypes).toEqual([]);
     await click(btn("Back to your filter"));
@@ -393,7 +454,7 @@ describe("GM-1 / GM-6 / GM-11 — insights and degrees say what they count", () 
     const before = host.querySelector('[data-testid="orphan-badge"]')?.textContent;
     expect(before).toBe("1");                 // LOOSE-2: only filed in a library
     const lensGroup = host.querySelector('[role="group"][aria-label="Lenses"]')!;
-    await click([...lensGroup.querySelectorAll("button")].find((b) => b.textContent === "Equipment ↔ Documents"));
+    await click([...lensGroup.querySelectorAll("button")].find((b) => b.textContent === "Governing paper"));
     // P-102 is tied only to its unit, which this lens hides — not an orphan.
     expect(host.querySelector('[data-testid="orphan-badge"]')?.textContent).toBe(before);
     await click(btn(/^\s*Insights/));
@@ -542,7 +603,7 @@ describe("DEC-88 item 3 — a URL's filter is never saved by an unrelated change
     nav.params = new URLSearchParams("lens=documents");
     await render(page());
     const lensGroup = host.querySelector('[role="group"][aria-label="Lenses"]')!;
-    await click([...lensGroup.querySelectorAll("button")].find((b) => b.textContent === "Equipment ↔ Documents"));
+    await click([...lensGroup.querySelectorAll("button")].find((b) => b.textContent === "Governing paper"));
     const stored = JSON.parse(window.localStorage.getItem(settingsKey("o1"))!);
     expect(stored.hiddenTypes).toEqual([...lensByKey("equipment-docs")!.hidden]);
   });

@@ -204,7 +204,7 @@ export default function SetupPage() {
       },
       {
         key: "process", title: "Map the process",
-        blurb: "Flows turn the graph into the plant: draw them on the Process lens, or point the reader at a PFD and confirm what it finds. Plot plans add the spatial picture.",
+        blurb: "Flows turn the graph into the plant: draw them on the Process layout lens, or point the reader at a PFD and confirm what it finds. Plot plans add the spatial picture.",
         icon: Compass, hue: "from-rose-500 to-red-600",
         checks: [
           { label: `${f.flows} confirmed flow${f.flows === 1 ? "" : "s"}${f.proposedFlows > 0 ? ` · ${f.proposedFlows} proposed, awaiting a document controller` : ""}`, ok: f.flows > 0 },

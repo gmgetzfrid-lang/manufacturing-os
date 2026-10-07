@@ -18,8 +18,12 @@
 //
 // LENSES (GPV-10 / GPV-4 / GM-10). Each lens is named for what it SHOWS,
 // never for what it hides, and its hidden list produces exactly that view.
-// A lens name is never a single node-type word: "Equipment" names the node
-// type alone. A scope (one unit's world) is a separate control, not a lens.
+// No lens label contains a node-type word (DEC-88 item 1, intelligence
+// I-24): "Equipment" names the node type alone, so "turn on the Equipment
+// lens" cannot be mistaken for the Equipment filter. A label is display
+// only — the KEY is what a URL (?lens=), a stored blob and a saved view
+// carry, and it never changes with a label. A scope (one unit's world) is a
+// separate control, not a lens.
 
 import type { GraphNodeType } from "@/lib/orgGraph";
 import { parseScopeParam, formatScopeParam, type ScopeRef } from "@/lib/scope";
@@ -129,8 +133,10 @@ const isNodeType = (t: unknown): t is GraphNodeType =>
 export type LensKey = "all" | "plant" | "equipment-docs" | "documents";
 
 export interface GraphLens {
+  /** The URL / settings contract (?lens=) — never renamed. */
   key: LensKey;
-  /** Named for what the lens SHOWS. */
+  /** Named for what the lens SHOWS, in words apart from the node types.
+   *  Display only: never read back from a URL or storage. */
   label: string;
   hidden: GraphNodeType[];
   libEdges: boolean;
@@ -138,24 +144,24 @@ export interface GraphLens {
   title: string;
 }
 
-/** The lens set (the plan's decision). Library NODES are drawn only with
+/** The lens set (DEC-88 item 1). Library NODES are drawn only with
  *  library links on (the filing web), so a lens that shows libraries says so
  *  with libEdges. */
 export const GRAPH_LENSES: readonly GraphLens[] = [
   {
-    key: "all", label: "Everything", hidden: [], libEdges: false,
+    key: "all", label: "Whole map", hidden: [], libEdges: false,
     title: "Every document, item of equipment, unit, plant, project and plot plan, with every relationship between them. Library filing is left out (Settings → Library links puts it in).",
   },
   {
-    key: "plant", label: "Plant (units & equipment)", hidden: ["document", "library", "project", "plot"], libEdges: false,
+    key: "plant", label: "Process layout", hidden: ["document", "library", "project", "plot"], libEdges: false,
     title: "The plant itself — plants, units, systems and equipment, with the process flows between them (an arrow points from what feeds to what is fed). Draw flows with Connect; read them off a PFD in the unit hub.",
   },
   {
-    key: "equipment-docs", label: "Equipment ↔ Documents", hidden: ["unit", "plant", "project", "library", "plot"], libEdges: false,
+    key: "equipment-docs", label: "Governing paper", hidden: ["unit", "plant", "project", "library", "plot"], libEdges: false,
     title: "Equipment and the documents that govern it — tags, the text that names it, and the links and supersession between those documents.",
   },
   {
-    key: "documents", label: "Documents & libraries", hidden: ["asset", "unit", "plant", "plot"], libEdges: true,
+    key: "documents", label: "Records & filing", hidden: ["asset", "unit", "plant", "plot"], libEdges: true,
     title: "The paper web — documents, the libraries they are filed in, the projects they travel through, and which revision replaced which.",
   },
 ];
