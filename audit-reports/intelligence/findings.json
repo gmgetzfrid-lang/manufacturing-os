@@ -25,17 +25,17 @@
     "audit-reports/intelligence/21-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 265,
+    "findings": 266,
     "gaps": 15,
     "by_severity": {
       "CRITICAL": 9,
       "HIGH": 59,
       "MEDIUM": 148,
-      "LOW": 49
+      "LOW": 50
     },
     "by_status": {
-      "RESOLVED": 194,
-      "OPEN": 65,
+      "RESOLVED": 196,
+      "OPEN": 64,
       "REFUTED": 2,
       "WONTFIX": 3,
       "INVALID": 1
@@ -6353,7 +6353,7 @@
       "id": "GPV-4",
       "title": "\"Equipment\" names three different things on the same screen; \"Units\" names two disjoint node families",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -6374,6 +6374,31 @@
       ],
       "refuted": false,
       "summary": "A user is told \"turn on the Equipment lens\". They open Settings, find the row labelled Equipment, and toggle it — the opposite of what was meant. The count next to it (counts[t], computed over the unfiltered graph at page.tsx:244-249) reads e.g. 2000 while the map shows a third of that under a lens, with no note that the two numbers count different sets.",
+      "area": "intelligence",
+      "report": "audit-reports/intelligence/08-graph-pivots.md"
+    },
+    {
+      "id": "GPV-15",
+      "title": "The marketing page still shows and describes the graph's lenses in the node-type words GPV-4 retired",
+      "severity": "LOW",
+      "status": "RESOLVED",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "components/marketing/TourTabs.tsx:31",
+        "components/marketing/TourTabs.tsx:307",
+        "app/about/page.tsx:337",
+        "app/about/page.tsx:343"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "adversarial",
+      "challenges": [
+        "adversarial"
+      ],
+      "refuted": false,
+      "summary": "A prospect or new user reads the tour, opens /graph and looks for the \"Equipment\" lens the mockup showed. They find the Filters row \"Equipment\" — the node type — and untick it. That is GPV-4's scenario, set up by the marketing page instead of the product.",
       "area": "intelligence",
       "report": "audit-reports/intelligence/08-graph-pivots.md"
     },

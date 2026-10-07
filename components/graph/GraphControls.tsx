@@ -8,10 +8,11 @@
 // only apply on release are the difference between a toy and an instrument.
 //
 // The focus depth is a filter, not a force, so it sits in Filters beside
-// what it filters (GPV-9). Counts say what they count — in this view, of the
-// whole map (GPV-4) — and the three things the Units filter covers are named
-// apart. Arrows mean direction on flows and supersession and work in 3D;
-// curved links are a 2D drawing and say so (GPV-8).
+// what it filters (GPV-9). Counts say what they count — in this view, on the
+// full graph (GPV-4; never "whole map", which is a lens's label, I-24) — and
+// the three things the Units filter covers are named apart. Arrows mean
+// direction on flows and supersession and work in 3D; curved links are a 2D
+// drawing and say so (GPV-8).
 
 import React from "react";
 import {
@@ -157,7 +158,7 @@ export default function GraphControls({
         <div className="w-72 max-w-[calc(100vw-1.5rem)] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl overflow-y-auto">
           <Section icon={Filter} title="Filters" defaultOpen>
             <div className="text-[9px] text-[var(--color-text-faint)]" data-testid="filter-count-caption">
-              {viewCounts ? "Node types · in this view / on the whole map" : "Node types · on the whole map"}
+              {viewCounts ? "Node types · in this view / on the full graph" : "Node types · on the full graph"}
             </div>
             <div className="space-y-1">
               {TYPE_ORDER.map((t) => (
@@ -169,7 +170,7 @@ export default function GraphControls({
                       <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: NODE_COLORS[t] }} />
                       <span className="flex-1 text-[11px] font-bold text-[var(--color-text)]">{TYPE_LABELS[t]}</span>
                       <span className="text-[10px] font-mono text-[var(--color-text-faint)]"
-                        title={viewCounts ? `${viewCounts[t]} in this view, ${counts[t]} on the whole map` : `${counts[t]} on the whole map`}>
+                        title={viewCounts ? `${viewCounts[t]} in this view, ${counts[t]} on the full graph` : `${counts[t]} on the full graph`}>
                         {viewCounts && viewCounts[t] !== counts[t] ? `${viewCounts[t]} / ${counts[t]}` : counts[t]}
                       </span>
                     </label>

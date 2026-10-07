@@ -2,9 +2,16 @@
 // the settings every earlier build saved.
 //
 //   * GPV-10 / GPV-4 / GM-10: each lens is named for what it SHOWS and its
-//     hidden list produces exactly that; no lens is named by a single
-//     node-type word; a hand-tuned filter still says which lens it drifted
-//     from.
+//     hidden list produces exactly that; a hand-tuned filter still says which
+//     lens it drifted from.
+//   * GPV-4 (I-24, DEC-88 item 1 as rewritten under DEC-90): no lens LABEL
+//     contains a node-type word — the words are read from the Filters
+//     drawer's own labels (components/graph/GraphControls.tsx TYPE_LABELS),
+//     an abbreviation ("docs") or derivative of one counting too (fix pass),
+//     so a lens and a node type never share a name. The rename is label-only:
+//     the keys a URL (?lens=), a stored settings blob and a saved view carry
+//     are unchanged, and every place outside the lens bar that names a lens
+//     names it by its label.
 //   * GPV-11: lens / filter, focus and depth, scope, search, an asked
 //     question and the peeked node round-trip through the URL; `?focus=` —
 //     every existing link's spelling — keeps its meaning (select the node);
@@ -14,12 +21,65 @@
 //     restored from storage; GPV-8's arrows default migrates a v1 blob.
 
 import { describe, it, expect, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   GRAPH_LENSES, GRAPH_NODE_TYPES, DEFAULT_GRAPH_SETTINGS, GRAPH_SETTINGS_VERSION,
   matchLens, lensByKey, parseGraphUrl, formatGraphUrl, urlFilterOf, applyGraphUrl,
   sanitizeGraphQuery, nodeIdParam, migrateSettings, loadSettings, saveSettings, settingsKey,
 } from "@/lib/graphSettings";
+import { UNIT_VARIANT_LABELS } from "@/components/graph/graphTheme";
+import { FEATURE_ATLAS } from "@/lib/featureAtlas";
 import type { GraphNodeType } from "@/lib/orgGraph";
+
+const src = (f: string) => readFileSync(join(process.cwd(), f), "utf8");
+
+/** The node-type labels exactly as the Filters drawer renders them — read
+ *  from the component's source, so a label added or renamed there is
+ *  checked here without a second list to keep in step. */
+function filterTypeLabels(): Record<string, string> {
+  const body = src("components/graph/GraphControls.tsx")
+    .match(/const TYPE_LABELS: Record<GraphNodeType, string> = \{([\s\S]*?)\};/)?.[1];
+  if (!body) throw new Error("TYPE_LABELS not found in components/graph/GraphControls.tsx");
+  return Object.fromEntries([...body.matchAll(/(\w+):\s*"([^"]+)"/g)].map((m) => [m[1], m[2]]));
+}
+
+const singular = (w: string) => (w.endsWith("ies") ? `${w.slice(0, -3)}y` : w.endsWith("s") ? w.slice(0, -1) : w);
+const wordsOf = (s: string) => (s.toLowerCase().match(/[a-z]+/g) ?? []);
+
+/** Every node-type word, plural and singular: each word of each Filters
+ *  label ("Plot plans" gives plot and plan), each type key (asset), and the
+ *  unit class's System kind (systems are folded into units, DEC-67, and the
+ *  Filters list names them). */
+function nodeTypeWords(): Set<string> {
+  const out = new Set<string>();
+  const add = (w: string) => { out.add(w); out.add(singular(w)); };
+  for (const label of Object.values(filterTypeLabels())) wordsOf(label).forEach(add);
+  for (const t of GRAPH_NODE_TYPES) wordsOf(t).forEach(add);
+  wordsOf(UNIT_VARIANT_LABELS.system).forEach(add);
+  return out;
+}
+
+/** A word names a node type when it is one (plural or singular), or when it
+ *  and a node-type word start the same at 3+ letters, the shorter whole: an
+ *  abbreviation ("doc", "docs", "lib", "proj", "equip" — "Docs" was the word
+ *  in the pre-I-14 lens "Equipment ↔ Docs") or a derivative
+ *  ("documentation") names the type as surely as the word itself. */
+function isTypeWord(w: string, typeWords: Set<string>): boolean {
+  const forms = [w, singular(w)];
+  if (forms.some((f) => typeWords.has(f))) return true;
+  for (const t of typeWords) {
+    for (const f of forms) {
+      if (f.length >= 3 && t.startsWith(f)) return true;   // abbreviation
+      if (t.length >= 3 && f.startsWith(t)) return true;   // derivative
+    }
+  }
+  return false;
+}
+
+/** The node-type words a label uses, in order. */
+const typeWordsIn = (label: string, typeWords = nodeTypeWords()) =>
+  wordsOf(label).filter((w) => isTypeWord(w, typeWords));
 
 const store = new Map<string, string>();
 beforeEach(() => {
@@ -35,20 +95,24 @@ const shown = (hidden: GraphNodeType[], libEdges: boolean) =>
   GRAPH_NODE_TYPES.filter((t) => !hidden.includes(t) && (t !== "library" || libEdges)).sort();
 
 describe("GPV-10 / GPV-4 / GM-10 — lenses named for what they show", () => {
-  it("is the plan's lens set, in order", () => {
+  it("is DEC-88's lens set, in order: the labels renamed (I-24), the keys unchanged", () => {
     expect(GRAPH_LENSES.map((l) => l.label)).toEqual([
-      "Everything", "Plant (units & equipment)", "Equipment ↔ Documents", "Documents & libraries",
+      "Whole map", "Process layout", "Governing paper", "Records & filing",
     ]);
+    // The keys are the URL / settings / saved-view contract — never renamed.
+    expect(GRAPH_LENSES.map((l) => l.key)).toEqual(["all", "plant", "equipment-docs", "documents"]);
   });
 
   it("each lens's hidden list produces exactly the node types its title names", () => {
     const by = (k: string) => lensByKey(k)!;
     expect(shown(by("all").hidden, by("all").libEdges)).toEqual(["asset", "document", "plant", "plot", "project", "unit"]);
-    // Plant: plants, units (with systems) and equipment — the old "Process"
-    // lens said "units and equipment only" and left plants in silently.
+    // Process layout (key plant): plants, units (with systems) and equipment
+    // — the old "Process" lens said "units and equipment only" and left
+    // plants in silently.
     expect(shown(by("plant").hidden, by("plant").libEdges)).toEqual(["asset", "plant", "unit"]);
     expect(by("plant").title).toMatch(/plants, units, systems and equipment/);
-    // Equipment ↔ Documents: plot plans are hidden now (the old lens left them in).
+    // Governing paper (key equipment-docs): plot plans are hidden now (the
+    // old lens left them in).
     expect(shown(by("equipment-docs").hidden, by("equipment-docs").libEdges)).toEqual(["asset", "document"]);
     expect(shown(by("documents").hidden, by("documents").libEdges)).toEqual(["document", "library", "project"]);
     expect(by("documents").title).toMatch(/libraries/);
@@ -56,12 +120,37 @@ describe("GPV-10 / GPV-4 / GM-10 — lenses named for what they show", () => {
     expect(by("all").title).toMatch(/Library filing is left out/);
   });
 
-  it("no lens is named by a single node-type word, and none is named for what it hides", () => {
-    const typeWords = ["Documents", "Equipment", "Units", "Libraries", "Projects", "Plants", "Plot plans"];
+  it("no lens label contains a node-type word (the Filters drawer's own labels), and none is named for what it hides", () => {
+    const labels = filterTypeLabels();
+    // The source read is whole: one label per node type, the drawer's words.
+    expect(Object.keys(labels).sort()).toEqual([...GRAPH_NODE_TYPES].sort());
+    expect(labels.asset).toBe("Equipment");          // the node type keeps "Equipment"
+    const typeWords = nodeTypeWords();
     for (const l of GRAPH_LENSES) {
-      expect(typeWords).not.toContain(l.label);
+      expect(typeWordsIn(l.label, typeWords), `lens "${l.label}" (${l.key})`).toEqual([]);
       expect(l.label).not.toMatch(/\b(no|without|except|hide|hidden)\b/i);
     }
+  });
+
+  it("the check is real: the labels I-14 shipped each fail it (GPV-4's reproduction)", () => {
+    // Done-when 1 was not met by these — three of four reuse node-type words.
+    expect(typeWordsIn("Plant (units & equipment)")).toEqual(["plant", "units", "equipment"]);
+    expect(typeWordsIn("Equipment ↔ Documents")).toEqual(["equipment", "documents"]);
+    expect(typeWordsIn("Documents & libraries")).toEqual(["documents", "libraries"]);
+    // Singular, plural and the type key are all caught.
+    expect(typeWordsIn("Plot plan")).toEqual(["plot", "plan"]);
+    expect(typeWordsIn("Asset view")).toEqual(["asset"]);
+    expect(typeWordsIn("Systems")).toEqual(["systems"]);
+    // Abbreviations and derivatives of a node-type word are caught too
+    // (fix pass): "Docs" was the pre-I-14 lens word for the Documents type.
+    expect(typeWordsIn("Docs & filing")).toEqual(["docs"]);
+    expect(typeWordsIn("Equipment ↔ Docs")).toEqual(["equipment", "docs"]);
+    expect(typeWordsIn("Doc web")).toEqual(["doc"]);
+    expect(typeWordsIn("Lib & proj view")).toEqual(["lib", "proj"]);
+    expect(typeWordsIn("Equip layout")).toEqual(["equip"]);
+    expect(typeWordsIn("Documentation")).toEqual(["documentation"]);
+    // …and the check does not over-reach: the four labels' own words pass it.
+    expect(typeWordsIn("Whole map · Process layout · Governing paper · Records & filing")).toEqual([]);
   });
 
   it("matchLens: exact, a near miss names the lens it drifted from, far is none", () => {
@@ -200,9 +289,163 @@ describe("regression — settings saved before this change load", () => {
     expect(migrateSettings({ savedViews: [{ id: "", name: "x" }, { id: "v", name: "" }, "junk"] }).savedViews).toEqual([]);
   });
 
-  it("the defaults: arrows on, the Everything lens, no scope", () => {
+  it("the defaults: arrows on, the Whole map lens (key all), no scope", () => {
     expect(DEFAULT_GRAPH_SETTINGS.showArrows).toBe(true);
     expect(matchLens(DEFAULT_GRAPH_SETTINGS.hiddenTypes, DEFAULT_GRAPH_SETTINGS.showLibraryEdges)).toMatchObject({ exact: true, lens: { key: "all" } });
     expect(DEFAULT_GRAPH_SETTINGS.scope).toBeNull();
+  });
+});
+
+describe("GPV-4 (I-24) — the rename is label-only: every link, stored blob and saved view loads the same lens", () => {
+  // Each lens key with the hidden list it produced before the rename — the
+  // pin is literal, so a key that changed its meaning would fail here.
+  const BEFORE: Array<[string, GraphNodeType[], boolean]> = [
+    ["all", [], false],
+    ["plant", ["document", "library", "project", "plot"], false],
+    ["equipment-docs", ["unit", "plant", "project", "library", "plot"], false],
+    ["documents", ["asset", "unit", "plant", "plot"], true],
+  ];
+
+  it("every existing ?lens= URL parses to the same key, applies the same filter and writes the same URL", () => {
+    for (const [key, hidden, libEdges] of BEFORE) {
+      const url = parseGraphUrl(new URLSearchParams(`lens=${key}`));
+      expect(url.lens, key).toBe(key);
+      const s = applyGraphUrl(DEFAULT_GRAPH_SETTINGS, url);
+      expect(s.hiddenTypes, key).toEqual(hidden);
+      expect(s.showLibraryEdges, key).toBe(libEdges);
+      expect(matchLens(s.hiddenTypes, s.showLibraryEdges)).toMatchObject({ exact: true, lens: { key } });
+      expect(urlFilterOf(s)).toEqual({ lens: key, hide: null, libs: null });
+      expect(formatGraphUrl(urlFilterOf(s))).toBe(`lens=${encodeURIComponent(key)}`);
+      // The same link with the page's other keys still means the same lens.
+      expect(parseGraphUrl(new URLSearchParams(`lens=${key}&select=asset%3Aa1&depth=2`)).lens).toBe(key);
+    }
+  });
+
+  it("a label is display only: it is never read as a key, old or new", () => {
+    for (const label of ["Whole map", "Process layout", "Governing paper", "Records & filing",
+      "Everything", "Plant (units & equipment)", "Equipment ↔ Documents", "Documents & libraries"]) {
+      expect(lensByKey(label), label).toBeNull();
+      expect(parseGraphUrl(new URLSearchParams({ lens: label })).lens, label).toBeNull();
+    }
+  });
+
+  it("a v1 blob (no version) holding each lens's filter loads as that lens, under its new label", () => {
+    const labels: Record<string, string> = {
+      all: "Whole map", plant: "Process layout", "equipment-docs": "Governing paper", documents: "Records & filing",
+    };
+    for (const [key, hidden, libEdges] of BEFORE) {
+      store.set(settingsKey(`v1-${key}`), JSON.stringify({ mode: "2d", hiddenTypes: hidden, showLibraryEdges: libEdges, showArrows: false }));
+      const s = loadSettings(`v1-${key}`);
+      expect(s.hiddenTypes, key).toEqual(hidden);
+      expect(s.showLibraryEdges, key).toBe(libEdges);
+      const m = matchLens(s.hiddenTypes, s.showLibraryEdges);
+      expect(m.exact, key).toBe(true);
+      expect(m.lens?.key, key).toBe(key);
+      expect(m.lens?.label, key).toBe(labels[key]);
+    }
+  });
+
+  it("a v2 blob with saved views keeps each view's filter, and it is still the lens it was", () => {
+    store.set(settingsKey("v2"), JSON.stringify({
+      version: 2, hiddenTypes: ["asset", "unit", "plant", "plot"], showLibraryEdges: true,
+      savedViews: [
+        { id: "v1", name: "Plant lens — crude", hiddenTypes: ["document", "library", "project", "plot"], showLibraryEdges: false, scope: { kind: "unit", code: "20" }, localDepth: 2 },
+        { id: "v2", name: "Equipment ↔ Documents", hiddenTypes: ["unit", "plant", "project", "library", "plot"], showLibraryEdges: false, localDepth: 1 },
+      ],
+    }));
+    const s = loadSettings("v2");
+    expect(matchLens(s.hiddenTypes, s.showLibraryEdges)).toMatchObject({ exact: true, lens: { key: "documents", label: "Records & filing" } });
+    // A view's name is the person's own words — kept as they typed it.
+    expect(s.savedViews.map((v) => v.name)).toEqual(["Plant lens — crude", "Equipment ↔ Documents"]);
+    expect(matchLens(s.savedViews[0].hiddenTypes, s.savedViews[0].showLibraryEdges).lens?.key).toBe("plant");
+    expect(matchLens(s.savedViews[1].hiddenTypes, s.savedViews[1].showLibraryEdges).lens?.key).toBe("equipment-docs");
+    expect(s.savedViews[0].scope).toEqual({ kind: "unit", code: "20" });
+  });
+
+  it("a saved blob never holds a lens label (labels are display only)", () => {
+    for (const [key, hidden, libEdges] of BEFORE) {
+      saveSettings(`save-${key}`, { ...DEFAULT_GRAPH_SETTINGS, hiddenTypes: hidden, showLibraryEdges: libEdges });
+      const raw = store.get(settingsKey(`save-${key}`))!;
+      for (const l of GRAPH_LENSES) expect(raw, key).not.toContain(l.label);
+      expect(JSON.parse(raw).hiddenTypes).toEqual(hidden);
+    }
+  });
+});
+
+describe("GPV-4 (I-24) — every place outside the lens bar that names a lens names it by its label", () => {
+  const label = (k: string) => lensByKey(k)!.label;
+
+  it("the graph page's Connect help names the flow lens by its label, never a node-type word", () => {
+    const page = src("app/(protected)/graph/page.tsx");
+    expect(page).toContain(`drawn with an arrow on the ${label("plant")} lens.`);
+    expect(page).not.toMatch(/\b(Plant|Process|Equipment|Documents?) lens\b/);
+  });
+
+  it("one name for the unfiltered graph: the peek's count and the Insights copy say 'the full graph', never 'the map' (integrator, I-24 merge)", () => {
+    const page = src("app/(protected)/graph/page.tsx");
+    const peek = src("components/graph/NodePeek.tsx");
+    for (const s of [
+      "every document and item of equipment on the full graph",
+      "anywhere on the full graph",
+      "The most-referenced nodes on the full graph",
+      'title="Links on the full graph, not counting library filing"',
+      "is on the full graph but hidden by this view",
+    ]) expect(page).toContain(s);
+    expect(peek).toContain("{links(node.degree)} on the full graph");
+    expect(page).not.toMatch(/(anywhere|nodes|equipment|Links) on the map\b/);
+    expect(peek).not.toMatch(/\)\} on the map\b/);
+  });
+
+  it("'paper' names one lens: the filing lens's title is 'The filing web', not 'The paper web' beside 'Governing paper' (integrator, I-24 merge)", () => {
+    // "Library filing" stays in the Whole map title: it names the edge type
+    // the Settings toggle adds, as it always has.
+    for (const lens of GRAPH_LENSES.filter((l) => l.key !== "equipment-docs")) {
+      expect(`${lens.label} ${lens.title}`.toLowerCase(), lens.key).not.toMatch(/\bpaper\b/);
+    }
+    expect(lensByKey("documents")!.title.startsWith("The filing web")).toBe(true);
+  });
+
+  it("GPV-15: the marketing tour and the about page show the product's lens labels, never a node-type word (integrator, I-24 merge)", () => {
+    const labels = GRAPH_LENSES.map((l) => l.label);
+    const tour = src("components/marketing/TourTabs.tsx");
+    const about = src("app/about/page.tsx");
+    expect(tour).toContain(`{${JSON.stringify(labels)}.map((l, i) => (`.replace(/","/g, '", "'));
+    expect(tour).toContain(`switch lenses: ${labels.join(", ")}.`);
+    expect(about).toContain(`four lenses: ${labels.join(", ")}`);
+    expect(about).toContain("Process layout · Governing paper · Records & filing lenses");
+    for (const f of [tour, about]) {
+      expect(f).not.toMatch(/\b(Everything|Process flow|Equipment|Documents)", "(Process flow|Equipment|Documents)"/);
+      expect(f).not.toMatch(/lenses: process flow|to see process flow, equipment|Process \/ equipment \/ document lenses/);
+    }
+  });
+
+  it("the setup navigator's 'Map the process' step names the same lens", () => {
+    const setup = src("app/(protected)/setup/page.tsx");
+    expect(setup).toContain(`draw them on the ${label("plant")} lens`);
+    expect(setup).not.toMatch(/\b(Plant|Process|Equipment|Documents?) lens\b/);
+  });
+
+  it("the feature atlas (⌘K and the assistant's app map) lists the four lenses by their labels", () => {
+    const graph = FEATURE_ATLAS.find((e) => e.href === "/graph")!;
+    for (const l of GRAPH_LENSES) expect(graph.blurb, l.key).toContain(l.label);
+    for (const old of ["Everything", "Equipment ↔ Docs", "Process (flow map)", "Documents."]) {
+      expect(graph.blurb).not.toContain(old);
+    }
+    // The lens list itself is exactly the four labels (the flow map is the
+    // Process layout lens's gloss) and names no node type. The words ⌘K
+    // found the graph by — everything, documents, docs, equipment — stay in
+    // the blurb, outside the list (fix pass; lib/__tests__/featureAtlas.test.ts
+    // pins the palette's results).
+    const list = graph.blurb.match(/with lenses: ([^.]+)\./)?.[1];
+    expect(list).toBe(GRAPH_LENSES.map((l) => (l.key === "plant" ? `${l.label} (the flow map)` : l.label)).join(", "));
+    expect(typeWordsIn(list!)).toEqual([]);
+    for (const w of ["everything", "documents", "docs", "equipment"]) {
+      expect(graph.blurb.toLowerCase(), w).toContain(w);
+      expect(list!.toLowerCase(), w).not.toContain(w);
+    }
+  });
+
+  it("the lens bar's header example is a label the bar can show", () => {
+    expect(src("components/graph/GraphLensBar.tsx")).toContain(`("≈ ${label("plant")} — adjusted")`);
   });
 });

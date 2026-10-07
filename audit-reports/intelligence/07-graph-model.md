@@ -98,6 +98,8 @@ Negative control: with `revealBridge` setting the highlight in the same commit a
 
 Left as is (review nit (c)): a reveal's filter change has no one-click undo. "Show it" and the faded Insights rows work the same way (`reveal`), and the lens bar's undo covers only a lens tap (GPV-10). Changing that is a different behaviour for all three, not part of this finding.
 
+*Cross-note (2026-10-07, intelligence Round G, I-24 fix pass): the basis line quoted above now reads "Counted on the full graph, whatever this view shows.", and the Insights button's title reads "… counted on the full graph …". The I-24 rename made "Whole map" the label of a lens that leaves library nodes out (`GPV-4`, `DEC-88` item 1), so "the whole map" no longer names the assembled graph on this screen. What is computed is unchanged: orphans, hubs and bridges still come from `graph.nodes` / `graph.edges`. `lib/__tests__/graphPageRender.test.ts` "the orphan badge does not move …" pins the new line.*
+
 ---
 
 <a id="gm-2"></a>
@@ -399,6 +401,8 @@ Tests: `lib/__tests__/orgGraph.test.ts` GM-6 block — a controller and a grante
 
 **Scope / residual.** `documents_total_for_org` is `20261138`'s, still Pending in `audit-reports/MIGRATION-PASTE-ORDER.md`. Until it is pasted, `access` is null and the note says only "Computed on the documents you can see." — no count is claimed. A scoped map's note says it was computed on the scope's documents the reader can see.
 
+*Cross-note (2026-10-07, intelligence Round G, I-24 fix pass): the line `basis.note` follows now reads "Counted on the full graph, whatever this view shows." The I-24 rename made "Whole map" a lens label (`GPV-4`). The note itself and where it sits are unchanged.*
+
 ---
 
 <a id="gm-7"></a>
@@ -666,6 +670,8 @@ Tests: `lib/__tests__/orgGraph.test.ts` GM-10 block (the system hangs from `cbun
 3. ✓ The lens presets are renamed to what they show. The scope (one unit's world) is a separate control, the scope picker (`GPV-2`), not a lens.
 
 **Scope / residual.** None in this package.
+
+*Cross-note (2026-10-07, intelligence Round G, I-24): the lens labels quoted above were renamed label-only (`DEC-88` item 1 as rewritten under `DEC-90`): Whole map · Process layout · Governing paper · Records & filing, keys unchanged. The second test cited is now "no lens label contains a node-type word (the Filters drawer's own labels), and none is named for what it hides" (`lib/__tests__/graphSettingsUrl.test.ts`). Each lens still shows what its title names. See `GPV-4`.*
 
 ---
 

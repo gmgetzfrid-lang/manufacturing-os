@@ -334,13 +334,13 @@ function PillarsSection() {
             tagline="Teach it your numbering system once, and imports categorize and file themselves. Documents, equipment, and operating areas become one navigable graph."
             bullets={[
               "Equipment registry with date-stamped photo galleries — tap any tag, anywhere, and see the physical thing",
-              "Interactive 2D/3D graph with lenses: process flow, equipment, documents — or everything at once",
+              "Interactive 2D/3D graph with four lenses: Whole map, Process layout, Governing paper, Records & filing",
               "The AI reads process flows straight off your flow diagrams and proposes them for human confirmation",
             ]}
             chips={[
               "Site Codebook (your numbering, taught once)", "Operating areas hub", "Equipment registry & photos",
               "Auto-categorize from tags & site codes", "Process flow map (drawn or AI-read)",
-              "Plot plans with placed markers", "2D/3D interactive graph", "Process / equipment / document lenses",
+              "Plot plans with placed markers", "2D/3D interactive graph", "Process layout · Governing paper · Records & filing lenses",
               "Path finding between any two nodes", "Per-tag backlinks",
               "Guided facility setup navigator",
             ]}

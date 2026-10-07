@@ -121,7 +121,7 @@ export default function NodePeek({
           <div className="text-xs font-black text-[var(--color-text)] break-words">{node.label}</div>
           {node.sub && <div className="text-[11px] text-[var(--color-text-muted)] break-words">{node.sub}</div>}
           <div className="text-[10px] text-[var(--color-text-faint)] mt-0.5" data-testid="peek-degree">
-            {labelFor(node.type)} · {links(node.degree)} on the map
+            {labelFor(node.type)} · {links(node.degree)} on the full graph
             {libraryLinks !== undefined && libraryLinks > 0 && ` (${libraryLinks} library filing)`}
             {viewDegree !== undefined && viewDegree !== node.degree && ` · ${links(viewDegree)} in this view`}
           </div>
@@ -214,7 +214,7 @@ export default function NodePeek({
             className="flex-1 inline-flex items-center justify-center gap-1 text-[11px] font-black text-violet-700 border border-violet-300 dark:border-violet-800 rounded-lg px-2 py-1.5 hover:bg-violet-50 dark:hover:bg-violet-950/40">
             <Focus className="w-3.5 h-3.5" /> Go in
           </button>
-          <button onClick={onGoOut} disabled={!focused} title="Back to the whole map"
+          <button onClick={onGoOut} disabled={!focused} title="Back out of the neighbourhood; the lens stays"
             className="flex-1 inline-flex items-center justify-center gap-1 text-[11px] font-black text-[var(--color-text)] border border-[var(--color-border)] rounded-lg px-2 py-1.5 hover:bg-[var(--color-surface-2)] disabled:opacity-40">
             <Layers className="w-3.5 h-3.5" /> Go out
           </button>

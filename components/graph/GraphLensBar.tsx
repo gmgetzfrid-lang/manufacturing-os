@@ -5,7 +5,7 @@
 // GPV-10: every lens is named for what it SHOWS and produces exactly that
 // (lib/graphSettings.ts GRAPH_LENSES); the row is a select below 640px so a
 // phone has the control too; a filter tuned by hand still says which lens it
-// is a variation of ("≈ Plant (units & equipment) — adjusted"), and a lens
+// is a variation of ("≈ Process layout — adjusted"), and a lens
 // tap that would throw a hand-tuned filter away can be undone.
 // GPV-11 / GAP-306: a view — the filter, the scope and the focus depth — can
 // be named and saved (per org, in this browser), and its link copied: the

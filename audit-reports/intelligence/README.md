@@ -56,7 +56,7 @@ It is not a missing brain. It is a missing memory.
 
 ## Findings
 
-**265 findings** — 9 CRITICAL, 59 HIGH, 148 MEDIUM, 49 LOW — plus **15 gap specs** (`GAP-313`, `GAP-314` opened at I-13, 2026-10-01; `GAP-315` opened at I-09, 2026-10-01; `GOV-15` opened at the I-05 merge, 2026-10-01; `ILIFE-14` opened at the admin-and-org P2 merge, 2026-10-01).
+**266 findings** — 9 CRITICAL, 59 HIGH, 148 MEDIUM, 50 LOW — plus **15 gap specs** (`GAP-313`, `GAP-314` opened at I-13, 2026-10-01; `GAP-315` opened at I-09, 2026-10-01; `GOV-15` opened at the I-05 merge, 2026-10-01; `ILIFE-14` opened at the admin-and-org P2 merge, 2026-10-01).
 
 > **One finding here carries `Status: REFUTED`** — `IEDGE-9`. An independent pass disproved it; the reason is on the finding. Kept rather than deleted (`DEC-41`). **Do not queue it as work.**
 
@@ -71,7 +71,7 @@ It is not a missing brain. It is a missing memory.
 | 05 | [**Knowledge ACL**](./05-knowledge-acl.md) | 12 | **Your leak question, half one** — `KACL-12` opened by intelligence Round G (I-01A), 2026-09-30 |
 | 06 | [**Document ACL leaks**](./06-document-acl-leaks.md) | 12 | **Your leak question, half two** |
 | 07 | [Graph model](./07-graph-model.md) | 14 | Every edge, every cap, what is not modelled |
-| 08 | [**Graph pivots**](./08-graph-pivots.md) | 14 | **Your pivot complaint**, traced to the render layer |
+| 08 | [**Graph pivots**](./08-graph-pivots.md) | 15 | **Your pivot complaint**, traced to the render layer; `GPV-15` (LOW) opened at I-24, 2026-10-07 |
 | 09 | [Link proposals](./09-link-proposals.md) | 13 | Candidate generation, false positives, who may accept |
 | 10 | [Codebook](./10-codebook.md) | 10 | The decoder everything else depends on |
 | 11 | [**The Bridge**](./11-the-bridge.md) | 14 | **Your equipment question**, step by step |

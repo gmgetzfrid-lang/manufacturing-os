@@ -50,6 +50,19 @@
 //   GPV-11  the route-change and Back / Forward cancels drop a pending write
 //           even when the browser is back on /graph before it comes due
 //   GM-7    a capped read whose count failed says "at least" the cap
+//
+// I-24 (GPV-4 done-when 1, DEC-88 item 1 as rewritten under DEC-90):
+//   GPV-4   the lens bar and the phone select read the four labels apart
+//           from the node types (Whole map · Process layout · Governing
+//           paper · Records & filing), beside a Filters drawer that still
+//           says "Equipment"; every existing ?lens=<key> link and a v1 blob
+//           light the same lens as before; the Connect help names the flow
+//           lens by its label
+//   I-24 fix pass: the counts, the Insights basis and the focus exits no
+//           longer say "the whole map" — a lens is labelled "Whole map" and
+//           leaves libraries out, so the unfiltered graph is "the full graph"
+//           and leaving focus says the lens stays; no lens label appears in
+//           any of those strings
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -279,6 +292,100 @@ describe("regression pins — every existing way into /graph", () => {
     expect(last().settings.showArrows).toBe(true);
     expect(last().nodes.map((n) => n.id)).not.toContain("doc:d1");
     expect(window.location.search).toContain("lens=plant");
+    // The same lens is lit, under its label (I-24: label-only rename).
+    const lit = host.querySelector('[role="group"][aria-label="Lenses"] button[aria-pressed="true"]');
+    expect(lit?.textContent).toBe("Process layout");
+  });
+});
+
+describe("GPV-4 (I-24) — lens labels apart from the node types, as rendered; every ?lens= link lights the same lens", () => {
+  const LABELS = ["Whole map", "Process layout", "Governing paper", "Records & filing"];
+  const lensButtons = () => [...host.querySelectorAll('[role="group"][aria-label="Lenses"] button')];
+  const lensSelect = () => host.querySelector('select[aria-label="Lens"]') as HTMLSelectElement;
+
+  it("the lens bar and the phone select read the four labels; the Filters drawer still says Equipment, and the two share no word", async () => {
+    await render(page());
+    expect(lensButtons().map((b) => b.textContent)).toEqual(LABELS);
+    expect([...lensSelect().options].map((o) => o.textContent)).toEqual(LABELS);
+    await click(btn("Settings"));
+    const caption = host.querySelector('[data-testid="filter-count-caption"]')!;
+    const typeRows = [...caption.parentElement!.querySelectorAll("label > span.flex-1")].map((el) => el.textContent ?? "");
+    expect(typeRows).toContain("Equipment");
+    expect(typeRows).toContain("Documents");
+    const words = (s: string) => (s.toLowerCase().match(/[a-z]+/g) ?? []).map((w) => w.replace(/(ies|s)$/, (m) => (m === "ies" ? "y" : "")));
+    const typeWords = new Set(typeRows.flatMap(words));
+    for (const l of LABELS) expect(words(l).filter((w) => typeWords.has(w)), l).toEqual([]);
+  });
+
+  it.each([
+    ["all", "Whole map"],
+    ["plant", "Process layout"],
+    ["equipment-docs", "Governing paper"],
+    ["documents", "Records & filing"],
+  ])("?lens=%s (an existing link) applies that lens's filter and lights %s", async (key, label) => {
+    nav.params = new URLSearchParams(`lens=${key}`);
+    await render(page());
+    expect(last().settings.hiddenTypes).toEqual([...lensByKey(key)!.hidden]);
+    const lit = lensButtons().filter((b) => b.getAttribute("aria-pressed") === "true");
+    expect(lit.map((b) => b.textContent)).toEqual([label]);
+    expect(lensSelect().value).toBe(key);
+    expect(window.location.search).toContain(`lens=${encodeURIComponent(key)}`);
+  });
+
+  it("tapping a lens writes its KEY to the URL, never its label", async () => {
+    await render(page());
+    await click(lensButtons().find((b) => b.textContent === "Records & filing"));
+    expect(window.location.search).toContain("lens=documents");
+    expect(decodeURIComponent(window.location.search)).not.toContain("Records");
+  });
+
+  it("the Connect help names the flow lens by its label", async () => {
+    nav.params = new URLSearchParams("select=cbunit%3A20");
+    await render(page());
+    await click(btn("Draw a connection from this node"));
+    expect(text()).toContain("drawn with an arrow on the Process layout lens.");
+    expect(text()).not.toMatch(/\b(Plant|Process|Equipment|Documents?) lens\b/);
+  });
+
+  it("the counts, the Insights basis and the focus exits never use a lens label — the unfiltered graph is 'the full graph' (fix pass)", async () => {
+    // A bare /graph lights "Whole map", which leaves library nodes out; the
+    // counts beside it measure the assembled graph, libraries included. Before
+    // the fix pass both were "the whole map" on the same screen.
+    nav.params = new URLSearchParams("local=asset%3Aa1&depth=1&select=asset%3Aa1");
+    await render(page());
+    const strings: Record<string, string> = {};
+    const exit = [...host.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") ?? "").startsWith("Leave focus"));
+    strings.focusChipExit = exit?.getAttribute("aria-label") ?? "";
+    const goOut = [...host.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Go out");
+    strings.peekGoOut = goOut?.getAttribute("title") ?? "";
+    const insightsBtn = btn(/^\s*Insights/);
+    strings.insightsTitle = insightsBtn?.getAttribute("title") ?? "";
+    await click(insightsBtn);
+    strings.insightsBasis = host.querySelector('[data-testid="insights-basis"]')?.textContent ?? "";
+    await click(btn("Settings"));
+    const caption = host.querySelector('[data-testid="filter-count-caption"]')!;
+    strings.countsCaption = caption.textContent ?? "";
+    const tips = [...caption.parentElement!.querySelectorAll("label span[title]")].map((el) => el.getAttribute("title") ?? "");
+    expect(tips.length).toBeGreaterThan(0);
+    tips.forEach((t, i) => { strings[`countTip${i}`] = t; });
+
+    for (const [where, s] of Object.entries(strings)) {
+      expect(s, where).not.toBe("");
+      for (const l of LABELS) expect(s.toLowerCase(), `${where}: "${s}"`).not.toContain(l.toLowerCase());
+      expect(s.toLowerCase(), where).not.toContain("whole");
+    }
+    // What each one says instead.
+    expect(strings.countsCaption).toBe("Node types · in this view / on the full graph");
+    expect(tips).toContain("1 in this view, 2 on the full graph");     // Equipment: P-101 of P-101, P-102
+    expect(strings.insightsTitle).toBe("Orphans, hubs and bridges — counted on the full graph, whatever this view shows");
+    expect(strings.insightsBasis).toContain("Counted on the full graph, whatever this view shows.");
+    expect(strings.focusChipExit).toBe("Leave focus — back out of the neighbourhood; the lens stays");
+    expect(strings.peekGoOut).toBe("Back out of the neighbourhood; the lens stays");
+    // Leaving focus keeps the lens: on Governing paper it stays Governing paper.
+    await click(lensButtons().find((b) => b.textContent === "Governing paper"));
+    await click(exit);
+    expect(window.location.search).not.toContain("local=");
+    expect(window.location.search).toContain("lens=equipment-docs");
   });
 });
 
@@ -346,7 +453,7 @@ describe("GPV-11 — the view is in the URL, and Back to graph restores it", () 
     expect(text()).toContain("2 hops");
     expect(window.location.search).toContain("local=asset%3Aa1");
     expect(window.location.search).toContain("depth=2");
-    await click(btn("Leave focus — back to the whole map"));
+    await click(btn("Leave focus — back out of the neighbourhood; the lens stays"));
     expect(window.location.search).not.toContain("local=");
   });
 
@@ -355,9 +462,9 @@ describe("GPV-11 — the view is in the URL, and Back to graph restores it", () 
     await render(page());
     expect(last().settings.hiddenTypes).toEqual(["plot", "plant"]);
     const lensGroup = host.querySelector('[role="group"][aria-label="Lenses"]')!;
-    // The filter is a variation of Everything — the lens says so.
-    const all = [...lensGroup.querySelectorAll("button")].find((b) => b.textContent?.includes("Everything"));
-    expect(all?.textContent).toBe("≈ Everything");
+    // The filter is a variation of Whole map — the lens says so.
+    const all = [...lensGroup.querySelectorAll("button")].find((b) => b.textContent?.includes("Whole map"));
+    expect(all?.textContent).toBe("≈ Whole map");
     await click(all);
     expect(last().settings.hiddenTypes).toEqual([]);
     await click(btn("Back to your filter"));
@@ -393,19 +500,19 @@ describe("GM-1 / GM-6 / GM-11 — insights and degrees say what they count", () 
     const before = host.querySelector('[data-testid="orphan-badge"]')?.textContent;
     expect(before).toBe("1");                 // LOOSE-2: only filed in a library
     const lensGroup = host.querySelector('[role="group"][aria-label="Lenses"]')!;
-    await click([...lensGroup.querySelectorAll("button")].find((b) => b.textContent === "Equipment ↔ Documents"));
+    await click([...lensGroup.querySelectorAll("button")].find((b) => b.textContent === "Governing paper"));
     // P-102 is tied only to its unit, which this lens hides — not an orphan.
     expect(host.querySelector('[data-testid="orphan-badge"]')?.textContent).toBe(before);
     await click(btn(/^\s*Insights/));
     const basis = host.querySelector('[data-testid="insights-basis"]')?.textContent ?? "";
-    expect(basis).toContain("Counted on the whole map");
+    expect(basis).toContain("Counted on the full graph");
     expect(basis).toContain("3 more are outside your access");
   });
 
   it("the peek labels the whole-map degree, the library-filing part and the in-view count", async () => {
     nav.params = new URLSearchParams("focus=d1");
     await render(page());
-    expect(host.querySelector('[data-testid="peek-degree"]')?.textContent).toBe("Document · 3 links on the map (1 library filing) · 1 link in this view");
+    expect(host.querySelector('[data-testid="peek-degree"]')?.textContent).toBe("Document · 3 links on the full graph (1 library filing) · 1 link in this view");
   });
 });
 
@@ -542,7 +649,7 @@ describe("DEC-88 item 3 — a URL's filter is never saved by an unrelated change
     nav.params = new URLSearchParams("lens=documents");
     await render(page());
     const lensGroup = host.querySelector('[role="group"][aria-label="Lenses"]')!;
-    await click([...lensGroup.querySelectorAll("button")].find((b) => b.textContent === "Equipment ↔ Documents"));
+    await click([...lensGroup.querySelectorAll("button")].find((b) => b.textContent === "Governing paper"));
     const stored = JSON.parse(window.localStorage.getItem(settingsKey("o1"))!);
     expect(stored.hiddenTypes).toEqual([...lensByKey("equipment-docs")!.hidden]);
   });
@@ -562,10 +669,10 @@ describe("GPV-5 / GPV-2 — after a scope change the URL's node is honoured on t
     g.scopedGraph = scoped();
     nav.params = new URLSearchParams("select=cbunit%3A20");
     await render(page());
-    expect(host.querySelector('[data-testid="peek-degree"]')?.textContent).toContain("3 links on the map");
+    expect(host.querySelector('[data-testid="peek-degree"]')?.textContent).toContain("3 links on the full graph");
     await click(btn("Scope the map to this unit"));
     expect(g.build[g.build.length - 1]).toEqual(["o1", { scope: { kind: "unit", code: "20" } }]);
-    expect(host.querySelector('[data-testid="peek-degree"]')?.textContent).toContain("7 links on the map");
+    expect(host.querySelector('[data-testid="peek-degree"]')?.textContent).toContain("7 links on the full graph");
   });
 
   it("an outside link that changes the scope selects its node once the scoped map lands — never a false 'not on this map'", async () => {
@@ -868,7 +975,7 @@ describe("GM-11 — the peek's numbers say what each counts (fix pass 3)", () =>
     g.proposals = { pairs: [{ documentId: "d1", targetDocumentId: "d2", proposer: "tag", nodeA: "doc:d1", nodeB: "doc:d2" }], total: 1, capped: false, error: null };
     nav.params = new URLSearchParams("focus=d1");
     await render(page());
-    expect(host.querySelector('[data-testid="peek-degree"]')?.textContent).toBe("Document · 3 links on the map (1 library filing) · 1 link in this view");
+    expect(host.querySelector('[data-testid="peek-degree"]')?.textContent).toBe("Document · 3 links on the full graph (1 library filing) · 1 link in this view");
     expect(host.querySelector('[data-testid="peek-connected"]')?.textContent).toBe("Connected in this view · 2 nodes (1 only by a proposed link)");
   });
 

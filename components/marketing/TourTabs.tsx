@@ -28,7 +28,7 @@ const CAPTIONS: Record<TabKey, string> = {
   library: "Every drawing and procedure, one current revision each, filterable by collection, status, and age.",
   ask: "Ask your document library a question in plain language — the answer is cited to the page, with highlighted proof one click away.",
   ticket: "Requests route through review, drafting, and engineer approval. The system enforces who is allowed to sign.",
-  graph: "Documents, equipment, and operating areas as one living map — switch lenses to see process flow, equipment, or paper.",
+  graph: "Documents, equipment, and operating areas as one living map — switch lenses: Whole map, Process layout, Governing paper, Records & filing.",
   assets: "Tap an equipment tag anywhere it appears and get the photo record of the physical thing.",
   locking: "Projects scope people to their work; checkout locks stop two drafters saving over each other.",
 };
@@ -304,7 +304,7 @@ function GraphMockup() {
     <MockupFrame url="app.manufacturing-os.com/graph">
       <div className="bg-slate-950 relative">
         <div className="flex flex-wrap gap-1.5 px-3 pt-3">
-          {["Everything", "Process flow", "Equipment", "Documents"].map((l, i) => (
+          {["Whole map", "Process layout", "Governing paper", "Records & filing"].map((l, i) => (
             <span key={l} className={`px-2.5 py-1 rounded-lg text-[10px] font-black ${i === 1 ? "bg-cyan-500 text-slate-950" : "bg-white/10 text-white/70"}`}>{l}</span>
           ))}
         </div>
