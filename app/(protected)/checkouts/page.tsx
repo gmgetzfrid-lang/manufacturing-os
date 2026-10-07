@@ -19,7 +19,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import { useRole } from "@/components/providers/RoleContext";
 import { listAllActiveCheckouts, autoReleaseExpiredAdHoc } from "@/lib/projects";
 import { findCheckoutOverlaps, type ConsolidationOverlap } from "@/lib/consolidation";
-import { notifyMany } from "@/lib/inAppNotifications";
+import { nudgeState, nudgeTargets, recentNudges, sendCheckoutNudge } from "@/lib/checkoutNudge";
 import { useToast } from "@/components/providers/ToastProvider";
 import StaleCheckoutBanner from "@/components/projects/StaleCheckoutBanner";
 import EditOverlapBanner from "@/components/documents/EditOverlapBanner";
@@ -51,6 +51,11 @@ export default function CheckoutsPage() {
   // same-project overlaps are covered by other UIs.
   const [overlaps, setOverlaps] = useState<ConsolidationOverlap[]>([]);
   const [consolidationOpen, setConsolidationOpen] = useState(true);
+  // OS-6 (notifications N9): when this member last nudged each (person,
+  // document) inside the 24-hour cooldown — read from the nudges they sent
+  // (lib/checkoutNudge.ts), so "Heads-up sent" survives a refresh and holds on
+  // another device. null = not known (before 20261191: the card's own state).
+  const [nudgedAt, setNudgedAt] = useState<Map<string, number> | null>(null);
 
   const [view, setView] = useState<"grouped" | "flat">("grouped");
   const [search, setSearch] = useState("");
@@ -121,6 +126,10 @@ export default function CheckoutsPage() {
       try {
         const ov = await findCheckoutOverlaps({ activeCheckouts: sessions });
         setOverlaps(ov);
+        if (ov.length > 0) {
+          const { known, sentAt } = await recentNudges(activeOrgId);
+          setNudgedAt(known ? sentAt : null);
+        }
       } catch {
         // Non-fatal — the consolidation signal is supplementary.
         setOverlaps([]);
@@ -249,31 +258,41 @@ export default function CheckoutsPage() {
             checkouts={rows}
             isOpen={consolidationOpen}
             onToggle={() => setConsolidationOpen((v) => !v)}
+            nudgedAt={nudgedAt}
+            uid={uid ?? null}
             onNudge={async (overlap, involved) => {
-              if (!activeOrgId) return;
-              const recipients = Array.from(new Set(
-                involved.map((c) => c.userId).filter((u) => u && u !== uid),
-              ));
-              if (recipients.length === 0) {
+              if (!activeOrgId || !uid) return false;
+              const targets = nudgeTargets(involved, uid);
+              if (targets.length === 0) {
                 showToast({ type: "info", title: "Nobody to notify", message: "You're the only person on this overlap." });
-                return;
+                return false;
               }
               const what =
                 overlap.kind === "asset"
                   ? `asset ${overlap.assetTag}`
                   : `${overlap.level === "system" ? "system" : "unit"} ${overlap.scopeName}`;
               const names = involved.map((c) => c.userName || c.userId.slice(0, 8)).join(", ");
-              await notifyMany({
+              // OS-6: the writer refuses a second nudge to the same person
+              // about the same document inside 24 hours, and says so.
+              const out = await sendCheckoutNudge({
                 orgId: activeOrgId,
-                userIds: recipients,
-                actorUserId: uid ?? undefined,
-                kind: "checkout_conflict",
-                title: "Coordinate — overlapping checkout",
-                body: `${userEmail?.split("@")[0] ?? "A colleague"} flagged that you're both working on ${what} (${names}). Sync up before issuing so changes don't collide.`,
-                link: "/checkouts",
-                resourceType: "checkout",
+                actorUserId: uid,
+                actorName: userEmail?.split("@")[0] ?? "A colleague",
+                overlapKey: overlapIdentity(overlap),
+                what, names, targets,
               });
-              showToast({ type: "success", title: "Heads-up sent", message: `Notified ${recipients.length} ${recipients.length === 1 ? "person" : "people"} to coordinate on ${what}.` });
+              if (out.refused) {
+                showToast({ type: "info", title: "Already nudged", message: out.refused });
+              } else {
+                showToast({
+                  type: "success", title: "Heads-up sent",
+                  message: `Notified ${out.sent} ${out.sent === 1 ? "person" : "people"} to coordinate on ${what}.` +
+                    (out.skipped.length > 0 ? ` ${out.skipped.length} already nudged in the last day ${out.skipped.length === 1 ? "was" : "were"} left out.` : ""),
+                });
+              }
+              const { known, sentAt } = await recentNudges(activeOrgId);
+              if (known) setNudgedAt(sentAt);
+              return true;
             }}
           />
         )}
@@ -439,14 +458,24 @@ function formatRelative(ts: Timestamp): string {
 // inside one collapsible panel — visually contained so the queue
 // below isn't pushed off-screen.
 
+/** One overlap's identity — the asset or the scope it is about — so a card
+ *  keeps its own state when the list reorders (an index key mis-carried a
+ *  "sent" onto another overlap — OS-6's verifier note). */
+function overlapIdentity(o: ConsolidationOverlap): string {
+  return o.kind === "asset" ? `asset:${o.assetId}` : `scope:${o.level}:${o.scopeId}`;
+}
+
 function ConsolidationPanel({
-  overlaps, checkouts, isOpen, onToggle, onNudge,
+  overlaps, checkouts, isOpen, onToggle, onNudge, nudgedAt, uid,
 }: {
   overlaps: ConsolidationOverlap[];
   checkouts: CheckoutWithContext[];
   isOpen: boolean;
   onToggle: () => void;
-  onNudge: (overlap: ConsolidationOverlap, involved: CheckoutWithContext[]) => Promise<void>;
+  /** Answers whether a heads-up went out (or was refused as already sent). */
+  onNudge: (overlap: ConsolidationOverlap, involved: CheckoutWithContext[]) => Promise<boolean>;
+  nudgedAt: Map<string, number> | null;
+  uid: string | null;
 }) {
   const assetCount = overlaps.filter((o) => o.kind === "asset").length;
   const scopeCount = overlaps.filter((o) => o.kind === "scope").length;
@@ -478,8 +507,8 @@ function ConsolidationPanel({
             see who&apos;s working on what.
           </div>
           <div className="space-y-2">
-            {overlaps.map((o, i) => (
-              <OverlapCard key={i} overlap={o} checkoutById={checkoutById} onNudge={onNudge} />
+            {overlaps.map((o) => (
+              <OverlapCard key={overlapIdentity(o)} overlap={o} checkoutById={checkoutById} onNudge={onNudge} nudgedAt={nudgedAt} uid={uid} />
             ))}
           </div>
         </div>
@@ -489,22 +518,29 @@ function ConsolidationPanel({
 }
 
 function OverlapCard({
-  overlap, checkoutById, onNudge,
+  overlap, checkoutById, onNudge, nudgedAt, uid,
 }: {
   overlap: ConsolidationOverlap;
   checkoutById: Map<string, CheckoutWithContext>;
-  onNudge: (overlap: ConsolidationOverlap, involved: CheckoutWithContext[]) => Promise<void>;
+  onNudge: (overlap: ConsolidationOverlap, involved: CheckoutWithContext[]) => Promise<boolean>;
+  nudgedAt: Map<string, number> | null;
+  uid: string | null;
 }) {
   const [nudging, setNudging] = React.useState(false);
-  const [nudged, setNudged] = React.useState(false);
+  // This tab's own memory — the whole state before 20261191; a cache of the
+  // server's answer after it.
+  const [nudgedHere, setNudgedHere] = React.useState(false);
   const involved = overlap.checkoutIds
     .map((id) => checkoutById.get(id))
     .filter((c): c is CheckoutWithContext => !!c);
+  // OS-6: "Heads-up sent" from the nudges this member sent, when known.
+  const sentByServer = nudgedAt ? nudgeState(nudgeTargets(involved, uid), nudgedAt).allSent : false;
+  const nudged = nudgedHere || sentByServer;
 
   const doNudge = async () => {
     if (nudging || nudged) return;
     setNudging(true);
-    try { await onNudge(overlap, involved); setNudged(true); }
+    try { if (await onNudge(overlap, involved)) setNudgedHere(true); }
     finally { setNudging(false); }
   };
 

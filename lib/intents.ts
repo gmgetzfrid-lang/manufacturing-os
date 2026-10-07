@@ -147,6 +147,31 @@ export async function recordIntent(input: RecordIntentInput): Promise<void> {
       base = (data as { current_version_id?: string | null } | null)?.current_version_id ?? null;
     }
     const now = Date.now();
+    // TAX-8 dw3 (notifications N9): a re-declared EXPIRED intent is a new
+    // intent, not the old one revived. The upsert below keeps created_at on
+    // its conflict key, so a lapsed row (kept until the daily prune) would
+    // hand the new intent its old start — and an edit overlap that re-forms
+    // between the same people would keep its old formed time, so an old
+    // dismissal or "Heads-up sent" would cover an episode nobody was told
+    // about (components/documents/EditOverlapBanner.tsx). Clear the caller's
+    // own lapsed row for this key first; the upsert then inserts a fresh row.
+    // A live intent is untouched (renewed in place, its start kept). Zero
+    // rows is the usual answer (nothing had lapsed), never a refusal.
+    const { data: lapsed, error: lapsedErr } = await supabase
+      .from("document_intents")
+      .delete()
+      .eq("document_id", input.documentId)
+      .eq("user_id", input.userId)
+      .eq("kind", input.kind)
+      .eq("source", input.source)
+      .lte("expires_at", new Date(now).toISOString())
+      .select("id");
+    if (lapsedErr) {
+      if (isMissingIntentSchema(lapsedErr)) { intentSchemaMissing = true; return; }
+      console.warn("[intents] a lapsed intent could not be cleared — the renewed one keeps its old start (non-blocking)", lapsedErr.message);
+    } else if (((lapsed as unknown[] | null) ?? []).length > 0) {
+      // A lapsed row was cleared: the intent below starts now.
+    }
     const { error } = await supabase
       .from("document_intents")
       .upsert(

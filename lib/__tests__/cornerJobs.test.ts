@@ -701,35 +701,49 @@ describe("TAX-8 (review fix) — 'Heads-up sent' counts only a heads-up sent aft
   });
 });
 
-describe("TAX-8 (N7 third review) — a re-formed overlap is new only once its lapsed intent rows are pruned", () => {
-  it("recordIntent re-upserts a lapsed row without touching created_at, so the re-formed overlap keeps its formed time and an old mark still covers it", () => {
-    // Pinned as it is (lib/intents is not this package's file): the upsert
-    // refreshes refreshed_at / expires_at on the conflict key and never
-    // sends created_at, so the row keeps the time it was first declared.
+describe("TAX-8 (N7 third review; N9 done-when 3) — a re-formed overlap is a new one: recordIntent replaces an EXPIRED intent row", () => {
+  it("recordIntent clears the caller's own lapsed row for the key, then upserts without sending created_at — a live intent keeps its start, a lapsed one starts again", () => {
+    // N7 pinned the gap as it was: the upsert keeps created_at on its
+    // conflict key, so a lapsed row revived by a re-declaration kept its old
+    // start until the daily prune. N9 (lib/intents.ts, TAX-8 dw3) closes it:
+    // the caller's own row for (document, user, kind, source) whose
+    // expires_at has passed is deleted first, so the upsert inserts a fresh
+    // row with a fresh created_at; a live row is untouched by the delete and
+    // renewed in place by the upsert, its start kept.
     const intents = readFileSync(resolve("lib/intents.ts"), "utf8");
-    const upsert = intents.slice(intents.indexOf('.from("document_intents")\n      .upsert('), intents.indexOf('{ onConflict: "document_id,user_id,kind,source" }'));
-    expect(upsert.startsWith('.from("document_intents")')).toBe(true);
+    const start = intents.indexOf("export async function recordIntent(");
+    const body = intents.slice(start, intents.indexOf("\n}\n", start));
+    const del = body.indexOf('.from("document_intents")\n      .delete()');
+    const up = body.indexOf('.from("document_intents")\n      .upsert(');
+    expect(del).toBeGreaterThan(0);
+    expect(up).toBeGreaterThan(del);
+    const clear = body.slice(del, up);
+    for (const term of [
+      '.eq("document_id", input.documentId)', '.eq("user_id", input.userId)', '.eq("kind", input.kind)',
+      '.eq("source", input.source)', '.lte("expires_at", new Date(now).toISOString())',
+    ]) expect(clear, term).toContain(term);
+    const upsert = body.slice(up, body.indexOf('{ onConflict: "document_id,user_id,kind,source" }'));
     expect(upsert).toContain("user_id: input.userId,");
     expect(upsert).toContain("refreshed_at: new Date(now).toISOString(),");
     expect(upsert).toContain("expires_at: computeIntentExpiry(input.kind, input.source, now),");
     expect(upsert).not.toContain("created_at");
-    // The prune that makes a later overlap a new one: the maintenance cron
-    // deletes expired rows (vercel.json: daily).
+    // The prune stays (the maintenance cron deletes expired rows daily); it
+    // is no longer what makes a re-formed overlap new.
     const cron = readFileSync(resolve("app/api/cron/maintenance/route.ts"), "utf8");
     expect(cron).toMatch(/\.from\("document_intents"\)\s*\.delete\(\)\s*\.lt\("expires_at"/);
     // So: B dismissed the overlap (stamped with its formed time F); B's
-    // intent lapsed; B re-declared before the prune — B's row still says F.
+    // intent lapsed; B re-declares — B's row is a new one with a new
+    // created_at, the overlap forms later, and the old mark no longer covers it.
     const F = "2026-09-20T09:00:00.000Z";
-    const reformed = [{ userId: "a", createdAt: "2026-09-19T08:00:00.000Z" }, { userId: "b", createdAt: F }];
-    const dismissal = overlapMark(overlapKey("d1", reformed), overlapMarkAt(Date.parse(F)));
-    expect(latestOverlapMark([dismissal], overlapKey("d1", reformed)) >= overlapFormedAt(reformed)).toBe(true);
-    // After the prune B's re-declaration is a new row with a new created_at:
-    // the overlap forms later and the old mark no longer covers it.
-    const fresh = [{ userId: "a", createdAt: "2026-09-19T08:00:00.000Z" }, { userId: "b", createdAt: "2026-09-22T10:00:00.000Z" }];
-    expect(latestOverlapMark([dismissal], overlapKey("d1", fresh)) >= overlapFormedAt(fresh)).toBe(false);
-    // The banner's header says exactly this (it used to claim the opposite).
+    const before = [{ userId: "a", createdAt: "2026-09-19T08:00:00.000Z" }, { userId: "b", createdAt: F }];
+    const dismissal = overlapMark(overlapKey("d1", before), overlapMarkAt(Date.parse(F)));
+    expect(latestOverlapMark([dismissal], overlapKey("d1", before)) >= overlapFormedAt(before)).toBe(true);
+    const reformed = [{ userId: "a", createdAt: "2026-09-19T08:00:00.000Z" }, { userId: "b", createdAt: "2026-09-22T10:00:00.000Z" }];
+    expect(latestOverlapMark([dismissal], overlapKey("d1", reformed)) >= overlapFormedAt(reformed)).toBe(false);
+    // The banner's header says exactly this (it used to say the old row was revived).
     const banner = readFileSync(resolve("components/documents/EditOverlapBanner.tsx"), "utf8");
-    expect(banner).toContain("but only once the lapsed\n//     intent rows are gone");
+    expect(banner).toContain("a re-declared EXPIRED intent gets a fresh row, so the\n//     overlap re-forms with a new formed time");
+    expect(banner).not.toContain("but only once the lapsed\n//     intent rows are gone");
   });
 });
 
