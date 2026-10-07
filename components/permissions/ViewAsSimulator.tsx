@@ -127,11 +127,13 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
     let alive = true;
     void (async () => {
       if (!simProject) { if (alive) { setProjectMembers([]); setProjectErr(null); } return; }
-      const { data, error } = await supabase.from("project_members").select("user_id").eq("project_id", simProject);
-      if (!alive) return;
-      if (error) { setProjectMembers([]); setProjectErr(error.message); return; }
-      setProjectErr(null);
-      setProjectMembers((((data ?? []) as Array<{ user_id: string }>)).map((r) => String(r.user_id)));
+      try {
+        const { data, error } = await supabase.from("project_members").select("user_id").eq("project_id", simProject);
+        if (!alive) return;
+        if (error) { setProjectMembers([]); setProjectErr(error.message); return; }
+        setProjectErr(null);
+        setProjectMembers((((data ?? []) as Array<{ user_id: string }>)).map((r) => String(r.user_id)));
+      } catch (e) { if (alive) { setProjectMembers([]); setProjectErr((e as Error).message || "Project members could not be read"); } }
     })();
     return () => { alive = false; };
   }, [simProject]);
