@@ -17,8 +17,8 @@
       "LOW": 24
     },
     "by_status": {
-      "RESOLVED": 50,
-      "OPEN": 11,
+      "RESOLVED": 51,
+      "OPEN": 10,
       "WONTFIX": 1
     }
   },
@@ -1458,7 +1458,7 @@
       "id": "VFY-11",
       "title": "An empty work package scans full-screen red \"PACK IS STALE — 0 of 0 sheets changed since this pack was printed\"",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

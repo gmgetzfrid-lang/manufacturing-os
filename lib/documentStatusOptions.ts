@@ -1,6 +1,6 @@
 // lib/documentStatusOptions.ts — the statuses the document editors OFFER for
-// a new choice (public-surfaces VFY-20; DEC-77, awaiting the user's
-// ratification).
+// a new choice (public-surfaces VFY-20; DEC-77, ratified by the integrator
+// under the user's delegation, 2026-10-07 — DEC-90).
 //
 // "IFC" is not a document status: DocumentStatus does not list it, the field
 // pack's print gate (lib/docPack.ts filterPackDocs) and the verify

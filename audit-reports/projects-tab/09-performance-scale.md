@@ -8,7 +8,7 @@ Query counts are exact (counted from `supabase.from(...)` call sites along each
 path). Byte and timing figures are estimates derived from row shapes, not
 measured against a live instance.
 
-**11 findings** — 2 CRITICAL, 6 HIGH, 3 MEDIUM.
+**11 findings** — 2 CRITICAL, 6 HIGH, 3 MEDIUM (as first graded) — and `PERF-12` (LOW), opened 2026-10-07 by the integrator (DEC-90), from `PERF-9`'s measured numbers.
 
 > Line numbers drift — **match on the quoted code.** See
 > [`../README.md`](../README.md) for the protocol.
@@ -51,8 +51,8 @@ more times.
 ## PERF-1 · The companies registry fires over eleven hundred queries per page view, with no cache, pagination or abort
 
 - **Severity:** HIGH
-- **Status:** OPEN
-- **Assigned:** the user — rule on 'Back does not re-run it'; no code is owed until then — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
+- **Status:** RESOLVED
+- **Assigned:** the user — rule on 'Back does not re-run it'; no code is owed until then — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`). *Ratified (GAP-409 wins) by the integrator under the user's delegation, 2026-10-07 (DEC-90): company status (do-not-use, inactive) drives award decisions, so stale cached data is the hazard, and Back re-runs one bounded gather of about 11 queries; `PERF-1` done-when 3 is superseded by the integrator's ruling under GAP-409.*
 - **Verification:** CONFIRMED (query counts exact; timing estimated)
 - **Blast radius:** performance / availability
 - **Locations:**
@@ -106,6 +106,15 @@ company restarts the whole sweep.
 - Back does not re-run it — **not done, by decision**: GAP-409 says "do not fix this with a client-side cache; stale company data drives award decisions", and the brief pins "one server-side batched gather per page, no cache". Back re-runs one ~11-query gather for the visible page. The finding stays open on this item until the user rules on it.
 
 **Scope / residual.** The detail page re-gathers its one company through the same function (a single-id batch). The RPC alternative (`company_profiles(org_id)`) was not needed: the census stays under 20. Migrations: `20261095_prj_roundG_registry_indexes.sql`, `20261096_prj_roundG_cost_doc_links_and_extent.sql` (DEC-30: applied by hand; the gather runs without them — the party-keyed reads degrade to the pre-migration shape, missing columns read as unknown).
+
+**Resolution (2026-10-07, by the integrator under the user's delegation, DEC-90).** *Ratified (GAP-409 wins) by the integrator under the user's delegation, 2026-10-07 (DEC-90): company status (do-not-use, inactive) drives award decisions, so stale cached data is the hazard, and Back re-runs one bounded gather of about 11 queries; `PERF-1` done-when 3 is superseded by the integrator's ruling under GAP-409.*
+
+**Done-when.**
+1. ✓ Met as written: a `/companies` visit issues under 200 queries (1 list + 11–13 gather for a page, pinned).
+2. ✓ Met as written: navigating away stops the sweep.
+3. **Superseded by the integrator's ruling under GAP-409, not met.** As written: "Back does not re-run it" — Back re-runs one ~11-query gather for the visible page. This record allows the supersession: it records the item as "not done, by decision: GAP-409 says 'do not fix this with a client-side cache; stale company data drives award decisions' … The finding stays open on this item until the user rules on it" — and this is that ruling.
+
+No code changed. GAP-409's note (`90-gap-register.md`) is updated; `userHeld.PERF-1` is removed.
 
 ---
 
@@ -580,9 +589,9 @@ the project row lands rather than blocking on everything.
 ## PERF-9 · A 571 KB chunk containing a zip library ships to everyone who opens any project
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J12 SERVER REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
-- **Assigned:** the user — a ruling — by the integrator, 2026-10-07, at the J12 merge (DEC-31; `userHeld` in `audit-reports/fleet-plans/projects-joint.json`). Done-when 2 measures either the route's own JavaScript, in which case the 474,342 bytes recorded below close it, or the whole route including the app-wide shell (~618 KB, loaded on every route). In the second case it needs an owner to slim the shell, and the integrator assigns one after the ruling.
+- **Assigned:** the user — a ruling — by the integrator, 2026-10-07, at the J12 merge (DEC-31; `userHeld` in `audit-reports/fleet-plans/projects-joint.json`). Done-when 2 measures either the route's own JavaScript, in which case the 474,342 bytes recorded below close it, or the whole route including the app-wide shell (~618 KB, loaded on every route). In the second case it needs an owner to slim the shell, and the integrator assigns one after the ruling. *Ratified (split) by the integrator under the user's delegation, 2026-10-07 (DEC-90): a budget belongs to the code that causes it, while performance-budget practice tracks total route JavaScript, so `PERF-9` done-when 2 measures the Projects tree's own JavaScript (474,342 bytes, under 700 KB) and the app-wide shell's ~618 KB on every route is opened as `PERF-12` (projects-joint J18).*
 - **Verification:** CONFIRMED (verified against the built output)
 - **Blast radius:** performance
 - **Locations:**
@@ -634,6 +643,14 @@ in `next/dynamic`.
 - ✗ Route JS is under 700 KB — **not met**: 1,092,416 bytes of client JavaScript for `/projects/[id]` (from 1,659,239). The Projects tree's own share is now 474,342 bytes; the remaining ~618 KB is the app-wide shell.
 
 **Scope / residual.** What is left is the app-wide shell (~618 KB, loaded on every route: the root and `(protected)` layouts and what they import). Slimming it is outside the Projects tree and no package owns it — owner: none yet. Or the owner rules that done-when 2 measures the route's own JavaScript, in which case the 474,342 bytes above close it; until one of the two, the record stays OPEN. Opening a heavy tab now fetches its chunk on first open (a spinner shows).
+
+**Resolution (2026-10-07, by the integrator under the user's delegation, DEC-90).** *Ratified (split) by the integrator under the user's delegation, 2026-10-07 (DEC-90): a budget belongs to the code that causes it, while performance-budget practice tracks total route JavaScript, so `PERF-9` done-when 2 measures the Projects tree's own JavaScript (474,342 bytes, under 700 KB) and the app-wide shell's ~618 KB on every route is opened as `PERF-12` (projects-joint J18).*
+
+**Done-when.**
+1. ✓ Met as written: PizZip is not in the project route's initial chunks (by the import graph and by the built chunks).
+2. ✓ On the ruled measure: "Route JS is under 700 KB" measures the Projects tree's own JavaScript, 474,342 bytes (gzip 144,895) in J12's built manifest. The other reading this record measured — the route's total client JavaScript, 1,092,416 bytes, ~618 KB of it the app-wide shell — is superseded by the ruling, as this record allows: "Done-when 2 measures either the route's own JavaScript, in which case the 474,342 bytes recorded below close it, or the whole route including the app-wide shell" (its second Assigned line), and "Or the owner rules that done-when 2 measures the route's own JavaScript, in which case the 474,342 bytes above close it" (its Scope).
+
+The total is not dropped: the shell's ~618 KB on every route is opened as `PERF-12` (LOW, below), owned by projects-joint J18 APP SHELL BUDGET, with a total-route budget as its done-when. No code changed; `userHeld.PERF-9` is removed.
 
 ---
 
@@ -748,6 +765,36 @@ that, not after.
 
 ---
 
+## PERF-12 · The app-wide shell ships ~618 KB of JavaScript to every route
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** projects-joint J18 APP SHELL BUDGET — by the integrator, 2026-10-07 (DEC-31; DEC-90; fleet plan `audit-reports/fleet-plans/projects-joint.json`, J18).
+- **Verification:** CONFIRMED from PERF-9's measured bundle numbers
+- **Locations:**
+  - `app/layout.tsx:1-4` — the root layout's imports (`globals.css`, `ThemeProvider`, `ServiceWorkerManager`)
+  - `app/(protected)/layout.tsx:3-27` — the `(protected)` layout imports every provider, host and indicator the shell mounts, statically
+  - `app/error.tsx`, `app/loading.tsx`, `app/(protected)/error.tsx` — the error and loading boundaries every route loads
+- **Independently verified:** — opened 2026-10-07 by the integrator; not yet challenged by a second party.
+
+**Mechanism.** A route's client JavaScript is the app-wide shell plus the route's own chunks. `PERF-9`'s measured build (projects-joint J12, commit `329ba59`: `next build`, then `entryJSFiles` from `.next/server/app/(protected)/projects/[id]/page_client-reference-manifest.js`) put `/projects/[id]` at **1,092,416 bytes** of client JavaScript. The route's own chunks are **474,342 bytes** (gzip 144,895; largest chunk 99,707). The rest, about **618 KB** (1,092,416 − 474,342 = 618,074 bytes), is the shell every route loads: the root and `(protected)` layouts, the error and loading boundaries, and `rootMainFiles`. The `(protected)` layout imports its providers, hosts and indicators statically (`app/(protected)/layout.tsx:6-25`: `Sidebar`, `TopBar`, `GlobalCommandPalette`, `RoleProvider`, `OrgBrandingProvider`, `SubscriptionProvider`, `ToastProvider`, `NotificationListener`, `UploadIndicator`, `CornerDock` / `CentreDock`, `BackupIndicator`, `KnowledgeIndexIndicator`, `TrialBanner`, `SubscriptionGate`, `RelationshipGraphHost`, `BackToGraphChip`, `SignatureCaptureHost`, `DialogHost`, `NotificationCenterProvider`, `UpdatePill`), so each of them, and what it imports, is in every route's initial download whether or not the page uses it. No budget covers the total: `PERF-9`'s done-when 2 was ruled to measure the route's own JavaScript (DEC-90 A24), and nothing measures the shell.
+
+**Failure scenario.** A field user on a tablet over a weak site connection opens any page — one document, the requests queue, a project — and downloads the same ~618 KB of shell JavaScript before the page's own code. On `/projects/[id]` the shell is 57% of the 1,092,416 bytes, and the total is well over the 700 KB a route was meant to stay under. A change that adds a provider or a host to the shell grows every route at once, and no check notices.
+
+**Evidence.**
+
+```
+PERF-9 (this report), J12's built manifest: total client JavaScript of /projects/[id] 1,659,239 bytes before → 1,092,416 bytes after; the route's OWN chunks 1,051,421 → 474,342 bytes (gzip 291,772 → 144,895; largest chunk 603,888 → 99,707); the app-wide shell every route loads (the root and (protected) layouts, the error and loading boundaries, rootMainFiles) ~618 KB.
+app/(protected)/layout.tsx:6-25 — import Sidebar from "@/components/navigation/Sidebar"; import TopBar …; import GlobalCommandPalette …; … import { NotificationCenterProvider, useNotificationCenter } from "@/components/notifications/NotificationCenter"; import UpdatePill from "@/components/system/UpdatePill";
+```
+
+**Done when.**
+
+- [ ] A total-route JavaScript budget (the shell plus the route's own chunks) is stated and checked from a built manifest, at least for `/projects/[id]`, so a change that pushes a route over it is caught
+- [ ] The shell's imports that a route does not need on first paint are split or lazy (`next/dynamic`, or an import on use — for example the command palette, the relationship-graph host, the signature-capture host and the background indicators), and the shell's measured share of every route falls below ~618 KB
+
+---
+
 ## Query limits — inconsistent across four readers of the same table
 
 Worth fixing as one piece of work rather than four findings.
@@ -783,7 +830,7 @@ everywhere; add an explicit `order` to the snapshot query at minimum. Time-bound
 
 | ID | Severity | Status |
 |---|---|---|
-| PERF-1 | CRITICAL | OPEN |
+| PERF-1 | CRITICAL | RESOLVED |
 | PERF-2 | CRITICAL | RESOLVED |
 | PERF-3 | HIGH | OPEN |
 | PERF-4 | HIGH | OPEN |
@@ -791,6 +838,7 @@ everywhere; add an explicit `order` to the snapshot query at minimum. Time-bound
 | PERF-6 | HIGH | OPEN |
 | PERF-7 | HIGH | RESOLVED |
 | PERF-8 | HIGH | RESOLVED |
-| PERF-9 | MEDIUM | OPEN |
+| PERF-9 | MEDIUM | RESOLVED |
 | PERF-10 | LOW | OPEN |
 | PERF-11 | MEDIUM | RESOLVED |
+| PERF-12 | LOW | OPEN |

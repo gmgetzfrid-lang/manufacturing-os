@@ -17,8 +17,8 @@
       "LOW": 9
     },
     "by_status": {
-      "OPEN": 42,
-      "RESOLVED": 17
+      "OPEN": 41,
+      "RESOLVED": 18
     }
   },
   "status_vocabulary": [
@@ -561,7 +561,7 @@
       "id": "BKP-8",
       "title": "The export endpoints run as service-role for Manager and DocCtrl, handing them every ACL-restricted document and every user's private scratchpad, plus unstamped presigned URLs with no download_audits",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

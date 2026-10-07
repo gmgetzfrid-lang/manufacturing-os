@@ -141,8 +141,9 @@ export function shouldSendForEvent(
  *  toggle. Exported once, for queueEmail's fallback and the digest (N6).
  *  A recall or a PSM alert passes all three (isPreferenceExempt): the plan's
  *  "un-mutable regardless". GAP-203 acceptance 2's stricter reading — the
- *  master switch stops every email, these included — is DEC-74 §9's
- *  item for the integrator to ratify. */
+ *  master switch stops every email, these included — is not taken: DEC-74
+ *  §9 was ratified by the integrator under the user's delegation,
+ *  2026-10-07 (DEC-90). */
 export function emailAllowedByPrefs(prefs: Record<string, unknown> | null, eventType: string): boolean {
   if (isPreferenceExempt(eventType)) return true;
   if (prefs?.email_enabled === false) return false;

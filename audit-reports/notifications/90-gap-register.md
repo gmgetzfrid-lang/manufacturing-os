@@ -289,7 +289,9 @@ The three:
 1. A user with no row saves the DEFAULTS object successfully. A test round-trips
    it.
 2. A user who sets `email_enabled = false` receives no email from **any** path,
-   client-initiated included.
+   client-initiated included. *Read as "…from any path, except drawing recalls
+   and PSM alerts" (DEC-74 §9, ratified 2026-10-07 by the integrator under the
+   user's delegation — DEC-90).*
 3. `digest_frequency = 'never'` suppresses the digest.
 4. `inapp_enabled` and `push_enabled` are read by something, or are removed.
 5. A check-violation surfaces distinctly rather than dumping `err.message`, so

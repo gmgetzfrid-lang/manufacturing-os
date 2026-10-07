@@ -1143,6 +1143,46 @@
     "document-control P14 merged (owns the intake-door migrations 20261149\u201320261151 \u2014 merged)"
    ],
    "sequencingNotes": "Added by the integrator 2026-10-07 at the J12 merge: GAP-401's two owed items. The separate origin's deployment is the user's (operator step); the package builds the code half and says exactly what the operator must stand up."
+  },
+  {
+   "name": "J17 BARRED LOOK-ALIKE \u2014 the do-not-use gate (never the binding) flags a registry name whose normalised tokens lead the vendor's (the Apex ruling)",
+   "findings": {
+    "projects-and-cost": [
+     "COST-3 (residual 2, assigned by the integrator 2026-10-07 under the user's delegation, DEC-90 A21: the Apex ruling \u2014 a do_not_use registry row whose normalised name tokens lead the bid's vendor name (\"Apex Industrial\" against \"Apex Industrial Services, LLC\") flags the bid for the typed acknowledgement and never binds it; the same rule in the bid tab, the lib's award and the database)"
+    ]
+   },
+   "files": [
+    "lib/bidTab.ts (barredCompanyFor / companyCandidatesByName: a token-prefix candidate for the gate only; matchCompanyByName's binding stays exact)",
+    "lib/costDocs.ts companyBehind (flaggedLookAlike: the same token-prefix candidate)",
+    "a new migration re-creating the SQL twin (cost_doc_company_barred / company_name_key) from 20261157's body (still unpasted) \u2014 lineDiff-pinned, DEC-30 counts-only inventory, DRLS-16",
+    "components/projects/cost/QuotesPanel.tsx awardGateFor (the typed acknowledgement names the token-prefix look-alike)",
+    "tests: projectControls.test.ts, costDocs.test.ts, quotesPanelRender.test.ts and the migration's shape test \u2014 the Apex scenario flagged and acknowledged, never bound; a single-token registry name flags broadly (an acknowledgement only); regression \u2014 exact and normalised binding unchanged"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "J14 merged (the same functions: companyBehind / cost_doc_company_barred's one-company order \u2014 COST-3 residual 3, MON-12 limb 2)",
+    "J12 merged (20261157 \u00a71, the SQL twin's newest body)"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-07 under the user's delegation (DEC-90 A21). Runs after J14. Its migration pastes after 20261157 (and after J14's, if J14 re-creates the same function)."
+  },
+  {
+   "name": "J18 APP SHELL BUDGET \u2014 a total-route JavaScript budget, and the app-wide shell's imports split or lazy (PERF-12)",
+   "findings": {
+    "projects-tab": [
+     "PERF-12 (opened by the integrator 2026-10-07, DEC-31 / DEC-90 A24: the app-wide shell ships ~618 KB of JavaScript to every route \u2014 1,092,416 bytes for /projects/[id], 474,342 of them the route's own; done when a total-route budget is checked from a built manifest and the shell's imports a route does not need on first paint are split or lazy)"
+    ]
+   },
+   "files": [
+    "app/layout.tsx and app/(protected)/layout.tsx (the shell's static imports: next/dynamic, or an import on use, for what first paint does not need)",
+    "the providers and hosts they import (components/providers/*, components/navigation/GlobalCommandPalette.tsx, components/documents/RelationshipGraphHost.tsx, components/signatures/SignatureCaptureHost.tsx, components/notifications/NotificationCenter.tsx and the indicators) \u2014 the import boundary only",
+    "a bundle-budget check over the built client-reference manifests (entryJSFiles + rootMainFiles) and its test"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "notifications N3 and N4 merged (they restructure the providers in app/(protected)/layout.tsx \u2014 N4 mounts AttentionProvider)",
+    "every other package that edits app/(protected)/layout.tsx or a provider it imports merged"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-07 under the user's delegation (DEC-90 A24). Runs LAST, after notifications N3 and N4, which restructure the providers. Measure with next build as PERF-9's J12 pass did (the client-reference manifest's entryJSFiles)."
   }
  ],
  "ownershipRule": "Where the two briefs disagree on a shared file, projects-and-cost's proposal applies: libs / API routes / migrations follow the projects-and-cost brief, components / pages follow the projects-tab brief; the schedule engine (lib/milestones.ts, criticalPath.ts, executionReport.ts) follows projects-tab's P6b brief with PC-4's rollup semantics folded in.",
@@ -1154,13 +1194,11 @@
   "orphan sweep 2026-10-01: J13 any time (records only); J12 after J11; J10b after J10",
   "integrator 2026-10-02 (J10b merge): J14 after J12",
   "integrator 2026-10-07 (J12 merge): J15 last (per file, after that file's owning package)",
-  "integrator 2026-10-07 (J12 merge): J16 after drafting-flow DF-P1"
+  "integrator 2026-10-07 (J12 merge): J16 after drafting-flow DF-P1",
+  "integrator 2026-10-07 (DEC-90): J17 after J14",
+  "integrator 2026-10-07 (DEC-90): J18 last, after notifications N3 and N4"
  ],
  "userHeld": {
-  "COST-5": "ratify DEC-48 (the silence-vs-plausible-hours gap, the declared / silent weighting, 'cheapest does not automatically win')",
-  "PERF-1": "rule on 'Back does not re-run it' (GAP-409 forbids a client-side cache)",
-  "CHART-2": "ratify DEC-55 rule 1 (then the integrator flips it with no code change)",
-  "PERF-6": "measure: time one real ten-page scanned PDF through /api/projects/cost-docs on the deployed app (done-when 1; CI has no real scan) \u2014 closes PERF-6 if inside the limit",
-  "PERF-9": "rule: does done-when 2 measure the route's own JavaScript (then the recorded 474,342 bytes close it) or include the app-wide shell (~618 KB on every route \u2014 then it needs a shell-slimming owner)"
+  "PERF-6": "measure: time one real ten-page scanned PDF through /api/projects/cost-docs on the deployed app (done-when 1; CI has no real scan) \u2014 closes PERF-6 if inside the limit"
  }
 }

@@ -94,7 +94,7 @@ lib/capabilityPolicy.ts:173-176 — `.from("org_configurations")` / `.select("va
   - `CapabilityPolicyEditor` and `ViewAsSimulator` show that they could not read the org's policy, and offer no Save and no grant.
   - The strict gates keep `loadCapabilityPolicyStrict` (`SURF-9` / `WF-20`).
 
-  **Not decided here: how a workflow action is evaluated after a failed read.** That is drafting-flow `AUTHZ-7`'s (refuse the transition, or use the last good cached policy; its package DF-P1 plans a 503 "policy unreadable" there). For that route it conflicts with roles-and-permissions `WF-1` done-when 2 (RESOLVED: the shipped defaults for that call, uncached). **The `WF-1` / `AUTHZ-7` conflict is flagged for the user's ratification.** Until the user rules, DF-P1 builds `AUTHZ-7` as its plan says. Nothing in this record, or in its pins, admits a workflow action on the defaults after a failed read.
+  **Not decided here: how a workflow action is evaluated after a failed read.** That is drafting-flow `AUTHZ-7`'s (refuse the transition, or use the last good cached policy; its package DF-P1 plans a 503 "policy unreadable" there). For that route it conflicts with roles-and-permissions `WF-1` done-when 2 (RESOLVED: the shipped defaults for that call, uncached). **The `WF-1` / `AUTHZ-7` conflict was flagged for the user's ratification:** *Ratified by the integrator under the user's delegation, 2026-10-07 (DEC-90): authority decisions fail closed (OWASP fail securely, deny by default) — the workflow route refuses on an unreadable policy (built), and the cached loader on a failed refresh serves the last good entry and, with none, refuses authority checks while non-authoritative UI may show the defaults labelled as such; `lib/holds.ts`'s fail-open becomes fail-closed (admin-and-org P9).* DF-P1 built `AUTHZ-7`'s route half as its plan says. Nothing in this record, or in its pins, admits a workflow action on the defaults after a failed read.
 
   **Plan amendment needed.** The admin-and-org plan's P9 entry lists neither `ALOG-1` nor `lib/capabilityPolicy.ts`, and the marker lives in `loadCapabilityPolicyEntry` (`lib/capabilityPolicy.ts:483-518`). The error state is in the two components beyond the lines its entry names (`CapabilityPolicyEditor.tsx:117`, `ViewAsSimulator.tsx:46`, `:96`). The integrator adds the finding and those files to P9, or re-owns this remainder.
 
@@ -109,6 +109,8 @@ lib/capabilityPolicy.ts:173-176 — `.from("org_configurations")` / `.select("va
 4. ✓ (P2).
 
 **Scope / residual.** Done-when 2 only. No application code changed in this package. The pin is a new test (commit `447bb8b`).
+
+**Integrator note (2026-10-07, DEC-90 A26).** *Ratified by the integrator under the user's delegation, 2026-10-07 (DEC-90): authority decisions fail closed (OWASP fail securely, deny by default) — the workflow route refuses on an unreadable policy (built), and the cached loader on a failed refresh serves the last good entry and, with none, refuses authority checks while non-authoritative UI may show the defaults labelled as such; `lib/holds.ts`'s fail-open becomes fail-closed (admin-and-org P9).* P9 lands the cached loader's rule together with this record's done-when 2 marker (a failed read distinguishable from an unset policy, shown by the policy editor and View-as), in `lib/capabilityPolicy.ts` `loadCapabilityPolicyEntry`, with a test that a healthy org's answers do not change. Status unchanged (OPEN, P9).
 
 ---
 

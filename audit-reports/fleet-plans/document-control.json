@@ -539,23 +539,24 @@
   {
    "name": "P16 STATUS-GUARD FOLLOW-UPS \u2014 the database limb of DEC-77 (IFC \u2192 Issued / Locked) and the controller hold passes REV-20 left open",
    "findings": [
-    "REV-21 (opened by P15 SURFACE REMAINDERS 2026-10-01: after the user ratifies DEC-77 \u00a74 \u2014 re-create enforce_document_publish_guard from its NEWEST definition so a status-only move into Issued / Locked from any status outside them is judged as an issue (publisher tier, hold, require mode), with isIssueTransition and lib/documentStatusOptions.ts isUnguardedEntryIntoForce following; or the user's data move of the IFC rows)"
+    "REV-21 (opened by P15 SURFACE REMAINDERS 2026-10-01; DEC-77 \u00a74 ratified by the integrator under the user's delegation 2026-10-07, DEC-90, option 1 \u2014 re-create enforce_document_publish_guard from its NEWEST definition so a status-only move into Issued / Locked from any status outside them is judged as an issue (publisher tier, hold, require mode), with isIssueTransition and lib/documentStatusOptions.ts isUnguardedEntryIntoForce following; no IFC rows are moved \u2014 the data-move option was not taken)"
    ],
    "files": [
     "one migration re-creating enforce_document_publish_guard from its newest body (lineDiff test; DEC-30 inventory of counts only; DRLS-16)",
     "lib/issueStatus.ts, lib/documentStatusOptions.ts (one predicate)"
    ],
    "migrationsLikely": 1,
-   "when": "after the user ratifies DEC-77 / REV-21, and after P14 merges (P14 re-creates the guard in 20261151); after P18 (the guard\u2019s newest body)",
+   "when": "AFTER P21 merges, from the newest guard body (P21 re-creates enforce_document_publish_guard from 20261174; find the newest by scanning) \u2014 DEC-77 / REV-21 were ratified 2026-10-07 (DEC-90), so REV-21 is no longer user-held",
    "dependsOn": [
-    "the user's ratification of DEC-77 \u00a74",
+    "DEC-77 \u00a74 ratified 2026-10-07 by the integrator under the user's delegation (DEC-90): REV-21 option 1, no IFC rows moved",
     "P14 merged",
     "P17 merged (P17 re-creates the guard first; start from its body)",
     "P18 merged (P18 re-creates the guard after P17; start from P18's body)",
     "P19 if it merges first (P19 re-creates the same guard; start from the newest body, found by scanning)",
-    "P20 if it merges first (P20 re-creates the same guard; start from the newest body, found by scanning)"
+    "P20 if it merges first (P20 re-creates the same guard; start from the newest body, found by scanning)",
+    "P21 merged (P21 re-creates the same guard after P20; start from the newest body, found by scanning)"
    ],
-   "sequencingNotes": "Added by the integrator 2026-10-01 at the P15 merge (DEC-31 remainder)."
+   "sequencingNotes": "Added by the integrator 2026-10-01 at the P15 merge (DEC-31 remainder). Updated by the integrator 2026-10-07 (DEC-90 A3): REV-21 is no longer user-held (DEC-77 ratified, option 1); P16 runs AFTER P21 merges, from the newest guard body, and its migration pastes after P21's (both behind 20261159's INTK-18 gate)."
   },
   {
    "name": "P17 GUARD & EDITOR FOLLOW-UPS \u2014 the controller hold passes REV-20 left open, the owner-must-approve rule at the database, the bulk editor's status change through changeDocumentStatus",
@@ -646,6 +647,25 @@
     "its paste follows 20261174's, which follows 20261165's (held with 20261164 / 20261159)"
    ],
    "sequencingNotes": "Added by the integrator 2026-10-07 at the P20 merge (DEC-31: REV-25). Does not wait on any ratification; its paste waits on 20261174's. No app path clears current_version_id (REV-24's census), so the app needs no change unless the case shows one."
+  },
+  {
+   "name": "P22 TRANSMITTAL STAMP ARMING & FAIL-CLOSED PORTAL ORIGIN \u2014 the DEC-61 \u00a75 amendment armed at issue, and no portal link without a configured origin",
+   "findings": [
+    "TRX-15 (added by the integrator 2026-10-07 under the user's delegation, DEC-90 A5: the DEC-61 \u00a75 amendment is ratified \u2014 arm the portal's download-time refusal: issueTransmittal writes stampable: true on each item the issue-time check found stampable, in the issue UPDATE, under an updated_at match on the draft read, so a concurrent draft edit is refused, never overwritten; the route's refusesUnstampable is already in place; a PDF the check found unstampable stays warned at issue and goes out unstamped only on the issuer's recorded yes (unstampableAccepted); done-when 2's device check stays userHeld)",
+    "TRX-14 (added by the integrator 2026-10-07 under the user's delegation, DEC-90 A6: DEC-64 \u00a71's self-hosted trade is reversed \u2014 lib/publicOrigin.ts recipientOrigin() drops the browser page-origin fallback and keeps the configured origin only, so with nothing configured the browser builds no portal link and no cover-sheet QR, as the server already does; done-when 1 then holds as written)"
+   ],
+   "files": [
+    "lib/transmittals.ts issueTransmittal (the stampable mark on the issue UPDATE, under an updated_at match on the draft read)",
+    "lib/publicOrigin.ts recipientOrigin() (the configured origin only, in a browser and on a server alike)",
+    "app/(protected)/transmittals/page.tsx (the issue and copy toasts' copy: no portal link without NEXT_PUBLIC_SITE_URL; the disabled Portal link button names it)",
+    "tests: lib/__tests__/dcRoundFP15TransmittalIssueWarn.test.ts (the issue writes stampable: true on checked items; an issuer-accepted unstampable item carries no mark), lib/__tests__/transmittalPortalRoute.test.ts (an armed item that fails to stamp is refused, nothing recorded as delivered), lib/__tests__/psStampRoundF.test.ts and lib/__tests__/dcRoundFTransmittals.test.ts (recipientOrigin returns null in a browser with nothing configured)"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "P15 merged (TRX-16's issue-time check: checkTransmittalStampability, unstampableAccepted; refusesUnstampable in the route)",
+    "PS-STAMP merged (lib/publicOrigin.ts recipientOrigin)"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-07 under the user's delegation (DEC-90 A5, A6). No migration; can run now. notifications N9 also edits lib/transmittals.ts (issueTransmittal's emit, transmittalPortalUrl) \u2014 whichever runs second rebases on the other. A self-hosted deployment sets NEXT_PUBLIC_SITE_URL (a Docker build arg) before the deploy carrying this package, or its portal link and cover QR are withheld (userHeld.TRX-14). TRX-15 stays OPEN after it for the device check (userHeld.TRX-15)."
   }
  ],
  "crossAreaFileOverlaps": [
@@ -662,13 +682,12 @@
   "DRLS-3": "deploy the app carrying P12's DRLS-15 / DRLS-17 commit, then paste 20261131",
   "DRLS-13": "deploy the app carrying P12's DRLS-15 / DRLS-17 commit, then paste 20261131",
   "REV-13": "deploy the app carrying P12's DRLS-15 / DRLS-17 commit, then paste 20261131",
-  "TRX-14": "ratify DEC-64 \u00a71 (or reject it, which turns the remainder back into code work)",
-  "PKG-12": "ratify DEC-70 \u00a72 (or change PACK_MAX_SHEETS / PAGES / BYTES), then set NEXT_PUBLIC_FIELD_PACK_BUDGET=on and rebuild",
+  "TRX-14": "operator: set NEXT_PUBLIC_SITE_URL in every deployment (a Docker build arg on self-host) before the deploy carrying document-control P22 \u2014 DEC-64 \u00a71's self-hosted trade is reversed (DEC-90), so with no configured origin the browser builds no portal link; the code is P22",
+  "PKG-12": "operator: read 20261143's MEASURE rows, have any package or asset tag over the budget split, then set NEXT_PUBLIC_FIELD_PACK_BUDGET=on and rebuild (DEC-70 \u00a72 ratified at 150 sheets / 1000 pages / 150 MB, DEC-90)",
   "REV-9": "set NEXT_PUBLIC_FACILITY_TIME_ZONE in every deployment (closes public-surfaces VFY-4 too)",
-  "VFY-20": "ratify DEC-77 (IFC stays out of the editors, existing IFC rows read not-in-force) or choose its Reversal (teach every gate IFC together); run VFY-20's read-only IFC count",
-  "REV-21": "ratify the database limb with DEC-77 \u00a74 (the guard judges a move INTO Issued / Locked from outside them as an issue, or the IFC rows are moved under your decision); then document-control P16 runs",
-  "XEDGE-12": "allow cdn.sheetjs.com in the environment's network policy (so a session can vendor SheetJS >= 0.20.2), or ratify exceljs and the loss of legacy .xls imports",
-  "TRX-15": "ratify the DEC-61 \u00a75 amendment and check one hidden-frame download on iOS Safari and Firefox",
-  "DRLS-14": "ratify DEC-79 (or its stricter reading: refuse while ANY evidence row exists), then paste 20261149 once identity-and-session IS-P1's bulk-delete check is deployed"
+  "VFY-20": "operator: run VFY-20's read-only IFC count (or read 20261134's inventory row) and send it back (DEC-77 ratified, DEC-90)",
+  "XEDGE-12": "operator: allow cdn.sheetjs.com in the environment's network policy, or fetch xlsx-0.20.3.tgz on another machine and commit it under vendor/ (the vendored SheetJS 0.20.3; exceljs not ratified, DEC-90); the integrator then does the swap",
+  "TRX-15": "operator: check one hidden-frame portal download on iOS Safari and one on Firefox (the &nav=1 save and the visible fallback link) \u2014 done-when 2; the DEC-61 \u00a75 amendment is ratified (DEC-90) and document-control P22 arms it",
+  "DRLS-14": "operator: paste 20261149 once identity-and-session IS-P1's checked bulk delete is deployed (DEC-79 ratified, DEC-90)"
  }
 }

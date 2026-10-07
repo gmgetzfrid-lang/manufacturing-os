@@ -190,7 +190,8 @@ the page fixes.
 
 ⚠ **Deploy order — the field pack (Round F wave 2, P8 FIELD;
 DEC-70).** Rewritten at P8's fourth review fix pass. The
-ratification now gates a switch in the code, not the deploy:
+ratification now gates a switch in the code, not the deploy. *DEC-70 §2's
+values were ratified by the integrator under the user's delegation, 2026-10-07 (DEC-90); step 3 below is decided, and the operator does steps 2 and 4.*
 
 1. **Deploy the P8 app.** The field-pack budget (`PKG-12`) ships OFF:
    `NEXT_PUBLIC_FIELD_PACK_BUDGET` is unset, and packs build as they did
@@ -210,7 +211,9 @@ ratification now gates a switch in the code, not the deploy:
    - the single files over 150 MB;
    - the files with no recorded size;
    - the live transmittal PDFs over 64 MiB (`TRX-15`).
-3. **The user ratifies DEC-70 §2 against those counts.** The
+3. **DEC-70 §2 against those counts — ratified 2026-10-07 (DEC-90): 150 sheets /
+   1000 pages / 150 MB; the device-aware variant and the amber leave-out are
+   rejected.** As first written: the
    150-sheet / 1000-page / 150 MB budget is a stated default, not a measured
    one, and once on it removes a capability that worked before, with no
    override: one pack of a large work package, on a desktop too, and any
@@ -232,8 +235,8 @@ should read amber rather than red at the cover scan (public-surfaces
 `VFY-19`'s residual).
 
 `TRX-15`'s stricter portal rule (a PDF goes out stamped or not at all) is not
-in this deploy: it is armed per item only by `TRX-16`'s issue-time mark, and
-lands with the user's ratification of the `DEC-61` §5 amendment.
+in this deploy: it is armed per item only by `TRX-16`'s issue-time mark. The
+`DEC-61` §5 amendment was ratified by the integrator under the user's delegation, 2026-10-07 (DEC-90); document-control P22 arms it.
 
 ⚠ **Paste NOW, independent of wave 2 — `DRLS-16` (CRITICAL).** The live
 11-argument `publish_revision` was never revoked from `anon`, and it reads a
@@ -321,7 +324,7 @@ restores Issued exactly as it always did, and the database decides.
 ⚠ **Paste order — P14 RECORDS & REVIEW REMAINDERS (2026-10-01).** Three
 one-paste migrations, independent of one another (any order among them):
 - `20261149_dc_roundF_document_evidence_delete_guard.sql` (`DRLS-14`) —
-  **paste ONLY once the user ratifies `DEC-79`** (the reversible
+  **DEC-79 is ratified by the integrator under the user's delegation, 2026-10-07 (DEC-90)** (the reversible
   default: a document carrying acted acknowledgment / sign-off evidence
   cannot be deleted by anyone; archive it instead). Independent of every
   pending document-control paste (`20261131`, `20261139`, `20261143`,
@@ -391,9 +394,10 @@ one-paste migration:
   Control on the hold refusal, as the inspector's `ReviewGateSection` does —
   projects-and-cost `INTK-18`, opened at the J10b merge and owned by
   projects-joint J14 (J10b merged without it; repointed at the integrator
-  fix, 2026-10-02); **or** until the user has ratified the
-  interim loss recorded on DEC-63's P17 Landed line (awaiting ratification).
-  Before either, the paste takes away a flow that works today: a controller's
+  fix, 2026-10-02). The other gate once offered here — the user's ratification
+  of the interim loss recorded on DEC-63's P17 Landed line — is closed: the
+  line was not ratified by the integrator under the user's delegation, 2026-10-07 (DEC-90), so only `INTK-18`'s deploy opens the paste.
+  Before it, the paste takes away a flow that works today: a controller's
   intake approve of a submission revising a held, already-issued document is
   refused, and the only way through is to release the stop-work hold,
   approve, and re-place the hold by hand (`REV-22`; P14's `20261151` already
@@ -424,8 +428,8 @@ one-paste migration:
   `20261159` (required)**, so after `20261151`, `20261144`, `20261130` and
   `20261070` too; its first statement refuses to run, changing nothing,
   without `20261159`'s guard. **`20261159` is itself held** (its paste
-  precondition above: projects-and-cost `INTK-18` deployed, or the user's
-  ratification of DEC-63's P17 Landed line), so this file waits with it.
+  precondition above: projects-and-cost `INTK-18` deployed; DEC-63's P17
+  Landed line was not ratified, DEC-90), so this file waits with it.
   It re-creates `enforce_document_publish_guard` from `20261159`'s body
   (every REV-22 limb 1, RG-14, REV-20 and REV-18 rule kept) and adds
   `restore_reversed_source` (SECURITY INVOKER). **Never re-paste `20261159`,
@@ -450,7 +454,8 @@ one-paste migration:
   at its time. **P16 (`REV-21`) re-creates
   this guard next, from `20261164`'s body** (no longer `20261159`'s).
   *(Integrator, P18 merge, 2026-10-02: P19 (`REV-23`) re-creates the same
-  guard. P16 waits on the user's DEC-77 ratification and P19 does not, so
+  guard. P16 waited on the user's DEC-77 ratification (given 2026-10-07, DEC-90;
+  P16 now runs after P21) and P19 does not, so
   whichever of the two runs second starts from the first one's body — the
   newest definition, found by the lineDiff test's scan — and pastes after
   it.)*
@@ -461,8 +466,8 @@ one-paste migration:
   (required)**, so after `20261159`, `20261151`, `20261144`, `20261130` and
   `20261070` too; its first statement refuses to run, changing nothing,
   without `20261164`'s guard and `restore_reversed_source`. `20261164` waits
-  on `20261159`, which is itself held (projects-and-cost `INTK-18` deployed,
-  or the user's ratification of DEC-63's P17 Landed line), so this file
+  on `20261159`, which is itself held (projects-and-cost `INTK-18` deployed;
+  DEC-63's P17 Landed line was not ratified, DEC-90), so this file
   waits with both. It re-creates `enforce_document_publish_guard` from
   `20261164`'s body (every P18, REV-22 limb 1, RG-14, REV-20 and REV-18 rule
   kept) and adds `put_back_retired_issue` (SECURITY INVOKER).

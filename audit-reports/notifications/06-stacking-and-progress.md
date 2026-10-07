@@ -614,6 +614,8 @@ Tests (`lib/__tests__/cornerDock.test.ts`, "STACK-10 / STACK-14 — …"):
 - `components/ui/Modal.tsx` is outside the plan's file list (lines in `ModalFooter`).
 - No migration.
 
+**Integrator note (2026-10-07, DEC-90 A15).** *Confirmed by the integrator under the user's delegation, 2026-10-07 (DEC-90): the dock rests under every overlay and rises only while a modal that started an upload reports it, which fixes the finding's own scenario without covering other overlays' controls (the literal reading blocked the asset editor's Save, `STACK-14`).* `STACK-10` stays RESOLVED on the confirmed reading of `DEC-85` item 4; `STACK-14` stays OPEN (N13).
+
 ---
 
 <a id="stack-11"></a>
