@@ -16,8 +16,9 @@
 //     (abandoned)          (DELIV-8, notifications Round G N6): mail an earlier
 //                          build parked and never sent. It was purged as
 //                          "delivered"; now the plan shows what is abandoned —
-//                          count, kinds, dates — before the confirm, and the
-//                          DATA_PURGE row records it
+//                          count, kinds, dates — before the confirm, and an
+//                          audit row records it BEFORE the delete (no record,
+//                          no delete)
 //   ai_usage_events      — before the current UTC month only (the AI spend
 //                          ledger: every monthly AI cap is enforced from the
 //                          month's rows, so they are never purge-eligible —
@@ -63,7 +64,7 @@ const TARGETS: PurgeTarget[] = [
     key: "email_notifications_suppressed",
     table: "email_notifications",
     label: "Abandoned email queue rows (never sent)",
-    reason: "Emails an earlier version parked as 'suppressed' while email was not configured, older than the drain's 7-day recovery window. They were never delivered and will never be sent; purging drops the only copy. The purge's audit row records how many, of which kinds and from when.",
+    reason: "Emails an earlier version parked as 'suppressed' while email was not configured, older than the drain's 7-day recovery window. They were never delivered and will never be sent; purging drops the only copy. Before they are deleted an audit row records how many, of which kinds and from when — if that record cannot be written, they are not deleted.",
   },
   {
     key: "ai_usage_events",
@@ -102,6 +103,18 @@ type FilterBuilder = {
   eq: (column: string, value: unknown) => FilterBuilder;
 } & PromiseLike<{ count?: number | null; error: { message: string } | null }>;
 
+/** A read of the abandoned line (abandonedDetail) — structural, like
+ *  FilterBuilder. */
+type ScanBuilder = {
+  eq: (column: string, value: unknown) => ScanBuilder;
+  lt: (column: string, value: unknown) => ScanBuilder;
+  gt: (column: string, value: unknown) => ScanBuilder;
+  not: (column: string, op: string, value: unknown) => ScanBuilder;
+  is: (column: string, value: null) => ScanBuilder;
+  order: (column: string, options: { ascending: boolean }) => ScanBuilder;
+  limit: (n: number) => ScanBuilder;
+} & PromiseLike<{ data?: unknown; count?: number | null; error: { message: string } | null }>;
+
 /** The rows a target may purge — its safety floor — on a count or a delete. */
 function floorOf(key: string, q: FilterBuilder): FilterBuilder {
   if (key === "notifications") {
@@ -114,35 +127,66 @@ function floorOf(key: string, q: FilterBuilder): FilterBuilder {
   return q;
 }
 
+/** What purging the abandoned-email line drops. */
+interface AbandonedDetail {
+  byEventType: Record<string, number>;
+  oldest: string | null;
+  newest: string | null;
+  /** More kinds than ABANDONED_KINDS_MAX: byEventType names the first ones. */
+  moreKinds?: true;
+}
+/** How many distinct kinds the breakdown names (the app has fewer than 30). */
+const ABANDONED_KINDS_MAX = 50;
+
 /** What purging the abandoned-email line would drop, by kind and date — for
- *  the plan line's reason and the DATA_PURGE row. Best-effort: an unreadable
- *  breakdown leaves the count (exact) to speak. */
-async function abandonedDetail(sb: SupabaseClient, orgId: string, cutoffIso: string): Promise<{ byEventType: Record<string, number>; oldest: string | null; newest: string | null } | null> {
+ *  the plan line's reason and the audit row written before the delete.
+ *  Exact, whatever the volume (DELIV-8, N6 fix pass): never a bulk read the
+ *  API's row cap truncates. The kinds are walked one at a time (the next
+ *  kind above the last, one row each) and each is a head count; the dates
+ *  are two ordered one-row reads. Null when any read fails — the line's own
+ *  count (exact) then speaks alone. */
+async function abandonedDetail(sb: SupabaseClient, orgId: string, cutoffIso: string): Promise<AbandonedDetail | null> {
+  // The abandoned line's rows, on a read of `columns` (a head count when
+  // `count`) — kept structural, as FilterBuilder is.
+  const scoped = (columns: string, count = false): ScanBuilder =>
+    (sb.from("email_notifications").select(columns, count ? { count: "exact", head: true } : undefined) as unknown as ScanBuilder)
+      .eq("org_id", orgId).lt("created_at", cutoffIso).eq("status", "suppressed");
   try {
-    const { data, error } = await sb
-      .from("email_notifications")
-      .select("event_type, created_at")
-      .eq("org_id", orgId)
-      .lt("created_at", cutoffIso)
-      .eq("status", "suppressed");
-    if (error || !Array.isArray(data)) return null;
     const byEventType: Record<string, number> = {};
-    let oldest: string | null = null;
-    let newest: string | null = null;
-    for (const r of data as Array<{ event_type: string | null; created_at: string | null }>) {
-      const k = r.event_type || "unknown";
-      byEventType[k] = (byEventType[k] ?? 0) + 1;
-      if (r.created_at && (!oldest || r.created_at < oldest)) oldest = r.created_at;
-      if (r.created_at && (!newest || r.created_at > newest)) newest = r.created_at;
+    let moreKinds = false;
+    let last: string | null = null;
+    for (let i = 0; ; i++) {
+      let q = scoped("event_type").not("event_type", "is", null);
+      if (last !== null) q = q.gt("event_type", last);
+      const { data, error } = await q.order("event_type", { ascending: true }).limit(1);
+      if (error) return null;
+      const next = (data as Array<{ event_type: string | null }> | null)?.[0]?.event_type ?? null;
+      if (next === null) break;
+      if (i >= ABANDONED_KINDS_MAX) { moreKinds = true; break; }
+      const { count, error: countErr } = await scoped("id", true).eq("event_type", next);
+      if (countErr || typeof count !== "number") return null;
+      if (count > 0) byEventType[next] = count;
+      last = next;
     }
-    return { byEventType, oldest, newest };
+    const { count: untyped, error: untypedErr } = await scoped("id", true).is("event_type", null);
+    if (untypedErr || typeof untyped !== "number") return null;
+    if (untyped > 0) byEventType.unknown = untyped;
+    const edge = async (ascending: boolean): Promise<string | null | undefined> => {
+      const { data, error } = await scoped("created_at").order("created_at", { ascending }).limit(1);
+      if (error) return undefined;
+      return ((data as Array<{ created_at: string | null }> | null)?.[0]?.created_at ?? null);
+    };
+    const [oldest, newest] = await Promise.all([edge(true), edge(false)]);
+    if (oldest === undefined || newest === undefined) return null;
+    return { byEventType, oldest, newest, ...(moreKinds ? { moreKinds: true as const } : {}) };
   } catch {
     return null;
   }
 }
 
-function describeAbandoned(d: { byEventType: Record<string, number>; oldest: string | null; newest: string | null }): string {
-  const kinds = Object.entries(d.byEventType).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${n} ${k}`).join(", ");
+function describeAbandoned(d: AbandonedDetail): string {
+  const kinds = Object.entries(d.byEventType).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).map(([k, n]) => `${n} ${k}`).join(", ") +
+    (d.moreKinds ? ", and further kinds" : "");
   const span = d.oldest && d.newest ? ` queued ${d.oldest.slice(0, 10)} to ${d.newest.slice(0, 10)} (UTC)` : "";
   return kinds ? ` These are: ${kinds}${span}.` : "";
 }
@@ -256,8 +300,22 @@ export async function POST(req: NextRequest) {
     try {
       // Count first so we can report an exact number, then delete the same set.
       const rows = await countTarget(sb, t, orgId, cut);
-      // DELIV-8: what an abandoned-email purge drops is recorded before it goes.
+      // DELIV-8 (N6 fix pass): what an abandoned-email purge drops — the only
+      // copy of mail never sent — is recorded BEFORE it goes, in an audit row
+      // of its own; a record that cannot be written means no delete.
       const abandoned = t.key === "email_notifications_suppressed" && rows > 0 ? await abandonedDetail(sb, orgId, cut) : null;
+      if (t.key === "email_notifications_suppressed" && rows > 0) {
+        const { error: recErr } = await sb.from("audit_logs").insert({
+          action: "DATA_PURGE_ABANDONED_EMAIL",
+          resource_id: orgId,
+          resource_type: "org",
+          org_id: orgId,
+          user_id: actor.userId,
+          user_email: actor.email,
+          details: { cutoffDays: days, cutoffIso: cut, rows, abandoned: abandoned ?? "the breakdown could not be read; the count is exact" },
+        });
+        if (recErr) throw new Error(`not purged — the record of what it holds could not be written first: ${recErr.message}`);
+      }
       if (rows > 0) {
         const base = sb
           .from(t.table)
@@ -274,9 +332,12 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Purging is itself an audited action — chain of custody for what was removed.
+  // Purging is itself an audited action — chain of custody for what was
+  // removed. The deletes have happened either way; a refused or failed audit
+  // row is reported in the answer, never a silent success (N6 fix pass).
+  let auditError: string | null = null;
   try {
-    await sb.from("audit_logs").insert({
+    const { error } = await sb.from("audit_logs").insert({
       action: "DATA_PURGE",
       resource_id: orgId,
       resource_type: "org",
@@ -285,7 +346,14 @@ export async function POST(req: NextRequest) {
       user_email: actor.email,
       details: { cutoffDays: days, cutoffIso, deleted, totalDeleted },
     });
-  } catch { /* never block the purge result on the audit insert */ }
+    if (error) auditError = error.message;
+  } catch (e) {
+    auditError = (e as Error).message || String(e);
+  }
+  if (auditError) console.error("[admin/purge] the DATA_PURGE audit row was not written", auditError);
 
-  return NextResponse.json({ ok: true, cutoffDays: days, deleted, totalDeleted });
+  return NextResponse.json({
+    ok: true, cutoffDays: days, deleted, totalDeleted,
+    ...(auditError ? { auditError: `the purge ran but its DATA_PURGE audit row was not written: ${auditError}` } : {}),
+  });
 }

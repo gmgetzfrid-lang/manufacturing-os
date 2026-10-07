@@ -96,6 +96,9 @@ async function handler(req: NextRequest) {
   if (!cronSecret || auth !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  // The run's clock: a step that must leave time for the ones after it
+  // derives its deadline from here (the compliance digest, 6b).
+  const startedAt = Date.now();
 
   const sb = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
 
@@ -385,6 +388,7 @@ async function handler(req: NextRequest) {
     result.complianceEmails = await queueComplianceDigests(sb, {
       origin: publicOrigin() || req.nextUrl.origin,
       errors: result.errors,
+      deadlineAt: startedAt + RUN_BUDGET_MS - AFTER_DIGEST_RESERVE_MS,
     });
   } catch (e) {
     result.errors.push(`compliance-digest: ${(e as Error).message}`);
@@ -659,16 +663,34 @@ const DIGEST_LINES = 12;
 /** How many of one recipient's newest unread compliance rows are read — far
  *  more than the digest lists; the subject's count is exact regardless. */
 const DIGEST_SCAN_PER_RECIPIENT = 200;
-const DIGEST_MEMBER_PAGE = 1000;
-const DIGEST_PREFS_CHUNK = 150;
+/** Rows per page of the window-wide recipient discovery (keyset on id). */
+const DIGEST_DISCOVERY_PAGE = 1000;
+/** uids per .in() read (members, preferences) — keeps the URL short. */
+const DIGEST_UID_CHUNK = 150;
 const DIGEST_PARALLEL = 8;
-/** The digest's share of the cron's 300 s. A run cut short says so; the
- *  starting member rotates daily, so no one is always last. */
-const DIGEST_BUDGET_MS = 90_000;
+
+/** The run's wall clock: the platform kills the function at `maxDuration`
+ *  (300 s), losing the steps not yet run and this route's JSON with them. */
+const RUN_BUDGET_MS = maxDuration * 1000;
+/** What the steps AFTER the digest are given, kept back from it (NEDGE-17
+ *  fix pass — the digest's deadline is the run's start + RUN_BUDGET_MS − this,
+ *  never a fixed share): the second drain (6c, a digest-sized batch), the
+ *  folder-trash purge and the proposals prune (one statement each), the
+ *  knowledge sync, the knowledge ingest (its own 40 s deadline), the platform
+ *  storage walk, and the embed drain (its own 100 s budget). */
+const AFTER_DIGEST_RESERVE_MS =
+  30_000 /* 6c drain */ + 5_000 /* trash purge + proposals prune */ + 20_000 /* knowledge sync */ +
+  40_000 /* knowledge ingest */ + 15_000 /* platform storage */ + 100_000 /* embed drain */;
 
 /** The daily compliance digest: one email per (org, member) listing their
  *  UNREAD compliance notices of the last 25 hours.
- *   - NEDGE-17: each member's list comes from a read scoped to that
+ *   - Who: the recipients of unread compliance rows in the window, found by
+ *     paging those rows (org_id, user_id only, keyset on id) to completion
+ *     — so the cost follows the pending items, not the membership (a member
+ *     with nothing pending costs nothing; NEDGE-17 fix pass), and no
+ *     recipient is dropped by a read window. Each must be an ACTIVE member
+ *     of that org with an address.
+ *   - NEDGE-17: each recipient's list comes from a read scoped to that
  *     (org, member) and ordered newest first — no window shared across orgs
  *     and recipients, so one member's rows cannot push anyone else's lines
  *     out of their digest.
@@ -683,36 +705,71 @@ const DIGEST_BUDGET_MS = 90_000;
  *     <time> (zone)" — the org's zone when configured, else UTC.
  *   - The per-(org, user, day) dedupe on metadata.day (the UTC day) is kept
  *     as it was: a manual re-run never mails anyone twice.
+ *   - Time: it stops at `deadlineAt` (derived by the caller from the run's
+ *     start, keeping the later steps' reserve) and says how many recipients
+ *     it did not reach; the starting recipient rotates daily, so a run cut
+ *     short does not always leave the same people out.
  *   - DELIV-7: every read and write that fails is a line in `errors`. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: string; errors: string[] }): Promise<number> {
+async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: string; errors: string[]; deadlineAt: number }): Promise<number> {
   const now = Date.now();
   const since = new Date(now - 25 * 3600 * 1000).toISOString();
   const asOf = new Date(now).toISOString();
   const dayKey = asOf.slice(0, 10);
   const say = (line: string) => { opts.errors.push(`compliance-digest: ${line}`); console.error(`[cron/maintenance] compliance-digest: ${line}`); };
+  const left = () => Math.max(0, Math.round((opts.deadlineAt - Date.now()) / 1000));
+  if (Date.now() >= opts.deadlineAt) {
+    say(`skipped — the steps before it used the time this run leaves it (the later steps' ${AFTER_DIGEST_RESERVE_MS / 1000} s are kept back from the ${RUN_BUDGET_MS / 1000} s run); unread items still in the 25-hour window are listed by the next run`);
+    return 0;
+  }
 
-  // Every ACTIVE member with an address — the people a digest can reach.
-  // Ordered, so a page boundary never skips or repeats anyone.
+  // WHO has something pending: every unread compliance row in the window,
+  // (org_id, user_id) only, keyset-paged on id to the empty page (never a
+  // short page read as the last — the API's row cap may be below the page).
+  const pending = new Map<string, { org_id: string; uid: string }>();
+  let after: string | null = null;
+  for (;;) {
+    if (Date.now() >= opts.deadlineAt) {
+      say(`stopped at its deadline while finding recipients — ${pending.size} found so far, none composed; the next run starts again`);
+      return 0;
+    }
+    let q = sb
+      .from("notifications").select("id, org_id, user_id")
+      .in("kind", COMPLIANCE_KINDS)
+      .is("read_at", null)
+      .gt("created_at", since)
+      .not("user_id", "is", null);
+    if (after !== null) q = q.gt("id", after);
+    const { data, error } = await q.order("id", { ascending: true }).limit(DIGEST_DISCOVERY_PAGE);
+    if (error) { say(`the window's compliance items could not be read — no digest was composed: ${error.message}`); return 0; }
+    const page = (data as Array<{ id: string; org_id: string | null; user_id: string | null }> | null) ?? [];
+    if (page.length === 0) break;
+    for (const r of page) if (r.org_id && r.user_id) pending.set(`${r.org_id}|${r.user_id}`, { org_id: r.org_id, uid: r.user_id });
+    after = String(page[page.length - 1].id);
+  }
+  if (pending.size === 0) return 0;
+
+  // Of those, the ACTIVE members of that org with an address.
   type Member = { uid: string; org_id: string; email: string | null };
   const members: Member[] = [];
-  for (let from = 0; ; from += DIGEST_MEMBER_PAGE) {
+  const uids = [...new Set([...pending.values()].map((p) => p.uid))].sort();
+  for (let i = 0; i < uids.length; i += DIGEST_UID_CHUNK) {
+    const chunk = uids.slice(i, i + DIGEST_UID_CHUNK);
     const { data, error } = await sb
-      .from("org_members").select("uid, org_id, email").eq("status", "active")
-      .order("org_id", { ascending: true }).order("uid", { ascending: true })
-      .range(from, from + DIGEST_MEMBER_PAGE - 1);
-    if (error) { say(`the member list could not be read — no digest was composed: ${error.message}`); return 0; }
-    const page = (data as Member[] | null) ?? [];
-    members.push(...page.filter((m) => !!m.email));
-    if (page.length < DIGEST_MEMBER_PAGE) break;
+      .from("org_members").select("uid, org_id, email").eq("status", "active").in("uid", chunk);
+    if (error) { say(`the recipients' memberships could not be read — no digest was composed: ${error.message}`); return 0; }
+    for (const m of (data as Member[] | null) ?? []) {
+      if (m.email && pending.has(`${m.org_id}|${m.uid}`)) members.push(m);
+    }
   }
   if (members.length === 0) return 0;
+  members.sort((a, b) => (a.org_id < b.org_id ? -1 : a.org_id > b.org_id ? 1 : a.uid < b.uid ? -1 : a.uid > b.uid ? 1 : 0));
 
   const prefs = new Map<string, Record<string, unknown>>();
   const unverified = new Set<string>();
-  const uids = [...new Set(members.map((m) => m.uid))];
-  for (let i = 0; i < uids.length; i += DIGEST_PREFS_CHUNK) {
-    const chunk = uids.slice(i, i + DIGEST_PREFS_CHUNK);
+  const memberUids = [...new Set(members.map((m) => m.uid))];
+  for (let i = 0; i < memberUids.length; i += DIGEST_UID_CHUNK) {
+    const chunk = memberUids.slice(i, i + DIGEST_UID_CHUNK);
     const { data, error } = await sb.from("notification_preferences").select("*").in("user_id", chunk);
     if (error) {
       chunk.forEach((u) => unverified.add(u));
@@ -804,14 +861,13 @@ async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: s
     queued += 1;
   };
 
-  // Start at a member that moves by one each day, so a run cut by its budget
-  // does not always leave the same people out.
+  // Start at a recipient that moves by one each day, so a run cut by its
+  // deadline does not always leave the same people out.
   const start = Math.floor(now / 86_400_000) % members.length;
   const order = [...members.slice(start), ...members.slice(0, start)];
-  const stopAt = Date.now() + DIGEST_BUDGET_MS;
   for (let i = 0; i < order.length; i += DIGEST_PARALLEL) {
-    if (Date.now() > stopAt) {
-      say(`stopped at its ${DIGEST_BUDGET_MS / 1000} s budget — ${order.length - i} member(s) were not reached this run`);
+    if (Date.now() >= opts.deadlineAt) {
+      say(`stopped at its deadline (${left()} s left; the later steps' ${AFTER_DIGEST_RESERVE_MS / 1000} s of the ${RUN_BUDGET_MS / 1000} s run are kept back) — ${order.length - i} recipient(s) were not reached this run`);
       break;
     }
     await Promise.all(order.slice(i, i + DIGEST_PARALLEL).map(one));

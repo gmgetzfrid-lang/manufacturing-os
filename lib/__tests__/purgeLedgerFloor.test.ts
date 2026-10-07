@@ -74,7 +74,8 @@ describe("GOV-4 / GOV-10 — the purge never reaches this month's AI spend ledge
     expect(cutoffOf("ai_usage_events", "count")).toEqual([MONTH_START]);
     expect(cutoffOf("ai_usage_events", "delete")).toEqual([MONTH_START]);
     // the DATA_PURGE audit row names the cutoff each table was purged to
-    const audit = db.calls.find((c) => c.table === "audit_logs" && c.op === "insert")!.payload as { details: { deleted: Array<{ table: string; cutoffIso: string }> } };
+    // (the abandoned-email line writes its own record first — notifications N6)
+    const audit = db.calls.find((c) => c.table === "audit_logs" && c.op === "insert" && (c.payload as { action?: string }).action === "DATA_PURGE")!.payload as { details: { deleted: Array<{ table: string; cutoffIso: string }> } };
     expect(audit.details.deleted.find((d) => d.table === "ai_usage_events")?.cutoffIso).toBe(MONTH_START);
     expect(audit.details.deleted.find((d) => d.table === "notifications")?.cutoffIso).toBe(sevenDaysAgo);
   });

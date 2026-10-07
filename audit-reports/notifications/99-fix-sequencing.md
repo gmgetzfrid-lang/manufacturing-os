@@ -153,6 +153,16 @@ N9, N14 and the integrator):*
   `orgTimeZone` already reads `org_configurations` key `timezone`).*
 - *Paste `20261183` (`email_notifications.queued_by`) any time; no code
   depends on it.*
+- *Pointer for N9 (from the N6 review, `NEDGE-10`): the two service-role
+  inserts in `app/api/transmittal/route.ts` — :418 (`transmittal_unstamped` /
+  `transmittal_refused`, to the issuer) and :798 (the acknowledgment receipt,
+  `watcher_activity`) — consult no preference, so the master switch the
+  one-click unsubscribe sets does not stop them. Either gate them on the
+  recipient's row (`emailAllowedByPrefs`, read as the service role) or record
+  them as preference-exempt with `DEC-74` §9. Until then the drain leaves the
+  unsubscribe header off the first two and off any mail to a member whose
+  switch is already off, and `/api/notifications/unsubscribe` names them as
+  still arriving.*
 
 *Opened by N5's second review fix (2026-10-02), not this area's to sequence
 alone: **`NEDGE-15`** — `app/api/tickets/handback/route.ts`'s `emit()` runs

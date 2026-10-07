@@ -16,9 +16,17 @@
 //   NEDGE-12   the escalation's date and the digest's name carry their zone.
 //   DELIV-7    the escalation's and the digest's failed writes are reported.
 //   NEDGE-10   the drain attaches the signed one-click List-Unsubscribe header
-//              and the footer to member mail; the unsubscribe route works.
-//   DELIV-8    the purge lists abandoned (suppressed) mail as its own line and
-//              records it; read rows carrying a dedupe watermark are kept.
+//              and the footer to member mail — the header only for mail to
+//              the recipient's own address that the master switch stops (a
+//              forged row naming another uid gets none, and its link would
+//              not verify); the unsubscribe route works.
+//   NEDGE-17   (fix pass) the digest's cost follows the pending items: a
+//              member with nothing pending is never read; its deadline is
+//              derived from the run's start.
+//   DELIV-8    the purge lists abandoned (suppressed) mail as its own line,
+//              with an exact breakdown past the API's row cap, and records it
+//              BEFORE deleting it; read rows carrying a dedupe watermark are
+//              kept.
 //   DELIV-1    20261183's one-paste shape.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -37,6 +45,11 @@ const db = vi.hoisted(() => {
     readError: {} as Record<string, { message: string } | undefined>,
     writeError: {} as Record<string, { message: string } | undefined>,
     seq: 0,
+    /** PostgREST's max-rows: a non-head select returns at most this many rows
+     *  (the count stays exact). null = no cap. */
+    maxRows: null as number | null,
+    /** Called on every executed query (table, op) — a test's clock or probe. */
+    onExec: null as null | ((table: string, op: string) => void),
   };
 });
 
@@ -61,6 +74,7 @@ function makeClient() {
     const matching = () => (db.tables[table] ?? []).filter((r) => filters.every((f) => f(r)));
     const exec = (): { data: unknown; error: unknown; count?: number } => {
       db.calls.push({ table, op: `exec:${op}`, args: [] });
+      db.onExec?.(table, op);
       if (op === "select") {
         const err = db.readError[table];
         if (err) return { data: null, error: err };
@@ -71,6 +85,7 @@ function makeClient() {
         const count = rows.length;
         if (range) rows = rows.slice(range[0], range[1] + 1);
         if (limit !== Infinity) rows = rows.slice(0, limit);
+        if (db.maxRows !== null) rows = rows.slice(0, db.maxRows);
         return { data: head ? null : rows.map((r) => ({ ...r })), error: null, count };
       }
       const err = db.writeError[table];
@@ -211,7 +226,7 @@ const savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(() => {
   db.tables = { orgs: [{ id: ORG_A, name: "Org A" }, { id: ORG_B, name: "Org B" }] };
-  db.calls = []; db.readError = {}; db.writeError = {}; db.seq = 0;
+  db.calls = []; db.readError = {}; db.writeError = {}; db.seq = 0; db.maxRows = null; db.onExec = null;
   drainAnswers = []; drainCalls = 0; resendBodies = []; resendStatus = [];
   for (const k of ["NEXT_PUBLIC_SITE_URL", "VERCEL_PROJECT_PRODUCTION_URL", "NEXT_PUBLIC_VERCEL_PROJECT_PRODUCTION_URL", "RESEND_API_KEY", "EMAIL_UNSUBSCRIBE_SECRET"]) { savedEnv[k] = process.env[k]; delete process.env[k]; }
   process.env.NEXT_PUBLIC_SITE_URL = ORIGIN;
@@ -317,11 +332,93 @@ describe("NEDGE-17 — each recipient's digest is read on its own: one org's flo
     expect(c1.subject).toBe("Compliance items need you (600)");
     expect(String(c1.body_text)).toMatch(/…and 588 more/);
     expect(r.complianceEmails).toBe(5);
-    // the read is scoped: every notifications read carries the recipient's org and uid
-    const reads = db.calls.filter((c) => c.table === "notifications" && c.op === "select");
-    expect(reads.length).toBeGreaterThanOrEqual(6);
-    const scoped = db.calls.filter((c) => c.table === "notifications" && c.op === "eq" && (c.args[0] === "user_id" || c.args[0] === "org_id"));
-    expect(scoped.length).toBeGreaterThanOrEqual(2 * 6);
+    // each list read is scoped to its recipient's org and uid — one per recipient
+    // with something pending; U(99), who has nothing pending, is never read
+    const scopedUids = db.calls.filter((c) => c.table === "notifications" && c.op === "eq" && c.args[0] === "user_id").map((c) => c.args[1]);
+    expect(scopedUids.sort()).toEqual([...colleagues, BDC].sort());
+    expect(db.calls.filter((c) => c.table === "notifications" && c.op === "eq" && c.args[0] === "org_id")).toHaveLength(5);
+  });
+
+  it("the API's row cap below the discovery page (max-rows 500) drops nobody: a short page is never read as the last", async () => {
+    db.maxRows = 500;
+    const colleagues = [U(1), U(2), U(3), U(4)];
+    db.tables.org_members = [...colleagues.map((u) => member(ORG_A, u)), member(ORG_B, BDC)];
+    db.tables.notifications = [];
+    for (const u of colleagues) for (let i = 0; i < 600; i++) {
+      db.tables.notifications.push(notice(ORG_A, u, "ack_requested", `Please acknowledge DOC-${i}`, minutesAgo(30)));
+    }
+    db.tables.notifications.push(notice(ORG_B, BDC, "ack_overdue", "Overdue acknowledgment: PID-0002", minutesAgo(1)));
+    const r = await runCron();
+    expect(r.complianceEmails).toBe(5);
+    expect(String(digestFor(BDC)!.body_text)).toContain("Overdue acknowledgment: PID-0002");
+  });
+});
+
+describe("NEDGE-17 (fix pass) — the digest's cost follows the pending items, and its deadline the run's clock", () => {
+  it("300 members, one with an unread compliance item: one list read, one membership read, one preferences read — nobody else is touched", async () => {
+    db.tables.org_members = Array.from({ length: 300 }, (_, i) => member(i % 2 ? ORG_A : ORG_B, U(i + 1)));
+    db.tables.notifications = [notice(ORG_A, U(2), "review_due", "Due", minutesAgo(10)), notice(ORG_A, U(3), "ticket_comment", "Not compliance", minutesAgo(10))];
+    const r = await runCron();
+    expect(r.complianceEmails).toBe(1);
+    expect(digestFor(U(2))).toBeTruthy();
+    expect(db.calls.filter((c) => c.table === "notifications" && c.op === "eq" && c.args[0] === "user_id").map((c) => c.args[1])).toEqual([U(2)]);
+    // the membership read names the recipients; no whole-platform member page
+    const memberIns = db.calls.filter((c) => c.table === "org_members" && c.op === "in");
+    expect(memberIns.some((c) => c.args[0] === "uid" && JSON.stringify(c.args[1]) === JSON.stringify([U(2)]))).toBe(true);
+    expect(db.calls.some((c) => c.table === "org_members" && c.op === "range")).toBe(false);
+    const prefIns = db.calls.filter((c) => c.table === "notification_preferences" && c.op === "in");
+    expect(prefIns.map((c) => c.args[1])).toEqual([[U(2)]]);
+  });
+
+  it("a run whose earlier steps used the digest's time skips it, says so, and the later steps still run", async () => {
+    db.tables.org_members = [member(ORG_A, U(1))];
+    db.tables.notifications = [notice(ORG_A, U(1), "review_due", "Due A", minutesAgo(10))];
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date());
+    let jumped = false;
+    // step 4 (the intents prune) runs before the digest: it "takes" 200 s
+    db.onExec = (table) => { if (table === "document_intents" && !jumped) { jumped = true; vi.setSystemTime(new Date(Date.now() + 200_000)); } };
+    try {
+      const r = await runCron();
+      expect(jumped).toBe(true);
+      expect(r.complianceEmails).toBe(0);
+      expect(digests()).toEqual([]);
+      expect(r.errors.some((e) => e.startsWith("compliance-digest: skipped — the steps before it used the time this run leaves it"))).toBe(true);
+      expect(r.embedDrain).toBeDefined();
+      expect(r.platformStorage).toBeDefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a deadline reached mid-run stops between rounds and names how many recipients were not reached", async () => {
+    db.tables.org_members = Array.from({ length: 20 }, (_, i) => member(ORG_A, U(i + 1)));
+    db.tables.notifications = Array.from({ length: 20 }, (_, i) => notice(ORG_A, U(i + 1), "review_due", `Due ${i}`, minutesAgo(10)));
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date());
+    let lists = 0;
+    // the first round's list reads "take" the rest of the time
+    db.onExec = (table, op) => {
+      if (table === "notifications" && op === "select" && db.calls.some((c) => c.table === "notifications" && c.op === "eq" && c.args[0] === "user_id")) {
+        if (++lists === 1) vi.setSystemTime(new Date(Date.now() + 200_000));
+      }
+    };
+    try {
+      const r = await runCron();
+      expect(r.complianceEmails).toBe(8);
+      expect(r.errors.some((e) => /^compliance-digest: stopped at its deadline \(0 s left; the later steps' \d+ s of the 300 s run are kept back\) — 12 recipient\(s\) were not reached this run$/.test(e))).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the deadline is the run's start + 300 s − the later steps' reserve, never a fixed share", () => {
+    const route = src("app/api/cron/maintenance/route.ts");
+    expect(route).toContain("const startedAt = Date.now();");
+    expect(route).toContain("deadlineAt: startedAt + RUN_BUDGET_MS - AFTER_DIGEST_RESERVE_MS,");
+    expect(route).toContain("const RUN_BUDGET_MS = maxDuration * 1000;");
+    expect(route).not.toMatch(/DIGEST_BUDGET_MS/);
+    expect(route.indexOf("const startedAt = Date.now();")).toBeLessThan(route.indexOf("// 1. Sweep expired ad-hoc checkouts"));
   });
 });
 
@@ -454,8 +551,9 @@ describe("NEDGE-10 — the drain: a signed one-click List-Unsubscribe header and
   const drain = () => drainPOST(new Request("http://app.local/api/notifications/send-queued", { method: "POST", headers: { authorization: "Bearer cron-secret" } }));
   const queued = (over: Row) => ({ org_id: ORG_A, status: "queued", attempt_count: 0, subject: "S", body_text: "Body", body_html: null, created_at: minutesAgo(5), ...over });
 
-  it("member mail carries List-Unsubscribe (signed for to_user_id) + List-Unsubscribe-Post; an unrendered row gets the footer at send; a rendered one is sent as stored; external mail gets neither", async () => {
+  it("member mail carries List-Unsubscribe (signed for to_user_id at their own address) + List-Unsubscribe-Post; an unrendered row gets the footer at send; a rendered one is sent as stored; external mail gets neither", async () => {
     process.env.RESEND_API_KEY = "re_test";
+    db.tables.users = [{ id: U(1), email: "a@x.io" }, { id: U(2), email: "B@X.io" }, { id: U(3), email: "sender@x.io" }];
     db.tables.email_notifications = [
       queued({ id: "e1", to_user_id: U(1), to_email: "a@x.io", body_text: `ping @[Mike](${U(5)})`, metadata: null }),
       queued({ id: "e2", to_user_id: U(2), to_email: "b@x.io", body_text: "rendered text", body_html: "<p>rendered</p>", metadata: { rendered: true } }),
@@ -465,7 +563,7 @@ describe("NEDGE-10 — the drain: a signed one-click List-Unsubscribe header and
     expect(await res.json()).toEqual({ processed: 3, sent: 3, failed: 0 });
     const byTo = new Map(resendBodies.map((b) => [b.to as string, b]));
     const a = byTo.get("a@x.io")!;
-    const tokenA = signUnsubscribe(U(1))!;
+    const tokenA = signUnsubscribe(U(1), "a@x.io")!;
     expect(a.headers).toEqual({
       "List-Unsubscribe": `<${ORIGIN}/api/notifications/unsubscribe?u=${U(1)}&t=${encodeURIComponent(tokenA)}>`,
       "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
@@ -483,6 +581,55 @@ describe("NEDGE-10 — the drain: a signed one-click List-Unsubscribe header and
     expect(ext).toMatchObject({ text: "portal", html: "<p>portal</p>" });
     // the stored rows were never rewritten
     expect(rows("email_notifications").find((r) => r.id === "e1")!.body_text).toBe(`ping @[Mike](${U(5)})`);
+  });
+
+  it("BLOCKER (fix pass): a forged row — to_user_id = the victim, to_email = the forger — is sent with NO unsubscribe header, and a link minted for that address turns nothing off", async () => {
+    process.env.RESEND_API_KEY = "re_test";
+    const VICTIM = U(7);
+    db.tables.users = [{ id: VICTIM, email: "victim@b.io" }, { id: U(8), email: "forger@a.io" }];
+    // RLS admits this row (email_notif_insert checks the address against the
+    // org's members, never against to_user_id) — reproduced on PG16 by the review
+    db.tables.email_notifications = [
+      queued({ id: "f1", to_user_id: VICTIM, to_email: "forger@a.io", body_text: "hi", metadata: { rendered: true } }),
+      queued({ id: "ok", to_user_id: VICTIM, to_email: "victim@b.io", body_text: "real", metadata: { rendered: true } }),
+    ];
+    expect(await (await drain()).json()).toEqual({ processed: 2, sent: 2, failed: 0 });
+    const byTo = new Map(resendBodies.map((b) => [b.to as string, b]));
+    expect(byTo.get("forger@a.io")!.headers).toBeUndefined();
+    expect(JSON.stringify(byTo.get("forger@a.io"))).not.toContain("/api/notifications/unsubscribe");
+    // the victim's own mail still carries their link
+    expect((byTo.get("victim@b.io")!.headers as Row)["List-Unsubscribe"]).toContain(`u=${VICTIM}`);
+    // and a link signed for the forger's address (what a uid-only token gave them) does nothing
+    const forged = `http://app.local/api/notifications/unsubscribe?u=${VICTIM}&t=${encodeURIComponent(signUnsubscribe(VICTIM, "forger@a.io")!)}`;
+    const res = await unsubPOST(new NextRequest(forged, { method: "POST", body: "List-Unsubscribe=One-Click", headers: { "content-type": "application/x-www-form-urlencoded" } }));
+    expect(res.status).toBe(400);
+    expect(rows("notification_preferences")).toEqual([]);
+    expect((await unsubGET(new NextRequest(forged))).status).toBe(400);
+  });
+
+  it("no header on mail the master switch does not stop: recalls, PSM alerts, the transmittal's unstamped / refused notices, and anything to a member whose switch is already off; unreadable recipient facts withhold it (mail still sent)", async () => {
+    process.env.RESEND_API_KEY = "re_test";
+    db.tables.users = [1, 2, 3, 4, 5, 6].map((n) => ({ id: U(n), email: `u${n}@x.io` }));
+    db.tables.notification_preferences = [{ user_id: U(5), email_enabled: false }];
+    db.tables.email_notifications = [
+      queued({ id: "r", to_user_id: U(1), to_email: "u1@x.io", event_type: "safety_recall", metadata: { rendered: true } }),
+      queued({ id: "a", to_user_id: U(2), to_email: "u2@x.io", event_type: "safety_alert", metadata: { rendered: true } }),
+      queued({ id: "t1", to_user_id: U(3), to_email: "u3@x.io", event_type: "transmittal_unstamped" }),
+      queued({ id: "t2", to_user_id: U(4), to_email: "u4@x.io", event_type: "transmittal_refused" }),
+      // the transmittal route's acknowledgment receipt: queued without a preference read
+      queued({ id: "ack", to_user_id: U(5), to_email: "u5@x.io", event_type: "watcher_activity" }),
+      queued({ id: "m", to_user_id: U(6), to_email: "u6@x.io", event_type: "comment_mention", metadata: { rendered: true } }),
+    ];
+    expect(await (await drain()).json()).toMatchObject({ processed: 6, sent: 6 });
+    const head = (to: string) => resendBodies.find((b) => b.to === to)!.headers;
+    for (const n of [1, 2, 3, 4, 5]) expect(head(`u${n}@x.io`)).toBeUndefined();
+    expect((head("u6@x.io") as Row)["List-Unsubscribe"]).toContain(`u=${U(6)}`);
+
+    resendBodies = [];
+    db.tables.email_notifications = [queued({ id: "m2", to_user_id: U(6), to_email: "u6@x.io", event_type: "comment_mention", metadata: { rendered: true } })];
+    db.readError.users = { message: "boom" };
+    expect(await (await drain()).json()).toMatchObject({ processed: 1, sent: 1 });
+    expect(resendBodies[0].headers).toBeUndefined();
   });
 
   it("a failed send returns a provider message for the cron (errorSample); the CAS claim and the 7-day recovery bound survive", async () => {
@@ -508,37 +655,64 @@ describe("NEDGE-10 — the drain: a signed one-click List-Unsubscribe header and
 
 describe("NEDGE-10 dw1 / dw3 — the one-click unsubscribe route", () => {
   const url = (uid: string, t: string) => `http://app.local/api/notifications/unsubscribe?u=${uid}&t=${encodeURIComponent(t)}`;
+  const seedUsers = () => { db.tables.users = [{ id: U(1), email: "one@x.io" }, { id: U(2), email: "two@x.io" }]; };
 
-  it("GET shows the choice and changes nothing (mail scanners fetch GET); a bad link is refused", async () => {
-    const t = signUnsubscribe(U(1))!;
+  it("GET shows the choice and changes nothing (mail scanners fetch GET); the page names the mail that still arrives; a bad link is refused", async () => {
+    seedUsers();
+    const t = signUnsubscribe(U(1), "one@x.io")!;
     const res = await unsubGET(new NextRequest(url(U(1), t)));
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toContain('<form method="post"');
-    expect(html).toContain("Drawing recalls and safety alerts are still emailed");
+    expect(html).toContain("drawing recalls and safety alerts");
+    expect(html).toContain("the notices a transmittal sends the person who issued it");
     expect(rows("notification_preferences")).toEqual([]);
     expect((await unsubGET(new NextRequest(url(U(1), "forged")))).status).toBe(400);
+    expect((await unsubGET(new NextRequest(url("not-a-uid", t)))).status).toBe(400);
   });
 
   it("the one-click POST turns email off for THAT member only (an upsert — a member with no row gets one, every other column at its default)", async () => {
+    seedUsers();
     db.tables.notification_preferences = [{ user_id: U(2), email_enabled: true, digest_frequency: "instant" }];
-    const res = await unsubPOST(new NextRequest(url(U(1), signUnsubscribe(U(1))!), { method: "POST", body: "List-Unsubscribe=One-Click", headers: { "content-type": "application/x-www-form-urlencoded" } }));
+    const res = await unsubPOST(new NextRequest(url(U(1), signUnsubscribe(U(1), "one@x.io")!), { method: "POST", body: "List-Unsubscribe=One-Click", headers: { "content-type": "application/x-www-form-urlencoded" } }));
     expect(await res.json()).toEqual({ ok: true });
     expect(rows("notification_preferences").find((p) => p.user_id === U(1))).toMatchObject({ email_enabled: false });
     expect(rows("notification_preferences").find((p) => p.user_id === U(2))).toMatchObject({ email_enabled: true });
     const up = db.calls.find((c) => c.table === "notification_preferences" && c.op === "upsert")!;
     expect(Object.keys(up.args[0] as Row).sort()).toEqual(["email_enabled", "updated_at", "user_id"]);
     expect(up.args[1]).toEqual({ onConflict: "user_id" });
+    // the page's answer does not promise more than the switch does
+    const page = await unsubPOST(new NextRequest(url(U(1), signUnsubscribe(U(1), "one@x.io")!), { method: "POST", headers: { accept: "text/html" } }));
+    const html = await page.text();
+    expect(html).not.toContain("You will no longer receive notification emails");
+    expect(html).toContain("the notices a transmittal sends the person who issued it");
   });
 
-  it("another member's token, or none, writes nothing; a refused write is a 500, never a fake success", async () => {
-    const res = await unsubPOST(new NextRequest(url(U(1), signUnsubscribe(U(2))!), { method: "POST" }));
+  it("another member's token, a token for another address, or a member who has since changed address, writes nothing; a refused write is a 500, never a fake success", async () => {
+    seedUsers();
+    const res = await unsubPOST(new NextRequest(url(U(1), signUnsubscribe(U(2), "two@x.io")!), { method: "POST" }));
     expect(res.status).toBe(400);
+    expect((await unsubPOST(new NextRequest(url(U(1), signUnsubscribe(U(1), "two@x.io")!), { method: "POST" }))).status).toBe(400);
+    const old = signUnsubscribe(U(1), "one@x.io")!;
+    db.tables.users[0].email = "one.new@x.io";
+    expect((await unsubPOST(new NextRequest(url(U(1), old), { method: "POST" }))).status).toBe(400);
     expect(rows("notification_preferences")).toEqual([]);
+    db.tables.users[0].email = "one@x.io";
     db.writeError.notification_preferences = { message: "denied" };
-    const res2 = await unsubPOST(new NextRequest(url(U(1), signUnsubscribe(U(1))!), { method: "POST", headers: { accept: "text/html" } }));
+    const res2 = await unsubPOST(new NextRequest(url(U(1), old), { method: "POST", headers: { accept: "text/html" } }));
     expect(res2.status).toBe(500);
     expect(await res2.text()).toContain("could not be saved");
+  });
+
+  it("an address that cannot be read changes nothing and says so (500, not 'invalid', not a success)", async () => {
+    seedUsers();
+    db.readError.users = { message: "boom" };
+    const t = signUnsubscribe(U(1), "one@x.io")!;
+    const res = await unsubPOST(new NextRequest(url(U(1), t), { method: "POST" }));
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "the link could not be checked; nothing was changed" });
+    expect((await unsubGET(new NextRequest(url(U(1), t)))).status).toBe(500);
+    expect(rows("notification_preferences")).toEqual([]);
   });
 });
 
@@ -571,23 +745,70 @@ describe("DELIV-8 — the purge: abandoned (suppressed) mail is its own reported
     const ab = by.get("email_notifications_suppressed")!;
     expect(ab).toMatchObject({ rows: 2, sourceTable: "email_notifications", label: "Abandoned email queue rows (never sent)" });
     expect(ab.reason).toMatch(/never delivered/);
-    expect(ab.reason).toContain("These are: 1 watcher_activity, 1 comment_mention queued 2026-01-01 to 2026-01-05 (UTC).");
+    // most first; a tie in name order
+    expect(ab.reason).toContain("These are: 1 comment_mention, 1 watcher_activity queued 2026-01-01 to 2026-01-05 (UTC).");
     // read notifications: only the plain read row — the three watermark rows and the unread one are kept
     expect(by.get("notifications")!.rows).toBe(1);
   });
 
-  it("the purge deletes sent and abandoned rows (never failed or queued), keeps watermark rows, and its DATA_PURGE row records what was abandoned", async () => {
+  const purgeAll = (extra: Row = {}) => purgePOST(new NextRequest("http://x/api/admin/purge", { method: "POST", headers: { authorization: "Bearer t", "content-type": "application/json" }, body: JSON.stringify({ orgId: "oA", days: 30, confirm: true, ...extra }) }));
+
+  it("the purge deletes sent and abandoned rows (never failed or queued), keeps watermark rows, and records what was abandoned BEFORE deleting it", async () => {
     seedPurge();
-    const res = await purgePOST(new NextRequest("http://x/api/admin/purge", { method: "POST", headers: { authorization: "Bearer t", "content-type": "application/json" }, body: JSON.stringify({ orgId: "oA", days: 30, confirm: true }) }));
+    // what the audit log holds at the moment each email_notifications delete runs
+    const atDelete: string[][] = [];
+    db.onExec = (table, op) => { if (table === "email_notifications" && op === "delete") atDelete.push(rows("audit_logs").map((a) => String(a.action))); };
+    const res = await purgeAll();
     expect(res.status).toBe(200);
+    expect(await res.json()).not.toHaveProperty("auditError");
     expect(rows("email_notifications").map((r) => r.id)).toEqual(["f1"]);
     expect(rows("notifications").map((r) => r.id).sort()).toEqual(["u1", "w1", "w2", "w3"]);
+    // delivered first (nothing to record), then abandoned — after its record landed
+    expect(atDelete).toEqual([[], ["DATA_PURGE_ABANDONED_EMAIL"]]);
+    const record = rows("audit_logs").find((a) => a.action === "DATA_PURGE_ABANDONED_EMAIL")!;
+    expect(record).toMatchObject({ org_id: "oA", user_id: "dc1", user_email: "dc1@x.io" });
+    expect(record.details).toMatchObject({
+      rows: 2, abandoned: { byEventType: { watcher_activity: 1, comment_mention: 1 }, oldest: old, newest: "2026-01-05T00:00:00.000Z" },
+    });
     const audit = rows("audit_logs").find((a) => a.action === "DATA_PURGE")!;
     const deleted = (audit.details as { deleted: Array<{ table: string; rows: number; abandoned?: unknown }> }).deleted;
     expect(deleted.find((d) => d.table === "email_notifications_suppressed")).toMatchObject({
       rows: 2, abandoned: { byEventType: { watcher_activity: 1, comment_mention: 1 }, oldest: old, newest: "2026-01-05T00:00:00.000Z" },
     });
     expect(deleted.find((d) => d.table === "email_notifications")).toMatchObject({ rows: 1 });
+  });
+
+  it("no record, no delete: a refused audit insert leaves the abandoned rows in place and says so; a refused DATA_PURGE row is reported, never a silent success", async () => {
+    seedPurge();
+    db.writeError.audit_logs = { message: "audit refused" };
+    const res = await purgeAll();
+    expect(res.status).toBe(200);
+    const out = await res.json() as { deleted: Array<{ table: string; rows: number; error?: string }>; auditError?: string };
+    // the abandoned mail is still there; delivered rows (disposable) went as before
+    expect(rows("email_notifications").map((r) => r.id).sort()).toEqual(["f1", "x1", "x2"]);
+    expect(out.deleted.find((d) => d.table === "email_notifications_suppressed")).toMatchObject({
+      rows: 0, error: "not purged — the record of what it holds could not be written first: audit refused",
+    });
+    expect(out.auditError).toBe("the purge ran but its DATA_PURGE audit row was not written: audit refused");
+  });
+
+  it("the breakdown is exact past the API's row cap (max-rows 1000): 2,500 abandoned rows, kinds and dates from every one of them", async () => {
+    db.maxRows = 1000;
+    db.tables.email_notifications = [];
+    // inserted newest-first: an unordered capped read would see only the first 1,000
+    for (let i = 0; i < 1000; i++) db.tables.email_notifications.push({ id: `a${i}`, org_id: ORG_A, status: "suppressed", created_at: "2026-02-11T00:00:00.000Z", event_type: "watcher_activity" });
+    for (let i = 0; i < 1200; i++) db.tables.email_notifications.push({ id: `b${i}`, org_id: ORG_A, status: "suppressed", created_at: "2026-01-20T00:00:00.000Z", event_type: "comment_mention" });
+    for (let i = 0; i < 299; i++) db.tables.email_notifications.push({ id: `c${i}`, org_id: ORG_A, status: "suppressed", created_at: "2026-01-10T00:00:00.000Z", event_type: "assignment" });
+    db.tables.email_notifications.push({ id: "d0", org_id: ORG_A, status: "suppressed", created_at: "2026-01-03T00:00:00.000Z", event_type: null });
+    db.tables.email_notifications.push({ id: "z0", org_id: ORG_B, status: "suppressed", created_at: "2025-12-01T00:00:00.000Z", event_type: "sla_warning" });
+    const res = await purgeGET(new NextRequest("http://x/api/admin/purge?orgId=oA&days=30", { headers: { authorization: "Bearer t" } }));
+    const json = await res.json() as { targets: Array<{ table: string; reason: string; rows: number }> };
+    const ab = json.targets.find((t) => t.table === "email_notifications_suppressed")!;
+    expect(ab.rows).toBe(2500);
+    expect(ab.reason).toContain("These are: 1200 comment_mention, 1000 watcher_activity, 299 assignment, 1 unknown queued 2026-01-03 to 2026-02-11 (UTC).");
+    // no bulk read of the line: every read of it is a head count or one row
+    const src0 = src("app/api/admin/purge/route.ts");
+    expect(src0).not.toMatch(/\.select\("event_type, created_at"\)/);
   });
 
   it("REGRESSION: a `tables` subset naming the table still purges both of its lines (as 'sent or suppressed' did); naming a line purges that line alone", async () => {

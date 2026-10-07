@@ -8,7 +8,7 @@
 //                       last site).
 //   NEDGE-10            mention markup renders as names; every email carries
 //                       a footer linking the settings page; the one-click
-//                       unsubscribe token is signed per member.
+//                       unsubscribe token is signed per member and address.
 //   NEDGE-12 dw1        lib/recordTime.ts writes moments ISO-8601 with an
 //                       offset and the zone named.
 //   escapeHtml          every interpolation is escaped (report 08's "verified
@@ -52,7 +52,7 @@ import {
   EmailOriginMissingError, hrefsOf, textToHtml,
 } from "@/lib/emailRender";
 import { formatRecordTime, formatRecordDate, isValidTimeZone, orgTimeZone } from "@/lib/recordTime";
-import { signUnsubscribe, verifyUnsubscribe, unsubscribeUrl } from "@/lib/unsubscribeToken";
+import { signUnsubscribe, verifyUnsubscribe, unsubscribeUrl, addressIsOwn } from "@/lib/unsubscribeToken";
 import { queueEmail, ticketUrl } from "@/lib/notifications";
 
 const ORIGIN = "https://ops.example.com";
@@ -151,20 +151,33 @@ describe("NEDGE-10 — mentions as names; a footer on every email; escaping carr
     expect(textToHtml("a\nb\n\nc")).toBe("<p>a<br>b</p>\n<p>c</p>");
   });
 
-  it("the one-click token is the member's own: verifies for them, for nobody else, and not unsigned", () => {
+  it("the one-click token is the member's own AT their address: verifies for them there, for nobody else, at no other address, and not unsigned", () => {
     process.env.EMAIL_UNSUBSCRIBE_SECRET = "s3cret";
-    const t = signUnsubscribe(UUID)!;
+    const t = signUnsubscribe(UUID, "pat@acme.io")!;
     expect(t).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(verifyUnsubscribe(UUID, t)).toBe(true);
-    expect(verifyUnsubscribe("11111111-1111-4111-8111-111111111111", t)).toBe(false);
-    expect(verifyUnsubscribe(UUID, t.slice(0, -1) + (t.endsWith("A") ? "B" : "A"))).toBe(false);
-    expect(verifyUnsubscribe(UUID, "")).toBe(false);
-    expect(signUnsubscribe("not-a-uuid")).toBeNull();
-    expect(unsubscribeUrl(ORIGIN, UUID)).toBe(`${ORIGIN}/api/notifications/unsubscribe?u=${UUID}&t=${encodeURIComponent(t)}`);
-    expect(unsubscribeUrl("", UUID)).toBeNull();
+    expect(verifyUnsubscribe(UUID, "pat@acme.io", t)).toBe(true);
+    // the address is compared as the app stores it: trimmed, lowercased
+    expect(verifyUnsubscribe(UUID, "  Pat@ACME.io ", t)).toBe(true);
+    expect(verifyUnsubscribe("11111111-1111-4111-8111-111111111111", "pat@acme.io", t)).toBe(false);
+    // N6 fix pass: a link minted for another address (a forged row's) is not the member's
+    expect(verifyUnsubscribe(UUID, "attacker@a.io", t)).toBe(false);
+    expect(verifyUnsubscribe(UUID, "attacker@a.io", signUnsubscribe(UUID, "attacker@a.io"))).toBe(true);
+    expect(verifyUnsubscribe(UUID, null, t)).toBe(false);
+    expect(verifyUnsubscribe(UUID, "pat@acme.io", t.slice(0, -1) + (t.endsWith("A") ? "B" : "A"))).toBe(false);
+    expect(verifyUnsubscribe(UUID, "pat@acme.io", "")).toBe(false);
+    expect(signUnsubscribe("not-a-uuid", "pat@acme.io")).toBeNull();
+    expect(signUnsubscribe(UUID, "")).toBeNull();
+    expect(signUnsubscribe(UUID, "not an address")).toBeNull();
+    expect(unsubscribeUrl(ORIGIN, UUID, "pat@acme.io")).toBe(`${ORIGIN}/api/notifications/unsubscribe?u=${UUID}&t=${encodeURIComponent(t)}`);
+    expect(unsubscribeUrl(ORIGIN, UUID, "pat@acme.io")).not.toContain("acme");
+    expect(unsubscribeUrl("", UUID, "pat@acme.io")).toBeNull();
+    expect(addressIsOwn("Pat@acme.io", "pat@acme.io ")).toBe(true);
+    expect(addressIsOwn("attacker@a.io", "pat@acme.io")).toBe(false);
+    expect(addressIsOwn("pat@acme.io", null)).toBe(false);
+    expect(addressIsOwn("", "")).toBe(false);
     // another key, another token: the token is bound to the deployment's secret
     process.env.EMAIL_UNSUBSCRIBE_SECRET = "other";
-    expect(verifyUnsubscribe(UUID, t)).toBe(false);
+    expect(verifyUnsubscribe(UUID, "pat@acme.io", t)).toBe(false);
   });
 });
 
