@@ -338,6 +338,10 @@ export default function StorageBackupPage() {
         body: JSON.stringify({ orgId: activeOrgId, locationHint: locDraft, naming: noteDraft }),
       });
       if (!res.ok) throw new Error((await res.text().catch(() => "")) || `HTTP ${res.status}`);
+      // BILL-7: the change is saved, but a refused audit row comes back as a
+      // warning — say it, as the quota and ceiling saves do.
+      const saved = await res.json().catch(() => null);
+      if (saved?.warning) setError(String(saved.warning));
       setArchiveRoot(locDraft.trim() || null);
       setFinderNote(noteDraft.trim() || null);
       setEditingLoc(false);
@@ -824,7 +828,12 @@ export default function StorageBackupPage() {
   const usedFloor = !!wsFiles?.truncated;
   const usedBytes = wsFiles?.bytes ?? 0;
   const pct = Math.min(100, Math.round((usedBytes / budgetBytes) * 100));
-  const health: "ok" | "warn" | "crit" = !usedMeasured ? "ok" : pct >= 90 ? "crit" : pct >= 70 ? "warn" : "ok";
+  // A partial walk is a FLOOR: under 70% it says nothing about the real
+  // total, so it is "partial", never "ok" — the rule the deployment figure
+  // and the cron already keep (lib/storageUsage.ts measurePlatformStorage,
+  // lib/storageAlerts.ts). An unmeasured workspace is neutral, never green.
+  const health: "ok" | "warn" | "crit" | "partial" | "unmeasured" =
+    !usedMeasured ? "unmeasured" : pct >= 90 ? "crit" : pct >= 70 ? "warn" : usedFloor ? "partial" : "ok";
   const byCat = db?.byCategory ?? { purge: 0, archive: 0, reference: 0 };
   const shared = stats?.scope === "workspace";
   // The segment list: the whole bucket's when the server's figures are shown,
@@ -870,9 +879,9 @@ export default function StorageBackupPage() {
       ) : stats ? (
         <>
           {/* ── Health watermark ─────────────────────────────────────────── */}
-          <div className={`rounded-2xl border p-4 mb-5 ${
+          <div data-watermark={health} className={`rounded-2xl border p-4 mb-5 ${
             health === "crit" ? "border-red-300 bg-red-50" :
-            health === "warn" ? "border-amber-300 bg-amber-50" :
+            health === "warn" || health === "partial" ? "border-amber-300 bg-amber-50" :
             "border-[var(--color-border)] bg-[var(--color-surface)]"
           }`}>
             <div className="flex items-end justify-between gap-3 flex-wrap mb-2">
@@ -883,23 +892,38 @@ export default function StorageBackupPage() {
                   <span className="text-sm font-bold text-[var(--color-text-muted)]">/ {fmtBytes(budgetBytes)} {isRealQuota ? "limit" : "soft budget"}</span>
                 </div>
               </div>
-              <div className={`text-right ${health === "crit" ? "text-red-700" : health === "warn" ? "text-amber-700" : "text-emerald-700"}`}>
+              <div className={`text-right ${
+                health === "crit" ? "text-red-700" :
+                health === "warn" || health === "partial" ? "text-amber-700" :
+                health === "ok" ? "text-emerald-700" : "text-[var(--color-text-muted)]"
+              }`}>
                 <div className="text-2xl font-black">{usedMeasured ? `${usedFloor ? "≥" : ""}${pct}%` : "—"}</div>
-                <div className="text-[11px] font-bold">{!usedMeasured ? "Try Refresh" : health === "crit" ? "Act now" : health === "warn" ? "Plan a backup" : "Healthy"}</div>
+                <div className="text-[11px] font-bold">{
+                  health === "unmeasured" ? "Try Refresh" :
+                  health === "crit" ? "Act now" :
+                  health === "warn" ? "Plan a backup" :
+                  health === "partial" ? "Partial — refresh" : "Healthy"
+                }</div>
               </div>
             </div>
             <div className="h-2.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-              <div className={`h-full rounded-full transition-all ${health === "crit" ? "bg-red-500" : health === "warn" ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${Math.max(2, pct)}%` }} />
+              <div className={`h-full rounded-full transition-all ${
+                health === "crit" ? "bg-red-500" :
+                health === "warn" || health === "partial" ? "bg-amber-500" :
+                health === "ok" ? "bg-emerald-500" : "bg-[var(--color-border)]"
+              }`} style={{ width: `${health === "unmeasured" ? 0 : Math.max(2, pct)}%` }} />
             </div>
             <div className="mt-2 flex items-start gap-1.5 text-[11px] text-[var(--color-text-muted)] leading-relaxed">
               <Info className="w-3.5 h-3.5 mt-px shrink-0" />
               <span>
-                {!usedMeasured
+                {health === "unmeasured"
                   ? <>This workspace&apos;s files could not be measured just now{stats.workspace?.filesError ? <> ({stats.workspace.filesError})</> : null}.</>
+                  : health === "partial"
+                  ? `Partial: the measurement stopped early, so this workspace's files are at least ${pct}% of the limit and the real figure is higher, possibly close to it. Refresh to measure again.`
                   : health === "ok"
                   ? "Plenty of headroom. Still recommended: take a full backup quarterly so you can restore from scratch."
-                  : `At ${pct}% it's time to take a full backup and free up space below.`}
-                {usedFloor && " The measurement stopped early, so the real figure is higher."}
+                  : `At ${usedFloor ? "least " : ""}${pct}% it's time to take a full backup and free up space below.`}
+                {usedFloor && health !== "partial" && " The measurement stopped early, so the real figure is higher."}
                 {reclaimNow > 0 && <> You can reclaim ≈<b>{fmtBytes(reclaimNow)}</b> now (purge + dedup).</>}
                 {!isRealQuota && " The limit shown is a guideline until you set your plan's real quota."}
                 {" "}Measured from this workspace&apos;s own files in storage, not the whole server; the database is shared

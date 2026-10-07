@@ -162,9 +162,12 @@ async function handler(req: NextRequest) {
   }
 
   // 3. Storage watermark alerts: notify admins of orgs over their set quota.
+  //    A workspace the shared walk budget did not measure is never "fine"
+  //    (admin-and-org BILL-12): it is said here, where an operator reads.
   try {
-    const { alerts } = await runStorageAlerts(sb);
+    const { alerts, unmeasured } = await runStorageAlerts(sb);
     result.storageAlerts = alerts;
+    if (unmeasured > 0) result.errors.push(`storage-alerts: ${unmeasured} workspace(s) with a storage limit were not measured in time; none was reported fine`);
   } catch (e) {
     result.errors.push(`storage-alerts: ${(e as Error).message}`);
   }

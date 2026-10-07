@@ -21,9 +21,16 @@
 //     renders read-only and gates its writes by `writes`;
 //   * `cap`            — a capability-policy decision: role tokens, then a
 //     live per-person grant (policyAllows with uid). Three surfaces.
-// `writes` is documentation pinned by test against the page's own constant:
-// the authority the page's actions need, enforced by the page and by its
-// API routes / RLS — NOT by the entry gate.
+// `writes` is the authority the page's actions need. It is not part of the
+// ENTRY rule, but since roles-and-permissions SURF-19 (admin-and-org Round G,
+// P6) it is ENFORCED server-side: lib/adminGate.ts authorizeAdminSurface(…,
+// "write") holds a route to the entry rule AND this set, by the full
+// collection. The storage surface's routes (the storage-stats POST,
+// archive-settings, shed, archives, orphans, ticket-shed) and the restore
+// surface's begin and apply-table ask it that way, so changing a surface's
+// `writes` changes who those routes admit — it is not documentation. It is
+// still pinned by test against the page's own constant, and RLS stays the
+// database's own rail.
 //
 // Pure — no imports beyond the policy evaluator — so the layout, the gate
 // route and the tests all read the same table.
@@ -40,7 +47,8 @@ export interface AdminSurface {
   entry: string[] | "*";
   /** Set when entry is decided by the capability policy (grants honoured). */
   cap?: CapabilityId;
-  /** The page's action authority (documentation; pinned to its source). */
+  /** The page's action authority: enforced by lib/adminGate.ts intent
+   *  "write" for the routes that ask it (SURF-19), pinned to the page's source. */
   writes?: string[];
   /** Shown on the denial screen. */
   denied: string;

@@ -30,6 +30,8 @@ const state = vi.hoisted(() => ({
   objects: [] as Array<{ Key: string; Size: number; LastModified?: Date }>,
   pageSize: 1000,
   hangAfterPages: Number.POSITIVE_INFINITY,
+  /** A list request under exactly this prefix never answers (until aborted). */
+  hangPrefix: null as string | null,
   pagesServed: 0,
   r2Calls: [] as Array<{ name: string; input: Row; hadSignal: boolean }>,
 }));
@@ -74,7 +76,7 @@ async function r2Send(cmd: { constructor?: { name?: string }; input?: Row }, opt
   const name = cmd?.constructor?.name ?? "";
   state.r2Calls.push({ name, input: cmd?.input ?? {}, hadSignal: !!opts?.abortSignal });
   if (name !== "ListObjectsV2Command") return {};
-  if (state.pagesServed >= state.hangAfterPages) {
+  if (state.pagesServed >= state.hangAfterPages || (state.hangPrefix !== null && cmd.input?.Prefix === state.hangPrefix)) {
     state.pagesServed++;
     return new Promise((_resolve, reject) => {
       opts?.abortSignal?.addEventListener("abort", () => reject(Object.assign(new Error("The operation was aborted"), { name: "AbortError" })));
@@ -103,7 +105,9 @@ vi.mock("@/lib/r2", () => ({ R2_BUCKET: "test-bucket", r2: { send: (cmd: never, 
 import { adminSurface } from "@/lib/adminSurfaces";
 import { authorizeAdminSurface, adminSurfaceWriteAllows, writesDeniedMessage } from "@/lib/adminGate";
 import { measureR2Usage, runPlatformStorageAlerts, PLATFORM_OPERATORS_KEY, platformOperatorSql, storageScopeFor } from "@/lib/storageUsage";
-import { runStorageAlerts } from "@/lib/storageAlerts";
+import { runStorageAlerts, quotaWalkOrder, fairShareDeadline } from "@/lib/storageAlerts";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import * as statsRoute from "@/app/api/admin/storage-stats/route";
 import * as archiveSettingsRoute from "@/app/api/admin/archive-settings/route";
 import * as shedRoute from "@/app/api/admin/shed/route";
@@ -128,7 +132,7 @@ const postJson = (path: string, body: Row, method = "POST") => new NextRequest(`
 
 beforeEach(() => {
   state.actor = null; state.rows = {}; state.errors = {}; state.calls = []; state.rpcs = [];
-  state.objects = []; state.pageSize = 1000; state.hangAfterPages = Number.POSITIVE_INFINITY; state.pagesServed = 0; state.r2Calls = [];
+  state.objects = []; state.pageSize = 1000; state.hangAfterPages = Number.POSITIVE_INFINITY; state.hangPrefix = null; state.pagesServed = 0; state.r2Calls = [];
 });
 
 // ── SURF-19: the gate's write intent ────────────────────────────────────────
@@ -458,7 +462,49 @@ describe("BILL-12 — each workspace is measured under its own prefix; BILL-11 �
   it("a workspace not measured within the budget is counted, never reported fine or alerted", async () => {
     state.rows.archive_settings = [{ org_id: O1, quota_bytes: 1000 }];
     state.objects = [{ Key: `orgs/${O1}/a`, Size: 999 }];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     expect(await runStorageAlerts(adminClient as never, { budgetMs: 0 })).toEqual({ alerts: 0, orgsChecked: 0, unmeasured: 1 });
+    // fix pass: the count reaches the log, not only the return value
+    expect(warn.mock.calls.some((c) => String(c[0]).includes("[storage-alerts] 1 of 1 workspace(s) with a storage limit were not measured in time"))).toBe(true);
+    warn.mockRestore();
+  });
+
+  it("fix pass, REPRODUCED: one workspace whose walk never answers no longer leaves every other workspace unmeasured", async () => {
+    const O3 = "33333333-3333-4333-8333-333333333333";
+    // The stuck workspace is FIRST in the order the database returns, as at
+    // base, where it used the whole shared budget and every later walk
+    // started past the deadline.
+    state.rows.archive_settings = [{ org_id: O2, quota_bytes: 1000 }, { org_id: O1, quota_bytes: 1000 }, { org_id: O3, quota_bytes: 1000 }];
+    state.rows.org_members = [{ org_id: O1, uid: "a1", status: "active" }, { org_id: O3, uid: "a3", status: "active" }];
+    state.hangPrefix = `orgs/${O2}/`;
+    state.objects = [{ Key: `orgs/${O1}/a.pdf`, Size: 950 }, { Key: `orgs/${O3}/b.pdf`, Size: 100 }];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const r = await runStorageAlerts(adminClient as never, { budgetMs: 300 });
+    warn.mockRestore();
+    // whatever today's rotation, the stuck walk gets only its share
+    expect(r).toEqual({ alerts: 1, orgsChecked: 2, unmeasured: 1 });
+    expect(inserts().map((x) => [x.org_id, x.user_id, x.title])).toEqual([[O1, "a1", "Storage critical — 95% full"]]);
+    expect(new Set(state.r2Calls.map((c) => c.input.Prefix))).toEqual(new Set([`orgs/${O1}/`, `orgs/${O2}/`, `orgs/${O3}/`]));
+  });
+
+  it("the walk order is by org id, rotated one place a day; each walk's deadline is an equal share of the time left", () => {
+    const rows = [{ org_id: "c" }, { org_id: "a" }, { org_id: "b" }];
+    expect(quotaWalkOrder(rows, 0).map((r) => r.org_id)).toEqual(["a", "b", "c"]);
+    expect(quotaWalkOrder(rows, 1).map((r) => r.org_id)).toEqual(["b", "c", "a"]);
+    expect(quotaWalkOrder(rows, 2).map((r) => r.org_id)).toEqual(["c", "a", "b"]);
+    expect(quotaWalkOrder(rows, 3).map((r) => r.org_id)).toEqual(["a", "b", "c"]);
+    expect(quotaWalkOrder([], 5)).toEqual([]);
+    // every workspace is first once in n days
+    expect(new Set([0, 1, 2].map((d) => quotaWalkOrder(rows, d)[0].org_id))).toEqual(new Set(["a", "b", "c"]));
+    expect(fairShareDeadline(1000, 46_000, 3)).toBe(16_000);
+    expect(fairShareDeadline(1000, 46_000, 1)).toBe(46_000);
+    expect(fairShareDeadline(50_000, 46_000, 3)).toBe(46_000); // past the shared deadline: no extension
+  });
+
+  it("the maintenance cron adds the unmeasured count to its errors (where an operator reads it)", () => {
+    const cron = readFileSync(join(process.cwd(), "app/api/cron/maintenance/route.ts"), "utf8");
+    expect(cron).toContain("const { alerts, unmeasured } = await runStorageAlerts(sb);");
+    expect(cron).toContain("if (unmeasured > 0) result.errors.push(`storage-alerts: ${unmeasured} workspace(s) with a storage limit were not measured in time; none was reported fine`);");
   });
 
   it("the platform watchdog on a SHARED server tells the platform operators only — in the workspaces they belong to", async () => {
@@ -491,5 +537,14 @@ describe("BILL-12 — each workspace is measured under its own prefix; BILL-11 �
     state.rows.orgs = [{ id: O1 }];
     await runPlatformStorageAlerts(adminClient as never);
     expect(state.r2Calls.filter((c) => c.name === "ListObjectsV2Command").every((c) => c.hadSignal)).toBe(true);
+  });
+});
+
+describe("SURF-19 fix pass — the registry says what the gate does with `writes`", () => {
+  it("lib/adminSurfaces.ts no longer calls `writes` documentation the gate does not enforce", () => {
+    const src = readFileSync(join(process.cwd(), "lib/adminSurfaces.ts"), "utf8");
+    expect(src).not.toMatch(/`writes` is documentation/);
+    expect(src).not.toMatch(/NOT by the entry gate/);
+    expect(src).toMatch(/it is ENFORCED server-side: lib\/adminGate\.ts authorizeAdminSurface\(…,\n\/\/ "write"\)/);
   });
 });

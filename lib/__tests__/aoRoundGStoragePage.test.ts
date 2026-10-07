@@ -7,7 +7,11 @@
 //     whole server's;
 //   * BILL-5: on a shared server (scope "workspace") the server's figures are
 //     not shown; the plan ceilings' editor is a platform operator's;
-//   * BILL-11 / BILL-7: the quota copy says it is advisory and audited;
+//   * BILL-11 / BILL-7: the quota copy says it is advisory and audited, and
+//     a save whose audit row was refused says so (quota, ceiling, archive
+//     location alike);
+//   * fix pass: a partial walk under 70% is "Partial", never "Healthy"; an
+//     unmeasured workspace is neutral, never green;
 //   * P3 handoff (DEC-87 §1, BKP-8): the Full ZIP / JSON buttons show only to
 //     a member holding the data-export surface's entry (Admin), by the full
 //     collection; anyone else reads a line pointing them to an Admin.
@@ -57,6 +61,8 @@ const SHARED = {
 
 let stats: unknown = DEPLOYMENT;
 let quota: number | null = null;
+let archivePut: Record<string, unknown> = { ok: true };
+const puts: Array<{ url: string; body: unknown }> = [];
 let container: HTMLDivElement;
 let root: Root;
 
@@ -64,10 +70,16 @@ beforeEach(() => {
   role.held = ["Admin"];
   stats = DEPLOYMENT;
   quota = null;
-  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+  archivePut = { ok: true };
+  puts.length = 0;
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
     const u = String(url);
     const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200 });
     if (u.startsWith("/api/admin/storage-stats")) return json(stats);
+    if (u.startsWith("/api/admin/archive-settings") && init?.method === "PUT") {
+      puts.push({ url: u, body: JSON.parse(init.body ?? "null") });
+      return json(archivePut);
+    }
     if (u.startsWith("/api/admin/archive-settings")) return json({ settings: { location_hint: null, naming: null, quota_bytes: quota } });
     if (u.startsWith("/api/admin/purge")) return json({ cutoffDays: 90, targets: [], totalRows: 0, totalEstBytes: 0, note: "" });
     if (u.startsWith("/api/admin/shed")) return json({ selectedCount: 0, reclaimableBytes: 0, eligibleCount: 0 });
@@ -91,6 +103,8 @@ async function render() {
   return container.textContent ?? "";
 }
 const buttons = () => [...container.querySelectorAll("button")].map((b) => b.textContent?.trim() ?? "");
+const watermark = () => container.querySelector("[data-watermark]") as HTMLElement;
+const greenIn = (el: HTMLElement) => el.querySelectorAll(".text-emerald-700, .bg-emerald-500").length;
 
 describe("BILL-12 — the limit is compared to this workspace's own files", () => {
   it("REPRODUCED: the watermark is the workspace's 1.5 GB of a 2 GB soft budget (75%), not the server's 100 MB + 9 GB", async () => {
@@ -121,6 +135,56 @@ describe("BILL-12 — the limit is compared to this workspace's own files", () =
     const text = await render();
     expect(text).toContain("Not measured");
     expect(text).toContain("could not be measured just now (bucket unreachable)");
+  });
+});
+
+describe("fix pass — a partial walk is never 'Healthy'; an unmeasured one is never green", () => {
+  const partial = (gb: number) => ({ ...DEPLOYMENT, workspace: { files: { ...workspace.files, bytes: gb * GB, truncated: true, stoppedBy: "deadline" }, filesError: null } });
+
+  it("REPRODUCED: a walk stopped by its deadline at 0.6 GB of 2 GB (a 30% floor) reads 'Partial', amber — not 'Healthy', not 'Plenty of headroom'", async () => {
+    stats = partial(0.6);
+    await render();
+    const card = watermark();
+    expect(card.getAttribute("data-watermark")).toBe("partial");
+    const text = card.textContent ?? "";
+    expect(text).toMatch(/at least 614 MB/);
+    expect(text).toContain("≥30%");
+    expect(text).toContain("Partial — refresh");
+    expect(text).toContain("so this workspace's files are at least 30% of the limit and the real figure is higher");
+    expect(text).not.toContain("Healthy");
+    expect(text).not.toContain("Plenty of headroom");
+    expect(greenIn(card)).toBe(0);
+    expect(card.className).toContain("border-amber-300");
+  });
+
+  it("a partial floor that already crosses 70% keeps its band and says the real figure is higher", async () => {
+    stats = partial(1.9);
+    await render();
+    const card = watermark();
+    expect(card.getAttribute("data-watermark")).toBe("crit");
+    expect(card.textContent).toContain("At least 95% it's time to take a full backup");
+    expect(card.textContent).toContain("The measurement stopped early, so the real figure is higher.");
+  });
+
+  it("'Not measured' is neutral: no green, no 'Healthy', no bar", async () => {
+    stats = { ...DEPLOYMENT, workspace: { files: null, filesError: "bucket unreachable" } };
+    await render();
+    const card = watermark();
+    expect(card.getAttribute("data-watermark")).toBe("unmeasured");
+    expect(card.textContent).toContain("Try Refresh");
+    expect(card.textContent).not.toContain("Healthy");
+    expect(greenIn(card)).toBe(0);
+    expect((card.querySelector(".h-full") as HTMLElement).style.width).toBe("0%");
+  });
+
+  it("a complete walk under 70% is still 'Healthy' and green", async () => {
+    stats = { ...DEPLOYMENT, workspace: { files: { ...workspace.files, bytes: 0.6 * GB }, filesError: null } };
+    await render();
+    const card = watermark();
+    expect(card.getAttribute("data-watermark")).toBe("ok");
+    expect(card.textContent).toContain("Healthy");
+    expect(card.textContent).toContain("Plenty of headroom");
+    expect(greenIn(card)).toBe(2);
   });
 });
 
@@ -162,6 +226,39 @@ describe("BILL-11 / BILL-7 — the quota copy", () => {
     const text = await render();
     expect(text).toContain("Advisory: Admin and Document Control are notified at 70% / 90%; uploads are never blocked at this limit. A change is recorded in the audit log.");
     expect(text).not.toContain("Admins are alerted at 70% / 90%.");
+  });
+});
+
+describe("BILL-7 — a saved archive location whose audit row was refused says so", () => {
+  const typeInto = (input: HTMLInputElement, value: string) => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    setter.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+  const saveRoot = async (root: string) => {
+    await render();
+    const input = [...container.querySelectorAll("input")].find((i) => i.placeholder.includes("fileserver")) as HTMLInputElement;
+    await act(async () => { typeInto(input, root); });
+    const save = [...container.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Save root")!;
+    await act(async () => { save.click(); });
+    for (let i = 0; i < 3; i++) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    return container.textContent ?? "";
+  };
+
+  it("REPRODUCED: { ok: true, warning } from the PUT is shown (it used to be dropped)", async () => {
+    archivePut = { ok: true, warning: "The change was saved, but its audit row was refused: permission denied" };
+    const text = await saveRoot("//fs/archives");
+    expect(puts).toHaveLength(1);
+    expect(puts[0].body).toMatchObject({ orgId: ORG, locationHint: "//fs/archives" });
+    expect(text).toContain("The change was saved, but its audit row was refused: permission denied");
+    expect(text).toContain("Archive root:");
+  });
+
+  it("a clean save shows no warning", async () => {
+    const text = await saveRoot("/Volumes/Backups/MOS");
+    expect(puts).toHaveLength(1);
+    expect(text).not.toContain("audit row was refused");
+    expect(text).toContain("Archive root:");
   });
 });
 

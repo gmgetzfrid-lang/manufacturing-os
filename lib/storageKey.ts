@@ -98,3 +98,43 @@ export function logoUploadProblem(contentType: unknown, size: unknown): { status
   if (n > LOGO_MAX_BYTES) return { status: 413, error: "A workspace logo can be at most 5 MB." };
   return null;
 }
+
+// ── Putting a backup's files back (ORG-5, fix pass) ──────────────────────────
+// The restore page (app/(protected)/admin/restore/page.tsx, "Put the files
+// back") re-uploads every file a Full ZIP carries through
+// /api/storage/upload-url, under the original (org-remapped) keys. A backup
+// carries the workspace logo (lib/storageKeyRegistry.ts registers the
+// branding logoPath for export), and upload-url signs a logo only with its
+// type AND its size, so the restore's request must carry both, and its PUT
+// must send the type the request named. One helper builds both, so the page
+// and the test that drives upload-url with the page's body cannot drift.
+
+/** The Content-Type a backup file is put back with, by its key's extension
+ *  (the restore page's table, unchanged). */
+const RESTORE_CONTENT_TYPES: Record<string, string> = {
+  pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
+  gif: "image/gif", svg: "image/svg+xml", webp: "image/webp", txt: "text/plain",
+  csv: "text/csv", zip: "application/zip", dxf: "image/vnd.dxf", dwg: "application/acad",
+  doc: "application/msword", xls: "application/vnd.ms-excel",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+};
+
+export function contentTypeForKey(key: string): string {
+  return RESTORE_CONTENT_TYPES[(key.toLowerCase().split(".").pop() || "")] || "application/octet-stream";
+}
+
+/** What the restore page sends to put one backup file of `size` bytes back
+ *  at `key`: the presign request's body and the PUT's Content-Type (the same
+ *  type). `logoProblem` is set only for a workspace logo upload-url will not
+ *  sign — an SVG or GIF logo uploaded before ORG-5, or one over 5 MB. The
+ *  page does not ask for it, and says the logo must be uploaded again. */
+export function restoreUploadRequest(key: string, size: number): {
+  contentType: string;
+  body: { path: string; contentType: string; size: number };
+  logoProblem: string | null;
+} {
+  const contentType = contentTypeForKey(key);
+  const problem = isWorkspaceLogoKey(key) ? logoUploadProblem(contentType, size) : null;
+  return { contentType, body: { path: key, contentType, size }, logoProblem: problem?.error ?? null };
+}

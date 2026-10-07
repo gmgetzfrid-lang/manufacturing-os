@@ -8,6 +8,12 @@
 // document, a folder's cover or page background under branding/covers/ and
 // branding/backgrounds/ — is signed exactly as before.
 //
+// Fix pass: the restore page's "Put the files back" is the second direct
+// caller of upload-url. It builds its request with the same helper the test
+// below drives the route with (lib/storageKey.ts restoreUploadRequest), so a
+// logo in a backup is put back with its size, and a legacy SVG / GIF logo the
+// route will not sign is named instead of failing silently.
+//
 // The route signs with the REAL presigner (an S3 client with inert
 // credentials — presigning is local), so the assertions read the URL's own
 // X-Amz-SignedHeaders: what storage will hold the PUT to.
@@ -77,6 +83,7 @@ vi.mock("@/lib/r2", async () => {
 });
 
 import { POST as uploadUrl } from "@/app/api/storage/upload-url/route";
+import { restoreUploadRequest, contentTypeForKey } from "@/lib/storageKey";
 import { POST as multipart } from "@/app/api/storage/multipart/route";
 
 const ORG = "12345678-1234-1234-1234-123456789abc";
@@ -223,5 +230,80 @@ describe("the client sends the size and reads the refusal (lib/storage.ts), and 
   it("the modal checks the same allow-list and cap before uploading, and offers only those types", () => {
     expect(modal).toMatch(/const problem = logoUploadProblem\(file\.type, file\.size\);/);
     expect(modal).toMatch(/accept=\{LOGO_CONTENT_TYPES\.join\(","\)\}/);
+  });
+});
+
+describe("ORG-5 fix pass — a backup restore puts the workspace logo back (app/(protected)/admin/restore/page.tsx)", () => {
+  const restorePage = readFileSync(join(process.cwd(), "app/(protected)/admin/restore/page.tsx"), "utf8");
+  const ADMIN = { uid: "u1", role: "Admin", roles: ["Admin"] };
+  const logoKey = (ext: string) => `orgs/${ORG}/branding/logo-0c0c0c0c-0c0c-4c0c-8c0c-0c0c0c0c0c0c.${ext}`;
+
+  it("REPRODUCED: the restore page's old body, { path, contentType } with no size, is refused 400 for a logo", async () => {
+    state.member = ADMIN;
+    const res = await post({ path: LOGO, contentType: "image/png" });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("The logo's size is required to upload it.");
+  });
+
+  it("the restore page's exact body for a PNG / JPEG / WebP logo is signed, type and length signed, and its PUT sends the signed type", async () => {
+    state.member = ADMIN;
+    for (const [ext, type] of [["png", "image/png"], ["jpg", "image/jpeg"], ["jpeg", "image/jpeg"], ["webp", "image/webp"]]) {
+      const req = restoreUploadRequest(logoKey(ext), 4096);
+      expect(req.logoProblem, ext).toBeNull();
+      expect(req.body, ext).toEqual({ path: logoKey(ext), contentType: type, size: 4096 });
+      expect(req.contentType, ext).toBe(type);
+      const res = await post(req.body);
+      expect(res.status, ext).toBe(200);
+      const signed = signedHeaders((await res.json()).url);
+      expect(signed, ext).toEqual(expect.arrayContaining(["content-type", "content-length", "host"]));
+    }
+    // each signed upload is audited, as any logo upload is
+    expect(state.inserts.filter((i) => i.table === "audit_logs").map((i) => i.row.details)).toEqual([
+      { path: logoKey("png"), contentType: "image/png", size: 4096 },
+      { path: logoKey("jpg"), contentType: "image/jpeg", size: 4096 },
+      { path: logoKey("jpeg"), contentType: "image/jpeg", size: 4096 },
+      { path: logoKey("webp"), contentType: "image/webp", size: 4096 },
+    ]);
+  });
+
+  it("a legacy SVG or GIF logo, or one over 5 MB, is named by the helper exactly when the route would refuse it", async () => {
+    state.member = ADMIN;
+    const cases: Array<[string, number, number]> = [["svg", 2048, 415], ["gif", 2048, 415], ["png", 5 * 1024 * 1024 + 1, 413]];
+    for (const [ext, size, status] of cases) {
+      const req = restoreUploadRequest(logoKey(ext), size);
+      const res = await post(req.body);
+      expect(res.status, ext).toBe(status);
+      expect(req.logoProblem, ext).toBe((await res.json()).error);
+    }
+    expect(state.inserts).toEqual([]);
+  });
+
+  it("every other backup file is unaffected: a document, a cover GIF, a background SVG — no logo problem, signed as before", async () => {
+    for (const key of [`orgs/${ORG}/libraries/l1/1-a.pdf`, `orgs/${ORG}/branding/covers/c1.gif`, `orgs/${ORG}/branding/backgrounds/b1.svg`, `orgs/${ORG}/tickets/t1/x.unknownext`]) {
+      const req = restoreUploadRequest(key, 99);
+      expect(req.logoProblem, key).toBeNull();
+      expect(req.body.contentType, key).toBe(contentTypeForKey(key));
+      const res = await post(req.body);
+      expect(res.status, key).toBe(200);
+      expect(signedHeaders((await res.json()).url), key).toEqual(["host"]);
+    }
+    expect(contentTypeForKey(`orgs/${ORG}/tickets/t1/x.unknownext`)).toBe("application/octet-stream");
+    expect(state.inserts).toEqual([]);
+  });
+
+  it("the page builds its request with the helper, sends its body, PUTs the same type, and says why a file failed", () => {
+    expect(restorePage).toMatch(/import \{ restoreUploadRequest \} from "@\/lib\/storageKey";/);
+    expect(restorePage).toMatch(/const req = restoreUploadRequest\(key, blob\.size\);/);
+    expect(restorePage).toMatch(/body: JSON\.stringify\(req\.body\),/);
+    expect(restorePage).toMatch(/method: "PUT", body: blob, headers: \{ "Content-Type": req\.contentType \}/);
+    expect(restorePage).not.toMatch(/contentTypeFor\(/);
+    expect(restorePage).not.toMatch(/JSON\.stringify\(\{ path: key, contentType/);
+    // a refusal's reason is kept and shown, not swallowed
+    expect(restorePage).toMatch(/\} catch \(e\) \{\n\s+counters\.failed\+\+;\n\s+const reason = \(e instanceof Error && e\.message\) \|\| "Upload failed";/);
+    expect(restorePage).toMatch(/\{fmtNum\(r\.files\)\} file\(s\): \{r\.reason\}/);
+    // a logo the route will not sign is not asked for; the restorer is told to upload it again
+    expect(restorePage).toMatch(/if \(req\.logoProblem\) \{\n\s+logoNotRestored = /);
+    expect(restorePage).toContain("The workspace logo in this backup was not put back");
+    expect(restorePage).toMatch(/href="\/admin\/branding"/);
   });
 });

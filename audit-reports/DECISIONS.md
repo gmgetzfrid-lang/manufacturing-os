@@ -5464,3 +5464,9 @@ Before such a modal starts an upload, once the run's cards clear, and whenever n
 - The quota's meaning narrows to files.
 - The page load still lists up to 40 s of bucket.
 - A refused caller of a converted route reads the surface's sentence instead of "Insufficient role".
+
+*Landed 2026-10-02 (admin-and-org Round G): A&O P6 review fix pass, corrected in place with `ORG-5`, `BILL-7`, `BILL-12`, `BILL-13` and `SURF-19`, and `ORG-16` opened.*
+- *§5. The backup restore is the second direct caller of upload-url. It now sends the logo's size, through `lib/storageKey.ts restoreUploadRequest`, so a PNG / JPEG / WebP logo in a backup is put back. A legacy SVG or GIF logo, or one over 5 MB, is a named residual: the restore says to upload it again and does not sign it by a restore-only path. The logo rule covers files directly under `branding/` only; the covers and backgrounds sub-folders' bytes stay member-writable, opened as `ORG-16` for the integrator to route.*
+- *§3 and §4. The quota walks each get an equal share of the time left, in an order that rotates daily, and the unmeasured count is logged and added to the cron's errors. The page never draws a partial walk under 70% as "Healthy".*
+- *Open product call (`BILL-12` Done-when 2, partial). On a single-workspace server the quota alert and the platform R2 alert can both fire on the same day, with different percentages for nearly the same bytes. The choice is to suppress one or merge the two.*
+- *§6. `lib/adminSurfaces.ts`'s header no longer calls `writes` documentation: the gate's "write" intent enforces it.*

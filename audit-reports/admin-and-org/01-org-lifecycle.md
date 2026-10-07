@@ -347,15 +347,23 @@ upload-url/route.ts:36-45 — the entire authorization: `.from("org_members").se
   - `lib/storage.ts`: `getPresignedUploadUrl` sends the file's `size`, which non-logo keys ignore. A refused presign keeps its "Failed to get upload URL (HTTP n)" prefix and appends the route's reason, so the branding page's "Logo upload failed: …" says why. This file is outside P6's plan (filesOutsidePlan).
   - `components/branding/LogoUploadModal.tsx` pre-checks the same rule (`logoUploadProblem`), offers only those types, and says "PNG, JPEG or WebP, up to 5 MB."
 - Tests: `lib/__tests__/aoRoundGLogoUpload.test.ts` (route, real presigner, multipart, regression for documents, covers and backgrounds; the client pins); `lib/__tests__/storageKey.test.ts` (the area and the rule).
+- **Review fix pass: the backup restore puts the logo back.** The review found that the change above broke the second direct caller of upload-url. `app/(protected)/admin/restore/page.tsx` ("Put the files back") posted `{ path, contentType }` with no size, so every workspace-logo file in a Full ZIP was answered 400 and counted as a bare "failed", and the restored branding row pointed at a missing object. Now:
+  - The page builds its request with `lib/storageKey.ts restoreUploadRequest(key, blob.size)`. That sends `{ path, contentType, size }`, and the PUT carries the same Content-Type the route signed. The extension table moved there unchanged, as `contentTypeForKey`.
+  - A failed file keeps the route's (or storage's) reason, and the panel lists each distinct reason with its file count instead of a bare count.
+  - A logo the route will not sign is not requested. That is an SVG or GIF uploaded before this change (the modal and the branding page accepted `image/*`), or one over 5 MB. The panel says "The workspace logo in this backup was not put back (…)" and links to Admin → Branding to upload it again. See Scope / residual.
+  - The restore page is outside P6's plan (filesOutsidePlan; `99-fix-sequencing.md`).
+  - Test: `aoRoundGLogoUpload.test.ts`, "ORG-5 fix pass — a backup restore puts the workspace logo back". It calls upload-url with the helper's exact body for PNG, JPEG and WebP logos (signed, type and length signed, audited). For SVG, GIF and over 5 MB, it checks that the helper names a problem exactly when the route refuses, and with the route's own sentence. Documents, covers and backgrounds are unaffected. Source pins check the page sends the helper's body and PUTs its type. The page's old body is 400, as the review reported.
 
 **Done-when.**
-- ✓ upload-url authorizes the key's area: writes directly under `orgs/<org>/branding/` require Admin by the full collection.
+- ✓ **for the logo area only.** upload-url authorizes the key's area for the workspace logo: writes directly under `orgs/<org>/branding/` require Admin by the full collection. *(Narrowed at the review fix pass. This line used to read as if the whole of `branding/` were held to Admin.)* The sub-folders `branding/covers/` and `branding/backgrounds/` are NOT held to Admin or to any role: any member, a Viewer or Contractor included, can read a folder's or library's `coverImageUrl` / background key and presign a PUT to it with any Content-Type, replacing the image every member sees. That is the same pointer-gated, bytes-open mechanism this finding describes. Under `DEC-31` that limb is opened as `ORG-16` with its owner.
 - ✓ The server pins ContentType from an allow-list and enforces a size cap. The list is png / jpeg / webp; svg is refused rather than sanitised (reason above), narrower than the record's list. Both are signed into the PUT.
 - ✓ Branding logo uploads write an audit row naming the actor (server-side, checked, before the signature).
 
 **Scope / residual.**
 - **An Admin can still overwrite the current logo's key in place.** The row is written. A fresh key per upload is what the app mints.
 - **A logo already stored as SVG keeps rendering** (its pointer is unchanged); a new one cannot be uploaded as SVG.
+- **A backup's SVG or GIF logo cannot be restored** (named residual, `DEC-31`; review fix pass). The restore puts back every PNG, JPEG or WebP logo of 5 MB or less. A logo uploaded before this change as SVG or GIF, or one over 5 MB, is refused by upload-url like any new upload of that type. So a restore into a fresh bucket, or into another workspace, leaves the restored branding row pointing at a missing object. The workspace's logo does not load until an Admin uploads one again. The restore panel says so, names the file and the reason, and links to Admin → Branding. It is not signed by a restore-only path: a restore flag would let any Admin skip the SVG refusal for any key the pointer names. Reversal: `DEC-44 (A&O P6)` (a server-side path that can sanitise SVG bytes).
+- **Covers and backgrounds under `branding/` are still member-writable** (authorization, not only Content-Type): opened as `ORG-16`.
 - **The finding's chain reaction is not closed here** (`DEC-31`): other member-writable areas, covers and backgrounds included, still accept any Content-Type. The download route's `ResponseContentType` / `ResponseContentDisposition` pinning is projects `SEC-7` (`lib/presignedDisposition.ts`).
 - **R2 enforcing the signed headers** is the SigV4 contract the cap and type pin rely on. It was tested here at the signature (the URL's signed header list), not against a live bucket.
 
@@ -738,5 +746,36 @@ Separately, `updateTeam` writes `supervisor_user_id` with no validation that the
 **Done when.**
 - A failed members read or pending-requests read shows an error, never an empty roster or a missing card.
 - A rendered test drives both failures.
+
+---
+
+## ORG-16 · Any member can replace a folder's or library's cover image and page background: `branding/covers/` and `branding/backgrounds/` keys are signed for any member, any Content-Type
+
+- **Severity:** LOW
+- **Severity rationale:** The author's estimate. It is `ORG-5`'s mechanism on a smaller surface. The images are a node's decoration, not the workspace's mark, and they are not stamped on controlled drawings. The tenant boundary holds: the org prefix gate refuses another workspace's member.
+- **Status:** OPEN
+- **Assigned:** the integrator, to route at the A&O P6 merge. The fix lives in `app/api/storage/upload-url/route.ts`, P6's file this round, but needs the documents area's node-customize authority, which P6 does not own. Proposed: the next package that edits upload-url, or a document-control package that owns `components/documents/CustomizeNodeModal.tsx`.
+- **Verification:** CONFIRMED (by reading)
+- **Locations:**
+  - `app/api/storage/upload-url/route.ts`. `isWorkspaceLogoKey` holds only files directly under `orgs/<org>/branding/` to Admin; every other key under the org prefix is signed for any active member, with the caller's Content-Type.
+  - `lib/storageKey.ts`, `isWorkspaceLogoKey`: `^orgs/<uuid>/branding/[^/]+$`.
+  - `components/documents/CustomizeNodeModal.tsx:76-77`, `:93-94` (`uploadToPath` to `orgs/<org>/branding/covers/<uuid>.<ext>` and `…/backgrounds/<uuid>.<ext>`, the prefix handed in by `app/(protected)/documents/page.tsx:511` and `documents/[libraryId]/page.tsx:4805`).
+  - The pointers (`coverImageUrl`, `bgImagePath`) are readable by every member who can see the node.
+- **Related:** `ORG-5` (opened from its review fix pass, under `DEC-31`), projects `SEC-7` (download disposition)
+- **Independently verified:** — (`author`: opened 2026-10-02 at the admin-and-org Round G P6 review fix pass, from the reviewer's finding; not yet challenged)
+
+**Mechanism.** `ORG-5`'s fix held the workspace logo's bytes to the rule its pointer has (Admin). The covers and backgrounds sub-folders were left on the membership rule, so their uploads keep working. But their bytes are then held to nothing beyond membership. A cover or background pointer is readable by every member who can see the folder or library, and upload-url signs a PUT for any key under the org's prefix that is not a published revision's bytes (`PKG-1`). It signs with any Content-Type.
+
+**Failure scenario.** A Viewer or Contractor reads a library's `coverImageUrl` (or `bgImagePath`) key (`orgs/<org>/branding/covers/<key>`), posts it to `/api/storage/upload-url` with any `contentType`, and PUTs any image (or an HTML document) to the signed URL. Every member sees the replaced cover on the library's card the next time it loads. No audit row is written, and the node's customize authority is never consulted, because the node row never changed.
+
+**Remediation.** Illustrative, one of:
+- authorize a covers / backgrounds key by the node's customize authority (whoever may save the node's cover may write its bytes), which needs the key to name its node, or a lookup from key to node;
+- mint a fresh key per upload, as the app already does, and refuse a PUT to a key that already exists or that any node points at, so the stored bytes of a saved cover cannot be replaced in place;
+- pin the Content-Type to an image allow-list, as `ORG-5` does for the logo.
+
+**Done when.**
+- A member without the node's customize authority cannot replace the bytes of a cover or background that a node points at.
+- A covers / backgrounds PUT carries a signed image Content-Type.
+- A route test shows a Viewer refused, and the node's customizer signed, for an existing cover key.
 
 ---
