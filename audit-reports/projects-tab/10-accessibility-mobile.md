@@ -799,10 +799,10 @@ Clusters of decisions are spaced 8 px (`gap-2` / `ml-2`), up from 4-6 px.
   - It also pins the 8 px clusters and the unchanged handlers and disabled states.
 
 **Done-when.**
-1. ✓ Every button that starts a write in the listed files carries `DECISION_TARGET`: the four component files whole, and every site the Locations name in the project page. The page's other write buttons were outside this finding's Locations. They are split, as `A11Y-14` split this one, to `A11Y-16` (opened below, `DEC-31`).
+1. ✓ Every button that starts a write in the listed files carries `DECISION_TARGET`: the four component files whole, and every site the Locations name in the project page. The page's other write buttons were outside this finding's Locations. They are split, as `A11Y-14` split this one, to `A11Y-16` (opened below, `DEC-31`). Its owner is only proposed (projects-joint J15 CHECKED-WRITE SWEEP); the integrator confirms or re-assigns it at the J14 merge.
 2. ✓ The census covers these files, so a new write button there without the floor fails.
 
-**Scope / residual.** The project page outside its Members tab: `A11Y-16`.
+**Scope / residual.** The project page outside its Members tab: `A11Y-16` (owner proposed, awaiting the integrator's confirmation).
 - Ship loop (`DEC-29` item 4), J14 fix pass: `tsc --noEmit` exits 0, and `eslint` on the 47 changed `.ts` / `.tsx` files exits 0. Every assertion of the full `vitest` run passes. On this host (load average about 20) the run's exit code was 1 twice, each time only from 5 s default timeouts, in files this package does not touch: `dcRoundFOwnerStamp`, `notificationWriteRails`, `notificationDispatchMembership` and `dependencies`. Those four pass when run on their own with `--testTimeout=60000` (exit 0). The full `next build` was not run here: the fleet's standing rule leaves it to the integrator at merge, so this resolution stands on that build passing.
 
 ---
@@ -817,7 +817,7 @@ Clusters of decisions are spaced 8 px (`gap-2` / `ml-2`), up from 4-6 px.
 - **Verification:** READ (each site read at J14's HEAD; sizes from the class strings, not measured)
 - **Blast radius:** accessibility / mobile
 - **Locations:** (all in `app/(protected)/projects/[id]/page.tsx`)
-  - `ActionButton` (the component at `:883`, `px-3 py-1.5` around 12 px text, about 28 px tall). It is used for the lifecycle changes (Pause, Complete, Cancel, Resume, Archive, Reopen, Delete) and for the header's Export CSV, Edit, Evidence pack, Report and Lessons learned. Pause, Complete, Cancel, Resume and Archive open the transition confirm; Delete and Reopen act directly.
+  - `ActionButton` (the component at `:883`, `px-3 py-1.5` around 12 px text, about 28 px tall). It is used for the lifecycle changes (Pause, Complete, Cancel, Resume, Archive, Reopen, Delete) and for the header's Export CSV, Edit, Evidence pack, Report and Lessons learned. Pause, Complete, Cancel, Resume and Archive open the transition confirm. Reopen opens a prompt for its reason (`handleReopen`, `:285`, confirm label "Reopen"). Delete always confirms (`handleDelete`, `:306`): a project with cost or quality records gets a confirm and then a typed reason from an Admin, and a refusal for anyone else; a project without them gets a "Delete" confirm. *Corrected (J14 last review, 2026-10-07, `DEC-29`):* this line first said that Delete and Reopen act directly. Neither does.
   - The lessons-learned editor's "Save to project" (`:762`), beside its Cancel (`:760`).
   - The status transition's confirm (`:855`), beside its Cancel (`:854`, read-only).
   - The Activity tab's comment Post (`:1023`).
@@ -826,7 +826,7 @@ Clusters of decisions are spaced 8 px (`gap-2` / `ml-2`), up from 4-6 px.
 
 **Mechanism.** `A11Y-15`'s Locations named only the Members tab's sites in the project page. Its census therefore reads the page's `MembersTab` function, not the page as a whole. The rest of the page's write buttons keep their small boxes.
 
-**Failure scenario.** On a tablet, a mis-tap on the project header hits Complete or Delete instead of a neighbouring action. Each lifecycle change does open a confirm, but Delete and Reopen act directly. The lessons editor's Cancel, which discards the draft, sits next to "Save to project".
+**Failure scenario.** On a tablet, a mis-tap on the project header hits Complete or Delete instead of a neighbouring action. Every lifecycle action opens a confirm or a prompt, so the mis-tap writes nothing by itself: it opens the wrong dialog, and the user must notice that before confirming it. The lessons editor's "Save to project" (`:762`) writes at once and sits next to its Cancel. That Cancel asks before discarding edited text, so a mis-tap meant for Cancel saves the draft instead. *Corrected (J14 last review, 2026-10-07, `DEC-29`):* this paragraph first said that Delete and Reopen act directly, and that Cancel discards the draft.
 
 **Remediation.** Put `${DECISION_TARGET}` in `ActionButton`'s class string (which covers every use) and on the lessons, transition-confirm and comment buttons. Space their clusters 8 px. Extend `A11Y-15`'s inverted census in `lib/__tests__/j10bDecisionTargets.test.ts` from `MembersTab` to the whole page, keeping the read-only list for genuinely read-only handlers (Back, the tab buttons, dismiss, Cancel).
 
