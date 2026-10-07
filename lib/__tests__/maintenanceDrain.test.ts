@@ -29,6 +29,13 @@
 //              short runs reach every recipient in turn (a resume cursor);
 //              the background steps take what the run has left.
 //   DELIV-7    (fix pass 2) the cron's two emit() calls read what they reached.
+//   NEDGE-17   (fix pass 3) the digest visits org by org, each on its own share
+//              of the time: one org's search that outlasts its share (or the
+//              whole digest) composes what it found and costs no other org
+//              its digest — at worst the orgs after it wait one run, which
+//              starts with them; nothing is lost.
+//   DELIV-11   (fix pass 3) the cron waits for no send batch past the drain's
+//              limit.
 //   DELIV-8    the purge lists abandoned (suppressed) mail as its own line,
 //              with an exact breakdown past the API's row cap, and records it
 //              BEFORE deleting it; read rows carrying a dedupe watermark are
@@ -258,13 +265,15 @@ let resendBodies: Array<Record<string, unknown>> = [];
 let resendStatus: number[] = [];
 /** How long each send-queued batch "takes" on the faked clock (0: no time). */
 let drainTakesMs = 0;
+/** How many of the next send-queued batches never answer (settle only on abort). */
+let drainHangs = 0;
 const savedFetch = globalThis.fetch;
 const savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(() => {
   db.tables = { orgs: [{ id: ORG_A, name: "Org A" }, { id: ORG_B, name: "Org B" }] };
   db.calls = []; db.readError = {}; db.writeError = {}; db.seq = 0; db.maxRows = null; db.onExec = null; db.rpcs = {}; db.folded = [];
-  drainAnswers = []; drainCalls = 0; resendBodies = []; resendStatus = []; drainTakesMs = 0;
+  drainAnswers = []; drainCalls = 0; resendBodies = []; resendStatus = []; drainTakesMs = 0; drainHangs = 0;
   vi.mocked(emit).mockReset();
   vi.mocked(emit).mockImplementation(async () => ({ recipients: 0 }));
   for (const k of ["NEXT_PUBLIC_SITE_URL", "VERCEL_PROJECT_PRODUCTION_URL", "NEXT_PUBLIC_VERCEL_PROJECT_PRODUCTION_URL", "RESEND_API_KEY", "EMAIL_UNSUBSCRIBE_SECRET"]) { savedEnv[k] = process.env[k]; delete process.env[k]; }
@@ -273,6 +282,14 @@ beforeEach(() => {
     const u = String(url);
     if (u.endsWith("/api/notifications/send-queued")) {
       drainCalls += 1;
+      if (drainHangs > 0) {
+        drainHangs -= 1;
+        const sig = init?.signal;
+        return new Promise<Response>((_res, rej) => {
+          if (sig?.aborted) rej(sig.reason);
+          sig?.addEventListener("abort", () => rej(sig.reason));
+        });
+      }
       if (drainTakesMs) vi.setSystemTime(new Date(Date.now() + drainTakesMs));
       const a = drainAnswers.shift() ?? { body: { processed: 0 } };
       return new Response(JSON.stringify(a.body ?? {}), { status: a.status ?? 200, headers: { "content-type": "application/json" } });
@@ -349,6 +366,29 @@ const notice = (org: string, uid: string, kind: string, title: string, created: 
   ({ id: `n-${++db.seq}`, org_id: org, user_id: uid, kind, title, link: "/documents/l?doc=d", created_at: created, read_at: null, metadata: null, ...over });
 const digests = () => rows("email_notifications").filter((e) => e.event_type === "compliance_digest");
 const digestFor = (uid: string) => digests().find((e) => e.to_user_id === uid);
+/** The calls of the query executing now (read from db.onExec; sequential reads only). */
+const queryNow = () => {
+  const out: Array<{ table: string; op: string; args: unknown[] }> = [];
+  for (let i = db.calls.length - 2; i >= 0 && !db.calls[i].op.startsWith("exec:"); i--) out.unshift(db.calls[i]);
+  return out;
+};
+/** Is the query executing now a page of `org`'s recipient search? */
+const isSearchOf = (org: string) => {
+  const q = queryNow();
+  return q.some((c) => c.op === "order" && c.args[0] === "user_id") && q.some((c) => c.op === "eq" && c.args[0] === "org_id" && c.args[1] === org);
+};
+/** The org of each recipient-search page, in the order they were read. */
+const searchOrder = () => {
+  const out: string[] = [];
+  let org: unknown = null;
+  for (const c of db.calls) {
+    if (c.table !== "notifications") continue;
+    if (c.op === "select") org = null;
+    if (c.op === "eq" && c.args[0] === "org_id") org = c.args[1];
+    if (c.op === "order" && c.args[0] === "user_id") out.push(String(org));
+  }
+  return out;
+};
 
 describe("NEDGE-17 — each recipient's digest is read on its own: one org's flood cannot push another org's lines out", () => {
   it("2,400 browser-legal ack_requested rows in org A (600 to each of four colleagues) — org B's Document Controller still gets every one of their lines", async () => {
@@ -376,7 +416,13 @@ describe("NEDGE-17 — each recipient's digest is read on its own: one org's flo
     // with something pending; U(99), who has nothing pending, is never read
     const scopedUids = db.calls.filter((c) => c.table === "notifications" && c.op === "eq" && c.args[0] === "user_id").map((c) => c.args[1]);
     expect(scopedUids.sort()).toEqual([...colleagues, BDC].sort());
-    expect(db.calls.filter((c) => c.table === "notifications" && c.op === "eq" && c.args[0] === "org_id")).toHaveLength(5);
+    // N6 fix pass 3: the recipient search is per org too, and skips past each
+    // recipient it finds — org A's 2,400 rows cost three pages (U1+U2, U3+U4,
+    // the empty page), org B's two; every read of notifications names its org
+    const orgEqs = db.calls.filter((c) => c.table === "notifications" && c.op === "eq" && c.args[0] === "org_id").map((c) => c.args[1]);
+    expect(orgEqs.filter((o) => o === ORG_A)).toHaveLength(3 + 4);
+    expect(orgEqs.filter((o) => o === ORG_B)).toHaveLength(2 + 1);
+    expect(db.calls.filter((c) => c.table === "notifications" && c.op === "order" && c.args[0] === "user_id")).toHaveLength(5);
   });
 
   it("the API's row cap below the discovery page (max-rows 500) drops nobody: a short page is never read as the last", async () => {
@@ -471,7 +517,7 @@ describe("NEDGE-17 (fix pass) — the digest's cost follows the pending items, a
       expect(r1.errors.some((e) => /^compliance-digest: nothing was composed — no time was left in this run \(the steps before it used 295 s of the 300 s\); nothing is lost/.test(e))).toBe(true);
       // the first window is recorded even so (a no-op when a state row exists)
       // (25 hours before the digest's own clock, 03:04:55)
-      expect(rows("platform_settings")).toEqual([{ key: "compliance_digest", value: { openSince: "2026-09-30T02:04:55.000Z", after: null }, updated_at: "2026-10-01T03:04:55.000Z" }]);
+      expect(rows("platform_settings")).toEqual([{ key: "compliance_digest", value: { openSince: "2026-09-30T02:04:55.000Z", orgs: {}, nextOrg: null }, updated_at: "2026-10-01T03:04:55.000Z" }]);
 
       db.onExec = null;
       vi.setSystemTime(new Date("2026-10-02T04:00:00.000Z"));   // 25 h 10 min after the item
@@ -481,13 +527,13 @@ describe("NEDGE-17 (fix pass) — the digest's cost follows the pending items, a
       expect(String(d.body_text)).toContain("Due on day 1");
       expect(d.metadata).toMatchObject({ since: "2026-09-30T02:04:55.000Z", through: "2026-10-02T04:00:00.000Z" });
       // a complete run closes the window and leaves no cursor
-      expect(rows("platform_settings")[0].value).toEqual({ openSince: "2026-10-02T04:00:00.000Z", after: null });
+      expect(rows("platform_settings")[0].value).toEqual({ openSince: "2026-10-02T04:00:00.000Z", orgs: {}, nextOrg: null });
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("a deadline reached mid-run stops between rounds, names how many recipients were not reached, and records where it stopped", async () => {
+  it("a deadline reached mid-run stops between rounds, names how many recipients were not reached and which org was not visited, and records where it stopped", async () => {
     db.tables.org_members = Array.from({ length: 20 }, (_, i) => member(ORG_A, U(i + 1)));
     db.tables.notifications = Array.from({ length: 20 }, (_, i) => notice(ORG_A, U(i + 1), "review_due", `Due ${i}`, minutesAgo(10)));
     vi.useFakeTimers({ toFake: ["Date"] });
@@ -502,8 +548,10 @@ describe("NEDGE-17 (fix pass) — the digest's cost follows the pending items, a
     try {
       const r = await runCron();
       expect(r.complianceEmails).toBe(8);
-      expect(r.errors.some((e) => /^compliance-digest: stopped at its deadline — 12 of 20 recipient\(s\) were not reached this run; the next run starts with them and its search reaches back to \S+, the oldest item still owed, so nothing is lost within 7 days$/.test(e))).toBe(true);
-      expect(rows("platform_settings")[0].value).toMatchObject({ after: `${ORG_A}|${U(8)}` });
+      const owedFrom = new Date(Date.parse(String(rows("notifications")[0].created_at)) - 1).toISOString();
+      expect(r.errors).toContain(`compliance-digest: ${ORG_A}: its share of the digest's time ran out — 8 of the 20 recipient(s) found were offered their digest; its next visit starts after the last one reached and searches back to ${owedFrom}, so nothing is lost within 7 days`);
+      expect(r.errors).toContain("compliance-digest: stopped at its deadline — 1 of 2 org(s) were not visited this run; the next run starts with them, and what they are owed stays open, so nothing is lost within 7 days");
+      expect(rows("platform_settings")[0].value).toMatchObject({ orgs: { [ORG_A]: { since: owedFrom, after: U(8), unfinished: true } }, nextOrg: ORG_B });
     } finally {
       vi.useRealTimers();
     }
@@ -548,15 +596,19 @@ describe("NEDGE-17 (fix pass) — the digest's cost follows the pending items, a
         expect(String(mine[0].body_text)).toContain(`Due ${i}`);
         expect(mine[0].subject).toBe("Compliance items need you (1)");
       }
-      // still owed after run 3: nobody's item — but U5–U16 were not reached by it, so the window stays open
-      expect(rows("platform_settings")[0].value).toMatchObject({ openSince: new Date(T - 10 * 60_000 - 1).toISOString(), after: `${ORG_A}|${U(4)}` });
+      // still owed after run 3: nobody's item — but U5–U16 were not reached by it, so org A's window stays open
+      expect(rows("platform_settings")[0].value).toEqual({
+        openSince: new Date(T + 2 * 86_400_000).toISOString(),
+        orgs: { [ORG_A]: { since: new Date(T - 10 * 60_000 - 1).toISOString(), after: U(4), unfinished: true } },
+        nextOrg: null,
+      });
 
       db.onExec = null;
       vi.setSystemTime(new Date(T + 3 * 86_400_000));
       const r4 = await runCron();
       expect(r4.complianceEmails).toBe(0);
       expect(digests()).toHaveLength(N);
-      expect(rows("platform_settings")[0].value).toEqual({ openSince: new Date(T + 3 * 86_400_000).toISOString(), after: null });
+      expect(rows("platform_settings")[0].value).toEqual({ openSince: new Date(T + 3 * 86_400_000).toISOString(), orgs: {}, nextOrg: null });
     } finally {
       vi.useRealTimers();
     }
@@ -575,7 +627,11 @@ describe("NEDGE-17 (fix pass) — the digest's cost follows the pending items, a
       vi.setSystemTime(new Date(T + 10 * 60_000));
       await runCron();
       expect(digests()).toHaveLength(1);
-      expect(rows("platform_settings")[0].value).toMatchObject({ openSince: new Date(T + 5 * 60_000 - 1).toISOString(), after: null });
+      expect(rows("platform_settings")[0].value).toEqual({
+        openSince: new Date(T + 10 * 60_000).toISOString(),
+        orgs: { [ORG_A]: { since: new Date(T + 5 * 60_000 - 1).toISOString(), after: null, unfinished: false } },
+        nextOrg: null,
+      });
       vi.setSystemTime(new Date(T + 86_400_000));
       await runCron();
       expect(digests()).toHaveLength(2);
@@ -618,9 +674,10 @@ describe("NEDGE-17 (fix pass) — the digest's cost follows the pending items, a
     const r = await runCron();
     expect(r.errors.some((e) => e.startsWith("compliance-digest: the recorded state (platform_settings 'compliance_digest') is not one this run can read"))).toBe(true);
     expect(String(digestFor(U(1))!.body_text)).toContain("Thirty hours old");
-    const v = rows("platform_settings")[0].value as { openSince: string; after: string | null };
+    const v = rows("platform_settings")[0].value as { openSince: string; orgs: Record<string, unknown>; nextOrg: string | null };
     expect(Number.isFinite(Date.parse(v.openSince))).toBe(true);
-    expect(v.after).toBeNull();
+    expect(v.orgs).toEqual({});
+    expect(v.nextOrg).toBeNull();
   });
 
   it("step 2 starts no batch that could end after its share of the run: a backlog of 40-second batches stops after three and says so; the digest still runs", async () => {
@@ -652,6 +709,199 @@ describe("NEDGE-17 (fix pass) — the digest's cost follows the pending items, a
     expect(route).not.toMatch(/100_000 \/\* embed drain \*\//);
     expect(route).not.toMatch(/% members\.length/);
     expect(route.indexOf("const startedAt = Date.now();")).toBeLessThan(route.indexOf("// 1. Sweep expired ad-hoc checkouts"));
+  });
+});
+
+describe("NEDGE-17 (fix pass 3) — org by org: one org's volume spends its own share of the digest's time, never another org's digest", () => {
+  const T = Date.parse("2026-10-01T03:00:00.000Z");
+  const at = (ms: number) => new Date(ms).toISOString();
+  const seedB = () => {
+    db.tables.notifications.push(notice(ORG_B, BDC, "review_due", "Review due: PID-0001", at(T - 60 * 60_000)));
+    db.tables.notifications.push(notice(ORG_B, BDC, "ack_overdue", "Overdue acknowledgment: PID-0002", at(T - 60_000)));
+    db.tables.notifications.push(notice(ORG_B, BDC, "review_overdue", "Review overdue: PID-0003", at(T - 60_000)));
+  };
+  const linesOfB = ["Review due: PID-0001", "Overdue acknowledgment: PID-0002", "Review overdue: PID-0003"];
+
+  it("MAJOR: org A's search outlasts its share (30 flooded colleagues, a page each, 10 s a page) — org B's Document Controller still gets every line; org A's found recipients are composed; the next run, org A last, finishes it with each item listed once", async () => {
+    const colleagues = Array.from({ length: 30 }, (_, i) => U(i + 1));
+    db.tables.org_members = [...colleagues.map((u) => member(ORG_A, u)), member(ORG_B, BDC)];
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(T));
+    db.tables.notifications = [];
+    for (const u of colleagues) for (let i = 0; i < 50; i++) {
+      db.tables.notifications.push(notice(ORG_A, u, "ack_requested", `Please acknowledge DOC-${i}`, at(T - 30 * 60_000), { actor_user_id: U(99) }));
+    }
+    seedB();
+    db.maxRows = 25;   // each page of org A's search holds one colleague's rows
+    db.onExec = (table, op) => { if (table === "notifications" && op === "select" && isSearchOf(ORG_A)) vi.setSystemTime(new Date(Date.now() + 10_000)); };
+    try {
+      const r = await runCron();
+      // org A (first by id) had half the digest's time: its search stopped after 7 pages, at its share's midpoint
+      expect(searchOrder()).toEqual([...Array(7).fill(ORG_A), ORG_B, ORG_B]);
+      const d = digestFor(BDC)!;
+      for (const t of linesOfB) expect(String(d.body_text)).toContain(t);
+      expect(d.subject).toBe("Compliance items need you (3)");
+      // what org A's search found was composed — counts exact past the API's row cap
+      for (let i = 1; i <= 7; i++) expect(digestFor(U(i))!.subject, `U(${i})`).toBe("Compliance items need you (50)");
+      for (let i = 8; i <= 30; i++) expect(digestFor(U(i)), `U(${i})`).toBeUndefined();
+      expect(r.complianceEmails).toBe(8);
+      expect(r.errors).toContain(`compliance-digest: ${ORG_A}: its share of the digest's time ran out — 7 of the 7 recipient(s) found were offered their digest, and its search for more did not finish; its next visit starts after the last one reached and searches back to ${at(T - 25 * 3_600_000)}, so nothing is lost within 7 days`);
+      expect(r.errors.some((e) => e.startsWith("compliance-digest: stopped at its deadline"))).toBe(false);
+      expect(rows("platform_settings")[0].value).toEqual({
+        openSince: at(T),
+        orgs: { [ORG_A]: { since: at(T - 25 * 3_600_000), after: U(7), unfinished: true } },
+        nextOrg: null,
+      });
+
+      // the next day, the flood's pages cost nothing: org A goes last (its visit did not finish) and is finished
+      // (the row cap back at the API's — above the 150-uid membership chunk)
+      db.onExec = null;
+      db.maxRows = null;
+      db.calls = [];
+      vi.setSystemTime(new Date(T + 86_400_000));
+      const r2 = await runCron();
+      expect(searchOrder()[0]).toBe(ORG_B);
+      expect(r2.complianceEmails).toBe(23);
+      for (const u of colleagues) {
+        const mine = digests().filter((e) => e.to_user_id === u);
+        expect(mine, u).toHaveLength(1);
+        expect(mine[0].subject).toBe("Compliance items need you (50)");
+      }
+      expect(digests().filter((e) => e.to_user_id === BDC)).toHaveLength(1);
+      expect(rows("platform_settings")[0].value).toEqual({ openSince: at(T + 86_400_000), orgs: {}, nextOrg: null });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the digest's deadline passes during org B's first search page: the recipient that page found is still composed (one round), and org B's next visit finds and lists the rest", async () => {
+    const B2 = U(901);
+    db.tables.org_members = [member(ORG_A, U(1)), member(ORG_B, BDC), member(ORG_B, B2)];
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(T));
+    db.tables.notifications = [notice(ORG_A, U(1), "review_due", "Due A", at(T - 10 * 60_000)), notice(ORG_B, B2, "review_due", "Due B2", at(T - 10 * 60_000))];
+    seedB();
+    db.maxRows = 3;    // org B's first page: the Document Controller's three rows
+    let jumped = false;
+    db.onExec = (table, op) => {
+      if (!jumped && table === "notifications" && op === "select" && isSearchOf(ORG_B)) { jumped = true; vi.setSystemTime(new Date(Date.now() + 300_000)); }
+    };
+    try {
+      const r = await runCron();
+      expect(jumped).toBe(true);
+      const d = digestFor(BDC)!;
+      for (const t of linesOfB) expect(String(d.body_text)).toContain(t);
+      expect(digestFor(U(1))).toBeTruthy();
+      expect(digestFor(B2)).toBeUndefined();
+      expect(r.complianceEmails).toBe(2);
+      expect(r.errors).toContain(`compliance-digest: ${ORG_B}: its share of the digest's time ran out — 1 of the 1 recipient(s) found were offered their digest, and its search for more did not finish; its next visit starts after the last one reached and searches back to ${at(T - 25 * 3_600_000)}, so nothing is lost within 7 days`);
+      expect(rows("platform_settings")[0].value).toMatchObject({ orgs: { [ORG_B]: { since: at(T - 25 * 3_600_000), after: BDC, unfinished: true } }, nextOrg: null });
+
+      db.onExec = null;
+      vi.setSystemTime(new Date(T + 86_400_000));
+      const r2 = await runCron();
+      expect(r2.complianceEmails).toBe(1);
+      expect(String(digestFor(B2)!.body_text)).toContain("Due B2");
+      expect(digests().filter((e) => e.to_user_id === BDC)).toHaveLength(1);
+      expect(rows("platform_settings")[0].value).toEqual({ openSince: at(T + 86_400_000), orgs: {}, nextOrg: null });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("one page of org A's search takes the digest's whole time: org A's found recipient is composed, org B is not visited and that is said; the next run starts with org B and lists every one of its lines, then 25 hours old", async () => {
+    db.tables.org_members = [member(ORG_A, U(1)), member(ORG_B, BDC)];
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(T));
+    db.tables.notifications = [notice(ORG_A, U(1), "ack_requested", "Please acknowledge DOC-1", at(T - 30 * 60_000))];
+    seedB();
+    let jumped = false;
+    db.onExec = (table, op) => {
+      if (!jumped && table === "notifications" && op === "select" && isSearchOf(ORG_A)) { jumped = true; vi.setSystemTime(new Date(Date.now() + 300_000)); }
+    };
+    try {
+      const r = await runCron();
+      expect(digestFor(U(1))).toBeTruthy();
+      expect(digestFor(BDC)).toBeUndefined();
+      expect(searchOrder()).toEqual([ORG_A]);
+      expect(r.errors).toContain("compliance-digest: stopped at its deadline — 1 of 2 org(s) were not visited this run; the next run starts with them, and what they are owed stays open, so nothing is lost within 7 days");
+      expect(rows("platform_settings")[0].value).toEqual({
+        openSince: at(T - 25 * 3_600_000),
+        orgs: { [ORG_A]: { since: at(T - 25 * 3_600_000), after: U(1), unfinished: true } },
+        nextOrg: ORG_B,
+      });
+
+      db.onExec = null;
+      db.calls = [];
+      vi.setSystemTime(new Date(T + 86_400_000));
+      const r2 = await runCron();
+      expect(searchOrder()[0]).toBe(ORG_B);
+      expect(r2.complianceEmails).toBe(1);
+      const d = digestFor(BDC)!;
+      for (const t of linesOfB) expect(String(d.body_text)).toContain(t);
+      expect(digests().filter((e) => e.to_user_id === U(1))).toHaveLength(1);
+      expect(rows("platform_settings")[0].value).toEqual({ openSince: at(T + 86_400_000), orgs: {}, nextOrg: null });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a recorded org entry this run cannot read makes the state unreadable: it searches the lookback, says so, and records a valid state", async () => {
+    db.tables.org_members = [member(ORG_A, U(1))];
+    db.tables.platform_settings = [{ key: "compliance_digest", value: { openSince: new Date().toISOString(), orgs: { [ORG_A]: { since: "not a time", after: null } } } }];
+    db.tables.notifications = [notice(ORG_A, U(1), "review_due", "Thirty hours old", new Date(Date.now() - 30 * 3_600_000).toISOString())];
+    const r = await runCron();
+    expect(r.errors.some((e) => e.startsWith("compliance-digest: the recorded state (platform_settings 'compliance_digest') is not one this run can read"))).toBe(true);
+    expect(String(digestFor(U(1))!.body_text)).toContain("Thirty hours old");
+    expect((rows("platform_settings")[0].value as { orgs: unknown }).orgs).toEqual({});
+  });
+
+  it("by source: the recipient search is one org's read, keyset on user_id — no read of notifications spans orgs, and none pages the table by id; each org's share comes from the time left", () => {
+    const route = src("app/api/cron/maintenance/route.ts");
+    const fn = route.slice(route.indexOf("async function queueComplianceDigests("), route.indexOf("export async function POST"));
+    expect(fn).toContain('.from("notifications").select("user_id, created_at")\n          .eq("org_id", org)');
+    expect(fn).toContain('q.order("user_id", { ascending: true }).order("created_at", { ascending: true }).limit(DIGEST_DISCOVERY_PAGE)');
+    expect(fn).not.toContain('select("id, org_id, user_id, created_at")');
+    expect(fn).not.toMatch(/\.gt\("id", afterId\)/);
+    expect(fn).toContain("const share = Math.max(DIGEST_ORG_FLOOR_MS, (opts.deadlineAt - t0) / (order.length - visited));");
+    expect(route).toContain("const DIGEST_ORG_FLOOR_MS = 5_000;");
+  });
+});
+
+describe("DELIV-11 (fix pass 3) — the cron waits for no send batch past the drain's limit", () => {
+  it("a batch that never answers: the cron stops waiting at step 2's limit, says so, and the digest and the second drain still run", async () => {
+    db.tables.org_members = [member(ORG_A, U(1))];
+    db.tables.notifications = [notice(ORG_A, U(1), "review_due", "Due A", minutesAgo(10))];
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date());
+    const waits: number[] = [];
+    vi.spyOn(AbortSignal, "timeout").mockImplementation((ms: number) => {
+      waits.push(ms);
+      const c = new AbortController();
+      // the first batch's wait "runs out" (the platform's timer, compressed)
+      if (waits.length === 1) setTimeout(() => c.abort(new DOMException("The operation was aborted due to timeout", "TimeoutError")), 0);
+      return c.signal;
+    });
+    drainHangs = 1;
+    try {
+      const r = await runCron();
+      // step 2 waits until 120 s into the run; the second drain until the run's end
+      expect(waits).toEqual([120_000, 290_000]);
+      expect(r.emailDrain).toEqual({ batches: 0, attempted: 0, sent: 0, failed: 0, configured: true, deferred: null, queueEmpty: false, outOfTime: true, unanswered: true });
+      expect(r.errors).toContain("notifications: a batch did not answer within the drain's limit (120 s) — the cron stopped waiting for it; its rows stay 'sending' until it finishes, or the drain's 15-minute reclaim re-queues them");
+      expect(r.errors.filter((e) => /^notifications: (stopped at its time limit|not run)/.test(e))).toEqual([]);
+      expect(r.complianceEmails).toBe(1);
+      expect(r.emailDrainAfterDigest).toMatchObject({ batches: 1, queueEmpty: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("by source: every send-queued fetch carries the wait's signal", () => {
+    const route = src("app/api/cron/maintenance/route.ts");
+    expect(route).toContain("const waitMs = Math.max(1_000, stopBy - Date.now());\n    const signal = AbortSignal.timeout(waitMs);");
+    expect((route.match(/fetch\(`\$\{origin\}\/api\/notifications\/send-queued`/g) ?? []).length).toBe(1);
+    expect(route).toMatch(/headers: \{ Authorization: `Bearer \$\{cronSecret\}` \},\n\s+signal,\n/);
   });
 });
 
@@ -768,8 +1018,8 @@ describe("NEDGE-9 — the digest honours the member's preferences and lists unre
     const r = await runCron();
     expect(r.complianceEmails).toBe(0);
     expect(r.errors.filter((e) => /compliance-digest: oA\/.*: the digest was not queued — the next run lists these items again: permission denied/.test(e))).toHaveLength(3);
-    // what was not queued stays owed: the window does not move past it
-    expect((rows("platform_settings")[0].value as { openSince: string }).openSince < new Date(Date.now() - 9 * 60_000).toISOString()).toBe(true);
+    // what was not queued stays owed: org A's window does not move past it
+    expect((rows("platform_settings")[0].value as { orgs: Record<string, { since: string }> }).orgs[ORG_A].since < new Date(Date.now() - 9 * 60_000).toISOString()).toBe(true);
   });
 });
 

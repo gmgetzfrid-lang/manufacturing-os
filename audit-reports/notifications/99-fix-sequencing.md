@@ -158,12 +158,18 @@ N9, N14 and the integrator):*
   `lib/distributionAcks.ts` and `lib/holds.ts`). The cron's own two `emit()`
   calls already read their result (N6 fix pass 2).*
 - *The compliance digest keeps its state in `platform_settings` (key
-  `compliance_digest`: the start of the oldest window still owed and a resume
-  cursor; `20260920`, service role only). Nothing else writes that key; a
-  package that edits `app/api/cron/maintenance/route.ts` later keeps the run
-  clock (`runEnd`, `digestDeadlineAt`, `noTimeFor`): a new background step takes
-  what the run has left, never a reservation ahead of the digest (`DEC-44 (N6)`
-  §4).*
+  `compliance_digest`: the window still owed, per org where an org is owed
+  more, a resume cursor per org whose visit did not finish, and the first org
+  a run cut short did not visit; `20260920`, service role only). Nothing else
+  writes that key; a package that edits `app/api/cron/maintenance/route.ts`
+  later keeps the run clock (`runEnd`, `digestDeadlineAt`, `noTimeFor`, the
+  per-org share in `queueComplianceDigests`, and the drain's bounded wait for
+  a send batch): a new background step takes what the run has left, never a
+  reservation ahead of the digest, and no digest read spans orgs
+  (`DEC-44 (N6)` §4, `NEDGE-17`). Optional follow-up, unassigned (it needs a
+  migration): a partial index on `notifications (org_id, user_id, created_at)
+  WHERE read_at IS NULL` would make each page of an org's recipient search an
+  index walk (`NEDGE-17`'s residual).*
 - *New, unassigned: `DELIV-16` (a compliance bell row has no retry or outbox)
   and `NEDGE-19` (an org-level timezone setting; `lib/recordTime.ts`
   `orgTimeZone` already reads `org_configurations` key `timezone`).*

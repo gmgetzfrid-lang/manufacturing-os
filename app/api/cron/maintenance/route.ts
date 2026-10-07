@@ -410,7 +410,9 @@ async function handler(req: NextRequest) {
   //     preferences (NEDGE-9), with an absolute link to their Inbox (NEDGE-4).
   //     N6 fix pass 2: it always gets DIGEST_FLOOR_MS (unless the run ends
   //     first), and a run that cannot reach everyone loses nothing — the
-  //     next run resumes where it stopped (queueComplianceDigests).
+  //     next run resumes where it stopped (queueComplianceDigests). N6 fix
+  //     pass 3: it visits org by org, each with its share of that time, so
+  //     one org's volume cannot spend another org's digest.
   try {
     result.complianceEmails = await queueComplianceDigests(sb, {
       origin: publicOrigin() || req.nextUrl.origin,
@@ -563,6 +565,14 @@ type DrainReport = {
   /** The drain's time ran out with the queue not known to be empty (N6 fix
    *  pass 2): the rest is sent by the next drain. Absent otherwise. */
   outOfTime?: true;
+  /** The cron stopped waiting for a batch that had not answered by the
+   *  drain's limit (N6 fix pass 3; with outOfTime). Absent otherwise. */
+  unanswered?: true;
+};
+
+/** One send-queued batch's JSON answer. */
+type DrainBatchAnswer = {
+  processed?: number; sent?: number; failed?: number; deferred?: number; configured?: boolean; errorSample?: string;
 };
 
 /** Drain the email queue through the sibling route, up to `maxBatches`
@@ -575,7 +585,9 @@ type DrainReport = {
  *     A batch that sent nothing stops the loop — another batch would claim
  *     the same rows again and spend their attempts inside this one run.
  *   - time (N6 fix pass 2): no batch starts unless it can end (DRAIN_BATCH_MS)
- *     by `stopBy`; a drain that stops for time says so.
+ *     by `stopBy`; a drain that stops for time says so. N6 fix pass 3: and
+ *     the cron waits for no batch past `stopBy` (a batch that does not
+ *     answer by then is reported, `unanswered`).
  *  Every line is also logged: the platform's cron log shows console output,
  *  not this route's JSON. */
 async function drainEmailQueue(origin: string, maxBatches: number, label: string, errors: string[], stopBy: number): Promise<DrainReport> {
@@ -584,14 +596,32 @@ async function drainEmailQueue(origin: string, maxBatches: number, label: string
   let sample: string | null = null;
   for (let i = 0; i < maxBatches; i++) {
     if (Date.now() + DRAIN_BATCH_MS > stopBy) { report.outOfTime = true; break; }
-    const res = await fetch(`${origin}/api/notifications/send-queued`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${cronSecret}` },
-    });
-    if (!res.ok) { say(`${label}: HTTP ${res.status}`); break; }
-    const body = (await res.json().catch(() => null)) as {
-      processed?: number; sent?: number; failed?: number; deferred?: number; configured?: boolean; errorSample?: string;
-    } | null;
+    // N6 fix pass 3: the cron waits for a batch no later than `stopBy` — a
+    // provider call that never answers must not hold the run (and the digest
+    // after it) until the platform kills it. Stopping the wait does not stop
+    // the batch: its rows stay 'sending' until it finishes, or the drain's
+    // 15-minute reclaim re-queues them.
+    const waitMs = Math.max(1_000, stopBy - Date.now());
+    const signal = AbortSignal.timeout(waitMs);
+    let res: Response | null = null;
+    let body: DrainBatchAnswer | null = null;
+    try {
+      res = await fetch(`${origin}/api/notifications/send-queued`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${cronSecret}` },
+        signal,
+      });
+      if (res.ok) body = (await res.json().catch(() => null)) as DrainBatchAnswer | null;
+    } catch (e) {
+      if (!signal.aborted) throw e;
+    }
+    if (signal.aborted && !body) {
+      report.outOfTime = true;
+      report.unanswered = true;
+      say(`${label}: a batch did not answer within the drain's limit (${Math.round(waitMs / 1000)} s) — the cron stopped waiting for it; its rows stay 'sending' until it finishes, or the drain's 15-minute reclaim re-queues them`);
+      break;
+    }
+    if (!res || !res.ok) { say(`${label}: HTTP ${res?.status}`); break; }
     if (!body) { say(`${label}: the drain answered without a JSON body — nothing is known about that batch`); break; }
     report.batches += 1;
     if (body.configured === false) {
@@ -614,7 +644,7 @@ async function drainEmailQueue(origin: string, maxBatches: number, label: string
   if (report.failed > 0) {
     say(`${label}: ${report.failed} of ${report.attempted} send attempt(s) failed${sample ? ` — e.g. ${sample}` : ""}`);
   }
-  if (report.outOfTime) {
+  if (report.outOfTime && !report.unanswered) {
     say(report.batches === 0
       ? `${label}: not run — the run's time is spent; the queue is sent by the next drain`
       : `${label}: stopped at its time limit after ${report.batches} batch(es) (${report.sent} sent) — the rest of the queue is sent by the next drain`);
@@ -715,7 +745,8 @@ const DIGEST_LINES = 12;
 /** How many of one recipient's newest unread compliance rows are read — far
  *  more than the digest lists; the subject's count is exact regardless. */
 const DIGEST_SCAN_PER_RECIPIENT = 200;
-/** Rows per page of the window-wide recipient discovery (keyset on id). */
+/** Rows per page of the orgs list and of one org's recipient search (N6 fix
+ *  pass 3: keyset on user_id within the org, skipping past each one found). */
 const DIGEST_DISCOVERY_PAGE = 1000;
 /** uids per .in() read (members, preferences) — keeps the URL short. */
 const DIGEST_UID_CHUNK = 150;
@@ -727,9 +758,10 @@ const DIGEST_PARALLEL = 8;
  *  response itself. */
 const RUN_BUDGET_MS = maxDuration * 1000;
 const RUN_TAIL_MS = 10_000;
-/** One send-queued batch at worst (100 rows in ~30 s — that route's own
- *  note): a drain starts a batch only when it can end inside the drain's
- *  limit. */
+/** One send-queued batch, typically (100 rows in ~30 s — that route's own
+ *  note): a drain starts a batch only when this much of its limit is left,
+ *  and waits for it no longer than the limit (N6 fix pass 3 — a batch that
+ *  has not answered by then is reported and left to finish on its own). */
 const DRAIN_BATCH_MS = 30_000;
 /** Step 2's share of the run: it starts no batch that could end after this,
  *  so a backlog cannot take the compliance steps' time (what it leaves is
@@ -773,18 +805,25 @@ function emitShortfall(r: EmitResult | null | undefined, leg: "inapp" | "email")
   return null;
 }
 
-/** Where the compliance digest stands between runs (NEDGE-17, N6 fix pass 2)
- *  — one platform_settings row (20260920; service role only):
- *   - openSince: a compliance item created after this and still unread may be
- *     owed to someone; the next run's recipient search starts here. It moves
- *     to a run's `asOf` only when that run offered every recipient their
- *     items; a run cut short, or one that held someone back, leaves it at the
- *     oldest item still owed.
- *   - after: the last recipient ("org_id|uid") a run cut short reached; the
- *     next run starts with the one after it, so successive short runs reach
- *     every recipient in turn. Null after a complete run. */
+/** Where the compliance digest stands between runs (NEDGE-17; N6 fix passes
+ *  2 and 3) — one platform_settings row (20260920; service role only):
+ *   - openSince: the start of the window still owed to every org that has no
+ *     entry in `orgs`. A run that visited every org moves it to its `asOf`;
+ *     one whose deadline left orgs unvisited leaves it where it was.
+ *   - orgs: one entry per org that is owed more than that — its own window
+ *     start (`since`) and, when its last visit did not finish (`unfinished`),
+ *     the last recipient (uid) that visit reached (`after`): the org's next
+ *     visit starts with the one after them and wraps, so successive short
+ *     visits reach each of its recipients in turn. A finished org has an entry
+ *     only when someone was held back (the per-day dedupe, a failed read or
+ *     insert) from before openSince.
+ *   - nextOrg: the first org the last run did not visit (its deadline came
+ *     first); the next run starts with it. Null when every org was visited.
+ *  (Fix pass 2's single cursor — `after` beside openSince — is not read: such
+ *  a state resumes from its openSince, which covers what that cursor owed.) */
 const DIGEST_STATE_KEY = "compliance_digest";
-type DigestState = { openSince: string; after: string | null };
+type DigestOrgState = { since: string; after: string | null; unfinished: boolean };
+type DigestState = { openSince: string; orgs: Record<string, DigestOrgState>; nextOrg: string | null };
 /** How far back a digest's search ever reaches; within it, an item no run
  *  listed is listed by the next. No more than the purge's 7-day minimum, so
  *  the digest rows each recipient's window starts from are still there. */
@@ -792,11 +831,31 @@ const DIGEST_LOOKBACK_MS = 7 * 24 * 3600 * 1000;
 /** The window of the first run (no state row yet) — the 25 hours the digest
  *  has always covered. */
 const DIGEST_FIRST_WINDOW_MS = 25 * 3600 * 1000;
+/** The least one org's visit is given (NEDGE-17, N6 fix pass 3). Its share is
+ *  the digest's time left divided among the orgs not yet visited, never less
+ *  than this: the first half for finding the org's recipients, the rest for
+ *  composing theirs. One org's volume spends its own share, never another's. */
+const DIGEST_ORG_FLOOR_MS = 5_000;
+/** How many orgs' unfinished visits one run names, one line each. */
+const DIGEST_ORG_LINES = 10;
+
+const isTimestamp = (t: unknown): t is string => typeof t === "string" && Number.isFinite(Date.parse(t));
 
 function parseDigestState(v: unknown): DigestState | null {
-  const o = v as { openSince?: unknown; after?: unknown } | null;
-  if (!o || typeof o.openSince !== "string" || !Number.isFinite(Date.parse(o.openSince))) return null;
-  return { openSince: o.openSince, after: typeof o.after === "string" && o.after ? o.after : null };
+  const o = v as { openSince?: unknown; orgs?: unknown; nextOrg?: unknown } | null;
+  if (!o || !isTimestamp(o.openSince)) return null;
+  const orgs: Record<string, DigestOrgState> = {};
+  if (o.orgs != null) {
+    if (typeof o.orgs !== "object" || Array.isArray(o.orgs)) return null;
+    for (const [id, e] of Object.entries(o.orgs as Record<string, unknown>)) {
+      const s = e as { since?: unknown; after?: unknown; unfinished?: unknown } | null;
+      // One entry this run cannot read makes the whole state unreadable:
+      // falling back to openSince for that org could skip what it is owed.
+      if (!s || !isTimestamp(s.since) || (s.after != null && typeof s.after !== "string")) return null;
+      orgs[id] = { since: s.since, after: typeof s.after === "string" && s.after ? s.after : null, unfinished: s.unfinished === true };
+    }
+  }
+  return { openSince: o.openSince, orgs, nextOrg: typeof o.nextOrg === "string" && o.nextOrg ? o.nextOrg : null };
 }
 
 /** Where a recipient's last digest stopped: the end of its window
@@ -814,21 +873,31 @@ function digestThrough(row: { created_at?: unknown; metadata?: unknown }): numbe
  *  UNREAD compliance notices that no earlier digest listed.
  *   - Window (NEDGE-17, N6 fix pass 2 — lossless): each recipient's list runs
  *     from where their last digest stopped (metadata.through) — for someone
- *     no digest in the window has reached, from the state's openSince — to
- *     `asOf`. A run cut short, or one that never started composing, leaves
- *     the state so the next run's search still covers what it did not list
- *     (up to DIGEST_LOOKBACK_MS back), and nobody it did reach is listed an
- *     item twice. The first run (no state) covers the 25 hours to now; a run
- *     that cannot read the state searches the whole lookback, starts each
+ *     no digest in the window has reached, from their org's window start (its
+ *     state entry, else openSince) — to `asOf`. A visit or a run cut short
+ *     leaves the state so a later run's search still covers what it did not
+ *     list (up to DIGEST_LOOKBACK_MS back), and nobody it did reach is listed
+ *     an item twice. The first run (no state) covers the 25 hours to now; a
+ *     run that cannot read the state searches the whole lookback, starts each
  *     list where that person's last digest stopped, and records nothing.
- *   - Who: the recipients of unread compliance rows in the window, found by
- *     paging those rows (org_id, user_id, created_at only, keyset on id) to
- *     completion — so the cost follows the pending items, not the membership
- *     (a member with nothing pending costs nothing), and no recipient is
- *     dropped by a read window. Each must be an ACTIVE member of that org
- *     with an address.
- *   - Order (N6 fix pass 2): by (org_id, uid), starting after the last
- *     recipient the previous run reached (state.after).
+ *   - Org by org (NEDGE-17, N6 fix pass 3): the orgs (keyset-paged by id) are
+ *     visited in turn, starting with the first one the last run did not
+ *     visit; after a run that visited every org, the orgs whose last visit did
+ *     not finish go last, so they are given what the others leave. Each visit
+ *     has a share of the digest's time (above). It finds the org's recipients
+ *     from THAT ORG's unread compliance rows in its window — (user_id,
+ *     created_at) only, ordered by (user_id, created_at) and skipping past
+ *     each recipient found, so a recipient costs at most one page however many
+ *     rows they hold — starting after the org's `after` and wrapping, to the
+ *     empty page (never a short page read as the last: the API's row cap may
+ *     be below the page). Then it composes the ones it found, in that order.
+ *     A search cut short still composes what it found; a visit always reads
+ *     one page and composes one round (the progress guarantee — a visit can
+ *     outlast `deadlineAt` by that much). So a flood of one org's rows spends
+ *     that org's share, never another org's; a single read slower than the
+ *     whole digest delays the orgs after it by one run, which starts with
+ *     them. Each recipient must be an ACTIVE member of that org with an
+ *     address.
  *   - NEDGE-17: each recipient's list comes from a read scoped to that
  *     (org, member) and ordered newest first — no window shared across orgs
  *     and recipients, so one member's rows cannot push anyone else's lines
@@ -844,21 +913,22 @@ function digestThrough(row: { created_at?: unknown; metadata?: unknown }): numbe
  *     zone when configured, else UTC.
  *   - The per-(org, user, day) dedupe on metadata.day (the UTC day) is kept:
  *     a manual re-run never mails anyone twice; what it holds back stays owed.
- *   - Time: it starts no round of recipients at or after `deadlineAt` (the
- *     caller's digestDeadlineAt) and says how many it did not reach.
+ *   - Time: no org's visit starts at or after `deadlineAt` (the caller's
+ *     digestDeadlineAt); the run says which orgs it did not visit or finish.
  *   - DELIV-7: every read and write that fails is a line in `errors`. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: string; errors: string[]; deadlineAt: number; runStartedAt: number }): Promise<number> {
   const now = Date.now();
   const asOf = new Date(now).toISOString();
   const dayKey = asOf.slice(0, 10);
+  const iso = (ms: number) => new Date(ms).toISOString();
   const say = (line: string) => { opts.errors.push(`compliance-digest: ${line}`); console.error(`[cron/maintenance] compliance-digest: ${line}`); };
   const lookbackDays = DIGEST_LOOKBACK_MS / 86_400_000;
   // The first window, recorded only where no state row exists yet (one
   // statement; a no-op otherwise) — so even a first run that composes
   // nothing leaves the next run the window it owes.
   const recordFirstWindow = async () => {
-    const first: DigestState = { openSince: new Date(now - DIGEST_FIRST_WINDOW_MS).toISOString(), after: null };
+    const first: DigestState = { openSince: iso(now - DIGEST_FIRST_WINDOW_MS), orgs: {}, nextOrg: null };
     const { error } = await sb.from("platform_settings").upsert(
       { key: DIGEST_STATE_KEY, value: first, updated_at: asOf }, { onConflict: "key", ignoreDuplicates: true });
     if (error) say(`the digest's first window could not be recorded — a run that does not finish may leave items older than ${DIGEST_FIRST_WINDOW_MS / 3_600_000} hours unlisted: ${error.message}`);
@@ -881,85 +951,59 @@ async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: s
     stateMalformed = !!data && !state;
   } catch (e) {
     stateReadable = false;
-    say(`where the last run stopped could not be read — this run searches the last ${lookbackDays} days, lists each recipient's items from where their last digest stopped, starts at the first recipient and records nothing: ${(e as Error).message}`);
+    say(`where the last run stopped could not be read — this run searches the last ${lookbackDays} days, lists each recipient's items from where their last digest stopped, starts at the first org and records nothing: ${(e as Error).message}`);
   }
   if (stateMalformed) {
     say(`the recorded state (platform_settings '${DIGEST_STATE_KEY}') is not one this run can read — it searches the last ${lookbackDays} days, lists each recipient's items from where their last digest stopped, and records a new state`);
   }
   if (stateReadable && !state && !stateMalformed) await recordFirstWindow();
   const horizon = now - DIGEST_LOOKBACK_MS;
-  let openSinceMs = !stateReadable || stateMalformed ? horizon : state ? Date.parse(state.openSince) : now - DIGEST_FIRST_WINDOW_MS;
+  const searchAll = !stateReadable || stateMalformed;
+  let openSinceMs = searchAll ? horizon : state ? Date.parse(state.openSince) : now - DIGEST_FIRST_WINDOW_MS;
   if (openSinceMs < horizon) {
-    say(`the window still owed reached back past ${lookbackDays} days (to ${state?.openSince}) — unread items older than ${new Date(horizon).toISOString()} that no run listed are no longer listed`);
+    say(`the window still owed reached back past ${lookbackDays} days (to ${state?.openSince}) — unread items older than ${iso(horizon)} that no run listed are no longer listed`);
     openSinceMs = horizon;
   }
-  const openSince = new Date(openSinceMs).toISOString();
-  const after = stateReadable ? state?.after ?? null : null;
+  const orgState: Record<string, DigestOrgState> = searchAll ? {} : state?.orgs ?? {};
+  const startOrg = searchAll ? null : state?.nextOrg ?? null;
 
-  // WHO has something pending: every unread compliance row in the window,
-  // (org_id, user_id, created_at) only, keyset-paged on id to the empty page
-  // (never a short page read as the last — the API's row cap may be below
-  // the page). Each pair keeps its oldest pending item: the point a later
-  // run must search from if this one does not reach them.
-  const pending = new Map<string, { org_id: string; uid: string; oldestMs: number }>();
-  let afterId: string | null = null;
+  // WHICH orgs: every one, by id, keyset-paged to the empty page.
+  const orgIds: string[] = [];
   for (;;) {
-    if (Date.now() >= opts.deadlineAt) {
-      say(`stopped at its deadline while finding recipients — ${pending.size} found so far, none composed; nothing is lost: the next run searches the same window`);
-      return 0;
-    }
-    let q = sb
-      .from("notifications").select("id, org_id, user_id, created_at")
-      .in("kind", COMPLIANCE_KINDS)
-      .is("read_at", null)
-      .gt("created_at", openSince)
-      .lte("created_at", asOf)
-      .not("user_id", "is", null);
-    if (afterId !== null) q = q.gt("id", afterId);
+    let q = sb.from("orgs").select("id");
+    if (orgIds.length > 0) q = q.gt("id", orgIds[orgIds.length - 1]);
     const { data, error } = await q.order("id", { ascending: true }).limit(DIGEST_DISCOVERY_PAGE);
-    if (error) { say(`the window's compliance items could not be read — no digest was composed; the next run searches the same window: ${error.message}`); return 0; }
-    const page = (data as Array<{ id: string; org_id: string | null; user_id: string | null; created_at: string | null }> | null) ?? [];
+    if (error) { say(`the orgs could not be listed — no digest was composed; the next run searches the same window: ${error.message}`); return 0; }
+    const page = (data as Array<{ id: unknown }> | null) ?? [];
     if (page.length === 0) break;
-    for (const r of page) {
-      if (!r.org_id || !r.user_id) continue;
-      const at = Date.parse(String(r.created_at));
-      const key = `${r.org_id}|${r.user_id}`;
-      const seen = pending.get(key);
-      if (!seen) pending.set(key, { org_id: r.org_id, uid: r.user_id, oldestMs: Number.isFinite(at) ? at : openSinceMs });
-      else if (Number.isFinite(at) && at < seen.oldestMs) seen.oldestMs = at;
-    }
-    afterId = String(page[page.length - 1].id);
+    for (const o of page) orgIds.push(String(o.id));
   }
+  // The rotation: from the first org the last run did not visit; after a run
+  // that visited every org, the unfinished ones last.
+  let firstAt = startOrg === null ? 0 : orgIds.findIndex((id) => id >= startOrg);
+  if (firstAt < 0) firstAt = 0;
+  let order = [...orgIds.slice(firstAt), ...orgIds.slice(0, firstAt)];
+  if (startOrg === null) order = [...order.filter((id) => !orgState[id]?.unfinished), ...order.filter((id) => orgState[id]?.unfinished)];
 
-  // Of those, the ACTIVE members of that org with an address.
   type Member = { uid: string; org_id: string; email: string | null };
-  const keyOf = (m: { org_id: string; uid: string }) => `${m.org_id}|${m.uid}`;
-  const members: Member[] = [];
-  const uids = [...new Set([...pending.values()].map((p) => p.uid))].sort();
-  for (let i = 0; i < uids.length; i += DIGEST_UID_CHUNK) {
-    const chunk = uids.slice(i, i + DIGEST_UID_CHUNK);
-    const { data, error } = await sb
-      .from("org_members").select("uid, org_id, email").eq("status", "active").in("uid", chunk);
-    if (error) { say(`the recipients' memberships could not be read — no digest was composed; the next run searches the same window: ${error.message}`); return 0; }
-    for (const m of (data as Member[] | null) ?? []) {
-      if (m.email && pending.has(keyOf(m))) members.push(m);
-    }
-  }
-  members.sort((a, b) => (keyOf(a) < keyOf(b) ? -1 : keyOf(a) > keyOf(b) ? 1 : 0));
-
+  // Preferences are a member's, not an org's: read once per uid per run.
   const prefs = new Map<string, Record<string, unknown>>();
   const unverified = new Set<string>();
-  const memberUids = [...new Set(members.map((m) => m.uid))];
-  for (let i = 0; i < memberUids.length; i += DIGEST_UID_CHUNK) {
-    const chunk = memberUids.slice(i, i + DIGEST_UID_CHUNK);
-    const { data, error } = await sb.from("notification_preferences").select("*").in("user_id", chunk);
-    if (error) {
-      chunk.forEach((u) => unverified.add(u));
-      say(`the email preferences of ${chunk.length} member(s) could not be read — their digest is sent, stamped pref_gate=unverified: ${error.message}`);
-      continue;
+  const prefsRead = new Set<string>();
+  const readPrefs = async (uids: string[]) => {
+    const todo = uids.filter((u) => !prefsRead.has(u));
+    for (let i = 0; i < todo.length; i += DIGEST_UID_CHUNK) {
+      const chunk = todo.slice(i, i + DIGEST_UID_CHUNK);
+      chunk.forEach((u) => prefsRead.add(u));
+      const { data, error } = await sb.from("notification_preferences").select("*").in("user_id", chunk);
+      if (error) {
+        chunk.forEach((u) => unverified.add(u));
+        say(`the email preferences of ${chunk.length} member(s) could not be read — their digest is sent, stamped pref_gate=unverified: ${error.message}`);
+        continue;
+      }
+      for (const p of (data as Array<Record<string, unknown>> | null) ?? []) prefs.set(String(p.user_id), p);
     }
-    for (const p of (data as Array<Record<string, unknown>> | null) ?? []) prefs.set(String(p.user_id), p);
-  }
+  };
 
   const orgNames = new Map<string, Promise<string | null>>();
   const nameOf = (orgId: string) => {
@@ -975,21 +1019,17 @@ async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: s
     return zones.get(orgId)!;
   };
 
-  // What a later run still owes, per recipient: the instant its search must
-  // start from (never before this run's own window).
-  const owed = new Map<string, number>();
-  const owe = (m: Member, fromMs: number) => owed.set(keyOf(m), Math.max(openSinceMs, fromMs));
-  const oldestOf = (m: Member) => (pending.get(keyOf(m))?.oldestMs ?? openSinceMs) - 1;
-
   let queued = 0;
-  const one = async (m: Member) => {
+  /** Offer one member their digest. `owe(fromMs)`: what a later run's search
+   *  for them must start from, when this one held something back. */
+  const one = async (m: Member, windowMs: number, oldestMs: number, owe: (fromMs: number) => void) => {
     // Declined by their preferences: offered, and nothing is owed.
     if (!unverified.has(m.uid) && !emailAllowedByPrefs(prefs.get(m.uid) ?? null, "compliance_digest")) return;
     // Their last digest: today's means no second one today (the per-day
     // dedupe); otherwise their list starts where it stopped. A read that
     // fails sends anyway, from the window's start — a line listed twice is
     // better than none.
-    let sinceMs = openSinceMs;
+    let sinceMs = windowMs;
     const { data: last, error: lastErr } = await sb
       .from("email_notifications").select("created_at, metadata")
       .eq("org_id", m.org_id)
@@ -998,19 +1038,19 @@ async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: s
       .order("created_at", { ascending: false })
       .limit(1);
     if (lastErr) {
-      say(`${m.org_id}/${m.uid}: their last digest could not be read — sent anyway, listing from ${openSince}: ${lastErr.message}`);
+      say(`${m.org_id}/${m.uid}: their last digest could not be read — sent anyway, listing from ${iso(windowMs)}: ${lastErr.message}`);
     } else {
       const row = ((last as Array<{ created_at?: unknown; metadata?: unknown }> | null) ?? [])[0];
       if (row) {
         const through = digestThrough(row);
         if ((row.metadata as { day?: unknown } | null)?.day === dayKey) {
-          owe(m, Math.max(oldestOf(m), through ?? openSinceMs));
+          owe(Math.max(oldestMs - 1, through ?? windowMs));
           return;
         }
         if (through !== null && through > sinceMs) sinceMs = through;
       }
     }
-    const since = new Date(sinceMs).toISOString();
+    const since = iso(sinceMs);
     // NEDGE-17: this member's own rows, in this org, newest first.
     const { data: rows, error, count } = await sb
       .from("notifications").select("kind, title, created_at", { count: "exact" })
@@ -1025,7 +1065,7 @@ async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: s
       .limit(DIGEST_SCAN_PER_RECIPIENT);
     if (error) {
       say(`${m.org_id}/${m.uid}: their compliance items could not be read — no digest for them this run; the next run lists them: ${error.message}`);
-      owe(m, Math.max(oldestOf(m), sinceMs));
+      owe(Math.max(oldestMs - 1, sinceMs));
       return;
     }
     const list = (rows as Array<{ title: string }> | null) ?? [];
@@ -1067,41 +1107,150 @@ async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: s
     });
     if (insErr) {
       say(`${m.org_id}/${m.uid}: the digest was not queued — the next run lists these items again: ${insErr.message}`);
-      owe(m, Math.max(oldestOf(m), sinceMs));
+      owe(Math.max(oldestMs - 1, sinceMs));
       return;
     }
     queued += 1;
   };
 
-  // Start after the last recipient the previous run reached (state.after),
-  // so successive runs cut short reach every recipient in turn.
-  let start = after === null ? 0 : members.findIndex((m) => keyOf(m) > after);
-  if (start < 0) start = 0;
-  const order = [...members.slice(start), ...members.slice(0, start)];
-  let reached = 0;
-  for (let i = 0; i < order.length; i += DIGEST_PARALLEL) {
-    if (Date.now() >= opts.deadlineAt) break;
-    await Promise.all(order.slice(i, i + DIGEST_PARALLEL).map(one));
-    reached = Math.min(order.length, i + DIGEST_PARALLEL);
-  }
-  const unreached = order.slice(reached);
-  for (const m of unreached) owe(m, oldestOf(m));
-  let nextOpenMs = now;
-  for (const t of owed.values()) if (t < nextOpenMs) nextOpenMs = t;
-  const next: DigestState = {
-    openSince: new Date(nextOpenMs).toISOString(),
-    after: unreached.length === 0 ? null : reached > 0 ? keyOf(order[reached - 1]) : after,
+  /** One org's visit: find its recipients until `searchBy`, then compose
+   *  theirs until `composeBy` (each phase does one step whatever the clock
+   *  says). Returns the org's next state entry (null: none needed) and, when
+   *  the visit did not finish, a line saying why. */
+  const clamped: string[] = [];
+  const visitOrg = async (org: string, searchBy: number, composeBy: number): Promise<{ entry: DigestOrgState | null; line: string | null }> => {
+    const own = orgState[org];
+    let windowMs = own ? Date.parse(own.since) : openSinceMs;
+    if (windowMs < horizon) { clamped.push(org); windowMs = horizon; }
+    const windowStart = iso(windowMs);
+    const cursor = own?.after ?? null;
+
+    // WHO in this org has something pending, in uid order from the cursor
+    // (wrapping): each recipient's oldest pending item, which a later run
+    // must search from if this one does not reach them.
+    const found: Array<{ uid: string; oldestMs: number }> = [];
+    const ranges: Array<[string | null, string | null]> = cursor === null ? [[null, null]] : [[cursor, null], [null, cursor]];
+    let searched = false;
+    let searchFailure: string | null = null;
+    let pages = 0;
+    search: for (let ri = 0; ri < ranges.length; ri++) {
+      const [lo, hi] = ranges[ri];
+      let from = lo;
+      for (;;) {
+        if (pages > 0 && Date.now() >= searchBy) break search;
+        let q = sb
+          .from("notifications").select("user_id, created_at")
+          .eq("org_id", org)
+          .in("kind", COMPLIANCE_KINDS)
+          .is("read_at", null)
+          .gt("created_at", windowStart)
+          .lte("created_at", asOf)
+          .not("user_id", "is", null);
+        if (from !== null) q = q.gt("user_id", from);
+        if (hi !== null) q = q.lte("user_id", hi);
+        const { data, error } = await q.order("user_id", { ascending: true }).order("created_at", { ascending: true }).limit(DIGEST_DISCOVERY_PAGE);
+        pages += 1;
+        if (error) { searchFailure = error.message; break search; }
+        const page = (data as Array<{ user_id: string | null; created_at: string | null }> | null) ?? [];
+        if (page.length === 0) break;
+        for (const r of page) {
+          const uid = r.user_id == null ? "" : String(r.user_id);
+          // ordered by (user_id, created_at): a uid's first row is its oldest
+          if (!uid || found[found.length - 1]?.uid === uid) continue;
+          const at = Date.parse(String(r.created_at));
+          found.push({ uid, oldestMs: Number.isFinite(at) ? at : windowMs });
+        }
+        from = String(page[page.length - 1].user_id);
+      }
+      if (ri === ranges.length - 1) searched = true;
+    }
+
+    // Of those, the ACTIVE members of this org with an address. A read that
+    // fails leaves the rest of the found for the next visit.
+    const members = new Map<string, Member>();
+    let composable = found.length;
+    let memberFailure: string | null = null;
+    for (let i = 0; i < found.length; i += DIGEST_UID_CHUNK) {
+      const chunk = found.slice(i, i + DIGEST_UID_CHUNK).map((f) => f.uid);
+      const { data, error } = await sb
+        .from("org_members").select("uid, org_id, email").eq("org_id", org).eq("status", "active").in("uid", chunk);
+      if (error) { memberFailure = error.message; composable = i; break; }
+      for (const m of (data as Member[] | null) ?? []) if (m.email) members.set(m.uid, m);
+    }
+    await readPrefs([...members.keys()]);
+
+    // Compose, in the order found.
+    let owedMs = Infinity;
+    const owe = (fromMs: number) => { owedMs = Math.min(owedMs, Math.max(windowMs, fromMs)); };
+    let reached = 0;
+    for (let rounds = 0; reached < composable; rounds++) {
+      if (rounds > 0 && Date.now() >= composeBy) break;
+      const round = found.slice(reached, Math.min(composable, reached + DIGEST_PARALLEL));
+      await Promise.all(round.map((f) => {
+        const m = members.get(f.uid);
+        return m ? one(m, windowMs, f.oldestMs, owe) : Promise.resolve();
+      }));
+      reached += round.length;
+    }
+    const unreached = found.slice(reached);
+    for (const f of unreached) owe(f.oldestMs - 1);
+    const after = reached > 0 ? found[reached - 1].uid : cursor;
+
+    if (searched && unreached.length === 0) {
+      return { entry: owedMs < Infinity ? { since: iso(owedMs), after: null, unfinished: false } : null, line: null };
+    }
+    // Not finished. What its search did not reach may be anywhere in its
+    // window, so the window stays where it was; if the search finished, the
+    // oldest item of those it did not reach bounds what is owed.
+    const since = iso(searched ? owedMs : windowMs);
+    const offered = `${reached} of the ${found.length} recipient(s) found were offered their digest`;
+    const line = searchFailure
+      ? `${org}: the search for its recipients failed (${offered}) — its next visit starts after the last one reached and searches back to ${since}: ${searchFailure}`
+      : memberFailure
+        ? `${org}: the memberships of ${found.length - composable} recipient(s) could not be read — no digest for them this run (${offered}); its next visit lists them: ${memberFailure}`
+        : `${org}: its share of the digest's time ran out — ${offered}${searched ? "" : ", and its search for more did not finish"}; its next visit starts after the last one reached and searches back to ${since}, so nothing is lost within ${lookbackDays} days`;
+    return { entry: { since, after, unfinished: true }, line };
   };
-  if (unreached.length > 0) {
-    say(`stopped at its deadline — ${unreached.length} of ${order.length} recipient(s) were not reached this run; ` +
+
+  // The visits. Each org's share: the time left over the orgs left, never
+  // less than DIGEST_ORG_FLOOR_MS — so one org's volume costs its own share.
+  const nextOrgs: Record<string, DigestOrgState> = {};
+  const lines: string[] = [];
+  let visited = 0;
+  for (; visited < order.length; visited++) {
+    const org = order[visited];
+    const t0 = Date.now();
+    if (t0 >= opts.deadlineAt) break;
+    const share = Math.max(DIGEST_ORG_FLOOR_MS, (opts.deadlineAt - t0) / (order.length - visited));
+    const composeBy = Math.min(opts.deadlineAt, t0 + share);
+    const v = await visitOrg(org, t0 + (composeBy - t0) / 2, composeBy);
+    if (v.entry) nextOrgs[org] = v.entry;
+    if (v.line) lines.push(v.line);
+  }
+  const notVisited = order.slice(visited);
+  // An org not visited keeps what it was owed.
+  for (const org of notVisited) if (orgState[org]) nextOrgs[org] = orgState[org];
+  const nextOpenMs = notVisited.length === 0 ? now : openSinceMs;
+  for (const [org, e] of Object.entries(nextOrgs)) {
+    if (!e.unfinished && Date.parse(e.since) >= nextOpenMs) delete nextOrgs[org];
+  }
+  const next: DigestState = { openSince: iso(nextOpenMs), orgs: nextOrgs, nextOrg: notVisited[0] ?? null };
+
+  if (clamped.length > 0) {
+    say(`the window still owed to ${clamped.length} org(s) reached back past ${lookbackDays} days (${clamped.slice(0, DIGEST_ORG_LINES).join(", ")}${clamped.length > DIGEST_ORG_LINES ? ", …" : ""}) — their unread items older than ${iso(horizon)} that no run listed are no longer listed`);
+  }
+  for (const line of lines.slice(0, DIGEST_ORG_LINES)) say(line);
+  if (lines.length > DIGEST_ORG_LINES) say(`…and ${lines.length - DIGEST_ORG_LINES} more org(s) whose visit did not finish`);
+  if (notVisited.length > 0) {
+    say(`stopped at its deadline — ${notVisited.length} of ${order.length} org(s) were not visited this run; ` +
       (stateReadable
-        ? `the next run starts with them and its search reaches back to ${next.openSince}, the oldest item still owed, so nothing is lost within ${lookbackDays} days`
+        ? `the next run starts with them, and what they are owed stays open, so nothing is lost within ${lookbackDays} days`
         : `this run could not record where it stopped, so the next run starts from the last point recorded`));
   }
   if (stateReadable) {
     const { error: saveErr } = await sb.from("platform_settings").upsert(
       { key: DIGEST_STATE_KEY, value: next, updated_at: asOf }, { onConflict: "key" });
-    if (saveErr) say(`where this run stopped could not be recorded — the next run searches again from ${openSince} (nobody reached here is listed an item twice): ${saveErr.message}`);
+    if (saveErr) say(`where this run stopped could not be recorded — the next run starts from the state the last run recorded (nobody reached here is listed an item twice): ${saveErr.message}`);
   }
   return queued;
 }
