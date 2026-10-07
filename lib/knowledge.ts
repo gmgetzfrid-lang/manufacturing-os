@@ -377,6 +377,25 @@ export async function saveLibraryAiFeatures(libraryId: string, features: Knowled
   };
   const notSaved = "Library AI setup was not saved — only Admin or Doc Control can change it.";
 
+  // ASK-8 done-when 2: a legend id this save ADDS must name a knowledge
+  // document of the library's own workspace (a stored one is kept as it is).
+  // Checked here, before any write, on every database: 20261121's save
+  // stores what it is given, and only 20261178 makes the database say the
+  // same. A save that names no legend sheet reads nothing more.
+  const nextLegend = Array.isArray(toggles.legendDocIds) ? (toggles.legendDocIds as unknown[]) : [];
+  if (nextLegend.length > 0) {
+    const { data: lib, error: libErr } = await supabase.from("knowledge_libraries")
+      .select("org_id, ai_features").eq("id", libraryId).maybeSingle();
+    if (libErr) fail(libErr);
+    const row = lib as { org_id?: string; ai_features?: Record<string, unknown> | null } | null;
+    const priorLegend = (row?.ai_features ?? {}).legendDocIds;
+    const added = legendIdsAdded(nextLegend, Array.isArray(priorLegend) ? priorLegend : []);
+    if (added.length > 0) {
+      if (!row?.org_id) throw new Error(notSaved);
+      await assertOrgKnowledgeDocIds(row.org_id, added);
+    }
+  }
+
   const rpc = await supabase.rpc("knowledge_library_save_ai_features", { p_library_id: libraryId, p_features: toggles });
   if (!rpc.error) {
     if (rpc.data !== true) throw new Error(notSaved);
@@ -391,20 +410,6 @@ export async function saveLibraryAiFeatures(libraryId: string, features: Knowled
     .select("ai_features").eq("id", libraryId).maybeSingle();
   if (readErr) fail(readErr);
   const marker = ((cur as { ai_features?: Record<string, unknown> | null } | null)?.ai_features ?? {}).embedBuild;
-  // ASK-8 done-when 2: before 20261178 the database checks nothing here, so
-  // the app does — a legend id this save ADDS must name a knowledge document
-  // of the library's own workspace (a stored one is kept as it is).
-  const nextLegend = Array.isArray(toggles.legendDocIds) ? (toggles.legendDocIds as unknown[]) : [];
-  const priorLegend = ((cur as { ai_features?: Record<string, unknown> | null } | null)?.ai_features ?? {}).legendDocIds;
-  const added = legendIdsAdded(nextLegend, Array.isArray(priorLegend) ? priorLegend : []);
-  if (added.length > 0) {
-    const { data: lib, error: libErr } = await supabase.from("knowledge_libraries")
-      .select("org_id").eq("id", libraryId).maybeSingle();
-    if (libErr) fail(libErr);
-    const orgId = (lib as { org_id?: string } | null)?.org_id;
-    if (!orgId) throw new Error(notSaved);
-    await assertOrgKnowledgeDocIds(orgId, added);
-  }
   const { data, error } = await supabase.from("knowledge_libraries")
     .update({ ai_features: marker !== undefined ? { ...toggles, embedBuild: marker } : toggles })
     .eq("id", libraryId).select("id");

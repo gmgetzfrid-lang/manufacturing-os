@@ -235,16 +235,41 @@ describe("ASK-8 done-when 2 — legend ids are validated on write", () => {
     await assertOrgKnowledgeDocIds("o1", []);
     expect(db.ref.calls).toEqual([]);
   });
-  it("the library toggles save: the RPC's refusal is said; before 20261178 / 20261121 the app checks added ids itself", async () => {
+  it("the library toggles save, on 20261121's RPC before 20261178 (reproduction → fix): the app refuses an added foreign id BEFORE the RPC runs", async () => {
     db.ref.tables.knowledge_libraries = [{ id: "lib-1", org_id: "o1", ai_features: { legendDocIds: ["stale"], embedBuild: { userId: "x" } } }];
-    // with the RPC (20261178): the database's refusal
+    // 20261121's save stores what it is given (no legend rule in the database yet)
+    db.rpc = (_name, args) => {
+      const a = args as { p_features: Record<string, unknown> };
+      const lib = db.ref.tables.knowledge_libraries[0];
+      lib.ai_features = { ...a.p_features, embedBuild: (lib.ai_features as Record<string, unknown>).embedBuild };
+      return { data: true, error: null };
+    };
+    await expect(saveLibraryAiFeatures("lib-1", { legendDocIds: ["stale", FOREIGN] })).rejects.toThrow(/is not a knowledge document of this workspace/);
+    await expect(saveLibraryAiFeatures("lib-1", { legendDocIds: ["nope"] })).rejects.toThrow(/is not a knowledge document id/);
+    expect(db.ref.calls.some((c) => c.table === "rpc:knowledge_library_save_ai_features")).toBe(false);
+    expect(db.ref.tables.knowledge_libraries[0].ai_features).toEqual({ legendDocIds: ["stale"], embedBuild: { userId: "x" } });
+    // the org predicate is the LIBRARY's org, read first
+    expect(db.ref.calls.some((c) => c.table === "knowledge_documents" && c.method === "eq" && c.args[0] === "org_id" && c.args[1] === "o1")).toBe(true);
+    // the org's own document beside the stale stored id saves through the RPC
+    await saveLibraryAiFeatures("lib-1", { legendDocIds: ["stale", OWN], visionPages: true });
+    expect(db.ref.tables.knowledge_libraries[0].ai_features).toEqual({ legendDocIds: ["stale", OWN], visionPages: true, embedBuild: { userId: "x" } });
+    // a save that names no legend sheet reads nothing more than today's
+    db.ref.calls.length = 0;
+    await saveLibraryAiFeatures("lib-1", { visionPages: false });
+    expect(db.ref.calls.map((c) => c.table)).toEqual(["rpc:knowledge_library_save_ai_features"]);
+  });
+  it("the library toggles save: the database's refusal (20261178) is said; before 20261121 the fallback keeps the check and the marker", async () => {
+    db.ref.tables.knowledge_libraries = [{ id: "lib-1", org_id: "o1", ai_features: { legendDocIds: ["stale"], embedBuild: { userId: "x" } } }];
+    // with 20261178: the app's read is stale (it believes FOREIGN is o1's); the database decides
+    db.ref.tables.knowledge_documents.push({ id: FOREIGN, org_id: "o1" });
     db.rpc = () => ({ data: null, error: { code: "23503", message: `legend_doc_ids_invalid: ${FOREIGN} is not a knowledge document of this workspace` } });
-    await expect(saveLibraryAiFeatures("lib-1", { legendDocIds: [FOREIGN] })).rejects.toThrow(/Library AI setup was not saved — a legend sheet must be a document indexed in this workspace/);
-    // without it (PGRST202): the fallback refuses a foreign id before its update…
+    await expect(saveLibraryAiFeatures("lib-1", { legendDocIds: [FOREIGN] })).rejects.toThrow(/Library AI setup was not saved — a legend sheet must be a document indexed in this workspace \(44444444-0000-0000-0000-000000000002 is not a knowledge document of this workspace\)/);
+    db.ref.tables.knowledge_documents.pop();
+    // without the RPC (PGRST202): a foreign id is refused before the fallback's update…
     db.rpc = null;
     await expect(saveLibraryAiFeatures("lib-1", { legendDocIds: ["stale", FOREIGN] })).rejects.toThrow(/is not a knowledge document of this workspace/);
     expect(db.ref.calls.some((c) => c.table === "knowledge_libraries" && c.method === "update")).toBe(false);
-    // …and saves the org's own document beside the stale stored id, keeping the marker
+    // …and the org's own document beside the stale stored id saves, keeping the marker
     await saveLibraryAiFeatures("lib-1", { legendDocIds: ["stale", OWN], visionPages: true });
     expect(db.ref.tables.knowledge_libraries[0].ai_features).toEqual({ legendDocIds: ["stale", OWN], visionPages: true, embedBuild: { userId: "x" } });
   });
