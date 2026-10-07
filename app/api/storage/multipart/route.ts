@@ -15,7 +15,7 @@ import {
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { assertSafeStorageKey } from "@/lib/storageKey";
+import { assertSafeStorageKey, isWorkspaceLogoKey } from "@/lib/storageKey";
 
 export const runtime = "nodejs";
 
@@ -35,6 +35,11 @@ export async function POST(req: NextRequest) {
   const path = String(body.path ?? "");
   if (!path) return bad("path is required");
   try { assertSafeStorageKey(path); } catch { return bad("Invalid path"); }
+  // ORG-5: the workspace logo is signed only by /api/storage/upload-url, which
+  // holds it to an Admin, an image type and a 5 MB cap. A logo is never big
+  // enough to need multipart (the client switches at 64 MB), so this route
+  // refuses the logo area outright instead of becoming the way around that.
+  if (isWorkspaceLogoKey(path)) return bad("The workspace logo uploads through the single-file route.", 400);
 
   // Same key-level authorization as upload-url: org-prefixed keys demand
   // active membership in that org.

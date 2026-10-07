@@ -1,5 +1,6 @@
-// lib/storageKey.ts — SERVER-ONLY. One gate every storage route runs a
-// caller-supplied R2 key through before it reaches the bucket.
+// lib/storageKey.ts — one gate every storage route runs a caller-supplied
+// R2 key through before it reaches the bucket. Pure (no server imports): the
+// workspace-logo rule below is also the logo modal's pre-check.
 //
 // R2 (the S3 API) treats object keys as opaque byte strings — it does NOT
 // collapse "../" the way a filesystem does, so a literal key like
@@ -54,4 +55,46 @@ export function assertSafeStorageKey(key: string): string {
 /** Non-throwing variant for call sites that prefer a boolean. */
 export function isSafeStorageKey(key: string): boolean {
   try { assertSafeStorageKey(key); return true; } catch { return false; }
+}
+
+// ── admin-and-org ORG-5: the workspace-logo area ────────────────────────────
+// The workspace logo lives DIRECTLY under orgs/<org>/branding/ (the branding
+// page and the sidebar's logo modal both mint orgs/<org>/branding/logo-<uuid>.<ext>).
+// Its pointer (org_configurations key='branding', data.logoPath) is Admin-only
+// at the database (20260713) and readable by every member, so the bytes at
+// that key must be Admin-only too, or any member could overwrite the logo
+// every member sees. The sub-folders branding/covers/ and
+// branding/backgrounds/ are a folder's or library's cover and page
+// background (components/documents/CustomizeNodeModal.tsx), written by
+// whoever customizes that node — they are NOT the logo area and keep the
+// membership rule. Pure (no server imports): the logo modal reads the same
+// allow-list and cap for its pre-check.
+
+/** The image types a logo may be stored as. SVG is refused: it can carry
+ *  script, and a presigned PUT never passes its bytes through the server, so
+ *  it cannot be sanitised on the way in. Exact strings: the PUT must send the
+ *  same Content-Type the server signs. */
+export const LOGO_CONTENT_TYPES: readonly string[] = ["image/png", "image/jpeg", "image/webp"];
+
+/** The largest logo the server signs a PUT for (5 MB). */
+export const LOGO_MAX_BYTES = 5 * 1024 * 1024;
+
+/** True when `key` is a file directly under orgs/<uuid>/branding/ — the
+ *  workspace-logo area (not its covers/ or backgrounds/ sub-folders). */
+export function isWorkspaceLogoKey(key: string): boolean {
+  return /^orgs\/[0-9a-fA-F-]{36}\/branding\/[^/]+$/.test(key);
+}
+
+/** Why a logo upload of this type and size is refused (with the HTTP status
+ *  the route answers), or null when it may be signed. `size` is the byte
+ *  count the client declares; the server signs it as the PUT's
+ *  Content-Length, so a body of any other length is refused by storage. */
+export function logoUploadProblem(contentType: unknown, size: unknown): { status: 400 | 413 | 415; error: string } | null {
+  if (typeof contentType !== "string" || !LOGO_CONTENT_TYPES.includes(contentType)) {
+    return { status: 415, error: "A workspace logo must be a PNG, JPEG or WebP image (SVG is not accepted)." };
+  }
+  const n = typeof size === "number" ? size : Number.NaN;
+  if (!Number.isInteger(n) || n <= 0) return { status: 400, error: "The logo's size is required to upload it." };
+  if (n > LOGO_MAX_BYTES) return { status: 413, error: "A workspace logo can be at most 5 MB." };
+  return null;
 }

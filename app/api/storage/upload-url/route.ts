@@ -3,7 +3,8 @@ import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { assertSafeStorageKey } from "@/lib/storageKey";
+import { assertSafeStorageKey, isWorkspaceLogoKey, logoUploadProblem } from "@/lib/storageKey";
+import { memberHoldsAny } from "@/lib/roleHeld";
 
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -18,7 +19,7 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json();
-  const { path, contentType } = body as { path: string; contentType?: string };
+  const { path, contentType, size } = body as { path: string; contentType?: string; size?: number };
 
   if (!path) {
     return NextResponse.json({ error: "path is required" }, { status: 400 });
@@ -31,10 +32,17 @@ export async function POST(req: NextRequest) {
   // overwrite another tenant's files (IDOR / cross-tenant write). Mirrors the
   // check in download-url. Non-org-prefixed keys keep their prior behavior.
   const orgMatch = path.match(/^orgs\/([0-9a-fA-F-]{36})\//);
+  // ORG-5: the workspace logo (a file directly under orgs/<org>/branding/,
+  // lib/storageKey.ts isWorkspaceLogoKey) is the AREA whose bytes every member
+  // sees as the workspace's mark, and whose pointer only an Admin may change
+  // (20260713). Writing it is Admin-only, by the full role collection, and
+  // only as a PNG / JPEG / WebP of at most 5 MB, the type and length signed
+  // into the PUT so the upload cannot swap them.
+  const logo = isWorkspaceLogoKey(path);
   if (orgMatch) {
     const { data: member } = await supabaseAdmin
       .from("org_members")
-      .select("uid")
+      .select("uid, role, roles")
       .eq("org_id", orgMatch[1])
       .eq("uid", user.id)
       .eq("status", "active")
@@ -42,6 +50,13 @@ export async function POST(req: NextRequest) {
     if (!member) {
       return NextResponse.json({ error: "Not a member of this workspace" }, { status: 403 });
     }
+    if (logo && !memberHoldsAny(member as { role?: unknown; roles?: unknown }, ["Admin"])) {
+      return NextResponse.json({ error: "Only an Admin can change the workspace logo." }, { status: 403 });
+    }
+  }
+  if (logo) {
+    const problem = logoUploadProblem(contentType, size);
+    if (problem) return NextResponse.json({ error: problem.error }, { status: problem.status });
   }
 
   // Authorize the KEY's MEANING, not just its org prefix (PKG-1). Every
@@ -77,13 +92,36 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const command = new PutObjectCommand({
-    Bucket: R2_BUCKET,
-    Key: path,
-    ContentType: contentType || "application/octet-stream",
-  });
+  if (logo && orgMatch) {
+    // ORG-5: a logo upload is recorded, naming the actor, before it is signed
+    // — the bytes it authorizes are what every member sees. Checked: a row
+    // that cannot be written refuses the upload rather than signing it
+    // unrecorded.
+    const { error: auditErr } = await supabaseAdmin.from("audit_logs").insert({
+      action: "BRANDING_LOGO_UPLOAD",
+      resource_id: orgMatch[1],
+      resource_type: "org_branding",
+      org_id: orgMatch[1],
+      user_id: user.id,
+      user_email: user.email ?? null,
+      user_role: "Admin",
+      details: { path, contentType, size },
+    });
+    if (auditErr) {
+      return NextResponse.json({ error: "Couldn't record the logo upload, so it was not signed. Try again." }, { status: 503 });
+    }
+  }
 
-  const url = await getSignedUrl(r2, command, { expiresIn: 900 }); // 15 min
+  const command = new PutObjectCommand(logo
+    ? { Bucket: R2_BUCKET, Key: path, ContentType: contentType, ContentLength: size }
+    : { Bucket: R2_BUCKET, Key: path, ContentType: contentType || "application/octet-stream" });
+
+  // A logo's Content-Type is signed too (the presigner leaves it unsigned by
+  // default), and its Content-Length is signed because it is set: a PUT with
+  // another type or another byte count is refused by storage.
+  const url = await getSignedUrl(r2, command, logo
+    ? { expiresIn: 900, signableHeaders: new Set(["content-type"]) }
+    : { expiresIn: 900 }); // 15 min
 
   return NextResponse.json({ url, path });
 }

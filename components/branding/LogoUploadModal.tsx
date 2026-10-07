@@ -11,6 +11,7 @@ import { X, Upload, Trash2, Loader2, Image as ImageIcon } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { useOrgBranding } from "@/components/providers/OrgBrandingProvider";
 import { uploadToPath } from "@/lib/storage";
+import { LOGO_CONTENT_TYPES, logoUploadProblem } from "@/lib/storageKey";
 
 export default function LogoUploadModal({ onClose }: { onClose: () => void }) {
   const { activeOrgId } = useRole();
@@ -28,7 +29,10 @@ export default function LogoUploadModal({ onClose }: { onClose: () => void }) {
 
   const pick = async (file: File | undefined | null) => {
     if (!file || !activeOrgId) return;
-    if (!file.type.startsWith("image/")) { setError("Please choose an image file."); return; }
+    // ORG-5: the server signs a logo only as a PNG / JPEG / WebP of at most
+    // 5 MB (lib/storageKey.ts); say so here before the upload starts.
+    const problem = logoUploadProblem(file.type, file.size);
+    if (problem) { setError(problem.error); return; }
     setBusy(true); setError(null);
     try {
       const ext = (file.name.split(".").pop() || "png").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -89,7 +93,8 @@ export default function LogoUploadModal({ onClose }: { onClose: () => void }) {
 
           {error && <div className="text-xs text-red-600">{error}</div>}
 
-          <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => void pick(e.target.files?.[0])} />
+          <input ref={fileRef} type="file" accept={LOGO_CONTENT_TYPES.join(",")} className="hidden" onChange={(e) => void pick(e.target.files?.[0])} />
+          <p className="text-[10px] text-[var(--color-text-muted)]">PNG, JPEG or WebP, up to 5 MB.</p>
           <button onClick={() => fileRef.current?.click()} disabled={busy}
             className="w-full py-2.5 rounded-xl bg-[var(--color-accent)] text-white font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-60 hover:opacity-90 transition-opacity">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}

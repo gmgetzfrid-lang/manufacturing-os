@@ -89,6 +89,10 @@ async function getPresignedUploadUrl(
   path: string,
   contentType?: string,
   signal?: AbortSignal,
+  /** The byte count of what will be PUT. The route signs it as the PUT's
+   *  Content-Length for the workspace-logo area (admin-and-org ORG-5's size
+   *  cap); other keys ignore it. */
+  size?: number,
 ): Promise<string> {
   if (signal?.aborted) throw new UploadCancelledError();
   const token = await getAuthToken();
@@ -98,7 +102,7 @@ async function getPresignedUploadUrl(
   const res = await fetch("/api/storage/upload-url", {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-    body: JSON.stringify({ path, contentType }),
+    body: JSON.stringify({ path, contentType, size }),
     signal: withDeadline(45_000, signal),
   }).catch((e: Error) => {
     if (signal?.aborted) throw new UploadCancelledError();
@@ -108,7 +112,12 @@ async function getPresignedUploadUrl(
         : `couldn't reach the server (${e.message})`,
     );
   });
-  if (!res.ok) throw new Error(`Failed to get upload URL (HTTP ${res.status})`);
+  if (!res.ok) {
+    // The route's reason (a logo's type or size, a published revision's key)
+    // follows the status, so the person reads why — not only that — it failed.
+    const reason = ((await res.json().catch(() => null)) as { error?: unknown } | null)?.error;
+    throw new Error(`Failed to get upload URL (HTTP ${res.status})${typeof reason === "string" && reason ? `: ${reason}` : ""}`);
+  }
   const { url } = await res.json();
   return url;
 }
@@ -617,7 +626,7 @@ async function uploadToPathInner(
 
   let uploadUrl: string;
   try {
-    uploadUrl = await getPresignedUploadUrl(path, contentType, opts?.signal);
+    uploadUrl = await getPresignedUploadUrl(path, contentType, opts?.signal, file.size);
   } catch (err) {
     emitUploadEnd(id, name, err);
     throw err;
