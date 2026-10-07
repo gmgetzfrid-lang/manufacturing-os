@@ -368,7 +368,7 @@ export async function scanDistributionAcks(orgId: string, opts?: {
   const binding = rows.filter((r) => ackStillBinds(r, docs.get(r.document_id as string)));
 
   let n = 0;
-  const sends: Array<() => Promise<void>> = [];
+  const sends: Array<() => Promise<unknown>> = [];   // notify() answers whether its row landed (DELIV-7, N6); the nag ignores it as before
   const escalations = new Map<string, { requesterId: string; docId: string; names: string[] }>();
   for (const r of binding) {
     const docId = r.document_id as string;
