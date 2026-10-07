@@ -726,6 +726,60 @@ Confirmed `process_flows` rows are the plant's human-asserted topology. Since `2
 2. A proposal between the two is never used.
 3. The graph shows a unit's upstream and downstream set from confirmed flows.
 
+**Partial (2026-10-07, intelligence Round G).** I-21 CONFIRMED TOPOLOGY. Build items 1 and 2 have landed. Item 3 is the graph page, which this package may not edit (see Acceptance 3 below).
+
+Reproduced first (DEC-29) on the base `6797c48`. `lib/orchestrator/tools.ts:554-561` `loadLineGraph` read only `knowledge_page_entities`, `.limit(20000)`, and nothing that reasons read `process_flows` (`FLOW-14`'s Partial lists every reader). I ran the base tool on this package's seeds. Two pieces of equipment joined only by a confirmed flow answer `found: false`, and a pair on a sheet past the 20,000th tag row is never seen. With a project max-rows below the page size, the base trace reads one response and misses a route a full read finds.
+
+What landed:
+
+1. **`flowsToLineEdges(orgId, client = the browser client)`** (`lib/processFlows.ts:386`). The orchestrator passes the service role, and every read is scoped to the org.
+   - Reads `process_flows` where `status = 'confirmed'`, and drops any returned row that is not confirmed (`:409`), so a filter that did not hold still lets no proposal through.
+   - Pages by key to `FLOW_EDGE_CEILING` (20,000), and says when that cap is reached.
+   - Resolves an asset end to its live registry tag. Archived, deleted, another workspace's, or a ref that is not an id: left out and counted (`skipped`).
+   - Resolves a unit end to a Site Codebook unit of the org as "UNIT <code>" (`unitTraceTag`). A code the codebook does not hold as a unit is left out.
+   - Returns `LineEdge[]` with `basis: "confirmed_flow"`, `lineId` (the flow id), `drawingId` (the source document; absent for a hand-drawn flow) and `label` (the stream).
+   - A missing flow table or column (PGRST205 / 42P01, 42703 / PGRST204), on any of its reads, answers `state: "missing"`. Any other failure answers `"error"` with the message, never "no flows".
+2. **`loadLineGraph(ctx)`** (`lib/orchestrator/tools.ts:649`).
+   - Runs the tag-index read and `flowsToLineEdges(ctx.orgId, supabaseAdmin)` together.
+   - Puts the confirmed-flow edges first, so a confirmed flow wins a tie for the shortest route. The co-occurrence edges follow, now `basis: "same_sheet"`.
+   - Keeps SURF-7's hidden-sheet filter (`if (hidden.has(row.document_id)) continue;`, `:684`) and extends it to flows (`:707`). A confirmed flow read off a sheet the caller cannot open is not walked. When the mirror hop fails closed, every flow read off a sheet is hidden. A hand-drawn flow is the org's shared map and is always walked.
+   - The tag-index read is ING-10's residual: paged with `readAll` in (`document_id`, `id`) order to `LINE_GRAPH_ROW_CEILING` (50,000), as I-03 pages the DRAWING FACTS census. Past it, the sheet the ceiling cut is dropped whole and the answer carries `graph_partial` ("…is NOT proof the equipment is unconnected").
+3. **`trace_pid_lines`.**
+   - With confirmed flows in the graph, a found route carries `route`, one entry per step. Each entry gives `basis: "confirmed flow"` with `flow` ("P101 feeds E204", or "(this step runs against the flow)") and `stream`, or `basis: "same sheet"` (and `off_page`).
+   - `basis` names both sources and says proposed or dismissed flows are never used.
+   - In neighbourhood mode, `confirmed_flows.feeds` and `.fed_by` are `traceNeighbourhood` over the confirmed flows alone, followed only their stored way (`lib/pidTrace.ts:223`, new optional `direction`). This is the "scoped by traceNeighbourhood" answer: what it feeds and what feeds it.
+   - A flow read that failed adds `confirmed_flows_unavailable`. More than 20,000 confirmed flows adds `confirmed_flows_partial`.
+   - With no confirmed flow walked, the answer is the base commit's, key for key, with no new field. That covers none at all, only proposals or dismissals, a database without the table or column, or every flow on a hidden sheet.
+4. **`lib/pidTrace.ts`.** `LineEdgeBasis` (`:30`), `LineEdge.basis` / `label`, `TraceStep.basis` (carried only when the edge names one, so every existing step is unchanged), and `traceNeighbourhood`'s optional `direction` (omitted: undirected, as before).
+
+Not changed, by the regression rule: the tool's catalogue description (the text the model reads for every org) and its parameters. The model learns that flows were walked from the answer's `basis` and `route`. A unit is traced as "Unit <code>".
+
+**Do not, kept.**
+- No `proposed` or `dismissed` row is read into a trace: filtered in the query and again per row; tested with a status filter that does not hold.
+- Nothing flow-derived drives a hold, an MOC or a compliance artifact. A census test pins `flowsToLineEdges`'s one consumer (`loadLineGraph`, called only by the read-only `trace_pid_lines`). No write tool's body reaches the trace, and the orchestrator has no hold or MOC tool.
+- No flow is inferred from co-occurrence or stored: nothing here writes.
+
+Tests: `lib/__tests__/intelRoundGConfirmedTopology.test.ts` (new, 28 cases).
+- REGRESSION, against goldens that the base tool produced for the same seeds: no flows; only a proposal and a dismissal (also with a status filter that does not hold); PGRST205 / 42P01 / 42703 on the flow read and 42703 on the registry read; every flow on a hidden sheet. Each gives the base output, key order included, for a path, a same-sheet hit, a not-found reason and a neighbourhood.
+- Confirmed flows: a confirmed flow names its basis, direction and stream, both ways; a mixed route labels both kinds of step; a proposal between the two is never used; a confirmed flow wins a tie; unit ends resolve, and archived, deleted, other-org, non-id and non-unit ends are left out; the directional neighbourhood.
+- The hidden filter on flow edges: unreadable then readable; the mirror hop failing closed.
+- Paging: rows past 20,000 are read; a max-rows below the page size; past 50,000 the cut sheet is dropped and the answer says PARTIAL.
+- `flowsToLineEdges`: the browser client by default; keyset paging with short pages; the 20,000-flow ceiling; a failed read never answers "no flows".
+- The consumer census, and the pidTrace basis and direction.
+
+`lib/__tests__/sweepRoundC.test.ts`'s service-role stand-in now answers a `.range()` window as PostgREST does. Its SURF-7 pins (`if (hidden.has(row.document_id)) continue;`, no `loadLineGraph(ctx.orgId)`) are unchanged and pass.
+
+**Acceptance.**
+1. ✓ "What is between P-101 and E-204?" names the confirmed flows on the path (`route[].basis: "confirmed flow"`, with the flow and its stream) and labels any co-occurrence step as `"same sheet"`.
+2. ✓ A proposal (or a dismissed row) between the two is never used.
+3. ✗ Not done here. The graph showing a unit's upstream and downstream set is `app/(protected)/graph/**` / `components/graph/**`. I-24 edits those files in parallel, and they are not in this package's file list. It needs no new data layer: `flowsToLineEdges(orgId)` (browser client, RLS) plus `traceNeighbourhood(edges, unitTraceTag(code), hops, "downstream" | "upstream")`.
+
+**Scope / residual.** Still open: acceptance 3 / build item 3, the graph's scope filter. The integrator names the owner (the next package that edits the graph page). Answers do change in two ways for an org with confirmed flows or with a large tag index, and both are this gap and ING-10 working, not regressions:
+- an org with confirmed flows gets routes through them;
+- a tag index larger than the project's max-rows is now read to the end or to 50,000 rows. The base `.limit(20000)` read was capped by PostgREST's max-rows (1,000 by default on Supabase), and answered "doesn't appear" for anything past it.
+
+A trace of a large index costs up to 50 sequential page reads.
+
 ---
 
 ## Already built — do not build these twice

@@ -876,6 +876,13 @@ app/api/knowledge/ask/route.ts:954 `.limit(20000);` immediately followed at 955 
 
 **Scope / residual.** `lib/orchestrator/tools.ts` `loadLineGraph` (one of this record's locations) still reads `knowledge_page_entities` with `.limit(20000)` and no overflow check. It feeds the assistant's line trace, not DRAWING FACTS, and makes no "trust these counts" claim; it is the orchestrator's file (not this package's) and is handed to its owner.
 
+*Landed 2026-10-07 (intelligence Round G, I-21 CONFIRMED TOPOLOGY): the `loadLineGraph` residual above.*
+- *What it was: reproduced on `6797c48`, where `lib/orchestrator/tools.ts:554-561` read `knowledge_page_entities` once with `.limit(20000)` and no check. The base trace never saw a pair on a sheet past the 20,000th row, and with a project max-rows below the page size it read one response.*
+- *What it does now (`lib/orchestrator/tools.ts:649`): the read goes through `readAll` (`lib/knowledgeAskGuards.ts`), ordered by `document_id` then `id` and named by kind (ING-5). It pages to an empty page or to `LINE_GRAPH_ROW_CEILING` (50,000), the way this record's census does.*
+- *Past the ceiling, the sheet the ceiling cut is dropped whole. The answer carries `graph_partial`, which says a route not found is not proof the equipment is unconnected.*
+- *Tests: `lib/__tests__/intelRoundGConfirmedTopology.test.ts`, "ING-10 residual — …" (rows past 20,000 are read; a short page is not the last; past 50,000 the trace says PARTIAL). The details are on `GAP-315`'s Partial.*
+- *No status change: ING-10 was already RESOLVED.*
+
 ---
 
 <a id="ing-11"></a>

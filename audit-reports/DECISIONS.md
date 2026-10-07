@@ -5139,6 +5139,13 @@ dialog to close on one Escape closes its own stack in its handler.
 
 *Landed 2026-10-01 (admin-and-org Round G, P3): item 3's kept dangling flows travel in every backup taken since the paste, and `20261155` refuses each one on restore, because the guard binds the restore too. The restore reports each as "a process flow whose equipment or unit is not in this workspace — not restored" (`lib/dataRestore.ts DANGLING_FLOW_CODE`). The row is counted in `totalDanglingFlows` and given its own line on `/admin/restore`, never mixed with real refusals. The guard is unchanged: no restore-session marker was added (that would need a migration, and would land a flow the database otherwise refuses). See admin-and-org `BKP-15`.*
 
+*Landed 2026-10-07 (intelligence Round G, I-21 CONFIRMED TOPOLOGY): item 2 is built for the orchestrator's line trace (`GAP-315` build 1 and 2; the graph's item 3 is open).*
+- *`lib/processFlows.ts` `flowsToLineEdges` reads only rows whose `status` is `confirmed`, in the query and again on every row. `lib/orchestrator/tools.ts` `loadLineGraph` merges them into `trace_pid_lines`, each edge naming its basis ("confirmed flow" or "same sheet") under the same hidden-sheet filter.*
+- *The read-only trace is the one consumer, pinned by a census test. Nothing flow-derived reaches a hold, an MOC or any write.*
+- *Calls made in the code (no new decision number): a confirmed flow wins a tie for the shortest route over sheet co-occurrence. A unit end is traced as "UNIT <code>", so it cannot collide with a tag. An end that is archived, deleted, another workspace's or not a codebook unit is left out, as the graph leaves it out. A flow read off a sheet the caller cannot open is not walked.*
+- *"Confirmed" is the status column. Until `20261155` is pasted it also covers flows any member drew by hand, so the trace says only "a person drew it or confirmed it".*
+- *An org with no confirmed flow traces exactly as before, and so does a database without the flow table. Tests: `lib/__tests__/intelRoundGConfirmedTopology.test.ts`.*
+
 <a id="dec-81"></a>
 ## DEC-81 · The notification kind registry: where each kind badges, what counts as an action, and what leaves the vocabulary
 
