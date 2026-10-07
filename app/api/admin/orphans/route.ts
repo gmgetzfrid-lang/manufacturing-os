@@ -11,17 +11,19 @@
 // live file being misread as an orphan.
 
 import { NextRequest, NextResponse } from "next/server";
-import { authorizeOrgRole } from "@/lib/serverAuth";
+import { authorizeAdminSurface } from "@/lib/adminGate";
 import { scanOrphans, deleteOrphans } from "@/lib/storageOrphans";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-const ROLES = ["Admin", "DocCtrl"];
+// SURF-19 (admin-and-org Round G, P6): held to the storage surface's writes
+// set (lib/adminSurfaces.ts) through lib/adminGate.ts — the ["Admin","DocCtrl"]
+// this route spelled as a constant before; who is admitted is unchanged.
 
 export async function GET(req: NextRequest) {
   const orgId = req.nextUrl.searchParams.get("orgId") || "";
-  const actor = await authorizeOrgRole(req, orgId, ROLES);
+  const actor = await authorizeAdminSurface(req, orgId, "storage", "write");
   if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
   try {
     // RET-7: the walk, the totals and the listing are this org's prefix only.
@@ -39,7 +41,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Expected JSON body" }, { status: 400 });
   }
   const orgId = String(body.orgId ?? "").trim();
-  const actor = await authorizeOrgRole(req, orgId, ROLES);
+  const actor = await authorizeAdminSurface(req, orgId, "storage", "write");
   if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
   if (body.confirm !== true) {
     return NextResponse.json({ error: "confirm: true is required to delete orphans." }, { status: 400 });

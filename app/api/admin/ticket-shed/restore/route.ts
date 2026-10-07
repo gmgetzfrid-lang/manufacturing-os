@@ -27,14 +27,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import JSZip from "jszip";
-import { authorizeOrgRole } from "@/lib/serverAuth";
+import { authorizeAdminSurface } from "@/lib/adminGate";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { exactEntryFor, bytesMatchManifest, type ManifestEntry } from "@/lib/restoreVerify";
 
 export const runtime = "nodejs";
 export const maxDuration = 300; // bounded work; never run unbounded on a hostile zip
 
-const SHED_ROLES = ["Admin", "DocCtrl"];
+// SURF-19 (admin-and-org Round G, P6): held to the storage surface's writes
+// set (lib/adminSurfaces.ts) through lib/adminGate.ts — the ["Admin","DocCtrl"]
+// this route spelled as a constant before; who is admitted is unchanged.
 
 // Input bounds — a restore archive is admin-produced and small; these only exist
 // to stop a malicious/corrupt zip from exhausting memory or wall-clock.
@@ -60,7 +62,7 @@ interface StubRow { id: string; attachments: Array<{ url?: string }> | null }
 export async function POST(req: NextRequest) {
   const orgId = req.nextUrl.searchParams.get("orgId") || "";
   const confirm = req.nextUrl.searchParams.get("confirm") === "true";
-  const actor = await authorizeOrgRole(req, orgId, SHED_ROLES);
+  const actor = await authorizeAdminSurface(req, orgId, "storage", "write");
   if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
   if (!confirm) return NextResponse.json({ error: "Confirmation required: pass confirm=true." }, { status: 400 });
   const sb = actor.admin;

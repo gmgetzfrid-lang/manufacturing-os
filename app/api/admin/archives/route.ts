@@ -11,16 +11,18 @@
 //   (kind "full" rows are full-backup records — informational)
 
 import { NextRequest, NextResponse } from "next/server";
-import { authorizeOrgRole } from "@/lib/serverAuth";
+import { authorizeAdminSurface } from "@/lib/adminGate";
 import { catalogNeedsReclaim } from "@/lib/archiveCatalog";
 
 export const runtime = "nodejs";
 
-const ROLES = ["Admin", "DocCtrl"];
+// SURF-19 (admin-and-org Round G, P6): held to the storage surface's writes
+// set (lib/adminSurfaces.ts) through lib/adminGate.ts — the ["Admin","DocCtrl"]
+// this route spelled as a constant before; who is admitted is unchanged.
 
 export async function GET(req: NextRequest) {
   const orgId = req.nextUrl.searchParams.get("orgId") || "";
-  const actor = await authorizeOrgRole(req, orgId, ROLES);
+  const actor = await authorizeAdminSurface(req, orgId, "storage", "write");
   if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
   const sb = actor.admin;
 

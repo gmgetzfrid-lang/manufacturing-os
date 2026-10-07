@@ -214,24 +214,17 @@ describe("SURF-9 — one admin-surface registry, mirroring every /admin page", (
       if (s.entry !== "*" && !s.cap && s.key !== "storage") expect(sourceHasRoleSet(page, s.entry), `${s.key} entry`).toBe(true);
       if (s.writes) expect(sourceHasRoleSet(page, s.writes), `${s.key} writes`).toBe(true);
     }
-    // the storage page's entry is what its stats API admits
-    expect(sourceHasRoleSet(src("app/api/admin/storage-stats/route.ts"), adminSurface("storage")!.entry as string[])).toBe(true);
+    // the storage page's entry is what its stats API admits — since SURF-19 (A&O P6) the stats GET asks
+    // the gate for exactly that entry rule, so the two cannot drift
+    expect(src("app/api/admin/storage-stats/route.ts")).toMatch(/export async function GET[\s\S]*?await authorizeAdminSurface\(req, orgId, "storage"\);/);
   });
-  it("the API routes behind a surface use the surface's role set (pinned until they call the gate themselves — SURF-19)", () => {
+  it("the API routes behind a surface that STILL carry a constant use the surface's role set (pinned until they call the gate themselves — SURF-19's limbs owned by A&O P5 and P7)", () => {
+    // SURF-19 (admin-and-org Round G, P6) converted every other route of this table to the gate
+    // (pinned below); these four are left to their owners: purge / archive-cancel (A&O P7),
+    // stripe checkout / portal (A&O P5, after P4).
     const table: Array<[string, readonly string[]]> = [
       ["app/api/admin/purge/route.ts", adminSurface("storage")!.writes!],
-      ["app/api/admin/shed/route.ts", adminSurface("storage")!.writes!],
-      ["app/api/admin/shed/commit/route.ts", adminSurface("storage")!.writes!],
-      ["app/api/admin/archives/route.ts", adminSurface("storage")!.writes!],
-      ["app/api/admin/orphans/route.ts", adminSurface("storage")!.writes!],
-      ["app/api/admin/archive-settings/route.ts", adminSurface("storage")!.writes!],
       ["app/api/admin/archive-cancel/route.ts", adminSurface("storage")!.writes!],
-      ["app/api/admin/ticket-shed/route.ts", adminSurface("storage")!.writes!],
-      ["app/api/admin/ticket-shed/commit/route.ts", adminSurface("storage")!.writes!],
-      ["app/api/admin/ticket-shed/restore/route.ts", adminSurface("storage")!.writes!],
-      ["app/api/admin/restore/begin/route.ts", adminSurface("restore")!.entry as string[]],
-      ["app/api/admin/restore/apply-table/route.ts", adminSurface("restore")!.entry as string[]],
-      ["app/api/admin/restore/preview/route.ts", adminSurface("restore")!.entry as string[]],
       ["app/api/stripe/checkout/route.ts", adminSurface("billing")!.writes!],
       ["app/api/stripe/portal/route.ts", adminSurface("billing")!.writes!],
     ];
@@ -239,6 +232,30 @@ describe("SURF-9 — one admin-surface registry, mirroring every /admin page", (
       const m = /const [A-Z_]*ROLES = (\[[^\]]*\]);/.exec(src(file));
       expect(m, file).not.toBeNull();
       expect(setEq(JSON.parse(m![1]) as string[], roles), file).toBe(true);
+    }
+  });
+  it("SURF-19 (A&O P6): the storage and restore routes call the gate themselves — surface and intent, no role constant, no authorizeOrgRole", () => {
+    const table: Array<[string, string, number]> = [
+      // [file, the exact gate call, how many handlers make it]
+      ["app/api/admin/storage-stats/route.ts", 'authorizeAdminSurface(req, orgId, "storage")', 1],
+      ["app/api/admin/storage-stats/route.ts", 'authorizeAdminSurface(req, orgId, "storage", "write")', 1],
+      ["app/api/admin/archive-settings/route.ts", 'authorizeAdminSurface(req, orgId, "storage", "write")', 2],
+      ["app/api/admin/shed/route.ts", 'authorizeAdminSurface(req, orgId, "storage", "write")', 2],
+      ["app/api/admin/shed/commit/route.ts", 'authorizeAdminSurface(req, orgId, "storage", "write")', 1],
+      ["app/api/admin/archives/route.ts", 'authorizeAdminSurface(req, orgId, "storage", "write")', 1],
+      ["app/api/admin/orphans/route.ts", 'authorizeAdminSurface(req, orgId, "storage", "write")', 2],
+      ["app/api/admin/ticket-shed/route.ts", 'authorizeAdminSurface(req, orgId, "storage", "write")', 2],
+      ["app/api/admin/ticket-shed/commit/route.ts", 'authorizeAdminSurface(req, orgId, "storage", "write")', 1],
+      ["app/api/admin/ticket-shed/restore/route.ts", 'authorizeAdminSurface(req, orgId, "storage", "write")', 1],
+      ["app/api/admin/restore/begin/route.ts", 'authorizeAdminSurface(req, orgId, "restore", "write")', 1],
+      ["app/api/admin/restore/apply-table/route.ts", 'authorizeAdminSurface(req, orgId, "restore", "write")', 1],
+      ["app/api/admin/restore/preview/route.ts", 'authorizeAdminSurface(req, orgId, "restore")', 1],
+    ];
+    for (const [file, call, n] of table) {
+      const s = src(file);
+      expect(s.split(`await ${call};`).length - 1, `${file}: ${call}`).toBe(n);
+      expect(s, file).not.toMatch(/const [A-Z_]*ROLES = /);
+      expect(s, file).not.toMatch(/authorizeOrgRole\(/);
     }
   });
   it("every data-export route calls the gate itself — no role constant of its own (admin-and-org BKP-8; SURF-19's data-export rows)", () => {

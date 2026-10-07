@@ -12,16 +12,18 @@
 // Restore is the most sensitive action in the app, so it's Admin-only.
 
 import { NextRequest, NextResponse } from "next/server";
-import { authorizeOrgRole } from "@/lib/serverAuth";
+import { authorizeAdminSurface } from "@/lib/adminGate";
 import { planRestore, type RestoreEnvelopeLike, type CurrentMember, RESTORE_LINK_MEMBER_STATUSES } from "@/lib/dataRestore";
 
 export const runtime = "nodejs";
 
-const RESTORE_ROLES = ["Admin"];
+// SURF-19 (admin-and-org Round G, P6): held to the restore surface's entry
+// (["Admin"], as the constant this route spelled before) through
+// lib/adminGate.ts; who is admitted is unchanged.
 
 export async function POST(req: NextRequest) {
   const orgId = req.nextUrl.searchParams.get("orgId") || "";
-  const actor = await authorizeOrgRole(req, orgId, RESTORE_ROLES);
+  const actor = await authorizeAdminSurface(req, orgId, "restore");
   if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
   const sb = actor.admin;
 

@@ -13,7 +13,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { DeleteObjectsCommand } from "@aws-sdk/client-s3";
-import { authorizeOrgRole } from "@/lib/serverAuth";
+import { authorizeAdminSurface } from "@/lib/adminGate";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import type { TicketAttachmentLite } from "@/lib/ticketShed";
 import { isOrgOwnedKey, sharedLiveKeys } from "@/lib/shedKeyGuard";
@@ -21,7 +21,9 @@ import { persistReclaimShortfall } from "@/lib/archiveCatalog";
 
 export const runtime = "nodejs";
 
-const SHED_ROLES = ["Admin", "DocCtrl"];
+// SURF-19 (admin-and-org Round G, P6): held to the storage surface's writes
+// set (lib/adminSurfaces.ts) through lib/adminGate.ts — the ["Admin","DocCtrl"]
+// this route spelled as a constant before; who is admitted is unchanged.
 
 interface TombstoneSource {
   id: string;
@@ -95,7 +97,7 @@ export async function POST(req: NextRequest) {
 
   const orgId = body.orgId || "";
   const archiveId = (body.archiveId || "").trim();
-  const actor = await authorizeOrgRole(req, orgId, SHED_ROLES);
+  const actor = await authorizeAdminSurface(req, orgId, "storage", "write");
   if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
   if (!archiveId) return NextResponse.json({ error: "archiveId is required" }, { status: 400 });
   if (body.confirm !== true) {
