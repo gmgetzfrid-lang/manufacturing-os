@@ -44,7 +44,11 @@ export default function WorkspaceSettingsPage() {
   const [libraryCount, setLibraryCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [emailQueueStatus, setEmailQueueStatus] = useState<"unknown" | "ok" | "no-key">("unknown");
+  // DELIV-4 (notifications Round G, N6): null until a count read SUCCEEDS —
+  // the green "No failed deliveries" is a measurement, never a default.
   const [failedEmails, setFailedEmails] = useState<number | null>(null);
+  const [failedReadError, setFailedReadError] = useState<string | null>(null);
+  const [requeueNote, setRequeueNote] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
   const [requeuing, setRequeuing] = useState(false);
   const [numbering, setNumbering] = useState<TicketNumberConfig>(TICKET_NUMBER_DEFAULTS);
   const [savingNum, setSavingNum] = useState(false);
@@ -66,13 +70,7 @@ export default function WorkspaceSettingsPage() {
         setLibraryCount(libs ?? 0);
 
         // Dead-letter emails: failed AND past the auto-retry cap (5 attempts).
-        const { count: dead } = await supabase
-          .from("email_notifications")
-          .select("id", { count: "exact", head: true })
-          .eq("org_id", activeOrgId)
-          .eq("status", "failed")
-          .gte("attempt_count", 5);
-        setFailedEmails(dead ?? 0);
+        await readDeadLetters(activeOrgId);
 
         // Probe the queue endpoint
         try {
@@ -86,19 +84,48 @@ export default function WorkspaceSettingsPage() {
     })();
   }, [activeOrgId]);
 
-  // Reset dead-letter emails to 'queued' so the next drain retries them.
+  // The dead-letter count — failed AND past the auto-retry cap (5 attempts).
+  // A read that fails leaves the count unknown (null) and says why; it is
+  // never shown as 0 (DELIV-4 dw3 / dw4).
+  async function readDeadLetters(orgId: string): Promise<number | null> {
+    const { count, error } = await supabase
+      .from("email_notifications")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", orgId)
+      .eq("status", "failed")
+      .gte("attempt_count", 5);
+    if (error || typeof count !== "number") {
+      setFailedEmails(null);
+      setFailedReadError(error?.message ?? "the database returned no count");
+      return null;
+    }
+    setFailedReadError(null);
+    setFailedEmails(count);
+    return count;
+  }
+
+  // Reset dead-letter emails to 'queued' so the next drain retries them. The
+  // update reads back the rows it changed, so a refusal (an RLS policy that
+  // lets this account change none) is reported, not shown as success.
   const requeueFailed = async () => {
     if (!activeOrgId || requeuing) return;
     setRequeuing(true);
+    setRequeueNote(null);
     try {
-      await supabase.from("email_notifications")
+      const { data: changed, error } = await supabase.from("email_notifications")
         .update({ status: "queued", attempt_count: 0 })
-        .eq("org_id", activeOrgId).eq("status", "failed").gte("attempt_count", 5);
-      await kickEmailDrain();
-      const { count: dead } = await supabase.from("email_notifications")
-        .select("id", { count: "exact", head: true })
-        .eq("org_id", activeOrgId).eq("status", "failed").gte("attempt_count", 5);
-      setFailedEmails(dead ?? 0);
+        .eq("org_id", activeOrgId).eq("status", "failed").gte("attempt_count", 5)
+        .select("id");
+      const n = ((changed as unknown[] | null) ?? []).length;
+      if (error) {
+        setRequeueNote({ tone: "error", text: `Nothing was requeued: ${error.message}` });
+      } else if (n === 0) {
+        setRequeueNote({ tone: "error", text: "Nothing was requeued — the database let this account change none of these rows. Only an Admin or a Manager can requeue failed email." });
+      } else {
+        setRequeueNote({ tone: "ok", text: `Requeued ${n} email${n === 1 ? "" : "s"}; they send on the next drain.` });
+        await kickEmailDrain();
+      }
+      await readDeadLetters(activeOrgId);
     } finally { setRequeuing(false); }
   };
 
@@ -263,7 +290,7 @@ export default function WorkspaceSettingsPage() {
               <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
               <div className="flex-1 min-w-0">
                 <div className="text-xs font-bold text-rose-900">{failedEmails} email{failedEmails === 1 ? "" : "s"} failed to send</div>
-                <div className="text-[11px] text-rose-700">They exceeded the {5}-attempt auto-retry. Requeue to try again (e.g. after fixing RESEND_API_KEY).</div>
+                <div className="text-[11px] text-rose-700">They exceeded the {5}-attempt auto-retry. Requeue to try again (e.g. after fixing RESEND_API_KEY). Only an Admin or a Manager can requeue.</div>
               </div>
               <button
                 onClick={() => void requeueFailed()}
@@ -274,7 +301,17 @@ export default function WorkspaceSettingsPage() {
               </button>
             </div>
           )}
-          {failedEmails === 0 && (
+          {requeueNote && (
+            <div className={`mt-3 text-[11px] inline-flex items-center gap-1 ${requeueNote.tone === "ok" ? "text-emerald-700" : "text-rose-700"}`}>
+              {requeueNote.tone === "ok" ? <CheckCircle2 className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />} {requeueNote.text}
+            </div>
+          )}
+          {failedEmails === null && failedReadError && (
+            <div className="mt-3 text-[11px] text-amber-800 inline-flex items-center gap-1">
+              <AlertTriangle className="w-3 h-3" /> Couldn&apos;t read the failed-delivery count ({failedReadError}), so it is unknown — not zero.
+            </div>
+          )}
+          {failedEmails === 0 && !failedReadError && (
             <div className="mt-3 text-[11px] text-emerald-700 inline-flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> No failed deliveries.</div>
           )}
         </div>
