@@ -31,7 +31,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { logAuditAction } from "@/lib/audit";
-import { addEntry, voidEntry, NO_ROW_MATCHED } from "@/lib/costs";
+import { addEntry, voidEntry, NO_ROW_MATCHED, fmtMoney } from "@/lib/costs";
 import { memberHoldsAny } from "@/lib/roleHeld";
 import { emit } from "@/lib/notify/dispatch";
 import { resolveProjectMembers } from "@/lib/notify/recipients";
@@ -465,9 +465,10 @@ async function notifyChangeOrder(
   co: ChangeOrder, event: "proposed" | "approved" | "rejected", actorId: string, actorName: string | null, note?: string | null,
 ): Promise<void> {
   try {
-    const [membersRes, projectRes] = await Promise.all([
+    const [membersRes, projectRes, amount] = await Promise.all([
       resolveProjectMembers(co.projectId),
       supabase.from("projects").select("owner_user_id").eq("id", co.projectId).maybeSingle(),
+      coAmountLabel(co),
     ]);
     const owner = ((projectRes.data as { owner_user_id?: string | null } | null)?.owner_user_id) ?? null;
     const audience = new Set<string>([...membersRes, ...(owner ? [owner] : [])]);
@@ -476,7 +477,6 @@ async function notifyChangeOrder(
     audience.delete(actorId);
     if (audience.size === 0) return;
     const who = actorName || "Someone";
-    const amount = co.amount.toLocaleString();
     const title = event === "proposed" ? `${co.coNumber} proposed — ${co.title}`
       : event === "approved" ? `${co.coNumber} approved — ${co.title}`
       : `${co.coNumber} rejected — ${co.title}`;
@@ -499,6 +499,22 @@ async function notifyChangeOrder(
   }
 }
 
+/** A change order's amount in its budget line's currency (cost_accounts.
+ *  currency, USD when unset or unreadable — the Costs tab's own default),
+ *  formatted as the tab formats money (fmtMoney): a CAD line's notice must
+ *  not read as dollars (N8's review fix). Never throws. */
+async function coAmountLabel(co: ChangeOrder): Promise<string> {
+  let currency = "USD";
+  if (co.costAccountId) {
+    try {
+      const { data } = await supabase.from("cost_accounts").select("currency").eq("id", co.costAccountId).maybeSingle();
+      const c = (data as { currency?: string | null } | null)?.currency?.trim();
+      if (c) currency = c.toUpperCase();
+    } catch { /* the default stands */ }
+  }
+  return fmtMoney(co.amount, currency);
+}
+
 /** MON-11: a change-order approval notifies the proposer, through lib/notify. */
 async function notifyApproval(co: ChangeOrder, actorId: string, actorName: string | null): Promise<void> {
   if (!co.createdBy || co.createdBy === actorId) return;
@@ -506,7 +522,7 @@ async function notifyApproval(co: ChangeOrder, actorId: string, actorName: strin
     await emit({
       orgId: co.orgId, category: "status", kind: "project_status",
       title: `${co.coNumber} approved — ${co.title}`,
-      body: `Your change order for ${co.amount.toLocaleString()} was approved and posted to the budget line.`,
+      body: `Your change order for ${await coAmountLabel(co)} was approved and posted to the budget line.`,
       link: `/projects/${co.projectId}?tab=costs`,
       resource: { type: "project", id: co.projectId },
       actorUserId: actorId, actorName: actorName ?? undefined,

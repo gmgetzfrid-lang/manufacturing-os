@@ -124,9 +124,9 @@ vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn(async (p: Record<string, u
 vi.mock("@/lib/inAppNotifications", async (importOriginal) => ({
   notify: vi.fn(async (p: Record<string, unknown>) => { state.notifies.push(p); state.timeline.push("notify"); }),
   notifyMany: vi.fn(async () => undefined),
-  // TAX-11 (N8): the sweep's holder notices are the typed insert on the
-  // sweep's own client — the real one, writing through the fake client.
-  notifyChecked: (await importOriginal<typeof import("@/lib/inAppNotifications")>()).notifyChecked,
+  // TAX-11 (N8): the sweep's holder notices are the typed batch insert on
+  // the sweep's own client — the real one, writing through the fake client.
+  notifyBatchChecked: (await importOriginal<typeof import("@/lib/inAppNotifications")>()).notifyBatchChecked,
 }));
 vi.mock("@/lib/subscriptions", () => ({ listFollowerIds: vi.fn(async () => []) }));
 vi.mock("@/lib/checkoutEpisodes", () => ({
@@ -253,8 +253,9 @@ describe("PM-4 dw4 — the sweep releases checkouts stranded on a closed project
     const sweep = writesTo("checkout_sessions", "update")[0];
     expect(sweep.filters).toContainEqual(["in:id", ["s1"]]);
     expect(sweep.payload).toMatchObject({ released_reason: "Auto-released: the project was closed", outcome: "auto_released" });
-    // TAX-11 (N8): one typed insert per holder, on the cron's client
-    const notes = writesTo("notifications", "insert").map((w) => w.payload) as Row[];
+    // TAX-11 (N8): the typed batch insert — one statement — on the cron's client
+    expect(writesTo("notifications", "insert")).toHaveLength(1);
+    const notes = writesTo("notifications", "insert").flatMap((w) => [w.payload].flat()) as Row[];
     expect(notes).toHaveLength(1);
     expect(notes[0]).toMatchObject({ user_id: "ann", title: "Your project checkout was released", kind: "checkout_released" });
   });

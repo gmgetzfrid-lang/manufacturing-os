@@ -104,8 +104,9 @@ describe("20261181 — notification_kinds() re-created from its NEWEST definitio
   const before = definitionsOf("notification_kinds", FILES.filter((f) => f < FILE)).at(-1)!;
   const mine = definitionsOf("notification_kinds", [FILE]);
 
-  it("the newest earlier definition is found by scanning the sequence (today 20261160 §1), and this file defines it once", () => {
-    expect(before[0]).toBe("20261160_notif_roundG_write_rails.sql");
+  it("the newest earlier definition is found by scanning the sequence, and this file defines it once", () => {
+    expect(before, "an earlier definition of notification_kinds()").toBeTruthy();
+    expect(before[0] < FILE).toBe(true);
     expect(mine).toHaveLength(1);
   });
 
@@ -115,14 +116,26 @@ describe("20261181 — notification_kinds() re-created from its NEWEST definitio
     expect(d.onlyInB.map((l) => l.trim())).toEqual(NEW_KINDS.map((k) => expect.stringMatching(new RegExp(`^\\('${k}',\\s+false\\),$`))));
   });
 
-  it("is the newest definition in the whole sequence today, and equals KIND_META kind for kind, flag for flag (the parity notificationWriteRails pins)", () => {
-    expect(definitionsOf("notification_kinds", FILES).at(-1)![0]).toBe(FILE);
+  // Nothing here asserts that this file is the newest definition, or how many
+  // kinds the registry holds: a later package re-creates notification_kinds()
+  // from this file's body plus its own rows (the hand-off), and
+  // notificationWriteRails.test.ts pins whichever definition is newest to
+  // KIND_META. What stays true of THIS file for good is pinned (N8's review fix).
+  it("every kind it lists is a registered kind with the registry's compliance flag, N8's four among them, none twice", () => {
     const values = [...mine[0][1].matchAll(/\('(\w+)',\s*(true|false)\)/g)].map((m) => [m[1], m[2] === "true"] as const);
-    expect(values.map(([k]) => k)).toEqual(Object.keys(KIND_META));
-    for (const [k, c] of values) expect(c, k).toBe(KIND_META[k as keyof typeof KIND_META].compliance);
-    for (const k of NEW_KINDS) expect(Object.keys(KIND_META), k).toContain(k);
+    expect(new Set(values.map(([k]) => k)).size).toBe(values.length);
+    for (const [k, c] of values) {
+      expect(Object.keys(KIND_META), k).toContain(k);
+      expect(c, k).toBe(KIND_META[k as keyof typeof KIND_META].compliance);
+    }
+    for (const k of NEW_KINDS) expect(values.map(([v]) => v), k).toContain(k);
+  });
+
+  it("its own probe states its own list's counts — derived from the VALUES it holds, not hard-coded", () => {
+    const values = [...mine[0][1].matchAll(/\('(\w+)',\s*(true|false)\)/g)].map((m) => [m[1], m[2] === "true"] as const);
+    const beforeCount = [...before[1].matchAll(/\('(\w+)',\s*(true|false)\)/g)].length;
     const n = values.length, c = values.filter(([, x]) => x).length;
-    expect([n, c]).toEqual([55, 15]);
+    expect(n).toBe(beforeCount + NEW_KINDS.length);
     expect(SQL).toContain(`COUNT(*) = ${n} AND COUNT(DISTINCT kind) = ${n} AND COUNT(*) FILTER (WHERE compliance) = ${c}`);
   });
 

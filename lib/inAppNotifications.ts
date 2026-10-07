@@ -118,24 +118,51 @@ export async function notifyChecked(input: NotificationInput, client?: NotifyCli
 export async function notifyWithReason(input: NotificationInput, client?: NotifyClient): Promise<{ ok: boolean; error?: string }> {
   try {
     const db: NotifyClient = client ?? supabase;
-    const { error } = await db.from("notifications").insert({
-      org_id: input.orgId,
-      user_id: input.userId,
-      kind: input.kind,
-      title: input.title,
-      body: input.body ?? null,
-      link: input.link ?? null,
-      resource_type: input.resourceType ?? null,
-      resource_id: input.resourceId ?? null,
-      actor_user_id: input.actorUserId ?? null,
-      actor_name: input.actorName ?? null,
-      metadata: input.metadata ?? null,
-    });
+    const { error } = await db.from("notifications").insert(notificationRow(input));
     if (error) { console.warn("[notify] insert failed", error.message); return { ok: false, error: error.message }; }
     return { ok: true };
   } catch (e) {
     console.warn("[notify] insert threw", e);
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** The typed insert's row: one place maps a NotificationInput to the table. */
+function notificationRow(input: NotificationInput): Record<string, unknown> {
+  return {
+    org_id: input.orgId,
+    user_id: input.userId,
+    kind: input.kind,
+    title: input.title,
+    body: input.body ?? null,
+    link: input.link ?? null,
+    resource_type: input.resourceType ?? null,
+    resource_id: input.resourceId ?? null,
+    actor_user_id: input.actorUserId ?? null,
+    actor_name: input.actorName ?? null,
+    metadata: input.metadata ?? null,
+  };
+}
+
+/**
+ * notifyChecked() for many rows in ONE insert statement on the given client
+ * (the shared one otherwise): all land or none do. Answers how many landed —
+ * every one, or 0 on a refusal (logged, never re-raised). For a server sweep
+ * that tells many people at once (the checkout sweep's holders, TAX-11): one
+ * statement, never an unbounded burst of single-row requests whose failures
+ * would each be swallowed (N8's review fix).
+ */
+export async function notifyBatchChecked(inputs: NotificationInput[], client?: NotifyClient): Promise<number> {
+  if (inputs.length === 0) return 0;
+  try {
+    const db: NotifyClient = client ?? supabase;
+    const rows = inputs.map(notificationRow);
+    const { error } = await db.from("notifications").insert(rows);
+    if (error) { console.warn("[notify] batch insert failed", error.message); return 0; }
+    return rows.length;
+  } catch (e) {
+    console.warn("[notify] batch insert threw", e);
+    return 0;
   }
 }
 

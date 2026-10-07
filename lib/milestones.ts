@@ -194,15 +194,33 @@ async function notifyScheduleChange(input: {
   }
 }
 
+/** Who acted, for a notice's words: the name the caller passed, else the
+ *  actor's display name or email in this org (org_members) — the
+ *  assignment's only caller (the task panel) passes a uid alone, and the
+ *  person told should learn who made them responsible (N8's review fix).
+ *  null when neither is known; a failed read is never thrown. */
+async function actorLabel(orgId: string, uid: string, name?: string | null): Promise<string | null> {
+  if (name?.trim()) return name.trim();
+  if (!orgId || !uid) return null;
+  try {
+    const { data } = await supabase.from("org_members").select("display_name, email").eq("org_id", orgId).eq("uid", uid).maybeSingle();
+    const row = data as { display_name?: string | null; email?: string | null } | null;
+    return row?.display_name?.trim() || row?.email?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 async function notifyMilestoneAssigned(m: Milestone, assigneeId: string, actorUserId: string, actorName?: string | null): Promise<void> {
   try {
+    const who = await actorLabel(m.orgId, actorUserId, actorName);
     await emit({
       orgId: m.orgId, category: "assignment", kind: "milestone_assigned",
       title: `You're responsible for “${m.name}”`,
-      body: `${actorName || "Someone"} made you responsible for this task${m.plannedAt ? ` (finish ${new Date(m.plannedAt).toLocaleDateString()})` : ""}.`,
+      body: `${who || "Someone"} made you responsible for this task${m.plannedAt ? ` (finish ${new Date(m.plannedAt).toLocaleDateString()})` : ""}.`,
       link: m.projectId ? `/projects/${m.projectId}?tab=schedule` : undefined,
       resource: m.projectId ? { type: "project", id: m.projectId } : { type: "document", id: m.documentId ?? "" },
-      actorUserId, actorName: actorName ?? undefined,
+      actorUserId, actorName: who ?? undefined,
       audience: { involved: [assigneeId] },
       metadata: { milestoneId: m.id },
     });
@@ -222,13 +240,14 @@ async function notifySlippedPastBaseline(input: {
     if (!owner) return;
     const n = input.slipped.length;
     const named = input.slipped.slice(0, 3).map((t) => `“${t.name}”`).join(", ");
+    const who = await actorLabel(input.orgId, input.actorUserId, input.actorName);
     await emit({
       orgId: input.orgId, category: "status", kind: "milestone_slipped",
       title: n === 1 ? `A task slipped past its baseline: ${input.slipped[0].name}` : `${n} tasks slipped past their baseline`,
-      body: `${input.actorName || "Someone"} moved ${n === 1 ? "a task" : `${n} tasks`} later than the approved baseline: ${named}${n > 3 ? ", …" : ""}.`,
+      body: `${who || "Someone"} moved ${n === 1 ? "a task" : `${n} tasks`} later than the approved baseline: ${named}${n > 3 ? ", …" : ""}.`,
       link: `/projects/${input.projectId}?tab=schedule`,
       resource: { type: "project", id: input.projectId },
-      actorUserId: input.actorUserId, actorName: input.actorName ?? undefined,
+      actorUserId: input.actorUserId, actorName: who ?? undefined,
       audience: { involved: [owner] },
       metadata: { milestoneIds: input.slipped.slice(0, 50).map((t) => t.id), count: n },
     });
@@ -522,13 +541,13 @@ export async function updateMilestone(input: UpdateMilestoneInput): Promise<Mile
 
   // PROD-11: a new responsible person (not a clear, not the same one).
   if (priorResponsible !== undefined && m.responsibleUserId && m.responsibleUserId !== priorResponsible) {
-    await notifyMilestoneAssigned(m, m.responsibleUserId, input.updatedBy, input.updatedByName);
+    await notifyMilestoneAssigned(m, m.responsibleUserId, input.updatedBy, input.updatedByName || input.updatedByEmail);
   }
   // PROD-11: a finish moved later, past its baseline — the owner hears once.
   if (!input.quietSlip && priorFinish && input.patch.plannedAt && slippedPastBaseline(priorFinish, input.patch.plannedAt, m.baselineFinishAt)) {
     await notifySlippedPastBaseline({
       orgId: m.orgId, projectId: m.projectId, slipped: [{ id: m.id!, name: m.name }],
-      actorUserId: input.updatedBy, actorName: input.updatedByName,
+      actorUserId: input.updatedBy, actorName: input.updatedByName || input.updatedByEmail,
     });
   }
 

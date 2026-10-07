@@ -52,12 +52,15 @@ vi.mock("@/lib/activityThread", () => ({ postMarkupRef: vi.fn(async () => undefi
 import { resolveBranch, clearBranchOpenAlerts } from "@/lib/branches";
 import { createMarkupRequest, resolveMarkupRequest } from "@/lib/markupRequests";
 import { notifyLibraryDocsAdded } from "@/lib/libraryNotify";
-import { proposeChangeOrder, decideChangeOrder, type ChangeOrder } from "@/lib/changeOrders";
+import { proposeChangeOrder, decideChangeOrder, CO_REASON_LABEL, type ChangeOrder } from "@/lib/changeOrders";
 import { reviewTurnoverItem, type TurnoverItem } from "@/lib/turnover";
 import {
   setMilestoneStatus, applyMilestoneMoves, updateMilestone, rebaseSchedule, slippedPastBaseline,
 } from "@/lib/milestones";
 import { resolveRecipients, type EmitInput } from "@/lib/notify/dispatch";
+import { postMarkupRef } from "@/lib/activityThread";
+import { notifyBatchChecked } from "@/lib/inAppNotifications";
+import { fmtMoney } from "@/lib/costs";
 
 const ORG = "o1";
 const member = (uid: string, roles: string[], status = "active") => ({ id: `m-${uid}`, org_id: ORG, uid, role: roles[0], roles, status, email: `${uid}@acme.test` });
@@ -168,6 +171,18 @@ describe("PROD-14 — a markup request notifies the person asked, and its answer
     const recipients = await resolveRecipients({ ...(e as unknown as EmitInput), audience: { involved: ["asker", "holder"] } });
     expect(recipients).toEqual([]);   // neither is an org member in this fake: the active-member filter
   });
+
+  it("a share: the thread's markup_ref notice leaves the requester out (notifyExclude) — they get the resolution notice, in the right words, once (N8's review fix)", async () => {
+    vi.mocked(postMarkupRef).mockClear();
+    s.db.tables.documents = [{ id: "d1", org_id: ORG, library_id: "lib1" }];
+    s.db.tables.markup_requests = [{ id: "mr1", org_id: ORG, document_id: "d1", requested_by_user_id: "asker", requested_from_user_id: "holder", status: "open" }];
+    await resolveMarkupRequest({ markupRequestId: "mr1", status: "shared", orgId: ORG, actorUserId: "holder", actorEmail: "holder@acme.test" });
+    expect(vi.mocked(postMarkupRef)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(postMarkupRef).mock.calls[0][0]).toMatchObject({ documentId: "d1", userId: "holder", notifyExclude: ["asker"] });
+    const [e] = emitsOf("markup_request");
+    expect(e.title).toBe("holder@acme.test shared their markups");
+    expect((e.audience as { involved: string[] }).involved).toContain("asker");
+  });
 });
 
 // ── PROD-5 ───────────────────────────────────────────────────────────────────
@@ -223,7 +238,7 @@ describe("PROD-6 dw1 — a change order proposed / approved / rejected reaches t
     await decideChangeOrder({ co: asCo(coRow()), decision: "rejected", shownAmount: 500, shownAccountId: "a1", note: "not in scope", actorId: "decider", actorName: "decider" });
     const [e] = emitsOf("change_order_status");
     expect((e.audience as { involved: string[] }).involved.sort()).toEqual(["owner", "pm", "proposer"]);
-    expect(e.body).toBe('decider rejected the change order for 500: "not in scope"');
+    expect(e.body).toBe(`decider rejected the change order for ${fmtMoney(500, "USD")}: "not in scope"`);   // no line currency on file: USD
     expect(emitsOf("project_status")).toEqual([]);                       // no approval notice on a rejection
   });
 
@@ -237,6 +252,19 @@ describe("PROD-6 dw1 — a change order proposed / approved / rejected reaches t
     expect(approval[0]).toMatchObject({ audience: { involved: ["proposer"] }, title: "CO-001 approved — Extra pipe" });
     const [e] = emitsOf("change_order_status");
     expect((e.audience as { involved: string[] }).involved.sort()).toEqual(["owner", "pm"]);
+  });
+
+  it("the amount carries its budget line's currency, as the Costs tab shows it — a CAD line never reads as dollars (N8's review fix); the proposer's own approval notice too", async () => {
+    s.db.tables.change_orders = [coRow({ amount: 12000 })];
+    s.db.tables.cost_accounts = [{ id: "a1", org_id: ORG, project_id: "p1", budget: 100000, currency: "cad" }];
+    await proposeChangeOrder({ orgId: ORG, projectId: "p1", costAccountId: "a1", title: "Extra pipe", amount: 12000, reasonCode: "field_condition", actorId: "proposer", actorName: "proposer" });
+    const [proposed] = emitsOf("change_order_status");
+    expect(proposed.body).toBe(`proposer proposed a change order for ${fmtMoney(12000, "CAD")} (${CO_REASON_LABEL.field_condition}). It waits for a decision on the Costs tab.`);
+    expect(fmtMoney(12000, "CAD")).not.toBe(fmtMoney(12000, "USD"));
+    s.emits = [];
+    await decideChangeOrder({ co: asCo(coRow({ amount: 12000 })), decision: "approved", shownAmount: 12000, shownAccountId: "a1", actorId: "decider", actorName: "decider" });
+    expect(String(emitsOf("change_order_status")[0].body)).toContain(fmtMoney(12000, "CAD"));
+    expect(emitsOf("project_status")[0].body).toBe(`Your change order for ${fmtMoney(12000, "CAD")} was approved and posted to the budget line.`);
   });
 
   it("voiding stays silent (DEC-44 (N8) item 2)", async () => {
@@ -346,6 +374,26 @@ describe("PROD-11 — the schedule speaks: status and moves to the project, a ne
     expect(emitsOf("milestone_assigned")).toEqual([]);
   });
 
+  it("the assignee learns WHO made them responsible when the caller passes only a uid (the task panel does): the actor's display name, else email, from org_members (N8's review fix)", async () => {
+    s.db.tables.milestones = [ms()];
+    // TaskDetailPanel.assign's call: updatedBy alone
+    await updateMilestone({ id: "m1", patch: { responsibleUserId: "proposer", responsibleUserName: "proposer" }, updatedBy: "pm" });
+    const [byEmail] = emitsOf("milestone_assigned");
+    expect(byEmail.body).toMatch(/^pm@acme\.test made you responsible for this task/);
+    expect(byEmail.actorName).toBe("pm@acme.test");
+    s.emits = [];
+    s.db.tables.org_members.find((m) => m.uid === "pm")!.display_name = "Pat Morgan";
+    await updateMilestone({ id: "m1", patch: { responsibleUserId: "owner" }, updatedBy: "pm" });
+    expect(emitsOf("milestone_assigned")[0].body).toMatch(/^Pat Morgan made you responsible/);
+    s.emits = [];
+    // a passed name wins; an actor nobody knows is "Someone", never a failure
+    await updateMilestone({ id: "m1", patch: { responsibleUserId: "proposer" }, updatedBy: "pm", updatedByName: "PM (passed)" });
+    expect(emitsOf("milestone_assigned")[0].body).toMatch(/^PM \(passed\) made you responsible/);
+    s.emits = [];
+    await updateMilestone({ id: "m1", patch: { responsibleUserId: "owner" }, updatedBy: "stranger" });
+    expect(emitsOf("milestone_assigned")[0].body).toMatch(/^Someone made you responsible/);
+  });
+
   it("dw3: a single edit that pushes a baselined task past its baseline tells the owner once", async () => {
     s.db.tables.milestones = [ms()];
     await updateMilestone({ id: "m1", patch: { plannedAt: "2026-11-12T00:00:00Z" }, updatedBy: "pm", updatedByName: "pm" });
@@ -382,5 +430,35 @@ describe("PROD-11 — the schedule speaks: status and moves to the project, a ne
     s.db.tables.milestones = [ms()];
     s.emitThrows = true;
     await expect(setMilestoneStatus({ id: "m1", status: "completed", actorUserId: "pm" })).resolves.toMatchObject({ status: "completed" });
+  });
+});
+
+// ── TAX-11 — the typed batch insert the checkout sweep writes through ───────
+describe("TAX-11 (N8's review fix) — notifyBatchChecked: many rows, ONE statement, on the given client", () => {
+  const row = (userId: string) => ({ orgId: ORG, userId, kind: "checkout_released" as const, title: "Released", actorName: "System", resourceType: "document", resourceId: "d1", metadata: { autoReleasedSessionId: `s-${userId}` } });
+
+  it("all rows in one insert call, the typed row shape; answers how many landed", async () => {
+    const client = makeFakeSupabase(s.db);
+    expect(await notifyBatchChecked([row("u1"), row("u2"), row("u3")], client)).toBe(3);
+    const inserts = s.db.calls.filter((c) => c.table === "notifications" && c.method === "insert");
+    expect(inserts).toHaveLength(1);
+    expect(s.db.tables.notifications.map((n) => n.user_id)).toEqual(["u1", "u2", "u3"]);
+    expect(s.db.tables.notifications[0]).toMatchObject({
+      org_id: ORG, kind: "checkout_released", title: "Released", body: null, link: null, resource_type: "document", resource_id: "d1",
+      actor_user_id: null, actor_name: "System", metadata: { autoReleasedSessionId: "s-u1" },
+    });
+  });
+
+  it("a refusal lands none and answers 0 (logged, never thrown); nothing to send sends nothing", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      s.db.refuseWrites.add("notifications");
+      expect(await notifyBatchChecked([row("u1"), row("u2")], makeFakeSupabase(s.db))).toBe(0);
+      expect(s.db.tables.notifications ?? []).toEqual([]);
+      expect(warn).toHaveBeenCalledWith("[notify] batch insert failed", expect.any(String));
+      s.db.calls.length = 0;
+      expect(await notifyBatchChecked([], makeFakeSupabase(s.db))).toBe(0);
+      expect(s.db.calls).toEqual([]);
+    } finally { warn.mockRestore(); }
   });
 });

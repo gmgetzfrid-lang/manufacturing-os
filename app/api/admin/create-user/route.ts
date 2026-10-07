@@ -4,7 +4,7 @@ import { ALL_ROLES, type Role } from "@/types/schema";
 import { normalizeEmail, applyEmailLookup } from "@/lib/identity";
 import { normalizeRoles, primaryRole } from "@/lib/roleCapabilities";
 import { assertOrgHasAccess } from "@/lib/serverAuth";
-import { queueAccessRequestOutcome } from "@/lib/accessRequestOutcome";
+import { clearAccessRequestNotices, queueAccessRequestOutcome } from "@/lib/accessRequestOutcome";
 
 // Bounded lookup of auth users by email. Only used in the rare path where the
 // auth account already exists (e.g. they signed in with Microsoft first) but
@@ -60,6 +60,9 @@ async function resolvePendingAccessRequests(orgId: string, email: string, member
     queuedBy: memberUid,
     toMember: true,
   });
+  // The requests are closed: the pool's notices about them stop waiting on
+  // anyone (N8's review fix — the PROD-3 rule). Best-effort.
+  await clearAccessRequestNotices(supabaseAdmin, orgId, rows.map((r) => String(r.id)));
 }
 
 /** The refusal every ambiguous-identity path lands on. Copies the pattern the

@@ -5,7 +5,9 @@ import { notifyMany } from "@/lib/inAppNotifications";
 import { queueEmail } from "@/lib/notifications";
 import { resolveRoleRecipients } from "@/lib/notify/recipients";
 import { runWithServerClient } from "@/lib/serverClientScope";
-import { ACCESS_REQUEST_AUDIENCE } from "@/lib/accessRequestOutcome";
+import {
+  ACCESS_REQUEST_AUDIENCE, ACCESS_REQUEST_EMAILS_PER_ORG_HOUR, noticeSafeName, wellFormedAddress,
+} from "@/lib/accessRequestOutcome";
 
 // This public, unauthenticated endpoint was the one door in the auth pair with
 // no rate limit — its neighbour /api/auth/signup carries the full
@@ -37,6 +39,21 @@ async function recordAttempt(ip: string, email: string | null, outcome: string):
     .then(() => undefined, () => undefined);
 }
 
+/** The email leg's per-org cap: how many requests this org received in the
+ *  last hour, the new one included. null when the count cannot be read —
+ *  the caller then sends the bell row only (the cap fails closed: the bell
+ *  still tells the pool). */
+async function requestsToOrgLastHour(orgId: string): Promise<number | null> {
+  const since = new Date(Date.now() - 3600_000).toISOString();
+  const { count, error } = await supabaseAdmin
+    .from("access_requests")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", orgId)
+    .gte("created_at", since);
+  if (error || typeof count !== "number") return null;
+  return count;
+}
+
 /** PROD-2: a request nobody hears about is a request nobody answers. After
  *  the row is written, every active member of the org holding Admin or
  *  DocCtrl (headline or additive role, lib/notify/recipients.ts) gets a bell
@@ -47,7 +64,16 @@ async function recordAttempt(ip: string, email: string | null, outcome: string):
  *  the requester's name and address are in its body. Best-effort and never
  *  thrown: the request is already recorded and the response is unchanged.
  *  The bound client is the service role (runWithServerClient), so the
- *  shared-client helpers write as the server. */
+ *  shared-client helpers write as the server.
+ *
+ *  This door is public and unauthenticated, and the notice multiplies one
+ *  request into a message per pool member from the app's own sender — so
+ *  nothing typed here reaches it unchecked (N8's review fix): the name is
+ *  stripped of control and line-break characters and of anything that
+ *  reads as a link (noticeSafeName); an address that is not ONE well-formed
+ *  address is shown as "invalid address" and gets no email leg
+ *  (wellFormedAddress); and past ACCESS_REQUEST_EMAILS_PER_ORG_HOUR requests
+ *  to the org in an hour the pool gets the bell row only. */
 async function notifyAccessRequest(input: {
   orgId: string; orgName: string; displayName: string; email: string; requestId: string | null;
 }): Promise<void> {
@@ -55,10 +81,12 @@ async function notifyAccessRequest(input: {
     await runWithServerClient(supabaseAdmin, async () => {
       const recipients = await resolveRoleRecipients(input.orgId, [...ACCESS_REQUEST_AUDIENCE]);
       if (recipients.length === 0) return;
-      // The name is typed at a public door: bounded before it reaches a bell.
-      const name = input.displayName.trim().slice(0, 80) || input.email;
+      // The name and the address are typed at a public door: made safe
+      // before they reach a bell or an email.
+      const address = wellFormedAddress(input.email);
+      const name = noticeSafeName(input.displayName, 80) || address || "Someone";
       const title = `${name} asked to join ${input.orgName}`;
-      const body = `${name} (${input.email}) asked for access to ${input.orgName}. Review the request under Admin → Users: add them as a member, or decline it.`;
+      const body = `${name} (${address ?? "invalid address"}) asked for access to ${input.orgName}. Review the request under Admin → Users: add them as a member, or decline it.`;
       await notifyMany({
         orgId: input.orgId,
         userIds: recipients,
@@ -70,6 +98,17 @@ async function notifyAccessRequest(input: {
         resourceId: input.requestId ?? undefined,
         metadata: input.requestId ? { accessRequestId: input.requestId } : undefined,
       });
+      // The email leg: only for a well-formed address, and only while the
+      // org's hourly request count is within the cap (read failure: none).
+      if (!address) {
+        console.warn("[request-access] the request's address is not a single well-formed address — the pool was told by bell only");
+        return;
+      }
+      const recent = await requestsToOrgLastHour(input.orgId);
+      if (recent === null || recent > ACCESS_REQUEST_EMAILS_PER_ORG_HOUR) {
+        console.warn(`[request-access] ${recent === null ? "the org's request count could not be read" : `${recent} requests to this org in the last hour`} — the pool was told by bell only`);
+        return;
+      }
       const { data: rows } = await supabaseAdmin
         .from("org_members")
         .select("uid, email")

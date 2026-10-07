@@ -1790,9 +1790,10 @@ describe("REGRESSION census — every app write to notifications fits the read_a
       visit(sf);
     }
     // N8 (TAX-11 done-when 2): three raw calls moved onto the typed sink
-    // (notifyChecked: the transmittal portal's two, the checkout sweep's), so
-    // eight raw calls and the sink itself are examined
-    expect(examined).toBeGreaterThanOrEqual(9);
+    // (the transmittal portal's two, the checkout sweep's), so eight raw
+    // calls and the sink's two inserts (notifyWithReason, and — N8's review
+    // fix — notifyBatchChecked) are examined
+    expect(examined).toBeGreaterThanOrEqual(10);
     expect(offenders).toEqual([]);
   });
 

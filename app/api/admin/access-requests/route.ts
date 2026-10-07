@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { queueAccessRequestOutcome } from "@/lib/accessRequestOutcome";
+import { clearAccessRequestNotices, queueAccessRequestOutcome } from "@/lib/accessRequestOutcome";
 
 // Decline a pending access request (EGRESS-5 follow-through). The public
 // request door (/api/auth/request-access) refuses a second request while one
@@ -81,6 +81,9 @@ export async function POST(req: NextRequest) {
       toEmail: (request.email as string | null) ?? null,
       queuedBy: caller.id,
     });
+    // The request is closed: the pool's notices about it stop waiting on
+    // anyone (N8's review fix — the PROD-3 rule). Best-effort.
+    await clearAccessRequestNotices(supabaseAdmin, request.org_id as string, [String(request.id ?? id)]);
   }
 
   return NextResponse.json({ ok: true });

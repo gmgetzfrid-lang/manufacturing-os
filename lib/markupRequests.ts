@@ -156,8 +156,12 @@ export async function resolveMarkupRequest(input: ResolveMarkupRequestInput): Pr
   // LIFE-8: sharing leaves the `markup_ref` row ActivityThread already
   // renders, on the document the request was about — the artifact pointer
   // the UI can back. Best-effort: the resolution itself is already recorded.
+  // The requester is left out of the thread's own notice: the resolution
+  // notice below tells them, in the right words — one row for one share,
+  // not two (N8's review fix).
   if (input.status === "shared" && (updated as { document_id?: string | null }).document_id) {
     try {
+      const requester = (updated as { requested_by_user_id?: string | null }).requested_by_user_id ?? null;
       await postMarkupRef({
         orgId: input.orgId,
         documentId: (updated as { document_id: string }).document_id,
@@ -166,6 +170,7 @@ export async function resolveMarkupRequest(input: ResolveMarkupRequestInput): Pr
         markupRequestId: input.markupRequestId,
         summary: `Markups shared${input.response?.trim() ? `: ${input.response.trim()}` : ""}${input.sharedMarkupUrl ? ` — ${input.sharedMarkupUrl}` : ""}`,
         metadata: input.sharedMarkupUrl ? { shared_markup_url: input.sharedMarkupUrl } : null,
+        notifyExclude: requester ? [requester] : undefined,
       });
     } catch (e) { console.warn("[markupRequests] markup_ref post failed (non-blocking)", e); }
   }

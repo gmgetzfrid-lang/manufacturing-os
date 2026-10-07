@@ -831,7 +831,9 @@ describe("the producer census — every written kind is declared and classified"
     // the moved sites write through the typed sink, on the client they hold
     expect(src("app/api/transmittal/route.ts")).toMatch(/notifyWithReason\(\{[\s\S]*?kind: UNSTAMPABLE_NOTICE_KIND,[\s\S]*?\}, supabaseAdmin\)/);
     expect(src("app/api/transmittal/route.ts")).toMatch(/notifyChecked\(\{[\s\S]*?kind: "ack_complete",[\s\S]*?\}, supabaseAdmin\)/);
-    expect(src("lib/projects.ts")).toMatch(/notifyChecked\(\{[\s\S]*?kind: "checkout_released",[\s\S]*?\}, db\)/);
+    // the sweep's holder notices: ONE typed batch statement per batch of
+    // released sessions, on the sweep's own client (N8's review fix)
+    expect(src("lib/projects.ts")).toMatch(/notifyBatchChecked\(released\.map\(\(r\) => \(\{[\s\S]*?kind: "checkout_released" as const,[\s\S]*?\}\)\), db\)/);
   });
 
   it("the census counts an insert call whose rows it cannot see — the drift it exists to stop (probe)", () => {

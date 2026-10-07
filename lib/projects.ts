@@ -12,7 +12,7 @@ import { isControllerPrincipal } from "@/lib/permissions";
 import { SNAPSHOT_READS, type ProjectStateSnapshot } from "@/lib/projectHealth";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { logAuditAction } from "@/lib/audit";
-import { notify, notifyMany, notifyChecked } from "@/lib/inAppNotifications";
+import { notify, notifyMany, notifyBatchChecked } from "@/lib/inAppNotifications";
 import { listFollowerIds } from "@/lib/subscriptions";
 import {
   ensureActiveEpisode,
@@ -2060,14 +2060,16 @@ async function sweepSessions(
 
   // Personal interrupt: tell each former holder their checkout evaporated —
   // built from the rows the UPDATE actually changed. The typed insert
-  // (notifyChecked, TAX-11) on THIS sweep's client — the RLS client in the
-  // browser, the cron's service-role client — one row per holder; a refusal
-  // is logged by notifyChecked and never fails the sweep.
+  // (TAX-11) on THIS sweep's client — the RLS client in the browser, the
+  // cron's service-role client — one row per holder, all in ONE statement
+  // per batch of released sessions (notifyBatchChecked: all land or none,
+  // as the raw insert did — never one request per holder at once); a
+  // refusal is logged and never fails the sweep.
   try {
-    await Promise.all(released.map((r) => notifyChecked({
+    const told = await notifyBatchChecked(released.map((r) => ({
       orgId: r.org_id,
       userId: r.user_id,
-      kind: "checkout_released",
+      kind: "checkout_released" as const,
       title: o.title,
       body: o.body,
       link: r.library_id ? `/documents/${r.library_id}?doc=${r.document_id}` : "/checkouts",
@@ -2075,7 +2077,8 @@ async function sweepSessions(
       resourceId: r.document_id,
       actorName: "System",
       metadata: { autoReleasedSessionId: r.id },
-    }, db)));
+    })), db);
+    if (told < released.length) console.warn(`[autoReleaseExpiredAdHoc] ${released.length} holder(s) were NOT told their checkout was released (non-blocking)`);
   } catch (e) {
     console.warn("[autoReleaseExpiredAdHoc] holder notify failed (non-blocking)", e);
   }
