@@ -17,7 +17,9 @@
 //     batch's worst case did not fit what is left of the payer's cap (no
 //     hold — I-18 fix pass 3), the meaning-index panel says "Waiting for AI
 //     budget headroom — retried each run" from what the drain recorded on
-//     the library's build marker (headroomWaitAt).
+//     the library's build marker (headroomWaitAt), with the figures in the
+//     third person ("the payer's $10.00 monthly AI cap has …") — every
+//     library member sees that panel, not only the payer.
 //
 // Every reader tolerates a database without 20261186: a missing column is no
 // count, exactly what each surface said before.
@@ -105,11 +107,45 @@ export const VISION_UNREAD_RULE =
   "so a count that covers those sheets is a floor, not a total, and a next free number may already be in use " +
   "on one of them — say so when you give either.";
 
+/** The sentence the drawing rules add instead when the unread-page count
+ *  itself could not be read ("unknown" in the facts): the app does not know
+ *  that any page went unread, so the rule says only that it could not check. */
+export const VISION_UNREAD_UNKNOWN_RULE =
+  "Whether every page was read by AI vision could not be checked this time: treat a count that covers these " +
+  "sheets as a floor, not a total, and a next free number as possibly already in use — say so when you give either.";
+
 /** What the embed status's `background` carries beyond lib/knowledge.ts's
  *  type when the drain recorded a headroom wait (present only then). */
 export interface BackgroundHeadroom {
   headroomWaitAt?: string | null;
   headroomNote?: string | null;
+}
+
+/** A dollar figure for the headroom note: cents from a cent up (as the
+ *  reservation's own sentence prints them), four places under a cent so a
+ *  tiny batch never reads "$0.00". */
+function headroomUsd(n: number): string {
+  if (!(n > 0)) return "$0.00";
+  if (n >= 0.01) return `$${n.toFixed(2)}`;
+  const fine = n.toFixed(4);
+  return Number(fine) > 0 ? `$${fine}` : "under $0.0001";
+}
+
+/** GOV-5 residual: what the embed drain records as `headroomNote` when a
+ *  run stopped because the next batch's worst case did not fit what is left
+ *  of the payer's cap — built from the refusal's figures
+ *  (GovernedCallError.details: spentUsd, capUsd, reservedUsd), in the THIRD
+ *  person. The reservation's own sentence says "your … monthly AI cap": it
+ *  is written to the payer, and the panel that shows the note is read by
+ *  every member of the library. Undefined when the figures are not all
+ *  there (the panel then says the bare line). */
+export function headroomWaitNote(details: unknown): string | undefined {
+  const d = (details ?? {}) as { spentUsd?: unknown; capUsd?: unknown; reservedUsd?: unknown };
+  const spent = d.spentUsd, cap = d.capUsd, worst = d.reservedUsd;
+  if (typeof spent !== "number" || typeof cap !== "number" || typeof worst !== "number") return undefined;
+  if (![spent, cap, worst].every(Number.isFinite) || !(cap > 0)) return undefined;
+  return `the payer's ${headroomUsd(cap)} monthly AI cap has ${headroomUsd(Math.max(0, cap - spent))} left, ` +
+    `and the next batch could cost up to ${headroomUsd(worst)}.`;
 }
 
 /** GOV-5 residual: the meaning-index panel's line for a background build

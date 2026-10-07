@@ -441,7 +441,7 @@ The same per-call reservation runs in the interactive ingest batch and in `/api/
 - The worst cases are deliberately high, so a payer within one page's (or one batch's) worst case of the cap is refused a little before it, never past it (DEC-73 reversal 5: refuse rather than clamp). *Fix pass 3:* for the embed drain that is a run stopped, not a hold. A payer left with less than one batch's worst case is offered one batch per run (one refused reservation: an insert, a read, a delete) until the 1st, and nothing on the stamp or the library panel says so; the run's report does. *(Assigned by the integrator at the I-18 merge, 2026-10-07: intelligence I-22, which already edits the library surface that shows a document's index state, says it there.)* The "cap reached" reading counts reservations in flight, as the first check always did: if those alone take the month to the cap, the library is held until the 1st.
 - *Fix pass 3:* a fold whose write fails leaves that call's reservation standing at its worst case for the month (over-counted).
 
-**Resolution (2026-10-07, intelligence Round G) — the residual assigned to I-22 at the I-18 merge.** Package I-22 KEYLESS TEXT-ONLY RECORD (commit `66ba7b4`), on base `6797c48`. The residual: when the embed drain stops a run because the next batch's worst case does not fit what is left of the payer's monthly AI cap (I-18 fix pass 3: the cap is not reached, so there is no hold, only the run's report), nothing on the library surface said so.
+**Resolution (2026-10-07, intelligence Round G) — the residual assigned to I-22 at the I-18 merge.** Package I-22 KEYLESS TEXT-ONLY RECORD (commit `66ba7b4`; fix pass on the same branch), on base `6797c48`. The residual: when the embed drain stops a run because the next batch's worst case does not fit what is left of the payer's monthly AI cap (I-18 fix pass 3: the cap is not reached, so there is no hold, only the run's report), nothing on the library surface said so.
 
 Reproduced first (DEC-29): **nothing durable recorded that outcome.** On `6797c48`:
 - `drainEmbedBacklog`'s `no_fit` branch (`lib/knowledgeEmbedDrain.ts:386-395`) calls only `record(...)` into the run's `drained[]`, and writes nothing to the stamp.
@@ -451,23 +451,26 @@ Reproduced first (DEC-29): **nothing durable recorded that outcome.** On `6797c4
 
 The narrowest durable source is that marker. The drain already writes it on every run that reaches the library (the slot claim), and it is where every other drain outcome the meaning-index panel shows lives. Nothing new is added that holds anything.
 
-- **The record.** In the `no_fit` branch the drain now patches the marker with `headroomWaitAt` (the run's time) and `headroomNote` (the reservation's sentence, cut to 300 characters) (`lib/knowledgeEmbedDrain.ts:404`).
+- **The record.** In the `no_fit` branch the drain now patches the marker with `headroomWaitAt` (the run's time) and `headroomNote` (`lib/knowledgeEmbedDrain.ts:407-410`).
+  - `headroomNote` is built in the third person from the refusal's figures (`GovernedCallError.details`: `spentUsd`, `capUsd`, `reservedUsd`) by `headroomWaitNote` (`lib/knowledgeKeyless.ts`). For example: "the payer's $10.00 monthly AI cap has $0.06 left, and the next batch could cost up to $0.11." Figures under a cent print to four places, never "$0.00".
+  - It is never the reservation's own sentence ("… left of your $10.00 monthly AI cap"), which is written to the payer: the status answers the note to every principal, and the panel shows it to every library member (fix pass).
+  - Without all three figures there is no note, and the panel says the bare line.
   - The patch is conditional on the stamp the run read (`expect`), like every other marker write.
   - It never sets `blockedUntil`, so no run skips the library for it: there is still no hold, and every run looks again.
-  - The slot claim at the start of the next run that reaches the library drops both fields (`:221`), so the marker only ever says what the LATEST such run found. The patch is unchanged (`p_drop: []`) when neither field is there, so every existing run writes the marker exactly as before.
-  - `EmbedBuildMarker` and `parseEmbedBuildMarker` carry the two fields (`lib/knowledgeEmbedCore.ts:537`, `:561`). The run's report still says it, as before.
+  - The slot claim at the start of the next run that reaches the library drops both fields (`:222`), so the marker only ever says what the LATEST such run found. The patch is unchanged (`p_drop: []`) when neither field is there, so every existing run writes the marker exactly as before.
+  - `EmbedBuildMarker` and `parseEmbedBuildMarker` carry the two fields (`lib/knowledgeEmbedCore.ts:540`, `:564`). The run's report still says it, as before.
 - **The status.** `/api/knowledge/embed`'s status adds `headroomWaitAt` and `headroomNote` to `background` only when the drain recorded one (`app/api/knowledge/embed/route.ts:208`). Every other status keeps the exact shape `embedStatusShape.test.ts` pins.
-- **The library surface.** The meaning-index panel on the library page (`components/knowledge/SemanticIndexPanel.tsx`) says "Waiting for AI budget headroom — retried each run", followed by the reservation's sentence (`data-headroom-wait`), in the background build's box. It says it only while passages remain and no dated hold is in force; a hold keeps its own "Waiting until …" line. The wording is in `headroomWaitLine` (`lib/knowledgeKeyless.ts`). The panel types the two extra fields locally (`BackgroundHeadroom`): `lib/knowledge.ts`'s `SemanticProgress` is I-16's file.
+- **The library surface.** The meaning-index panel on the library page (`components/knowledge/SemanticIndexPanel.tsx`) says "Waiting for AI budget headroom — retried each run", followed by that third-person note (`data-headroom-wait`), in the background build's box. It says it only while passages remain and no dated hold is in force; a hold keeps its own "Waiting until …" line. The wording is in `headroomWaitLine` (`lib/knowledgeKeyless.ts`). The panel types the two extra fields locally (`BackgroundHeadroom`): `lib/knowledge.ts`'s `SemanticProgress` is I-16's file.
 
 Tests:
 - `lib/__tests__/intelRoundGEmbedHeadroomRecord.test.ts`:
-  - a no-fit run records `headroomWaitAt` and the reservation's sentence; `blockedReason`, `blockedUntil` and `lastError` stay unset; the write is conditional on the stamp read;
+  - a no-fit run records `headroomWaitAt` and exactly `headroomWaitNote` over the refusal's figures, in the third person, never "your" (the run's report keeps the reservation's own sentence); `blockedReason`, `blockedUntil` and `lastError` stay unset; the write is conditional on the stamp read;
   - the next run is not held: once a batch fits it embeds the library, and the record is cleared;
   - a later run held for another reason (the agreement) no longer says it waits for headroom;
   - REGRESSION: a run that never met the stop writes every marker patch with `p_drop: []` and no headroom field.
-  - Mutation-checked: removing the record fails three cases, and removing the clear fails two.
+  - Mutation-checked: removing the record fails three cases, and removing the clear fails two. Recording the reservation's own sentence fails the first case (fix pass).
 - `lib/__tests__/intelRoundGEmbedHeadroomStatus.test.ts`: the status carries the record beside the fields it always had, and with nothing recorded `background` is exactly what it was.
-- `lib/__tests__/intelRoundGKeylessLibrarySurface.test.ts`: the rendered panel says it, with the sentence, and no hold line. With nothing recorded it is as before. A dated hold keeps its own line, and nothing is said with nothing left to embed.
+- `lib/__tests__/intelRoundGKeylessLibrarySurface.test.ts`: the rendered panel says it, with the note the drain records (`headroomWaitNote` over a refusal's figures), and no hold line. A member who is not the payer is never told the payer's cap or headroom is theirs (fix pass). With nothing recorded it is as before. A dated hold keeps its own line, and nothing is said with nothing left to embed.
 - `lib/__tests__/embedDrain.test.ts` (I-16's) passes unchanged.
 
 **Done-when (the residual).**

@@ -601,11 +601,11 @@ and six counts; paste before or with the app deploy.
 - `app/api/knowledge/ask/route.ts` (I-03's; I-12 and I-25 next): the DRAWING FACTS' own read of `id, vision_failed_pages, vision_keyless_pages`.
   - On 42703 / PGRST204 naming the keyless column, it falls back to `id, vision_failed_pages`, then to nothing.
   - Any other error is "unknown", never none.
-  - `visionUnreadFactsLine`, `trusted` false while any page is unread, and `VISION_UNREAD_RULE` in the rules.
+  - `visionUnreadFactsLine`, `trusted` false while any page is unread, and `VISION_UNREAD_RULE` in the rules for a known non-zero count. For an unknown count the rules carry `VISION_UNREAD_UNKNOWN_RULE` instead.
   - The sheets' own read (`id, name, library_id, vision_pages`) is unchanged; I-03's tests pin it.
 - `app/(protected)/knowledge/[id]/page.tsx`: `docRowCounters(doc, keylessCount)` and the `data-keyless-pages` line, fed by `readKeylessTextPages` (`lib/knowledgeKeylessClient.ts`) beside the list. When `lib/knowledge.ts`'s `KnowledgeDocument` gains the column (I-16 or later), fold it in and drop that read.
 - `lib/knowledgeEmbedDrain.ts` (I-02's / I-18's):
-  - The `no_fit` branch patches `headroomWaitAt` and `headroomNote` on the build marker, never `blockedUntil`.
+  - The `no_fit` branch patches `headroomWaitAt` and `headroomNote` on the build marker, never `blockedUntil`. `headroomNote` is `headroomWaitNote(e.details)`, in the third person. It is never the reservation's "your … cap" sentence, because every library member reads it.
   - The slot claim drops both, only when present. The patch is otherwise unchanged.
 - `app/api/knowledge/embed/route.ts`: `background` carries the two fields only when recorded.
 - `components/knowledge/SemanticIndexPanel.tsx`: the `data-headroom-wait` line (`headroomWaitLine`).

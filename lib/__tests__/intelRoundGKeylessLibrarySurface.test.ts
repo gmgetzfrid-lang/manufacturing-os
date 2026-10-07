@@ -75,6 +75,7 @@ vi.mock("@/lib/knowledge", async (importOriginal) => ({ ...(await importOriginal
 import KnowledgeLibraryPage from "@/app/(protected)/knowledge/[id]/page";
 import SemanticIndexPanel from "@/components/knowledge/SemanticIndexPanel";
 import { resetKeylessColumnProbe } from "@/lib/knowledgeKeylessClient";
+import { headroomWaitNote } from "@/lib/knowledgeKeyless";
 import type { KnowledgeDocument, KnowledgeLibrary, SemanticProgress } from "@/lib/knowledge";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -201,14 +202,27 @@ describe("GOV-5 residual (I-22) — the meaning-index panel says a background bu
     await flush();
   }
 
-  it("the drain's recorded no-fit stop is said, with the reservation's sentence — no hold line", async () => {
-    await mountPanel(status({
-      ...BG, headroomWaitAt: "2026-10-07T03:00:05Z",
-      headroomNote: "the payer's $10.00 monthly AI cap has $0.06 left; one batch could cost up to $0.11",
-    }));
+  // What the drain records on a no-fit stop: headroomWaitNote over the
+  // figures reserveWithinCap puts on its refusal (GovernedCallError.details)
+  // — the same call lib/knowledgeEmbedDrain.ts makes, and the record test
+  // (intelRoundGEmbedHeadroomRecord.test.ts) pins that the drain stores
+  // exactly that.
+  const RECORDED = headroomWaitNote({ spentUsd: 9.94, capUsd: 10, reservedUsd: 0.11, locked: false });
+
+  it("the drain's recorded no-fit stop is said, with the payer's figures in the third person — no hold line", async () => {
+    await mountPanel(status({ ...BG, headroomWaitAt: "2026-10-07T03:00:05Z", headroomNote: RECORDED }));
     const line = host.querySelector('[data-headroom-wait="true"]');
-    expect(line?.textContent).toBe("Waiting for AI budget headroom — retried each run: the payer's $10.00 monthly AI cap has $0.06 left; one batch could cost up to $0.11");
+    expect(line?.textContent).toBe(
+      "Waiting for AI budget headroom — retried each run: the payer's $10.00 monthly AI cap has $0.06 left, and the next batch could cost up to $0.11.",
+    );
     expect(host.textContent).not.toMatch(/Waiting until/);
+  });
+
+  it("a member who is not the payer is never told the payer's cap or headroom is theirs", async () => {
+    await mountPanel(status({ ...BG, mine: false, headroomWaitAt: "2026-10-07T03:00:05Z", headroomNote: RECORDED }));
+    const box = host.querySelector('[data-headroom-wait="true"]')!.parentElement!;
+    expect(box.textContent).toMatch(/runs on another member's embeddings key and monthly cap/);
+    expect(box.textContent).not.toMatch(/\byour\b/i);
   });
 
   it("REGRESSION: a background build with nothing recorded shows exactly what it showed before; a dated hold keeps its own line", async () => {

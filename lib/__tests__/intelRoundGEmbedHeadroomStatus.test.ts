@@ -58,16 +58,20 @@ const status = async (embedBuild: Row) => {
   return res.json() as Promise<{ background: Record<string, unknown> | null; remaining: number }>;
 };
 
+/** What the drain records (headroomWaitNote, third person): the status
+ *  answers it to every principal of the library, payer or not. */
+const NOTE = "the payer's $10.00 monthly AI cap has $0.06 left, and the next batch could cost up to $0.11.";
+
 describe("GOV-5 residual (I-22) — the status says what the drain recorded", () => {
   it("a recorded headroom wait rides background, beside the fields it always had", async () => {
     const body = await status({
       userId: ME, at: "2026-09-01T00:00:00Z", standing: true, lastDrainAt: "2026-10-07T03:00:00Z",
-      headroomWaitAt: "2026-10-07T03:00:05Z", headroomNote: "This call could cost up to $0.11 and $0.06 is left of your $10.00 monthly AI cap.",
+      headroomWaitAt: "2026-10-07T03:00:05Z", headroomNote: NOTE,
     });
     expect(body.background).toEqual({
       mine: true, standing: true, startedAt: "2026-09-01T00:00:00Z", lastDrainAt: "2026-10-07T03:00:00Z",
       blockedUntil: null, blockedReason: null, lastError: null,
-      headroomWaitAt: "2026-10-07T03:00:05Z", headroomNote: "This call could cost up to $0.11 and $0.06 is left of your $10.00 monthly AI cap.",
+      headroomWaitAt: "2026-10-07T03:00:05Z", headroomNote: NOTE,
     });
     expect(body.remaining).toBe(10);
   });

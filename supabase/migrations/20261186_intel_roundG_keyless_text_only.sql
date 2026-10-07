@@ -35,9 +35,13 @@
 -- Apply AFTER 20261122_intel_roundG_ingest_integrity.sql: the engine keeps
 -- the count only under the ingest claim that file adds (the probe below says
 -- whether it is there). Independent of 20261162. Until this file is pasted
--- the code runs exactly as before: the engine writes the column only where
--- the row it claimed carries it, the reset strips it on an older database,
--- and every reader takes a missing column (42703 / PGRST204) as no count.
+-- every path that reads or writes the keyless count runs as before: the
+-- engine writes the column only where the row it claimed carries it, the
+-- reset strips it on an older database, and every reader takes a missing
+-- column (42703 / PGRST204) as no count. The ask route's DRAWING FACTS
+-- line for failed pages, and the rules no longer saying TRUST while any
+-- page is unread, need only 20261122: on a database with 20261122 and
+-- without this file, a library with failed pages already gets them.
 -- The app may be deployed before or after the paste.
 --
 -- NARROWS nothing and WIDENS nothing (no policy, grant, function or trigger

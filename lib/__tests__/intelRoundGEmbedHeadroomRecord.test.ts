@@ -3,8 +3,12 @@
 // payer's monthly AI cap (not reached — I-18 fix pass 3: no hold, the run's
 // report only), the run's outcome is recorded where the library surface can
 // read it: on the library's build marker (ai_features.embedBuild), as
-// `headroomWaitAt` and the reservation's sentence — never blockedUntil, so
-// it holds nothing back. The next run that reaches the library clears it.
+// `headroomWaitAt` and a note built from the refusal's figures in the THIRD
+// person ("the payer's $10.00 monthly AI cap has … left") — never
+// blockedUntil, so it holds nothing back. The next run that reaches the
+// library clears it. The note is never the reservation's own sentence ("…
+// left of your $10.00 monthly AI cap"): the panel that shows it is read by
+// every member of the library, not only the payer.
 //
 // Before this, nothing durable recorded the outcome: drainEmbedBacklog
 // returned it in `drained[].note`, the maintenance cron kept only a count
@@ -41,7 +45,7 @@ import { parseEmbedBuildMarker } from "@/lib/knowledgeEmbedCore";
 import { drainEmbedBacklog } from "@/lib/knowledgeEmbedDrain";
 import { EMBEDDING_DIMENSIONS } from "@/lib/ai/embeddings";
 import { AGREEMENT_VERSION, worstCaseCostUsd } from "@/lib/ai/pricing";
-import { headroomWaitLine } from "@/lib/knowledgeKeyless";
+import { headroomWaitLine, headroomWaitNote } from "@/lib/knowledgeKeyless";
 
 const ORG = "0a000000-0000-4000-8000-000000000001";
 const LIB = "0b000000-0000-4000-8000-000000000001";
@@ -118,9 +122,10 @@ const run = () => drainEmbedBacklog({ scopeOrgIds: null, budgetMs: 200_000 });
 const markerWrites = () => admin.state.calls.filter((c) => c.table === "rpc:embed_build_marker_write").map((c) => c.args[0] as Row);
 
 describe("GOV-5 residual (I-22) — the embed drain records a stop for budget headroom where the library surface reads it, with no hold", () => {
-  it("a payer under the cap whose headroom fits no batch: the run's outcome is on the build marker — headroomWaitAt and the reservation's sentence — and nothing is held", async () => {
+  it("a payer under the cap whose headroom fits no batch: the run's outcome is on the build marker — headroomWaitAt and the payer's figures in the third person — and nothing is held", async () => {
     usage.cap = 10; usage.spent = 9.5;
-    meter.spent = 10 - BATCH_WORST / 2;
+    const SPENT = 10 - BATCH_WORST / 2;
+    meter.spent = SPENT;
     const out = await run();
     expect(provider.inputs).toEqual([]);
     expect(out.drained[0]).toMatchObject({ outcome: "blocked", embedded: 0 });
@@ -129,7 +134,16 @@ describe("GOV-5 residual (I-22) — the embed drain records a stop for budget he
     // Not a hold: no date the drain would skip on, no "cap reached".
     expect([m.blockedReason, m.blockedUntil, m.lastError]).toEqual([undefined, undefined, undefined]);
     expect(Date.parse(String(m.headroomWaitAt))).toBeGreaterThan(Date.now() - 60_000);
-    expect(m.headroomNote).toMatch(/^This call could cost up to \$\d+\.\d\d and \$\d+\.\d\d is left of your \$10\.00 monthly AI cap/);
+    // The refusal the drain met is the reservation's own, worded to the payer…
+    const refused = meter.asked.filter((a) => a.refused === "does not fit");
+    expect(refused.length).toBe(1);
+    expect(refused[0].worstCaseUsd).toBe(BATCH_WORST);
+    expect(out.drained[0].note).toMatch(/is left of your \$10\.00 monthly AI cap, so it was not made\.$/);
+    // …but what the marker records — and every member's panel shows — is
+    // the payer's figures in the third person, from that refusal's details.
+    expect(m.headroomNote).toBe(headroomWaitNote({ spentUsd: SPENT, capUsd: 10, reservedUsd: BATCH_WORST }));
+    expect(m.headroomNote).toMatch(/^the payer's \$10\.00 monthly AI cap has \$\d+\.\d+ left, and the next batch could cost up to \$\d+\.\d+\.$/);
+    expect(m.headroomNote).not.toMatch(/\byour\b/i);
     expect(m).toMatchObject({ userId: PAYER, standing: true });
     // Written only on the stamp this run read.
     expect(markerWrites().every((w) => w.p_expect_user === PAYER && w.p_expect_at === AT)).toBe(true);

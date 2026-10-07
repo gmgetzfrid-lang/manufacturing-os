@@ -61,10 +61,15 @@ describe("20261186 — the one-paste shape", () => {
     expect(code).not.toMatch(/\b(UPDATE|DELETE FROM|INSERT INTO)\b/);
   });
 
-  it("the header says why NOT NULL DEFAULT 0, the paste order, and that the app runs unpasted", () => {
+  it("the header says why NOT NULL DEFAULT 0, the paste order, and what runs unpasted — no more than the code does", () => {
     expect(sql).toMatch(/Why NOT NULL DEFAULT 0 and not nullable/);
     expect(sql).toMatch(/Apply AFTER 20261122_intel_roundG_ingest_integrity\.sql/);
-    expect(sql).toMatch(/Until this file is pasted\n-- the code runs exactly as before/);
+    // Only the keyless count's paths run as before unpasted: the DRAWING
+    // FACTS' failed-page line and the dropped TRUST need only 20261122
+    // (intelRoundGKeylessAskFacts.test.ts, 'a database without 20261186 …').
+    expect(sql).toMatch(/Until this file is pasted\n-- every path that reads or writes the keyless count runs as before/);
+    expect(sql).toMatch(/need only 20261122/);
+    expect(sql).not.toMatch(/the code runs exactly as before/);
     expect(sql).toMatch(/The app may be deployed before or after the paste\./);
   });
 });

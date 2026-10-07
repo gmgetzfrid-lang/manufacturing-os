@@ -49,8 +49,8 @@ vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (k: string | null) => k }));
 import { POST } from "@/app/api/knowledge/ask/route";
 import { DATA_OPEN, DATA_CLOSE } from "@/lib/knowledgeAskGuards";
 import {
-  VISION_UNREAD_RULE, visionUnreadFactsLine, summarizeVisionUnread, keylessTextOnlyLabel, keylessPagesShown,
-  keylessCount, headroomWaitLine,
+  VISION_UNREAD_RULE, VISION_UNREAD_UNKNOWN_RULE, visionUnreadFactsLine, summarizeVisionUnread, keylessTextOnlyLabel,
+  keylessPagesShown, keylessCount, headroomWaitLine, headroomWaitNote,
 } from "@/lib/knowledgeKeyless";
 
 const ask = (body: Record<string, unknown>) => POST(new NextRequest("http://x/api/knowledge/ask", {
@@ -135,7 +135,18 @@ describe("ING-6 (a) / I-22 — the DRAWING FACTS say how many pages AI vision co
     expect(data).toContain("- Sheets: 4");
     expect(data).toContain("- Pages AI vision could not read: unknown — the count could not be read this time");
     expect(system).not.toMatch(/TRUST them for counts/);
+    // The app does not know that any page went unread, so the rules never
+    // say so: they say only that it could not be checked.
+    expect(system).toContain(`Prefer them over the passages for counts and totals. ${VISION_UNREAD_UNKNOWN_RULE}`);
+    expect(system).not.toContain(VISION_UNREAD_RULE);
+    expect(system).not.toMatch(/Some pages were not read by AI vision/);
+  });
+
+  it("…while a known non-zero count keeps the rule that pages went unread, and never the could-not-check one", async () => {
+    sheets((d) => (d === 0 ? { vision_failed_pages: [2] } : {}));
+    const { system } = await prompt();
     expect(system).toContain(VISION_UNREAD_RULE);
+    expect(system).not.toContain(VISION_UNREAD_UNKNOWN_RULE);
   });
 });
 
@@ -146,6 +157,7 @@ describe("I-22 — REGRESSION: every page read → the prompt is exactly as befo
     expect(now.data).not.toContain("Pages AI vision could not read");
     expect(now.system).toMatch(/TRUST them for counts and totals\./);
     expect(now.system).not.toContain(VISION_UNREAD_RULE);
+    expect(now.system).not.toContain(VISION_UNREAD_UNKNOWN_RULE);
 
     resetHarness();
     sheets();
@@ -190,6 +202,24 @@ describe("I-22 — the shared wording (lib/knowledgeKeyless.ts)", () => {
     expect(visionUnreadFactsLine(summarizeVisionUnread([{ vision_failed_pages: [] }, { vision_keyless_pages: 0 }, {}]), 3)).toBe("");
     // Duplicates and junk in a page list are not pages.
     expect(summarizeVisionUnread([{ vision_failed_pages: [2, 2, 0, "x"] }])).toEqual({ failedPages: 1, keylessPages: 0, sheets: 1 });
+  });
+
+  it("GOV-5 residual: the headroom note is the payer's figures in the third person — never the reservation's 'your … cap'", () => {
+    // The figures reserveWithinCap puts on its refusal (GovernedCallError.details).
+    expect(headroomWaitNote({ spentUsd: 9.94, capUsd: 10, reservedUsd: 0.11, locked: false }))
+      .toBe("the payer's $10.00 monthly AI cap has $0.06 left, and the next batch could cost up to $0.11.");
+    // A tiny embedding batch never reads "$0.00".
+    expect(headroomWaitNote({ spentUsd: 9.9995, capUsd: 10, reservedUsd: 0.0012 }))
+      .toBe("the payer's $10.00 monthly AI cap has $0.0005 left, and the next batch could cost up to $0.0012.");
+    expect(headroomWaitNote({ spentUsd: 9.99999999, capUsd: 10, reservedUsd: 0.0012 }))
+      .toBe("the payer's $10.00 monthly AI cap has under $0.0001 left, and the next batch could cost up to $0.0012.");
+    // Figures missing or junk: no note (the panel says the bare line).
+    expect(headroomWaitNote(undefined)).toBeUndefined();
+    expect(headroomWaitNote({ spentUsd: 9.94, capUsd: 10 })).toBeUndefined();
+    expect(headroomWaitNote({ spentUsd: "9.94", capUsd: 10, reservedUsd: 0.11 })).toBeUndefined();
+    expect(headroomWaitNote({ spentUsd: Number.NaN, capUsd: 10, reservedUsd: 0.11 })).toBeUndefined();
+    expect(headroomWaitNote({ spentUsd: 0, capUsd: 0, reservedUsd: 0.11 })).toBeUndefined();
+    expect(headroomWaitNote({ spentUsd: 1, capUsd: 2, reservedUsd: 3 })).not.toMatch(/\byour\b/i);
   });
 
   it("GOV-5 residual: the headroom wait is said only while passages remain and no dated hold is in force", () => {

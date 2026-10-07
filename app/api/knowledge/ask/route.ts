@@ -93,7 +93,8 @@ import {
 import { renderKnowledgePages, MAX_DEEP_READ_PAGES } from "@/lib/knowledgePageRender";
 import { loadCodebookAdmin, codebookToDecoderText } from "@/lib/codebookServer";
 import {
-  KEYLESS_PAGES_COLUMN, summarizeVisionUnread, visionUnreadFactsLine, VISION_UNREAD_RULE, type VisionUnreadSummary,
+  KEYLESS_PAGES_COLUMN, summarizeVisionUnread, visionUnreadFactsLine, VISION_UNREAD_RULE, VISION_UNREAD_UNKNOWN_RULE,
+  type VisionUnreadSummary,
 } from "@/lib/knowledgeKeyless";
 
 export const runtime = "nodejs";
@@ -1876,7 +1877,10 @@ export async function POST(req: NextRequest) {
                   "only as good as that transcription — say so when you give one, and treat a title-block " +
                   "identity read that way as unconfirmed."
                 : "Prefer them over the passages for counts and totals.") +
-          (visionUnreadAny ? ` ${VISION_UNREAD_RULE}` : "") + "\n" +
+          // A known non-zero count: pages went unread. A count that could
+          // not be read: the app does not know that, so the rule says only
+          // that it could not check.
+          (visionUnread === "unknown" ? ` ${VISION_UNREAD_UNKNOWN_RULE}` : visionUnreadAny ? ` ${VISION_UNREAD_RULE}` : "") + "\n" +
           "- The full tag list is in the library's Drawing intelligence panel (equipment register export).\n" +
           "- When the user asks to SEE or FIND specific equipment, keep the answer short and lean on " +
           "the citations: every cited sheet opens in the viewer with the named tags ringed on the " +

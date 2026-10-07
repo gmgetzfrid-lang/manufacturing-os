@@ -532,8 +532,11 @@ export interface EmbedBuildMarker {
    *  because the next batch's worst case did not fit what is left of the
    *  payer's monthly AI cap, which is not reached (capRefusalKind "no_fit").
    *  NOT a hold — no blockedUntil, so every run looks again; the next run
-   *  that reaches the library clears it. `headroomNote` is the reservation's
-   *  sentence. The library's meaning-index panel says it is waiting. */
+   *  that reaches the library clears it. `headroomNote` is built from the
+   *  refusal's figures in the third person (headroomWaitNote in
+   *  lib/knowledgeKeyless.ts: "the payer's … cap has … left"), since every
+   *  library member reads it. The library's meaning-index panel says it is
+   *  waiting. */
   headroomWaitAt?: string;
   headroomNote?: string;
 }

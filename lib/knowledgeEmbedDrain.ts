@@ -63,6 +63,7 @@ import {
   loadEmbedDetail, unembeddedCount, embedAgreementSigned, readEmbedBuildMarker, expectationOf,
   type EmbedBuildMarker,
 } from "@/lib/knowledgeEmbedCore";
+import { headroomWaitNote } from "@/lib/knowledgeKeyless";
 
 /** Per-slice loop budget / in-flight hard stop, relative to slice start. */
 const SLICE_BUDGET_MS = 45_000;
@@ -396,13 +397,16 @@ export async function drainEmbedBacklog(opts: {
           // No hold and no reason on the stamp: this run's work on the
           // library ends here, and the next run looks again.
           // GOV-5 residual (I-22): the run's outcome is recorded on the
-          // build marker — `headroomWaitAt` and the reservation's sentence,
-          // never blockedUntil, so it holds nothing back — and the library's
-          // meaning-index panel says it is waiting for budget headroom,
-          // retried each run. The run's report says it too, as before.
+          // build marker — `headroomWaitAt` and a note built from the
+          // refusal's figures, never blockedUntil, so it holds nothing back —
+          // and the library's meaning-index panel says it is waiting for
+          // budget headroom, retried each run. The note is in the third
+          // person ("the payer's … cap"), never the reservation's own
+          // sentence ("your … cap"): every member of the library reads that
+          // panel, not only the payer. The run's report says it too, as before.
           await patchEmbedBuildMarker(lib.id, {
             headroomWaitAt: new Date().toISOString(),
-            headroomNote: String((e as Error)?.message ?? "").slice(0, 300) || undefined,
+            headroomNote: e instanceof GovernedCallError ? headroomWaitNote(e.details) : undefined,
           }, expect);
           record({
             embedded, remaining: -1, outcome: embedded > 0 ? "advanced" : "blocked",

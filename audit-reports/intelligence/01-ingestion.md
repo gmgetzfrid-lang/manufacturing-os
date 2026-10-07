@@ -379,7 +379,7 @@ Tests: `lib/__tests__/entityKindGuard.test.ts`, block "the entity-kind inventory
 ## ING-6 · A vision call that fails on a provider error is committed as an empty page and the document still reaches 'ready' — no counter, no flag, no error
 
 - **Severity:** MEDIUM
-- **Status:** RESOLVED
+- **Status:** OPEN
 - **Assigned:** intelligence I-22 KEYLESS TEXT-ONLY RECORD (new; the DRAWING FACTS count and the keyless first-index limb) — by the integrator, 2026-10-02, at the I-06b merge (DEC-31; fleet plan `audit-reports/fleet-plans/intelligence.json`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledgeIngest.ts:186-197`, `lib/knowledgeIngest.ts:180-185`, `lib/knowledgeIngest.ts:315`, `lib/knowledgeIngest.ts:431-437`
@@ -514,31 +514,34 @@ The engine's park message still reads "ask an admin to accept the partial index"
 
 **Integrator note (2026-10-07, DEC-90 A18).** *Ratified by the integrator under the user's delegation, 2026-10-07 (DEC-90): keyless completion is text-only WITH the marker on the row and the library surface — honest about data quality without parking a keyless org's work; a marker-less ruling is not taken (`ING-13` done-when 2: "A record or a message alone does not close this"); intelligence I-22 as planned.* Status stays OPEN: the keyless first-index limb and the DRAWING FACTS limb close on I-22's merge and the paste of its migration, with `ING-13`'s done-when 2.
 
-**Resolution (2026-10-07, intelligence Round G).** Package I-22 KEYLESS TEXT-ONLY RECORD (commits `81aa658`, `66ba7b4`), on base `6797c48`. It closes the two limbs the I-06b merge left here.
+**Resolution (2026-10-07, intelligence Round G).** Package I-22 KEYLESS TEXT-ONLY RECORD (commits `81aa658`, `66ba7b4`; fix pass on the same branch), on base `6797c48`. Its code lands the two limbs the I-06b merge left here.
+
+*Status stays OPEN, as the integrator's 2026-10-07 note above says: the code has landed (`81aa658`/`66ba7b4`, plus the fix pass), and the finding closes at I-22's merge and the paste of `20261186`. The integrator sets RESOLVED then.*
 
 - **(a) The third criterion: DRAWING FACTS state how many pages AI vision could not read.**
   - Reproduced first (DEC-29). On `6797c48` the facts read `id, name, library_id, vision_pages` (`app/api/knowledge/ask/route.ts:1625`) and say nothing about unread pages. The rules said "TRUST them for counts and totals" whenever no sheet was AI-transcribed (`:1772`), even with pages waiting on AI vision. The new tests in `lib/__tests__/intelRoundGKeylessAskFacts.test.ts` fail against the base route: all five that look for the line, and the read check.
-  - The fix, in the same route: a read of its own over the same libraries, `id, vision_failed_pages, vision_keyless_pages` (`:1668`). It is filtered to exactly the admitted sheets the facts count (`docsList`; KACL-4 unchanged), and the sheets' own read is untouched (I-03's tests pin its columns and its fail-closed path).
+  - The fix, in the same route: a read of its own over the same libraries, `id, vision_failed_pages, vision_keyless_pages` (`:1669`). It is filtered to exactly the admitted sheets the facts count (`docsList`; KACL-4 unchanged), and the sheets' own read is untouched (I-03's tests pin its columns and its fail-closed path).
   - It feeds a facts line (`visionUnreadFactsLine`, `lib/knowledgeKeyless.ts`), as plain document data: "- Pages AI vision could not read: N (on M of K sheets) — F are waiting for an AI vision read or were accepted unread; K were indexed from their text layer only because no AI key was available. The tags and text on those pages may be missing."
-  - While any page is unread, `trusted` is false (`:1799`). The rules add `VISION_UNREAD_RULE`: a count over those sheets is a floor, and a next free number may be in use on one of them (`:1879`). The transcription hedge still applies when sheets were AI-read.
+  - While any page is unread, `trusted` is false (`:1800`). The rules add `VISION_UNREAD_RULE`: a count over those sheets is a floor, and a next free number may be in use on one of them (`:1883`). The transcription hedge still applies when sheets were AI-read.
   - Database states:
     - Without `20261186` (42703 / PGRST204 naming the column), the failed pages alone are stated.
     - Without `20261122` as well, nothing is stated and the prompt is today's, byte for byte (tested).
-    - Any other failure of that read is stated as "unknown — the count could not be read this time" and is never taken as none; the facts still ride.
+    - Any other failure of that read is stated as "unknown — the count could not be read this time" and is never taken as none; the facts still ride. `trusted` is false. The rules then add `VISION_UNREAD_UNKNOWN_RULE` (whether every page was read by AI vision could not be checked, so a count over these sheets is a floor) and never `VISION_UNREAD_RULE`, because the app does not know that any page went unread (fix pass, `:1883`).
   - I-03 / I-20 limbs of the route are unchanged: the fence, the GOV-3/4/6/11 gates, the partial and cut-off marks, the ACL roster, the history.
 - **(b) The keyless first-index limb.** It is the same keyless text-only path as `ING-13`'s remainder, and DEC-58 as ruled (DEC-90 A18) settles it the same way: text-only, with the marker. A first index with no AI key completes as before, never held. The engine counts each page it committed from its text layer where a batch with a key would read it with AI vision (`knowledge_documents.vision_keyless_pages`, `20261186`; see `ING-13`'s Resolution). The library page says "N pages indexed from their text layer only (no AI key)", and the facts above count those pages.
   - Test: `intelRoundGKeylessTextOnly.test.ts` "ING-6 keyless first-index limb …": `ready`, `vision_failed_pages: []`, `empty_pages: 1`, `vision_keyless_pages: 1`, no vision call. It fails against the base engine.
 
-Tests: `lib/__tests__/intelRoundGKeylessAskFacts.test.ts` (10 cases):
+Tests: `lib/__tests__/intelRoundGKeylessAskFacts.test.ts` (12 cases):
 - the facts line with both counts, and the rules without TRUST;
 - AI-transcribed sheets too (both hedges);
 - an accepted partial index's unread pages;
 - no `20261186`;
-- an unreadable count;
+- an unreadable count: the facts say "unknown", and the rules say only that it could not be checked (`VISION_UNREAD_UNKNOWN_RULE`), never that pages went unread (fix pass);
+- a known non-zero count keeps `VISION_UNREAD_RULE` and never the could-not-check rule (fix pass);
 - REGRESSION: every page read, no `20261186`, and no `20261122` all produce the same prompt, which says TRUST, as before; the sheets' own read is untouched;
-- the shared wording.
+- the shared wording, including the GOV-5 residual's third-person headroom note (`headroomWaitNote`).
 
-Each case was mutation-checked: removing the facts line fails five cases, and keeping `trusted` as before fails two. Also `lib/__tests__/intelRoundGKeylessLibrarySurface.test.ts` and `intelRoundGKeylessMigration.test.ts` (see `ING-13`).
+Each case was mutation-checked: removing the facts line fails five cases, and keeping `trusted` as before fails two. Appending `VISION_UNREAD_RULE` for an unknown count fails the unreadable-count case (fix pass). Also `lib/__tests__/intelRoundGKeylessLibrarySurface.test.ts` and `intelRoundGKeylessMigration.test.ts` (see `ING-13`).
 
 **Done-when.**
 - ✓ Failed or rejected vision pages are recorded per document and surfaced (I-02b, as recorded above). A page committed text-only with no AI key is now recorded too (`vision_keyless_pages`) and surfaced on the same row.
@@ -1063,7 +1066,7 @@ Test: `lib/__tests__/intelRoundGDrawingRoutes.test.ts`, block "ING-12 — the li
 ## ING-13 · Nothing server-side stops a keyless table-aware re-index, or a keyless batch committing a regenerated document's AI-vision pages text-only as if complete — the library page's own key check is the only guard, and the client reads the re-index's leftovers out of free text
 
 - **Severity:** MEDIUM
-- **Status:** RESOLVED
+- **Status:** OPEN
 - **Assigned:** intelligence I-22 KEYLESS TEXT-ONLY RECORD (new; done-when 2 for a regenerated document whose last generation was keyless) — by the integrator, 2026-10-02, at the I-06b merge (DEC-31).
 - **Verification:** CONFIRMED (reproduced 2026-10-01 at HEAD `1363b8d` through the ingest route, the real engine and the in-memory database; see Evidence)
 - **Locations:** `app/api/knowledge/ingest/route.ts:396-445`, `app/api/knowledge/ingest/route.ts:164-197`, `lib/knowledgeIngest.ts:1295-1349`, `lib/knowledgeIngest.ts:802-841`, `lib/knowledgeIngest.ts:2064-2094`, `lib/knowledge.ts:755-800`, `app/(protected)/knowledge/[id]/page.tsx:1652-1687`, `components/providers/KnowledgeIndexIndicator.tsx:104-157`
@@ -1148,7 +1151,9 @@ Tests:
 
 **Integrator note (2026-10-07, DEC-90 A18).** *Ratified by the integrator under the user's delegation, 2026-10-07 (DEC-90): keyless completion is text-only WITH the marker on the row and the library surface — honest about data quality without parking a keyless org's work; a marker-less ruling is not taken (`ING-13` done-when 2: "A record or a message alone does not close this"); intelligence I-22 as planned.* DEC-58 carries a Landed line recording it. Status stays OPEN: done-when 2 ("at the least it leaves a marker on the row, set by the engine and pinned by a test — a keyless-commit flag or count …") closes on I-22's merge and the paste of its migration, as planned. I-22's decisionsNeeded entry is resolved.
 
-**Resolution (2026-10-07, intelligence Round G).** Package I-22 KEYLESS TEXT-ONLY RECORD (commits `81aa658`, `66ba7b4`), on base `6797c48` (I-18 merged). DEC-58 as ruled under DEC-90 A18: keyless completion is text-only WITH a marker; a keyless org's page is never held.
+**Resolution (2026-10-07, intelligence Round G).** Package I-22 KEYLESS TEXT-ONLY RECORD (commits `81aa658`, `66ba7b4`; fix pass on the same branch), on base `6797c48` (I-18 merged). DEC-58 as ruled under DEC-90 A18: keyless completion is text-only WITH a marker; a keyless org's page is never held.
+
+*Status stays OPEN, as the integrator's 2026-10-07 note above says: the code has landed (`81aa658`/`66ba7b4`), and done-when 2 closes at I-22's merge and the paste of `20261186`. The integrator sets RESOLVED then.*
 
 Reproduced first (DEC-29) on `6797c48`, with the real engine and the in-memory database. The new tests in `lib/__tests__/intelRoundGKeylessTextOnly.test.ts` were run against the base `lib/knowledgeIngest.ts`, and all eight cases that pin the count fail (the five regression cases and the held-page case pass on the base, as they must):
 - Rev-up of a document last indexed keyless: the reset wrote `vision_owed_pages: []`. The keyless batch then left `{ status: "ready", vision_pages: 0, vision_failed_pages: [], empty_pages: 2, error: null }` with no marker.
@@ -1205,7 +1210,7 @@ Tests:
 
 **Done-when.**
 - ✓ (1) Unchanged: I-06b's gate (`reindex()`'s `assertAiGates` 409).
-- ✓ (2) A keyless batch of a regenerated document no longer commits the pages it needed AI vision for as if complete, with no trace. It leaves a marker on the row, set by the engine and pinned by tests: a keyless-commit count (`vision_keyless_pages`), over both cases the I-06b fix pass 3 Partial named (a rev-up, and a same-file reset, of a document whose last generation was keyless). A regenerated document that owes AI vision is still held as I-06b built it. Per DEC-58 as ruled (DEC-90 A18), the page is marked, not held. The marker reaches the row once `20261186` is pasted; until then the engine runs exactly as before (Pending migration below).
+- ✓ (2), in code; the record closes at merge and paste. A keyless batch of a regenerated document no longer commits the pages it needed AI vision for as if complete, with no trace. It leaves a marker on the row, set by the engine and pinned by tests: a keyless-commit count (`vision_keyless_pages`), over both cases the I-06b fix pass 3 Partial named (a rev-up, and a same-file reset, of a document whose last generation was keyless). A regenerated document that owes AI vision is still held as I-06b built it. Per DEC-58 as ruled (DEC-90 A18), the page is marked, not held. The marker reaches the row once `20261186` is pasted; until then the engine runs exactly as before (Pending migration below).
 - ✓ (3) Unchanged: structured leftovers.
 - ✓ (4) Unchanged: the drain's `fileBehind` tests.
 
