@@ -19,6 +19,16 @@ export interface LineComponent {
   position?: number;
 }
 
+/** Where an edge comes from (GAP-315 / FLOW-14). The answer says which, per
+ *  step, because the two are not the same kind of fact:
+ *   - "confirmed_flow": a CONFIRMED row of the plant's process map
+ *     (process_flows, lib/processFlows `flowsToLineEdges`) — a person drew
+ *     it or confirmed it, and it is directional: `from` feeds `to`;
+ *   - "same_sheet": two tags read off the same drawing page, or a tag and an
+ *     off-page continuation reference on it (lib/orchestrator/tools
+ *     `loadLineGraph`) — sheet-level co-occurrence, not a drawn line. */
+export type LineEdgeBasis = "confirmed_flow" | "same_sheet";
+
 /** One connection between two pieces of equipment. */
 export interface LineEdge {
   lineId: string;            // "L-44-098"
@@ -31,6 +41,12 @@ export interface LineEdge {
   /** TRUE when this edge crosses a sheet boundary via an off-page connector.
    *  A trace that silently walks off-page reads as one drawing when it isn't. */
   offPage?: boolean;
+  /** Where the edge comes from (see LineEdgeBasis). Absent when the caller
+   *  did not say — the pure tests, and any caller before GAP-315. */
+  basis?: LineEdgeBasis;
+  /** The stream, in the plant's words ("crude feed") — a confirmed flow's
+   *  label, when it has one. */
+  label?: string;
 }
 
 export interface TraceStep {
@@ -40,6 +56,8 @@ export interface TraceStep {
   drawingId?: string;
   offPage: boolean;
   components: LineComponent[];
+  /** The edge's basis, carried when the edge names one (GAP-315). */
+  basis?: LineEdgeBasis;
 }
 
 export interface TraceResult {
@@ -172,6 +190,7 @@ export function tracePath(
       drawingId: p.edge.drawingId,
       offPage: !!p.edge.offPage,
       components: orderComponents(p.edge, p.reversed),
+      ...(p.edge.basis ? { basis: p.edge.basis } : {}),
     });
     path.push(p.from);
     cursor = p.from;
@@ -190,11 +209,18 @@ export function tracePath(
  * The isolation question: "if I blind this exchanger, what am I touching?"
  * Returns tags with the hop count so a reader can tell immediate neighbours
  * from things three runs away.
+ *
+ * `direction` (GAP-315) follows each edge only its stored way: "downstream"
+ * from `from` to `to` (what this feeds), "upstream" from `to` to `from`
+ * (what feeds this). It means something only for directional edges — the
+ * confirmed process flows — so a caller passes only those. Omitted, the walk
+ * is undirected, exactly as before.
  */
 export function traceNeighbourhood(
   edges: readonly LineEdge[],
   startTag: string,
   hops = 2,
+  direction?: "downstream" | "upstream",
 ): Array<{ tag: string; hops: number }> {
   const start = normalizeTag(startTag);
   const adj = buildAdjacency(edges);
@@ -206,6 +232,8 @@ export function traceNeighbourhood(
     const next: string[] = [];
     for (const node of frontier) {
       for (const link of adj[node] ?? []) {
+        if (direction === "downstream" && link.reversed) continue;
+        if (direction === "upstream" && !link.reversed) continue;
         if (distance.has(link.to)) continue;
         distance.set(link.to, d);
         next.push(link.to);

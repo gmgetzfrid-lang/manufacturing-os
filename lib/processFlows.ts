@@ -15,8 +15,10 @@
 // Every write here is CHECKED: a refusal (or an RLS filter that changed no
 // row) is an error the person reads, never a silent success.
 
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import { LOW_CONFIDENCE } from "@/lib/flowsRead";
+import { normalizeTag, type LineEdge } from "@/lib/pidTrace";
 
 export type FlowEndpointKind = "asset" | "unit";
 export type FlowStatus = "proposed" | "confirmed" | "dismissed";
@@ -305,4 +307,155 @@ export function isLowConfidence(f: Pick<ProcessFlow, "evidence" | "origin">): bo
   if (f.origin !== "ai") return false;
   const c = flowConfidence(f);
   return c === null || c < LOW_CONFIDENCE;
+}
+
+// ── Confirmed topology as a reasoning input (GAP-315 / FLOW-14) ─────────────
+//
+// DEC-80 item 2: only CONFIRMED flows are ever consumed by anything that
+// reasons. A proposal (the PFD reader's, or a member's hand-drawn flow
+// waiting on a controller) and a dismissed row never reach a trace. And
+// nothing derived from a flow drives a hold or an MOC: the one consumer is
+// the orchestrator's read-only line trace (lib/orchestrator/tools
+// `loadLineGraph`), which answers a question and writes nothing.
+//
+// What "confirmed" means is the row's status column (process_flows.status,
+// 20261017: 'proposed' | 'confirmed' | 'dismissed'). Since 20261155
+// (DEC-80 item 1) a confirmed row is one the controller tier drew or
+// decided. 20261155 is not pasted everywhere yet (MIGRATION-PASTE-ORDER, row
+// 118, Pending on 2026-10-07): until it is, a confirmed row is one any active
+// member drew by hand (20261017's insert lands it confirmed) or confirmed
+// (the author or a controller, under 20261017's update policy). The paste
+// keeps every row confirmed before it as it is. So, in both worlds, a
+// confirmed flow is a PERSON's record on the process map, never an AI
+// proposal — and that is all the trace says about it.
+
+/** What flowsToLineEdges reads with. The browser client by default (RLS: an
+ *  active member reads the org's flows); the orchestrator passes the service
+ *  role, which every read here scopes to the org explicitly. */
+export type FlowReadClient = Pick<SupabaseClient, "from">;
+
+/** Confirmed flows are read in keyset pages of this size, up to the ceiling. */
+export const FLOW_EDGE_PAGE = 1000;
+export const FLOW_EDGE_CEILING = FLOW_READ_CAP;
+
+export interface FlowLineEdges {
+  /** One edge per confirmed flow whose two ends resolve (basis "confirmed_flow"). */
+  edges: LineEdge[];
+  /** "missing": a flow table or column this read needs is not on this
+   *  database (PGRST205 / 42P01, or 42703 / PGRST204 naming a column) — the
+   *  caller traces exactly as it did before flows were an input. "error": a
+   *  read failed; no flow is used and the caller says so (never "no flows"). */
+  state: "ok" | "missing" | "error";
+  error?: string;
+  /** More confirmed flows than FLOW_EDGE_CEILING exist; the rest (by id) were not read. */
+  truncated: boolean;
+  /** Confirmed rows left out because an end does not resolve: equipment that
+   *  is deleted or archived (the graph hides an archived end's flows too —
+   *  FLOW-6), an asset ref that is not a registry id, a unit the Site
+   *  Codebook does not hold (AREA-10), or a flow from an endpoint to itself. */
+  skipped: number;
+}
+
+type FlowEdgeRow = {
+  id: string; status: string;
+  from_kind: string; from_ref: string; to_kind: string; to_ref: string;
+  label: string | null; source_document_id: string | null;
+};
+
+/** A flow read failed only because the database predates what it reads. */
+const flowSchemaMissing = (e: { code?: string; message?: string }) =>
+  missingTable(e) || e.code === "42703" || e.code === "PGRST204";
+
+/** The line-trace node a unit end becomes: "UNIT <code>", tag-normalised
+ *  ("UNIT20"), so a codebook unit code can never be mistaken for an equipment
+ *  tag or an off-page reference that happens to read "20". */
+export function unitTraceTag(code: string): string {
+  return normalizeTag(`UNIT ${code}`);
+}
+
+/**
+ * GAP-315: the org's CONFIRMED process flows as line-trace edges
+ * (lib/pidTrace LineEdge[]). Every edge names its basis ("confirmed_flow");
+ * `lineId` is the flow's id, `drawingId` the knowledge document it was read
+ * from (absent for a hand-drawn flow), `label` the stream. An asset end
+ * resolves to its registry tag, a unit end to its Site Codebook unit, both
+ * tag-normalised (pidTrace normalizeTag) so they meet the sheet graph's tags.
+ * The read is the status column, `confirmed` only — in the query and again on
+ * every row returned — in keyset pages to FLOW_EDGE_CEILING.
+ */
+export async function flowsToLineEdges(orgId: string, client: FlowReadClient = supabase): Promise<FlowLineEdges> {
+  const none = (state: "missing" | "error", error?: string): FlowLineEdges =>
+    ({ edges: [], state, ...(error ? { error } : {}), truncated: false, skipped: 0 });
+  const failed = (e: { code?: string; message?: string }) =>
+    (flowSchemaMissing(e) ? none("missing") : none("error", e.message || "the read failed"));
+
+  const rows: FlowEdgeRow[] = [];
+  let truncated = false;
+  let after: string | null = null;
+  for (;;) {
+    let q = client.from("process_flows")
+      .select("id, status, from_kind, from_ref, to_kind, to_ref, label, source_document_id")
+      .eq("org_id", orgId)
+      .eq("status", "confirmed");
+    if (after) q = q.gt("id", after);
+    const { data, error } = await q.order("id", { ascending: true }).limit(FLOW_EDGE_PAGE);
+    if (error) return failed(error);
+    const batch = (data ?? []) as FlowEdgeRow[];
+    // A short page is not taken as the last (the project's max-rows may sit
+    // below FLOW_EDGE_PAGE): the read ends on an empty page.
+    if (batch.length === 0) break;
+    // DEC-80 item 2, belt and braces: a row that is not confirmed never
+    // becomes an edge, whatever the filter above returned.
+    rows.push(...batch.filter((r) => r.status === "confirmed"));
+    if (rows.length > FLOW_EDGE_CEILING) { truncated = true; rows.length = FLOW_EDGE_CEILING; break; }
+    after = batch[batch.length - 1].id;
+  }
+  if (rows.length === 0) return { edges: [], state: "ok", truncated, skipped: 0 };
+
+  // Asset ends → live registry tags (an archived or deleted asset resolves to nothing).
+  const tagOf = new Map<string, string>();
+  const assetRefs = [...new Set(rows.flatMap((r) => [
+    r.from_kind === "asset" ? r.from_ref : null, r.to_kind === "asset" ? r.to_ref : null,
+  ]).filter((ref): ref is string => !!ref && UUID.test(ref)))];
+  for (let i = 0; i < assetRefs.length; i += 200) {
+    const { data, error } = await client.from("assets").select("id, tag, archived")
+      .eq("org_id", orgId).in("id", assetRefs.slice(i, i + 200));
+    if (error) return failed(error);
+    for (const a of (data ?? []) as Array<{ id: string; tag: string | null; archived: boolean | null }>) {
+      const key = a.archived ? "" : normalizeTag(a.tag ?? "");
+      if (key) tagOf.set(a.id, key);
+    }
+  }
+  // Unit ends → Site Codebook units of the org (a code it does not hold resolves to nothing).
+  const units = new Set<string>();
+  const unitRefs = [...new Set(rows.flatMap((r) => [
+    r.from_kind === "unit" ? r.from_ref : null, r.to_kind === "unit" ? r.to_ref : null,
+  ]).filter((ref): ref is string => !!ref))];
+  for (let i = 0; i < unitRefs.length; i += 200) {
+    const { data, error } = await client.from("codebook_entries").select("code")
+      .eq("org_id", orgId).eq("kind", "unit").in("code", unitRefs.slice(i, i + 200));
+    if (error) return failed(error);
+    for (const u of (data ?? []) as Array<{ code: string }>) units.add(u.code);
+  }
+
+  const endKey = (kind: string, ref: string): string | null => {
+    if (kind === "asset") return tagOf.get(ref) ?? null;
+    if (kind === "unit") return units.has(ref) ? unitTraceTag(ref) : null;
+    return null;
+  };
+  const edges: LineEdge[] = [];
+  let skipped = 0;
+  for (const r of rows) {
+    const from = endKey(r.from_kind, r.from_ref);
+    const to = endKey(r.to_kind, r.to_ref);
+    if (!from || !to || from === to) { skipped += 1; continue; }
+    const label = (r.label ?? "").trim();
+    edges.push({
+      lineId: r.id, from, to,
+      ...(r.source_document_id ? { drawingId: r.source_document_id } : {}),
+      basis: "confirmed_flow",
+      ...(label ? { label } : {}),
+    });
+  }
+  return { edges, state: "ok", truncated, skipped };
 }

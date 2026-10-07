@@ -28,14 +28,19 @@ const state = vi.hoisted(() => ({
 
 function chain(table: string) {
   const c: Record<string, unknown> = {};
+  // A paged read (`.range(from, to)`) gets its window, as PostgREST answers
+  // it — the trace's tag-index read pages to an empty window (ING-10 / I-21).
+  let win: { from: number; to: number } | null = null;
   const handler: ProxyHandler<Record<string, unknown>> = {
     get(_t, prop: string) {
       if (prop === "then") {
+        const rows = state.lists[table] ?? [];
         return (resolve: (v: unknown) => void) => resolve(state.errors[table]
           ? { data: null, error: state.errors[table] }
-          : { data: state.lists[table] ?? [], error: null });
+          : { data: win ? rows.slice(win.from, win.to + 1) : rows, error: null });
       }
       return (...args: unknown[]) => {
+        if (prop === "range") win = { from: Number(args[0]), to: Number(args[1]) };
         if (prop === "or") state.orCalls.push({ table, list: String(args[0]) });
         if (prop === "insert") state.inserts.push({ table, row: args[0] as Record<string, unknown> });
         if (prop === "maybeSingle") return Promise.resolve({ data: state.single[table] ?? null, error: null });
