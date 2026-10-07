@@ -11,6 +11,7 @@ import { writeActivity } from "@/lib/projects";
 import { logAuditAction } from "@/lib/audit";
 import type { MarkupRequest, MarkupRequestStatus, Timestamp } from "@/types/schema";
 import { postMarkupRef } from "@/lib/activityThread";
+import { emit } from "@/lib/notify/dispatch";
 
 export function rowToMarkupRequest(r: Record<string, unknown>): MarkupRequest {
   return {
@@ -83,6 +84,27 @@ export async function createMarkupRequest(input: CreateMarkupRequestInput): Prom
     });
   }
 
+  // PROD-14: the person asked hears about it — a bell row and an email,
+  // whether or not the document is on a project (the feed entry above is
+  // project-only). They answer it from /inbox ("Markup requests for you").
+  // Best-effort: the request is already recorded.
+  try {
+    const who = input.actorEmail || "A colleague";
+    await emit({
+      orgId: input.orgId,
+      category: "assignment",
+      kind: "markup_request",
+      title: `${who} asked for your markups`,
+      body: input.message.trim(),
+      link: "/inbox",
+      resource: { type: "document", id: input.documentId },
+      actorUserId: input.actorUserId,
+      actorName: input.actorEmail || undefined,
+      audience: { involved: [input.requestedFromUserId] },
+      metadata: { markupRequestId: data.id, requestStatus: "open" },
+    });
+  } catch (e) { console.warn("[markupRequests] request notice failed (non-blocking)", e); }
+
   await logAuditAction({
     action: "MARKUP_REQUESTED",
     resourceId: input.documentId,
@@ -125,7 +147,7 @@ export async function resolveMarkupRequest(input: ResolveMarkupRequestInput): Pr
       resolved_at: now,
     })
     .eq("id", input.markupRequestId)
-    .select("document_id")
+    .select("document_id, requested_by_user_id, requested_from_user_id")
     .maybeSingle();
   if (error) throw new Error(error.message);
   // A refused update (RLS) returns no row — never report "shared" for it.
@@ -147,6 +169,35 @@ export async function resolveMarkupRequest(input: ResolveMarkupRequestInput): Pr
       });
     } catch (e) { console.warn("[markupRequests] markup_ref post failed (non-blocking)", e); }
   }
+
+  // PROD-14 dw3: the other side of the request hears the answer — the
+  // requester when the person asked shares or declines, the person asked
+  // when the requester cancels (the actor is dropped by the dispatcher).
+  // Best-effort: the resolution is already recorded.
+  try {
+    const row = updated as { document_id?: string | null; requested_by_user_id?: string | null; requested_from_user_id?: string | null };
+    const who = input.actorEmail || "A colleague";
+    const verb = input.status === "shared" ? "shared their markups" : input.status === "declined" ? "declined your markup request" : "cancelled their markup request";
+    if (row.document_id) {
+      // The answer opens the document (a share is noted on its activity
+      // thread); without a readable library the row carries no link.
+      const { data: doc } = await supabase.from("documents").select("library_id").eq("id", row.document_id).maybeSingle();
+      const libraryId = (doc as { library_id?: string | null } | null)?.library_id ?? null;
+      await emit({
+        orgId: input.orgId,
+        category: "status",
+        kind: "markup_request",
+        title: `${who} ${verb}`,
+        body: input.response?.trim() || undefined,
+        link: libraryId ? `/documents/${libraryId}?doc=${row.document_id}` : undefined,
+        resource: { type: "document", id: row.document_id },
+        actorUserId: input.actorUserId,
+        actorName: input.actorEmail || undefined,
+        audience: { involved: [row.requested_by_user_id, row.requested_from_user_id].filter((u): u is string => !!u) },
+        metadata: { markupRequestId: input.markupRequestId, requestStatus: input.status },
+      });
+    }
+  } catch (e) { console.warn("[markupRequests] resolution notice failed (non-blocking)", e); }
 
   if (input.projectId) {
     await writeActivity({
