@@ -145,7 +145,7 @@ technical review is not blocked on their answering it.
 ## FRIC-3 · The intake form demands a unit before it will accept the request
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** friction / adoption
 - **Locations:**
@@ -186,6 +186,15 @@ document.
 1. A failed submit tells the user which field is missing and moves focus to it.
 2. Unit is derived from the source document where one is attached.
 3. All three creation paths satisfy the same field contract (`LIFE-9`).
+
+**Resolution (2026-10-07, drafting-flow Round G).** DF-P2 CREATE, on `DEC-44 (DF-P2)` item 1: the unit is **optional** at intake, with an explicit answer for "I don't know". The form's unit select opens on "Unit unknown — triage assigns" (`lib/ticketCreate.ts` `UNIT_UNKNOWN_LABEL`) whenever there is more than one unit — no silent first-option pre-selection (the verifier's quieter failure) — and pre-selects the only one when there is exactly one. With no unit list the box is optional and says it is a setup gap. The route records the unknown explicitly (`unit: NULL`, `metadata.unit_unknown: true`) and never refuses for it.
+
+**Done-when.**
+- ✓ (1) A failed submit says which field and puts the cursor there: a route refusal carries its `field`, and the form focuses it (`focusField`); a required custom field is named and focused before any upload; a title or description of only spaces is named and focused (no bare `return` left). `lib/__tests__/requestFormCreate.test.ts`, "a refused submit names the field and moves the cursor to it", "a title of only spaces is named and focused", and the EDGE-13 required-field case.
+- ✓ (2) Unit is derived from the source document where one is attached — server-side, from the document's `unit_code` or its metadata (`unitOfDocumentMetadata`), when the requester gave none, and resolved against the list (`lib/__tests__/ticketCreateRoute.test.ts`, "no unit given but a source document names one: derived and resolved to the list's value").
+- ✓ (3) All three creation paths satisfy the same field contract (`FRIC-8`).
+
+**Scope / residual.** A triage action that sets the unit on a "Unit unknown" ticket is `DCW-7`'s residual.
 
 ---
 
@@ -360,7 +369,7 @@ role/status combination, ideally because attention is derived from the engine.
 ## FRIC-8 · Three ticket-creation paths, three different field contracts
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** data quality / friction
 - **Re-verified:** hardening pass — **SURVIVES**. Three creation paths were counted directly during the drafting-flow audit and re-counted here: `requests/new/page.tsx`, `lib/transitionIn.ts` and `components/documents/CheckInPanel.tsx`. Each assembles its own field set.
@@ -376,6 +385,12 @@ role/status combination, ideally because attention is derived from the engine.
 The highest-priority ticket kind in the system is the one that can never be late.
 
 **Done when.** See `LIFE-9`.
+
+**Resolution (2026-10-07, drafting-flow Round G).** DF-P2 CREATE. One contract, one path. `lib/ticketCreate.ts` is the field contract every creator posts (`TicketCreateInput`: title, description, request type, priority, unit, target date, requester role, custom categories, source documents, attachments, and an `origin` that is `portal`, `checkin` or `intake_collision`), and `app/api/tickets/create/route.ts` is the only writer: it stamps the same row for every origin — `PENDING_ASSIGNMENT`, the SLA clock (`target_completion_at`, the form's date or `defaultSlaTargetDate`), the requester as watcher, the opening history line, the canonical source reference(s) and `unit` (resolved, derived from the source document, or the explicit "Unit unknown — triage assigns", `DEC-44 (DF-P2)` item 1). A collision ticket now has a due date and its flagger as a watcher, as `LIFE-9` required, from the same code as the other two.
+
+**Done-when.** `LIFE-9`'s (roles-and-permissions, RESOLVED 2026-09-02) — re-checked on the one path: ✓ (1) all three origins produce the same required-field set (`lib/__tests__/ticketCreateRoute.test.ts`, "REGRESSION — each door's legitimate flow files the same ticket": the request form, a check-in and an intake collision); ✓ (2) a collision ticket has a target date and enrols its flagger; ✓ (3) a check-in or collision ticket carries `unit` whenever its source document names one, and the explicit unknown (`metadata.unit_unknown`) when it does not — sortable and searchable like any other (there is no unit facet filter, as the verifier noted).
+
+**Scope / residual.** Who resolves a "Unit unknown" ticket at triage is `DCW-7`'s residual.
 
 ---
 

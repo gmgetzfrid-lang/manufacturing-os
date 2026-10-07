@@ -313,6 +313,15 @@ supabase/schema.sql:402 —
 - [ ] Either `unit` is made NOT NULL in the DB or the TypeScript type is relaxed to `unit?: string | null` so the two agree
 - [ ] Row mappers stop using `as string` for columns that can be null
 
+**Partial (2026-10-07, drafting-flow Round G).** DF-P2 CREATE closes done-when 1; done-whens 2 and 3 are type and row-mapper changes in files other packages own.
+
+**Done-when.**
+- ✓ (1) Every ticket the check-in and the intake collision create carries a unit decision, made by `app/api/tickets/create/route.ts` for every origin: the source document's unit (`documents.unit_code`, else `unitOfDocumentMetadata(metadata)`), resolved against the workspace's unit list where there is one; with none known, `unit` is NULL with `metadata.unit_unknown: true` — the explicit "Unit unknown — triage assigns" (`DEC-44 (DF-P2)` item 1) — and never `""`. A derived unit that is not on the list is kept and marked `metadata.unit_unlisted`. `lib/__tests__/ticketCreateRoute.test.ts`, "FRIC-3 / DCW-7 — the unit is optional, explicit when unknown, resolved against the list".
+- ✗ (2) `Ticket.unit` is still `unit: string` (`types/schema.ts`) while the column is nullable and NULL is now a designed value. Not in DF-P2's files.
+- ✗ (3) The row mappers still cast `row.unit as string` (`lib/ticketTransitions.ts` `rowToTicket`, the request pages' `fromRow`). Not in DF-P2's files.
+
+**Scope / residual.** (2) and `rowToTicket` → **DF-P4** (it edits `types/schema.ts` and `rowToTicket` for `PERS-5`); the pages' `fromRow` → **DF-P9**. Proposed in `99-fix-sequencing.md`, "Hand-offs from DF-P2".
+
 ---
 
 <a id="pers-7"></a>

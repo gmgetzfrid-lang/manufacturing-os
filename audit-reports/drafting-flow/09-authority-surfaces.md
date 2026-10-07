@@ -187,6 +187,15 @@ lib/workflow.ts:200 — `          if (needsEngineerApproval && !isEng) {`
 
 **Scope / residual.** Server-side `requester_name` (from `org_members.display_name`) → **DF-P2**, whose create route inserts under the service role and stamps the requester identity itself (fleet plan DF-P2: "requester = caller … REPLICATING 20261038's ticket_insert_integrity checks"). `requester_name` is display-only and denormalised by design (`EDGE-11`); it carries no authority. Whether the gate should key on who asked at all is `TIER-1` (DF-P6).
 
+**Partial (2026-10-07, drafting-flow Round G).** DF-P2 CREATE — the `requester_name` limb handed to DF-P2. `app/api/tickets/create/route.ts` stamps the whole requester identity from the authenticated membership: `requester_id` = the caller, `requester_email` = the member's email, `requester_role` kept only if the caller holds it (else their headline — `20261038`'s rule, `stampedRequesterRole`), and `requester_name` = `org_members.display_name`, else the email's local part (`stampedRequesterName`, `:394`). No creator sends a name any more.
+
+**Done-when.**
+- ✗ (in part) Every app path stamps all four fields server-side ✓ (`lib/__tests__/ticketCreateRoute.test.ts`, "AUTHZ-3: the requester's name comes from the membership (display name, else the email's local part), never the client"; "a forged role is replaced by the headline…"). But a hand-written PostgREST insert is still possible — `tickets_org_insert` (`20261166`) admits a member's own insert, and `ticket_insert_integrity` does not touch `requester_name` — so a direct insert can still carry a client-chosen name. The name is display-only and carries no authority (`EDGE-11`).
+- ✓ Unchanged (`DEC-16`).
+- ✓ Unchanged.
+
+**Scope / residual.** No app path inserts `tickets` from the browser any more (the route's insert is the only one in `app/`, `components/`, `lib/` and `hooks/`). A narrowing migration after the DF-P2 deploy — drop `tickets_org_insert`, or stamp `requester_name` in `ticket_insert_integrity` from `org_members.display_name` — closes it; no package brief carries it (`99-fix-sequencing.md`, "Hand-offs from DF-P2").
+
 ---
 
 <a id="authz-4"></a>

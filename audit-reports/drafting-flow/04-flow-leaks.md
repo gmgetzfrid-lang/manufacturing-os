@@ -262,7 +262,7 @@ it asks the human to launder it through their filesystem.
 ## LEAK-6 · A check-in interrupted mid-commit orphans the ticket it already created
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** drafting-flow DF-P2 CREATE — by the integrator's records fix at the DF-P0 merge, 2026-10-02. DF-P2 owns the file's one drafting-flow hunk: `components/documents/CheckInPanel.tsx` `createDraftingTicket` → the server create route (fleet plan `audit-reports/fleet-plans/drafting-flow.json`, DF-P2 `files`), deferred until document-control P6 merged — P6 merged before `f1ac550` (`4d755ff`), and no unmerged package in any fleet plan lists the file. The resume lookup sits beside that hunk, and a server create route that resumes by `episodeId` itself closes it. Not yet in DF-P2's brief as a done-when: the integrator adds it (`99-fix-sequencing.md`, "Hand-offs from DF-P0").
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity
@@ -297,6 +297,16 @@ evidence that a discrepancy was reported through that session at all.
 - ✓ (2) As `LIFE-14` records it: the sweep writes `auto_released` only over an empty verdict (`lib/projects.ts:1990-1997`), so it can no longer overwrite a human verdict; the one remaining NULL-outcome path (a session close that never completes) shows as an open session until the sweep records `auto_released` — never a false verdict.
 
 **Scope / residual.** Done-when (1) → **DF-P2** (assigned above): when `CheckInPanel` moves behind the server create route, the create resumes by `metadata.checkin.episodeId` (or the panel blocks on a successful lookup) — the hand-off row DF-P0 already wrote for this file, now with the failing done-when. The owning record, roles-and-permissions `LIFE-14`, carries the same gap (cross-area note there); its own status is that area's to settle.
+
+**Resolution (2026-10-07, drafting-flow Round G).** DF-P2 CREATE. Both halves the Partial asked for.
+- **The panel blocks on a successful lookup.** `components/documents/CheckInPanel.tsx` `lookupResumeTicket` reads the lookup's `{ error }` (and is scoped to this requester); the mount keeps the lookup's promise (`resumeLookupRef`) and the commit **awaits** it — `const ticket = done.ticket ?? (await resumedTicket()) ?? await createDraftingTicket(selected);` (`:399`). `lib/ticketCreateClient.ts` `resumeCheckinTicket` waits for a pending read, makes a failed read once more, and returns the ticket it finds.
+- **The create resumes by episode server-side.** When the read still cannot answer, the panel posts the check-in to `app/api/tickets/create/route.ts`, which looks for an open ticket of this requester carrying `metadata.checkin.episodeId` before it numbers anything (`:307-315`): found → 200 `resumed: true` with that ticket, nothing allocated, inserted or announced, and the new staged files discarded; a lookup error → 503, never a second ticket. A resumed ticket sends no second PSM escalation (`if (res.resumed) return …`).
+
+**Done-when.**
+- ✓ (1) A check-in interrupted after ticket creation and resumed in a new component instance links to the existing ticket — also when the panel's lookup is pending or failed. `lib/__tests__/checkInPanelCreate.test.ts`, "LEAK-6 — the resume read is awaited and its error read": a PENDING read is waited for (nothing filed); a FAILED read is made once more and its ticket reused; a read that fails twice hands over to the route exactly once; a retry after a failed session close reuses the ticket. `lib/__tests__/ticketCreateRoute.test.ts`, "LEAK-6 — a check-in resumes the ticket its episode already filed": the resume, a closed / canceled / other requester's ticket not resumed, and a failed lookup 503 with nothing written. `lib/__tests__/ticketCreateClient.test.ts` pins `resumeCheckinTicket`.
+- ✓ (2) Unchanged: the sweep writes `auto_released` only over an empty verdict.
+
+**Scope / residual.** None. The owning record, roles-and-permissions `LIFE-14`, carries a cross-area note.
 
 ---
 

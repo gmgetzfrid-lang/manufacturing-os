@@ -42,7 +42,7 @@ What the seven lenses did not look at — plus the parts of this flow that are s
 ## EDGE-1 · Every per-user email opt-out is silently ignored for the new-drafting-request notification: queueEmail reads the RECIPIENT's preferences under the SENDER's JWT, and RLS returns nothing
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/notifications.ts:53`, `lib/notifications.ts:59`, `lib/notifications.ts:61`, `lib/notifications.ts:147`, `lib/notify/dispatch.ts:105`, `app/(protected)/requests/new/page.tsx:342`, `supabase/migrations/20260605_rls_policies_new_tables.sql:112`
 - **Re-verified:** hardening pass — **SURVIVES**. `queueEmail` reads `notification_preferences` (`notifications.ts:53`) and tests `prefs?.email_enabled === false` (`:59`) — under the **sender's** session. Own-row RLS means the recipient's row is invisible, `prefs` is null, the `=== false` test is false, and the mail goes out regardless of the opt-out.
@@ -109,6 +109,15 @@ lib/notify/dispatch.ts:105-106
 - [ ] emit()'s email leg resolves preferences with a service-role client on the server, or the requests/new call site is replaced by a server route that does
 - [ ] A test asserts a recipient with email_enabled=false or email_on_assignment=false gets NO row in email_notifications when a different user files a request
 - [ ] The false comment at lib/notify/dispatch.ts:105-106 is deleted or made true
+
+**Resolution (2026-10-07, drafting-flow Round G).** DF-P2 CREATE. The new-drafting-request email is queued on the server. `app/api/tickets/create/route.ts` `announce()` calls `emit()` inside `runWithServerClient(supabaseAdmin, …)` (`:506`), so `queueEmail` asks `email_gate()` (`20261148`, `DEC-74`) as the service role, or — before that paste — its legacy gate reads the **recipient's** `notification_preferences` row under the service role, where it is visible. The request form, `CheckInPanel` and `lib/transitionIn.ts` no longer emit the creation notice at all (`EDGE-8`), so no browser session decides a recipient's preference for it.
+
+**Done-when.**
+- ✓ The `requests/new` call site is replaced by a server route whose `emit()` resolves preferences with a service-role client.
+- ✓ `lib/__tests__/ticketCreateRoute.test.ts`, "EDGE-1 / EDGE-12": before `20261148` (no `email_gate`), a recipient with `email_enabled=false` — and one with `email_on_assignment=false` — gets no `email_notifications` row while their bell row stays; after it, `email_gate`'s answer decides and every call is made as the service role.
+- ✓ The comment at `lib/notify/dispatch.ts:201-202` ("queueEmail already checks notification_preferences … honored automatically") is true on this path now, and for every caller once `20261148` is pasted (`email_gate()` is `SECURITY DEFINER`; notifications N1, `DEC-74`). DF-P2 does not edit `lib/notify/**`.
+
+**Scope / residual.** Every other browser `emit()` producer is the notifications area's (`DELIV-9`, and `email_gate()` after the paste) — the fleet plan's DF-P2 dependency line says so.
 
 ---
 
@@ -441,7 +450,7 @@ vercel.json (only two crons; neither scans tickets)
 ## EDGE-8 · The new-drafting-request fan-out runs in the requester's browser and races a 500 ms redirect — the one ticket transition whose notification is not server-guaranteed
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/requests/new/page.tsx:338-358`, `app/(protected)/requests/new/page.tsx:360-363`, `app/(protected)/requests/new/page.tsx:10`, `app/api/tickets/workflow-action/route.ts:20-25`, `lib/notify/dispatch.ts:78-131`
 - **Re-verified:** hardening pass — **SURVIVES**. `void (async () => { … await emit(…) })()` (`requests/new/page.tsx:338-349`) is fire-and-forget in the browser, racing `setTimeout(() => router.push('/requests'), 500)` (`:361-363`).
@@ -482,6 +491,15 @@ app/api/tickets/workflow-action/route.ts:24-25 (the standard this violates)
 - [ ] Ticket creation posts to a server route that inserts the row AND fans out, in that order, before responding
 - [ ] The client no longer imports emit from lib/notify/dispatch at app/(protected)/requests/new/page.tsx:10
 - [ ] A recipient still receives the request_pending_approval bell row and email when the submitting tab is closed immediately after the response
+
+**Resolution (2026-10-07, drafting-flow Round G).** DF-P2 CREATE. Ticket creation is server-side. `POST /api/tickets/create` (`app/api/tickets/create/route.ts`) validates the one field contract (`lib/ticketCreate.ts` `parseTicketCreateBody`, then membership, request type, required custom fields, unit, attachments and source documents), allocates the number, inserts the row under the service role (`:409`) and announces it — the bell rows awaited and the email rows queued through the typed sink, `emit()` run as the service role (`runWithServerClient(supabaseAdmin, () => emit({ … }))`, `:506`) — all before it answers 201. Only the send-queued kick runs in `after()` (`:431`); the cron drains the queue either way. The request form posts the contract through `lib/ticketCreateClient.ts` `submitTicketCreate` and redirects on the route's answer (`router.push('/requests')`, no timer). `CheckInPanel` and `lib/transitionIn.ts` `flagCollisionToDrafting` post the same contract, so no creator inserts a ticket or announces one from the browser: the only `tickets` insert left in `app/`, `components/`, `lib/` and `hooks/` is the route's.
+
+**Done-when.**
+- ✓ Ticket creation posts to a server route that inserts the row and fans out, in that order, before responding — `lib/__tests__/ticketCreateRoute.test.ts`, "REGRESSION — each door's legitimate flow files the same ticket, now server-side": the `notifications` and `email_notifications` rows exist when the 201 is read.
+- ✓ The request form no longer imports `emit` (nor `resolveTicketRecipients` or `generateTicketNumber`) — census in `lib/__tests__/ticketCreateClient.test.ts`, "the request form no longer imports emit, routes recipients or numbers anything".
+- ✓ A recipient still receives the `request_pending_approval` bell row and email when the submitting tab closes right after the response: both are written before the response, and nothing is left for the tab to do (the same route test reads them with no further client step).
+
+**Scope / residual.** The check-in's PSM escalation for an undocumented field change and its owner-review notice still `emit()` from the browser after the route answers (`components/documents/CheckInPanel.tsx`, the `undocumented` block and the review-requested block). They are not the creation notice — separate `safety` / `review_requested` events (`LIFE-7`) — and DF-P2's brief does not move them; recorded as a proposed hand-off in `99-fix-sequencing.md`, "Hand-offs from DF-P2".
 
 ---
 
@@ -680,7 +698,7 @@ app/api/admin/ticket-shed/route.ts:186-189
 ## EDGE-12 · The 60-second email burst-dedupe in queueEmail can never fire: email_notifications grants INSERT only, so the duplicate-detecting SELECT always returns empty
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/notifications.ts:63-75`, `supabase/migrations/20260605_rls_policies_new_tables.sql:117-124`, `supabase/migrations/20260529_phase_b_notifications.sql:63-64`
 - **Re-verified:** hardening pass — **SURVIVES**, and the migration states the cause in its own comment. The dedupe issues a **SELECT** on `email_notifications` from the client (`notifications.ts:67-72`), while the only policy on that table is `FOR INSERT TO authenticated` (`20260605_rls_policies_new_tables.sql:121-124`) — the comment above it reads *"Client needs INSERT only; reads happen via service role which bypasses RLS."* With no SELECT policy the query returns zero rows every time, so `dupes` is always empty and the 60-second burst guard can never fire.
@@ -722,6 +740,14 @@ CREATE POLICY "email_notif_insert" ON email_notifications
 - [ ] The dedupe runs where it can actually read (server-side with the service role), or is removed along with its comment and the dedupe index is documented as serving the drain only
 - [ ] A test queues the same (recipient, event, resource) twice within 60 s and asserts exactly one email_notifications row
 
+**Resolution (2026-10-07, drafting-flow Round G).** DF-P2 CREATE, for ticket creation. The creation notice's email leg runs where the dedupe can read: `app/api/tickets/create/route.ts` runs `emit()` as the service role (`:506`), so `email_gate()`'s 60-second repeat check (`DEC-74` §6: same recipient, subject and body) or, before `20261148`, the legacy gate's read of `email_notifications` sees the recipient's rows. No browser emit of the creation notice remains (`EDGE-8`).
+
+**Done-when.**
+- ✓ The dedupe runs server-side with the service role on the creation path.
+- ✓ `lib/__tests__/ticketCreateRoute.test.ts`, "the same (recipient, event, resource) email queued twice within 60 s lands once on the server path the route uses": two identical `queueEmail` calls under `runWithServerClient(supabaseAdmin, …)` write one row; a different resource writes a second.
+
+**Scope / residual.** The browser-side dedupe for every other producer is notifications `DELIV-9`'s (fleet plan, DF-P2 `dependsOn`); after `20261148` is pasted `email_gate()` dedupes for every caller.
+
 ---
 
 <a id="edge-13"></a>
@@ -729,7 +755,7 @@ CREATE POLICY "email_notif_insert" ON email_notifications
 ## EDGE-13 · Ticket attachments upload to R2 before required fields are validated and before the row is inserted — a rejected submit strands binaries and burns a request number the register calls 'gap-free'
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/requests/new/page.tsx:215`, `app/(protected)/requests/new/page.tsx:234-249`, `app/(protected)/requests/new/page.tsx:271-286`, `app/(protected)/requests/new/page.tsx:327-332`, `supabase/migrations/20260724_ticket_numbering.sql:4-6`, `lib/storageOrphans.ts:52`
 - **Re-verified:** hardening pass — **SURVIVES**. `generateTicketNumber` is called at `:215` and the R2 uploads run at `:234-243`, both **before** the row insert. A submit rejected after that point strands the binaries and burns the ticket number.
@@ -773,6 +799,20 @@ supabase/migrations/20260724_ticket_numbering.sql:4-6
 - [ ] All client-side validation runs before any upload and before generateTicketNumber
 - [ ] A failed insert either releases/reuses the allocated number, or the 'gap-free' claim in 20260724_ticket_numbering.sql is corrected
 - [ ] A failed submit leaves no unreferenced object in R2, or explicitly deletes what it uploaded
+
+**Resolution (2026-10-07, drafting-flow Round G).** DF-P2 CREATE, on `DEC-44 (DF-P2)` item 2. Validate, then number; never upload before validating.
+- The form runs every check it can make before any file moves: title and description, then the required custom fields (`lib/ticketCreate.ts` `missingRequiredCustomField`, the message and the cursor on the field) — then stages the files.
+- Files are **staged** under the requester's own pending prefix (`orgs/<org>/tickets/pending/<uid>/<batch>/…`, `ticketStagingPrefix` / `ticketStagingFolder`); an upload that fails part-way discards what it staged (`discardStagedFiles` → `DELETE /api/tickets/create`, which deletes only the caller's own staged keys that no ticket names).
+- The route repeats every check — membership, request type, required custom fields (portal only), unit, each staged key (the caller's own, in this org, present in storage: `HeadObject`, a missing object 400, a storage fault 503), the source documents — and only then calls `next_ticket_number` as the caller (`:334`). A refusal before that point deletes the caller's staged keys.
+- A failed insert releases its number by compare-and-set — `update({ next_seq: seq - 1 }).eq("org_id", …).eq("year", …).eq("next_seq", seq)` (`:413-414`) — so the next request reuses it; if another submission already took the next number the gap stays (a number is never handed out twice).
+- After the insert, staged files are re-keyed under the ticket number (`CopyObject`, a compare-and-set of `attachments`, then the originals deleted). A file whose move fails stays on the row at its staged key — referenced, never orphaned.
+
+**Done-when.**
+- ✓ All client-side validation runs before any upload and before a number exists — `lib/__tests__/requestFormCreate.test.ts`, "EDGE-13 — the form's own checks run before any upload" (a required custom field left empty: no upload, nothing posted).
+- ✓ A failed insert releases the allocated number when nothing was handed out after it, and keeps the gap otherwise — `lib/__tests__/ticketCreateRoute.test.ts`, "a failed insert releases its number…" and "…after another submission took the next number keeps the gap"; `lib/ticketNumber.ts`'s header now says so. The `20260724_ticket_numbering.sql` header ("gap-free") is a migration and is not edited: numbers are gap-free except when an insert fails after a concurrent submission took the next number.
+- ✓ A failed submit leaves no unreferenced object: a refused contract deletes the caller's staged keys (`lib/__tests__/ticketCreateRoute.test.ts`, "a missing required custom field: 400 naming the field, no number allocated, the staged file deleted"; "a malformed body … its staged file goes too"); a failed upload discards its batch; a failed move keeps the staged key on the row (`lib/__tests__/ticketCreateRoute.test.ts`, "a staged file whose move fails stays on the row where it was staged").
+
+**Scope / residual.** A tab that closes between staging and the route's answer leaves its staged batch under `tickets/pending/`; `lib/storageOrphans.ts` reclaims it after `MIN_AGE_DAYS`, as before.
 
 ---
 

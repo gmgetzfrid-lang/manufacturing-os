@@ -326,6 +326,14 @@ once `DCW-1` gives tickets a real container reference.
 **Done when.** `unit` resolves against the org's codebook where one exists, and
 the unconfigured case is visibly a setup gap rather than a free-text field.
 
+**Partial (2026-10-07, drafting-flow Round G).** DF-P2 CREATE, on `DEC-44 (DF-P2)` item 1.
+- **Resolved against the list.** `lib/ticketCreate.ts` `unitOptionsFor` takes the configured units, else the Site Codebook's (`codebook_entries`, the form's fallback vocabulary); `resolveUnit` matches a value or a label (case and spacing folded). A request-form unit that is not on the list is refused (400, field `unit`); a unit derived from a source document that is not on the list is kept and marked `metadata.unit_unlisted`. `lib/__tests__/ticketCreateRoute.test.ts`, "the request form's unit must be on the list…", "with no configured units the Site Codebook's are the list".
+- **The unconfigured case.** With no unit list the box is optional and says it is a setup gap ("This workspace has no unit list yet — an admin can add one in Admin → Site Codebook…"), and an empty answer files as the explicit "Unit unknown". The box still takes free text, so a requester who knows the unit can say it.
+
+**Done-when.** ✓ `unit` resolves against the org's codebook (or configured list) where one exists. ✗ (in part) The unconfigured case is visibly a setup gap, but it is still a free-text field: removing it would discard what a requester knows with no list to pick from (`DEC-44 (DF-P2)` item 1 keeps it, reversible in one line). And the "triage assigns" half has no action yet: nothing at triage sets the unit on a "Unit unknown" ticket.
+
+**Scope / residual.** A triage `unit` (on `assign` / `request_eng_review` at `PENDING_ASSIGNMENT`, validated against `unitOptionsFor`, clearing `unit_unknown` / `unit_unlisted`) → proposed **DF-P4**, whose brief already adds a `libraryId` to those actions; the free-text box is the user's to keep or remove. Both in `99-fix-sequencing.md`, "Hand-offs from DF-P2".
+
 ---
 
 ## Verified sound — do not break

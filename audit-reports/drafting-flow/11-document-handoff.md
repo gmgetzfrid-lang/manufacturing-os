@@ -161,6 +161,15 @@ app/(protected)/requests/[id]/page.tsx:649-651 —
 
 **Scope / residual.** The stamp → **DF-P10** (`PHYS-9`); the captured base version id → **DF-P2** (`HAND-7`) — both as the DF-P0 record handed them.
 
+**Partial (2026-10-07, drafting-flow Round G).** DF-P2 CREATE — the base-version limb DF-P0 handed to DF-P2 (`99-fix-sequencing.md`, "Hand-offs from DF-P0"), the same work as `HAND-7`: a new ticket's `metadata.source_document` carries `version_id` captured at creation, `revDrift` compares version ids when both sides carry one, and `SourceDriftBanner` flags a moved source by version id.
+
+**Done-when.**
+- ✓ (in `DEC-22`'s shape) Unchanged (DF-P1).
+- ✗ The stamp (unchanged) → DF-P10.
+- ✗ (in part) A captured base version id now exists and the banner compares it; the ticket page's existing chip (`revDrift(sourceRef.rev, sourceDoc.doc?.rev)`) still passes rev labels until DF-P9 mounts the banner or passes `{ versionId, rev }` sides.
+
+**Scope / residual.** The stamp → **DF-P10** (`PHYS-9`); the page's comparison → **DF-P9** (the banner mount, `HAND-7`).
+
 ---
 
 <a id="hand-4"></a>
@@ -346,6 +355,17 @@ lib/revisions.ts:461 —
 - [ ] `metadata.source_document` captures `current_version_id` at request time alongside the display rev.
 - [ ] The ticket surface compares that captured version against the document's live `current_version_id` and shows a "source revision has moved" banner in the drafting queue and on the ticket.
 - [ ] Approving a deliverable drafted from a superseded base requires an explicit acknowledgement.
+
+**Partial (2026-10-07, drafting-flow Round G).** DF-P2 CREATE.
+- **The captured version.** The canonical shape gains `version_id`: `lib/sourceDocRef.ts` `buildSourceDocumentRef` always writes it (`null` when unknown), and `app/api/tickets/create/route.ts` fills it at request time from the register (`capturedVersion`, `:145-156`): a named version kept only when it is a version of that document; otherwise the document's `current_version_id` when the rev the requester saw is still current (or none was shown); `null` when the rev they saw is no longer current (never the wrong version). The check-in passes the version it checked in against.
+- **The comparison.** `revDrift` compares version ids when both sides carry one and falls back to rev labels for historical rows. New `components/requests/SourceDriftBanner.tsx` reads each source document's live `current_version_id` (in the ticket's org) and says "The source revision has moved since this request was raised", naming each sheet that moved; a failed read or an unreadable document says nothing.
+
+**Done-when.**
+- ✓ (1) `metadata.source_document` captures the version id alongside the display rev — `lib/__tests__/ticketCreateRoute.test.ts`, "HAND-7 / GAP-8 — the source documents, in this workspace, with the version each was raised against"; `lib/__tests__/sourceDocRef.test.ts`.
+- ✗ (in part) (2) The banner is built and tested (`lib/__tests__/sourceDriftBanner.test.ts`) but not mounted: the ticket page and the drafting queue are DF-P9's files.
+- ✗ (3) Approving a deliverable drafted from a superseded base requires no acknowledgement yet.
+
+**Scope / residual.** (2) → **DF-P9** (its brief mounts `SourceDriftBanner` on the ticket page as one line; the drafting-queue chip is added in `99-fix-sequencing.md`, "Hand-offs from DF-P2"). (3) → proposed **DF-P6** (the approval actions' review model), same section.
 
 ---
 
