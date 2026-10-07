@@ -53,7 +53,7 @@
 --      deleted by the app.
 --   2. stripe_event_locks — one row per Stripe customer whose event the
 --      webhook is applying right now:
---        lock_key   TEXT PRIMARY KEY   the event's customer id (its
+--        lock_for   TEXT PRIMARY KEY   the event's customer id (its
 --                                      subscription id if it names none).
 --        event_id   TEXT NOT NULL      the delivery holding it.
 --        locked_at  TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -172,7 +172,7 @@ COMMENT ON TABLE stripe_events IS
 
 -- ── 2. one event per Stripe customer at a time (BILL-4) ──────────────────
 CREATE TABLE IF NOT EXISTS stripe_event_locks (
-  lock_key   TEXT PRIMARY KEY,
+  lock_for   TEXT PRIMARY KEY,
   event_id   TEXT NOT NULL,
   locked_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -229,13 +229,13 @@ UNION ALL SELECT 'stripe_events: anon and authenticated hold no privilege on it'
 UNION ALL SELECT 'stripe_events: the service role may read and insert',
        has_table_privilege('service_role', 'public.stripe_events', 'SELECT')
        AND has_table_privilege('service_role', 'public.stripe_events', 'INSERT'), NULL
-UNION ALL SELECT 'stripe_event_locks exists with its three columns, lock_key the primary key',
+UNION ALL SELECT 'stripe_event_locks exists with its three columns, lock_for the primary key',
        (SELECT COUNT(*) = 3 FROM information_schema.columns
          WHERE table_schema = 'public' AND table_name = 'stripe_event_locks'
-           AND column_name IN ('lock_key', 'event_id', 'locked_at'))
+           AND column_name IN ('lock_for', 'event_id', 'locked_at'))
        AND EXISTS (SELECT 1 FROM pg_constraint
                     WHERE conrelid = to_regclass('public.stripe_event_locks') AND contype = 'p'
-                      AND pg_get_constraintdef(oid) = 'PRIMARY KEY (lock_key)'), NULL
+                      AND pg_get_constraintdef(oid) = 'PRIMARY KEY (lock_for)'), NULL
 UNION ALL SELECT 'stripe_event_locks: RLS on, no policy; anon and authenticated hold no privilege; the service role may read, insert and delete',
        COALESCE((SELECT relrowsecurity FROM pg_class WHERE oid = to_regclass('public.stripe_event_locks')), false)
        AND NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'stripe_event_locks')

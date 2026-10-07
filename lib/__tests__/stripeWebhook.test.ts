@@ -33,7 +33,7 @@
 // like / or filters, order + limit, maybeSingle's PGRST116 on more than one
 // row, filtered deletes, missing stripe_events / stripe_event_locks tables
 // answered PGRST205 (the world before 20261175 is pasted),
-// stripe_events.id and stripe_event_locks.lock_key UNIQUE (23505), the lock's
+// stripe_events.id and stripe_event_locks.lock_for UNIQUE (23505), the lock's
 // locked_at default, and injected write errors. Every await on it yields, so
 // two deliveries run with Promise.all interleave as concurrent requests do.
 
@@ -138,7 +138,7 @@ function from(table: string) {
         for (const r of list) if (all.some((x) => x.id === r.id)) return { data: null, error: { code: "23505", message: 'duplicate key value violates unique constraint "stripe_events_pkey"' } };
       }
       if (table === "stripe_event_locks") {
-        for (const r of list) if (all.some((x) => x.lock_key === r.lock_key)) return { data: null, error: { code: "23505", message: 'duplicate key value violates unique constraint "stripe_event_locks_pkey"' } };
+        for (const r of list) if (all.some((x) => x.lock_for === r.lock_for)) return { data: null, error: { code: "23505", message: 'duplicate key value violates unique constraint "stripe_event_locks_pkey"' } };
       }
       const defaults: Row = table === "stripe_event_locks" ? { locked_at: new Date().toISOString() } : {};
       for (const r of list) all.push({ ...defaults, ...r });
@@ -999,7 +999,7 @@ describe("BILL-4 (review minor) — one event per Stripe customer at a time (str
     await deliver();
     const lockOps = state.log.filter((l) => l.table === "stripe_event_locks" && l.op !== "select");
     expect(lockOps.map((l) => l.op)).toEqual(["insert", "delete"]);
-    expect(lockOps[0].payload).toEqual({ lock_key: "cus_1", event_id: "evt_1" });
+    expect(lockOps[0].payload).toEqual({ lock_for: "cus_1", event_id: "evt_1" });
     expect(state.log.findIndex((l) => l.table === "stripe_event_locks")).toBe(0);
     expect(rowsOf("stripe_event_locks")).toEqual([]);
   });
@@ -1007,7 +1007,7 @@ describe("BILL-4 (review minor) — one event per Stripe customer at a time (str
   it("a lock another delivery holds is waited on, then 503 (Stripe retries) with nothing written; a lapsed lock (a run that died) is broken", async () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
     try {
-      state.tables.stripe_event_locks = [{ lock_key: "cus_1", event_id: "evt_other", locked_at: new Date().toISOString() }];
+      state.tables.stripe_event_locks = [{ lock_for: "cus_1", event_id: "evt_other", locked_at: new Date().toISOString() }];
       state.event = subEvent("customer.subscription.created", { id: "evt_wait" });
       const res = await deliver();
       expect(res.status).toBe(503);
@@ -1016,7 +1016,7 @@ describe("BILL-4 (review minor) — one event per Stripe customer at a time (str
       expect(rowsOf("stripe_events")).toEqual([]);
       expect(rowsOf("stripe_event_locks")).toEqual([expect.objectContaining({ event_id: "evt_other" })]);
       // the same lock, two minutes old: broken, and the event applies
-      state.tables.stripe_event_locks = [{ lock_key: "cus_1", event_id: "evt_dead", locked_at: new Date(Date.now() - 120_000).toISOString() }];
+      state.tables.stripe_event_locks = [{ lock_for: "cus_1", event_id: "evt_dead", locked_at: new Date(Date.now() - 120_000).toISOString() }];
       expect(await (await deliver()).json()).toMatchObject({ outcome: "applied" });
       expect(org().subscription_status).toBe("active");
       expect(rowsOf("stripe_event_locks")).toEqual([]);

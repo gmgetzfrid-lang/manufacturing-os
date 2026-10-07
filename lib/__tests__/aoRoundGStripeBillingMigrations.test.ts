@@ -113,19 +113,19 @@ describe("20261175 — the Stripe event ledger and one workspace per customer", 
     expect(A.tail).toMatch(/after: Stripe customer ids still claimed by more than one workspace/);
   });
 
-  it("stripe_event_locks: one row per customer (lock_key the primary key), service role may read, insert and delete; RLS on, no policy", () => {
-    expect(A.ddl).toMatch(/CREATE TABLE IF NOT EXISTS stripe_event_locks \(\s+lock_key\s+TEXT PRIMARY KEY,\s+event_id\s+TEXT NOT NULL,\s+locked_at\s+TIMESTAMPTZ NOT NULL DEFAULT now\(\)\s+\);/);
+  it("stripe_event_locks: one row per customer (lock_for the primary key), service role may read, insert and delete; RLS on, no policy", () => {
+    expect(A.ddl).toMatch(/CREATE TABLE IF NOT EXISTS stripe_event_locks \(\s+lock_for\s+TEXT PRIMARY KEY,\s+event_id\s+TEXT NOT NULL,\s+locked_at\s+TIMESTAMPTZ NOT NULL DEFAULT now\(\)\s+\);/);
     expect(A.ddl).toMatch(/ALTER TABLE stripe_event_locks ENABLE ROW LEVEL SECURITY;/);
     expect(A.ddl).toMatch(/REVOKE ALL ON stripe_event_locks FROM PUBLIC, anon, authenticated;/);
     expect(A.ddl).toMatch(/GRANT SELECT, INSERT, DELETE ON stripe_event_locks TO service_role;/);
-    expect(A.tail).toMatch(/pg_get_constraintdef\(oid\) = 'PRIMARY KEY \(lock_key\)'/);
+    expect(A.tail).toMatch(/pg_get_constraintdef\(oid\) = 'PRIMARY KEY \(lock_for\)'/);
     expect(A.tail).toMatch(/NOT EXISTS \(SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'stripe_event_locks'\)/);
     expect(A.tail).toMatch(/has_table_privilege\('service_role', 'public\.stripe_event_locks', 'DELETE'\)/);
     // the route writes the columns the table has, and its lease is the header's
     const route = readFileSync(join(root, "app", "api", "stripe", "webhook", "route.ts"), "utf8");
-    expect(route).toMatch(/\.from\("stripe_event_locks"\)\.insert\(\{ lock_key: key, event_id: eventId \}\)/);
-    expect(route).toMatch(/\.from\("stripe_event_locks"\)\.delete\(\)\.eq\("lock_key", key\)\.lt\("locked_at", lapsed\)/);
-    expect(route).toMatch(/\.from\("stripe_event_locks"\)\.delete\(\)\.eq\("lock_key", key\)\.eq\("event_id", eventId\)/);
+    expect(route).toMatch(/\.from\("stripe_event_locks"\)\.insert\(\{ lock_for: key, event_id: eventId \}\)/);
+    expect(route).toMatch(/\.from\("stripe_event_locks"\)\.delete\(\)\.eq\("lock_for", key\)\.lt\("locked_at", lapsed\)/);
+    expect(route).toMatch(/\.from\("stripe_event_locks"\)\.delete\(\)\.eq\("lock_for", key\)\.eq\("event_id", eventId\)/);
     expect(route).toMatch(/const LOCK_LEASE_MS = 60_000;/);
     expect(A.raw).toMatch(/A row older\s+--\s+than 60 seconds belongs to a run that died/);
   });

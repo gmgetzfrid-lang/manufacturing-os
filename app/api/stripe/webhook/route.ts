@@ -339,12 +339,12 @@ async function acquireLock(sb: Db, key: string | null, eventId: string | null):
   Promise<{ ok: true; held: boolean } | { ok: false; status: number; error: string }> {
   if (!key || !eventId) return { ok: true, held: false };
   for (let attempt = 0; ; attempt++) {
-    const { error } = await sb.from("stripe_event_locks").insert({ lock_key: key, event_id: eventId });
+    const { error } = await sb.from("stripe_event_locks").insert({ lock_for: key, event_id: eventId });
     if (!error) return { ok: true, held: true };
     if (isMissingTable(error, "stripe_event_locks")) return { ok: true, held: false };
     if (error.code !== "23505") return { ok: false, status: 500, error: `Could not take the Stripe event lock (${error.message}); Stripe will retry.` };
     const lapsed = new Date(Date.now() - LOCK_LEASE_MS).toISOString();
-    const { error: breakErr } = await sb.from("stripe_event_locks").delete().eq("lock_key", key).lt("locked_at", lapsed);
+    const { error: breakErr } = await sb.from("stripe_event_locks").delete().eq("lock_for", key).lt("locked_at", lapsed);
     if (breakErr) return { ok: false, status: 500, error: `Could not read the Stripe event lock (${breakErr.message}); Stripe will retry.` };
     if (attempt >= LOCK_WAITS_MS.length) {
       return { ok: false, status: 503, error: `Another event for this Stripe customer is being applied; this one was not applied. Stripe will retry it.` };
@@ -356,7 +356,7 @@ async function acquireLock(sb: Db, key: string | null, eventId: string | null):
 /** Release only our own lock. A refused release is logged: the lock lapses
  *  after LOCK_LEASE_MS, and the event itself was handled and recorded. */
 async function releaseLock(sb: Db, key: string, eventId: string): Promise<void> {
-  const { error } = await sb.from("stripe_event_locks").delete().eq("lock_key", key).eq("event_id", eventId);
+  const { error } = await sb.from("stripe_event_locks").delete().eq("lock_for", key).eq("event_id", eventId);
   if (error) console.error(`[stripe/webhook] the Stripe event lock for ${key} was not released (${error.message}); it lapses after ${LOCK_LEASE_MS / 1000} s.`);
 }
 
