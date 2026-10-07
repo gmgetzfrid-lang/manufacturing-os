@@ -411,7 +411,7 @@ describe("20261160 — enforce_notification_insert(): the insert rails", () => {
       "link: N.a (unresolved)",
     ]);
     expect(byMember.seen).toBe(6);
-  });
+  }, 60_000); // a whole-repo AST census, like the two below: room under a loaded full-suite run (DF-P2: 6.5 s there, 1.6 s alone)
 
   it("OS-1 dw3 / DELIV-6 dw2: an undeclared kind is refused (22023)", () => {
     expect(squash(body)).toContain(squash(`RAISE EXCEPTION 'notifications: unknown kind %', NEW.kind USING ERRCODE = '22023';`));
