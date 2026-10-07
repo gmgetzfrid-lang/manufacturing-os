@@ -19,6 +19,11 @@
 // holds elsewhere (fix pass 2): the flows are named only by a route with a
 // flow step, a no-route answer at a flow's end (or whose reason the flows
 // change), and a neighbourhood a flow reaches into or with feeds / fed_by.
+// And a step a confirmed flow takes still cites the sheets that carry its
+// pair (fix pass 3: `also_on_sheet`, kept in `drawings`), so where the route
+// is the sheets' own, no sheet the base cited is lost. The tag index is paged
+// by key (a write mid-read skips no sheet), and the flow read is bounded on
+// the trace's clock.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -38,19 +43,73 @@ const db = vi.hoisted(() => ({
   ignoreStatusFilter: false,
   /** PostgREST's max-rows: no response holds more rows than this. */
   maxRows: Number.POSITIVE_INFINITY,
-  /** A page-indexed failure: a .range() read of the table from this row on fails. */
-  rangeErrors: {} as Record<string, { from: number; error: Err }>,
-  /** The clock Date.now reads, and what each paged tag-index read costs on it. */
+  /** A paged read's failure: a page of the table whose first row is this row
+   *  of the ordered read, or a later one, fails. */
+  pageErrors: {} as Record<string, { from: number; error: Err }>,
+  /** The clock Date.now reads, what each tag-index page costs on it, and what
+   *  any one query of a table costs on it. */
   now: 0,
   pageCostMs: 0,
+  costMs: {} as Record<string, number>,
   /** A failure for one query shape only (a table-wide one is `errors`). */
   failQuery: null as null | ((table: string, calls: Array<[string, unknown[]]>) => Err | null),
+  /** The tag-index pages served: where each began in the ordered read. */
+  tagPageStarts: [] as number[],
+  /** Runs before each tag-index page is answered (a write landing mid-read). */
+  beforeTagPage: null as null | ((served: number) => void),
 }));
 
 /** A query's filtered, ordered rows, per table array (a seed replaces it) and
- *  per query shape (every call but the window): a paged read of a 50,000-row
- *  table filters and sorts once, not once a page. */
+ *  per query shape (every call but the window and the keyset cursor): a paged
+ *  read of a 50,000-row table filters and sorts once, not once a page. */
 const shaped = new WeakMap<Row[], Map<string, Row[]>>();
+
+/** How the fake compares a column with a value, in sorting and in filters:
+ *  numbers as numbers (a page), everything else by code unit. */
+function cmpCol(x: unknown, y: unknown): number {
+  if (typeof x === "number") return x - Number(y);
+  const a = String(x ?? ""), b = String(y ?? "");
+  return a === b ? 0 : a < b ? -1 : 1;
+}
+
+/** A PostgREST `.or()` list as a row predicate: terms split on commas
+ *  outside double quotes and parentheses; `and(…)` / `or(…)` nest; a quoted
+ *  value is unescaped (backslash escapes); eq / neq / gt / gte / lt / lte. */
+function orPredicate(list: string): (r: Row) => boolean {
+  const split = (text: string): string[] => {
+    const out: string[] = [];
+    let cur = ""; let quoted = false; let depth = 0;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (quoted && ch === "\\") { cur += ch + text[i + 1]; i += 1; continue; }
+      if (ch === '"') quoted = !quoted;
+      else if (!quoted && ch === "(") depth += 1;
+      else if (!quoted && ch === ")") depth -= 1;
+      if (!quoted && depth === 0 && ch === ",") { out.push(cur); cur = ""; continue; }
+      cur += ch;
+    }
+    out.push(cur);
+    return out;
+  };
+  const term = (t: string): ((r: Row) => boolean) => {
+    const nested = /^(and|or)\(([\s\S]*)\)$/.exec(t);
+    if (nested) {
+      const parts = split(nested[2]).map(term);
+      return nested[1] === "and" ? (r) => parts.every((f) => f(r)) : (r) => parts.some((f) => f(r));
+    }
+    const i = t.indexOf("."), j = t.indexOf(".", i + 1);
+    const col = t.slice(0, i), op = t.slice(i + 1, j);
+    let value = t.slice(j + 1);
+    if (value.startsWith('"') && value.endsWith('"')) value = value.slice(1, -1).replace(/\\(.)/g, "$1");
+    const test: Record<string, (c: number) => boolean> = {
+      eq: (c) => c === 0, neq: (c) => c !== 0, gt: (c) => c > 0, gte: (c) => c >= 0, lt: (c) => c < 0, lte: (c) => c <= 0,
+    };
+    if (!test[op]) throw new Error(`the fake does not read ${op} in an .or() list`);
+    return (r) => test[op](cmpCol(r[col], value));
+  };
+  const parts = split(list).map(term);
+  return (r) => parts.some((f) => f(r));
+}
 
 function makeChain(client: string, table: string): unknown {
   const calls: Array<[string, unknown[]]> = [];
@@ -59,10 +118,10 @@ function makeChain(client: string, table: string): unknown {
     if (db.errors[table]) return { data: null, error: db.errors[table] };
     const failed = db.failQuery?.(table, calls);
     if (failed) return { data: null, error: failed };
-    const range = calls.find(([c]) => c === "range");
-    if (range && table === "knowledge_page_entities") db.now += db.pageCostMs;
-    const failAt = db.rangeErrors[table];
-    if (range && failAt && Number(range[1][0]) >= failAt.from) return { data: null, error: failAt.error };
+    // A tag-index page: the trace's ordered, keyset-paged read.
+    const tagPage = table === "knowledge_page_entities" && calls.some(([c]) => c === "order");
+    if (tagPage) { db.beforeTagPage?.(db.tagPageStarts.length); db.now += db.pageCostMs; }
+    db.now += db.costMs[table] ?? 0;
     const source = db.tables[table] ?? [];
     let win: { from: number; to: number } | null = null;
     let cap: number | null = null;
@@ -70,7 +129,8 @@ function makeChain(client: string, table: string): unknown {
       if (m === "range") win = { from: Number(a[0]), to: Number(a[1]) };
       else if (m === "limit") cap = Number(a[0]);
     }
-    const shape = JSON.stringify([db.ignoreStatusFilter, calls.filter(([m]) => m !== "range" && m !== "limit")]);
+    const cursorCalls = new Set(["range", "limit", "gte", "or"]);
+    const shape = JSON.stringify([db.ignoreStatusFilter, calls.filter(([m]) => !cursorCalls.has(m))]);
     const byShape = shaped.get(source) ?? new Map<string, Row[]>();
     shaped.set(source, byShape);
     let rows = byShape.get(shape);
@@ -90,16 +150,29 @@ function makeChain(client: string, table: string): unknown {
       if (orders.length > 0) {
         rows.sort((x, y) => {
           for (const o of orders) {
-            const xv = String(x[o.col] ?? ""), yv = String(y[o.col] ?? "");
-            if (xv !== yv) return (xv < yv ? -1 : 1) * (o.asc ? 1 : -1);
+            const c = cmpCol(x[o.col], y[o.col]);
+            if (c !== 0) return c * (o.asc ? 1 : -1);
           }
           return 0;
         });
       }
       byShape.set(shape, rows);
     }
+    // The keyset cursor (`gte` and `or`), on the memoised order: a page's
+    // rows, and where in the ordered read it begins.
+    const ordered = rows;
+    const keep: Array<(r: Row) => boolean> = [];
+    for (const [m, a] of calls) {
+      if (m === "gte") keep.push((r) => cmpCol(r[String(a[0])], a[1]) >= 0);
+      else if (m === "or") keep.push(orPredicate(String(a[0])));
+    }
     // A copy, always: the code under test never holds the memoised array.
-    rows = win ? rows.slice(win.from, win.to + 1) : rows.slice();
+    rows = keep.length > 0 ? ordered.filter((r) => keep.every((f) => f(r))) : ordered.slice();
+    const start = win ? win.from : rows.length > 0 ? ordered.indexOf(rows[0]) : ordered.length;
+    if (tagPage) db.tagPageStarts.push(start);
+    const failAt = db.pageErrors[table];
+    if (tagPage && failAt && start >= failAt.from) return { data: null, error: failAt.error };
+    if (win) rows = rows.slice(win.from, win.to + 1);
     if (cap !== null) rows = rows.slice(0, cap);
     if (rows.length > db.maxRows) rows = rows.slice(0, db.maxRows);
     return { data: rows, error: null };
@@ -135,7 +208,7 @@ vi.mock("@/lib/knowledgeAccess", () => ({
 vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn(async () => {}) }));
 
 import { toolByName, TOOLS, LINE_GRAPH_ROW_CEILING, LINE_GRAPH_READ_BUDGET_MS, type ToolContext } from "@/lib/orchestrator/tools";
-import { flowsToLineEdges, unitTraceTag, FLOW_EDGE_CEILING, FLOW_EDGE_PAGE } from "@/lib/processFlows";
+import { flowsToLineEdges, unitTraceTag, FLOW_EDGE_CEILING, FLOW_EDGE_PAGE, FLOW_READ_OUT_OF_TIME } from "@/lib/processFlows";
 import { tracePath, traceNeighbourhood, normalizeTag, type LineEdge } from "@/lib/pidTrace";
 import type { KnowledgePrincipal } from "@/lib/knowledgeAccess";
 
@@ -204,6 +277,8 @@ function ctxFor(roles: string[]): ToolContext {
 const trace = async (args: Record<string, string | number>, roles = ["Viewer"]) =>
   (await toolByName("trace_pid_lines")!.run(args, ctxFor(roles))).data as Record<string, unknown>;
 const queriesOf = (table: string) => db.queries.filter((q) => q.table === table);
+/** The trace's tag-index pages (ordered; the same-sheet lookup is not). */
+const tagPages = () => queriesOf("knowledge_page_entities").filter((q) => q.calls.some(([m]) => m === "order"));
 const callArgs = (q: { calls: Array<[string, unknown[]]> }, m: string) => q.calls.filter(([c]) => c === m).map(([, a]) => a);
 
 // The base commit's basis sentence and goldens (6797c48, the same seeds).
@@ -258,7 +333,8 @@ let clock: { mockRestore: () => void } | null = null;
 beforeEach(() => {
   db.tables = {}; db.errors = {}; db.queries = []; db.readable = new Set(["d-open"]);
   db.ignoreStatusFilter = false; db.maxRows = Number.POSITIVE_INFINITY;
-  db.rangeErrors = {}; db.now = 1_000_000; db.pageCostMs = 0; db.failQuery = null;
+  db.pageErrors = {}; db.now = 1_000_000; db.pageCostMs = 0; db.costMs = {}; db.failQuery = null;
+  db.tagPageStarts = []; db.beforeTagPage = null;
   nextEnt = 0; nextFlow = 0;
   // The tag-index read's time budget reads Date.now: a test's clock moves
   // only when a page costs something, never with the machine's load.
@@ -550,6 +626,183 @@ describe("IRLS-11 (fix pass 2) — a flow citing another workspace's document is
   });
 });
 
+describe("I-21 fix pass 3 — a step a confirmed flow takes keeps the sheet evidence for its pair", () => {
+  it("REGRESSION: an org whose confirmed map mirrors its P&IDs keeps the base's drawings, and each step names both sources", async () => {
+    // The reviewer's scenario: sheetSeed, plus hand-drawn confirmed flows
+    // on both of the route's pairs. The base answer cites k-a.
+    seedBase({
+      knowledge_page_entities: sheetSeed(),
+      process_flows: [
+        flow(["asset", A_P101], ["asset", A_T150], "confirmed"),
+        flow(["asset", A_T150], ["asset", A_E204], "confirmed"),
+      ],
+    });
+    const out = await trace({ start_tag: "P-101", end_tag: "E-204" });
+    expect(out).toMatchObject({
+      found: true, path: GOLDEN_PATH.path, drawings: GOLDEN_PATH.drawings, crosses_sheets: false, components: [],
+    });
+    expect(out.route).toEqual([
+      { from: "P101", to: "T150", basis: "confirmed flow", flow: "P101 feeds T150", also_on_sheet: ["k-a"] },
+      { from: "T150", to: "E204", basis: "confirmed flow", flow: "T150 feeds E204", also_on_sheet: ["k-a"] },
+    ]);
+    expect(String(out.basis)).toMatch(ROUTE_BASIS);
+    expect(String(out.basis)).toContain("`also_on_sheet`");
+  });
+
+  it("flows read off a PFD: the PFD is cited beside the P&ID, never instead of it (the base's list is a subset)", async () => {
+    seedBase({
+      knowledge_page_entities: sheetSeed(),
+      process_flows: [
+        flow(["asset", A_P101], ["asset", A_T150], "confirmed", { origin: "ai", source_document_id: "k-c" }),
+        flow(["asset", A_T150], ["asset", A_E204], "confirmed", { origin: "ai", source_document_id: "k-c" }),
+      ],
+    });
+    const out = await trace({ start_tag: "P-101", end_tag: "E-204" });
+    expect(out.drawings).toEqual(["k-c", "k-a"]);
+    for (const d of GOLDEN_PATH.drawings) expect(out.drawings).toContain(d);
+    expect((out.route as Array<Record<string, unknown>>).map((st) => st.also_on_sheet)).toEqual([["k-a"], ["k-a"]]);
+  });
+
+  it("every sheet that carries the pair is named, in route order; a sheet the caller cannot open is not", async () => {
+    // P-101 and E-204 together on k-a page 3, on k-c page 1 (a readable
+    // mirror) and on k-b page 1 (a mirror the Viewer cannot read).
+    seedBase({
+      knowledge_page_entities: [
+        ent("k-a", 3, "equipment", "P-101"), ent("k-a", 3, "equipment", "E-204"),
+        ent("k-b", 1, "equipment", "P-101"), ent("k-b", 1, "equipment", "E-204"),
+        ent("k-c", 1, "equipment", "P-101"), ent("k-c", 1, "equipment", "E-204"),
+      ],
+      process_flows: [flow(["asset", A_P101], ["asset", A_E204], "confirmed", { label: "crude feed" })],
+    });
+    const viewer = await trace({ start_tag: "P-101", end_tag: "E-204" });
+    expect(viewer.route).toEqual([
+      { from: "P101", to: "E204", basis: "confirmed flow", flow: "P101 feeds E204", stream: "crude feed", also_on_sheet: ["k-a", "k-c"] },
+    ]);
+    expect(viewer.drawings).toEqual(["k-a", "k-c"]);
+    expect(JSON.stringify(viewer)).not.toContain("k-b");
+    db.readable.add("d-hidden");
+    const allowed = await trace({ start_tag: "P-101", end_tag: "E-204" });
+    expect(allowed.drawings).toEqual(["k-a", "k-b", "k-c"]);
+    // Walked the other way, the step still names the sheets.
+    const back = await trace({ start_tag: "E-204", end_tag: "P-101" });
+    expect((back.route as Array<Record<string, unknown>>)[0]).toMatchObject({ basis: "confirmed flow", also_on_sheet: ["k-a", "k-b", "k-c"] });
+  });
+
+  it("an off-page continuation on the pair keeps its mark: crosses_sheets as the sheets alone say it", async () => {
+    // On k-a page 1, P-101 and an off-page reference that reads T-150.
+    const sheets = () => [ent("k-a", 1, "equipment", "P-101"), ent("k-a", 1, "ref", "T-150")];
+    seedBase({ knowledge_page_entities: sheets() });
+    const today = await trace({ start_tag: "P-101", end_tag: "T-150" });
+    expect(today).toMatchObject({ found: true, path: ["P101", "T150"], drawings: ["k-a"], crosses_sheets: true, basis: SHEET_BASIS });
+    seedBase({ knowledge_page_entities: sheets(), process_flows: [flow(["asset", A_P101], ["asset", A_T150], "confirmed")] });
+    const out = await trace({ start_tag: "P-101", end_tag: "T-150" });
+    expect(out).toMatchObject({ found: true, path: ["P101", "T150"], drawings: ["k-a"], crosses_sheets: true });
+    expect(out.route).toEqual([
+      { from: "P101", to: "T150", basis: "confirmed flow", flow: "P101 feeds T150", also_on_sheet: ["k-a"], off_page: true },
+    ]);
+  });
+
+  it("a flow step on a pair no sheet carries cites no sheet for it; the sheet step beside it keeps its own", async () => {
+    seedBase({
+      knowledge_page_entities: [ent("k-a", 2, "equipment", "T-150"), ent("k-a", 2, "equipment", "E-204")],
+      process_flows: [flow(["asset", A_P101], ["asset", A_T150], "confirmed", { origin: "ai", source_document_id: "k-c" })],
+    });
+    const out = await trace({ start_tag: "P-101", end_tag: "E-204" });
+    expect(out.route).toEqual([
+      { from: "P101", to: "T150", basis: "confirmed flow", flow: "P101 feeds T150" },
+      { from: "T150", to: "E204", basis: "same sheet" },
+    ]);
+    expect(out.drawings).toEqual(["k-c", "k-a"]);
+  });
+});
+
+describe("ING-10 residual (fix pass 3) — the tag index is paged by key: a write mid-read never skips a sheet", () => {
+  const self = (doc: string, n: number, firstPage = 1) =>
+    Array.from({ length: n }, (_, i) => ent(doc, firstPage + i, "self", `${doc}-SELF-${i}`));
+
+  it("a sheet re-indexed while the trace reads (its rows deleted before the third page) shifts no later sheet out of the pages", async () => {
+    // k-1 and k-2 fill the first two pages; P-101 and E-204 share k-3 page 1.
+    // An OFFSET read's third page (rows 2,000 on) would start at k-4 once
+    // k-1's 1,000 rows are gone, and never read k-3.
+    const k3 = [ent("k-3", 1, "equipment", "P-101"), ent("k-3", 1, "equipment", "E-204"), ...self("k-3", 998, 2)];
+    const rows = [...self("k-1", 1_000), ...self("k-2", 1_000), ...k3, ...self("k-4", 10)];
+    seedBase({ knowledge_page_entities: rows });
+    db.beforeTagPage = (served) => {
+      if (served === 2) db.tables.knowledge_page_entities = rows.filter((r) => r.document_id !== "k-1");
+    };
+    const out = await trace({ start_tag: "P-101", end_tag: "E-204" });
+    expect(out).toMatchObject({ found: true, path: ["P101", "E204"], drawings: ["k-3"] });
+    expect(out).not.toHaveProperty("graph_partial");
+    // The third page began at k-3's first row (row 1,000 of what was left).
+    expect(db.tagPageStarts.slice(0, 3)).toEqual([0, 1_000, 1_000]);
+  });
+
+  it("the cursor quotes the tag it carries: a comma, a parenthesis, a dot, a quote or a backslash never splits the list", async () => {
+    const odd = { id: "e-odd", org_id: ORG, document_id: "k-f-0000", page: 1_000, kind: "ref", tag: 'X,Y(1).2"Z\\' };
+    seedBase({
+      knowledge_page_entities: [
+        ...Array.from({ length: 999 }, (_, i) => ent("k-f-0000", i + 1, "self", `SELF-${i}`)), odd,
+        ent("k-z", 1, "equipment", "P-101"), ent("k-z", 1, "equipment", "E-204"),
+      ],
+    });
+    const out = await trace({ start_tag: "P-101", end_tag: "E-204" });
+    expect(out).toMatchObject({ found: true, path: ["P101", "E204"], drawings: ["k-z"] });
+    expect(db.tagPageStarts).toEqual([0, 1_000, 1_002]);
+    expect(String(callArgs(tagPages()[1], "or")[0][0])).toContain('tag.gt."X,Y(1).2\\"Z\\\\"');
+  });
+});
+
+describe("fix pass 3 — the confirmed-flow read is bounded on the trace's clock", () => {
+  const admin = { from: (t: string) => makeChain("admin", t) } as never;
+  /** `n` flows between 2n distinct assets of the org: ⌈2n / 200⌉ asset chunks. */
+  const assetPairs = (n: number) => {
+    const assets = Array.from({ length: 2 * n }, (_, i) => ({ id: uuid(5000 + i), org_id: ORG, tag: `K-${5000 + i}`, archived: false }));
+    const flows = Array.from({ length: n }, (_, i) => flow(["asset", assets[2 * i].id], ["asset", assets[2 * i + 1].id], "confirmed"));
+    return { assets, flows };
+  };
+
+  it("no round trip starts past the deadline — a flow page, an asset chunk or a codebook chunk — and the read then fails, never half-resolved", async () => {
+    // 350 flows, 700 assets: four asset chunks at 4 s each start at 0, 4, 8
+    // and 12 s; the fourth is past a 10 s deadline.
+    const { assets, flows } = assetPairs(350);
+    seedBase({ process_flows: flows });
+    db.tables.assets.push(...assets);
+    db.costMs.assets = 4_000;
+    const out = await flowsToLineEdges(ORG, admin, { deadline: db.now + 10_000 });
+    expect(out).toEqual({ edges: [], state: "error", error: FLOW_READ_OUT_OF_TIME, truncated: false, skipped: 0, unitNodes: [] });
+    expect(queriesOf("assets")).toHaveLength(3);
+    // Without a deadline (every caller but the trace), the read is whole.
+    db.queries = [];
+    const whole = await flowsToLineEdges(ORG, admin);
+    expect(whole.state).toBe("ok");
+    expect(whole.edges).toHaveLength(350);
+    // A slow codebook read is bounded the same way.
+    seedBase({ process_flows: Array.from({ length: 300 }, (_, i) => flow(["unit", `U${i}`], ["unit", `V${i}`], "confirmed")) });
+    db.costMs.codebook_entries = 6_000;
+    expect((await flowsToLineEdges(ORG, admin, { deadline: db.now + 10_000 })).error).toBe(FLOW_READ_OUT_OF_TIME);
+    // And a slow flow page.
+    seedBase({ process_flows: Array.from({ length: 2_500 }, () => flow(["unit", "20"], ["unit", "30"], "confirmed")) });
+    db.costMs = { process_flows: 6_000 };
+    db.queries = [];
+    expect((await flowsToLineEdges(ORG, admin, { deadline: db.now + 10_000 })).error).toBe(FLOW_READ_OUT_OF_TIME);
+    expect(queriesOf("process_flows")).toHaveLength(2);
+  });
+
+  it("the trace passes its own budget: a flow read past it is said, and the sheets answer as before", async () => {
+    const { assets, flows } = assetPairs(350);
+    seedBase({ knowledge_page_entities: sheetSeed(), process_flows: flows });
+    db.tables.assets.push(...assets);
+    db.costMs.assets = 4_000;
+    const out = await trace({ start_tag: "P-101", end_tag: "E-204" });
+    const { confirmed_flows_unavailable: note, ...rest } = out;
+    expect(rest).toEqual(GOLDEN_PATH);
+    expect(String(note)).toBe(
+      "The plant's confirmed process flows could not be read (reading them took longer than one trace may spend on it), "
+      + "so this trace uses sheet co-occurrence only. That is NOT the same as the plant having no confirmed flows — say so.",
+    );
+  });
+});
+
 describe("GAP-315 — confirmed flows reach the trace, each step naming its basis", () => {
   it("a confirmed flow joins two pieces of equipment no sheet connects; the route names it, its direction and its stream", async () => {
     seedBase({
@@ -594,13 +847,15 @@ describe("GAP-315 — confirmed flows reach the trace, each step naming its basi
     expect(out).not.toHaveProperty("route");
   });
 
-  it("when a confirmed flow and sheet co-occurrence join the same pair, the flow is the step named", async () => {
+  it("when a confirmed flow and sheet co-occurrence join the same pair, the flow is the step named — and the sheet is still cited (fix pass 3)", async () => {
     seedBase({
       knowledge_page_entities: [ent("k-a", 3, "equipment", "P-101"), ent("k-a", 3, "equipment", "E-204")],
       process_flows: [flow(["asset", A_P101], ["asset", A_E204], "confirmed")],
     });
     const out = await trace({ start_tag: "P-101", end_tag: "E-204" });
-    expect(out.route).toEqual([{ from: "P101", to: "E204", basis: "confirmed flow", flow: "P101 feeds E204" }]);
+    expect(out.route).toEqual([{ from: "P101", to: "E204", basis: "confirmed flow", flow: "P101 feeds E204", also_on_sheet: ["k-a"] }]);
+    expect(out.drawings).toEqual(["k-a"]);
+    expect(String(out.basis)).toMatch(/A "confirmed flow" step that lists `also_on_sheet` ALSO has its two tags on the same drawing page of those sheets \(they are in `drawings` too\): name both sources for it\./);
     // The same-sheet hint still names the sheet both are drawn on.
     expect(out.same_sheet).toEqual([{ sheet: "PID-100 SHT 1", page: 3 }]);
   });
@@ -740,16 +995,27 @@ describe("ING-10 residual — the tag index is paged, never one capped read that
     const out = await trace({ start_tag: "P-101", end_tag: "E-204" });
     expect(out).toMatchObject({ found: true, path: ["P101", "E204"], drawings: ["k-z"] });
     expect(out).not.toHaveProperty("graph_partial");
-    const windows = queriesOf("knowledge_page_entities").flatMap((q) => callArgs(q, "range")).map((a) => Number(a[0]));
-    expect(Math.max(...windows)).toBeGreaterThanOrEqual(20_000);
+    expect(Math.max(...db.tagPageStarts)).toBeGreaterThanOrEqual(20_000);
     // Stable order: by document, page and tag (the prefix of the
     // (document_id, page, tag) index), then id; the kinds named (ING-5).
-    const first = queriesOf("knowledge_page_entities").find((q) => callArgs(q, "range").length > 0)!;
+    const [first, second] = tagPages();
     expect(callArgs(first, "order")).toEqual([
       ["document_id", { ascending: true }], ["page", { ascending: true }],
       ["tag", { ascending: true }], ["id", { ascending: true }],
     ]);
     expect(callArgs(first, "in")[0][0]).toBe("kind");
+    // Paged by key on that whole order (fix pass 3), never by offset: the
+    // first page has no cursor; the next asks for the rows after the last
+    // one read (k-f-0000 page 1000, SELF999, e-0000999).
+    expect(first.calls.map(([m]) => m)).not.toContain("range");
+    expect(callArgs(first, "or")).toEqual([]);
+    expect(callArgs(second, "gte")).toEqual([["document_id", "k-f-0000"]]);
+    expect(callArgs(second, "or")).toEqual([[
+      'document_id.gt."k-f-0000",and(document_id.eq."k-f-0000",page.gt.1000),'
+      + 'and(document_id.eq."k-f-0000",page.eq.1000,tag.gt."SELF999"),'
+      + 'and(document_id.eq."k-f-0000",page.eq.1000,tag.eq."SELF999",id.gt."e-0000999")',
+    ]]);
+    expect(callArgs(second, "limit")).toEqual([[1_000]]);
   }, 60_000);
 
   it("a short page is not the last: a project max-rows below the page size still reads every row", async () => {
@@ -788,8 +1054,7 @@ describe("ING-10 residual — the tag index is paged, never one capped read that
     db.pageCostMs = 1_500;
     seedBase({ knowledge_page_entities: cutSheet(6_998) });
     const cut = await trace({ start_tag: "P-101", end_tag: "E-204" });
-    const pages = queriesOf("knowledge_page_entities").filter((q) => callArgs(q, "range").length > 0);
-    expect(pages).toHaveLength(7);
+    expect(tagPages()).toHaveLength(7);
     expect(cut).toMatchObject({ found: false, reason: "E-204 doesn't appear on any traced line." });
     expect(String(cut.graph_partial)).toMatch(/^PARTIAL: reading the drawing tag index took longer than one trace may spend on it \(10 s\)/);
     expect(String(cut.graph_partial)).toMatch(/is NOT proof the equipment is unconnected/);
@@ -806,7 +1071,6 @@ describe("ING-10 residual — the tag index is paged, never one capped read that
 describe("ING-10 residual (fix pass 2) — a read that is whole is never called partial on time", () => {
   const filler = (n: number) => Array.from({ length: n }, (_, i) =>
     ent(`k-f-${String(Math.floor(i / 1000)).padStart(4, "0")}`, (i % 1000) + 1, "self", `SELF-${i}`));
-  const rangePages = () => queriesOf("knowledge_page_entities").filter((q) => callArgs(q, "range").length > 0);
 
   it("the last data page ends past the budget: the closing page is still asked for, and the whole read is walked", async () => {
     // 6 s a page: page 0 (full) ends at 6 s, page 1 (short: the rest) at
@@ -816,7 +1080,7 @@ describe("ING-10 residual (fix pass 2) — a read that is whole is never called 
     const out = await trace({ start_tag: "P-101", end_tag: "E-204" });
     expect(out).toMatchObject({ found: true, path: ["P101", "E204"], drawings: ["k-z"] });
     expect(out).not.toHaveProperty("graph_partial");
-    expect(rangePages().map((q) => Number(callArgs(q, "range")[0][0]))).toEqual([0, 1_000, 1_002]);
+    expect(db.tagPageStarts).toEqual([0, 1_000, 1_002]);
   });
 
   it("…once only: with a max-rows below the window every page is short, and the read still stops one page past the budget, PARTIAL", async () => {
@@ -826,7 +1090,7 @@ describe("ING-10 residual (fix pass 2) — a read that is whole is never called 
     db.maxRows = 500;
     seedBase({ knowledge_page_entities: [ent("k-a", 1, "equipment", "P-101"), ent("k-a", 1, "equipment", "T-150"), ...filler(3_000)] });
     const out = await trace({ start_tag: "P-101", end_tag: "T-150" });
-    expect(rangePages()).toHaveLength(4);
+    expect(tagPages()).toHaveLength(4);
     expect(out.found).toBe(true);
     expect(String(out.graph_partial)).toMatch(/^PARTIAL: reading the drawing tag index took longer than one trace may spend on it \(10 s\)/);
   });
@@ -844,7 +1108,7 @@ describe("ING-10 residual — a tag-index read that fails is said, never passed 
       knowledge_page_entities: [ent("k-a", 1, "equipment", "T-150"), ent("k-a", 1, "equipment", "E-204"), ...filler(1_500)],
       process_flows: [flow(["asset", A_P101], ["asset", A_T150], "confirmed")],
     });
-    db.rangeErrors.knowledge_page_entities = { from: 1_000, error: timeout };
+    db.pageErrors.knowledge_page_entities = { from: 1_000, error: timeout };
     const out = await trace({ start_tag: "T-150", end_tag: "E-204" });
     expect(out).toMatchObject({ found: false, reason: "E-204 doesn't appear on any traced line." });
     expect(String(out.graph_unavailable)).toBe(
@@ -860,7 +1124,7 @@ describe("ING-10 residual — a tag-index read that fails is said, never passed 
 
   it("with no flows: today's answer plus the one sentence — path and neighbourhood", async () => {
     seedBase({ knowledge_page_entities: sheetSeed() });
-    db.rangeErrors.knowledge_page_entities = { from: 0, error: timeout };
+    db.pageErrors.knowledge_page_entities = { from: 0, error: timeout };
     const path = await trace({ start_tag: "P-101", end_tag: "E-204" });
     const { graph_unavailable: note, ...rest } = path;
     expect(rest).toEqual({
@@ -872,7 +1136,7 @@ describe("ING-10 residual — a tag-index read that fails is said, never passed 
     expect(near).toMatchObject({ start: "T-150", connected: [], basis: SHEET_BASIS });
     expect(String(near.graph_unavailable)).toMatch(/is NOT proof — say the trace could not be checked/);
     // The index read working again: no note.
-    db.rangeErrors = {};
+    db.pageErrors = {};
     expect(await trace({ start_tag: "P-101", end_tag: "E-204" })).not.toHaveProperty("graph_unavailable");
   });
 });
@@ -965,7 +1229,7 @@ describe("DEC-80 item 2 — nothing flow-derived drives a hold or an MOC", () =>
     expect(users.sort()).toEqual(["lib/orchestrator/tools.ts", "lib/processFlows.ts"]);
     const tools = src("lib/orchestrator/tools.ts");
     const body = tools.slice(tools.indexOf("async function loadLineGraph(ctx: ToolContext)"));
-    expect(body.slice(0, body.indexOf("\n}"))).toContain("flowsToLineEdges(ctx.orgId, supabaseAdmin)");
+    expect(body.slice(0, body.indexOf("\n}"))).toMatch(/flowsToLineEdges\(ctx\.orgId, supabaseAdmin, \{ deadline: startedAt \+ LINE_GRAPH_READ_BUDGET_MS \}\)/);
     expect(tools.match(/flowsToLineEdges\(/g)).toHaveLength(1);
     // loadLineGraph is called once, by the trace tool, and the trace tool writes nothing.
     expect(tools.match(/loadLineGraph\(ctx\)/g)).toHaveLength(1);

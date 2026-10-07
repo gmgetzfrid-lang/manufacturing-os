@@ -22,9 +22,9 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { readableControlledDocIds, type KnowledgePrincipal } from "@/lib/knowledgeAccess";
 import { TAG_ENTITY_KINDS } from "@/lib/knowledgeEntityKinds";
 import { orIlikeContains, type ParamSpec } from "@/lib/orchestrator/protocol";
-import { tracePath, traceNeighbourhood, normalizeTag, type LineEdge } from "@/lib/pidTrace";
+import { tracePath, traceNeighbourhood, normalizeTag, type LineEdge, type TraceStep } from "@/lib/pidTrace";
 import { flowsToLineEdges, FLOW_EDGE_CEILING } from "@/lib/processFlows";
-import { readAll } from "@/lib/knowledgeAskGuards";
+import { READ_PAGE, type PgErr } from "@/lib/knowledgeAskGuards";
 import { isControllerPrincipal } from "@/lib/permissions";
 import { holdsReadOnlyRole } from "@/lib/roleHeld";
 import { RANK, replaceDecision, storedProvisional, type AuditStatus } from "@/lib/drawingAuditLog";
@@ -609,6 +609,31 @@ const tracePidLines: ToolDef = {
         });
       }
     } catch { /* advisory only */ }
+    // I-21 fix pass 3: a step a confirmed flow takes keeps the sheet
+    // evidence for its pair. Where a flow and sheet co-occurrence join the
+    // same two tags, the flow comes first in that pair's adjacency and is the
+    // step's edge, so tracePath cites only the flow's own source sheet (none
+    // for a hand-drawn flow). The sheets that also carry the pair — in the
+    // walk, so never a hidden one — are named on the step (`also_on_sheet`)
+    // and kept in `drawings`, in route order; the first of them (the edge the
+    // sheets alone would take for that step) keeps its off-page mark. A route
+    // with no flow step is untouched.
+    const pairKey = (a: string, b: string) => [normalizeTag(a), normalizeTag(b)].sort().join("|");
+    const sheetsOfPair = new Map<string, LineEdge[]>();
+    if (r.steps.some((s) => s.basis === "confirmed_flow")) {
+      for (const e of walk) {
+        if (e.basis !== "same_sheet") continue;
+        const k = pairKey(e.from, e.to);
+        const list = sheetsOfPair.get(k);
+        if (list) list.push(e); else sheetsOfPair.set(k, [e]);
+      }
+    }
+    const sheetTwins = (st: TraceStep): LineEdge[] =>
+      (st.basis === "confirmed_flow" ? sheetsOfPair.get(pairKey(st.from, st.to)) ?? [] : []);
+    const docsOf = (list: Array<string | undefined>) => [...new Set(list.filter((d): d is string => !!d))];
+    const drawings = sheetsOfPair.size > 0
+      ? docsOf(r.steps.flatMap((st) => [st.drawingId, ...sheetTwins(st).map((e) => e.drawingId)]))
+      : r.drawings;
     // GAP-315 acceptance 1: each step of the route names its basis — the
     // confirmed flows on the path, which way the product moves along each,
     // and every co-occurrence step labelled as only that.
@@ -617,16 +642,20 @@ const tracePidLines: ToolDef = {
       const flow = st.basis === "confirmed_flow" ? flowById.get(st.lineId) : undefined;
       if (!flow) return { from: st.from, to: st.to, basis: "same sheet", ...(st.offPage ? { off_page: true } : {}) };
       const withTheFlow = normalizeTag(flow.from) === normalizeTag(st.from);
+      const twins = sheetTwins(st);
+      const alsoOn = docsOf(twins.map((e) => e.drawingId));
       return {
         from: st.from, to: st.to, basis: "confirmed flow",
         flow: withTheFlow ? `${st.from} feeds ${st.to}` : `${st.to} feeds ${st.from} (this step runs against the flow)`,
         ...(flow.label ? { stream: flow.label } : {}),
+        ...(alsoOn.length > 0 ? { also_on_sheet: alsoOn } : {}),
+        ...(twins[0]?.offPage ? { off_page: true } : {}),
       };
     }) : null;
     return {
       data: {
-        found: r.found, path: r.path, drawings: r.drawings,
-        crosses_sheets: r.steps.some((s) => s.offPage),
+        found: r.found, path: r.path, drawings,
+        crosses_sheets: r.steps.some((s) => s.offPage || !!sheetTwins(s)[0]?.offPage),
         components: r.components,
         reason: r.reason,
         basis: withFlows ? (r.found ? TRACE_BASIS_WITH_FLOWS : NO_ROUTE_BASIS_WITH_FLOWS) : SHEET_BASIS,
@@ -659,10 +688,11 @@ const TRACE_BASIS_WITH_FLOWS =
   + "process map — a person drew it or confirmed it; it has a direction (one thing feeds the next). A "
   + "\"same sheet\" step is equipment appearing together on the same drawing page, or an off-page "
   + "continuation reference — sheet-level connectivity, not valve-by-valve line tracing. Proposed or "
-  + "dismissed flows are never used. A UNIT<code> tag is a whole operating unit (a Site Codebook unit), "
-  + "not a piece of equipment: a route may start or end at one but never passes through one. Say which "
-  + "steps are confirmed flows and which are only on the same sheet; intermediate components are only "
-  + "listed once line geometry is captured.";
+  + "dismissed flows are never used. A \"confirmed flow\" step that lists `also_on_sheet` ALSO has its two "
+  + "tags on the same drawing page of those sheets (they are in `drawings` too): name both sources for it. "
+  + "A UNIT<code> tag is a whole operating unit (a Site Codebook unit), not a piece of equipment: a route "
+  + "may start or end at one but never passes through one. Say which steps are confirmed flows and which "
+  + "are only on the same sheet; intermediate components are only listed once line geometry is captured.";
 
 /** GAP-315 (I-21 fix pass 2): a no-route answer's basis when its start or
  *  end is on a confirmed flow, or the flows change its reason. No `route`. */
@@ -689,9 +719,8 @@ const NEIGHBOURHOOD_BASIS_WITH_FLOWS =
   + "Intermediate components are only listed once line geometry is captured.";
 
 /** ING-10 residual: the most tag-occurrence rows one trace reads. The read is
- *  paged to the end or to here (readAll, as the DRAWING FACTS census is); past
- *  it the document the ceiling cut is dropped whole and the trace says it is
- *  partial. */
+ *  paged to the end or to here (readTagIndex, by key); past it the document
+ *  the ceiling cut is dropped whole and the trace says it is partial. */
 export const LINE_GRAPH_ROW_CEILING = 50_000;
 
 /** ING-10 residual (I-21 fix pass): the wall clock one trace may spend
@@ -701,17 +730,20 @@ export const LINE_GRAPH_ROW_CEILING = 50_000;
  *  there and the trace says it is partial, exactly as at the row ceiling.
  *  The one exception (fix pass 2): when the page before came back short,
  *  the read is most likely over, and the page that would close it is still
- *  asked for — once — so a read that is whole is never called partial. */
+ *  asked for — once — so a read that is whole is never called partial.
+ *  The confirmed-flow read runs beside it on the same clock (fix pass 3:
+ *  flowsToLineEdges' `deadline`); past it, that read fails and is said. */
 export const LINE_GRAPH_READ_BUDGET_MS = 10_000;
 
 /** What loadLineGraph built, and what it could not include. */
 interface LineGraph {
   /** Confirmed-flow edges first, then the sheet co-occurrence edges. When a
    *  confirmed flow and co-occurrence join the SAME pair, the flow is the
-   *  step a route names (it comes first in that pair's adjacency). Between
-   *  two different routes of equal length, breadth-first order decides, not
-   *  the basis: flows in id order, then the sheets in (document, page, tag)
-   *  order. */
+   *  step a route names (it comes first in that pair's adjacency), and the
+   *  trace still cites the sheets that carry the pair (`also_on_sheet`, and
+   *  `drawings`: fix pass 3). Between two different routes of equal length,
+   *  breadth-first order decides, not the basis: flows in id order, then the
+   *  sheets in (document, page, tag) order. */
   edges: LineEdge[];
   /** The trace keys of the unit ends among the flow edges (unitTraceTag). */
   units: ReadonlySet<string>;
@@ -767,6 +799,81 @@ async function notOrgsOwn(orgId: string, knowledgeDocIds: string[]): Promise<Set
   } catch { return new Set(ids); }
 }
 
+/** One tag occurrence the line trace reads (knowledge_page_entities). */
+type TagRow = { id: string; document_id: string; page: number; kind: string; tag: string };
+
+/** A value inside a PostgREST `.or()` list, as one quoted literal: a comma,
+ *  a parenthesis or a dot in it never splits the list (ORCH-6). */
+const orLiteral = (v: string) => `"${v.replace(/[\\"]/g, (c) => `\\${c}`)}"`;
+
+/** The rows after `r` in (document_id, page, tag, id) order, as a keyset
+ *  `.or()` list: a later document; or the same document and a later page; or
+ *  the same page and a later tag; or the same tag and a later id. */
+function tagRowsAfter(r: TagRow): string {
+  const d = orLiteral(r.document_id);
+  const p = Number(r.page);
+  const t = orLiteral(r.tag);
+  return [
+    `document_id.gt.${d}`,
+    `and(document_id.eq.${d},page.gt.${p})`,
+    `and(document_id.eq.${d},page.eq.${p},tag.gt.${t})`,
+    `and(document_id.eq.${d},page.eq.${p},tag.eq.${t},id.gt.${orLiteral(r.id)})`,
+  ].join(",");
+}
+
+/**
+ * ING-10 residual: the org's tag index, read whole or said not to be.
+ *
+ * Paged by KEY on the read's whole order (I-21 fix pass 3): each page asks
+ * for the rows after the last one the page before returned, in (document_id,
+ * page, tag, id) order. A sheet re-indexed while the trace reads (its rows
+ * deleted, then inserted again) never shifts a later sheet's rows out of the
+ * pages, as an OFFSET page would (lib/knowledgeAskGuards `readAllByKey` says
+ * the same of offsets), and no page re-reads the rows before it. The order
+ * keeps a sheet's rows together and in page order, so a read stopped part
+ * way cuts one sheet, which loadLineGraph drops whole; and edge order (which
+ * breaks a tie between equal-length routes) follows the tags.
+ *
+ * A short page is not taken as the last (a project max-rows may sit below
+ * READ_PAGE): the read ends on an empty page, past LINE_GRAPH_ROW_CEILING
+ * rows ("ceiling"), or at LINE_GRAPH_READ_BUDGET_MS ("time": no page starts
+ * past it, save the one closing page after a short one). A failed page
+ * returns its error, and loadLineGraph says the index could not be read.
+ */
+async function readTagIndex(orgId: string, startedAt: number):
+  Promise<{ rows: TagRow[]; error: PgErr | null; stop: "ceiling" | "time" | null }> {
+  const rows: TagRow[] = [];
+  let after: TagRow | null = null;
+  let shortBefore = false;
+  let closingAsked = false;
+  for (let n = 0; n < 10_000; n++) {
+    if (after && Date.now() - startedAt > LINE_GRAPH_READ_BUDGET_MS) {
+      if (!shortBefore || closingAsked) return { rows, error: null, stop: "time" };
+      closingAsked = true;
+    }
+    let q = supabaseAdmin
+      .from("knowledge_page_entities")
+      .select("id, document_id, page, kind, tag")
+      .eq("org_id", orgId)
+      .in("kind", TAG_ENTITY_KINDS as unknown as string[]);
+    // The `gte` is implied by the `or` and changes no row: it is the range
+    // bound an index on the order can seek to.
+    if (after) q = q.gte("document_id", after.document_id).or(tagRowsAfter(after));
+    const { data, error } = await q
+      .order("document_id", { ascending: true }).order("page", { ascending: true })
+      .order("tag", { ascending: true }).order("id", { ascending: true })
+      .limit(READ_PAGE);
+    if (error) return { rows, error, stop: null };
+    const batch = (data ?? []) as TagRow[];
+    if (batch.length === 0) return { rows, error: null, stop: null };
+    rows.push(...batch);
+    if (rows.length > LINE_GRAPH_ROW_CEILING) return { rows, error: null, stop: "ceiling" };
+    shortBefore = batch.length < READ_PAGE;
+    after = batch[batch.length - 1];
+  }
+  return { rows, error: null, stop: "ceiling" };
+}
+
 /**
  * Build the connectivity graph from what extraction actually captured.
  *
@@ -782,46 +889,17 @@ async function notOrgsOwn(orgId: string, knowledgeDocIds: string[]): Promise<Set
  * edge answers a question and never drives a hold or an MOC.
  */
 async function loadLineGraph(ctx: ToolContext): Promise<LineGraph> {
-  type EntRow = { document_id: string; page: number; kind: string; tag: string };
   const startedAt = Date.now();
-  let outOfTime = false;
-  let last: { from: number; to: number } | null = null;
-  let closingAsked = false;
   const [read, flows] = await Promise.all([
-    // ING-10 residual: paged in a stable order to the end, or to the
-    // ceiling — never one capped read that looks whole (the way I-03 reads
-    // the DRAWING FACTS census). The order is (document, page, tag, id): the
-    // prefix of the (document_id, page, tag) index, so a sheet's rows come
-    // together and in page order, and edge order (which breaks a tie between
-    // equal-length routes) follows the tags, not random ids. No page starts
-    // past the time budget — save the one closing page after a short one
-    // (LINE_GRAPH_READ_BUDGET_MS) — the read ends there (an empty page to
-    // readAll) and is partial.
-    readAll<EntRow>((from, to) => {
-      const shortBefore = last !== null && from - last.from < last.to - last.from + 1;
-      last = { from, to };
-      if (from > 0 && Date.now() - startedAt > LINE_GRAPH_READ_BUDGET_MS) {
-        if (!shortBefore || closingAsked) {
-          outOfTime = true;
-          return Promise.resolve({ data: [], error: null });
-        }
-        closingAsked = true;
-      }
-      return supabaseAdmin
-        .from("knowledge_page_entities")
-        .select("document_id, page, kind, tag")
-        .eq("org_id", ctx.orgId)
-        .in("kind", TAG_ENTITY_KINDS as unknown as string[])
-        .order("document_id", { ascending: true }).order("page", { ascending: true })
-        .order("tag", { ascending: true }).order("id", { ascending: true })
-        .range(from, to);
-    }, LINE_GRAPH_ROW_CEILING),
-    flowsToLineEdges(ctx.orgId, supabaseAdmin),
+    readTagIndex(ctx.orgId, startedAt),
+    // The flow read and its end resolution are bounded on the same clock
+    // (fix pass 3): past it, the read fails and the trace says so.
+    flowsToLineEdges(ctx.orgId, supabaseAdmin, { deadline: startedAt + LINE_GRAPH_READ_BUDGET_MS }),
   ]);
   // A failed page discards every row read before it: the graph is the
   // confirmed flows alone, and the answer says the index could not be read.
-  let rowsAll: EntRow[] = read.error ? [] : read.rows;
-  const partial: LineGraph["partial"] = read.error ? null : read.capped ? "ceiling" : outOfTime ? "time" : null;
+  let rowsAll: TagRow[] = read.error ? [] : read.rows;
+  const partial: LineGraph["partial"] = read.error ? null : read.stop;
   if (partial) {
     // Past the ceiling the first row beyond it names the document the
     // ceiling cut; stopped on time, the last row read names the document

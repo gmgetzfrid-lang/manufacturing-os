@@ -338,6 +338,21 @@ export type FlowReadClient = Pick<SupabaseClient, "from">;
 export const FLOW_EDGE_PAGE = 1000;
 export const FLOW_EDGE_CEILING = FLOW_READ_CAP;
 
+/** I-21 fix pass 3: what bounds flowsToLineEdges in time. */
+export interface FlowEdgeReadOptions {
+  /** A Date.now() instant past which no further round trip starts — a flow
+   *  page, an asset chunk or a codebook chunk. Past it the read fails
+   *  (`state: "error"`, FLOW_READ_OUT_OF_TIME), so the caller says the flows
+   *  could not be read: half-resolved ends would otherwise leave flows out as
+   *  if their equipment were gone. (Every flow read needs a resolution round
+   *  trip after its last page, so unlike the tag index there is no closing
+   *  page to let through.) Omitted, the read is not time-bounded. */
+  deadline?: number;
+}
+
+/** The error a read stopped by its deadline answers. */
+export const FLOW_READ_OUT_OF_TIME = "reading them took longer than one trace may spend on it";
+
 export interface FlowLineEdges {
   /** One edge per confirmed flow whose two ends resolve (basis "confirmed_flow"). */
   edges: LineEdge[];
@@ -389,18 +404,26 @@ export function unitTraceTag(code: string): string {
  * resolves to its registry tag, a unit end to its Site Codebook unit, both
  * tag-normalised (pidTrace normalizeTag) so they meet the sheet graph's tags.
  * The read is the status column, `confirmed` only — in the query and again on
- * every row returned — in keyset pages to FLOW_EDGE_CEILING.
+ * every row returned — in keyset pages to FLOW_EDGE_CEILING. With a
+ * `deadline` (the line trace passes its tag-index budget), no round trip
+ * starts past it, and a read stopped there fails rather than resolve part.
  */
-export async function flowsToLineEdges(orgId: string, client: FlowReadClient = supabase): Promise<FlowLineEdges> {
+export async function flowsToLineEdges(
+  orgId: string,
+  client: FlowReadClient = supabase,
+  opts: FlowEdgeReadOptions = {},
+): Promise<FlowLineEdges> {
   const none = (state: "missing" | "error", error?: string): FlowLineEdges =>
     ({ edges: [], state, ...(error ? { error } : {}), truncated: false, skipped: 0, unitNodes: [] });
   const failed = (e: { code?: string; message?: string }) =>
     (flowSchemaMissing(e) ? none("missing") : none("error", e.message || "the read failed"));
+  const late = () => opts.deadline !== undefined && Date.now() > opts.deadline;
 
   const rows: FlowEdgeRow[] = [];
   let truncated = false;
   let after: string | null = null;
   for (;;) {
+    if (late()) return none("error", FLOW_READ_OUT_OF_TIME);
     let q = client.from("process_flows")
       .select("id, status, from_kind, from_ref, to_kind, to_ref, label, source_document_id")
       .eq("org_id", orgId)
@@ -426,6 +449,7 @@ export async function flowsToLineEdges(orgId: string, client: FlowReadClient = s
     r.from_kind === "asset" ? r.from_ref : null, r.to_kind === "asset" ? r.to_ref : null,
   ]).filter((ref): ref is string => !!ref && UUID.test(ref)))];
   for (let i = 0; i < assetRefs.length; i += 200) {
+    if (late()) return none("error", FLOW_READ_OUT_OF_TIME);
     const { data, error } = await client.from("assets").select("id, tag, archived")
       .eq("org_id", orgId).in("id", assetRefs.slice(i, i + 200));
     if (error) return failed(error);
@@ -440,6 +464,7 @@ export async function flowsToLineEdges(orgId: string, client: FlowReadClient = s
     r.from_kind === "unit" ? r.from_ref : null, r.to_kind === "unit" ? r.to_ref : null,
   ]).filter((ref): ref is string => !!ref))];
   for (let i = 0; i < unitRefs.length; i += 200) {
+    if (late()) return none("error", FLOW_READ_OUT_OF_TIME);
     const { data, error } = await client.from("codebook_entries").select("code")
       .eq("org_id", orgId).eq("kind", "unit").in("code", unitRefs.slice(i, i + 200));
     if (error) return failed(error);
