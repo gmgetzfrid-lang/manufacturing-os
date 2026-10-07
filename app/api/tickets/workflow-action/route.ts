@@ -6,6 +6,7 @@ import { loadCapabilityPolicyStrict, policyAllows, scopedTokensFor } from "@/lib
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { isSafeStorageKey } from "@/lib/storageKey";
 import { publicOrigin } from "@/lib/publicOrigin";
+import { plainMentions, wrapEmailBody } from "@/lib/emailRender";
 import { flaggedRequestTypes } from "@/lib/requestTypes";
 import {
   computeTransition,
@@ -1037,9 +1038,24 @@ async function fanOut(params: {
   const emailLink = `${emailOrigin.replace(/\/+$/, "")}${link}`;
   const actorName = actorEmail.split("@")[0];
 
+  // NEDGE-14 (notifications Round G, N6): only ACTIVE members of the ticket's
+  // org hear about it — the predicate emit() applies centrally
+  // (lib/notify/recipients.ts activeMembersOf), read here on the service role
+  // together with the addresses. A read that fails keeps today's bell
+  // audience (a transient error never silently drops a notice) and mails no
+  // one (no address was read).
+  const { data: members, error: membersErr } = await supabaseAdmin
+    .from("org_members").select("uid, email").eq("org_id", ticket.orgId).eq("status", "active").in("uid", recipients);
+  if (membersErr) console.warn("[workflow-action] active-membership read failed — recipients not filtered, no email sent", membersErr.message);
+  const active = membersErr ? null : ((members as Array<{ uid: string; email: string | null }> | null) ?? []);
+  const activeUids = new Set((active ?? []).map((m) => m.uid));
+  const audience = active ? recipients.filter((uid) => activeUids.has(uid)) : recipients;
+
   if (activity) {
-    await supabaseAdmin.from("notifications").insert(
-      recipients.map((uid) => ({
+    if (audience.length === 0) return;
+    // DELIV-7 dw3: a refused insert is logged, never silently dropped.
+    const { error: activityErr } = await supabaseAdmin.from("notifications").insert(
+      audience.map((uid) => ({
         org_id: ticket.orgId,
         user_id: uid,
         kind: "ticket_comment",
@@ -1053,6 +1069,7 @@ async function fanOut(params: {
         metadata: { activity: action.type, status: newStatus },
       })),
     );
+    if (activityErr) console.error("[workflow-action] activity bell rows were not written (transition committed):", activityErr.message);
     return;
   }
 
@@ -1088,9 +1105,11 @@ async function fanOut(params: {
     console.warn("[workflow-action] superseding stale notifications failed:", e);
   }
 
-  // 1) In-app bell rows.
-  await supabaseAdmin.from("notifications").insert(
-    recipients.map((uid) => ({
+  // 1) In-app bell rows — to the active audience only (NEDGE-14). The stale
+  //    alerts above are retired whoever is left to tell.
+  if (audience.length === 0) return;
+  const { error: bellErr } = await supabaseAdmin.from("notifications").insert(
+    audience.map((uid) => ({
       org_id: ticket.orgId,
       user_id: uid,
       kind: cls.inAppKind,
@@ -1104,14 +1123,16 @@ async function fanOut(params: {
       metadata: { action: action.type, status: newStatus },
     })),
   );
+  if (bellErr) console.error("[workflow-action] bell rows were not written (transition committed):", bellErr.message);
 
   // 2) Email queue — preference-aware (defaults all-on when no prefs row).
-  const [{ data: members }, { data: prefs }] = await Promise.all([
-    supabaseAdmin.from("org_members").select("uid, email").eq("org_id", ticket.orgId).in("uid", recipients),
+  const [{ data: prefs }, { data: orgRow }] = await Promise.all([
     supabaseAdmin.from("notification_preferences").select("*").in("user_id", recipients),
+    supabaseAdmin.from("orgs").select("name").eq("id", ticket.orgId).maybeSingle(),
   ]);
+  const orgName = ((orgRow as { name?: string | null } | null)?.name ?? null);
   const emailByUid = new Map<string, string>();
-  ((members as Array<{ uid: string; email: string | null }>) ?? []).forEach((m) => {
+  (active ?? []).forEach((m) => {
     if (m.email) emailByUid.set(m.uid, m.email);
   });
   const prefByUid = new Map<string, Record<string, unknown>>();
@@ -1136,26 +1157,40 @@ async function fanOut(params: {
     }
   };
 
-  const emailRows = recipients
+  // NEDGE-10 dw2: a note's mention markup reaches the email as names; the
+  // render layer adds the footer (lib/emailRender.ts — the drain then
+  // attaches the one-click unsubscribe header).
+  const note = comment ? plainMentions(comment) : null;
+  const composedText = `${actorEmail} performed: ${action.label}\n\nStatus is now: ${newStatus}\n${note ? `\nNote: ${note}\n` : ""}\n${emailLink}`;
+  const composedHtml = `
+        <p><b>${escapeHtml(actorEmail)}</b> performed <b>${escapeHtml(action.label)}</b> on <a href="${escapeHtml(emailLink)}">${escapeHtml(ticketLabel)}</a>.</p>
+        <p>Status: <b>${escapeHtml(newStatus)}</b></p>
+        ${note ? `<blockquote style="border-left:3px solid #cbd5e1;padding-left:12px;color:#475569;white-space:pre-wrap">${escapeHtml(note)}</blockquote>` : ""}
+        <p><a href="${escapeHtml(emailLink)}">Open ticket</a></p>`;
+  let body: { bodyText: string; bodyHtml: string } | null = null;
+  try {
+    body = wrapEmailBody({ text: composedText, html: composedHtml, orgName, origin: emailOrigin });
+  } catch (e) {
+    console.warn("[workflow-action] email not rendered (queued as composed):", (e as Error).message);
+  }
+
+  const emailRows = audience
     .filter((uid) => emailByUid.has(uid) && wantsEmail(uid))
     .map((uid) => ({
       org_id: ticket.orgId,
       to_user_id: uid,
       to_email: emailByUid.get(uid)!,
       subject: cls.emailSubject,
-      body_text: `${actorEmail} performed: ${action.label}\n\nStatus is now: ${newStatus}\n${comment ? `\nNote: ${comment}\n` : ""}\n${emailLink}`,
-      body_html: `
-        <p><b>${escapeHtml(actorEmail)}</b> performed <b>${escapeHtml(action.label)}</b> on <a href="${escapeHtml(emailLink)}">${escapeHtml(ticketLabel)}</a>.</p>
-        <p>Status: <b>${escapeHtml(newStatus)}</b></p>
-        ${comment ? `<blockquote style="border-left:3px solid #cbd5e1;padding-left:12px;color:#475569;white-space:pre-wrap">${escapeHtml(comment)}</blockquote>` : ""}
-        <p><a href="${escapeHtml(emailLink)}">Open ticket</a></p>`,
+      body_text: body ? body.bodyText : composedText,
+      body_html: body ? body.bodyHtml : composedHtml,
       resource_type: "ticket",
       resource_id: ticketId,
       event_type: cls.eventType,
-      metadata: { action: action.type, status: newStatus },
+      metadata: { action: action.type, status: newStatus, ...(body ? { rendered: true } : {}) },
       status: "queued",
     }));
   if (emailRows.length > 0) {
-    await supabaseAdmin.from("email_notifications").insert(emailRows);
+    const { error: mailErr } = await supabaseAdmin.from("email_notifications").insert(emailRows);
+    if (mailErr) console.error("[workflow-action] emails were not queued (transition committed):", mailErr.message);
   }
 }
