@@ -562,6 +562,7 @@ app/api/knowledge/ask/route.ts:1369-1374 — the only filter is `.in("document_i
 *Reproduced on `f5073fc`.*
 - `saveConfig` (`lib/codebook.ts:657-669`) wrote any string into `codebook_config.legend_doc_ids`. A throwaway test (another org's knowledge document id, saved through `saveConfig`) resolved and stored the id. With the fix the same test is refused before anything is written.
 - `knowledge_library_save_ai_features` (newest body `20261121`, confirmed by scanning `supabase/migrations`) stored `p_features` as given.
+- *Fix pass (2026-10-02, I-16 verification run).* The first draft of this package checked the library save's ids in the app only on its pre-20261121 fallback. On a database with 20261121's RPC and without 20261178 — today's — a foreign id still went through the RPC unchecked. `intelRoundGCodebookLifecycle.test.ts` "the library toggles save, on 20261121's RPC before 20261178" fails against that draft and passes now: the app checks before the RPC runs.
 
 *What landed.*
 - **The rule, once.** 20261178 §4a adds `assert_legend_doc_ids(org, new, old)`: invoker rights, `search_path` pinned, anon revoked. Every id a save ADDS must be uuid-shaped (22023) and name a `knowledge_documents` row of the same org (23503); the org predicate is explicit. An id already stored is kept as it is, so detaching another sheet never trips on a stale one. That includes the page's upsert: its BEFORE INSERT arm compares with the stored row.
@@ -571,14 +572,14 @@ app/api/knowledge/ask/route.ts:1369-1374 — the only filter is `.in("document_i
 - **The library toggles save.**
   - `knowledge_library_save_ai_features` is re-created from 20261121's body plus ONE line: the check, on the saved library only, through a CASE. Invoker rights and the `embedBuild` stamp are unchanged. An exact cut is pinned, and `embedDrain.test.ts`'s census names 20261178 as its newest definer.
   - `trg_knowledge_libraries_legend_guard` (refuse-only, beside 20261121's `embedBuild` guard, which is untouched) applies the same rule to a person's direct PostgREST write of `ai_features`.
-  - `lib/knowledge.ts` `saveLibraryAiFeatures` translates the RPC's refusal, and in its pre-20261121 fallback checks the ids it adds before its update.
+  - `lib/knowledge.ts` `saveLibraryAiFeatures` checks the ids it adds before any write, on every database: it reads the library's org and stored legend, then `assertOrgKnowledgeDocIds`, before the RPC (and so before the pre-20261121 fallback too). A save that names no legend sheet reads nothing more than before. It also translates the RPC's refusal.
   - The service role — the org restore, the embed drain's marker writes — passes.
 
 *Tests.*
-- `lib/__tests__/intelRoundGCodebookLifecycle.test.ts` "ASK-8 done-when 2": the reproduction → fix; an own document saves; a detach beside a stale id saves; a code-rule save reads nothing new; the database's refusal is translated; the library save is refused through the RPC and through the fallback, and the fallback keeps the marker.
+- `lib/__tests__/intelRoundGCodebookLifecycle.test.ts` "ASK-8 done-when 2": the reproduction → fix; an own document saves; a detach beside a stale id saves; a code-rule save reads nothing new; the database's refusal is translated. The library save: on 20261121's RPC a foreign id or a non-id is refused before the RPC is called, against the library's own org; an own document saves through the RPC; a save with no legend sheet calls the RPC alone; the database's refusal is translated; the fallback refuses before its update and keeps the marker.
 - `lib/__tests__/intelRoundGCodebookLifecycleMigration.test.ts`: the rule's shape, and the RPC's exact cut.
 - PG16 (CB-5's run):
-  - another org's document and a non-uuid are refused, through the codebook upsert, the toggles RPC and a direct library write;
+  - another org's document and a non-uuid are refused, through the codebook upsert, a first `codebook_config` insert, the toggles RPC and a direct library write;
   - an own document saves;
   - a stale stored id stays detachable;
   - a non-controller's RPC answers false without running the check on a row RLS hides;
