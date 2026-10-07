@@ -117,3 +117,20 @@ narrowed too.
   2. **P7** takes the registry and viewer notes (P3 handoff 2 and fix-pass-8 item 2), as a `dependsOn` line. `BKP-6` is not P7's.
   3. **P4** takes `BILL-3`'s create-form wart (fix-pass-8 item 1), as a `dependsOn` line beside `DEC-87` §2's machine-row convention.
   4. `DEC-44 (A&O P3)` was renumbered `DEC-87`, and every mention moved with it. `20261172` is row 127 of `MIGRATION-PASTE-ORDER.md`.
+- *2026-10-02 (admin-and-org Round G, P6: storage quota, platform ceiling, branding upload key) — one paste, one setup line, and handoffs.*
+  1. **Paste `supabase/migrations/20261177_ao_roundG_platform_operators.sql`** (`DEC-30`, one paste, idempotent).
+     - *What it does.* It re-asserts that `platform_settings` is service-role only (RLS on, nothing granted to public / anon / authenticated), seeds the empty operator list (`platform_operators` = `{"uids": []}`, never clearing one) and comments the table. It creates no function, policy, trigger or grant.
+     - *Order.* Either order with P6's deploy. Before the paste, the app finds no operator row, so nobody may change the plan ceilings (fail closed); every workspace still sees its own files, and a single-workspace server still sees its own figures.
+     - *What to check.* The seven probes are all true; the after rows give the operator count (0 until the line below) and the workspace count.
+     - *Rollback.* `DELETE FROM platform_settings WHERE key = 'platform_operators';`
+  2. **Register the deployment's owner as platform operator**, or nobody can change the hosting-plan ceilings from `/admin/storage` (BILL-5, `DEC-44 (A&O P6)` §1). On a shared server, the deployment's storage alerts go to operators only. The line is in 20261177's header (by email); the storage page shows a refused Admin / DocCtrl the same thing with their own uid.
+  3. **For A&O P7's audit-action registry (`ALOG-11`).** P6 writes four actions, each a person's row with the actor's real uid and the role the surface admitted them by:
+     - `BRANDING_LOGO_UPLOAD` (`resource_type` `org_branding`, `details { path, contentType, size }`; ORG-5);
+     - `STORAGE_QUOTA_CHANGED` and `ARCHIVE_SETTINGS_CHANGED` (`archive_settings`, `details.changes { <field>: { before, after } }`; BILL-7);
+     - `PLATFORM_STORAGE_LIMITS_CHANGED` (`platform_settings`, `details { scope: "deployment", before, after }`; BILL-5 / BILL-7).
+  4. **SURF-19's remaining limbs** are each one line, recorded in the finding's Partial block:
+     - `app/api/admin/purge` and `archive-cancel` (A&O P7): `authorizeAdminSurface(req, orgId, "storage", "write")`.
+     - `app/api/stripe/checkout` and `portal` (A&O P5): `authorizeAdminSurface(req, orgId, "billing", "write")`.
+
+     The pin `lib/__tests__/roundE_D_rolesAdmin.test.ts` "…that STILL carry a constant…" lists exactly these four; drop each row as it converts.
+  5. **Outside P6's plan:** `lib/storage.ts` (three lines). `getPresignedUploadUrl` sends the file's `size`, which the route signs as a logo's Content-Length, and appends the route's reason to "Failed to get upload URL (HTTP n)". Without it, the branding page's logo upload would be refused for want of a size.

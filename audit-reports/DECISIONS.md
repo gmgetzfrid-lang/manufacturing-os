@@ -5401,3 +5401,66 @@ Before such a modal starts an upload, once the run's cards clear, and whenever n
 *Landed 2026-10-02 (admin-and-org Round G): A&O P3 fix pass 7, corrected in place with `BKP-6`, `BKP-8` and `BKP-13`. §1: PATCH gates enabling only for a row that pushes to a bucket after the save. §3: `rebuildExportList` says whether the export arrived (`undelivered`), and names `user_id` as who took it, with email and role as display hints until `ALOG-7`. `BKP-6`: a retention purge's deleted and failed counts are the run row's own columns (`20261172`, pending paste), written by both run routes and shown on the page. The Acceptance line on the bounded reads says the 15-minute window (`DEC-29`). Implementation and Acceptance are updated to match.*
 
 *Landed 2026-10-02 (admin-and-org Round G): A&O P3 fix pass 8, corrected in place with `BKP-6`, `BKP-8`, `BKP-13` and `BILL-3`. §3: a recall reads a record's `DATA_EXPORT_UNDELIVERED` row up to a day after it (`UNDELIVERED_READ_WINDOW_MS`); the 15-minute bound assumed the routes' 300 s `maxDuration`, which the Docker self-host (`next start`) does not enforce, so a failed slow delivery read as delivered. `undelivered: null` means no failure is recorded, never "arrived". `audit_logs_insert` checks the uid and the org, never the email or role. §1: Run Now, the sweep's plan limb and its disable-on-lapse test a bucket destination as PATCH does, s3 / r2 with a bucket (`pushesToBucket`), so the converted webhook fix pass 7 allowed is no longer disabled that night or refused 402. Implementation, Acceptance and Risk are updated to match.*
+
+*Landed 2026-10-02 (admin-and-org Round G): A&O P6 took Risk's first item. `/admin/storage`'s Full ZIP and JSON buttons render only for a member holding the data-export surface's entry (`hasAnyRole(adminSurface("data-export").entry)`, the full collection). Manager and DocCtrl read the surface's denial sentence and "Ask an Admin to take a full backup." instead of a 403. See `BKP-8`'s residual and `DEC-44 (A&O P6)`.*
+
+<a id="dec-44-ao-p6"></a>
+## DEC-44 (A&O P6) · The storage page's numbers: who sets the plan ceiling, whose usage a quota counts, what a quota does, how long a walk may take, and what a logo may be
+
+*Minted by admin-and-org Round G, package P6 (2026-10-02), under the protocol's fail-safe rule, as a provisional "DEC-44 (A&O P6)", distinct from the download-record DEC-44. DEC-44 to DEC-87 are taken on the integration branch; the integrator renumbers it at merge. It takes the fleet plan's decisionsNeeded for P6 (`audit-reports/fleet-plans/admin-and-org.json`) with the integrator's launch choices: BILL-5 conservative, BILL-11 advisory, BILL-13 per the record, ORG-5 an image allow-list and 5 MB. References: `BILL-5`, `BILL-7`, `BILL-11`, `BILL-12`, `BILL-13`, `ORG-5` (admin-and-org), `SURF-19` (roles-and-permissions).*
+
+**Decision. Six calls.**
+
+1. **The hosting-plan ceiling is a platform operator's (`BILL-5`).** The ceiling (`platform_settings` `storage_limits`) describes one bucket and one database for the whole server, so it is not made per-org: a per-org ceiling would be a second quota, not the plan.
+   - **Who writes it.** Only a platform operator: a uid listed in `platform_settings` `platform_operators` (`{"uids": [...]}`). That table is service-role only and no app route writes the row, so no org role, Admin included, can make anyone an operator; the deployment's owner registers one in the SQL editor (`20261177`'s header; the page shows a refused Admin / DocCtrl the line with their own uid).
+   - **The org count does not matter.** An Admin of the only workspace is refused too, as the integrator's brief asked ("no member of any org can upsert the global row").
+   - **Considered and not taken:** letting the sole workspace's controllers write while the server has one workspace. A second workspace can appear by signup without anyone deciding it; the cost of not taking it is one SQL line for a single-workspace owner.
+2. **The quota is advisory (`BILL-11`).** Nothing refuses an upload at the quota or the plan ceiling, and every copy says so. The alert says what happens past the R2 ceiling: Cloudflare bills the overage, or refuses writes on an account without billing. Enforcing at upload would refuse a controlled revision mid-workflow on a figure up to a day old or a partial walk.
+3. **A workspace's quota counts its own files (`BILL-12`).** Its usage is the bucket walked under `orgs/<id>/`, in the cron and on the page alike. The shared database is not attributed per org: relation sizes are physical, and attributing them would scan every org-scoped table. It is watched against its plan ceiling by the platform watchdog. Who sees the deployment's figures (every table, the whole bucket, the plan ceilings, the deployment's alerts): a platform operator, or the members of the ONE workspace on a single-workspace server, whose figures they are. Nobody else on a shared server.
+4. **A bucket walk has a deadline, not a cache (`BILL-13`).** The record's first remedy: `measureR2Usage` takes a deadline and returns a partial walk as `truncated` / `stoppedBy: "deadline"`, never a throw. storage-stats declares `maxDuration = 60` with a 40 s walk; the cron gives the platform walk 60 s and the quota walks 45 s. A cron-cached figure stays the next step if page-load list ops ever matter.
+5. **The workspace logo (`ORG-5`).**
+   - **Who.** Admin only, by the full collection, for a file directly under `orgs/<org>/branding/`. The covers and backgrounds sub-folders are folders' and libraries' and keep the membership rule.
+   - **What.** PNG, JPEG or WebP, at most 5 MB, the type and length signed into the presigned PUT. SVG is refused rather than sanitised: a presigned PUT never passes its bytes through the server.
+   - **The record.** An audit row (`BRANDING_LOGO_UPLOAD`) is written, checked, before the signature. The multipart route refuses the area.
+6. **The routes behind a surface ask the one gate with an intent (`SURF-19`).** `authorizeAdminSurface(req, orgId, surface, "enter" | "write")`. "write" is the entry rule AND the surface's `writes` set (a surface with no `writes` set is held to its entry). A route whose constant was the writes set is held to "write" even where it reads, so that nobody's admission changes.
+
+**Rationale.**
+- `BILL-5`: the ceiling bands every workspace and is a fact about the server, so the person who may move it is the person who runs the server, and the app must not let a tenant's role stand in for that.
+- `BILL-12`: the quota is a workspace's own budget, so its numerator must be the workspace's own bytes.
+- `BILL-11` and `BILL-13`: a number that refuses work, or that the page cannot finish computing, is worse than an honest advisory one that says when it is partial.
+- `ORG-5`: the logo's pointer was already Admin-only, so the bytes are held to the same rule.
+- `SURF-19`: one decision should have one evaluator.
+
+**Implementation.**
+- `lib/storageUsage.ts`: `PLATFORM_OPERATORS_KEY`, `PLATFORM_OPERATORS_MIGRATION`, `platformOperatorSql`, `readPlatformOperators`, `isSoleTenant`, `storageScopeFor`, `orgStoragePrefix`, `MeasureR2Options` (`deadlineMs`, `prefix`, `orgTotalFor`), `PLATFORM_WALK_BUDGET_MS`, `platformAlertRecipients`, and the alert copy.
+- `lib/storageAlerts.ts`: `runStorageAlerts` per prefix, `QUOTA_WALK_BUDGET_MS`, and the copy.
+- `app/api/admin/storage-stats/route.ts` and `archive-settings/route.ts`: the gate, the operator rail, the scope, the audit rows, `maxDuration`.
+- `lib/adminGate.ts`: `AdminGateIntent`, `adminSurfaceWriteAllows`, `writesDeniedMessage`.
+- The 12 converted route files (seventeen handlers).
+- `lib/storageKey.ts`: `isWorkspaceLogoKey`, `LOGO_CONTENT_TYPES`, `LOGO_MAX_BYTES`, `logoUploadProblem`.
+- `app/api/storage/upload-url/route.ts`, `multipart/route.ts`.
+- `lib/storage.ts`: sends `size` and surfaces the route's reason.
+- `components/branding/LogoUploadModal.tsx` and `app/(protected)/admin/storage/page.tsx`.
+- `supabase/migrations/20261177_ao_roundG_platform_operators.sql`.
+- Tests: `lib/__tests__/aoRoundGStorageQuota.test.ts`, `aoRoundGLogoUpload.test.ts`, `aoRoundGStoragePage.test.ts`, `aoRoundGPlatformOperatorsMigration.test.ts`, `storageKey.test.ts`, `roundE_D_rolesAdmin.test.ts`, `notificationKindStorageProducers.test.ts`.
+
+**Acceptance.**
+- An Admin or DocCtrl of any org, the only one included, who is not an operator is refused 403 on the ceiling and nothing is written. An operator saves it, and the audit row has old and new values. An unreadable operator list is 503.
+- On a shared server a non-operator's stats GET carries no deployment aggregate and walks only their prefix. The sole workspace and an operator get the deployment's figures, labelled.
+- Another tenant's upload cannot move a workspace's quota band.
+- No alert or page copy says uploads will fail.
+- A walk past its deadline returns partial, never throws.
+- Only an Admin can sign a logo PUT, only as PNG / JPEG / WebP of 5 MB or less, with the type and length signed; covers, backgrounds and documents are signed as before.
+- Every converted route admits exactly the roles its base constant admitted, and a registry change moves its answer.
+
+**Reversal.**
+- A deployment that wants tenants to set the ceiling would add a per-org ceiling column, a second quota with its own name, never re-open the global row to org roles.
+- A stated need to enforce the quota adds a refusal at upload-url / multipart against a fresh per-org figure.
+- SVG logos would need a server-side upload path that can sanitise the bytes.
+
+**Risk:** low.
+- A single-workspace owner loses the in-app ceiling editor until they register as operator (one SQL line, shown on the page).
+- A shared server with no operator gets no deployment alert; the cron logs it.
+- The quota's meaning narrows to files.
+- The page load still lists up to 40 s of bucket.
+- A refused caller of a converted route reads the surface's sentence instead of "Insufficient role".

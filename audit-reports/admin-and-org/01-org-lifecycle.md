@@ -304,7 +304,7 @@ settings/page.tsx:108-114 — `const { error } = await supabase.from("orgs").upd
 ## ORG-5 · Any active org member can overwrite the org logo in R2 — the Admin-only branding RLS is bypassed because authority lives on the config row, not the storage key
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/storage/upload-url/route.ts:26-56`, `lib/orgBranding.ts:24-31`, `app/(protected)/admin/branding/page.tsx:63-69`, `components/branding/LogoUploadModal.tsx:36-38`, `supabase/migrations/20260713_branding_admin_writes.sql:20-34`, `components/navigation/Sidebar.tsx:372-375`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: the Admin-only RLS protects the pointer, not the bytes it points at. Any active member (Viewer/Contractor included) can presign a PUT for the exact logo key and replace what every member sees.
@@ -332,6 +332,32 @@ upload-url/route.ts:36-45 — the entire authorization: `.from("org_members").se
 - [ ] upload-url authorizes the key's AREA, not just the org: writes under `orgs/<org>/branding/` require `is_org_admin`-equivalent
 - [ ] The server pins ContentType from a small allowlist (png/jpeg/webp/svg) rather than echoing the caller's string, and enforces a size cap
 - [ ] Branding logo uploads write an audit_logs row naming the actor
+
+
+**Resolution (2026-10-02, admin-and-org Round G).** Package P6. Reproduced at base `f5073fc`: `app/api/storage/upload-url/route.ts:33-45` checked membership only and `:80-86` signed whatever `ContentType` the caller sent. The presigner leaves Content-Type unsigned (`@aws-sdk/s3-request-presigner` adds it to `unsignableHeaders`), so the PUT could carry any type regardless. The test "a Drafter … asking to PUT the exact logo key is refused 403" fails against base.
+- **The logo area.** `lib/storageKey.ts isWorkspaceLogoKey` defines it as a file directly under `orgs/<uuid>/branding/`, which is where both the branding page and the sidebar's logo modal mint `logo-<uuid>.<ext>`. The sub-folders `branding/covers/` and `branding/backgrounds/` are a folder's or library's cover and page background (`components/documents/CustomizeNodeModal.tsx`), written by whoever customizes that node. They are not the logo, and they keep the membership rule, so those uploads work as before.
+- **Done-when 1.** For a logo key, upload-url reads the member's role collection (`select("uid, role, roles")`) and refuses anyone not holding Admin (`memberHoldsAny`, the collection, as `is_org_admin` reads it): 403 "Only an Admin can change the workspace logo."
+- **Done-when 2** (`DEC-44 (A&O P6)` §5, the brief's values):
+  - **Types.** PNG, JPEG and WebP only (`LOGO_CONTENT_TYPES`, exact strings), else 415. SVG is refused, not sanitised: a presigned PUT never passes its bytes through the server, so nothing could sanitise it on the way in, and it can carry script when opened directly.
+  - **Size.** 5 MB (`LOGO_MAX_BYTES`; the record names no cap, so the brief's default). Over is 413; a missing or non-integer declared size is 400.
+  - **Signed into the PUT.** The type and the declared length are SIGNED headers of the presigned PUT (`ContentLength` set; `signableHeaders: content-type`), so storage refuses a PUT that sends another type or another byte count. The test reads `X-Amz-SignedHeaders` from a real presigned URL.
+  - **Multipart.** `app/api/storage/multipart/route.ts` refuses the logo area outright (400 before storage is touched): a logo never needs multipart, and the route must not be the way around these checks.
+- **Done-when 3.** Before signing, the route writes `BRANDING_LOGO_UPLOAD` (`resource_type` `org_branding`, the org, the actor's uid and email, `user_role` Admin, `details { path, contentType, size }`). Checked: a refused row refuses the upload (503), never signed unrecorded. The row is written where the upload is authorized, which the finding's attacker (a member calling upload-url directly) cannot skip. A client-side row in `lib/orgBranding.ts saveOrgBranding`, the plan's suggested site, would be skipped by exactly that caller, so `lib/orgBranding.ts` is not edited.
+- **The client.**
+  - `lib/storage.ts`: `getPresignedUploadUrl` sends the file's `size`, which non-logo keys ignore. A refused presign keeps its "Failed to get upload URL (HTTP n)" prefix and appends the route's reason, so the branding page's "Logo upload failed: …" says why. This file is outside P6's plan (filesOutsidePlan).
+  - `components/branding/LogoUploadModal.tsx` pre-checks the same rule (`logoUploadProblem`), offers only those types, and says "PNG, JPEG or WebP, up to 5 MB."
+- Tests: `lib/__tests__/aoRoundGLogoUpload.test.ts` (route, real presigner, multipart, regression for documents, covers and backgrounds; the client pins); `lib/__tests__/storageKey.test.ts` (the area and the rule).
+
+**Done-when.**
+- ✓ upload-url authorizes the key's area: writes directly under `orgs/<org>/branding/` require Admin by the full collection.
+- ✓ The server pins ContentType from an allow-list and enforces a size cap. The list is png / jpeg / webp; svg is refused rather than sanitised (reason above), narrower than the record's list. Both are signed into the PUT.
+- ✓ Branding logo uploads write an audit row naming the actor (server-side, checked, before the signature).
+
+**Scope / residual.**
+- **An Admin can still overwrite the current logo's key in place.** The row is written. A fresh key per upload is what the app mints.
+- **A logo already stored as SVG keeps rendering** (its pointer is unchanged); a new one cannot be uploaded as SVG.
+- **The finding's chain reaction is not closed here** (`DEC-31`): other member-writable areas, covers and backgrounds included, still accept any Content-Type. The download route's `ResponseContentType` / `ResponseContentDisposition` pinning is projects `SEC-7` (`lib/presignedDisposition.ts`).
+- **R2 enforcing the signed headers** is the SigV4 contract the cap and type pin rely on. It was tested here at the signature (the URL's signed header list), not against a live bucket.
 
 ---
 

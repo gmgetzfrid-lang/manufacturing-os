@@ -190,7 +190,7 @@ app/api/stripe/webhook/route.ts:102-104 — `await supabase.from("orgs").update(
 ## BILL-5 · The platform storage ceiling is a single global row that any Admin/DocCtrl of any org can overwrite, and the storage dashboard leaks deployment-wide usage across tenants
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/admin/storage-stats/route.ts:158-188`, `app/api/admin/storage-stats/route.ts:24-36`, `app/api/admin/storage-stats/route.ts:114-150`, `lib/storageUsage.ts:53-77`, `lib/storageUsage.ts:131-162`, `supabase/migrations/20260920_per_user_keys_real_limits.sql:23-30`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on both halves. The role check only proves membership in *some* org; nothing scopes the write to a platform owner, and STORAGE_LIMITS_KEY is a single global key. The GET at :24-150 returns deployment-wide table sizes, row counts, and per-segment R2 breakdowns (with newest-object timestamps) to any Admin/Manager/DocCtrl of any tenant; loadPlatformLimits (storageUsage.ts:56-77) and runPlatformStorageAlerts then band every tenant off that one shared ceiling.
@@ -214,6 +214,29 @@ app/api/admin/storage-stats/route.ts:174-179 — `const { error } = await actor.
 - [ ] The storage ceiling is per-org (key includes the org id, or a column on the org) or the write is restricted to a platform-operator role that org admins cannot hold
 - [ ] GET's aggregates are scoped to the caller's org, or the endpoint is restricted to a platform operator
 - [ ] Changing a storage ceiling writes an audit_logs row naming the actor and the old/new values
+
+
+**Resolution (2026-10-02, admin-and-org Round G).** Package P6, under the provisional `DEC-44 (A&O P6)` (`audit-reports/DECISIONS.md`; DEC-44 to DEC-87 are taken on the integration branch, so the integrator renumbers it). Reproduced at base `f5073fc`: `app/api/admin/storage-stats/route.ts:164` admitted an Admin or DocCtrl of the org named in the body and `:174-179` upserted the one `platform_settings` row `storage_limits`; `:26` let any Admin / Manager / DocCtrl of any org read `mfg_table_stats()`, the whole-bucket walk (`:121`) and an unfiltered `ai_usage_events` count (`:105-106`). The tests named "REPRODUCED" below fail against that code.
+- **The write is a platform operator's (Done-when 1).** The ceiling is the hosting plan's, one bucket and one database for the whole server, so a per-org ceiling would be a second quota, not the plan; the record's other branch is taken. A platform operator is a uid listed in `platform_settings` under `platform_operators` (`{"uids": [...]}`). That table is service-role only (20260920 revokes it from every client role), and no app route writes the row, so no org role, Admin included, can make anyone an operator: the deployment's owner adds one in the SQL editor. `POST /api/admin/storage-stats` is first held to the storage surface's writes set through `lib/adminGate.ts` (SURF-19; who reaches it is unchanged), then refuses anyone not on the list: 403 with `operatorRequired: true` and a sentence naming the paste. An unreadable list is a 503, nothing saved (fail closed). The org count does not matter: an Admin of the only workspace is refused too, as the integrator's brief asked ("no member of any org can upsert the global row"). `lib/storageUsage.ts`: `PLATFORM_OPERATORS_KEY`, `readPlatformOperators`, `platformOperatorSql` (the idempotent line the page shows a refused Admin / DocCtrl, tested against PG16).
+- **The deployment's figures are scoped (Done-when 2).** `GET` returns `scope`. It is `"deployment"` for a platform operator, or for a member of the ONE workspace on a single-workspace server (those figures are its own; `isSoleTenant`, fail-closed on an unreadable `orgs`). Otherwise it is `"workspace"`: only this workspace's files, measured under `orgs/<id>/` (`measureR2Usage({ prefix })`), and the AI count for this org, with `db`, `r2Real`, `r2Estimate`, `freeTier` and `dedup` null and no deployment RPC called (`storageScopeFor`). In deployment scope the workspace's own total comes from the same walk (`orgTotalFor`), never riding on the deployment figure.
+- **The change is audited (Done-when 3, with `BILL-7`).** `PLATFORM_STORAGE_LIMITS_CHANGED`, `resource_type` `platform_settings`, the actor's uid, email and admitted role, `details { scope: "deployment", before { r2Bytes, dbBytes, source }, after }`. Checked: a refused row is said on the answer (`warning`), since the change has landed.
+- **The platform watchdog follows the same rule.** `runPlatformStorageAlerts` used to bell every Admin / DocCtrl of every org with the deployment's totals (base `lib/storageUsage.ts:245-265`). It now tells the sole workspace's Admin / DocCtrl (unchanged for a single-workspace server), or, on a shared server, the platform operators in each workspace they are an active member of. With no operator registered it tells nobody, logs that, and returns `route: "none"` (`platformAlertRecipients`).
+- **The page** (`app/(protected)/admin/storage/page.tsx`) shows the ceilings' editor only to an operator. Anyone else reads that the ceilings are one setting for the whole server, and an Admin / DocCtrl also sees the registration line with their own uid. In workspace scope the server's sections are not rendered, with a note saying why.
+- Migration `supabase/migrations/20261177_ao_roundG_platform_operators.sql` (DEC-30 one paste): re-asserts RLS and the revoke on `platform_settings`, seeds `platform_operators` as `{"uids": []}` without ever clearing a list, and adds a table comment. No function, policy, trigger or grant. Run on PG16 in three worlds: a first apply, a re-paste with an operator registered, and a hand-granted `authenticated` (the revoke takes it back, and the inventory counts it).
+- Tests: `lib/__tests__/aoRoundGStorageQuota.test.ts` ("BILL-5 — …", "BILL-5 Done-when 2 / BILL-12 — …", and the platform watchdog cases); `lib/__tests__/aoRoundGPlatformOperatorsMigration.test.ts` (20261177's shape); `lib/__tests__/aoRoundGStoragePage.test.ts` (rendered).
+
+**Pending migration:** `20261177_ao_roundG_platform_operators.sql`. The code does not wait on it: with no row, nobody is an operator, so the write stays refused, and the registration line inserts the row itself. Until a uid is registered, nobody can change the ceilings from the app. The env override (`STORAGE_LIMIT_*_BYTES`) still applies when no `storage_limits` row exists.
+
+**Done-when.**
+- ✓ The write is restricted to a platform-operator role that org admins cannot hold.
+- ✓ GET's aggregates are scoped to the caller's org unless the caller is a platform operator or the server's only workspace.
+- ✓ Changing the ceiling writes an audit row naming the actor and the old and new values.
+
+**Scope / residual.**
+- **Who registers an operator.** The deployment's owner does, by SQL, once (the paste's header and the page give the line). There is no in-app console for operators, by design: an app route that could write the list would be an org role's way in.
+- **A single-workspace server's Admin loses the in-app ceiling editor until they register.** This is the conservative side the brief asked for. `DEC-44 (A&O P6)` records the alternative it did not take: letting the sole workspace's controllers write while the server has one workspace.
+- **A shared server with no operator gets no platform alert.** The cron logs it. Registering one restores the alert.
+- The per-org quota (`archive_settings.quota_bytes`) is `BILL-12`'s.
 
 ---
 
@@ -255,7 +278,7 @@ app/api/stripe/portal/route.ts:43-46 — `const session = await stripe.billingPo
 ## BILL-7 · Changing the storage quota or the plan ceiling — the numbers that drive every storage alert — writes no audit record
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/admin/archive-settings/route.ts:33-56`, `app/api/admin/storage-stats/route.ts:158-188`, `lib/storageAlerts.ts:38-51`, `lib/storageUsage.ts:56-77`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by reading both handlers end to end and by grepping supabase/schema.sql and supabase/migrations/*.sql for any trigger or audit hook on archive_settings / platform_settings — there is none. Both numbers feed the alerting math directly (lib/storageAlerts.ts:38-51 reads quota_bytes; lib/storageUsage.ts:56-77 reads the platform ceiling), so raising either silences alerts with no record of who moved it.
@@ -276,6 +299,19 @@ app/api/admin/archive-settings/route.ts:51-56 — `const { error } = await actor
 
 - [ ] archive-settings PUT and storage-stats POST each write an audit_logs row with the old and new values
 - [ ] Those rows survive a real insert (i.e. a valid uuid user_id — see the Stripe audit finding for the failure mode)
+
+
+**Resolution (2026-10-02, admin-and-org Round G).** Package P6. Reproduced at base `f5073fc`: `app/api/admin/archive-settings/route.ts:51-56` and `app/api/admin/storage-stats/route.ts:174-188` wrote no `audit_logs` row.
+- **`PUT /api/admin/archive-settings`** reads the current row first (checked: an unreadable row refuses the change, 500, nothing written). After the upsert it writes one row naming the fields that changed, each with `{ before, after }`. The action is `STORAGE_QUOTA_CHANGED` when the quota is among them, `ARCHIVE_SETTINGS_CHANGED` otherwise. The row carries `resource_type` `archive_settings`, the actor's uid and email, and `user_role` = the role the storage surface's writes set admitted them by (`lib/adminGate.ts` `admittedRole`). A save that changed nothing writes no row. A refused row is said on the answer (`warning`), and the page shows it.
+- **`POST /api/admin/storage-stats`**: `PLATFORM_STORAGE_LIMITS_CHANGED` with the ceilings before and after (`BILL-5`).
+- The storage page's quota line no longer presents the 70% / 90% thresholds as a property of the system. It reads: "Advisory: Admin and Document Control are notified at 70% / 90%; uploads are never blocked at this limit. A change is recorded in the audit log."
+- Tests: `lib/__tests__/aoRoundGStorageQuota.test.ts`, "BILL-7 — archive-settings PUT records old and new values" (fails against base) and the BILL-5 audit case; `lib/__tests__/aoRoundGStoragePage.test.ts` (the copy).
+
+**Done-when.**
+- ✓ archive-settings PUT and storage-stats POST each write an audit row with the old and new values.
+- ✓ The rows carry the actor's real uid (`authorizeOrgRole`'s verified user, never a string), written with the service client, and the write is checked and surfaced.
+
+**Scope / residual.** The new actions (`STORAGE_QUOTA_CHANGED`, `ARCHIVE_SETTINGS_CHANGED`, `PLATFORM_STORAGE_LIMITS_CHANGED`, and `ORG-5`'s `BRANDING_LOGO_UPLOAD`) are for A&O P7's audit-action registry (`ALOG-11`) to name. They are listed in `99-fix-sequencing.md`'s Integrator notes.
 
 ---
 
@@ -378,7 +414,7 @@ components/subscription/SubscriptionGate.tsx:46-48 — `  const ENFORCE = false;
 ## BILL-11 · Quota is advisory only — nothing refuses a write at the ceiling, while the alert copy tells admins uploads are about to start failing
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/storageUsage.ts:224-227`, `app/api/storage/upload-url/route.ts:47-55`, `app/api/storage/multipart/route.ts:50-58`, `app/api/admin/archive-settings/route.ts:46-49`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: the quota is display-and-notify only, and the dedupe at storageAlerts.ts:56-59 does suppress re-alerting for seven days. Minor imprecision in the finding, not in the conclusion: the quoted "before uploads start failing" copy at storageUsage.ts:224-227 belongs to the *platform* R2 ceiling alert, while the per-org quota's copy is the storageAlerts.ts:63 line.
@@ -400,6 +436,20 @@ lib/storageUsage.ts:226 — the alert body ends `"or archive old revisions from 
 - [ ] upload-url and multipart consult current usage against the org's quota and refuse (413/402) with an actionable message when over, or
 - [ ] The product explicitly documents the quota as advisory and the alert copy stops claiming uploads will fail
 
+
+**Resolution (2026-10-02, admin-and-org Round G).** Package P6, Done-when 2 (the plan's recommendation; `DEC-44 (A&O P6)` §2). Reproduced at base `f5073fc`: `lib/storageUsage.ts:229` ended the platform alert "… before uploads start failing.", while `app/api/storage/upload-url/route.ts` and `multipart/route.ts` never consult usage. Nothing refuses an upload at the quota or the plan ceiling, and P6 adds no refusal. Enforcing at upload would refuse a controlled revision mid-workflow on a figure that is up to a day old or a partial walk, which is the failure the finding warns of.
+- **Platform alert** (`runPlatformStorageAlerts`): "This app does not stop uploads at the ceiling: past it, Cloudflare bills the overage, or refuses writes on an account without billing." It names "the whole deployment", and says "at least" for a partial walk.
+- **Quota alert** (`lib/storageAlerts.ts runStorageAlerts`): "… of the storage limit an admin set (… measured under this workspace only). The limit is advisory: uploads are not blocked when it is reached."
+- **The storage page** says the same at the quota line and at the plan ceilings ("Advisory: uploads are never blocked at a ceiling.").
+- The module headers (`lib/storageAlerts.ts`, `lib/storageUsage.ts`) document the quota as advisory.
+- Tests: `lib/__tests__/aoRoundGStorageQuota.test.ts` (both alert bodies), `lib/__tests__/notificationKindStorageProducers.test.ts` (the quota alert's full row), `lib/__tests__/aoRoundGStoragePage.test.ts` (the page copy).
+
+**Done-when.**
+- Not done, by decision (`DEC-44 (A&O P6)` §2): upload-url and multipart refusing over quota. The other branch is taken.
+- ✓ The product documents the quota as advisory (alerts, page, module headers), and no copy claims uploads will fail.
+
+**Scope / residual.** If enforcement is ever wanted, it belongs at upload-url / multipart against a fresh per-org figure (`BILL-12`'s prefix walk), with a refusal the uploader can act on. That is a product decision, not this finding.
+
 ---
 
 <a id="bill-12"></a>
@@ -407,7 +457,7 @@ lib/storageUsage.ts:226 — the alert body ends `"or archive old revisions from 
 ## BILL-12 · Storage usage is measured deployment-wide but charged against each org's own quota — another tenant's uploads push your workspace into 'critical'
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/storageAlerts.ts:25-69`, `lib/storageAlerts.ts:36`, `lib/storageAlerts.ts:45-51`, `app/(protected)/admin/storage/page.tsx:766-772`, `lib/storageUsage.ts:210-263`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and the path is live: app/api/cron/maintenance/route.ts:121 calls `runStorageAlerts(sb)` daily. The 'exact for the common single-workspace deployment' caveat in the doc comment at storageAlerts.ts:19-24 is an acknowledgement of the bug, not a guard — nothing scopes usedBytes to s.org_id.
@@ -432,6 +482,23 @@ lib/storageAlerts.ts:36 — `const usedBytes = dbBytes + r2Bytes;` computed once
 - [ ] The two alerting paths are reconciled so an admin cannot receive two different percentages for the same storage on the same day
 - [ ] The storage page labels whether the footprint shown is workspace-scoped or deployment-scoped
 
+
+**Resolution (2026-10-02, admin-and-org Round G).** Package P6. Reproduced at base `f5073fc`: `lib/storageAlerts.ts:53` computed one `usedBytes` (every table of the public schema plus every org's revisions and photos) and `:66` banded each org's quota against it. The page did the same (`page.tsx:781`). The test "another tenant's 8 GB upload no longer pushes this workspace into critical" fails against base.
+- **Each workspace is measured under its own key prefix.** `runStorageAlerts` walks `orgs/<id>/` for each org with a quota (`measureR2Usage({ prefix, deadlineMs })`, one 45 s budget for all of them, `QUOTA_WALK_BUDGET_MS`) and bands that org's own bytes against that org's own quota. A workspace measured only partly is alerted only when its floor already crosses a band ("at least N%"). One not measured in time is counted `unmeasured`, never reported fine.
+- **The page's watermark** ("This workspace's files") is the same figure, `stats.workspace.files` from the stats route (the prefix walk, or the workspace's total from the deployment walk), against the same quota. A partial walk reads "at least"; a failed one reads "Not measured" with the reason, never a zero.
+- **The two alerting paths now agree on the bytes.** Both are bucket walks; the per-org path used to use a row-sum estimate. Each alert names what it measured and against which limit: "this workspace's files … of the storage limit an admin set", against "… plan ceiling (… the whole deployment)". On a shared server only platform operators receive the deployment's alert (`BILL-5`), so a tenant's admin gets one percentage, their workspace's. On a single-workspace server the admin may get both, for different limits (the quota they set, and the hosting plan), each labelled.
+- **The page labels its scope.** The watermark says it is measured from this workspace's own files, not the whole server. The server's sections sit under "The whole server — every workspace on it", saying "this is its only workspace" or "you are a platform operator". The segment list says whether it is the whole bucket or this workspace. The AI card says "every workspace on this server" or "this workspace". On a shared server the server's sections are not shown, with a note.
+- Tests: `lib/__tests__/aoRoundGStorageQuota.test.ts` (prefix walk, other tenant not counted, partial and unmeasured, the platform route); `lib/__tests__/notificationKindStorageProducers.test.ts` (the quota alert now measured from the bucket); `lib/__tests__/aoRoundGStoragePage.test.ts` (rendered watermark and labels).
+
+**Done-when.**
+- ✓ Per-org usage is measured per-org before it is compared to that org's quota: the R2 walk is scoped to `orgs/<id>/`. *The database half is not grouped by org_id; it is excluded.* The database is one shared Postgres. Its bytes cannot be attributed to an org without scanning every org-scoped table (relation sizes are physical, not per-row). Counting all of it against each org was the main cross-tenant term. The quota now covers the workspace's files, and the database is watched against its plan ceiling by the platform watchdog. `DEC-44 (A&O P6)` §3 records the definition.
+- ✓ The two alerting paths are reconciled. The same measurement method is used, each alert names its scope and its limit, and on a shared server a tenant's admin no longer receives the deployment's percentage.
+- ✓ The storage page labels workspace-scoped and deployment-scoped figures.
+
+**Scope / residual.**
+- **The quota's meaning narrowed** from "database + files" to "this workspace's files". A single-workspace server's watermark drops by its database size; the page says what it measures.
+- **Keys outside `orgs/<id>/`** (`diagnostics/`, anything an older writer put at the bucket root) count against no workspace. They still appear in the deployment's segment list.
+
 ---
 
 <a id="bill-13"></a>
@@ -439,7 +506,7 @@ lib/storageAlerts.ts:36 — `const usedBytes = dbBytes + r2Bytes;` computed once
 ## BILL-13 · The R2 bucket walk has no time budget and runs inside a user-facing request — up to 500 sequential list round trips with no maxDuration
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `lib/storageUsage.ts:131-162`, `app/api/admin/storage-stats/route.ts:14`, `app/api/admin/storage-stats/route.ts:120-124`, `app/api/cron/maintenance/route.ts:279-284`, `lib/storageUsage.ts:184-189`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed the absence claim: grepping `maxDuration` across app/ shows ~25 routes that set it (cron/maintenance:41 = 300, data-export/run-scheduled:18 = 300) and storage-stats is not among them, and vercel.json contains only `ignoreCommand` and `crons` — no functions.maxDuration default. So the interactive path runs an unbounded 500-round-trip walk under the platform's default timeout while the cron path that calls the same function (maintenance:279-284) gets 300s.
@@ -460,6 +527,21 @@ lib/storageUsage.ts:157-159 — `token = res.IsTruncated ? res.NextContinuationT
 
 - [ ] measureR2Usage accepts a deadline and returns `truncated: true` when it stops on time rather than throwing
 - [ ] storage-stats declares an explicit maxDuration consistent with the walk's worst case, or the walk is moved off the request path and served from a cached cron measurement
+
+
+**Resolution (2026-10-02, admin-and-org Round G).** Package P6, the record's first remedy (`DEC-44 (A&O P6)` §4: a deadline plus an explicit `maxDuration`, not a cached cron figure). Reproduced at base `f5073fc`: `lib/storageUsage.ts:160` bounded the walk by its page count alone, and `app/api/admin/storage-stats/route.ts` declared no `maxDuration`.
+- **The walk takes a deadline.** `measureR2Usage(opts)` takes `deadlineMs`. Before each page it stops if time is up, and each request carries an abort signal for the time left, so one slow page cannot overrun either. A walk stopped either way returns what it measured with `truncated: true` and `stoppedBy: "deadline"`, never a throw. The page cap reads `stoppedBy: "pages"`. A walk that ran to the end reads `stoppedBy: null`. The substrate rule holds: a partial walk is never banded "ok" on the deployment figure, and a failure still lands in `r2Error`. The numeric signature (`measureR2Usage(500)`) still works.
+- **storage-stats** declares `export const maxDuration = 60`, with the walk's budget at 40 s (`WALK_BUDGET_MS`). The aggregates before it are sub-second RPCs. On a shared server a non-operator's walk is their prefix only. In deployment scope one walk gives both the deployment's and the workspace's figures.
+- **The cron** gives the platform walk 60 s (`PLATFORM_WALK_BUDGET_MS`, inside the maintenance cron's 300 s, ahead of the meaning-index drain's 100 s) and the per-org quota walks 45 s between them (`QUOTA_WALK_BUDGET_MS`).
+- **The page's partial-walk banner** says which bound stopped it, the time budget or the 500,000-object cap.
+- The module header no longer calls the walk "daily": it runs on every storage page load and in the cron.
+- Tests: `lib/__tests__/aoRoundGStorageQuota.test.ts`, "BILL-13 — measureR2Usage stops in time …": a finished walk; a deadline already past (no request); a request outliving its deadline aborted with the pages before it kept; the page cap; the prefix and org total; the route's `maxDuration`; the cron walk carries a signal.
+
+**Done-when.**
+- ✓ measureR2Usage accepts a deadline and returns `truncated: true` when it stops on time rather than throwing.
+- ✓ storage-stats declares an explicit `maxDuration` (60 s) consistent with the walk's worst case (its 40 s budget).
+
+**Scope / residual.** A page load on a very large bucket still costs one list op per 1,000 objects up to the budget. A cached cron figure would remove that and is the next step if it matters. The page shows a partial walk as a floor.
 
 ---
 
