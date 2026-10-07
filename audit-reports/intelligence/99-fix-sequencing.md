@@ -468,6 +468,23 @@ ledger past the ceiling leaves the usage GET up (the viewer's own meter and
 the default's editor) and says the team view is unavailable
 (`teamUnavailable`).
 
+**An index for one Find-connections run's proposals — owed by the next
+migration on `proposed_links`** (`GM-7`, I-14 fix pass 4, 2026-10-07). The
+graph reads pending proposals newest first in keyset windows on
+(`created_at` desc, `id` desc) (`lib/linkProposals.ts`
+`readPendingProposalPairs`). `proposed_links_org_status_idx` is (org_id,
+status, created_at DESC) and holds no `id`. A run inserts its rows in one
+upsert, so they share one `created_at`, and inside that tie every window
+reads, and runs the RESTRICTIVE read policy on, every remaining row of the
+run (measured on PG16: 9,000 and then 8,000 rows for the first two windows
+of one 9,000-row run). Where timestamps are spread, the `created_at <= c`
+bound added at fix pass 4 keeps the rows a window reads close to the rows
+it returns (1,001 for 1,000). **Owner:** the
+next intelligence package that ships a migration touching `proposed_links`,
+or the user if they want it sooner. That package adds
+`CREATE INDEX IF NOT EXISTS … ON proposed_links (org_id, status, created_at
+DESC, id DESC)` and keeps the reader's order. I-14 added no migration.
+
 ---
 
 ## Do not do these
