@@ -523,7 +523,7 @@ for imported rows too.
 ## SAF-9 · A rejection reason never reaches the contractor, and nothing notifies them either way
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J12 SERVER REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Assigned:** projects-joint J14 PROJECTS FOLLOW-UPS — the remainder (the Intake tab's call of J12's `notifyIntakeOutcome` on approve / reject, and the turnover copy) — by the integrator, 2026-10-07, at the J12 merge (DEC-31; fleet plan `audit-reports/fleet-plans/projects-joint.json`).
 - **Verification:** CONFIRMED
@@ -586,6 +586,28 @@ again.
 - [ ] No UI string claims a channel that does not exist — **still the turnover copy**: `components/projects/QualityTab.tsx:1104` ("The contractor sees this reason, it lands on their record…") — a turnover rejection reaches no contractor channel. J10b's file (handed over): say "kept on the item's record as a nonconformance" or point at a channel that exists.
 
 **Scope / residual.** OPEN for the two hand-offs above. Out of scope by `DEC-56`: emailing an address the door collected.
+
+**Resolution (2026-10-07, projects Round G).** Package projects-joint J14 PROJECTS FOLLOW-UPS made both hand-offs above:
+- **The Intake tab tells the contractor (done-when 2).** `components/projects/IntakePanel.tsx` calls J12's `notifyIntakeOutcome(orgId, versionId)` after a decision lands:
+  - after a rejection's write;
+  - after an approval that made the submission the current revision (`settleApproval` re-reads `current_version_id`; an approval that did not land tells nobody);
+  - after INTK-18's recorded force, which lands the same way.
+- The route reads the outcome from the database and emails only the link's contact, once per submission (`DEC-56`). The panel says what happened in one sentence (`outcomeNoticeSentence`): the contact was emailed; nothing (already told); no contact on the link; email not set up; a send in progress; or the send failed and the portal still shows the outcome. A cancelled rejection tells nobody.
+- **The notice never holds up the decision (J14 last review, 2026-10-07).** As first landed, approve and reject awaited `notifyIntakeOutcome` before they showed the decision's message and refreshed the list. The route's send can take up to its 15 s abort, so a decision that had already landed kept its spinner and looked hung. Now the decision's message shows and the list refreshes as soon as the write lands, and the busy state clears. The notice is sent without being awaited (`IntakePanel.tsx` `tellOutcome`), and its sentence is appended to the decision's message when the route answers. It is appended only while that message is still the one on screen, so a later action's message is never written over.
+- **The turnover copy (done-when 3).** `components/projects/QualityTab.tsx`'s rejection prompt now says where the reason goes and who does not get it: "The reason is kept on this item as a nonconformance, and the rejection counts on its contractor's company record when the contractor is linked to a Known Company. The contractor is not sent this reason — tell them yourself."
+- Tests:
+  - `lib/__tests__/j14IntakeApproveHold.test.ts` "SAF-9 (J14) — the Intake tab tells the contractor how their submission was decided": a landed rejection asks the route for that version and says it was emailed; a failed send and a link with no contact are said; a cancelled rejection, and an approval that did not make the submission current, tell nobody; every route answer has its sentence. Its "INTK-18" block's regression case pins the approval's notice.
+  - `lib/__tests__/prjRoundGJ14.test.ts` "SAF-9 done-when 3 (J14)": the turnover prompt's words, and no claim of a contractor channel.
+  - `intakePanelLinkAudit.test.ts` and `j10bIntakeLinksOrigin.test.ts` mock the role context the panel now reads.
+  - (J14 last review) `j14IntakeApproveHold.test.ts` "the decision shows and the list refreshes as soon as the write lands": with the notice held unanswered, approve and reject each show their message, refresh the list and clear the busy state, and the notice's sentence (sent, or a failed send) is appended when it answers. "a notice that answers after another message took the screen is not written over it". Both fail against the panel as it was. The existing cases (sent, failed, no contact, cancelled, not landed) pass unchanged.
+
+**Done-when.**
+- [x] A rejected submission shows its reason on the contractor's portal (unchanged).
+- [x] The contractor is notified on both outcomes of every decision the Intake tab makes: a rejection, an approval and a forced approval. *Split (`DEC-31`):* a submission approved from the document's review surface (`ReviewGateSection`, `components/documents/**` — document-control's) does not call the route yet. That limb is `SAF-19`, opened below. Its owner is only proposed (document-control's next package that edits the review promote); the integrator confirms or names it at the J14 merge. The route itself needs nothing: it reads the outcome from the version, so any surface that decides may call it.
+- [x] No UI string claims a channel that does not exist, for the string this done-when was recorded against: the turnover rejection now says the contractor is not sent the reason. *Corrected (J14 fix pass):* this line also said "the upload portal's 'You'll be contacted' is true for a link with a contact". The sentence is the QUOTE portal's ("You'll be contacted about the award decision.", `app/api/intake/upload/route.ts:919`), and no quote link could carry a contact: the Costs tab's quote-link form wrote none. Since the J14 fix pass the form takes one (`MON-10`), so the sentence is true for a quote link created with a contact. On a link without one, including every quote link minted before that fix, it over-promises. That limb is in the intake door's file, not this package's, and is split to `SAF-20` (below, `DEC-31`).
+
+**Scope / residual.** `SAF-19` (the document review surface's approval; owner proposed, awaiting the integrator's confirmation). `SAF-20` (the quote portal's sentence on a link with no contact). Out of scope by `DEC-56` (unchanged): emailing an address the door collected.
+- Ship loop (`DEC-29` item 4), J14 fix pass: `tsc --noEmit` exits 0, and `eslint` on the 47 changed `.ts` / `.tsx` files exits 0. Every assertion of the full `vitest` run passes. On this host (load average about 20) the run's exit code was 1 twice, each time only from 5 s default timeouts, in files this package does not touch: `dcRoundFOwnerStamp`, `notificationWriteRails`, `notificationDispatchMembership` and `dependencies`. Those four pass when run on their own with `--testTimeout=60000` (exit 0). The full `next build` was not run here: the fleet's standing rule leaves it to the integrator at merge, so this resolution stands on that build passing.
 
 ---
 
@@ -988,6 +1010,63 @@ project history for the document will be hidden.
 
 ---
 
+## SAF-19 · A contractor's submission approved from the document's review surface tells the contractor nothing
+
+*Numbered SAF-19 on this branch (opened by projects-joint J14 PROJECTS FOLLOW-UPS as `SAF-9`'s remainder, per `DEC-31`). If the number collides at merge the integrator renumbers.*
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** document-control, the owner of `components/documents/ReviewGateSection.tsx`: its next package that edits the review promote. Proposed by projects-joint J14 PROJECTS FOLLOW-UPS, 2026-10-07, in its review's fix pass (DEC-31). The integrator names the package at the J14 merge.
+- **Assigned:** document-control P23 DIRECT-WRITE ISSUE RECORD (the next document-control package; ReviewGateSection is document-control's) — by the integrator, 2026-10-07 (J14 merge; fleet plan `document-control.json`).
+- **Verification:** READ (by reading `ReviewGateSection` and the notice route at J14's HEAD; not exercised against a live database)
+- **Blast radius:** process / external communication
+- **Locations:**
+  - `components/documents/ReviewGateSection.tsx`: the review promote (`finalizeReviewedRevision`) calls no notice when the version it promotes came through an intake link.
+  - `app/api/intake/outcome-notice/route.ts` and `lib/intakeOutcomeNotice.ts` `notifyIntakeOutcome`: the route that tells the link's contact, keyed by version, called today only by the Intake tab.
+- **Related:** `SAF-9` (its done-when 2's other limb), `DEC-56`, `INTK-18`
+- **Independently verified:** — (`author`: opened by projects-joint J14 from `SAF-9`'s Scope, per `DEC-31`; not yet challenged)
+
+**Mechanism.** A contractor's revision lands in review, and the document's review surface can promote it as well as the project's Intake tab. Since J14 the Intake tab calls the notice route after its decision lands. The review surface does not, so a submission approved there tells the contractor nothing. Their portal shows the outcome.
+
+**Failure scenario.** A document controller approves a vendor's revision from the document page. The vendor's link has a contact, but no email is sent. The vendor waits, or resubmits the same revision.
+
+**Remediation.** After a promote that made an intake-born version current (the version's `provenance` is the door's, or its `authored_by_link_id` is set), call `notifyIntakeOutcome(orgId, versionId)` and say its answer, as `IntakePanel`'s `settleApproval` does. The route reads the outcome from the version, claims the send once per submission and emails only the link's contact (`DEC-56`), so a second surface's call is safe.
+
+**Done when.**
+- A submission approved from the review surface tells the link's contact, through the same route, once.
+- A rendered test drives the review surface's approval of an intake-born version and of an ordinary one (no notice).
+
+---
+
+## SAF-20 · The quote portal promises the award decision to a contractor whose link has no contact
+
+*Numbered SAF-20 on this branch (opened by projects-joint J14 PROJECTS FOLLOW-UPS's review fix pass as `SAF-9` done-when 3's remainder, per `DEC-31`). If the number collides at merge the integrator renumbers.*
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** projects-joint, the owner of `app/api/intake/upload/route.ts` (the intake door; J16 INTAKE DOOR IDENTITY & UNTRUSTED ORIGIN edits this file). Proposed by projects-joint J14 PROJECTS FOLLOW-UPS, 2026-10-07, in its review's fix pass (DEC-31). The integrator names the package at the J14 merge.
+- **Assigned:** projects-joint J19 PROJECTS REMAINDERS (after J16, which edits the intake route) — by the integrator, 2026-10-07 (J14 merge; fleet plan `projects-joint.json`).
+- **Verification:** READ (the door's quote branch and the notice route at J14's HEAD; not exercised against a live database)
+- **Blast radius:** process / external communication
+- **Locations:**
+  - `app/api/intake/upload/route.ts:919`: "Your quote is in — … You'll be contacted about the award decision.", returned for every quote submission.
+  - `app/api/intake/outcome-notice/route.ts` `quoteNotice`: emails only `project_intake_links.contact_email`; a link with none answers `no_contact` (`DEC-56`).
+  - `components/projects/cost/QuotesPanel.tsx` `QuoteLinksSection`: the contact is optional (since the J14 fix pass), and links minted before it have none.
+- **Related:** `SAF-9` (done-when 3), `MON-10` (done-when 2), `DEC-56`
+- **Independently verified:** — (`author`: opened by projects-joint J14's review fix pass from its reviewer's finding, per `DEC-31`; not yet challenged)
+
+**Mechanism.** The door tells every quote submitter they will be contacted about the award decision. The award and decline notice reaches only the contact the org typed on the quote link. A link with no contact gets no email, and the contractor learns the outcome only from the portal's status chip, if they return to it.
+
+**Failure scenario.** An owner mints a quote link without a contact email (optional), or the link predates the field. The contractor submits and is told "You'll be contacted about the award decision." The RFQ is awarded to a rival. Nobody emails them, and the bid tab tells the owner that they were not emailed. The contractor waits on a promise the system cannot keep.
+
+**Remediation.** Make the door's sentence depend on the link's contact: with one, keep the promise; without one, say "The decision will be shown on this page — check back here." The door already reads the link row. One test per branch.
+
+**Done when.**
+- The quote door's success sentence promises contact only when the link carries a contact email, and otherwise points at the portal.
+- A route test covers both branches.
+
+---
+
 ## Report progress
 
 | ID | Severity | Status |
@@ -1000,7 +1079,7 @@ project history for the document will be hidden.
 | SAF-6 | HIGH | RESOLVED |
 | SAF-7 | HIGH | RESOLVED |
 | SAF-8 | MEDIUM | RESOLVED |
-| SAF-9 | HIGH | OPEN |
+| SAF-9 | HIGH | RESOLVED |
 | SAF-10 | HIGH | RESOLVED |
 | SAF-11 | HIGH | RESOLVED |
 | SAF-12 | HIGH | RESOLVED |
@@ -1010,3 +1089,5 @@ project history for the document will be hidden.
 | SAF-16 | MEDIUM | RESOLVED |
 | SAF-17 | MEDIUM | RESOLVED |
 | SAF-18 | MEDIUM | OPEN |
+| SAF-19 | LOW | OPEN |
+| SAF-20 | LOW | OPEN |

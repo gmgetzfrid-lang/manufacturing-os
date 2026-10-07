@@ -13,6 +13,7 @@
 
 import React, { useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { DECISION_TARGET } from "@/components/projects/decisionTarget";
 
 function clamp(p: number): number {
   return Math.max(0, Math.min(100, Math.round(p || 0)));
@@ -67,14 +68,14 @@ export function ProgressSlider({ percent, onPick, disabled, busy }: SliderProps)
         className="w-full accent-[var(--color-accent)] cursor-pointer disabled:opacity-50"
         aria-label="Percent complete"
       />
-      <div className="mt-2 flex items-center gap-1">
+      <div className="mt-2 flex flex-wrap items-center gap-2">
         {QUICK.map((q) => (
           <button
             key={q}
             type="button"
             disabled={disabled || busy}
             onClick={() => commit(q)}
-            className={`flex-1 text-[11px] font-bold py-1 rounded-md border transition-colors disabled:opacity-50 ${
+            className={`${DECISION_TARGET} flex-1 text-[11px] font-bold py-1 rounded-md border transition-colors disabled:opacity-50 ${
               val === q
                 ? "bg-[var(--color-accent)] text-[var(--color-accent-fg)] border-[var(--color-accent)]"
                 : "bg-[var(--color-surface)] text-[var(--color-text-muted)] border-[var(--color-border)] hover:bg-[var(--color-surface-2)]"
@@ -109,9 +110,9 @@ export default function ProgressControl({ percent, onPick, disabled, onDisabledC
   };
 
   const tone = pct >= 100
-    ? "text-emerald-700 bg-emerald-50 border-emerald-200"
+    ? "text-emerald-700 dark:text-emerald-300 bg-emerald-500/[0.08] border-emerald-500/40"
     : pct > 0
-      ? "text-blue-700 bg-blue-50 border-blue-200"
+      ? "text-blue-700 dark:text-blue-300 bg-blue-500/[0.08] border-blue-500/40"
       : "text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border-[var(--color-border)]";
 
   return (

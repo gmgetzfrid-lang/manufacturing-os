@@ -628,8 +628,7 @@ export async function applyAssessment(input: {
 
 // ── Human override ───────────────────────────────────────────────────────
 
-/** Human override on one item — status, applicability, note, or manually
- *  attached evidence. A status or applicability change REQUIRES a reason of
+/** Human override on one item — status, applicability or note. A status or applicability change REQUIRES a reason of
  *  its own that meets the bar (SAF-4 / GAP-405: no placeholder is ever
  *  invented, and the note already on the item belongs to the earlier
  *  decision); a note is set or replaced only with one that meets the bar and
@@ -643,7 +642,6 @@ export async function updateChecklistItem(input: {
     applicability?: ChecklistItem["applicability"];
     status?: ChecklistItem["status"];
     manualNote?: string | null;
-    addEvidence?: { label: string; documentId?: string; href?: string };
   };
   actor: Actor;
 }): Promise<{ ok: boolean; error?: string }> {
@@ -663,9 +661,6 @@ export async function updateChecklistItem(input: {
   if (input.patch.applicability !== undefined) row.applicability = input.patch.applicability;
   if (input.patch.status !== undefined) row.status = input.patch.status;
   if (input.patch.manualNote !== undefined) row.manual_note = input.patch.manualNote?.trim() || null;
-  if (input.patch.addEvidence) {
-    row.evidence = [...input.item.evidence, { ...input.patch.addEvidence, source: "manual" as const }];
-  }
   const w = await checkedWrite(supabase.from("checklist_items").update(row).eq("id", input.item.id).select("id"));
   if (!w.ok) return { ok: false, error: w.error };
   await audit("CHECKLIST_ITEM_UPDATED", input.orgId, input.projectId, input.actor, {
@@ -673,7 +668,7 @@ export async function updateChecklistItem(input: {
     from: { applicability: input.item.applicability, status: input.item.status },
     patch: {
       applicability: input.patch.applicability, status: input.patch.status,
-      note: input.patch.manualNote ? true : undefined, evidence: input.patch.addEvidence?.label,
+      note: input.patch.manualNote ? true : undefined,
     },
   });
   return { ok: true };
@@ -884,10 +879,6 @@ export async function gatherProjectEvidenceState(orgId: string, projectId: strin
     }
   }
 
-  const tags = await safe(
-    supabase.from("assets").select("tag").eq("org_id", orgId).eq("archived", false).limit(1000)
-      .then((r) => ((r.data ?? []) as Array<{ tag: string }>).map((a) => a.tag)), []);
-
   return {
     turnoverAcceptedNames: turnover.filter((t) => t.status === "accepted").map((t) => t.name),
     // The rows behind the two state rules, so a sweep citation names its row
@@ -897,7 +888,6 @@ export async function gatherProjectEvidenceState(orgId: string, projectId: strin
     miChecklistComplete: checklists.some((c) => c.kind === "mi" && c.status === "complete" && c.completed_basis === "human"),
     miChecklistId: checklists.find((c) => c.kind === "mi" && c.status === "complete" && c.completed_basis === "human" && c.id)?.id ?? null,
     documentTitles: [...new Set(documents.map((d) => d.label))],
-    equipmentTags: tags,
     documents,
   };
 }

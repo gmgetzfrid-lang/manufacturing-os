@@ -15,6 +15,7 @@ import { updateProjectMeta } from "@/lib/projects";
 import { logAuditAction } from "@/lib/audit";
 import { invalidateProjectSnapshot } from "@/lib/projectSnapshot";
 import type { Project, ProjectVisibility } from "@/types/schema";
+import { DECISION_TARGET } from "@/components/projects/decisionTarget";
 
 interface WizardFields {
   purpose: string;
@@ -316,7 +317,7 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
         </div>
         <div className="px-5 py-3.5 border-t border-[var(--color-border)] flex items-center justify-end gap-2">
           <button onClick={close} className="text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5">{savedIdentity ? "Close" : "Cancel"}</button>
-          <button onClick={() => void save()} disabled={busy} className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+          <button onClick={() => void save()} disabled={busy} className={`${DECISION_TARGET} inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[var(--color-accent)] text-[var(--color-accent-fg)] text-xs font-black hover:bg-[var(--color-accent-hover)] disabled:opacity-50`}>
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Save changes
           </button>
         </div>

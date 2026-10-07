@@ -105,7 +105,7 @@ export default function ProjectCoach({ orgId, projectId, refreshKey, preRead }: 
 
       {open && readFailures.length > 0 && (
         <div role="status" className="mx-4 mt-2 flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/[0.08] px-2.5 py-1.5 text-[11px] text-[var(--color-text)]">
-          <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-600" />
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
           <span>Could not read {listJoin(readFailures)} — the parts of the score and the suggestions that depend on {readFailures.length === 1 ? "it" : "them"} are left out, not counted as empty.</span>
         </div>
       )}

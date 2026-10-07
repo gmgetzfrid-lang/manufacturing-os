@@ -65,13 +65,13 @@ export default function ScheduleFilterBar({ filter, onChange, groups, matchCount
         {/* Quick toggles */}
         <button
           onClick={() => onChange({ ...filter, blockedOnly: !filter.blockedOnly })}
-          className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition-colors ${filter.blockedOnly ? "bg-rose-50 border-rose-300 text-rose-700" : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"}`}
+          className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition-colors ${filter.blockedOnly ? "bg-rose-500/[0.08] border-rose-500/50 text-rose-700 dark:text-rose-300" : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"}`}
         >
           <PauseCircle className="w-3.5 h-3.5" /> Needs attention
         </button>
         <button
           onClick={() => onChange({ ...filter, overdueOnly: !filter.overdueOnly })}
-          className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition-colors ${filter.overdueOnly ? "bg-rose-50 border-rose-300 text-rose-700" : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"}`}
+          className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition-colors ${filter.overdueOnly ? "bg-rose-500/[0.08] border-rose-500/50 text-rose-700 dark:text-rose-300" : "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"}`}
         >
           <AlertTriangle className="w-3.5 h-3.5" /> Overdue
         </button>

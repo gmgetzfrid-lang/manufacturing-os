@@ -1084,6 +1084,7 @@ Tests — `lib/__tests__/prjRoundGJ11Migrations.test.ts`: "no other migration re
 - **Severity:** LOW
 - **Status:** OPEN
 - **Assigned:** projects-joint J14 PROJECTS FOLLOW-UPS — the done-when 2 remainder (the Partial block below: residuals 2 and 4); J14 runs after J12 — by J12's review fix pass 6, 2026-10-02, on the integrator's instruction. Also the done-when 1 exception (residual 3) — by J12's fix pass 7, 2026-10-02 (`DEC-31`). Earlier: projects-joint J12 SERVER REMAINDERS — by the integrator, 2026-10-01 (J11 merge; fleet plan `audit-reports/fleet-plans/`).
+- **Assigned:** projects-joint J19 PROJECTS REMAINDERS (residual 3: the import's match scope and the project_id rail) — by the integrator, 2026-10-07 (J14 merge; fleet plan `projects-joint.json`).
 - **Verification:** CONFIRMED (by reading; not exercised against a live database)
 - **Blast radius:** data-confidentiality
 - **Locations:**
@@ -1136,6 +1137,29 @@ Tests — `lib/__tests__/prjRoundGJ11Migrations.test.ts`: "no other migration re
 
    Owner: projects-joint J14 PROJECTS FOLLOW-UPS (`DEC-31`; it runs after J12) — the exception decided at J12 fix pass 7, above.
 4. A milestone deleted by the service role (`auth.uid()` NULL — a server-side purge or the SQL editor) writes no scope row, so a `MILESTONE_DELETED` row a signed-in caller writes after such a delete, for a milestone with no stamped row since the paste, names no project and is the audit roles' only. No app path does this: `lib/milestones.ts` deletes as the signed-in caller (review fix pass 5). `delete_project_record`'s purge is not this case — it runs as the signed-in caller and, since review fix pass 6, writes no scope row on purpose (above). Owner: projects-joint J14 PROJECTS FOLLOW-UPS (the Partial block).
+
+**Partial (2026-10-07, projects Round G — J14 PROJECTS FOLLOW-UPS).** Residuals 2 and 4 decided and recorded, with no SQL change (`DEC-69`'s J14 *Landed* line). Residual 3 stays open, and one premise of it is corrected.
+- **Residual 2 — decided: accepted, not back-filled.** A document-typed `MILESTONE_*` row written before `20261157`'s paste carries no `details.projectId`, so it becomes the audit roles' alone once its milestone is deleted.
+  - Back-filling the stamp would rewrite append-only audit history (admin-and-org P7 owns that trail's integrity), so it is not done.
+  - No reach rule for an unstamped row of a gone milestone is added either. Such a row names only its document, and a document can sit in several projects, a private one among them. Any rule reading the row's reach from its document would reopen the leak done-when 1 closes.
+  - The window is bounded. Every row written from the paste on carries its stamp or the org-level marker; a signed-in delete records the scope first; the audit roles keep every row; and `20261157`'s inventory counts the at-risk rows before the paste.
+  - Done-when 2's exception for these rows is accepted on the record, not owed.
+- **Residual 4 — decided: by design.** A milestone deleted by the service role (`auth.uid()` NULL: a restore, the cron, or the SQL editor) writes no scope row.
+  - No app path deletes a milestone as the service role (`lib/milestones.ts` deletes as the signed-in caller, and `delete_project_record`'s purge writes none on purpose).
+  - Recording the scope there would mean changing §9's service pass, which keeps a restore's rows exactly as written.
+  - The `MILESTONE_DELETED` row written after such an operator's delete is the audit roles' alone. That is accepted for an operator action.
+- **Residual 3 — still open; a premise corrected.** The residual says no app path moves an existing milestone's project. Read again at J14's HEAD, one does.
+  - `lib/milestones.ts`'s import upsert reads a document-scoped import's existing rows by `document_id` alone (`existing` read: `else if (input.documentId) q = q.eq("document_id", input.documentId)`). Its upsert payload then writes the import's `scope`, including `project_id: input.projectId ?? null`, onto each matched row.
+  - So a document-only re-import of a file whose rows were first imported onto a project with that document moves each matched milestone OFF its project, to the document alone. Its earlier rows stay with that project's roster (residual 3's "done-when 2 case"), and the milestone itself becomes an org-level one.
+  - Found by reading; not run.
+  - A rail refusing every signed-in move of `milestones.project_id` would refuse that import, so it was not built here. `lib/milestones.ts` is not this package's file.
+- Owner of residual 3: the integrator assigns at the J14 merge (projects-joint, the owner of `lib/milestones.ts`): first the import's scope read (match an existing row only within its own project), then a `BEFORE UPDATE OF project_id ON milestones` rail for the signed-in caller.
+
+**Done-when.**
+- ◐ (unchanged) Done-when 1: residual 3, above.
+- ◐ Done-when 2: its first limb ✓. Its second holds for every row written from the paste on. Residuals 2 and 4 are accepted exceptions, decided above (`DEC-69`'s J14 line), and not owed.
+
+**Scope / residual.** Residual 3 (owner above). Residuals 2 and 4: decided, above. Residual 1: as recorded (the inventory counts its rows). Pending migration: `20261157` (HOLD).
 
 ---
 

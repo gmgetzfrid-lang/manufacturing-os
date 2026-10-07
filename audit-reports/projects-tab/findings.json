@@ -14,18 +14,18 @@
     "audit-reports/projects-tab/10-accessibility-mobile.md"
   ],
   "totals": {
-    "findings": 144,
+    "findings": 148,
     "gaps": 10,
     "by_severity": {
       "CRITICAL": 17,
       "HIGH": 52,
       "MEDIUM": 68,
-      "LOW": 7
+      "LOW": 11
     },
     "by_status": {
-      "RESOLVED": 130,
+      "RESOLVED": 137,
       "REFUTED": 2,
-      "OPEN": 12
+      "OPEN": 9
     }
   },
   "status_vocabulary": [
@@ -1069,7 +1069,7 @@
       "id": "SAF-9",
       "title": "A rejection reason never reaches the contractor, and nothing notifies them either way",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "ux / process",
@@ -2024,7 +2024,7 @@
       "id": "A11Y-13",
       "title": "Contrast failures and missing dark variants",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (computed)",
       "blast_radius": "accessibility",
@@ -2503,7 +2503,7 @@
       "id": "MON-10",
       "title": "A losing bid reads \"under review\" forever unless it shares an RFQ group",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "ux / vendor relations",
@@ -2560,7 +2560,7 @@
       "id": "MON-12",
       "title": "A company flagged \"do not use\" can still be awarded work",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "process / governance",
@@ -2860,7 +2860,7 @@
       "id": "REL-4",
       "title": "Every database row enters the application as an unchecked cast",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "correctness / availability",
@@ -2940,7 +2940,7 @@
       "id": "REL-9",
       "title": "Six states are declared, accepted by the data layer, and reachable from no interface",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (each by grep)",
       "blast_radius": "dead-end / feature-gap",
@@ -3704,7 +3704,7 @@
       "id": "A11Y-15",
       "title": "Write buttons outside A11Y-14's surfaces still carry no decision floor",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": null,
       "verification_note": "READ — each site was read at the J10b merge; sizes are from the class strings, not measured",
       "blast_radius": "accessibility / mobile",
@@ -3723,6 +3723,31 @@
       ],
       "refuted": false,
       "summary": "On a tablet, a mis-tap on the Members tab hits \"make owner\" instead of the row's other action, or a quick-percent button records the wrong progress.",
+      "area": "projects-tab",
+      "report": "audit-reports/projects-tab/10-accessibility-mobile.md"
+    },
+    {
+      "id": "A11Y-16",
+      "title": "The project page's own write buttons, outside its Members tab, still carry no decision floor",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": null,
+      "verification_note": "READ (each site read at J14's HEAD; sizes from the class strings, not measured)",
+      "blast_radius": "accessibility / mobile",
+      "related": [
+        "A11Y-15",
+        "A11Y-14"
+      ],
+      "locations": [
+        "app/(protected)/projects/[id]/page.tsx"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "On a tablet, a mis-tap on the project header hits Complete or Delete instead of a neighbouring action. Every lifecycle action opens a confirm or a prompt, so the mis-tap writes nothing by itself: it opens the wrong dialog, and the user must notice that before confirming it. The lessons editor's \"Save to project\" (:762) writes at once and sits next to its Cancel. That Cancel asks before discarding ",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/10-accessibility-mobile.md"
     },
@@ -3780,6 +3805,32 @@
       "report": "audit-reports/projects-tab/03-money-ledger.md"
     },
     {
+      "id": "MON-14",
+      "title": "A direct delete of a flagged contractor clears its flag from its open quotes",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (on a private scratch PostgreSQL 16 with `20261157` and `20261179` applied — J14's `scenarios_j14.sql`)",
+      "blast_radius": "process / governance",
+      "related": [
+        "MON-12",
+        "MON-13",
+        "DEC-48"
+      ],
+      "locations": [
+        "supabase/migrations/20261013_project_controls_program.sql:119"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "Seen on the scratch cluster: quote f51 is filed against a contractor whose company is DO NOT USE, and an award without a reason is refused (companyflagged). Clearing its contractor directly is refused by the move rail. The project owner then deletes the contractor over PostgREST (no app path does), and the same award passes with no reason and no override row.",
+      "area": "projects-tab",
+      "report": "audit-reports/projects-tab/03-money-ledger.md"
+    },
+    {
       "id": "PERF-10",
       "title": "Money formatting constructs a new formatter on every call",
       "severity": "LOW",
@@ -3830,6 +3881,62 @@
       "summary": "A field user on a tablet over a weak site connection opens any page — one document, the requests queue, a project — and downloads the same ~618 KB of shell JavaScript before the page's own code. On /projects/[id] the shell is 57% of the 1,092,416 bytes, and the total is well over the 700 KB a route was meant to stay under. A change that adds a provider or a host to the shell grows every route at o",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/09-performance-scale.md"
+    },
+    {
+      "id": "SAF-19",
+      "title": "A contractor's submission approved from the document's review surface tells the contractor nothing",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": null,
+      "verification_note": "READ (by reading `ReviewGateSection` and the notice route at J14's HEAD; not exercised against a live database)",
+      "blast_radius": "process / external communication",
+      "related": [
+        "SAF-9",
+        "DEC-56",
+        "INTK-18"
+      ],
+      "locations": [
+        "components/documents/ReviewGateSection.tsx",
+        "app/api/intake/outcome-notice/route.ts",
+        "lib/intakeOutcomeNotice.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A document controller approves a vendor's revision from the document page. The vendor's link has a contact, but no email is sent. The vendor waits, or resubmits the same revision.",
+      "area": "projects-tab",
+      "report": "audit-reports/projects-tab/02-safety-compliance.md"
+    },
+    {
+      "id": "SAF-20",
+      "title": "The quote portal promises the award decision to a contractor whose link has no contact",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": null,
+      "verification_note": "READ (the door's quote branch and the notice route at J14's HEAD; not exercised against a live database)",
+      "blast_radius": "process / external communication",
+      "related": [
+        "SAF-9",
+        "MON-10",
+        "DEC-56"
+      ],
+      "locations": [
+        "app/api/intake/upload/route.ts:919",
+        "app/api/intake/outcome-notice/route.ts",
+        "components/projects/cost/QuotesPanel.tsx"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "An owner mints a quote link without a contact email (optional), or the link predates the field. The contractor submits and is told \"You'll be contacted about the award decision.\" The RFQ is awarded to a rival. Nobody emails them, and the bid tab tells the owner that they were not emailed. The contractor waits on a promise the system cannot keep.",
+      "area": "projects-tab",
+      "report": "audit-reports/projects-tab/02-safety-compliance.md"
     },
     {
       "id": "SEC-19",

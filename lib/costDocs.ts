@@ -348,9 +348,25 @@ const FLAGGED_COMPANY_STATUSES = ["do_not_use", "inactive"];
  *  database's own check). A link counts only to a company of the document's
  *  own org (the rail reads as the definer, so it checks the same).
  *  Any failed read is an ERROR, never "no company": the refusal must not
- *  pass silently because a lookup timed out. */
-async function companyBehind(doc: CostDocument, raw: Record<string, unknown>): Promise<{ company: CompanyRow | null; barred: CompanyRow | null; error?: string }> {
+ *  pass silently because a lookup timed out.
+ *  - `also` (projects Round G J14, MON-12 / COST-3) — every OTHER flagged
+ *    company the award answers for, each needing its own reason (20261179
+ *    `cost_doc_companies_barred` after its first): unless the document's
+ *    own link decides alone, the stored vendor name's do-not-use look-alike
+ *    when `barred` is another company (a flagged contractor answers first
+ *    and hid it), and the bound company's own flag when a look-alike
+ *    answered first and hid it — each once, never `barred` itself. `barred`
+ *    and its order are unchanged, so the refusal and the override row keep
+ *    naming the company they named. */
+async function companyBehind(doc: CostDocument, raw: Record<string, unknown>): Promise<{ company: CompanyRow | null; barred: CompanyRow | null; also: CompanyRow[]; error?: string }> {
   const flaggedOrNull = (c: CompanyRow): CompanyRow | null => (FLAGGED_COMPANY_STATUSES.includes(c.status) ? c : null);
+  /** The companies after `first`, each once (20261179's order: the look-alike, then the bound company's flag). */
+  const others = (first: CompanyRow | null, ...rest: Array<CompanyRow | null>): CompanyRow[] => {
+    const out: CompanyRow[] = [];
+    for (const c of rest) if (c && c.id !== first?.id && !out.some((o) => o.id === c.id)) out.push(c);
+    return out;
+  };
+  const failed = (error: string) => ({ company: null, barred: null, also: [], error });
   const byId = async (id: string): Promise<{ company: CompanyRow | null; error?: string }> => {
     const { data, error } = await supabase.from("companies").select("id, name, status").eq("id", id).eq("org_id", doc.orgId).maybeSingle();
     if (error) return { company: null, error: userFacingReadError(error, "companyBehind") };
@@ -359,37 +375,42 @@ async function companyBehind(doc: CostDocument, raw: Record<string, unknown>): P
   const docCompanyId = (raw.company_id as string | null | undefined) ?? null;
   if (docCompanyId) {
     const hit = await byId(docCompanyId);
-    if (hit.error) return { company: null, barred: null, error: hit.error };
-    if (hit.company) return { company: hit.company, barred: flaggedOrNull(hit.company) };
+    if (hit.error) return failed(hit.error);
+    // A person's link decides alone — nothing else is answered for.
+    if (hit.company) return { company: hit.company, barred: flaggedOrNull(hit.company), also: [] };
   }
   if (doc.partyId) {
     const { data, error } = await supabase.from("project_parties").select("company_id").eq("id", doc.partyId).maybeSingle();
-    if (error) return { company: null, barred: null, error: userFacingReadError(error, "companyBehind") };
+    if (error) return failed(userFacingReadError(error, "companyBehind"));
     const partyCompanyId = ((data as { company_id?: string | null } | null)?.company_id) ?? null;
     if (partyCompanyId) {
       const hit = await byId(partyCompanyId);
-      if (hit.error) return { company: null, barred: null, error: hit.error };
+      if (hit.error) return failed(hit.error);
       if (hit.company) {
-        // A flagged contractor company answers; an unflagged one binds but
-        // never clears a do-not-use look-alike (20261157 cost_doc_company_barred).
+        // A flagged contractor company answers first; an unflagged one binds
+        // but never clears a do-not-use look-alike (20261157
+        // cost_doc_company_barred). Behind a flagged one, the look-alike is
+        // answered for too, with its own reason (20261179).
         const flagged = flaggedOrNull(hit.company);
-        if (flagged) return { company: hit.company, barred: flagged };
         const lookAlike = await flaggedLookAlike(doc.orgId, doc.vendorName ?? "");
-        if (lookAlike.error) return { company: null, barred: null, error: lookAlike.error };
-        return { company: hit.company, barred: lookAlike.company };
+        if (lookAlike.error) return failed(lookAlike.error);
+        const barred = flagged ?? lookAlike.company;
+        return { company: hit.company, barred, also: others(barred, lookAlike.company, flagged) };
       }
     }
   }
   const name = doc.vendorName?.trim();
-  if (!name) return { company: null, barred: null };
+  if (!name) return { company: null, barred: null, also: [] };
   const { data, error } = await supabase.from("companies").select("id, name, status")
     .eq("org_id", doc.orgId).ilike("name", name.replace(/[%_\\]/g, (c) => `\\${c}`)).limit(2);
-  if (error) return { company: null, barred: null, error: userFacingReadError(error, "companyBehind") };
+  if (error) return failed(userFacingReadError(error, "companyBehind"));
   const rows = (data ?? []) as CompanyRow[];
   const bound = rows.length === 1 ? rows[0] : null;
   const lookAlike = await flaggedLookAlike(doc.orgId, doc.vendorName ?? "");
-  if (lookAlike.error) return { company: null, barred: null, error: lookAlike.error };
-  return { company: bound, barred: lookAlike.company ?? (bound ? flaggedOrNull(bound) : null) };
+  if (lookAlike.error) return failed(lookAlike.error);
+  const boundFlag = bound ? flaggedOrNull(bound) : null;
+  const barred = lookAlike.company ?? boundFlag;
+  return { company: bound, barred, also: others(barred, lookAlike.company, boundFlag) };
 }
 
 /** MON-12's gate for a bid nobody has linked: ANY do-not-use registry row
@@ -568,20 +589,61 @@ async function notifyAward(fresh: CostDocument, total: number, actor: Actor, cos
 /** The refusals an award runs against the row as read, before anything
  *  moves (MON-12 / COST-8 / COST-13): the budget line's currency, the
  *  company registry (fail-closed — a failed read refuses), and the read
- *  extent. Shared by the one-transaction award and the client sequence. */
+ *  extent. Shared by the one-transaction award and the client sequence.
+ *  `judgeMoved` — only the client sequence passes it (see the check). */
 async function awardGuard(
   f: CostDocument, raw: Record<string, unknown>, costAccountId: string,
   override: string | null, confirmedTotal: number | null | undefined,
-): Promise<{ refusal: string | null; company: CompanyRow | null; barred: CompanyRow | null }> {
+  answers: AwardAnswers = {}, judgeMoved = false,
+): Promise<{ refusal: string | null; company: CompanyRow | null; barred: CompanyRow | null; also: CompanyRow[]; needsOverride?: NeedsOverride }> {
   const mismatch = await currencyMismatch(f, costAccountId);
-  if (mismatch) return { refusal: mismatch, company: null, barred: null };
+  if (mismatch) return { refusal: mismatch, company: null, barred: null, also: [] };
   const behind = await companyBehind(f, raw);
   if (behind.error) {
-    return { refusal: `Couldn't check the company registry (${asClause(behind.error)}) — try again; an award is not made without that check.`, company: null, barred: null };
+    return { refusal: `Couldn't check the company registry (${asClause(behind.error)}) — try again; an award is not made without that check.`, company: null, barred: null, also: [] };
   }
-  const { company, barred } = behind;
-  if (barred && !override) return { refusal: flaggedMessage(barred), company, barred };
-  return { refusal: extentRefusal(f, raw, confirmedTotal), company, barred };
+  const { company, barred, also } = behind;
+  if (barred && !override) return { refusal: flaggedMessage(barred), company, barred, also, needsOverride: needsOverrideOf(barred) };
+  // J14 (MON-12): the reason was typed for one company — never recorded
+  // against another. Judged HERE only on the client sequence, where this
+  // read is the one the override row records. Through award_quote the
+  // server judges it under its lock (`company_moved`, 20261179) against
+  // the same SQL the bid tab asked; this TypeScript read can differ from
+  // that SQL (trim against btrim, ilike against lower() =), and a refusal
+  // from it would come back on every retry, so the award could never
+  // complete (J14 last review). The refusal names this read's company
+  // (`moved`), so the caller asks the reason for it and tries again.
+  if (judgeMoved && barred && answers.overrideCompanyId && answers.overrideCompanyId !== barred.id) {
+    return { refusal: movedMessage(barred), company, barred, also, needsOverride: { ...needsOverrideOf(barred), moved: true } };
+  }
+  // J14 (MON-12 / COST-3): every other flagged company needs its own reason.
+  const missing = also.find((c) => !alsoReasonFor(answers.alsoOverrides, c.id));
+  if (barred && missing) return { refusal: alsoMessage(missing, barred), company, barred, also, needsOverride: { ...needsOverrideOf(missing), also: true } };
+  return { refusal: extentRefusal(f, raw, confirmedTotal), company, barred, also };
+}
+
+/** J14 (MON-12 / COST-3): what the caller says about the companies an
+ *  award answers for — the company its override reason was typed for, and
+ *  a reason for each other flagged company (`companyBehind`'s `also`). */
+export interface AwardAnswers {
+  overrideCompanyId?: string | null;
+  alsoOverrides?: Array<{ companyId: string; reason: string }> | null;
+}
+/** `also`: another company after the first. `moved`: the first company, but
+ *  not the one the caller's reason was typed for (`overrideCompanyId`) —
+ *  the answer moved, so that reason does not go with it. */
+export type NeedsOverride = { companyId: string; companyName: string; status: string; also?: boolean; moved?: boolean };
+const needsOverrideOf = (c: CompanyRow): NeedsOverride => ({ companyId: c.id, companyName: c.name, status: c.status });
+/** The trimmed reason given for `companyId`, or null. */
+function alsoReasonFor(given: AwardAnswers["alsoOverrides"], companyId: string): string | null {
+  for (const g of given ?? []) if (g.companyId === companyId && g.reason?.trim()) return g.reason.trim();
+  return null;
+}
+function movedMessage(now: CompanyRow): string {
+  return `This bid's company link, contractor or vendor name changed after the reason was typed — the award now answers for ${now.name}${now.status === "inactive" ? " (marked inactive)" : " (flagged DO NOT USE)"}. Nothing was changed; award it again to give a reason for ${now.name}.`;
+}
+function alsoMessage(c: CompanyRow, first: CompanyRow): string {
+  return `${c.name} is ${c.status === "do_not_use" ? "flagged DO NOT USE" : "marked inactive"} in the company registry and this award answers for it too (besides ${first.name}). Awarding it needs a reason for ${c.name} as well — each is recorded on the audit trail under its own override.`;
 }
 
 function flaggedMessage(company: CompanyRow): string {
@@ -603,7 +665,7 @@ export function isMissingRpc(err: { code?: string | null; message?: string | nul
 
 type AwardResult = {
   ok: boolean; error?: string; warning?: string;
-  needsOverride?: { companyId: string; companyName: string; status: string };
+  needsOverride?: NeedsOverride;
 };
 
 /**
@@ -629,21 +691,51 @@ async function awardInOneTransaction(
   if (fresh.status !== "draft" && fresh.status !== "parsed") {
     return { ok: false, error: `This document is already ${costDocStatusLabel(fresh.status).toLowerCase()} — refresh to see the latest.` };
   }
-  const verdict = await awardGuard(fresh, raw, input.costAccountId, override, input.confirmedTotal);
+  const answers: AwardAnswers = { overrideCompanyId: input.overrideCompanyId ?? null, alsoOverrides: input.alsoOverrides ?? null };
+  const verdict = await awardGuard(fresh, raw, input.costAccountId, override, input.confirmedTotal, answers);
   if (verdict.refusal) {
-    return verdict.barred && !override
-      ? { ok: false, error: verdict.refusal, needsOverride: { companyId: verdict.barred.id, companyName: verdict.barred.name, status: verdict.barred.status } }
-      : { ok: false, error: verdict.refusal };
+    return verdict.needsOverride ? { ok: false, error: verdict.refusal, needsOverride: verdict.needsOverride } : { ok: false, error: verdict.refusal };
   }
   const total = postableTotal(fresh).total;
   if (total == null || !(total > 0)) return { ok: false, error: "No readable total on this quote yet — run the AI read (or type the total) first." };
 
+  // J14 (MON-12 / COST-3, 20261179): the company the reason was typed for
+  // and a reason for each other flagged company go with the call — sent
+  // only when there are any, so the call is 20261157's own otherwise.
+  // (J14 fix pass) Every non-empty reason the caller holds goes, not only
+  // those for the companies this read found: the server's list
+  // (cost_doc_companies_barred) can name a company this read missed (trim
+  // against btrim, ilike against lower() =), and its refusal is answered
+  // with a reason for THAT company — dropping it here would refuse the
+  // award again for good. The server ignores a reason for a company not on
+  // its list, so sending one is safe.
+  const alsoGiven = verdict.also.map((c) => ({ companyId: c.id, reason: alsoReasonFor(answers.alsoOverrides, c.id) ?? "" }));
+  for (const g of answers.alsoOverrides ?? []) {
+    const reason = g.reason?.trim();
+    if (reason && !alsoGiven.some((x) => x.companyId === g.companyId)) alsoGiven.push({ companyId: g.companyId, reason });
+  }
+  const extra: Record<string, unknown> = {};
+  // (J14 last review) The company the caller's reason was typed for, only
+  // when the caller named it — never this read's own answer, which can
+  // differ from the server's and would then refuse an award the server
+  // would make.
+  if (override && answers.overrideCompanyId) extra.p_override_company = answers.overrideCompanyId;
+  if (alsoGiven.length) extra.p_also_overrides = alsoGiven;
+  const base = {
+    p_doc: fresh.id, p_cost_account: input.costAccountId, p_expected_total: total,
+    p_override_reason: override, p_confirmed_total: input.confirmedTotal ?? null,
+  };
   let res: { data: unknown; error: { code?: string | null; message: string } | null };
+  let legacy = Object.keys(extra).length === 0;
   try {
-    res = await supabase.rpc("award_quote", {
-      p_doc: fresh.id, p_cost_account: input.costAccountId, p_expected_total: total,
-      p_override_reason: override, p_confirmed_total: input.confirmedTotal ?? null,
-    });
+    res = await supabase.rpc("award_quote", { ...base, ...extra });
+    // Before 20261179 the function takes five arguments: the same award
+    // through 20261157's call, the other companies' overrides recorded
+    // below by this function (as the client sequence records them).
+    if (res.error && isMissingRpc(res.error) && !legacy) {
+      legacy = true;
+      res = await supabase.rpc("award_quote", base);
+    }
   } catch (e) {
     return { ok: false, error: userFacingCaughtError(e, { context: "awardQuote" }) };
   }
@@ -656,17 +748,23 @@ async function awardInOneTransaction(
     confirmed?: number; pagesRead?: number | null; pagesTotal?: number | null;
     docCurrency?: string; accountCurrency?: string;
     company?: { id?: string; name?: string; status?: string } | null;
-    rivals?: number; declined?: number; ungroupedOpen?: unknown;
+    rivals?: number; declined?: number; ungroupedOpen?: unknown; also?: unknown;
   };
   if (!out.ok) {
     const co = out.company;
+    const c: CompanyRow | null = co?.id && co.name && co.status ? { id: co.id, name: co.name, status: co.status } : null;
     switch (out.code) {
       case "company_flagged":
-        if (co?.id && co.name && co.status) {
-          const c: CompanyRow = { id: co.id, name: co.name, status: co.status };
-          return { ok: false, error: flaggedMessage(c), needsOverride: { companyId: c.id, companyName: c.name, status: c.status } };
+        if (c && out.also === true) {
+          return { ok: false, error: verdict.barred ? alsoMessage(c, verdict.barred) : flaggedMessage(c), needsOverride: { ...needsOverrideOf(c), also: true } };
         }
+        if (c) return { ok: false, error: flaggedMessage(c), needsOverride: needsOverrideOf(c) };
         return { ok: false, error: "The company behind this quote is flagged in the registry — awarding it needs an explicit override with a reason." };
+      case "company_moved":
+        // The server's answer under its lock: the caller asks the reason for it and tries again.
+        return c
+          ? { ok: false, error: movedMessage(c), needsOverride: { ...needsOverrideOf(c), moved: true } }
+          : { ok: false, error: "This bid's company link, contractor or vendor name changed after the reason was typed — nothing was changed; award it again." };
       case "status":
         return { ok: false, error: `This document is already ${costDocStatusLabel(out.status ?? "decided").toLowerCase()} — refresh to see the latest.` };
       case "currency":
@@ -688,6 +786,15 @@ async function awardInOneTransaction(
         return { ok: false, error: "This document could not be awarded — it was removed, or you don't have permission to award it. Nothing was changed." };
       default:
         return { ok: false, error: "Someone else just decided this document — refresh to see the latest." };
+    }
+  }
+  // The five-argument call recorded the first override only: each other
+  // company's goes on the record here, as the client sequence records it.
+  if (legacy) {
+    for (const c of verdict.also) {
+      await audit("COST_DOC_AWARD_OVERRIDE", fresh.orgId, fresh.id, input.actor, {
+        companyId: c.id, companyName: c.name, companyStatus: c.status, reason: alsoReasonFor(answers.alsoOverrides, c.id), also: true,
+      });
     }
   }
   const warnings: string[] = [];
@@ -722,6 +829,17 @@ export async function awardQuote(input: {
    *  (COST_DOC_AWARD_OVERRIDE, written by this function after the post — a
    *  caller does not write its own override row). */
   overrideReason?: string | null;
+  /** J14 (MON-12): the company `overrideReason` was typed for. When given,
+   *  an award that now answers for another company is refused instead of
+   *  recording the reason against it — under award_quote's lock (20261179;
+   *  this lib does not pre-judge it there), or by this lib on the client
+   *  sequence — with `needsOverride.moved` naming the company it now
+   *  answers for. */
+  overrideCompanyId?: string | null;
+  /** J14 (MON-12 / COST-3): a typed reason for each OTHER flagged company
+   *  the award answers for (`needsOverride.also`), each recorded under its
+   *  own COST_DOC_AWARD_OVERRIDE row. */
+  alsoOverrides?: Array<{ companyId: string; reason: string }> | null;
   /** COST-13: the figure the user typed from the PAPER, in the document's
    *  currency — pass the typed number itself, never the row's total. It
    *  must equal the row's total in whole units (else refused). Required
@@ -732,10 +850,14 @@ export async function awardQuote(input: {
   confirmedTotal?: number | null;
 }): Promise<{
   ok: boolean; error?: string; warning?: string;
-  /** Set when the award was refused ONLY because the company behind the
-   *  quote is flagged (do-not-use or inactive) and no override reason was
-   *  given — the caller may ask for a reason and call again with it. */
-  needsOverride?: { companyId: string; companyName: string; status: string };
+  /** Set when the award was refused ONLY because a company it answers for
+   *  is flagged (do-not-use or inactive) and no reason was given for it —
+   *  the first company when no override reason was given; another one
+   *  (`also: true`) when `alsoOverrides` has none for it; the first company
+   *  (`moved: true`) when the reason was typed for another one
+   *  (`overrideCompanyId`). The caller may ask for that reason and call
+   *  again with it. */
+  needsOverride?: NeedsOverride;
 }> {
   const { doc } = input;
   if (doc.kind !== "quote") return { ok: false, error: "Only quotes can be awarded." };
@@ -751,18 +873,22 @@ export async function awardQuote(input: {
   // claim's UPDATE (claimDocTransition's guard).
   let company: CompanyRow | null = null;
   let barred: CompanyRow | null = null;
+  let alsoFlagged: CompanyRow[] = [];
+  let needs: NeedsOverride | undefined;
+  const answers: AwardAnswers = { overrideCompanyId: input.overrideCompanyId ?? null, alsoOverrides: input.alsoOverrides ?? null };
   const claim = await claimDocTransition(doc.id, ["draft", "parsed"], "awarded", input.actor.uid, true, async (f, raw) => {
-    const verdict = await awardGuard(f, raw, input.costAccountId, override, input.confirmedTotal);
+    const verdict = await awardGuard(f, raw, input.costAccountId, override, input.confirmedTotal, answers, true);
     company = verdict.company;
     barred = verdict.barred;
+    alsoFlagged = verdict.also;
+    needs = verdict.needsOverride;
     return verdict.refusal;
   });
   const awardedCompany = company as CompanyRow | null;
   const barredCompany = barred as CompanyRow | null;
+  const needsOverride = needs as NeedsOverride | undefined;
   if (!claim.ok) {
-    return barredCompany && !override
-      ? { ok: false, error: claim.error, needsOverride: { companyId: barredCompany.id, companyName: barredCompany.name, status: barredCompany.status } }
-      : { ok: false, error: claim.error };
+    return needsOverride ? { ok: false, error: claim.error, needsOverride } : { ok: false, error: claim.error };
   }
   const fresh = claim.fresh;
   const extent = readExtentOf(claim.raw);
@@ -798,6 +924,12 @@ export async function awardQuote(input: {
     await audit("COST_DOC_AWARD_OVERRIDE", fresh.orgId, doc.id, input.actor, {
       companyId: barredCompany.id, companyName: barredCompany.name, companyStatus: barredCompany.status, reason: override,
     });
+    // J14: each other company the award answered for, under its own row.
+    for (const c of alsoFlagged) {
+      await audit("COST_DOC_AWARD_OVERRIDE", fresh.orgId, doc.id, input.actor, {
+        companyId: c.id, companyName: c.name, companyStatus: c.status, reason: alsoReasonFor(answers.alsoOverrides, c.id), also: true,
+      });
+    }
   }
 
   // Rivals (MON-10): every still-open quote in the SAME RFQ group becomes
@@ -838,11 +970,68 @@ export async function awardQuote(input: {
     rivalsDeclined: declined, ungroupedLeftOpen: ungroupedOpen.length,
     costAccountId: input.costAccountId, postedEntryId: posted.entryId ?? null,
     companyId: awardedCompany?.id ?? null, override,
+    alsoOverridden: barredCompany && override ? alsoFlagged.map((c) => c.id) : [],
     // COST-13 dw4: the read extent the posted total came from (null = not recorded / unknown).
     pagesRead: extent.pagesRead, pagesTotal: extent.pagesTotal, totalConfirmed: input.confirmedTotal != null,
   });
   await notifyAward(fresh, total, input.actor, input.costAccountId);
   return warnings.length ? { ok: true, warning: warnings.join(" ") } : { ok: true };
+}
+
+/** J14 (MON-12, 20261179): `relink_cost_document` is not in the database
+ *  yet — the caller keeps its own direct write (today's path). */
+export const RELINK_RPC_MISSING: unique symbol = Symbol("relink_cost_document missing");
+
+export type RelinkResult =
+  | { ok: true; leaving: CompanyRow[] }
+  | { ok: false; code: string; error: string; leaving?: CompanyRow[] };
+
+const companyRowOf = (v: unknown): CompanyRow | null => {
+  const c = (v ?? null) as { id?: unknown; name?: unknown; status?: unknown } | null;
+  return c && typeof c.id === "string" && typeof c.name === "string" && typeof c.status === "string" ? { id: c.id, name: c.name, status: c.status } : null;
+};
+
+/**
+ * J14 (MON-12, 20261179): link (or unlink, `companyId` null) an OPEN bid to
+ * a Known Company through `relink_cost_document`, which locks the quote,
+ * works out which flagged companies the move leaves behind (the companies
+ * the award answered for before, minus after — `cost_doc_companies_barred`)
+ * and, when there are any and no reason was typed, answers
+ * `reason_required` naming them and writes nothing; otherwise it moves the
+ * link and writes its COST_DOC_COMPANY_LINKED row in the same transaction.
+ * The database refuses the same move written directly (its move rail), so
+ * the bid row's picker goes through here. RELINK_RPC_MISSING before the
+ * migration is applied.
+ */
+export async function relinkQuoteCompany(input: { docId: string; companyId: string | null; reason?: string | null }): Promise<RelinkResult | typeof RELINK_RPC_MISSING> {
+  let res: { data: unknown; error: { code?: string | null; message: string } | null };
+  try {
+    res = await supabase.rpc("relink_cost_document", { p_doc: input.docId, p_company: input.companyId, p_reason: input.reason?.trim() || null });
+  } catch (e) {
+    return { ok: false, code: "error", error: userFacingCaughtError(e, { context: "relinkQuoteCompany" }) };
+  }
+  if (res.error) {
+    if (isMissingRpc(res.error)) return RELINK_RPC_MISSING;
+    return { ok: false, code: res.error.code ?? "error", error: userFacingError(res.error, { context: "relinkQuoteCompany" }) };
+  }
+  const out = (res.data ?? {}) as { ok?: boolean; code?: string; leaving?: unknown };
+  const leaving = (Array.isArray(out.leaving) ? out.leaving : []).map(companyRowOf).filter((c): c is CompanyRow => !!c);
+  if (out.ok) return { ok: true, leaving };
+  const code = out.code ?? "refused";
+  switch (code) {
+    case "reason_required":
+      return { ok: false, code, leaving, error: `Link unchanged — ${leaving.map((c) => `${c.name} (${c.status === "do_not_use" ? "flagged do-not-use" : "marked inactive"})`).join(", ") || "a flagged company"} would no longer answer for this bid, and no reason was given.` };
+    case "no_column":
+      return { ok: false, code, error: "Linking a bidder to the registry needs migration 20261096 applied." };
+    case "company":
+      return { ok: false, code, error: "That company is not in this workspace's registry — pick one from the list. Nothing was changed." };
+    case "not_found":
+      return { ok: false, code, error: "This bid could not be linked — it was removed, or you don't have permission to change it. Nothing was changed." };
+    case "not_quote":
+      return { ok: false, code, error: "Only a bid (quote) is linked to a Known Company here." };
+    default:
+      return { ok: false, code, error: "Couldn't link the company — the document was decided (awarded, not selected or voided) or removed since this table loaded. Refresh to see the latest." };
+  }
 }
 
 /** MON-10: decline a quote by hand — the explicit, audited "not selected"
@@ -943,7 +1132,12 @@ export async function voidCostDoc(input: { doc: CostDocument; actor: Actor }): P
  *  (stays) parsed; a DECLINED bid takes the corrected total for its
  *  tabulation and stays declined — a correction is not a reopen. */
 export async function setManualTotal(input: {
-  doc: CostDocument; total: number; vendorName?: string | null; actor: Actor;
+  /** (MON-12, J14 fix pass) No vendor name here: a typed total never rides
+   *  with a rename. On an open quote 20261179's move rail refuses a
+   *  signed-in vendor-name change that leaves a flagged company behind, and
+   *  a total patched together with that name would be refused with it. A
+   *  vendor-name correction is its own write. */
+  doc: CostDocument; total: number; actor: Actor;
   /** COST-8: the document's currency as the paper states it (an ISO code,
    *  or "$" / "US$" for USD) — the in-app correction for a stored currency
    *  that would otherwise strand the document at posting. */
@@ -952,7 +1146,6 @@ export async function setManualTotal(input: {
   if (!Number.isFinite(input.total) || input.total <= 0) return { ok: false, error: "Enter the document's total as a positive number." };
   if (input.doc.status === "awarded" || input.doc.status === "posted") return { ok: false, error: MOVED_MONEY };
   const patch: Record<string, unknown> = { total_amount: input.total };
-  if (input.vendorName?.trim()) patch.vendor_name = input.vendorName.trim();
   if (input.currency != null && input.currency.trim()) {
     const code = normalizeCurrency(input.currency);
     if (!code) return { ok: false, error: `"${input.currency.trim()}" is not a currency code — use a three-letter code such as USD, CAD or EUR.` };

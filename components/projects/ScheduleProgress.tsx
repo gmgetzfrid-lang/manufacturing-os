@@ -33,12 +33,12 @@ interface Props {
 }
 
 const STATUS_META: Record<MilestoneStatus, { label: string; tone: string; bar: string; Icon: React.ComponentType<{ className?: string }> }> = {
-  planned:     { label: "Planned",     tone: "text-blue-700",    bar: "bg-blue-400",    Icon: Circle },
-  in_progress: { label: "In progress", tone: "text-amber-700",   bar: "bg-amber-400",   Icon: PauseCircle },
-  completed:   { label: "Completed",   tone: "text-emerald-700", bar: "bg-emerald-500", Icon: CheckCircle2 },
-  missed:      { label: "Missed",      tone: "text-rose-700",    bar: "bg-rose-500",    Icon: XCircle },
-  blocked:     { label: "Blocked",     tone: "text-purple-700",  bar: "bg-purple-500",  Icon: MinusCircle },
-  on_hold:     { label: "On hold",     tone: "text-amber-700",   bar: "bg-amber-500",   Icon: PauseCircle },
+  planned:     { label: "Planned",     tone: "text-blue-700 dark:text-blue-300",    bar: "bg-blue-400",    Icon: Circle },
+  in_progress: { label: "In progress", tone: "text-amber-700 dark:text-amber-300",   bar: "bg-amber-400",   Icon: PauseCircle },
+  completed:   { label: "Completed",   tone: "text-emerald-700 dark:text-emerald-300", bar: "bg-emerald-500", Icon: CheckCircle2 },
+  missed:      { label: "Missed",      tone: "text-rose-700 dark:text-rose-300",    bar: "bg-rose-500",    Icon: XCircle },
+  blocked:     { label: "Blocked",     tone: "text-purple-700 dark:text-purple-300",  bar: "bg-purple-500",  Icon: MinusCircle },
+  on_hold:     { label: "On hold",     tone: "text-amber-700 dark:text-amber-300",   bar: "bg-amber-500",   Icon: PauseCircle },
 };
 
 export default function ScheduleProgress({ milestones, metrics, nowMs: nowProp }: Props) {
@@ -126,23 +126,23 @@ export default function ScheduleProgress({ milestones, metrics, nowMs: nowProp }
         {/* Forecast / slip card */}
         <div className={`rounded-2xl p-4 border ${
           slipDays > 0
-            ? "bg-rose-50 border-rose-200"
+            ? "bg-rose-500/[0.08] border-rose-500/40"
             : metrics.forecastEndAt
-              ? "bg-emerald-50 border-emerald-200"
+              ? "bg-emerald-500/[0.08] border-emerald-500/40"
               : "bg-[var(--color-surface-2)] border-[var(--color-border)]"
         }`}>
           <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Forecast end</div>
           <div className="text-lg font-black text-[var(--color-text)] mt-1">
             {metrics.forecastEndAt ? humanDate(metrics.forecastEndAt) : metrics.plannedEndAt ? humanDate(metrics.plannedEndAt) : "—"}
           </div>
-          <div className={`text-[11px] mt-1 inline-flex items-center gap-1 ${slipDays > 0 ? "text-rose-700" : "text-emerald-700"}`}>
+          <div className={`text-[11px] mt-1 inline-flex items-center gap-1 ${slipDays > 0 ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-300"}`}>
             {slipDays > 0
               ? <><AlertTriangle className="w-3 h-3" /> {slipDays}d slip vs plan</>
               : metrics.forecastEndAt ? <><CheckCircle2 className="w-3 h-3" /> On track</> : "Plan not yet set"
             }
           </div>
           {overdue.length > 0 && (
-            <div className="mt-2 text-[11px] font-bold text-rose-700 inline-flex items-center gap-1">
+            <div className="mt-2 text-[11px] font-bold text-rose-700 dark:text-rose-300 inline-flex items-center gap-1">
               <AlertTriangle className="w-3 h-3" /> {overdue.length} overdue
             </div>
           )}

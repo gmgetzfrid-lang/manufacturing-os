@@ -239,16 +239,20 @@ describe("MON-12 — the registry rail on an award", () => {
     expect(look).toContain("if (rows.length < 1000) break;");
     expect(lib).toContain('const FLAGGED_COMPANY_STATUSES = ["do_not_use", "inactive"];');
     const behind = between(lib, "async function companyBehind(", "\n}\n");
-    expect(behind).toContain("if (hit.company) return { company: hit.company, barred: flaggedOrNull(hit.company) };");
-    expect(behind.split("if (hit.company) return { company: hit.company, barred: flaggedOrNull(hit.company) };").length - 1).toBe(1); // the own link only
+    // projects Round G J14 (MON-12 / COST-3, 20261179): `barred` keeps this order; `also` adds every OTHER
+    // flagged company the award answers for (the look-alike behind a flagged contractor, the bound company's
+    // flag behind a look-alike) — prjRoundGJ14Migration.test.ts pins that half.
+    expect(behind).toContain("if (hit.company) return { company: hit.company, barred: flaggedOrNull(hit.company), also: [] };");
+    expect(behind.split("if (hit.company) return { company: hit.company, barred: flaggedOrNull(hit.company), also: [] };").length - 1).toBe(1); // the own link only
     // the contractor's link: its flagged company answers; an unflagged one binds and the look-alike gate still runs
     const partyTs = behind.slice(behind.indexOf('from("project_parties")'), behind.indexOf("const name = doc.vendorName?.trim();"));
-    expect(partyTs).toContain("if (flagged) return { company: hit.company, barred: flagged };");
+    expect(partyTs).toContain("const barred = flagged ?? lookAlike.company;");
     expect(partyTs).toContain('const lookAlike = await flaggedLookAlike(doc.orgId, doc.vendorName ?? "");');
-    expect(partyTs).toContain("return { company: hit.company, barred: lookAlike.company };");
+    expect(partyTs).toContain("return { company: hit.company, barred, also: others(barred, lookAlike.company, flagged) };");
     expect(behind.split('const lookAlike = await flaggedLookAlike(doc.orgId, doc.vendorName ?? "");').length - 1).toBe(2);
-    expect(behind).toContain("if (lookAlike.error) return { company: null, barred: null, error: lookAlike.error };");
-    expect(behind).toContain("return { company: bound, barred: lookAlike.company ?? (bound ? flaggedOrNull(bound) : null) };");
+    expect(behind).toContain("if (lookAlike.error) return failed(lookAlike.error);");
+    expect(behind).toContain("const boundFlag = bound ? flaggedOrNull(bound) : null;");
+    expect(behind).toContain("const barred = lookAlike.company ?? boundFlag;");
     // the bid tab's chip reads the document's own link only (QuotesPanel registryFor) — a quote filed against a
     // contractor whose company is active still answers for the look-alike there, by the vendor name on file;
     // its award prompt asks the database's own gate (companyAwardAnswersFor, J12 review fix 7 — below), and
@@ -279,7 +283,9 @@ describe("MON-12 — the registry rail on an award", () => {
     expect(gate).toContain("const companyId = text(raw?.company_id);");
     expect(gate).toContain("const partyId = raw ? text(raw.party_id) : doc.partyId;");
     expect(gate).toContain("const vendorName = raw ? text(raw.vendor_name) : doc.vendorName;");
-    expect(gate).toContain("const override = await companyAwardAnswersFor({ orgId, companyId, partyId, vendorName }, linkedCompany, barredRows);");
+    // J14: the database's whole list first (20261179), this one-company question while it is missing
+    expect(gate).toContain("const bid = { orgId, companyId, partyId, vendorName };");
+    expect(gate).toContain("const override = listed ? listed[0] ?? null : await companyAwardAnswersFor(bid, linkedCompany, barredRows);");
     const ask = between(panel, "export async function companyAwardAnswersFor(", "\n}\n");
     expect(ask).toContain('supabase.rpc("cost_doc_company_barred", {\n    p_org: bid.orgId, p_company: bid.companyId, p_party: bid.partyId, p_vendor: bid.vendorName,\n  });');
     // the database's question never reads the letterhead (J12 review fix pass 8 keeps fix 7's rule) ...
@@ -289,12 +295,14 @@ describe("MON-12 — the registry rail on an award", () => {
     const award = between(panel, "const award = async (", "\n  };\n");
     expect(award).toContain("return await awardGateFor(doc);");
     expect(award).not.toContain("e?.vendorName ?? doc.vendorName");
-    expect(award).toContain("const failed = await recordIntent(held.override, overrideReason, held.override.status);");
+    expect(award).toContain("...(held.override && overrideReason ? [{ flag: held.override, reason: overrideReason, also: false }] : []),");
+    expect(award).toContain("const failed = await recordIntent(it.flag, it.reason, it.flag.status, it.also);");
     // ... and the letterhead's stop (fix pass 8) is its own audit action, never the override's reason
     expect(award).toContain('action: "COST_DOC_AWARD_LETTERHEAD_ACK", resource_type: "cost", resource_id: doc.id,');
+    // J14: the first override names the company it was typed for; each other company's reason goes with it
     expect(award.match(/await awardQuote\(\{[^}]*\}\)/g)).toEqual([
-      "await awardQuote({ doc, siblings, costAccountId: accountId, actor, overrideReason, confirmedTotal })",
-      "await awardQuote({ doc, siblings, costAccountId: accountId, actor, overrideReason: reason, confirmedTotal })",
+      "await awardQuote({ doc, siblings, costAccountId: accountId, actor, overrideReason, overrideCompanyId, alsoOverrides: [...alsoOverrides], confirmedTotal })",
+      "await awardQuote({ doc, siblings, costAccountId: accountId, actor, overrideReason, overrideCompanyId, alsoOverrides: [...alsoOverrides], confirmedTotal })",
     ]);
   });
   it("two non-exact do-not-use look-alikes: the lib and the database break the tie the same way — the exact name first, then the id in byte order, no collation in either (review fix 5 minor)", () => {
@@ -815,7 +823,12 @@ describe("SAF-9 — the contractor outcome notice is claimed once per attempt", 
     // the route claims with exactly these keys
     const route = readFileSync(join(root, "app/api/intake/outcome-notice/route.ts"), "utf8");
     expect(route).toContain('const CLAIMED = "INTAKE_OUTCOME_NOTICE_CLAIMED";');
-    expect(route).toContain("details: { versionId, attempt, projectId: l.project_id, linkId: l.id, outcome },");
+    // (projects Round G J14, MON-10: the claim → send → record sequence is one
+    // helper shared by a submission's notice and a quote's; the claim row's
+    // keys are still versionId — the decided record's id — and attempt.)
+    expect(route).toContain("details: { versionId: key, attempt, ...n.claimDetails },");
+    expect(route).toContain("claimDetails: { projectId: l.project_id, linkId: l.id, outcome },");
+    expect(route).toContain("key: versionId,");
     expect(route.indexOf("action: CLAIMED")).toBeLessThan(route.indexOf('await fetch("https://api.resend.com/emails"'));
   });
   it("the notice's three rows are the route's: a signed-in insert of one is refused; the route writes them as the service role (review minor)", () => {

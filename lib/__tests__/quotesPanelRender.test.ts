@@ -1144,7 +1144,8 @@ describe.each(MODES)("MON-12 (J12 review fix 9) — a do-not-use look-alike a fl
     const opts = dlg.appPrompt.mock.calls[1][0] as { tone?: string; required?: boolean; placeholder?: string };
     expect(opts).toMatchObject({ tone: "danger", required: true, placeholder: "Acknowledgement reason (required)" });
     expect(promptText(1)).toMatch(/^The vendor on file, "Apex Industrial", and the letterhead the AI read, "Apex Industrial, Inc\.", could be Apex Industrial, flagged DO NOT USE in the registry\./);
-    expect(promptText(1)).toMatch(/here that is Coastal Fabricators, marked inactive, so no override for Apex Industrial is recorded/);
+    // J14 (MON-12 / COST-3): the award answers for Apex too — the reason typed here is its own override.
+    expect(promptText(1)).toMatch(/here that is Coastal Fabricators, marked inactive, so Apex Industrial is recorded as an override of its own, with the reason you give here/);
     expect(auditActions()).toEqual(["COST_DOC_AWARD_LETTERHEAD_ACK", "COST_DOC_AWARD_OVERRIDE_DO_NOT_USE"]);
     expect(auditRow("COST_DOC_AWARD_LETTERHEAD_ACK")).toMatchObject({
       matchedOn: ["vendorOnFile", "letterhead"], vendorOnFile: "Apex Industrial", letterhead: "Apex Industrial, Inc.",
@@ -1155,9 +1156,11 @@ describe.each(MODES)("MON-12 (J12 review fix 9) — a do-not-use look-alike a fl
     expect(auditRow("COST_DOC_AWARD_OVERRIDE_DO_NOT_USE")).toMatchObject({ companyId: "c-coastal", company: "Coastal Fabricators", companyStatus: "inactive", reason: OVERRIDE_REASON });
     expect(cd.awardQuote).toHaveBeenCalledTimes(1);
     expect(cd.awardQuote.mock.calls[0][0].overrideReason).toBe(OVERRIDE_REASON);              // never the acknowledgement's
+    // J14: the first override names the company it was typed for; the stored name's look-alike goes with its own reason.
+    expect(cd.awardQuote.mock.calls[0][0]).toMatchObject({ overrideCompanyId: "c-coastal", alsoOverrides: [{ companyId: "c-apex", reason: ACK_REASON }] });
     const confirm = dlg.appConfirm.mock.calls[0][0] as { message: string; tone?: string };
     expect(confirm.tone).toBe("danger");
-    expect(confirm.message).toMatch(/The vendor on file \("Apex Industrial"\) and the letterhead the AI read \("Apex Industrial, Inc\."\) could be Apex Industrial, flagged DO NOT USE — the award's override names Coastal Fabricators/);
+    expect(confirm.message).toMatch(/The vendor on file \("Apex Industrial"\) and the letterhead the AI read \("Apex Industrial, Inc\."\) could be Apex Industrial, flagged DO NOT USE — the award's override names Coastal Fabricators, and Apex Industrial is recorded as an override of its own with your reason/);
   });
 
   it("S1b: the same contractor, the vendor on file 'Bayline Scaffold' — Coastal's override and the LETTERHEAD's acknowledgement for Apex (unchanged from fix pass 8)", async () => {
@@ -1182,11 +1185,12 @@ describe.each(MODES)("MON-12 (J12 review fix 9) — a do-not-use look-alike a fl
     await render(fieldOf(d));
     await awardOn(/Apex Industrial, Inc\./);
     expect(promptTitles()).toEqual(["Coastal Fabricators is flagged DO NOT USE", VENDOR_TITLE]);
-    expect(promptText(1)).toMatch(/here that is Coastal Fabricators, flagged do-not-use, so no override for Apex Industrial is recorded/);
+    expect(promptText(1)).toMatch(/here that is Coastal Fabricators, flagged do-not-use, so Apex Industrial is recorded as an override of its own, with the reason you give here/);
     expect(auditActions()).toEqual(["COST_DOC_AWARD_LETTERHEAD_ACK", "COST_DOC_AWARD_OVERRIDE_DO_NOT_USE"]);
     expect(auditRow("COST_DOC_AWARD_LETTERHEAD_ACK")).toMatchObject({ matchedOn: ["vendorOnFile", "letterhead"], companyId: "c-apex", company: "Apex Industrial", overrideCompanyId: "c-coastal", reason: ACK_REASON });
     expect(auditRow("COST_DOC_AWARD_OVERRIDE_DO_NOT_USE")).toMatchObject({ companyId: "c-coastal", company: "Coastal Fabricators", companyStatus: "do_not_use", reason: OVERRIDE_REASON });
     expect(cd.awardQuote.mock.calls[0][0].overrideReason).toBe(OVERRIDE_REASON);
+    expect(cd.awardQuote.mock.calls[0][0]).toMatchObject({ overrideCompanyId: "c-coastal", alsoOverrides: [{ companyId: "c-apex", reason: ACK_REASON }] });
   });
 
   it("S6: a typed-total bid (no letterhead) on file as 'Apex Industrial', the contractor inactive — the stored name's acknowledgement is asked, naming no letterhead", async () => {
@@ -1338,7 +1342,7 @@ describe.each(MODES)("MON-12 (J12 review fix 10) — the letterhead is the name 
     expect(host.textContent).not.toMatch(/Unknown vendor/);
     await awardOn(/150,000/);
     expect(promptTitles()).toEqual(["Coastal Fabricators is marked INACTIVE", VENDOR_TITLE]);
-    expect(promptText(1)).toMatch(/^The vendor on file "Apex Industrial" could be Apex Industrial, flagged DO NOT USE in the registry\. .*here that is Coastal Fabricators, marked inactive, so no override for Apex Industrial is recorded/);
+    expect(promptText(1)).toMatch(/^The vendor on file "Apex Industrial" could be Apex Industrial, flagged DO NOT USE in the registry\. .*here that is Coastal Fabricators, marked inactive, so Apex Industrial is recorded as an override of its own, with the reason you give here/);
     expect(promptText(1)).not.toMatch(/letterhead/);
     expect(auditActions()).toEqual(["COST_DOC_AWARD_LETTERHEAD_ACK", "COST_DOC_AWARD_OVERRIDE_DO_NOT_USE"]);
     expect(auditRow("COST_DOC_AWARD_LETTERHEAD_ACK")).toMatchObject({
@@ -1407,5 +1411,214 @@ describe.each(MODES)("MON-12 (J12 review fix 10) — the letterhead is the name 
     const confirm = dlg.appConfirm.mock.calls[0][0] as { message: string };
     expect(confirm.message).toMatch(/the vendor on file is not set, and your acknowledgement is recorded with this award/);
     expect(auditRow("COST_DOC_AWARD_LETTERHEAD_ACK")).toMatchObject({ matchedOn: ["letterhead"], letterhead: "Apex Industrial, Inc.", vendorOnFile: "   ", companyId: "c-apex", reason: ACK_REASON });
+  });
+});
+
+// projects Round G — J14 PROJECTS FOLLOW-UPS (projects-tab MON-12 limbs 1 and 2, projects-and-cost COST-3
+// residual 3). After 20261179 the bid tab asks the database's WHOLE list (cost_doc_companies_barred): the
+// override first, then every other flagged company the award answers for, each with its own reason — the
+// stored name's acknowledgement is that look-alike's reason (it goes with the award as its own override), any
+// other company is asked for one. The first override names the company it was typed for (a moved answer is
+// refused under award_quote's lock). The bid row's picker moves the link through relink_cost_document.
+describe("MON-12 / COST-3 (J14) — the bid tab answers for every flagged company, each with its own reason", () => {
+  const SPAR_DNU = company("s-dnu", "Spar Rigging Ltd", "do_not_use");
+  const SPAR_INACT = company("s-inact", "Spar Rigging", "inactive");
+  const flag = (c: Pick<Company, "id" | "name" | "status">) => ({ id: c.id, name: c.name, status: c.status });
+  const listed = (...cs: Array<Pick<Company, "id" | "name" | "status">>) => { db.rpc.cost_doc_companies_barred = { data: cs.map(flag), error: null }; };
+  const intents = () => db.inserts.filter((i) => i.table === "audit_logs" && i.row.action === "COST_DOC_AWARD_OVERRIDE_DO_NOT_USE").map((i) => i.row.details as Record<string, unknown>);
+  const spar = () => doc({ id: "spar", vendorName: "Spar Rigging", currency: "EUR", totalAmount: 150_000, parsed: parsedFrom("Spar Rigging") });
+  beforeEach(() => {
+    reg.listCompanies.mockResolvedValue([SPAR_DNU, SPAR_INACT]);
+    reg.listBarredCompanies.mockResolvedValue([SPAR_DNU]);
+    dlg.appConfirm.mockResolvedValue(true);
+    cd.awardQuote.mockResolvedValue({ ok: true });
+  });
+
+  it("the bound company's inactive flag behind a do-not-use look-alike: two prompts, two intent rows (the second marked also), and both reasons go with the award", async () => {
+    const d = spar();
+    db.single.cost_documents = storedRow(d);
+    listed(SPAR_DNU, SPAR_INACT);
+    dlg.appPrompt.mockResolvedValueOnce("Not the barred Spar Rigging Ltd").mockResolvedValueOnce("Reactivation paperwork pending");
+    await render(fieldOf(d));
+    await awardOn(/Spar Rigging/);
+    expect(promptTitles()).toEqual(["Spar Rigging Ltd is flagged DO NOT USE", "Spar Rigging is marked INACTIVE too"]);
+    expect(promptText(1)).toMatch(/This award also answers for Spar Rigging, besides Spar Rigging Ltd/);
+    expect(db.calls.filter((c) => c.table === "rpc:cost_doc_companies_barred")).toHaveLength(2);       // the click and the re-ask
+    expect(db.calls.filter((c) => c.table === "rpc:cost_doc_company_barred")).toHaveLength(0);         // the list answers; the one-company question is not asked
+    expect(intents()).toEqual([
+      expect.objectContaining({ companyId: "s-dnu", companyStatus: "do_not_use", reason: "Not the barred Spar Rigging Ltd" }),
+      expect.objectContaining({ companyId: "s-inact", companyStatus: "inactive", reason: "Reactivation paperwork pending", also: true }),
+    ]);
+    expect(cd.awardQuote).toHaveBeenCalledTimes(1);
+    expect(cd.awardQuote.mock.calls[0][0]).toMatchObject({
+      overrideReason: "Not the barred Spar Rigging Ltd", overrideCompanyId: "s-dnu",
+      alsoOverrides: [{ companyId: "s-inact", reason: "Reactivation paperwork pending" }],
+    });
+  });
+
+  it("no reason for the second company stops the award: nothing recorded, nothing awarded", async () => {
+    const d = spar();
+    db.single.cost_documents = storedRow(d);
+    listed(SPAR_DNU, SPAR_INACT);
+    dlg.appPrompt.mockResolvedValueOnce("Not the barred Spar Rigging Ltd").mockResolvedValueOnce(null);
+    await render(fieldOf(d));
+    await awardOn(/Spar Rigging/);
+    expect(errors.at(-1)).toMatch(/Award stopped — Spar Rigging is marked inactive and no override reason was given for it/);
+    expect(auditActions()).toEqual([]);
+    expect(cd.awardQuote).not.toHaveBeenCalled();
+  });
+
+  it("an award that fails after both intents closes each with its own abandonment row", async () => {
+    const d = spar();
+    db.single.cost_documents = storedRow(d);
+    listed(SPAR_DNU, SPAR_INACT);
+    dlg.appPrompt.mockResolvedValueOnce("Not the barred Spar Rigging Ltd").mockResolvedValueOnce("Reactivation paperwork pending");
+    cd.awardQuote.mockResolvedValue({ ok: false, error: "This bid's company link, contractor or vendor name changed after the reason was typed — nothing was changed." });
+    await render(fieldOf(d));
+    await awardOn(/Spar Rigging/);
+    expect(auditActions()).toEqual(["COST_DOC_AWARD_OVERRIDE_DO_NOT_USE", "COST_DOC_AWARD_OVERRIDE_DO_NOT_USE", "COST_DOC_AWARD_OVERRIDE_ABANDONED", "COST_DOC_AWARD_OVERRIDE_ABANDONED"]);
+    expect(db.inserts.filter((i) => i.row.action === "COST_DOC_AWARD_OVERRIDE_ABANDONED").map((i) => (i.row.details as Record<string, unknown>).companyId)).toEqual(["s-dnu", "s-inact"]);
+  });
+
+  it("a second company the lib finds after the click (needsOverride.also) is asked for, recorded as an intent marked also, and the award retried with its reason", async () => {
+    const d = spar();
+    db.single.cost_documents = storedRow(d);
+    listed(SPAR_DNU);
+    dlg.appPrompt.mockResolvedValueOnce("Not the barred Spar Rigging Ltd").mockResolvedValueOnce("Reactivation paperwork pending");
+    cd.awardQuote
+      .mockResolvedValueOnce({ ok: false, error: "also", needsOverride: { companyId: "s-inact", companyName: "Spar Rigging", status: "inactive", also: true } })
+      .mockResolvedValueOnce({ ok: true });
+    await render(fieldOf(d));
+    await awardOn(/Spar Rigging/);
+    expect(promptTitles()).toEqual(["Spar Rigging Ltd is flagged DO NOT USE", "Spar Rigging is marked INACTIVE too"]);
+    expect(intents().map((i) => [i.companyId, i.also ?? false])).toEqual([["s-dnu", false], ["s-inact", true]]);
+    expect(cd.awardQuote).toHaveBeenCalledTimes(2);
+    expect(cd.awardQuote.mock.calls[0][0].alsoOverrides).toEqual([]);
+    expect(cd.awardQuote.mock.calls[1][0]).toMatchObject({ overrideReason: "Not the barred Spar Rigging Ltd", overrideCompanyId: "s-dnu", alsoOverrides: [{ companyId: "s-inact", reason: "Reactivation paperwork pending" }] });
+  });
+
+  it("(J14 last review) a moved answer (needsOverride.moved — award_quote's company_moved, or the lib's client sequence) is asked for by name, its intent recorded, the earlier intent closed, and the award retried naming the new company", async () => {
+    const d = spar();
+    db.single.cost_documents = storedRow(d);
+    listed(SPAR_DNU);
+    dlg.appPrompt.mockResolvedValueOnce("Not the barred Spar Rigging Ltd").mockResolvedValueOnce("Spar Rigging's reactivation is signed");
+    cd.awardQuote
+      .mockResolvedValueOnce({ ok: false, error: "moved", needsOverride: { companyId: "s-inact", companyName: "Spar Rigging", status: "inactive", moved: true } })
+      .mockResolvedValueOnce({ ok: true });
+    await render(fieldOf(d));
+    await awardOn(/Spar Rigging/);
+    expect(promptTitles()).toEqual(["Spar Rigging Ltd is flagged DO NOT USE", "Spar Rigging is marked INACTIVE"]);
+    expect(promptText(1)).toMatch(/changed after the reason was typed for Spar Rigging Ltd — the award now answers for Spar Rigging, so that reason does not go with it\. To award anyway, state the reason for Spar Rigging/);
+    expect(auditActions()).toEqual(["COST_DOC_AWARD_OVERRIDE_DO_NOT_USE", "COST_DOC_AWARD_OVERRIDE_DO_NOT_USE", "COST_DOC_AWARD_OVERRIDE_ABANDONED"]);
+    expect(intents().map((i) => [i.companyId, i.also ?? false])).toEqual([["s-dnu", false], ["s-inact", false]]);
+    expect(db.inserts.filter((i) => i.row.action === "COST_DOC_AWARD_OVERRIDE_ABANDONED").map((i) => i.row.details)).toEqual([
+      { companyId: "s-dnu", company: "Spar Rigging Ltd", why: "the award's answer moved to Spar Rigging before it posted" },
+    ]);
+    expect(cd.awardQuote).toHaveBeenCalledTimes(2);
+    expect(cd.awardQuote.mock.calls[1][0]).toMatchObject({ overrideReason: "Spar Rigging's reactivation is signed", overrideCompanyId: "s-inact", alsoOverrides: [] });
+    expect(errors.filter((e) => e)).toEqual([]);
+  });
+
+  it("(J14 last review) a moved answer whose new reason is not given stops the award and closes the intent it had", async () => {
+    const d = spar();
+    db.single.cost_documents = storedRow(d);
+    listed(SPAR_DNU);
+    dlg.appPrompt.mockResolvedValueOnce("Not the barred Spar Rigging Ltd").mockResolvedValueOnce(null);
+    cd.awardQuote.mockResolvedValueOnce({ ok: false, error: "moved", needsOverride: { companyId: "s-inact", companyName: "Spar Rigging", status: "inactive", moved: true } });
+    await render(fieldOf(d));
+    await awardOn(/Spar Rigging/);
+    expect(cd.awardQuote).toHaveBeenCalledTimes(1);
+    expect(errors.at(-1)).toMatch(/Award stopped — Spar Rigging is flagged and no override reason was given/);
+    expect(auditActions()).toEqual(["COST_DOC_AWARD_OVERRIDE_DO_NOT_USE", "COST_DOC_AWARD_OVERRIDE_ABANDONED"]);
+  });
+
+  it("review 9's S1 after 20261179: the list names Apex after Coastal — the stored name's acknowledgement is its reason, no third prompt", async () => {
+    const COASTAL_INACT = company("c-coastal", "Coastal Fabricators", "inactive");
+    reg.listCompanies.mockResolvedValue([APEX]);
+    reg.listBarredCompanies.mockResolvedValue([APEX]);
+    const d = frontBid({ vendorName: "Apex Industrial", partyId: "pp1" });
+    db.single.cost_documents = storedRow(d);
+    db.single.project_parties = { company_id: COASTAL_INACT.id };
+    db.single.companies = [companyRow(COASTAL_INACT)];
+    listed(COASTAL_INACT, APEX);
+    dlg.appPrompt.mockResolvedValueOnce("Coastal reinstated").mockResolvedValueOnce("Apex's name on a Coastal bid — checked");
+    await render(fieldOf(d));
+    await awardOn(/Apex Industrial, Inc\./);
+    expect(promptTitles()).toEqual(["Coastal Fabricators is marked INACTIVE", VENDOR_TITLE]);
+    expect(cd.awardQuote.mock.calls[0][0]).toMatchObject({ overrideCompanyId: "c-coastal", alsoOverrides: [{ companyId: "c-apex", reason: "Apex's name on a Coastal bid — checked" }] });
+  });
+
+  it("a failed list call (not an absent function) stops the award with no fallback", async () => {
+    const d = spar();
+    db.single.cost_documents = storedRow(d);
+    db.rpc.cost_doc_companies_barred = { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } };
+    await render(fieldOf(d));
+    await awardOn(/Spar Rigging/);
+    expect(errors.at(-1)).toMatch(/Award stopped — the Known Companies registry couldn't be checked/);
+    expect(db.calls.filter((c) => c.table === "rpc:cost_doc_company_barred")).toHaveLength(0);
+    expect(cd.awardQuote).not.toHaveBeenCalled();
+  });
+
+  describe("the bid row's picker moves the link through relink_cost_document", () => {
+    const linkTo = async (vendor: RegExp, companyId: string) => {
+      const linkBtn = [...rowOf(vendor).querySelectorAll("button")].find((b) => /link to registry|change/.test(b.textContent ?? ""))!;
+      await act(async () => { linkBtn.click(); });
+      const select = rowOf(vendor).querySelector("select")!;
+      await act(async () => {
+        select.value = companyId;
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      for (let i = 0; i < 5; i++) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    };
+    const relinkCalls = () => db.calls.filter((c) => c.table === "rpc:relink_cost_document").map((c) => c.args[0]);
+    const directWrites = () => db.calls.filter((c) => c.table === "cost_documents" && c.method === "update");
+
+    it("the server says what the move leaves: a reason is asked, the second call carries it; nothing is written from the browser", async () => {
+      const other = company("c-other", "Harbor Welding");
+      reg.listCompanies.mockResolvedValue([other]);
+      let n = 0;
+      db.rpc = new Proxy({} as typeof db.rpc, {
+        get: (_t, name: string) => name !== "relink_cost_document" ? undefined
+          : (n++ === 0
+            ? { data: { ok: false, code: "reason_required", leaving: [{ id: "c-k", name: "Keel Rigging", status: "inactive" }] }, error: null }
+            : { data: { ok: true, leaving: [{ id: "c-k", name: "Keel Rigging", status: "inactive" }] }, error: null }),
+      });
+      dlg.appPrompt.mockResolvedValueOnce("Harbor's letterhead and tax id");
+      await render();
+      await linkTo(/Bayline/, "c-other");
+      expect(promptTitles()).toEqual(["Keel Rigging is marked INACTIVE"]);
+      expect(promptText(0)).toMatch(/This bid answers for Keel Rigging \(inactive\) — through its own link, its contractor or its name\. Linking it elsewhere removes that flag/);
+      expect(relinkCalls()).toEqual([
+        { p_doc: "bay", p_company: "c-other", p_reason: null },
+        { p_doc: "bay", p_company: "c-other", p_reason: "Harbor's letterhead and tax id" },
+      ]);
+      expect(directWrites()).toEqual([]);
+      expect(auditActions()).toEqual([]);              // the function writes the row, in its own transaction
+    });
+
+    it("no reason: the link stays and no second call is made; a refusal reads as the server's sentence", async () => {
+      const other = company("c-other", "Harbor Welding");
+      reg.listCompanies.mockResolvedValue([other]);
+      db.rpc.relink_cost_document = { data: { ok: false, code: "reason_required", leaving: [{ id: "c-apex", name: "Apex Industrial", status: "do_not_use" }] }, error: null };
+      dlg.appPrompt.mockResolvedValueOnce(null);
+      await render();
+      await linkTo(/Bayline/, "c-other");
+      expect(errors.at(-1)).toMatch(/Link unchanged — Apex Industrial is flagged do-not-use and no reason was given/);
+      expect(relinkCalls()).toHaveLength(1);
+      expect(directWrites()).toEqual([]);
+    });
+
+    it("nothing left behind: one call, no prompt, the row shows the new link", async () => {
+      const other = company("c-other", "Harbor Welding");
+      reg.listCompanies.mockResolvedValue([other]);
+      db.rpc.relink_cost_document = { data: { ok: true, leaving: [] }, error: null };
+      await render();
+      await linkTo(/Bayline/, "c-other");
+      expect(dlg.appPrompt).not.toHaveBeenCalled();
+      expect(relinkCalls()).toEqual([{ p_doc: "bay", p_company: "c-other", p_reason: null }]);
+      expect(directWrites()).toEqual([]);
+      expect(rowOf(/Bayline/).textContent).toMatch(/change/);          // linked now (it offered "link to registry" before)
+      expect(rowOf(/Bayline/).textContent).not.toMatch(/link to registry/);
+    });
   });
 });

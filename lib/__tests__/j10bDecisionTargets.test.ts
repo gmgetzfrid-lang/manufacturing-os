@@ -167,3 +167,90 @@ describe("A11Y-14 — decision controls outside the Quality tab carry the 24 / 4
     expect(tin.slice(tin.indexOf("void adoptOne(c)"), tin.indexOf("onFlagCollision(c, impact)"))).not.toContain("<div");   // Adopt and Flag to drafting share that cluster
   });
 });
+
+// projects Round G J14 — projects-tab A11Y-15. The write buttons outside
+// A11Y-14's surfaces — the project page's Members tab (add, save a
+// responsibility, make owner, remove), StatusControl's status menu and its
+// reason confirm, ProgressControl's quick-percent buttons, the stale-checkout
+// release and EditProjectModal's Save — carry the same floor, under the
+// same INVERTED census: every <button> in these files (the project page:
+// its MembersTab only — the rest of that page is A11Y-16's) carries
+// DECISION_TARGET unless its whole click is on this list of read-only
+// handlers (a menu opener, a Back, a dismiss, a close, the edit form's own
+// field controls).
+const READ_ONLY_15: RegExp[] = [
+  /^\(e\) => \{ e\.stopPropagation\(\); if \(disabled\) \{ onDisabledClick\?\.\(\); return; \} openMenu\(\); \}$/,   // StatusControl's chip opens its menu
+  /^\(\) => setPctStep\(false\)$/,                                                                                    // …Back from the percent step
+  /^\(\) => setReasonFor\(null\)$/,                                                                                   // …Back from the reason step
+  /^\(e\) => \{ e\.stopPropagation\(\); openMenu\(\); \}$/,                                                           // ProgressControl's chip opens its slider
+  /^dismissForToday$/,                                                                                                // the stale-checkout banner's dismiss (local only)
+  /^close$/,                                                                                                          // the edit modal's close / cancel
+  /^\(\) => setVisibility\(v\)$/,                                                                                     // …its visibility field
+  /^\(\) => setGoals\(goals\.filter\(\(_, j\) => j !== i\)\)$/,                                                         // …remove a goal from the form
+  /^addGoal$/,                                                                                                        // …add a goal to the form
+  /^\(\) => setSowDoc\(null\)$/,                                                                                      // …clear the Summary of Work field
+  /^\(\) => \{ setSowDoc\(d\); setSowQuery\(""\); \}$/,                                                                 // …pick the Summary of Work
+  /^\(\) => setEditingResp\(\(p\) => \(\{ \.\.\.p, \[m\.userId\]: m\.responsibility \?\? "" \}\)\)$/,                    // the Members tab opens a responsibility's editor
+];
+const readOnly15 = (tag: string) => { const h = onClickOf(tag); return h != null && READ_ONLY_15.some((re) => re.test(h)); };
+/** The project page's MembersTab, from its declaration to the next top-level function. */
+const membersTab = () => {
+  const page = src("app/(protected)/projects/[id]/page.tsx");
+  const at = page.indexOf("function MembersTab(");
+  return page.slice(at, page.indexOf("\nfunction ", at + 1));
+};
+const CENSUS_15: Array<{ file: string; text: () => string; min: number; must: string[] }> = [
+  { file: "app/(protected)/projects/[id]/page.tsx (MembersTab)", text: membersTab, min: 4, must: ["onClick={addByEmail}", "void saveResp(m)", "void makeOwner(m)", "await removeMember("] },
+  { file: "components/projects/StatusControl.tsx", text: () => src("components/projects/StatusControl.tsx"), min: 2, must: ["onPick(reasonFor, reason.trim() || undefined)", "choose(s)"] },
+  { file: "components/projects/ProgressControl.tsx", text: () => src("components/projects/ProgressControl.tsx"), min: 1, must: ["commit(q)"] },
+  { file: "components/projects/StaleCheckoutBanner.tsx", text: () => src("components/projects/StaleCheckoutBanner.tsx"), min: 1, must: ["void release(r)"] },
+  { file: "components/projects/EditProjectModal.tsx", text: () => src("components/projects/EditProjectModal.tsx"), min: 1, must: ["void save()"] },
+];
+
+describe("A11Y-15 (J14) — the remaining Projects write buttons carry the 24 / 44 px floor", () => {
+  it("each file imports the one shared constant and declares none of its own", () => {
+    for (const f of ["app/(protected)/projects/[id]/page.tsx", ...CENSUS_15.slice(1).map((c) => c.file)]) {
+      const s = src(f);
+      expect(s, f).toContain('import { DECISION_TARGET } from "@/components/projects/decisionTarget";');
+      expect(s, f).not.toMatch(/const DECISION_TARGET =/);
+    }
+  });
+
+  for (const { file, text, min, must } of CENSUS_15) {
+    it(`${file}: every button carries the floor unless its click is on the read-only list (counted)`, () => {
+      const deciders = buttonTags(text()).filter((t) => !readOnly15(t));
+      const bare = deciders.filter((t) => !t.includes("${DECISION_TARGET}"));
+      expect(bare).toEqual([]);
+      expect(deciders.length).toBeGreaterThanOrEqual(min);
+      for (const label of must) expect(deciders.some((t) => t.includes(label)), label).toBe(true);
+    });
+  }
+
+  it("the read-only list carries no dead entry, and a write added to one of its handlers leaves it", () => {
+    const handlers = CENSUS_15.flatMap(({ text }) => buttonTags(text()).map(onClickOf)).filter((h): h is string => h != null);
+    for (const re of READ_ONLY_15) expect(handlers.some((h) => re.test(h)), String(re)).toBe(true);
+    expect(readOnly15(`<button onClick={() => setPctStep(false)} className="x">`)).toBe(true);
+    expect(readOnly15(`<button onClick={() => { setPctStep(false); void onSetProgress(50); }} className="x">`)).toBe(false);
+    expect(readOnly15(`<button onClick={() => void makeOwner(m)} className="x">`)).toBe(false);
+  });
+
+  it("decision clusters are spaced 8 px: the member row's actions, the responsibility save, the status reason confirm and the quick-percent row", () => {
+    const members = membersTab();
+    expect(members).toContain('<div className="flex items-center gap-2 shrink-0">\n                  {canReceiveOwnership && (');
+    expect(members).toContain('<div className="mt-1 flex items-center gap-2">\n                        <input autoFocus value={respDraft}');
+    expect(src("components/projects/StatusControl.tsx")).toContain('<div className="flex items-center justify-end gap-2 mt-2">');
+    // the 224 px popover holds four 44 px targets a row on a coarse pointer; the fifth wraps
+    expect(src("components/projects/ProgressControl.tsx")).toContain('<div className="mt-2 flex flex-wrap items-center gap-2">');
+  });
+
+  it("every handler, label and disabled state is unchanged — only the class strings moved", () => {
+    const members = membersTab();
+    expect(members).toContain("<button onClick={addByEmail} disabled={busy || !addEmail.trim()}");
+    expect(members).toContain("<button onClick={() => void saveResp(m)}");
+    expect(members).toContain('<button onClick={() => void makeOwner(m)} title="Transfer ownership to this member"');
+    expect(members).toContain('title="Remove from project"');
+    expect(src("components/projects/StaleCheckoutBanner.tsx")).toContain("disabled={releasingId === r.id}");
+    expect(src("components/projects/ProgressControl.tsx")).toContain("disabled={disabled || busy}\n            onClick={() => commit(q)}");
+    expect(src("components/projects/EditProjectModal.tsx")).toContain("<button onClick={() => void save()} disabled={busy}");
+  });
+});

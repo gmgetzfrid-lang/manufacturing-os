@@ -35,6 +35,7 @@ import ProjectDocumentsCard from "@/components/projects/ProjectDocumentsCard";
 import TabErrorBoundary from "@/components/projects/TabErrorBoundary";
 import EditProjectModal from "@/components/projects/EditProjectModal";
 import ProjectCoach from "@/components/projects/ProjectCoach";
+import { DECISION_TARGET } from "@/components/projects/decisionTarget";
 import CloseoutGatesPending, { CLOSEOUT_GATES_WAIT } from "@/components/projects/CloseoutGatesPending";
 import { openProjectReport, draftLessonsLearned, saveLessonsLearned } from "@/lib/projectReport";
 import { gatherProjectSnapshot, type SnapshotPreRead } from "@/lib/projectSnapshot";
@@ -1142,7 +1143,7 @@ function MembersTab({
           <input value={addResp} onChange={(e) => setAddResp(e.target.value)} placeholder="Responsibility (what they own / will own) — optional"
             className="mt-2 w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
           <div className="mt-2 flex justify-end">
-            <button onClick={addByEmail} disabled={busy || !addEmail.trim()} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50">
+            <button onClick={addByEmail} disabled={busy || !addEmail.trim()} className={`${DECISION_TARGET} inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] disabled:opacity-50`}>
               {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Add member
             </button>
           </div>
@@ -1178,13 +1179,13 @@ function MembersTab({
                   {m.userEmail && <div className="text-xs text-[var(--color-text-muted)] truncate">{m.userEmail}</div>}
                   {canManage ? (
                     respDraft !== undefined ? (
-                      <div className="mt-1 flex items-center gap-1.5">
+                      <div className="mt-1 flex items-center gap-2">
                         <input autoFocus value={respDraft}
                           onChange={(e) => setEditingResp((p) => ({ ...p, [m.userId]: e.target.value }))}
                           onKeyDown={(e) => { if (e.key === "Enter") void saveResp(m); if (e.key === "Escape") setEditingResp((p) => { const n = { ...p }; delete n[m.userId]; return n; }); }}
                           placeholder="What is this member responsible for?"
                           className="flex-1 px-2 py-1 border border-[var(--color-accent-ring)] rounded text-xs focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
-                        <button onClick={() => void saveResp(m)} className="text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] px-1.5">Save</button>
+                        <button onClick={() => void saveResp(m)} className={`${DECISION_TARGET} text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] px-1.5 rounded`}>Save</button>
                       </div>
                     ) : (
                       <button onClick={() => setEditingResp((p) => ({ ...p, [m.userId]: m.responsibility ?? "" }))}
@@ -1197,10 +1198,10 @@ function MembersTab({
                     <div className="mt-1 text-xs text-[var(--color-text-muted)] inline-flex items-center gap-1"><Target className="w-3 h-3 text-[var(--color-text-faint)]" /><span className="italic">{m.responsibility}</span></div>
                   ) : null}
                 </div>
-                <div className="flex items-center gap-1 shrink-0">
+                <div className="flex items-center gap-2 shrink-0">
                   {canReceiveOwnership && (
                     <button onClick={() => void makeOwner(m)} title="Transfer ownership to this member"
-                      className="opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] px-1.5 py-1 rounded hover:bg-[var(--color-accent-soft)] whitespace-nowrap">
+                      className={`${DECISION_TARGET} opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity text-[11px] font-bold text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] px-1.5 py-1 rounded hover:bg-[var(--color-accent-soft)] whitespace-nowrap`}>
                       Make owner
                     </button>
                   )}
@@ -1214,7 +1215,7 @@ function MembersTab({
                         } catch (e) { await appAlert({ message: userFacingCaughtError(e, { context: "project page" }), tone: "danger" }); }
                       }}
                       title="Remove from project"
-                      className="opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md text-[var(--color-text-faint)] hover:text-rose-700 dark:hover:text-rose-300 hover:bg-rose-500/10"
+                      className={`${DECISION_TARGET} inline-flex items-center justify-center opacity-60 sm:opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md text-[var(--color-text-faint)] hover:text-rose-700 dark:hover:text-rose-300 hover:bg-rose-500/10`}
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>

@@ -123,6 +123,12 @@ export async function runWizardFollowUpWrites(
       success_criteria: d.successCriteria.trim() || null,
       job_kind: d.jobKind,
       sow_document_id: d.sowDocumentId,
+      // REL-9 (projects Round G J14): kept, by decision — the wizard's record
+      // of which steps the creator finished or skipped. No screen reads it
+      // (the coach re-surfaces a skipped step from the project's own rows);
+      // its reader is the workspace export and restore, which carry the
+      // projects row whole (lib/dataExport.ts reads every exported table
+      // with select("*"); lib/exportTables.ts lists "projects").
       setup_state: d.setupState,
     });
     if (error) {

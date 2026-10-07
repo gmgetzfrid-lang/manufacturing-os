@@ -807,7 +807,7 @@ describe("checklistEngine", () => {
     manualNote: null, evidence: [], ...over,
   });
   const state = (over: Partial<ProjectEvidenceState> = {}): ProjectEvidenceState => ({
-    turnoverAcceptedNames: [], miChecklistComplete: false, documentTitles: [], equipmentTags: [], ...over,
+    turnoverAcceptedNames: [], miChecklistComplete: false, documentTitles: [], ...over,
   });
 
   it("satisfies items whose evidence the platform holds, with the citation attached", () => {
@@ -1252,7 +1252,6 @@ describe("review regressions", () => {
     const state: ProjectEvidenceState = {
       turnoverAcceptedNames: [], miChecklistComplete: false,
       documentTitles: ["NDE Report Pkg 4", "Rapid Response Plan Rev 2"],
-      equipmentTags: [],
     };
     const items: ChecklistItemState[] = [
       { id: "1", text: "All piping supports grounded and bonded per spec", applicability: "applies", status: "open", manualNote: null, evidence: [] },

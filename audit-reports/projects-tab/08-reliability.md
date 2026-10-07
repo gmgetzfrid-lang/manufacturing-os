@@ -174,7 +174,7 @@ sites through it, falling back to a generic message plus a logged detail.
 ## REL-4 · Every database row enters the application as an unchecked cast
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J14 PROJECTS FOLLOW-UPS (the two `lib/projectReport.ts` lookups: `CO_REASON_LABEL[x] ?? x` and a fallback for `why[r.reason]`) — by the integrator, 2026-10-02 (at the J10b merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** correctness / availability
@@ -251,6 +251,20 @@ but the three above remove the user-visible damage for far less work.
    No migration was needed.
 
 **Scope / residual.** OPEN only for the two `lib/projectReport.ts` lookups in J12's file. The fix is `CO_REASON_LABEL[x] ?? x` at both sites and a fallback for `why[r.reason]` at `:400`. A zod row-validation layer is not attempted (DEC-31).
+
+**Resolution (2026-10-07, projects Round G).** Package projects-joint J14 PROJECTS FOLLOW-UPS made the last two lookups total, in `lib/projectReport.ts`:
+- `coReasonLabel(reason)` — `CO_REASON_LABEL[reason] ?? reason` — labels the closeout report's change-order line (`renderReportHtml`) and the coach's lessons line. A reason outside the map prints as itself.
+- The coach's lessons line is `changeOrderLessonLine(r, money)`. Its lesson is `CO_REASON_LESSON[reason] ?? CO_REASON_LESSON.other`; the old `why[r.reason]` would have printed "undefined" for a reason outside the map. The five mapped reasons print the line the draft always printed.
+- Neither lookup depends on its caller any more. `summarizeChangeOrders` builds `byReason` from the map's own keys today, so the old lookups held only while every caller did the same.
+- Tests: `lib/__tests__/projectReport.test.ts` "REL-4 (J14) — the report's change-order lookups are total": an unmapped reason prints as itself on the report and in the lessons line, never "undefined"; a mapped reason's lessons line is unchanged.
+
+**Done-when.**
+1. ✓ No label lookup can return `undefined`. The two `lib/projectReport.ts` sites were the last ones in the Projects and Companies surfaces; J10b made every other one total.
+2. ✓ `fmtMoney(NaN)` never renders "$NaN" (J3, unchanged).
+3. ✓ The database rejects an unmapped status or kind (the CHECKs listed above, unchanged).
+
+**Scope / residual.** None for this finding. A zod row-validation layer is not attempted (DEC-31, as recorded above).
+- Ship loop (`DEC-29` item 4), J14 fix pass: `tsc --noEmit` exits 0, and `eslint` on the 47 changed `.ts` / `.tsx` files exits 0. Every assertion of the full `vitest` run passes. On this host (load average about 20) the run's exit code was 1 twice, each time only from 5 s default timeouts, in files this package does not touch: `dcRoundFOwnerStamp`, `notificationWriteRails`, `notificationDispatchMembership` and `dependencies`. Those four pass when run on their own with `--testTimeout=60000` (exit 0). The full `next build` was not run here: the fleet's standing rule leaves it to the integrator at merge, so this resolution stands on that build passing.
 
 ---
 
@@ -451,7 +465,7 @@ a window.
 ## REL-9 · Six states are declared, accepted by the data layer, and reachable from no interface
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J14 PROJECTS FOLLOW-UPS (done-when 3's remaining dead declarations: `equipmentTags`, `trend`, `setup_state`, `addEvidence`) — by the integrator, 2026-10-02 (at the J10b merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (each by grep)
 - **Blast radius:** dead-end / feature-gap
@@ -541,6 +555,25 @@ also pure cost, per report `09`).
    - `kind: "po"`: retained under J3's CHECK decision.
 
 **Scope / residual.** OPEN for the dead declarations above, which belong to the owners of those files. `lib/checklists.ts` is outside this package's file list. Its edit is confined to `setChecklistStatus`'s void limb (the reason gate before the write and the checked audit after it) plus one new private helper, and it is reported as `filesOutsidePlan`. The database does not require the reason, because checklists have no reason column. The `20261136` rail keeps any direct void to controllers, but a controller writing the table directly, outside the lib, still records no reason. Notifications N8 adds `emit()` calls to the same file, so the integrator should expect a merge. The comment on the `20261136` rail ("no product path reopens or voids a checklist") is now stale on voids. That file is a migration, so the integrator notes it rather than editing it.
+
+**Resolution (2026-10-07, projects Round G).** Package projects-joint J14 PROJECTS FOLLOW-UPS settled done-when 3's four remaining declarations, each by removal or by a recorded reader:
+- `equipmentTags`: removed. `lib/checklists.ts` gathered it for the evidence sweep with one extra read of the asset register (`assets.tags`), and no rule read it. The read, the field and its declaration on `ProjectEvidenceState` (`lib/checklistEngine.ts`) are gone.
+- `trend`: removed from `ProjectHealth` (`lib/projectHealth.ts`). It was always the literal `"steady"`, and nothing read it.
+- `addEvidence`: removed from `updateChecklistItem`'s patch (`lib/checklists.ts`), with its evidence write and its audit key. No interface ever passed it; evidence lands through the checklist's own evidence paths.
+- `setup_state`: kept, by decision, with its reader recorded at the write (`lib/projectWizardWrites.ts`). The wizard's record of how a project was set up is read by the workspace export and restore: `lib/dataExport.ts` selects every exported table whole (`select("*")`), and `lib/exportTables.ts` lists `projects`. Dropping the write would empty that column in every export from then on.
+- `lib/checklists.ts` is touched only to remove declarations, as the brief allows beside notifications N8's `emit()` work in the same file.
+- Tests:
+  - `lib/__tests__/checklists.test.ts` "REL-9 (J14)": the sweep no longer reads the asset register; `updateChecklistItem` never writes the evidence column.
+  - `lib/__tests__/prjRoundGJ14.test.ts` "REL-9 (J14) — the remaining dead declarations": `ProjectHealth` carries no `trend`; the engine's evidence state declares no `equipmentTags`; `setup_state` is kept with its reader recorded, and the export reads `projects` whole.
+  - `projectControls.test.ts` and `j10bTabsDataChanged.test.ts` are adjusted to the shapes without the removed fields.
+
+**Done-when.**
+1. ✓ A mistaken checklist can be voided (J10b, unchanged).
+2. ✓ An approved change order can be unwound in one action that voids exactly its entry (J3, unchanged).
+3. ✓ The remaining dead declarations are removed: `equipmentTags`, `trend` and `addEvidence` are gone. `setup_state` is not dead (its reader is above). `kind: "po"` stays under J3's CHECK decision, as recorded.
+
+**Scope / residual.** None for this finding. For the integrator: the comment on the `20261136` rail ("no product path reopens or voids a checklist") is still stale on voids, as J10b recorded. That file is a migration, and it is not edited here.
+- Ship loop (`DEC-29` item 4), J14 fix pass: `tsc --noEmit` exits 0, and `eslint` on the 47 changed `.ts` / `.tsx` files exits 0. Every assertion of the full `vitest` run passes. On this host (load average about 20) the run's exit code was 1 twice, each time only from 5 s default timeouts, in files this package does not touch: `dcRoundFOwnerStamp`, `notificationWriteRails`, `notificationDispatchMembership` and `dependencies`. Those four pass when run on their own with `--testTimeout=60000` (exit 0). The full `next build` was not run here: the fleet's standing rule leaves it to the integrator at merge, so this resolution stands on that build passing.
 
 ---
 
@@ -708,11 +741,11 @@ condition to match `hasPlan`. Use the project currency in the example.
 | REL-1 | HIGH | RESOLVED |
 | REL-2 | HIGH | RESOLVED |
 | REL-3 | HIGH | OPEN |
-| REL-4 | HIGH | OPEN |
+| REL-4 | HIGH | RESOLVED |
 | REL-5 | HIGH | RESOLVED |
 | REL-6 | HIGH | RESOLVED |
 | REL-7 | HIGH | RESOLVED |
 | REL-8 | MEDIUM | RESOLVED |
-| REL-9 | MEDIUM | OPEN |
+| REL-9 | MEDIUM | RESOLVED |
 | REL-10 | MEDIUM | RESOLVED |
 | REL-11 | MEDIUM | RESOLVED |

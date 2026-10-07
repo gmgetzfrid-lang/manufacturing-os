@@ -1183,6 +1183,28 @@
     "every other package that edits app/(protected)/layout.tsx or a provider it imports merged"
    ],
    "sequencingNotes": "Added by the integrator 2026-10-07 under the user's delegation (DEC-90 A24). Runs LAST, after notifications N3 and N4, which restructure the providers. Measure with next build as PERF-9's J12 pass did (the client-reference manifest's entryJSFiles)."
+  },
+  {
+   "name": "J19 PROJECTS REMAINDERS \u2014 a milestone keeps its project on a re-import, a contractor with open quotes is not deleted from under them, and the quote portal promises only what it can send",
+   "findings": [
+    "projects-tab SEC-21 residual 3 (assigned by the integrator at the J14 merge, 2026-10-07: a document-only re-import of a schedule first imported onto a project moves each matched milestone OFF its project \u2014 the import matches an existing row only within its own project, and a BEFORE UPDATE OF project_id ON milestones rail refuses a signed-in move without the project's authority)",
+    "projects-tab MON-14 (opened by J14's fix pass, DEC-31; assigned by the integrator at the J14 merge: a BEFORE DELETE rail on project_parties so a contractor answering for open quotes, or flagged, is not deleted from under them \u2014 after 20261179)",
+    "projects-tab SAF-20 (opened by J14's fix pass, DEC-31; assigned by the integrator at the J14 merge: app/api/intake/upload/route.ts tells every quote submitter 'You'll be contacted about the award decision' \u2014 say it only when the link has a contact, otherwise say the outcome shows on the portal; AFTER J16 merges, which edits this route)",
+    "projects-tab A11Y-16 (opened by J14, DEC-31; assigned by the integrator at the J14 merge: the project page's write buttons outside its Members tab take DECISION_TARGET \u2014 the same per-file pass over app/(protected)/projects/[id]/page.tsx J15 already makes)",
+    "projects-tab PERF-5 remainder (assigned by the integrator at the J14 merge: done-when 1 measured at 4x CPU on a quiet host with the committed harness scripts/perf/execution-drag/ \u2014 a measurement only; J18 runs last, when the fleet's load is gone)"
+   ],
+   "files": [
+    "lib/milestones.ts (the import's match scope)",
+    "app/api/intake/upload/route.ts (the quote branch's confirmation sentence) \u2014 after J16 merges",
+    "one migration: BEFORE UPDATE OF project_id ON milestones (signed-in), BEFORE DELETE ON project_parties \u2014 DEC-30 counts-only inventory, DRLS-16, any re-created function from its NEWEST definition, lineDiff-pinned",
+    "tests: a re-import keeps each milestone on its project; a signed-in project move without authority is refused; a contractor with open quotes cannot be deleted silently; the portal sentence matches the link's contact; regression \u2014 today's import onto a project, a party delete with no quotes and a link with a contact behave exactly as before"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "J14 merged (20261179; MON-12 / COST-3)",
+    "J16 merged (app/api/intake/upload/route.ts)"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-07 at the J14 merge (DEC-31: these three remainders had only proposed owners)."
   }
  ],
  "ownershipRule": "Where the two briefs disagree on a shared file, projects-and-cost's proposal applies: libs / API routes / migrations follow the projects-and-cost brief, components / pages follow the projects-tab brief; the schedule engine (lib/milestones.ts, criticalPath.ts, executionReport.ts) follows projects-tab's P6b brief with PC-4's rollup semantics folded in.",

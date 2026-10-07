@@ -248,6 +248,21 @@ Status stays OPEN for:
 - **Residual 3 → projects-joint J14** (unchanged).
 
 It RESOLVES once both land.
+
+**Partial (2026-10-07, projects Round G).** Package projects-joint J14 PROJECTS FOLLOW-UPS closed residual 3 (its Assigned line), in one change with projects-tab `MON-12` (the full record is there).
+- The decision: an award answers for EVERY flagged company, each with its own reason. The first answer's order is unchanged; an `inactive` contractor is not re-ordered behind the look-alike.
+- `20261179` §1 `cost_doc_companies_barred` returns the list, and `lib/costDocs.ts` `companyBehind` returns it in step (`barred` + `also`). The stored vendor name's do-not-use look-alike behind a flagged contractor, an `inactive` one included, is now on it.
+- `award_quote` (§2) refuses without a reason for that company and records `COST_DOC_AWARD_OVERRIDE` for it under its own row (`also: true`). It also refuses a reason typed for another company (`company_moved`).
+- The bid tab passes the stored name's acknowledgement as that company's reason, so the look-alike is recorded by the server, not only by the browser's `COST_DOC_AWARD_LETTERHEAD_ACK`.
+- Before `20261179` is pasted, the lib records the same override rows itself (the five-argument fallback, or its client sequence).
+- (J14 fix pass) A company only the server's list names (the lib's read missed it) is answerable from the bid tab. The retry sends every reason the tab holds as `p_also_overrides`, where the first landing dropped the one the server had asked for (`MON-12`'s review fix).
+- (J14 last review, 2026-10-07) The moved answer is likewise the server's to judge. Through `award_quote` it is judged only under the lock; the lib judges it only on its client sequence, where its own read is what it records. Both refusals name the company, so the bid tab asks for its reason. As first landed, the lib's own read refused it before the call, and a difference between that read and the server's refused every retry (`MON-12`'s Review fix 2).
+- Tests: `prjRoundGJ14Migration.test.ts`, the J14 blocks of `costDocs.test.ts` and `quotesPanelRender.test.ts`, and the scratch PostgreSQL 16 run (all on `MON-12`).
+
+**Done-when.** Unchanged from the block above: ✓, ✓ by the ratified ruling (`DEC-48`, DEC-90 A20), ✓ / ✓. Residual 3 sat under the first; the override is now recorded for every flagged company the award answers for.
+
+**Scope / residual.** Residual 3: closed, pending `20261157` and `20261179`. Residuals 1 and 2 as the integrator note above records (DEC-90 A20 / A21, ratified 2026-10-07): residual 1 is ✓ by the ratified ruling; residual 2 is projects-joint J17 BARRED LOOK-ALIKE's. *(Integrator at the J14 merge, 2026-10-07: this said both waited on the user's rulings — J14's base predates DEC-90.)*
+
 ---
 
 <a id="cost-4"></a>

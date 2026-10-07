@@ -821,7 +821,7 @@ Exercised on a throwaway PostgreSQL 16 with the fixed body and a stub schema (`a
 
 - **Severity:** LOW
 - **Severity rationale:** Nothing is published wrongly and nothing is lost. The approve is refused, nothing is changed, and the panel says so in plain words. The cost is a missing door: on the Intake tab a controller can only release the hold, while the document's review panel offers the same controller a recorded way through.
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J14 PROJECTS FOLLOW-UPS (`components/projects/IntakePanel.tsx` `approve`: offer a controller the review promote's recorded force after a hold refusal, as `ReviewGateSection` does) — by the integrator, 2026-10-02 (at the J10b merge: document-control P14 named this as the integrator's follow-up at that merge; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (by reading; not exercised against a live database)
 - **Blast radius:** workflow / controller recovery
@@ -842,3 +842,23 @@ Exercised on a throwaway PostgreSQL 16 with the fixed body and a stub schema (`a
 - On a hold refusal, a controller on the Intake tab is offered the recorded force with the required acknowledgement, and the forced call carries `forceHold: true` and the trimmed reason.
 - A non-controller, and any refusal that is not the hold's, gets today's message, and the call without a force is unchanged.
 - A rendered test drives the controller case, the non-controller case and the unchanged call, as `dcRoundFReviewHoldForce.test.ts` does for `ReviewGateSection`.
+
+**Resolution (2026-10-07, projects Round G).** Package projects-joint J14 PROJECTS FOLLOW-UPS mirrored `ReviewGateSection` in `components/projects/IntakePanel.tsx`:
+- **The refusal.** When `approve`'s `finalizeReviewedRevision` comes back unpublished with a hold refusal (`isFinalizeHoldRefusal(res.reason)`), and the person is a controller, the panel offers the force. "Controller" is `useRole().hasAnyRole(["Admin", "DocCtrl"])`, which reads the role collection, so a DocCtrl held as a secondary role counts. The panel says nothing was changed, and the row opens a panel (`data-testid="intake-hold-force"`) under the submission.
+- **The panel.** It holds the HLD-2 acknowledgement (the shared `HeldSourceNotice`, "Proceed over the active hold: approve this submission while the hold stays open"), an optional reason, "Approve over the hold" (disabled until acknowledged) and "Not now".
+- **The forced call.** It first re-reads the document's `pending_version_id` (`SAF-15`): a pointer that moved since the list loaded refreshes the list and forces nothing. Otherwise it is the same call plus `forceHold: true` and the trimmed reason (`null` when blank), with the roster requirement as before. `finalize_reviewed_promote` (`20261151`) honours it for a controller and writes `REV_HOLD_OVERRIDDEN` in the same transaction. A forced approval that lands settles like any approval (`settleApproval`: what became current, the evidence sweep, and the contractor's notice — `SAF-9`).
+- **Everything else is unchanged.** A non-controller's hold refusal, and any refusal that is not the hold's, gets the message it always got (`finalizeReasonMessage`), and the call without a force is unchanged.
+- Tests: `lib/__tests__/j14IntakeApproveHold.test.ts` "INTK-18 (J14) —" renders the panel, as `dcRoundFReviewHoldForce.test.ts` does for `ReviewGateSection`:
+  - a controller (DocCtrl in the role collection) refused by the hold must acknowledge, then the approve carries `forceHold: true` and the trimmed reason;
+  - the forced approve re-checks the pending pointer, and a moved one forces nothing;
+  - someone below a controller is told to release the hold, with no force offered;
+  - a controller's refusal that is not the hold's is said as before;
+  - regression: an approve that lands is called exactly as before (no force).
+
+**Done-when.**
+- ✓ On a hold refusal, a controller on the Intake tab is offered the recorded force with the required acknowledgement, and the forced call carries `forceHold: true` and the trimmed reason.
+- ✓ A non-controller, and any refusal that is not the hold's, gets today's message, and the call without a force is unchanged.
+- ✓ A rendered test drives the controller case, the non-controller case and the unchanged call.
+
+**Scope / residual.** None for this finding. The hold refusal exists only once `20261151` is pasted; before it, nothing in this path changes. For the integrator: the paste-order note that `20261159` waits for "the app offering the Intake tab's recorded hold override (INTK-18, projects-joint J14)" is met by this package's deploy.
+- Ship loop (`DEC-29` item 4), J14 fix pass: `tsc --noEmit` exits 0, and `eslint` on the 47 changed `.ts` / `.tsx` files exits 0. Every assertion of the full `vitest` run passes. On this host (load average about 20) the run's exit code was 1 twice, each time only from 5 s default timeouts, in files this package does not touch: `dcRoundFOwnerStamp`, `notificationWriteRails`, `notificationDispatchMembership` and `dependencies`. Those four pass when run on their own with `--testTimeout=60000` (exit 0). The full `next build` was not run here: the fleet's standing rule leaves it to the integrator at merge, so this resolution stands on that build passing.

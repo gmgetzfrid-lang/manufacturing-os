@@ -310,4 +310,22 @@ export const EXPECTED_FUNCTIONS: readonly FunctionExpectation[] = [
     migration: "20261181_notif_roundG_producers_free.sql",
     feature: "A resolved branch clears its branch_open alerts for the DocCtrl pool (lib/branches.ts clearBranchOpenAlerts; PROD-3)",
   },
+  // projects-joint J14 (MON-12 / COST-3): the bid tab asks the award's whole
+  // list and its company picker moves a link through the server; both fall
+  // back to today's path while missing (42883 / PGRST202). The uuid argument
+  // refuses "schema-health-probe" (22P02), so neither body runs.
+  {
+    signature: "cost_doc_companies_barred(uuid, uuid, uuid, text)",
+    fn: "cost_doc_companies_barred",
+    probeArgs: { p_org: "schema-health-probe", p_company: null, p_party: null, p_vendor: null },
+    migration: "20261179_prj_roundG_award_answers_for_each.sql",
+    feature: "Every flagged company an award answers for, each with its own reason (components/projects/cost/QuotesPanel.tsx; MON-12 / COST-3)",
+  },
+  {
+    signature: "relink_cost_document(uuid, uuid, text)",
+    fn: "relink_cost_document",
+    probeArgs: { p_doc: "schema-health-probe", p_company: null },
+    migration: "20261179_prj_roundG_award_answers_for_each.sql",
+    feature: "The bid row's company picker, with its reason and record in one transaction (lib/costDocs.ts relinkQuoteCompany; MON-12)",
+  },
 ];

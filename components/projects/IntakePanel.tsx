@@ -14,6 +14,17 @@
 // screen (SAF-15). A rejection needs a reason, which the contractor sees on
 // their portal (SAF-9). Every link expires (SEC-5); quote links live on the
 // Costs tab, not here (INTK-12).
+//
+// projects Round G (J14): a decision that lands asks the server to email
+// the contact the org entered on the link (SAF-9 — J12's
+// /api/intake/outcome-notice through notifyIntakeOutcome, DEC-56; the
+// outcome is read from the database, one notice per submission) and says
+// what became of it. When an active hold refuses the promote, a controller
+// (Admin / DocCtrl held in the role collection) is offered the review
+// promote's recorded force with the HLD-2 acknowledgement, as the
+// document's review panel offers it (INTK-18, REV-20); anyone else, and any
+// other refusal, is told as before, and the call without a force is
+// unchanged.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { userFacingError, userFacingReadError, userFacingCaughtError } from "@/lib/userFacingError";
@@ -25,7 +36,7 @@ import { supabase } from "@/lib/supabase";
 import { publicOrigin } from "@/lib/publicOrigin";
 import { DECISION_TARGET } from "@/components/projects/decisionTarget";
 import {
-  finalizeReviewedRevision, finalizeReasonMessage,
+  finalizeReviewedRevision, finalizeReasonMessage, isFinalizeHoldRefusal,
   effectiveReviewControlForDocument, listDraftRoster, openReviewRoster,
 } from "@/lib/reviewControl";
 import { effectiveDocClassForDocument } from "@/lib/docClass";
@@ -35,6 +46,9 @@ import {
   newIntakeToken, intakePortalPath, linkCredentialView, firstReadWithColumns, reissueIntakeLink,
 } from "@/lib/intakeLinks";
 import { describeProjectSweep } from "@/lib/checklists";
+import { notifyIntakeOutcome } from "@/lib/intakeOutcomeNotice";
+import { useRole } from "@/components/providers/RoleContext";
+import HeldSourceNotice from "@/components/documents/lifecycle/HeldSourceNotice";
 import type { ReviewControl } from "@/types/schema";
 
 // SEC-5: the date picker works in the user's LOCAL calendar (the expiry
@@ -63,11 +77,33 @@ interface PendingSub {
   company: string | null; submittedAt: string | null; changeLog: string | null;
 }
 
+/** SAF-9: what became of the contractor's email, as one sentence appended to
+ *  the decision's notice. The portal shows the outcome whatever happens. */
+export function outcomeNoticeSentence(res: { sent: true } | { sent: false; reason: string }): string {
+  if (res.sent) return " The company's contact was emailed the outcome.";
+  switch (res.reason) {
+    case "already": return "";
+    case "no_contact": return " Their link carries no contact email, so they see the outcome on their portal only.";
+    case "not_configured": return " Email is not configured here, so they see the outcome on their portal only.";
+    case "in_progress": return " The email to the company's contact is already being sent.";
+    default: return ` The email to the company's contact could not be sent (${res.reason}) — they still see the outcome on their portal.`;
+  }
+}
+
 export default function IntakePanel({ orgId, projectId, canManage, uid, userEmail }: {
   orgId: string; projectId: string; canManage: boolean; uid: string; userEmail?: string | null;
 }) {
+  // INTK-18: the controller tier is the role COLLECTION (OWN-3 / ADD-1), as
+  // the document's review panel reads it — never the headline role alone.
+  const { hasAnyRole } = useRole();
+  const isController = hasAnyRole(["Admin", "DocCtrl"]);
   const [links, setLinks] = useState<IntakeLink[]>([]);
   const [pending, setPending] = useState<PendingSub[]>([]);
+  /** INTK-18: the submission whose approve an active hold refused, with the
+   *  arguments the forced call repeats; the acknowledgement and reason. */
+  const [holdRefused, setHoldRefused] = useState<{ p: PendingSub; requireRosterComplete: boolean } | null>(null);
+  const [holdAck, setHoldAck] = useState(false);
+  const [holdReason, setHoldReason] = useState("");
   const [libs, setLibs] = useState<Array<{ id: string; name: string }>>([]);
   const [intakeLibraryId, setIntakeLibraryId] = useState<string | null>(null);
   const [intakeCollectionId, setIntakeCollectionId] = useState<string | null>(null);
@@ -80,6 +116,18 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
   const setMsg = useCallback((text: string | null, tone: "error" | "success" | "info" = "error") => {
     setNotice(text == null ? null : { tone, text });
   }, []);
+  /** SAF-9 (J14 last review): the contractor's notice never holds up the
+   *  decision. The decision's message shows and the list refreshes as soon
+   *  as its write lands; the notice (the route's send can take up to its
+   *  15 s abort) is sent without being awaited, and its outcome sentence is
+   *  appended when it answers — only while the decision's message is still
+   *  the one on screen (a later action's message is never written over). */
+  const tellOutcome = useCallback((shown: string, versionId: string) => {
+    void notifyIntakeOutcome(orgId, versionId).then((res) => {
+      const told = outcomeNoticeSentence(res);
+      if (told) setNotice((cur) => (cur && cur.text === shown ? { tone: cur.tone, text: shown + told } : cur));
+    });
+  }, [orgId]);
   /** SEC-19: link id → the address minted or re-issued in THIS session — the
    *  only time it is known (the database keeps its SHA-256, 20261141). */
   const [freshUrls, setFreshUrls] = useState<Map<string, string>>(new Map());
@@ -417,18 +465,68 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         orgId, documentId: p.docId, actorId: uid, actorName: userEmail ?? "Reviewer", actorEmail: userEmail ?? null,
         requireRosterComplete: rosterRequired,
       });
+      if (!res.published) {
+        // INTK-18: an active hold refused a controller's promote — offer the
+        // recorded force (nothing was changed); any other refusal, and
+        // anyone else's, is said as before.
+        if (isController && isFinalizeHoldRefusal(res.reason)) {
+          setHoldRefused({ p, requireRosterComplete: rosterRequired }); setHoldAck(false); setHoldReason("");
+          setMsg(`${p.label} Rev ${p.revLabel ?? ""} was not approved: the document has an active hold, and nothing was changed. Release the hold, or proceed over it as Document Control below — the override is recorded on the document's history.`, "info");
+          return;
+        }
+        throw new Error(finalizeReasonMessage(res.reason));
+      }
+      await settleApproval(p, res);
+    } catch (e) { setMsg(userFacingCaughtError(e, { context: "IntakePanel" })); }
+    finally { setBusy(null); }
+  };
+
+  /** After a promote landed: name what became current, say what the
+   *  evidence sweep did, and tell the contractor (SAF-9). */
+  const settleApproval = async (p: PendingSub, res: Awaited<ReturnType<typeof finalizeReviewedRevision>>) => {
+    // Name what actually became current — never the stale row's label.
+    const { data: after } = await supabase.from("documents").select("rev, current_version_id").eq("id", p.docId).maybeSingle();
+    // UX-16: the approval swept the project's open checklists — say what it did.
+    const swept = res.evidenceSweep ? describeProjectSweep(res.evidenceSweep) : null;
+    const landed = String(after?.current_version_id ?? "") === p.pendingVersionId;
+    const shown = (landed
+      ? `${p.label} Rev ${String(after?.rev ?? p.revLabel ?? "")} approved — it is now the current revision.`
+      : `${p.label}: the approval went through, but the current revision is not the submission you approved — refresh and check the document.`)
+      + (swept ? ` ${swept.text}` : "");
+    setMsg(shown, landed && (!swept || swept.ok) ? "success" : "error");
+    // SAF-9: the decision landed — the server emails the link's contact
+    // (the outcome read from the database; one notice per submission),
+    // without holding up the message or the refresh.
+    if (landed) tellOutcome(shown, p.pendingVersionId);
+    await refresh();
+  };
+
+  /** INTK-18: the review promote's recorded force, offered to a controller
+   *  only after an active hold refused the approve, and only once the HLD-2
+   *  acknowledgement is given — the same call plus forceHold and the trimmed
+   *  reason (finalize_reviewed_promote, 20261151: honoured for a controller
+   *  while a hold is active, REV_HOLD_OVERRIDDEN in the same transaction). */
+  const approveOverHold = async () => {
+    if (!holdRefused || !holdAck || !isController) return;
+    const { p, requireRosterComplete } = holdRefused;
+    setBusy(p.docId); setMsg(null);
+    try {
+      // SAF-15: still exactly the version on screen.
+      const { data: doc, error: docErr } = await supabase.from("documents")
+        .select("id, pending_version_id").eq("id", p.docId).eq("org_id", orgId).maybeSingle();
+      if (docErr) throw new Error(`Couldn't read ${p.label}: ${userFacingReadError(docErr)}`);
+      if (!doc || String(doc.pending_version_id ?? "") !== p.pendingVersionId) {
+        setHoldRefused(null);
+        await refresh();
+        throw new Error(`${p.label} changed since this list loaded — it has been refreshed. Check the submission shown now before approving.`);
+      }
+      const res = await finalizeReviewedRevision({
+        orgId, documentId: p.docId, actorId: uid, actorName: userEmail ?? "Reviewer", actorEmail: userEmail ?? null,
+        requireRosterComplete, forceHold: true, overrideReason: holdReason.trim() || null,
+      });
       if (!res.published) throw new Error(finalizeReasonMessage(res.reason));
-      // Name what actually became current — never the stale row's label.
-      const { data: after } = await supabase.from("documents").select("rev, current_version_id").eq("id", p.docId).maybeSingle();
-      // UX-16: the approval swept the project's open checklists — say what it did.
-      const swept = res.evidenceSweep ? describeProjectSweep(res.evidenceSweep) : null;
-      const landed = String(after?.current_version_id ?? "") === p.pendingVersionId;
-      setMsg((landed
-        ? `${p.label} Rev ${String(after?.rev ?? p.revLabel ?? "")} approved — it is now the current revision.`
-        : `${p.label}: the approval went through, but the current revision is not the submission you approved — refresh and check the document.`)
-        + (swept ? ` ${swept.text}` : ""),
-      landed && (!swept || swept.ok) ? "success" : "error");
-      await refresh();
+      setHoldRefused(null); setHoldAck(false); setHoldReason("");
+      await settleApproval(p, res);
     } catch (e) { setMsg(userFacingCaughtError(e, { context: "IntakePanel" })); }
     finally { setBusy(null); }
   };
@@ -476,10 +574,14 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         org_id: orgId, user_id: uid, user_email: userEmail ?? null,
         details: { projectId, versionId: p.pendingVersionId, revLabel: p.revLabel, company: p.company, reason: reason.trim() },
       });
-      setMsg(auditErr
+      const shown = auditErr
         ? `${p.label} Rev ${p.revLabel ?? ""} rejected, but its audit record failed: ${userFacingError(auditErr, { embed: true })}`
-        : `${p.label} Rev ${p.revLabel ?? ""} rejected — the company sees it as not accepted, with your reason, on their portal.`,
-      auditErr ? "error" : "success");
+        : `${p.label} Rev ${p.revLabel ?? ""} rejected — the company sees it as not accepted, with your reason, on their portal.`;
+      setMsg(shown, auditErr ? "error" : "success");
+      // SAF-9: the rejection landed — the server emails the link's contact
+      // the outcome and the reason it reads from the version, without
+      // holding up the message or the refresh.
+      tellOutcome(shown, p.pendingVersionId);
       await refresh();
     } catch (e) { setMsg(userFacingCaughtError(e, { context: "IntakePanel" })); }
     finally { setBusy(null); }
@@ -552,6 +654,34 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
                 )}
               </div>
               {p.changeLog && <div className="mt-1 text-[11px] text-[var(--color-text-muted)] italic">&ldquo;{p.changeLog}&rdquo;</div>}
+              {canManage && isController && holdRefused?.p.docId === p.docId && holdRefused.p.pendingVersionId === p.pendingVersionId && (
+                <div data-testid="intake-hold-force" className="mt-2 space-y-2">
+                  <div className="text-[11px] text-[var(--color-text)]">
+                    This document has an active hold, so the submission was not approved and nothing was changed. Release the hold, or proceed over it as Document Control — the override is recorded on the document&apos;s history.
+                  </div>
+                  <HeldSourceNotice
+                    decision={{ kind: "acknowledge", text: "Proceed over the active hold: approve this submission while the hold stays open." }}
+                    readError={null}
+                    ack={holdAck}
+                    setAck={setHoldAck}
+                  />
+                  <input
+                    value={holdReason}
+                    onChange={(e) => setHoldReason(e.target.value)}
+                    placeholder="Why (optional — recorded with the override)"
+                    aria-label="Reason for proceeding over the hold"
+                    className="w-full text-[11px] rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-text)] px-2 py-1.5"
+                  />
+                  <span className="flex items-center gap-2">
+                    <button onClick={() => void approveOverHold()} disabled={busy === p.docId || !holdAck} className={`${DECISION_TARGET} inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-700 text-white text-[11px] font-black hover:bg-amber-800 disabled:opacity-50`}>
+                      {busy === p.docId ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Approve over the hold
+                    </button>
+                    <button onClick={() => { setHoldRefused(null); setHoldAck(false); setHoldReason(""); }} className={`${DECISION_TARGET} inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)]`}>
+                      Not now
+                    </button>
+                  </span>
+                </div>
+              )}
             </li>
           ))}
         </ul>

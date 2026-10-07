@@ -57,6 +57,8 @@ vi.mock("@/lib/reviewControl", () => ({
   effectiveReviewControlForDocument: vi.fn(), listDraftRoster: vi.fn(async () => []), openReviewRoster: vi.fn(),
 }));
 vi.mock("@/lib/docClass", () => ({ effectiveDocClassForDocument: vi.fn() }));
+// projects Round G J14 (INTK-18): the panel reads the controller tier from the role collection.
+vi.mock("@/components/providers/RoleContext", () => ({ useRole: () => ({ hasAnyRole: () => false }) }));
 vi.mock("@/lib/transitionIn", () => ({ flagCollisionToDrafting: vi.fn() }));
 vi.mock("@/components/projects/TransitionInPanel", () => ({ default: () => null }));
 vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn(async () => undefined) }));

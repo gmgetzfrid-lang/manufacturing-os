@@ -107,7 +107,7 @@ export default function ExecutionGuide() {
                 <Row icon={<GripVertical className="w-4 h-4 text-[var(--color-text-muted)]" />} label="Then move the one sub-task">
                   Drag that sub-task&apos;s grip handle to another day — or open the task and use the <ChevronLeft className="inline w-3 h-3" /> <ChevronRight className="inline w-3 h-3" /> buttons on each sub-task row.
                 </Row>
-                <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-[12px] text-emerald-900">
+                <div className="rounded-lg bg-emerald-500/[0.08] border border-emerald-500/40 px-3 py-2 text-[12px] text-emerald-900 dark:text-emerald-200">
                   <b>The schedule keeps itself honest:</b> moving one sub-task leaves the others where they were and stretches the parent to cover both. Example — you did 3 of 10 sub-tasks early; only those 3 move, the rest stay on plan, and the task now spans both.
                 </div>
               </Section>

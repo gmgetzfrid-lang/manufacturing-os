@@ -344,6 +344,8 @@ describe("20261160 — enforce_notification_insert(): the insert rails", () => {
     for (const good of [null, "", "/documents/l-1?doc=d-1", "/requests/7", "/checkouts", "/register?filter=unowned", "/"]) expect(ok(good), String(good)).toBe(true);
   });
 
+  // A census over every producer file: 1-2 s alone, past vitest's 5 s default
+  // under a loaded full run (integrator, 2026-10-07).
   it("every link the app's notification producers write passes that predicate (each string a `link:` can take starts with '/')", () => {
     let seen = 0, shorthand = 0;
     const offenders: string[] = [];
@@ -414,7 +416,7 @@ describe("20261160 — enforce_notification_insert(): the insert rails", () => {
       "link: N.a (unresolved)",
     ]);
     expect(byMember.seen).toBe(6);
-  });
+  }, 30_000);
 
   it("OS-1 dw3 / DELIV-6 dw2: an undeclared kind is refused (22023)", () => {
     expect(squash(body)).toContain(squash(`RAISE EXCEPTION 'notifications: unknown kind %', NEW.kind USING ERRCODE = '22023';`));

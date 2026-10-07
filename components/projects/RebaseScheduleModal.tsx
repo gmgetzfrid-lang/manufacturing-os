@@ -162,7 +162,7 @@ export default function RebaseScheduleModal({
               </div>
               {previewDelta && (
                 <div className={`mt-1 text-[11px] font-bold ${
-                  previewDelta.days > 0 ? "text-amber-700" : previewDelta.days < 0 ? "text-emerald-700" : "text-[var(--color-text-muted)]"
+                  previewDelta.days > 0 ? "text-amber-700 dark:text-amber-300" : previewDelta.days < 0 ? "text-emerald-700 dark:text-emerald-300" : "text-[var(--color-text-muted)]"
                 }`}>
                   Shift: {previewDelta.days > 0 ? "+" : ""}{previewDelta.days} day{Math.abs(previewDelta.days) === 1 ? "" : "s"}
                   {" · "}
@@ -171,7 +171,7 @@ export default function RebaseScheduleModal({
               )}
             </div>
           ) : (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+            <div className="rounded-xl border border-amber-500/40 bg-amber-500/[0.08] p-3 text-xs text-amber-900 dark:text-amber-200">
               No current anchor date detected — make sure the project has at least one milestone with a planned date before rebasing.
             </div>
           )}

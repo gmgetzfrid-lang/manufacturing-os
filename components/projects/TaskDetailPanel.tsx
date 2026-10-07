@@ -169,7 +169,7 @@ export default function TaskDetailPanel({
                     {i > 0 && <ChevronRight className="w-2.5 h-2.5 text-slate-300" />}
                     <button
                       onClick={() => onSelectMilestone?.(a)}
-                      className="font-semibold hover:text-indigo-700 hover:underline truncate max-w-[120px]"
+                      className="font-semibold hover:text-indigo-700 dark:hover:text-indigo-300 hover:underline truncate max-w-[120px]"
                       title={a.name}
                     >
                       {a.name}
@@ -183,7 +183,7 @@ export default function TaskDetailPanel({
               <StatusPill status={effStatus} />
               <span className="text-[10px] font-black tabular-nums text-[var(--color-text-muted)]">{effPct}%</span>
               {m.wbs && <span className="font-mono text-[10px] text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{m.wbs}</span>}
-              {!isLeaf && <span className="text-[9px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded">Summary</span>}
+              {!isLeaf && <span className="text-[9px] font-black uppercase tracking-wider bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 px-1.5 py-0.5 rounded">Summary</span>}
             </div>
             <h2 className="mt-1.5 text-base font-bold text-[var(--color-text)] leading-snug break-words">{m.name}</h2>
           </div>
@@ -370,14 +370,14 @@ export default function TaskDetailPanel({
                             <button
                               onClick={(e) => { e.stopPropagation(); onMoveDays(s.id!, -1); }}
                               title="Move this sub-task 1 day earlier"
-                              className="w-5 h-5 inline-flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-indigo-700 hover:bg-indigo-50"
+                              className="w-5 h-5 inline-flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-indigo-700 dark:hover:text-indigo-300 hover:bg-indigo-500/10"
                             >
                               <ChevronLeft className="w-3.5 h-3.5" />
                             </button>
                             <button
                               onClick={(e) => { e.stopPropagation(); onMoveDays(s.id!, 1); }}
                               title="Move this sub-task 1 day later"
-                              className="w-5 h-5 inline-flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-indigo-700 hover:bg-indigo-50"
+                              className="w-5 h-5 inline-flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-indigo-700 dark:hover:text-indigo-300 hover:bg-indigo-500/10"
                             >
                               <ChevronRight className="w-3.5 h-3.5" />
                             </button>
@@ -405,7 +405,7 @@ export default function TaskDetailPanel({
                       className="flex-1 text-xs px-2 py-1.5 border border-[var(--color-border-strong)] rounded-md outline-none focus:ring-2 focus:ring-indigo-500/30"
                       onKeyDown={(e) => { if (e.key === "Enter") void addNote(); }}
                     />
-                    <button onClick={() => void addNote()} disabled={!noteDraft.trim()} className="p-1.5 rounded-md text-indigo-600 hover:bg-indigo-50 disabled:opacity-40" title="Add note">
+                    <button onClick={() => void addNote()} disabled={!noteDraft.trim()} className="p-1.5 rounded-md text-indigo-600 hover:bg-indigo-500/10 disabled:opacity-40" title="Add note">
                       <MessageSquarePlus className="w-4 h-4" />
                     </button>
                   </div>
@@ -653,11 +653,11 @@ function StatusPill({ status, dotOnly }: { status: MilestoneStatus; dotOnly?: bo
     status === "missed"      ? "bg-rose-600" : "bg-slate-400";
   if (dotOnly) return <span className={`shrink-0 w-2 h-2 rounded-full ${tone}`} title={labelOf(status)} />;
   const text =
-    status === "completed"   ? "text-emerald-800 bg-emerald-100 border-emerald-200" :
-    status === "in_progress" ? "text-blue-800 bg-blue-100 border-blue-200" :
-    status === "on_hold"     ? "text-amber-900 bg-amber-100 border-amber-200" :
-    status === "blocked"     ? "text-rose-800 bg-rose-100 border-rose-200" :
-    status === "missed"      ? "text-rose-900 bg-rose-100 border-rose-200" : "text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]";
+    status === "completed"   ? "text-emerald-800 dark:text-emerald-300 bg-emerald-500/15 border-emerald-500/40" :
+    status === "in_progress" ? "text-blue-800 dark:text-blue-300 bg-blue-500/15 border-blue-500/40" :
+    status === "on_hold"     ? "text-amber-900 dark:text-amber-200 bg-amber-500/15 border-amber-500/40" :
+    status === "blocked"     ? "text-rose-800 dark:text-rose-300 bg-rose-500/15 border-rose-500/40" :
+    status === "missed"      ? "text-rose-900 dark:text-rose-200 bg-rose-500/15 border-rose-500/40" : "text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]";
   return <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${text}`}><span className={`w-1.5 h-1.5 rounded-full ${tone}`} />{labelOf(status)}</span>;
 }
 
@@ -772,12 +772,12 @@ function DependencyEditor({
           {deps.map((id) => {
             const t = byId.get(id);
             return (
-              <span key={id} className="inline-flex items-center gap-1 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-800 text-[11px] font-semibold pl-2 pr-1 py-0.5">
+              <span key={id} className="inline-flex items-center gap-1 rounded-full bg-indigo-500/[0.08] border border-indigo-500/40 text-indigo-800 dark:text-indigo-300 text-[11px] font-semibold pl-2 pr-1 py-0.5">
                 <button type="button" className="truncate max-w-[160px] hover:underline" onClick={() => t && onSelectMilestone?.(t)} title={t ? (hiddenIds?.has(id) ? `${t.name} — hidden by the imported-rows filter` : t.name) : "This task was deleted; the link points at nothing"}>
                   {t ? (hiddenIds?.has(id) ? `${t.name} (hidden by filter)` : t.name) : "(deleted task)"}
                 </button>
                 {canEdit && (
-                  <button type="button" disabled={saving} onClick={() => void save(deps.filter((dd) => dd !== id))} className="p-0.5 rounded-full hover:bg-indigo-200/60 text-indigo-500 hover:text-indigo-800" title="Remove dependency">
+                  <button type="button" disabled={saving} onClick={() => void save(deps.filter((dd) => dd !== id))} className="p-0.5 rounded-full hover:bg-indigo-500/20 text-indigo-500 hover:text-indigo-800 dark:hover:text-indigo-300" title="Remove dependency">
                     <XIcon className="w-3 h-3" />
                   </button>
                 )}
@@ -787,19 +787,138 @@ function DependencyEditor({
         </div>
       )}
       {canEdit && (
-        <select
-          value=""
-          disabled={saving || candidates.length === 0}
-          onChange={(e) => { if (e.target.value) void save([...deps, e.target.value]); }}
-          className="w-full text-[12px] border border-[var(--color-border-strong)] rounded-md px-2 py-1.5 bg-[var(--color-surface)] text-[var(--color-text)] disabled:opacity-50"
-        >
-          <option value="">{candidates.length === 0 ? "No other tasks available" : "+ Add a predecessor…"}</option>
-          {candidates.map((t) => (
-            <option key={t.id} value={t.id!}>{t.name}{t.id && hiddenIds?.has(t.id) ? " (hidden by filter)" : ""}</option>
-          ))}
-        </select>
+        <PredecessorPicker
+          candidates={candidates}
+          hiddenIds={hiddenIds}
+          disabled={saving}
+          onPick={(id) => void save([...deps, id])}
+        />
       )}
       {error && <div role="alert" className="text-[11px] text-rose-700 dark:text-rose-300 mt-1">{error}</div>}
+    </div>
+  );
+}
+
+/** PERF-5 remediation 4 (projects Round G J14): the most matches the
+ *  predecessor picker draws at once — the picker never renders every task
+ *  (a 5,000-task schedule was a 5,000-option <select>). */
+export const PREDECESSOR_PICKER_LIMIT = 20;
+
+/** The tasks a typed query matches, in the candidates' own order (planned
+ *  date, then name): every word of the query appears in the name, case
+ *  aside. An empty query matches every candidate. */
+export function matchPredecessors(candidates: readonly Milestone[], query: string): Milestone[] {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return [...candidates];
+  return candidates.filter((t) => { const n = (t.name ?? "").toLowerCase(); return words.every((w) => n.includes(w)); });
+}
+
+/** PERF-5 remediation 4 (projects Round G J14): a searchable predecessor
+ *  picker in place of a <select> of every task. Type to narrow; at most
+ *  PREDECESSOR_PICKER_LIMIT matches are drawn, and the rest are counted.
+ *  The candidates are DependencyEditor's own (no cycle, not already a
+ *  dependency, never this task), so what may be picked is unchanged.
+ *
+ *  (J14 fix pass, A11Y) The ARIA 1.2 combobox pattern, so a keyboard and a
+ *  screen reader keep what the native <select> gave them: the input is a
+ *  `combobox` (aria-expanded, aria-controls, aria-autocomplete="list",
+ *  aria-activedescendant); the matches are a `listbox` of `option`s, the
+ *  active one aria-selected; ArrowDown / ArrowUp (Home / End) move the
+ *  active option, Enter picks it (with none active, Enter picks nothing —
+ *  J14 last review), Escape closes. Focus stays in the input throughout; the count is said in
+ *  the status line. */
+function PredecessorPicker({ candidates, hiddenIds, disabled, onPick }: {
+  candidates: Milestone[];
+  hiddenIds?: ReadonlySet<string>;
+  disabled: boolean;
+  onPick: (id: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(-1);
+  const baseId = React.useId();
+  const listId = `${baseId}-listbox`;
+  const optionId = (i: number) => `${baseId}-option-${i}`;
+  const matches = useMemo(() => matchPredecessors(candidates, query), [candidates, query]);
+  const shown = matches.slice(0, PREDECESSOR_PICKER_LIMIT);
+  const expanded = open && !disabled;
+  const activeIndex = expanded && active >= 0 && active < shown.length ? active : -1;
+  useEffect(() => {
+    if (activeIndex < 0 || typeof document === "undefined") return;
+    const el = document.getElementById(`${baseId}-option-${activeIndex}`) as (HTMLElement & { scrollIntoView?: (o?: ScrollIntoViewOptions) => void }) | null;
+    el?.scrollIntoView?.({ block: "nearest" });
+  }, [activeIndex, baseId]);
+  const pick = (id: string) => { setQuery(""); setOpen(false); setActive(-1); onPick(id); };
+  if (candidates.length === 0) {
+    return <div className="text-[11px] text-[var(--color-text-faint)] italic">No other tasks available</div>;
+  }
+  const move = (to: number) => { setOpen(true); setActive(shown.length ? Math.max(0, Math.min(shown.length - 1, to)) : -1); };
+  return (
+    <div
+      className="relative"
+      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) { setOpen(false); setActive(-1); } }}
+    >
+      <input
+        type="search"
+        role="combobox"
+        aria-expanded={expanded}
+        aria-controls={listId}
+        aria-autocomplete="list"
+        aria-activedescendant={activeIndex >= 0 ? optionId(activeIndex) : undefined}
+        value={query}
+        disabled={disabled}
+        onFocus={() => setOpen(true)}
+        onChange={(e) => { setQuery(e.target.value); setOpen(true); setActive(-1); }}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") { setOpen(false); setActive(-1); return; }
+          if (e.key === "ArrowDown") { e.preventDefault(); move(expanded ? activeIndex + 1 : 0); return; }
+          if (e.key === "ArrowUp") { e.preventDefault(); move(expanded ? (activeIndex < 0 ? shown.length - 1 : activeIndex - 1) : shown.length - 1); return; }
+          if (expanded && e.key === "Home" && activeIndex >= 0) { e.preventDefault(); move(0); return; }
+          if (expanded && e.key === "End" && activeIndex >= 0) { e.preventDefault(); move(shown.length - 1); return; }
+          if (e.key === "Enter") {
+            // (J14 last review) Enter accepts only the ACTIVE option — the one
+            // ArrowDown / ArrowUp highlighted (ARIA APG, list autocomplete with
+            // manual selection). With none active it writes nothing: it only
+            // opens the list, so tabbing in and pressing Enter never links
+            // the earliest task (the native <select> never wrote without a choice).
+            e.preventDefault();
+            const t = activeIndex >= 0 ? shown[activeIndex] : null;
+            if (t?.id) pick(t.id);
+            else setOpen(true);
+          }
+        }}
+        placeholder="+ Add a predecessor — type to search…"
+        aria-label="Add a predecessor — type to search the project's tasks"
+        className="w-full text-[12px] border border-[var(--color-border-strong)] rounded-md px-2 py-1.5 bg-[var(--color-surface)] text-[var(--color-text)] disabled:opacity-50"
+      />
+      {expanded && (
+        <div className="mt-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm">
+          <ul id={listId} role="listbox" data-testid="dep-candidates" aria-label="Matching tasks" className="max-h-56 overflow-y-auto py-1">
+            {shown.map((t, i) => (
+              <li
+                key={t.id}
+                id={optionId(i)}
+                role="option"
+                aria-selected={i === activeIndex}
+                // the input keeps focus: a press on an option never blurs it (which would close the list first)
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setActive(i)}
+                onClick={() => t.id && pick(t.id)}
+                className={`w-full cursor-pointer text-left px-2 py-1.5 text-[12px] text-[var(--color-text)] truncate ${i === activeIndex ? "bg-[var(--color-surface-2)] outline outline-1 outline-[var(--color-accent)]" : "hover:bg-[var(--color-surface-2)]"}`}
+              >
+                {t.name}{t.id && hiddenIds?.has(t.id) ? " (hidden by filter)" : ""}
+              </li>
+            ))}
+          </ul>
+          <div role="status" className="px-2 py-1 border-t border-[var(--color-border)] text-[10px] text-[var(--color-text-faint)]">
+            {matches.length === 0
+              ? "No task matches — try another word."
+              : matches.length > shown.length
+                ? `Showing ${shown.length} of ${matches.length} — type to narrow.`
+                : `${matches.length} task${matches.length === 1 ? "" : "s"}.`}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

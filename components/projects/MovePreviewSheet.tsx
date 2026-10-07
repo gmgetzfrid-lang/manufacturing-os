@@ -167,7 +167,7 @@ export default function MovePreviewSheet({ targets, deltaDays, onCancel, onConfi
           </div>
 
           {/* Impact line — the confidence-builder */}
-          <div className={`rounded-lg border p-3 text-sm ${mode === "extend" ? "border-amber-200 bg-amber-50 text-amber-900" : "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]"}`}>
+          <div className={`rounded-lg border p-3 text-sm ${mode === "extend" ? "border-amber-500/40 bg-amber-500/[0.08] text-amber-900 dark:text-amber-200" : "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)]"}`}>
             {mode === "defer" ? (
               <div className="flex items-center gap-2">
                 <ArrowRight className="w-4 h-4 shrink-0" />
@@ -203,13 +203,13 @@ export default function MovePreviewSheet({ targets, deltaDays, onCancel, onConfi
           )}
 
           {warnings.length > 0 && (
-            <div className="rounded-lg border border-amber-300 bg-amber-50 p-2.5 space-y-1">
+            <div className="rounded-lg border border-amber-500/50 bg-amber-500/[0.08] p-2.5 space-y-1">
               {warnings.map((wn, i) => (
-                <div key={i} className="flex items-start gap-1.5 text-[12px] text-amber-900">
+                <div key={i} className="flex items-start gap-1.5 text-[12px] text-amber-900 dark:text-amber-200">
                   <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" /> {wn}
                 </div>
               ))}
-              <div className="text-[10px] text-amber-700/80 pl-5">You can still continue — this is just a heads-up.</div>
+              <div className="text-[10px] text-amber-800 dark:text-amber-300 pl-5">You can still continue — this is just a heads-up.</div>
             </div>
           )}
 
@@ -235,7 +235,7 @@ export default function MovePreviewSheet({ targets, deltaDays, onCancel, onConfi
 function ModeCard({ active, disabled, onClick, title, body, tone }: {
   active: boolean; disabled?: boolean; onClick: () => void; title: string; body: string; tone: "slate" | "amber";
 }) {
-  const ring = active ? (tone === "amber" ? "border-amber-400 ring-2 ring-amber-200 bg-amber-50" : "border-[var(--color-accent-ring)] ring-2 ring-[var(--color-accent-ring)]/30 bg-[var(--color-accent-soft)]") : "border-[var(--color-border)] hover:border-[var(--color-border-strong)] bg-[var(--color-surface)]";
+  const ring = active ? (tone === "amber" ? "border-amber-400 ring-2 ring-amber-500/40 bg-amber-500/[0.08]" : "border-[var(--color-accent-ring)] ring-2 ring-[var(--color-accent-ring)]/30 bg-[var(--color-accent-soft)]") : "border-[var(--color-border)] hover:border-[var(--color-border-strong)] bg-[var(--color-surface)]";
   return (
     <button onClick={onClick} disabled={disabled} className={`text-left rounded-xl border p-3 transition-all disabled:opacity-40 disabled:cursor-not-allowed ${ring}`}>
       <div className="text-[13px] font-bold text-[var(--color-text)]">{title}</div>

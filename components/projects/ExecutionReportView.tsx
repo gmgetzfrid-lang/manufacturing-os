@@ -153,7 +153,7 @@ export default function ExecutionReportView({ milestones, orgId, projectId, nowM
           task), so the loop is never silent (seventh and eighth review
           passes). */}
       {(critical.ids.size > 0 || critical.cycle) && (
-        <div className="rounded-2xl border border-rose-200 bg-rose-50/40 shadow-sm px-4 py-3">
+        <div className="rounded-2xl border border-rose-500/40 bg-rose-500/[0.08] shadow-sm px-4 py-3">
           <div className="flex items-center gap-2 flex-wrap">
             <Zap className="w-4 h-4 text-rose-600 dark:text-rose-400" />
             <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Driving the finish</span>
@@ -172,7 +172,7 @@ export default function ExecutionReportView({ milestones, orgId, projectId, nowM
           </div>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {criticalNames.slice(0, 10).map((n, i) => (
-              <span key={i} className="inline-flex items-center text-[11px] bg-[var(--color-surface)] border border-rose-200 text-rose-800 rounded-full px-2 py-0.5">{n}</span>
+              <span key={i} className="inline-flex items-center text-[11px] bg-[var(--color-surface)] border border-rose-500/40 text-rose-800 dark:text-rose-300 rounded-full px-2 py-0.5">{n}</span>
             ))}
             {criticalNames.length > 10 && <span className="text-[11px] text-[var(--color-text-faint)] italic">+{criticalNames.length - 10} more</span>}
           </div>
@@ -205,7 +205,7 @@ export default function ExecutionReportView({ milestones, orgId, projectId, nowM
 
       {/* Baseline drift — planned vs now */}
       {r.baseline && (
-        <div className={`rounded-2xl border shadow-sm px-4 py-3 ${r.baseline.finishDriftDays > 0 ? "border-rose-200 bg-rose-50/40" : r.baseline.finishDriftDays < 0 ? "border-emerald-200 bg-emerald-50/40" : "border-[var(--color-border)] bg-[var(--color-surface)]"}`}>
+        <div className={`rounded-2xl border shadow-sm px-4 py-3 ${r.baseline.finishDriftDays > 0 ? "border-rose-500/40 bg-rose-500/[0.08]" : r.baseline.finishDriftDays < 0 ? "border-emerald-500/40 bg-emerald-500/[0.08]" : "border-[var(--color-border)] bg-[var(--color-surface)]"}`}>
           <div className="flex items-center gap-3 flex-wrap">
             <span className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">{chosen && chosen.id !== "current" ? `Vs. the baseline set ${fmtDate(chosen.setAt)}` : "Vs. approved plan"}</span>
             <span className={`text-lg font-black ${r.baseline.finishDriftDays > 0 ? "text-rose-700 dark:text-rose-300" : r.baseline.finishDriftDays < 0 ? "text-emerald-700 dark:text-emerald-300" : "text-[var(--color-text)]"}`}>
@@ -219,7 +219,7 @@ export default function ExecutionReportView({ milestones, orgId, projectId, nowM
           {r.baseline.worstSlips.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">
               {r.baseline.worstSlips.map((s) => (
-                <span key={s.id} className="inline-flex items-center gap-1 text-[11px] bg-[var(--color-surface)] border border-rose-200 text-rose-800 rounded-full px-2 py-0.5">
+                <span key={s.id} className="inline-flex items-center gap-1 text-[11px] bg-[var(--color-surface)] border border-rose-500/40 text-rose-800 dark:text-rose-300 rounded-full px-2 py-0.5">
                   {s.name} <b>+{s.days}d</b>
                 </span>
               ))}
@@ -242,8 +242,8 @@ export default function ExecutionReportView({ milestones, orgId, projectId, nowM
 
       {/* Blockers — what's stopping work, with reasons */}
       {r.blockers.length > 0 && (
-        <div className="bg-[var(--color-surface)] rounded-2xl border border-rose-200 shadow-sm overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-rose-100 bg-rose-50/60 flex items-center gap-2">
+        <div className="bg-[var(--color-surface)] rounded-2xl border border-rose-500/40 shadow-sm overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-rose-500/40 bg-rose-500/[0.08] flex items-center gap-2">
             <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400" />
             <span className="font-bold text-[var(--color-text)] text-sm">Needs attention</span>
             <span className="text-[11px] text-[var(--color-text-muted)]">{r.blockers.length} on-hold / blocked</span>
@@ -251,7 +251,7 @@ export default function ExecutionReportView({ milestones, orgId, projectId, nowM
           <ul className="divide-y divide-[var(--color-border)]">
             {r.blockers.map((b) => (
               <li key={b.id} className="px-4 py-2.5 flex items-start gap-3">
-                <span className={`mt-0.5 shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${b.status === "blocked" ? "bg-rose-100 text-rose-800 border-rose-200" : "bg-amber-100 text-amber-900 border-amber-200"}`}>
+                <span className={`mt-0.5 shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${b.status === "blocked" ? "bg-rose-500/15 text-rose-800 dark:text-rose-300 border-rose-500/40" : "bg-amber-500/15 text-amber-900 dark:text-amber-200 border-amber-500/40"}`}>
                   {b.status === "blocked" ? "Blocked" : "On hold"}
                 </span>
                 <div className="flex-1 min-w-0">
@@ -311,15 +311,15 @@ export default function ExecutionReportView({ milestones, orgId, projectId, nowM
             </div>
           )}
           {r.performers.deviations.length > 0 && (
-            <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 p-2.5">
-              <div className="text-[11px] font-bold text-amber-900 mb-1">{r.performers.deviations.length} task{r.performers.deviations.length === 1 ? "" : "s"} done by someone other than planned</div>
+            <div className="mt-3 rounded-lg bg-amber-500/[0.08] border border-amber-500/40 p-2.5">
+              <div className="text-[11px] font-bold text-amber-900 dark:text-amber-200 mb-1">{r.performers.deviations.length} task{r.performers.deviations.length === 1 ? "" : "s"} done by someone other than planned</div>
               <ul className="space-y-0.5">
                 {r.performers.deviations.slice(0, 8).map((d) => (
-                  <li key={d.id} className="text-[12px] text-amber-900/90">
+                  <li key={d.id} className="text-[12px] text-amber-900 dark:text-amber-200">
                     <b>{d.name}</b>: planned <i>{d.planned}</i> → actually <i>{d.actual}</i>
                   </li>
                 ))}
-                {r.performers.deviations.length > 8 && <li className="text-[11px] text-amber-800/70 italic">+{r.performers.deviations.length - 8} more</li>}
+                {r.performers.deviations.length > 8 && <li className="text-[11px] text-amber-800 dark:text-amber-300 italic">+{r.performers.deviations.length - 8} more</li>}
               </ul>
             </div>
           )}

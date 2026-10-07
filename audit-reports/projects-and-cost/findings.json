@@ -18,8 +18,8 @@
       "LOW": 14
     },
     "by_status": {
-      "RESOLVED": 73,
-      "OPEN": 4
+      "RESOLVED": 74,
+      "OPEN": 3
     }
   },
   "status_vocabulary": [
@@ -1914,7 +1914,7 @@
       "id": "INTK-18",
       "title": "The Intake tab's approve offers a controller no recorded force when an active hold refuses the review promote",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (by reading; not exercised against a live database)",
       "blast_radius": "workflow / controller recovery",

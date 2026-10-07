@@ -307,7 +307,7 @@ export default function ScheduleImportModal({
                 <span>Importing into</span>
                 <span className="font-bold text-[var(--color-text)] truncate max-w-[200px]">{projectName ?? `Project ${projectId.slice(0,8)}`}</span>
                 {projectStatus && projectStatus !== "active" && (
-                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-rose-100 text-rose-800 border border-rose-200">
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-rose-500/15 text-rose-800 dark:text-rose-300 border border-rose-500/40">
                     <AlertTriangle className="w-2.5 h-2.5" /> {projectStatus}
                   </span>
                 )}
@@ -396,13 +396,13 @@ export default function ScheduleImportModal({
               {/* Warnings — for everything except the refused-format case,
                   which the guide above covers. */}
               {parseResult.format !== "msproject-mpp" && parseResult.format !== "msproject-mpx" && parseResult.warnings.length > 0 && (
-                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                <div className="rounded-xl border border-amber-500/40 bg-amber-500/[0.08] p-3 text-xs text-amber-900 dark:text-amber-200">
                   <div className="font-bold flex items-center gap-1.5 mb-1">
                     <AlertTriangle className="w-3.5 h-3.5" /> {parseResult.warnings.length} note{parseResult.warnings.length === 1 ? "" : "s"} from the parser
                   </div>
                   <ul className="ml-5 list-disc space-y-0.5">
                     {parseResult.warnings.slice(0, 4).map((w, i) => <li key={i}>{w}</li>)}
-                    {parseResult.warnings.length > 4 && <li className="italic text-amber-800/70">+{parseResult.warnings.length - 4} more…</li>}
+                    {parseResult.warnings.length > 4 && <li className="italic text-amber-800 dark:text-amber-300">+{parseResult.warnings.length - 4} more…</li>}
                   </ul>
                 </div>
               )}
@@ -460,7 +460,7 @@ export default function ScheduleImportModal({
 
               {/* Questions the parser asked — answered once, applied to every row. */}
               {parseResult.needsDateConvention && (
-                <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 space-y-2">
+                <div className="rounded-xl border border-amber-500/50 bg-amber-500/[0.08] p-3 text-xs text-amber-900 dark:text-amber-200 space-y-2">
                   <div className="font-bold">How should dates in this file be read?</div>
                   {/* GAP-403: the question names the column the dates are in — each
                       sample with its own column (a contradicting file's two sides
@@ -481,7 +481,7 @@ export default function ScheduleImportModal({
                 </div>
               )}
               {parseResult.needsProjectChoice && parseResult.projects && (
-                <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 space-y-2">
+                <div className="rounded-xl border border-amber-500/50 bg-amber-500/[0.08] p-3 text-xs text-amber-900 dark:text-amber-200 space-y-2">
                   <div className="font-bold">This file holds {parseResult.projects.length} projects — which one is this?</div>
                   <div>They are never merged into one board. Pick the project whose activities belong here.</div>
                   <Select value={parseOpts.projectId ?? ""} onChange={(e) => reparse({ projectId: e.target.value || null })}>
@@ -500,7 +500,7 @@ export default function ScheduleImportModal({
                 </div>
               )}
               {overRowCap && (
-                <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900">
+                <div className="rounded-xl border border-rose-500/40 bg-rose-500/[0.08] p-3 text-xs text-rose-900 dark:text-rose-200">
                   This file has <b>{parseResult.rows.length.toLocaleString()}</b> rows; the import limit is <b>{SCHEDULE_IMPORT_LIMITS.maxRows.toLocaleString()}</b> rows per file. Split the schedule (for example by phase) and import the parts separately.
                 </div>
               )}
@@ -531,7 +531,7 @@ export default function ScheduleImportModal({
                     </div>
                   )}
                   {(plan.positionRepeated ?? 0) > 0 && (
-                    <div className="text-[11px] text-amber-900">
+                    <div className="text-[11px] text-amber-900 dark:text-amber-200">
                       {positionRepeatedSummary(plan)}
                     </div>
                   )}
@@ -541,7 +541,7 @@ export default function ScheduleImportModal({
                     </div>
                   )}
                   {plan.localProgressAtRisk.length > 0 && (
-                    <div className="rounded-lg border border-amber-300 bg-amber-50 p-2.5 text-[11px] text-amber-900 space-y-1.5">
+                    <div className="rounded-lg border border-amber-500/50 bg-amber-500/[0.08] p-2.5 text-[11px] text-amber-900 dark:text-amber-200 space-y-1.5">
                       <div className="font-bold flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" /> {plan.localProgressAtRisk.length} task{plan.localProgressAtRisk.length === 1 ? " has" : "s have"} progress on the board that differs from this file — {overwriteProgress ? "the file's value will replace it" : "kept as it is on the board"}</div>
                       <ul className="ml-5 list-disc">
                         {plan.localProgressAtRisk.slice(0, 5).map((r) => <li key={r.id}>{r.name}: {progressChangeLabel(r.localPercent, r.filePercent ?? 0)} ({r.localStatus.replace("_", " ")} on the board)</li>)}
@@ -561,7 +561,7 @@ export default function ScheduleImportModal({
                 <div className="rounded-xl border border-[var(--color-border)] p-3 text-xs space-y-1.5">
                   <div className="flex items-center justify-between">
                     <span>{progress.phase === "rows" ? "Writing rows" : "Wiring structure"} · {progress.done} / {progress.total}</span>
-                    <button onClick={cancelImport} className="font-bold text-rose-700 hover:underline">Cancel</button>
+                    <button onClick={cancelImport} className="font-bold text-rose-700 dark:text-rose-300 hover:underline">Cancel</button>
                   </div>
                   <div className="h-1.5 rounded bg-[var(--color-surface-2)] overflow-hidden"><div className="h-full bg-[var(--color-accent)] transition-all" style={{ width: `${progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0}%` }} /></div>
                 </div>
@@ -778,17 +778,17 @@ function XmlExportGuide({ filename, format }: { filename: string; format: "mspro
         </div>
       </div>
       <div className="p-4">
-        <div className="rounded-lg border border-emerald-300 bg-emerald-50 p-3">
-          <div className="text-xs font-black text-emerald-900 uppercase tracking-widest mb-2">Exact copy · no setup</div>
-          <ol className="space-y-1.5 text-xs text-emerald-900/90">
+        <div className="rounded-lg border border-emerald-500/50 bg-emerald-500/[0.08] p-3">
+          <div className="text-xs font-black text-emerald-900 dark:text-emerald-200 uppercase tracking-widest mb-2">Exact copy · no setup</div>
+          <ol className="space-y-1.5 text-xs text-emerald-900 dark:text-emerald-200">
             <Step n={1}>
-              Open <code className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-emerald-200 text-[10px]">{filename || "your schedule"}</code> in Microsoft Project.
+              Open <code className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-emerald-500/40 text-[10px]">{filename || "your schedule"}</code> in Microsoft Project.
             </Step>
             <Step n={2}>
-              <b>File → Save As</b> (or <kbd className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-emerald-200">F12</kbd>) → choose <b>XML Format (*.xml)</b> and save.
+              <b>File → Save As</b> (or <kbd className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-emerald-500/40">F12</kbd>) → choose <b>XML Format (*.xml)</b> and save.
             </Step>
             <Step n={3}>
-              Drag that new <code className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-emerald-200 text-[10px]">.xml</code> file right here. It imports with all dependencies, resources, and exact dates.
+              Drag that new <code className="font-mono bg-[var(--color-surface)] px-1.5 py-0.5 rounded border border-emerald-500/40 text-[10px]">.xml</code> file right here. It imports with all dependencies, resources, and exact dates.
             </Step>
           </ol>
         </div>
@@ -824,14 +824,14 @@ function ParseQualityStats({ result }: { result: ParseResult }) {
 
   return (
     <div className={`rounded-xl border p-3 space-y-2 ${
-      noHierarchy ? "bg-rose-50 border-rose-200" : "bg-emerald-50 border-emerald-200"
+      noHierarchy ? "bg-rose-500/[0.08] border-rose-500/40" : "bg-emerald-500/[0.08] border-emerald-500/40"
     }`}>
       <div className="flex items-center gap-2">
         {noHierarchy
           ? <AlertTriangle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
           : <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
         }
-        <div className={`text-sm font-bold ${noHierarchy ? "text-rose-900" : "text-emerald-900"}`}>
+        <div className={`text-sm font-bold ${noHierarchy ? "text-rose-900 dark:text-rose-200" : "text-emerald-900 dark:text-emerald-200"}`}>
           {noHierarchy
             ? "Hierarchy NOT detected"
             : `Hierarchy detected — ${summaries} summary parent${summaries === 1 ? "" : "s"}, ${withParent} sub-task${withParent === 1 ? "" : "s"}`}
@@ -844,7 +844,7 @@ function ParseQualityStats({ result }: { result: ParseResult }) {
         <StatCell label="WBS codes"        value={`${withWbs} / ${total}`}    tone={withWbs     > 0 ? "ok" : "muted"} />
       </div>
       {noHierarchy && (
-        <div className="text-[11px] text-rose-900 mt-1 space-y-1">
+        <div className="text-[11px] text-rose-900 dark:text-rose-200 mt-1 space-y-1">
           <div className="font-bold">Without parent/child structure, sub-tasks won&apos;t render as accordions and tasks won&apos;t group under phases.</div>
           <div>Most common causes:</div>
           <ol className="ml-4 list-decimal space-y-0.5">
@@ -854,7 +854,7 @@ function ParseQualityStats({ result }: { result: ParseResult }) {
         </div>
       )}
       {!noHierarchy && noDurations && (
-        <div className="text-[11px] text-emerald-900 mt-1">
+        <div className="text-[11px] text-emerald-900 dark:text-emerald-200 mt-1">
           Note: most rows don&apos;t carry start dates — only finish. Tasks will render as single-day on their finish date. Use the per-task <b>Set duration</b> action in the Execution view to expand the ones that take multiple days.
         </div>
       )}
@@ -864,8 +864,8 @@ function ParseQualityStats({ result }: { result: ParseResult }) {
 
 function StatCell({ label, value, tone }: { label: string; value: string; tone: "ok" | "warn" | "muted" }) {
   const cls =
-    tone === "ok"    ? "bg-[var(--color-surface)] border-emerald-200 text-emerald-900" :
-    tone === "warn"  ? "bg-[var(--color-surface)] border-rose-200 text-rose-900" :
+    tone === "ok"    ? "bg-[var(--color-surface)] border-emerald-500/40 text-emerald-900 dark:text-emerald-200" :
+    tone === "warn"  ? "bg-[var(--color-surface)] border-rose-500/40 text-rose-900 dark:text-rose-200" :
                        "bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text)]";
   return (
     <div className={`rounded-md border px-2 py-1 ${cls}`}>
