@@ -25,6 +25,7 @@ import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { getAssetByTag, listAssetPhotos, type Asset, type AssetPhoto } from "@/lib/assets";
+import { tagKey } from "@/lib/codebook";
 import { assetSignInHref, watchForNoSession, type NoSessionAnswer } from "@/lib/assetSignIn";
 import AliasPanel from "@/components/assets/AliasPanel";
 import MentionsPanel from "@/components/assets/MentionsPanel";
@@ -40,7 +41,12 @@ interface HubDoc {
     source: string;                 // jsonb_sync | manual | drawing
     sheetLabel: string | null;      // GAP-301: "2002-D-10001 SHT 4"
     pages: number[];
-    machine: boolean;               // GAP-303: a machine read it off the sheet
+    machine: boolean;               // GAP-303: a machine read it off the sheet — and no person said so
+    /** GAP-303: a person also tagged the document with it (its asset_tags
+     *  name the tag) — the link is theirs as much as the drawing's: while a
+     *  'drawing' row holds the pair, the tag sync's own row is skipped, so
+     *  the relation alone cannot say so. */
+    personTagged: boolean;
     model: string | null;           // the AI model, when a page was transcribed
     sourceRevision: string | null;  // the revision it was read from
     vanished: boolean;              // GAP-309: not read on the current revision
@@ -196,7 +202,11 @@ export default function AssetHubPage() {
       // Bridge read the tag on is listed with its sheet. The asset_tags
       // containment read is kept beside it: it is the only answer for an
       // unregistered tag, and no document listed before disappears.
-      const docCols = "id, document_number, title, name, rev, status, library_id, checked_out_by_name";
+      // asset_tags: whether a person tagged the document with it (GAP-303).
+      const docCols = "id, document_number, title, name, rev, status, library_id, checked_out_by_name, asset_tags";
+      const keys = new Set([tagKey(tag), ...(a?.tag ? [tagKey(a.tag)] : [])].filter(Boolean));
+      const typedOn = (r: Record<string, unknown>) => Array.isArray(r.asset_tags)
+        && (r.asset_tags as Array<Record<string, unknown> | null>).some((e) => !!e && typeof e.tag === "string" && keys.has(tagKey(e.tag)));
       const links = a?.id ? await readAssetLinks(a.id) : { rows: [] as LinkRow[], error: null };
       if (links.error) throw new Error(links.error);
       const linkByDoc = new Map<string, LinkRow>();
@@ -220,6 +230,7 @@ export default function AssetHubPage() {
       for (const r of (docRows ?? []) as Array<Record<string, unknown>>) if (!rowsById.has(String(r.id))) rowsById.set(String(r.id), r);
       const mapped: HubDoc[] = [...rowsById.values()].map((r) => {
         const l = linkByDoc.get(String(r.id));
+        const personTagged = typedOn(r);
         return {
           id: String(r.id),
           number: String(r.document_number || r.title || r.name || "—"),
@@ -232,7 +243,8 @@ export default function AssetHubPage() {
             source: String(l.source ?? "jsonb_sync"),
             sheetLabel: l.sheet_label ?? null,
             pages: Array.isArray(l.pages) ? l.pages : [],
-            machine: l.asserted_by ? l.asserted_by === "machine" : l.source === "drawing",
+            machine: (l.asserted_by ? l.asserted_by === "machine" : l.source === "drawing") && !personTagged,
+            personTagged,
             model: l.model ?? null,
             sourceRevision: l.source_revision ?? null,
             vanished: !!l.vanished_at,
@@ -394,14 +406,24 @@ export default function AssetHubPage() {
                   <Link href={d.libraryId ? `/documents/${d.libraryId}?doc=${d.id}` : "/documents"} className="flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-surface-2)] transition-colors">
                     <span className="font-mono text-xs font-bold text-[var(--color-text)] truncate flex-1">{d.number}{d.title && d.title !== d.number ? <span className="font-sans font-normal text-[var(--color-text-muted)]"> — {d.title}</span> : ""}</span>
                     {/* GAP-301: the sheet the tag is on; GAP-303: who said so. */}
-                    {d.link?.sheetLabel && <span className="text-[10px] font-bold font-mono text-[var(--color-text)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded shrink-0">{d.link.sheetLabel}</span>}
+                    {/* GOV-9: a sheet address read off an AI transcription is unconfirmed — said here
+                        when no "AI-read" badge stands beside it. */}
+                    {d.link?.sheetLabel && <span className="text-[10px] font-bold font-mono text-[var(--color-text)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded shrink-0">{d.link.sheetLabel}{d.link.model && !d.link.machine ? " (AI-read, unconfirmed)" : ""}</span>}
+                    {d.link?.personTagged && d.link.source === "drawing" && (
+                      <span className="text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded shrink-0"
+                        title={`Tagged on this document by a person (its equipment tags). The equipment sweep also read it off the drawing${d.link.model ? ` from an AI transcription (${d.link.model})` : ""}${d.link.sourceRevision ? `, Rev ${d.link.sourceRevision}` : ""}.`}>
+                        tagged · also on drawing
+                      </span>
+                    )}
                     {d.link?.machine && (
                       <span className="text-[10px] font-bold text-violet-700 bg-violet-50 border border-violet-200 px-1.5 py-0.5 rounded shrink-0"
                         title={`Read off the drawing by the equipment sweep${d.link.model ? ` from an AI transcription (${d.link.model}) — check it against the sheet` : " from the drawing's own text"}${d.link.sourceRevision ? `, Rev ${d.link.sourceRevision}` : ""}. Not typed by a person.`}>
                         {d.link.model ? "AI-read" : "read from drawing"}
                       </span>
                     )}
-                    {d.link?.vanished && <span className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded shrink-0" title="The current revision no longer shows this tag — waiting for a person to confirm in the equipment sweep.">not on current rev</span>}
+                    {d.link?.vanished && <span className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded shrink-0" title={d.link.personTagged
+                      ? "The current revision's drawing no longer shows this tag. The document's own equipment tags still name it, so the link stays whatever the sweep's review decides."
+                      : "The current revision no longer shows this tag — waiting for a person to confirm in the equipment sweep."}>not on current rev</span>}
                     {d.link?.superseded && !d.link.vanished && <span className="text-[10px] font-bold text-[var(--color-text-muted)] shrink-0" title="Read from an earlier revision; the next sweep refreshes it.">earlier rev</span>}
                     {d.rev && <span className="text-[10px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded shrink-0">Rev {d.rev}</span>}
                     {d.status && <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded border shrink-0 ${stateStyle(documentState(d.status)).pill}`}>{d.status}</span>}

@@ -39,11 +39,14 @@
 //     revision marks its relation `vanished_at` for review (GAP-309).
 //   * Honest degradation — no codebook → tags still flow (no codes/units);
 //     a degraded insert says what it dropped; a database without the
-//     relation's vocabulary (20261170) says the relation was not recorded
-//     and keeps today's column write.
+//     relation's vocabulary (20261170) or its provenance (20261171) says the
+//     relation was not recorded and keeps today's column write — a 'drawing'
+//     row is never written without who asserted it and which revision it was
+//     read from (99-fix-sequencing Phase 2: GAP-303 before GAP-304).
 //   * Everything audited — applied runs, discovered assets and every human
 //     decision on a machine reading (dismiss, vanished review) write an
-//     audit_logs row: a correction is a row, never an overwrite (GAP-303).
+//     audit_logs row: a correction is a row, never an overwrite (GAP-303);
+//     an audit row that cannot be written is reported to the caller.
 //   * AI-derived data never drives a hold, an MOC or a compliance artifact:
 //     nothing here writes one.
 
@@ -179,10 +182,9 @@ export interface RelationOutcome {
   refreshed: number;
   /** Pairs a person already linked (jsonb_sync / manual) — left as they are. */
   keptHuman: number;
-  /** Why no relation was recorded (e.g. 20261170 not applied), or null. */
+  /** Why no relation was recorded (20261170 or 20261171 not applied, a
+   *  refused write), or null. */
   notRecorded: string | null;
-  /** The provenance columns (20261171) were missing — rows written without. */
-  provenanceDropped: boolean;
 }
 
 export interface ApplyResult {
@@ -204,6 +206,9 @@ export interface ApplyResult {
   codesFilled: number;
   /** The proposal row's update failed — the work above landed. */
   ledgerError?: string;
+  /** The EQUIPMENT_BRIDGE_APPLIED audit row could not be written — the work
+   *  above landed. */
+  auditError?: string;
 }
 
 const NIL_UUID = "00000000-0000-0000-0000-000000000000";
@@ -225,13 +230,16 @@ const checkViolation = (e: PgErr) => !!e && e.code === "23514";
 const uniqueViolation = (e: PgErr) => !!e && e.code === "23505";
 
 const PROVENANCE_COLS = ["asserted_by", "model", "source_revision", "source_version_id", "vanished_at", "superseded_at", "presence_confirmed_on"] as const;
+/** The relation's provenance (20261171) is missing: the write named one of
+ *  its columns and the database does not have it. */
+const missingProvenance = (e: PgErr) => missingColumn(e) && PROVENANCE_COLS.some((c) => (e?.message ?? "").includes(c));
 /** Every provenance / revision-truth column (20261171) reset to what a
  *  person's link carries — used when a machine row becomes a person's. */
 const HUMAN_PROVENANCE = (userId: string | null): Record<string, unknown> => ({
   asserted_by: "human", asserted_by_user: userId, model: null, source_revision: null, source_version_id: null,
   vanished_at: null, superseded_at: null, presence_confirmed_on: null,
 });
-const LEDGER_COLS_20261171 = ["dismissed", "sources"] as const;
+const LEDGER_COLS_20261171 = ["dismissed", "sources", "applied_columns"] as const;
 
 /** Rows per window and the ceiling of one entity slab (BR-11). */
 const PAGE_ROWS = 1000;
@@ -382,32 +390,69 @@ export function planDismissals(input: {
   return { dismissed: out, lapsed };
 }
 
-/** BR-5: applied tags a person has since removed from the column the Bridge
- *  wrote them into. The column is the one the apply recorded on the
- *  suggestion (`appliedColumn`; null — none was mapped — never counts);
- *  for a tag applied before that was recorded, the library's mapped column,
- *  and only when the document holds that column at all (a column the
- *  document never held is a re-mapping, not a removal). Compared by the one
- *  tag grammar. Tags already dismissed are not re-planned. */
+/** BR-5: applied tags a person has since removed from the document's tag
+ *  columns, and where every other applied tag now is.
+ *
+ *  The column each applied tag was written into is recorded per tag in the
+ *  ledger (`applied_columns`, carried across every recompute whether or not
+ *  the tag is read this time; null — none was mapped — never counts). A tag
+ *  counts as removed only when it is absent from EVERY tag column the
+ *  document holds (the library's tag-type columns, the mapped and the
+ *  recorded column, and any array-valued metadata key), and never when the
+ *  recorded column's key is gone from the document (a re-map or a dropped
+ *  column, not a person's removal) — so a column re-map never reads as mass
+ *  removals. A tag applied before the column was recorded is stamped with
+ *  the column it is found in (the mapped one first); found in none while the
+ *  document holds tag columns, it was removed; on a document holding none it
+ *  is left as it is. Compared by the one tag grammar. Tags already
+ *  dismissed are not re-planned. */
 export function planColumnRemovals(input: {
   applied: ReadonlyArray<string>;
   dismissed: ReadonlySet<string>;
+  /** tag → the column the Bridge wrote it into; absent: not recorded. */
   recordedColumn: ReadonlyMap<string, string | null>;
   mappedColumn: string | null | undefined;
+  /** The library's tag-type columns (tags / multi / pill). */
+  tagColumns?: ReadonlyArray<string>;
   metadata: Record<string, unknown> | null | undefined;
-}): string[] {
+}): { removed: string[]; columns: Map<string, string | null> } {
   const meta = input.metadata && typeof input.metadata === "object" ? input.metadata : {};
-  const out: string[] = [];
+  const holds = (k: string) => Object.prototype.hasOwnProperty.call(meta, k);
+  // The tag columns the document holds (a historical tag can only have been
+  // removed from one of these) …
+  const tagCols = [...new Set<string>([
+    ...(input.mappedColumn ? [input.mappedColumn] : []),
+    ...(input.tagColumns ?? []),
+    ...[...input.recordedColumn.values()].filter((c): c is string => !!c),
+  ])].filter(holds);
+  // … and everywhere a tag counts as still present (any array-valued key too:
+  // a column the library no longer declares still holds what it holds).
+  const held = [...new Set([...tagCols, ...Object.keys(meta).filter((k) => Array.isArray(meta[k]))])];
+  const keysIn = new Map(held.map((k) => [k, new Set(columnTags(meta[k]).map((t) => tagKey(t)))]));
+  const foundIn = (tag: string, prefer: Array<string | null | undefined>): string | null => {
+    const key = tagKey(tag);
+    for (const k of [...prefer.filter((p): p is string => !!p && keysIn.has(p)), ...held]) {
+      if (keysIn.get(k)?.has(key)) return k;
+    }
+    return null;
+  };
+  const removed: string[] = [];
+  const columns = new Map<string, string | null>();
   for (const tag of input.applied) {
-    if (input.dismissed.has(tag)) continue;
     const recorded = input.recordedColumn.has(tag);
-    const column = recorded ? input.recordedColumn.get(tag) ?? null : input.mappedColumn ?? null;
-    if (!column) continue;
-    if (!recorded && !Object.prototype.hasOwnProperty.call(meta, column)) continue;
-    const keys = new Set(columnTags(meta[column]).map((t) => tagKey(t)));
-    if (!keys.has(tagKey(tag))) out.push(tag);
+    const column = recorded ? input.recordedColumn.get(tag) ?? null : null;
+    if (input.dismissed.has(tag)) { if (recorded) columns.set(tag, column); continue; }
+    if (recorded && column === null) { columns.set(tag, null); continue; } // applied with no column mapped
+    const where = foundIn(tag, [column, input.mappedColumn]);
+    if (where) { columns.set(tag, where); continue; }
+    if (recorded) {
+      columns.set(tag, column);
+      if (column && holds(column)) removed.push(tag); // the key is there and the tag is nowhere
+      continue;
+    }
+    if (tagCols.length > 0) removed.push(tag);        // historical: in none of the columns it could be in
   }
-  return out;
+  return { removed, columns };
 }
 
 /** BR-14 / GAP-309: the knowledge copies that feed the Bridge — ready, and
@@ -423,10 +468,15 @@ function classifyCopies(twins: ReadonlyArray<TwinRow>, current: string | null): 
   });
 }
 
-/** The revision the used copies were read from (id and label). */
-function readingOf(used: ReadonlyArray<TwinRow>, current: string | null): { revision: string | null; versionId: string | null } {
+/** The revision the used copies were read from (id and label). A copy that
+ *  carries no revision id says nothing about which revision it read — the
+ *  revision is then not known (null), never assumed to be the document's
+ *  current one: a legacy copy holding an earlier revision's text would
+ *  otherwise stamp its reading as the current revision's, and the
+ *  superseded mark could never fire for it. */
+function readingOf(used: ReadonlyArray<TwinRow>): { revision: string | null; versionId: string | null } {
   return {
-    versionId: used.find((t) => t.source_version_id)?.source_version_id ?? current ?? null,
+    versionId: used.find((t) => t.source_version_id)?.source_version_id ?? null,
     revision: used.find((t) => t.source_rev)?.source_rev ?? null,
   };
 }
@@ -461,11 +511,46 @@ async function readWindows<T>(make: () => Builder, ceiling: number): Promise<{ r
   }
 }
 
-export async function loadBridgeConfig(admin: SupabaseClient, libraryId: string): Promise<BridgeConfig | null> {
-  if (!libraryId) return null;
-  const { data } = await admin.from("libraries").select("equipment_bridge").eq("id", libraryId).maybeSingle();
-  const raw = data?.equipment_bridge as BridgeConfig | null | undefined;
-  return raw && typeof raw === "object" ? raw : null;
+/** Read every row of one query, keyset-paged on `id` until an EMPTY page —
+ *  PostgREST cuts a response at its max-rows without an error, so a short
+ *  page is not proof of the end (BR-11). */
+async function pageById<T extends { id: string }>(
+  make: (after: string | null) => PromiseLike<{ data: unknown; error: PgErr }>,
+): Promise<{ rows: T[]; error: PgErr }> {
+  const rows: T[] = [];
+  for (let after: string | null = null; ;) {
+    const { data, error } = await make(after);
+    if (error) return { rows, error };
+    const batch = (data ?? []) as T[];
+    if (batch.length === 0) return { rows, error: null };
+    rows.push(...batch);
+    const last = String(batch[batch.length - 1].id);
+    if (last === after) return { rows, error: null }; // a store that ignores the keyset: stop, never loop
+    after = last;
+  }
+}
+
+/** A library's Bridge settings and its tag-type columns (the columns a tag
+ *  can sit in: type tags / multi, or pill-style). `error` is a read that
+ *  failed — an unread configuration is not an empty one (no column, discovery
+ *  on): every caller refuses to act on it. */
+export interface LibraryBridge { config: BridgeConfig | null; tagColumns: string[]; error: string | null }
+
+export async function loadBridgeConfig(admin: SupabaseClient, libraryId: string): Promise<LibraryBridge> {
+  if (!libraryId) return { config: null, tagColumns: [], error: null };
+  let res: { data: unknown; error: PgErr } = await admin.from("libraries").select("equipment_bridge, custom_columns").eq("id", libraryId).maybeSingle();
+  if (res.error && missingColumn(res.error)) {
+    res = await admin.from("libraries").select("equipment_bridge").eq("id", libraryId).maybeSingle();
+  }
+  if (res.error) return { config: null, tagColumns: [], error: res.error.message ?? "read failed" };
+  const row = (res.data ?? null) as { equipment_bridge?: unknown; custom_columns?: unknown } | null;
+  const raw = row?.equipment_bridge as BridgeConfig | null | undefined;
+  const cols = Array.isArray(row?.custom_columns) ? (row!.custom_columns as Array<Record<string, unknown>>) : [];
+  return {
+    config: raw && typeof raw === "object" ? raw : null,
+    tagColumns: cols.filter((c) => c && typeof c.key === "string" && (c.type === "tags" || c.type === "multi" || c.isPill === true)).map((c) => String(c.key)),
+    error: null,
+  };
 }
 
 /** An automatic apply acts when a column is mapped (as it always did), or —
@@ -531,7 +616,7 @@ export async function computeForDocument(admin: SupabaseClient, orgId: string, d
     return empty(twins.some((t) => t.status === "ready") ? "twin_stale" : "twin_not_ready");
   }
   const usedIds = used.map((t) => t.id);
-  const { versionId: revision, revision: revisionLabel } = readingOf(used, current);
+  const { versionId: revision, revision: revisionLabel } = readingOf(used);
 
   const ents = await readWindows<EntityRow>(() => admin
     .from("knowledge_page_entities")
@@ -598,7 +683,14 @@ export async function computeForDocument(admin: SupabaseClient, orgId: string, d
     byTag.set(norm, cur);
   }
 
-  const bridge = await loadBridgeConfig(admin, String(srcDoc.library_id ?? ""));
+  // An unread configuration is not an empty one: computed without it, the
+  // proposal would lose the library's default unit, the column plan below
+  // would run against no mapping, and an auto-apply would act with discovery
+  // on whatever the library chose. Nothing is written; the sweep counts the
+  // document failed and the next one retries.
+  const lib = await loadBridgeConfig(admin, String(srcDoc.library_id ?? ""));
+  if (lib.error) throw new Error(`The library's equipment-sweep settings could not be read: ${lib.error} — nothing was computed.`);
+  const bridge = lib.config;
   const { data: existingRow, error: ledgerReadErr } = await readLedgerRow(admin, orgId, documentId);
   // An unread ledger is not an empty one: writing over it would forget what
   // was applied and what people dismissed.
@@ -613,22 +705,34 @@ export async function computeForDocument(admin: SupabaseClient, orgId: string, d
   });
   // A lapsed dismissal is re-proposed whole: it leaves `applied` too.
   const appliedNext = applied.filter((t) => !plan.lapsed.includes(t));
-  // BR-5: the column each applied tag was written into, carried across
-  // recomputes; a tag a person removed from it is a rejection, remembered
-  // as a dismissal (via 'column') and taken off the relation below.
+  // BR-5: the column each applied tag was written into, carried across every
+  // recompute in the ledger's own map (`applied_columns`, 20261171) — whether
+  // or not the tag is read this time — with the suggestion's copy as the
+  // fallback (before 20261171, and rows written before the map existed). A
+  // tag a person removed from every tag column is a rejection, remembered as
+  // a dismissal (via 'column') and taken off the relation below.
   const recordedColumn = new Map<string, string | null>();
+  const ledgerColumns = existingRow?.applied_columns;
+  if (ledgerColumns && typeof ledgerColumns === "object" && !Array.isArray(ledgerColumns)) {
+    for (const [tag, col] of Object.entries(ledgerColumns as Record<string, unknown>)) {
+      if (appliedNext.includes(tag)) recordedColumn.set(tag, typeof col === "string" && col ? col : null);
+    }
+  }
   for (const s of (Array.isArray(existingRow?.suggested) ? existingRow!.suggested : []) as Array<Record<string, unknown>>) {
-    if (s && typeof s.tag === "string" && "appliedColumn" in s && appliedNext.includes(s.tag)) {
+    if (s && typeof s.tag === "string" && "appliedColumn" in s && appliedNext.includes(s.tag) && !recordedColumn.has(s.tag)) {
       recordedColumn.set(s.tag, (s.appliedColumn as string | null) ?? null);
     }
   }
-  const columnRemoved = planColumnRemovals({
+  const columnPlan = planColumnRemovals({
     applied: appliedNext,
     dismissed: new Set(plan.dismissed.map((d) => d.tag)),
     recordedColumn,
     mappedColumn: bridge?.targetColumnKey ?? null,
+    tagColumns: lib.tagColumns,
     metadata: (srcDoc as { metadata?: Record<string, unknown> | null }).metadata ?? null,
   });
+  const columnRemoved = columnPlan.removed;
+  const appliedColumns = columnPlan.columns;
   const dismissalsNext: BridgeDismissal[] = [
     ...plan.dismissed,
     ...columnRemoved.map((tag) => ({
@@ -665,13 +769,13 @@ export async function computeForDocument(admin: SupabaseClient, orgId: string, d
         held: !assetId && heldForUnknownPrefix(tag, book) ? "unknown_prefix" as const : null,
         dismissed: dismissedTags.has(tag),
         model: [...info.models][0] ?? null,
-        ...(recordedColumn.has(tag) ? { appliedColumn: recordedColumn.get(tag) ?? null } : {}),
+        ...(appliedColumns.has(tag) ? { appliedColumn: appliedColumns.get(tag) ?? null } : {}),
       };
     })
     .sort((a, b) => a.tag.localeCompare(b.tag, undefined, { numeric: true }));
 
   await upsertSuggestions(admin, orgId, documentId, suggestions, unit, {
-    applied: appliedNext, dismissed: dismissalsNext, sources,
+    applied: appliedNext, dismissed: dismissalsNext, sources, appliedColumns,
   });
 
   // ── BR-5: a tag a person took out of its column leaves the relation too
@@ -738,7 +842,7 @@ export async function computeForDocument(admin: SupabaseClient, orgId: string, d
 }
 
 async function readLedgerRow(admin: SupabaseClient, orgId: string, documentId: string): Promise<{ data: Record<string, unknown> | null; error: PgErr }> {
-  let res = await admin.from("document_equipment_suggestions").select("suggested, applied, status, dismissed")
+  let res = await admin.from("document_equipment_suggestions").select("suggested, applied, status, dismissed, applied_columns")
     .eq("org_id", orgId).eq("document_id", documentId).maybeSingle();
   if (res.error && missingColumn(res.error)) {
     res = await admin.from("document_equipment_suggestions").select("suggested, applied, status")
@@ -751,7 +855,7 @@ async function upsertSuggestions(
   admin: SupabaseClient, orgId: string, documentId: string,
   suggestions: BridgeSuggestion[],
   unit: { unitCode: string | null; source: "document_number" | "library_default" | null; rejected: string | null },
-  ledger: { applied: string[]; dismissed: BridgeDismissal[]; sources: BridgeSource[] },
+  ledger: { applied: string[]; dismissed: BridgeDismissal[]; sources: BridgeSource[]; appliedColumns: ReadonlyMap<string, string | null> },
 ): Promise<void> {
   // Preserve the applied history (the idempotence base) across recomputes.
   const fresh = suggestions.filter((s) => !ledger.applied.includes(s.tag) && !s.dismissed);
@@ -769,10 +873,13 @@ async function upsertSuggestions(
     computed_at: new Date().toISOString(),
     dismissed: ledger.dismissed,
     sources: ledger.sources,
+    // BR-5: the column each applied tag was written into — its own map, so a
+    // tag missing from one reading keeps its record.
+    applied_columns: Object.fromEntries([...ledger.appliedColumns].filter(([tag]) => ledger.applied.includes(tag))),
   };
   let { error } = await admin.from("document_equipment_suggestions").upsert(row, { onConflict: "org_id,document_id" });
   if (error && missingColumn(error)) {
-    // Before 20261171: the ledger has no dismissed / sources columns.
+    // Before 20261171: the ledger has no dismissed / sources / applied_columns columns.
     for (const c of LEDGER_COLS_20261171) delete row[c];
     ({ error } = await admin.from("document_equipment_suggestions").upsert(row, { onConflict: "org_id,document_id" }));
   }
@@ -780,13 +887,18 @@ async function upsertSuggestions(
 }
 
 /** GAP-304: write or refresh the 'drawing' relation for these tags. A pair a
- *  person already linked is left as it is (a human assertion stands). */
+ *  person already linked is left as it is (a human assertion stands). A
+ *  'drawing' row is written only WITH its provenance (GAP-303 before GAP-304,
+ *  99-fix-sequencing Phase 2): on a database without 20261171 nothing is
+ *  written and that is said, exactly as before 20261170 — a relation that
+ *  existed before its provenance could never recover who asserted it or
+ *  which revision it was read from. */
 export async function syncDrawingRelations(
   admin: SupabaseClient, orgId: string, documentId: string,
   items: Array<{ assetId: string; tag: string; sheetLabel: string | null; pages: number[]; model: string | null }>,
   prov: { revision: string | null; versionId: string | null },
 ): Promise<RelationOutcome> {
-  const out: RelationOutcome = { written: 0, refreshed: 0, keptHuman: 0, notRecorded: null, provenanceDropped: false };
+  const out: RelationOutcome = { written: 0, refreshed: 0, keptHuman: 0, notRecorded: null };
   if (items.length === 0) return out;
   const byAsset = new Map<string, { id: string; source: string }>();
   const ids = [...new Set(items.map((i) => i.assetId))];
@@ -796,27 +908,27 @@ export async function syncDrawingRelations(
     if (error) { out.notRecorded = `the relation could not be read: ${error.message ?? "error"}`; return out; }
     for (const r of (data ?? []) as Array<{ id: string; asset_id: string; source: string }>) byAsset.set(r.asset_id, { id: r.id, source: r.source });
   }
-  let withProvenance = true;
   const seen = new Set<string>();
   for (const it of items) {
     if (seen.has(it.assetId)) continue;
     seen.add(it.assetId);
     const existing = byAsset.get(it.assetId);
     if (existing && existing.source !== "drawing") { out.keptHuman++; continue; }
-    const base: Record<string, unknown> = { tag_text: it.tag, sheet_label: it.sheetLabel, pages: it.pages };
-    const provenance: Record<string, unknown> = {
+    const patch: Record<string, unknown> = {
+      tag_text: it.tag, sheet_label: it.sheetLabel, pages: it.pages,
       asserted_by: "machine", model: it.model, source_revision: prov.revision, source_version_id: prov.versionId,
       vanished_at: null, superseded_at: null,
     };
-    const write = async (patch: Record<string, unknown>) => existing
+    const err = existing
       ? (await admin.from("document_assets").update(patch).eq("id", existing.id).eq("org_id", orgId).eq("source", "drawing")).error
       : (await admin.from("document_assets").insert({
           org_id: orgId, document_id: documentId, asset_id: it.assetId, source: "drawing", ...patch,
         })).error;
-    let err = await write(withProvenance ? { ...base, ...provenance } : base);
-    if (err && withProvenance && missingColumn(err) && PROVENANCE_COLS.some((c) => (err?.message ?? "").includes(c))) {
-      withProvenance = false; out.provenanceDropped = true;  // before 20261171
-      err = await write(base);
+    if (err && missingProvenance(err)) {
+      // Before 20261171: no provenance columns — no row is written without
+      // them. The column write still happens, and this is said.
+      out.notRecorded = "The document↔equipment relation was not recorded: the database does not have migration 20261171 yet (a drawing link is written only with who asserted it and which revision it was read from — paste 20261170, then 20261171).";
+      return out;
     }
     if (err && (checkViolation(err) || missingColumn(err))) {
       // Before 20261170: no 'drawing' vocabulary, no sheet columns. The
@@ -841,14 +953,21 @@ async function markRevisionTruth(
   admin: SupabaseClient, orgId: string, documentId: string, present: ReadonlySet<string>, versionId: string | null, complete: boolean,
 ): Promise<{ vanished: number; reappeared: number; superseded: number; complete: boolean; skipped?: string; failed?: number }> {
   const out: { vanished: number; reappeared: number; superseded: number; complete: boolean; skipped?: string; failed?: number } = { vanished: 0, reappeared: 0, superseded: 0, complete };
-  const { data, error } = await admin.from("document_assets")
-    .select("id, tag_text, vanished_at, superseded_at, source_version_id, presence_confirmed_on")
-    .eq("org_id", orgId).eq("document_id", documentId).eq("source", "drawing");
+  type Row = { id: string; tag_text: string | null; vanished_at: string | null; superseded_at: string | null; source_version_id: string | null; presence_confirmed_on?: string | null };
+  // Every drawing row of the document, paged (a multi-sheet set carries
+  // thousands; one response is cut at PostgREST's max-rows without an error).
+  const { rows, error } = await pageById<Row>((after) => {
+    let q = admin.from("document_assets")
+      .select("id, tag_text, vanished_at, superseded_at, source_version_id, presence_confirmed_on")
+      .eq("org_id", orgId).eq("document_id", documentId).eq("source", "drawing")
+      .order("id", { ascending: true }).limit(PAGE_ROWS);
+    if (after) q = q.gt("id", after);
+    return q;
+  });
   if (error) return { ...out, skipped: missingColumn(error) ? "20261171 not applied — revision truth is not recorded yet" : (error.message ?? "read failed") };
   const presentKeys = new Set([...present].map(assetNorm));
   const now = new Date().toISOString();
-  type Row = { id: string; tag_text: string | null; vanished_at: string | null; superseded_at: string | null; source_version_id: string | null; presence_confirmed_on?: string | null };
-  for (const r of (data ?? []) as Row[]) {
+  for (const r of rows) {
     const isPresent = presentKeys.has(assetNorm(r.tag_text ?? ""));
     const confirmedHere = !!versionId && r.presence_confirmed_on === versionId;
     const patch: Record<string, unknown> = {};
@@ -864,6 +983,47 @@ async function markRevisionTruth(
   return out;
 }
 
+/** The document's 'drawing' rows for these tags, filtered AT THE DATABASE —
+ *  never "every drawing row of the document, then filter": a multi-sheet set
+ *  carries thousands and one response is cut at PostgREST's max-rows without
+ *  an error, so a tag past the cut would read as not linked. The tags are
+ *  resolved to their registry assets (the one tag grammar, tag_normalized)
+ *  and the rows read by asset id, plus by the spelling the Bridge stored
+ *  (tag_text) for a row whose asset was renamed since; each read is bounded
+ *  by the pairs it names (one row per document and asset). A row matches
+ *  when its asset is the tag's or its tag_text is the tag by the grammar. */
+async function readDrawingRowsForTags(
+  admin: SupabaseClient, orgId: string, documentId: string, tags: string[], cols: string,
+): Promise<{ rows: Array<Record<string, unknown>>; error: PgErr }> {
+  const keys = new Set(tags.map(assetNorm));
+  const keyList = [...keys].filter(Boolean);
+  const assetIds = new Set<string>();
+  for (let i = 0; i < keyList.length; i += 100) {
+    const { data, error } = await admin.from("assets").select("id")
+      .eq("org_id", orgId).in("tag_normalized", keyList.slice(i, i + 100));
+    if (error) return { rows: [], error };
+    for (const a of (data ?? []) as Array<{ id: string }>) assetIds.add(String(a.id));
+  }
+  const byId = new Map<string, Record<string, unknown>>();
+  const take = (data: unknown) => { for (const r of (data ?? []) as Array<Record<string, unknown>>) byId.set(String(r.id), r); };
+  const ids = [...assetIds];
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data, error } = await admin.from("document_assets").select(cols)
+      .eq("org_id", orgId).eq("document_id", documentId).eq("source", "drawing").in("asset_id", ids.slice(i, i + 100));
+    if (error) return { rows: [], error };
+    take(data);
+  }
+  const spellings = [...new Set(tags.filter(Boolean))];
+  for (let i = 0; i < spellings.length; i += 100) {
+    const { data, error } = await admin.from("document_assets").select(cols)
+      .eq("org_id", orgId).eq("document_id", documentId).eq("source", "drawing").in("tag_text", spellings.slice(i, i + 100));
+    if (error) return { rows: [], error };
+    take(data);
+  }
+  const rows = [...byId.values()].filter((r) => assetIds.has(String(r.asset_id)) || keys.has(assetNorm(String(r.tag_text ?? ""))));
+  return { rows, error: null };
+}
+
 /** Remove 'drawing' relations for these tags (service role), recording what
  *  each one was — a person's correction of a machine reading. A pair the
  *  document's own asset_tags still names is not lost: while the drawing row
@@ -876,19 +1036,14 @@ async function removeDrawingRelations(
 ): Promise<RemovalOutcome> {
   const out: RemovalOutcome = { removed: 0, keptAsPersonsLink: 0 };
   if (tags.length === 0) return out;
-  const keys = new Set(tags.map(assetNorm));
-  const sel = await admin.from("document_assets").select("id, asset_id, tag_text, sheet_label, pages, source_revision, model, vanished_at")
-    .eq("org_id", orgId).eq("document_id", documentId).eq("source", "drawing");
-  let rows = (sel.data ?? []) as Array<Record<string, unknown>>;
+  let sel = await readDrawingRowsForTags(admin, orgId, documentId, tags, "id, asset_id, tag_text, sheet_label, pages, source_revision, model, vanished_at");
   if (sel.error) {
     if (!missingColumn(sel.error)) throw new Error(`The relation could not be read: ${sel.error.message ?? "read failed"}`);
-    const fallback = await admin.from("document_assets").select("id, asset_id, tag_text")
-      .eq("org_id", orgId).eq("document_id", documentId).eq("source", "drawing");
-    if (fallback.error) throw new Error(`The relation could not be read: ${fallback.error.message ?? "read failed"}`);
-    rows = (fallback.data ?? []) as Array<Record<string, unknown>>;
+    sel = await readDrawingRowsForTags(admin, orgId, documentId, tags, "id, asset_id, tag_text");
+    if (sel.error) throw new Error(`The relation could not be read: ${sel.error.message ?? "read failed"}`);
   }
   // A copy of what each row was, recorded before it changes.
-  const doomed = rows.filter((r) => keys.has(assetNorm(String(r.tag_text ?? ""))) && (!opts.onlyVanished || r.vanished_at)).map((r) => ({ ...r }));
+  const doomed = sel.rows.filter((r) => !opts.onlyVanished || r.vanished_at).map((r) => ({ ...r }));
   if (doomed.length === 0) return out;
 
   // Which of these pairs a person tagged on the document (documents.asset_tags,
@@ -972,7 +1127,7 @@ export async function applyForDocument(admin: SupabaseClient, input: {
     : !alreadyApplied.has(s.tag) && !dismissedTags.has(s.tag) && !s.dismissed && !s.held);
   const blank = (): ApplyResult => ({
     appliedTags: [], createdAssets: 0, codesLeftBlank: [], degraded: [], failed: [], held: [],
-    relations: { written: 0, refreshed: 0, keptHuman: 0, notRecorded: null, provenanceDropped: false },
+    relations: { written: 0, refreshed: 0, keptHuman: 0, notRecorded: null },
     column: null, codesFilled: 0,
   });
   if (wanted.length === 0) return blank();
@@ -981,7 +1136,12 @@ export async function applyForDocument(admin: SupabaseClient, input: {
     .from("documents").select("id, library_id, metadata, created_by")
     .eq("id", documentId).eq("org_id", orgId).maybeSingle();
   if (!doc) throw new Error("Document not found");
-  const bridge = await loadBridgeConfig(admin, String(doc.library_id ?? ""));
+  // An unread configuration is not "no column, discovery on": acting on it
+  // would create assets a library opted out of and mark tags applied that
+  // never reached the mapped column. Nothing is applied.
+  const lib = await loadBridgeConfig(admin, String(doc.library_id ?? ""));
+  if (lib.error) throw new Error(`The library's equipment-sweep settings could not be read: ${lib.error} — nothing was applied.`);
+  const bridge = lib.config;
   const targetKey = bridge?.targetColumnKey ?? null;
   const book = await loadCodebookAdmin(admin, orgId);
   const result = blank();
@@ -1135,6 +1295,15 @@ export async function applyForDocument(admin: SupabaseClient, input: {
   }
 
   const appliedUnion = [...new Set([...alreadyApplied, ...appliedNow])];
+  // BR-5: the ledger's own map of where each applied tag was written —
+  // carried across recomputes whether or not the tag is read again.
+  const priorColumns = (row.applied_columns && typeof row.applied_columns === "object" && !Array.isArray(row.applied_columns))
+    ? row.applied_columns as Record<string, unknown> : {};
+  const appliedColumns: Record<string, string | null> = {};
+  for (const [tag, col] of Object.entries(priorColumns)) {
+    if (appliedUnion.includes(tag)) appliedColumns[tag] = typeof col === "string" && col ? col : null;
+  }
+  for (const tag of appliedNow) appliedColumns[tag] = targetKey;
   const ledger: Record<string, unknown> = {
     // The proposal as it stands after this apply: a tag named again is no
     // longer dismissed or held, a discovered tag now has its asset, and each
@@ -1149,18 +1318,21 @@ export async function applyForDocument(admin: SupabaseClient, input: {
     applied_by: input.userId,
     // A tag named again leaves the dismissed list (BR-9).
     dismissed: dismissals.filter((d) => !appliedNow.includes(d.tag)),
+    applied_columns: appliedColumns,
   };
   let { error: ledgerErr } = await admin.from("document_equipment_suggestions").update(ledger)
     .eq("org_id", orgId).eq("document_id", documentId);
   if (ledgerErr && missingColumn(ledgerErr)) {
-    delete ledger.dismissed;
+    for (const c of LEDGER_COLS_20261171) delete ledger[c]; // before 20261171
     ({ error: ledgerErr } = await admin.from("document_equipment_suggestions").update(ledger)
       .eq("org_id", orgId).eq("document_id", documentId));
   }
   if (ledgerErr) result.ledgerError = ledgerErr.message;
   if (input.userId) await markReviewed(admin, String(doc.library_id ?? ""), bridge, input.userId);
 
-  await admin.from("audit_logs").insert({
+  // Checked: the apply created registry assets and relations — a missing
+  // audit row is said to the caller, never swallowed.
+  const { error: auditErr } = await admin.from("audit_logs").insert({
     action: "EQUIPMENT_BRIDGE_APPLIED",
     resource_type: "document",
     resource_id: documentId,
@@ -1172,7 +1344,8 @@ export async function applyForDocument(admin: SupabaseClient, input: {
       held: result.held, relations: result.relations, codesFilled: result.codesFilled,
       revision: prov.revision, ledgerError: result.ledgerError ?? null,
     },
-  }).then(() => undefined, () => undefined);
+  });
+  if (auditErr) result.auditError = `The tags were applied, but the audit record could not be written: ${auditErr.message}`;
 
   result.appliedTags = appliedNow;
   return result;
@@ -1190,7 +1363,7 @@ async function currentReading(admin: SupabaseClient, orgId: string, documentId: 
     const sources = classifyCopies(twins, current);
     const used = twins.filter((t) => sources.find((s) => s.knowledgeDocumentId === t.id)?.used);
     if (used.length === 0) return { revision: null, versionId: null };
-    return readingOf(used, current);
+    return readingOf(used);
   } catch {
     return { revision: null, versionId: null };
   }
@@ -1252,7 +1425,12 @@ export async function dismissForDocument(admin: SupabaseClient, input: {
   });
   const auditError = removal.auditError ?? (auditErr ? `The dismissal was saved, but its audit record could not be written: ${auditErr.message}` : undefined);
   const { data: doc } = await admin.from("documents").select("library_id").eq("id", documentId).eq("org_id", orgId).maybeSingle();
-  if (doc?.library_id) await markReviewed(admin, String(doc.library_id), await loadBridgeConfig(admin, String(doc.library_id)), userId);
+  if (doc?.library_id) {
+    // The review mark is written only over a configuration that was read —
+    // never over an unread one (which would replace the library's settings).
+    const lib = await loadBridgeConfig(admin, String(doc.library_id));
+    if (!lib.error) await markReviewed(admin, String(doc.library_id), lib.config, userId);
+  }
   return {
     dismissed: target, relationsRemoved, remembered,
     ...(removal.keptAsPersonsLink > 0 ? { keptAsPersonsLink: removal.keptAsPersonsLink } : {}),
@@ -1272,12 +1450,11 @@ export async function reviewVanished(admin: SupabaseClient, input: {
   const { orgId, documentId, userId, decision } = input;
   const tags = [...new Set(input.tags.map((t) => normalizeTag(String(t))).filter(Boolean))];
   if (tags.length === 0) return { changed: 0 };
-  const keys = new Set(tags.map(assetNorm));
-  const { data, error } = await admin.from("document_assets").select("id, tag_text, vanished_at")
-    .eq("org_id", orgId).eq("document_id", documentId).eq("source", "drawing");
+  // Only these tags' rows, filtered at the database (never the document's
+  // every drawing row, which PostgREST would cut at its max-rows).
+  const { rows: found, error } = await readDrawingRowsForTags(admin, orgId, documentId, tags, "id, asset_id, tag_text, vanished_at");
   if (error) throw new Error(missingColumn(error) ? "Revision truth needs migration 20261171." : error.message ?? "read failed");
-  const rows = ((data ?? []) as Array<{ id: string; tag_text: string | null; vanished_at: string | null }>)
-    .filter((r) => r.vanished_at && keys.has(assetNorm(r.tag_text ?? "")));
+  const rows = (found as unknown as Array<{ id: string; tag_text: string | null; vanished_at: string | null }>).filter((r) => r.vanished_at);
   if (rows.length === 0) return { changed: 0 };
 
   if (decision === "remove") {
@@ -1364,7 +1541,7 @@ export async function adoptDrawingRelation(admin: SupabaseClient, input: {
  *  reported (assetCategorize's discipline — never guessed). */
 export async function discoverFromKnowledge(admin: SupabaseClient, input: {
   orgId: string; userId: string; knowledgeDocumentId: string; tags: string[];
-}): Promise<{ created: string[]; existing: string[]; held: string[]; failed: Array<{ tag: string; reason: string }>; unitless: number }> {
+}): Promise<{ created: string[]; existing: string[]; held: string[]; failed: Array<{ tag: string; reason: string }>; unitless: number; auditError?: string }> {
   const { orgId, userId, knowledgeDocumentId } = input;
   const out = { created: [] as string[], existing: [] as string[], held: [] as string[], failed: [] as Array<{ tag: string; reason: string }>, unitless: 0 };
   const { data: kdoc } = await admin.from("knowledge_documents").select("id, org_id, source_document_id, source_rev")
@@ -1407,10 +1584,13 @@ export async function discoverFromKnowledge(admin: SupabaseClient, input: {
     out.unitless++;
     if (!t) out.held.push(tag); // created untyped: the codebook does not know its prefix — teach it
   }
-  await admin.from("audit_logs").insert({
+  // Checked: discovery created registry assets — a missing audit row is
+  // said to the caller, never swallowed (GAP-307 / GAP-303).
+  const { error: auditErr } = await admin.from("audit_logs").insert({
     action: "EQUIPMENT_BRIDGE_DISCOVERED", resource_type: "knowledge_document", resource_id: knowledgeDocumentId, org_id: orgId, user_id: userId,
     details: { door: "knowledge", created: out.created, existing: out.existing, untyped: out.held, failed: out.failed, unitless: out.unitless },
-  }).then(() => undefined, () => undefined);
+  });
+  if (auditErr) return { ...out, auditError: `The equipment was discovered, but the audit record could not be written: ${auditErr.message}` };
   return out;
 }
 

@@ -431,6 +431,8 @@ The impact panel (`lib/impact.ts`), revision fanout (`lib/revisionImpact.ts`) an
 
 **Scope / residual.** Handed to document control (the owner of `lib/documentLifecycle/**` and 20261131's supersession policies): a RESTRICTIVE read rail on `document_supersessions` covering both document columns, decided with the lineage readers. Pending migration: `supabase/migrations/20261170_intel_roundG_document_assets_source.sql`; its inventory counts the rows on private / hidden documents that become readable only to those who can read the document.
 
+**Fix pass 2 (2026-10-02, review): a consequence outside this area, handed to projects.** The `project_documents_document_readable` rail returns a link row only while its document is readable. `lib/projects.ts` `listProjectDocuments` therefore no longer sees the rows it counted as hidden. Once 20261170 is pasted, `hiddenByPermissions` and `hiddenDocIds` read 0. The projects register's deliberate "N linked documents are hidden by your permissions" note (ProjectDocumentsCard in `components/projects/**`, and `documentsTabCount`'s badge contribution) goes dark: the hiding becomes total instead of disclosed. That trades a disclosure for the leak this finding closes, since the note itself told a reader that a restricted document is linked to the project. The projects package (owner of `lib/projects.ts` and `components/projects/**`) should drop the note or re-source it, for example from a SECURITY DEFINER count of the project's links the caller cannot read, if the disclosure is wanted. Its tests' fixtures, which still return those rows, no longer describe the database. Recorded in the 20261170 header and in DEC-44 (I-11)'s Risk; not edited here (not this package's files).
+
 ---
 
 <a id="dacl-12"></a>

@@ -206,13 +206,24 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
       if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
       const results = (json.results as Array<Record<string, unknown>>) ?? [];
       const failed = results.filter((r) => r.error);
-      if (failed.length > 0) setError(`${failed.length} document(s) failed — first: ${failed[0].error}`);
+      const auditError = results.map((r) => r.auditError).find(Boolean);
+      const problems = [
+        failed.length > 0 ? `${failed.length} document(s) failed — first: ${failed[0].error}` : null,
+        auditError ? String(auditError) : null,
+      ].filter(Boolean).join(" · ");
       setNotice(summarise(results, Number(json.unreadable ?? 0)));
       if (tags) setPicked((p) => ({ ...p, [documentIds[0]]: new Set() }));
       await refresh();
+      keepError(problems || null);
       onApplied();
     } catch (e) { setError((e as Error).message); }
     finally { setApplying(null); }
+  };
+
+  /** Shown AFTER the re-read (refresh clears the error line first): what
+   *  failed, and a correction or apply whose audit row was not written. */
+  const keepError = (msg: string | null) => {
+    if (msg) setError((prev) => (prev ? `${msg} · ${prev}` : msg));
   };
 
   const post = async (payload: Record<string, unknown>) => {
@@ -231,8 +242,8 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
       setNotice(`${(json.dismissed as string[] | undefined)?.length ?? 0} tag(s) dismissed — never applied again; a later revision that brings one back proposes it again.` +
         (json.remembered === false ? " (This database cannot remember dismissals across a re-sweep yet — migration 20261171.)" : "") +
         (Number(json.keptAsPersonsLink ?? 0) > 0 ? ` ${json.keptAsPersonsLink} link(s) stay, because the document's own equipment tags name them.` : ""));
-      if (json.auditError) setError(String(json.auditError));
       await refresh();
+      keepError(json.auditError ? String(json.auditError) : null);
       onApplied();
     } catch (e) { setError((e as Error).message); }
     finally { setApplying(null); }
@@ -242,9 +253,9 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
     setApplying(documentId); setError(null);
     try {
       const json = await post({ action: "vanished", documentId, tags: [tag], decision });
-      if (json.auditError) setError(String(json.auditError));
-      else if (Number(json.keptAsPersonsLink ?? 0) > 0) setNotice("The drawing's link was removed; the link stays, because the document's own equipment tags name it.");
+      if (!json.auditError && Number(json.keptAsPersonsLink ?? 0) > 0) setNotice("The drawing's link was removed; the link stays, because the document's own equipment tags name it.");
       await refresh();
+      keepError(json.auditError ? String(json.auditError) : null);
       onApplied();
     } catch (e) { setError((e as Error).message); }
     finally { setApplying(null); }
@@ -402,26 +413,28 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
                       {first?.unitRejected && (
                         <span className="text-[10px] font-bold text-amber-700">decodes to unit {first.unitRejected}, which the Site Codebook does not hold — filed to no unit</span>
                       )}
-                      {done ? (
-                        <span className="ml-auto inline-flex items-center gap-1 text-[10px] font-black text-emerald-700"><Check className="w-3 h-3" /> applied</span>
-                      ) : (
-                        <span className="ml-auto inline-flex items-center gap-2">
-                          {sel.size > 0 && (
-                            <>
-                              <button onClick={() => void apply([r.document_id], [...sel])} disabled={applying !== null}
-                                className="text-[10px] font-black text-[var(--color-accent)] hover:underline disabled:opacity-40">Apply {sel.size} picked</button>
-                              <button onClick={() => void dismiss(r.document_id, [...sel])} disabled={applying !== null}
-                                className="inline-flex items-center gap-0.5 text-[10px] font-black text-rose-700 hover:underline disabled:opacity-40"><Ban className="w-3 h-3" />Dismiss {sel.size}</button>
-                            </>
-                          )}
-                          {sel.size === 0 && fresh.length > 0 && (
-                            <button onClick={() => void apply([r.document_id])} disabled={applying !== null}
-                              className="inline-flex items-center gap-1 text-[10px] font-black text-[var(--color-accent)] hover:underline disabled:opacity-40">
-                              {applying === r.document_id ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Apply {fresh.length}
-                            </button>
-                          )}
-                        </span>
-                      )}
+                      {/* BR-9: the picked-tag actions are offered on EVERY document —
+                          a fully-applied one included: that is where a person dismisses
+                          a machine-read link, or applies a dismissed tag to take it back. */}
+                      <span className="ml-auto inline-flex items-center gap-2">
+                        {sel.size > 0 && (
+                          <>
+                            <button onClick={() => void apply([r.document_id], [...sel])} disabled={applying !== null}
+                              className="text-[10px] font-black text-[var(--color-accent)] hover:underline disabled:opacity-40">Apply {sel.size} picked</button>
+                            <button onClick={() => void dismiss(r.document_id, [...sel])} disabled={applying !== null}
+                              className="inline-flex items-center gap-0.5 text-[10px] font-black text-rose-700 hover:underline disabled:opacity-40"><Ban className="w-3 h-3" />Dismiss {sel.size}</button>
+                          </>
+                        )}
+                        {sel.size === 0 && !done && fresh.length > 0 && (
+                          <button onClick={() => void apply([r.document_id])} disabled={applying !== null}
+                            className="inline-flex items-center gap-1 text-[10px] font-black text-[var(--color-accent)] hover:underline disabled:opacity-40">
+                            {applying === r.document_id ? <Loader2 className="w-3 h-3 animate-spin" /> : null} Apply {fresh.length}
+                          </button>
+                        )}
+                        {done && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-black text-emerald-700"><Check className="w-3 h-3" /> applied</span>
+                        )}
+                      </span>
                     </div>
                     {r.suggested.length > 0 && (
                       <div className="mt-1.5 flex flex-wrap gap-1">
@@ -458,7 +471,8 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
                       <div className="mt-1.5 space-y-1" data-testid="vanished-delta">
                         {vanished.map((v) => (
                           <div key={`${v.tag_text}`} className="text-[10px] text-amber-800 flex items-center gap-2 flex-wrap">
-                            <span><span className="font-mono font-bold">{v.tag_text}</span> is no longer read on the current revision{v.sheet_label ? ` (was on ${v.sheet_label}` : " ("}{v.source_revision ? `, read from Rev ${v.source_revision})` : ")"}</span>
+                            {/* GOV-9: a sheet address read off an AI transcription is shown unconfirmed. */}
+                            <span><span className="font-mono font-bold">{v.tag_text}</span> is no longer read on the current revision{v.sheet_label ? ` (was on ${v.sheet_label}${v.model ? " (AI-read, unconfirmed)" : ""}` : " ("}{v.source_revision ? `, read from Rev ${v.source_revision})` : ")"}</span>
                             <button onClick={() => void reviewVanished(r.document_id, String(v.tag_text), "remove")} disabled={applying !== null} className="font-black text-rose-700 hover:underline">It left the sheet — remove the link</button>
                             <button onClick={() => void reviewVanished(r.document_id, String(v.tag_text), "keep")} disabled={applying !== null} className="font-black text-[var(--color-accent)] hover:underline">It is still there — keep</button>
                           </div>

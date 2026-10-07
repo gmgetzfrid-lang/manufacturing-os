@@ -129,3 +129,21 @@ describe("GAP-311 remainder (I-11) — the sheet it is on, from the relation", (
     expect(docs[1].subtitle).toBe("FV-2201 appears on this drawing · P&ID crude feed sht 2");
   });
 });
+
+describe("GOV-9 / GAP-303 (fix pass 2) — the ⌘K subtitle marks an AI-read sheet and a person's own tag", () => {
+  it("a sheet read off an AI transcription is '(AI-read, unconfirmed)'; a pair the document's asset_tags name says a person tagged it too", async () => {
+    Object.assign(db.ref.tables.document_assets[0], { source: "drawing", sheet_label: "2002-D-10001 SHT 4", model: "vision-model-x" });
+    Object.assign(db.ref.tables.document_assets[1], { source: "drawing", sheet_label: "2002-D-10002 SHT 1", model: null });
+    Object.assign(db.ref.tables.documents[1], { asset_tags: [{ tag: "fv 2201" }] });
+    const [hit] = await lookupTag("o1", "FV-2201");
+    expect(hit.documents.map((d) => [d.document_number, d.aiRead, d.personTagged])).toEqual([
+      ["2002-D-10001", true, false],
+      ["2002-D-10002", false, true],
+    ]);
+    expect(hit.documents[0]).not.toHaveProperty("asset_tags");
+    const docs = (await globalSearch({ orgId: "o1", query: "FV-2201" })).filter((h) => h.exact && h.kind === "document");
+    // Reproduction: the fix-pass-1 subtitle stated the transcribed title block as fact.
+    expect(docs[0].subtitle).toBe("FV-2201 appears on 2002-D-10001 SHT 4 (AI-read, unconfirmed) (read from the drawing) · P&ID crude feed");
+    expect(docs[1].subtitle).toBe("FV-2201 appears on 2002-D-10002 SHT 1 (tagged, and read from the drawing) · P&ID crude feed sht 2");
+  });
+});

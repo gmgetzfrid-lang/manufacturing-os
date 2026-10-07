@@ -128,3 +128,30 @@ describe("the asset hub lists what the relation links (WIRE-1 / BR-2)", () => {
     expect((fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][0]).toBe("/api/equipment/sheets?orgId=o1&tag=E-22");
   });
 });
+
+describe("GAP-303 (fix pass 2) — a pair a person typed on the document is not shown as 'not typed by a person'", () => {
+  it("the drawing row holds the pair while the document's asset_tags name it: shown as tagged (and read from the drawing), never 'Not typed by a person'; an AI-read sheet keeps its mark", async () => {
+    // A drafter typed "E 22" into the drawing's equipment tags after the Bridge applied it:
+    // the tag sync's own row was skipped (the drawing row holds the pair).
+    Object.assign(s.db.tables.documents[0], { asset_tags: [{ tag: "E 22" }] });
+    Object.assign(s.db.tables.document_assets[0], { model: "vision-model-x", vanished_at: "2026-10-01T00:00:00Z" });
+    await render();
+    const item = [...container.querySelectorAll("li")].find((li) => (li.textContent ?? "").includes("2002-D-10001"))!;
+    const text = item.textContent ?? "";
+    // Reproduction: the fix-pass-1 hub badged it "AI-read" with the tooltip "… Not typed by a person."
+    expect(text).toContain("tagged · also on drawing");
+    expect([...item.querySelectorAll("span")].some((x) => x.textContent === "AI-read")).toBe(false);
+    expect(item.innerHTML).not.toContain("Not typed by a person");
+    expect(text).toContain("2002-D-10001 SHT 4 (AI-read, unconfirmed)");
+    const vanished = [...item.querySelectorAll("span")].find((x) => x.textContent === "not on current rev")!;
+    expect(vanished.getAttribute("title")).toMatch(/document's own equipment tags still name it/);
+    expect(vanished.getAttribute("title")).not.toMatch(/waiting for a person/);
+  });
+  it("a drawing row no person tagged keeps the machine mark", async () => {
+    await render();
+    const item = [...container.querySelectorAll("li")].find((li) => (li.textContent ?? "").includes("2002-D-10001"))!;
+    expect(item.textContent).toContain("read from drawing");
+    expect(item.innerHTML).toContain("Not typed by a person");
+    expect(item.textContent).not.toContain("tagged · also on drawing");
+  });
+});

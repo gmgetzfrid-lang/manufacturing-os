@@ -372,19 +372,33 @@ describe("GAP-304 / WIRE-1 / BR-2 — apply writes the relation, keeps the colum
     expect(db.tables.documents[0].metadata).toEqual({ equipment: ["E-22", "P-7", "V-101"] });
   });
 
-  it("before 20261171 the provenance columns are dropped and the row still lands (said)", async () => {
+  it("before 20261171 NO drawing row is written — a relation never exists before its provenance (GAP-303 before GAP-304, fix pass 2); said, and the column write still lands", async () => {
     seed();
     await computeForDocument(admin(), "o1", "d1");
+    // 20261170 pasted, 20261171 not: the vocabulary admits 'drawing', the
+    // provenance columns do not exist (PostgREST names the column).
     db.beforeInsert = {
       document_assets: (row) => {
-        if ("asserted_by" in row) throw { code: "42703", message: 'column "asserted_by" of relation "document_assets" does not exist' };
+        if ("asserted_by" in row) throw { code: "PGRST204", message: "Could not find the 'asserted_by' column of 'document_assets' in the schema cache" };
         return row;
       },
     };
     const r = await applyForDocument(admin(), { orgId: "o1", documentId: "d1", userId: "u1" });
-    expect(r.relations).toMatchObject({ written: 3, provenanceDropped: true, notRecorded: null });
-    expect(relations()[0]).not.toHaveProperty("asserted_by");
-    expect(relations()[0]).toHaveProperty("sheet_label");
+    // Reproduction: the fix-pass-1 file retried without the provenance and wrote 3 rows that could never say who asserted them.
+    expect(r.relations).toMatchObject({ written: 0, refreshed: 0 });
+    expect(r.relations.notRecorded).toMatch(/migration 20261171/);
+    expect(r.relations).not.toHaveProperty("provenanceDropped");
+    expect(relations()).toHaveLength(0);
+    expect(db.tables.documents[0].metadata).toEqual({ equipment: ["E-22", "P-7", "V-101"] });
+    expect(audit("EQUIPMENT_BRIDGE_APPLIED")[0].details).toMatchObject({ relations: { notRecorded: expect.stringMatching(/20261171/) } });
+    // The GAP-304 backfill of a later recompute writes none either.
+    await computeForDocument(admin(), "o1", "d1");
+    expect(relations()).toHaveLength(0);
+    // Once 20261171 lands, the next recompute relates every applied tag WITH its provenance.
+    db.beforeInsert = {};
+    await computeForDocument(admin(), "o1", "d1");
+    expect(relations()).toHaveLength(3);
+    expect(relations().every((x) => x.asserted_by === "machine" && x.source_version_id === "v2")).toBe(true);
   });
 
   it("a pair a person already linked is left as it is — a human assertion stands", async () => {
@@ -474,18 +488,38 @@ describe("BR-5 — a tag a person removed from the column is never re-added by a
     expect(relations().map((x) => x.tag_text).sort()).toEqual(["E-22", "V-101"]);
     expect((ledger().dismissed as Row[]).map((d) => [d.tag, d.via])).toEqual([["P-7", "column"]]);
   });
-  it("a column the document never held is a re-mapping, not a removal; tags applied with no column mapped are never column-dismissed", () => {
-    const base = { applied: ["E-22", "P-7"], dismissed: new Set<string>() };
-    // Historical (nothing recorded): the mapped column decides, only when the document holds it.
-    expect(planColumnRemovals({ ...base, recordedColumn: new Map(), mappedColumn: "equipment", metadata: { equipment: ["E-22"] } })).toEqual(["P-7"]);
-    expect(planColumnRemovals({ ...base, recordedColumn: new Map(), mappedColumn: "tags2", metadata: { equipment: ["E-22"] } })).toEqual([]);
-    // Recorded: the column it was written into, even after the library re-maps.
-    expect(planColumnRemovals({ ...base, recordedColumn: new Map([["E-22", "equipment"], ["P-7", "equipment"]]), mappedColumn: "tags2", metadata: { equipment: ["e22", "P-7"] } })).toEqual([]);
-    expect(planColumnRemovals({ ...base, recordedColumn: new Map([["E-22", "equipment"], ["P-7", "equipment"]]), mappedColumn: "tags2", metadata: { equipment: "E-22" } })).toEqual(["P-7"]);
-    // Applied with no column mapped (AREA-4), a column mapped later.
-    expect(planColumnRemovals({ ...base, recordedColumn: new Map([["E-22", null], ["P-7", null]]), mappedColumn: "equipment", metadata: { equipment: [] } })).toEqual([]);
+  it("a tag is removed only when it is in NO tag column the document holds — never on a re-map, a dropped key, or a move to another column (fix pass 2)", () => {
+    const plan = (x: Partial<Parameters<typeof planColumnRemovals>[0]>) => planColumnRemovals({
+      applied: ["E-22", "P-7"], dismissed: new Set<string>(), recordedColumn: new Map(), mappedColumn: "equipment",
+      tagColumns: ["equipment", "tags2"], metadata: {}, ...x,
+    });
+    // Historical (nothing recorded): out of the only tag column it could be in → removed; the rest stamped where found.
+    expect(plan({ metadata: { equipment: ["E-22"] } }).removed).toEqual(["P-7"]);
+    expect([...plan({ metadata: { equipment: ["E-22"] } }).columns]).toEqual([["E-22", "equipment"]]);
+    // (a) Re-mapped onto tags2, which the document now holds: the historical tags still sit in 'equipment'.
+    // Reproduction: the fix-pass-1 rule read the mapped column only and dismissed both.
+    const remap = plan({ mappedColumn: "tags2", metadata: { equipment: ["E-22", "P-7"], tags2: ["X-1"] } });
+    expect(remap.removed).toEqual([]);
+    expect(Object.fromEntries(remap.columns)).toEqual({ "E-22": "equipment", "P-7": "equipment" });
+    // A document holding no tag column at all: nothing can be said, nothing removed.
+    expect(plan({ metadata: {} }).removed).toEqual([]);
+    // Recorded: the column it was written into, compared by the one grammar.
+    const rec = new Map<string, string | null>([["E-22", "equipment"], ["P-7", "equipment"]]);
+    expect(plan({ recordedColumn: rec, mappedColumn: "tags2", metadata: { equipment: ["e22", "P-7"] } }).removed).toEqual([]);
+    expect(plan({ recordedColumn: rec, mappedColumn: "tags2", metadata: { equipment: "E-22" } }).removed).toEqual(["P-7"]);
+    // (c) The recorded column's key gone from the document (a re-map, a dropped column): never a removal.
+    expect(plan({ recordedColumn: rec, mappedColumn: "tags2", metadata: { tags2: [] } }).removed).toEqual([]);
+    expect(plan({ recordedColumn: rec, metadata: {} }).removed).toEqual([]);
+    // Moved by a person into another tag column: not a removal; the record follows it.
+    const moved = plan({ recordedColumn: rec, metadata: { equipment: ["E-22"], tags2: ["P-7"] } });
+    expect(moved.removed).toEqual([]);
+    expect(moved.columns.get("P-7")).toBe("tags2");
+    // An undeclared array column still counts as holding it (safe direction).
+    expect(plan({ recordedColumn: rec, tagColumns: [], metadata: { equipment: ["E-22"], legacy_tags: ["P-7"] } }).removed).toEqual([]);
+    // Applied with no column mapped (AREA-4), a column mapped later: never column-dismissed.
+    expect(plan({ recordedColumn: new Map([["E-22", null], ["P-7", null]]), metadata: { equipment: [] } }).removed).toEqual([]);
     // Already dismissed: not planned again.
-    expect(planColumnRemovals({ ...base, dismissed: new Set(["P-7"]), recordedColumn: new Map(), mappedColumn: "equipment", metadata: { equipment: ["E-22"] } })).toEqual([]);
+    expect(plan({ dismissed: new Set(["P-7"]), metadata: { equipment: ["E-22"] } }).removed).toEqual([]);
   });
   it("with no column mapped, a later mapping does not dismiss what was applied before it", async () => {
     seed({ bridge: {} });
@@ -496,6 +530,152 @@ describe("BR-5 — a tag a person removed from the column is never re-added by a
     const r = await computeForDocument(admin(), "o1", "d1");
     expect(r.columnDismissed).toBeUndefined();
     expect(relations().filter((x) => x.source === "drawing")).toHaveLength(3);
+  });
+});
+
+describe("BR-5 fix pass 2 — a re-map, a tag missing from one reading, or a dropped column never reads as removals", () => {
+  it("(a) tags applied before the column was recorded, the library re-mapped onto a column the document now holds: nothing is dismissed, and each tag is stamped with the column it is in", async () => {
+    seed({ bridge: { targetColumnKey: "tags2" } });
+    db.tables.libraries[0].custom_columns = [{ key: "equipment", type: "tags" }, { key: "tags2", type: "tags" }];
+    db.tables.assets.push({ id: "a-p7", org_id: "o1", tag: "P-7", tag_normalized: "p7", unit_code: "20", code: "2050.7", archived: false });
+    // History: all three applied into 'equipment' before this deploy (no column recorded) …
+    db.tables.document_equipment_suggestions = [{ org_id: "o1", document_id: "d1", applied: ["E-22", "P-7", "V-101"], dismissed: [], suggested: [{ tag: "E-22" }, { tag: "P-7" }, { tag: "V-101" }] }];
+    // … then a person typed a value into the newly mapped column.
+    db.tables.documents[0].metadata = { equipment: ["E-22", "P-7", "V-101"], tags2: ["X-1"] };
+    const r = await computeForDocument(admin(), "o1", "d1");
+    // Reproduction: the fix-pass-1 rule saw the document hold 'tags2' and dismissed all three (by: null).
+    expect(r.columnDismissed).toBeUndefined();
+    expect(ledger().dismissed).toEqual([]);
+    expect(relations().map((x) => x.tag_text).sort()).toEqual(["E-22", "P-7", "V-101"]);
+    expect(ledger().applied_columns).toEqual({ "E-22": "equipment", "P-7": "equipment", "V-101": "equipment" });
+  });
+  it("(b) a tag missing from one reading keeps its recorded column — the ledger's own map, not the suggestion — and is not dismissed when it is read again", async () => {
+    seed();
+    await computeForDocument(admin(), "o1", "d1");
+    await applyForDocument(admin(), { orgId: "o1", documentId: "d1", userId: "u1" });
+    expect(ledger().applied_columns).toEqual({ "E-22": "equipment", "P-7": "equipment", "V-101": "equipment" });
+    db.tables.libraries[0].equipment_bridge = { targetColumnKey: "tags2" };
+    db.tables.documents[0].metadata = { ...(db.tables.documents[0].metadata as Row), tags2: ["X-1"] };
+    const all = [...db.tables.knowledge_page_entities];
+    db.tables.knowledge_page_entities = all.filter((e) => e.tag !== "P-7");   // an extraction miss
+    await computeForDocument(admin(), "o1", "d1");
+    expect(ledger().suggested.find((s) => s.tag === "P-7")).toBeUndefined();
+    expect(ledger().applied_columns).toMatchObject({ "P-7": "equipment" });
+    db.tables.knowledge_page_entities = all;                                  // read again
+    const r = await computeForDocument(admin(), "o1", "d1");
+    // Reproduction: the fix-pass-1 file lost P-7's column with its suggestion and then dismissed it against 'tags2'.
+    expect(r.columnDismissed).toBeUndefined();
+    expect(ledger().dismissed).toEqual([]);
+    expect(relations().filter((x) => x.source === "drawing")).toHaveLength(3);
+  });
+  it("(c) the recorded column's key gone from the document is not a removal", async () => {
+    seed();
+    await computeForDocument(admin(), "o1", "d1");
+    await applyForDocument(admin(), { orgId: "o1", documentId: "d1", userId: "u1" });
+    db.tables.documents[0].metadata = {};
+    const r = await computeForDocument(admin(), "o1", "d1");
+    // Reproduction: the fix-pass-1 rule read every applied tag as removed.
+    expect(r.columnDismissed).toBeUndefined();
+    expect(relations().filter((x) => x.source === "drawing")).toHaveLength(3);
+  });
+  it("a person's real removal still is one: out of every tag column, with the key still there", async () => {
+    seed({ bridge: { targetColumnKey: "equipment" } });
+    db.tables.libraries[0].custom_columns = [{ key: "equipment", type: "tags" }, { key: "notes", type: "text" }];
+    await computeForDocument(admin(), "o1", "d1");
+    await applyForDocument(admin(), { orgId: "o1", documentId: "d1", userId: "u1" });
+    db.tables.documents[0].metadata = { equipment: ["E-22", "V-101"], notes: "P-7 is spare" };
+    const r = await computeForDocument(admin(), "o1", "d1");
+    expect(r.columnDismissed).toEqual(["P-7"]);
+  });
+});
+
+describe("minor fixes (fix pass 2) — an unread configuration, a copy of unknown revision, checked audits", () => {
+  /** The stand-in, except that every read of one table fails. */
+  function tableFails(table: string): SupabaseClient {
+    const base = makeFakeSupabase(db);
+    const failing = (): object => {
+      const answer = { data: null, error: { code: "57014", message: "statement timeout" } };
+      const chain: object = new Proxy({}, {
+        get(_t, prop: string) {
+          if (prop === "then") return (resolve: (v: unknown) => void) => resolve(answer);
+          if (prop === "maybeSingle" || prop === "single") return () => Promise.resolve(answer);
+          return () => chain;
+        },
+      });
+      return chain;
+    };
+    return { ...base, from: (t: string) => (t === table ? failing() : base.from(t)) } as unknown as SupabaseClient;
+  }
+  it("a library whose settings cannot be read: apply writes nothing (no asset the library opted out of, no tag marked applied without its column)", async () => {
+    seed({ bridge: { targetColumnKey: "equipment", createAssets: false } });
+    await computeForDocument(admin(), "o1", "d1");
+    const before = JSON.stringify({ assets: db.tables.assets, rel: relations(), ledger: ledger(), meta: db.tables.documents[0].metadata });
+    // Reproduction: the fix-pass-1 file read the failure as "no column, discovery on" — created P-7 and marked all three applied.
+    await expect(applyForDocument(tableFails("libraries"), { orgId: "o1", documentId: "d1", userId: "u1" }))
+      .rejects.toThrow(/settings could not be read: statement timeout — nothing was applied/);
+    expect(JSON.stringify({ assets: db.tables.assets, rel: relations(), ledger: ledger(), meta: db.tables.documents[0].metadata })).toBe(before);
+  });
+  it("…and a compute writes nothing: no proposal without the library's default unit, no column plan, no auto-apply", async () => {
+    seed({ documentNumber: null, bridge: { targetColumnKey: "equipment", defaultUnitCode: "25", autoApply: true } });
+    await expect(computeForDocument(tableFails("libraries"), "o1", "d1")).rejects.toThrow(/settings could not be read/);
+    expect(db.tables.document_equipment_suggestions).toHaveLength(0);
+    expect(db.tables.assets.find((a) => a.tag === "P-7")).toBeUndefined();
+  });
+  it("a copy that carries no revision id stamps NO revision — never the document's current one", async () => {
+    seed({ twins: [{ id: "k1", org_id: "o1", library_id: "kl1", name: "old.pdf", source_document_id: "d1", status: "ready", source_version_id: null, source_rev: null, vision_failed_pages: [] }] });
+    db.tables.documents[0].current_version_id = "v3";
+    await computeForDocument(admin(), "o1", "d1");
+    await applyForDocument(admin(), { orgId: "o1", documentId: "d1", userId: "u1" });
+    // Reproduction: the fix-pass-1 readingOf fell back to current_version_id and stamped v3.
+    expect(relations().map((x) => x.source_version_id)).toEqual([null, null, null]);
+    await dismissForDocument(admin(), { orgId: "o1", documentId: "d1", userId: "u1", tags: ["P-7"] });
+    expect((ledger().dismissed as Row[]).find((d) => d.tag === "P-7")!.revision).toBeNull();
+  });
+  it("the apply's audit row and the knowledge door's are checked: a refused insert is said to the caller", async () => {
+    seed();
+    await computeForDocument(admin(), "o1", "d1");
+    db.refuseWrites.add("audit_logs");
+    const r = await applyForDocument(admin(), { orgId: "o1", documentId: "d1", userId: "u1" });
+    expect(r.createdAssets).toBe(1);
+    expect(r.auditError).toMatch(/applied, but the audit record could not be written/);
+    db.tables.knowledge_documents.push({ id: "k-up", org_id: "o1", library_id: "kl1", name: "upload.pdf", source_document_id: null, status: "ready", source_rev: null });
+    db.tables.knowledge_page_entities.push({ id: "u1", document_id: "k-up", page: 3, kind: "equipment", tag: "P-44", raw: "P-44" });
+    const k = await discoverFromKnowledge(admin(), { orgId: "o1", userId: "u1", knowledgeDocumentId: "k-up", tags: ["P-44"] });
+    expect(k.created).toEqual(["P-44"]);
+    expect(k.auditError).toMatch(/discovered, but the audit record could not be written/);
+  });
+});
+
+describe("major 2 (fix pass 2) — the relation's per-document reads are never cut at PostgREST's max-rows", () => {
+  /** One drawing carrying 12 applied tags (P-101 … P-112), applied before max-rows bites. */
+  async function twelveApplied() {
+    seed({ entities: Array.from({ length: 12 }, (_, i) => ({ id: `m${String(i).padStart(3, "0")}`, document_id: "k1", page: 1, kind: "equipment", tag: `P-${101 + i}`, raw: `P-${101 + i}` })) });
+    await computeForDocument(admin(), "o1", "d1");
+    await applyForDocument(admin(), { orgId: "o1", documentId: "d1", userId: "u1" });
+    expect(relations().filter((x) => x.source === "drawing")).toHaveLength(12);
+  }
+  it("Dismiss of a tag whose row lies past the cut removes it (reproduction: relationsRemoved 0, the link left)", async () => {
+    await twelveApplied();
+    db.maxRows = 5;
+    const d = await dismissForDocument(admin(), { orgId: "o1", documentId: "d1", userId: "u1", tags: ["P-112"] });
+    expect(d.relationsRemoved).toBe(1);
+    expect(relations().some((x) => x.tag_text === "P-112")).toBe(false);
+    expect(relations()).toHaveLength(11);
+  });
+  it("'It left the sheet' past the cut removes it", async () => {
+    await twelveApplied();
+    relations().find((x) => x.tag_text === "P-112")!.vanished_at = "2026-10-01T00:00:00Z";
+    db.maxRows = 5;
+    expect(await reviewVanished(admin(), { orgId: "o1", documentId: "d1", userId: "u1", tags: ["P-112"], decision: "remove" })).toEqual({ changed: 1 });
+    expect(relations().some((x) => x.tag_text === "P-112")).toBe(false);
+  });
+  it("revision truth reads every row: a tag past the cut that leaves the sheet is marked", async () => {
+    await twelveApplied();
+    db.tables.knowledge_page_entities = db.tables.knowledge_page_entities.filter((e) => e.tag !== "P-112");
+    db.maxRows = 5;
+    const r = await computeForDocument(admin(), "o1", "d1");
+    expect(r.revision).toMatchObject({ vanished: 1, complete: true });
+    expect(relations().find((x) => x.tag_text === "P-112")!.vanished_at).toBeTruthy();
   });
 });
 

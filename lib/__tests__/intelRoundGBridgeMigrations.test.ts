@@ -240,6 +240,17 @@ describe("20261171 — the paste contract and provenance", () => {
   it("BR-9 / BR-14: the ledger's dismissed and sources columns", () => {
     expect(m71).toContain("ALTER TABLE document_equipment_suggestions ADD COLUMN IF NOT EXISTS dismissed JSONB NOT NULL DEFAULT '[]'::jsonb;");
     expect(m71).toContain("ALTER TABLE document_equipment_suggestions ADD COLUMN IF NOT EXISTS sources JSONB NOT NULL DEFAULT '[]'::jsonb;");
+    // BR-5 (fix pass 2): the applied tag → column map, its own column, probed with the other two.
+    expect(m71).toContain("ALTER TABLE document_equipment_suggestions ADD COLUMN IF NOT EXISTS applied_columns JSONB NOT NULL DEFAULT '{}'::jsonb;");
+    expect(m71).toMatch(/COUNT\(\*\) = 3 FROM information_schema\.columns\s+WHERE table_schema = 'public' AND table_name = 'document_equipment_suggestions'\s+AND column_name IN \('dismissed', 'sources', 'applied_columns'\) AND is_nullable = 'NO'/);
+  });
+  it("GAP-303 before GAP-304 (fix pass 2): both headers say the Bridge writes no drawing row without its provenance, and the lib holds that order", () => {
+    expect(m71).toMatch(/the Bridge writes NO 'drawing' row/);
+    expect(m71).not.toMatch(/writes its rows without the provenance columns/);
+    expect(m70).toMatch(/Pasted WITHOUT 20261171 the Bridge still writes no\n-- 'drawing' row/);
+    const lib = readFileSync(join(process.cwd(), "lib", "equipmentBridgeServer.ts"), "utf8");
+    expect(lib).not.toMatch(/provenanceDropped/);
+    expect(lib).toMatch(/if \(err && missingProvenance\(err\)\) \{/);
   });
   it("WIRE-8: GIN (jsonb_path_ops) on transmittals.items and tickets.metadata; a b-tree on the expression the impact scan filters", () => {
     expect(m71).toContain("CREATE INDEX IF NOT EXISTS transmittals_items_path_gin ON transmittals USING GIN (items jsonb_path_ops);");

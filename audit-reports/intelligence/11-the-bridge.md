@@ -80,6 +80,8 @@ Decision (DEC-44 (I-11) item 1): skip and report, never widen. The writes stay o
 
 **Scope / residual.** The page's button gate belongs to the library page (edited next by IS-P1 / I-12); nothing here depends on it.
 
+**Fix pass 2 (2026-10-02, review).** The sweep skipped `libraryGate`: a Manager who cannot read a restricted library could post `action "sweep"` with its id and learn its live document count (`counts.unreadable`). The sweep branch now calls `libraryGate(orgId, libraryId, auth.principal)` first, as GET and settings do: 404 for another workspace's library, 403 for one the caller cannot read, before any document is listed. The settings save also refuses (500) when the stored configuration cannot be read, instead of rebuilding it without the library's review mark (`loadBridgeConfig` now returns its read error). Test: `lib/__tests__/equipmentBridgeRoutes.test.ts` "sweep goes through the same library gate (fix pass 2): another workspace's library is 404, an unreadable one 403 — no counts of its documents leave it" (fails on the fix-pass-1 route).
+
 ---
 
 <a id="br-2"></a>
@@ -251,6 +253,20 @@ lib/equipmentBridgeServer.ts:181-182 — `const wanted = suggested.filter((s) =>
 4. ✓ `lib/__tests__/equipmentBridge.test.ts` "reproduction → fix: apply, delete CL chip by hand, re-index with auto-apply on — the column keeps the deletion" — now also asserting no `document_assets` row for P-7 after the recompute, the column dismissal, both audit rows, and that a person naming it again restores column and relation; plus "GAP-304 backfill: a tag applied before the relation existed (no column recorded) and since removed from the column is never related", "a column the document never held is a re-mapping, not a removal; …" and "with no column mapped, a later mapping does not dismiss what was applied before it".
 
 **Scope / residual.** Before 20261171 the ledger has no `dismissed` column. Dismiss still removes the relation and audits the decision, and says that the ledger cannot remember it across a recompute ("before 20261171 the ledger cannot remember it across a recompute — said, not silently dropped"); a column dismissal is likewise not remembered then, but the column check re-finds it on every recompute. A person putting a column-dismissed chip back by hand does not lift the dismissal; naming the tag in the sweep does.
+
+**Fix pass 2 (2026-10-02, review).** Done-when 3's fix-pass claim ("without a re-map reading as mass removals") was overstated, and so was DEC-44 (I-11) item 4. Three shapes still turned a re-map or a missed reading into column dismissals (`by: null`, relation removed, never re-applied):
+- (a) Tags applied before this deploy carry no recorded column. Once the library re-mapped onto a column the document holds (one apply, or a person typing a value), every historical tag counted against the new column.
+- (b) The recorded column lived only on the suggestion, which every recompute rebuilds from the tags read now. A tag missing from one reading lost it and fell back to (a).
+- (c) With the column recorded, a document whose metadata no longer held that key read every applied tag as removed (the fix-pass-1 table accepted this shape).
+
+Now:
+- The applied column is kept per tag in the ledger's own map, `document_equipment_suggestions.applied_columns` (added to `20261171`; `{}` default; probed; re-run on scratch PostgreSQL 16). Every apply writes it and every recompute carries it, whether or not the tag is read. The suggestion's `appliedColumn` stays as the fallback (before 20261171, and rows written before the map existed).
+- `planColumnRemovals` returns `{ removed, columns }`. A tag counts as removed only when it is absent from EVERY tag column the document holds: the library's tag-type columns (`loadBridgeConfig` now also reads `custom_columns`: type tags / multi, or pill), the mapped column, the recorded columns, and any array-valued metadata key. It never counts when the recorded column's key is gone from the document.
+- A historical tag (no record) is stamped with the column it is found in, the mapped one first. Found nowhere while the document holds a tag column, it was removed, so the GAP-304 backfill protection holds. On a document holding no tag column, it is left as it is.
+- A tag a person moved into another tag column is not a removal; its record follows it.
+- Tests in `lib/__tests__/equipmentBridge.test.ts`: "a tag is removed only when it is in NO tag column the document holds — never on a re-map, a dropped key, or a move to another column (fix pass 2)", "(a) tags applied before the column was recorded, the library re-mapped onto a column the document now holds: …", "(b) a tag missing from one reading keeps its recorded column — …", "(c) the recorded column's key gone from the document is not a removal". Each fails on the fix-pass-1 library. The regression guard "a person's real removal still is one: out of every tag column, with the key still there" passes on both.
+
+Done-when 3 (restated): ✓ the dismissed list and the preserved `applied`; ✓ a column removal becomes a dismissal; ✓ (fix pass 2) a re-map onto a column the document holds, a dropped column key, a move to another tag column and a tag missing from one reading never read as removals. Residual: a historical tag on a document whose only tag column a person deleted outright (the key gone, not emptied) is not dismissed, because nothing says where it was. The backfill relates it, and a person removes it with Dismiss.
 
 ---
 
@@ -431,6 +447,17 @@ Auto-apply stays off by default (opt-in, as before). A tag whose prefix the Site
 
 **Scope / residual.** With a mapped column, an opted-in auto-apply acts before any review, as it always did; turning it on is the review decision. Before 20261171 a dismissal is not remembered across a recompute, and the route says so.
 
+**Fix pass 2 (2026-10-02, review).** Done-when 1–2 did not hold on the documents where they matter most. On a fully-applied document (status 'applied', nothing fresh; every document after "Apply all"), the modal rendered only the green "applied" label, so a picked chip offered no button:
+- a misread machine link could not be dismissed;
+- a dismissed chip's "pick it and apply to take it back" had no Apply;
+- the registry drawer's Unlink message (a drawing link "is removed by dismissing the tag in that library's Equipment sweep") pointed at an action that was not there.
+
+The first resolution's evidence for done-when 1 was a route test, not a render of chip selection.
+
+Now `components/documents/EquipmentSweepModal.tsx` renders "Apply N picked" and "Dismiss N" whenever chips are picked, whatever the document's status, with the "applied" label beside them. Failed documents, and an apply's or a correction's `auditError`, stay on screen after the re-read (the refresh cleared the error line first). Test: `lib/__tests__/equipmentSweepModalRender.test.ts` (jsdom) "picking an applied chip offers Dismiss beside the 'applied' label, and Dismiss posts action 'dismiss' with that tag", "picking a dismissed chip offers Apply ('pick it and apply to take it back'), which posts the tag", "an apply or a dismissal whose audit row was refused stays on screen after the re-read". All fail on the fix-pass-1 modal.
+
+Done-when evidence (corrected): 1 ✓ the render cases above (chip selection; Apply sends the picked `tags`), with the route test as the server half. 2 ✓ the render case above (Dismiss posts the picked tags), with the lib tests as listed.
+
 ---
 
 <a id="br-10"></a>
@@ -516,6 +543,12 @@ app/api/equipment-bridge/route.ts:121-123 — `for (const t of (twins ?? []) as 
 **Fix pass (2026-10-02, review).** "Done" was decided from a short page (`page.ids.length < SWEEP_PAGE`), and GET stopped paging on a batch under 1000. PostgREST cuts a response at `db-max-rows` without an error, so on a project whose max-rows is below the page size a cut page read as the end and the rest of the library was never swept while the modal said "Swept." Now the sweep is done only on an EMPTY page (a short page hands back its last id and the next call finds out), and GET pages until an empty batch; the entity windows (`readWindows`) start each window where the rows read so far end, so a cut window skips nothing either. Test: `lib/__tests__/equipmentBridgeRoutes.test.ts` "a project whose PostgREST max-rows is below the page size: a cut page is not the end — the whole library is swept, and GET lists it whole" (fails on the pre-fix route); the 520-document and budget tests now count the closing empty page.
 
 **Scope / residual.** The cursor lives in the modal. A closed modal starts again at the head; a re-run recomputes idempotently.
+
+**Fix pass 2 (2026-10-02, review).** "GET lists it whole" held for the document list only. GET read each 100-document slice's 'drawing' relation rows in one request. That is GAP-309's only review source, and PostgREST's max-rows cut it without an error (100 applied P&IDs at about 30 tags each is about 3,000 rows). The same unpaged per-document read sat in `markRevisionTruth`, `removeDrawingRelations` and `reviewVanished`. Past 1,000 applied tags a Dismiss saved the dismissal but reported `relationsRemoved: 0` and left the link. Now:
+- GET pages each slice's relation rows by keyset (`drawingRelations`: order by id, `gt` the last id, until an EMPTY page; org-scoped).
+- `markRevisionTruth` pages the document's drawing rows the same way (`pageById`).
+- `removeDrawingRelations` and `reviewVanished` no longer read every drawing row of the document. `readDrawingRowsForTags` resolves the tags to their registry assets (`tag_normalized`) and filters `.in("asset_id", …)` at the database, plus `.in("tag_text", …)` for a row whose asset was renamed since. Each read is bounded by the pairs it names.
+- Tests: `lib/__tests__/equipmentBridgeRoutes.test.ts` "GET's relation rows (the GAP-309 review source) are paged too: a cut response is not the whole list (fix pass 2)" (150 rows under max-rows 100); `lib/__tests__/equipmentBridge.test.ts` "major 2 (fix pass 2) — the relation's per-document reads are never cut at PostgREST's max-rows" (Dismiss, "It left the sheet" and revision truth on a 12-row drawing under max-rows 5). Each fails on the fix-pass-1 files.
 
 ---
 

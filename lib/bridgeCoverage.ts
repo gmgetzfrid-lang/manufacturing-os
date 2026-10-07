@@ -36,6 +36,9 @@ export interface CoverageAsset {
 }
 export interface CoverageRelation {
   document_id: string; asset_id: string; source: string; sheet_label: string | null;
+  /** The AI model that transcribed the page the label was read off (GOV-9);
+   *  null / absent: the PDF's own text layer, or not recorded. */
+  model?: string | null;
 }
 export interface CoverageDocument {
   id: string; document_number: string | null; title: string | null; library_id: string | null; unit_code: string | null;
@@ -66,6 +69,9 @@ export interface CoverageWhere {
   name: string;
   /** A sheet address from the relation, or the pages the tag was read on. */
   sheet: string | null;
+  /** GOV-9: the sheet address was read off an AI transcription — shown
+   *  unconfirmed wherever it is shown. */
+  aiRead?: boolean;
   pages: number[];
   via: "relation" | "extracted";
   door: "controlled" | "knowledge";
@@ -106,7 +112,7 @@ export function buildCoverage(input: CoverageInput): CoverageReport {
     if (!d) continue; // not readable to the caller (or gone)
     push(r.asset_id, {
       documentId: r.document_id, knowledgeDocumentId: null, name: d.document_number || d.title || "Untitled",
-      sheet: r.sheet_label, pages: [], via: "relation", door: "controlled", libraryId: d.library_id,
+      sheet: r.sheet_label, aiRead: !!r.model, pages: [], via: "relation", door: "controlled", libraryId: d.library_id,
     });
   }
   const sheetOnly = new Map<string, { tag: string; where: CoverageWhere[]; units: Set<string> }>();
@@ -228,21 +234,18 @@ export async function loadCoverage(admin: SupabaseClient, orgId: string, opts: {
   if (copies.error) throw new Error(`the indexed documents could not be read: ${copies.error.message}`);
 
   // The relation (every source), org-wide.
+  // With the transcribing model (20261171, GOV-9), the sheet label
+  // (20261170), or neither — a missing column is dropped one step at a time.
   type Rel = CoverageRelation & { id: string };
-  let rel = await pageAll<Rel>((after) => {
-    let q = admin.from("document_assets").select("id, document_id, asset_id, source, sheet_label")
+  const readRel = (cols: string) => pageAll<Rel>((after) => {
+    let q = admin.from("document_assets").select(cols)
       .eq("org_id", orgId).order("id", { ascending: true }).limit(1000);
     if (after) q = q.gt("id", after);
     return q;
   }, COVERAGE_CEILING);
-  if (rel.error && missingColumn(rel.error)) {
-    rel = await pageAll<Rel>((after) => {
-      let q = admin.from("document_assets").select("id, document_id, asset_id, source")
-        .eq("org_id", orgId).order("id", { ascending: true }).limit(1000);
-      if (after) q = q.gt("id", after);
-      return q;
-    }, COVERAGE_CEILING);
-  }
+  let rel = await readRel("id, document_id, asset_id, source, sheet_label, model");
+  if (rel.error && missingColumn(rel.error)) rel = await readRel("id, document_id, asset_id, source, sheet_label");
+  if (rel.error && missingColumn(rel.error)) rel = await readRel("id, document_id, asset_id, source");
   if (rel.error) throw new Error(`the document↔equipment relation could not be read: ${rel.error.message}`);
   truncated ||= rel.truncated;
 
@@ -310,7 +313,10 @@ export async function loadCoverage(admin: SupabaseClient, orgId: string, opts: {
 
   return buildCoverage({
     assets: assets.rows,
-    relations: rel.rows.map((r) => ({ document_id: r.document_id, asset_id: r.asset_id, source: r.source, sheet_label: (r as { sheet_label?: string | null }).sheet_label ?? null })),
+    relations: rel.rows.map((r) => ({
+      document_id: r.document_id, asset_id: r.asset_id, source: r.source,
+      sheet_label: (r as { sheet_label?: string | null }).sheet_label ?? null, model: (r as { model?: string | null }).model ?? null,
+    })),
     documents,
     sheetTags,
     units: book.units.map((u) => ({ code: u.code, label: u.label })),

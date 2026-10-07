@@ -42,9 +42,9 @@
 // caller's ACL on it (lib/knowledgeAccess loadPrincipal +
 // readableControlledDocIds — the same engine as the ask and drawing routes).
 // A document the caller cannot read is skipped and counted, never computed,
-// applied or listed (decision: skip and report, never widen). The library's
-// configuration (GET's mapping, settings) is read and written only for a
-// library of the caller's workspace that the caller can read. The page shows
+// applied or listed (decision: skip and report, never widen). A library is
+// listed (GET), swept, or has its configuration saved only when it is the
+// caller's workspace's and the caller can read it (libraryGate). The page shows
 // the sweep only to the controller tier (isController); the API admits the
 // registry writer tier, deliberately — the registry's own write tier
 // (DEC-53) — and the ACL check is what keeps a Manager off a library they
@@ -131,6 +131,27 @@ async function libraryGate(orgId: string, libraryId: string, principal: Knowledg
   return { lib: lib as { id: string; equipment_bridge?: unknown; custom_columns?: unknown } };
 }
 
+/** Every 'drawing' relation row of these documents (this workspace's),
+ *  keyset-paged on id until an EMPTY page — a short page is not the end
+ *  (PostgREST cuts at its max-rows without an error). */
+async function drawingRelations(orgId: string, documentIds: string[], cols: string): Promise<{ rows: Array<Record<string, unknown>>; error: string | null }> {
+  const rows: Array<Record<string, unknown>> = [];
+  for (let after: string | null = null; ;) {
+    let q = supabaseAdmin.from("document_assets").select(cols)
+      .eq("org_id", orgId).in("document_id", documentIds).eq("source", "drawing")
+      .order("id", { ascending: true }).limit(1000);
+    if (after) q = q.gt("id", after);
+    const { data, error } = await q;
+    if (error) return { rows: [], error: error.message };
+    const batch = (data ?? []) as unknown as Array<Record<string, unknown>>;
+    if (batch.length === 0) return { rows, error: null };
+    rows.push(...batch);
+    const last = String(batch[batch.length - 1].id);
+    if (last === after) return { rows, error: null };
+    after = last;
+  }
+}
+
 /** The library's live documents, in id order, from `after` (keyset). */
 async function libraryDocIds(orgId: string, libraryId: string, after: string | null, limit: number): Promise<{ ids: string[]; error: string | null }> {
   let q = supabaseAdmin.from("documents").select("id")
@@ -180,15 +201,15 @@ export async function GET(req: NextRequest) {
       .from("document_equipment_suggestions").select("*")
       .eq("org_id", orgId).in("document_id", slice);
     rows.push(...((data ?? []) as Array<Record<string, unknown>>));
-    let rel: { data: unknown; error: { message: string } | null } = await supabaseAdmin.from("document_assets")
-      .select("document_id, asset_id, tag_text, sheet_label, pages, vanished_at, superseded_at, source_revision, model")
-      .in("document_id", slice).eq("source", "drawing");
+    // GAP-309's only review surface: every 'drawing' row of these documents,
+    // keyset-paged to an EMPTY page (100 applied P&IDs carry thousands of
+    // rows; one response is cut at PostgREST's max-rows without an error).
+    let rel = await drawingRelations(orgId, slice, "id, document_id, asset_id, tag_text, sheet_label, pages, vanished_at, superseded_at, source_revision, model");
     if (rel.error) {
-      rel = await supabaseAdmin.from("document_assets").select("document_id, asset_id, tag_text, sheet_label, pages")
-        .in("document_id", slice).eq("source", "drawing");
+      rel = await drawingRelations(orgId, slice, "id, document_id, asset_id, tag_text, sheet_label, pages");
       relationNote = rel.error ? "The document↔equipment relation has no drawing rows yet (migration 20261170 is not applied)." : "Revision marks need migration 20261171.";
     }
-    relations.push(...((rel.data ?? []) as Array<Record<string, unknown>>));
+    relations.push(...rel.rows);
   }
   const nameById = new Map(visible.map((d) => [d.id, d.document_number || d.title || d.name || d.id.slice(0, 8)]));
 
@@ -236,7 +257,11 @@ export async function POST(req: NextRequest) {
     if (!libraryId) return bad("libraryId required");
     const gate = await libraryGate(orgId, libraryId, auth.principal);
     if (gate instanceof NextResponse) return gate;
-    const prior = await loadBridgeConfig(supabaseAdmin, libraryId);
+    // The library's review mark and who turned auto-apply on are carried
+    // over from what is stored — never from a read that failed.
+    const priorRead = await loadBridgeConfig(supabaseAdmin, libraryId);
+    if (priorRead.error) return bad(`The library's equipment-sweep settings could not be read: ${priorRead.error}`, 500);
+    const prior = priorRead.config;
     const autoApply = body.autoApply === true;
     const cfg: BridgeConfig = {
       targetColumnKey: body.targetColumnKey ? String(body.targetColumnKey) : undefined,
@@ -258,6 +283,11 @@ export async function POST(req: NextRequest) {
   if (action === "sweep") {
     const libraryId = String(body.libraryId ?? "");
     if (!libraryId) return bad("libraryId required");
+    // BR-1: the same gate as GET and settings — a library of another
+    // workspace is 404, one the caller cannot read is 403 (its live document
+    // count is the library's, not the caller's to learn).
+    const gate = await libraryGate(orgId, libraryId, auth.principal);
+    if (gate instanceof NextResponse) return gate;
     const cursor = typeof body.cursor === "string" && body.cursor ? body.cursor : null;
     const started = Date.now();
     const page = await libraryDocIds(orgId, libraryId, cursor, SWEEP_PAGE);

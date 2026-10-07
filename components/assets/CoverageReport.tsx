@@ -26,7 +26,9 @@ const TAB_LABEL: Record<Tab, string> = {
 };
 
 function whereText(w: CoverageWhere): string {
-  const at = w.sheet ?? (w.pages.length > 0 ? `page${w.pages.length === 1 ? "" : "s"} ${w.pages.join(", ")}` : null);
+  // GOV-9: a sheet address read off an AI transcription is a reading, not an identity.
+  const at = w.sheet ? (w.aiRead ? `${w.sheet} (AI-read, unconfirmed)` : w.sheet)
+    : (w.pages.length > 0 ? `page${w.pages.length === 1 ? "" : "s"} ${w.pages.join(", ")}` : null);
   const door = w.door === "knowledge" ? " (knowledge upload)" : w.via === "extracted" ? " (read, not applied)" : "";
   return `${w.name}${at ? ` · ${at}` : ""}${door}`;
 }
@@ -88,6 +90,7 @@ export default function CoverageReport({ orgId, units, initialUnitCode }: {
     if (entries.length === 0) return;
     let created = 0, existing = 0, untyped = 0;
     const failures: string[] = [];
+    const auditErrors: string[] = [];
     for (const [knowledgeDocumentId, set] of entries) {
       const res = await fetch("/api/equipment-bridge", {
         method: "POST", headers: await headers(),
@@ -99,6 +102,7 @@ export default function CoverageReport({ orgId, units, initialUnitCode }: {
       existing += (json.existing ?? []).length;
       untyped += (json.held ?? []).length;
       for (const f of json.failed ?? []) failures.push(`${f.tag}: ${f.reason}`);
+      if (json.auditError) auditErrors.push(String(json.auditError));
     }
     setPicked({});
     setDiscoverNote(
@@ -108,6 +112,9 @@ export default function CoverageReport({ orgId, units, initialUnitCode }: {
       (failures.length ? ` · ${failures.length} failed: ${failures.slice(0, 3).join("; ")}` : ""),
     );
     await load();
+    // The discovery landed but its audit row did not: said, never swallowed
+    // (after the re-derive, which clears the error line).
+    if (auditErrors.length > 0) setError(auditErrors[0]);
   };
 
   const pickedCount = Object.values(picked).reduce((n, s) => n + s.size, 0);

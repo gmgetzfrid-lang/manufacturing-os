@@ -75,6 +75,14 @@ describe("buildCoverage — the four working lists", () => {
   });
 });
 
+describe("GOV-9 (fix pass 2) — a sheet address read off an AI transcription is marked wherever the report shows it", () => {
+  it("a relation carrying the transcribing model is where-listed as aiRead; a text-layer one is not", () => {
+    const r = buildCoverage({ ...INPUT, relations: [{ ...INPUT.relations[0], model: "vision-model-x" }, INPUT.relations[1]] });
+    expect(r.agree[0].where[0]).toMatchObject({ sheet: "2002-D-10001 SHT 4", aiRead: true });
+    expect(buildCoverage(INPUT).agree[0].where[0].aiRead).toBe(false);
+  });
+});
+
 describe("loadCoverage — read with the service role, filtered per caller", () => {
   let db: FakeDb;
   beforeEach(() => {

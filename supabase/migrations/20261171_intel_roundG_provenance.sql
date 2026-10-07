@@ -8,7 +8,9 @@
 --   1. GAP-303 — provenance on document_assets, before the Bridge writes its
 --      first row (99-fix-sequencing Phase 2: a source column retrofitted onto
 --      rows already written is a backfill that cannot recover what it did
---      not record):
+--      not record). The app holds this order itself: the Bridge writes no
+--      'drawing' row on a database without these columns, even once
+--      20261170 admits the vocabulary:
 --        asserted_by       'machine' | 'human' (NOT NULL, default 'human' —
 --                          every row before this file was typed by a person:
 --                          documents.asset_tags, or a manual link)
@@ -44,10 +46,13 @@
 --   3. BR-9 / BR-5 / BR-14 — document_equipment_suggestions.dismissed (the
 --      tags a person rejected, with who, when and on which revision — never
 --      re-applied; re-proposed only when a later revision brings the tag
---      back after it had left the sheet) and .sources (which knowledge
+--      back after it had left the sheet), .sources (which knowledge
 --      documents the proposal was computed from, their revision and whether
---      they were complete). Written by the service role and controllers only
---      (20261128's policy, unchanged).
+--      they were complete) and .applied_columns (tag → the metadata column
+--      the Bridge wrote it into, null when none was mapped — carried across
+--      every recompute, so a tag missing from one reading keeps its record
+--      and a column re-map never reads as a person's removal). Written by the
+--      service role and controllers only (20261128's policy, unchanged).
 --   4. WIRE-8 — GIN (jsonb_path_ops) on transmittals.items, which the
 --      inspector's "which transmittals carried this document" reads with
 --      @> on every open; GIN (jsonb_path_ops) on tickets.metadata; and the
@@ -56,10 +61,11 @@
 --
 -- WIDENS nothing; NARROWS nothing a person could do before (a person could
 -- not write these columns: they did not exist). The app keeps working while
--- this is unpasted: the Bridge writes its rows without the provenance columns
--- (it retries without them on a missing column and says so), dismissals are
--- held in the proposal row's `applied` list as before, and readers treat a
--- missing column as "not recorded".
+-- this is unpasted: the Bridge writes NO 'drawing' row (a relation is never
+-- written before its provenance — it says the relation needs this file and
+-- keeps its column write, exactly as before 20261170), dismissals are held
+-- in the proposal row as before, and readers treat a missing column as "not
+-- recorded".
 --
 -- Requires 20260609 (document_assets), 20260928 (document_equipment_
 -- suggestions), 20260717 (transmittals). Paste order: AFTER 20261170 (the
@@ -78,7 +84,7 @@ SELECT 'document_assets rows (each becomes asserted_by human, except drawing row
 UNION ALL
 SELECT 'document_assets rows written by the Bridge (drawing — stamped asserted_by machine)', COUNT(*) FROM document_assets WHERE source = 'drawing'
 UNION ALL
-SELECT 'document_equipment_suggestions rows (dismissed and sources start empty; the next sweep fills sources)', COUNT(*) FROM document_equipment_suggestions
+SELECT 'document_equipment_suggestions rows (dismissed, sources and applied_columns start empty; the next sweep fills them)', COUNT(*) FROM document_equipment_suggestions
 UNION ALL
 SELECT 'transmittals (GIN on items)', COUNT(*) FROM transmittals
 UNION ALL
@@ -144,6 +150,7 @@ CREATE TRIGGER trg_document_assets_stamp_assertion
 -- ── 3. BR-9 / BR-5 / BR-14: the ledger remembers ───────────────────────────
 ALTER TABLE document_equipment_suggestions ADD COLUMN IF NOT EXISTS dismissed JSONB NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE document_equipment_suggestions ADD COLUMN IF NOT EXISTS sources JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE document_equipment_suggestions ADD COLUMN IF NOT EXISTS applied_columns JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 -- ── 4. WIRE-8: the two JSONB lookups, indexed ──────────────────────────────
 CREATE INDEX IF NOT EXISTS transmittals_items_path_gin ON transmittals USING GIN (items jsonb_path_ops);
@@ -190,10 +197,10 @@ SELECT 'a person''s write is stamped human with their uid, no model, no revision
               FROM pg_proc WHERE proname = 'document_assets_stamp_assertion'),
        NULL
 UNION ALL
-SELECT 'document_equipment_suggestions.dismissed and .sources exist (BR-9 / BR-14)',
-       (SELECT COUNT(*) = 2 FROM information_schema.columns
+SELECT 'document_equipment_suggestions.dismissed, .sources and .applied_columns exist (BR-9 / BR-14 / BR-5)',
+       (SELECT COUNT(*) = 3 FROM information_schema.columns
          WHERE table_schema = 'public' AND table_name = 'document_equipment_suggestions'
-           AND column_name IN ('dismissed', 'sources') AND is_nullable = 'NO'),
+           AND column_name IN ('dismissed', 'sources', 'applied_columns') AND is_nullable = 'NO'),
        NULL
 UNION ALL
 SELECT 'WIRE-8: GIN (jsonb_path_ops) on transmittals.items and tickets.metadata; b-tree on tickets metadata->source_document->>id',

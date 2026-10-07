@@ -308,6 +308,13 @@ No confidence score is stored or shown. Nothing AI-derived drives a hold, an MOC
 
 **Scope / residual.** Handed: the drawing viewer's tag overlay (the drawing surfaces' owner) and the graph's edge styling by `asserted_by` (I-14 / I-15). A single per-asset "how we came to believe this" view is not built. Pending migration: `supabase/migrations/20261171_intel_roundG_provenance.sql`, after 20261170.
 
+**Fix pass 2 (2026-10-02, review).** Three gaps against this record:
+- **Order (99-fix-sequencing Phase 2; GAP-304 depends on this).** With 20261170 pasted and 20261171 not, `syncDrawingRelations` retried the 'drawing' insert without the provenance columns. A relation could then exist before its provenance: a backfill that cannot recover what it did not record. Now a missing provenance column means nothing is written. `notRecorded` says the relation needs 20261171 (paste 20261170, then 20261171), the column write still lands, and the first recompute after 20261171 relates every applied tag with its provenance. `provenanceDropped` is gone. Both migration headers say so. Test: `lib/__tests__/equipmentBridge.test.ts` "before 20261171 NO drawing row is written — a relation never exists before its provenance …" (fails on the fix-pass-1 library).
+- **Audited.** The `EQUIPMENT_BRIDGE_APPLIED` audit (an apply: registry assets and relations) and the `EQUIPMENT_BRIDGE_DISCOVERED` audit (the knowledge door) were still fire-and-forget. Both are checked now. A refused insert returns `auditError` (`ApplyResult.auditError`; the discover result's `auditError`), shown by the sweep modal and the coverage report. Tests: "the apply's audit row and the knowledge door's are checked: a refused insert is said to the caller"; `lib/__tests__/coverageReportRender.test.ts` "a discovery that landed but whose audit row was refused is said …"; `lib/__tests__/equipmentSweepModalRender.test.ts` "an apply or a dismissal whose audit row was refused stays on screen after the re-read".
+- **A person's assertion shown as one.** While a 'drawing' row holds a pair, the resync trigger skips the person's `jsonb_sync` row (confirmed on scratch PostgreSQL 16 by the review). The relation alone therefore said "machine, not typed by a person" for a tag a drafter had typed. The asset hub now reads the linked documents' `asset_tags`. A pair the document's own tags name is shown "tagged · also on drawing": no "Not typed by a person", and the vanished mark says the link stays because the document's tags name it. ⌘K says "(tagged, and read from the drawing)". Tests: `lib/__tests__/assetHubRelation.test.ts` "the drawing row holds the pair while the document's asset_tags name it: …" and `lib/__tests__/globalSearchTags.test.ts` "a sheet read off an AI transcription is '(AI-read, unconfirmed)'; a pair the document's asset_tags name says a person tagged it too". Both fail on the fix-pass-1 files.
+
+Acceptance 2 gains the ⌘K and coverage-report AI-read marks (GOV-9's fix pass 2). Acceptance 3: every Bridge write's and every correction's audit insert is now checked.
+
 ---
 
 <a id="gap-304"></a>
@@ -375,6 +382,12 @@ The relation is authoritative and the column is kept: see `BR-2` / `WIRE-1`. The
 **Scope / residual.** **Pending migrations:** `supabase/migrations/20261170_intel_roundG_document_assets_source.sql`, then `supabase/migrations/20261171_intel_roundG_provenance.sql` (hand-applied, in that order). The app deploys in either order: before 20261170 the Bridge says the relation was not recorded and keeps its column write; before 20261171 it writes the relation without the provenance columns and says so. A library's backlog of applied tags is related on its next sweep (BR-11's resumable sweep), not by the migration: the paste writes no customer rows.
 
 **Fix pass (2026-10-02, review).** The backfill population was `applied`, not the column: every recompute re-related applied tags a person had since taken off the mapped column (before this deploy, the only way to reject a Bridge tag). Now an applied tag no longer in the column the Bridge wrote it into is recorded as a dismissal (`via: 'column'`) and its relation removed or never created (BR-5's fix-pass block: `appliedColumn`, `planColumnRemovals`). An apply stamps the revision of the CURRENT copy (`currentReading` now uses the compute's selection — ready and at the document's current revision — through a shared `classifyCopies` / `readingOf`), never a stale ready copy listed first ("currentReading — an apply stamps the revision of the CURRENT copy, never a stale one listed first"). Every relation read and write names `org_id` (BR-1's fix pass).
+
+**Fix pass 2 (2026-10-02, review).** The residual above was wrong in one clause: "before 20261171 it writes the relation without the provenance columns and says so". That let a relation exist before its provenance, against this finding's own "Depends on: GAP-303" and 99-fix-sequencing Phase 2. Now, before 20261171, the Bridge writes NO 'drawing' row and says the relation needs that file. The column write still lands, and the first recompute after the paste relates the applied tags with their provenance (GAP-303's fix pass 2).
+- The relation's per-document reads are paged, or filtered at the database (BR-11's fix pass 2).
+- A library configuration that cannot be read now stops the apply and the compute, and nothing is written (`loadBridgeConfig` returns `{ config, tagColumns, error }`). Before, a failed read was taken as "no column, discovery on": the apply created assets a library had opted out of (`createAssets: false`) and marked tags applied that never reached the mapped column. The compute throws rather than skipping only the auto-apply and the column plan, which is stricter than the review's ask: a proposal computed without the configuration would also lose the library's default unit. The sweep counts the document failed; ingest's call is already caught. Tests: "a library whose settings cannot be read: apply writes nothing …" and "…and a compute writes nothing: no proposal without the library's default unit, no column plan, no auto-apply".
+
+**Scope / residual (corrected).** Pending migrations: `20261170`, then `20261171`, in that order. The app deploys in either order. Before 20261170, and now also before 20261171, the Bridge says the relation was not recorded and keeps its column write.
 
 ---
 
@@ -555,6 +568,8 @@ any door, and drives the same reconcile. The `source_document_id` gate moves fro
 
 **Scope / residual.** Whether a knowledge upload gets a relation row of its own (a nullable `document_id` plus a `knowledge_document_id`, or a second table) is a schema decision left open. Until then the coverage report keeps the upload's sheets as a working list.
 
+**Fix pass 2 (2026-10-02, review).** The knowledge door's `EQUIPMENT_BRIDGE_DISCOVERED` audit insert was fire-and-forget, though this record says the door is audited. It is checked now: a refused insert returns `auditError` with the discovery's result, and the coverage report shows it after its re-derive. Tests: `lib/__tests__/equipmentBridge.test.ts` "the apply's audit row and the knowledge door's are checked: a refused insert is said to the caller"; `lib/__tests__/coverageReportRender.test.ts` "a discovery that landed but whose audit row was refused is said (GAP-307 / GAP-303), not swallowed".
+
 ---
 
 <a id="gap-308"></a>
@@ -652,6 +667,11 @@ and keep feeding the census, the Bridge and asset discovery.
 - **"It is still there" is remembered.** It cleared `vanished_at`, and the next complete recompute of the same revision marked it again — an endless review. 20261171 adds `document_assets.presence_confirmed_on` (UUID): the keep stores the revision (`source_version_id` of the current copy) it was made on, the audit row carries it, and `markRevisionTruth` does not re-mark a row on that revision; a later revision may ask again. Test: "'It is still there' is remembered for the revision it was made on: …".
 - **Checked writes.** A mark (vanished / back / superseded) is counted only when its update lands (`failed` counts the rest). "It left the sheet" writes the ledger's `applied` FIRST and throws if it cannot, so nothing is removed whose tag would stay applied and be re-linked silently. Tests: "a mark whose write is refused is not counted (checked writes)", "'It left the sheet' writes the ledger first: …".
 - Residual: a document whose copies carry no revision id cannot have its "still there" remembered (nothing to scope it to); the sweep asks again on the next complete reading.
+
+**Fix pass 2 (2026-10-02, review).**
+1. The review surface read its rows unpaged. GET's relation read and `markRevisionTruth` are now keyset-paged, and the review actions filter at the database (BR-11's fix pass 2), so a max-rows cut never drops a vanished or superseded mark.
+2. `readingOf` fell back to the document's `current_version_id` when no used copy carried a revision id. A legacy copy holding an earlier revision's text therefore stamped its reading as the current revision's, and the superseded mark could never fire for it. The revision is now null (not known) in that case. Test: "a copy that carries no revision id stamps NO revision — never the document's current one" (fails on the fix-pass-1 library).
+3. The vanished line marks a sheet read off an AI transcription "(AI-read, unconfirmed)" (GOV-9).
 
 ---
 

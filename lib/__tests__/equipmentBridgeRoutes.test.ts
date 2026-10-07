@@ -209,6 +209,21 @@ describe("BR-1 — a document or library of ANOTHER workspace is refused before 
     expect(set.status).toBe(403);
     expect((st.db.tables.libraries[0].equipment_bridge as Row).autoApply).toBeUndefined();
   });
+  it("sweep goes through the same library gate (fix pass 2): another workspace's library is 404, an unreadable one 403 — no counts of its documents leave it", async () => {
+    victim();
+    const other = await POST(req({ action: "sweep", orgId: "oA", libraryId: "libB" }, "attacker"));
+    expect(other.status).toBe(404);
+    expect(JSON.stringify(await other.json())).not.toMatch(/counts|unreadable/);
+    // A Manager (not a controller) of o1 who cannot read lib1.
+    st.controller = false;
+    library(3);
+    st.unreadableLibraries = new Set(["lib1"]);
+    const res = await POST(req({ action: "sweep", orgId: "o1", libraryId: "lib1" }));
+    // Reproduction: the fix-pass-1 route skipped the gate and answered counts.unreadable = 3.
+    expect(res.status).toBe(403);
+    expect(JSON.stringify(await res.json())).not.toMatch(/counts|unreadable/);
+    expect(st.db.tables.document_equipment_suggestions.filter((r) => r.org_id === "o1")).toHaveLength(0);
+  });
   it("adopt: a person's Link refused 23505 on a drawing row makes the row theirs; their own workspace's document and asset only", async () => {
     library(1);
     st.readable = new Set(["d0000"]);
@@ -281,6 +296,25 @@ describe("BR-11 — the sweep is paged with a cursor and a budget; a 500+ docume
     const listed = await (await GET(getReq("http://x/api/equipment-bridge?orgId=o1&libraryId=lib1"))).json();
     expect(listed.suggestions).toHaveLength(400);
     expect(listed.unreadable).toBe(0);
+  });
+  it("GET's relation rows (the GAP-309 review source) are paged too: a cut response is not the whole list (fix pass 2)", async () => {
+    library(3);
+    st.readable = new Set(st.db.tables.documents.map((d) => String(d.id)));
+    for (const d of ["d0000", "d0001", "d0002"]) st.db.tables.document_equipment_suggestions.push({ org_id: "o1", document_id: d, suggested: [], applied: [], status: "applied" });
+    // 150 'drawing' rows (50 per sheet), every one marked vanished; and another workspace's row on the same id space.
+    for (let i = 0; i < 150; i++) {
+      st.db.tables.document_assets.push({
+        id: `rel-${String(i).padStart(3, "0")}`, org_id: "o1", document_id: `d000${i % 3}`, asset_id: `a-${i}`, tag_text: `P-${i + 1}`,
+        source: "drawing", sheet_label: null, pages: [1], vanished_at: "2026-10-01T00:00:00Z", superseded_at: null, source_revision: "A", model: null,
+      });
+    }
+    st.db.tables.document_assets.push({ id: "rel-x", org_id: "o2", document_id: "d0000", asset_id: "a-x", tag_text: "P-X", source: "drawing" });
+    st.db.maxRows = 100;
+    const listed = await (await GET(getReq("http://x/api/equipment-bridge?orgId=o1&libraryId=lib1"))).json();
+    // Reproduction: the fix-pass-1 route read each slice in one request and listed 100.
+    expect(listed.relations).toHaveLength(150);
+    expect(listed.relations.every((r: Row) => r.vanished_at)).toBe(true);
+    expect(listed.relations.some((r: Row) => r.tag_text === "P-X")).toBe(false);
   });
   it("documents the caller cannot read are counted, never computed", async () => {
     library(4);

@@ -78,3 +78,45 @@ describe("GAP-308 — the coverage report, scoped to a unit from the unit's page
     expect(page.slice(at, page.indexOf("/>", at))).toMatch(/initialUnitCode=\{currentUnit\.code\}/);
   });
 });
+
+describe("fix pass 2 — the AI-read mark on a relation's sheet, and a discovery whose audit row failed", () => {
+  const where = (x: Record<string, unknown>) => ({ documentId: null, knowledgeDocumentId: null, name: "x", sheet: null, pages: [], via: "relation", door: "controlled", libraryId: null, ...x });
+  const REPORT = {
+    scope: { unitCode: null, label: null },
+    totals: { assets: 2, onSheet: 2, onNoSheet: 0, sheetTagsWithoutAsset: 1, disagree: 0 },
+    agree: [
+      { assetId: "a1", tag: "E-22", unitCode: "20", where: [where({ documentId: "d1", name: "2002-D-10001", sheet: "2002-D-10001 SHT 5", aiRead: true, libraryId: "lib1" })] },
+      { assetId: "a2", tag: "V-101", unitCode: "20", where: [where({ documentId: "d1", name: "2002-D-10001", sheet: "2002-D-10001 SHT 4", aiRead: false, libraryId: "lib1" })] },
+    ],
+    listOnly: [],
+    sheetOnly: [{ tag: "P-44", units: [], unitHint: null, where: [where({ knowledgeDocumentId: "k-up", name: "upload.pdf", pages: [3], via: "extracted", door: "knowledge" })] }],
+    disagree: [], notes: [],
+  };
+  it("GOV-9: the transcribed sheet reads '(AI-read, unconfirmed)'; the text-layer one does not", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ report: REPORT }) })));
+    await act(async () => { root.render(React.createElement(CoverageReport, { orgId: "o1", units: [] })); });
+    await settle();
+    const agreeTab = [...container.querySelectorAll("button[role=tab]")].find((b) => (b.textContent ?? "").startsWith("Agree"))!;
+    await act(async () => { (agreeTab as HTMLButtonElement).click(); });
+    const text = container.textContent ?? "";
+    expect(text).toContain("2002-D-10001 SHT 5 (AI-read, unconfirmed)");
+    expect(text).toContain("2002-D-10001 SHT 4");
+    expect(text).not.toContain("2002-D-10001 SHT 4 (AI-read");
+  });
+  it("a discovery that landed but whose audit row was refused is said (GAP-307 / GAP-303), not swallowed", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: { body: string }) => {
+      const body = JSON.parse(init.body);
+      if (body.action === "discover") return { ok: true, json: async () => ({ ok: true, created: ["P-44"], existing: [], held: [], failed: [], unitless: 1, auditError: "The equipment was discovered, but the audit record could not be written: refused" }) };
+      return { ok: true, json: async () => ({ report: REPORT }) };
+    }));
+    await act(async () => { root.render(React.createElement(CoverageReport, { orgId: "o1", units: [] })); });
+    await settle();
+    const box = container.querySelector("input[type=checkbox]") as HTMLInputElement;
+    await act(async () => { box.click(); });
+    const go = [...container.querySelectorAll("button")].find((b) => (b.textContent ?? "").startsWith("Discover"))!;
+    await act(async () => { (go as HTMLButtonElement).click(); });
+    await settle();
+    expect(container.textContent).toContain("1 discovered");
+    expect(container.textContent).toContain("the audit record could not be written");
+  });
+});

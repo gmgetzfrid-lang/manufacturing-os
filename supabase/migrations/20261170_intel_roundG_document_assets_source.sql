@@ -70,7 +70,22 @@
 -- 'drawing' insert is refused by the old CHECK (23514) and it says the
 -- relation was not recorded, keeping its column write — today's behaviour;
 -- readers see no 'drawing' rows; ⌘K and the hub read sheet_label only when
--- the column exists.
+-- the column exists. Pasted WITHOUT 20261171 the Bridge still writes no
+-- 'drawing' row: a row is written only with its provenance (GAP-303 before
+-- GAP-304, 99-fix-sequencing Phase 2), so until 20261171 lands it says the
+-- relation needs that file and keeps its column write.
+--
+-- Two consequences outside this area (recorded under DACL-11 / AREA-2 and
+-- handed to projects, which owns lib/projects.ts and lib/transitionIn.ts):
+-- (1) the project_documents read rail means a link row whose document the
+-- caller cannot read is no longer returned at all, so the projects
+-- register's "N linked documents are hidden by your permissions" disclosure
+-- (listProjectDocuments' hiddenByPermissions / hiddenDocIds) reads 0 from
+-- now on — the hiding is total, the disclosure goes dark; (2) transition-in's
+-- link of matched equipment (an upsert ON CONFLICT DO NOTHING) onto a pair a
+-- 'drawing' row already holds writes nothing, silently — the controller's
+-- assertion is lost if the drawing row is later dismissed; it should go
+-- through /api/equipment-bridge action 'adopt' when the pair is a drawing row.
 --
 -- Requires 20260609 (the tables), 20260814 (is_org_controller) and 20261045
 -- (caller_holds_any_role). Paste order: after 20261128 / 20261138 (no object

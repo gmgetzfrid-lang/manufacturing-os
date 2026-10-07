@@ -706,6 +706,14 @@ A title block read off a transcribed page is never an identity:
 
 **Scope / residual.** OPEN on criterion 4's remaining consumers (I-07). The relation's stored `sheet_label` is a plain label. Its machine-and-model provenance sits beside it on the row (`asserted_by`, `model`), and every surface that shows the label shows that mark.
 
+**Fix pass 2 (2026-10-02, intelligence Round G, I-11 review).** The residual's "every surface that shows the label shows that mark" was false when written. ⌘K (`lookupTag` selected only `sheet_label` and `source`), the sweep's vanished delta, and the coverage report's relation rows showed a title-block address read off an AI transcription as fact. Each now marks it:
+- `lib/search.ts` `lookupTag` selects `model` (falling back without it) and carries `aiRead`, and `lib/globalSearch.ts` writes "<sheet> (AI-read, unconfirmed)".
+- The vanished line in `components/documents/EquipmentSweepModal.tsx` does the same.
+- `lib/bridgeCoverage.ts` reads the relation's `model`, and `components/assets/CoverageReport.tsx` marks the sheet.
+- The asset hub marks the sheet chip itself when no "AI-read" badge stands beside it (a pair a person also tagged).
+
+Tests: `lib/__tests__/globalSearchTags.test.ts`, `equipmentSweepModalRender.test.ts`, `bridgeCoverage.test.ts`, `coverageReportRender.test.ts` and `assetHubRelation.test.ts`; each new case fails on the fix-pass-1 files. The statement now holds for every surface I-11 owns that shows the relation's label: the sweep, the asset hub, ⌘K and the coverage report. The graph (`lib/orgGraph.ts`, I-15) does not show the label yet; when it does, it carries the mark with it (handed with GM-14).
+
 ---
 
 <a id="gov-10"></a>
