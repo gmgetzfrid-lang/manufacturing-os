@@ -224,7 +224,8 @@ supabase/schema.sql:1068-1069 `CREATE POLICY "documents_org_access" ON documents
 - ✓ libraries' attestation columns controller-or-owner — `20261077` §2 (PASTE pending).
 - ✓ `document_disposition_events` and `access_recertification_events` are SELECT (member) + INSERT (authority-bound) with no UPDATE or DELETE for authenticated — `20261043` / `20261077` §5 (disposition) and `20261188` (recertification; PASTE pending).
 
-**Scope / residual.** None. Paste order: `20261077` and `20261188` are independent of each other.
+**Scope / residual.** None. Paste order: `20261077` and `20261188` are independent of each other. Until `20261188` is pasted, done-when 3's recertification half holds in the file only; every member's event insert is admitted as before (DEC-30). *(Added at P9's second review fix, 2026-10-07: this record first said "(PASTE pending)" inline only, with no `Pending migration:` line.)*
+- Pending migration: `supabase/migrations/20261188_ao_roundG_access_recert_events.sql`.
 
 ---
 

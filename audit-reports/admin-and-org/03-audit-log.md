@@ -130,7 +130,7 @@ Tests: `lib/__tests__/aoRoundGP9PermissionsConsole.test.ts` "AUTHZ-7 / ALOG-1 �
 3. ✓ (P0) executed live by `20261063`'s final SELECT.
 4. ✓ (P2) the `EXPECTED_COLUMNS` probe.
 
-**Scope / residual.** None for this finding's criteria. Outside them, and recorded for the integrator on drafting-flow `AUTHZ-7` (proposed finding, not opened here): DEC-89 item 3 lets a non-authoritative UI reader show the defaults "labelled as such". The console surfaces that present the policy label it (above); the affordance surfaces listed in `loadCapabilityPolicy`'s comment draw their controls from the last good copy or, with none, the defaults, with no label of their own. Each such control's action is decided by a server route, a strict gate or the database, which refuse on an unreadable policy — so no authority is widened — but a control may be offered that the server then refuses.
+**Scope / residual.** None for this finding's criteria. Outside them, and recorded for the integrator on drafting-flow `AUTHZ-7` (proposed finding, not opened here): DEC-89 item 3 lets a non-authoritative UI reader show the defaults "labelled as such". The console surfaces that present the policy label it (above); the affordance surfaces listed in `loadCapabilityPolicy`'s comment draw their controls from the last good copy or, with none, the defaults, with no label of their own. Each such control's action is decided by a server route, a strict gate or the database, which refuse on an unreadable policy — so no authority is widened — but a control may be offered that the server then refuses. *(Corrected at P9's second review fix, 2026-10-07: that remainder is now opened as drafting-flow [`AUTHZ-15`](../drafting-flow/09-authority-surfaces.md#authz-15) (LOW), with an owning package per surface, instead of being left "proposed". Separately, the explorer and View-as now re-read when the policy editor on the same page saves, so neither shows the pre-save policy as the org's. View-as also says when its member, library, project or team-name lists could not be read. The editor says a failed projects read to every viewer, not only to an editor.)*
 
 ---
 
@@ -183,13 +183,34 @@ Tests: `lib/__tests__/accessRecert.test.ts` "ALOG-2 — a recertification cannot
 
 **Paste and deploy order.** Either order; deploying the app first is the usual one (from that deploy a refused record is said and the dates are put back). Before the paste every member's insert is admitted as today; after it a recertifier's insert is admitted and anyone else's is refused, which the app surfaces. No 42883 / PGRST202 / 42P01 path (no function, column or table is added). Independent of every other pending file.
 
+*(P9's second review fix, 2026-10-07.)* Three gaps in the code above are closed:
+
+- **A refused cadence record was left in force.** `setRecertPolicy` left the new cadence on the library with no history row, and nothing put it back. Now it first reads the stored cadence, checked (`recert_policy`, `next_recertification_date`, `recert_notified_at`). A library it cannot read is refused before any write. When the event insert is refused, it puts the previous cadence back with a count-checked update and says whether that worked: "was NOT changed … put back", or "is in force with no recertification-history record. Tell an Admin."
+- **Every failure was blamed on authority.** Both functions now name the owner / Admin / Document Control rule only when the database refused on it (`42501`, `recordRefusalWho`). A timeout told to an Admin is no longer "only an Admin can record it".
+- **The modal could save defaults over an unread cadence.** When the library row could not be read (or was not found), Save cadence and Remove cadence still used the form's defaults. They are now off, with "The library's cadence could not be read …" (`libraryReadError`, separate from the access-list issues).
+
+Tests:
+- `accessRecert.test.ts`:
+  - "the cadence's event row is checked: a refusal puts the previous cadence and dates back (count-checked) and says so";
+  - "a refusal that is NOT an authority refusal (a timeout) does not blame authority; a failed put-back says the cadence is in force unrecorded";
+  - "a library whose cadence cannot be read is refused before anything is written";
+  - "the attestation's refusal names the authority rule only on 42501".
+- `aoRoundGP9RecertModalRendered.test.ts`:
+  - "a library row that could not be read turns Save / Remove cadence off";
+  - "regression: a readable library leaves the cadence controls on".
+
 **Done-when.**
 1. ✓ A failed recertification write surfaces an error to the reviewer — the library read, the update (OWN-14), the event insert and the cadence's event insert are all checked, and the modal shows the refusal.
 2. ✓ `access_recertification_events` binds `performed_by = auth.uid()` on INSERT and admits no UPDATE or DELETE from an authenticated caller — `20261188` (PASTE pending).
 3. ✓ The set of people who can perform a recertification matches the set the scan notifies — owner (`owner_user_id`) + controllers (by the collection) in the scan, the page, the library guard and, from `20261188`, the event table.
 4. ✓ `grant_count` and `grants_snapshot` exclude rules whose `expiresAt` has passed (since `RET-3`, pinned here), and the modal labels them.
 
-**Scope / residual.** None for this finding. A holder of `can_manage_node` on a library who is neither its owner nor a controller may set the CADENCE on the library row (`20261036`'s policy arm) but cannot write its event row after `20261188`; no product surface offers them the modal, and `setRecertPolicy` says so if reached. The audit call's `userId: input.actorId ?? ""` is unchanged (the verifier dropped that leg: no caller passes a null actor).
+**Scope / residual.** None for this finding's code. Two notes:
+- A holder of `can_manage_node` on a library who is neither its owner nor a controller may set the CADENCE on the library row (`20261036`'s policy arm), but cannot write its event row after `20261188`. No product surface offers them the modal. If they reach `setRecertPolicy` anyway, it now puts the cadence back and says so.
+- The audit call's `userId: input.actorId ?? ""` is unchanged. The verifier dropped that leg: no caller passes a null actor.
+
+Done-when 2 and 3 hold at the database only once `20261188` is pasted (DEC-30). Until then, every member's event insert is admitted, as before.
+- Pending migration: `supabase/migrations/20261188_ao_roundG_access_recert_events.sql`.
 
 ---
 
@@ -724,14 +745,71 @@ The derivation also corrected rows the finding did not name: *Data export & back
 
 *(Corrected at P9's review fix, 2026-10-07. The rewrite first had one snapshot row, "Change a department's supervisor or library ownership", marked Admin only. That understated library ownership the same way the old matrix understated DocCtrl, which is what this finding is about: Document Control and a library's owner can both reassign it. The teams row was labelled "Teams & team members" with no source named. All three rows are now pinned to the SQL text they describe.)*
 
+*(Corrected at P9's second review fix, 2026-10-07.)* Two claims above were overstated:
+
+1. **Composed authority was missing from four derived rows.** `capabilityRow` asked only the row's own capability. But the workflow engine the route enforces (`lib/workflow.ts` `getActions`, called by `app/api/tickets/workflow-action/route.ts`) also admits the management override at those rows' stages:
+   - `allows('ticket.eng_review') || isManagement` at PENDING_ENG_TEAM;
+   - `allows('ticket.direct_approve') || isManagement` at PENDING_REVIEW and FINAL_DRAFT;
+   - `allows('ticket.final_approve') || isManagement` at PENDING_FINAL_APPROVAL;
+   - a co-reviewer acting on the requester's behalf.
+
+   So "Direct engineering approval" showed Admin, Manager and Supervisor "—", "Engineering scope review" and "Final engineering approval" showed them ◐ (identity only), and "Requester review" showed management and engineers as identity only. All are wrong; the old literal matrix had the final-approval row right. `PermissionsExplorer.tsx` now composes them:
+   - `COMPOSED` and `composedAllows`: management for those three rows; Direct engineering approval or management for Requester review; and, ◐, a Requester-review holder reopening a ticket with no requester (`canActAsRequester`).
+   - A cell held only through composition says so, for example "Via Management override (ticket.manage)".
+   - `ViewAsSimulator` answers through the same `composedAllows`.
+
+   With the shipped defaults, the rows now read:
+   - Direct engineering approval `y-yy-y------`;
+   - Engineering scope review and Final engineering approval `ycyycycccccc`;
+   - Requester review `ycyycycycccc`.
+2. **The snapshot's review date overclaimed.** Every snapshot row sat under "reviewed 2026-10-07", but only the rows this package changed had been checked against the code. One of them was stale: "Per-library permission (ACL) drawer" said Admin and Document Control only, beside the corrected ownership row that admits an owner and a Manage Permissions grant holder. Fixed:
+   - **ACL drawer row:** now `yycccccccccc`, matching the drawer's delegation mode (`PermissionDrawer` `delegationOnly`, DEL-1 / GAP-3). The library page offers that mode on the library to its owner, and on a folder or document to its effective owner or a Manage Permissions grant holder on the chain. It allows allow-rules only, never Admin or Manage Permissions, and each needs an expiry. The library guard (`20261077` §2) admits the same people on the library's ACL, without the drawer's bounds.
+   - **"Edit document metadata":** checked too (the reviewer named it). It is now `yycccccccccc` with ⚠:
+     - The metadata editor's fields are the controllers' (`MetadataEditor` `canEdit`). An ACL Edit Metadata grant opens nothing more there.
+     - The inline title rename is offered to every member.
+     - The database admits any member's update unless an ACL deny binds them: `documents_org_access`, plus `documents_deny_write_guard` (`20260901`). This is the OWN-2 / OWN-19 class.
+   - **Per-row stamps:** each snapshot row now says whether it was checked. The eight rows checked against the code on 2026-10-07 carry `checked` and are tagged SNAPSHOT. The other 23 are tagged **NOT RE-CHECKED** on screen (named under *Scope / residual*). The section header now reads "rows marked SNAPSHOT were checked against the code on 2026-10-07, rows marked NOT RE-CHECKED were not".
+   - **Live refresh:** the explorer and View-as panels re-read on the same page when the policy editor saves or a View-as grant or revoke lands (`announceCapabilityPolicyChanged` / `onCapabilityPolicyChanged`, `lib/capabilityPolicy.ts`). Before this, the matrix kept showing the pre-save policy under "this org's policy".
+
 Tests: `lib/__tests__/aoRoundGP9PermissionsConsole.test.ts` "ALOG-14 — the permissions explorer tells the truth" (the columns are the role model; every capability is a derived row and a stored narrowing moves it; each of the six rows is the server's answer; quality sign-off's standing holders; every registry row reads a field that exists; the snapshot is labelled, dated and duplicates nothing; the old "Derived from a code audit" claim is gone; review fix, each pinned to the newest migration that defines its rule: library ownership to the `20261077` §2 guard text, the supervisor row to `20261046`'s guard and `teams_admin_write`, the teams row to `teams_admin_write` / `team_members_admin_write` and the registry's `teams.entry`, member removal to `revoke_member`'s `'remove'` branch in `20261161` and `org_members_delete` in `20261042`); `lib/__tests__/aoRoundGP9ConsoleRendered.test.ts` "PermissionsExplorer" (rendered: three sections in order; a stored narrowing in the cells; the unreadable policy labelled); `lib/__tests__/rolePickerCensus.test.ts` (the columns cover every role once); `sweepRoundA3.test.ts`'s DEL-6 pin on the recertification row still holds.
+
+Second review fix, tests:
+- `aoRoundGP9PermissionsConsole.test.ts` "the four ticket rows the engine composes with ticket.manage show management as able".
+- **Engine parity** — "parity with the engine, per role column — the shipped defaults" and "— a narrowed policy". For every live ticket row, a synthetic ticket is built at the row's stage. `WorkflowEngine.getActions` is asked, per role, whether that role is offered the stage's action, and each column's cell must agree: ✓ when every role is offered, ◐ when some are, never ✓ when none are. Every `COMPOSED` entry must have a stage there. A mutation that drops one composition fails it.
+- "the narrowed policy moves the composed cells too".
+- "View-as answers through the same composition".
+- "exactly the rows checked against the code carry the review date".
+- "the ACL drawer row is the drawer's delegation contract (DEL-1 / GAP-3) and the library guard" (pinned to `PermissionDrawer`, the library page and `20261077` §2).
+- "document metadata: the editor is the controllers'…" (pinned to `MetadataEditor`, `saveInlineTitle`, `documents_org_access` and `documents_deny_write_guard`).
+- `aoRoundGP9ConsoleRendered.test.ts`:
+  - "a snapshot row not checked against the code says so on screen";
+  - "a policy-editor save re-reads the explorer and View-as on the same page";
+  - "View-as: a Manager approves drawings via the management override".
 
 **Done-when.**
 1. ✓ Rows that correspond to a registered capability are rendered from `CAPABILITY_DEFS` and the org's stored policy — every capability, not only the old matches.
-2. ✓ The mismatches are each corrected (1–5, display-only: derived or corrected snapshot rows) or shown to hold (6); none was a policy gap, so nobody's authority changed. The rewrite's own rows are held to the same bar: member removal (Admin only), library ownership (controllers, the owner, a Manage Permissions grant), a department's supervisor and team membership each say what the database admits, and tests pin each one to the SQL it describes. *(Corrected at P9's review fix: this first claimed every mismatch was corrected while two rows the rewrite added were wrong — library ownership shown Admin-only, and Manager ✓ for removing a member.)*
-3. ✓ The remaining hand-maintained rows are a labelled, dated documentation snapshot (section header, per-row SNAPSHOT tag, the hint that they are not derived).
+2. ✓ The mismatches are each corrected (1–5, display-only: derived or corrected snapshot rows) or shown to hold (6); none was a policy gap, so nobody's authority changed. The rewrite's own rows are held to the same bar: member removal (Admin only), library ownership (controllers, the owner, a Manage Permissions grant), a department's supervisor and team membership each say what the database admits, and tests pin each one to the SQL it describes. *(Corrected at P9's review fix: this first claimed every mismatch was corrected while two rows the rewrite added were wrong — library ownership shown Admin-only, and Manager ✓ for removing a member.)* *(Corrected again at P9's second review fix: the ✓ above was still overstated. Four derived ticket rows left out the management override the engine composes onto them, so Admin, Manager and Supervisor were shown unable, or identity-only, on approvals the route lets them make. They are now composed, and each live ticket row is pinned per role column to `WorkflowEngine.getActions` for the defaults and for a narrowed policy.)*
+3. ✓ The remaining hand-maintained rows are a labelled documentation snapshot (section header, per-row tag, the hint that they are not derived). *(Corrected at P9's second review fix: this first said "dated" for every row while only the rows this package changed had been checked. Now only the eight rows checked against the code carry the date (SNAPSHOT); the other 23 say NOT RE-CHECKED on screen.)*
 
-**Scope / residual.** None for this finding. The snapshot rows stay hand-maintained by design (the finding's own chain reaction: ACL and ownership semantics no single evaluator exposes); they carry their review date for the next reviewer.
+**Scope / residual.** The snapshot rows stay hand-maintained by design (the finding's own chain reaction: ACL and ownership semantics no single evaluator exposes).
+
+**Checked against the code on 2026-10-07 (8 rows):**
+- Edit document metadata
+- Access recertification reviews
+- Document-level activity history (/activity)
+- Add a member (invite)
+- Remove a member from the workspace
+- Change a department's supervisor
+- Reassign library ownership / owning team
+- Per-library permission (ACL) drawer
+
+**Not re-checked (23 rows).** These are carried from the earlier hand-written matrix and tagged NOT RE-CHECKED on screen:
+- **Documents:** Browse & read documents; Upload files / create folders; Download / print (stamped when uncontrolled); Edit equipment / asset tags; Manage sets & binders; Delete documents / versions; Request deletion (owner path).
+- **Publishing:** Publish / rev-up a revision; Publish over someone's checkout (reason required); Force past an active hold; Revert to a prior revision; Check out / check in documents; Place / release legal hold.
+- **Reviews:** Configure review policies & rosters; Sign a review (e-signature); Auto-publish as last review signer; Acknowledge read-&-understood; Retention, disposition & purge.
+- **Other areas:** Create a drafting request; Create / edit / refresh work packages; Request distribution confirmations; Confirm "I have this revision"; Create / manage projects & schedules.
+
+Re-checking them is a documentation task for whoever next edits the snapshot. They are not part of this finding's three criteria.
 
 ---
 

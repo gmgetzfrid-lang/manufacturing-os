@@ -36,6 +36,11 @@
 //     project, whose tokens REPLACE the row above for that project only.
 //     Saved through the policy route (audited; refused until the database
 //     reads projectId, 20261136), listed by project name, removable.
+//   * ALOG-14 (fix pass 2) — a save announces the change
+//     (announceCapabilityPolicyChanged), so the explorer and View-as panels on
+//     the same page re-read instead of showing the pre-save policy; a
+//     projects read that failed is said to every viewer, and a stored rule's
+//     project is then "could not be listed", never "not visible to you".
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { SlidersHorizontal, Loader2, RotateCcw, Check, AlertTriangle, Plus, X } from "lucide-react";
@@ -45,7 +50,7 @@ import { supabase } from "@/lib/supabase";
 import {
   CAPABILITY_DEFS, defaultCapabilityPolicy, loadCapabilityPolicyEntry, saveCapabilityPolicy,
   validateCapabilityPolicy, invalidateCapabilityPolicy, isRuleArray, ruleIsConditional, describeWhen,
-  CapabilityPolicyChangeError, POLICY_CHANGED, PROJECT_SCOPED_CAPS,
+  CapabilityPolicyChangeError, POLICY_CHANGED, PROJECT_SCOPED_CAPS, announceCapabilityPolicyChanged,
   type CapabilityId, type CapabilityEntry, type CapabilityRule, type CapabilityPolicy,
 } from "@/lib/capabilityPolicy";
 import { loadRequestTypeOptions, type RequestTypeOption } from "@/lib/requestTypes";
@@ -201,7 +206,8 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
 
   const areas = useMemo(() => [...new Set(CAPABILITY_DEFS.map((d) => d.area))], []);
   const typeLabel = (v: string) => requestTypes.find((t) => t.value === v)?.label ?? v;
-  const projectLabel = (id: string) => projects.find((p) => p.id === id)?.name ?? `project ${id.slice(0, 8)}… (not visible to you)`;
+  const projectLabel = (id: string) => projects.find((p) => p.id === id)?.name
+    ?? `project ${id.slice(0, 8)}… (${projectsErr ? "projects could not be listed" : "not visible to you"})`;
   const capLabel = (c: CapabilityId) => CAPABILITY_DEFS.find((d) => d.id === c)?.label ?? c;
 
   const toggle = (cap: CapabilityId, token: string) => {
@@ -331,6 +337,8 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
       setBaselineCaps(JSON.stringify(caps));
       setDirty(false);
       setMsg({ tone: "ok", text: "Saved — validated and audited on the server; enforced on the next action." });
+      // ALOG-14 (fix pass 2): the other panels on this page re-read.
+      announceCapabilityPolicyChanged(activeOrgId);
     };
     try {
       // This editor only owns the role grid: the policy route preserves the
@@ -367,6 +375,7 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
       }
       // Someone else changed the grid: show theirs, never overwrite it.
       apply(fresh.policy, fresh.version);
+      announceCapabilityPolicyChanged(activeOrgId);
       setMsg({ tone: "err", text: "Another admin changed the action permissions since you opened this page — the grid now shows their version and your change was NOT saved. Make your change again." });
     } finally { setSaving(false); }
   };
@@ -554,9 +563,12 @@ export default function CapabilityPolicyEditor({ canEdit }: { canEdit: boolean }
                 <button onClick={addProjectOverride} disabled={!newProject} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[var(--color-border-strong)] text-[11px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40">
                   <Plus className="w-3 h-3" /> Add project rule
                 </button>
-                {projectsErr && <span className="text-[10px] font-bold text-rose-700 dark:text-rose-300">Projects could not be listed ({projectsErr}).</span>}
               </div>
             )}
+            {/* Said to every viewer, not only an editor: a read-only viewer
+                otherwise sees each stored rule's project as "not visible to
+                you" when the list simply failed to load. */}
+            {projectsErr && <div role="alert" className="mt-1 text-[10px] font-bold text-rose-700 dark:text-rose-300">Projects could not be listed ({projectsErr}) — a rule&apos;s project below is shown by its id.</div>}
             {projectRows.length > 0 ? (
               <ul className="mt-2 space-y-1">
                 {projectRows.map(({ def, row, idx }) => (

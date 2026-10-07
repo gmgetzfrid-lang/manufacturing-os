@@ -125,8 +125,17 @@ narrowed too.
      - The criterion needs the grant op's scope and both evaluators' grant loops, plus the admin-and-org files the record names. It stays OPEN.
      - Until then a project is granted by role, through the editor's new project-scoped rules.
      - *(Review fix: this read "Proposed owner", which left the criterion with no accepted owner once P9 is done. `QUAL-14`'s Assigned line now asks for the same.)*
-  4. **For the integrator — a proposed LOW finding on drafting-flow `AUTHZ-7`**: the affordance surfaces that draw controls from the cached policy show the defaults unlabelled during a database fault (no authority widens). And intelligence `DACL-5` criterion 3's drawer half is admin-and-org P7's (`PermissionDrawer.tsx`); the simulator half landed here.
+  4. **For the integrator — drafting-flow `AUTHZ-15` (LOW), opened at P9's second review fix**: during a database fault, the affordance surfaces that draw controls from the cached policy show the defaults unlabelled (no authority widens).
+     - Confirm the owners its Assigned line proposes per surface:
+       - drafting-flow DF-P9 for the requests pages and the ticket-notification hook;
+       - document-control for transmittals, `HoldStrip`, `/admin/holds`, `InspectorPanel` and `CheckoutStatusCell`; the integrator names the remainder package.
+     - Add it to those packages' plans.
+     - Also: intelligence `DACL-5` criterion 3's drawer half is admin-and-org P7's (`PermissionDrawer.tsx`); the simulator half landed here.
+     - *(Second review fix: this item first proposed the finding without opening it, so no package held that part of DEC-90 A26 once P9 merged.)*
   5. **For the integrator, at this merge: rule on admin-and-org `ALOG-9` done-when 3** ([DEC-35](../DECISIONS.md#dec-35), "Noted 2026-10-07"). The permissions page's `ADMIN_ROLES` is still a spelled literal, held equal to `ADMIN_SURFACES` by the SURF-9 census rather than derived from it.
      - Ruling (a): the census-held literal counts as one declaration. `ALOG-9` then resolves with no code.
      - Ruling (b): the census accepts a set derived from the registry, and the page derives it. One line in `app/(protected)/admin/permissions/page.tsx` plus `lib/__tests__/roundE_D_rolesAdmin.test.ts`; name the package.
      - `ALOG-9` stays OPEN until then.
+  6. **Second review fix (2026-10-07), for the next reviewer of the permissions explorer's snapshot.**
+     - Only eight snapshot rows were checked against the code on 2026-10-07. The other 23 are tagged NOT RE-CHECKED on screen and named in `ALOG-14`'s *Scope / residual*.
+     - Re-checking them is documentation work for whichever package next edits `components/permissions/PermissionsExplorer.tsx`. Mark each row `checked: true` with a pinning test.

@@ -6,7 +6,10 @@
 // it's still appropriate. The attestation snapshots the list and resets the
 // clock. ALOG-2: a refused cadence save or attestation is shown here, a list
 // that could not be read is said (and attesting is off), and expired grants
-// are listed apart — never as current access.
+// are listed apart — never as current access. A library row that could not
+// be read turns the cadence controls off too (fix pass 2): the form's
+// defaults are not the stored cadence, and saving them would overwrite a
+// cadence the reviewer never saw.
 
 import React, { useCallback, useEffect, useState } from "react";
 import { KeyRound, X, Loader2, CheckCircle2, ShieldAlert } from "lucide-react";
@@ -40,6 +43,10 @@ export default function AccessRecertModal({ libraryId, orgId, name, uid, userNam
   // ALOG-2: a read that failed is said — an empty list would read as "nobody
   // has access", the false answer an attestation must never be signed on.
   const [loadIssue, setLoadIssue] = useState<string | null>(null);
+  // ALOG-2 (fix pass 2): the library row itself — its stored cadence — could
+  // not be read. Kept apart from the access-list issues: it gates the cadence
+  // controls, not only the attestation.
+  const [libraryReadError, setLibraryReadError] = useState<string | null>(null);
   // ALOG-2 done-when 1: a refused write is shown to the reviewer, never a
   // silent return to the form.
   const [actionError, setActionError] = useState<string | null>(null);
@@ -58,10 +65,14 @@ export default function AccessRecertModal({ libraryId, orgId, name, uid, userNam
       setNextDate((data?.next_recertification_date as string | null) ?? null);
       setGrants(eff.live);
       setExpired(eff.expired);
-      const issues = [...(error ? [`library: ${error.message}`] : []), ...(eff.complete ? [] : eff.issues)];
+      const libErr = error ? error.message : !data ? "the library was not found" : null;
+      setLibraryReadError(libErr);
+      const issues = [...(libErr ? [`library: ${libErr}`] : []), ...(eff.complete ? [] : eff.issues)];
       setLoadIssue(issues.length ? issues.join("; ") : null);
     } catch (e) {
-      setLoadIssue((e as Error)?.message || "the access list could not be read");
+      const m = (e as Error)?.message || "the access list could not be read";
+      setLoadIssue(m);
+      setLibraryReadError(m);
     } finally { setLoading(false); }
   }, [libraryId, orgId]);
   useEffect(() => { void load(); }, [load]);
@@ -119,18 +130,23 @@ export default function AccessRecertModal({ libraryId, orgId, name, uid, userNam
 
             {/* Cadence */}
             <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-2">
+              {libraryReadError && (
+                <div role="alert" className="rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-1.5 text-[11px] text-rose-800 dark:bg-rose-950/40 dark:text-rose-200">
+                  The library&apos;s cadence could not be read ({libraryReadError}). Saving or removing a cadence is off until it loads — the settings below are not the stored ones.
+                </div>
+              )}
               <label className="flex items-center gap-2 text-sm text-[var(--color-text)]">
-                <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Require periodic recertification
+                <input type="checkbox" checked={enabled} disabled={!!libraryReadError} onChange={(e) => setEnabled(e.target.checked)} /> Require periodic recertification
               </label>
               {enabled && (
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-[var(--color-text-muted)]">Every</span>
                   <input type="number" min={1} value={months} onChange={(e) => setMonths(Math.max(1, parseInt(e.target.value) || 1))} className={`${inp} w-20`} />
                   <span className="text-xs text-[var(--color-text-muted)]">months</span>
-                  <button onClick={() => void savePolicy()} disabled={busy} className="ml-auto px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-white text-xs font-bold disabled:opacity-50">Save cadence</button>
+                  <button onClick={() => void savePolicy()} disabled={busy || !!libraryReadError} className="ml-auto px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-white text-xs font-bold disabled:opacity-50">Save cadence</button>
                 </div>
               )}
-              {existing && <button onClick={() => void clearPolicy()} disabled={busy} className="text-[11px] text-red-600 hover:underline">Remove cadence</button>}
+              {existing && <button onClick={() => void clearPolicy()} disabled={busy || !!libraryReadError} className="text-[11px] text-red-600 hover:underline disabled:opacity-50">Remove cadence</button>}
             </div>
 
             {/* Access list */}

@@ -206,7 +206,12 @@ describe("getActions honours the resource — DEC-13 acceptance: ASBUILT may onl
   it("the simulator and the route evaluate with the same call shape as the engine (all four evaluators move together)", () => {
     expect(src("lib/workflow.ts")).toContain("const allows = (cap: Parameters<typeof policyAllows>[1]) => policyAllows(policy, cap, userRole, roleCollection, userId, resource);");
     expect(src("lib/workflow.ts")).toContain("const resource = ticketResource(ticket);");
-    expect(src("components/permissions/ViewAsSimulator.tsx")).toContain("ok: policyAllows(policy, d.id, who.role, who.roles, who.uid, resource),");
+    // admin-and-org P9 second review fix (ALOG-14): the simulator answers through
+    // composedAllows — the same policyAllows call shape, plus the authority the
+    // engine composes onto a row (ticket.manage), pinned to the engine itself in
+    // aoRoundGP9PermissionsConsole.test.ts.
+    expect(src("components/permissions/ViewAsSimulator.tsx")).toContain("const answer = composedAllows(policy, d.id, who.role, who.roles, who.uid, resource);");
+    expect(src("components/permissions/PermissionsExplorer.tsx")).toContain("if (policyAllows(policy, cap, role, roles ? [...roles] : null, uid, resource)) return { ok: true, via: null, conditional: null };");
     expect(src("components/permissions/ViewAsSimulator.tsx")).toContain("scoped: scopedTokensFor(policy, d.id, resource) !== null,");
     expect(src("lib/holds.ts")).toContain("if (!policyAllows(policy, cap, role, extra, uid, resource)) {");
     const r = src("app/api/tickets/workflow-action/route.ts");

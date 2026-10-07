@@ -25,9 +25,11 @@ import { useRole } from "@/components/providers/RoleContext";
 import {
   CAPABILITY_DEFS, loadCapabilityPolicyEntry, policyAllows, scopedTokensFor, addUserGrant, revokeUserGrant,
   grantsForUser, grantActive, invalidateCapabilityPolicy, PROJECT_SCOPED_CAPS, qualitySignOffEligible, isRuleArray,
+  announceCapabilityPolicyChanged, onCapabilityPolicyChanged,
   type CapabilityPolicy, type CapabilityId, type CapabilityResource, type LoadedCapabilityPolicy,
 } from "@/lib/capabilityPolicy";
 import { loadRequestTypeOptions, type RequestTypeOption } from "@/lib/requestTypes";
+import { composedAllows } from "@/components/permissions/PermissionsExplorer";
 import { canDiscover, canPublishOnLibrary, canPublishViaIndex, isControllerPrincipal, heldRoles } from "@/lib/permissions";
 import type { AccessControl, AclIndex, NodeVisibility, Role } from "@/types/schema";
 
@@ -61,11 +63,20 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
   const [simProject, setSimProject] = useState("");
   const [projectMembers, setProjectMembers] = useState<string[]>([]);
   const [projectErr, setProjectErr] = useState<string | null>(null);
+  // ORG-14 (fix pass 2): does the live database decide quality sign-off per
+  // project yet? quality_signoff_status exists only once 20261136 is pasted;
+  // before that the database admits the controllers and the project's owner
+  // only, whatever a project rule says. null = not known (not asked yet, or
+  // the probe failed for another reason — nothing is claimed either way).
+  const [signoffLive, setSignoffLive] = useState<boolean | null>(null);
   // DEC-13 stage 2: the simulator evaluates against a RESOURCE too — pick a
   // request type and the list below answers "for a ticket of this type",
   // through the same policyAllows(resource) the workflow route enforces.
   const [requestTypes, setRequestTypes] = useState<RequestTypeOption[]>([]);
   const [simType, setSimType] = useState("");
+  // ALOG-14 (fix pass 2) / ORG-10's rule: a list read that failed is SAID —
+  // an empty project picker or raw team ids must not read as "there are none".
+  const [listErrors, setListErrors] = useState<string[]>([]);
 
   useEffect(() => {
     if (!activeOrgId) return;
@@ -77,6 +88,12 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
         loadRequestTypeOptions(activeOrgId),
         supabase.from("projects").select("id, name, owner_user_id, visibility").eq("org_id", activeOrgId).order("name"),
         supabase.from("teams").select("id, name").eq("org_id", activeOrgId),
+      ]);
+      setListErrors([
+        ...(m.error ? [`members (${m.error.message})`] : []),
+        ...(l.error ? [`libraries (${l.error.message})`] : []),
+        ...(pr.error ? [`projects (${pr.error.message})`] : []),
+        ...(tm.error ? [`team names (${tm.error.message})`] : []),
       ]);
       setProjects((((pr.data ?? []) as Array<Record<string, unknown>>)).map((r) => ({
         id: String(r.id), name: String(r.name ?? r.id),
@@ -138,6 +155,22 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
     return () => { alive = false; };
   }, [simProject]);
 
+  // ORG-14 (fix pass 2): asked once, when a project is first picked.
+  useEffect(() => {
+    if (!simProject || signoffLive !== null) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const { error } = await supabase.rpc("quality_signoff_status", { p_project: simProject });
+        if (!alive) return;
+        if (!error) { setSignoffLive(true); return; }
+        const code = error.code ?? "";
+        if (code === "42883" || code === "PGRST202" || /could not find the function|function .* does not exist/i.test(error.message ?? "")) setSignoffLive(false);
+      } catch { /* not known: nothing is claimed */ }
+    })();
+    return () => { alive = false; };
+  }, [simProject, signoffLive]);
+
   const who = useMemo(() => members.find((m) => m.uid === pick) ?? null, [members, pick]);
 
   // ── Per-person delegation state ──
@@ -155,6 +188,27 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
     const e = await loadCapabilityPolicyEntry(activeOrgId);
     setPolicy(e.policy);
     setPolicyIssue(issueOf(e));
+    // ALOG-14 (fix pass 2): the explorer on this page re-reads too.
+    announceCapabilityPolicyChanged(activeOrgId);
+  }, [activeOrgId]);
+
+  // ALOG-14 (fix pass 2): a save in the policy editor on this page is
+  // announced; this list re-reads (the writer already dropped the cache).
+  useEffect(() => {
+    if (!activeOrgId) return;
+    let alive = true;
+    const off = onCapabilityPolicyChanged(activeOrgId, () => {
+      void loadCapabilityPolicyEntry(activeOrgId).then((e) => {
+        if (!alive) return;
+        setPolicy(e.policy);
+        setPolicyIssue(issueOf(e));
+      }).catch((err: unknown) => {
+        if (!alive) return;
+        setPolicy({});
+        setPolicyIssue({ kind: "unreadable", error: (err as Error)?.message || "the policy could not be read" });
+      });
+    });
+    return () => { alive = false; off(); };
   }, [activeOrgId]);
 
   const doGrant = async () => {
@@ -216,11 +270,16 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
       const resource: CapabilityResource | undefined = PROJECT_SCOPED_CAPS.has(d.id)
         ? (simProject ? { projectId: simProject } : undefined)
         : (simType ? { requestType: simType } : undefined);
+      // ALOG-14 (fix pass 2): the engine composes other capabilities onto
+      // some ticket rows (a manager approves at every review stage via
+      // ticket.manage; a co-reviewer reviews on the requester's behalf) —
+      // the same composition the explorer's cells use (COMPOSED).
+      const answer = composedAllows(policy, d.id, who.role, who.roles, who.uid, resource);
       const row = {
         def: d,
-        ok: policyAllows(policy, d.id, who.role, who.roles, who.uid, resource),
+        ok: answer.ok,
         scoped: scopedTokensFor(policy, d.id, resource) !== null,
-        why: null as string | null,
+        why: (answer.via ?? answer.conditional) as string | null,
       };
       if (d.id === "quality.sign_off") {
         // ORG-14: the database's rule (quality_signer_eligible, 20261136) —
@@ -285,6 +344,12 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
           {members.map((m) => <option key={m.uid} value={m.uid}>{m.name} — {heldOf(m).join(", ")}</option>)}
         </select>
       </div>
+      {listErrors.length > 0 && (
+        <div role="alert" className="mx-4 mt-3 rounded-xl border border-rose-500/30 bg-rose-500/[0.06] p-2.5 text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2">
+          <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <span>Some lists could not be read: {listErrors.join("; ")}. What follows is incomplete — a missing project, library or member is not evidence that there is none, and a team or project may be named by its id. Do not sign off an access review on it.</span>
+        </div>
+      )}
       {policyIssue?.kind === "unreadable" && (
         <div role="alert" className="mx-4 mt-3 rounded-xl border border-rose-500/30 bg-rose-500/[0.06] p-2.5 text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2">
           <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
@@ -318,6 +383,11 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
               </label>
             </div>
             {projectErr && <div className="mb-1 text-[10px] font-bold text-rose-700 dark:text-rose-300">The project&apos;s members could not be read ({projectErr}) — a private project&apos;s quality sign-off below may under-report.</div>}
+            {signoffLive === false && (
+              <div data-signoff-pending="" className="mb-1 text-[10px] font-bold text-amber-800 dark:text-amber-300">
+                This database does not decide quality sign-off per project yet (migration 20261136 is not applied): today it admits Admin / Document Control and the project&apos;s owner only. &ldquo;Sign off quality records&rdquo; below is the rule it will apply once 20261136 is pasted.
+              </div>
+            )}
             <ul className="space-y-0.5">
               {caps.map(({ def, ok, scoped, why }) => (
                 <li key={def.id} data-cap={def.id} data-ok={ok ? "yes" : "no"} className={`text-[11px] flex items-center gap-1.5 flex-wrap ${ok ? "text-[var(--color-text)]" : "text-[var(--color-text-faint)]"}`}>

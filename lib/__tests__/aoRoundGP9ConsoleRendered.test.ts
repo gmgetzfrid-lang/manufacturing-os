@@ -49,12 +49,18 @@ const h = vi.hoisted(() => {
     return q;
   }
   const role = { activeOrgId: "o1", uid: "a1", userEmail: "a@x", roles: ["Admin"] as string[] };
-  return { db, table, role, fetchCalls: [] as Array<Record<string, unknown>>, fetchReplies: [] as Array<{ status: number; body: Record<string, unknown> }> };
+  return {
+    db, table, role, fetchCalls: [] as Array<Record<string, unknown>>, fetchReplies: [] as Array<{ status: number; body: Record<string, unknown> }>,
+    /** the answer to every supabase.rpc call (ORG-14: the 20261136 probe) */
+    rpc: { data: null as unknown, error: null as null | { message: string; code?: string } },
+    rpcCalls: [] as string[],
+  };
 });
 
 vi.mock("@/lib/supabase", () => ({
   supabase: {
     from: (t: string) => h.table(t),
+    rpc: async (fn: string) => { h.rpcCalls.push(fn); return h.rpc; },
     auth: { getSession: async () => ({ data: { session: { access_token: "tok" } } }) },
   },
 }));
@@ -92,6 +98,7 @@ beforeEach(() => {
   h.db.tables = {}; h.db.readError = {}; h.db.reads = [];
   h.fetchCalls = []; h.fetchReplies = [];
   h.role.roles = ["Admin"];
+  h.rpc = { data: null, error: null }; h.rpcCalls = [];
   globalThis.fetch = vi.fn(async (_url: unknown, init?: { body?: string }) => {
     h.fetchCalls.push(JSON.parse(String(init?.body ?? "{}")));
     const r = h.fetchReplies.shift() ?? { status: 200, body: { ok: true, policy: {}, version: "2026-10-07T00:00:00.000Z" } };
@@ -209,6 +216,27 @@ describe("ViewAsSimulator", () => {
     act(() => root.unmount()); root = createRoot(host);
     await mount(); await pickMember("saf");
     expect(li()).toContain("granted on every project they can see");
+  });
+
+  it("ORG-14 (fix pass 2): before 20261136 is pasted, a picked project says the database admits only the controllers and the owner today", async () => {
+    seed();
+    h.rpc = { data: null, error: { message: "Could not find the function public.quality_signoff_status(p_project) in the schema cache", code: "PGRST202" } };
+    await mount(); await pickMember("saf");
+    expect(host.querySelector("[data-signoff-pending]")).toBeNull(); // not asked until a project is picked
+    await pickProject("p1");
+    expect(h.rpcCalls).toEqual(["quality_signoff_status"]);
+    expect(host.querySelector("[data-signoff-pending]")!.textContent).toContain("migration 20261136 is not applied");
+  });
+  it("ORG-14 (fix pass 2) regression: with 20261136 live (the probe answers), no such note", async () => {
+    seed();
+    h.rpc = { data: { maySign: true, otherSigners: 1 }, error: null };
+    await mount(); await pickMember("saf"); await pickProject("p1");
+    expect(host.querySelector("[data-signoff-pending]")).toBeNull();
+    // and a probe that fails for another reason claims nothing either way
+    act(() => root.unmount()); root = createRoot(host);
+    h.rpc = { data: null, error: { message: "timeout" } };
+    await mount(); await pickMember("saf"); await pickProject("p1");
+    expect(host.querySelector("[data-signoff-pending]")).toBeNull();
   });
 
   it("ALOG-1 done-when 2: an unreadable policy is SAID, and no grant is offered", async () => {
@@ -330,7 +358,7 @@ describe("PermissionsExplorer", () => {
     const sections = [...host.querySelectorAll("tr[data-section]")].map((r) => r.getAttribute("data-section"));
     expect(sections).toEqual(["policy", "surface", "snapshot"]);
     expect(text()).toContain("Action permissions — this org's policy");
-    expect(text()).toContain("Documentation snapshot — hand-maintained, reviewed 2026-10-07");
+    expect(text()).toContain("Documentation snapshot — hand-maintained; rows marked SNAPSHOT were checked against the code on 2026-10-07, rows marked NOT RE-CHECKED were not");
     expect(host.querySelectorAll("span").length).toBeGreaterThan(0);
     // the stored narrowing is what the row shows
     const row = [...host.querySelectorAll("tr")].find((r) => r.querySelector("td")?.textContent?.startsWith("Place a hold"))!;
@@ -338,10 +366,106 @@ describe("PermissionsExplorer", () => {
     expect(marks[0]).toBe("✓");
     expect(marks[11]).toBe("—"); // Viewer
   });
+  it("fix pass 2: a snapshot row not checked against the code says so on screen; a checked one does not", async () => {
+    h.db.tables.org_configurations = [policyRow({})];
+    await mount();
+    const rowOf = (cap: string) => [...host.querySelectorAll("tr")].find((r) => r.querySelector("td")?.textContent?.startsWith(cap))!;
+    expect(rowOf("Manage sets & binders").querySelector("[data-unchecked]")?.textContent).toBe("NOT RE-CHECKED");
+    expect(rowOf("Per-library permission (ACL) drawer").querySelector("[data-unchecked]")).toBeNull();
+    expect(rowOf("Per-library permission (ACL) drawer").textContent).toContain("SNAPSHOT");
+    // the composed rows (blocker): a Manager approves drawings
+    const marks = [...rowOf("Direct engineering approval").querySelectorAll("td")].slice(1).map((td) => td.textContent);
+    expect(marks[2]).toBe("✓"); // Manager
+  });
   it("ALOG-1 / DEC-89: an unreadable policy shows the shipped defaults LABELLED, never as the org's", async () => {
     h.db.readError.org_configurations = { message: "boom" };
     await mount();
     expect(host.querySelector('[role="alert"]')!.textContent).toContain("show the SHIPPED DEFAULTS, not this org's policy");
     expect(text()).toContain("(shipped defaults — the org's policy could not be read)");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// fix pass 2 — the page's panels move together, and a failed list is said
+// ═══════════════════════════════════════════════════════════════════════════
+describe("/admin/permissions panels after a save (ALOG-14 fix pass 2)", () => {
+  it("a policy-editor save re-reads the explorer and View-as on the same page — the matrix never shows the pre-save policy", async () => {
+    h.db.tables = {
+      org_configurations: [policyRow({ "checkout.force_release": ["Admin", "DocCtrl"] }, "2026-10-01T00:00:00+00:00")],
+      org_members: [{ org_id: "o1", uid: "dc", display_name: "Dee Control", role: "DocCtrl", roles: ["DocCtrl"], status: "active" }],
+      libraries: [], teams: [], team_members: [], projects: [], project_members: [],
+    };
+    // the policy route stands in for the database write
+    globalThis.fetch = vi.fn(async (_url: unknown, init?: { body?: string }) => {
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      h.fetchCalls.push(body);
+      h.db.tables.org_configurations = [policyRow(body.caps, "2026-10-07T00:00:00+00:00")];
+      return new Response(JSON.stringify({ ok: true, version: "2026-10-07T00:00:00+00:00" }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as never;
+    await act(async () => {
+      root.render(React.createElement(React.Fragment, null,
+        React.createElement("div", { id: "ed" }, React.createElement(CapabilityPolicyEditor, { canEdit: true })),
+        React.createElement("div", { id: "ex" }, React.createElement(PermissionsExplorer)),
+        React.createElement("div", { id: "va" }, React.createElement(ViewAsSimulator, { canEdit: true }))));
+    });
+    await flush();
+    const within = (id: string) => host.querySelector(`#${id}`)!;
+    const exRow = () => [...within("ex").querySelectorAll("tr")].find((r) => r.querySelector("td")?.textContent?.startsWith("Force-release a checkout"))!;
+    const exMark = (i: number) => [...exRow().querySelectorAll("td")].slice(1)[i].textContent;
+    await choose([...within("va").querySelectorAll("select")].find((x) => [...x.options].some((o) => o.value === "dc")) as HTMLSelectElement, "dc");
+    const vaOk = () => within("va").querySelector('[data-cap="checkout.force_release"]')?.getAttribute("data-ok");
+    expect(exMark(1)).toBe("✓"); // DocCtrl, before
+    expect(vaOk()).toBe("yes");
+    const edRow = [...within("ed").querySelectorAll("tr")].find((r) => r.querySelector("td")?.textContent?.startsWith("Force-release a checkout"))!;
+    await act(async () => { (edRow.querySelectorAll("td")[3].querySelector("button") as HTMLButtonElement).click(); }); // DocCtrl column
+    await act(async () => { button(/Save policy/)!.click(); });
+    await flush();
+    expect(h.fetchCalls).toHaveLength(1);
+    expect(exMark(1)).toBe("—"); // the explorer re-read the saved policy
+    expect(vaOk()).toBe("no"); // so did View-as
+  }, 30_000); // three panels mounted together: give a loaded machine room
+
+  it("View-as: a projects (or team names) read that failed is said — never an empty picker read as 'no projects'", async () => {
+    h.db.tables = {
+      org_configurations: [policyRow({})],
+      org_members: [{ org_id: "o1", uid: "eng", display_name: "Eve Eng", role: "Engineer-2", roles: ["Engineer-2"], status: "active" }],
+      libraries: [], teams: [], team_members: [], projects: [], project_members: [],
+    };
+    h.db.readError.projects = { message: "timeout" };
+    h.db.readError.teams = { message: "denied" };
+    await act(async () => { root.render(React.createElement(ViewAsSimulator, { canEdit: false })); });
+    await flush();
+    const alert = [...host.querySelectorAll('[role="alert"]')].map((n) => n.textContent).join(" ");
+    expect(alert).toContain("Some lists could not be read: projects (timeout); team names (denied)");
+  });
+
+  it("View-as: a Manager approves drawings via the management override (the composed rows), said on the line", async () => {
+    h.db.tables = {
+      org_configurations: [policyRow({})],
+      org_members: [{ org_id: "o1", uid: "mgr", display_name: "Max Manager", role: "Manager", roles: ["Manager"], status: "active" },
+                    { org_id: "o1", uid: "dr", display_name: "Dan Drafter", role: "Drafter", roles: ["Drafter"], status: "active" }],
+      libraries: [], teams: [], team_members: [], projects: [], project_members: [],
+    };
+    await act(async () => { root.render(React.createElement(ViewAsSimulator, { canEdit: false })); });
+    await flush();
+    await choose(select((x) => [...x.options].some((o) => o.value === "mgr")), "mgr");
+    const li = (cap: string) => host.querySelector(`[data-cap="${cap}"]`)!;
+    for (const cap of ["ticket.direct_approve", "ticket.final_approve", "ticket.eng_review", "ticket.requester_review"]) {
+      expect(li(cap).getAttribute("data-ok"), cap).toBe("yes");
+    }
+    expect(li("ticket.direct_approve").textContent).toContain("via Management override (ticket.manage)");
+    await choose(select((x) => [...x.options].some((o) => o.value === "mgr")), "dr");
+    expect(li("ticket.direct_approve").getAttribute("data-ok")).toBe("no");
+  });
+
+  it("the editor: a projects read that failed is said to a READ-ONLY viewer too, and a stored rule's project is 'could not be listed', not 'not visible to you'", async () => {
+    h.db.tables = { org_configurations: [policyRow({ "quality.sign_off": [{ tokens: [] }, { tokens: ["Safety"], when: { projectId: ["p1"] } }] })] };
+    h.db.readError.projects = { message: "timeout" };
+    await act(async () => { root.render(React.createElement(CapabilityPolicyEditor, { canEdit: false })); });
+    await flush();
+    expect(text()).toContain("Projects could not be listed (timeout)");
+    const rule = host.querySelector('[data-project-rule="p1"]')!;
+    expect(rule.textContent).toContain("project p1… (projects could not be listed)");
+    expect(rule.textContent).not.toContain("not visible to you");
   });
 });

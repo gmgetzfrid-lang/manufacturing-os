@@ -118,7 +118,9 @@ import { POST as policyRoute } from "@/app/api/admin/capability-policy/route";
 import { openHold, releaseHold, updateHoldExpectedRelease } from "@/lib/holds";
 import { POLICY_TOKENS, DORMANT_ROLES } from "@/lib/roleCapabilities";
 import { POLICY_TOKENS as EDITOR_TOKENS, tokensOutsideGrid, splitPolicyForEditor, joinPolicyFromEditor } from "@/components/permissions/CapabilityPolicyEditor";
-import { EXPLORER_COLUMNS, SURFACE_ROWS, SNAPSHOT_ROWS, explorerRows, capabilityRow } from "@/components/permissions/PermissionsExplorer";
+import { EXPLORER_COLUMNS, SURFACE_ROWS, SNAPSHOT_ROWS, explorerRows, capabilityRow, COMPOSED, composedAllows, STANDING } from "@/components/permissions/PermissionsExplorer";
+import { WorkflowEngine } from "@/lib/workflow";
+import type { Ticket, Role } from "@/types/schema";
 import { adminSurface } from "@/lib/adminSurfaces";
 import { MANAGEMENT_ROLES } from "@/lib/managementRoles";
 import { ALL_ROLES } from "@/types/schema";
@@ -417,6 +419,18 @@ describe("WF-10 — a revocation binds on the very next server-side decision", (
       expect(client || f === "lib/holds.ts", f).toBe(true);
     }
   });
+  it("fix pass 2: in lib/holds.ts (browser AND server — scanStaleHolds runs in the maintenance cron) each cached-loader call sits in one of the three named functions, none of them a server authority decision", () => {
+    const h = src("lib/holds.ts");
+    const fnAt = (i: number) => [...h.slice(0, i).matchAll(/^(?:export )?(?:async )?function (\w+)/gm)].pop()?.[1];
+    const sites = [...h.matchAll(new RegExp(CACHED.source, "g"))].map((m) => fnAt(m.index!));
+    expect(sites.length).toBeGreaterThan(0);
+    // assertHoldCapability: the browser client gate (fails closed);
+    // notifyHoldChange / scanStaleHolds: the notification AUDIENCE only.
+    for (const fn of sites) expect(["assertHoldCapability", "notifyHoldChange", "scanStaleHolds"], String(fn)).toContain(fn);
+    expect(new Set(sites)).toEqual(new Set(["assertHoldCapability", "notifyHoldChange", "scanStaleHolds"]));
+    // scanStaleHolds is the server caller (the maintenance cron) — audience only, no authority.
+    expect(src("app/api/cron/maintenance/route.ts")).toMatch(/scanStaleHolds/);
+  });
   it("the module says so", () => {
     expect(src("lib/capabilityPolicy.ts")).toContain("WF-10 (admin-and-org Round G, P9): no server-side AUTHORITY decision reads");
   });
@@ -582,6 +596,96 @@ describe("ALOG-14 — the permissions explorer tells the truth", () => {
     expect(newestDefining(/POLICY org_members_update ON org_members/)).toBe("20260817_org_members_escalation_and_config.sql");
     expect(rows.some((r) => /suspend or remove members/.test(r.cap))).toBe(false);
   });
+  // ── fix pass 2 (blocker): composed authority — the engine admits other
+  // capabilities' holders at a row's stage; the row must say so ──
+  it("the four ticket rows the engine composes with ticket.manage show management as able (the old literal matrix had it right)", () => {
+    expect(cells("Direct engineering approval")).toBe("y-yy-y------");
+    expect(cells("Engineering scope review")).toBe("ycyycycccccc");
+    expect(cells("Final engineering approval")).toBe("ycyycycccccc");
+    expect(cells("Requester review")).toBe("ycyycycycccc");
+    expect(row("Direct engineering approval").cells[col("Manager")].why).toBe("Via Management override (ticket.manage)");
+    expect(row("Requester review").cells[col("Engineer 1-4")].why).toMatch(/co-review on the requester's behalf, via Direct engineering approval/i);
+    // identity-only stays identity-only where no composed authority reaches
+    expect(row("Final engineering approval").cells[col("DocCtrl")]).toEqual({ v: "c", why: STANDING["ticket.final_approve"]!.anyone });
+    // reopen: a Requester-review holder reopens a ticket with no requester (◐, said)
+    expect(row("Reopen closed tickets").cells[col("Requester")].why).toMatch(/On a ticket with no requester: via Requester review/);
+  });
+  // The parity pin: for each composed row, the stage it describes is built
+  // as a synthetic ticket and the engine (lib/workflow.ts getActions — what
+  // the workflow route enforces) is asked, per role, whether that role is
+  // offered the stage's action. The cell must agree, column by column, for
+  // the shipped defaults AND for a narrowed policy.
+  const tk = (over: Partial<Ticket>): Ticket => ({
+    id: "t1", orgId: "o1", status: "PENDING_REVIEW", requesterId: "req", requesterRole: "Requester", requestType: "New Drawing", unit: "U1",
+    assignedDrafterId: "dr", assignedEngineerId: null, attachments: [], ...over,
+  } as unknown as Ticket);
+  // Every live ticket row is pinned (the rows with no composition too), so a
+  // future composition in the engine fails here until the matrix says it.
+  const STAGES: Array<{ cap: string; label: string; ticket: Ticket; action: string; conditionalOnly?: boolean }> = [
+    { cap: "ticket.manage", label: "Management override", ticket: tk({ status: "PENDING_ASSIGNMENT", assignedDrafterId: null }), action: "cancel_request" },
+    { cap: "ticket.assign", label: "Assign drafters", ticket: tk({ status: "PENDING_ASSIGNMENT", assignedDrafterId: null }), action: "assign" },
+    { cap: "ticket.self_assign", label: "Self-assign drafting work", ticket: tk({ status: "PENDING_ASSIGNMENT", assignedDrafterId: null }), action: "self_assign" },
+    { cap: "ticket.draft_work", label: "Do drafting work", ticket: tk({ status: "DRAFTING", assignedDrafterId: null }), action: "save_progress" },
+    { cap: "ticket.force_close", label: "Force close", ticket: tk({ status: "DRAFTING" }), action: "close_ticket" },
+    { cap: "ticket.reassign_engineer", label: "Reassign engineer reviewer", ticket: tk({ status: "PENDING_FINAL_APPROVAL", assignedEngineerId: "eng" }), action: "reassign_engineer" },
+    { cap: "ticket.eng_review", label: "Engineering scope review", ticket: tk({ status: "PENDING_ENG_TEAM", assignedEngineerId: null }), action: "approve_team" },
+    { cap: "ticket.direct_approve", label: "Direct engineering approval", ticket: tk({ status: "PENDING_REVIEW" }), action: "approve_draft_ifc" },
+    { cap: "ticket.direct_approve", label: "Direct engineering approval", ticket: tk({ status: "FINAL_DRAFT" }), action: "reject_final" },
+    { cap: "ticket.final_approve", label: "Final engineering approval", ticket: tk({ status: "PENDING_FINAL_APPROVAL", assignedEngineerId: null }), action: "engineer_approve_final" },
+    { cap: "ticket.requester_review", label: "Requester review", ticket: tk({ status: "PENDING_REVIEW", requesterId: undefined }), action: "request_revision" },
+    { cap: "ticket.requester_review", label: "Requester review", ticket: tk({ status: "FINAL_DRAFT", requesterId: undefined }), action: "reject_final" },
+    { cap: "ticket.reopen", label: "Reopen closed tickets", ticket: tk({ status: "CLOSED" }), action: "reopen_ticket" },
+    { cap: "ticket.reopen", label: "Reopen closed tickets", ticket: tk({ status: "CLOSED", requesterId: undefined }), action: "reopen_ticket", conditionalOnly: true },
+  ];
+  const NARROWED: CapabilityPolicy = { caps: {
+    "ticket.manage": ["Admin"],
+    "ticket.direct_approve": ["DocCtrl", "Engineer-2"],
+    "ticket.eng_review": ["Drafter"],
+    "ticket.final_approve": [],
+    "ticket.requester_review": ["Viewer", "Supervisor"],
+    "ticket.reopen": ["Auditor"],
+  } };
+  for (const [name, policy] of [["the shipped defaults", {}], ["a narrowed policy", NARROWED]] as Array<[string, CapabilityPolicy]>) {
+    it(`parity with the engine, per role column — ${name}`, () => {
+      // every composition the matrix claims is exercised against the engine here
+      for (const cap of Object.keys(COMPOSED)) expect(STAGES.some((x) => x.cap === cap), cap).toBe(true);
+      const rs = explorerRows(policy);
+      for (const st of STAGES) {
+        const r = rs.find((x) => x.cap === st.label)!;
+        EXPLORER_COLUMNS.forEach(({ label, roles }, i) => {
+          const offered = roles.filter((role) => WorkflowEngine.getActions(st.ticket, role as Role, "actor", policy, { userRoles: [role as Role] })
+            .some((a) => a.action === st.action));
+          const cell = r.cells[i];
+          const where = `${st.label} @ ${st.ticket.status}${st.ticket.requesterId ? "" : " (no requester)"} — ${label}`;
+          if (st.conditionalOnly) {
+            // the conditional stage: anyone the engine admits there is never shown as unable
+            if (offered.length > 0) expect(cell.v, where).not.toBe("-");
+            return;
+          }
+          if (offered.length === roles.length) expect(cell.v, where).toBe("y");
+          else if (offered.length > 0) expect(cell.v, where).toBe("c");
+          else expect(cell.v, where).not.toBe("y");
+        });
+      }
+    });
+  }
+  it("the narrowed policy moves the composed cells too (a partial column, a removed manager)", () => {
+    const rs = explorerRows(NARROWED);
+    const c = (label: string) => rs.find((x) => x.cap === label)!.cells.map((x) => x.v).join("");
+    // Admin via ticket.manage; DocCtrl by the row; Engineer-2 only; Manager / Supervisor no longer manage.
+    expect(c("Direct engineering approval")).toBe("yy---c------");
+    expect(rs.find((x) => x.cap === "Direct engineering approval")!.cells[col("Engineer 1-4")].why).toBe("Only Engineer-2 in this column");
+    // Requester review: Supervisor and Viewer by the row; Admin via manage; DocCtrl / Engineer-2 via co-review.
+    expect(c("Requester review")).toBe("yycycccccccy");
+  });
+  it("View-as answers through the same composition (composedAllows)", () => {
+    expect(composedAllows({}, "ticket.direct_approve", "Manager", ["Manager"])).toEqual({ ok: true, via: "via Management override (ticket.manage)", conditional: null });
+    expect(composedAllows({}, "ticket.direct_approve", "Engineer-3", ["Engineer-3"])).toEqual({ ok: true, via: null, conditional: null });
+    expect(composedAllows({}, "ticket.direct_approve", "Drafter", ["Drafter"])).toEqual({ ok: false, via: null, conditional: null });
+    expect(composedAllows({}, "ticket.reopen", "Requester", ["Requester"]).conditional).toMatch(/no requester/);
+    expect(composedAllows(NARROWED, "ticket.eng_review", "Manager", ["Manager"]).ok).toBe(false);
+    expect(src("components/permissions/ViewAsSimulator.tsx")).toContain("const answer = composedAllows(policy, d.id, who.role, who.roles, who.uid, resource);");
+  });
   it("standing holders are shown: Admin / DocCtrl always sign off quality records; anyone else is ◐ (project owner)", () => {
     const q = row("Sign off quality records");
     expect(q.cells[col("Admin")].v).toBe("y");
@@ -599,9 +703,50 @@ describe("ALOG-14 — the permissions explorer tells the truth", () => {
     const derived = new Set(rows.filter((r) => r.source !== "snapshot").map((r) => r.cap));
     for (const r of SNAPSHOT_ROWS) expect(derived.has(r.cap), r.cap).toBe(false);
     const e = src("components/permissions/PermissionsExplorer.tsx");
-    expect(e).toContain("Documentation snapshot — hand-maintained, reviewed ${SNAPSHOT_REVIEWED}");
+    expect(e).toContain("Documentation snapshot — hand-maintained; rows marked SNAPSHOT were checked against the code on ${SNAPSHOT_REVIEWED}, rows marked NOT RE-CHECKED were not");
     expect(e).toContain(">SNAPSHOT</span>");
+    expect(e).toContain(">NOT RE-CHECKED</span>");
     expect(e).not.toContain("Derived from a code audit of every enforcement point");
+  });
+  // ── fix pass 2 (major): the review date is carried only by rows checked
+  // against the code that day; the rest say they were not re-checked ──
+  const CHECKED = [
+    "Edit document metadata", "Access recertification reviews", "Document-level activity history (/activity)",
+    "Add a member (invite)", "Remove a member from the workspace", "Change a department's supervisor",
+    "Reassign library ownership / owning team", "Per-library permission (ACL) drawer",
+  ];
+  it("exactly the rows checked against the code carry the review date; every other snapshot row is marked NOT RE-CHECKED", () => {
+    expect(SNAPSHOT_ROWS.filter((r) => r.checked).map((r) => r.cap).sort()).toEqual([...CHECKED].sort());
+    for (const r of rows.filter((x) => x.source === "snapshot")) expect(!!r.unchecked, r.cap).toBe(!CHECKED.includes(r.cap));
+  });
+  it("the ACL drawer row is the drawer's delegation contract (DEL-1 / GAP-3) and the library guard — owners and Manage Permissions holders, not controllers only", () => {
+    const drawer = src("components/permissions/PermissionDrawer.tsx");
+    expect(drawer).toContain("delegationOnly?: boolean;");
+    expect(drawer).toContain('const DELEGABLE_ACTIONS: PermissionAction[] = ["discover", "read", "download", "upload", "createFolder", "editMetadata", "write", "publish"];');
+    expect(drawer).toMatch(/if \(delegationOnly\) \{[\s\S]*?if \(effect !== "allow"\)[\s\S]*?if \(illegal\.length\)[\s\S]*?if \(!exp\)/);
+    const page = src("app/(protected)/documents/[libraryId]/page.tsx");
+    expect(page).toContain("const libraryDelegationAuthority = !!uid && !!library?.ownerUserId && library.ownerUserId === uid;");
+    expect(page).toContain("delegationOnly={!isController && libraryDelegationAuthority}");
+    expect(page).toContain("delegationOnly={!isController && drawerDelegationAuthority}");
+    expect(page).toMatch(/const drawerDelegationAuthority = \(\(\) => \{[\s\S]*?if \(ownerId && ownerId === uid\) return true;[\s\S]*?canWithAclChain\(\{ principal, action: "managePermissions"/);
+    // the database: a change to libraries.acl is the 20261077 §2 guard's — controller, owner, or can_manage_node
+    expect(newestDefining(/CREATE OR REPLACE FUNCTION enforce_library_sensitive_columns\(\)/)).toBe("20261077_dc_roundF_records_rails.sql");
+    expect(src("supabase/migrations/20261077_dc_roundF_records_rails.sql"))
+      .toMatch(/OR NEW\.acl\s+IS DISTINCT FROM OLD\.acl[\s\S]*?IF NOT is_org_controller\(OLD\.org_id\)\s+AND OLD\.owner_user_id::text IS DISTINCT FROM auth\.uid\(\)::text\s+AND NOT can_manage_node\(OLD\.acl_index, OLD\.org_id\) THEN/);
+    expect(cells("Per-library permission (ACL) drawer")).toBe("yycccccccccc");
+    const why = row("Per-library permission (ACL) drawer").cells[col("Drafter")].why!;
+    expect(why).toMatch(/allow rules only, never Admin or Manage Permissions, each with an expiry/);
+    expect(why).toMatch(/Manage Permissions grant holder/);
+  });
+  it("document metadata: the editor is the controllers'; the inline title rename and the database admit anyone not denied — said, not shown as Admin / DocCtrl only", () => {
+    expect(src("components/documents/MetadataEditor.tsx")).toContain('const canEdit = heldRoles.some((r) => r === "Admin" || r === "DocCtrl");');
+    const page = src("app/(protected)/documents/[libraryId]/page.tsx");
+    expect(page).toMatch(/key: "renameTitle", label: "Rename title"/);
+    expect(page).toMatch(/const saveInlineTitle = async \(docId: string, value: string\) => \{[\s\S]*?\.from\("documents"\)\s*\.update\(\{ title,/);
+    expect(src("supabase/schema.sql")).toMatch(/CREATE POLICY "documents_org_access" ON documents FOR ALL\s+USING \(org_id IN \(SELECT my_org_ids\(\)\)\);/);
+    expect(src("supabase/migrations/20260901_db_hard_enforcement.sql")).toMatch(/CREATE POLICY documents_deny_write_guard ON documents\s+AS RESTRICTIVE FOR UPDATE[\s\S]*?acl_index_denies\(acl_index, org_id, auth\.uid\(\), 'editMetadata'\)/);
+    expect(cells("Edit document metadata")).toBe("yycccccccccc");
+    expect(row("Edit document metadata").warn).toMatch(/documents_org_access admits any member's update/);
   });
 });
 

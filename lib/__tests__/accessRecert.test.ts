@@ -148,12 +148,47 @@ describe("ALOG-2 — a recertification cannot fail silently, and the snapshot is
     expect(writes("access_recertification_events", "insert")).toEqual([]);
   });
 
-  it("the cadence's event row is checked: a refusal throws after the cadence is saved and says so", async () => {
-    st.answer = (t, ops) => (t === "libraries" && isWrite(ops, "update") ? { data: [{ id: "l1" }], error: null }
-      : t === "access_recertification_events" ? { data: null, error: { message: "denied" } } : { data: [], error: null });
-    await expect(setRecertPolicy({ libraryId: "l1", orgId: "o1", policy: { enabled: true, intervalMonths: 6 }, actorId: "mgr" }))
-      .rejects.toThrow(/The recertification cadence was saved on the library, but its record was refused \(denied\)/);
+  // fix pass 2: the cadence is read first and PUT BACK when its record is
+  // refused — a cadence in force with no history row is the unrecorded change.
+  const cadenceAnswers = (opts: { eventError?: unknown; backRows?: unknown[]; readError?: unknown }) => (t: string, ops: Op[]) => {
+    if (t === "libraries" && isWrite(ops, "update")) {
+      const patch = ops.find((o) => o.m === "update")!.args[0] as Record<string, unknown>;
+      const isPutBack = patch.recert_notified_at === PRIOR.recert_notified_at;
+      return isPutBack ? { data: opts.backRows ?? [{ id: "l1" }], error: null } : { data: [{ id: "l1" }], error: null };
+    }
+    if (t === "libraries") return opts.readError ? { data: null, error: opts.readError } : { data: PRIOR, error: null };
+    if (t === "access_recertification_events") return { data: null, error: opts.eventError ?? null };
+    return { data: [], error: null };
+  };
+  it("the cadence's event row is checked: a refusal puts the previous cadence and dates back (count-checked) and says so", async () => {
+    st.answer = cadenceAnswers({ eventError: { message: "new row violates row-level security policy", code: "42501" } });
+    await expect(setRecertPolicy({ libraryId: "l1", orgId: "o1", policy: { enabled: true, intervalMonths: 3 }, actorId: "mgr" }))
+      .rejects.toThrow(/The recertification cadence was NOT changed: its record was refused \(new row violates row-level security policy\), so the library's previous cadence and dates were put back\. Only an Admin, a Document Controller or the library's owner can record it/);
+    const ups = writes("libraries", "update").map((c) => c.ops.find((o) => o.m === "update")!.args[0] as Record<string, unknown>);
+    expect(ups).toHaveLength(2);
+    expect(ups[1]).toEqual({ recert_policy: PRIOR.recert_policy, next_recertification_date: PRIOR.next_recertification_date, recert_notified_at: PRIOR.recert_notified_at });
+    // the put-back is count-checked (.select("id"))
+    expect(writes("libraries", "update")[1].ops.some((o) => o.m === "select" && o.args[0] === "id")).toBe(true);
     expect(st.audits).toEqual([]);
+  });
+  it("a refusal that is NOT an authority refusal (a timeout) does not blame authority; a failed put-back says the cadence is in force unrecorded", async () => {
+    st.answer = cadenceAnswers({ eventError: { message: "canceling statement due to statement timeout", code: "57014" }, backRows: [] });
+    const err = await setRecertPolicy({ libraryId: "l1", orgId: "o1", policy: { enabled: true, intervalMonths: 3 }, actorId: "admin" }).catch((e: Error) => e);
+    expect((err as Error).message).toMatch(/was saved on the library, but its record was refused \(canceling statement due to statement timeout\) and the previous cadence could not be put back \(no row was updated\) — the change is in force with no recertification-history record\. Tell an Admin\.$/);
+    expect((err as Error).message).not.toMatch(/Only an Admin/);
+  });
+  it("a library whose cadence cannot be read is refused before anything is written", async () => {
+    st.answer = cadenceAnswers({ readError: { message: "timeout" } });
+    await expect(setRecertPolicy({ libraryId: "l1", orgId: "o1", policy: null, actorId: "admin" }))
+      .rejects.toThrow(/The recertification cadence was NOT saved: the library could not be read \(timeout\)\./);
+    expect(writes("libraries", "update")).toEqual([]);
+    expect(writes("access_recertification_events", "insert")).toEqual([]);
+  });
+  it("the attestation's refusal names the authority rule only on 42501 (the same wording rule)", async () => {
+    st.answer = answers({ eventError: { message: "fetch failed" } });
+    const err = await recertifyAccess({ libraryId: "l1", orgId: "o1", actorId: "admin" }).catch((e: Error) => e);
+    expect((err as Error).message).toMatch(/The library's recertification dates were put back\.$/);
+    expect((err as Error).message).not.toMatch(/Only an Admin/);
   });
 
   it("regression: a controller's or owner's attestation still records exactly as before (one library update, one event, one audit row)", async () => {
@@ -163,9 +198,10 @@ describe("ALOG-2 — a recertification cannot fail silently, and the snapshot is
     expect(writes("access_recertification_events", "insert")).toHaveLength(1);
     expect(out.nextDate).toBe(computeNextRecertDate(new Date().toISOString(), 6));
     st.calls = []; st.audits = [];
-    st.answer = (t, ops) => (t === "libraries" && isWrite(ops, "update") ? { data: [{ id: "l1" }], error: null } : { data: null, error: null });
+    st.answer = cadenceAnswers({});
     await setRecertPolicy({ libraryId: "l1", orgId: "o1", policy: { enabled: true, intervalMonths: 3 }, actorId: "admin" });
     expect(writes("access_recertification_events", "insert")).toHaveLength(1);
+    expect(writes("libraries", "update")).toHaveLength(1); // no put-back on success
     expect(st.audits.map((a) => a.action)).toEqual(["ACCESS_RECERT_POLICY_SET"]);
   });
 });

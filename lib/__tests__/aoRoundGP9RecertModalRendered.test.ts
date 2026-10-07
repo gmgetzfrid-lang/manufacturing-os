@@ -112,6 +112,31 @@ describe("ALOG-2 — AccessRecertModal never hides a refusal", () => {
     expect(text()).toContain("Departed Contractor");
   });
 
+  it("fix pass 2: a library row that could not be read turns Save / Remove cadence off — the form's defaults never overwrite a cadence nobody saw", async () => {
+    s.lib = { data: null, error: { message: "upstream timeout" } };
+    await mount();
+    expect(text()).toContain("The library's cadence could not be read (upstream timeout)");
+    expect(button(/Save cadence/).disabled).toBe(true);
+    await act(async () => { button(/Save cadence/).click(); });
+    await flush();
+    expect(s.setPolicy).not.toHaveBeenCalled();
+    expect(button(/Recertify — access reviewed/).disabled).toBe(true);
+    // not found reads the same way
+    act(() => root.unmount()); root = createRoot(host);
+    s.lib = { data: null, error: null };
+    await mount();
+    expect(text()).toContain("The library's cadence could not be read (the library was not found)");
+    expect(button(/Save cadence/).disabled).toBe(true);
+  });
+
+  it("regression: a readable library leaves the cadence controls on (an access-list issue alone does not turn them off)", async () => {
+    s.detailed.mockResolvedValue({ live: [], expired: [], complete: false, issues: ["members: timeout"], visibility: null });
+    await mount();
+    expect(text()).not.toContain("cadence could not be read");
+    expect(button(/Save cadence/).disabled).toBe(false);
+    expect(button(/Remove cadence/).disabled).toBe(false);
+  });
+
   it("an access list that could not be resolved is said, and attesting from it is off", async () => {
     s.detailed.mockResolvedValue({ live: [], expired: [], complete: false, issues: ["members: timeout"], visibility: null });
     await mount();

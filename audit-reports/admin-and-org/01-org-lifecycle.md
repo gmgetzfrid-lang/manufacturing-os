@@ -718,7 +718,17 @@ Tests: `lib/__tests__/aoRoundGP9PermissionsConsole.test.ts` "ORG-14 — qualityS
 - ✓ A member granted `quality.sign_off` on one project is shown as holding it for that project and not for another — the grant being a project-scoped rule naming a role they hold (a person-scoped project grant does not exist yet: projects-and-cost `QUAL-14` done-when 2, Partial). With no project picked, the simulator names the projects whose rule changes the answer, and never claims "every project" for a member a project rule excludes (review fix).
 - ✓ A test compares the simulator's answer against `quality_signer_eligible`'s rule for a controller, an owner, a project-scoped grantee and an ungranted member.
 
-**Scope / residual.** None for this finding. The database's rule is `20261136`'s, which is PASTE pending: until it is pasted the database does not yet decide quality sign-off per project, and the simulator shows the rule the database WILL apply.
+**Scope / residual.** None for this finding's code. The database's rule is `20261136`'s, which is PASTE pending. Until it is pasted, the database does not decide quality sign-off per project: it admits the controllers and the project's owner only. The simulator shows the rule the database WILL apply.
+
+*(P9's second review fix, 2026-10-07.)* Two changes:
+- **On screen:** View-as now says this. When a project is picked, it asks the database once (`quality_signoff_status`, which exists only from `20261136`). On a missing function (`42883` / `PGRST202`) it shows "This database does not decide quality sign-off per project yet (migration 20261136 is not applied): today it admits Admin / Document Control and the project's owner only…". A probe that fails for any other reason claims nothing.
+- **Record:** the explicit DEC-30 line below was added; this record first said "PASTE pending" only inline.
+
+Tests: `aoRoundGP9ConsoleRendered.test.ts`:
+- "ORG-14 (fix pass 2): before 20261136 is pasted, a picked project says the database admits only the controllers and the owner today";
+- the regression: with the probe answering, or failing for another reason, no note.
+
+- Pending migration: `supabase/migrations/20261136_prj_roundG_quality_signoff.sql` (owned by projects-and-cost J2b; not this package's file).
 
 ---
 

@@ -473,6 +473,25 @@ export function __resetCapabilityPolicyCache(): void { cache.clear(); }
  *  this after every write; other instances age theirs out (SERVER_CACHE_TTL_MS). */
 export function invalidateCapabilityPolicy(orgId: string): void { cache.delete(orgId); }
 
+/** ALOG-14 (admin-and-org Round G, P9 fix pass 2): the browser event a
+ *  console write announces — the policy editor's save, a View-as grant or
+ *  revoke — so the other panels on /admin/permissions (PermissionsExplorer,
+ *  ViewAsSimulator) re-read instead of showing the pre-save policy under
+ *  "this org's policy". The writer drops the cached copy first; a listener
+ *  re-reads with loadCapabilityPolicyEntry and never announces in turn. */
+export const CAPABILITY_POLICY_CHANGED_EVENT = "capability-policy-changed";
+export function announceCapabilityPolicyChanged(orgId: string): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(CAPABILITY_POLICY_CHANGED_EVENT, { detail: { orgId } }));
+}
+/** Subscribe to the announcement for one org; returns the unsubscribe. */
+export function onCapabilityPolicyChanged(orgId: string, fn: () => void): () => void {
+  if (typeof window === "undefined") return () => undefined;
+  const handler = (e: Event) => { if ((e as CustomEvent<{ orgId?: string }>).detail?.orgId === orgId) fn(); };
+  window.addEventListener(CAPABILITY_POLICY_CHANGED_EVENT, handler);
+  return () => window.removeEventListener(CAPABILITY_POLICY_CHANGED_EVENT, handler);
+}
+
 /** Parse a stored `org_configurations.data` blob into a policy. Two stored
  *  shapes: canonical {caps, grants}, and the legacy flat {capId: roles[]}
  *  from before per-person grants existed. Unknown capability ids and grants
