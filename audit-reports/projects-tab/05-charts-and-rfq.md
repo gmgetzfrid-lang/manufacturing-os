@@ -64,8 +64,8 @@ case, and let it go negative when the data does — then project across
 ## CHART-2 · Spent and Committed are drawn in near-identical colours, differentiated by nothing else
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
-- **Assigned:** the user — ratify DEC-55 rule 1; no code is owed until then — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
+- **Status:** RESOLVED
+- **Assigned:** the user — ratify DEC-55 rule 1; no code is owed until then — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`). *Ratified by the integrator under the user's delegation, 2026-10-07 (DEC-90): WCAG 2.2 SC 1.4.1 asks that colour not be the only means of telling series apart, and here shape and the legend carry it; SC 1.4.11's 3:1 applies to each mark against its background (met), not mark against mark, and a 3:1 pair would make one series out-shout the other.*
 - **Verification:** CONFIRMED (measured contrast)
 - **Blast radius:** accessibility / correctness
 - **Locations:**
@@ -113,6 +113,15 @@ the brand accent for one of two adjacent series in the same chart.
 3. ✗ Not met as worded. `DEC-55` rule 1 proposes to replace it, and **that change to an audit done-when awaits the owner's ratification**. The two validated steps are 1.03:1 (light) and 1.15:1 (dark) in luminance against each other. A categorical palette is validated inside one lightness band so that no series out-shouts another, and no pair within the palette's validated lightness band is 3:1 apart. Outside the band such a pair does exist: on white, an amber near luminance 0.28 and a navy near 0.045 clear 3:1 against each other and against the surface. One of those lines then out-shouts the other, which is exactly what the band prevents. What the criterion was protecting is met by other means. Identity no longer rests on colour: the lines and markers differ in shape and the legend names each series. The hues themselves are far apart: ΔE 34.6 for normal vision and ΔE ≥ 30 under simulated colour-vision deficiency. Each mark clears 3:1 against its own surface in both themes.
 
 **Scope / residual.** OPEN for done-when 3 only. If the owner ratifies `DEC-55` rule 1, the integrator flips the Status to RESOLVED with no code change. If the owner keeps the 3:1 criterion, the fix is a pair from outside the validated band, which needs the palette re-validated; this package does not make that change. The planned line's `--color-text-faint` stroke is 2.6:1 on white. It is unchanged: the dashed planned line is one of the README's "verified sound" items, and the dash carries its identity. The other `vizCat` consumers (dashboard widgets, Donut, SegmentBar) are unchanged in code. They now receive a defined light-theme colour for slots 3–6. **Pointer for the Costs tab's owner:** the stat strip's icon chips (`StatCard` tones: Committed `sky`, Spent `violet`) are decoration beside a text label, not series marks, and are unchanged. If the tiles are ever to carry series colour, they take slots 1 and 2 as above.
+
+**Resolution (2026-10-07, by the integrator under the user's delegation, DEC-90).** *Ratified by the integrator under the user's delegation, 2026-10-07 (DEC-90): WCAG 2.2 SC 1.4.1 asks that colour not be the only means of telling series apart, and here shape and the legend carry it; SC 1.4.11's 3:1 applies to each mark against its background (met), not mark against mark, and a 3:1 pair would make one series out-shout the other.*
+
+**Done-when.**
+1. ✓ Met as written: the two series differ by shape as well as hue.
+2. ✓ Met as written: both colours come from the validated categorical scale.
+3. **Superseded by the ratified `DEC-55` rule 1, not met.** As written: "Contrast between the marks clears 3:1 in both themes" — the two validated steps are 1.03:1 (light) and 1.15:1 (dark) against each other. This record allows the supersession: "If the owner ratifies `DEC-55` rule 1, the integrator flips the Status to RESOLVED with no code change." Each mark clears 3:1 against its own surface in both themes, and shape and the legend carry identity.
+
+No code changed. `userHeld.CHART-2` is removed.
 
 ---
 

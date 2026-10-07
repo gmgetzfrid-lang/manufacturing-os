@@ -14,18 +14,18 @@
     "audit-reports/projects-tab/10-accessibility-mobile.md"
   ],
   "totals": {
-    "findings": 143,
+    "findings": 144,
     "gaps": 10,
     "by_severity": {
       "CRITICAL": 17,
       "HIGH": 52,
       "MEDIUM": 68,
-      "LOW": 6
+      "LOW": 7
     },
     "by_status": {
-      "RESOLVED": 126,
+      "RESOLVED": 129,
       "REFUTED": 2,
-      "OPEN": 15
+      "OPEN": 13
     }
   },
   "status_vocabulary": [
@@ -831,7 +831,7 @@
       "id": "PERF-1",
       "title": "The companies registry fires over eleven hundred queries per page view, with no cache, pagination or abort",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (query counts exact; timing estimated)",
       "blast_radius": "performance / availability",
@@ -2293,7 +2293,7 @@
       "id": "CHART-2",
       "title": "Spent and Committed are drawn in near-identical colours, differentiated by nothing else",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (measured contrast)",
       "blast_radius": "accessibility / correctness",
@@ -2755,7 +2755,7 @@
       "id": "PERF-9",
       "title": "A 571 KB chunk containing a zip library ships to everyone who opens any project",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (verified against the built output)",
       "blast_radius": "performance",
@@ -3802,6 +3802,32 @@
       ],
       "refuted": false,
       "summary": null,
+      "area": "projects-tab",
+      "report": "audit-reports/projects-tab/09-performance-scale.md"
+    },
+    {
+      "id": "PERF-12",
+      "title": "The app-wide shell ships ~618 KB of JavaScript to every route",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED from PERF-9's measured bundle numbers",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/layout.tsx:1-4",
+        "app/(protected)/layout.tsx:3-27",
+        "app/error.tsx",
+        "app/loading.tsx",
+        "app/(protected)/error.tsx"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A field user on a tablet over a weak site connection opens any page — one document, the requests queue, a project — and downloads the same ~618 KB of shell JavaScript before the page's own code. On /projects/[id] the shell is 57% of the 1,092,416 bytes, and the total is well over the 700 KB a route was meant to stay under. A change that adds a provider or a host to the shell grows every route at o",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/09-performance-scale.md"
     },

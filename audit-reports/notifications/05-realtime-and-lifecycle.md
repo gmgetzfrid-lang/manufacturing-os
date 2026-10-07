@@ -207,7 +207,8 @@ const isFirstRun = useRef(true);
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
-- **Assigned:** the user (ratify `DEC-81` §3, as `OS-12`) — by the integrator, 2026-10-01 (N2 merge; fleet plan `userHeld`).
+- **Assigned:** the user (ratify `DEC-81` §3, as `OS-12`) — by the integrator, 2026-10-01 (N2 merge; fleet plan `userHeld`). *Ratified by the integrator under the user's delegation, 2026-10-07 (DEC-90), with one change: `transmittal_unstampable` badges Documents, because it reports a controlled copy released without its UNCONTROLLED marking, a document-control integrity event the issuer may need to act on (ISO 9001 §7.5.3); the other eight kinds stay bell-only, and notifications N9 makes the one-line move.*
+- **Assigned:** notifications N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT — by the integrator, 2026-10-07 (DEC-90; fleet plan `audit-reports/fleet-plans/notifications.json`, N9).
 - **Verification:** CONFIRMED
 - **Locations:** `hooks/useTicketNotifications.ts:71-103`, `hooks/useTicketNotifications.ts:100-102`, `hooks/useTicketNotifications.ts:284`, `components/navigation/Sidebar.tsx:229`, `components/navigation/Sidebar.tsx:231`, `components/navigation/Sidebar.tsx:235`, `lib/inAppNotifications.ts:10-58`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Accurate, and if anything understated: 32 of ~52 kinds land in 'other' and 3 more in the unrendered 'scratchpad', so roughly two-thirds — not half — of kinds inflate the bell while badging nothing in the rail. ack_requested, every review_*/ack_* kind, library_doc_added/revised and effective_now are all in that unbadged set.
@@ -253,6 +254,8 @@ default:
 - **Partly — awaits ratification:** a test asserts, for each kind, that `sectionForKind` returns a section the Sidebar badges (parsed from `Sidebar.tsx`) — or null, for the explicit bell-only list. The bell-only arm is the plan's (the header bell owns the remainder); the list of nine awaits the user's ratification of `DEC-81` §3, including the two kinds beyond the plan's default (`ai_cap_changed`, `transmittal_unstampable`).
 
 **Scope / residual.** Stays OPEN for done-when 4's bell-only arm until the user ratifies `DEC-81` §3 (or `ai_cap_changed` and `transmittal_unstampable` are placed on a badged row); then record RESOLVED. Nothing else remains in this finding.
+
+**Integrator note (2026-10-07, DEC-90 A12).** *Ratified by the integrator under the user's delegation, 2026-10-07 (DEC-90), with one change: `transmittal_unstampable` badges Documents, because it reports a controlled copy released without its UNCONTROLLED marking, a document-control integrity event the issuer may need to act on (ISO 9001 §7.5.3); the other eight kinds stay bell-only, and notifications N9 makes the one-line move.* Status stays OPEN. This record names its close as the ratification of `DEC-81` §3 ("The finding closes — record it RESOLVED — when the user ratifies §3, or when those two kinds are placed on a badged row"), and §3 is ratified with a change: the bell-only list is ratified for eight kinds, and `transmittal_unstampable` is to badge Documents — a move not yet made. So ratification is not the only open item: until notifications N9 makes the one-line move, one kind sits bell-only without a ratified place, and done-when 4 ("a test asserts: for each `NotificationKind`, `sectionForKind(kind)` returns a section that Sidebar badges") holds neither as written nor under the ratified list. When N9 lands it, record done-when 4 as superseded by the ratified DEC-81 §3, not met (a bell-only kind returns null, which no Sidebar row badges), and RESOLVE. Owner: notifications N9, with `OS-12`. `userHeld.RT-6` is removed.
 
 ---
 

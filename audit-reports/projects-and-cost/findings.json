@@ -18,8 +18,8 @@
       "LOW": 14
     },
     "by_status": {
-      "RESOLVED": 72,
-      "OPEN": 5
+      "RESOLVED": 73,
+      "OPEN": 4
     }
   },
   "status_vocabulary": [
@@ -780,7 +780,7 @@
       "id": "COST-5",
       "title": "Bid scoring is scaled to the worst bid in the field, so one honest exclusion can cost the full coverage weight, and the manpower dimension rewards higher self-reported hours",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

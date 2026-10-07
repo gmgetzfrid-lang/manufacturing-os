@@ -1080,7 +1080,7 @@
       ],
       "sequencingNotes": "Added by the integrator 2026-10-02 at the I-06b merge (DEC-31: ING-13's and ING-6's keyless limbs had no running owner). Never hold a keyless org's page (the fix-pass-2 design: a document no AI vision ever read completes text-only) — mark it.",
       "decisionsNeeded": [
-        "DEC-58 — accept a keyless first index / keyless regeneration ending text-only with only a marker (proposed default: yes, marked on the row and said on the library surface), or hold such pages for a key (rejected at I-06b fix pass 3: it parks every revised drawing of a keyless org)"
+        "DEC-58 — accept a keyless first index / keyless regeneration ending text-only with only a marker (proposed default: yes, marked on the row and said on the library surface), or hold such pages for a key (rejected at I-06b fix pass 3: it parks every revised drawing of a keyless org) — DECIDED 2026-10-07 by the integrator under the user's delegation (DEC-90 A18): keyless completion is text-only WITH the marker (the proposed default); build as planned"
       ]
     },
     {
@@ -1101,6 +1101,40 @@
         "I-18 and I-22 merged (both edit lib/knowledgeIngest.ts first)"
       ],
       "sequencingNotes": "Added by the integrator 2026-10-07 at the I-14 merge (DEC-31: IRLS-14's remainder had no running owner; lib/knowledgeIngest.ts is I-06b / I-20's, both merged)."
+    },
+    {
+      "name": "I-24 GRAPH LENS LABELS — the four lenses get labels apart from the node-type words (DEC-88 item 1 not ratified); the URL keys unchanged",
+      "findings": [
+        "GPV-4 (added by the integrator 2026-10-07 under the user's delegation, DEC-90 A16: done-when 1 — rename the lens labels only: all → \"Whole map\", plant → \"Process layout\", equipment-docs → \"Governing paper\", documents → \"Records & filing\"; the keys that URLs, stored settings and saved views carry do not change)"
+      ],
+      "files": [
+        "lib/graphSettings.ts (one label per GRAPH_LENSES entry)",
+        "lib/__tests__/graphSettingsUrl.test.ts (strengthened from 'no lens is named by a single node-type word' to 'no lens label contains a node-type word', the node-type list read from components/graph/GraphControls.tsx)",
+        "lib/__tests__/graphPageRender.test.ts (the label strings it pins)"
+      ],
+      "migrationsLikely": 0,
+      "dependsOn": [
+        "I-14 merged (GRAPH_LENSES and the Lenses group)"
+      ],
+      "sequencingNotes": "Added by the integrator 2026-10-07 under the user's delegation (DEC-90 A16). Can run any time: the labels are display only."
+    },
+    {
+      "name": "I-25 ASK ARITHMETIC — the ask route stops presenting the model's computed result: the formula and the cited inputs are shown (PR-9 option (b))",
+      "findings": [
+        "PR-9 (added by the integrator 2026-10-07 under the user's delegation, DEC-90 A17: done-when 2, option (b) — app/api/knowledge/ask/route.ts calcProtocol stops at the substituted expression, or the result is withheld when answerHasComputation marks one; the answer surface shows the formula and each cited input, never the model's number; a deterministic evaluator is the later path)"
+      ],
+      "files": [
+        "app/api/knowledge/ask/route.ts (calcProtocol; the answer when answerHasComputation is set)",
+        "lib/knowledgeAskGuards.ts (answerHasComputation and the withholding of a model-computed result)",
+        "app/(protected)/knowledge/[id]/page.tsx (the answer surface: the formula and the cited inputs, the result withheld, the 'Unverified arithmetic' label kept)",
+        "tests: askRouteHonesty.test.ts's PR-9 block (a worked substitution reaches the asker as formula and inputs, with no result); regression — a lookup answer is unchanged"
+      ],
+      "migrationsLikely": 0,
+      "dependsOn": [
+        "I-12 merged (it edits app/api/knowledge/ask/route.ts)",
+        "I-22 merged (it edits the ask route's DRAWING FACTS)"
+      ],
+      "sequencingNotes": "Added by the integrator 2026-10-07 under the user's delegation (DEC-90 A17). Runs after I-12 and I-22, which both edit the ask route; coordinate with I-16 if it still edits the route."
     }
   ],
   "crossAreaFileOverlaps": [
@@ -1135,8 +1169,6 @@
     "ING-4": "paste 20261122 (then a controller presses the re-index button per DEC-58)",
     "ING-7": "paste 20261122",
     "SEM-9": "paste 20261121 and send back its last row (recall@12 vs exact scan; >= 0.90 closes it, below turns it back into code work)",
-    "GAP-305": "paste 20261138, run the unit-identity decode on /admin/scope, paste 20261138 again and send back the disagreement inventory",
-    "PR-9": "decide done-when 2 (DEC-83 item 6): re-derive the model's arithmetic server-side (an evaluator for the transcribed formula and inputs), or stop presenting the model's computed number as the answer (show the formula and inputs, withhold the result); the label 'arithmetic: unverified' is done-when 1 and has landed",
-    "GPV-4": "ratify DEC-88 item 1 (the lens names as written: Everything · Plant (units & equipment) · Equipment ↔ Documents · Documents & libraries) — closes done-when 1 as superseded; if not ratified, the rename is label-only (one label per GRAPH_LENSES entry, the URL keys unchanged) and is queued as a package"
+    "GAP-305": "paste 20261138, run the unit-identity decode on /admin/scope, paste 20261138 again and send back the disagreement inventory"
   }
 }

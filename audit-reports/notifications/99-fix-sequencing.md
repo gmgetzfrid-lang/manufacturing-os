@@ -192,7 +192,8 @@ either name while the flag is false, and the reverse (`RT-10`).*
   declares its row. Other overlays declare nothing, because at rest the dock is
   under them. While raised, the upload cards still cover the right end of the
   raising modal's body above its row until the run's cards clear. The integrator
-  ratified `DEC-85` item 4 on 2026-10-02 as meeting `STACK-10` done-when 1.
+  ratified `DEC-85` item 4 on 2026-10-02 as meeting `STACK-10` done-when 1
+  (confirmed by the integrator under the user's delegation, 2026-10-07 — DEC-90).
   `STACK-14` stays OPEN (Partial) on that, and on its done-when as written, which
   the ratification does not meet. Its owner is notifications N13 LAYERS SWEEP (new, added
   by the integrator at the N7 merge, 2026-10-02 — with `TAX-14` done-when 4),
