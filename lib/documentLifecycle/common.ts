@@ -15,6 +15,7 @@ import {
   writeSupersessionLineage,
   startIssuedDocumentClocks,
   putBackRetiredIssue,
+  describePutBackStatus,
   type CreationStatus,
 } from "@/lib/revisions";
 import type { AssetTag } from "@/types/schema";
@@ -126,10 +127,17 @@ export interface PriorSupersessionFields {
  *  (20261165) — the same write, run as the caller, recorded
  *  (REV_HOLD_OVERRIDDEN) when Document Control puts a held source it retired
  *  back into the issue the split / merge stamped, which the guard no longer
- *  admits bare — and the direct write only while the function is absent. */
+ *  admits bare — and the direct write only while the function is absent.
+ *
+ *  REV-29 (P25): `priorStatus` is what the source WAS, a NULL (or blank)
+ *  status included — put back as that, never as "Issued". On a database
+ *  whose put_back_retired_issue predates 20261192 (it refuses a NULL
+ *  status) a NULL is put back as "Issued", exactly as before P25 (an older
+ *  body takes today's path); with no function at all the direct write puts
+ *  back the NULL (the guard there judges it as it judged 'Issued'). */
 export async function restoreSupersededSource(
   sourceDocId: string,
-  priorStatus: string,
+  priorStatus: string | null,
   replacementDocIds: string[],
   actor: ActorContext,
   prior: PriorSupersessionFields = {},
@@ -141,9 +149,10 @@ export async function restoreSupersededSource(
     documentId: sourceDocId, status: priorStatus, door: "lifecycle_rollback",
     reason: "A split or merge that retired this document did not complete; its rollback put the document back.",
     supersession: prior, forceHold: true,
+    ...(priorStatus === null ? { olderBodyStatus: "Issued" } : {}),
   });
   if (door.kind === "refused") {
-    throw new Error(`source ${sourceDocId} is still Superseded — restore it to ${priorStatus} (${door.reason})`);
+    throw new Error(`source ${sourceDocId} is still Superseded — restore it to ${describePutBackStatus(priorStatus)} (${door.reason})`);
   }
   if (door.kind === "absent") {
     const { data: restored, error: restoreErr } = await supabase
@@ -160,7 +169,7 @@ export async function restoreSupersededSource(
       .eq("id", sourceDocId)
       .select("id");
     if (restoreErr || ((restored as unknown[] | null) ?? []).length === 0) {
-      throw new Error(`source ${sourceDocId} is still Superseded — restore it to ${priorStatus} (${restoreErr?.message ?? "the write was refused"})`);
+      throw new Error(`source ${sourceDocId} is still Superseded — restore it to ${describePutBackStatus(priorStatus)} (${restoreErr?.message ?? "the write was refused"})`);
     }
   }
   if (replacementDocIds.length > 0) {
@@ -413,8 +422,9 @@ export async function createNewDocWithFirstVersion(input: {
  *  retirement once nothing can roll back (completeSourceRetirement). */
 export interface SupersededSource {
   sourceDocId: string;
-  /** REV-12: the status the source held, read fresh. */
-  priorStatus: string;
+  /** REV-12: the status the source held, read fresh — REV-29 (P25): a NULL
+   *  one kept as NULL (recorded so, and put back so), never "Issued". */
+  priorStatus: string | null;
   /** REV-12: the operation's instant, recorded as `auditAt`. */
   auditAt: string;
 }
@@ -465,7 +475,11 @@ export async function markSupersededAndLink(input: {
   if (curErr || !cur) throw new Error(`Couldn't read the source document's status (${curErr?.message ?? "not found"}) — nothing was retired.`);
   // A copy, taken now: what the rollback puts back is the state BEFORE the flip.
   const prior: PriorSupersessionFields & { status?: string | null } = { ...(cur as PriorSupersessionFields & { status?: string | null }) };
-  const priorStatus = String(prior.status ?? "Issued");
+  // REV-29 (P25): what the source WAS — a NULL status kept as NULL, so the
+  // rollback puts it back as that and the DOC_SPLIT / DOC_MERGED event
+  // records it, and a reversal restores it (never "Issued", which put a
+  // document that had no status in force, unreviewed).
+  const priorStatus: string | null = prior.status ?? null;
 
   // The pairs that already exist are not this attempt's to remove.
   let preExisting = new Set<string>();

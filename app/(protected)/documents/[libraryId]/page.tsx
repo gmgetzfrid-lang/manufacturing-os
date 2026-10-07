@@ -69,6 +69,7 @@ import RevUpModal from "@/components/documents/RevUpModal";
 import { loadMyMarkup, saveMyMarkup, myActiveSessionId, type DocumentMarkup } from "@/lib/markups";
 import { listVersions, changeDocumentStatus } from "@/lib/revisions";
 import { isIssueTransition, isControlledIssueStatus } from "@/lib/issueStatus";
+import { isUnguardedEntryIntoForce } from "@/lib/documentStatusOptions";
 import { publicOrigin } from "@/lib/publicOrigin";
 import SupersedeModal from "@/components/documents/SupersedeModal";
 import ArchiveConfirmModal from "@/components/documents/ArchiveConfirmModal";
@@ -2794,7 +2795,9 @@ export default function LibraryExplorerPage() {
     // write below, unchanged. `pageSawIssue` is only what the editor told the
     // person (its "issuing" note) — it picks the sentence, not the route.
     const toStatus = next.core?.status;
-    const pageSawIssue = toStatus !== undefined && isIssueTransition({ fromStatus: selectedDoc.status, toStatus, hasCurrentRevision: !!selectedDoc.currentVersionId });
+    // REV-26 (document-control P25): a move into force out of IFC is an issue the editor says it is (its entry-into-force note), recorded by changeDocumentStatus.
+    const pageSawIssue = toStatus !== undefined && (isIssueTransition({ fromStatus: selectedDoc.status, toStatus, hasCurrentRevision: !!selectedDoc.currentVersionId })
+      || isUnguardedEntryIntoForce({ fromStatus: selectedDoc.status, toStatus, hasCurrentRevision: !!selectedDoc.currentVersionId }));
     if (toStatus !== undefined && isControlledIssueStatus(toStatus)) {
       const orgId = selectedDoc.orgId || activeOrgId || library?.orgId || null;
       if (!uid || !orgId) {
@@ -3405,8 +3408,9 @@ export default function LibraryExplorerPage() {
           actorUserId={uid}
           actorEmail={userEmail || undefined}
           actorRole={activeRole ?? undefined}
-          onSuccess={() => {
-            const newStatus = selectedDoc.status === "Archived" ? "Issued" : "Archived";
+          onSuccess={(restoredStatus) => {
+            // REV-27 (P25): an un-archive passes the status it restored (Draft, In Review, the stamped IFC …), never assumed Issued.
+            const newStatus = selectedDoc.status === "Archived" ? (restoredStatus ?? "Issued") : "Archived";
             setSelectedDoc((prev) => prev ? { ...prev, status: newStatus as DocumentRecord["status"] } : prev);
             setVersionHistoryRefreshKey((k) => k + 1);
           }}

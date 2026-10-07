@@ -23,6 +23,21 @@
 // Merge wizards' HeldSourceNotice) before the restore passes forceHold.
 // Without it no force is sent: over a hold the guard refuses the restore in
 // the new-door sentence, and the dialog offers the Draft restore.
+//
+// REV-27 (document-control P25): an archive whose stamp names the current
+// revision with a status no gate reads as in force (an IFC drawing archived
+// as IFC; a library's own status; no status) is read as what it was
+// (unarchiveRestoreDefault's `not-in-force` basis). Its restore into Issued
+// is NOT the put-back of an issue — since 20261185 the guard judges it as a
+// first entry into force (the require limb; over an active hold refused for
+// everyone, whatever override is sent) — so the dialog never pre-selects
+// Issued for it, never calls that restore a put-back, and never asks for a
+// hold-override confirmation for it. It offers the restore to the stamped
+// status itself (unarchiveStampedRestoreStatus — the put-back the guard
+// still spares; decided with DEC-77: a put-back of what it was, not a new
+// choice) and pre-selects it; when what it was cannot be restored (a NULL
+// or blank status) it pre-selects Draft. Document Control's recorded
+// override is offered for that put-back only.
 
 import React, { useEffect, useState } from "react";
 import { X, Archive, AlertTriangle, Loader2, ArchiveRestore, Check } from "lucide-react";
@@ -37,7 +52,16 @@ import { readActiveHolds, holdReasonLabel } from "@/lib/holdGate";
 import HeldSourceNotice from "@/components/documents/lifecycle/HeldSourceNotice";
 import type { DocumentRecord } from "@/types/schema";
 
-type RestoreStatus = (typeof UNARCHIVE_RESTORE_STATUSES)[number];
+/** One of UNARCHIVE_RESTORE_STATUSES, or (REV-27) the archive's own stamped
+ *  status no gate reads as in force — the put-back of what it was. */
+type RestoreStatus = string;
+
+/** REV-27 (P25): how the dialog names a stamped status no gate reads as in
+ *  force — what the document was when it was archived. */
+function describeStamp(stamp: string | null | undefined): string {
+  if (stamp === null || stamp === undefined) return "in no status";
+  return stamp.trim() ? `"${stamp}"` : "in an empty status";
+}
 
 /** REV-19 (P14 final review): what of a landed un-archive's issue did not
  *  complete — unarchiveDocument's StatusIssueOutcome (the review clock /
@@ -62,16 +86,21 @@ function restoreFollowUps(outcome: StatusIssueOutcome | null | undefined): Resto
  *  collection, not the headline). */
 async function afterIssueRefusal(
   message: string, actor: { orgId: string; actorUserId: string; actorRole?: string },
+  /** REV-27 (P25): the archive's own stamped status, restorable as what it was. */
+  stamped?: string | null,
 ): Promise<string> {
   if (message.includes(ISSUE_REFUSAL.unreviewed)) {
-    return "You can restore it as a Draft instead (choose Draft above), then submit its revision for review.";
+    return stamped
+      ? `You can restore it as "${stamped}" instead — what it was when it was archived (choose it above) — or as a Draft, then submit its revision for review.`
+      : "You can restore it as a Draft instead (choose Draft above), then submit its revision for review.";
   }
   const holdFirst = "Restoring it as a Draft is refused the same way: the hold must be released first (or ask Document Control).";
   if (message.includes(ISSUE_REFUSAL.newDoorHold)) {
     const principal = await resolveActorPrincipal({ uid: actor.actorUserId, orgId: actor.orgId, headlineRole: actor.actorRole });
-    return isControllerPrincipal(principal)
-      ? "You can restore it as a Draft instead (choose Draft above) — the hold refuses only the issue — and issue it once the hold is released."
-      : holdFirst;
+    if (!isControllerPrincipal(principal)) return holdFirst;
+    return stamped
+      ? `You can restore it as "${stamped}" instead — what it was when it was archived; over the hold that is your recorded override, which the dialog asks you to confirm when you choose it above — or as a Draft (choose it above) — the hold refuses only the issue — and issue it once the hold is released.`
+      : "You can restore it as a Draft instead (choose Draft above) — the hold refuses only the issue — and issue it once the hold is released.";
   }
   if (message.includes(ISSUE_REFUSAL.publishHold)) return holdFirst;
   return "Restoring it as a Draft needs the same authority — ask Document Control to restore it.";
@@ -133,7 +162,11 @@ export default function ArchiveConfirmModal({
   // WAS (unarchiveRestoreDefault reads the guard's retirement stamp; when it
   // records nothing, Issued — the default before 20261144).
   const [restoreStatus, setRestoreStatus] = useState<RestoreStatus>("Issued");
-  const [basis, setBasis] = useState<"loading" | "issued" | "not-issued" | "unknown">("loading");
+  const [basis, setBasis] = useState<"loading" | "issued" | "not-in-force" | "not-issued" | "unknown">("loading");
+  // REV-27 (P25): what a `not-in-force` archive was (its stamp's status), and
+  // whether that can be restored as such (unarchiveStampedRestoreStatus).
+  const [stampedStatus, setStampedStatus] = useState<string | null>(null);
+  const [stampedOption, setStampedOption] = useState<string | null>(null);
   const [followUps, setFollowUps] = useState<RestoreFollowUps | null>(null);
   // REV-23 (P19 review fix): the holds a controller's restore of the archived
   // issue would pass, and their confirmation.
@@ -146,10 +179,16 @@ export default function ArchiveConfirmModal({
     setBasis("loading");
     setHeldRestore({ kind: "none" });
     setHoldAck(false);
+    setStampedStatus(null);
+    setStampedOption(null);
     (async () => {
-      const d = doc.id
-        ? await unarchiveRestoreDefault(doc.id).catch(() => ({ status: "Issued" as RestoreStatus, basis: "unknown" as const }))
-        : { status: "Issued" as RestoreStatus, basis: "unknown" as const };
+      type Default = Awaited<ReturnType<typeof unarchiveRestoreDefault>>;
+      const d: Default = doc.id
+        ? await unarchiveRestoreDefault(doc.id).catch((): Default => ({ status: "Issued", basis: "unknown" }))
+        : { status: "Issued", basis: "unknown" };
+      // REV-27 (P25): the stamped status of a `not-in-force` archive, offered
+      // as the put-back of what it was when it can be restored as such.
+      const own = d.basis === "not-in-force" ? (d.stampedRestore ?? null) : null;
       // REV-23 (P19 review fix): only the restore that puts the archived issue
       // back (the stamp names the current revision — basis "issued") can pass
       // a hold, as Document Control's recorded override; any other restore to
@@ -170,10 +209,18 @@ export default function ArchiveConfirmModal({
       // hold is refused for Document Control too since 20261182 (REV-25,
       // P21), unless a recorded force sets the flag (publish_revision's, the
       // review promote's).
-      const held: HeldRestore = d.basis === "issued" && doc.id
+      // REV-27 (P25): for a `not-in-force` archive the put-back the guard
+      // spares is the restore to its own stamped status (`own`), so the holds
+      // are read for that one; its restore into Issued is never offered an
+      // override (20261185 refuses it over a hold for everyone).
+      const held: HeldRestore = (d.basis === "issued" || own !== null) && doc.id
         ? await heldRestoreFor(doc.id, { orgId, actorUserId, actorRole })
         : { kind: "none" };
-      if (alive) { setRestoreStatus(d.status); setBasis(d.basis); setHeldRestore(held); }
+      if (alive) {
+        setRestoreStatus(d.status); setBasis(d.basis); setHeldRestore(held);
+        setStampedStatus(d.basis === "not-in-force" ? (d.stampedStatus ?? null) : null);
+        setStampedOption(own);
+      }
     })();
     return () => { alive = false; };
   }, [isOpen, mode, doc.id, orgId, actorUserId, actorRole]);
@@ -181,9 +228,16 @@ export default function ArchiveConfirmModal({
   if (!isOpen) return null;
 
   const isArchive = mode === "archive";
+  // REV-27 (P25): the restore that puts back what the archive took away —
+  // into Issued for an in-force stamp (basis "issued"), or the stamped status
+  // itself for a stamp no gate reads as in force. Only that restore can pass
+  // a hold, as Document Control's recorded override.
+  const isPutBackTarget = basis === "issued"
+    ? isControlledIssueStatus(restoreStatus)
+    : basis === "not-in-force" && stampedOption !== null && restoreStatus === stampedOption;
   // REV-23 (P19 review fix): restoring the held archived issue as Issued is
   // Document Control's override of the hold — confirmed here, or not sent.
-  const needsHoldAck = !isArchive && heldRestore.kind === "held" && isControlledIssueStatus(restoreStatus);
+  const needsHoldAck = !isArchive && heldRestore.kind === "held" && isPutBackTarget;
   const forceHold = needsHoldAck && holdAck ? true : undefined;
 
   const submit = async () => {
@@ -208,7 +262,7 @@ export default function ArchiveConfirmModal({
       // REV-18: a refused restore to Issued is the issue rule — the dialog
       // says what is still open (the Draft restore only where it would land).
       setError(!isArchive && restoreStatus === "Issued" && isIssueRefusal(message)
-        ? `${message} ${await afterIssueRefusal(message, { orgId, actorUserId, actorRole })}`
+        ? `${message} ${await afterIssueRefusal(message, { orgId, actorUserId, actorRole }, basis === "not-in-force" ? stampedOption : null)}`
         : message);
     } finally {
       setBusy(false);
@@ -291,11 +345,18 @@ export default function ArchiveConfirmModal({
                     className="mt-1 w-full px-2.5 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)]"
                   >
                     {UNARCHIVE_RESTORE_STATUSES.map((st) => <option key={st} value={st}>{st}</option>)}
+                    {/* REV-27 (P25): the put-back of what it was — never a new choice (DEC-77 §1). */}
+                    {basis === "not-in-force" && stampedOption !== null && (
+                      <option value={stampedOption}>{stampedOption} (what it was when archived)</option>
+                    )}
                   </select>
                 </label>
                 <p className="text-xs text-[var(--color-text-muted)]">
                   {basis === "loading" && "Checking what it was before it was archived…"}
                   {basis === "issued" && "It was issued when it was archived — restoring it as Issued puts that issue back."}
+                  {basis === "not-in-force" && (stampedOption !== null
+                    ? `It was ${describeStamp(stampedStatus)} when it was archived — not a status any gate reads as in force (the field pack does not print it and the verify page does not recognise it). Restoring it as "${stampedOption}" puts back what it was; that is the default.`
+                    : `It was ${describeStamp(stampedStatus)} when it was archived — not a status any gate reads as in force. The archive can't put that back, so it comes back as a Draft unless you choose otherwise.`)}
                   {basis === "not-issued" && "It was not issued when it was archived (a Draft or In Review), so it comes back as a Draft unless you choose otherwise."}
                   {basis === "unknown" && "What it was before it was archived isn't recorded, so it comes back as Issued, as un-archiving always has, unless you choose otherwise. The database decides that restore: if it is refused, nothing changes and you can restore it as a Draft."}
                 </p>
@@ -303,15 +364,27 @@ export default function ArchiveConfirmModal({
                   <HeldSourceNotice
                     decision={{
                       kind: "acknowledge",
-                      text: `Restore it as ${restoreStatus} over the active ${heldRestore.reasons.length === 1 ? "hold" : "holds"} (${heldRestore.reasons.join(", ")}): it comes back into force while ${heldRestore.reasons.length === 1 ? "the hold stands" : "they stand"}. Restoring it as a Draft needs no override.`,
+                      // REV-27 (P25): the put-back of a status no gate reads as in force brings back what it was — not into force.
+                      text: basis === "not-in-force"
+                        ? `Restore it as ${restoreStatus} over the active ${heldRestore.reasons.length === 1 ? "hold" : "holds"} (${heldRestore.reasons.join(", ")}): it comes back as what it was when it was archived (not in force) while ${heldRestore.reasons.length === 1 ? "the hold stands" : "they stand"}. Restoring it as a Draft needs no override.`
+                        : `Restore it as ${restoreStatus} over the active ${heldRestore.reasons.length === 1 ? "hold" : "holds"} (${heldRestore.reasons.join(", ")}): it comes back into force while ${heldRestore.reasons.length === 1 ? "the hold stands" : "they stand"}. Restoring it as a Draft needs no override.`,
                     }}
                     readError={null}
                     ack={holdAck}
                     setAck={setHoldAck}
                   />
                 )}
-                {heldRestore.kind === "unreadable" && isControlledIssueStatus(restoreStatus) && (
+                {heldRestore.kind === "unreadable" && isPutBackTarget && (
                   <HeldSourceNotice decision={{ kind: "clear" }} readError={heldRestore.error} ack={false} setAck={() => {}} />
+                )}
+                {restoreStatus === "Issued" && basis === "not-in-force" && (
+                  // REV-27 (P25): a first entry into force, never called a put-back, never offered an override.
+                  <p data-testid="unarchive-entry-into-force-note" className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2">
+                    Restoring as <b>Issued</b> puts its current revision in force for the first time — an issue, not the
+                    put-back of one: nothing in force was taken away when it was archived. Since database update 20261185
+                    the database judges it as an issue: in a library that requires reviewer sign-off an unreviewed revision
+                    needs Document Control, and an active hold refuses it for everyone, Document Control included.
+                  </p>
                 )}
                 {restoreStatus === "Issued" && basis === "not-issued" && (
                   <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2">

@@ -360,7 +360,7 @@ describe("REV-19 (P17) — REGRESSION: every bulk edit that issues nothing is wr
     expect(issuedRecords()).toEqual([]);
   });
 
-  it("P15 / DEC-77 unchanged: an IFC row set to Issued is hold-checked by the modal and written as before — a held one is refused and never written, and neither is recorded as a REV-18 issue", async () => {
+  it("P15 / DEC-77 unchanged: an IFC row set to Issued is hold-checked by the modal and written as before — a held one is refused and never written; REV-26 (P25, the pin moved with DEC-77's REV-26 decision): the written one is recorded as a first entry into force (the roster opened, the review clock left as it was), the refused one is not", async () => {
     const free = seedDoc("f1", { status: "IFC" });
     const held = seedDoc("f2", { status: "IFC" });
     T("document_holds").push({ id: "hh", org_id: ORG, document_id: "f2", reason: "Other", notes: "Vendor query", released_at: null, opened_at: "2026-09-01" });
@@ -371,6 +371,11 @@ describe("REV-19 (P17) — REGRESSION: every bulk edit that issues nothing is wr
     const items = Array.from(host.querySelectorAll('[data-testid="bulk-refused-rows"] li')).map((li) => li.textContent ?? "");
     expect(items).toHaveLength(1);
     expect(items[0]).toMatch(/^F2 — Document has an active hold/);
-    expect(issuedRecords()).toEqual([]);
+    expect(issuedRecords()).toHaveLength(1);
+    expect(issuedRecords()[0]).toMatchObject({ resource_id: "f1" });
+    expect(issuedRecords()[0].details).toMatchObject({
+      door: "bulk", fromStatus: "IFC", toStatus: "Issued", putBack: false, entryIntoForce: true,
+      complianceClocksStarted: false, reviewClockReset: false, acknowledgmentRosterOpened: true,
+    });
   });
 });
