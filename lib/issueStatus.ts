@@ -12,6 +12,11 @@
 // the same trim (exactly the characters String.prototype.trim removes) and
 // the same five statuses — and its v_issuing is isIssueTransition. Both are
 // pinned to this file by test (lib/__tests__/dcRoundFStatusTransition.test.ts).
+// Since 20261185 (REV-21, DEC-77 §4) v_issuing has a second limb — a
+// status-only move into Issued / Locked out of an issue status no gate reads
+// as in force (an existing IFC row), which is
+// lib/documentStatusOptions.ts isUnguardedEntryIntoForce; see
+// isIssueTransition below (pinned in dcRoundFStatusIntoForce.test.ts).
 
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 
@@ -57,7 +62,23 @@ export const RETIRED_NOT_ISSUED_STAMP = "not-issued";
  *  predicate, pinned by test). Such a write takes the publisher tier, is
  *  refused over an active hold, and under a policy that requires sign-off is
  *  a controller's unless the revision carries a complete roster. A document
- *  with no current revision has nothing to issue (a register row). */
+ *  with no current revision has nothing to issue (a register row).
+ *
+ *  REV-21 (document-control P16, 20261185): the database's v_issuing also
+ *  holds for a status-only move INTO Issued / Locked out of an issue status
+ *  outside them (IFC, an empty status, a case or spacing variant, a
+ *  library's own) — exactly lib/documentStatusOptions.ts
+ *  isUnguardedEntryIntoForce for a write that leaves the pointer where it
+ *  is. So for a status editor's write, v_issuing is
+ *  `isIssueTransition(x) || isUnguardedEntryIntoForce(x)` (pinned by test,
+ *  over every status pair the editors and the import can produce). The two
+ *  are kept apart on purpose: this predicate decides what the app RECORDS
+ *  as a new issue (REV-19 — changeDocumentStatus, unarchiveDocument and the
+ *  bulk editor start the compliance clocks and write DOCUMENT_ISSUED on it),
+ *  and whether a move into force out of IFC owes those clocks and that
+ *  record is not decided here (document-control REV-26); the two editors
+ *  treat the move into force as an issue through the other predicate (said
+ *  before the save, the hold checked first). */
 export function isIssueTransition(input: {
   fromStatus: string | null | undefined; toStatus: string | null | undefined; hasCurrentRevision: boolean;
 }): boolean {
