@@ -17,6 +17,13 @@
 // zero-row UPDATE as success), and the audit row is written only after a
 // confirmed match. The list readers THROW on a failed read (REL-2) so a
 // broken tab is never pixel-identical to an empty one.
+//
+// Notifications (notifications PROD-6 dw3, N8 — DEC-44 (N8) item 2): this
+// module is deliberately SILENT. Budget lines, parties and cost entries are
+// a controller's own bookkeeping, each write audited (COST_*), and the Costs
+// tab is where they are read; the money events that need a second person
+// are notified where they happen — a change order proposed / approved /
+// rejected (lib/changeOrders.ts) and an award (lib/costDocs.ts notifyAward).
 
 import { supabase } from "@/lib/supabase";
 import { userFacingError, userFacingReadError, userFacingCaughtError } from "@/lib/userFacingError";

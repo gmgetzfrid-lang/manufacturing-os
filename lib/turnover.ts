@@ -43,6 +43,7 @@ import type { Actor } from "@/lib/costs";
 import { checkedWrite, isMissingSchemaError } from "@/lib/checkedWrite";
 import { userFacingCaughtError, userFacingReadError, asClause } from "@/lib/userFacingError";
 import { reasonKey, reasonProblem } from "@/lib/checklistEngine";
+import { emit } from "@/lib/notify/dispatch";
 import {
   captureQualitySignoff, loadSignoffAuthority, signoffSeparation, QUALITY_SIGNOFF_RESOURCE, type SignoffInput,
   runProjectEvidenceSweep, type ProjectSweepOutcome,
@@ -440,6 +441,7 @@ export async function reviewTurnoverItem(input: {
     documentId: input.documentId ?? item.documentId ?? null,
     ...(signatureId ? { signatureId, singleSigner } : {}),
   });
+  if (input.status === "rejected") await notifyTurnoverRejected(item, note, input.actor);
   // UX-16: an accepted item is evidence arriving (its document joins the
   // project's register, first) — the project's open checklists are swept
   // now, not when someone next clicks "Check evidence we already hold".
@@ -448,6 +450,35 @@ export async function reviewTurnoverItem(input: {
     if (evidenceSweep.checklists > 0 || evidenceSweep.error) return { ok: true, evidenceSweep };
   }
   return { ok: true };
+}
+
+/** projects-tab MON-11 dw3 (notifications N8): a turnover rejection notifies
+ *  whoever is responsible for the item on OUR side — the person who added
+ *  it (the seeder, for a seeded item) and the project owner, who chases the
+ *  resubmission. The contractor itself is external (no account; MON-10 — its
+ *  signal is the portal). Through lib/notify, the existing project_status
+ *  kind (as the award notice — no new kind), the reviewer dropped by the
+ *  dispatcher. Best-effort behind the decision: a failure is logged, never
+ *  returned — the rejection and its nonconformance row already stand. */
+async function notifyTurnoverRejected(item: TurnoverItem, note: string | null, actor: Actor): Promise<void> {
+  try {
+    const { data } = await supabase.from("projects").select("owner_user_id").eq("id", item.projectId).maybeSingle();
+    const owner = ((data as { owner_user_id?: string | null } | null)?.owner_user_id) ?? null;
+    const involved = [item.createdBy ?? null, owner].filter((u): u is string => !!u);
+    if (involved.length === 0) return;
+    await emit({
+      orgId: item.orgId, category: "status", kind: "project_status",
+      title: `Turnover item rejected — ${item.name}`,
+      body: `${actorName(actor) ?? "A reviewer"} rejected it${note ? `: "${note}"` : ""}. The contractor has to resubmit it before the package can close.`,
+      link: `/projects/${item.projectId}?tab=quality`,
+      resource: { type: "project", id: item.projectId },
+      actorUserId: actor.uid, actorName: actorName(actor) ?? undefined,
+      audience: { involved },
+      metadata: { turnoverItemId: item.id },
+    });
+  } catch (e) {
+    console.warn(`[turnover] rejection notice not sent: ${(e as Error).message}`);
+  }
 }
 
 /** Reopen an accepted or waived item for re-review (QUAL-11): the item goes

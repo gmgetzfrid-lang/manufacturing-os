@@ -34,6 +34,7 @@ import { logAuditAction } from "@/lib/audit";
 import { addEntry, voidEntry, NO_ROW_MATCHED } from "@/lib/costs";
 import { memberHoldsAny } from "@/lib/roleHeld";
 import { emit } from "@/lib/notify/dispatch";
+import { resolveProjectMembers } from "@/lib/notify/recipients";
 import { userFacingError, userFacingReadError, userFacingCaughtError, asClause } from "@/lib/userFacingError";
 
 /** org_configurations key: `{ "amount": <number> }`. */
@@ -245,7 +246,9 @@ export async function proposeChangeOrder(input: {
     orgId: input.orgId, userId: input.actorId,
     details: { coNumber, amount: input.amount, reasonCode: input.reasonCode, title: input.title.trim() },
   });
-  return rowToCo(data);
+  const proposed = rowToCo(data);
+  await notifyChangeOrder(proposed, "proposed", input.actorId, input.actorName ?? null);
+  return proposed;
 }
 
 /** COST-6: who else could decide this CO — the org's active controllers and
@@ -422,6 +425,9 @@ export async function decideChangeOrder(input: {
     details: { coNumber: co.coNumber, amount: co.amount, reasonCode: co.reasonCode, selfDecided, proposerId: co.createdBy },
   });
   if (input.decision === "approved") await notifyApproval(co, input.actorId, input.actorName ?? null);
+  if (input.decision === "approved" || input.decision === "rejected") {
+    await notifyChangeOrder(co, input.decision, input.actorId, input.actorName ?? null, input.note ?? null);
+  }
   return { warning };
 }
 
@@ -442,6 +448,54 @@ async function revertDecision(coId: string): Promise<{ ok: boolean; error?: stri
     return { ok: true };
   } catch (e) {
     return { ok: false, error: userFacingCaughtError(e, { context: "revertChangeOrderClaim" }) };
+  }
+}
+
+/** PROD-6 dw1 (notifications N8, DEC-44 (N8) item 2): a change order
+ *  proposed, approved or rejected notifies the project's members and its
+ *  owner — the money's owner on this project (projects.owner_user_id, the
+ *  owner lib/costs.ts and lib/costDocs.ts notify) — through lib/notify, kind
+ *  change_order_status. The actor never hears about their own act (the
+ *  dispatcher drops them). On an approval the proposer is left out here:
+ *  notifyApproval already tells them, in their own words (MON-11), so they
+ *  get one notice, not two. A rejection reaches the proposer here. Voids
+ *  stay silent (DEC-44 (N8) item 2). Best-effort behind the money: a read
+ *  or emit failure is logged and never fails the change order. */
+async function notifyChangeOrder(
+  co: ChangeOrder, event: "proposed" | "approved" | "rejected", actorId: string, actorName: string | null, note?: string | null,
+): Promise<void> {
+  try {
+    const [membersRes, projectRes] = await Promise.all([
+      resolveProjectMembers(co.projectId),
+      supabase.from("projects").select("owner_user_id").eq("id", co.projectId).maybeSingle(),
+    ]);
+    const owner = ((projectRes.data as { owner_user_id?: string | null } | null)?.owner_user_id) ?? null;
+    const audience = new Set<string>([...membersRes, ...(owner ? [owner] : [])]);
+    if (event === "rejected" && co.createdBy) audience.add(co.createdBy);
+    if (event === "approved" && co.createdBy) audience.delete(co.createdBy);
+    audience.delete(actorId);
+    if (audience.size === 0) return;
+    const who = actorName || "Someone";
+    const amount = co.amount.toLocaleString();
+    const title = event === "proposed" ? `${co.coNumber} proposed — ${co.title}`
+      : event === "approved" ? `${co.coNumber} approved — ${co.title}`
+      : `${co.coNumber} rejected — ${co.title}`;
+    const body = event === "proposed"
+      ? `${who} proposed a change order for ${amount} (${CO_REASON_LABEL[co.reasonCode] ?? co.reasonCode}). It waits for a decision on the Costs tab.`
+      : event === "approved"
+        ? `${who} approved the change order for ${amount}; it is posted to its budget line.`
+        : `${who} rejected the change order for ${amount}${note?.trim() ? `: "${note.trim()}"` : "."}`;
+    await emit({
+      orgId: co.orgId, category: "status", kind: "change_order_status",
+      title, body,
+      link: `/projects/${co.projectId}?tab=costs`,
+      resource: { type: "project", id: co.projectId },
+      actorUserId: actorId, actorName: actorName ?? undefined,
+      audience: { involved: [...audience] },
+      metadata: { changeOrderId: co.id, coNumber: co.coNumber, event },
+    });
+  } catch (e) {
+    console.warn(`[changeOrders] change-order notice not sent: ${(e as Error).message}`);
   }
 }
 
