@@ -135,7 +135,11 @@ vi.mock("@/lib/supabaseAdmin", () => ({
     rpc: vi.fn(async (fn: string, args: Record<string, unknown>) => {
       db.rpcCalls.push({ fn, args });
       const h = db.rpc[fn];
-      return h ? h(args) : { data: null, error: null };
+      if (h) return h(args);
+      // projects-joint J16 (GAP-401): a database before 20261184 — the door
+      // promotes through the service-role publish_revision, as before.
+      if (fn.startsWith("intake_door_")) return { data: null, error: { code: "PGRST202", message: `Could not find the function public.${fn} in the schema cache` } };
+      return { data: null, error: null };
     }),
     auth: { getUser: vi.fn(async () => ({ data: { user: null }, error: { message: "none" } })) },
   },

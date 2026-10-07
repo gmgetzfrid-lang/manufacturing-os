@@ -122,7 +122,10 @@ vi.mock("@/lib/supabase", () => ({
   // lib/serverClientScope.ts registers its request-scoped reader here).
   __registerScopedServerClient: vi.fn(),
 }));
-vi.mock("@/lib/supabaseAdmin", () => ({ supabaseAdmin: { from: (t: string) => chain(t), rpc: () => Promise.resolve({ data: null, error: null }) } }));
+// projects-joint J16 (GAP-401): the intake door's functions (20261184) answer
+// as a database before that migration, so the intake cases below run the
+// door's service-role path (the door functions are intakeUploadRoute.test.ts's).
+vi.mock("@/lib/supabaseAdmin", () => ({ supabaseAdmin: { from: (t: string) => chain(t), rpc: (fn?: string) => Promise.resolve(String(fn ?? "").startsWith("intake_door_") ? { data: null, error: { code: "PGRST202", message: `Could not find the function public.${String(fn)} in the schema cache` } } : { data: null, error: null }) } }));
 vi.mock("@/lib/r2", () => ({ r2: { send: vi.fn(async () => undefined) }, R2_BUCKET: "test-bucket" }));
 vi.mock("@aws-sdk/client-s3", () => ({ PutObjectCommand: class { constructor(public input: unknown) {} } }));
 vi.mock("@/lib/inAppNotifications", () => ({

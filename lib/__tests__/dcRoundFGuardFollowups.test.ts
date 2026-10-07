@@ -307,9 +307,16 @@ describe("20261159 — RG-14: the opened-under stamp and the policy helper", () 
     // both openers pass the signed-in user as the actor (the trigger's auth.uid())
     expect(src("lib/revisions.ts")).toContain("revisionLabel: draftLabel, contentHash: fileHash, control, actorId: actorUserId, actorName: actorEmail,");
     expect(src("lib/revisions.ts")).toContain("change_log: changeLog.trim(), created_by: actorUserId, created_by_name: actorEmail || actorUserId, created_at: now,");
-    const intakeInsert = between(src("app/api/intake/upload/route.ts"), "const { data: ver, error: verErr } = await supabaseAdmin\n      .from(\"document_versions\")\n      .insert({", "})");
+    // projects-joint J16 (GAP-401): the row is built once and written either
+    // through the door's identity (intake_door_submit_version, 20261184) or,
+    // before that paste, as the service role — neither carries a created_by.
+    const intakeInsert = between(src("app/api/intake/upload/route.ts"), "const versionRow = {", "};");
     expect(intakeInsert).toContain("intake_link_id: linkId,");
     expect(intakeInsert).not.toMatch(/\bcreated_by:/);
+    expect(src("app/api/intake/upload/route.ts")).toContain(".insert(versionRow)");
+    const doorInsert = between(src("supabase/migrations/20261184_prj_roundG_intake_door_identity.sql"), "INSERT INTO document_versions (", "RETURNING id INTO v_id;");
+    expect(doorInsert).toContain("intake_link_id");
+    expect(doorInsert).not.toMatch(/\bcreated_by\b,/);
     // the only roster writes in the app are openReviewRoster's (no other door opens a roster)
     const rosterWriters = ["lib", "app", "components"].flatMap((d) => walk(d)).filter((f) => /\.(ts|tsx)$/.test(f) && !f.includes("__tests__"))
       .filter((f) => /from\("document_review_signoffs"\)\s*\.(insert|upsert)\(/.test(readFileSync(f, "utf8")));
