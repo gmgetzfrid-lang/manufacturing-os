@@ -23,6 +23,12 @@
 //   NEDGE-17   (fix pass) the digest's cost follows the pending items: a
 //              member with nothing pending is never read; its deadline is
 //              derived from the run's start.
+//   NEDGE-17   (fix pass 2) the digest always gets its floor of time, a run
+//              cut short or skipped loses nothing (the next run's window
+//              reaches back to the oldest item still owed), and successive
+//              short runs reach every recipient in turn (a resume cursor);
+//              the background steps take what the run has left.
+//   DELIV-7    (fix pass 2) the cron's two emit() calls read what they reached.
 //   DELIV-8    the purge lists abandoned (suppressed) mail as its own line,
 //              with an exact breakdown past the API's row cap, and records it
 //              BEFORE deleting it; read rows carrying a dedupe watermark are
@@ -50,6 +56,10 @@ const db = vi.hoisted(() => {
     maxRows: null as number | null,
     /** Called on every executed query (table, op) — a test's clock or probe. */
     onExec: null as null | ((table: string, op: string) => void),
+    /** RPCs that answer (by name); any other is "missing" (PGRST202). */
+    rpcs: {} as Record<string, unknown>,
+    /** Folded intake digests the flush hands to the cron's send. */
+    folded: [] as Array<Record<string, unknown>>,
   };
 });
 
@@ -71,6 +81,7 @@ function makeClient() {
     let op = "select";
     let payload: unknown = null;
     let onConflict: string | null = null;
+    let ignoreDuplicates = false;
     const matching = () => (db.tables[table] ?? []).filter((r) => filters.every((f) => f(r)));
     const exec = (): { data: unknown; error: unknown; count?: number } => {
       db.calls.push({ table, op: `exec:${op}`, args: [] });
@@ -101,7 +112,7 @@ function makeClient() {
         for (const r of list) {
           const key = onConflict ?? "id";
           const hit = (db.tables[table] ?? []).find((x) => x[key] === r[key]);
-          if (hit) Object.assign(hit, r); else db.tables[table] = [...(db.tables[table] ?? []), { ...r }];
+          if (hit) { if (!ignoreDuplicates) Object.assign(hit, r); } else db.tables[table] = [...(db.tables[table] ?? []), { ...r }];
         }
         return { data: list, error: null };
       }
@@ -123,7 +134,7 @@ function makeClient() {
           switch (prop) {
             case "select": if (op === "select") head = !!(args[1] as { head?: boolean } | undefined)?.head; break;
             case "insert": case "update": case "delete": op = prop; payload = args[0]; break;
-            case "upsert": op = "upsert"; payload = args[0]; onConflict = (args[1] as { onConflict?: string } | undefined)?.onConflict ?? null; break;
+            case "upsert": op = "upsert"; payload = args[0]; onConflict = (args[1] as { onConflict?: string } | undefined)?.onConflict ?? null; ignoreDuplicates = !!(args[1] as { ignoreDuplicates?: boolean } | undefined)?.ignoreDuplicates; break;
             case "eq": filters.push((r) => at(r, String(args[0])) === args[1]); break;
             case "neq": filters.push((r) => at(r, String(args[0])) !== args[1]); break;
             case "in": { const s = new Set(args[1] as unknown[]); filters.push((r) => s.has(at(r, String(args[0])))); break; }
@@ -131,6 +142,7 @@ function makeClient() {
             case "gt": filters.push((r) => String(at(r, String(args[0]))) > String(args[1])); break;
             case "gte": filters.push((r) => String(at(r, String(args[0]))) >= String(args[1])); break;
             case "lt": filters.push((r) => String(at(r, String(args[0]))) < String(args[1])); break;
+            case "lte": filters.push((r) => String(at(r, String(args[0]))) <= String(args[1])); break;
             case "not":
               if (args[1] === "is" && args[2] === null) filters.push((r) => at(r, String(args[0])) != null);
               else if (args[1] === "in") { const s = new Set(String(args[2]).replace(/^\(|\)$/g, "").split(",")); filters.push((r) => !s.has(String(at(r, String(args[0]))))); }
@@ -154,7 +166,9 @@ function makeClient() {
   };
   return {
     from,
-    rpc: async (fn: string) => ({ data: null, error: { code: "PGRST202", message: `Could not find the function public.${fn}` } }),
+    rpc: async (fn: string) => (Object.hasOwn(db.rpcs, fn)
+      ? { data: db.rpcs[fn], error: null }
+      : { data: null, error: { code: "PGRST202", message: `Could not find the function public.${fn}` } }),
     auth: { getUser: async () => ({ data: { user: null } }) },
   };
 }
@@ -184,10 +198,30 @@ vi.mock("@/lib/orchestrator/proposals", () => ({ pruneOrchestratorProposals: asy
 vi.mock("@/lib/storageUsage", () => ({ runPlatformStorageAlerts: async () => ({ status: { r2: { pct: 0 }, db: { pct: 0 } }, alerts: 0 }) }));
 vi.mock("@/lib/aclIndexRebuild", () => ({ rebuildAclIndexes: async () => ({ errors: [] }) }));
 vi.mock("@/lib/intakeStaging", () => ({ sweepIntakeStaging: async () => ({ objectsDeleted: 0, errors: [], truncated: false }) }));
+// The intake helpers keep their contracts (lib/intakeRateLimit.ts): the flush
+// hands each folded digest to `send`; deliverFoldedDigest lands the bell rows,
+// then runs the email leg and only logs its failure; nudgeReviewHealth counts
+// a `send` that throws as failed.
 vi.mock("@/lib/intakeRateLimit", () => ({
-  flushFoldedIntakeNotices: async () => ({ digests: 0, failed: 0, unrecorded: 0 }),
-  deliverFoldedDigest: async () => 0, foldedDigestKind: () => "doc_superseded", foldedDigestMetadata: () => ({}),
-  nudgeReviewHealth: async () => ({ nudged: 0, failed: 0, orgless: 0 }), REVIEW_HEALTH_KIND: "review_overdue",
+  flushFoldedIntakeNotices: async (_c: unknown, input: { send: (d: Record<string, unknown>) => Promise<number> }) => {
+    let digests = 0;
+    for (const d of db.folded) if ((await input.send(d)) > 0) digests += 1;
+    return { digests, failed: 0, unrecorded: 0 };
+  },
+  deliverFoldedDigest: async (_c: unknown, d: Record<string, unknown>, email?: (d: Record<string, unknown>) => Promise<void>) => {
+    if (email) { try { await email(d); } catch { /* the real one logs and keeps the bell rows */ } }
+    return 1;
+  },
+  foldedDigestKind: () => "doc_superseded", foldedDigestMetadata: () => ({}),
+  nudgeReviewHealth: async (_c: unknown, input: { orgs: Array<{ orgId: string | null }>; send: (h: unknown, text: unknown, metadata: unknown) => Promise<void> }) => {
+    const out = { nudged: 0, skipped: 0, failed: 0, orgless: 0 };
+    for (const o of input.orgs) {
+      if (!o.orgId) { out.orgless += 1; continue; }
+      try { await input.send(o, { title: "t", body: "b" }, {}); out.nudged += 1; } catch { out.failed += 1; }
+    }
+    return out;
+  },
+  REVIEW_HEALTH_KIND: "review_overdue",
   isMissingFunction: () => true,
 }));
 vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn(async () => ({ recipients: 0 })) }));
@@ -200,6 +234,7 @@ import { POST as drainPOST } from "@/app/api/notifications/send-queued/route";
 import { GET as unsubGET, POST as unsubPOST } from "@/app/api/notifications/unsubscribe/route";
 import { GET as purgeGET, POST as purgePOST } from "@/app/api/admin/purge/route";
 import { signUnsubscribe } from "@/lib/unsubscribeToken";
+import { emit } from "@/lib/notify/dispatch";
 
 const ROOT = process.cwd();
 const src = (p: string) => readFileSync(join(ROOT, p), "utf8");
@@ -221,19 +256,24 @@ let drainAnswers: Array<{ status?: number; body?: unknown }> = [];
 let drainCalls = 0;
 let resendBodies: Array<Record<string, unknown>> = [];
 let resendStatus: number[] = [];
+/** How long each send-queued batch "takes" on the faked clock (0: no time). */
+let drainTakesMs = 0;
 const savedFetch = globalThis.fetch;
 const savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(() => {
   db.tables = { orgs: [{ id: ORG_A, name: "Org A" }, { id: ORG_B, name: "Org B" }] };
-  db.calls = []; db.readError = {}; db.writeError = {}; db.seq = 0; db.maxRows = null; db.onExec = null;
-  drainAnswers = []; drainCalls = 0; resendBodies = []; resendStatus = [];
+  db.calls = []; db.readError = {}; db.writeError = {}; db.seq = 0; db.maxRows = null; db.onExec = null; db.rpcs = {}; db.folded = [];
+  drainAnswers = []; drainCalls = 0; resendBodies = []; resendStatus = []; drainTakesMs = 0;
+  vi.mocked(emit).mockReset();
+  vi.mocked(emit).mockImplementation(async () => ({ recipients: 0 }));
   for (const k of ["NEXT_PUBLIC_SITE_URL", "VERCEL_PROJECT_PRODUCTION_URL", "NEXT_PUBLIC_VERCEL_PROJECT_PRODUCTION_URL", "RESEND_API_KEY", "EMAIL_UNSUBSCRIBE_SECRET"]) { savedEnv[k] = process.env[k]; delete process.env[k]; }
   process.env.NEXT_PUBLIC_SITE_URL = ORIGIN;
   globalThis.fetch = vi.fn(async (url: unknown, init?: RequestInit) => {
     const u = String(url);
     if (u.endsWith("/api/notifications/send-queued")) {
       drainCalls += 1;
+      if (drainTakesMs) vi.setSystemTime(new Date(Date.now() + drainTakesMs));
       const a = drainAnswers.shift() ?? { body: { processed: 0 } };
       return new Response(JSON.stringify(a.body ?? {}), { status: a.status ?? 200, headers: { "content-type": "application/json" } });
     }
@@ -370,20 +410,21 @@ describe("NEDGE-17 (fix pass) — the digest's cost follows the pending items, a
     expect(prefIns.map((c) => c.args[1])).toEqual([[U(2)]]);
   });
 
-  it("a run whose earlier steps used the digest's time skips it, says so, and the later steps still run", async () => {
+  it("REGRESSION (fix pass 2): earlier steps that take 120 s still leave the digest its time — the pending recipient's digest is queued", async () => {
     db.tables.org_members = [member(ORG_A, U(1))];
     db.tables.notifications = [notice(ORG_A, U(1), "review_due", "Due A", minutesAgo(10))];
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date());
     let jumped = false;
-    // step 4 (the intents prune) runs before the digest: it "takes" 200 s
-    db.onExec = (table) => { if (table === "document_intents" && !jumped) { jumped = true; vi.setSystemTime(new Date(Date.now() + 200_000)); } };
+    // step 4 (the intents prune) runs before the digest: it "takes" 120 s
+    db.onExec = (table) => { if (table === "document_intents" && !jumped) { jumped = true; vi.setSystemTime(new Date(Date.now() + 120_000)); } };
     try {
       const r = await runCron();
       expect(jumped).toBe(true);
-      expect(r.complianceEmails).toBe(0);
-      expect(digests()).toEqual([]);
-      expect(r.errors.some((e) => e.startsWith("compliance-digest: skipped — the steps before it used the time this run leaves it"))).toBe(true);
+      expect(r.complianceEmails).toBe(1);
+      expect(String(digestFor(U(1))!.body_text)).toContain("Due A");
+      expect(r.errors.filter((e) => e.startsWith("compliance-digest"))).toEqual([]);
+      // and the background steps after it still had their time
       expect(r.embedDrain).toBeDefined();
       expect(r.platformStorage).toBeDefined();
     } finally {
@@ -391,7 +432,62 @@ describe("NEDGE-17 (fix pass) — the digest's cost follows the pending items, a
     }
   });
 
-  it("a deadline reached mid-run stops between rounds and names how many recipients were not reached", async () => {
+  it("earlier steps that leave only 10 s: the digest still composes (its floor, cut to the run's end); the second drain and the background steps give way and say so; the two prunes still run", async () => {
+    db.tables.org_members = [member(ORG_A, U(1))];
+    db.tables.notifications = [notice(ORG_A, U(1), "review_due", "Due A", minutesAgo(10))];
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date());
+    let jumped = false;
+    db.onExec = (table) => { if (table === "document_intents" && !jumped) { jumped = true; vi.setSystemTime(new Date(Date.now() + 280_000)); } };
+    try {
+      const r = await runCron();
+      expect(r.complianceEmails).toBe(1);
+      expect(r.errors).toContain("notifications (after the compliance steps): not run — the run's time is spent; the queue is sent by the next drain");
+      expect(r.emailDrainAfterDigest).toMatchObject({ batches: 0, outOfTime: true });
+      for (const step of ["knowledge-sync", "knowledge-ingest", "platform-storage", "embed-drain"]) {
+        expect(r.errors.some((e) => e.startsWith(`${step}: not run — 10 s of the run were left`)), step).toBe(true);
+      }
+      expect(r.embedDrain).toBeUndefined();
+      expect(r.platformStorage).toBeUndefined();
+      expect(r).toHaveProperty("folderTrashPurged");
+      expect(r.orchestratorProposalsPruned).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("LOSSLESS: a run whose earlier steps used the whole run composes nothing and says so — and the next day's run lists the item, though it is then more than 25 hours old", async () => {
+    db.tables.org_members = [member(ORG_A, U(1))];
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const day1 = new Date("2026-10-01T03:00:00.000Z");
+    vi.setSystemTime(day1);
+    db.tables.notifications = [notice(ORG_A, U(1), "review_due", "Due on day 1", new Date(day1.getTime() - 10 * 60_000).toISOString())];
+    let jumped = false;
+    db.onExec = (table) => { if (table === "document_intents" && !jumped) { jumped = true; vi.setSystemTime(new Date(Date.now() + 295_000)); } };
+    try {
+      const r1 = await runCron();
+      expect(r1.complianceEmails).toBe(0);
+      expect(digests()).toEqual([]);
+      expect(r1.errors.some((e) => /^compliance-digest: nothing was composed — no time was left in this run \(the steps before it used 295 s of the 300 s\); nothing is lost/.test(e))).toBe(true);
+      // the first window is recorded even so (a no-op when a state row exists)
+      // (25 hours before the digest's own clock, 03:04:55)
+      expect(rows("platform_settings")).toEqual([{ key: "compliance_digest", value: { openSince: "2026-09-30T02:04:55.000Z", after: null }, updated_at: "2026-10-01T03:04:55.000Z" }]);
+
+      db.onExec = null;
+      vi.setSystemTime(new Date("2026-10-02T04:00:00.000Z"));   // 25 h 10 min after the item
+      const r2 = await runCron();
+      expect(r2.complianceEmails).toBe(1);
+      const d = digestFor(U(1))!;
+      expect(String(d.body_text)).toContain("Due on day 1");
+      expect(d.metadata).toMatchObject({ since: "2026-09-30T02:04:55.000Z", through: "2026-10-02T04:00:00.000Z" });
+      // a complete run closes the window and leaves no cursor
+      expect(rows("platform_settings")[0].value).toEqual({ openSince: "2026-10-02T04:00:00.000Z", after: null });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a deadline reached mid-run stops between rounds, names how many recipients were not reached, and records where it stopped", async () => {
     db.tables.org_members = Array.from({ length: 20 }, (_, i) => member(ORG_A, U(i + 1)));
     db.tables.notifications = Array.from({ length: 20 }, (_, i) => notice(ORG_A, U(i + 1), "review_due", `Due ${i}`, minutesAgo(10)));
     vi.useFakeTimers({ toFake: ["Date"] });
@@ -400,25 +496,207 @@ describe("NEDGE-17 (fix pass) — the digest's cost follows the pending items, a
     // the first round's list reads "take" the rest of the time
     db.onExec = (table, op) => {
       if (table === "notifications" && op === "select" && db.calls.some((c) => c.table === "notifications" && c.op === "eq" && c.args[0] === "user_id")) {
-        if (++lists === 1) vi.setSystemTime(new Date(Date.now() + 200_000));
+        if (++lists === 1) vi.setSystemTime(new Date(Date.now() + 300_000));
       }
     };
     try {
       const r = await runCron();
       expect(r.complianceEmails).toBe(8);
-      expect(r.errors.some((e) => /^compliance-digest: stopped at its deadline \(0 s left; the later steps' \d+ s of the 300 s run are kept back\) — 12 recipient\(s\) were not reached this run$/.test(e))).toBe(true);
+      expect(r.errors.some((e) => /^compliance-digest: stopped at its deadline — 12 of 20 recipient\(s\) were not reached this run; the next run starts with them and its search reaches back to \S+, the oldest item still owed, so nothing is lost within 7 days$/.test(e))).toBe(true);
+      expect(rows("platform_settings")[0].value).toMatchObject({ after: `${ORG_A}|${U(8)}` });
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("the deadline is the run's start + 300 s − the later steps' reserve, never a fixed share", () => {
+  it("MAJOR (fix pass 2): three runs cut short reach every recipient in turn — each one's day-1 item is listed once, by the run that reached them, even two days later; a complete fourth run closes the window", async () => {
+    const N = 20;
+    db.tables.org_members = Array.from({ length: N }, (_, i) => member(ORG_A, U(i + 1)));
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const T = Date.parse("2026-10-01T03:00:00.000Z");
+    vi.setSystemTime(new Date(T));
+    db.tables.notifications = Array.from({ length: N }, (_, i) => notice(ORG_A, U(i + 1), "review_due", `Due ${i + 1}`, new Date(T - 10 * 60_000).toISOString()));
+    // each run's first per-recipient list read "takes" the rest of the run: one round of 8
+    const cutShort = () => {
+      const mark = db.calls.length;
+      let jumped = false;
+      db.onExec = (table, op) => {
+        if (jumped || table !== "notifications" || op !== "select") return;
+        if (db.calls.slice(mark).some((c) => c.table === "notifications" && c.op === "eq" && c.args[0] === "user_id")) {
+          jumped = true;
+          vi.setSystemTime(new Date(Date.now() + 300_000));
+        }
+      };
+    };
+    const reachedBy: string[][] = [];
+    try {
+      for (let day = 0; day < 3; day++) {
+        vi.setSystemTime(new Date(T + day * 86_400_000));
+        cutShort();
+        const before = new Set(digests().map((d) => String(d.to_user_id)));
+        const r = await runCron();
+        expect(r.complianceEmails, `day ${day + 1}`).toBe(day < 2 ? 8 : 4);
+        reachedBy.push(digests().map((d) => String(d.to_user_id)).filter((u) => !before.has(u)));
+      }
+      // run 1: U1–U8; run 2: U9–U16; run 3: U17–U20 (and U1–U4 again, wrapping, with nothing new for them)
+      expect(reachedBy[0]).toEqual(Array.from({ length: 8 }, (_, i) => U(i + 1)));
+      expect(reachedBy[1]).toEqual(Array.from({ length: 8 }, (_, i) => U(i + 9)));
+      expect(reachedBy[2]).toEqual(Array.from({ length: 4 }, (_, i) => U(i + 17)));
+      for (let i = 1; i <= N; i++) {
+        const mine = digests().filter((d) => d.to_user_id === U(i));
+        expect(mine, `U(${i})`).toHaveLength(1);
+        expect(String(mine[0].body_text)).toContain(`Due ${i}`);
+        expect(mine[0].subject).toBe("Compliance items need you (1)");
+      }
+      // still owed after run 3: nobody's item — but U5–U16 were not reached by it, so the window stays open
+      expect(rows("platform_settings")[0].value).toMatchObject({ openSince: new Date(T - 10 * 60_000 - 1).toISOString(), after: `${ORG_A}|${U(4)}` });
+
+      db.onExec = null;
+      vi.setSystemTime(new Date(T + 3 * 86_400_000));
+      const r4 = await runCron();
+      expect(r4.complianceEmails).toBe(0);
+      expect(digests()).toHaveLength(N);
+      expect(rows("platform_settings")[0].value).toEqual({ openSince: new Date(T + 3 * 86_400_000).toISOString(), after: null });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a second run the same day (the per-day dedupe) keeps what it held back owed — the next day's digest lists it, and not what the first one already listed", async () => {
+    db.tables.org_members = [member(ORG_A, U(1))];
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const T = Date.parse("2026-10-01T03:00:00.000Z");
+    vi.setSystemTime(new Date(T));
+    db.tables.notifications = [notice(ORG_A, U(1), "review_due", "Item A", new Date(T - 60_000).toISOString())];
+    try {
+      await runCron();
+      expect(digests()).toHaveLength(1);
+      db.tables.notifications.push(notice(ORG_A, U(1), "ack_requested", "Item B", new Date(T + 5 * 60_000).toISOString()));
+      vi.setSystemTime(new Date(T + 10 * 60_000));
+      await runCron();
+      expect(digests()).toHaveLength(1);
+      expect(rows("platform_settings")[0].value).toMatchObject({ openSince: new Date(T + 5 * 60_000 - 1).toISOString(), after: null });
+      vi.setSystemTime(new Date(T + 86_400_000));
+      await runCron();
+      expect(digests()).toHaveLength(2);
+      const second = digests()[1];
+      expect(String(second.body_text)).toContain("Item B");
+      expect(String(second.body_text)).not.toContain("Item A");
+      expect(second.subject).toBe("Compliance items need you (1)");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a state that cannot be read: the digest is still sent, each list starting where that person's last digest stopped; nothing is recorded", async () => {
+    db.tables.org_members = [member(ORG_A, U(1))];
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const T = Date.parse("2026-10-05T03:00:00.000Z");
+    vi.setSystemTime(new Date(T));
+    db.tables.email_notifications = [{ id: "old", org_id: ORG_A, to_user_id: U(1), event_type: "compliance_digest", status: "sent", created_at: new Date(T - 2 * 86_400_000).toISOString(), metadata: { day: "2026-10-03", through: new Date(T - 2 * 86_400_000).toISOString() } }];
+    db.tables.notifications = [
+      notice(ORG_A, U(1), "review_due", "Already listed", new Date(T - 2 * 86_400_000 - 60_000).toISOString()),
+      notice(ORG_A, U(1), "review_due", "Thirty hours old", new Date(T - 30 * 3_600_000).toISOString()),
+    ];
+    db.readError.platform_settings = { message: "boom" };
+    try {
+      const r = await runCron();
+      expect(r.errors.some((e) => e.startsWith("compliance-digest: where the last run stopped could not be read — this run searches the last 7 days"))).toBe(true);
+      const d = digests().find((e) => e.id !== "old")!;
+      expect(String(d.body_text)).toContain("Thirty hours old");
+      expect(String(d.body_text)).not.toContain("Already listed");
+      expect(db.calls.some((c) => c.table === "platform_settings" && c.op === "upsert")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a recorded state this run cannot parse: it searches the lookback, says so, and records a valid state in its place", async () => {
+    db.tables.org_members = [member(ORG_A, U(1))];
+    db.tables.platform_settings = [{ key: "compliance_digest", value: { openSince: "not a time" } }];
+    db.tables.notifications = [notice(ORG_A, U(1), "review_due", "Thirty hours old", new Date(Date.now() - 30 * 3_600_000).toISOString())];
+    const r = await runCron();
+    expect(r.errors.some((e) => e.startsWith("compliance-digest: the recorded state (platform_settings 'compliance_digest') is not one this run can read"))).toBe(true);
+    expect(String(digestFor(U(1))!.body_text)).toContain("Thirty hours old");
+    const v = rows("platform_settings")[0].value as { openSince: string; after: string | null };
+    expect(Number.isFinite(Date.parse(v.openSince))).toBe(true);
+    expect(v.after).toBeNull();
+  });
+
+  it("step 2 starts no batch that could end after its share of the run: a backlog of 40-second batches stops after three and says so; the digest still runs", async () => {
+    db.tables.org_members = [member(ORG_A, U(1))];
+    db.tables.notifications = [notice(ORG_A, U(1), "review_due", "Due A", minutesAgo(10))];
+    drainAnswers = Array.from({ length: 20 }, () => ({ body: { processed: 100, sent: 100, failed: 0 } }));
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date());
+    drainTakesMs = 40_000;
+    try {
+      const r = await runCron();
+      expect(r.emailDrain).toMatchObject({ batches: 3, sent: 300, outOfTime: true, queueEmpty: false });
+      expect(r.errors).toContain("notifications: stopped at its time limit after 3 batch(es) (300 sent) — the rest of the queue is sent by the next drain");
+      expect(r.complianceEmails).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the clock by source: the digest's deadline is the run's end less the second drain's reserve, never less than its floor; the background budgets come from what is left", () => {
     const route = src("app/api/cron/maintenance/route.ts");
-    expect(route).toContain("const startedAt = Date.now();");
-    expect(route).toContain("deadlineAt: startedAt + RUN_BUDGET_MS - AFTER_DIGEST_RESERVE_MS,");
-    expect(route).toContain("const RUN_BUDGET_MS = maxDuration * 1000;");
-    expect(route).not.toMatch(/DIGEST_BUDGET_MS/);
+    expect(route).toContain("const startedAt = Date.now();\n  const runEnd = startedAt + RUN_BUDGET_MS - RUN_TAIL_MS;");
+    expect(route).toContain("return Math.min(runEnd, Math.max(runEnd - AFTER_DIGEST_RESERVE_MS, now + DIGEST_FLOOR_MS));");
+    expect(route).toContain("deadlineAt: digestDeadlineAt(runEnd, Date.now()),");
+    expect(route).toContain("const AFTER_DIGEST_RESERVE_MS = DRAIN_BATCH_MS + 10_000;");
+    expect(route).toContain("budgetMs: Math.min(EMBED_DRAIN_MS, left())");
+    expect(route).toContain("deadlineMs: Date.now() + Math.min(INGEST_MS, left() - INGEST_COMMIT_MS),");
+    // no reservation for the background steps is held ahead of the digest, and no daily stride
+    expect(route).not.toMatch(/100_000 \/\* embed drain \*\//);
+    expect(route).not.toMatch(/% members\.length/);
     expect(route.indexOf("const startedAt = Date.now();")).toBeLessThan(route.indexOf("// 1. Sweep expired ad-hoc checkouts"));
+  });
+});
+
+describe("DELIV-7 (fix pass 2) — the cron's emit() calls read what they reached", () => {
+  const seedHealth = () => {
+    db.rpcs = {
+      prune_intake_attempts: 0,
+      orphaned_in_review_versions_count: 1,
+      pending_on_retired_version_count: 0,
+      intake_review_health_by_org: [{ org_id: ORG_A, orphaned_in_review: 1, pending_on_retired: 0, example_document_id: "d1" }],
+    };
+  };
+
+  it("a review-health nudge that reached no controller, or lost bell rows, is not counted as nudged and is named", async () => {
+    seedHealth();
+    const r = await runCron();
+    expect(r.reviewHealthNudges).toBe(0);
+    expect(r.errors).toContain("intake-door: 1 org(s) with review-health counts could not be nudged — oA: it reached no recipient (the audience resolved to nobody)");
+
+    vi.mocked(emit).mockImplementation(async () => ({ recipients: 2, inapp: { sent: 1, failed: 1 } }));
+    const r2 = await runCron();
+    expect(r2.reviewHealthNudges).toBe(0);
+    expect(r2.errors).toContain("intake-door: 1 org(s) with review-health counts could not be nudged — oA: 1 of 2 bell row(s) were refused");
+
+    vi.mocked(emit).mockImplementation(async () => ({ recipients: 2, inapp: { sent: 2, failed: 0 } }));
+    const r3 = await runCron();
+    expect(r3.reviewHealthNudges).toBe(1);
+    expect(r3.errors.filter((e) => e.includes("could not be nudged"))).toEqual([]);
+  });
+
+  it("a folded intake digest whose email leg reached nobody is a line (its bell rows landed)", async () => {
+    db.rpcs = { prune_intake_attempts: 0 };
+    db.folded = [{ orgId: ORG_A, projectId: "p1", involved: [U(1)], title: "t", body: "b", link: "/projects/p1", actorName: "System" }];
+    const r = await runCron();
+    expect(r.intakeFoldedDigests).toBe(1);
+    expect(r.errors).toContain("intake-notices: project p1 — the digest's email leg: it reached no recipient (the audience resolved to nobody)");
+    vi.mocked(emit).mockImplementation(async () => ({ recipients: 1 }));
+    const r2 = await runCron();
+    expect(r2.errors.filter((e) => e.startsWith("intake-notices: project"))).toEqual([]);
+  });
+
+  it("by source: neither emit() in the cron discards its result", () => {
+    const route = src("app/api/cron/maintenance/route.ts");
+    expect(route).not.toContain(".then(() => undefined)");
+    expect((route.match(/emitShortfall\(r, "(inapp|email)"\)/g) ?? []).length).toBe(2);
   });
 });
 
@@ -489,7 +767,9 @@ describe("NEDGE-9 — the digest honours the member's preferences and lists unre
     db.writeError.email_notifications = { message: "permission denied" };
     const r = await runCron();
     expect(r.complianceEmails).toBe(0);
-    expect(r.errors.filter((e) => /compliance-digest: oA\/.*: the digest was not queued: permission denied/.test(e))).toHaveLength(3);
+    expect(r.errors.filter((e) => /compliance-digest: oA\/.*: the digest was not queued — the next run lists these items again: permission denied/.test(e))).toHaveLength(3);
+    // what was not queued stays owed: the window does not move past it
+    expect((rows("platform_settings")[0].value as { openSince: string }).openSince < new Date(Date.now() - 9 * 60_000).toISOString()).toBe(true);
   });
 });
 
@@ -503,7 +783,7 @@ describe("NEDGE-4 / NEDGE-12 — the digest links the Inbox, absolute, and is na
     expect(hrefs).toEqual([`${ORIGIN}/inbox`, `${ORIGIN}/settings/notifications`]);
     expect(String(d.body_text)).toContain(`Open your Inbox to act on them: ${ORIGIN}/inbox`);
     expect(d.metadata).toMatchObject({ link: `${ORIGIN}/inbox`, rendered: true });
-    expect(String(d.body_text)).toMatch(/from the 25 hours to \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+00:00 \(UTC\)\./);
+    expect(String(d.body_text)).toMatch(/notices from \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+00:00 \(UTC\) to \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+00:00 \(UTC\)\./);
     expect(String(d.body_html)).toContain("Org A");
   });
 
@@ -740,8 +1020,10 @@ describe("DELIV-8 — the purge: abandoned (suppressed) mail is its own reported
     const res = await purgeGET(new NextRequest("http://x/api/admin/purge?orgId=oA&days=30", { headers: { authorization: "Bearer t" } }));
     const json = await res.json() as { targets: Array<{ table: string; sourceTable: string; label: string; reason: string; rows: number }> };
     const by = new Map(json.targets.map((t) => [t.table, t]));
-    expect(by.get("email_notifications")).toMatchObject({ rows: 1, sourceTable: "email_notifications", label: "Delivered email queue rows" });
-    expect(by.get("email_notifications")!.reason).not.toMatch(/suppressed\. The delivery is done/);
+    expect(by.get("email_notifications_sent")).toMatchObject({ rows: 1, sourceTable: "email_notifications", label: "Delivered email queue rows" });
+    expect(by.get("email_notifications_sent")!.reason).not.toMatch(/suppressed\. The delivery is done/);
+    // a table name keys no line: each email line has its own key (N6 fix pass 2)
+    expect(by.has("email_notifications")).toBe(false);
     const ab = by.get("email_notifications_suppressed")!;
     expect(ab).toMatchObject({ rows: 2, sourceTable: "email_notifications", label: "Abandoned email queue rows (never sent)" });
     expect(ab.reason).toMatch(/never delivered/);
@@ -775,7 +1057,7 @@ describe("DELIV-8 — the purge: abandoned (suppressed) mail is its own reported
     expect(deleted.find((d) => d.table === "email_notifications_suppressed")).toMatchObject({
       rows: 2, abandoned: { byEventType: { watcher_activity: 1, comment_mention: 1 }, oldest: old, newest: "2026-01-05T00:00:00.000Z" },
     });
-    expect(deleted.find((d) => d.table === "email_notifications")).toMatchObject({ rows: 1 });
+    expect(deleted.find((d) => d.table === "email_notifications_sent")).toMatchObject({ rows: 1 });
   });
 
   it("no record, no delete: a refused audit insert leaves the abandoned rows in place and says so; a refused DATA_PURGE row is reported, never a silent success", async () => {
@@ -811,13 +1093,28 @@ describe("DELIV-8 — the purge: abandoned (suppressed) mail is its own reported
     expect(src0).not.toMatch(/\.select\("event_type, created_at"\)/);
   });
 
-  it("REGRESSION: a `tables` subset naming the table still purges both of its lines (as 'sent or suppressed' did); naming a line purges that line alone", async () => {
+  it("MINOR (fix pass 2): each `tables` name selects one line — the delivered line's key never purges the abandoned mail; the bare table name (an older client's) selects the delivered line alone, and the plan says so", async () => {
+    const purgeOnly = (tables: string[]) => purgePOST(new NextRequest("http://x/api/admin/purge", { method: "POST", headers: { authorization: "Bearer t", "content-type": "application/json" }, body: JSON.stringify({ orgId: "oA", days: 30, confirm: true, tables }) }));
     seedPurge();
-    await purgePOST(new NextRequest("http://x/api/admin/purge", { method: "POST", headers: { authorization: "Bearer t", "content-type": "application/json" }, body: JSON.stringify({ orgId: "oA", days: 30, confirm: true, tables: ["email_notifications_suppressed"] }) }));
+    await purgeOnly(["email_notifications_suppressed"]);
     expect(rows("email_notifications").map((r) => r.id).sort()).toEqual(["f1", "s1"]);
+    // a client keying lines by the plan's `table` picks "Delivered email" alone
     seedPurge();
-    await purgePOST(new NextRequest("http://x/api/admin/purge", { method: "POST", headers: { authorization: "Bearer t", "content-type": "application/json" }, body: JSON.stringify({ orgId: "oA", days: 30, confirm: true, tables: ["email_notifications"] }) }));
-    expect(rows("email_notifications").map((r) => r.id)).toEqual(["f1"]);
+    db.tables.audit_logs = [];
+    const res = await purgeOnly(["email_notifications_sent"]);
+    expect(rows("email_notifications").map((r) => r.id).sort()).toEqual(["f1", "x1", "x2"]);
+    expect(rows("audit_logs").some((a) => a.action === "DATA_PURGE_ABANDONED_EMAIL")).toBe(false);
+    expect((await res.json() as { deleted: Array<{ table: string }> }).deleted.map((d) => d.table)).toEqual(["email_notifications_sent"]);
+    // the bare table name no longer expands to the abandoned line
+    seedPurge();
+    await purgeOnly(["email_notifications"]);
+    expect(rows("email_notifications").map((r) => r.id).sort()).toEqual(["f1", "x1", "x2"]);
+    // a name that is no line selects nothing (never every target)
+    seedPurge();
+    await purgeOnly(["constructor"]);
+    expect(rows("email_notifications")).toHaveLength(4);
+    const plan = await (await purgeGET(new NextRequest("http://x/api/admin/purge?orgId=oA&days=30", { headers: { authorization: "Bearer t" } }))).json() as { legacyTableNames: Record<string, string> };
+    expect(plan.legacyTableNames).toEqual({ email_notifications: "email_notifications_sent" });
   });
 
   it("the kept watermark lists are 20261160's — the NEWEST definition of enforce_notification_insert() in the sequence (scanned at test time)", () => {

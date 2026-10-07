@@ -968,7 +968,10 @@ describe("the embed-drain route throttles user triggers; the cron path is unchan
   it("a user bearer passes minIntervalMs; the CRON_SECRET path does not", () => {
     expect(route).toContain("...(scopeOrgIds ? { minIntervalMs: USER_TRIGGER_MIN_INTERVAL_MS } : {}),");
     expect(route).toContain("const USER_TRIGGER_MIN_INTERVAL_MS = 120_000;");
-    expect(repo("app/api/cron/maintenance/route.ts")).toContain("const drainOut = await drainEmbedBacklog({ scopeOrgIds: null, budgetMs: 100_000 });");
+    // notifications N6 (fix pass 2): the cron's budget is what its run has left, up to 100 s — still no minIntervalMs
+    const cron = repo("app/api/cron/maintenance/route.ts");
+    expect(cron).toContain("const drainOut = await drainEmbedBacklog({ scopeOrgIds: null, budgetMs: Math.min(EMBED_DRAIN_MS, left()) });");
+    expect(cron).toContain("const EMBED_DRAIN_MS = 100_000;");
   });
   it("the page-load nudge is debounced per tab", () => {
     const k = repo("lib/knowledge.ts");

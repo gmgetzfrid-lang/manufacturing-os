@@ -146,8 +146,24 @@ N9, N14 and the integrator):*
   `notifyMany` returns `{ sent, failed }`, and `emit()` returns
   `{ recipients, inapp? }` (warning on an empty audience). N14 RAW-INSERT TAIL
   owns `DELIV-7`'s remainder: the raw inserts in `app/api/transmittal/route.ts`
-  (`ack_complete`), `lib/projects.ts` and `app/api/ai/usage/route.ts`, and the
-  regulatory `notify()` callers that should surface the answer.*
+  (`ack_complete`), `lib/projects.ts` and `app/api/ai/usage/route.ts`; the
+  maintenance cron's own stale-checkout escalation (`checkout_released`,
+  `escalateStaleCheckouts` in `app/api/cron/maintenance/route.ts` — a raw insert
+  whose failures N6 reports, still N14's to route through `notify()`, TAX-11's
+  tail); and the regulatory callers that should surface the answer, among them
+  the cron's step-6 compliance scans, which ignore it inside their own files
+  (`notify()` in `lib/reviewCycles.ts`, `lib/acknowledgments.ts`,
+  `lib/reviewControl.ts`, `lib/effectiveDate.ts`, `lib/retention.ts`,
+  `lib/accessRecert.ts`, `lib/distributionAcks.ts`; `emit()` in
+  `lib/distributionAcks.ts` and `lib/holds.ts`). The cron's own two `emit()`
+  calls already read their result (N6 fix pass 2).*
+- *The compliance digest keeps its state in `platform_settings` (key
+  `compliance_digest`: the start of the oldest window still owed and a resume
+  cursor; `20260920`, service role only). Nothing else writes that key; a
+  package that edits `app/api/cron/maintenance/route.ts` later keeps the run
+  clock (`runEnd`, `digestDeadlineAt`, `noTimeFor`): a new background step takes
+  what the run has left, never a reservation ahead of the digest (`DEC-44 (N6)`
+  §4).*
 - *New, unassigned: `DELIV-16` (a compliance bell row has no retry or outbox)
   and `NEDGE-19` (an org-level timezone setting; `lib/recordTime.ts`
   `orgTimeZone` already reads `org_configurations` key `timezone`).*

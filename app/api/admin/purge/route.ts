@@ -11,7 +11,8 @@
 //                          never a row that carries one of the server's dedupe
 //                          watermarks (DELIV-8 dw3: deleting one re-armed the
 //                          escalation it remembered)
-//   email_notifications  — status = sent              (delivered queue rows)
+//   email_notifications  — status = sent              (delivered queue rows;
+//                          line key email_notifications_sent)
 //   email_notifications  — status = suppressed, listed as its OWN line
 //     (abandoned)          (DELIV-8, notifications Round G N6): mail an earlier
 //                          build parked and never sent. It was purged as
@@ -40,7 +41,8 @@ const DEFAULT_DAYS = 90;
 
 interface PurgeTarget {
   /** The target's name in the plan, the `tables` subset and the audit row —
-   *  the table's own name, except the abandoned-email line. */
+   *  the table's own name, except the two email lines, which each have their
+   *  own (N6 fix pass 2: a table name never stands for both). */
   key: string;
   table: string;
   label: string;
@@ -55,7 +57,7 @@ const TARGETS: PurgeTarget[] = [
     reason: "Bell items the recipient has already read. Disposable once read and aged — the lasting record of any action lives in the audit log. Rows the daily scans use to remember an escalation they already sent are kept, so a purge never re-sends one.",
   },
   {
-    key: "email_notifications",
+    key: "email_notifications_sent",
     table: "email_notifications",
     label: "Delivered email queue rows",
     reason: "Outbound emails already sent. The delivery is done; the queue row is a disposable byproduct.",
@@ -73,6 +75,13 @@ const TARGETS: PurgeTarget[] = [
     reason: "Per-call AI meter rows — the ledger every monthly AI cap is enforced from. Only rows from before this month are ever eligible, whatever the window: this month's rows are the spend the caps count.",
   },
 ];
+
+/** A name an earlier client sent in `tables`, and the ONE line it selects now
+ *  (DELIV-8, N6 fix pass 2). Bare "email_notifications" once meant "sent or
+ *  suppressed"; it selects the delivered line alone — the abandoned line, the
+ *  only copy of mail never sent, is purged only when named by its own key (or
+ *  when no subset is given). The GET plan lists these aliases. */
+const LEGACY_TARGET_NAMES: Record<string, string> = { email_notifications: "email_notifications_sent" };
 
 /** The cutoff a target is purged to. For the AI spend ledger it is never
  *  later than the first instant of the current UTC month (the ledger
@@ -122,7 +131,7 @@ function floorOf(key: string, q: FilterBuilder): FilterBuilder {
     for (const k of PURGE_KEEPS_WATERMARK_KEYS) n = n.is(`metadata->>${k}`, null);
     return n;
   }
-  if (key === "email_notifications") return q.eq("status", "sent");
+  if (key === "email_notifications_sent") return q.eq("status", "sent");
   if (key === "email_notifications_suppressed") return q.eq("status", "suppressed");
   return q;
 }
@@ -265,6 +274,9 @@ export async function GET(req: NextRequest) {
     targets,
     totalRows,
     totalEstBytes,
+    // A purge's `tables` names lines by their `table` key above; these older
+    // names are still accepted, each for the one line given.
+    legacyTableNames: LEGACY_TARGET_NAMES,
     note:
       "Counts are exact for your workspace; byte figures are estimates from average row size " +
       "(actual reclaim depends on Postgres VACUUM). Only disposable byproducts are listed — records are never eligible.",
@@ -286,12 +298,13 @@ export async function POST(req: NextRequest) {
   const days = clampDays(body.days);
   const cutoffIso = new Date(Date.now() - days * 86400 * 1000).toISOString();
 
-  // Optional subset; default to every eligible target. A table name selects
-  // every line of that table ("email_notifications" = delivered + abandoned,
-  // as before); a line's key selects that line alone.
-  const requested = Array.isArray(body.tables) && body.tables.length > 0
-    ? TARGETS.filter((t) => body.tables!.includes(t.key) || body.tables!.includes(t.table))
-    : TARGETS;
+  // Optional subset; default to every eligible target. Each name selects the
+  // one line whose key it is (N6 fix pass 2: never every line of a table — a
+  // client keying lines by table name would otherwise purge the abandoned
+  // mail it never selected); an older name selects the line
+  // LEGACY_TARGET_NAMES gives it.
+  const named = new Set((Array.isArray(body.tables) ? body.tables : []).map((n) => (Object.hasOwn(LEGACY_TARGET_NAMES, n) ? LEGACY_TARGET_NAMES[n] : n)));
+  const requested = named.size > 0 ? TARGETS.filter((t) => named.has(t.key)) : TARGETS;
 
   const deleted: Array<{ table: string; rows: number; cutoffIso: string; error?: string; abandoned?: unknown }> = [];
   let totalDeleted = 0;

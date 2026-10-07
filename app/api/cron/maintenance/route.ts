@@ -71,7 +71,7 @@ import {
 } from "@/lib/intakeRateLimit";
 import { runWithServerClient } from "@/lib/serverClientScope";
 import { sweepIntakeStaging } from "@/lib/intakeStaging";
-import { emit } from "@/lib/notify/dispatch";
+import { emit, type EmitResult } from "@/lib/notify/dispatch";
 import { KIND_META } from "@/lib/notificationKinds";
 import { emailAllowedByPrefs } from "@/lib/notificationPrefs";
 import { renderNotificationEmail } from "@/lib/emailRender";
@@ -96,9 +96,19 @@ async function handler(req: NextRequest) {
   if (!cronSecret || auth !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  // The run's clock: a step that must leave time for the ones after it
-  // derives its deadline from here (the compliance digest, 6b).
+  // The run's clock (N6 fix pass 2): every step that must leave time for the
+  // ones after it derives its limit from here — step 2's drain, the
+  // compliance digest (6b), the second drain (6c) and the background steps.
+  // `runEnd` is the platform's kill (maxDuration) less the response's tail.
   const startedAt = Date.now();
+  const runEnd = startedAt + RUN_BUDGET_MS - RUN_TAIL_MS;
+  const left = () => runEnd - Date.now();
+  // A background step the run has no time left for is not run, and says so.
+  const noTimeFor = (step: string, needMs: number): boolean => {
+    if (left() >= needMs) return false;
+    result.errors.push(`${step}: not run — ${Math.max(0, Math.round(left() / 1000))} s of the run were left (it needs ${needMs / 1000} s; the email steps before it come first) — the next run continues it`);
+    return true;
+  };
 
   const sb = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
 
@@ -156,9 +166,11 @@ async function handler(req: NextRequest) {
   //    one request, not the day — a 400-email fan-out must not take 16 days.
   //    DELIV-11: `processed` decides "empty", never `sent` (sent:0 is a real
   //    answer); unconfigured email and failed sends are reported, not read as
-  //    an empty queue (drainEmailQueue).
+  //    an empty queue (drainEmailQueue). N6 fix pass 2: it starts no batch
+  //    that could end after FIRST_DRAIN_BUDGET_MS of the run, so a backlog
+  //    cannot take the compliance steps' time.
   try {
-    const drain = await drainEmailQueue(req.nextUrl.origin, 12, "notifications", result.errors);
+    const drain = await drainEmailQueue(req.nextUrl.origin, 12, "notifications", result.errors, startedAt + FIRST_DRAIN_BUDGET_MS);
     result.notificationsDrained = drain.sent;
     result.emailDrain = drain;
   } catch (e) {
@@ -248,6 +260,10 @@ async function handler(req: NextRequest) {
           pendingOnRetired: Number(r.pending_on_retired ?? 0),
           exampleDocumentId: r.example_document_id == null ? null : String(r.example_document_id),
         }));
+        // DELIV-7 (N6 fix pass 2): what each nudge reached is read, never
+        // discarded — one that reached no controller, or whose bell rows were
+        // refused, counts as not nudged and is named below.
+        const nudgeShort: string[] = [];
         const nudged = await nudgeReviewHealth(sb, {
           orgs, day: new Date().toISOString().slice(0, 10),
           send: (h, text, metadata) => runWithServerClient(sb, () => emit({
@@ -257,10 +273,13 @@ async function handler(req: NextRequest) {
             audience: { roles: ["Admin", "DocCtrl"] },
             channels: ["inapp"],
             metadata,
-          }).then(() => undefined)),
+          }).then((r) => {
+            const short = emitShortfall(r, "inapp");
+            if (short) { nudgeShort.push(`${h.orgId}: ${short}`); throw new Error(short); }
+          })),
         });
         result.reviewHealthNudges = nudged.nudged;
-        if (nudged.failed > 0) intakeLine(`intake-door: ${nudged.failed} org(s) with review-health counts could not be nudged`);
+        if (nudged.failed > 0) intakeLine(`intake-door: ${nudged.failed} org(s) with review-health counts could not be nudged${nudgeShort.length ? ` — ${nudgeShort.slice(0, 5).join("; ")}` : ""}`);
         if (nudged.orgless > 0) intakeLine(`review-health: ${nudged.orgless} group(s) of rows name no org (neither the version nor its document carries org_id) — counted above, no controller pool to nudge; find them with the two count functions' queries and an org_id IS NULL filter`);
       }
     }
@@ -279,7 +298,12 @@ async function handler(req: NextRequest) {
           audience: { involved: dd.involved, followers: false },
           channels: ["email"],
           metadata: foldedDigestMetadata(dd),
-        }).then(() => undefined))),
+        }).then((r) => {
+          // DELIV-7 (N6 fix pass 2): the email leg's reach is read — the bell
+          // rows landed (counted above); an email that reached nobody is a line.
+          const short = emitShortfall(r, "email");
+          if (short) intakeLine(`intake-notices: project ${dd.projectId} — the digest's email leg: ${short}`);
+        }))),
       });
       result.intakeFoldedDigests = flushed.digests;
       if (flushed.failed > 0) {
@@ -384,11 +408,15 @@ async function handler(req: NextRequest) {
   //     the drain below sends it. Each recipient's list is read on its own
   //     (NEDGE-17), unread items only, through the member's email
   //     preferences (NEDGE-9), with an absolute link to their Inbox (NEDGE-4).
+  //     N6 fix pass 2: it always gets DIGEST_FLOOR_MS (unless the run ends
+  //     first), and a run that cannot reach everyone loses nothing — the
+  //     next run resumes where it stopped (queueComplianceDigests).
   try {
     result.complianceEmails = await queueComplianceDigests(sb, {
       origin: publicOrigin() || req.nextUrl.origin,
       errors: result.errors,
-      deadlineAt: startedAt + RUN_BUDGET_MS - AFTER_DIGEST_RESERVE_MS,
+      deadlineAt: digestDeadlineAt(runEnd, Date.now()),
+      runStartedAt: startedAt,
     });
   } catch (e) {
     result.errors.push(`compliance-digest: ${(e as Error).message}`);
@@ -397,10 +425,11 @@ async function handler(req: NextRequest) {
   // 6c. Drain anything the compliance steps just queued (step 2 ran before
   //     they existed in this request). DELIV-11: reported like step 2, never
   //     swallowed. With email unconfigured step 2 has already said so, and
-  //     this pass would only say it again.
+  //     this pass would only say it again. It starts no batch that could end
+  //     after the run's end.
   if (result.emailDrain?.configured !== false) {
     try {
-      result.emailDrainAfterDigest = await drainEmailQueue(req.nextUrl.origin, 6, "notifications (after the compliance steps)", result.errors);
+      result.emailDrainAfterDigest = await drainEmailQueue(req.nextUrl.origin, 6, "notifications (after the compliance steps)", result.errors, runEnd);
     } catch (e) {
       result.errors.push(`notifications (after the compliance steps): ${(e as Error).message}`);
     }
@@ -433,38 +462,45 @@ async function handler(req: NextRequest) {
   //    drain the ingest queue so linked documents index in the background
   //    without anyone babysitting a browser tab. Bounded by pages + a
   //    deadline so this step can't eat the whole invocation. No-op on a
-  //    pre-20260917 DB.
-  try {
-    const sync = await syncAllKnowledgeSources();
-    result.knowledgeSync = {
-      libraries: sync.libraries, added: sync.added,
-      refreshed: sync.refreshed, removed: sync.removed,
-      // ILIFE-13: the libraries this run left for the next (the rotation
-      // reaches them oldest first), and the rev-ups another sync landed first.
-      deferred: sync.deferred, unsynced: sync.unsynced,
-    };
-    if (sync.errors.length) {
-      result.errors.push(...sync.errors.slice(0, 5).map((m) => `knowledge-sync: ${m}`));
+  //    pre-20260917 DB. N6 fix pass 2: from here on each background step
+  //    takes what the run has left (noTimeFor / left()) — no reservation for
+  //    them is held ahead of the compliance digest.
+  if (!noTimeFor("knowledge-sync", KNOWLEDGE_SYNC_MS)) {
+    try {
+      const sync = await syncAllKnowledgeSources();
+      result.knowledgeSync = {
+        libraries: sync.libraries, added: sync.added,
+        refreshed: sync.refreshed, removed: sync.removed,
+        // ILIFE-13: the libraries this run left for the next (the rotation
+        // reaches them oldest first), and the rev-ups another sync landed first.
+        deferred: sync.deferred, unsynced: sync.unsynced,
+      };
+      if (sync.errors.length) {
+        result.errors.push(...sync.errors.slice(0, 5).map((m) => `knowledge-sync: ${m}`));
+      }
+    } catch (e) {
+      result.errors.push(`knowledge-sync: ${(e as Error).message}`);
     }
-  } catch (e) {
-    result.errors.push(`knowledge-sync: ${(e as Error).message}`);
   }
-  try {
-    const drained = await drainKnowledgeIngestQueue({
-      maxPages: 400,
-      // Bounded to fit the platform's observed kill window with room for the
-      // batch to COMMIT — an over-long drain gets killed mid-write and loses
-      // every page it processed, which reads as "the cron never indexes".
-      deadlineMs: Date.now() + 40_000,
-    });
-    result.knowledgeIngest = {
-      docs: drained.docsTouched, pages: drained.pagesIndexed, completed: drained.completed,
-    };
-    if (drained.errors.length) {
-      result.errors.push(...drained.errors.slice(0, 5).map((m) => `knowledge-ingest: ${m}`));
+  if (!noTimeFor("knowledge-ingest", INGEST_COMMIT_MS + 10_000)) {
+    try {
+      const drained = await drainKnowledgeIngestQueue({
+        maxPages: 400,
+        // Bounded to fit the platform's observed kill window with room for the
+        // batch to COMMIT — an over-long drain gets killed mid-write and loses
+        // every page it processed, which reads as "the cron never indexes".
+        // Never past what the run has left (N6 fix pass 2).
+        deadlineMs: Date.now() + Math.min(INGEST_MS, left() - INGEST_COMMIT_MS),
+      });
+      result.knowledgeIngest = {
+        docs: drained.docsTouched, pages: drained.pagesIndexed, completed: drained.completed,
+      };
+      if (drained.errors.length) {
+        result.errors.push(...drained.errors.slice(0, 5).map((m) => `knowledge-ingest: ${m}`));
+      }
+    } catch (e) {
+      result.errors.push(`knowledge-ingest: ${(e as Error).message}`);
     }
-  } catch (e) {
-    result.errors.push(`knowledge-ingest: ${(e as Error).message}`);
   }
   // The assistant's proposals (ORCH-4): a row a week past its expiry holds a
   // message or a finding nobody can confirm any more — removed here daily,
@@ -481,11 +517,13 @@ async function handler(req: NextRequest) {
   //    default). Admins get an in-app notification at 70%/90%, deduped to
   //    one per person per resource per week — "upgrade before it breaks",
   //    not "why did uploads stop".
-  try {
-    const { status, alerts } = await runPlatformStorageAlerts(sb);
-    result.platformStorage = { r2Pct: status.r2.pct, dbPct: status.db.pct, alerts };
-  } catch (e) {
-    result.errors.push(`platform-storage: ${(e as Error).message}`);
+  if (!noTimeFor("platform-storage", STORAGE_WALK_MS)) {
+    try {
+      const { status, alerts } = await runPlatformStorageAlerts(sb);
+      result.platformStorage = { r2Pct: status.r2.pct, dbPct: status.db.pct, alerts };
+    } catch (e) {
+      result.errors.push(`platform-storage: ${(e as Error).message}`);
+    }
   }
 
   // 10. MEANING-INDEX DRAIN — advance consented embedding builds. This rides
@@ -493,15 +531,18 @@ async function handler(req: NextRequest) {
   //     third (or hourly) vercel.json cron entry fails every deployment on
   //     this plan — production silently froze for a day the last time one
   //     was added. Page loads nudge the drain far more often; this is the
-  //     nobody-opened-the-app backstop.
-  try {
-    const drainOut = await drainEmbedBacklog({ scopeOrgIds: null, budgetMs: 100_000 });
-    result.embedDrain = {
-      libraries: drainOut.drained.length,
-      embedded: drainOut.drained.reduce((n, d) => n + d.embedded, 0),
-    };
-  } catch (e) {
-    result.errors.push(`embed-drain: ${(e as Error).message}`);
+  //     nobody-opened-the-app backstop. Its budget is what the run has left,
+  //     up to EMBED_DRAIN_MS (N6 fix pass 2).
+  if (!noTimeFor("embed-drain", EMBED_DRAIN_MIN_MS)) {
+    try {
+      const drainOut = await drainEmbedBacklog({ scopeOrgIds: null, budgetMs: Math.min(EMBED_DRAIN_MS, left()) });
+      result.embedDrain = {
+        libraries: drainOut.drained.length,
+        embedded: drainOut.drained.reduce((n, d) => n + d.embedded, 0),
+      };
+    } catch (e) {
+      result.errors.push(`embed-drain: ${(e as Error).message}`);
+    }
   }
 
   return NextResponse.json(result);
@@ -519,6 +560,9 @@ type DrainReport = {
   /** Rows left queued because email is not configured (configured: false). */
   deferred: number | null;
   queueEmpty: boolean;
+  /** The drain's time ran out with the queue not known to be empty (N6 fix
+   *  pass 2): the rest is sent by the next drain. Absent otherwise. */
+  outOfTime?: true;
 };
 
 /** Drain the email queue through the sibling route, up to `maxBatches`
@@ -530,13 +574,16 @@ type DrainReport = {
  *   - failed sends: an error line names the count and one provider message.
  *     A batch that sent nothing stops the loop — another batch would claim
  *     the same rows again and spend their attempts inside this one run.
+ *   - time (N6 fix pass 2): no batch starts unless it can end (DRAIN_BATCH_MS)
+ *     by `stopBy`; a drain that stops for time says so.
  *  Every line is also logged: the platform's cron log shows console output,
  *  not this route's JSON. */
-async function drainEmailQueue(origin: string, maxBatches: number, label: string, errors: string[]): Promise<DrainReport> {
+async function drainEmailQueue(origin: string, maxBatches: number, label: string, errors: string[], stopBy: number): Promise<DrainReport> {
   const report: DrainReport = { batches: 0, attempted: 0, sent: 0, failed: 0, configured: true, deferred: null, queueEmpty: false };
   const say = (line: string) => { errors.push(line); console.error(`[cron/maintenance] ${line}`); };
   let sample: string | null = null;
   for (let i = 0; i < maxBatches; i++) {
+    if (Date.now() + DRAIN_BATCH_MS > stopBy) { report.outOfTime = true; break; }
     const res = await fetch(`${origin}/api/notifications/send-queued`, {
       method: "POST",
       headers: { Authorization: `Bearer ${cronSecret}` },
@@ -566,6 +613,11 @@ async function drainEmailQueue(origin: string, maxBatches: number, label: string
   }
   if (report.failed > 0) {
     say(`${label}: ${report.failed} of ${report.attempted} send attempt(s) failed${sample ? ` — e.g. ${sample}` : ""}`);
+  }
+  if (report.outOfTime) {
+    say(report.batches === 0
+      ? `${label}: not run — the run's time is spent; the queue is sent by the next drain`
+      : `${label}: stopped at its time limit after ${report.batches} batch(es) (${report.sent} sent) — the rest of the queue is sent by the next drain`);
   }
   return report;
 }
@@ -669,27 +721,114 @@ const DIGEST_DISCOVERY_PAGE = 1000;
 const DIGEST_UID_CHUNK = 150;
 const DIGEST_PARALLEL = 8;
 
-/** The run's wall clock: the platform kills the function at `maxDuration`
- *  (300 s), losing the steps not yet run and this route's JSON with them. */
+/** The run's wall clock (NEDGE-17, N6 fix pass 2). The platform kills the
+ *  function at `maxDuration` (300 s), losing the steps not yet run and this
+ *  route's JSON with them; `runEnd` keeps RUN_TAIL_MS of that back for the
+ *  response itself. */
 const RUN_BUDGET_MS = maxDuration * 1000;
-/** What the steps AFTER the digest are given, kept back from it (NEDGE-17
- *  fix pass — the digest's deadline is the run's start + RUN_BUDGET_MS − this,
- *  never a fixed share): the second drain (6c, a digest-sized batch), the
- *  folder-trash purge and the proposals prune (one statement each), the
- *  knowledge sync, the knowledge ingest (its own 40 s deadline), the platform
- *  storage walk, and the embed drain (its own 100 s budget). */
-const AFTER_DIGEST_RESERVE_MS =
-  30_000 /* 6c drain */ + 5_000 /* trash purge + proposals prune */ + 20_000 /* knowledge sync */ +
-  40_000 /* knowledge ingest */ + 15_000 /* platform storage */ + 100_000 /* embed drain */;
+const RUN_TAIL_MS = 10_000;
+/** One send-queued batch at worst (100 rows in ~30 s — that route's own
+ *  note): a drain starts a batch only when it can end inside the drain's
+ *  limit. */
+const DRAIN_BATCH_MS = 30_000;
+/** Step 2's share of the run: it starts no batch that could end after this,
+ *  so a backlog cannot take the compliance steps' time (what it leaves is
+ *  sent at 6c and by the next drain). */
+const FIRST_DRAIN_BUDGET_MS = 120_000;
+/** What the compliance digest is always given from the moment it starts,
+ *  however long the steps before it took — unless the run ends sooner. */
+const DIGEST_FLOOR_MS = 60_000;
+/** Kept back from the digest for the obligation step after it: the second
+ *  drain (6c, one batch), which sends what the digest queued, and the two
+ *  one-statement prunes. The background steps after them — knowledge sync,
+ *  ingest, the storage walk, the embed drain — take what the run has left;
+ *  no reservation for them is held ahead of the digest. */
+const AFTER_DIGEST_RESERVE_MS = DRAIN_BATCH_MS + 10_000;
+/** The background steps: the most each is given, cut to what the run has
+ *  left; with less than it needs a step is not run, says so, and the next
+ *  run continues it. */
+const KNOWLEDGE_SYNC_MS = 15_000; // the sync's own default budget (lib/knowledgeSourceSync.ts)
+const INGEST_MS = 40_000;
+/** Room after the ingest's deadline for its last batch to commit. */
+const INGEST_COMMIT_MS = 15_000;
+const STORAGE_WALK_MS = 15_000;
+const EMBED_DRAIN_MS = 100_000;
+/** Below this the embed drain only marks libraries starved. */
+const EMBED_DRAIN_MIN_MS = 20_000;
+
+/** The digest's deadline: the run's end less the 6c reserve — and never less
+ *  than DIGEST_FLOOR_MS from `now`, unless the run itself ends sooner. */
+function digestDeadlineAt(runEnd: number, now: number): number {
+  return Math.min(runEnd, Math.max(runEnd - AFTER_DIGEST_RESERVE_MS, now + DIGEST_FLOOR_MS));
+}
+
+/** DELIV-7 (N6 fix pass 2): what an emit() from this cron fell short of, as a
+ *  sentence — nobody resolved, or bell rows refused — else null. The cron
+ *  reads it instead of discarding the result. (emit() reports no per-email
+ *  outcome; its email leg is judged by its audience alone.) */
+function emitShortfall(r: EmitResult | null | undefined, leg: "inapp" | "email"): string | null {
+  if (!r || r.recipients === 0) return "it reached no recipient (the audience resolved to nobody)";
+  const failed = r.inapp?.failed ?? 0;
+  if (leg === "inapp" && failed > 0) return `${failed} of ${r.recipients} bell row(s) were refused`;
+  return null;
+}
+
+/** Where the compliance digest stands between runs (NEDGE-17, N6 fix pass 2)
+ *  — one platform_settings row (20260920; service role only):
+ *   - openSince: a compliance item created after this and still unread may be
+ *     owed to someone; the next run's recipient search starts here. It moves
+ *     to a run's `asOf` only when that run offered every recipient their
+ *     items; a run cut short, or one that held someone back, leaves it at the
+ *     oldest item still owed.
+ *   - after: the last recipient ("org_id|uid") a run cut short reached; the
+ *     next run starts with the one after it, so successive short runs reach
+ *     every recipient in turn. Null after a complete run. */
+const DIGEST_STATE_KEY = "compliance_digest";
+type DigestState = { openSince: string; after: string | null };
+/** How far back a digest's search ever reaches; within it, an item no run
+ *  listed is listed by the next. No more than the purge's 7-day minimum, so
+ *  the digest rows each recipient's window starts from are still there. */
+const DIGEST_LOOKBACK_MS = 7 * 24 * 3600 * 1000;
+/** The window of the first run (no state row yet) — the 25 hours the digest
+ *  has always covered. */
+const DIGEST_FIRST_WINDOW_MS = 25 * 3600 * 1000;
+
+function parseDigestState(v: unknown): DigestState | null {
+  const o = v as { openSince?: unknown; after?: unknown } | null;
+  if (!o || typeof o.openSince !== "string" || !Number.isFinite(Date.parse(o.openSince))) return null;
+  return { openSince: o.openSince, after: typeof o.after === "string" && o.after ? o.after : null };
+}
+
+/** Where a recipient's last digest stopped: the end of its window
+ *  (metadata.through) or, for a digest queued before N6 fix pass 2, when it
+ *  was queued. */
+function digestThrough(row: { created_at?: unknown; metadata?: unknown }): number | null {
+  const through = (row.metadata as { through?: unknown } | null)?.through;
+  const t = typeof through === "string" ? Date.parse(through) : NaN;
+  if (Number.isFinite(t)) return t;
+  const c = typeof row.created_at === "string" ? Date.parse(row.created_at) : NaN;
+  return Number.isFinite(c) ? c : null;
+}
 
 /** The daily compliance digest: one email per (org, member) listing their
- *  UNREAD compliance notices of the last 25 hours.
+ *  UNREAD compliance notices that no earlier digest listed.
+ *   - Window (NEDGE-17, N6 fix pass 2 — lossless): each recipient's list runs
+ *     from where their last digest stopped (metadata.through) — for someone
+ *     no digest in the window has reached, from the state's openSince — to
+ *     `asOf`. A run cut short, or one that never started composing, leaves
+ *     the state so the next run's search still covers what it did not list
+ *     (up to DIGEST_LOOKBACK_MS back), and nobody it did reach is listed an
+ *     item twice. The first run (no state) covers the 25 hours to now; a run
+ *     that cannot read the state searches the whole lookback, starts each
+ *     list where that person's last digest stopped, and records nothing.
  *   - Who: the recipients of unread compliance rows in the window, found by
- *     paging those rows (org_id, user_id only, keyset on id) to completion
- *     — so the cost follows the pending items, not the membership (a member
- *     with nothing pending costs nothing; NEDGE-17 fix pass), and no
- *     recipient is dropped by a read window. Each must be an ACTIVE member
- *     of that org with an address.
+ *     paging those rows (org_id, user_id, created_at only, keyset on id) to
+ *     completion — so the cost follows the pending items, not the membership
+ *     (a member with nothing pending costs nothing), and no recipient is
+ *     dropped by a read window. Each must be an ACTIVE member of that org
+ *     with an address.
+ *   - Order (N6 fix pass 2): by (org_id, uid), starting after the last
+ *     recipient the previous run reached (state.after).
  *   - NEDGE-17: each recipient's list comes from a read scoped to that
  *     (org, member) and ordered newest first — no window shared across orgs
  *     and recipients, so one member's rows cannot push anyone else's lines
@@ -701,69 +840,112 @@ const AFTER_DIGEST_RESERVE_MS =
  *     cannot be read sends the digest stamped pref_gate = 'unverified'
  *     (DEC-74 §4). An item already read in the bell is not listed.
  *   - NEDGE-4: the email links the member's Inbox, absolute (lib/emailRender.ts).
- *   - NEDGE-12: it is named for when it was composed — "the 25 hours to
- *     <time> (zone)" — the org's zone when configured, else UTC.
- *   - The per-(org, user, day) dedupe on metadata.day (the UTC day) is kept
- *     as it was: a manual re-run never mails anyone twice.
- *   - Time: it stops at `deadlineAt` (derived by the caller from the run's
- *     start, keeping the later steps' reserve) and says how many recipients
- *     it did not reach; the starting recipient rotates daily, so a run cut
- *     short does not always leave the same people out.
+ *   - NEDGE-12: it names its window — "from <since> to <asOf>", in the org's
+ *     zone when configured, else UTC.
+ *   - The per-(org, user, day) dedupe on metadata.day (the UTC day) is kept:
+ *     a manual re-run never mails anyone twice; what it holds back stays owed.
+ *   - Time: it starts no round of recipients at or after `deadlineAt` (the
+ *     caller's digestDeadlineAt) and says how many it did not reach.
  *   - DELIV-7: every read and write that fails is a line in `errors`. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: string; errors: string[]; deadlineAt: number }): Promise<number> {
+async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: string; errors: string[]; deadlineAt: number; runStartedAt: number }): Promise<number> {
   const now = Date.now();
-  const since = new Date(now - 25 * 3600 * 1000).toISOString();
   const asOf = new Date(now).toISOString();
   const dayKey = asOf.slice(0, 10);
   const say = (line: string) => { opts.errors.push(`compliance-digest: ${line}`); console.error(`[cron/maintenance] compliance-digest: ${line}`); };
-  const left = () => Math.max(0, Math.round((opts.deadlineAt - Date.now()) / 1000));
-  if (Date.now() >= opts.deadlineAt) {
-    say(`skipped — the steps before it used the time this run leaves it (the later steps' ${AFTER_DIGEST_RESERVE_MS / 1000} s are kept back from the ${RUN_BUDGET_MS / 1000} s run); unread items still in the 25-hour window are listed by the next run`);
+  const lookbackDays = DIGEST_LOOKBACK_MS / 86_400_000;
+  // The first window, recorded only where no state row exists yet (one
+  // statement; a no-op otherwise) — so even a first run that composes
+  // nothing leaves the next run the window it owes.
+  const recordFirstWindow = async () => {
+    const first: DigestState = { openSince: new Date(now - DIGEST_FIRST_WINDOW_MS).toISOString(), after: null };
+    const { error } = await sb.from("platform_settings").upsert(
+      { key: DIGEST_STATE_KEY, value: first, updated_at: asOf }, { onConflict: "key", ignoreDuplicates: true });
+    if (error) say(`the digest's first window could not be recorded — a run that does not finish may leave items older than ${DIGEST_FIRST_WINDOW_MS / 3_600_000} hours unlisted: ${error.message}`);
+  };
+  if (now >= opts.deadlineAt) {
+    say(`nothing was composed — no time was left in this run (the steps before it used ${Math.round((now - opts.runStartedAt) / 1000)} s of the ${RUN_BUDGET_MS / 1000} s); nothing is lost: the next run's search starts where the last one that finished left off`);
+    await recordFirstWindow();
     return 0;
   }
 
+  // WHERE the last run stopped. Unreadable: search the whole lookback and
+  // record nothing — the state stays as the last readable run left it.
+  let state: DigestState | null = null;
+  let stateReadable = true;
+  let stateMalformed = false;
+  try {
+    const { data, error } = await sb.from("platform_settings").select("value").eq("key", DIGEST_STATE_KEY).maybeSingle();
+    if (error) throw new Error(error.message);
+    state = parseDigestState((data as { value?: unknown } | null)?.value ?? null);
+    stateMalformed = !!data && !state;
+  } catch (e) {
+    stateReadable = false;
+    say(`where the last run stopped could not be read — this run searches the last ${lookbackDays} days, lists each recipient's items from where their last digest stopped, starts at the first recipient and records nothing: ${(e as Error).message}`);
+  }
+  if (stateMalformed) {
+    say(`the recorded state (platform_settings '${DIGEST_STATE_KEY}') is not one this run can read — it searches the last ${lookbackDays} days, lists each recipient's items from where their last digest stopped, and records a new state`);
+  }
+  if (stateReadable && !state && !stateMalformed) await recordFirstWindow();
+  const horizon = now - DIGEST_LOOKBACK_MS;
+  let openSinceMs = !stateReadable || stateMalformed ? horizon : state ? Date.parse(state.openSince) : now - DIGEST_FIRST_WINDOW_MS;
+  if (openSinceMs < horizon) {
+    say(`the window still owed reached back past ${lookbackDays} days (to ${state?.openSince}) — unread items older than ${new Date(horizon).toISOString()} that no run listed are no longer listed`);
+    openSinceMs = horizon;
+  }
+  const openSince = new Date(openSinceMs).toISOString();
+  const after = stateReadable ? state?.after ?? null : null;
+
   // WHO has something pending: every unread compliance row in the window,
-  // (org_id, user_id) only, keyset-paged on id to the empty page (never a
-  // short page read as the last — the API's row cap may be below the page).
-  const pending = new Map<string, { org_id: string; uid: string }>();
-  let after: string | null = null;
+  // (org_id, user_id, created_at) only, keyset-paged on id to the empty page
+  // (never a short page read as the last — the API's row cap may be below
+  // the page). Each pair keeps its oldest pending item: the point a later
+  // run must search from if this one does not reach them.
+  const pending = new Map<string, { org_id: string; uid: string; oldestMs: number }>();
+  let afterId: string | null = null;
   for (;;) {
     if (Date.now() >= opts.deadlineAt) {
-      say(`stopped at its deadline while finding recipients — ${pending.size} found so far, none composed; the next run starts again`);
+      say(`stopped at its deadline while finding recipients — ${pending.size} found so far, none composed; nothing is lost: the next run searches the same window`);
       return 0;
     }
     let q = sb
-      .from("notifications").select("id, org_id, user_id")
+      .from("notifications").select("id, org_id, user_id, created_at")
       .in("kind", COMPLIANCE_KINDS)
       .is("read_at", null)
-      .gt("created_at", since)
+      .gt("created_at", openSince)
+      .lte("created_at", asOf)
       .not("user_id", "is", null);
-    if (after !== null) q = q.gt("id", after);
+    if (afterId !== null) q = q.gt("id", afterId);
     const { data, error } = await q.order("id", { ascending: true }).limit(DIGEST_DISCOVERY_PAGE);
-    if (error) { say(`the window's compliance items could not be read — no digest was composed: ${error.message}`); return 0; }
-    const page = (data as Array<{ id: string; org_id: string | null; user_id: string | null }> | null) ?? [];
+    if (error) { say(`the window's compliance items could not be read — no digest was composed; the next run searches the same window: ${error.message}`); return 0; }
+    const page = (data as Array<{ id: string; org_id: string | null; user_id: string | null; created_at: string | null }> | null) ?? [];
     if (page.length === 0) break;
-    for (const r of page) if (r.org_id && r.user_id) pending.set(`${r.org_id}|${r.user_id}`, { org_id: r.org_id, uid: r.user_id });
-    after = String(page[page.length - 1].id);
+    for (const r of page) {
+      if (!r.org_id || !r.user_id) continue;
+      const at = Date.parse(String(r.created_at));
+      const key = `${r.org_id}|${r.user_id}`;
+      const seen = pending.get(key);
+      if (!seen) pending.set(key, { org_id: r.org_id, uid: r.user_id, oldestMs: Number.isFinite(at) ? at : openSinceMs });
+      else if (Number.isFinite(at) && at < seen.oldestMs) seen.oldestMs = at;
+    }
+    afterId = String(page[page.length - 1].id);
   }
-  if (pending.size === 0) return 0;
 
   // Of those, the ACTIVE members of that org with an address.
   type Member = { uid: string; org_id: string; email: string | null };
+  const keyOf = (m: { org_id: string; uid: string }) => `${m.org_id}|${m.uid}`;
   const members: Member[] = [];
   const uids = [...new Set([...pending.values()].map((p) => p.uid))].sort();
   for (let i = 0; i < uids.length; i += DIGEST_UID_CHUNK) {
     const chunk = uids.slice(i, i + DIGEST_UID_CHUNK);
     const { data, error } = await sb
       .from("org_members").select("uid, org_id, email").eq("status", "active").in("uid", chunk);
-    if (error) { say(`the recipients' memberships could not be read — no digest was composed: ${error.message}`); return 0; }
+    if (error) { say(`the recipients' memberships could not be read — no digest was composed; the next run searches the same window: ${error.message}`); return 0; }
     for (const m of (data as Member[] | null) ?? []) {
-      if (m.email && pending.has(`${m.org_id}|${m.uid}`)) members.push(m);
+      if (m.email && pending.has(keyOf(m))) members.push(m);
     }
   }
-  if (members.length === 0) return 0;
-  members.sort((a, b) => (a.org_id < b.org_id ? -1 : a.org_id > b.org_id ? 1 : a.uid < b.uid ? -1 : a.uid > b.uid ? 1 : 0));
+  members.sort((a, b) => (keyOf(a) < keyOf(b) ? -1 : keyOf(a) > keyOf(b) ? 1 : 0));
 
   const prefs = new Map<string, Record<string, unknown>>();
   const unverified = new Set<string>();
@@ -793,9 +975,42 @@ async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: s
     return zones.get(orgId)!;
   };
 
+  // What a later run still owes, per recipient: the instant its search must
+  // start from (never before this run's own window).
+  const owed = new Map<string, number>();
+  const owe = (m: Member, fromMs: number) => owed.set(keyOf(m), Math.max(openSinceMs, fromMs));
+  const oldestOf = (m: Member) => (pending.get(keyOf(m))?.oldestMs ?? openSinceMs) - 1;
+
   let queued = 0;
   const one = async (m: Member) => {
+    // Declined by their preferences: offered, and nothing is owed.
     if (!unverified.has(m.uid) && !emailAllowedByPrefs(prefs.get(m.uid) ?? null, "compliance_digest")) return;
+    // Their last digest: today's means no second one today (the per-day
+    // dedupe); otherwise their list starts where it stopped. A read that
+    // fails sends anyway, from the window's start — a line listed twice is
+    // better than none.
+    let sinceMs = openSinceMs;
+    const { data: last, error: lastErr } = await sb
+      .from("email_notifications").select("created_at, metadata")
+      .eq("org_id", m.org_id)
+      .eq("to_user_id", m.uid)
+      .eq("event_type", "compliance_digest")
+      .order("created_at", { ascending: false })
+      .limit(1);
+    if (lastErr) {
+      say(`${m.org_id}/${m.uid}: their last digest could not be read — sent anyway, listing from ${openSince}: ${lastErr.message}`);
+    } else {
+      const row = ((last as Array<{ created_at?: unknown; metadata?: unknown }> | null) ?? [])[0];
+      if (row) {
+        const through = digestThrough(row);
+        if ((row.metadata as { day?: unknown } | null)?.day === dayKey) {
+          owe(m, Math.max(oldestOf(m), through ?? openSinceMs));
+          return;
+        }
+        if (through !== null && through > sinceMs) sinceMs = through;
+      }
+    }
+    const since = new Date(sinceMs).toISOString();
     // NEDGE-17: this member's own rows, in this org, newest first.
     const { data: rows, error, count } = await sb
       .from("notifications").select("kind, title, created_at", { count: "exact" })
@@ -804,24 +1019,17 @@ async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: s
       .eq("user_id", m.uid)
       .is("read_at", null)
       .gt("created_at", since)
+      .lte("created_at", asOf)
       .order("created_at", { ascending: false })
       .order("id", { ascending: false })
       .limit(DIGEST_SCAN_PER_RECIPIENT);
-    if (error) { say(`${m.org_id}/${m.uid}: their compliance items could not be read — no digest for them this run: ${error.message}`); return; }
+    if (error) {
+      say(`${m.org_id}/${m.uid}: their compliance items could not be read — no digest for them this run; the next run lists them: ${error.message}`);
+      owe(m, Math.max(oldestOf(m), sinceMs));
+      return;
+    }
     const list = (rows as Array<{ title: string }> | null) ?? [];
     if (list.length === 0) return;
-
-    // Dedupe: one digest per (org, user) per day (metadata-marked). A check
-    // that fails sends anyway — a duplicate digest is better than none.
-    const { data: existing, error: dupErr } = await sb
-      .from("email_notifications").select("id")
-      .eq("org_id", m.org_id)
-      .eq("to_user_id", m.uid)
-      .eq("event_type", "compliance_digest")
-      .contains("metadata", { day: dayKey })
-      .limit(1);
-    if (dupErr) say(`${m.org_id}/${m.uid}: today's earlier digest could not be checked — sent anyway: ${dupErr.message}`);
-    if ((existing as unknown[] | null)?.length) return;
 
     const total = typeof count === "number" && count >= list.length ? count : list.length;
     const unique = [...new Set(list.map((r) => r.title))].slice(0, DIGEST_LINES);
@@ -832,7 +1040,7 @@ async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: s
       "These document-control items are waiting on you:\n\n" +
       unique.map((t) => `  • ${t}`).join("\n") +
       (more > 0 ? `\n  …and ${more} more` : "") +
-      `\n\nThis digest lists your unread compliance notices from the 25 hours to ${formatRecordTime(asOf, zone)}.`;
+      `\n\nThis digest lists your unread compliance notices from ${formatRecordTime(since, zone)} to ${formatRecordTime(asOf, zone)}.`;
     let rendered: { bodyText: string; bodyHtml: string } | null = null;
     let link: string | null = null;
     try {
@@ -851,26 +1059,49 @@ async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: s
       body_html: rendered ? rendered.bodyHtml : null,
       event_type: "compliance_digest",
       metadata: {
-        day: dayKey, count: total,
+        day: dayKey, count: total, since, through: asOf,
         ...(link ? { link, rendered: true } : {}),
         ...(unverified.has(m.uid) ? { pref_gate: "unverified" } : {}),
       },
       status: "queued",
     });
-    if (insErr) { say(`${m.org_id}/${m.uid}: the digest was not queued: ${insErr.message}`); return; }
+    if (insErr) {
+      say(`${m.org_id}/${m.uid}: the digest was not queued — the next run lists these items again: ${insErr.message}`);
+      owe(m, Math.max(oldestOf(m), sinceMs));
+      return;
+    }
     queued += 1;
   };
 
-  // Start at a recipient that moves by one each day, so a run cut by its
-  // deadline does not always leave the same people out.
-  const start = Math.floor(now / 86_400_000) % members.length;
+  // Start after the last recipient the previous run reached (state.after),
+  // so successive runs cut short reach every recipient in turn.
+  let start = after === null ? 0 : members.findIndex((m) => keyOf(m) > after);
+  if (start < 0) start = 0;
   const order = [...members.slice(start), ...members.slice(0, start)];
+  let reached = 0;
   for (let i = 0; i < order.length; i += DIGEST_PARALLEL) {
-    if (Date.now() >= opts.deadlineAt) {
-      say(`stopped at its deadline (${left()} s left; the later steps' ${AFTER_DIGEST_RESERVE_MS / 1000} s of the ${RUN_BUDGET_MS / 1000} s run are kept back) — ${order.length - i} recipient(s) were not reached this run`);
-      break;
-    }
+    if (Date.now() >= opts.deadlineAt) break;
     await Promise.all(order.slice(i, i + DIGEST_PARALLEL).map(one));
+    reached = Math.min(order.length, i + DIGEST_PARALLEL);
+  }
+  const unreached = order.slice(reached);
+  for (const m of unreached) owe(m, oldestOf(m));
+  let nextOpenMs = now;
+  for (const t of owed.values()) if (t < nextOpenMs) nextOpenMs = t;
+  const next: DigestState = {
+    openSince: new Date(nextOpenMs).toISOString(),
+    after: unreached.length === 0 ? null : reached > 0 ? keyOf(order[reached - 1]) : after,
+  };
+  if (unreached.length > 0) {
+    say(`stopped at its deadline — ${unreached.length} of ${order.length} recipient(s) were not reached this run; ` +
+      (stateReadable
+        ? `the next run starts with them and its search reaches back to ${next.openSince}, the oldest item still owed, so nothing is lost within ${lookbackDays} days`
+        : `this run could not record where it stopped, so the next run starts from the last point recorded`));
+  }
+  if (stateReadable) {
+    const { error: saveErr } = await sb.from("platform_settings").upsert(
+      { key: DIGEST_STATE_KEY, value: next, updated_at: asOf }, { onConflict: "key" });
+    if (saveErr) say(`where this run stopped could not be recorded — the next run searches again from ${openSince} (nobody reached here is listed an item twice): ${saveErr.message}`);
   }
   return queued;
 }
