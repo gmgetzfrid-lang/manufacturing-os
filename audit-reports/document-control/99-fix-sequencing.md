@@ -559,12 +559,17 @@ one-paste migration:
   or re-created. **Never re-paste `20261174`, `20261165`, `20261164`,
   `20261159`, `20261151`, `20261144`, `20261139`, `20261105` or any earlier
   guard migration after it** — each drops the P21 rule.
-- **Deploy order: none.** It refuses no write the app makes legitimately:
-  no app path clears a pointer, a new document's first pointer write
-  carries no hold (unchanged), and every other first pointer write the app
-  makes on an existing document goes through `publish_revision` or the
-  review promote, whose recorded forces set the flag. The app carrying P19
-  must already be deployed, as `20261165` requires.
+- **Deploy order: none.** No app path clears a pointer, a new document's
+  first pointer write carries no hold (unchanged), and every other first
+  pointer write the app makes on an existing document goes through
+  `publish_revision` or the review promote, whose recorded forces set the
+  flag. One app result changes: the unforced review promote of a held
+  Issued document with no current revision (the inspector, or the intake
+  approve through `finalizeReviewedRevision`), admitted unrecorded before,
+  is now refused in REV-20 (b)'s sentence — the inspector offers the
+  recorded force on it, the intake approve none until projects-and-cost
+  `INTK-18` lands. The app carrying P19 must already be deployed, as
+  `20261165` requires.
 - **After the paste:** Document Control's first pointer write on a held
   document with no current revision (any status), and its clear of a held
   issued document's current revision (whatever status the write leaves),

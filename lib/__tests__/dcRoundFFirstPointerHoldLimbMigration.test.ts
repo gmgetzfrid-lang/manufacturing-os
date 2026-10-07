@@ -152,6 +152,10 @@ describe("20261182 — the guard re-created from its NEWEST earlier body (found 
     const head = M.slice(0, M.indexOf("DO $$"));
     expect(head).toMatch(/DECIDED — how the guard tells an existing document's first\n-- {11}pointer write from a creation's \(REV-17\): by the active hold\./);
     expect(G_LIMB).toContain("this trigger fires BEFORE UPDATE only (TG_OP is always UPDATE here)");
+    // P17's and P20's comments (kept byte for byte) still leave a first pointer write to REV-17; the P21 block says it supersedes them over a hold
+    expect(G.live).toContain("A first pointer\n  -- write (no current revision yet) is a creation's — REV-17's — not this.\n");
+    expect(G.live).toContain("A first pointer write (no current revision yet)\n  -- is a creation's — REV-17's — not this, as in P17's limb.");
+    expect(G_LIMB).toContain("For a write over a hold,\n  -- this supersedes \"a first pointer write (no current revision yet) is a\n  -- creation's — REV-17's — not this\" in P17's and P20's comments above.");
   });
 
   it("…and no creation carries a hold at its first pointer write: every creation door inserts the row, then the version, then writes the pointer, with no hold in between; HLD-2's carry onto a new split / merge sheet runs after the sheet is created", () => {
@@ -202,21 +206,56 @@ describe("20261182 — the guard re-created from its NEWEST earlier body (found 
     expect(holdInserters.sort()).toEqual(["lib/documentLifecycle/common.ts", "lib/holds.ts"]);
   });
 
-  it("every app write of current_version_id names a revision — none clears a pointer — and the only ones are a creation's first pointer write and the review promote's pre-20261151 fallback (the census REV-24 took, re-taken)", () => {
+  it("every app write of current_version_id names a revision — none clears a pointer — and the only ones are a creation's first pointer write and the review promote's pre-20261151 fallback (the census REV-24 took, re-taken over each file's WHOLE text: any object-literal key, across lines, in a variable patch too, quoted or not; any property assignment)", () => {
     const walk = (d: string): string[] => readdirSync(join(process.cwd(), d)).flatMap((n) => {
       const p = join(d, n);
       if (n === "node_modules" || n === "__tests__" || n.startsWith(".")) return [];
       return statSync(join(process.cwd(), p)).isDirectory() ? walk(p) : /\.(ts|tsx)$/.test(n) ? [p] : [];
     });
-    const writes = ["lib", "app", "components"].flatMap(walk).flatMap((p) =>
-      src(p).split("\n").filter((l) => /\.(?:update|insert|upsert)\(\{[^}]*\bcurrent_version_id:/.test(l)).map((l) => `${p}: ${l.trim()}`));
-    expect(writes.map((w) => w.replace(/: .*current_version_id: ([\w.]+).*/, ": $1")).sort()).toEqual([
+    /** Every current_version_id key in an object literal of `text` (not one line at a time), with the value it is given
+     *  (up to the next `,`, `}` or line end) and the text just before it. A TS type literal (`string | null`) is not a write. */
+    const keysIn = (text: string) => [...text.matchAll(/[{,]\s*(["']?)current_version_id\1\s*:\s*/g)].map((m) => {
+      const at = m.index! + m[0].length;
+      return { value: text.slice(at).split(/[,}\n]/)[0].trim(), before: text.slice(Math.max(0, m.index! - 80), m.index! + 1) };
+    }).filter((k) => !/^string(?:\s*\|\s*(?:null|undefined))*$/.test(k.value));
+    const NULL_KEY = /["']?current_version_id["']?\s*:\s*(?:null|undefined)\b/;
+    const ASSIGN = /(?:\.current_version_id|\[\s*["']current_version_id["']\s*\])\s*=(?!=)/;
+    // the scanner itself: a write split over lines, or built as a variable patch first, is collected (and its null flagged)
+    expect(keysIn('await supabase.from("documents")\n  .update({\n    status: "Draft",\n    current_version_id: null,\n  })').map((k) => k.value)).toEqual(["null"]);
+    expect(keysIn("const patch = { current_version_id: null };\nawait q.update(patch);").map((k) => k.value)).toEqual(["null"]);
+    expect(keysIn('const patch = { "current_version_id": next.id }').map((k) => k.value)).toEqual(["next.id"]);
+    expect(NULL_KEY.test("const patch = {\n  current_version_id:\n    null };")).toBe(true);
+    expect(ASSIGN.test("patch.current_version_id = null;")).toBe(true);
+    expect(keysIn("const doc = data as { current_version_id: string | null };")).toEqual([]);
+
+    const found: string[] = [];
+    const contexts: Record<string, string> = {};
+    for (const p of ["lib", "app", "components", "hooks"].flatMap(walk)) {
+      const text = src(p);
+      expect(text, `${p}: a literal current_version_id: null / undefined`).not.toMatch(NULL_KEY);
+      expect(text, `${p}: a property assignment of current_version_id`).not.toMatch(ASSIGN);
+      for (const k of keysIn(text)) {
+        const key = `${p}: ${k.value.replace(/\s+/g, " ")}`;
+        found.push(key);
+        contexts[key] = k.before;
+      }
+    }
+    expect(found.sort()).toEqual([
+      // the two read-only shapes: an object handed to a reader, a map entry copied from a read row — neither reaches a write
       "app/(protected)/documents/[libraryId]/page.tsx: newVersion.id",
+      "app/api/knowledge/drawing/route.ts: r.current_version_id ?? null",
       "lib/documentLifecycle/common.ts: versionId",
+      "lib/documentShares.ts: (data.current_version_id as string | null) ?? null",
       "lib/reviewControl.ts: pendingId",
       "lib/revisions.ts: ver.id",
     ]);
-    for (const w of writes) expect(w).not.toMatch(/current_version_id: null/);
+    // the four writes are PATCHes naming a revision…
+    for (const k of ["app/(protected)/documents/[libraryId]/page.tsx: newVersion.id", "lib/documentLifecycle/common.ts: versionId", "lib/reviewControl.ts: pendingId", "lib/revisions.ts: ver.id"]) {
+      expect(contexts[k], k).toMatch(/\.update\(\{\s*$/);
+    }
+    // …and the two read-only shapes stay where they are read
+    expect(contexts["lib/documentShares.ts: (data.current_version_id as string | null) ?? null"]).toMatch(/resolveServedVersion\(supabase, \{\s*id: documentId,$/);
+    expect(contexts["app/api/knowledge/drawing/route.ts: r.current_version_id ?? null"]).toMatch(/ctrlById\.set\(r\.id, \{ rev: String\(r\.rev \?\? ""\),$/);
   });
 
   it("DRLS-16: the guard is executable by no client role; SECURITY DEFINER with its search_path pinned; nothing dropped, nothing else created", () => {
@@ -339,6 +378,10 @@ describe("20261182 — the one-paste shape", () => {
     expect(head).toMatch(/Never re-paste\n-- 20261174, 20261165, 20261164, 20261159, 20261151, 20261144, 20261139,\n-- 20261105 or any earlier guard migration after this one/);
     expect(head).toMatch(/P16 \(REV-21\) re-creates this guard too: whichever of P16's\n-- migration and this one is pasted second starts from the other's body/);
     expect(head).toMatch(/DEPLOY ORDER: no app deploy is needed before or after this paste/);
+    // …and it names the one app result that changes (F-14a): the unforced review promote of a held Issued document with no current revision
+    expect(head).toMatch(/ONE\n-- app result changes: the unforced review promote of a held Issued\n-- document with no current revision \(the inspector's ReviewGateSection, or\n-- IntakePanel through finalizeReviewedRevision\), admitted unrecorded\n-- before, is now refused in REV-20 \(b\)'s sentence\./);
+    expect(head).toMatch(/the intake approve\n-- offers none until projects-and-cost INTK-18 \(J14\) lands\./);
+    expect(head).not.toMatch(/changes no app behaviour|refuses no write the app makes legitimately/);
     expect(head).toMatch(/NOT a widening/);
   });
 });

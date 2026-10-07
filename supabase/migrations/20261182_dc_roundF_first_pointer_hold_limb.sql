@@ -90,17 +90,21 @@
 -- migration and this one is pasted second starts from the other's body (it
 -- is rebased on it before it is pasted — the lineDiff test scans for the
 -- newest definition), and pastes after it.
--- DEPLOY ORDER: no app deploy is needed before or after this paste. It
--- refuses no write the app makes legitimately: no app path clears any
--- document's pointer; the app's first pointer writes are a new document's
--- (createDocumentWithFile, the split / merge sheets, the library page's
--- upload — no hold at that write, so unchanged) or go through
--- publish_revision / the review promote, whose recorded forces set the flag
--- (unforced over a hold, publish_revision answers on_hold and the review
--- promote of a held Draft was already refused by REV-20 (b); the inspector
--- offers Document Control the review promote's force on this sentence).
--- The app carrying P19 must already be deployed, as 20261165 requires;
--- P21 changes no app behaviour.
+-- DEPLOY ORDER: no app deploy is needed before or after this paste. No app
+-- path clears any document's pointer; the app's first pointer writes are a
+-- new document's (createDocumentWithFile, the split / merge sheets, the
+-- library page's upload — no hold at that write, so unchanged) or go
+-- through publish_revision / the review promote, whose recorded forces set
+-- the flag (unforced over a hold, publish_revision answers on_hold and the
+-- review promote of a held Draft was already refused by REV-20 (b)). ONE
+-- app result changes: the unforced review promote of a held Issued
+-- document with no current revision (the inspector's ReviewGateSection, or
+-- IntakePanel through finalizeReviewedRevision), admitted unrecorded
+-- before, is now refused in REV-20 (b)'s sentence. The inspector offers
+-- Document Control the recorded force on that sentence; the intake approve
+-- offers none until projects-and-cost INTK-18 (J14) lands. The app carrying
+-- P19 must already be deployed, as 20261165 requires; P21 changes no app
+-- code.
 -- Single paste: prerequisite check → temp-table inventory →
 -- BEGIN/DDL/COMMIT → one SELECT (check text, ok boolean, n text).
 -- ⚠ APPLIED BY HAND (DEC-30). Idempotent.
@@ -417,7 +421,9 @@ BEGIN
   -- document, and HLD-2 carries a split / merge source's holds onto a new
   -- sheet only after the sheet's first pointer write. So a first pointer
   -- write OVER A HOLD is an existing document's; a creation's is unchanged
-  -- (REV-17's rule below decides it, as before).
+  -- (REV-17's rule below decides it, as before). For a write over a hold,
+  -- this supersedes "a first pointer write (no current revision yet) is a
+  -- creation's — REV-17's — not this" in P17's and P20's comments above.
   -- (ii) The CLEAR of the pointer (the current revision -> NULL) of a
   -- document in an issue status (Issued, IFC, a library's own), whatever
   -- status the write leaves: P17's limb binds a move between two revisions
