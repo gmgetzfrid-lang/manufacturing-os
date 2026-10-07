@@ -573,7 +573,7 @@ this is mostly substitution.
 ## A11Y-13 · Contrast failures and missing dark variants
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J14 PROJECTS FOLLOW-UPS (`ProjectCoach.tsx:101`'s dark variant, then the ratchet's `RECORDED_RESIDUAL` empties; the light tint slabs the record lists, re-counted at HEAD) — by the integrator, 2026-10-02 (at the J10b merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (computed)
 - **Blast radius:** accessibility
@@ -686,6 +686,27 @@ Tests: `a11y13FinalReview.test.ts` (4: the delete error rendered from a refused 
 - `ProjectCoach.tsx:101`: J12 can add `dark:text-{hue}-400` beside the 600 icon. When that lands, the ratchet's `RECORDED_RESIDUAL` drops to `{}`.
 - The light tint slabs.
 
+**Resolution (2026-10-07, projects Round G).** Package projects-joint J14 PROJECTS FOLLOW-UPS closed both residual items. Each change is on its own element; no global stylesheet rule was added.
+- `ProjectCoach.tsx`: the not-migrated icon keeps its 600 step on light and wears `dark:text-amber-400` (3 : 1 for an icon). The final review's ratchet `RECORDED_RESIDUAL` is now `{}`.
+- The light tint slabs, re-counted at J14's base: 47 `bg-{hue}-50|100` slabs with no dark background variant, plus 6 translucent `bg-{hue}-50/NN`, all in the schedule engine's surfaces, the status chips and the calendar tiles. Every one now uses the token recipe: a `{hue}-500` tint at 8 % (`bg-{hue}-500/[0.08]`, the 50 slab) or 15 % (`bg-{hue}-500/15`, the 100 chip), and a half-alpha border (`-500/40|50`). The slab reads as a tint on both themes, so it needs no separate dark background.
+- The coloured text on those slabs: 76 sites of `text-{hue}-700|800|900` had no dark twin. Each gains one: 700 / 800 with `dark:text-{hue}-300`, 900 with `dark:text-{hue}-200`. The faded slab text (`700/80`, `800/70`, `900/90`) is a full step.
+- Files:
+  - `ExecutionView.tsx`, `ExecutionGuide.tsx`, `ExecutionReportView.tsx`, `TaskDetailPanel.tsx`, `MovePreviewSheet.tsx` and `RebaseScheduleModal.tsx`.
+  - `ScheduleImportModal.tsx`, `SchedulePulse.tsx`, `ScheduleFilterBar.tsx`, `ScheduleProgress.tsx` and `ScheduleCalendarTileView.tsx`.
+  - `StatusControl.tsx`, `ProgressControl.tsx` and `StaleCheckoutBanner.tsx`.
+- Tests: `lib/__tests__/a11y13FinalReview.test.ts`.
+  - The ratchet's residual is `{}` and its census is still mutation-checked.
+  - "A11Y-13 (J14) —" adds two censuses over the whole Projects area, each pinned at zero: no `bg-{hue}-50|100` without a dark background variant, translucent ones included; no `text-{hue}-700|800|900` without its dark twin.
+  - Both censuses are mutation-checked: a bare slab, a translucent slab, a darkless text and a darkless hover each fail, and the recipe passes.
+  - The recipe's contrast is computed per hue in both themes by the WCAG formula, over Tailwind v3's sRGB steps and the area's light and dark surfaces. Text must reach 4.5 : 1: 700 on the 8 % slab, 800 and 900 on the 15 % chip, and the dark twins on both. The test found amber-700 on the 15 % chip at 4.47 : 1, so that pair is not used; amber text on a chip is 800.
+
+**Done-when.**
+1. ✓ Every text / background pair in the Projects area clears 4.5 : 1 in both themes, for every pair the record names and every pair the two censuses can see (the coloured-text and tint-slab shapes). Computed from the recipe; no browser audit tool was run over rendered pages.
+2. ✓ No error panel renders light-on-dark (unchanged).
+3. ✓ All date inputs match the theme (unchanged).
+
+**Scope / residual.** None for this finding. A new light slab or darkless text anywhere in the area fails the censuses.
+
 ---
 
 ## A11Y-14 · Decision controls outside the Quality tab are still under 24 px
@@ -744,7 +765,7 @@ Clusters of decisions are spaced 8 px (`gap-2` / `ml-2`), up from 4-6 px.
 ## A11Y-15 · Write buttons outside A11Y-14's surfaces still carry no decision floor
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J14 PROJECTS FOLLOW-UPS (bring the listed write buttons under the shared `DECISION_TARGET` and add them to the census) — by the integrator, 2026-10-02 (at the J10b merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** READ — each site was read at the J10b merge; sizes are from the class strings, not measured
 - **Blast radius:** accessibility / mobile
@@ -765,6 +786,51 @@ Clusters of decisions are spaced 8 px (`gap-2` / `ml-2`), up from 4-6 px.
 **Done when.**
 - Every button that starts a write in the listed files carries `DECISION_TARGET`.
 - The census in `j10bDecisionTargets.test.ts` (or a successor) covers these files, so a new write button there without the floor fails.
+
+**Resolution (2026-10-07, projects Round G).** Package projects-joint J14 PROJECTS FOLLOW-UPS brought every listed write button under the shared floor (`${DECISION_TARGET}`: 24 px, and 44 px on a coarse pointer). Every handler, label and disabled state is unchanged.
+- `app/(protected)/projects/[id]/page.tsx`, the Members tab: Add member, Save (a responsibility), Make owner and Remove. The row's action cluster and the responsibility editor are spaced 8 px (`gap-2`). Only the `MembersTab` function is edited, because the page is identity-and-session IS-P1's this wave (its `activeRole` site).
+- `StatusControl.tsx`: each item of the status menu and the reason confirm. The reason cluster is `gap-2`.
+- `ProgressControl.tsx`: the quick-percent buttons. Their row is `flex-wrap gap-2`, so the 224 px popover holds four 44 px targets a row and the fifth wraps.
+- `StaleCheckoutBanner.tsx`: Release. `EditProjectModal.tsx`: Save changes.
+- Tests: `lib/__tests__/j10bDecisionTargets.test.ts` "A11Y-15 (J14) —".
+  - It is an inverted census over the four component files whole and the page's `MembersTab`. Every `<button>` must carry the floor unless its whole click is on the read-only list (`READ_ONLY_15`): a menu opener, a Back, a dismiss, a close, the edit form's own field controls, and opening a responsibility's editor.
+  - Each file must hold at least its listed write buttons, found by handler. Each read-only entry must be used (no dead exemption), and a write added to a read-only handler takes it off the list.
+  - It also pins the 8 px clusters and the unchanged handlers and disabled states.
+
+**Done-when.**
+1. ✓ Every button that starts a write in the listed files carries `DECISION_TARGET`: the four component files whole, and every site the Locations name in the project page. The page's other write buttons were outside this finding's Locations. They are split, as `A11Y-14` split this one, to `A11Y-16` (opened below, `DEC-31`).
+2. ✓ The census covers these files, so a new write button there without the floor fails.
+
+**Scope / residual.** The project page outside its Members tab: `A11Y-16`.
+
+---
+
+## A11Y-16 · The project page's own write buttons, outside its Members tab, still carry no decision floor
+
+*Numbered A11Y-16 on this branch (opened by projects-joint J14 PROJECTS FOLLOW-UPS as `A11Y-15`'s remainder, per `DEC-31`). If the number collides at merge the integrator renumbers.*
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** — (the integrator assigns at the J14 merge: projects-joint, once identity-and-session IS-P1's edit of the same page has merged)
+- **Verification:** READ (each site read at J14's HEAD; sizes from the class strings, not measured)
+- **Blast radius:** accessibility / mobile
+- **Locations:** (all in `app/(protected)/projects/[id]/page.tsx`)
+  - `ActionButton` (the component at `:883`, `px-3 py-1.5` around 12 px text, about 28 px tall). It is used for the lifecycle changes (Pause, Complete, Cancel, Resume, Archive, Reopen, Delete) and for the header's Export CSV, Edit, Evidence pack, Report and Lessons learned. Pause, Complete, Cancel, Resume and Archive open the transition confirm; Delete and Reopen act directly.
+  - The lessons-learned editor's "Save to project" (`:762`), beside its Cancel (`:760`).
+  - The status transition's confirm (`:855`), beside its Cancel (`:854`, read-only).
+  - The Activity tab's comment Post (`:1023`).
+- **Related:** `A11Y-15` (whose Done-when 1 split these off), `A11Y-14`, `components/projects/decisionTarget.ts`
+- **Independently verified:** — (`author`: opened by projects-joint J14 from `A11Y-15`'s census, per `DEC-31`; not yet challenged)
+
+**Mechanism.** `A11Y-15`'s Locations named only the Members tab's sites in the project page. Its census therefore reads the page's `MembersTab` function, not the page as a whole. The rest of the page's write buttons keep their small boxes.
+
+**Failure scenario.** On a tablet, a mis-tap on the project header hits Complete or Delete instead of a neighbouring action. Each lifecycle change does open a confirm, but Delete and Reopen act directly. The lessons editor's Cancel, which discards the draft, sits next to "Save to project".
+
+**Remediation.** Put `${DECISION_TARGET}` in `ActionButton`'s class string (which covers every use) and on the lessons, transition-confirm and comment buttons. Space their clusters 8 px. Extend `A11Y-15`'s inverted census in `lib/__tests__/j10bDecisionTargets.test.ts` from `MembersTab` to the whole page, keeping the read-only list for genuinely read-only handlers (Back, the tab buttons, dismiss, Cancel).
+
+**Done when.**
+- Every button that starts a write in `app/(protected)/projects/[id]/page.tsx` carries `DECISION_TARGET`.
+- The census reads the whole page, so a new write button there without the floor fails.
 
 ---
 
@@ -821,6 +887,7 @@ Clusters of decisions are spaced 8 px (`gap-2` / `ml-2`), up from 4-6 px.
 | A11Y-10 | HIGH | OPEN |
 | A11Y-11 | MEDIUM | RESOLVED |
 | A11Y-12 | MEDIUM | OPEN |
-| A11Y-13 | MEDIUM | OPEN |
+| A11Y-13 | MEDIUM | RESOLVED |
 | A11Y-14 | MEDIUM | RESOLVED |
-| A11Y-15 | LOW | OPEN |
+| A11Y-15 | LOW | RESOLVED |
+| A11Y-16 | LOW | OPEN |

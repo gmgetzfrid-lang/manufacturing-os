@@ -523,7 +523,7 @@ for imported rows too.
 ## SAF-9 · A rejection reason never reaches the contractor, and nothing notifies them either way
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J12 SERVER REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Assigned:** projects-joint J14 PROJECTS FOLLOW-UPS — the remainder (the Intake tab's call of J12's `notifyIntakeOutcome` on approve / reject, and the turnover copy) — by the integrator, 2026-10-07, at the J12 merge (DEC-31; fleet plan `audit-reports/fleet-plans/projects-joint.json`).
 - **Verification:** CONFIRMED
@@ -586,6 +586,25 @@ again.
 - [ ] No UI string claims a channel that does not exist — **still the turnover copy**: `components/projects/QualityTab.tsx:1104` ("The contractor sees this reason, it lands on their record…") — a turnover rejection reaches no contractor channel. J10b's file (handed over): say "kept on the item's record as a nonconformance" or point at a channel that exists.
 
 **Scope / residual.** OPEN for the two hand-offs above. Out of scope by `DEC-56`: emailing an address the door collected.
+
+**Resolution (2026-10-07, projects Round G).** Package projects-joint J14 PROJECTS FOLLOW-UPS made both hand-offs above:
+- **The Intake tab tells the contractor (done-when 2).** `components/projects/IntakePanel.tsx` calls J12's `notifyIntakeOutcome(orgId, versionId)` after a decision lands:
+  - after a rejection's write;
+  - after an approval that made the submission the current revision (`settleApproval` re-reads `current_version_id`; an approval that did not land tells nobody);
+  - after INTK-18's recorded force, which lands the same way.
+- The route reads the outcome from the database and emails only the link's contact, once per submission (`DEC-56`). The panel says what happened in one sentence (`outcomeNoticeSentence`): the contact was emailed; nothing (already told); no contact on the link; email not set up; a send in progress; or the send failed and the portal still shows the outcome. A cancelled rejection tells nobody.
+- **The turnover copy (done-when 3).** `components/projects/QualityTab.tsx`'s rejection prompt now says where the reason goes and who does not get it: "The reason is kept on this item as a nonconformance, and the rejection counts on its contractor's company record when the contractor is linked to a Known Company. The contractor is not sent this reason — tell them yourself."
+- Tests:
+  - `lib/__tests__/j14IntakeApproveHold.test.ts` "SAF-9 (J14) — the Intake tab tells the contractor how their submission was decided": a landed rejection asks the route for that version and says it was emailed; a failed send and a link with no contact are said; a cancelled rejection, and an approval that did not make the submission current, tell nobody; every route answer has its sentence. Its "INTK-18" block's regression case pins the approval's notice.
+  - `lib/__tests__/prjRoundGJ14.test.ts` "SAF-9 done-when 3 (J14)": the turnover prompt's words, and no claim of a contractor channel.
+  - `intakePanelLinkAudit.test.ts` and `j10bIntakeLinksOrigin.test.ts` mock the role context the panel now reads.
+
+**Done-when.**
+- [x] A rejected submission shows its reason on the contractor's portal (unchanged).
+- [x] The contractor is notified on both outcomes of every decision the Intake tab makes: a rejection, an approval and a forced approval. *Split (`DEC-31`):* a submission approved from the document's review surface (`ReviewGateSection`, `components/documents/**` — document-control's) does not call the route yet. That limb is `SAF-19`, opened below with its owner. The route itself needs nothing: it reads the outcome from the version, so any surface that decides may call it.
+- [x] No UI string claims a channel that does not exist. The turnover rejection now says the contractor is not sent the reason, and the upload portal's "You'll be contacted" is true for a link with a contact.
+
+**Scope / residual.** `SAF-19` (the document review surface's approval). Out of scope by `DEC-56` (unchanged): emailing an address the door collected.
 
 ---
 
@@ -988,6 +1007,33 @@ project history for the document will be hidden.
 
 ---
 
+## SAF-19 · A contractor's submission approved from the document's review surface tells the contractor nothing
+
+*Numbered SAF-19 on this branch (opened by projects-joint J14 PROJECTS FOLLOW-UPS as `SAF-9`'s remainder, per `DEC-31`). If the number collides at merge the integrator renumbers.*
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** — (the integrator assigns at the J14 merge: document-control, the owner of `components/documents/**`)
+- **Verification:** READ (by reading `ReviewGateSection` and the notice route at J14's HEAD; not exercised against a live database)
+- **Blast radius:** process / external communication
+- **Locations:**
+  - `components/documents/ReviewGateSection.tsx`: the review promote (`finalizeReviewedRevision`) calls no notice when the version it promotes came through an intake link.
+  - `app/api/intake/outcome-notice/route.ts` and `lib/intakeOutcomeNotice.ts` `notifyIntakeOutcome`: the route that tells the link's contact, keyed by version, called today only by the Intake tab.
+- **Related:** `SAF-9` (its done-when 2's other limb), `DEC-56`, `INTK-18`
+- **Independently verified:** — (`author`: opened by projects-joint J14 from `SAF-9`'s Scope, per `DEC-31`; not yet challenged)
+
+**Mechanism.** A contractor's revision lands in review, and the document's review surface can promote it as well as the project's Intake tab. Since J14 the Intake tab calls the notice route after its decision lands. The review surface does not, so a submission approved there tells the contractor nothing. Their portal shows the outcome.
+
+**Failure scenario.** A document controller approves a vendor's revision from the document page. The vendor's link has a contact, but no email is sent. The vendor waits, or resubmits the same revision.
+
+**Remediation.** After a promote that made an intake-born version current (the version's `provenance` is the door's, or its `authored_by_link_id` is set), call `notifyIntakeOutcome(orgId, versionId)` and say its answer, as `IntakePanel`'s `settleApproval` does. The route reads the outcome from the version, claims the send once per submission and emails only the link's contact (`DEC-56`), so a second surface's call is safe.
+
+**Done when.**
+- A submission approved from the review surface tells the link's contact, through the same route, once.
+- A rendered test drives the review surface's approval of an intake-born version and of an ordinary one (no notice).
+
+---
+
 ## Report progress
 
 | ID | Severity | Status |
@@ -1000,7 +1046,7 @@ project history for the document will be hidden.
 | SAF-6 | HIGH | RESOLVED |
 | SAF-7 | HIGH | RESOLVED |
 | SAF-8 | MEDIUM | RESOLVED |
-| SAF-9 | HIGH | OPEN |
+| SAF-9 | HIGH | RESOLVED |
 | SAF-10 | HIGH | RESOLVED |
 | SAF-11 | HIGH | RESOLVED |
 | SAF-12 | HIGH | RESOLVED |
@@ -1010,3 +1056,4 @@ project history for the document will be hidden.
 | SAF-16 | MEDIUM | RESOLVED |
 | SAF-17 | MEDIUM | RESOLVED |
 | SAF-18 | MEDIUM | OPEN |
+| SAF-19 | LOW | OPEN |

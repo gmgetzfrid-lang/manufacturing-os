@@ -293,7 +293,7 @@ the loop the suppression prevents.
 ## PERF-5 · The execution board renders eight hundred components into a viewport showing fifteen
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J12 SERVER REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Assigned:** projects-joint J14 PROJECTS FOLLOW-UPS — the remainder (done-when 1 on a slow CPU: the drag's per-day-offset re-render in `components/projects/ExecutionView.tsx`; remediation 4, the dependency picker) — by the integrator, 2026-10-07, at the J12 merge (DEC-31).
 - **Verification:** CONFIRMED (structure); node counts estimated
@@ -355,6 +355,36 @@ The calendar view is the one safe surface — it caps at 4 chips per day with
 - ✓ The board's DOM node count is proportional to what is visible (above; re-observed: 24 rows and 22 bars for 400 tasks).
 
 **Scope / residual.** Owed for done-when 1 on a slow CPU: what is left of the per-day-offset re-render while dragging — each change of the drag's day offset still re-renders the board's windowed bars and outline rows and the dependency arrows' geometry (`Bar` / `OutlineRow` are not memo'd; windowing only bounds them). Not built here; the board (`components/projects/ExecutionView.tsx`) is projects-tab P6b's schedule file, edited here only for the formatter and the axis memo. Owner: none yet. Remediation 4 (a searchable dependency picker) and the `MIN_PX_PER_DAY = 30` floor that keeps "Fit" from fitting a two-year schedule are not done-whens and stay as recorded above. Measured headless on a standalone bundle of the board with stubbed data and stubbed `next/*` modules (the harness is in the package's scratch space, not the repository), not on a deployed build against live data.
+
+**Resolution (2026-10-07, projects Round G).** Package projects-joint J14 PROJECTS FOLLOW-UPS took the drag's per-day-offset re-render out of the board and built remediation 4.
+- **A drag frame re-renders the dragged bar only** (`components/projects/ExecutionView.tsx`).
+  - `Bar`, `OutlineRow` and `DependencyArrows` are `React.memo`'d.
+  - Every windowed row gets ONE stable handler object per task id: toggle, select, status, progress, duration, open, sequence, the pointer handlers, nudge and resize. Each handler calls the board's LATEST callbacks through a ref that `useLayoutEffect` updates after every render. A row's props therefore change only when its own data or its own drag state changes, and a change of the drag's day offset re-renders the dragged bar and nothing else.
+  - Before the change, `Bar` and `OutlineRow` were plain components handed fresh inline closures, so all were re-rendered. `DependencyArrows`, also a plain component, rebuilt its geometry over every task and link on any parent render.
+- **Remediation 4, a searchable dependency picker** (`components/projects/TaskDetailPanel.tsx` `PredecessorPicker`). The `<select>` of every task is now a search box: "Add a predecessor — type to search the project's tasks".
+  - It opens on focus and draws at most `PREDECESSOR_PICKER_LIMIT` (20) matches, saying "Showing 20 of 399 — type to narrow."
+  - A query matches when every word of it is in the name, case aside (`matchPredecessors`).
+  - Enter takes the first match, Escape closes, and a hidden-by-filter task says so.
+  - The candidates are the same: no cycle, not already a predecessor, never the task itself (SCH-9's test pins them, now through the search box).
+- **Counted, not timed:** `lib/__tests__/j14ExecutionDragMemo.test.ts`, on the 400-task board.
+  - The work a render does is observed through two pure helpers it calls on every render. `Bar` and `OutlineRow` ask `isImportedMilestone`; the arrows ask `resolveVisibleDepIndex` for every task and link.
+  - One drag frame now calls the first at most once (the dragged bar) and the second never. Run against the board before the change, the same frame called the first 80 times (40 windowed outline rows + 40 bars), so the assertion fails there.
+  - The dragged bar still moves, the move still goes to the confirmation sheet, and a renamed task still re-renders its row (the memo never holds a stale row).
+  - Picker cases: no `<option>` per task; closed until asked; 20 drawn of 399 and counted; a word narrows it; a click saves the link; Enter takes the first match; a word matching nothing says so; the matcher's rule.
+  - `scheduleEngineUi.test.ts`'s SCH-9 case reads the candidates through the search box, and its PERF-5 source pin follows the windowed maps.
+- **Timed, at 4× CPU throttle** (done-when 1 on a slow CPU, the J12 record's open limb).
+  - J12's harness, reused: a standalone bundle of the board with stubbed data (400 tasks) and stubbed `next/*`, in headless Chromium 141 with CDP's `Emulation.setCPUThrottlingRate`. A 120-step drag of a bar (360 px) was timed against a no-drag control over the same window.
+  - Six runs alternated the board before and after the change. The host was busy (load average 7–15), so the numbers are noisy.
+  - Before: the drag showed 6 long tasks in six runs (355 ms in all; one run had a 250 ms frame), and 36 frames over 25 ms against the control's 24.
+  - After: the drag showed 1 long task in six runs (52 ms), and 14 frames over 25 ms against the control's 12. Its worst frame was 50 ms, and no frame was over 50 ms.
+  - At 1×, after: no long task and no frame over 25 ms in six drag runs. Before, the same runs had 6 frames over 25 ms.
+  - Honestly: at 4× the drag is now within this host's noise of its own no-drag control (the control shows a long task too). It is not proven free of every dropped frame on every slow machine. The deterministic evidence is the counted test above. The harness is in the package's scratch space (`scratchpad/j14perf5/`, its runs in `runs/`), not in the repository.
+
+**Done-when.**
+- ✓ Dragging a task on a 400-row schedule does not drop frames: at normal CPU speed (no long task, no frame over 25 ms in six runs), and at 4× throttle within the control's own noise (above). Per frame, the drag re-renders one bar where it re-rendered 80 components and the arrow geometry.
+- ✓ The board's DOM node count is proportional to what is visible (unchanged: 24 rows and 22 bars for 400 tasks in the harness).
+
+**Scope / residual.** None for this finding's done-whens. The `MIN_PX_PER_DAY = 30` floor that keeps "Fit" from fitting a two-year schedule is not a done-when and stays as recorded above. It is named for the integrator; this package did not verify it as a defect, so it opens no finding (`DEC-29`).
 
 ---
 
@@ -787,7 +817,7 @@ everywhere; add an explicit `order` to the snapshot query at minimum. Time-bound
 | PERF-2 | CRITICAL | RESOLVED |
 | PERF-3 | HIGH | OPEN |
 | PERF-4 | HIGH | OPEN |
-| PERF-5 | HIGH | OPEN |
+| PERF-5 | HIGH | RESOLVED |
 | PERF-6 | HIGH | OPEN |
 | PERF-7 | HIGH | RESOLVED |
 | PERF-8 | HIGH | RESOLVED |

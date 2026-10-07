@@ -239,6 +239,19 @@ The award refusal runs in the caller's session (`lib/costDocs.ts` is imported by
 1. The user ratifies the `DEC-48` J12 line, or rules otherwise. For example, a link that records its source (a column on `cost_documents`) and that the bid tab's `registryFor` reads as unbound for gating would let the machine persist a unique match safely. That needs a migration and the bid tab's file (`QuotesPanel.tsx`, projects-joint J10b's this wave).
 2. The owner's ruling on the Apex scenario recorded above: whether the do-not-use GATE (never the binding) flags a registry name whose normalised tokens lead the vendor's ("Apex Industrial Services, LLC" vs "Apex Industrial"). Until then, that bid is flagged only once a person links it.
 3. (J12 fix pass 9.) The award's refusal names one company, and a flagged contractor (an `inactive` one included) answers before the do-not-use registry name the vendor name on file normalises to — in `20261157` §1 `cost_doc_company_barred` (still unpasted) and in `lib/costDocs.ts` `companyBehind`. So `award_quote`'s override row never records that look-alike; the bid tab's acknowledgement (`COST_DOC_AWARD_LETTERHEAD_ACK`, written in the browser) is its only record. Owner: projects-joint J14 PROJECTS FOLLOW-UPS (it runs after J12; handed off in `99-fix-sequencing.md`): answer an `inactive` contractor only after the look-alike, or return every flagged company the award answers for, each with its own override.
+
+**Partial (2026-10-07, projects Round G).** Package projects-joint J14 PROJECTS FOLLOW-UPS closed residual 3 (its Assigned line), in one change with projects-tab `MON-12` (the full record is there).
+- The decision: an award answers for EVERY flagged company, each with its own reason. The first answer's order is unchanged; an `inactive` contractor is not re-ordered behind the look-alike.
+- `20261179` §1 `cost_doc_companies_barred` returns the list, and `lib/costDocs.ts` `companyBehind` returns it in step (`barred` + `also`). The stored vendor name's do-not-use look-alike behind a flagged contractor, an `inactive` one included, is now on it.
+- `award_quote` (§2) refuses without a reason for that company and records `COST_DOC_AWARD_OVERRIDE` for it under its own row (`also: true`). It also refuses a reason typed for another company (`company_moved`).
+- The bid tab passes the stored name's acknowledgement as that company's reason, so the look-alike is recorded by the server, not only by the browser's `COST_DOC_AWARD_LETTERHEAD_ACK`.
+- Before `20261179` is pasted, the lib records the same override rows itself (the five-argument fallback, or its client sequence).
+- Tests: `prjRoundGJ14Migration.test.ts`, the J14 blocks of `costDocs.test.ts` and `quotesPanelRender.test.ts`, and the scratch PostgreSQL 16 run (all on `MON-12`).
+
+**Done-when.** Unchanged from the block above: ✓, ✓ by ruling pending ratification (`DEC-48`), ✓ / ✓. Residual 3 sat under the first; the override is now recorded for every flagged company the award answers for.
+
+**Scope / residual.** Residuals 1 and 2 above stay: the user's ratification of `DEC-48`'s J12 line, and the owner's ruling on the Apex scenario. Both are rulings, not this package's. Residual 3: closed, pending `20261157` and `20261179`.
+
 ---
 
 <a id="cost-4"></a>

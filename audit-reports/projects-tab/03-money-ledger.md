@@ -565,7 +565,7 @@ project.
 ## MON-10 · A losing bid reads "under review" forever unless it shares an RFQ group
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J14 PROJECTS FOLLOW-UPS (done-when 2, the contractor's notice of an award or decline, through the contractor-notice path J12 builds for intake outcomes) — by the integrator, 2026-10-02 (at the J10b merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** ux / vendor relations
@@ -639,6 +639,26 @@ group. Send the notification promised at `upload/route.ts:127`.
 
 **Scope / residual.** OPEN for the contractor notification only (notifications area). `BID-10` group normalisation is J4's.
 
+**Resolution (2026-10-07, projects Round G).** Package projects-joint J14 PROJECTS FOLLOW-UPS built done-when 2 on J12's contractor-notice path, not on a second one (`DEC-56`'s email rule, `SAF-9`'s route):
+- `/api/intake/outcome-notice` also takes `{ orgId, costDocumentId }`. It reads the quote with the service role and requires a quote of the org that came through an intake link, else 404. It then requires the caller to be the project's owner or a controller (`memberHoldsAny` Admin / DocCtrl), and reads the outcome from the quote's STORED status. `awarded` or `declined` is told; any other status is 409 `undecided` and sends nothing. The email goes only to the contact the org entered on that quote link (`project_intake_links.contact_email`), and a link with none answers `no_contact`.
+- The words say what the portal's status chip says and nothing more: "Selected: …" or "Not selected: …", the project, the RFQ group and the company name on the link. There is no price, no reason and no rival (`lib/intakeOutcomeNotice.ts` `quoteOutcomeEmail`).
+- The send is J12's own sequence, shared, not copied (the route's `claimSendRecord`): the claim row first (`INTAKE_OUTCOME_NOTICE_CLAIMED`, unique per org, key and attempt by `20261157` §8), then the provider, then `INTAKE_OUTCOME_NOTIFIED` or `_FAILED`. A quote's key is its document id, so it is told once. The three rows are server-only, typed `cost` on the quote.
+- The bid tab (`components/projects/cost/QuotesPanel.tsx` `noticeQuoteOutcomes`, through `notifyQuoteOutcome`):
+  - After an award lands it tells the awarded bidder, and each open rival of the same RFQ group (by key, the ones the award declines), when its quote came through a link. The route reads each one's stored status, so a rival the award did not decline is `undecided` and skipped.
+  - After a hand decline lands it tells that bidder.
+  - A failed send is said beside the award's own warning, and the quiet answers say nothing (already told, no contact, email not set up, a send in progress, undecided). A failed award or a refused decline tells nobody.
+- Tests:
+  - `lib/__tests__/intakeOutcomeNoticeRoute.test.ts`, seven quote cases: an award tells the link's contact it was selected, with no price, and the trail is the same three actions typed `cost`; a decline says "not selected", never the internal reason, and is sent once; an open quote is 409 and sends nothing; a hand-filed quote, an invoice, and another org's quote or link are 404; the project owner and a DocCtrl held in `roles[]` may send it, a plain member is refused, no contact is said, and a malformed id is a 400; a failed send is recorded and frees the next attempt; a body naming both ids is the submission's (the regression path).
+  - `lib/__tests__/j14QuoteOutcomeNotice.test.ts` (the bid tab, rendered): who is told after an award, a decline, or a failure.
+  - `lib/__tests__/prjRoundGJ14.test.ts` "MON-10 (J14)": the lib call and the words.
+  - `prjRoundGJ12Migration.test.ts` follows the route's shared claim.
+
+**Done-when.**
+1. ✓ Every losing bid on an awarded scope reaches a terminal status (J3 / J10b, unchanged).
+2. ✓ The contractor is notified of the outcome, for every quote that came through a quote link with a contact on it: at the award (the winner and the group's declined rivals) and at a hand decline. The portal's status chip shows the same status in every case. A quote filed by hand has no contractor channel (`DEC-56`: the door's collected addresses are never emailed), and the system has nothing to tell it through.
+
+**Scope / residual.** None for this finding. `BID-10` group normalisation is J4's (as recorded). Notice is best-effort, never part of the award: a failed send is said to the person and recorded (`_FAILED`), and the next decision's call may retry it.
+
 ---
 
 ## MON-11 · Only one event in the entire controls program notifies anyone
@@ -691,7 +711,7 @@ already shows state.
 ## MON-12 · A company flagged "do not use" can still be awarded work
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J12 SERVER REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Assigned:** projects-joint J14 PROJECTS FOLLOW-UPS — the done-when 1 remainder (Scope / residual: the rail on a move away from a flagged company, with the bid-row picker moved onto its RPC); J14 runs after J12 — by J12's review fix pass 6, 2026-10-02, on the integrator's instruction. Also J14's, named here by J12's review fix pass 10 (2026-10-07): the server's one-company order (J12 fix pass 9; Scope / residual; projects-and-cost `COST-3` residual 3) — `cost_doc_company_barred` and `lib/costDocs.ts` `companyBehind` answer a flagged contractor (an `inactive` one included) before the stored vendor name's do-not-use look-alike, so `award_quote`'s override row never records that look-alike.
 - **Verification:** CONFIRMED
@@ -803,6 +823,86 @@ explicit override that captures a reason and writes an audit row. Decide what
 
 **Paste order (review fix pass 3).** `20261157` is pasted only AFTER the J12 code is deployed (the migration header's HOW TO APPLY; the integrator's MIGRATION-PASTE-ORDER row). The code deployed before J12 awards a flagged quote with its typed reason by writing `status = 'awarded'` directly and recording the reason afterwards; it never sets `app.cost_doc_award_override`, so the rail would refuse every reasoned override — the person types a reason and is still refused — until the J12 code, which awards through `award_quote`, is live.
 
+**Resolution (2026-10-07, projects Round G).** Package projects-joint J14 PROJECTS FOLLOW-UPS built all three of J14's limbs in one migration, `supabase/migrations/20261179_prj_roundG_award_answers_for_each.sql` (DEC-30: one paste, a counts-only inventory before the transaction, one final SELECT), and the app halves.
+- **The one-company order (J12 fix pass 9; projects-and-cost `COST-3` residual 3) — decided: every flagged company the award answers for, each with its own reason.** The other option offered was to answer an `inactive` contractor only after the look-alike. It was not taken: it would change which company the refusal and the first override name, and it still needs a second question.
+  - `cost_doc_companies_barred` (§1; new, SECURITY INVOKER, `search_path` pinned, anon revoked) returns the list. `cost_doc_company_barred`'s answer comes first, unchanged; that function is not re-created. Then, unless the document's own link to a company of its org decides alone, come the stored vendor name's do-not-use look-alike and the bound company's own flag, each once. The look-alike query is `cost_doc_company_barred`'s, line for line.
+  - So the look-alike behind a flagged contractor (an `inactive` one included — review 9's S1, S1c, S6) and the bound `inactive` company behind a look-alike (the "Spar Rigging" case) are each on the list.
+  - `lib/costDocs.ts` `companyBehind` returns the same list (`barred` unchanged, plus `also`).
+- **`award_quote` re-created** (§2) from its NEWEST definition (`20261157` §3, found by scanning the sequence; the lineDiff test lists every added line). It gains two arguments, both DEFAULT NULL; the five-argument signature is dropped first, so PostgREST sees one candidate.
+  - `p_also_overrides` holds a typed reason for each OTHER company on the list. A company with none refuses the award (`company_flagged`, `also: true`, naming it) and writes nothing. Each one given is recorded under its own `COST_DOC_AWARD_OVERRIDE` row (`also: true`) in the award's transaction, and `COST_DOC_AWARDED` names them (`alsoOverridden`).
+  - `p_override_company` is the company the first reason was typed for (J12 fix pass 8's residual). When it is given and the answer under the lock is another company, the award is refused (`company_moved`) and writes nothing.
+  - The lib (`awardGuard`) refuses the same two cases before the call. It sends the new arguments only when it has them, and on PGRST202 (the database before `20261179`) it retries 20261157's five-argument call and records the other companies' overrides itself, as its client sequence does.
+- **The two-step write (done-when 1's "Not met") — the move rail.** `enforce_cost_document_company_move` (§3; BEFORE UPDATE ON `cost_documents`, SECURITY DEFINER, `search_path` pinned, revoked from PUBLIC, anon and authenticated) judges a signed-in write to an OPEN quote that changes its company link, contractor or vendor name. It compares §1's list before and after, read as the definer. It refuses (23514) when a flagged company the quote answered for no longer answers, unless the write runs inside `relink_cost_document`, which sets `app.cost_doc_relink_override` to that one document after a typed reason.
+  - The trigger has no column list, because `company_id` is 20261096's and is read through `to_jsonb`. Every other update leaves at the first test.
+  - Passes: the service role (the AI read route fills a missing vendor name as the service role); a decided quote; a move that leaves no flagged company behind (linking a bid TO its flagged company, renaming a vendor whose contractor still answers); the company's or contractor's own delete (FK SET NULL one level down — `MON-14`, opened below, is that delete).
+- **The bid row's picker, on the server** (§4). `relink_cost_document(p_doc, p_company, p_reason)` is SECURITY INVOKER (the caller's own RLS), refuses a NULL `auth.uid()` and is revoked from anon.
+  - It locks the quote. It refuses a decided one, a company of another org, and a database without 20261096's column (`no_column`).
+  - It works out the flagged companies the move leaves. When there are any and no reason was typed, it answers `reason_required` naming them and writes nothing.
+  - Otherwise it moves the link and writes `COST_DOC_COMPANY_LINKED` in the same transaction: `overrideDoNotUse` names the first company left, `leaving` names each, plus the reason and `viaRpc: true`.
+  - `QuotesPanel.tsx` `linkCompany` moves through `relinkQuoteCompany`: one call, a prompt naming the companies only when the server asks, a second call with the reason. While the function is missing, its own question and direct write stand.
+- **The bid tab** asks the database's whole list (`companiesAwardAnswersFor`, falling back to the one-company question while it is missing).
+  - It prompts once for each other company that no acknowledgement already names, and records each intent (`COST_DOC_AWARD_OVERRIDE_DO_NOT_USE`, `also: true`) before money moves, closing each with its own abandonment row if the award then fails.
+  - It passes the stored vendor name's acknowledgement as that look-alike's reason: the award now answers for it, and the prompt says so ("…so Apex Industrial is recorded as an override of its own, with the reason you give here").
+  - It names the first override's company (`overrideCompanyId`).
+  - It asks for a company the lib finds after the click (`needsOverride.also`) and retries with its reason. The letterhead's acknowledgement is still never an override.
+- Tests:
+  - `lib/__tests__/prjRoundGJ14Migration.test.ts`, 19 tests:
+    - the DEC-30 shape, and the guard (20261157 first);
+    - the set-based inventory, and the paste order;
+    - `award_quote`'s lineDiff against the newest earlier definition, the refusals before the claim, and the DROP before the CREATE with its grants;
+    - `cost_doc_company_barred` untouched, the list's order and the look-alike query line for line, and `companyBehind` in step;
+    - the rail's passes in order, and the RPC's order of checks;
+    - the app halves, and the schema-health probes.
+  - `lib/__tests__/costDocs.test.ts` "MON-12 / COST-3 (J14)", 9 tests: S1, Spar, the negative controls, a moved answer, the one-transaction arguments, the five-argument fallback, the function's refusals, and `relinkQuoteCompany`. Mutation-checked: `also` emptied fails 4; the moved check off fails 1.
+  - `lib/__tests__/quotesPanelRender.test.ts` "MON-12 / COST-3 (J14)", 9 rendered cases: Spar's two prompts and intents, no reason for the second, two abandonment rows, the lib's `also`, S1 after 20261179, a failed list call, and the picker's three server paths. Mutation-checked: the list ignored fails 4; the RPC skipped fails 3; the stored-name reason dropped fails 5.
+  - The three J12 fix-9 / fix-10 cases (S1, S1c, H9) re-pin the prompt's new words. `prjRoundGJ12Migration.test.ts` re-pins the code shapes J14 changed.
+- Scratch: a private PostgreSQL 16 cluster (`scratchpad/j14pg/`). It runs J12's stub (`stub_full.sql`), the real `20261157`, J12's seed and J14's (`seed_j14.sql`), then `20261179` twice (idempotent; all 8 probes `t`), then `scenarios_j14.sql`.
+  - The lists:
+    - an inactive contractor with an Apex look-alike gives [Coastal Fabricators (inactive), Apex Industrial] (the one-company gate: Coastal);
+    - "Spar Rigging" gives [Spar Rigging Ltd, Spar Rigging (inactive)];
+    - a person's link to an active company gives [];
+    - another org sees [].
+  - `award_quote`:
+    - with only the first reason it answered `company_flagged` / `also` naming Apex;
+    - with the reason typed for Apex while the answer was Coastal it answered `company_moved`;
+    - a blank reason, or one for another company only, was refused;
+    - all four wrote nothing;
+    - with both reasons it awarded, wrote two overrides (the second `also: true`, its reason trimmed), and `COST_DOC_AWARDED` named Apex in `alsoOverridden`;
+    - the five named arguments (the app before J14) still awarded a one-company quote;
+    - Spar needed its bound company's reason, then awarded.
+  - Direct writes, as the project owner:
+    - refused (23514): f45 linked to an active Harbor, f45 renamed, f1's contractor cleared or moved, and f4 (the exact-name inactive Sleepy Co) renamed;
+    - passed: f1 renamed with its contractor still answering, a clean quote renamed, a decided quote's contractor cleared, and the service role's rename.
+  - `relink_cost_document`:
+    - no reason gave `reason_required` naming Apex;
+    - another org's company gave `company`;
+    - with a reason it moved the link and wrote one row (the override and the trimmed reason);
+    - unchanged, toward the flag, and back to the name needed no reason;
+    - a decided quote gave `decided`, a Viewer `not_found`, anon permission denied, and a signed-out caller 42501;
+    - both settings were left cleared.
+  - An Admin's delete of a linked do-not-use company and the owner's delete of a flagged contractor both passed (FK SET NULL).
+  - Inventory, seeded before the paste: open quotes answering for more than one flagged company 2, for at least one 6. Re-checked against §1's function applied per quote, they were equal (0 / 3 after the scenarios).
+  - 20,000 quotes beside 1,000 flagged rows: the set-based inventory and the whole paste took 0.65 s, with the counts equal to the function per quote (6,750 / 10,003). A first, per-quote inventory took 2 min 27 s and was replaced before commit.
+
+**Done-when.**
+1. ✓ Awarding a `do_not_use` company requires an explicit, reasoned override (with `20261157` and `20261179` applied).
+   - Every flagged company the award answers for needs its own reason, at the lib and the database, by the same list. The bid tab asks the list.
+   - The two-step write is closed: a signed-in move of an open quote's link, contractor or vendor name away from a flagged company is refused unless it carries a typed reason through `relink_cost_document`, which records it in the move's own transaction.
+   - A reason typed for one company never goes with an award that answers for another.
+   - Until the two migrations are pasted, each layer falls back to the path recorded above (the lib's client sequence, the panel's own question and direct write).
+2. ✓ The override is audited — one `COST_DOC_AWARD_OVERRIDE` row per company, in the award's transaction (or by the lib's sequence before the paste). A reasoned move away from a flagged company is audited in the move's transaction.
+3. ✓ `inactive` has behaviour (unchanged), and an `inactive` bound company behind a do-not-use look-alike is now asked about too.
+
+**Scope / residual.** Pending migrations: `20261157` (HOLD), then `20261179` (DEC-30).
+- Paste order: `20261179` after `20261157`, and only once the app carrying J14 is deployed. The app before J14 moves a bid off a flagged company by writing `company_id` directly, so §3 would refuse its reasoned move. It also never sends `p_also_overrides`.
+- `MIGRATION-PASTE-ORDER.md` is the integrator's; the row is named here, not added.
+- Opened as its own finding: `MON-14` (below), a signed-in direct DELETE of a flagged contractor, which clears its flag from its open quotes. The rail lets an FK SET NULL through, because a project's own purge cascades the same way.
+- By design, as recorded:
+  - the rail judges the registry as it stands, so a company flagged after an award does not reopen it, and a controller's edit of the registry itself (un-flagging, renaming, deleting a company) is the registry's;
+  - the letterhead acknowledgement has no database counterpart;
+  - a contractor's FIRST company link (set once, `MON-13`) can replace an exact-name binding to an `inactive` company, which is the binding's definition (done-when 3), not a move off a flag. A do-not-use look-alike is never hidden by a contractor's active company.
+- `lib/schemaExpectations.ts` gains probes for `cost_doc_companies_barred` and `relink_cost_document` (additive). The `award_quote` entry's `signature` text still names 20261157's five arguments. Its probe resolves the seven-argument function by its named arguments; the text is the integrator's to update.
+
 ---
 
 ## MON-13 · The contractor-link and item-contractor rules are enforced only in the browser
@@ -847,6 +947,34 @@ explicit override that captures a reason and writes an audit row. Decide what
 
 ---
 
+## MON-14 · A direct delete of a flagged contractor clears its flag from its open quotes
+
+*Numbered MON-14 on this branch (opened by projects-joint J14 PROJECTS FOLLOW-UPS from its `MON-12` move rail's FK pass, per `DEC-31`). If the number collides at merge the integrator renumbers.*
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** — (the integrator assigns at the J14 merge: projects-joint, a migration after `20261179`)
+- **Verification:** CONFIRMED (on a private scratch PostgreSQL 16 with `20261157` and `20261179` applied — J14's `scenarios_j14.sql`)
+- **Blast radius:** process / governance
+- **Locations:**
+  - `supabase/migrations/20261013_project_controls_program.sql:119`: `cost_documents.party_id REFERENCES project_parties(id) ON DELETE SET NULL`.
+  - `20261179` §3 `enforce_cost_document_company_move`: lets that SET NULL through (`pg_trigger_depth() > 1`), because a project's purge cascades the same way.
+  - The project-parties RLS (project owner and controllers may write): a signed-in DELETE of a contractor is allowed.
+- **Related:** `MON-12` (whose two-step write this is a third step of), `MON-13` (the contractor's link is set once), `DEC-48`
+- **Independently verified:** — (`author`: opened by projects-joint J14 from its own scratch run, per `DEC-31`; not yet challenged)
+
+**Mechanism.** An award answers for a contractor's company when that company is flagged (`cost_doc_company_barred`). Deleting the contractor (`project_parties`) sets every quote's `party_id` to NULL through the foreign key. The move rail cannot tell that cascade from a project purge's, so it lets it through. The quote then answers for nothing through its contractor.
+
+**Failure scenario.** Seen on the scratch cluster: quote f51 is filed against a contractor whose company is DO NOT USE, and an award without a reason is refused (`company_flagged`). Clearing its contractor directly is refused by the move rail. The project owner then deletes the contractor over PostgREST (no app path does), and the same award passes with no reason and no override row.
+
+**Remediation.** A `BEFORE DELETE ON project_parties` rail (SECURITY DEFINER, `search_path` pinned): refuse a signed-in delete of a contractor whose company is flagged while an open quote (draft / parsed) names it. Let through the service role and the project's own delete or purge (the project row already gone, or `delete_project_record`'s `app.record_purge` naming the project — `20261103`'s pattern). No app path deletes a contractor today, so the rail breaks nothing.
+
+**Done when.**
+- A signed-in direct delete of a flagged contractor named by an open quote is refused; the project's own delete and purge still pass.
+- A scratch run shows both, and a shape test pins the rail (DRLS-16).
+
+---
+
 ## Report progress
 
 | ID | Severity | Status |
@@ -860,7 +988,8 @@ explicit override that captures a reason and writes an audit row. Decide what
 | MON-7 | MEDIUM | OPEN |
 | MON-8 | MEDIUM | RESOLVED |
 | MON-9 | LOW | RESOLVED |
-| MON-10 | MEDIUM | OPEN |
+| MON-10 | MEDIUM | RESOLVED |
 | MON-11 | MEDIUM | OPEN |
-| MON-12 | MEDIUM | OPEN |
+| MON-12 | MEDIUM | RESOLVED |
 | MON-13 | LOW | RESOLVED |
+| MON-14 | LOW | OPEN |
