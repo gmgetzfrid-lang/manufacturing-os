@@ -545,6 +545,42 @@ one-paste migration:
   second starts from the other's body (the lineDiff scan finds it) and
   pastes after it.
 
+⚠ **Paste order — P21 FIRST-POINTER-WRITE HOLD LIMB (2026-10-07).** One
+one-paste migration:
+- `20261182_dc_roundF_first_pointer_hold_limb.sql` (`REV-25`) — **after
+  `20261174` (required)**, so after `20261165`, `20261164`, `20261159`,
+  `20261151`, `20261144`, `20261130` and `20261070` too. Its first statement
+  refuses to run, changing nothing, without `20261174`'s guard and
+  `put_back_retired_issue`. `20261174` waits on `20261165`, which waits on
+  `20261164` and the held `20261159` (paste guide row 119), so this file
+  waits with them. It re-creates `enforce_document_publish_guard` from
+  `20261174`'s body (every P20, P19, P18, REV-22 limb 1, RG-14, REV-20,
+  REV-18 and REV-17 rule kept) and adds two limbs. Nothing else is created
+  or re-created. **Never re-paste `20261174`, `20261165`, `20261164`,
+  `20261159`, `20261151`, `20261144`, `20261139`, `20261105` or any earlier
+  guard migration after it** — each drops the P21 rule.
+- **Deploy order: none.** It refuses no write the app makes legitimately:
+  no app path clears a pointer, a new document's first pointer write
+  carries no hold (unchanged), and every other first pointer write the app
+  makes on an existing document goes through `publish_revision` or the
+  review promote, whose recorded forces set the flag. The app carrying P19
+  must already be deployed, as `20261165` requires.
+- **After the paste:** Document Control's first pointer write on a held
+  document with no current revision (any status), and its clear of a held
+  issued document's current revision (whatever status the write leaves),
+  are refused ("…release the hold before issuing it, or publish over it
+  with Document Control's recorded override.") unless a recorded force
+  makes them — `publish_revision`'s (a new revision) or the review
+  promote's (a reviewed draft; the inspector offers it on this sentence).
+  The Draft route closes at its pointer write. A creation is told apart by
+  the hold, which no creation carries at its first pointer write. The
+  inventory counts the held documents with no current revision (and of
+  those, the ones in an issue status) and the held issued documents with
+  one.
+- **P16 (`REV-21`) and P21 re-create the same guard.** Whichever is pasted
+  second starts from the other's body (the lineDiff scan finds it) and
+  pastes after it.
+
 ⚠ **Deploy note — P12 (operators, public-surfaces `SHR-11`).** Before
 deploying the app carrying P12, a self-hosted deployment (the Docker image,
 `next start`) must set `NEXT_PUBLIC_SITE_URL` to its public address — a
