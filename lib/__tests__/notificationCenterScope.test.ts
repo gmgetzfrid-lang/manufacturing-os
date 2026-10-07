@@ -20,8 +20,11 @@
 //     the panel (review fix) — and so is an update row-level security filters
 //     down to fewer rows than were listed (no error, nothing changed; second
 //     review fix).
-//   * Escape inside the leave-confirm answers the confirm ("Stay"); the
-//     center stays open behind it (second review fix).
+//   * The leave question is asked inside the panel; Escape answers it
+//     ("Stay") and goes no further — a raising modal's `window` Escape
+//     listener (MetadataStagingModal's, which aborts its upload) never hears
+//     it, and neither does it when an app dialog over the center answers its
+//     own Escape; the center stays open (third review fix).
 //
 // The REAL Sidebar, NotificationBell, NotificationCenter and the REAL
 // attention hook render here; only the database, the session and the router
@@ -103,9 +106,9 @@ import { useTicketNotifications } from "@/hooks/useTicketNotifications";
 import { CornerDock, __resetDockForTests, useDockAllowances, useDockRaise, NOTIFICATION_CENTER_RAIL_PX } from "@/components/ui/CornerDock";
 import { ToastProvider, useToast } from "@/components/providers/ToastProvider";
 import { Z } from "@/lib/zLayers";
-import { MARK_READ_FAILED, confirmLeaveDuringUploads } from "@/components/notifications/NotificationCenter";
-import { beginUpload, endUpload } from "@/lib/uploadActivity";
-import { DialogHost } from "@/components/providers/DialogProvider";
+import { MARK_READ_FAILED, confirmLeaveDuringUploads, LEAVE_QUESTION } from "@/components/notifications/NotificationCenter";
+import { beginUpload, endUpload, hasUploadsInFlight } from "@/lib/uploadActivity";
+import { DialogHost, appAlert } from "@/components/providers/DialogProvider";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -481,52 +484,87 @@ describe("RT-11 dw1 — raised over an upload modal, '+N more' opens the center 
 });
 
 describe("RT-11 (review fix) — above an upload modal, a link asks before it leaves the page running the upload", () => {
-  const openRaised = async () => {
-    await mount(React.createElement(ToastProvider, null, React.createElement(NotificationCenterProvider, null, React.createElement(Shell, { raised: true }), React.createElement(GrabCenter))));
+  const openRaised = async (extra: React.ReactNode = null) => {
+    await mount(React.createElement(ToastProvider, null, React.createElement(NotificationCenterProvider, null, React.createElement(Shell, { raised: true }), React.createElement(GrabCenter), extra)));
     await act(async () => { opener.open("all"); });
     await flush();
     expect(Number(panel().style.zIndex)).toBe(Z.dialog);
   };
-  /** Every click on the page, and whether its navigation went ahead: one the
+  /** Every click on a link, and whether its navigation went ahead: one the
    *  guard stopped never reaches the document; one followed reaches it with
-   *  its default intact (jsdom has no navigation, so it is cancelled there). */
+   *  its default intact (jsdom has no navigation, so it is cancelled there).
+   *  Clicks on plain buttons (the question's own) are not navigation. */
   const seen: Event[] = [];
   const followed = new Set<Event>();
   const atStart = (e: Event) => { seen.push(e); };
   const atEnd = (e: Event) => { if (!e.defaultPrevented) followed.add(e); e.preventDefault(); };
+  const hrefOf = (e: Event) => (e.target as Element).closest?.("a[href]")?.getAttribute("href") ?? null;
   const clicks = {
-    get length() { return seen.length; },
     set length(n: number) { seen.length = n; followed.clear(); },
-    list: () => seen.map((e) => ({ href: (e.target as Element).closest("a")?.getAttribute("href") ?? null, followed: followed.has(e) })),
+    list: () => seen.filter((e) => hrefOf(e) !== null).map((e) => ({ href: hrefOf(e), followed: followed.has(e) })),
   };
+  /** The leave question, asked inside the panel (third review fix). */
+  const question = () => panel().querySelector("[data-center-leave-question]") as HTMLElement | null;
+  const answer = async (label: "Stay" | "Leave anyway") => {
+    const b = [...question()!.querySelectorAll("button")].find((x) => x.textContent === label)!;
+    await act(async () => { b.click(); });
+    await flush();
+  };
+  /** MetadataStagingModal's Escape, copied from
+   *  components/documents/MetadataStagingModal.tsx (`onKey`, pinned below): a
+   *  `window` bubble listener that — unless an input or select has focus —
+   *  runs requestClose(): abort the transfers, close the modal. */
+  const staging = { aborted: 0 };
+  const stagingOnKey = (e: KeyboardEvent) => {
+    if (e.key !== "Escape") return;
+    const el = document.activeElement;
+    if (el instanceof HTMLInputElement || el instanceof HTMLSelectElement) { el.blur(); return; }
+    staging.aborted++;
+  };
+  const escapeAtFocus = () => act(async () => {
+    document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  });
   beforeEach(() => {
     clicks.length = 0;
+    staging.aborted = 0;
     window.addEventListener("click", atStart, { capture: true });
     document.addEventListener("click", atEnd);
   });
   afterEach(() => {
     window.removeEventListener("click", atStart, { capture: true });
     document.removeEventListener("click", atEnd);
+    window.removeEventListener("keydown", stagingOnKey);
   });
 
-  it("an upload in flight: a row asks first; 'Stay' keeps the page (no navigation, no mark read), 'Leave anyway' follows the row", async () => {
+  it("an upload in flight: a row asks first, inside the panel; 'Stay' keeps the page (no navigation, no mark read, focus back on the row), 'Leave anyway' follows the row", async () => {
     await openRaised();
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const native = vi.spyOn(window, "confirm");
     beginUpload();
     try {
       const rowLink = panel().querySelector("li a") as HTMLAnchorElement;
       await act(async () => { rowLink.click(); });
       await flush();
-      expect(confirm).toHaveBeenCalledTimes(1);
-      expect(confirm.mock.calls[0][0]).toContain("An upload is still running");
+      const q = question()!;
+      expect(q).toBeTruthy();
+      expect(native).not.toHaveBeenCalled();
+      expect(q.querySelector('[role="alertdialog"]')!.textContent).toContain("An upload is still running");
+      expect(panel().contains(q)).toBe(true);
+      // the rest of the panel waits behind it; focus is on "Stay"
+      expect(rowLink.closest("[inert]")).not.toBeNull();
+      expect(document.activeElement?.textContent).toBe("Stay");
+      expect(clicks.list()).toEqual([{ href: rowLink.getAttribute("href"), followed: false }]);
+
+      await answer("Stay");
+      expect(question()).toBeNull();
       expect(clicks.list()).toEqual([{ href: rowLink.getAttribute("href"), followed: false }]);
       expect(fx.markReadCalls).toBe(0);
       expect(panel().hasAttribute("inert")).toBe(false);
+      expect(rowLink.closest("[inert]")).toBeNull();
+      expect(document.activeElement).toBe(rowLink);
 
-      confirm.mockReturnValue(true);
       await act(async () => { rowLink.click(); });
       await flush();
-      expect(confirm).toHaveBeenCalledTimes(2);
+      await answer("Leave anyway");
       // the first tap (stayed), the second tap (asked), then the row's own
       // click replayed and followed
       expect(clicks.list().map((c) => c.followed)).toEqual([false, false, true]);
@@ -536,19 +574,19 @@ describe("RT-11 (review fix) — above an upload modal, a link asks before it le
 
   it("the inbox link asks too; a row's own 'mark read' control never asks", async () => {
     await openRaised();
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     beginUpload();
     try {
       const inbox = [...panel().querySelectorAll("a")].find((a) => a.getAttribute("href") === "/inbox")!;
       await act(async () => { inbox.click(); });
       await flush();
-      expect(confirm).toHaveBeenCalledTimes(1);
+      expect(question()).toBeTruthy();
       expect(clicks.list()).toEqual([{ href: "/inbox", followed: false }]);
+      await answer("Stay");
       const markOne = panel().querySelector("li a button") as HTMLButtonElement;
       expect(markOne).toBeTruthy();
       await act(async () => { markOne.click(); });
       await flush();
-      expect(confirm).toHaveBeenCalledTimes(1);
+      expect(question()).toBeNull();
       expect(fx.markReadCalls).toBe(1);
       // it marked the row read and went nowhere
       expect(clicks.list().at(-1)!.followed).toBe(false);
@@ -557,10 +595,9 @@ describe("RT-11 (review fix) — above an upload modal, a link asks before it le
 
   it("no upload in flight, or opened at rest: a link is followed at once, as before", async () => {
     await openRaised();
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     await act(async () => { (panel().querySelector("li a") as HTMLAnchorElement).click(); });
     await flush();
-    expect(confirm).not.toHaveBeenCalled();
+    expect(question()).toBeNull();
     expect(clicks.list().map((c) => c.followed)).toEqual([true]);
     await act(async () => root.unmount());
     root = createRoot(host);
@@ -572,66 +609,108 @@ describe("RT-11 (review fix) — above an upload modal, a link asks before it le
     try {
       await act(async () => { (panel().querySelector("li a") as HTMLAnchorElement).click(); });
       await flush();
-      expect(confirm).not.toHaveBeenCalled();
+      expect(question()).toBeNull();
       expect(clicks.list().map((c) => c.followed)).toEqual([true]);
     } finally { endUpload(); }
   });
 
-  it("Escape inside the leave-confirm answers it ('Stay') — the center stays open behind it; 'Leave anyway' then follows the row (second review fix)", async () => {
-    // The real DialogHost: the confirm is DialogHost's Modal (z 700, mounted
-    // after the center), whose Escape handler listens on `document`.
-    await mount(React.createElement(ToastProvider, null, React.createElement(NotificationCenterProvider, null,
-      React.createElement(Shell, { raised: true }), React.createElement(GrabCenter), React.createElement(DialogHost))));
-    await act(async () => { opener.open("all"); });
-    await flush();
-    expect(Number(panel().style.zIndex)).toBe(Z.dialog);
-    const native = vi.spyOn(window, "confirm");
-    const confirmDialog = () => [...document.querySelectorAll('[role="dialog"]')].find((d) => !d.hasAttribute("data-center-panel")) as HTMLElement | undefined;
+  it("Escape on the leave question answers it ('Stay') and goes no further: the raising modal's window Escape listener never fires, the upload keeps running, the center stays open; 'Leave anyway' then follows the row (third review fix)", async () => {
+    // the staging modal was open first — its listener is on `window`, bubble phase
+    window.addEventListener("keydown", stagingOnKey);
+    await openRaised(React.createElement(DialogHost));
     beginUpload();
     try {
       const rowLink = panel().querySelector("li a") as HTMLAnchorElement;
       await act(async () => { rowLink.click(); });
       await flush();
-      expect(native).not.toHaveBeenCalled();
-      const dlg = confirmDialog()!;
-      expect(dlg.textContent).toContain("An upload is still running");
-      // focus is in the confirm (its default button), as a keyboard user has it
-      expect(dlg.contains(document.activeElement)).toBe(true);
-      await act(async () => { document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
+      expect(question()).toBeTruthy();
+      // the question is the panel's own — the app's dialog host shows nothing
+      expect([...document.querySelectorAll('[role="dialog"]')].filter((d) => !d.hasAttribute("data-center-panel"))).toEqual([]);
+      expect(question()!.contains(document.activeElement)).toBe(true);
+      await escapeAtFocus();
       await flush();
-      // the confirm answered "Stay": gone, the row not followed, nothing marked…
-      expect(confirmDialog()).toBeUndefined();
+      // "Stay": the question is gone, the row not followed, nothing marked…
+      expect(question()).toBeNull();
       expect(clicks.list()).toEqual([{ href: rowLink.getAttribute("href"), followed: false }]);
       expect(fx.markReadCalls).toBe(0);
-      // …and the center is still open, at its layer, behind where the confirm was
+      // …the staging modal never heard the key, and the upload is untouched…
+      expect(staging.aborted).toBe(0);
+      expect(hasUploadsInFlight()).toBe(true);
+      // …and the center is still open, at its layer
       expect(panel().hasAttribute("inert")).toBe(false);
       expect(Number(panel().style.zIndex)).toBe(Z.dialog);
 
       // asked again, "Leave anyway" follows the row
       await act(async () => { rowLink.click(); });
       await flush();
-      const leave = [...confirmDialog()!.querySelectorAll("button")].find((b) => b.textContent === "Leave anyway")!;
-      expect(leave.getAttribute("type")).toBe("submit");
-      // (this harness cancels every click's default to stand in for
-      // navigation, so the confirm's submit is sent directly)
-      await act(async () => { leave.closest("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
-      await flush();
+      await answer("Leave anyway");
       expect(clicks.list().map((c) => c.followed)).toEqual([false, false, true]);
       expect(fx.markReadCalls).toBe(1);
+      expect(staging.aborted).toBe(0);
     } finally { endUpload(); }
-    // with no other dialog up, Escape still closes the center
+    // with no question up, Escape closes the center — and still stops there
     await act(async () => { opener.open("all"); });
     await flush();
     await act(async () => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
     await flush();
     expect(panel().hasAttribute("inert")).toBe(true);
+    expect(staging.aborted).toBe(0);
+  });
+
+  it("closed with the question up (the backdrop), the answer is 'Stay': nothing is followed (third review fix)", async () => {
+    await openRaised();
+    beginUpload();
+    try {
+      const rowLink = panel().querySelector("li a") as HTMLAnchorElement;
+      await act(async () => { rowLink.click(); });
+      await flush();
+      expect(question()).toBeTruthy();
+      await act(async () => { (document.querySelector("[data-center-backdrop]") as HTMLElement).click(); });
+      await flush();
+      expect(panel().hasAttribute("inert")).toBe(true);
+      expect(question()).toBeNull();
+      expect(clicks.list().filter((c) => c.followed)).toEqual([]);
+      expect(fx.markReadCalls).toBe(0);
+    } finally { endUpload(); }
+  });
+
+  it("an app dialog opened over the center answers its own Escape, and the key stops there — the raising modal under the center never hears it (third review fix)", async () => {
+    window.addEventListener("keydown", stagingOnKey);
+    await openRaised(React.createElement(DialogHost));
+    let settled = false;
+    await act(async () => { void appAlert({ title: "Three files finished", message: "The rest are still uploading." }).then(() => { settled = true; }); });
+    await flush();
+    const alert = [...document.querySelectorAll('[role="dialog"]')].find((d) => !d.hasAttribute("data-center-panel")) as HTMLElement;
+    expect(alert.textContent).toContain("Three files finished");
+    expect(alert.contains(document.activeElement)).toBe(true);
+    await escapeAtFocus();
+    await flush();
+    expect(settled).toBe(true);
+    expect([...document.querySelectorAll('[role="dialog"]')].filter((d) => !d.hasAttribute("data-center-panel"))).toEqual([]);
+    expect(staging.aborted).toBe(0);
+    expect(panel().hasAttribute("inert")).toBe(false);
+    // the next Escape (nothing above the center) closes the center, and stops there too
+    await act(async () => { panel().focus(); });
+    await escapeAtFocus();
+    await flush();
+    expect(panel().hasAttribute("inert")).toBe(true);
+    expect(staging.aborted).toBe(0);
+  });
+
+  it("the premise: MetadataStagingModal's Escape is a window bubble listener that aborts the upload (pinned so the copy above stays honest)", () => {
+    const STAGING = readFileSync(resolve("components/documents/MetadataStagingModal.tsx"), "utf8");
+    expect(STAGING).toMatch(/const requestClose = \(\) => \{\s*abortRef\.current\?\.abort\(\);\s*onCancel\(\);\s*\};/);
+    expect(STAGING).toMatch(/const onKey = \(e: KeyboardEvent\) => \{\s*if \(e\.key !== "Escape"\) return;[\s\S]{0,400}?requestClose\(\);\s*\};\s*window\.addEventListener\("keydown", onKey\);/);
   });
 
   it("the question reuses the reload prompt's words (pure)", async () => {
-    const confirm = vi.fn(async () => true);
-    expect(await confirmLeaveDuringUploads({ inFlight: () => false, confirm })).toBe(true);
-    expect(confirm).not.toHaveBeenCalled();
-    expect(await confirmLeaveDuringUploads({ inFlight: () => true, confirm })).toBe(true);
-    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ title: "An upload is still running", confirmLabel: "Leave anyway", cancelLabel: "Stay", tone: "danger" }));
+    const ask = vi.fn(async () => true);
+    expect(await confirmLeaveDuringUploads({ inFlight: () => false, ask })).toBe(true);
+    expect(ask).not.toHaveBeenCalled();
+    expect(await confirmLeaveDuringUploads({ inFlight: () => true, ask })).toBe(true);
+    expect(ask).toHaveBeenCalledWith(LEAVE_QUESTION);
+    expect(LEAVE_QUESTION).toMatchObject({ title: "An upload is still running", confirmLabel: "Leave anyway", cancelLabel: "Stay" });
+    const stay = vi.fn(async () => false);
+    expect(await confirmLeaveDuringUploads({ inFlight: () => true, ask: stay })).toBe(false);
   });
 });

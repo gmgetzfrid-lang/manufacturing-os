@@ -18,15 +18,16 @@
 //     is amber and stays until dismissed, its bell row being the durable
 //     trace (TAX-3 dw1 / dw3; the plan's default, DEC-44 (N3)). A hold
 //     placed keeps the amber it always had.
-//   * A notification row coalesces with another about the same event — the
-//     same kind, the same resource and the same actor within the toast
-//     provider's window — into one card with a count (`coalesceKey`, RT-11 /
-//     OS-4). The actor is part of the event: ToastProvider's merge keeps the
-//     first card's words, so without it Carol's sign-off on P-1 would merge
-//     into Bob's and read "Bob signed off on P-1 ×2". Two people's acts on one
-//     resource stay two cards; one person's repeat (Alice posting twice) is
-//     one card that still shows the first row's words — the remainder of the
-//     trade-off in DEC-44 (N3) item 4, handed to ToastProvider's next holder.
+//   * A notification row coalesces with another only when it says the same
+//     thing about the same thing — the same kind and resource AND the same
+//     words (title and body) — within the toast provider's window: one card
+//     with a count (`coalesceKey`, RT-11 / OS-4; a nudge clicked five times is
+//     one card ×5). ToastProvider's merge keeps the first card's words, so a
+//     key that merged differently worded rows hid the newer ones: a second
+//     status ("Approve" then "Release" on DR-12 read "Approve ×2"), a second
+//     message ("hey" then the real question read "hey ×2"), another person's
+//     sign-off. With the words in the key, every card shows exactly what each
+//     row it stands for said (third review fix).
 //   * A burst is summarized: at most BURST_SHOWN_MAX informational cards
 //     per BURST_WINDOW_MS; the rest of that window's rows become one
 //     "N more notifications" card when it closes (TAX-9 dw4 — two cards plus
@@ -35,10 +36,11 @@
 //     held. Action rows are never folded into the summary.
 //   * The member's "Pop-up toasts" switch (`toast_enabled`) is read through
 //     `readToastPreference` — on mount, whenever the tab comes back, and
-//     before any toast once the last read is older than PREF_FRESH_MS — and
-//     fails open (RT-10 / DEC-74 §7): on an error, and on a read that has not
-//     answered within PREF_READ_TIMEOUT_MS (a stalled request on plant Wi-Fi
-//     with no route out must not silence every toast in the tab). A refresh
+//     before any toast once the last read is older than PREF_FRESH_MS. A read
+//     that rejects, or has not answered within PREF_READ_TIMEOUT_MS (a
+//     stalled request on plant Wi-Fi with no route out), keeps the last value
+//     a read actually returned — a known "off" stays off — and fails open
+//     only when nothing has been read yet (RT-10 / DEC-74 §7). A refresh
 //     never waits on an older read, and a late answer never overwrites a
 //     newer one. Bell rows are never affected.
 
@@ -56,8 +58,6 @@ export interface ListenedRow {
   title: string;
   body: string | null;
   resource_id?: string | null;
-  /** Who did it — part of the event's key (two people's acts are two). */
-  actor_user_id?: string | null;
 }
 
 export interface ToastSpec {
@@ -87,6 +87,15 @@ export function isActionRow(row: Pick<ListenedRow, "kind">): boolean {
   return kindMeta(row.kind)?.actionRequired ?? false;
 }
 
+/** One card per statement (RT-11 dw2 / OS-4 dw2): the kind and resource it
+ *  is about and the words it says. A row about no resource has none — it
+ *  keeps ToastProvider's content key (`undefined`), so two unrelated
+ *  messages about nothing in particular merge only when worded alike. */
+export function notificationCoalesceKey(row: Pick<ListenedRow, "kind" | "resource_id" | "title" | "body">): string | undefined {
+  if (!row.resource_id) return undefined;
+  return `${row.kind}:${row.resource_id}\u0000${row.title}\u0000${row.body ?? ""}`;
+}
+
 /** The toast for one notification row. */
 export function toastForRow(row: ListenedRow): ToastSpec {
   const action = isActionRow(row);
@@ -98,12 +107,9 @@ export function toastForRow(row: ListenedRow): ToastSpec {
     message: row.body ?? "",
     // Action-required stays until dismissed (TAX-3 dw3): 0 = no timer.
     duration: action ? 0 : NOTIFICATION_TOAST_MS,
-    // One card per event (RT-11 dw2 / OS-4 dw2): the same kind, resource
-    // and actor. A different actor is a different event (the merged card
-    // keeps the first row's words, so it would name the wrong person). A row
-    // about no resource keeps the content key, so two unrelated messages
-    // never merge.
-    coalesceKey: row.resource_id ? `${row.kind}:${row.resource_id}:${row.actor_user_id ?? ""}` : undefined,
+    // One card per statement (RT-11 dw2 / OS-4 dw2): the merged card keeps
+    // the first row's words, so only rows with the same words may merge.
+    coalesceKey: notificationCoalesceKey(row),
   };
 }
 
@@ -135,6 +141,10 @@ export function createNotificationToaster(deps: ToasterDeps) {
   const seen = new Set<string>();
   const seenOrder: string[] = [];
   let pref: { value: boolean; at: number } | null = null;
+  // The last value a read actually returned (never a fallback). A refresh
+  // forgets `pref`'s freshness, never this: a stalled or failed re-read keeps
+  // a known "off" (RT-10, third review fix).
+  let lastRead: boolean | null = null;
   let pending: Promise<boolean> | null = null;
   // Bumped by every refresh: a read begun before it may still answer, but
   // never writes the cache a newer read owns.
@@ -149,29 +159,32 @@ export function createNotificationToaster(deps: ToasterDeps) {
   let timer: unknown = null;
   let stopped = false;
 
-  /** One read of the switch, failing open on an error and on a read that
-   *  has not answered within PREF_READ_TIMEOUT_MS. */
-  const readOnce = (): Promise<boolean> => new Promise<boolean>((resolve) => {
+  /** One read of the switch. A read that rejects, or has not answered
+   *  within PREF_READ_TIMEOUT_MS, keeps the last value actually read and
+   *  fails open only when nothing has been read yet. */
+  const readOnce = (gen: number): Promise<boolean> => new Promise<boolean>((resolve) => {
     let settled = false;
     let handle: unknown = null;
-    const settle = (value: boolean) => {
+    const settle = (value: boolean, answered: boolean) => {
       if (settled) return;
       settled = true;
       if (handle !== null) { clearTimer(handle); prefTimers.delete(handle); }
+      if (answered && gen === generation) lastRead = value;
       resolve(value);
     };
-    handle = setTimer(() => settle(true), PREF_READ_TIMEOUT_MS);
+    const unanswered = () => settle(lastRead ?? true, false);
+    handle = setTimer(unanswered, PREF_READ_TIMEOUT_MS);
     prefTimers.add(handle);
     let read: Promise<boolean>;
-    try { read = deps.readPreference(); } catch { read = Promise.resolve(true); }
-    read.then(settle, () => settle(true));
+    try { read = deps.readPreference(); } catch { read = Promise.reject(new Error("unreadable")); }
+    read.then((value) => settle(value, true), unanswered);
   });
 
   const ensurePreference = (): Promise<boolean> => {
     if (pref && now() - pref.at < PREF_FRESH_MS) return Promise.resolve(pref.value);
     if (pending) return pending;
     const gen = generation;
-    const p: Promise<boolean> = readOnce().then((value) => {
+    const p: Promise<boolean> = readOnce(gen).then((value) => {
       if (gen === generation) pref = { value, at: now() };
       if (pending === p) pending = null;
       return value;
@@ -228,8 +241,9 @@ export function createNotificationToaster(deps: ToasterDeps) {
         if (!stopped && enabled) route(row);
       });
     },
-    /** Forget the cached preference and read it again (mount, tab return)
-     *  — a fresh read, never the one still in flight. */
+    /** Forget the cached preference's freshness and read it again (mount,
+     *  tab return) — a fresh read, never the one still in flight. The last
+     *  value actually read is kept for a read that stalls or fails. */
     refreshPreference() {
       generation++;
       pref = null;

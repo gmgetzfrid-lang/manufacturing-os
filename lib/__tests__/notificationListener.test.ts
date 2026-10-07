@@ -9,10 +9,11 @@
 // so one checkout-thread post toasts each participant exactly once (from its
 // durable `checkout_message` row) and an uninvolved member never; an
 // action-required kind is amber and stays (TAX-3); a row coalesces with
-// another about the same event — same kind, resource and actor (RT-11 /
-// OS-4); a burst is one summary (TAX-9); the member's pop-up switch is
-// honoured, failing open on an error and on a read that never answers
-// (RT-10).
+// another only when it says the same thing about the same thing — same kind,
+// resource and words (RT-11 / OS-4; third review fix); a burst is one summary
+// (TAX-9); the member's pop-up switch is honoured — a read that fails or
+// never answers keeps the last value read, and fails open only when nothing
+// has been read yet (RT-10).
 //
 // The supabase double is an in-memory bus: an INSERT is delivered to every
 // subscribed channel on that table whose `col=eq.value` filter matches — the
@@ -132,7 +133,7 @@ vi.mock("@/components/providers/ToastProvider", async (orig) => {
 });
 
 import {
-  NotificationListener, toastForRow, burstSummary, createNotificationToaster,
+  NotificationListener, toastForRow, burstSummary, createNotificationToaster, notificationCoalesceKey,
   BURST_WINDOW_MS, BURST_SHOWN_MAX, PREF_FRESH_MS, PREF_READ_TIMEOUT_MS, SEEN_IDS_MAX, NOTIFICATION_TOAST_MS,
 } from "@/components/providers/NotificationListener";
 import { postActivity } from "@/lib/activityThread";
@@ -182,10 +183,10 @@ afterEach(async () => {
 
 describe("toastForRow — the tone, the time and the event key come from the registry", () => {
   it("an action-required kind is amber and stays until dismissed; an FYI kind is the 6 s info toast it always was", () => {
-    expect(toastForRow({ id: "1", kind: "checkout_released", title: "Your checkout was force-released", body: "b", resource_id: "d1", actor_user_id: "uD" }))
-      .toEqual({ type: "warning", title: "Your checkout was force-released", message: "b", duration: 0, coalesceKey: "checkout_released:d1:uD" });
-    expect(toastForRow({ id: "2", kind: "checkout_message", title: "Alice posted to X", body: "hi", resource_id: "d1", actor_user_id: "uA" }))
-      .toEqual({ type: "info", title: "Alice posted to X", message: "hi", duration: NOTIFICATION_TOAST_MS, coalesceKey: "checkout_message:d1:uA" });
+    expect(toastForRow({ id: "1", kind: "checkout_released", title: "Your checkout was force-released", body: "b", resource_id: "d1" }))
+      .toEqual({ type: "warning", title: "Your checkout was force-released", message: "b", duration: 0, coalesceKey: "checkout_released:d1\u0000Your checkout was force-released\u0000b" });
+    expect(toastForRow({ id: "2", kind: "checkout_message", title: "Alice posted to X", body: "hi", resource_id: "d1" }))
+      .toEqual({ type: "info", title: "Alice posted to X", message: "hi", duration: NOTIFICATION_TOAST_MS, coalesceKey: "checkout_message:d1\u0000Alice posted to X\u0000hi" });
     expect(NOTIFICATION_TOAST_MS).toBe(6000);
   });
 
@@ -195,21 +196,35 @@ describe("toastForRow — the tone, the time and the event key come from the reg
     expect(toastForRow({ id: "3", kind: "task_nudge", title: "t", body: null })).toMatchObject({ type: "info", duration: 6000 });
   });
 
-  it("RT-11 dw2 / OS-4 dw2: the coalesce key is the event — kind, resource and actor; a row about no resource keeps the content key (two unrelated messages never merge)", () => {
-    expect(toastForRow({ id: "1", kind: "doc_superseded", title: "a", body: null, resource_id: "doc-9" }).coalesceKey).toBe("doc_superseded:doc-9:");
+  it("RT-11 dw2 / OS-4 dw2: the coalesce key is the statement — kind, resource and words; a row about no resource keeps the content key (two unrelated messages never merge)", () => {
+    expect(toastForRow({ id: "1", kind: "doc_superseded", title: "a", body: null, resource_id: "doc-9" }).coalesceKey).toBe("doc_superseded:doc-9\u0000a\u0000");
     expect(toastForRow({ id: "2", kind: "orchestrator_message", title: "a", body: null, resource_id: null }).coalesceKey).toBeUndefined();
-    expect(LISTENER).toContain('`${row.kind}:${row.resource_id}:${row.actor_user_id ?? ""}`');
+    expect(LISTENER).toContain('`${row.kind}:${row.resource_id}\\u0000${row.title}\\u0000${row.body ?? ""}`');
+    // the same words about the same thing — a nudge clicked twice — share one key
+    const nudge = { kind: "overlap_advisory", title: "Coordinate — overlapping checkout", body: "P-7", resource_id: "d7" };
+    expect(toastForRow({ id: "3", ...nudge }).coalesceKey).toBe(toastForRow({ id: "4", ...nudge }).coalesceKey);
+    // the same words about another resource, or as another kind, do not
+    expect(toastForRow({ id: "5", ...nudge, resource_id: "d8" }).coalesceKey).not.toBe(toastForRow({ id: "6", ...nudge }).coalesceKey);
+    expect(toastForRow({ id: "7", ...nudge, kind: "checkout_conflict" }).coalesceKey).not.toBe(toastForRow({ id: "8", ...nudge }).coalesceKey);
   });
 
-  it("two people's acts on one resource are two events (the merged card would name the first): Bob's and Carol's sign-offs keep their own keys; one person's repeat shares one", () => {
-    const bob = toastForRow({ id: "1", kind: "review_signed", title: "Bob signed off on P-1", body: null, resource_id: "p1", actor_user_id: "uB" });
-    const carol = toastForRow({ id: "2", kind: "review_signed", title: "Carol signed off on P-1", body: null, resource_id: "p1", actor_user_id: "uC" });
-    const bobAgain = toastForRow({ id: "3", kind: "review_signed", title: "Bob signed off on P-1", body: null, resource_id: "p1", actor_user_id: "uB" });
+  it("rows that say different things about one resource never share a key, whoever sent them (the merged card keeps the first row's words — third review fix): two statuses, two messages, two people", () => {
+    // one engineer, Approve then Release on DR-12 (lib/ticketTransitions.ts: ticket_status, title `${actionLabel} · ${ticketLabel}`, body `Status: …`)
+    const approve = toastForRow({ id: "1", kind: "ticket_status", title: "Approve · DR-12", body: "Status: APPROVED", resource_id: "t12" });
+    const release = toastForRow({ id: "2", kind: "ticket_status", title: "Release · DR-12", body: "Status: RELEASED", resource_id: "t12" });
+    expect(approve.coalesceKey).not.toBe(release.coalesceKey);
+    // the same transition label with a different status still differs (the body carries it)
+    expect(toastForRow({ id: "3", kind: "ticket_status", title: "Advance · DR-12", body: "Status: IN_REVIEW", resource_id: "t12" }).coalesceKey)
+      .not.toBe(toastForRow({ id: "4", kind: "ticket_status", title: "Advance · DR-12", body: "Status: APPROVED", resource_id: "t12" }).coalesceKey);
+    // one person, two thread posts (lib/activityThread.ts: same title, the snippet in the body)
+    const hey = toastForRow({ id: "5", kind: "checkout_message", title: "Alice posted to P-1", body: "hey", resource_id: "d1" });
+    const real = toastForRow({ id: "6", kind: "checkout_message", title: "Alice posted to P-1", body: "PSV sizing on sheet 3 is wrong", resource_id: "d1" });
+    expect(hey.coalesceKey).not.toBe(real.coalesceKey);
+    // two people's sign-offs on one document
+    const bob = toastForRow({ id: "7", kind: "review_signed", title: "Bob signed off on P-1", body: null, resource_id: "p1" });
+    const carol = toastForRow({ id: "8", kind: "review_signed", title: "Carol signed off on P-1", body: null, resource_id: "p1" });
     expect(bob.coalesceKey).not.toBe(carol.coalesceKey);
-    expect(bob.coalesceKey).toBe(bobAgain.coalesceKey);
-    // a system row (no actor) about one resource still keys on kind + resource
-    expect(toastForRow({ id: "4", kind: "review_due", title: "x", body: null, resource_id: "p1", actor_user_id: null }).coalesceKey)
-      .toBe(toastForRow({ id: "5", kind: "review_due", title: "y", body: null, resource_id: "p1" }).coalesceKey);
+    expect(notificationCoalesceKey({ kind: "review_signed", title: "Bob signed off on P-1", body: null, resource_id: "p1" })).toBe(bob.coalesceKey);
   });
 });
 
@@ -233,7 +248,10 @@ describe("RT-2 / TAX-4 — one checkout-thread post: one toast per participant, 
     // The durable row reached the participant and the watcher, not the author.
     expect((bus.tables.notifications ?? []).map((r) => r.user_id).sort()).toEqual(["uP", "uW"]);
     expect(toastsOf("uP")).toHaveLength(1);
-    expect(toastsOf("uP")[0]).toMatchObject({ type: "info", title: "Alice posted to P-1204-03", message: "pressure relief sizing looks wrong on sheet 3", coalesceKey: "checkout_message:d1:uA" });
+    expect(toastsOf("uP")[0]).toMatchObject({
+      type: "info", title: "Alice posted to P-1204-03", message: "pressure relief sizing looks wrong on sheet 3",
+      coalesceKey: notificationCoalesceKey({ kind: "checkout_message", resource_id: "d1", title: "Alice posted to P-1204-03", body: "pressure relief sizing looks wrong on sheet 3" }),
+    });
     expect(toastsOf("uW")).toHaveLength(1);
     expect(toastsOf("uA")).toHaveLength(0);
     // RT-2 dw3 / TAX-4 dw3: the member with no part in the document hears nothing.
@@ -254,7 +272,7 @@ describe("RT-2 / TAX-4 — one checkout-thread post: one toast per participant, 
     expect(toastsOf("uU")).toEqual([]);
     expect(toastsOf("uP")).toEqual([]);
     expect(toastsOf("uH")).toEqual([
-      { uid: "uH", type: "warning", title: "Your checkout was force-released", message: "Dana force-released the checkout.", duration: 0, coalesceKey: "checkout_released:d1:" },
+      { uid: "uH", type: "warning", title: "Your checkout was force-released", message: "Dana force-released the checkout.", duration: 0, coalesceKey: "checkout_released:d1\u0000Your checkout was force-released\u0000Dana force-released the checkout." },
     ]);
   });
 
@@ -271,7 +289,7 @@ describe("every notification still toasts its member (regression)", () => {
     await mountListener("u1");
     await insertNotification({ id: "n-1", user_id: "u1", kind: "ticket_mention", title: "Sam mentioned you", body: "on DR-12", resource_id: "t1" });
     await flush();
-    expect(toastsOf("u1")).toEqual([{ uid: "u1", type: "info", title: "Sam mentioned you", message: "on DR-12", duration: 6000, coalesceKey: "ticket_mention:t1:" }]);
+    expect(toastsOf("u1")).toEqual([{ uid: "u1", type: "info", title: "Sam mentioned you", message: "on DR-12", duration: 6000, coalesceKey: "ticket_mention:t1\u0000Sam mentioned you\u0000on DR-12" }]);
     // the same row delivered again (a reconnect replay)
     const sub = bus.subs.find((s) => s.table === "notifications")!;
     await act(async () => { sub.cb({ new: { id: "n-1", user_id: "u1", kind: "ticket_mention", title: "Sam mentioned you", body: "on DR-12" } }); });
@@ -333,16 +351,16 @@ describe("TAX-9 dw4 — a burst is one summary, never one card per row", () => {
     })();
   });
 
-  it("a burst of one event (same kind, resource and actor) is one card: every repeat joins it and none is held for the summary; other events keep the two-card budget (OS-4 dw2, second review fix)", async () => {
+  it("a burst of one statement (same kind, resource and words) is one card: every repeat joins it and none is held for the summary; other rows keep the two-card budget (OS-4 dw2, second review fix)", async () => {
     const shown: Array<{ title: string; coalesceKey?: string }> = [];
     let fire: (() => void) | null = null;
     const t = createNotificationToaster({
       show: (s) => shown.push({ title: s.title, coalesceKey: s.coalesceKey }), readPreference: async () => true, now: () => 0,
       setTimer: (cb, ms) => { if (ms === BURST_WINDOW_MS) fire = cb; return 1; }, clearTimer: () => {},
     });
-    for (let i = 1; i <= 5; i++) t.receive({ id: `n${i}`, kind: "task_nudge", title: "Sam nudged you about P-7", body: null, resource_id: "p7", actor_user_id: "uS" });
-    t.receive({ id: "o1", kind: "ticket_comment", title: "other 1", body: null, resource_id: "t1", actor_user_id: "uX" });
-    t.receive({ id: "o2", kind: "ticket_comment", title: "other 2", body: null, resource_id: "t2", actor_user_id: "uX" });
+    for (let i = 1; i <= 5; i++) t.receive({ id: `n${i}`, kind: "task_nudge", title: "Sam nudged you about P-7", body: null, resource_id: "p7" });
+    t.receive({ id: "o1", kind: "ticket_comment", title: "other 1", body: null, resource_id: "t1" });
+    t.receive({ id: "o2", kind: "ticket_comment", title: "other 2", body: null, resource_id: "t2" });
     await new Promise((r) => setTimeout(r, 0));
     // five deliveries of the one event (ToastProvider merges them: one card ×5), then one more card
     expect(shown.map((x) => x.title)).toEqual([...Array(5).fill("Sam nudged you about P-7"), "other 1"]);
@@ -385,7 +403,7 @@ describe("TAX-9 dw4 — a burst is one summary, never one card per row", () => {
   });
 });
 
-describe("RT-10 — the member's pop-up switch is read before a toast, re-read when the tab comes back, and fails open", () => {
+describe("RT-10 — the member's pop-up switch is read before a toast, re-read when the tab comes back, and fails open only when nothing is known", () => {
   it("toast_enabled off: no toast at all (the bell row is untouched — the row still landed)", async () => {
     fx.pref.u1 = false;
     await mountListener("u1");
@@ -409,7 +427,7 @@ describe("RT-10 — the member's pop-up switch is read before a toast, re-read w
     expect(toastsOf("u1").map((t) => t.title)).toEqual(["Back on"]);
   });
 
-  it("a stale read is refreshed before the next toast (PREF_FRESH_MS); an unreadable preference shows toasts", async () => {
+  it("a stale read is refreshed before the next toast (PREF_FRESH_MS); an unreadable re-read keeps the known value; with nothing known, an unreadable preference shows toasts", async () => {
     let clock = 0;
     const reads: number[] = [];
     let pref: boolean | "throw" = true;
@@ -429,13 +447,53 @@ describe("RT-10 — the member's pop-up switch is read before a toast, re-read w
     await new Promise((r) => setTimeout(r, 0));
     pref = "throw";
     clock = 3 * PREF_FRESH_MS;
-    t.receive({ id: "d", kind: "checkout_conflict", title: "D", body: null }); // unreadable: fail open
+    t.receive({ id: "d", kind: "checkout_conflict", title: "D", body: null }); // unreadable: the known "off" stands
     await new Promise((r) => setTimeout(r, 0));
-    expect(shown).toEqual(["A", "B", "D"]);
+    expect(shown).toEqual(["A", "B"]);
     expect(reads).toEqual([0, PREF_FRESH_MS + 10, 3 * PREF_FRESH_MS]);
+    // nothing ever read, and the read fails: fail open
+    const fresh: string[] = [];
+    const u = createNotificationToaster({
+      show: (s) => fresh.push(s.title), now: () => 0, setTimer: () => 1, clearTimer: () => {},
+      readPreference: async () => { throw new Error("x"); },
+    });
+    u.receive({ id: "e", kind: "checkout_conflict", title: "E", body: null });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(fresh).toEqual(["E"]);
   });
 
-  it("a read that never answers fails open after PREF_READ_TIMEOUT_MS — a stalled request does not silence the tab (second review fix)", async () => {
+  it("a known 'off' survives a re-read that stalls: a tab return on Wi-Fi with no route out does not bring the pop-ups back (third review fix)", async () => {
+    const shown: string[] = [];
+    const timers: Array<{ cb: () => void; ms: number; cleared: boolean }> = [];
+    const answers: Array<(v: boolean) => void> = [];
+    const t = createNotificationToaster({
+      show: (s) => shown.push(s.title), now: () => 0,
+      setTimer: (cb, ms) => { const h = { cb, ms, cleared: false }; timers.push(h); return h; },
+      clearTimer: (h) => { (h as { cleared: boolean }).cleared = true; },
+      readPreference: () => new Promise<boolean>((resolve) => { answers.push(resolve); }),
+    });
+    t.refreshPreference(); // mount: the member switched pop-ups off
+    answers[0](false);
+    await new Promise((r) => setTimeout(r, 0));
+    t.receive({ id: "a", kind: "checkout_conflict", title: "A", body: null });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(shown).toEqual([]);
+    t.refreshPreference(); // the tab comes back; this read never answers
+    expect(answers).toHaveLength(2);
+    t.receive({ id: "b", kind: "checkout_conflict", title: "B", body: null });
+    timers.filter((h) => h.ms === PREF_READ_TIMEOUT_MS && !h.cleared).forEach((h) => h.cb());
+    await new Promise((r) => setTimeout(r, 0));
+    expect(shown).toEqual([]); // still off — the stall did not turn it on
+    // the next read that does answer decides again
+    t.refreshPreference();
+    answers[2](true);
+    await new Promise((r) => setTimeout(r, 0));
+    t.receive({ id: "c", kind: "checkout_conflict", title: "C", body: null });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(shown).toEqual(["C"]);
+  });
+
+  it("with nothing read yet, a read that never answers fails open after PREF_READ_TIMEOUT_MS — a stalled request does not silence the tab (second review fix)", async () => {
     const shown: string[] = [];
     const timers: Array<{ cb: () => void; ms: number; cleared: boolean }> = [];
     let reads = 0;

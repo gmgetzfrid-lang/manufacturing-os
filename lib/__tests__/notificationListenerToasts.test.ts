@@ -3,10 +3,12 @@
 // notifications Round G, N3 SURFACES — the listener through the REAL
 // ToastProvider and corner dock (N7's): a notification row still becomes a
 // visible, announced, dismissible card; an FYI card leaves after its 6 s; an
-// action-required card stays until dismissed (TAX-3 dw3); two rows about one
-// event are one card with a count (RT-11 dw2 / OS-4 dw2, N7's coalescing
-// keyed by N3's `${kind}:${resource_id}:${actor_user_id}`), and two people's
-// acts on one resource stay two cards, each naming its own person.
+// action-required card stays until dismissed (TAX-3 dw3); rows that say the
+// same thing about the same thing are one card with a count (RT-11 dw2 /
+// OS-4 dw2, N7's coalescing keyed by N3's kind + resource + words), and rows
+// that say different things — a newer status, a second message, another
+// person's sign-off — are cards of their own, each in its own words (the
+// merge keeps the first card's words; third review fix).
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -81,22 +83,32 @@ describe("the toast echo of a bell row, through the real dock", () => {
 
   const cards = () => document.getElementById("corner-dock")!.querySelectorAll('[data-dock-slot="transient"] .rounded-xl');
 
-  it("two rows about one event (same kind, same resource, same actor), worded differently, are one card with a count", async () => {
-    await deliver({ kind: "checkout_message", title: "Alice posted to P-1204-03", body: "first", resource_id: "d1", actor_user_id: "uA" });
-    await deliver({ kind: "checkout_message", title: "Alice posted to P-1204-03", body: "second", resource_id: "d1", actor_user_id: "uA" });
+  it("the same row twice (same kind, resource and words) is one card with a count", async () => {
+    await deliver({ kind: "overlap_advisory", title: "Coordinate — overlapping checkout", body: "P-7", resource_id: "d7", actor_user_id: "uS" });
+    await deliver({ kind: "overlap_advisory", title: "Coordinate — overlapping checkout", body: "P-7", resource_id: "d7", actor_user_id: "uS" });
     expect(cards()).toHaveLength(1);
     expect(text()).toContain("×2");
-    // KNOWN TRADE-OFF, narrowed (DEC-44 (N3) item 4): N7's merge keeps the
-    // FIRST row's words, so one person's repeat reads "Alice posted … first
-    // ×2" and the second snippet shows only in the bell. Handed to the next
-    // holder of components/providers/ToastProvider.tsx (show the newest
-    // words on a merge) — this pin changes with it.
-    expect(text()).toContain("first");
-    expect(text()).not.toContain("second");
-    // another event (a different kind, a different resource) is its own card
-    // (an action row: never held by the burst rule, so it shows at once)
+    // another statement (a different kind, a different resource) is its own card
     await deliver({ kind: "checkout_conflict", title: "Checkout conflict on P-9", body: "x", resource_id: "d9", actor_user_id: "uA" });
     expect(cards()).toHaveLength(2);
+  });
+
+  it("one person's two thread posts are two cards — the second message reaches a toast, never 'hey ×2' (third review fix)", async () => {
+    await deliver({ kind: "checkout_message", title: "Alice posted to P-1204-03", body: "hey", resource_id: "d1", actor_user_id: "uA" });
+    await deliver({ kind: "checkout_message", title: "Alice posted to P-1204-03", body: "PSV sizing on sheet 3 is wrong", resource_id: "d1", actor_user_id: "uA" });
+    expect(cards()).toHaveLength(2);
+    expect(text()).toContain("hey");
+    expect(text()).toContain("PSV sizing on sheet 3 is wrong");
+    expect(text()).not.toContain("×2");
+  });
+
+  it("Approve then Release on DR-12 by one engineer within 10 s: two cards, the newer status shown — never 'Status: APPROVED ×2' (third review fix)", async () => {
+    // the rows app/api/tickets/workflow-action/route.ts writes: one kind, one resource, one actor
+    await deliver({ kind: "ticket_status", title: "Approve · DR-12", body: "Status: APPROVED", resource_id: "t12", actor_user_id: "uE", metadata: { action: "approve_draft_ifc", status: "APPROVED" } });
+    await deliver({ kind: "ticket_status", title: "Release · DR-12", body: "Status: RELEASED", resource_id: "t12", actor_user_id: "uE", metadata: { action: "release", status: "RELEASED" } });
+    expect(cards()).toHaveLength(2);
+    expect(text()).toContain("Status: RELEASED");
+    expect(text()).not.toContain("×2");
   });
 
   it("a nudge burst about one thing from one person is one card with a count — no summary card after the window (OS-4 dw2, second review fix)", async () => {

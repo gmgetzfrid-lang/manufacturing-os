@@ -27,18 +27,22 @@
 // link lead away from the page that owns the running upload, and a client-side
 // navigation meets no leave-page prompt — so while an upload is in flight such
 // a link asks first (`confirmLeaveDuringUploads`) and is followed only on yes.
+// The question is asked INSIDE the panel, never in a dialog of its own: the
+// raising modal under the center may close (and abort its upload) on an
+// Escape that reaches `window` (MetadataStagingModal does), so the center
+// must be the one that answers that Escape ("Stay") and stops it there.
 //
 // Accessible (NEDGE-5): a labelled modal dialog that takes focus when it
 // opens and gives it back to the opener when it closes; inert while closed.
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import Link from "next/link";
 import { X, BellRing, Inbox } from "lucide-react";
 import { useTicketNotifications, type AttentionCounts, type AttentionSection } from "@/hooks/useTicketNotifications";
 import { AttentionFeed, type AttnFilter } from "@/components/cockpit/AttentionFeed";
 import { isDockRaised, useOccupyRightRail } from "@/components/ui/CornerDock";
-import { appConfirm } from "@/components/providers/DialogProvider";
+import { Button } from "@/components/ui/Button";
 import { supabase } from "@/lib/supabase";
 import { hasUploadsInFlight } from "@/lib/uploadActivity";
 import { Z } from "@/lib/zLayers";
@@ -117,23 +121,28 @@ export async function markTheseRead(ids: string[]): Promise<void> {
 /** What a failed "mark read" says in the panel. */
 export const MARK_READ_FAILED = "Couldn't mark these notifications read. They are still listed here — try again in a moment.";
 
+/** The leave question's words (the wording of UpdatePill's
+ *  `confirmReloadDuringUploads`). */
+export const LEAVE_QUESTION = {
+  title: "An upload is still running",
+  message: "Opening this leaves the page that is running the upload, which stops the upload in progress. Files that already finished are saved; the rest will need uploading again.",
+  confirmLabel: "Leave anyway",
+  cancelLabel: "Stay",
+} as const;
+export type LeaveQuestion = typeof LEAVE_QUESTION;
+
 /** RT-11 (review fix): opened above an upload modal, a row or the inbox link
  *  navigates away from the page running the upload, which ends it — and a
  *  client-side navigation never meets the browser's leave-page prompt. So
- *  while one is in flight, ask first (the wording of UpdatePill's
- *  `confirmReloadDuringUploads`). */
+ *  while one is in flight, ask first. `ask` is the panel's own inline
+ *  question (third review fix: not the app's dialog host, whose Escape goes
+ *  on to the raising modal's `window` listener and aborts the upload). */
 export async function confirmLeaveDuringUploads(deps: {
-  inFlight: () => boolean;
-  confirm: (o: { title: string; message: string; confirmLabel: string; cancelLabel: string; tone: "danger" }) => Promise<boolean>;
-} = { inFlight: hasUploadsInFlight, confirm: appConfirm }): Promise<boolean> {
-  if (!deps.inFlight()) return true;
-  return deps.confirm({
-    title: "An upload is still running",
-    message: "Opening this leaves the page that is running the upload, which stops the upload in progress. Files that already finished are saved; the rest will need uploading again.",
-    confirmLabel: "Leave anyway",
-    cancelLabel: "Stay",
-    tone: "danger",
-  });
+  inFlight?: () => boolean;
+  ask: (q: LeaveQuestion) => Promise<boolean>;
+}): Promise<boolean> {
+  if (!(deps.inFlight ?? hasUploadsInFlight)()) return true;
+  return deps.ask(LEAVE_QUESTION);
 }
 
 /** The header line: the number the opener showed, and where it came from.
@@ -165,29 +174,70 @@ function CenterPanel({
   const panelRef = useRef<HTMLElement | null>(null);
   // The confirmed link's own click, replayed after "Leave anyway".
   const followingRef = useRef(false);
+  // The leave question (RT-11), asked inside the panel: while it is up the
+  // rest of the panel is inert, and `answerRef` holds its answer.
+  const [leaveAsked, setLeaveAsked] = useState(false);
+  const answerRef = useRef<((ok: boolean) => void) | null>(null);
+  const askLeave = useCallback((): Promise<boolean> => new Promise<boolean>((resolve) => {
+    answerRef.current?.(false);
+    answerRef.current = (ok) => { answerRef.current = null; resolve(ok); };
+    setLeaveAsked(true);
+  }), []);
+  // Answered by a person (a button, Escape): the question leaves the page
+  // first, so a replayed click lands on a panel that is no longer inert.
+  const answerLeave = useCallback((ok: boolean) => {
+    const answer = answerRef.current;
+    if (!answer) return;
+    flushSync(() => setLeaveAsked(false));
+    answer(ok);
+  }, []);
+  // Closed (or unmounted) with the question up: the answer is "Stay".
+  useEffect(() => {
+    if (isOpen || !answerRef.current) return;
+    const answer = answerRef.current;
+    setLeaveAsked(false);
+    answer(false);
+  }, [isOpen]);
+  useEffect(() => () => { answerRef.current?.(false); }, []);
   // Opened above a raising modal, the panel is a rail above the raise: the
   // raised dock moves left of it instead of covering its rows (RT-11).
   useOccupyRightRail(panelRef, isOpen && aboveModal, true);
 
   // Escape closes just the center (capture — the same trick every overlay in
-  // the app uses so underlying Esc listeners don't also fire). An Escape
-  // inside another dialog — the leave-confirm a row opens over the center,
-  // or a modal opened above it — is that dialog's to answer: the center lets
-  // it through and stays open.
+  // the app uses so underlying Esc listeners don't also fire). While the
+  // leave question is up, Escape answers it ("Stay") and goes no further: the
+  // center stays open, and a raising modal's `window` listener under it
+  // (MetadataStagingModal's Escape closes the modal and aborts its upload)
+  // never hears the key (third review fix). An Escape inside another dialog
+  // above the center (an app dialog opened over it) is that dialog's to
+  // answer on `document` (Modal's convention); once it has, the key stops
+  // there too, so nothing under the center acts on it as well.
   useEffect(() => {
     if (!isOpen) return;
     const h = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
+      if (answerRef.current) {
+        e.stopPropagation();
+        answerLeave(false);
+        return;
+      }
       const at = e.target instanceof Element && e.target !== document.body ? e.target : document.activeElement;
       const dialog = at?.closest('[role="dialog"], [role="alertdialog"]');
       const panel = panelRef.current;
-      if (dialog && panel && dialog !== panel && !panel.contains(dialog)) return;
+      if (dialog && panel && dialog !== panel && !panel.contains(dialog)) {
+        // Added during this dispatch, so it runs after every `document`
+        // listener already there (the dialog's), before any `window` one.
+        const stopAfterDialog = (ev: Event) => { if (ev === e) ev.stopPropagation(); };
+        document.addEventListener("keydown", stopAfterDialog);
+        setTimeout(() => document.removeEventListener("keydown", stopAfterDialog), 0);
+        return;
+      }
       e.stopPropagation();
       onClose();
     };
     window.addEventListener("keydown", h, { capture: true });
     return () => window.removeEventListener("keydown", h, { capture: true });
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, answerLeave]);
 
   // Focus (NEDGE-5): opening moves focus into the panel; closing returns it
   // to whatever opened it, when that is still on the page and focus has
@@ -257,13 +307,15 @@ function CenterPanel({
     if (!hasUploadsInFlight()) return;
     e.preventDefault();
     e.stopPropagation();
-    void confirmLeaveDuringUploads().then((ok) => {
+    void confirmLeaveDuringUploads({ ask: askLeave }).then((ok) => {
       // Closed meanwhile (the panel is inert): nothing to follow.
-      if (!ok || !link.isConnected || link.closest("[inert]")) return;
+      if (!link.isConnected || link.closest("[inert]")) return;
+      // "Stay": back to the row that asked.
+      if (!ok) { link.focus({ preventScroll: true }); return; }
       followingRef.current = true;
       try { link.click(); } finally { followingRef.current = false; }
     });
-  }, [aboveModal]);
+  }, [aboveModal, askLeave]);
 
   if (typeof document === "undefined") return null;
 
@@ -305,7 +357,7 @@ function CenterPanel({
         style={{ transitionTimingFunction: "var(--ease-spring)", ...layer }}
         onClickCapture={guardLeave}
       >
-        <div className="px-4 py-3.5 border-b border-[var(--color-border)] flex items-center gap-3 shrink-0 bg-[var(--color-surface-2)]">
+        <div inert={leaveAsked} className="px-4 py-3.5 border-b border-[var(--color-border)] flex items-center gap-3 shrink-0 bg-[var(--color-surface-2)]">
           <span className="inline-flex items-center justify-center w-9 h-9 rounded-xl bg-[var(--color-accent)] text-white shadow-lg shadow-orange-500/25 shrink-0">
             <BellRing className="w-4.5 h-4.5" aria-hidden />
           </span>
@@ -337,7 +389,7 @@ function CenterPanel({
           </button>
         </div>
 
-        <div className="flex-1 min-h-0 overflow-y-auto p-4">
+        <div inert={leaveAsked} className="flex-1 min-h-0 overflow-y-auto p-4">
           {markError && (
             <div role="alert" data-center-mark-error className="mb-3 rounded-lg border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/40 px-3 py-2 text-[12px] font-bold text-red-700 dark:text-red-300">
               {markError}
@@ -363,7 +415,7 @@ function CenterPanel({
           )}
         </div>
 
-        <div className="px-4 py-2.5 border-t border-[var(--color-border)] shrink-0 bg-[var(--color-surface-2)]">
+        <div inert={leaveAsked} className="px-4 py-2.5 border-t border-[var(--color-border)] shrink-0 bg-[var(--color-surface-2)]">
           <Link
             href="/inbox"
             onClick={onClose}
@@ -372,6 +424,32 @@ function CenterPanel({
             <Inbox className="w-3.5 h-3.5" aria-hidden /> Open the full inbox cockpit
           </Link>
         </div>
+
+        {/* The leave question (RT-11), inside the panel and over its rows
+            (last in the panel, so it paints above them with no layer of its
+            own). Its Escape is the center's: "Stay". */}
+        {leaveAsked && (
+          <div data-center-leave-question className="absolute inset-0 flex items-center justify-center p-4 bg-slate-900/40">
+            <div
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="center-leave-question-title"
+              aria-describedby="center-leave-question-message"
+              className="w-full max-w-sm rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] p-5 shadow-2xl"
+            >
+              <h2 id="center-leave-question-title" className="text-sm font-black">{LEAVE_QUESTION.title}</h2>
+              <p id="center-leave-question-message" className="mt-1 text-sm text-[var(--color-text-muted)]">{LEAVE_QUESTION.message}</p>
+              <div className="mt-4 flex justify-end gap-2">
+                <Button type="button" variant="secondary" autoFocus onClick={() => answerLeave(false)}>
+                  {LEAVE_QUESTION.cancelLabel}
+                </Button>
+                <Button type="button" variant="danger" onClick={() => answerLeave(true)}>
+                  {LEAVE_QUESTION.confirmLabel}
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
       </aside>
     </>,
     document.body,
