@@ -55,6 +55,22 @@ async function requestsToOrgLastHour(orgId: string): Promise<number | null> {
   return count;
 }
 
+/** The burst notice's words. A count over the cap is stated as the cap it
+ *  passed. A count that could not be read states no number and no "more":
+ *  the request may be the org's only one today, so "more than 5 within an
+ *  hour" would be untrue (N8's final review fix). */
+function burstNotice(orgName: string, recent: number | null): { title: string; body: string } {
+  return recent === null
+    ? {
+      title: `Access requests are waiting for ${orgName}`,
+      body: `Access requests are waiting for ${orgName}. Every request is listed under Admin → Users: review them there.`,
+    }
+    : {
+      title: `More access requests are waiting for ${orgName}`,
+      body: `More than ${ACCESS_REQUEST_NOTICES_PER_ORG_HOUR} people asked to join ${orgName} within an hour, so they are no longer announced one by one. Every request is listed under Admin → Users: review them there.`,
+    };
+}
+
 /** PROD-2 (N8's review fix): past the per-org cap, the pool is told ONCE
  *  that more requests are waiting — not once per request. Each pool member
  *  holds at most one UNREAD burst row for the org (resource_type 'org',
@@ -89,8 +105,7 @@ async function notifyAccessRequestBurst(orgId: string, orgName: string, recipien
       orgId,
       userId: uid,
       kind: "access_request_pending" as const,
-      title: `More access requests are waiting for ${orgName}`,
-      body: `More than ${ACCESS_REQUEST_NOTICES_PER_ORG_HOUR} people asked to join ${orgName} within an hour, so they are no longer announced one by one. Every request is listed under Admin → Users: review them there.`,
+      ...burstNotice(orgName, recent),
       link: "/admin/users",
       resourceType: ACCESS_REQUEST_BURST_RESOURCE_TYPE,
       resourceId: orgId,

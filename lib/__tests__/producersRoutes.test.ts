@@ -278,6 +278,26 @@ describe("PROD-2 — what a stranger types at the public door never reaches a no
     expect(warn).toHaveBeenCalledWith(expect.stringMatching(/count could not be read — this request gets no notice of its own/));
   });
 
+  it("a count that could not be read is never stated as a number: the burst row says requests are waiting, not 'more than 5 within an hour' (N8's final review fix)", async () => {
+    s.countFails = true;
+    expect((await ask()).status).toBe(200);                                     // this may be the org's only request today
+    const rows = burstRows();
+    expect(rows).toHaveLength(3);
+    for (const r of rows) {
+      expect(r.title).toBe("Access requests are waiting for Acme Refining");
+      expect(r.body).toBe("Access requests are waiting for Acme Refining. Every request is listed under Admin → Users: review them there.");
+      expect(String(r.body)).not.toMatch(/\d|More than|within an hour/);
+    }
+    // REGRESSION: a count that WAS read and is over the cap keeps the cap in its words
+    s.countFails = false;
+    s.db.tables.notifications = [];
+    for (let i = 0; i <= ACCESS_REQUEST_NOTICES_PER_ORG_HOUR; i++) await ask({ displayName: `P${i}`, email: `p${i}@corp.com`, orgName: "Acme Refining" });
+    const over = burstRows();
+    expect(over).toHaveLength(3);
+    expect(over[0].title).toBe("More access requests are waiting for Acme Refining");
+    expect(over[0].body).toBe(`More than ${ACCESS_REQUEST_NOTICES_PER_ORG_HOUR} people asked to join Acme Refining within an hour, so they are no longer announced one by one. Every request is listed under Admin → Users: review them there.`);
+  });
+
   it("a member's browser cannot silence the burst notice with a decoy: the open-row check matches only the server's own rows (no actor — 20261160 stamps every signed-in writer)", async () => {
     s.db.tables.notifications = [{
       id: "forged", org_id: ORG, user_id: "dc1", kind: "access_request_pending", resource_type: "org", resource_id: ORG,

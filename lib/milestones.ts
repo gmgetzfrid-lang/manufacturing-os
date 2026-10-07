@@ -25,6 +25,7 @@ import { isImportedMilestone } from "@/lib/milestoneLiveness";
 import { shiftForStart, shiftAfterMove } from "@/lib/scheduleFilter";
 import { SCHEDULE_IMPORT_LIMITS } from "@/lib/scheduleParsers";
 import { emit } from "@/lib/notify/dispatch";
+import { projectVisibleAmong } from "@/lib/notify/recipients";
 import type {
   Milestone, MilestoneStatus, MilestoneSource, MilestoneNote, MilestoneAttributes,
 } from "@/types/schema";
@@ -144,9 +145,12 @@ function pickResource(m: { projectId?: string | null; documentId?: string | null
 //     (applyMilestoneMoves, rebaseSchedule) reach the PROJECT's members —
 //     audience { projectId }, kind project_status, in-app only (a busy
 //     schedule moves all day; the bell carries it, nobody's inbox does —
-//     PROD-7 dw3's rule for chatty kinds);
+//     PROD-7 dw3's rule for chatty kinds), written as ONE statement for all
+//     the members (emit's inappOneStatement), so a burst of moves holds one
+//     pooled connection per notice, not one per member;
 //   · a task's new responsible person hears it (milestone_assigned, bell +
-//     email) — they are the one who has to act;
+//     email) — they are the one who has to act — while they can see the
+//     project (SEC-2: a private project's owner, roster or controllers);
 //   · a move that pushes baselined tasks past their baseline (later than
 //     the baseline finish, and later than before) tells the project OWNER —
 //     milestone_slipped, bell + email — ONCE per operation (a drag cascade,
@@ -216,6 +220,12 @@ async function notifyScheduleChange(input: {
       actorUserId: input.actorUserId, actorName: input.actorName ?? undefined,
       audience: { projectId: input.projectId },
       channels: ["inapp"],
+      // ONE statement for every member (N8's final review fix): from the
+      // second schedule notice about a project in a minute, 20261160 counts
+      // each member's row again under the writer's advisory lock; one
+      // request per member would each hold a pooled connection while they
+      // queue on it.
+      inappOneStatement: true,
       metadata: input.metadata,
     });
   } catch (e) {
@@ -242,6 +252,11 @@ async function actorLabel(orgId: string, uid: string, name?: string | null): Pro
 
 async function notifyMilestoneAssigned(m: Milestone, assigneeId: string, actorUserId: string, actorName?: string | null): Promise<void> {
   try {
+    // The assignee is named by hand: on a project, they are told only while
+    // they can see it (SEC-2 — a private project's owner, roster or
+    // controllers; N8's final review fix). A document-only task has no
+    // project to hide.
+    if (m.projectId && (await projectVisibleAmong(m.orgId, m.projectId, [assigneeId])).length === 0) return;
     const who = await actorLabel(m.orgId, actorUserId, actorName);
     await emit({
       orgId: m.orgId, category: "assignment", kind: "milestone_assigned",

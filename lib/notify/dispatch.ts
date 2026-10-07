@@ -7,7 +7,7 @@
 // It wraps the existing notifyMany()/queueEmail() helpers rather than replacing
 // them, so producers can migrate to emit() one at a time with zero regression.
 
-import { notifyMany, type NotificationKind } from "@/lib/inAppNotifications";
+import { notifyMany, notifyBatchWithReason, type NotificationKind } from "@/lib/inAppNotifications";
 import { queueEmail } from "@/lib/notifications";
 import { supabase } from "@/lib/supabase";
 import {
@@ -48,6 +48,18 @@ export interface EmitInput {
   /** Defaults to both channels (in-app and email). Pass a subset to
    *  force-limit a noisy event. */
   channels?: NotifChannel[];
+  /** Write the in-app rows as ONE insert statement (notifyBatchWithReason)
+   *  instead of one request per recipient (notifyMany). For a chatty fan-out
+   *  written from the browser to many people (the schedule's notices to a
+   *  project — lib/milestones.ts, N8's final review fix): 20261160 counts a
+   *  repeat row (the same kind about the same resource to that person within
+   *  the minute) again under the writer's advisory lock, one row after
+   *  another, and each of notifyMany's parallel requests would hold a pooled
+   *  connection while it waits; one statement holds one connection however
+   *  the lock is taken. A row for someone the rail skips (not an active
+   *  member) does not sink it; a cap refusal (P0001) refuses the whole
+   *  statement, and is logged. */
+  inappOneStatement?: boolean;
   /** An explicit subject / body is sent as given, to everyone. Without one,
    *  the subject is decided per recipient (emailSubjectFor): the title for
    *  someone the producer named, broadcastSubject(category, resource.type)
@@ -181,8 +193,24 @@ export async function emit(input: EmitInput): Promise<void> {
   const channels = input.channels ?? ["inapp", "email"];
 
   // 1) In-app bell — reuse the existing fan-out helper (it also drops the actor
-  //    and dedupes recipients defensively).
-  if (channels.includes("inapp")) {
+  //    and dedupes recipients defensively), or, when the producer asks for it,
+  //    ONE statement for every recipient (inappOneStatement).
+  if (channels.includes("inapp") && input.inappOneStatement) {
+    const { error } = await notifyBatchWithReason(recipients.map((uid) => ({
+      orgId: input.orgId,
+      userId: uid,
+      kind: input.kind,
+      title: input.title,
+      body: input.body,
+      link: input.link,
+      resourceType: input.resource.type,
+      resourceId: input.resource.id,
+      actorUserId: input.actorUserId,
+      actorName: input.actorName,
+      metadata: input.metadata,
+    })));
+    if (error) console.warn(`[notify] the ${input.kind} notice reached none of its ${recipients.length} recipient(s): ${error}`);
+  } else if (channels.includes("inapp")) {
     await notifyMany({
       orgId: input.orgId,
       userIds: recipients,

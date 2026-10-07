@@ -200,6 +200,40 @@ describe("PROD-14 — a markup request notifies the person asked, and its answer
     expect(recipients).toEqual([]);   // neither is an org member in this fake: the active-member filter
   });
 
+  it("the notices run AFTER the durable writes: the feed entry and the MARKUP_* audit row are written first, so a fan-out that never finishes (a tab closed mid-email) loses neither (N8's final review fix)", async () => {
+    const { emit } = await import("@/lib/notify/dispatch");
+    const { logAuditAction } = await import("@/lib/audit");
+    const { writeActivity } = await import("@/lib/projects");
+    vi.mocked(logAuditAction).mockClear();
+    vi.mocked(writeActivity).mockClear();
+    vi.mocked(emit).mockClear();
+    const actions = () => vi.mocked(logAuditAction).mock.calls.map((c) => (c[0] as { action: string }).action);
+    // a notice that never completes
+    vi.mocked(emit).mockImplementationOnce(() => new Promise<void>(() => {}));
+    void createMarkupRequest({ orgId: ORG, projectId: "p1", documentId: "d1", requestedFromUserId: "holder", message: "redlines?", actorUserId: "asker", actorEmail: "asker@acme.test" });
+    await flushNotices();
+    expect(vi.mocked(writeActivity)).toHaveBeenCalledTimes(1);
+    expect(actions()).toEqual(["MARKUP_REQUESTED"]);
+    expect(vi.mocked(emit)).toHaveBeenCalledTimes(1);                       // the notice was started, last
+    s.db.tables.documents = [{ id: "d1", org_id: ORG, library_id: "lib1" }];
+    s.db.tables.markup_requests = [{ id: "mr1", org_id: ORG, document_id: "d1", requested_by_user_id: "asker", requested_from_user_id: "holder", status: "open" }];
+    vi.mocked(emit).mockImplementationOnce(() => new Promise<void>(() => {}));
+    void resolveMarkupRequest({ markupRequestId: "mr1", status: "declined", response: "busy", orgId: ORG, projectId: "p1", actorUserId: "holder", actorEmail: "holder@acme.test" });
+    await flushNotices();
+    expect(vi.mocked(writeActivity)).toHaveBeenCalledTimes(2);
+    expect(actions()).toEqual(["MARKUP_REQUESTED", "MARKUP_DECLINED"]);
+    // and in order on the ordinary path: the feed, then the audit row, then the notice
+    vi.mocked(logAuditAction).mockClear();
+    vi.mocked(writeActivity).mockClear();
+    vi.mocked(emit).mockClear();
+    await createMarkupRequest({ orgId: ORG, projectId: "p1", documentId: "d1", requestedFromUserId: "holder", message: "redlines?", actorUserId: "asker", actorEmail: "asker@acme.test" });
+    const [feed] = vi.mocked(writeActivity).mock.invocationCallOrder;
+    const [audit] = vi.mocked(logAuditAction).mock.invocationCallOrder;
+    const [notice] = vi.mocked(emit).mock.invocationCallOrder;
+    expect(feed).toBeLessThan(audit);
+    expect(audit).toBeLessThan(notice);
+  });
+
   it("a share: the thread's markup_ref notice leaves the requester out (notifyExclude) — they get the resolution notice, in the right words, once (N8's review fix)", async () => {
     vi.mocked(postMarkupRef).mockClear();
     s.db.tables.documents = [{ id: "d1", org_id: ORG, library_id: "lib1" }];
@@ -227,7 +261,7 @@ describe("PROD-5 — one helper for every library insert path: library_doc_added
   });
 
   it("one document: 'New document: <number>'; no count, no org, no library or no actor: nobody is told; a dispatch failure is swallowed", async () => {
-    await notifyLibraryDocsAdded({ orgId: ORG, libraryId: "lib1", count: 1, firstLabel: "P-101", actorUserId: "dc1" });
+    await notifyLibraryDocsAdded({ orgId: ORG, libraryId: "lib1", count: 1, firstLabel: "P-101", actorUserId: "stranger" });
     expect(s.emits[0]).toMatchObject({ title: "New document: P-101", body: "Someone added P-101 to a library you subscribe to." });
     s.emits = [];
     for (const bad of [{ count: 0 }, { orgId: null }, { libraryId: undefined }, { actorUserId: null }]) {
@@ -236,6 +270,33 @@ describe("PROD-5 — one helper for every library insert path: library_doc_added
     expect(s.emits).toEqual([]);
     s.emitThrows = true;
     await expect(notifyLibraryDocsAdded({ orgId: ORG, libraryId: "lib1", count: 1, firstLabel: "x", actorUserId: "dc1" })).resolves.toBeUndefined();
+  });
+
+  it("a caller that passes no name (the CSV import: the library page hands the modal a uid alone) names the actor as the staged-upload path does — their email — never 'Someone' for a known member (N8's final review fix)", async () => {
+    // the CSV import's call: actorUserId only
+    await notifyLibraryDocsAdded({ orgId: ORG, libraryId: "lib1", count: 200, firstLabel: "P-101", actorUserId: "dc1" });
+    expect(s.emits[0]).toMatchObject({
+      title: "200 new documents added", body: "dc1@acme.test added 200 documents to a library you subscribe to.", actorName: "dc1@acme.test",
+    });
+    // the staged-upload path's wording is the same for the same person (it passes the session's email)
+    s.emits = [];
+    await notifyLibraryDocsAdded({ orgId: ORG, libraryId: "lib1", count: 200, firstLabel: "P-101", actorUserId: "dc1", actorName: "dc1@acme.test" });
+    expect(s.emits[0].body).toBe("dc1@acme.test added 200 documents to a library you subscribe to.");
+    // REGRESSION: a passed name is used verbatim, with no lookup
+    s.emits = [];
+    s.db.calls.length = 0;
+    await notifyLibraryDocsAdded({ orgId: ORG, libraryId: "lib1", count: 2, firstLabel: "P-101", actorUserId: "dc1", actorName: "Dana Cole" });
+    expect(s.emits[0].body).toBe("Dana Cole added 2 documents to a library you subscribe to.");
+    expect(s.db.calls.filter((c) => c.table === "org_members")).toEqual([]);
+    // no email on file: the display name; a read that fails: "Someone", never a failure
+    s.emits = [];
+    Object.assign(s.db.tables.org_members.find((m) => m.uid === "dc2")!, { email: null, display_name: "Dee Two" });
+    await notifyLibraryDocsAdded({ orgId: ORG, libraryId: "lib1", count: 2, firstLabel: "P-101", actorUserId: "dc2" });
+    expect(s.emits[0].body).toBe("Dee Two added 2 documents to a library you subscribe to.");
+    s.emits = [];
+    s.failRead = (t) => t === "org_members";
+    await notifyLibraryDocsAdded({ orgId: ORG, libraryId: "lib1", count: 2, firstLabel: "P-101", actorUserId: "dc1" });
+    expect(s.emits[0].body).toBe("Someone added 2 documents to a library you subscribe to.");
   });
 });
 
@@ -263,10 +324,11 @@ describe("PROD-6 dw1 — a change order proposed / approved / rejected reaches t
 
   it("rejecting: the proposer hears it here, with the members and the owner; the decider does not", async () => {
     s.db.tables.change_orders = [coRow()];
+    s.db.tables.cost_accounts = [{ id: "a1", org_id: ORG, project_id: "p1", budget: 1000, currency: null }];
     await decideChangeOrder({ co: asCo(coRow()), decision: "rejected", shownAmount: 500, shownAccountId: "a1", note: "not in scope", actorId: "decider", actorName: "decider" });
     const [e] = emitsOf("change_order_status");
     expect((e.audience as { involved: string[] }).involved.sort()).toEqual(["owner", "pm", "proposer"]);
-    expect(e.body).toBe(`decider rejected the change order for ${coNoticeMoney(500, "USD")}: "not in scope"`);   // no line currency on file: USD
+    expect(e.body).toBe(`decider rejected the change order for ${coNoticeMoney(500, "USD")}: "not in scope"`);   // a line with no currency on file: USD
     expect(emitsOf("project_status")).toEqual([]);                       // no approval notice on a rejection
   });
 
@@ -288,8 +350,7 @@ describe("PROD-6 dw1 — a change order proposed / approved / rejected reaches t
     s.db.tables.cost_accounts = [{ id: "a1", org_id: ORG, project_id: "p1", budget: 100000, currency: "cad" }];
     await proposeChangeOrder({ orgId: ORG, projectId: "p1", costAccountId: "a1", title: "Extra pipe", amount: AMT, reasonCode: "field_condition", actorId: "proposer", actorName: "proposer" });
     const exact = coNoticeMoney(AMT, "CAD");
-    expect(exact).toBe(new Intl.NumberFormat(undefined, { style: "currency", currency: "CAD" }).format(AMT));
-    expect(exact).toContain("12,345.67");
+    expect(exact).toBe("CAD 12,345.67");
     expect(exact).not.toBe(fmtMoney(AMT, "CAD"));                          // the tab's column rounds it to 12,346
     expect(exact).not.toBe(coNoticeMoney(AMT, "USD"));
     const [proposed] = emitsOf("change_order_status");
@@ -324,6 +385,100 @@ describe("PROD-6 dw1 — a change order proposed / approved / rejected reaches t
     expect((await resolveRecipients(emitsOf("change_order_status")[0] as unknown as EmitInput)).sort()).toEqual(["owner", "pm", "proposer"]);
   });
 
+  it("money is written the same for every reader — digits grouped by ',' with '.' before the minor unit and the ISO code in front — whatever the writer's locale (N8's final review fix)", () => {
+    const Real = Intl.NumberFormat;
+    // a de-DE writer: before the fix, "1.500,00 $" was stored and read by everyone
+    const spy = vi.spyOn(Intl, "NumberFormat").mockImplementation(
+      ((_l?: unknown, o?: Intl.NumberFormatOptions) => new Real("de-DE", o)) as unknown as typeof Intl.NumberFormat,
+    );
+    try {
+      expect(coNoticeMoney(1500, "USD")).toBe("USD 1,500.00");
+      expect(coNoticeMoney(500, "USD")).toBe("USD 500.00");
+      expect(coNoticeMoney(12345.67, "cad")).toBe("CAD 12,345.67");
+      expect(coNoticeMoney(1234567.891, "EUR")).toBe("EUR 1,234,567.89");
+      expect(coNoticeMoney(-2500, "USD")).toBe("USD -2,500.00");
+      expect(coNoticeMoney(-0.001, "USD")).toBe("USD 0.00");
+      expect(coNoticeMoney(1500, "JPY")).toBe("JPY 1,500");                  // ISO 4217 minor units
+      expect(coNoticeMoney(12.3456, "BHD")).toBe("BHD 12.346");
+      expect(coNoticeMoney(12345.67, null)).toBe("12,345.67");               // currency unknown: no claim
+      expect(coNoticeMoney(12345.67, "dollars")).toBe("12,345.67");          // not an ISO code: no claim
+      expect(coNoticeMoney(Number.NaN)).toBe("—");
+    } finally { spy.mockRestore(); }
+  });
+
+  it("when the budget line cannot be read (a failed read, or no row — RLS hiding it from the decider), the amount carries NO currency, never dollars for a CAD line, and no line manager is told; the miss is logged (N8's final review fix)", async () => {
+    const AMT = 12345.67;
+    s.db.tables.org_members.push(member("cam", ["Engineer"]));
+    s.db.tables.cost_accounts = [{ id: "a1", org_id: ORG, project_id: "p1", budget: 100000, currency: "CAD", cam_user_id: "cam" }];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      s.failRead = (t, cols) => t === "cost_accounts" && cols === "currency, cam_user_id";
+      s.db.tables.change_orders = [coRow({ amount: AMT })];
+      await decideChangeOrder({ co: asCo(coRow({ amount: AMT })), decision: "approved", shownAmount: AMT, shownAccountId: "a1", actorId: "decider", actorName: "decider" });
+      const [members] = emitsOf("change_order_status");
+      expect(members.body).toBe("decider approved the change order for 12,345.67; it is posted to its budget line.");
+      expect((members.audience as { involved: string[] }).involved).not.toContain("cam");
+      expect(emitsOf("project_status")[0].body).toBe("Your change order for 12,345.67 was approved and posted to the budget line.");
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/CO-001's budget line could not be read \(read failed\) — its notice states the amount with no currency/));
+      // a row the decider cannot see (no error, no row): the same — no currency claim
+      s.failRead = null;
+      s.emits = [];
+      s.db.tables.cost_accounts = [];
+      s.db.tables.change_orders = [coRow({ amount: AMT })];
+      await decideChangeOrder({ co: asCo(coRow({ amount: AMT })), decision: "rejected", shownAmount: AMT, shownAccountId: "a1", note: "no", actorId: "decider", actorName: "decider" });
+      expect(emitsOf("change_order_status")[0].body).toBe('decider rejected the change order for 12,345.67: "no"');
+    } finally { warn.mockRestore(); }
+    // REGRESSION: a line whose currency column is empty is USD (the Costs tab's default), and so is a CO with no line
+    s.emits = [];
+    s.db.tables.cost_accounts = [{ id: "a1", org_id: ORG, project_id: "p1", budget: 100000, currency: null }];
+    s.db.tables.change_orders = [coRow({ amount: AMT })];
+    await decideChangeOrder({ co: asCo(coRow({ amount: AMT })), decision: "rejected", shownAmount: AMT, shownAccountId: "a1", note: "no", actorId: "decider", actorName: "decider" });
+    expect(emitsOf("change_order_status")[0].body).toBe('decider rejected the change order for USD 12,345.67: "no"');
+    s.emits = [];
+    s.db.tables.change_orders = [];
+    await proposeChangeOrder({ orgId: ORG, projectId: "p1", title: "Extra pipe", amount: 500, reasonCode: "field_condition", actorId: "proposer", actorName: "proposer" });
+    expect(String(emitsOf("change_order_status")[0].body)).toContain("for USD 500.00 (");
+  });
+
+  it("SEC-2: on a PRIVATE project the people named by hand — the line's CAM, a rejected CO's proposer, the approval's proposer — are told only while they can see it (owner, roster, or an Admin / DocCtrl); the members and the owner as before (N8's final review fix)", async () => {
+    const involved = () => [...(emitsOf("change_order_status")[0].audience as { involved: string[] }).involved].sort();
+    s.db.tables.projects = [{ id: "p1", org_id: ORG, owner_user_id: "owner", visibility: "private" }];
+    // the proposer was removed from the roster but is still an org member; the CAM was never on it
+    s.db.tables.project_members = s.db.tables.project_members.filter((m) => m.user_id !== "proposer");
+    s.db.tables.org_members.push(member("cam", ["Engineer"]));
+    s.db.tables.cost_accounts = [{ id: "a1", org_id: ORG, project_id: "p1", budget: 1000, currency: "USD", cam_user_id: "cam" }];
+    const decide = async (decision: "approved" | "rejected") => {
+      s.emits = [];
+      s.db.tables.change_orders = [coRow()];
+      await decideChangeOrder({ co: asCo(coRow()), decision, shownAmount: 500, shownAccountId: "a1", note: "not in scope", actorId: "decider", actorName: "decider" });
+    };
+    await decide("rejected");
+    expect(involved()).toEqual(["owner", "pm"]);                            // neither the removed proposer nor the off-roster CAM
+    await decide("approved");
+    expect(emitsOf("project_status")).toEqual([]);                          // the removed proposer's own approval notice: not sent
+    expect(involved()).toEqual(["owner", "pm"]);
+    // still able to see it: a CAM on the roster, or a controller off it (DocCtrl held additively) — kept
+    s.db.tables.project_members.push({ project_id: "p1", user_id: "cam" });
+    await decide("rejected");
+    expect(involved()).toEqual(["cam", "owner", "pm"]);
+    s.db.tables.project_members = s.db.tables.project_members.filter((m) => m.user_id !== "cam");
+    s.db.tables.cost_accounts[0].cam_user_id = "dc2";
+    await decide("rejected");
+    expect(involved()).toEqual(["dc2", "owner", "pm"]);
+    // a project that cannot be read keeps none of the hand-named (fail closed); the roster still hears
+    s.db.tables.cost_accounts[0].cam_user_id = "cam";
+    s.failRead = (t) => t === "projects";
+    await decide("rejected");
+    expect(involved()).toEqual(["owner", "pm"]);                            // "owner" here is on the roster
+    s.failRead = null;
+    // REGRESSION: the same people on a project that is NOT private are told, as before
+    s.db.tables.projects[0].visibility = "public";
+    await decide("rejected");
+    expect(involved()).toEqual(["cam", "owner", "pm", "proposer"]);
+    await decide("approved");
+    expect(emitsOf("project_status")[0]).toMatchObject({ audience: { involved: ["proposer"] } });
+  });
+
   it("voiding stays silent (DEC-44 (N8) item 2)", async () => {
     s.db.tables.change_orders = [coRow()];
     await decideChangeOrder({ co: asCo(coRow()), decision: "void", shownAmount: 500, shownAccountId: "a1", actorId: "decider", actorName: "decider" });
@@ -354,6 +509,24 @@ describe("MON-11 dw3 — a turnover rejection notifies whoever is responsible fo
       title: "Turnover item rejected — Weld map & weld log", audience: { involved: ["pm", "owner"] },
     });
     expect(e.body).toContain('"missing weld numbers on sheet 3"');
+  });
+
+  it("SEC-2: the item's creator is told only while they can see the project — on a PRIVATE project a creator removed from the roster is not told the reason; the owner still is (N8's final review fix)", async () => {
+    const reject = async () => {
+      s.emits = [];
+      s.db.tables.turnover_items = [{ id: "t1", org_id: ORG, project_id: "p1", status: "received", created_by: "pm" }];
+      expect((await reviewTurnoverItem({ item, status: "rejected", note: "missing weld numbers on sheet 3", actor: { uid: "decider", email: "qa@acme.test" } })).ok).toBe(true);
+      return (s.emits[0]?.audience as { involved: string[] } | undefined)?.involved;
+    };
+    s.db.tables.projects = [{ id: "p1", org_id: ORG, owner_user_id: "owner", visibility: "private" }];
+    s.db.tables.project_members = s.db.tables.project_members.filter((m) => m.user_id !== "pm");
+    expect(await reject()).toEqual(["owner"]);
+    // REGRESSION: a creator still on the roster, or any creator on a project that is not private, is told as before
+    s.db.tables.project_members.push({ project_id: "p1", user_id: "pm" });
+    expect(await reject()).toEqual(["pm", "owner"]);
+    s.db.tables.project_members = s.db.tables.project_members.filter((m) => m.user_id !== "pm");
+    s.db.tables.projects[0].visibility = "public";
+    expect(await reject()).toEqual(["pm", "owner"]);
   });
 
   it("received (no decision) notifies nobody; a failed notice never fails the rejection", async () => {
@@ -390,7 +563,7 @@ describe("PROD-11 — the schedule speaks: status and moves to the project, a ne
     const [e] = s.emits;
     expect(e).toMatchObject({
       kind: "project_status", audience: { projectId: "p1" }, channels: ["inapp"], actorUserId: "pm",
-      link: "/projects/p1?tab=schedule", title: "Task blocked: Mechanical completion",
+      link: "/projects/p1?tab=schedule", title: "Task blocked: Mechanical completion", inappOneStatement: true,
     });
     // the project's members resolve through the dispatcher — the actor out
     expect((await resolveRecipients(e as unknown as EmitInput)).sort()).toEqual(["owner", "proposer"]);
@@ -574,6 +747,56 @@ describe("PROD-11 — the schedule speaks: status and moves to the project, a ne
     await updateMilestone({ id: "m1", patch: { plannedAt: "2026-11-14T00:00:00Z" }, updatedBy: "pm" });
     await flushNotices();
     expect(emitsOf("milestone_slipped")).toEqual([]);
+  });
+
+  it("the members' schedule notice is ONE insert statement however many members there are — from the second notice in a minute 20261160 counts each row again under the writer's lock, and one statement holds one pooled connection, not one per member (N8's final review fix)", async () => {
+    const real = await vi.importActual<typeof import("@/lib/notify/dispatch")>("@/lib/notify/dispatch");
+    const { emit } = await import("@/lib/notify/dispatch");
+    for (const uid of ["m1", "m2", "m3", "m4", "m5"]) {
+      s.db.tables.org_members.push(member(uid, ["Engineer"]));
+      s.db.tables.project_members.push({ project_id: "p1", user_id: uid });
+    }
+    s.db.tables.milestones = [ms()];
+    const inserts = () => s.db.calls.filter((c) => c.table === "notifications" && c.method === "insert");
+    // two notices about the project in the same minute: the second is the one the lock path meets
+    for (const status of ["blocked", "in_progress"] as const) {
+      vi.mocked(emit).mockImplementationOnce(real.emit);
+      await setMilestoneStatus({ id: "m1", status, statusReason: "waiting on parts", actorUserId: "pm", actorUserName: "pm" });
+      await flushNotices();
+    }
+    expect(inserts()).toHaveLength(2);                                       // one statement per notice
+    for (const c of inserts()) {
+      const rows = c.args[0] as Array<Record<string, unknown>>;
+      expect(rows.map((r) => r.user_id).sort()).toEqual(["m1", "m2", "m3", "m4", "m5", "owner", "proposer"]);   // the actor out
+      expect(rows[0]).toMatchObject({ kind: "project_status", actor_user_id: "pm", resource_type: "project", resource_id: "p1", link: "/projects/p1?tab=schedule" });
+    }
+    expect((s.db.tables.notifications ?? []).filter((n) => n.kind === "project_status")).toHaveLength(14);
+    // REGRESSION: an emit() that does not ask for it keeps one request per recipient (notifyMany), as every other producer does
+    s.db.calls.length = 0;
+    await real.emit({
+      orgId: ORG, category: "status", kind: "project_status", title: "t", resource: { type: "project", id: "p1" },
+      actorUserId: "pm", audience: { projectId: "p1" }, channels: ["inapp"],
+    });
+    expect(inserts()).toHaveLength(7);
+    expect(inserts().every((c) => !Array.isArray(c.args[0]))).toBe(true);
+  });
+
+  it("SEC-2: a new responsible person on a PRIVATE project is told only while they can see it (owner, roster, or an Admin / DocCtrl); a project that is not private, as before (N8's final review fix)", async () => {
+    s.db.tables.projects = [{ id: "p1", org_id: ORG, owner_user_id: "owner", visibility: "private" }];
+    s.db.tables.org_members.push(member("outsider", ["Engineer"]));
+    s.db.tables.milestones = [ms()];
+    const assign = async (uid: string) => {
+      s.emits = [];
+      await updateMilestone({ id: "m1", patch: { responsibleUserId: uid }, updatedBy: "pm", updatedByName: "pm" });
+      await flushNotices();
+      return emitsOf("milestone_assigned").map((e) => (e.audience as { involved: string[] }).involved[0]);
+    };
+    expect(await assign("outsider")).toEqual([]);                             // off the private project's roster: not told
+    expect(s.db.tables.milestones[0].responsible_user_id).toBe("outsider");  // REGRESSION: the assignment itself stands
+    expect(await assign("proposer")).toEqual(["proposer"]);                   // on the roster
+    expect(await assign("dc1")).toEqual(["dc1"]);                             // a DocCtrl off the roster still sees the project
+    s.db.tables.projects[0].visibility = "public";
+    expect(await assign("outsider")).toEqual(["outsider"]);                   // not private: told, as before
   });
 
   it("a failed notice never fails the schedule change", async () => {

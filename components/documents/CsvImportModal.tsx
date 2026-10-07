@@ -37,8 +37,10 @@ interface Props {
   orgId: string;
   collectionId?: string | null;
   actorUserId: string;
-  /** The signed-in member's name or email, for the library followers' notice
-   *  (PROD-5). Optional: without it the notice says "Someone". */
+  /** The signed-in member's email, for the library followers' notice
+   *  (PROD-5). Optional: without it notifyLibraryDocsAdded names the actor
+   *  by their email in the org (org_members), as the staged-upload path
+   *  does, and says "Someone" only when that is unknown. */
   actorName?: string | null;
   onImported?: (count: number) => void;
 }

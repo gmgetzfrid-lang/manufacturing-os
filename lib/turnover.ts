@@ -44,6 +44,7 @@ import { checkedWrite, isMissingSchemaError } from "@/lib/checkedWrite";
 import { userFacingCaughtError, userFacingReadError, asClause } from "@/lib/userFacingError";
 import { reasonKey, reasonProblem } from "@/lib/checklistEngine";
 import { emit } from "@/lib/notify/dispatch";
+import { projectVisibleAmong, type ProjectVisibilityRow } from "@/lib/notify/recipients";
 import {
   captureQualitySignoff, loadSignoffAuthority, signoffSeparation, QUALITY_SIGNOFF_RESOURCE, type SignoffInput,
   runProjectEvidenceSweep, type ProjectSweepOutcome,
@@ -458,13 +459,20 @@ export async function reviewTurnoverItem(input: {
  *  resubmission. The contractor itself is external (no account; MON-10 — its
  *  signal is the portal). Through lib/notify, the existing project_status
  *  kind (as the award notice — no new kind), the reviewer dropped by the
- *  dispatcher. Best-effort behind the decision: a failure is logged, never
- *  returned — the rejection and its nonconformance row already stand. */
+ *  dispatcher. The item's creator is named by hand, so they are kept only
+ *  while they can see the project (projectVisibleAmong: a private project's
+ *  owner, roster or controllers — SEC-2; a creator since removed from a
+ *  private project's roster is not told the rejection reason — N8's final
+ *  review fix); the owner sees it by definition. Best-effort behind the
+ *  decision: a failure is logged, never returned — the rejection and its
+ *  nonconformance row already stand. */
 async function notifyTurnoverRejected(item: TurnoverItem, note: string | null, actor: Actor): Promise<void> {
   try {
-    const { data } = await supabase.from("projects").select("owner_user_id").eq("id", item.projectId).maybeSingle();
-    const owner = ((data as { owner_user_id?: string | null } | null)?.owner_user_id) ?? null;
-    const involved = [item.createdBy ?? null, owner].filter((u): u is string => !!u);
+    const { data, error } = await supabase.from("projects").select("owner_user_id, visibility").eq("id", item.projectId).maybeSingle();
+    const project = error ? null : ((data as ProjectVisibilityRow | null) ?? null);
+    const owner = project?.owner_user_id ?? null;
+    const [creator] = await projectVisibleAmong(item.orgId, item.projectId, [item.createdBy], project);
+    const involved = [creator ?? null, owner].filter((u): u is string => !!u);
     if (involved.length === 0) return;
     await emit({
       orgId: item.orgId, category: "status", kind: "project_status",
