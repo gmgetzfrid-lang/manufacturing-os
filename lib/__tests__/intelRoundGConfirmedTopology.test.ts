@@ -14,7 +14,11 @@
 // EXACTLY as before. The goldens below are the base commit's (6797c48)
 // outputs for the same seeds, key order included. So does an equipment-to-
 // equipment trace in an org whose only flows have a unit end (fix pass): a
-// unit is a whole operating unit, never walked through.
+// unit is a whole operating unit, never walked through. And so does any
+// answer that does not rest on a confirmed flow, whatever flows the org
+// holds elsewhere (fix pass 2): the flows are named only by a route with a
+// flow step, a no-route answer at a flow's end (or whose reason the flows
+// change), and a neighbourhood a flow reaches into or with feeds / fed_by.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -39,6 +43,8 @@ const db = vi.hoisted(() => ({
   /** The clock Date.now reads, and what each paged tag-index read costs on it. */
   now: 0,
   pageCostMs: 0,
+  /** A failure for one query shape only (a table-wide one is `errors`). */
+  failQuery: null as null | ((table: string, calls: Array<[string, unknown[]]>) => Err | null),
 }));
 
 /** A query's filtered, ordered rows, per table array (a seed replaces it) and
@@ -51,6 +57,8 @@ function makeChain(client: string, table: string): unknown {
   db.queries.push({ client, table, calls });
   const result = (): { data: Row[] | null; error: Err | null } => {
     if (db.errors[table]) return { data: null, error: db.errors[table] };
+    const failed = db.failQuery?.(table, calls);
+    if (failed) return { data: null, error: failed };
     const range = calls.find(([c]) => c === "range");
     if (range && table === "knowledge_page_entities") db.now += db.pageCostMs;
     const failAt = db.rangeErrors[table];
@@ -134,6 +142,12 @@ import type { KnowledgePrincipal } from "@/lib/knowledgeAccess";
 const ORG = "o1";
 const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const A_P101 = uuid(101), A_E204 = uuid(204), A_T150 = uuid(150), A_V300 = uuid(300), A_X999 = uuid(999);
+const A_K500 = uuid(500), A_K501 = uuid(501);
+/** Two more of the org's assets, on no sheet of the regression seed. */
+const moreAssets = () => [
+  { id: A_K500, org_id: ORG, tag: "K-500", archived: false },
+  { id: A_K501, org_id: ORG, tag: "K-501", archived: false },
+];
 
 /** The sheet graph's rows: one tag occurrence each. */
 let nextEnt = 0;
@@ -197,6 +211,10 @@ const SHEET_BASIS =
   "Derived from equipment appearing together on the same drawing page, plus off-page "
   + "continuation references. This is sheet-level connectivity, not valve-by-valve line "
   + "tracing — intermediate components are only listed once line geometry is captured.";
+/** The flow-basis sentences' openings (I-21 fix pass 2). */
+const ROUTE_BASIS = /^Two sources, named per step in `route`\./;
+const NO_ROUTE_BASIS = /^Searched two sources: CONFIRMED flows on the plant's process map/;
+const NEAR_BASIS = /^Two sources\. `connected` is undirected and counts both/;
 const GOLDEN_PATH = {
   found: true, path: ["P101", "T150", "E204"], drawings: ["k-a"], crosses_sheets: false,
   components: [], reason: undefined, basis: SHEET_BASIS,
@@ -240,7 +258,7 @@ let clock: { mockRestore: () => void } | null = null;
 beforeEach(() => {
   db.tables = {}; db.errors = {}; db.queries = []; db.readable = new Set(["d-open"]);
   db.ignoreStatusFilter = false; db.maxRows = Number.POSITIVE_INFINITY;
-  db.rangeErrors = {}; db.now = 1_000_000; db.pageCostMs = 0;
+  db.rangeErrors = {}; db.now = 1_000_000; db.pageCostMs = 0; db.failQuery = null;
   nextEnt = 0; nextFlow = 0;
   // The tag-index read's time budget reads Date.now: a test's clock moves
   // only when a page costs something, never with the machine's load.
@@ -349,6 +367,186 @@ describe("REGRESSION — an org with no confirmed flows traces exactly as before
     expect(rest).toEqual({ start: "P-101", connected: today.nearP.connected });
     expect(directional).toMatchObject({ feeds: [], fed_by: [{ tag: "UNIT20", hops: 1 }] });
     expect(String(basis)).toMatch(/A UNIT<code> tag is a whole operating unit \(a Site Codebook unit\), not a piece of equipment/);
+  });
+});
+
+describe("REGRESSION (fix pass 2) — a confirmed flow the answer does not rest on changes nothing", () => {
+  it("an org with confirmed flows that touch none of the traced equipment: today's path, same-sheet hit, not-found and neighbourhood, key for key", async () => {
+    seedBase({
+      knowledge_page_entities: sheetSeed(),
+      process_flows: [
+        flow(["asset", A_K500], ["asset", A_K501], "confirmed", { label: "cooling water" }),
+        flow(["unit", "30"], ["asset", A_K501], "confirmed"),
+      ],
+    });
+    db.tables.assets.push(...moreAssets());
+    await expectToday();
+    // Not vacuous: the flows are in the graph, and answer where they are asked about.
+    const k = await trace({ start_tag: "K-500", end_tag: "K-501" });
+    expect(k.route).toEqual([{ from: "K500", to: "K501", basis: "confirmed flow", flow: "K500 feeds K501", stream: "cooling water" }]);
+    expect(String(k.basis)).toMatch(ROUTE_BASIS);
+  });
+
+  it("a confirmed flow at a route's own end that the route does not take: the route and the same-sheet hit are today's", async () => {
+    seedBase({
+      knowledge_page_entities: sheetSeed(),
+      process_flows: [flow(["asset", A_P101], ["asset", A_K500], "confirmed")],
+    });
+    db.tables.assets.push(...moreAssets());
+    const path = await trace({ start_tag: "P-101", end_tag: "E-204" });
+    expect(path).toEqual(GOLDEN_PATH);
+    expect(Object.keys(path)).toEqual(Object.keys(GOLDEN_PATH));
+    const same = await trace({ start_tag: "P-101", end_tag: "T-150" });
+    expect(same).toEqual(GOLDEN_SAME_SHEET);
+    expect(Object.keys(same)).toEqual(Object.keys(GOLDEN_SAME_SHEET));
+  });
+});
+
+describe("GAP-315 (fix pass 2) — the answer names the flows exactly where it rests on one", () => {
+  it("a neighbourhood a confirmed flow reaches into: `connected_through_flow` names those tags, the basis names no `route`, and an empty list is not 'nothing feeds it'", async () => {
+    // T-150 shares a sheet with P-101; a confirmed flow P-101 → E-204. T-150
+    // is on no flow, so its feeds / fed_by are empty — and E-204 is in
+    // `connected` only through the flow.
+    seedBase({
+      knowledge_page_entities: [ent("k-a", 1, "equipment", "T-150"), ent("k-a", 1, "equipment", "P-101")],
+      process_flows: [flow(["asset", A_P101], ["asset", A_E204], "confirmed")],
+    });
+    const out = await trace({ start_tag: "T-150", hops: 2 });
+    expect(out.connected).toEqual([{ tag: "P101", hops: 1 }, { tag: "E204", hops: 2 }]);
+    const cf = out.confirmed_flows as Record<string, unknown>;
+    expect(cf).toMatchObject({ feeds: [], fed_by: [], connected_through_flow: ["E204"] });
+    expect(String(cf.note)).toContain(
+      "An empty list means no confirmed flow is recorded that way — NOT that nothing feeds it, or that it feeds nothing.",
+    );
+    expect(String(out.basis)).toMatch(NEAR_BASIS);
+    expect(String(out.basis)).not.toContain("`route`");
+    expect(out).not.toHaveProperty("route");
+    // Within one run, nothing is there through a flow: today's answer.
+    expect(await trace({ start_tag: "T-150", hops: 1 })).toEqual({ start: "T-150", connected: [{ tag: "P101", hops: 1 }], basis: SHEET_BASIS });
+  });
+
+  it("a flow that only repeats a sheet pair brings no tag closer; the start's own flow still gives the directional lists", async () => {
+    // A — B — C on sheets (C two runs from A); a flow A → C makes C one run
+    // away; a flow T-150 → P-101 repeats the sheet pair.
+    seedBase({
+      knowledge_page_entities: [
+        ent("k-a", 1, "equipment", "P-101"), ent("k-a", 1, "equipment", "T-150"),
+        ent("k-a", 2, "equipment", "T-150"), ent("k-a", 2, "equipment", "E-204"),
+      ],
+      process_flows: [flow(["asset", A_T150], ["asset", A_P101], "confirmed"), flow(["asset", A_P101], ["asset", A_E204], "confirmed")],
+    });
+    const p = await trace({ start_tag: "P-101", hops: 2 });
+    expect(p.connected).toEqual([{ tag: "E204", hops: 1 }, { tag: "T150", hops: 1 }]);
+    expect(p.confirmed_flows).toMatchObject({
+      feeds: [{ tag: "E204", hops: 1 }], fed_by: [{ tag: "T150", hops: 1 }], connected_through_flow: ["E204"],
+    });
+    const t = await trace({ start_tag: "T-150", hops: 1 });
+    expect(t.connected).toEqual([{ tag: "E204", hops: 1 }, { tag: "P101", hops: 1 }]);
+    expect(t.confirmed_flows).toMatchObject({ feeds: [{ tag: "P101", hops: 1 }], fed_by: [], connected_through_flow: [] });
+    expect(String(t.basis)).toMatch(NEAR_BASIS);
+  });
+
+  it("a no-route answer names the flows when its own start or end is on one — with no `route` in the basis", async () => {
+    seedBase({
+      knowledge_page_entities: [ent("k-a", 2, "equipment", "T-150"), ent("k-a", 2, "equipment", "E-204")],
+      process_flows: [flow(["asset", A_P101], ["asset", A_K500], "confirmed")],
+    });
+    db.tables.assets.push(...moreAssets());
+    // P-101 is on a flow alone: without it, P-101 "doesn't appear".
+    const onlyFlow = await trace({ start_tag: "P-101", end_tag: "E-204" });
+    expect(onlyFlow).toMatchObject({ found: false, reason: "No traced route connects P-101 to E-204." });
+    expect(String(onlyFlow.basis)).toMatch(NO_ROUTE_BASIS);
+    expect(String(onlyFlow.basis)).not.toContain("`route`");
+    expect(onlyFlow).not.toHaveProperty("route");
+    // The end on a flow, the start on a sheet: the same.
+    expect(String((await trace({ start_tag: "T-150", end_tag: "K-500" })).basis)).toMatch(NO_ROUTE_BASIS);
+    // Neither end on a flow: today's not-found.
+    const neither = await trace({ start_tag: "X-1", end_tag: "E-204" });
+    expect(neither).toEqual(GOLDEN_NOT_FOUND);
+    // P-101 on a sheet too: the sheets alone give the same reason, and the
+    // flow at P-101 was still walked — the basis says so.
+    seedBase({
+      knowledge_page_entities: [
+        ent("k-a", 1, "equipment", "P-101"), ent("k-a", 1, "equipment", "V-9"),
+        ent("k-a", 2, "equipment", "T-150"), ent("k-a", 2, "equipment", "E-204"),
+      ],
+      process_flows: [flow(["asset", A_P101], ["asset", A_K500], "confirmed")],
+    });
+    db.tables.assets.push(...moreAssets());
+    const both = await trace({ start_tag: "P-101", end_tag: "E-204" });
+    expect(both).toMatchObject({ found: false, reason: "No traced route connects P-101 to E-204." });
+    expect(String(both.basis)).toMatch(NO_ROUTE_BASIS);
+  });
+
+  it("a no-route answer names the flows when they change its reason (a flow chain lengthens the search past its run limit)", async () => {
+    // S-0 shares a sheet with N-0; confirmed flows N-0 → N-1 → … → N-30.
+    // Neither S-0 nor E-204 is on a flow; the sheets alone say "no traced
+    // route", the flows push the search to its 25-run limit.
+    const chain = Array.from({ length: 31 }, (_, i) => ({ id: uuid(2000 + i), org_id: ORG, tag: `N-${i}`, archived: false }));
+    seedBase({
+      knowledge_page_entities: [
+        ent("k-a", 1, "equipment", "S-0"), ent("k-a", 1, "equipment", "N-0"),
+        ent("k-a", 2, "equipment", "T-150"), ent("k-a", 2, "equipment", "E-204"),
+      ],
+      process_flows: chain.slice(1).map((a, i) => flow(["asset", chain[i].id], ["asset", a.id], "confirmed")),
+    });
+    db.tables.assets.push(...chain);
+    const out = await trace({ start_tag: "S-0", end_tag: "E-204" });
+    expect(out).toMatchObject({ found: false, reason: "No route within 25 runs. They may still be connected further out." });
+    expect(String(out.basis)).toMatch(NO_ROUTE_BASIS);
+    // Without the flows: today's reason and basis.
+    seedBase({
+      knowledge_page_entities: [
+        ent("k-a", 1, "equipment", "S-0"), ent("k-a", 1, "equipment", "N-0"),
+        ent("k-a", 2, "equipment", "T-150"), ent("k-a", 2, "equipment", "E-204"),
+      ],
+    });
+    expect(await trace({ start_tag: "S-0", end_tag: "E-204" })).toMatchObject({
+      found: false, reason: "No traced route connects S-0 to E-204.", basis: SHEET_BASIS,
+    });
+  });
+});
+
+describe("IRLS-11 (fix pass 2) — a flow citing another workspace's document is not walked, and that document is never named", () => {
+  it("a legacy confirmed flow whose source is another org's upload: not walked, its id absent; once the document is the org's own it is walked", async () => {
+    const docs = (owner: string) => [
+      { id: "k-a", org_id: ORG, name: "PID-100 SHT 1", source_document_id: null },
+      { id: "k-x", org_id: owner, name: "Their PID", source_document_id: null },
+    ];
+    const flows = () => [
+      flow(["asset", A_P101], ["asset", A_E204], "confirmed", { origin: "ai", source_document_id: "k-x" }),
+      flow(["asset", A_T150], ["asset", A_E204], "confirmed"),
+    ];
+    seedBase({ process_flows: flows() });
+    db.tables.knowledge_documents = docs("o2");
+    const out = await trace({ start_tag: "P-101", end_tag: "E-204" });
+    expect(out).toMatchObject({ found: false, path: [], drawings: [] });
+    expect(JSON.stringify(out)).not.toContain("k-x");
+    expect(JSON.stringify(await trace({ start_tag: "E-204", hops: 2 }))).not.toContain("P101");
+    // The hand-drawn flow is the org's map and is walked.
+    expect((await trace({ start_tag: "T-150", end_tag: "E-204" })).found).toBe(true);
+    // The org check is the org's own: by org and by id.
+    const check = queriesOf("knowledge_documents").find((q) => callArgs(q, "eq").some(([c]) => c === "org_id"))!;
+    expect(callArgs(check, "eq")).toContainEqual(["org_id", ORG]);
+    expect(callArgs(check, "in")).toContainEqual(["id", ["k-x"]]);
+
+    seedBase({ process_flows: flows() });
+    db.tables.knowledge_documents = docs(ORG);
+    expect(await trace({ start_tag: "P-101", end_tag: "E-204" })).toMatchObject({ found: true, path: ["P101", "E204"], drawings: ["k-x"] });
+  });
+
+  it("the org check failing hides every flow read off a sheet (fails closed), never the hand-drawn map", async () => {
+    seedBase({
+      process_flows: [
+        flow(["asset", A_P101], ["asset", A_E204], "confirmed", { origin: "ai", source_document_id: "k-a" }),
+        flow(["asset", A_T150], ["asset", A_E204], "confirmed"),
+      ],
+    });
+    expect((await trace({ start_tag: "P-101", end_tag: "E-204" })).found).toBe(true);
+    db.failQuery = (table, calls) => (table === "knowledge_documents" && calls.some(([m, a]) => m === "eq" && a[0] === "org_id")
+      ? { code: "57014", message: "statement timeout" } : null);
+    expect((await trace({ start_tag: "P-101", end_tag: "E-204" })).found).toBe(false);
+    expect((await trace({ start_tag: "T-150", end_tag: "E-204" })).found).toBe(true);
   });
 });
 
@@ -544,9 +742,13 @@ describe("ING-10 residual — the tag index is paged, never one capped read that
     expect(out).not.toHaveProperty("graph_partial");
     const windows = queriesOf("knowledge_page_entities").flatMap((q) => callArgs(q, "range")).map((a) => Number(a[0]));
     expect(Math.max(...windows)).toBeGreaterThanOrEqual(20_000);
-    // Stable order: by document, then id; the kinds named (ING-5).
+    // Stable order: by document, page and tag (the prefix of the
+    // (document_id, page, tag) index), then id; the kinds named (ING-5).
     const first = queriesOf("knowledge_page_entities").find((q) => callArgs(q, "range").length > 0)!;
-    expect(callArgs(first, "order")).toEqual([["document_id", { ascending: true }], ["id", { ascending: true }]]);
+    expect(callArgs(first, "order")).toEqual([
+      ["document_id", { ascending: true }], ["page", { ascending: true }],
+      ["tag", { ascending: true }], ["id", { ascending: true }],
+    ]);
     expect(callArgs(first, "in")[0][0]).toBe("kind");
   }, 60_000);
 
@@ -599,6 +801,35 @@ describe("ING-10 residual — the tag index is paged, never one capped read that
     expect(whole).toMatchObject({ found: true, path: ["P101", "E204"], drawings: ["k-g"] });
     expect(whole).not.toHaveProperty("graph_partial");
   }, 60_000);
+});
+
+describe("ING-10 residual (fix pass 2) — a read that is whole is never called partial on time", () => {
+  const filler = (n: number) => Array.from({ length: n }, (_, i) =>
+    ent(`k-f-${String(Math.floor(i / 1000)).padStart(4, "0")}`, (i % 1000) + 1, "self", `SELF-${i}`));
+  const rangePages = () => queriesOf("knowledge_page_entities").filter((q) => callArgs(q, "range").length > 0);
+
+  it("the last data page ends past the budget: the closing page is still asked for, and the whole read is walked", async () => {
+    // 6 s a page: page 0 (full) ends at 6 s, page 1 (short: the rest) at
+    // 12 s. The page that closes the read starts past 10 s, after a short one.
+    db.pageCostMs = 6_000;
+    seedBase({ knowledge_page_entities: [...filler(1_000), ent("k-z", 1, "equipment", "P-101"), ent("k-z", 1, "equipment", "E-204")] });
+    const out = await trace({ start_tag: "P-101", end_tag: "E-204" });
+    expect(out).toMatchObject({ found: true, path: ["P101", "E204"], drawings: ["k-z"] });
+    expect(out).not.toHaveProperty("graph_partial");
+    expect(rangePages().map((q) => Number(callArgs(q, "range")[0][0]))).toEqual([0, 1_000, 1_002]);
+  });
+
+  it("…once only: with a max-rows below the window every page is short, and the read still stops one page past the budget, PARTIAL", async () => {
+    // 500 rows a response, 4 s a page: pages start at 0, 4, 8 s; the page at
+    // 12 s follows a short one and is asked for; the next is not.
+    db.pageCostMs = 4_000;
+    db.maxRows = 500;
+    seedBase({ knowledge_page_entities: [ent("k-a", 1, "equipment", "P-101"), ent("k-a", 1, "equipment", "T-150"), ...filler(3_000)] });
+    const out = await trace({ start_tag: "P-101", end_tag: "T-150" });
+    expect(rangePages()).toHaveLength(4);
+    expect(out.found).toBe(true);
+    expect(String(out.graph_partial)).toMatch(/^PARTIAL: reading the drawing tag index took longer than one trace may spend on it \(10 s\)/);
+  });
 });
 
 describe("ING-10 residual — a tag-index read that fails is said, never passed off as \"doesn't appear\"", () => {
@@ -776,6 +1007,34 @@ describe("lib/pidTrace — the basis rides on the step; a directional neighbourh
     expect(traceNeighbourhood(flows, "A", 2, "upstream")).toEqual([]);
     expect(traceNeighbourhood(EDGES, "B", 2)).toEqual(traceNeighbourhood(EDGES, "B", 2, undefined));
     expect(traceNeighbourhood(EDGES, "B", 2)).toEqual([{ tag: "A", hops: 1 }, { tag: "C", hops: 1 }, { tag: "D", hops: 2 }]);
+  });
+
+  it("fix pass 2, on random graphs: a route with no flow step is the route the sheets alone give, and a neighbourhood with no tag through a flow is the sheets' own", () => {
+    // What lets trace_pid_lines answer as before whenever it rests on no
+    // flow: flows ahead of the sheet edges never change a sheet-only route.
+    let seed = 20261007;
+    const rnd = (n: number) => { seed = (seed * 1103515245 + 12345) % 2147483648; return Math.floor((seed / 2147483648) * n); };
+    let routes = 0;
+    for (let t = 0; t < 4000; t++) {
+      const n = 3 + rnd(12);
+      const node = () => `N${rnd(n)}`;
+      const sheets: LineEdge[] = Array.from({ length: rnd(n * 2) }, (_, k) => ({ lineId: `p${k}`, from: node(), to: node(), basis: "same_sheet" as const }))
+        .filter((e) => e.from !== e.to);
+      const flows: LineEdge[] = Array.from({ length: rnd(8) }, (_, k) => ({ lineId: `f${k}`, from: node(), to: node(), basis: "confirmed_flow" as const }))
+        .filter((e) => e.from !== e.to);
+      const [a, b] = [node(), node()];
+      const r = tracePath([...flows, ...sheets], a, b);
+      if (r.found && !r.steps.some((st) => st.basis === "confirmed_flow")) {
+        routes += 1;
+        expect(r).toEqual(tracePath(sheets, a, b));
+      }
+      const hops = 1 + rnd(3);
+      const near = traceNeighbourhood([...flows, ...sheets], a, hops);
+      const bySheet = traceNeighbourhood(sheets, a, hops);
+      const at = new Map(bySheet.map((x) => [x.tag, x.hops]));
+      if (near.every((x) => (at.get(x.tag) ?? Infinity) <= x.hops)) expect(near).toEqual(bySheet);
+    }
+    expect(routes).toBeGreaterThan(500);
   });
 
   it("a terminal node is reached and never passed through, unless the walk starts there", () => {

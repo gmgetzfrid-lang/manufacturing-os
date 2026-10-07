@@ -484,16 +484,15 @@ const tracePidLines: ToolDef = {
   async run(args, ctx) {
     const graph = await loadLineGraph(ctx);
     // GAP-315: the confirmed process flows the graph holds (after the
-    // hidden-sheet filter). The answer's extra fields appear only when the
-    // walk used one; with none, every field below is exactly as before flows
-    // were an input.
+    // hidden-sheet filter). The answer names them (a flow basis, `route`,
+    // `confirmed_flows`) only when it rests on one: a found route with a
+    // confirmed-flow step; a no-route answer whose own start or end is on a
+    // flow, or whose reason the flows change; a neighbourhood with a tag only
+    // a flow brings that close, or a non-empty feeds / fed_by. Otherwise
+    // every field below is as before flows were an input, whatever flows the
+    // org holds elsewhere (I-21 fix pass 2).
     const flowEdges = graph.edges.filter((e) => e.basis === "confirmed_flow");
-    // Say what this is built from. Claiming valve-level tracing when the
-    // source is page co-occurrence would be a lie an engineer acts on.
-    const basisFor = (withFlows: boolean) => (withFlows ? TRACE_BASIS_WITH_FLOWS :
-      "Derived from equipment appearing together on the same drawing page, plus off-page "
-      + "continuation references. This is sheet-level connectivity, not valve-by-valve line "
-      + "tracing — intermediate components are only listed once line geometry is captured.");
+    const isFlow = (e: LineEdge) => e.basis === "confirmed_flow";
     // ING-10 residual / GAP-315: what the graph could not include, said — a
     // trace that read part of the index, or none of it, must not pass "no
     // route" off as proof.
@@ -528,32 +527,56 @@ const tracePidLines: ToolDef = {
       const hops = Number(args.hops ?? 2) || 2;
       const walk = equipmentWalk(graph, start);
       const near = traceNeighbourhood(walk, start, hops);
+      // The tags in `connected` only a confirmed flow brings that close:
+      // sheet co-occurrence alone does not reach them in as few runs. (Every
+      // other tag is exactly where the sheets alone put it.)
+      const bySheet = walk.some(isFlow)
+        ? new Map(traceNeighbourhood(walk.filter((e) => !isFlow(e)), start, hops).map((n) => [n.tag, n.hops]))
+        : null;
+      const throughFlow = bySheet ? near.filter((n) => (bySheet.get(n.tag) ?? Infinity) > n.hops).map((n) => n.tag) : [];
       // GAP-315: scoped by traceNeighbourhood over the confirmed flows
       // alone, each followed only its stored way; a unit is reached, never
       // walked through (unless the walk starts there).
       const feeds = traceNeighbourhood(flowEdges, start, hops, "downstream", graph.units);
       const fedBy = traceNeighbourhood(flowEdges, start, hops, "upstream", graph.units);
-      const withFlows = walk.some((e) => e.basis === "confirmed_flow") || feeds.length > 0 || fedBy.length > 0;
+      const withFlows = throughFlow.length > 0 || feeds.length > 0 || fedBy.length > 0;
       return {
         data: {
-          start: args.start_tag, connected: near, basis: basisFor(withFlows),
+          start: args.start_tag, connected: near, basis: withFlows ? NEIGHBOURHOOD_BASIS_WITH_FLOWS : SHEET_BASIS,
           ...(withFlows ? {
             confirmed_flows: {
-              feeds, fed_by: fedBy,
+              feeds, fed_by: fedBy, connected_through_flow: throughFlow,
               note: "Directional, from CONFIRMED process flows only: `feeds` is what this equipment or unit "
-                + "feeds (downstream), `fed_by` what feeds it (upstream). A UNIT<code> tag is a whole operating "
-                + "unit (a Site Codebook unit), not a piece of equipment: these lists name it and stop there. "
-                + "`connected` also counts sheet co-occurrence, which has no direction, and never passes "
-                + "through a unit.",
+                + "feeds (downstream), `fed_by` what feeds it (upstream). An empty list means no confirmed flow "
+                + "is recorded that way — NOT that nothing feeds it, or that it feeds nothing. A UNIT<code> tag "
+                + "is a whole operating unit (a Site Codebook unit), not a piece of equipment: these lists name "
+                + "it and stop there. `connected` also counts sheet co-occurrence, which has no direction, and "
+                + "never passes through a unit; `connected_through_flow` lists the tags in it that only a "
+                + "confirmed flow brings that close.",
             },
           } : {}),
           ...notes,
         },
       };
     }
-    const walk = equipmentWalk(graph, String(args.start_tag), String(args.end_tag));
-    const withFlows = walk.some((e) => e.basis === "confirmed_flow");
-    const r = tracePath(walk, String(args.start_tag), String(args.end_tag));
+    const startTag = String(args.start_tag);
+    const endTag = String(args.end_tag);
+    const walk = equipmentWalk(graph, startTag, endTag);
+    const r = tracePath(walk, startTag, endTag);
+    // A found route rests on a flow when one of its steps is one. A no-route
+    // answer does when its own start or end is on a flow the trace could
+    // walk, or when the sheets alone would give a different reason (flows
+    // elsewhere lengthening the search past its run limit). A flow anywhere
+    // else in the org changes nothing here.
+    const walkFlows = walk.filter(isFlow);
+    const onFlow = (tag: string) => {
+      const k = normalizeTag(tag);
+      return walkFlows.some((e) => normalizeTag(e.from) === k || normalizeTag(e.to) === k);
+    };
+    const withFlows = r.found
+      ? r.steps.some((s) => s.basis === "confirmed_flow")
+      : walkFlows.length > 0 && (onFlow(startTag) || onFlow(endTag)
+        || tracePath(walk.filter((e) => !isFlow(e)), startTag, endTag).reason !== r.reason);
     // When both tags sit on ONE sheet, say so and point at the viewer —
     // that is where a human reads the drawn connection. (An automated
     // line-follower was tried, in several revisions, against real SHX
@@ -605,7 +628,8 @@ const tracePidLines: ToolDef = {
         found: r.found, path: r.path, drawings: r.drawings,
         crosses_sheets: r.steps.some((s) => s.offPage),
         components: r.components,
-        reason: r.reason, basis: basisFor(withFlows),
+        reason: r.reason,
+        basis: withFlows ? (r.found ? TRACE_BASIS_WITH_FLOWS : NO_ROUTE_BASIS_WITH_FLOWS) : SHEET_BASIS,
         ...(sameSheet.length > 0 ? {
           same_sheet: sameSheet,
           note:
@@ -620,7 +644,16 @@ const tracePidLines: ToolDef = {
   },
 };
 
-/** GAP-315: the trace's basis when the graph walked confirmed process flows. */
+/** The trace's basis when its answer rests on sheet co-occurrence alone —
+ *  the base commit's sentence, word for word. Say what this is built from:
+ *  claiming valve-level tracing when the source is page co-occurrence would
+ *  be a lie an engineer acts on. */
+const SHEET_BASIS =
+  "Derived from equipment appearing together on the same drawing page, plus off-page "
+  + "continuation references. This is sheet-level connectivity, not valve-by-valve line "
+  + "tracing — intermediate components are only listed once line geometry is captured.";
+
+/** GAP-315: a found route's basis when a step of it is a confirmed flow. */
 const TRACE_BASIS_WITH_FLOWS =
   "Two sources, named per step in `route`. A \"confirmed flow\" step is a CONFIRMED flow on the plant's "
   + "process map — a person drew it or confirmed it; it has a direction (one thing feeds the next). A "
@@ -631,6 +664,30 @@ const TRACE_BASIS_WITH_FLOWS =
   + "steps are confirmed flows and which are only on the same sheet; intermediate components are only "
   + "listed once line geometry is captured.";
 
+/** GAP-315 (I-21 fix pass 2): a no-route answer's basis when its start or
+ *  end is on a confirmed flow, or the flows change its reason. No `route`. */
+const NO_ROUTE_BASIS_WITH_FLOWS =
+  "Searched two sources: CONFIRMED flows on the plant's process map (a person drew it or confirmed it; "
+  + "proposed or dismissed flows are never used), and equipment appearing together on the same drawing "
+  + "page, plus off-page continuation references (sheet-level connectivity, not valve-by-valve line "
+  + "tracing). A UNIT<code> tag is a whole operating unit (a Site Codebook unit), not a piece of "
+  + "equipment: a route may start or end at one but never passes through one.";
+
+/** GAP-315 (I-21 fix pass 2): a neighbourhood's basis when a confirmed flow
+ *  brings a tag into `connected`, or `feeds` / `fed_by` is not empty. It
+ *  names no `route` (this mode has none) and says, per tag, which source put
+ *  it there. */
+const NEIGHBOURHOOD_BASIS_WITH_FLOWS =
+  "Two sources. `connected` is undirected and counts both: CONFIRMED flows on the plant's process map "
+  + "(a person drew it or confirmed it; proposed or dismissed flows are never used), and equipment "
+  + "appearing together on the same drawing page, or an off-page continuation reference (sheet-level "
+  + "connectivity, not valve-by-valve line tracing). `confirmed_flows.connected_through_flow` names the "
+  + "tags in `connected` that only a confirmed flow brings that close; every other tag is that close on "
+  + "sheet co-occurrence alone. Direction comes from confirmed flows only (`confirmed_flows.feeds` / "
+  + "`fed_by`). A UNIT<code> tag is a whole operating unit (a Site Codebook unit), not a piece of "
+  + "equipment: `connected` never passes through one, and `feeds` / `fed_by` name one and stop there. "
+  + "Intermediate components are only listed once line geometry is captured.";
+
 /** ING-10 residual: the most tag-occurrence rows one trace reads. The read is
  *  paged to the end or to here (readAll, as the DRAWING FACTS census is); past
  *  it the document the ceiling cut is dropped whole and the trace says it is
@@ -640,8 +697,11 @@ export const LINE_GRAPH_ROW_CEILING = 50_000;
 /** ING-10 residual (I-21 fix pass): the wall clock one trace may spend
  *  paging the tag index. Each page is a fresh query (an org filter and a
  *  sort), and the run around it has its own budget (app/api/orchestrator
- *  LOOP_BUDGET_MS, 75 s). No new page starts past this; the read stops there
- *  and the trace says it is partial, exactly as at the row ceiling. */
+ *  LOOP_BUDGET_MS, 75 s). No new data page starts past this; the read stops
+ *  there and the trace says it is partial, exactly as at the row ceiling.
+ *  The one exception (fix pass 2): when the page before came back short,
+ *  the read is most likely over, and the page that would close it is still
+ *  asked for — once — so a read that is whole is never called partial. */
 export const LINE_GRAPH_READ_BUDGET_MS = 10_000;
 
 /** What loadLineGraph built, and what it could not include. */
@@ -650,7 +710,8 @@ interface LineGraph {
    *  confirmed flow and co-occurrence join the SAME pair, the flow is the
    *  step a route names (it comes first in that pair's adjacency). Between
    *  two different routes of equal length, breadth-first order decides, not
-   *  the basis. */
+   *  the basis: flows in id order, then the sheets in (document, page, tag)
+   *  order. */
   edges: LineEdge[];
   /** The trace keys of the unit ends among the flow edges (unitTraceTag). */
   units: ReadonlySet<string>;
@@ -683,6 +744,30 @@ function equipmentWalk(graph: LineGraph, ...ends: string[]): LineEdge[] {
 }
 
 /**
+ * IRLS-11 (I-21 fix pass 2): the ids among `knowledgeDocIds` that are not
+ * this org's own knowledge documents. unreadableMirrors looks a document up by
+ * id alone, so a legacy confirmed flow (20261155 counted such rows and kept
+ * them) that cites another workspace's upload would pass it, be walked, and
+ * name that document's id in `drawings`. A flow citing one is not walked. A
+ * failed read names every id (fails closed, as unreadableMirrors does).
+ */
+async function notOrgsOwn(orgId: string, knowledgeDocIds: string[]): Promise<Set<string>> {
+  const ids = [...new Set(knowledgeDocIds.filter(Boolean))];
+  if (ids.length === 0) return new Set();
+  try {
+    const own = new Set<string>();
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data, error } = await supabaseAdmin
+        .from("knowledge_documents").select("id")
+        .eq("org_id", orgId).in("id", ids.slice(i, i + 200));
+      if (error) throw error;
+      for (const d of (data ?? []) as Array<{ id: string }>) own.add(d.id);
+    }
+    return new Set(ids.filter((id) => !own.has(id)));
+  } catch { return new Set(ids); }
+}
+
+/**
  * Build the connectivity graph from what extraction actually captured.
  *
  * Equipment on the same drawing page is connected on that page; an off-page
@@ -700,22 +785,35 @@ async function loadLineGraph(ctx: ToolContext): Promise<LineGraph> {
   type EntRow = { document_id: string; page: number; kind: string; tag: string };
   const startedAt = Date.now();
   let outOfTime = false;
+  let last: { from: number; to: number } | null = null;
+  let closingAsked = false;
   const [read, flows] = await Promise.all([
     // ING-10 residual: paged in a stable order to the end, or to the
     // ceiling — never one capped read that looks whole (the way I-03 reads
-    // the DRAWING FACTS census). No page starts past the time budget: the
-    // read ends there (an empty page to readAll) and is partial.
+    // the DRAWING FACTS census). The order is (document, page, tag, id): the
+    // prefix of the (document_id, page, tag) index, so a sheet's rows come
+    // together and in page order, and edge order (which breaks a tie between
+    // equal-length routes) follows the tags, not random ids. No page starts
+    // past the time budget — save the one closing page after a short one
+    // (LINE_GRAPH_READ_BUDGET_MS) — the read ends there (an empty page to
+    // readAll) and is partial.
     readAll<EntRow>((from, to) => {
+      const shortBefore = last !== null && from - last.from < last.to - last.from + 1;
+      last = { from, to };
       if (from > 0 && Date.now() - startedAt > LINE_GRAPH_READ_BUDGET_MS) {
-        outOfTime = true;
-        return Promise.resolve({ data: [], error: null });
+        if (!shortBefore || closingAsked) {
+          outOfTime = true;
+          return Promise.resolve({ data: [], error: null });
+        }
+        closingAsked = true;
       }
       return supabaseAdmin
         .from("knowledge_page_entities")
         .select("document_id, page, kind, tag")
         .eq("org_id", ctx.orgId)
         .in("kind", TAG_ENTITY_KINDS as unknown as string[])
-        .order("document_id", { ascending: true }).order("id", { ascending: true })
+        .order("document_id", { ascending: true }).order("page", { ascending: true })
+        .order("tag", { ascending: true }).order("id", { ascending: true })
         .range(from, to);
     }, LINE_GRAPH_ROW_CEILING),
     flowsToLineEdges(ctx.orgId, supabaseAdmin),
@@ -736,10 +834,15 @@ async function loadLineGraph(ctx: ToolContext): Promise<LineGraph> {
 
   // SURF-7 / IEDGE-2: the graph is built only from sheets the caller may read
   // — a trace must not walk a drawing they cannot open. A confirmed flow
-  // read off a sheet the caller cannot open is not walked either; a
-  // hand-drawn flow (no source sheet) is the org's shared map.
-  const flowDocs = flows.edges.map((e) => e.drawingId).filter((d): d is string => !!d);
-  const hidden = await unreadableMirrors(ctx, [...new Set([...rowsAll.map((r) => r.document_id), ...flowDocs])]);
+  // read off a sheet the caller cannot open is not walked either, nor one
+  // that cites another workspace's document (IRLS-11: a legacy row
+  // 20261155 kept); a hand-drawn flow (no source sheet) is the org's shared
+  // map.
+  const flowDocs = [...new Set(flows.edges.map((e) => e.drawingId).filter((d): d is string => !!d))];
+  const [hidden, foreign] = await Promise.all([
+    unreadableMirrors(ctx, [...new Set([...rowsAll.map((r) => r.document_id), ...flowDocs])]),
+    notOrgsOwn(ctx.orgId, flowDocs),
+  ]);
 
   const byPage = new Map<string, { equipment: string[]; refs: string[] }>();
   for (const row of rowsAll) {
@@ -766,7 +869,7 @@ async function loadLineGraph(ctx: ToolContext): Promise<LineGraph> {
       }
     }
   }
-  const flowEdges = flows.edges.filter((e) => !e.drawingId || !hidden.has(e.drawingId));
+  const flowEdges = flows.edges.filter((e) => !e.drawingId || (!hidden.has(e.drawingId) && !foreign.has(e.drawingId)));
   return {
     edges: [...flowEdges, ...edges],
     units: new Set(flows.unitNodes),
