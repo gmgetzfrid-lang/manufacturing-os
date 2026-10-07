@@ -264,6 +264,7 @@ but the three above remove the user-visible damage for far less work.
 3. ✓ The database rejects an unmapped status or kind (the CHECKs listed above, unchanged).
 
 **Scope / residual.** None for this finding. A zod row-validation layer is not attempted (DEC-31, as recorded above).
+- Ship loop (`DEC-29` item 4), J14 fix pass: `tsc --noEmit` exits 0, and `eslint` on the 47 changed `.ts` / `.tsx` files exits 0. Every assertion of the full `vitest` run passes. On this host (load average about 20) the run's exit code was 1 twice, each time only from 5 s default timeouts, in files this package does not touch: `dcRoundFOwnerStamp`, `notificationWriteRails`, `notificationDispatchMembership` and `dependencies`. Those four pass when run on their own with `--testTimeout=60000` (exit 0). The full `next build` was not run here: the fleet's standing rule leaves it to the integrator at merge, so this resolution stands on that build passing.
 
 ---
 
@@ -572,6 +573,7 @@ also pure cost, per report `09`).
 3. ✓ The remaining dead declarations are removed: `equipmentTags`, `trend` and `addEvidence` are gone. `setup_state` is not dead (its reader is above). `kind: "po"` stays under J3's CHECK decision, as recorded.
 
 **Scope / residual.** None for this finding. For the integrator: the comment on the `20261136` rail ("no product path reopens or voids a checklist") is still stale on voids, as J10b recorded. That file is a migration, and it is not edited here.
+- Ship loop (`DEC-29` item 4), J14 fix pass: `tsc --noEmit` exits 0, and `eslint` on the 47 changed `.ts` / `.tsx` files exits 0. Every assertion of the full `vitest` run passes. On this host (load average about 20) the run's exit code was 1 twice, each time only from 5 s default timeouts, in files this package does not touch: `dcRoundFOwnerStamp`, `notificationWriteRails`, `notificationDispatchMembership` and `dependencies`. Those four pass when run on their own with `--testTimeout=60000` (exit 0). The full `next build` was not run here: the fleet's standing rule leaves it to the integrator at merge, so this resolution stands on that build passing.
 
 ---
 

@@ -383,27 +383,51 @@ function ackWarning(ack: NameFlag, override: AwardFlag | null): string {
 }
 
 /** MON-10 (projects Round G J14): the outcomes of a quote's notice that say
- *  nothing went wrong — told before, no contact on the link, email not set
- *  up here, a send already under way, or (a rival the award did not
- *  decline) not decided. The portal shows the outcome in every case. */
-const QUIET_NOTICE_REASONS: readonly string[] = ["already", "no_contact", "not_configured", "in_progress", "undecided"];
+ *  nothing went wrong — told before, email not set up here, a send already
+ *  under way, or (a rival the award did not decline) not decided. The portal
+ *  shows the outcome in every case. A link with no contact email is NOT
+ *  quiet (J14 fix pass): that bidder is never emailed, and the user is told
+ *  so (`no_contact` has its own sentence below). */
+const QUIET_NOTICE_REASONS: readonly string[] = ["already", "not_configured", "in_progress", "undecided"];
 
 /**
  * MON-10: tell each quote's contractor how it was decided — J12's notice
  * route (`/api/intake/outcome-notice`, `notifyQuoteOutcome`), which reads
  * the outcome from the quote's stored status and emails only the contact
- * the org entered on the quote link it came through (DEC-56), once. Only
- * quotes that came through a link are asked. Returns one sentence naming
- * the notices that failed, or null.
+ * the org entered on the quote link it came through (DEC-56; the Costs
+ * tab's quote-link form takes it), once. Only quotes that came through a
+ * link are asked. Returns the sentences naming the notices that failed and
+ * the bidders whose link carries no contact email (not emailed — their
+ * portal shows the outcome), or null.
  */
 export async function noticeQuoteOutcomes(orgId: string, docs: CostDocument[]): Promise<string | null> {
   const linked = docs.filter((d) => d.kind === "quote" && !!d.intakeLinkId);
   const answers = await Promise.all(linked.map(async (d) => ({ d, res: await notifyQuoteOutcome(orgId, d.id) })));
-  const failed = answers.filter(({ res }) => !res.sent && !QUIET_NOTICE_REASONS.includes(res.reason));
-  if (!failed.length) return null;
-  const names = failed.map(({ d, res }) => `${d.vendorName ?? d.fileName ?? "a bidder"} (${res.sent ? "" : res.reason})`);
-  return `The email telling ${failed.length === 1 ? "the bidder" : `${failed.length} bidders`} the outcome could not be sent: ${names.join(", ")} — their portal still shows it.`;
+  const reasonOf = (res: { sent: true } | { sent: false; reason: string }) => (res.sent ? null : res.reason);
+  const nameOf = (d: CostDocument) => d.vendorName ?? d.fileName ?? "a bidder";
+  const noContact = answers.filter(({ res }) => reasonOf(res) === "no_contact");
+  const failed = answers.filter(({ res }) => {
+    const r = reasonOf(res);
+    return r != null && r !== "no_contact" && !QUIET_NOTICE_REASONS.includes(r);
+  });
+  const said: string[] = [];
+  if (failed.length) {
+    const names = failed.map(({ d, res }) => `${nameOf(d)} (${reasonOf(res)})`);
+    said.push(`The email telling ${failed.length === 1 ? "the bidder" : `${failed.length} bidders`} the outcome could not be sent: ${names.join(", ")} — their portal still shows it.`);
+  }
+  if (noContact.length) {
+    const names = noContact.map(({ d }) => nameOf(d)).join(", ");
+    said.push(noContact.length === 1
+      ? `${names}'s quote link has no contact email, so they were not emailed the outcome — they see it on their portal only.`
+      : `The quote links of ${names} have no contact email, so they were not emailed the outcome — they see it on their portals only.`);
+  }
+  return said.length ? said.join(" ") : null;
 }
+
+/** MON-10 (J14 fix pass): the quote link's contact email — the address the
+ *  award / decline notice goes to (DEC-56: one the org typed). Optional; a
+ *  typed one must look like an address (the transmittal email's check). */
+const CONTACT_EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const QUOTE_LINK_DEFAULT_DAYS = 90;
 const isoDateInDays = (d: number) => new Date(Date.now() + d * 86_400_000).toISOString().slice(0, 10);
@@ -1901,6 +1925,8 @@ interface QuoteLink {
    *  is known only right after a mint or a re-issue (`freshUrls`). */
   id: string; token: string | null; tokenPrefix: string | null; companyName: string; rfqGroup: string | null;
   revokedAt: string | null; expiresAt: string | null; submissionCount: number;
+  /** MON-10 (J14 fix pass): the contact the award / decline notice emails. */
+  contactEmail: string | null;
 }
 
 function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: {
@@ -1909,6 +1935,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
 }) {
   const [links, setLinks] = useState<QuoteLink[] | null>(null);
   const [company, setCompany] = useState("");
+  const [contactEmail, setContactEmail] = useState("");
   const [group, setGroup] = useState("");
   // A quote link is a bearer credential: it always expires (SEC-5 /
   // INTK-12) — 90 days by default, editable, never blank.
@@ -1925,7 +1952,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
     // SEC-19: the token's prefix, never the token; the plain column only
     // before 20261141.
     const read = (cred: "token_prefix" | "token") => supabase.from("project_intake_links")
-      .select(`id, ${cred}, company_name, rfq_group, revoked_at, expires_at, submission_count, purpose`)
+      .select(`id, ${cred}, company_name, contact_email, rfq_group, revoked_at, expires_at, submission_count, purpose`)
       .eq("project_id", projectId).eq("purpose", "quote")
       .order("created_at", { ascending: false });
     const { data, error } = await firstReadWithColumns<Array<Record<string, unknown>>>([() => read("token_prefix"), () => read("token")]);
@@ -1937,6 +1964,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
       revokedAt: (r.revoked_at as string | null) ?? null,
       expiresAt: (r.expires_at as string | null) ?? null,
       submissionCount: Number(r.submission_count ?? 0),
+      contactEmail: ((r.contact_email as string | null) ?? "").trim() || null,
     })));
   }, [projectId]);
   React.useEffect(() => { void refresh(); }, [refresh]);
@@ -1949,6 +1977,10 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
 
   const create = async () => {
     if (!company.trim()) { setErr("Name the company the link is for."); return; }
+    // MON-10 (J14 fix pass): the award / decline notice emails this contact
+    // (DEC-56) — without one, the bidder sees the outcome on the portal only.
+    const contact = contactEmail.trim();
+    if (contact && !CONTACT_EMAIL_SHAPE.test(contact)) { setErr(`"${contact}" doesn't look like an email address — fix it, or leave the contact blank.`); return; }
     const expiresAt = expires ? new Date(`${expires}T23:59:59`) : null;
     if (!expiresAt || !Number.isFinite(expiresAt.getTime()) || expiresAt.getTime() <= Date.now()) {
       setErr("Give the link an expiry date in the future — a quote link never lives forever."); return;
@@ -1960,7 +1992,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
       const token = newIntakeToken();
       const { data: created, error } = await supabase.from("project_intake_links").insert({
         org_id: orgId, project_id: projectId, token,
-        company_name: company.trim(),
+        company_name: company.trim(), contact_email: contact || null,
         purpose: "quote", rfq_group: snapRfqGroup(group, snapTargets) || null,
         expires_at: expiresAt.toISOString(),
         created_by: actor.uid,
@@ -1975,7 +2007,7 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
       });
       if (auditErr) setErr(`The link was created but its audit record failed: ${userFacingError(auditErr, { embed: true })}`);
       setFreshUrls((prev) => new Map(prev).set(String((created as { id: string }).id), portalUrl(token)));
-      setCompany(""); setGroup(""); setExpires(isoDateInDays(QUOTE_LINK_DEFAULT_DAYS));
+      setCompany(""); setContactEmail(""); setGroup(""); setExpires(isoDateInDays(QUOTE_LINK_DEFAULT_DAYS));
       await refresh();
     } catch (e) {
       setErr(userFacingCaughtError(e, { context: "QuotesPanel quote link" }));
@@ -2082,6 +2114,10 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
       <div className="flex items-center gap-2 flex-wrap">
         <input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Company name"
           className="h-8 w-48 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
+        <input type="email" value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} placeholder="Contact email (optional)"
+          aria-label="Contact email — the award or decline notice is emailed here"
+          title="The award or decline notice is emailed to this address. Without one, the contractor sees the outcome on their portal only."
+          className="h-8 w-52 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
         <input value={group} onChange={(e) => setGroup(e.target.value)} placeholder="RFQ group (optional)" list="rfq-groups-link"
           className="h-8 w-56 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs" />
         <datalist id="rfq-groups-link">
@@ -2104,6 +2140,9 @@ function QuoteLinksSection({ orgId, projectId, actor, existingGroups, setErr }: 
               <span className="font-bold text-[var(--color-text)]">{l.companyName}</span>
               {l.rfqGroup && <span className="text-[var(--color-text-muted)]">· {l.rfqGroup}</span>}
               <span className="text-[10px] text-[var(--color-text-faint)]">{l.submissionCount} submission{l.submissionCount === 1 ? "" : "s"}</span>
+              {l.contactEmail
+                ? <span className="text-[10px] text-[var(--color-text-faint)]" title="The award or decline notice is emailed here">{l.contactEmail}</span>
+                : <span className="text-[10px] text-[var(--color-text-faint)]" title="No contact email on this link — the award or decline is shown on the contractor's portal, not emailed">no contact — portal only</span>}
               {l.expiresAt
                 ? <span className={`text-[10px] ${Date.parse(l.expiresAt) < Date.now() ? "font-bold text-rose-700 dark:text-rose-300" : "text-[var(--color-text-faint)]"}`}>
                     {Date.parse(l.expiresAt) < Date.now() ? "expired" : "expires"} {new Date(l.expiresAt).toLocaleDateString()}

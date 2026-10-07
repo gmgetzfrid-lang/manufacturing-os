@@ -690,7 +690,18 @@ async function awardInOneTransaction(
   // J14 (MON-12 / COST-3, 20261179): the company the reason was typed for
   // and a reason for each other flagged company go with the call — sent
   // only when there are any, so the call is 20261157's own otherwise.
+  // (J14 fix pass) Every non-empty reason the caller holds goes, not only
+  // those for the companies this read found: the server's list
+  // (cost_doc_companies_barred) can name a company this read missed (trim
+  // against btrim, ilike against lower() =), and its refusal is answered
+  // with a reason for THAT company — dropping it here would refuse the
+  // award again for good. The server ignores a reason for a company not on
+  // its list, so sending one is safe.
   const alsoGiven = verdict.also.map((c) => ({ companyId: c.id, reason: alsoReasonFor(answers.alsoOverrides, c.id) ?? "" }));
+  for (const g of answers.alsoOverrides ?? []) {
+    const reason = g.reason?.trim();
+    if (reason && !alsoGiven.some((x) => x.companyId === g.companyId)) alsoGiven.push({ companyId: g.companyId, reason });
+  }
   const extra: Record<string, unknown> = {};
   if (override && verdict.barred) extra.p_override_company = answers.overrideCompanyId ?? verdict.barred.id;
   if (alsoGiven.length) extra.p_also_overrides = alsoGiven;
@@ -1098,7 +1109,12 @@ export async function voidCostDoc(input: { doc: CostDocument; actor: Actor }): P
  *  (stays) parsed; a DECLINED bid takes the corrected total for its
  *  tabulation and stays declined — a correction is not a reopen. */
 export async function setManualTotal(input: {
-  doc: CostDocument; total: number; vendorName?: string | null; actor: Actor;
+  /** (MON-12, J14 fix pass) No vendor name here: a typed total never rides
+   *  with a rename. On an open quote 20261179's move rail refuses a
+   *  signed-in vendor-name change that leaves a flagged company behind, and
+   *  a total patched together with that name would be refused with it. A
+   *  vendor-name correction is its own write. */
+  doc: CostDocument; total: number; actor: Actor;
   /** COST-8: the document's currency as the paper states it (an ISO code,
    *  or "$" / "US$" for USD) — the in-app correction for a stored currency
    *  that would otherwise strand the document at posting. */
@@ -1107,7 +1123,6 @@ export async function setManualTotal(input: {
   if (!Number.isFinite(input.total) || input.total <= 0) return { ok: false, error: "Enter the document's total as a positive number." };
   if (input.doc.status === "awarded" || input.doc.status === "posted") return { ok: false, error: MOVED_MONEY };
   const patch: Record<string, unknown> = { total_amount: input.total };
-  if (input.vendorName?.trim()) patch.vendor_name = input.vendorName.trim();
   if (input.currency != null && input.currency.trim()) {
     const code = normalizeCurrency(input.currency);
     if (!code) return { ok: false, error: `"${input.currency.trim()}" is not a currency code — use a three-letter code such as USD, CAD or EUR.` };

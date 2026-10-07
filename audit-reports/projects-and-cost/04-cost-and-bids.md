@@ -246,6 +246,7 @@ The award refusal runs in the caller's session (`lib/costDocs.ts` is imported by
 - `award_quote` (§2) refuses without a reason for that company and records `COST_DOC_AWARD_OVERRIDE` for it under its own row (`also: true`). It also refuses a reason typed for another company (`company_moved`).
 - The bid tab passes the stored name's acknowledgement as that company's reason, so the look-alike is recorded by the server, not only by the browser's `COST_DOC_AWARD_LETTERHEAD_ACK`.
 - Before `20261179` is pasted, the lib records the same override rows itself (the five-argument fallback, or its client sequence).
+- (J14 fix pass) A company only the server's list names (the lib's read missed it) is answerable from the bid tab. The retry sends every reason the tab holds as `p_also_overrides`, where the first landing dropped the one the server had asked for (`MON-12`'s review fix).
 - Tests: `prjRoundGJ14Migration.test.ts`, the J14 blocks of `costDocs.test.ts` and `quotesPanelRender.test.ts`, and the scratch PostgreSQL 16 run (all on `MON-12`).
 
 **Done-when.** Unchanged from the block above: ✓, ✓ by ruling pending ratification (`DEC-48`), ✓ / ✓. Residual 3 sat under the first; the override is now recorded for every flagged company the award answers for.

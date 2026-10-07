@@ -817,7 +817,16 @@ export function matchPredecessors(candidates: readonly Milestone[], query: strin
  *  picker in place of a <select> of every task. Type to narrow; at most
  *  PREDECESSOR_PICKER_LIMIT matches are drawn, and the rest are counted.
  *  The candidates are DependencyEditor's own (no cycle, not already a
- *  dependency, never this task), so what may be picked is unchanged. */
+ *  dependency, never this task), so what may be picked is unchanged.
+ *
+ *  (J14 fix pass, A11Y) The ARIA 1.2 combobox pattern, so a keyboard and a
+ *  screen reader keep what the native <select> gave them: the input is a
+ *  `combobox` (aria-expanded, aria-controls, aria-autocomplete="list",
+ *  aria-activedescendant); the matches are a `listbox` of `option`s, the
+ *  active one aria-selected; ArrowDown / ArrowUp (Home / End) move the
+ *  active option, Enter picks it (the first match when none is active),
+ *  Escape closes. Focus stays in the input throughout; the count is said in
+ *  the status line. */
 function PredecessorPicker({ candidates, hiddenIds, disabled, onPick }: {
   candidates: Milestone[];
   hiddenIds?: ReadonlySet<string>;
@@ -826,43 +835,71 @@ function PredecessorPicker({ candidates, hiddenIds, disabled, onPick }: {
 }) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(-1);
+  const baseId = React.useId();
+  const listId = `${baseId}-listbox`;
+  const optionId = (i: number) => `${baseId}-option-${i}`;
   const matches = useMemo(() => matchPredecessors(candidates, query), [candidates, query]);
   const shown = matches.slice(0, PREDECESSOR_PICKER_LIMIT);
-  const pick = (id: string) => { setQuery(""); setOpen(false); onPick(id); };
+  const expanded = open && !disabled;
+  const activeIndex = expanded && active >= 0 && active < shown.length ? active : -1;
+  useEffect(() => {
+    if (activeIndex < 0 || typeof document === "undefined") return;
+    const el = document.getElementById(`${baseId}-option-${activeIndex}`) as (HTMLElement & { scrollIntoView?: (o?: ScrollIntoViewOptions) => void }) | null;
+    el?.scrollIntoView?.({ block: "nearest" });
+  }, [activeIndex, baseId]);
+  const pick = (id: string) => { setQuery(""); setOpen(false); setActive(-1); onPick(id); };
   if (candidates.length === 0) {
     return <div className="text-[11px] text-[var(--color-text-faint)] italic">No other tasks available</div>;
   }
+  const move = (to: number) => { setOpen(true); setActive(shown.length ? Math.max(0, Math.min(shown.length - 1, to)) : -1); };
   return (
     <div
       className="relative"
-      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOpen(false); }}
+      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) { setOpen(false); setActive(-1); } }}
     >
       <input
         type="search"
+        role="combobox"
+        aria-expanded={expanded}
+        aria-controls={listId}
+        aria-autocomplete="list"
+        aria-activedescendant={activeIndex >= 0 ? optionId(activeIndex) : undefined}
         value={query}
         disabled={disabled}
         onFocus={() => setOpen(true)}
-        onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+        onChange={(e) => { setQuery(e.target.value); setOpen(true); setActive(-1); }}
         onKeyDown={(e) => {
-          if (e.key === "Escape") { setOpen(false); return; }
-          if (e.key === "Enter" && shown[0]?.id) { e.preventDefault(); pick(shown[0].id); }
+          if (e.key === "Escape") { setOpen(false); setActive(-1); return; }
+          if (e.key === "ArrowDown") { e.preventDefault(); move(expanded ? activeIndex + 1 : 0); return; }
+          if (e.key === "ArrowUp") { e.preventDefault(); move(expanded ? (activeIndex < 0 ? shown.length - 1 : activeIndex - 1) : shown.length - 1); return; }
+          if (expanded && e.key === "Home" && activeIndex >= 0) { e.preventDefault(); move(0); return; }
+          if (expanded && e.key === "End" && activeIndex >= 0) { e.preventDefault(); move(shown.length - 1); return; }
+          if (e.key === "Enter") {
+            const t = activeIndex >= 0 ? shown[activeIndex] : shown[0];
+            if (t?.id) { e.preventDefault(); pick(t.id); }
+          }
         }}
         placeholder="+ Add a predecessor — type to search…"
         aria-label="Add a predecessor — type to search the project's tasks"
         className="w-full text-[12px] border border-[var(--color-border-strong)] rounded-md px-2 py-1.5 bg-[var(--color-surface)] text-[var(--color-text)] disabled:opacity-50"
       />
-      {open && !disabled && (
+      {expanded && (
         <div className="mt-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm">
-          <ul data-testid="dep-candidates" aria-label="Matching tasks" className="max-h-56 overflow-y-auto py-1">
-            {shown.map((t) => (
-              <li key={t.id}>
-                <button
-                  type="button"
-                  onClick={() => t.id && pick(t.id)}
-                  className="w-full text-left px-2 py-1.5 text-[12px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] focus:bg-[var(--color-surface-2)] outline-none truncate"
-                >
-                  {t.name}{t.id && hiddenIds?.has(t.id) ? " (hidden by filter)" : ""}
-                </button>
+          <ul id={listId} role="listbox" data-testid="dep-candidates" aria-label="Matching tasks" className="max-h-56 overflow-y-auto py-1">
+            {shown.map((t, i) => (
+              <li
+                key={t.id}
+                id={optionId(i)}
+                role="option"
+                aria-selected={i === activeIndex}
+                // the input keeps focus: a press on an option never blurs it (which would close the list first)
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setActive(i)}
+                onClick={() => t.id && pick(t.id)}
+                className={`w-full cursor-pointer text-left px-2 py-1.5 text-[12px] text-[var(--color-text)] truncate ${i === activeIndex ? "bg-[var(--color-surface-2)] outline outline-1 outline-[var(--color-accent)]" : "hover:bg-[var(--color-surface-2)]"}`}
+              >
+                {t.name}{t.id && hiddenIds?.has(t.id) ? " (hidden by filter)" : ""}
               </li>
             ))}
           </ul>

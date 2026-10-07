@@ -160,15 +160,33 @@ describe("MON-10 (J14) — the contractor is told how the quote was decided", ()
     expect(lastErr()).toBeUndefined();
   });
 
-  it("the award's warning still stands, and a notice that failed is said beside it; the quiet answers (no contact, a rival the award did not decline) say nothing", async () => {
+  it("the award's warning still stands, and a notice that failed is said beside it; the quiet answers (a rival the award did not decline, already told) say nothing", async () => {
     dlg.appConfirm.mockResolvedValue(true);
     cd.awardQuote.mockResolvedValue({ ok: true, warning: "Awarded, but 1 of 1 competing bid(s) could not be marked not-selected — refresh and decline them by hand." });
     nq.notifyQuoteOutcome.mockImplementation(async (_o: string, id: string) => (id === "gulf" ? { sent: false, reason: "send_failed" } : { sent: false, reason: "undecided" }));
     await render([GULF, APEX]);
     await award("Gulf Mechanical");
     expect(lastErr()).toBe("Awarded, but 1 of 1 competing bid(s) could not be marked not-selected — refresh and decline them by hand. The email telling the bidder the outcome could not be sent: Gulf Mechanical (send_failed) — their portal still shows it.");
+    for (const reason of ["already", "undecided", "in_progress", "not_configured"]) {
+      nq.notifyQuoteOutcome.mockReset().mockResolvedValue({ sent: false, reason });
+      expect(await noticeQuoteOutcomes("o1", [GULF, APEX])).toBeNull();
+    }
+  });
+
+  it("(J14 fix pass) a quote link with no contact email is NOT quiet: the user is told those bidders were not emailed and see the outcome on their portal only", async () => {
     nq.notifyQuoteOutcome.mockReset().mockResolvedValue({ sent: false, reason: "no_contact" });
-    expect(await noticeQuoteOutcomes("o1", [GULF, APEX])).toBeNull();
+    expect(await noticeQuoteOutcomes("o1", [GULF])).toBe("Gulf Mechanical's quote link has no contact email, so they were not emailed the outcome — they see it on their portal only.");
+    expect(await noticeQuoteOutcomes("o1", [GULF, APEX])).toBe("The quote links of Gulf Mechanical, Apex Industrial have no contact email, so they were not emailed the outcome — they see it on their portals only.");
+    // beside a failed send, both are said
+    nq.notifyQuoteOutcome.mockReset().mockImplementation(async (_o: string, id: string) => (id === "gulf" ? { sent: false, reason: "send_failed" } : { sent: false, reason: "no_contact" }));
+    expect(await noticeQuoteOutcomes("o1", [GULF, APEX])).toBe("The email telling the bidder the outcome could not be sent: Gulf Mechanical (send_failed) — their portal still shows it. Apex Industrial's quote link has no contact email, so they were not emailed the outcome — they see it on their portal only.");
+    // rendered: the award says it
+    dlg.appConfirm.mockResolvedValue(true);
+    cd.awardQuote.mockResolvedValue({ ok: true });
+    nq.notifyQuoteOutcome.mockReset().mockImplementation(async (_o: string, id: string) => (id === "gulf" ? { sent: true } : { sent: false, reason: "no_contact" }));
+    await render([GULF, APEX]);
+    await award("Gulf Mechanical");
+    expect(lastErr()).toBe("Apex Industrial's quote link has no contact email, so they were not emailed the outcome — they see it on their portal only.");
   });
 
   it("a failed award tells nobody", async () => {
@@ -200,5 +218,70 @@ describe("MON-10 (J14) — the contractor is told how the quote was decided", ()
     await act(async () => { btn(rowOf("Bayline"), /Decline/)!.click(); });
     await settle();
     expect(nq.notifyQuoteOutcome).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("MON-10 (J14 fix pass) — the quote link carries the contact the award notice emails", () => {
+  const openLinks = async () => {
+    const toggle = btn(host, /Quote links for contractors/)!;
+    await act(async () => { toggle.click(); });
+    await settle();
+  };
+  const setInput = async (el: HTMLInputElement, v: string) => {
+    const proto = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!;
+    await act(async () => { proto.set!.call(el, v); el.dispatchEvent(new Event("input", { bubbles: true })); });
+  };
+  const linkInserts = () => db.calls.filter((c) => c.table === "project_intake_links" && c.method === "insert").map((c) => c.args[0] as Record<string, unknown>);
+  const contactInput = () => host.querySelector('input[placeholder="Contact email (optional)"]') as HTMLInputElement;
+
+  it("a link created with a contact writes it as contact_email; the list shows it; a quote that came through that link is the one the award's notice asks for", async () => {
+    db.byOp["project_intake_links.insert"] = { data: { id: "link-gulf" }, error: null };
+    db.byOp["audit_logs.insert"] = { data: null, error: null };
+    db.results.project_intake_links = { data: [], error: null };
+    const GULF = doc({ id: "gulf", vendorName: "Gulf Mechanical", rfqGroup: "Unit 300 Repipe", intakeLinkId: "link-gulf", totalAmount: 140_000, parsed: parsedQuote("Gulf Mechanical", 140_000, 140_000) });
+    await render([GULF]);
+    await openLinks();
+    expect(contactInput()).toBeTruthy();
+    expect(contactInput().type).toBe("email");
+    expect(contactInput().getAttribute("aria-label")).toMatch(/award or decline notice is emailed here/);
+    await setInput(host.querySelector('input[placeholder="Company name"]') as HTMLInputElement, "Gulf Mechanical");
+    await setInput(contactInput(), "  bids@gulf.example  ");
+    // the re-read after the create returns the stored row, contact included
+    db.results.project_intake_links = { data: [{ id: "link-gulf", token_prefix: "abc123", company_name: "Gulf Mechanical", contact_email: "bids@gulf.example", rfq_group: null, revoked_at: null, expires_at: new Date(Date.now() + 5 * 86_400_000).toISOString(), submission_count: 1, purpose: "quote" }], error: null };
+    await act(async () => { btn(host, /Create link/)!.click(); });
+    await settle();
+    expect(linkInserts()).toHaveLength(1);
+    expect(linkInserts()[0]).toMatchObject({ purpose: "quote", company_name: "Gulf Mechanical", contact_email: "bids@gulf.example" });
+    const reads = db.calls.filter((c) => c.table === "project_intake_links" && c.method === "select").map((c) => String(c.args[0]));
+    expect(reads.some((r) => /contact_email/.test(r))).toBe(true);
+    expect(host.textContent).toContain("bids@gulf.example");
+    expect(contactInput().value).toBe("");
+    // the award's notice is asked for the quote that came through the link
+    dlg.appConfirm.mockResolvedValue(true);
+    cd.awardQuote.mockResolvedValue({ ok: true });
+    await award("Gulf Mechanical");
+    expect(nq.notifyQuoteOutcome).toHaveBeenCalledWith("o1", "gulf");
+    expect(lastErr()).toBeUndefined();
+  });
+
+  it("a contact that is not an email address inserts nothing and says why; a blank one writes null, and the row says the outcome is portal only", async () => {
+    db.byOp["project_intake_links.insert"] = { data: { id: "link-2" }, error: null };
+    db.byOp["audit_logs.insert"] = { data: null, error: null };
+    db.results.project_intake_links = { data: [], error: null };
+    await render([]);
+    await openLinks();
+    await setInput(host.querySelector('input[placeholder="Company name"]') as HTMLInputElement, "Apex Industrial");
+    await setInput(contactInput(), "bids at apex");
+    await act(async () => { btn(host, /Create link/)!.click(); });
+    await settle();
+    expect(linkInserts()).toHaveLength(0);
+    expect(lastErr()).toBe('"bids at apex" doesn\'t look like an email address — fix it, or leave the contact blank.');
+    await setInput(contactInput(), "   ");
+    db.results.project_intake_links = { data: [{ id: "link-2", token_prefix: "def456", company_name: "Apex Industrial", contact_email: null, rfq_group: null, revoked_at: null, expires_at: new Date(Date.now() + 5 * 86_400_000).toISOString(), submission_count: 0, purpose: "quote" }], error: null };
+    await act(async () => { btn(host, /Create link/)!.click(); });
+    await settle();
+    expect(linkInserts()).toHaveLength(1);
+    expect(linkInserts()[0].contact_email).toBeNull();
+    expect(host.textContent).toContain("no contact — portal only");
   });
 });

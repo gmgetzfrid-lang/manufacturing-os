@@ -706,6 +706,7 @@ Tests: `a11y13FinalReview.test.ts` (4: the delete error rendered from a refused 
 3. ✓ All date inputs match the theme (unchanged).
 
 **Scope / residual.** None for this finding. A new light slab or darkless text anywhere in the area fails the censuses.
+- Ship loop (`DEC-29` item 4), J14 fix pass: `tsc --noEmit` exits 0, and `eslint` on the 47 changed `.ts` / `.tsx` files exits 0. Every assertion of the full `vitest` run passes. On this host (load average about 20) the run's exit code was 1 twice, each time only from 5 s default timeouts, in files this package does not touch: `dcRoundFOwnerStamp`, `notificationWriteRails`, `notificationDispatchMembership` and `dependencies`. Those four pass when run on their own with `--testTimeout=60000` (exit 0). The full `next build` was not run here: the fleet's standing rule leaves it to the integrator at merge, so this resolution stands on that build passing.
 
 ---
 
@@ -802,6 +803,7 @@ Clusters of decisions are spaced 8 px (`gap-2` / `ml-2`), up from 4-6 px.
 2. ✓ The census covers these files, so a new write button there without the floor fails.
 
 **Scope / residual.** The project page outside its Members tab: `A11Y-16`.
+- Ship loop (`DEC-29` item 4), J14 fix pass: `tsc --noEmit` exits 0, and `eslint` on the 47 changed `.ts` / `.tsx` files exits 0. Every assertion of the full `vitest` run passes. On this host (load average about 20) the run's exit code was 1 twice, each time only from 5 s default timeouts, in files this package does not touch: `dcRoundFOwnerStamp`, `notificationWriteRails`, `notificationDispatchMembership` and `dependencies`. Those four pass when run on their own with `--testTimeout=60000` (exit 0). The full `next build` was not run here: the fleet's standing rule leaves it to the integrator at merge, so this resolution stands on that build passing.
 
 ---
 
@@ -811,7 +813,7 @@ Clusters of decisions are spaced 8 px (`gap-2` / `ml-2`), up from 4-6 px.
 
 - **Severity:** LOW
 - **Status:** OPEN
-- **Assigned:** — (the integrator assigns at the J14 merge: projects-joint, once identity-and-session IS-P1's edit of the same page has merged)
+- **Assigned:** projects-joint J15 CHECKED-WRITE SWEEP. It runs last and per file, after identity-and-session IS-P1's edit of `app/(protected)/projects/[id]/page.tsx` has merged, and its pass over that page's write handlers is where these class strings ride. Proposed by projects-joint J14 PROJECTS FOLLOW-UPS, 2026-10-07, in its review's fix pass (DEC-31). The integrator confirms or re-assigns at the J14 merge.
 - **Verification:** READ (each site read at J14's HEAD; sizes from the class strings, not measured)
 - **Blast radius:** accessibility / mobile
 - **Locations:** (all in `app/(protected)/projects/[id]/page.tsx`)

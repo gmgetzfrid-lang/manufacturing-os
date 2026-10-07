@@ -602,9 +602,10 @@ again.
 **Done-when.**
 - [x] A rejected submission shows its reason on the contractor's portal (unchanged).
 - [x] The contractor is notified on both outcomes of every decision the Intake tab makes: a rejection, an approval and a forced approval. *Split (`DEC-31`):* a submission approved from the document's review surface (`ReviewGateSection`, `components/documents/**` — document-control's) does not call the route yet. That limb is `SAF-19`, opened below with its owner. The route itself needs nothing: it reads the outcome from the version, so any surface that decides may call it.
-- [x] No UI string claims a channel that does not exist. The turnover rejection now says the contractor is not sent the reason, and the upload portal's "You'll be contacted" is true for a link with a contact.
+- [x] No UI string claims a channel that does not exist, for the string this done-when was recorded against: the turnover rejection now says the contractor is not sent the reason. *Corrected (J14 fix pass):* this line also said "the upload portal's 'You'll be contacted' is true for a link with a contact". The sentence is the QUOTE portal's ("You'll be contacted about the award decision.", `app/api/intake/upload/route.ts:919`), and no quote link could carry a contact: the Costs tab's quote-link form wrote none. Since the J14 fix pass the form takes one (`MON-10`), so the sentence is true for a quote link created with a contact. On a link without one, including every quote link minted before that fix, it over-promises. That limb is in the intake door's file, not this package's, and is split to `SAF-20` (below, `DEC-31`).
 
-**Scope / residual.** `SAF-19` (the document review surface's approval). Out of scope by `DEC-56` (unchanged): emailing an address the door collected.
+**Scope / residual.** `SAF-19` (the document review surface's approval). `SAF-20` (the quote portal's sentence on a link with no contact). Out of scope by `DEC-56` (unchanged): emailing an address the door collected.
+- Ship loop (`DEC-29` item 4), J14 fix pass: `tsc --noEmit` exits 0, and `eslint` on the 47 changed `.ts` / `.tsx` files exits 0. Every assertion of the full `vitest` run passes. On this host (load average about 20) the run's exit code was 1 twice, each time only from 5 s default timeouts, in files this package does not touch: `dcRoundFOwnerStamp`, `notificationWriteRails`, `notificationDispatchMembership` and `dependencies`. Those four pass when run on their own with `--testTimeout=60000` (exit 0). The full `next build` was not run here: the fleet's standing rule leaves it to the integrator at merge, so this resolution stands on that build passing.
 
 ---
 
@@ -1013,7 +1014,7 @@ project history for the document will be hidden.
 
 - **Severity:** LOW
 - **Status:** OPEN
-- **Assigned:** — (the integrator assigns at the J14 merge: document-control, the owner of `components/documents/**`)
+- **Assigned:** document-control, the owner of `components/documents/ReviewGateSection.tsx`: its next package that edits the review promote. Proposed by projects-joint J14 PROJECTS FOLLOW-UPS, 2026-10-07, in its review's fix pass (DEC-31). The integrator names the package at the J14 merge.
 - **Verification:** READ (by reading `ReviewGateSection` and the notice route at J14's HEAD; not exercised against a live database)
 - **Blast radius:** process / external communication
 - **Locations:**
@@ -1031,6 +1032,34 @@ project history for the document will be hidden.
 **Done when.**
 - A submission approved from the review surface tells the link's contact, through the same route, once.
 - A rendered test drives the review surface's approval of an intake-born version and of an ordinary one (no notice).
+
+---
+
+## SAF-20 · The quote portal promises the award decision to a contractor whose link has no contact
+
+*Numbered SAF-20 on this branch (opened by projects-joint J14 PROJECTS FOLLOW-UPS's review fix pass as `SAF-9` done-when 3's remainder, per `DEC-31`). If the number collides at merge the integrator renumbers.*
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** projects-joint, the owner of `app/api/intake/upload/route.ts` (the intake door; J16 INTAKE DOOR IDENTITY & UNTRUSTED ORIGIN edits this file). Proposed by projects-joint J14 PROJECTS FOLLOW-UPS, 2026-10-07, in its review's fix pass (DEC-31). The integrator names the package at the J14 merge.
+- **Verification:** READ (the door's quote branch and the notice route at J14's HEAD; not exercised against a live database)
+- **Blast radius:** process / external communication
+- **Locations:**
+  - `app/api/intake/upload/route.ts:919`: "Your quote is in — … You'll be contacted about the award decision.", returned for every quote submission.
+  - `app/api/intake/outcome-notice/route.ts` `quoteNotice`: emails only `project_intake_links.contact_email`; a link with none answers `no_contact` (`DEC-56`).
+  - `components/projects/cost/QuotesPanel.tsx` `QuoteLinksSection`: the contact is optional (since the J14 fix pass), and links minted before it have none.
+- **Related:** `SAF-9` (done-when 3), `MON-10` (done-when 2), `DEC-56`
+- **Independently verified:** — (`author`: opened by projects-joint J14's review fix pass from its reviewer's finding, per `DEC-31`; not yet challenged)
+
+**Mechanism.** The door tells every quote submitter they will be contacted about the award decision. The award and decline notice reaches only the contact the org typed on the quote link. A link with no contact gets no email, and the contractor learns the outcome only from the portal's status chip, if they return to it.
+
+**Failure scenario.** An owner mints a quote link without a contact email (optional), or the link predates the field. The contractor submits and is told "You'll be contacted about the award decision." The RFQ is awarded to a rival. Nobody emails them, and the bid tab tells the owner that they were not emailed. The contractor waits on a promise the system cannot keep.
+
+**Remediation.** Make the door's sentence depend on the link's contact: with one, keep the promise; without one, say "The decision will be shown on this page — check back here." The door already reads the link row. One test per branch.
+
+**Done when.**
+- The quote door's success sentence promises contact only when the link carries a contact email, and otherwise points at the portal.
+- A route test covers both branches.
 
 ---
 
@@ -1057,3 +1086,4 @@ project history for the document will be hidden.
 | SAF-17 | MEDIUM | RESOLVED |
 | SAF-18 | MEDIUM | OPEN |
 | SAF-19 | LOW | OPEN |
+| SAF-20 | LOW | OPEN |

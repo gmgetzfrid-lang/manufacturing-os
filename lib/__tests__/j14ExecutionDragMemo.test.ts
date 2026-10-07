@@ -107,7 +107,8 @@ describe("PERF-5 (J14) — a change of the drag's day offset re-renders the drag
     // Releasing still hands the move to the confirmation sheet (unchanged).
     await fire(barOf("Task 20"), "pointerup", 100 + 1600);
     expect(host.textContent).toMatch(/Move “Task 20” \d+ days later/);
-  });
+    // (J14 fix pass) a 400-task board under a loaded host can pass the 5 s default; the counts, not the clock, are the test
+  }, 30_000);
 
   it("data that changes still re-renders: a status change re-draws its row (the memo never holds a stale row)", async () => {
     await renderBoard();
@@ -149,14 +150,14 @@ describe("PERF-5 remediation 4 (J14) — a searchable dependency picker that nev
     const search = host.querySelector('input[aria-label^="Add a predecessor"]') as HTMLInputElement;
     expect(host.querySelector('[data-testid="dep-candidates"]')).toBeNull();   // closed until asked
     await act(async () => { search.focus(); });
-    const drawn = () => [...host.querySelectorAll('[data-testid="dep-candidates"] button')].map((b) => b.textContent);
+    const drawn = () => [...host.querySelectorAll('[data-testid="dep-candidates"] [role="option"]')].map((b) => b.textContent);
     expect(drawn()).toHaveLength(PREDECESSOR_PICKER_LIMIT);
     expect(host.textContent).toMatch(/Showing 20 of 399 — type to narrow\./);
     await type(search, "task 39");
     // Every word is a substring match: "39" also finds 139, 239 and 339.
     expect(drawn().sort()).toEqual(["Task 39", "Task 139", "Task 239", "Task 339", "Task 390", "Task 391", "Task 392", "Task 393", "Task 394", "Task 395", "Task 396", "Task 397", "Task 398", "Task 399"].sort());
     expect(host.textContent).toMatch(/14 tasks\./);
-    const pick = [...host.querySelectorAll<HTMLButtonElement>('[data-testid="dep-candidates"] button')].find((b) => b.textContent === "Task 391")!;
+    const pick = [...host.querySelectorAll<HTMLElement>('[data-testid="dep-candidates"] [role="option"]')].find((b) => b.textContent === "Task 391")!;
     await act(async () => { pick.click(); });
     await act(async () => { await Promise.resolve(); });
     expect(upd.updateMilestone).toHaveBeenCalledWith({ id: "t0", patch: { dependsOn: ["t391"] }, updatedBy: "u" });
@@ -175,6 +176,80 @@ describe("PERF-5 remediation 4 (J14) — a searchable dependency picker that nev
     expect(upd.updateMilestone).toHaveBeenCalledTimes(1);
     const first = matchPredecessors(many.filter((t) => t.id !== "t0").sort((a, b) => (Date.parse(a.plannedAt as string) - Date.parse(b.plannedAt as string)) || a.name.localeCompare(b.name)), "Task 7")[0];
     expect(upd.updateMilestone.mock.calls[0][0]).toEqual({ id: "t0", patch: { dependsOn: [first.id] }, updatedBy: "u" });
+  });
+  it("(J14 fix pass, A11Y) the ARIA 1.2 combobox: the input is a combobox that owns a listbox of options; ArrowDown / ArrowUp / Home / End move the active option (aria-activedescendant, aria-selected) and Enter picks it; Escape closes", async () => {
+    upd.updateMilestone.mockClear();
+    await act(async () => { root.render(panel(many[0], many)); });
+    await act(async () => { await Promise.resolve(); });
+    const search = host.querySelector('input[aria-label^="Add a predecessor"]') as HTMLInputElement;
+    const key = async (k: string) => { await act(async () => { search.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true })); }); };
+    const listbox = () => host.querySelector('[role="listbox"]') as HTMLElement | null;
+    const opts = () => [...host.querySelectorAll<HTMLElement>('[role="listbox"] > [role="option"]')];
+    const activeOpt = () => { const id = search.getAttribute("aria-activedescendant"); return id ? document.getElementById(id) : null; };
+    // closed: a combobox, collapsed, no active option; no buttons pose as options
+    expect(search.getAttribute("role")).toBe("combobox");
+    expect(search.getAttribute("aria-autocomplete")).toBe("list");
+    expect(search.getAttribute("aria-expanded")).toBe("false");
+    expect(search.getAttribute("aria-activedescendant")).toBeNull();
+    // open: expanded, aria-controls names the listbox, every match an option, none selected yet
+    await act(async () => { search.focus(); });
+    expect(search.getAttribute("aria-expanded")).toBe("true");
+    expect(listbox()).not.toBeNull();
+    expect(search.getAttribute("aria-controls")).toBe(listbox()!.id);
+    expect(opts()).toHaveLength(PREDECESSOR_PICKER_LIMIT);
+    expect(listbox()!.querySelectorAll("button")).toHaveLength(0);
+    expect(opts().every((o) => o.getAttribute("aria-selected") === "false")).toBe(true);
+    await type(search, "task 39");
+    expect(opts()).toHaveLength(14);
+    // ArrowDown: the first option is active and selected; again: the second
+    await key("ArrowDown");
+    expect(activeOpt()).toBe(opts()[0]);
+    expect(opts()[0].getAttribute("aria-selected")).toBe("true");
+    await key("ArrowDown");
+    expect(activeOpt()).toBe(opts()[1]);
+    expect(opts().filter((o) => o.getAttribute("aria-selected") === "true")).toEqual([opts()[1]]);
+    // End / Home / ArrowUp, clamped at the ends
+    await key("End");
+    expect(activeOpt()).toBe(opts()[13]);
+    await key("ArrowDown");
+    expect(activeOpt()).toBe(opts()[13]);
+    await key("Home");
+    expect(activeOpt()).toBe(opts()[0]);
+    await key("ArrowUp");
+    expect(activeOpt()).toBe(opts()[0]);
+    await key("ArrowDown"); await key("ArrowDown");
+    const chosen = activeOpt()!.textContent;
+    expect(chosen).toBe(opts()[2].textContent);
+    // Enter picks the ACTIVE option, not the first match
+    await key("Enter");
+    await act(async () => { await Promise.resolve(); });
+    expect(upd.updateMilestone).toHaveBeenCalledTimes(1);
+    const picked = (upd.updateMilestone.mock.calls[0][0] as { patch: { dependsOn: string[] } }).patch.dependsOn[0];
+    expect(many.find((t) => t.id === picked)?.name).toBe(chosen);
+    // typing resets the active option; Escape closes and collapses
+    await act(async () => { search.focus(); });
+    await type(search, "task 1");
+    await key("ArrowDown");
+    expect(activeOpt()).not.toBeNull();
+    await type(search, "task 12");
+    expect(search.getAttribute("aria-activedescendant")).toBeNull();
+    await key("Escape");
+    expect(search.getAttribute("aria-expanded")).toBe("false");
+    expect(listbox()).toBeNull();
+    // closed, ArrowDown opens it on the first option
+    await key("ArrowDown");
+    expect(search.getAttribute("aria-expanded")).toBe("true");
+    expect(activeOpt()).toBe(opts()[0]);
+  });
+  it("(J14 fix pass) a press on an option keeps the input focused, so the list is not closed under the click", async () => {
+    await act(async () => { root.render(panel(many[0], many)); });
+    await act(async () => { await Promise.resolve(); });
+    const search = host.querySelector('input[aria-label^="Add a predecessor"]') as HTMLInputElement;
+    await act(async () => { search.focus(); });
+    const opt = host.querySelector<HTMLElement>('[role="listbox"] > [role="option"]')!;
+    const down = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    opt.dispatchEvent(down);
+    expect(down.defaultPrevented).toBe(true);
   });
   it("matchPredecessors: every word, case aside; an empty query is every candidate, in order", () => {
     const c = [mk({ id: "a", name: "Hydrotest loop 4" }), mk({ id: "b", name: "Fit-up loop 4" }), mk({ id: "c", name: "Hydrotest loop 5" })];

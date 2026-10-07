@@ -83,7 +83,10 @@
 --      flagged companies the move leaves (section 1's list before, minus
 --      after) and, when there are any and no reason was typed, answers
 --      `reason_required` naming them and writes nothing; otherwise moves
---      the link under the GUC and writes COST_DOC_COMPANY_LINKED (the
+--      the link — under the GUC only when the move leaves a flagged
+--      company and the reason was typed; any other move runs without it,
+--      so section 3's rail judges it as the definer, seeing rows this
+--      caller's RLS may hide — and writes COST_DOC_COMPANY_LINKED (the
 --      picker's own row, with `overrideDoNotUse` naming the first company
 --      left and `leaving` naming each, the reason, `viaRpc: true`) in the
 --      same transaction — so the move and its record land together or not
@@ -538,7 +541,7 @@ BEGIN
    WHERE NOT v_after @> jsonb_build_array(jsonb_build_object('id', e -> 'id'))
    LIMIT 1;
   IF v_left IS NOT NULL THEN
-    RAISE EXCEPTION '% is flagged % in the company registry — moving this quote''s company link, contractor or vendor name away from it needs a typed reason, recorded on the audit trail (the company picker on the bid row asks for one); nothing was changed. (MON-12, 20261179)',
+    RAISE EXCEPTION '% is flagged % in the company registry — this quote answers for it, and nothing was changed. Its company link moves away from it only through the company picker on the bid row, with a typed reason recorded on the audit trail; its contractor or vendor name cannot be moved away from it (link the bid to its real company first). (MON-12, 20261179)',
       v_left ->> 'name', CASE v_left ->> 'status' WHEN 'do_not_use' THEN 'DO NOT USE' ELSE 'inactive' END
       USING ERRCODE = 'check_violation';
   END IF;
@@ -610,8 +613,15 @@ BEGIN
     RETURN jsonb_build_object('ok', false, 'code', 'reason_required', 'leaving', v_leaving);
   END IF;
 
-  -- The move: the rail (section 3) reads the override for this document only.
-  PERFORM set_config('app.cost_doc_relink_override', p_doc::text, true);
+  -- The move. Only a move that leaves a flagged company behind WITH the
+  -- typed reason carries the override (the rail, section 3, reads it for
+  -- this document only). Any other move runs without it, so the rail judges
+  -- it as the definer, seeing every row: a flagged company this caller's
+  -- own read (the list above, under the caller's RLS) cannot see is still
+  -- never left without a reason — the rail refuses that move outright.
+  IF jsonb_array_length(v_leaving) > 0 AND v_reason IS NOT NULL THEN
+    PERFORM set_config('app.cost_doc_relink_override', p_doc::text, true);
+  END IF;
   UPDATE cost_documents SET company_id = p_company
    WHERE id = p_doc AND status IN ('draft', 'parsed');
   GET DIAGNOSTICS v_moved = ROW_COUNT;
@@ -633,7 +643,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION public.relink_cost_document(uuid, uuid, text) IS
-  'MON-12 (20261179): the bid row''s company picker on the server — locks an open quote, refuses a company of another org, answers reason_required (writing nothing) when the move leaves a flagged company (cost_doc_companies_barred before minus after) and no reason was typed, else moves company_id under app.cost_doc_relink_override and writes COST_DOC_COMPANY_LINKED in the same transaction. SECURITY INVOKER; NULL auth.uid() refused.';
+  'MON-12 (20261179): the bid row''s company picker on the server — locks an open quote, refuses a company of another org, answers reason_required (writing nothing) when the move leaves a flagged company (cost_doc_companies_barred before minus after) and no reason was typed, else moves company_id and writes COST_DOC_COMPANY_LINKED in the same transaction. Only a reasoned move that leaves a flagged company runs under app.cost_doc_relink_override; any other move is judged by the move rail as the definer. SECURITY INVOKER; NULL auth.uid() refused.';
 
 REVOKE ALL ON FUNCTION public.relink_cost_document(uuid, uuid, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.relink_cost_document(uuid, uuid, text) FROM anon;
@@ -702,12 +712,15 @@ SELECT 'MON-12: trg_cost_documents_company_move fires BEFORE UPDATE on cost_docu
                   AND pg_get_triggerdef(t.oid) LIKE '%BEFORE UPDATE ON public.cost_documents FOR EACH ROW%'),
        NULL::text
 UNION ALL
-SELECT 'MON-12: relink_cost_document is SECURITY INVOKER with search_path pinned, refuses a NULL auth.uid(), locks the quote, answers reason_required before it moves anything, moves under the relink override and records COST_DOC_COMPANY_LINKED in the same body; anon cannot execute it, authenticated can',
+SELECT 'MON-12: relink_cost_document is SECURITY INVOKER with search_path pinned, refuses a NULL auth.uid(), locks the quote, answers reason_required before it moves anything, sets the relink override ONLY for a reasoned move that leaves a flagged company (any other move is judged by the rail as the definer), and records COST_DOC_COMPANY_LINKED in the same body; anon cannot execute it, authenticated can',
        (SELECT NOT prosecdef AND proconfig::text LIKE '%search_path=public%'
                AND prosrc LIKE '%IF v_uid IS NULL THEN%' AND prosrc LIKE '%FOR UPDATE;%'
                AND prosrc LIKE '%''code'', ''reason_required''%'
                AND strpos(prosrc, '''reason_required''') < strpos(prosrc, 'UPDATE cost_documents SET company_id')
                AND prosrc LIKE '%PERFORM set_config(''app.cost_doc_relink_override'', p_doc::text, true);%'
+               AND strpos(prosrc, 'IF jsonb_array_length(v_leaving) > 0 AND v_reason IS NOT NULL THEN') > 0
+               AND strpos(prosrc, 'IF jsonb_array_length(v_leaving) > 0 AND v_reason IS NOT NULL THEN') < strpos(prosrc, 'PERFORM set_config(''app.cost_doc_relink_override'', p_doc::text, true);')
+               AND strpos(prosrc, 'PERFORM set_config(''app.cost_doc_relink_override'', p_doc::text, true);') < strpos(prosrc, 'END IF;' || chr(10) || '  UPDATE cost_documents SET company_id')
                AND prosrc LIKE '%''COST_DOC_COMPANY_LINKED''%'
           FROM pg_proc WHERE proname = 'relink_cost_document' AND pronargs = 3)
        AND NOT has_function_privilege('anon', 'public.relink_cost_document(uuid,uuid,text)', 'EXECUTE')

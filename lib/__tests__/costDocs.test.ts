@@ -1683,6 +1683,45 @@ describe("MON-12 / COST-3 (J14) — every flagged company the award answers for,
       expect(also.needsOverride).toEqual({ companyId: "c-y", companyName: "Yarrow Weld", status: "inactive", also: true });
       expect(also.error).toMatch(/^Yarrow Weld is marked inactive in the company registry and this award answers for it too \(besides Coastal Fabricators\)/);
     });
+    it("(J14 fix pass) a company only the SERVER's list names: its refusal (also) is answered, and the retry carries that reason as p_also_overrides beside the lib's own — the award completes", async () => {
+      seedS1();
+      // the server's list holds Yarrow Weld, which this lib's read does not find
+      // (trim against btrim, ilike against lower() =); it refuses until a reason for it comes
+      rpc.handler = (_fn: string, a: Record<string, unknown>) => {
+        const given = (a.p_also_overrides as Array<{ companyId: string; reason: string }> | undefined) ?? [];
+        if (!given.some((g) => g.companyId === "c-y" && g.reason.trim())) {
+          return { data: { ok: false, code: "company_flagged", also: true, company: { id: "c-y", name: "Yarrow Weld", status: "inactive" } }, error: null };
+        }
+        return { data: { ok: true, entryId: "e1", total: 1000, rivals: 0, declined: 0, ungroupedOpen: [] }, error: null };
+      };
+      const base = { doc: s1(), siblings: [], costAccountId: "a1", actor, overrideReason: "Coastal reactivated", overrideCompanyId: "c-coastal" };
+      const first = await awardQuote({ ...base, alsoOverrides: [{ companyId: "c-apex", reason: "Not Apex" }] });
+      expect(first.needsOverride).toEqual({ companyId: "c-y", companyName: "Yarrow Weld", status: "inactive", also: true });
+      // the panel pushes the reason it asked for; the retry sends it
+      const retry = await awardQuote({ ...base, alsoOverrides: [{ companyId: "c-apex", reason: "Not Apex" }, { companyId: "c-y", reason: "  Yarrow is the parent, reactivated  " }, { companyId: "c-blank", reason: "   " }] });
+      expect(retry.ok).toBe(true);
+      expect(rpc.calls.at(-1)!.args.p_also_overrides).toEqual([
+        { companyId: "c-apex", reason: "Not Apex" },
+        { companyId: "c-y", reason: "Yarrow is the parent, reactivated" },
+      ]);
+      // a reason with no company on the lib's list never reaches the legacy (client-recorded) override rows
+      expect(auditRows("COST_DOC_AWARD_OVERRIDE")).toHaveLength(0);
+    });
+    it("(J14 fix pass) before 20261179 the legacy five-argument path records override rows for the lib's own list only — never for a reason the lib's read cannot place", async () => {
+      seedS1();
+      rpc.handler = fiveArgs;
+      const ok = await awardQuote({ doc: s1(), siblings: [], costAccountId: "a1", actor, overrideReason: "Coastal reactivated", overrideCompanyId: "c-coastal", alsoOverrides: [{ companyId: "c-apex", reason: "Not Apex" }, { companyId: "c-y", reason: "Yarrow reason" }] });
+      expect(ok.ok).toBe(true);
+      expect(auditRows("COST_DOC_AWARD_OVERRIDE").map((r) => (r.details as Row).companyId)).toEqual(["c-coastal", "c-apex"]);
+    });
+  });
+
+  it("(J14 fix pass) a typed total never rides with a vendor-name rename: setManualTotal writes the total (and currency) only, so 20261179's move rail can never take the total down with a refused rename", async () => {
+    db.tables.cost_documents.push(docRow({ id: "d-name", status: "parsed", total_amount: 100, vendor_name: "Apex Industrial, Inc." }));
+    // a caller passing a name anyway (an old call shape) changes nothing but the total
+    const res = await setManualTotal({ doc: doc({ id: "d-name" }), total: 1250, actor, ...({ vendorName: "Apex Industrial" } as object) } as Parameters<typeof setManualTotal>[0]);
+    expect(res.ok).toBe(true);
+    expect(db.tables.cost_documents[0]).toMatchObject({ status: "parsed", total_amount: 1250, vendor_name: "Apex Industrial, Inc." });
   });
 
   describe("relinkQuoteCompany — the bid row's picker on the server (relink_cost_document)", () => {

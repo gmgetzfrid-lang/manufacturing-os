@@ -433,7 +433,7 @@ describe("SCH-9 · the dependency picker reasons over every task; a hidden one i
     // <select> of every task, at most PREDECESSOR_PICKER_LIMIT at a time.
     const search = host.querySelector('input[aria-label^="Add a predecessor"]') as HTMLInputElement;
     await act(async () => { search.focus(); });
-    const options = [...host.querySelectorAll('[data-testid="dep-candidates"] button')].map((o) => o.textContent);
+    const options = [...host.querySelectorAll('[data-testid="dep-candidates"] [role="option"]')].map((o) => o.textContent);
     expect(options).toContain("Paint");
     expect(options).not.toContain("NDE");                     // c depends on a through the hidden b
     expect(options.some((o) => o?.startsWith("Weld"))).toBe(false);

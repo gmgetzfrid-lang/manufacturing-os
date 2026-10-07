@@ -275,6 +275,18 @@ describe("section 4 — relink_cost_document: the picker's move, its reason and 
     expect(body).toContain("'overrideDoNotUse', jsonb_build_object('companyId', v_leaving -> 0 ->> 'id'");
     expect(body).toContain("'leaving', v_leaving, 'reason', v_reason)");
   });
+
+  it("(J14 fix pass) the relink override is set ONLY for a reasoned move that leaves a flagged company; any other move runs without it, so the definer rail judges it with full visibility", () => {
+    const body = f();
+    const guard = "  IF jsonb_array_length(v_leaving) > 0 AND v_reason IS NOT NULL THEN\n    PERFORM set_config('app.cost_doc_relink_override', p_doc::text, true);\n  END IF;\n  UPDATE cost_documents SET company_id = p_company";
+    expect(body).toContain(guard);
+    // exactly one place sets the override for the document, and it is inside that IF
+    expect(body.split("PERFORM set_config('app.cost_doc_relink_override', p_doc::text, true);")).toHaveLength(2);
+    // the clear follows the UPDATE unconditionally
+    expect(body).toMatch(/GET DIAGNOSTICS v_moved = ROW_COUNT;\n  PERFORM set_config\('app\.cost_doc_relink_override', '', true\);/);
+    // the paste probe pins the same gate
+    expect(C).toContain("AND strpos(prosrc, 'IF jsonb_array_length(v_leaving) > 0 AND v_reason IS NOT NULL THEN') < strpos(prosrc, 'PERFORM set_config(''app.cost_doc_relink_override'', p_doc::text, true);')");
+  });
 });
 
 describe("the app halves (J14)", () => {
@@ -282,6 +294,9 @@ describe("the app halves (J14)", () => {
     const lib = src("lib/costDocs.ts");
     expect(lib).toContain("if (override && verdict.barred) extra.p_override_company = answers.overrideCompanyId ?? verdict.barred.id;");
     expect(lib).toContain("if (alsoGiven.length) extra.p_also_overrides = alsoGiven;");
+    // (J14 fix pass) every reason held goes, merged with the lib's own list — a company only the server names is answerable
+    expect(lib).toContain("for (const g of answers.alsoOverrides ?? []) {");
+    expect(lib).toContain("if (reason && !alsoGiven.some((x) => x.companyId === g.companyId)) alsoGiven.push({ companyId: g.companyId, reason });");
     expect(lib).toContain('res = await supabase.rpc("award_quote", { ...base, ...extra });');
     expect(lib).toContain("if (res.error && isMissingRpc(res.error) && !legacy) {");
     expect(lib).toContain('res = await supabase.rpc("award_quote", base);');
