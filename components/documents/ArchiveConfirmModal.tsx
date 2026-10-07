@@ -166,9 +166,10 @@ export default function ArchiveConfirmModal({
       // service role) has nothing to issue, so its restore to Issued is not
       // decided by the issue rule at all: it passes Document Control over a
       // hold, nothing recorded (below Document Control the publisher tier's
-      // hold check still refuses it). Its later first pointer write is the
-      // first-pointer-write residual the integrator opens as a new finding
-      // at the P20 merge (REV-24's Scope).
+      // hold check still refuses it). Its later first pointer write over the
+      // hold is refused for Document Control too since 20261182 (REV-25,
+      // P21), unless a recorded force sets the flag (publish_revision's, the
+      // review promote's).
       const held: HeldRestore = d.basis === "issued" && doc.id
         ? await heldRestoreFor(doc.id, { orgId, actorUserId, actorRole })
         : { kind: "none" };
