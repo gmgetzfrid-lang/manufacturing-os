@@ -767,3 +767,25 @@ app/(protected)/assets/[tag]/page.tsx — if (answer === "none") router.replace(
 - Residual: an address of the return's shape opened in the same tab within the TTL — a hand-made `/?error=x`, or any query containing `code=` — is read as a return. It lands on the path that tab's own carry holds, which is still a validated same-origin path.
 
 ---
+
+
+<a id="phys-15"></a>
+
+## PHYS-15 · A document number or revision label with a character the stamp font cannot print fails every stamp path — the copy goes out unmarked, or not at all
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** public-surfaces PS-P7 STAMP TEXT ENCODING — by the integrator, 2026-10-07 (opened at the document-control P22 merge, DEC-31; fleet plan `public-surfaces.json`).
+- **Verification:** CONFIRMED
+- **Locations:** `lib/stamping.ts:356` (`StandardFonts.HelveticaBold`, WinAnsi), `drawFooter` / `drawWatermark` (the text encoded directly); callers that put a document number or revision label in the footer: `app/api/share/file/route.ts:134` (`shareFooterNotice`; its catch at `:139` releases the copy unstamped), `lib/downloads.ts:474`, `:516` (`buildFooterNotice`), `lib/docPack.ts:748`, `components/viewers/MultiDocViewer.tsx:771`, `components/assets/FileReferenceModal.tsx:170`; the transmittal portal (`portalStampText`, handled by P22 for that path only)
+- **Independently verified:** — opened 2026-10-07 by the integrator from document-control P22's final review (DEC-31: P22 found the failure and recorded it only for the transmittal portal); read against the branch, not yet challenged by a second party.
+
+**Mechanism.** The stamp embeds the standard Helvetica-Bold font, whose encoding is WinAnsi. `pdf-lib` refuses to encode a character outside it ("WinAnsi cannot encode …"). A document number or revision label pasted from Word often carries one — a Unicode hyphen (U+2010), a non-breaking hyphen, a Greek capital delta ("Δ1"), a curly quote. Every path that draws that text in a footer or watermark then throws. Each caller handles the throw its own way: the share download releases the copy unstamped (recorded only as unstamped), the controlled download and the pack fail on the same text, and P22's issue-time check now warns and never arms such an item — advising "change it to plain characters", which a published revision label (fixed) or a document number (a controlled renumber) often cannot follow.
+
+**Failure scenario.** A drawing numbered "P‐101" (U+2010, pasted from Word) is shared by link. Every `/api/share/file` download leaves without its UNCONTROLLED marking; the in-app controlled download fails to stamp on the same text; the transmittal portal warns at issue and sends it unstamped. No path can ever stamp that document.
+
+**Done when.**
+
+- [ ] one helper maps stamp text to what the stamp font can print (U+2010/U+2011/U+2012/U+2013/U+2014 → "-", curly quotes → straight, "Δ" → "Delta", other unprintable characters → a visible placeholder, never dropped silently) — or the stamp embeds a Unicode-capable font — and every caller above draws through it
+- [ ] a number or label with such a character stamps on every path, and the stamped text is recorded with what was mapped
+- [ ] regression: a number or label in plain characters stamps exactly as today (byte-identical text); P22's `stampFooterUnprintable` guard and issue-time warning are updated to the new rule (an item no longer unprintable is armed again)

@@ -685,6 +685,24 @@
     "identity-and-session IS-P1 merged (saveMetadata through changeDocumentStatus, decided from the database row)"
    ],
    "sequencingNotes": "Added by the integrator 2026-10-07 at the IS-P1 merge (DEC-31: REV-19's remainders had no running owner). Runs after P16."
+  },
+  {
+   "name": "P24 TRANSMITTAL ISSUE VERDICT \u2014 a PDF the issue-time check could not decide needs the issuer's recorded yes, and the database requires a server-recorded verdict or acceptance at issue",
+   "findings": [
+    "TRX-17 (opened 2026-10-07 at document-control P22's review fix pass, DEC-31; assigned by the integrator at the P22 merge: an 'unchecked' PDF or a check that did not run is issued with no warning and no recorded yes, and transmittals_guard (20261133) never verifies the browser-written stampable mark or an acceptance \u2014 the issue path asks for the yes, and a migration re-creating transmittals_guard from its NEWEST body requires a server-recorded verdict per PDF item for the draft as issued, or a recorded acceptance)"
+   ],
+   "files": [
+    "lib/transmittals.ts (unstampableItems / issueTransmittal / armCheckedItems: an unchecked verdict asks for the yes)",
+    "app/api/transmittal/stamp-check/route.ts and lib/transmittalStampCheck.ts (record the verdict server-side for the draft's items)",
+    "one migration: transmittals_guard re-created from its NEWEST definition (20261133 or later \u2014 scan supabase/migrations), lineDiff-pinned, DEC-30 counts-only inventory (issued transmittals without a verdict), DRLS-16",
+    "tests: an unchecked PDF needs the yes; a direct draft \u2192 issued write without a verdict or acceptance is refused; regression \u2014 a decided, stampable issue and an accepted unstampable issue behave exactly as after P22"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "P22 merged (armCheckedItems, stampFooterUnprintable, the issue UPDATE under an updated_at match)",
+    "public-surfaces PS-P7 if it has merged first (stamp text encoding changes what is 'unprintable') \u2014 either order, the second rebases"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-07 at the P22 merge (DEC-31: TRX-17 had no package). notifications N9 also edits lib/transmittals.ts \u2014 whichever runs second rebases."
   }
  ],
  "crossAreaFileOverlaps": [

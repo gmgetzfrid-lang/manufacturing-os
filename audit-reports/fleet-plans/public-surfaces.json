@@ -178,6 +178,23 @@
     "identity-and-session IS-P1 merged (the client storage inventory and its per-key census)"
    ],
    "sequencingNotes": "Added by the integrator 2026-10-07 at the IS-P1 merge (DEC-31: OFF-15 had no owner). Can run now; FullScreenViewer.tsx has no other running owner."
+  },
+  {
+   "name": "PS-P7 STAMP TEXT ENCODING \u2014 a document number or revision label with a character the stamp font cannot print stamps on every path",
+   "findings": [
+    "PHYS-15 (opened by the integrator 2026-10-07 at the document-control P22 merge, DEC-31: lib/stamping.ts embeds WinAnsi Helvetica-Bold and every stamp path fails on a Unicode hyphen, a Greek delta, a curly quote in a number or label \u2014 one helper mapping stamp text to what the font prints (or a Unicode-capable embedded font), used by every caller; P22's stampFooterUnprintable guard and issue-time warning follow the new rule)"
+   ],
+   "files": [
+    "lib/stamping.ts (one stampText helper used by drawFooter / drawWatermark; or an embedded Unicode-capable font)",
+    "app/api/share/file/route.ts (shareFooterNotice), lib/downloads.ts (buildFooterNotice), lib/docPack.ts, components/viewers/MultiDocViewer.tsx, components/assets/FileReferenceModal.tsx \u2014 draw through the helper",
+    "lib/transmittals.ts / lib/transmittalStampCheck.ts (stampFooterUnprintable and portalStampText follow the helper's rule)",
+    "tests: each path stamps a number / label with U+2010, U+2013, '\u0394', curly quotes; regression \u2014 plain text stamps byte-identically"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "document-control P22 merged (portalStampText, stampFooterUnprintable, armCheckedItems)"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-07 at the P22 merge (DEC-31). Can run once P22 is merged."
   }
  ],
  "crossAreaFileOverlaps": [

@@ -17,6 +17,13 @@
 // route's ContentLength), never the version's recorded size, and the check
 // saves the stamped document as the route does (a save that throws is
 // `unloadable`).
+//
+// document-control P22 review fix (TRX-15): the check stamps the TEXT the
+// download stamps (portalStampText: the item's number, the revision the
+// issue will pin, the transmittal's number, the date, the verify link). It
+// stamped a fixed text with no revision, so a revision label the stamp's
+// font cannot print (a Greek delta, a Unicode hyphen) passed the check, the
+// issue armed the item, and every download of it was refused for good.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
@@ -41,6 +48,9 @@ const st = vi.hoisted(() => ({
   user: { id: "u-dc" } as { id: string } | null,
   transmittal: null as Row | null,
   authority: { allowed: true, member: { role: "DocCtrl", roles: ["DocCtrl"], email: "dc@a" } } as Row,
+  /** P22 review fix: the options each real stamp was made with, and the configured origin. */
+  stamps: [] as Array<Record<string, unknown>>,
+  origin: "https://app.example.com",
 }));
 
 function chain(table: string) {
@@ -110,13 +120,31 @@ vi.mock("@/lib/r2", () => ({
     }),
   },
 }));
+// The REAL stamp (pdf-lib, Helvetica-Bold), with the options it was given recorded.
+vi.mock("@/lib/stamping", async (orig) => {
+  const real = await orig<typeof import("@/lib/stamping")>();
+  return {
+    ...real,
+    applyStampToPdfDoc: async (...args: Parameters<typeof real.applyStampToPdfDoc>) => {
+      st.stamps.push({ ...args[1] });
+      return real.applyStampToPdfDoc(...args);
+    },
+  };
+});
+vi.mock("@/lib/publicOrigin", async (orig) => ({
+  ...(await orig<typeof import("@/lib/publicOrigin")>()),
+  publicOrigin: () => st.origin,
+}));
 vi.mock("@/lib/transmittals", async (orig) => ({
   ...(await orig<typeof import("@/lib/transmittals")>()),
   evaluateTransmitAuthority: vi.fn(async () => st.authority),
 }));
 
 import { checkItemsStampable, STAMP_CHECK_TIME_BUDGET_MS } from "@/lib/transmittalStampCheck";
-import { PORTAL_STAMP_MAX_BYTES, describeUnstampable, unstampableItems, type TransmittalItem } from "@/lib/transmittals";
+import { PORTAL_STAMP_MAX_BYTES, describeUnstampable, unstampableItems, portalStampText, stampFooterUnprintable, type TransmittalItem } from "@/lib/transmittals";
+import { applyStampToPdfDoc as realStamp } from "@/lib/stamping";
+import { wrapToWidth } from "@/lib/stampLayout";
+import { StandardFonts } from "pdf-lib";
 
 const ORG = "org-a";
 const KEY = (n: string) => `orgs/${ORG}/docs/${n}.pdf`;
@@ -158,6 +186,8 @@ beforeEach(async () => {
   st.docs = {}; st.versions = {}; st.readErrors = {}; st.objects = {}; st.fetched = []; st.heads = []; st.ranges = []; st.chunksRead = 0; st.destroyed = 0; st.writes = [];
   st.user = { id: "u-dc" };
   st.transmittal = null;
+  st.stamps = [];
+  st.origin = "https://app.example.com";
   st.authority = { allowed: true, member: { role: "DocCtrl", roles: ["DocCtrl"], email: "dc@a" } };
 });
 
@@ -333,7 +363,7 @@ describe("TRX-16 (P15 review fix) — PDF or not is decided before the size, by 
   });
   it("the check decides PDF-or-not by the bytes alone, as the stamping route does — never by name or type", () => {
     const lib = readFileSync(join(process.cwd(), "lib/transmittalStampCheck.ts"), "utf8");
-    expect(lib).toContain('.select("id, file_url, size")');
+    expect(lib).toContain('.select("id, file_url, size, revision_label")');
     const code = lib.replace(/^\s*\/\/[^\n]*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
     expect(code).not.toContain("isPdfFile");
     expect(code).not.toContain("file_type");
@@ -396,6 +426,119 @@ describe("TRX-16 (P15 final review fix) — oversize by the object's own length;
     expect(route).toContain("outBytes = await pdfDoc.save();");
     expect(route).toContain("const size = typeof obj.ContentLength === \"number\" ? obj.ContentLength : null;");
     expect(route).toContain("if (size !== null && size > PORTAL_STAMP_MAX_BYTES) {");
+  });
+});
+
+describe("TRX-15 (P22 review fix) — the check stamps the text the download stamps, so a label the stamp cannot print is warned at issue", () => {
+  const today = () => new Date().toISOString().slice(0, 10);
+  const label = (doc: string, revisionLabel: string | null) => { st.versions[`${doc}-v`] = { ...st.versions[`${doc}-v`], revision_label: revisionLabel }; };
+  const runFor = (items: TransmittalItem[], transmittalNumber = "TR-0042") =>
+    checkItemsStampable(admin.client as never, { orgId: ORG, items, transmittalNumber });
+
+  it("the check's stamp options are the download's: the item's number, the revision the issue will pin (its own, else the current file's label), the transmittal number, today, the verify link", async () => {
+    file("d1"); label("d1", "C");
+    file("d2"); label("d2", "C");
+    expect(await runFor([item("d1", "P-101"), { ...item("d2", "P-102"), rev: " B " }])).toEqual([
+      { documentId: "d1", number: "P-101", verdict: "stampable" },
+      { documentId: "d2", number: "P-102", verdict: "stampable" },
+    ]);
+    const opts = st.stamps.map(({ timestamp, ...rest }) => { expect(timestamp).toBeInstanceOf(Date); return rest; });
+    expect(opts).toEqual([
+      portalStampText({ docNumber: "P-101", rev: "C", transmittalNumber: "TR-0042", issuedOn: today(), verifyUrl: "https://app.example.com/verify/d1?v=d1-v" }),
+      portalStampText({ docNumber: "P-102", rev: "B", transmittalNumber: "TR-0042", issuedOn: today(), verifyUrl: "https://app.example.com/verify/d2?v=d2-v" }),
+    ]);
+    expect(String(opts[0].footerNotice)).toBe(`P-101 Rev C as issued on transmittal TR-0042 (${today()}). Scan the QR to confirm it is still current.`);
+    expect(opts[0].userLabel).toBe("transmittal TR-0042");
+    // with no configured origin the download prints no QR and says so — so does the check
+    st.stamps = []; st.origin = "";
+    await runFor([item("d1", "P-101")]);
+    expect(st.stamps[0].verifyUrl).toBeUndefined();
+    expect(String(st.stamps[0].footerNotice)).toMatch(/Confirm the current revision with the issuer before use\.$/);
+  });
+
+  it("a revision label the stamp cannot print is unloadable, naming the characters — it passed the old check (fixed text) and was refused at every download", async () => {
+    // the reviewer's reproduction: the old check's text stamps, the download's text with rev "P‐01" does not
+    const loaded = () => PDFDocument.load(GOOD);
+    await expect(realStamp(await loaded(), { userLabel: "transmittal stamp check", timestamp: new Date(), watermarkText: "UNCONTROLLED — TRANSMITTAL COPY", footerNotice: "P-101 as issued on a transmittal (issue-time stamp check).", verifyUrl: "https://stamp-check.invalid/verify" })).resolves.toBeUndefined();
+    await expect(realStamp(await loaded(), { ...portalStampText({ docNumber: "P-101", rev: "P‐01", transmittalNumber: "TR-0042", issuedOn: "2026-10-07" }), timestamp: new Date() })).rejects.toThrow(/WinAnsi cannot encode/);
+
+    file("d1"); label("d1", "Δ1"); // the item records no rev: the current file's label is stamped
+    file("d2"); label("d2", "A");
+    file("d3"); label("d3", "A");
+    const out = await runFor([item("d1", "P-101"), { ...item("d2", "P-102"), rev: "P‐01" }, item("d3", "P‐103")]);
+    expect(out).toEqual([
+      { documentId: "d1", number: "P-101", verdict: "unloadable", detail: "its number or revision label has a character the portal's stamp cannot print (Δ)", unprintable: "Δ" },
+      { documentId: "d2", number: "P-102", verdict: "unloadable", detail: "its number or revision label has a character the portal's stamp cannot print (‐)", unprintable: "‐" },
+      { documentId: "d3", number: "P‐103", verdict: "unloadable", detail: "its number or revision label has a character the portal's stamp cannot print (‐)", unprintable: "‐" },
+    ]);
+    // warned at issue, with the right reason and remedy (not "re-save it without restrictions")
+    expect(unstampableItems(out)).toHaveLength(3);
+    const warning = describeUnstampable(out)!;
+    expect(warning).toContain("P-101: its number or revision label contains “Δ” (U+0394), which the portal's stamp cannot print");
+    expect(warning).toContain("P-102: its number or revision label contains “‐” (U+2010)");
+    expect(warning).not.toMatch(/re-save it without restrictions/);
+  });
+
+  it("REGRESSION: plain, Latin-1 and cp1252 labels still stamp; a non-PDF or oversize file is not stamped, so its label never matters; an encrypted PDF keeps its own reason", async () => {
+    file("d1"); label("d1", "Rév B");
+    file("d2"); label("d2", "1.2");
+    file("d3"); label("d3", "A");
+    file("m1", { key: `orgs/${ORG}/docs/plant.dwg`, bytes: DWG }); label("m1", "Δ1");
+    file("p1", { size: PORTAL_STAMP_MAX_BYTES + 1, contentLength: PORTAL_STAMP_MAX_BYTES + 1 }); label("p1", "Δ1");
+    file("x1", { bytes: ENCRYPTED }); label("x1", "Δ1");
+    const out = await runFor([item("d1", "P-101"), item("d2", "P–102"), item("d3", "P-103 “GA”"), item("m1", "M-1"), item("p1", "SET-9"), item("x1", "VDS-7")]);
+    expect(out.map((c) => [c.documentId, c.verdict, c.detail ?? null])).toEqual([
+      ["d1", "stampable", null],
+      ["d2", "stampable", null],
+      ["d3", "stampable", null],
+      ["m1", "not_pdf", null],
+      ["p1", "oversize", null],
+      ["x1", "unloadable", "encrypted (permission-restricted) PDF"],
+    ]);
+  });
+
+  it("a damaged-PDF stamp failure keeps its reason (no unprintable): only pdf-lib's \"cannot encode\" is a label", async () => {
+    file("v1"); label("v1", "A");
+    const save = vi.spyOn(PDFDocument.prototype, "save").mockRejectedValueOnce(new Error("cannot serialise"));
+    try {
+      expect(await runFor([item("v1", "P-301")])).toEqual([
+        { documentId: "v1", number: "P-301", verdict: "unloadable", detail: "the PDF could not be stamped (damaged or unsupported)" },
+      ]);
+    } finally {
+      save.mockRestore();
+    }
+  });
+
+  it("the route passes the transmittal's number; the check reads the current file's label", async () => {
+    const route = readFileSync(join(process.cwd(), "app/api/transmittal/stamp-check/route.ts"), "utf8");
+    expect(route).toContain("checkItemsStampable(supabaseAdmin, { orgId: t.orgId, items: t.items, transmittalNumber: t.number })");
+    const lib = readFileSync(join(process.cwd(), "lib/transmittalStampCheck.ts"), "utf8");
+    expect(lib).toContain("await applyStampToPdfDoc(pdfDoc, { ...text, timestamp: new Date() });");
+    expect(lib).not.toContain("stamp-check.invalid");
+  });
+
+  it("stampFooterUnprintable agrees with pdf-lib's stamp font, code point by code point (the footer's wrap, then each line encoded, as drawFooter does)", async () => {
+    const doc = await PDFDocument.create();
+    const font = await doc.embedFont(StandardFonts.HelveticaBold);
+    const prints = (ch: string) => {
+      try {
+        for (const line of wrapToWidth(`A${ch}B`, 10_000, (t) => font.widthOfTextAtSize(t, 8))) font.encodeText(line);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const mismatches: string[] = [];
+    let printable = 0;
+    const codePoints = [...Array.from({ length: 0x10000 }, (_, i) => i).filter((cp) => cp < 0xd800 || cp > 0xdfff), 0x1f600, 0x1d400, 0x20000];
+    for (const cp of codePoints) {
+      const ch = String.fromCodePoint(cp);
+      const lib = stampFooterUnprintable(ch) === "";
+      if (lib) printable++;
+      if (lib !== prints(ch)) mismatches.push(cp.toString(16));
+    }
+    expect(mismatches).toEqual([]);
+    expect(printable).toBeGreaterThan(218); // the 218 WinAnsi characters, plus whitespace (printed as a space)
   });
 });
 

@@ -55,6 +55,8 @@ export async function POST(req: NextRequest) {
   }
   if (t.status !== "draft") return bad(`${t.number} is ${t.status} — only a draft is checked before issue.`, 409);
 
-  const items = await checkItemsStampable(supabaseAdmin, { orgId: t.orgId, items: t.items });
+  // TRX-15 (P22 review fix): the transmittal's number is stamped too — the
+  // check stamps what the download will.
+  const items = await checkItemsStampable(supabaseAdmin, { orgId: t.orgId, items: t.items, transmittalNumber: t.number });
   return NextResponse.json({ items }, { headers: { "Cache-Control": "no-store" } });
 }

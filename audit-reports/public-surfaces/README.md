@@ -22,13 +22,13 @@ The four unauthenticated verify endpoints, share links and the short link, the p
 
 ## Findings
 
-**63 findings** — 4 CRITICAL, 13 HIGH, 21 MEDIUM, 25 LOW.
+**64 findings** — 4 CRITICAL, 13 HIGH, 21 MEDIUM, 26 LOW.
 
 | # | Report | n | Note |
 |---|---|---|---|
 | 01 | [The public verify endpoints](./01-verify-endpoints.md) | 20 | `VFY-15` – `VFY-20` (LOW) opened at PS-VERIFY, 2026-10-01 (provisional ids) |
 | 02 | [Share links & the short link](./02-share-links.md) | 14 |  |
-| 03 | [The physical bridge — QR, labels, stamps, print](./03-physical-bridge.md) | 14 | `PHYS-14` (MEDIUM) opened at PS-VERIFY, 2026-10-01 (provisional id) |
+| 03 | [The physical bridge — QR, labels, stamps, print](./03-physical-bridge.md) | 15 | `PHYS-14` (MEDIUM) opened at PS-VERIFY, 2026-10-01 (provisional id); `PHYS-15` (LOW) opened at the document-control P22 merge, 2026-10-07 |
 | 04 | [Offline, the service worker & the field device](./04-offline-pwa.md) | 15 | `OFF-15` (LOW) opened at identity-and-session IS-P1, 2026-10-07 |
 
 Every report except the critic was **adversarially verified** — a second agent

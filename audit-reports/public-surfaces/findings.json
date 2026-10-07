@@ -8,17 +8,17 @@
     "audit-reports/public-surfaces/04-offline-pwa.md"
   ],
   "totals": {
-    "findings": 63,
+    "findings": 64,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 4,
       "HIGH": 13,
       "MEDIUM": 21,
-      "LOW": 25
+      "LOW": 26
     },
     "by_status": {
       "RESOLVED": 52,
-      "OPEN": 10,
+      "OPEN": 11,
       "WONTFIX": 1
     }
   },
@@ -1296,6 +1296,33 @@
       "summary": "On a shared field tablet an inspector uploads a stamp image of their initials and \"VERIFIED IN FIELD\" and signs out at the end of the shift. The next person signs in on the same tablet, opens a drawing and finds that stamp in their stamp menu; they can place the previous person's initials on a markup.",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/04-offline-pwa.md"
+    },
+    {
+      "id": "PHYS-15",
+      "title": "A document number or revision label with a character the stamp font cannot print fails every stamp path — the copy goes out unmarked, or not at all",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/stamping.ts:356",
+        "app/api/share/file/route.ts:134",
+        "lib/downloads.ts:474",
+        "lib/docPack.ts:748",
+        "components/viewers/MultiDocViewer.tsx:771",
+        "components/assets/FileReferenceModal.tsx:170"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A drawing numbered \"P‐101\" (U+2010, pasted from Word) is shared by link. Every /api/share/file download leaves without its UNCONTROLLED marking; the in-app controlled download fails to stamp on the same text; the transmittal portal warns at issue and sends it unstamped. No path can ever stamp that document.",
+      "area": "public-surfaces",
+      "report": "audit-reports/public-surfaces/03-physical-bridge.md"
     },
     {
       "id": "SHR-7",

@@ -15,16 +15,16 @@
     "audit-reports/document-control/11-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 165,
+    "findings": 166,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 19,
       "HIGH": 54,
       "MEDIUM": 71,
-      "LOW": 21
+      "LOW": 22
     },
     "by_status": {
-      "RESOLVED": 152,
+      "RESOLVED": 153,
       "OPEN": 13
     }
   },
@@ -3650,7 +3650,7 @@
       "id": "TRX-14",
       "title": "transmittalPortalUrl builds the external link from window.location.origin, bypassing the publicOrigin() helper that exists in this repo specifically to stop that",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -4446,6 +4446,34 @@
       ],
       "refuted": false,
       "summary": "A DocCtrl issues TR-0107 carrying a permission-restricted vendor datasheet. The external contractor clicks Download and is refused (\"could not be marked … Contact the issuer\"). The issuer hears of it then, re-saves the file without restrictions and issues again — a day lost on a transmittal the register showed as issued.",
+      "area": "document-control",
+      "report": "audit-reports/document-control/06-transmittals.md"
+    },
+    {
+      "id": "TRX-17",
+      "title": "A PDF can still leave the portal unmarked with no warning at issue and no recorded yes: one the issue-time check could not decide, and any issue made outside the app's issue path",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by reading; the client half is pinned in `lib/__tests__/dcRoundFP15TransmittalIssueWarn.test.ts`: an `unchecked` file is not warned and carries no mark, and a check that cannot run never blocks an issue)",
+      "blast_radius": "document-control integrity (an uncontrolled copy without its marking, and no recorded yes for it)",
+      "related": [
+        "TRX-15",
+        "TRX-16",
+        "DEC-61"
+      ],
+      "locations": [
+        "lib/transmittals.ts",
+        "supabase/migrations/20261133_dc_roundF_transmittal_rails.sql",
+        "app/api/transmittal/route.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A 40-sheet transmittal of large PDFs runs past the check's budget, and the last items come back unchecked (or the browser gives up at 80 s). No confirm opens and nothing is marked. One of those items is a permission-restricted vendor datasheet. The recipient downloads it without the UNCONTROLLED marking, and the issuer hears of it only from the after-the-fact notice. Separately, a transmit authori",
       "area": "document-control",
       "report": "audit-reports/document-control/06-transmittals.md"
     }
