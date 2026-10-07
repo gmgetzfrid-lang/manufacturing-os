@@ -424,7 +424,7 @@ app/api/share/file/route.ts:129-140 — `await sb.from("download_audits").insert
 ## OFF-8 · Nothing ever clears Cache Storage on sign-out, so a shared field tablet carries the previous user's cached API responses — and the OAuth authorization code as a cache key
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** identity-and-session IS-P1 (done-when 3: the client-storage inventory in RoleContext) — by the integrator, 2026-10-01 (PKG-1 merge; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/RoleContext.tsx:259-281`, `public/sw.js:52-65`, `app/page.tsx:97`, `lib/eSignatures.ts:82-86`
@@ -480,6 +480,24 @@ components/providers/RoleContext.tsx:270-281 quoted above — the loop's scope i
 3. ✗ Not done. The principle now covers Cache Storage too, but "all client-side storage" is wider than this package: `localStorage` / `sessionStorage` hold some twenty other keys (recents, settings, memory, snapshots, UI preferences, the silent-SSO flag that must SURVIVE an expiry-driven `SIGNED_OUT`) and `lib/draftHandoff.ts` keeps an IndexedDB store. Deciding which of them are account data needs a per-key inventory in the file identity-and-session owns.
 
 **Scope / residual.** Open for done-when 3, handed to identity-and-session (it owns `RoleContext.tsx`; `IS-P1` edits it next): inventory the client-storage keys and clear the account-scoped ones on `SIGNED_OUT`. The "session evaporated" branch (`RoleContext.tsx`, the `else` after `SIGNED_IN`) still clears no cache; the next identity's `SESSION` purge bounds it (`XEDGE-6`). The Cache Storage half is closed.
+
+**Resolution (2026-10-07, identity-and-session Round G).** Package **IS-P1** — done-when 3, the half handed to the file identity-and-session owns (commit `6dd12d2`). Reproduced on `f8d5eb5`: `components/providers/RoleContext.tsx`'s `SIGNED_OUT` block cleared two localStorage prefixes (`intel-status-`, `schema-gaps-`), the device workspace and Cache Storage (PKG-1); sessionStorage, every other account key and the IndexedDB draft hand-off were untouched, and the "session evaporated" branch cleared nothing at all.
+- **The inventory** (`RoleContext.tsx` `CLIENT_STORAGE_INVENTORY` `:77`, `CLIENT_INDEXED_DB_INVENTORY` `:124`): every key the app keeps in localStorage / sessionStorage (38 rows over the 27 files that read or write them) and the one IndexedDB database, each classified under DEC-44 (IS-P1) §2 — a value an account READ from the server must not outlive that account:
+  - **account** (cleared on every SIGNED_OUT): the hub snapshots `intel-status-` / `schema-gaps-` (both stores); the palette's recents `mfg-os.palette.recents` (titles and links the account opened); the graph's settled layout `orgGraph:pos…` (keyed by the ids its graph returned) and its snapshot `org-graph-…` (session); the library row cache `mfg-os:lib:…` (session); the ask thread `kl-active-thread-…` (session); dismissals `dismissed:…`; the IndexedDB database `manufacturingos` (store `draftHandoff`: marked-up drawings waiting for their request). Each says what an evaporated session does with it — "cache" (rebuilt from the server, dropped) or "held" (the ask thread, the dismissals, the hand-off: work the same account may come straight back to, kept).
+  - **workspace**: `manufacturingos.activeOrgId` / `.owner` — cleared on SIGNED_OUT by `clearStoredOrgId` (IDENT-4, unchanged), kept on evaporation (owner-checked).
+  - **sign-in** (kept — an expiry-driven SIGNED_OUT needs them): `manufacturingos.preferMicrosoft` (the silent-SSO flag; the explicit sign-out buttons clear it), `manufacturingos.silentSSOAttempted` (the once-per-tab guard — clearing it on an expiry could loop the silent attempt), `manufacturingos.signInNext` (the destination carried across the Microsoft round trip), `manufacturingos.rememberSession`, and supabase-js's own `sb-…` keys.
+  - **uid-scoped** (kept): `manufacturingos.dashboard.<uid>` — the person's own layout mirror, never served to another identity, and the only durable copy where `users.dashboard_config` cannot be written (`lib/dashboard/config.ts` saves locally first).
+  - **device** (kept): theme, density, sidebar, view modes, hints seen, snoozes, inspector folds, the rev-up's last issue type, the graph's drawing settings (DEC-88), a throttle timestamp — and `manufacturingos.customStamps`, stamp images the person uploaded: not an account read, but not keyed by uid, so the next account on the device is offered them (opened as `OFF-15`).
+- **SIGNED_OUT** (`:605`): `purgeAccountClientStores("all")` removes every account key from both stores and deletes the IndexedDB database (awaited, bounded at 1.5 s; a delete blocked by an open connection completes when it closes) — after `clearStoredOrgId`, before PKG-1's Cache Storage purge and the redirect, both kept exactly as they were. It replaces the two-prefix loop.
+- **A session that evaporates** without a SIGNED_OUT (`:705`): the rebuildable caches go (`purgeAccountClientStores("cache")`) and Cache Storage is emptied the same bounded way; held work and the owner-checked workspace stay. **A different identity** signing in on the tab afterwards — or switching in another tab — ends the last identity's account data first, held keys included (`identityChangeEndsAccount`, `noteIdentity` on SIGNED_IN and on a uid-changing TOKEN_REFRESHED, `:633`, `:664`); the same identity keeps everything.
+- Tests: `lib/__tests__/sessSixRoleNull.test.ts` "OFF-8 —": a census refuses any file under app/, components/, hooks/, lib/ that touches localStorage / sessionStorage / indexedDB without an inventory row, and finds every row's key in its owner files; the sign-in and account classifications; the purge per scope against real jsdom storage ("all": exactly the workspace, sign-in, uid-scoped and device keys survive; "cache": held work stays); a forbidden store never throws; the IndexedDB delete is asked for, bounded (a hung delete returns inside its budget) and not run for an evaporated session; and the provider rendered — SIGNED_OUT clears the account keys and the device workspace and keeps the silent-SSO flags; an evaporated session drops the caches and keeps held work and the workspace; a different identity's SIGNED_IN ends the held data while the same identity's keeps it. `sw.test.ts`'s OFF-8 block (PKG-1's purge, lifted verbatim) passes unchanged.
+
+**Done-when.**
+1. ✓ (PKG-1, unchanged) Sign-out deletes every Cache Storage cache before the redirect; the "ideally unregisters and re-registers the worker" part is still not done (PKG-1's note stands). The evaporated branch now empties Cache Storage too.
+2. ✓ (PKG-1, unchanged).
+3. ✓ The principle — what an account fetched must not outlive it — is enforced for every client store through an inventory a test keeps complete: each key holding what an account read is cleared on SIGNED_OUT (localStorage, sessionStorage and the IndexedDB database), the sign-in flow's own keys survive an expiry-driven SIGNED_OUT, and the session-evaporated branch drops the caches. Kept by the rule and said in the inventory: the uid-scoped dashboard mirror and the device keys.
+
+**Scope / residual.** `OFF-15` (new, below): `manufacturingos.customStamps` is device-wide, not keyed by uid — the viewer's owner keys it by uid (clearing it on sign-out would destroy a person's uploaded stamps, a flow that works today). The last identity is remembered per tab and per page load: after a session evaporates, a reload and a sign-in as a DIFFERENT account in the same tab, the held keys (an open ask thread in that tab's sessionStorage, an unsubmitted hand-off) are not ended until that account's next SIGNED_OUT; the caches were already dropped by the evaporation.
 
 ---
 
@@ -809,5 +827,29 @@ lib/__tests__/sw.test.ts:20-24 — the cache mock's `put` is a bare `vi.fn` neve
 4. ✓ The old line-64 case is now "returns a real Response for a navigation that genuinely fails — network down, nothing cached", with the abort cases separate.
 
 **Scope / residual.** None.
+
+---
+
+<a id="off-15"></a>
+
+## OFF-15 · The viewer's custom stamp images are kept device-wide, not per account, so the next person on a shared tablet is offered the last person's uploaded stamps
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Locations:** `components/viewers/FullScreenViewer.tsx:344`, `components/viewers/FullScreenViewer.tsx:352`, `components/providers/RoleContext.tsx` (`CLIENT_STORAGE_INVENTORY`, the `manufacturingos.customStamps` row)
+- **Independently verified:** — opened 2026-10-07 by identity-and-session Round G (IS-P1) while inventorying the client storage for `OFF-8` done-when 3, per DEC-31; read against the branch, not yet challenged by a second party.
+
+**Mechanism.** The full-screen viewer persists the stamp images a person uploads (PNG / JPG data URLs, up to 12) under one localStorage key, `manufacturingos.customStamps` — read in the `useState` initialiser (`:344`) and written by `persistCustomStamps` (`:352`). The key is not scoped to the account: it carries no uid, and nothing clears it at sign-out. `OFF-8`'s inventory classes it "device" — it is not something an account READ from the server, so the sign-out purge leaves it, and clearing it there would delete a person's uploaded stamps on every sign-out, a flow that works today.
+
+**Failure scenario.** On a shared field tablet an inspector uploads a stamp image of their initials and "VERIFIED IN FIELD" and signs out at the end of the shift. The next person signs in on the same tablet, opens a drawing and finds that stamp in their stamp menu; they can place the previous person's initials on a markup.
+
+**Done when.**
+
+- [ ] The stamp list is stored per account (keyed by uid, as `lib/dashboard/config.ts` and `hooks/useDismissed.ts` key theirs), so the next account on the device is never offered it and the same account keeps its stamps across sign-outs.
+- [ ] Stamps already stored under the device-wide key are not shown to an account other than the one that uploaded them (moved to the first account that signs in, or dropped, deliberately and said).
+- [ ] `OFF-8`'s inventory row moves from "device" to "uid-scoped", and its census still passes.
+
+**Owner.** The full-screen viewer's owner (`components/viewers/FullScreenViewer.tsx` — public-surfaces PS-STAMP's file, merged); for the integrator to assign.
 
 ---

@@ -339,6 +339,11 @@ one-paste migrations, independent of one another (any order among them):
   showing the sentence instead of "Failed to delete library." (`DRLS-14`)
   — done at P14's final review (it shows "Delete failed: " and the
   database's sentence; a zero-row delete is a refusal).
+  *(identity-and-session IS-P1, 2026-10-07: the deploy prerequisite is
+  built — `handleBulkDelete` is one checked delete per document and keeps a
+  refused one listed and selected with the database's sentence; `20261149`
+  now waits only on the user's DEC-79 ratification and on deploying the app
+  that carries IS-P1.)*
 - `20261150_dc_roundF_work_package_repin_record.sql` (`DRLS-10`) — after
   `20261032` / `20261033` (the pin policies and the pin guard it sits
   beside); a new AFTER UPDATE trigger only, re-creating nothing.
