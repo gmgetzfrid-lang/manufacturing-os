@@ -1085,6 +1085,47 @@ describe("GOV-15 — app-side, until 20261173 is pasted: the sequential path, wi
     expect(notices().map((n) => [n.user_id, n.title])).toEqual([[ADMIN2, "A monthly AI cap is still held"]]);
   });
 
+  // Restored by I-18's completion (2026-10-07): two sequential expectations
+  // of the tenth review's S3 test (fix pass 11), which df24894 deleted with
+  // the race describe they sat in. They are sequential (one request, a log
+  // that refuses), so they hold on this path exactly as before.
+  it("the tenth review's S3, sequential part (fix pass 11): a raise of the default whose row the log refuses still goes ahead (as at 052271b), never a 503 — with an override of one's own, and held while following the default; the other holder is told all the same", async () => {
+    for (const own of [45, null] as const) {
+      db.tables.ai_usage_limits = [{ org_id: ORG, user_id: null, monthly_cap_usd: 40, updated_by: ADMIN2 }];
+      if (own !== null) db.tables.ai_usage_limits.push({ org_id: ORG, user_id: ADMIN, monthly_cap_usd: own, updated_by: ADMIN });
+      db.tables.audit_logs = [];
+      db.tables.notifications = [];
+      db.errors["audit_logs:insert"] = { message: "audit write timed out" };
+      const r = await post(ADMIN, { capUsd: 100 });
+      delete db.errors["audit_logs:insert"];
+      expect(r.status, String(own)).toBe(200);
+      expect(r.json).toMatchObject({ ok: true, capUsd: 100 });
+      expect(limitsOf(null)).toEqual([100]);
+      // the follower is still held where they were; the one with an override keeps it
+      expect(limitsOf(ADMIN)).toEqual(own === null ? [40] : [own]);
+      if (own === null) expect(r.json).toMatchObject({ selfHeldAtUsd: 40 });
+      // the log refused every row, as at 052271b; the other holder is told all the same
+      expect(db.tables.audit_logs).toHaveLength(0);
+      expect(notices().filter((n) => n.user_id === ADMIN2).map((n) => n.title)).toContain("A monthly AI cap changed");
+    }
+  });
+
+  it("…and a row the log refuses once is tried again after the raise has landed: the raise is in the log once", async () => {
+    db.tables.ai_usage_limits = [{ org_id: ORG, user_id: null, monthly_cap_usd: 40, updated_by: ADMIN2 },
+      { org_id: ORG, user_id: ADMIN, monthly_cap_usd: 45, updated_by: ADMIN }];
+    db.tables.audit_logs = [];
+    let refused = 0;
+    db.hook = ({ table, action }) => {
+      if (table === "audit_logs" && action === "insert" && refused === 0) { refused = 1; db.errors["audit_logs:insert"] = { message: "audit write timed out" }; }
+    };
+    db.after = ({ table, action }) => { if (table === "audit_logs" && action === "insert") delete db.errors["audit_logs:insert"]; };
+    const r = await post(ADMIN, { capUsd: 100 });
+    db.hook = null;
+    db.after = null;
+    expect(r.status).toBe(200);
+    expect(capDetails()).toEqual([{ capUsd: 100, previousCapUsd: 40 }]);
+  });
+
   it("an update that matches no row (the row went between the read and the write) is never a 200: 409, nothing audited or told", async () => {
     db.tables.ai_usage_limits = [{ org_id: ORG, user_id: ENG, monthly_cap_usd: 25 }];
     db.hook = ({ table, action }) => {

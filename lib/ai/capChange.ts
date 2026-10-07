@@ -466,10 +466,15 @@ export async function applyCapChangeAppSide(req: CapChangeRequest): Promise<CapC
   }
 
   // Landed: the change's row, then the hold's (the order the log has always
-  // read in: the raise, then the hold it wrote). Best-effort, as before —
-  // one try each (the record a default raise used to write first existed
-  // only for the race reader GOV-15 deletes).
-  if (!soleHolder) await auditCapChange(orgId, actorId, details);
+  // read in: the raise, then the hold it wrote). Best-effort, as before. A
+  // default raise's row keeps the two tries it had before GOV-15 — it was
+  // written first (for the race reader GOV-15 deletes) and, when the log
+  // refused it, tried again once the raise had landed — so a log that
+  // refuses it once still holds it once; every other row gets one try.
+  if (!soleHolder) {
+    const auditError = await auditCapChange(orgId, actorId, details);
+    if (auditError && defaultRaise) await auditCapChange(orgId, actorId, details);
+  }
   if (pinAt !== null) {
     await auditCapChange(orgId, actorId, {
       targetUserId: actorId, capUsd: pinAt, previousCapUsd: ownBeforeUsd ?? previousCapUsd, heldOnDefaultRaise: true,
