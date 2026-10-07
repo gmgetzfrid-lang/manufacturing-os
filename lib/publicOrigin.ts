@@ -35,10 +35,11 @@
 //      to scan it (lib/stamping.ts warns); the transmittal email refuses.
 //
 // A link handed to an OUTSIDE party with no account (the transmittal portal)
-// uses recipientOrigin(): steps 1–2, then the page's own origin only on a
-// host that party can open — never a Vercel deployment host (*.vercel.app, a
-// preview behind Vercel's login) or a loopback address — else "", which its
-// callers check and report.
+// uses recipientOrigin(): steps 1–2 ONLY, in a browser and on a server alike
+// — never the page's own address, whatever host the issuer's browser is on
+// (TRX-14, DEC-64 §1 as reversed by DEC-90 A6: a link for an outside party is
+// built only on a configured canonical origin) — else "", which its callers
+// check and report ("set NEXT_PUBLIC_SITE_URL and rebuild").
 
 /** NEXT_PUBLIC_SITE_URL as configured (trimmed, no trailing slash). */
 function siteUrl(): string {
@@ -92,15 +93,12 @@ export function isUnreachableRecipientHost(hostname: string): boolean {
 }
 
 /** The origin for a link handed to an OUTSIDE party (the transmittal portal):
- *  the configured origin; else, in a browser, the page's own origin when its
- *  host is one that party can open — a self-hosted deployment's own address —
- *  and not a Vercel deployment host or loopback; else "". On a server it is
- *  configuredPublicOrigin(). Callers treat "" as "no link" and say so. */
+ *  the CONFIGURED origin only (configuredPublicOrigin — NEXT_PUBLIC_SITE_URL,
+ *  else Vercel's production domain), in a browser and on a server alike, so
+ *  the two runtimes build the same link; else "". Never the page's own
+ *  address: with nothing configured a browser builds no link, as the server
+ *  already does (TRX-14; DEC-64 §1, reversed by DEC-90 A6 — fail closed).
+ *  Callers treat "" as "no link" and name NEXT_PUBLIC_SITE_URL. */
 export function recipientOrigin(): string {
-  const configured = configuredPublicOrigin();
-  if (configured) return configured;
-  if (typeof window === "undefined" || !window.location?.origin) return "";
-  let host = "";
-  try { host = new URL(window.location.origin).hostname; } catch { host = ""; }
-  return isUnreachableRecipientHost(host) ? "" : window.location.origin;
+  return configuredPublicOrigin();
 }

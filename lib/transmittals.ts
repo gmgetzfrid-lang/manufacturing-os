@@ -693,17 +693,15 @@ async function nextTransmittalSeq(orgId: string): Promise<number> {
   return top + 1;
 }
 
-/** TRX-14 / XEDGE-5: the external portal link, built on an origin the
- *  recipient can open (lib/publicOrigin.ts recipientOrigin): the CONFIGURED
- *  public origin (NEXT_PUBLIC_SITE_URL, else Vercel's production domain);
- *  else, in a browser, the page's own origin — unless that is a Vercel
- *  deployment host (a preview behind Vercel's login) or loopback. Returns
- *  null when there is none, so a caller refuses to email or print a
- *  hostless, preview-host or localhost link. A server uses only the
- *  configured origin, so the runtimes can differ: off Vercel with nothing
- *  configured the email route refuses while a browser on the self-hosted
- *  address still builds the link; with Vercel's exposure off the server can
- *  email a link a browser on a preview host cannot build. */
+/** TRX-14 / XEDGE-5: the external portal link, built on the deployment's
+ *  CONFIGURED public origin only (lib/publicOrigin.ts recipientOrigin:
+ *  NEXT_PUBLIC_SITE_URL, else Vercel's production domain), in a browser and
+ *  on a server alike — never the page's own address (DEC-64 §1, reversed by
+ *  DEC-90 A6). Returns null when no origin is configured, so a caller
+ *  refuses to email, copy or print a link (the cover sheet then carries no
+ *  portal block or QR). The runtimes differ only where Vercel's exposure is
+ *  off: a server that still receives the production domain can email a link
+ *  a browser cannot build. */
 export function transmittalPortalUrl(token: string): string | null {
   let origin = "";
   try { origin = recipientOrigin(); } catch { origin = ""; }
@@ -712,16 +710,16 @@ export function transmittalPortalUrl(token: string): string | null {
 
 /** TRX-14 dw3: true when the deployment NAMES its public origin
  *  (NEXT_PUBLIC_SITE_URL, or Vercel's production domain) in this runtime.
- *  Without it a browser link uses the page's own address, so the issue flow
- *  says so. */
+ *  Without it no portal link is built (P22: in a browser too), and the issue
+ *  flow says to set NEXT_PUBLIC_SITE_URL. */
 export function portalOriginConfigured(): boolean {
   return !!configuredPublicOrigin();
 }
 
 /** TRX-14 dw3: true when THIS runtime can build a portal link at all
- *  (transmittalPortalUrl would return a URL). False in a browser on a Vercel
- *  deployment host or loopback with nothing configured: the issue flow then
- *  says what to set instead of offering a copy that cannot work. */
+ *  (transmittalPortalUrl would return a URL) — since P22, exactly when an
+ *  origin is configured, on any host. When false the issue flow says what to
+ *  set (NEXT_PUBLIC_SITE_URL) instead of offering a copy that cannot work. */
 export function portalLinkAvailable(): boolean {
   let origin = "";
   try { origin = recipientOrigin(); } catch { origin = ""; }
@@ -826,9 +824,16 @@ export async function listTransmittals(orgId: string): Promise<Transmittal[]> {
 }
 
 export async function getTransmittal(id: string): Promise<Transmittal | null> {
+  const row = await getTransmittalRow(id);
+  return row ? rowToTransmittal(row) : null;
+}
+
+/** The row as stored — its `items` JSON untouched (TRX-15: the issue writes
+ *  the draft's own items back, marked, never a re-mapped copy). */
+async function getTransmittalRow(id: string): Promise<Record<string, unknown> | null> {
   const { data, error } = await supabase.from("transmittals").select("*").eq("id", id).maybeSingle();
   if (error) { if (isMissingTable(error)) throw new Error(MIGRATION_HINT); throw new Error(error.message); }
-  return data ? rowToTransmittal(data as Record<string, unknown>) : null;
+  return (data as Record<string, unknown> | null) ?? null;
 }
 
 export interface UpdateTransmittalDraftInput {
@@ -953,15 +958,64 @@ export function describeUnstampable(checks: readonly ItemStampCheck[]): string |
   return `The recipient's portal cannot stamp ${bad.length === 1 ? "this file" : "these files"} as an UNCONTROLLED copy, so ${bad.length === 1 ? "it" : "they"} would be released as issued, WITHOUT the marking, the as-issued footer or the verify QR:\n${lines.map((l) => `• ${l}`).join("\n")}\nFix the file${bad.length === 1 ? "" : "s"} and issue again, or issue anyway.`;
 }
 
+/** TRX-15: the whole issue-time check the issuer answered, bound to the
+ *  draft it was run on (the draft row's `updated_at` when it was read). */
+export interface DraftStampCheck {
+  draftUpdatedAt: string | null;
+  items: ItemStampCheck[];
+}
+
 /** TRX-16: issuing was stopped BEFORE anything was written because the
  *  portal cannot stamp one or more PDFs — the issuer decides (fix and
- *  re-issue, or issue anyway with `acceptedUnstampable`). */
+ *  re-issue, or issue anyway with `acceptedUnstampable`). TRX-15: `checked`
+ *  carries the whole check, so the issuer's "Issue anyway" (`opts.checked`)
+ *  still arms the files it found stampable without checking again. */
 export class UnstampableItemsError extends Error {
   readonly code = "unstampable_items" as const;
-  constructor(readonly items: ItemStampCheck[]) {
+  constructor(readonly items: ItemStampCheck[], readonly checked: DraftStampCheck | null = null) {
     super(describeUnstampable(items) ?? "Some files cannot be stamped by the portal.");
     this.name = "UnstampableItemsError";
   }
+}
+
+/** TRX-15 (DEC-61 §5 as amended, ratified DEC-90 A5): the draft's own items
+ *  as the issue UPDATE writes them — `stampable: true` on each item whose
+ *  document the issue-time check found `stampable`, which arms the portal's
+ *  download-time refusal for it (app/api/transmittal/route.ts
+ *  `refusesUnstampable`: a PDF checked as stampable that then cannot be
+ *  stamped is refused, never released unmarked). Every other item carries
+ *  NO mark — an issuer-accepted unstampable PDF (`oversize` / `unloadable`),
+ *  a file that is not a PDF, an `unchecked` one, every item when the check
+ *  did not run (`checks` null) — so it keeps §5's release, as before; a mark
+ *  already on a draft item is removed (only this issue's check arms). Items
+ *  are otherwise the draft's JSON as stored. `changed` is false when the
+ *  result equals the draft's items (the issue then leaves them alone). */
+export function armCheckedItems(
+  rawItems: unknown,
+  checks: readonly ItemStampCheck[] | null,
+): { items: unknown[]; changed: boolean; armed: number } {
+  const stampable = new Set<string>();
+  const other = new Set<string>();
+  for (const c of checks ?? []) (c.verdict === "stampable" ? stampable : other).add(c.documentId);
+  let changed = false;
+  let armed = 0;
+  const items = (Array.isArray(rawItems) ? rawItems : []).map((raw: unknown) => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+    const it = raw as Record<string, unknown>;
+    const id = typeof it.documentId === "string" ? it.documentId : "";
+    if (id && stampable.has(id) && !other.has(id)) {
+      armed += 1;
+      if (it.stampable === true) return it;
+      changed = true;
+      return { ...it, stampable: true };
+    }
+    if (!Object.prototype.hasOwnProperty.call(it, "stampable")) return it;
+    changed = true;
+    const rest = { ...it };
+    delete rest.stampable;
+    return rest;
+  });
+  return { items, changed, armed };
 }
 
 /** TRX-16: ask the server (`/api/transmittal/stamp-check`) whether the
@@ -1025,40 +1079,70 @@ export interface IssueOutcome {
  *  The issuer may go ahead: `acceptedUnstampable` (the error's items) issues
  *  without re-checking, and the acceptance is recorded on the
  *  TRANSMITTAL_ISSUED row. A check that cannot run does not block the issue
- *  (it is a warning; DEC-61 §5 still governs the portal) — it is logged. The
- *  check marks no item: arming the portal's stricter refusal (`stampable:
- *  true`) awaits the user's ratification of the DEC-61 §5 amendment. */
+ *  (it is a warning; DEC-61 §5 still governs the portal) — it is logged.
+ *
+ *  TRX-15 (DEC-61 §5 as amended, ratified DEC-90 A5): the issue ARMS the
+ *  portal's download-time refusal — `stampable: true` on each item the check
+ *  found stampable (`armCheckedItems`), written in the issue UPDATE itself
+ *  and only under an `updated_at` match on the draft as read here, so a
+ *  draft edited meanwhile is refused (named), never overwritten. An
+ *  issuer-accepted unstampable item, a non-PDF, an unchecked file — and
+ *  every item when the check could not run — carries no mark and keeps
+ *  §5's release. On "Issue anyway" (`acceptedUnstampable`) the check the
+ *  issuer answered (`opts.checked`, from the error) arms its stampable items
+ *  without checking again, if the draft has not changed since it ran. */
 export async function issueTransmittal(
   id: string,
   actor: TransmittalActor,
-  opts?: { acceptedUnstampable?: ItemStampCheck[]; onPhase?: (phase: IssuePhase) => void },
+  opts?: { acceptedUnstampable?: ItemStampCheck[]; checked?: DraftStampCheck | null; onPhase?: (phase: IssuePhase) => void },
 ): Promise<IssueOutcome> {
-  const draft = await getTransmittal(id);
-  if (!draft) throw new Error("That transmittal no longer exists.");
+  const draftRow = await getTransmittalRow(id);
+  const draft = draftRow ? rowToTransmittal(draftRow) : null;
+  if (!draftRow || !draft) throw new Error("That transmittal no longer exists.");
   if (draft.status !== "draft") throw new Error(`${draft.number} is already ${draft.status}.`);
   await assertItemsIssuable(draft.orgId, draft.items);
+  // TRX-15: the draft as read — its marked items are written back only under this.
+  const readAt = typeof draftRow.updated_at === "string" && draftRow.updated_at ? draftRow.updated_at : null;
   const accepted = opts?.acceptedUnstampable ?? null;
+  let checks: ItemStampCheck[] | null = null;
   if (!accepted) {
     opts?.onPhase?.("checking");
     const check = await checkTransmittalStampability(id);
     if (!check.ok) {
       console.warn(`[transmittals] the issue-time stamp check could not run for ${draft.number} — issuing without it (DEC-61 §5 still governs the portal):`, check.error);
     } else if (unstampableItems(check.items).length > 0) {
-      throw new UnstampableItemsError(unstampableItems(check.items));
+      throw new UnstampableItemsError(unstampableItems(check.items), { draftUpdatedAt: readAt, items: check.items });
+    } else {
+      checks = check.items;
     }
+  } else if (opts?.checked && readAt && opts.checked.draftUpdatedAt === readAt) {
+    checks = opts.checked.items;
   }
   opts?.onPhase?.("issuing");
 
+  const arming = readAt ? armCheckedItems(draftRow.items, checks) : null;
+  const marked = arming !== null && arming.changed;
   const now = new Date().toISOString();
-  const { data, error } = await supabase
+  const patch: Record<string, unknown> = { status: "issued", issued_at: now, updated_at: now };
+  if (marked) patch.items = arming.items;
+  let write = supabase
     .from("transmittals")
-    .update({ status: "issued", issued_at: now, updated_at: now })
+    .update(patch)
     .eq("id", id)
-    .eq("status", "draft")
+    .eq("status", "draft");
+  if (marked && readAt) write = write.eq("updated_at", readAt);
+  const { data, error } = await write
     .select("*")
     .maybeSingle();
   if (error) { if (isMissingTable(error)) throw new Error(MIGRATION_HINT); throw new Error(error.message); }
   if (!data) {
+    if (marked) {
+      // TRX-15: tell a draft edited meanwhile apart from the other refusals.
+      const latest = await getTransmittalRow(id).catch(() => null);
+      if (latest && latest.status === "draft" && latest.updated_at !== readAt) {
+        throw new Error(`${draft.number} was not issued — the draft was changed while it was being issued (saved meanwhile, here or by someone else), and an issue never overwrites a draft edit. Nothing was sent: open the draft, check it and issue again.`);
+      }
+    }
     throw new Error(`${draft.number} was not issued — it is no longer a draft, or you do not hold transmit authority ("Issue transmittals") for every document on it.`);
   }
   const t = rowToTransmittal(data as Record<string, unknown>);

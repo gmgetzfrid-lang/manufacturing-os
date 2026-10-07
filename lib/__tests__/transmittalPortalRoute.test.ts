@@ -208,6 +208,7 @@ vi.mock("@/lib/publicOrigin", () => ({ publicOrigin: () => "https://app.example.
 
 import { GET, POST } from "@/app/api/transmittal/route";
 import { applyStampToPdfDoc } from "@/lib/stamping";
+import { armCheckedItems } from "@/lib/transmittals";
 
 const TOKEN = "abcdefabcdefabcdefabcdefabcdefab";
 const DOC = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
@@ -838,6 +839,87 @@ describe("TRX-15 — a PDF that cannot be stamped: released recorded-unstamped w
     // a large PDF released unmarked is said to be (DEC-61 §5)
     expect(page).toContain('i.unmarkedReason === "oversize"');
     expect(page).toMatch(/a PDF too large to mark, or a PDF saved with security restrictions — is released as issued, without the marking/);
+  });
+});
+
+// ─── P22 (TRX-15, DEC-90 A5): the mark the issue writes arms THIS route ────
+describe("TRX-15 (P22) — an item the issue armed (armCheckedItems, then the issue trigger's merge) is refused when it cannot be stamped; an issuer-accepted item goes out unstamped as before", () => {
+  // the issue trigger (20261133) merges a draft item's own keys into the
+  // snapshot: `it || jsonb_build_object(versionId, rev, fileHash, fileSize,
+  // statusAsSent, effectiveDate)` — so the mark the issue UPDATE carries is
+  // what the portal reads.
+  const issued = (draftItems: unknown[], checks: Parameters<typeof armCheckedItems>[1]) =>
+    (armCheckedItems(draftItems, checks).items as Array<Record<string, unknown>>).map((it) => ({
+      ...it, versionId: VER, rev: "3", fileHash: sha(state.bytes), fileSize: state.bytes.length, statusAsSent: "Issued", effectiveDate: null,
+    }));
+  const draftItems = [{ documentId: DOC, number: "P-101", rev: "3", versionId: VER }];
+  beforeEach(() => {
+    state.versionRow = { file_url: `orgs/orgA/d/${DOC}.pdf`, org_id: "orgA", record_id: DOC, revision_label: "3" };
+  });
+  const stamperRefuses = () => vi.mocked(applyStampToPdfDoc).mockImplementation(async () => { throw new Error("Input document to `PDFDocument.load` is encrypted."); });
+  const restoreStamp = () => {
+    vi.mocked(applyStampToPdfDoc).mockReset();
+    vi.mocked(applyStampToPdfDoc).mockImplementation(async (_doc: unknown, opts: Record<string, unknown>) => { state.order.push("stamp"); state.stamps.push(opts); });
+  };
+
+  it("checked stampable at issue, then the stamp fails at download → 422 unstampable / stamp_failed; nothing recorded as delivered, no download counted, the refusal on the issuer's trail", async () => {
+    state.transmittal!.items = issued(draftItems, [{ documentId: DOC, number: "P-101", verdict: "stampable" }]);
+    expect((state.transmittal!.items as Array<Record<string, unknown>>)[0].stampable).toBe(true);
+    stamperRefuses();
+    try {
+      const res = await get(DOC);
+      expect(res.status).toBe(422);
+      expect(await res.json()).toEqual({ error: "unstampable", reason: "stamp_failed" });
+      expect(state.downloads).toHaveLength(0);
+      expect(state.rpcs.filter((r) => r.args.p_kind === "download")).toHaveLength(0);
+      expect(state.audits.some((a) => a.action === "TRANSMITTAL_PORTAL_DOWNLOAD")).toBe(false);
+      expect(state.audits.find((a) => a.action === "TRANSMITTAL_PORTAL_UNSTAMPABLE_REFUSED")?.details).toMatchObject({ documentId: DOC, versionId: VER, reason: "stamp_failed" });
+      // fail closed, retryable: once the file stamps again the same link delivers it, stamped
+      restoreStamp();
+      const again = await get(DOC);
+      expect(again.status).toBe(200);
+      expect(again.headers.get("x-transmittal-stamped")).toBe("1");
+      expect(state.downloads).toHaveLength(1);
+      expect(state.downloads[0].source).toBe("transmittal_portal");
+    } finally {
+      restoreStamp();
+    }
+  });
+
+  it("REGRESSION: an armed item that stamps is delivered stamped exactly as before", async () => {
+    state.transmittal!.items = issued(draftItems, [{ documentId: DOC, number: "P-101", verdict: "stampable" }]);
+    const res = await get(DOC);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-transmittal-stamped")).toBe("1");
+    expect(state.stamps).toHaveLength(1);
+    expect(state.downloads[0].source).toBe("transmittal_portal");
+  });
+
+  it("REGRESSION: the issuer-accepted (unloadable) item carries no mark and goes out UNSTAMPED, recorded so, the issuer told — as today", async () => {
+    state.transmittal!.items = issued(draftItems, [{ documentId: DOC, number: "P-101", verdict: "unloadable", detail: "encrypted (permission-restricted) PDF" }]);
+    expect((state.transmittal!.items as Array<Record<string, unknown>>)[0]).not.toHaveProperty("stampable");
+    stamperRefuses();
+    try {
+      const res = await get(DOC);
+      expect(res.status).toBe(200);
+      expect(sha(new Uint8Array(await res.arrayBuffer()))).toBe(sha(state.bytes));
+      expect(state.downloads[0].source).toBe("transmittal_portal_unstamped");
+      expect(state.audits.find((a) => a.action === "TRANSMITTAL_PORTAL_DOWNLOAD")?.details).toMatchObject({ stamped: false, unstampedReason: "stamp_failed" });
+      expect(state.notifications[0]).toMatchObject({ metadata: { documentId: DOC, reason: "stamp_failed", outcome: "released" } });
+    } finally {
+      restoreStamp();
+    }
+  });
+
+  it("REGRESSION: an item issued when the check could not run carries no mark — released unstamped under DEC-61 §5, as today", async () => {
+    state.transmittal!.items = issued(draftItems, null);
+    stamperRefuses();
+    try {
+      expect((await get(DOC)).status).toBe(200);
+      expect(state.downloads[0].source).toBe("transmittal_portal_unstamped");
+    } finally {
+      restoreStamp();
+    }
   });
 });
 

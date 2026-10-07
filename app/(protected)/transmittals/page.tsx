@@ -67,8 +67,9 @@ interface DocHit {
   versionId: string | null;
 }
 
-/** TRX-14: what the issuer does when THIS browser cannot build the portal
- *  link (a Vercel deployment host or loopback with nothing configured). */
+/** TRX-14: what the issuer does when no portal link can be built — no public
+ *  origin is configured (P22: a browser never falls back to its own address,
+ *  DEC-64 §1 as reversed by DEC-90 A6). */
 const NO_PORTAL_LINK_ADVICE = "set NEXT_PUBLIC_SITE_URL to the public site address and rebuild, then copy the portal link from this register";
 
 /** TRX-10: the issue toast says what actually happened — the email's real
@@ -82,9 +83,7 @@ function issueToast(outcome: IssueOutcome): { type: "success" | "warning"; title
   else if (t.recipientEmail?.trim()) notes.push(`the email was NOT sent (${outcome.email.reason ?? "unknown reason"}) — ${linkHere ? "copy the portal link instead" : NO_PORTAL_LINK_ADVICE}`);
   else notes.push(`no recipient email — ${linkHere ? "copy the portal link to send it" : NO_PORTAL_LINK_ADVICE}`);
   if (outcome.portal === "ready" && !linkHere) {
-    notes.push("this browser cannot build the portal link (NEXT_PUBLIC_SITE_URL unset) — the cover sheet carries none");
-  } else if (outcome.portal === "ready" && !portalOriginConfigured()) {
-    notes.push("NEXT_PUBLIC_SITE_URL is not set, so the copied link and the cover sheet use this browser's address — check it opens from outside before sending");
+    notes.push("no portal link can be built without a configured public address (NEXT_PUBLIC_SITE_URL unset) — the cover sheet carries no portal link or QR");
   }
   if (outcome.auditError) notes.push(`the audit record could not be written (${outcome.auditError})`);
   const clean = outcome.portal === "ready" && (outcome.email.sent || !t.recipientEmail?.trim()) && portalOriginConfigured() && !outcome.auditError;
@@ -399,17 +398,17 @@ export default function TransmittalsPage() {
                         disabled={!portalLinkAvailable()}
                         onClick={() => {
                           const url = transmittalPortalUrl(t.portalToken!);
-                          if (!url) { showToast({ type: "error", title: "No portal link", message: "This browser cannot build the portal link (NEXT_PUBLIC_SITE_URL unset)." }); return; }
+                          if (!url) { showToast({ type: "error", title: "No portal link", message: "No portal link without a configured public address (NEXT_PUBLIC_SITE_URL unset) — set it and rebuild." }); return; }
                           void navigator.clipboard.writeText(url);
                           showToast({
-                            type: portalOriginConfigured() ? "success" : "warning",
+                            type: "success",
                             title: "Portal link copied",
-                            message: `Send it to ${t.recipientName || t.recipientCompany || "the recipient"} — they can download the files and acknowledge receipt themselves.${portalOriginConfigured() ? "" : " NEXT_PUBLIC_SITE_URL is not set, so the link uses this browser's address — check it opens from outside before sending."}`,
+                            message: `Send it to ${t.recipientName || t.recipientCompany || "the recipient"} — they can download the files and acknowledge receipt themselves.`,
                           });
                         }}
                         title={portalLinkAvailable()
                           ? "Copy the recipient's secure portal link — no account needed on their side"
-                          : "No portal link: this browser cannot build one (NEXT_PUBLIC_SITE_URL unset) — set it and rebuild"}
+                          : "No portal link: NEXT_PUBLIC_SITE_URL is not set — set it to the public site address and rebuild"}
                         className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-bold border bg-[var(--color-accent-soft)] border-[var(--color-accent-ring)]/40 text-[var(--color-accent)] hover:brightness-95 transition-[filter] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:brightness-100"
                       >
                         <LinkIcon className="w-3.5 h-3.5" /> Portal link
@@ -691,11 +690,13 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, policy, princi
         // TRX-16: warned at issue, before anything was sent — the issuer
         // fixes the file(s) or issues anyway (DEC-61 §5: released unmarked,
         // recorded so; the acceptance goes on the TRANSMITTAL_ISSUED row).
+        // TRX-15: the check they answered still arms the files it found
+        // stampable (e.checked), so only the accepted ones go out unmarked.
         if (!(await appConfirm({ title: "Files the portal cannot mark", message: <span className="whitespace-pre-line">{e.message}</span>, confirmLabel: "Issue anyway" }))) {
           await onSaved({ kind: "issue-failed", draft, error: "Not issued — fix the file(s) the portal cannot mark, then issue again." });
           return;
         }
-        outcome = await issueTransmittal(draft.id, actor, { acceptedUnstampable: e.items, onPhase: setIssuePhase });
+        outcome = await issueTransmittal(draft.id, actor, { acceptedUnstampable: e.items, checked: e.checked, onPhase: setIssuePhase });
       }
       await onSaved({ kind: "issued", outcome });
     } catch (e) {

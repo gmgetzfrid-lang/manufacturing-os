@@ -11,10 +11,11 @@
 //     verify URL logs a warning, and a page with no QR never carries an
 //     instruction to scan one. .env.example documents the variable as
 //     required.
-//   * TRX-14 / XEDGE-5 — the transmittal portal link is built on an origin
-//     the recipient can open: the configured origin, else (browser) the
-//     page's own address unless it is a Vercel deployment host or loopback.
-//     The self-host Docker build can receive NEXT_PUBLIC_SITE_URL.
+//   * TRX-14 / XEDGE-5 — the transmittal portal link is built on the
+//     CONFIGURED origin only, in a browser and on a server alike: with
+//     nothing configured no runtime builds one, on any host (document-control
+//     P22; DEC-64 §1 as reversed by DEC-90 A6). The self-host Docker build
+//     can receive NEXT_PUBLIC_SITE_URL.
 //   * PHYS-9 substrate — StampOptions.controlState drives the footer's main
 //     line (and the default watermark); neither the main line nor the
 //     watermark can say CONTROLLED COPY, whatever watermarkText a caller
@@ -154,7 +155,7 @@ describe("PHYS-11 — publicOrigin(): configured, else production, else (browser
     }
   });
 
-  it("publicOrigin() itself refuses no host: the page origin is the browser's last answer (the recipient-host check is recipientOrigin's alone)", () => {
+  it("publicOrigin() itself refuses no host: the page origin is the browser's last answer (the recipient-host check is not publicOrigin's)", () => {
     const s = src("lib/publicOrigin.ts");
     expect(s).not.toMatch(/isVercelDeploymentHost/);
     const body = s.slice(s.indexOf("export function publicOrigin(): string {"), s.indexOf("export function isUnreachableRecipientHost"));
@@ -189,7 +190,7 @@ describe("PHYS-11 — publicOrigin(): configured, else production, else (browser
 });
 
 // ─── TRX-14 / XEDGE-5: the transmittal link, browser half ──────────────────
-describe("TRX-14 / XEDGE-5 — the portal link is built on an origin the recipient can open", () => {
+describe("TRX-14 / XEDGE-5 — the portal link is built on a configured origin only (P22: never the browser's own address)", () => {
   afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
   it("a Vercel deployment host or a loopback address is one an outside recipient cannot open", () => {
@@ -213,18 +214,41 @@ describe("TRX-14 / XEDGE-5 — the portal link is built on an origin the recipie
     expect(portalOriginConfigured()).toBe(false);
   });
 
-  it("nothing configured, OFF Vercel (self-hosted): the browser builds the link on its own address, as on the base — the server builds none and the email route refuses", () => {
+  it("P22 (DEC-90 A6): nothing configured, OFF Vercel (self-hosted) — the browser builds NO link either, on any host, exactly as the server (fail closed); publicOrigin() there is still the page", () => {
     env({});
-    browserAt("https://mfgos.plant.example");
-    expect(transmittalPortalUrl("tok")).toBe("https://mfgos.plant.example/transmittal/tok");
-    expect(portalLinkAvailable()).toBe(true);
-    expect(portalOriginConfigured()).toBe(false); // so the toasts warn that the link uses this browser's address
-    browserAt("http://mfg-server:3000");
-    expect(transmittalPortalUrl("tok")).toBe("http://mfg-server:3000/transmittal/tok");
+    for (const o of ["https://mfgos.plant.example", "http://mfg-server:3000", "http://10.0.0.12:3000"]) {
+      browserAt(o);
+      expect(recipientOrigin(), o).toBe("");
+      expect(transmittalPortalUrl("tok"), o).toBeNull();
+      expect(portalLinkAvailable(), o).toBe(false);
+      expect(portalOriginConfigured(), o).toBe(false);
+      // the other browser callers keep an absolute origin (PHYS-11): only the outside-party link refuses the page host
+      expect(publicOrigin(), o).toBe(o);
+    }
     vi.unstubAllGlobals();
     expect(typeof window).toBe("undefined");
+    expect(recipientOrigin()).toBe("");
     expect(transmittalPortalUrl("tok")).toBeNull();
     expect(portalLinkAvailable()).toBe(false);
+  });
+
+  it("P22: recipientOrigin() is the configured origin and nothing else — the browser and the server agree whenever one is configured", () => {
+    const s = src("lib/publicOrigin.ts");
+    const body = s.slice(s.indexOf("export function recipientOrigin(): string {"));
+    expect(body).toMatch(/^export function recipientOrigin\(\): string \{\n  return configuredPublicOrigin\(\);\n\}/);
+    expect(body).not.toMatch(/window|isUnreachableRecipientHost/);
+    for (const vars of [{ NEXT_PUBLIC_SITE_URL: "https://mfg.yourplant.com" }, { NEXT_PUBLIC_VERCEL_PROJECT_PRODUCTION_URL: "app.example.com", VERCEL_PROJECT_PRODUCTION_URL: "app.example.com" }]) {
+      env(vars);
+      const server = recipientOrigin();
+      expect(server).toMatch(/^https:\/\//);
+      for (const o of ["https://mfgos.plant.example", "https://mfgos-git-feature-team.vercel.app", "http://localhost:3000"]) {
+        browserAt(o);
+        expect(recipientOrigin(), o).toBe(server);
+      }
+      vi.unstubAllGlobals();
+    }
+    // the share download still judges the request host by isUnreachableRecipientHost (its own rule, unchanged)
+    expect(src("app/api/share/file/route.ts")).toContain("return isUnreachableRecipientHost(url.hostname) ? \"\" : url.origin;");
   });
 
   it("exposure off: the server can build the production link while a browser on a preview host builds none", () => {
@@ -258,7 +282,7 @@ describe("TRX-14 / XEDGE-5 — the portal link is built on an origin the recipie
     }
   });
 
-  it("lib/transmittals builds the link on recipientOrigin; the toasts never advise copying a link this browser cannot build, and the button is disabled with the variable named", () => {
+  it("lib/transmittals builds the link on recipientOrigin; the toasts never advise copying a link that cannot be built, and the button is disabled with the variable named", () => {
     const t = src("lib/transmittals.ts");
     expect(t).toContain('import { configuredPublicOrigin, recipientOrigin } from "@/lib/publicOrigin";');
     expect(t).toContain("try { origin = recipientOrigin(); } catch { origin = \"\"; }");
@@ -271,15 +295,18 @@ describe("TRX-14 / XEDGE-5 — the portal link is built on an origin the recipie
     expect(page).toContain('`no recipient email — ${linkHere ? "copy the portal link to send it" : NO_PORTAL_LINK_ADVICE}`');
     expect(page).not.toContain('notes.push("no recipient email — copy the portal link to send it");');
     expect(page).not.toContain("— copy the portal link instead`);");
-    expect(page).toMatch(/if \(outcome\.portal === "ready" && !linkHere\) \{\s*\n\s*notes\.push\("this browser cannot build the portal link \(NEXT_PUBLIC_SITE_URL unset\) — the cover sheet carries none"\);/);
-    // A link built on this browser's address (self-hosted, nothing configured) says so.
-    expect(page).toContain('} else if (outcome.portal === "ready" && !portalOriginConfigured()) {');
-    expect(page).toContain("NEXT_PUBLIC_SITE_URL is not set, so the copied link and the cover sheet use this browser's address — check it opens from outside before sending");
+    expect(page).toMatch(/if \(outcome\.portal === "ready" && !linkHere\) \{\s*\n\s*notes\.push\("no portal link can be built without a configured public address \(NEXT_PUBLIC_SITE_URL unset\) — the cover sheet carries no portal link or QR"\);\s*\n\s*\}/);
+    // P22: no link is ever built on this browser's address, so no toast says one was.
+    expect(page).not.toContain('} else if (outcome.portal === "ready" && !portalOriginConfigured()) {');
+    expect(page).not.toMatch(/use[s]? this browser's address/);
+    expect(page).not.toContain("this browser cannot build");
     expect(page).not.toContain("if this is a preview deploy the recipient cannot open it");
     // The Portal link button is not offered as an action that always fails.
     expect(page).toContain("disabled={!portalLinkAvailable()}");
-    expect(page).toContain('"No portal link: this browser cannot build one (NEXT_PUBLIC_SITE_URL unset) — set it and rebuild"');
-    expect(page).toContain('message: "This browser cannot build the portal link (NEXT_PUBLIC_SITE_URL unset)."');
+    expect(page).toContain('"No portal link: NEXT_PUBLIC_SITE_URL is not set — set it to the public site address and rebuild"');
+    expect(page).toContain('message: "No portal link without a configured public address (NEXT_PUBLIC_SITE_URL unset) — set it and rebuild."');
+    // a copied link is always one built on the configured origin
+    expect(page).toMatch(/type: "success",\s*\n\s*title: "Portal link copied",/);
     expect(page).not.toContain("This deployment has no public site URL configured.");
   });
 

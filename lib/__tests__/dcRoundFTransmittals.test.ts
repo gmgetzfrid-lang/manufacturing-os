@@ -74,8 +74,9 @@ import {
   itemIssueBlocker, isTransmittalIssuable, legalHoldNotice, mayTransmit, portalLinkState, portalRowRefusal,
   portalKeyAllowed, hashPrefix, itemAsSentLabel, receiptEvidence, renderTransmittalSheet, rowToTransmittal,
   transmittalPortalUrl, portalOriginConfigured, TRANSMIT_CAPABILITY, mayDeleteDraft, fileSizeLabel,
-  DRAFT_DELETE_GUARD_ROLES, assertItemsIssuable, type Transmittal,
+  DRAFT_DELETE_GUARD_ROLES, assertItemsIssuable, portalLinkAvailable, openTransmittalSheet, type Transmittal,
 } from "@/lib/transmittals";
+import { recipientOrigin } from "@/lib/publicOrigin";
 import { CAPABILITY_DEFS } from "@/lib/capabilityPolicy";
 
 const ORG = "org-a";
@@ -488,6 +489,57 @@ describe("TRX-14 / XEDGE-5 — the portal URL is built on the public origin, nev
   });
   it("lib/transmittals no longer reads window.location.origin itself", () => {
     expect(src("lib/transmittals.ts")).not.toMatch(/window\.location\.origin/);
+  });
+  it("P22 (DEC-90 A6): in a BROWSER with nothing configured there is no link either — on a self-hosted address too — so the cover sheet prints no portal block or QR and the copy refuses", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "");
+    vi.stubEnv("VERCEL_PROJECT_PRODUCTION_URL", "");
+    vi.stubEnv("NEXT_PUBLIC_VERCEL_PROJECT_PRODUCTION_URL", "");
+    const written: string[] = [];
+    const browserAt = (origin: string) => vi.stubGlobal("window", {
+      location: { origin, hostname: new URL(origin).hostname },
+      open: () => ({ document: { open: () => undefined, write: (h: string) => { written.push(h); }, close: () => undefined } }),
+    });
+    const live = rowToTransmittal({ id: "t1", org_id: ORG, seq: 1, number: "TR-0001", status: "issued", issued_at: "2026-10-01T00:00:00Z", portal_token: "tok", portal_expires_at: "2099-01-01T00:00:00Z", recipient_name: "Acme", items: [{ documentId: "d1", number: "P-1", rev: "A" }] });
+    try {
+      for (const origin of ["https://mfgos.plant.example", "http://mfg-server:3000", "https://mfgos-git-x.vercel.app", "http://localhost:3000"]) {
+        browserAt(origin);
+        expect(recipientOrigin(), origin).toBe("");
+        expect(transmittalPortalUrl("tok"), origin).toBeNull();
+        expect(portalLinkAvailable(), origin).toBe(false);
+        // the cover sheet a browser prints for a LIVE link carries no portal link and no QR
+        written.length = 0;
+        await openTransmittalSheet(live);
+        expect(written, origin).toHaveLength(1);
+        expect(written[0], origin).toContain("TR-0001");
+        expect(written[0], origin).not.toContain("/transmittal/tok");
+        expect(written[0], origin).not.toContain(origin);
+        expect(written[0], origin).not.toMatch(/data:image\/png;base64/);
+      }
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+  it("REGRESSION (P22): with NEXT_PUBLIC_SITE_URL set, the browser builds exactly the link it built before, on any host — and the sheet prints it with its QR", async () => {
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://mfg.yourplant.com");
+    const written: string[] = [];
+    const live = rowToTransmittal({ id: "t1", org_id: ORG, seq: 1, number: "TR-0001", status: "issued", issued_at: "2026-10-01T00:00:00Z", portal_token: "tok", portal_expires_at: "2099-01-01T00:00:00Z", recipient_name: "Acme", items: [{ documentId: "d1", number: "P-1", rev: "A" }] });
+    try {
+      for (const origin of ["https://mfgos.plant.example", "https://mfgos-git-x.vercel.app", "http://localhost:3000"]) {
+        vi.stubGlobal("window", {
+          location: { origin, hostname: new URL(origin).hostname },
+          open: () => ({ document: { open: () => undefined, write: (h: string) => { written.push(h); }, close: () => undefined } }),
+        });
+        expect(transmittalPortalUrl("tok"), origin).toBe("https://mfg.yourplant.com/transmittal/tok");
+        expect(portalLinkAvailable(), origin).toBe(true);
+        expect(portalOriginConfigured(), origin).toBe(true);
+        written.length = 0;
+        await openTransmittalSheet(live);
+        expect(written[0], origin).toContain("https://mfg.yourplant.com/transmittal/tok");
+        expect(written[0], origin).toMatch(/data:image\/png;base64/);
+      }
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 
