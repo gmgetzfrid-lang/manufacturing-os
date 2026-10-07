@@ -257,6 +257,9 @@ const runCron = async () => {
 };
 const rows = (t: string) => db.tables[t] ?? [];
 const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
+/** DIGEST_CLOCK_OVERLAP_MS (the integrator's fix pass): a run that visited every org records openSince
+ *  this much before its asOf, and each window that starts where an earlier one stopped starts this much before it. */
+const MARGIN = 5 * 60_000;
 
 /** Queue the drain's answers, one per send-queued call, in order (then: empty). */
 let drainAnswers: Array<{ status?: number; body?: unknown }> = [];
@@ -362,8 +365,9 @@ describe("DELIV-11 — the drain loop reads `processed`; a failed or unconfigure
 // ═════════════════════════════════════════════════════════════════════════════
 const member = (org: string, uid: string, status = "active", email: string | null = `${uid.slice(-4)}@${org}.io`) =>
   ({ org_id: org, uid, status, email, role: "Engineer", roles: null });
+// notifications.id is a uuid (20260723): the digest records and filters ids only in that shape
 const notice = (org: string, uid: string, kind: string, title: string, created: string, over: Row = {}) =>
-  ({ id: `n-${++db.seq}`, org_id: org, user_id: uid, kind, title, link: "/documents/l?doc=d", created_at: created, read_at: null, metadata: null, ...over });
+  ({ id: `00000000-0000-4000-a000-${String(++db.seq).padStart(12, "0")}`, org_id: org, user_id: uid, kind, title, link: "/documents/l?doc=d", created_at: created, read_at: null, metadata: null, ...over });
 const digests = () => rows("email_notifications").filter((e) => e.event_type === "compliance_digest");
 const digestFor = (uid: string) => digests().find((e) => e.to_user_id === uid);
 /** The calls of the query executing now (read from db.onExec; sequential reads only). */
@@ -526,8 +530,8 @@ describe("NEDGE-17 (fix pass) — the digest's cost follows the pending items, a
       const d = digestFor(U(1))!;
       expect(String(d.body_text)).toContain("Due on day 1");
       expect(d.metadata).toMatchObject({ since: "2026-09-30T02:04:55.000Z", through: "2026-10-02T04:00:00.000Z" });
-      // a complete run closes the window and leaves no cursor
-      expect(rows("platform_settings")[0].value).toEqual({ openSince: "2026-10-02T04:00:00.000Z", orgs: {}, nextOrg: null });
+      // a complete run closes the window (to its asOf less the clock margin) and leaves no cursor
+      expect(rows("platform_settings")[0].value).toEqual({ openSince: "2026-10-02T03:55:00.000Z", orgs: {}, nextOrg: null });
     } finally {
       vi.useRealTimers();
     }
@@ -535,7 +539,10 @@ describe("NEDGE-17 (fix pass) — the digest's cost follows the pending items, a
 
   it("a deadline reached mid-run stops between rounds, names how many recipients were not reached and which org was not visited, and records where it stopped", async () => {
     db.tables.org_members = Array.from({ length: 20 }, (_, i) => member(ORG_A, U(i + 1)));
-    db.tables.notifications = Array.from({ length: 20 }, (_, i) => notice(ORG_A, U(i + 1), "review_due", `Due ${i}`, minutesAgo(10)));
+    // one timestamp for every row (computed once: on a loaded machine twenty calls can cross a millisecond,
+    // and the owed point below is read from the first row)
+    const tenMinutesAgo = minutesAgo(10);
+    db.tables.notifications = Array.from({ length: 20 }, (_, i) => notice(ORG_A, U(i + 1), "review_due", `Due ${i}`, tenMinutesAgo));
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date());
     let lists = 0;
@@ -598,7 +605,7 @@ describe("NEDGE-17 (fix pass) — the digest's cost follows the pending items, a
       }
       // still owed after run 3: nobody's item — but U5–U16 were not reached by it, so org A's window stays open
       expect(rows("platform_settings")[0].value).toEqual({
-        openSince: new Date(T + 2 * 86_400_000).toISOString(),
+        openSince: new Date(T + 2 * 86_400_000 - MARGIN).toISOString(),
         orgs: { [ORG_A]: { since: new Date(T - 10 * 60_000 - 1).toISOString(), after: U(4), unfinished: true } },
         nextOrg: null,
       });
@@ -608,7 +615,7 @@ describe("NEDGE-17 (fix pass) — the digest's cost follows the pending items, a
       const r4 = await runCron();
       expect(r4.complianceEmails).toBe(0);
       expect(digests()).toHaveLength(N);
-      expect(rows("platform_settings")[0].value).toEqual({ openSince: new Date(T + 3 * 86_400_000).toISOString(), orgs: {}, nextOrg: null });
+      expect(rows("platform_settings")[0].value).toEqual({ openSince: new Date(T + 3 * 86_400_000 - MARGIN).toISOString(), orgs: {}, nextOrg: null });
     } finally {
       vi.useRealTimers();
     }
@@ -627,9 +634,12 @@ describe("NEDGE-17 (fix pass) — the digest's cost follows the pending items, a
       vi.setSystemTime(new Date(T + 10 * 60_000));
       await runCron();
       expect(digests()).toHaveLength(1);
+      // the integrator's fix pass: run 2's search starts MARGIN before run 1's asOf, so it sees Item A (still
+      // unread) as U1's oldest pending item, and what the dedupe holds back is owed from there; the first
+      // digest's tail (Item A's id) keeps it out of the next one
       expect(rows("platform_settings")[0].value).toEqual({
-        openSince: new Date(T + 10 * 60_000).toISOString(),
-        orgs: { [ORG_A]: { since: new Date(T + 5 * 60_000 - 1).toISOString(), after: null, unfinished: false } },
+        openSince: new Date(T + 10 * 60_000 - MARGIN).toISOString(),
+        orgs: { [ORG_A]: { since: new Date(T - 60_000 - 1).toISOString(), after: null, unfinished: false } },
         nextOrg: null,
       });
       vi.setSystemTime(new Date(T + 86_400_000));
@@ -649,11 +659,12 @@ describe("NEDGE-17 (fix pass) — the digest's cost follows the pending items, a
     vi.useFakeTimers({ toFake: ["Date"] });
     const T = Date.parse("2026-10-05T03:00:00.000Z");
     vi.setSystemTime(new Date(T));
-    db.tables.email_notifications = [{ id: "old", org_id: ORG_A, to_user_id: U(1), event_type: "compliance_digest", status: "sent", created_at: new Date(T - 2 * 86_400_000).toISOString(), metadata: { day: "2026-10-03", through: new Date(T - 2 * 86_400_000).toISOString() } }];
     db.tables.notifications = [
       notice(ORG_A, U(1), "review_due", "Already listed", new Date(T - 2 * 86_400_000 - 60_000).toISOString()),
       notice(ORG_A, U(1), "review_due", "Thirty hours old", new Date(T - 30 * 3_600_000).toISOString()),
     ];
+    // the last digest, as this code writes it: "Already listed" fell in its last five minutes, so its id is the tail
+    db.tables.email_notifications = [{ id: "old", org_id: ORG_A, to_user_id: U(1), event_type: "compliance_digest", status: "sent", created_at: new Date(T - 2 * 86_400_000).toISOString(), metadata: { day: "2026-10-03", through: new Date(T - 2 * 86_400_000).toISOString(), tail: [db.tables.notifications[0].id] } }];
     db.readError.platform_settings = { message: "boom" };
     try {
       const r = await runCron();
@@ -748,7 +759,7 @@ describe("NEDGE-17 (fix pass 3) — org by org: one org's volume spends its own 
       expect(r.errors).toContain(`compliance-digest: ${ORG_A}: its share of the digest's time ran out — 7 of the 7 recipient(s) found were offered their digest, and its search for more did not finish; its next visit starts after the last one reached and searches back to ${at(T - 25 * 3_600_000)}, so nothing is lost within 7 days`);
       expect(r.errors.some((e) => e.startsWith("compliance-digest: stopped at its deadline"))).toBe(false);
       expect(rows("platform_settings")[0].value).toEqual({
-        openSince: at(T),
+        openSince: at(T - MARGIN),
         orgs: { [ORG_A]: { since: at(T - 25 * 3_600_000), after: U(7), unfinished: true } },
         nextOrg: null,
       });
@@ -768,7 +779,7 @@ describe("NEDGE-17 (fix pass 3) — org by org: one org's volume spends its own 
         expect(mine[0].subject).toBe("Compliance items need you (50)");
       }
       expect(digests().filter((e) => e.to_user_id === BDC)).toHaveLength(1);
-      expect(rows("platform_settings")[0].value).toEqual({ openSince: at(T + 86_400_000), orgs: {}, nextOrg: null });
+      expect(rows("platform_settings")[0].value).toEqual({ openSince: at(T + 86_400_000 - MARGIN), orgs: {}, nextOrg: null });
     } finally {
       vi.useRealTimers();
     }
@@ -803,7 +814,7 @@ describe("NEDGE-17 (fix pass 3) — org by org: one org's volume spends its own 
       expect(r2.complianceEmails).toBe(1);
       expect(String(digestFor(B2)!.body_text)).toContain("Due B2");
       expect(digests().filter((e) => e.to_user_id === BDC)).toHaveLength(1);
-      expect(rows("platform_settings")[0].value).toEqual({ openSince: at(T + 86_400_000), orgs: {}, nextOrg: null });
+      expect(rows("platform_settings")[0].value).toEqual({ openSince: at(T + 86_400_000 - MARGIN), orgs: {}, nextOrg: null });
     } finally {
       vi.useRealTimers();
     }
@@ -840,7 +851,7 @@ describe("NEDGE-17 (fix pass 3) — org by org: one org's volume spends its own 
       const d = digestFor(BDC)!;
       for (const t of linesOfB) expect(String(d.body_text)).toContain(t);
       expect(digests().filter((e) => e.to_user_id === U(1))).toHaveLength(1);
-      expect(rows("platform_settings")[0].value).toEqual({ openSince: at(T + 86_400_000), orgs: {}, nextOrg: null });
+      expect(rows("platform_settings")[0].value).toEqual({ openSince: at(T + 86_400_000 - MARGIN), orgs: {}, nextOrg: null });
     } finally {
       vi.useRealTimers();
     }
@@ -865,6 +876,266 @@ describe("NEDGE-17 (fix pass 3) — org by org: one org's volume spends its own 
     expect(fn).not.toMatch(/\.gt\("id", afterId\)/);
     expect(fn).toContain("const share = Math.max(DIGEST_ORG_FLOOR_MS, (opts.deadlineAt - t0) / (order.length - visited));");
     expect(route).toContain("const DIGEST_ORG_FLOOR_MS = 5_000;");
+  });
+});
+
+describe("NEDGE-17 (the integrator's fix pass) — the clock margin, and a finished org's own window when a run leaves orgs unvisited", () => {
+  const T = Date.parse("2026-10-01T03:00:00.000Z");
+  const DAY = 86_400_000;
+  const at = (ms: number) => new Date(ms).toISOString();
+  /** The database's clock runs this far behind this server's. */
+  const DB_LAG = 3_000;
+  const meta = (r: Row) => r.metadata as Record<string, unknown>;
+  /** Each org's recipient search since db.calls was last cleared (its pages to the empty one counted
+   *  once): the org, and where its window starts. */
+  const searchStarts = () => {
+    const out: Array<{ org: unknown; from: unknown }> = [];
+    let org: unknown = null, from: unknown = null;
+    for (const c of db.calls) {
+      if (c.table !== "notifications") continue;
+      if (c.op === "select") { org = null; from = null; }
+      if (c.op === "eq" && c.args[0] === "org_id") org = c.args[1];
+      if (c.op === "gt" && c.args[0] === "created_at") from = c.args[1];
+      if (c.op === "order" && c.args[0] === "user_id" && (out.at(-1)?.org !== org || out.at(-1)?.from !== from)) out.push({ org, from });
+    }
+    return out;
+  };
+
+  it("CLOCK: this server's clock 3 s ahead of the database's — a row the database stamps before asOf but writes just after its recipient's read is listed by the next run, and nothing the first digest listed is listed again", async () => {
+    db.tables.org_members = [member(ORG_A, U(1))];
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(T));
+    db.tables.notifications = [
+      notice(ORG_A, U(1), "review_due", "An hour old", at(T - 3_600_000)),
+      // tonight's scan, a moment before the digest (stamped by the database's clock)
+      notice(ORG_A, U(1), "ack_overdue", "Written by tonight's scan", at(T - DB_LAG - 2_000)),
+    ];
+    // just after U1's list is read (their digest's insert comes next), a colleague's request lands: the
+    // database stamps it with its own now(), 3 s behind this server's — inside the window that read covered
+    const late = { row: null as Row | null };
+    db.onExec = (table, op) => {
+      if (!late.row && table === "email_notifications" && op === "insert") {
+        late.row = notice(ORG_A, U(1), "ack_requested", "Written just after the read", at(Date.now() - DB_LAG));
+        db.tables.notifications.push(late.row);
+      }
+    };
+    try {
+      await runCron();
+      const first = digestFor(U(1))!;
+      expect(first.subject).toBe("Compliance items need you (2)");
+      expect(String(first.body_text)).not.toContain("Written just after the read");
+      expect(String(late.row!.created_at) <= String(meta(first).through)).toBe(true);
+      // the first digest records what it counted in its last five minutes: tonight's scan row
+      expect(meta(first).tail).toEqual([db.tables.notifications[1].id]);
+
+      db.onExec = null;
+      vi.setSystemTime(new Date(T + DAY));
+      const r2 = await runCron();
+      expect(r2.complianceEmails).toBe(1);
+      const second = digests()[1];
+      expect(second.subject).toBe("Compliance items need you (1)");
+      expect(String(second.body_text)).toContain("Written just after the read");
+      expect(String(second.body_text)).not.toContain("Written by tonight's scan");
+      expect(String(second.body_text)).not.toContain("An hour old");
+      // it names the window from where the first one stopped, as before
+      expect(meta(second)).toMatchObject({ since: at(T), through: at(T + DAY) });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("REGRESSION: an ordinary sequence lists each unread row once — the second digest re-reads the first one's last five minutes and leaves out what it counted there; a third run lists nothing", async () => {
+    db.tables.org_members = [member(ORG_A, U(1))];
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(T));
+    db.tables.notifications = [
+      notice(ORG_A, U(1), "review_due", "Item A (two hours old)", at(T - 2 * 3_600_000)),
+      notice(ORG_A, U(1), "ack_overdue", "Item B (tonight's scan)", at(T - 2 * 60_000)),
+      notice(ORG_A, U(1), "review_overdue", "Item C (tonight's scan)", at(T - 30_000)),
+    ];
+    const [, B, C] = db.tables.notifications;
+    try {
+      await runCron();
+      expect(digests()).toHaveLength(1);
+      expect(digests()[0].subject).toBe("Compliance items need you (3)");
+      expect(meta(digests()[0]).tail).toEqual([C.id, B.id]);
+      expect(rows("platform_settings")[0].value).toEqual({ openSince: at(T - MARGIN), orgs: {}, nextOrg: null });
+
+      db.tables.notifications.push(notice(ORG_A, U(1), "review_due", "Item D (the next afternoon)", at(T + 12 * 3_600_000)));
+      db.calls = [];
+      vi.setSystemTime(new Date(T + DAY));
+      await runCron();
+      expect(digests()).toHaveLength(2);
+      const second = digests()[1];
+      expect(second.subject).toBe("Compliance items need you (1)");
+      expect(String(second.body_text)).toContain("Item D");
+      for (const t of ["Item A", "Item B", "Item C"]) expect(String(second.body_text)).not.toContain(t);
+      expect(meta(second)).toMatchObject({ since: at(T), through: at(T + DAY) });
+      expect(meta(second).tail).toBeUndefined();   // nothing it counted fell in its own last five minutes
+      // the search and the list read reach five minutes further back; the list leaves out the first digest's tail
+      expect(searchStarts()).toEqual([{ org: ORG_A, from: at(T - MARGIN) }, { org: ORG_B, from: at(T - MARGIN) }]);
+      // every read of notifications this run (both orgs' search pages and U1's list) starts there
+      const readsFrom = db.calls.filter((c) => c.table === "notifications" && c.op === "gt" && c.args[0] === "created_at").map((c) => c.args[1]);
+      expect(readsFrom).toHaveLength(4);
+      expect([...new Set(readsFrom)]).toEqual([at(T - MARGIN)]);
+      expect(db.calls.filter((c) => c.table === "notifications" && c.op === "not" && c.args[0] === "id").map((c) => c.args.slice(1)))
+        .toEqual([["in", `(${C.id},${B.id})`]]);
+
+      vi.setSystemTime(new Date(T + 2 * DAY));
+      const r3 = await runCron();
+      expect(r3.complianceEmails).toBe(0);
+      expect(digests()).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the tail's bound: a digest that counted 102 rows in its last five minutes records the newest 100 — the other two are listed once more, by the next digest only", async () => {
+    db.tables.org_members = [member(ORG_A, U(1))];
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(T));
+    db.tables.notifications = Array.from({ length: 102 }, (_, i) => notice(ORG_A, U(1), "ack_requested", `Request #${i}.`, at(T - 60_000 - i * 1_000)));
+    try {
+      await runCron();
+      expect(digests()[0].subject).toBe("Compliance items need you (102)");
+      expect(meta(digests()[0]).tail).toEqual(db.tables.notifications.slice(0, 100).map((n) => n.id));
+      vi.setSystemTime(new Date(T + DAY));
+      await runCron();
+      const second = digests()[1];
+      expect(second.subject).toBe("Compliance items need you (2)");
+      expect(String(second.body_text)).toContain("Request #100.");
+      expect(String(second.body_text)).toContain("Request #101.");
+      vi.setSystemTime(new Date(T + 2 * DAY));
+      const r3 = await runCron();
+      expect(r3.complianceEmails).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a last digest with no tail (queued before this pass) or a tail that is not uuids (a forged row): its list takes no id filter and never fails — what that digest counted in its last five minutes may be listed once more", async () => {
+    db.tables.org_members = [member(ORG_A, U(1)), member(ORG_A, U(2))];
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(T + DAY));
+    db.tables.platform_settings = [{ key: "compliance_digest", value: { openSince: at(T - MARGIN), orgs: {}, nextOrg: null } }];
+    db.tables.notifications = [
+      notice(ORG_A, U(1), "review_due", "Counted by the older digest", at(T - 60_000)),
+      notice(ORG_A, U(2), "review_due", "Counted by the forged one", at(T - 60_000)),
+    ];
+    db.tables.email_notifications = [
+      { id: "pre", org_id: ORG_A, to_user_id: U(1), event_type: "compliance_digest", status: "sent", created_at: at(T), metadata: { day: "2026-10-01", count: 1 } },
+      { id: "forged", org_id: ORG_A, to_user_id: U(2), event_type: "compliance_digest", status: "sent", created_at: at(T), metadata: { day: "2026-10-01", through: at(T), tail: ["x),or(id.not.is.null", 42] } },
+    ];
+    try {
+      const r = await runCron();
+      expect(r.errors.filter((e) => e.startsWith("compliance-digest"))).toEqual([]);
+      expect(r.complianceEmails).toBe(2);
+      const newFor = (uid: string) => digests().find((e) => e.to_user_id === uid && e.id !== "pre" && e.id !== "forged")!;
+      expect(String(newFor(U(1)).body_text)).toContain("Counted by the older digest");
+      expect(String(newFor(U(2)).body_text)).toContain("Counted by the forged one");
+      expect(db.calls.some((c) => c.table === "notifications" && c.op === "not" && c.args[0] === "id")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ISSUE 2: two runs that each leave one org unvisited — an org a run finished keeps its own window (its next search starts at that run's asOf less the margin, not at the older openSince), no loss line names it once openSince is past the lookback, each item is listed once, and a run that visits every org records the state as before", async () => {
+    const ORG_C = "oC";
+    db.tables.orgs.push({ id: ORG_C, name: "Org C" });
+    db.tables.org_members = [member(ORG_A, U(1)), member(ORG_B, U(2)), member(ORG_C, U(3))];
+    vi.useFakeTimers({ toFake: ["Date"] });
+    // runs that kept leaving an org unvisited have held openSince 5.5 days back
+    db.tables.platform_settings = [{ key: "compliance_digest", value: { openSince: at(T - 5.5 * DAY), orgs: {}, nextOrg: null } }];
+    db.tables.notifications = [];
+    for (const [day, uids] of [[0, [1, 2, 3]], [1, [1, 2, 3]], [2, [1, 2, 3]]] as Array<[number, number[]]>) {
+      for (const u of uids) db.tables.notifications.push(notice([ORG_A, ORG_B, ORG_C][u - 1], U(u), "review_due", `Day ${day + 1} item for U${u}`, at(T + day * DAY - 3_600_000)));
+    }
+    /** The digest's time runs out once `uid`'s digest is queued: the org after it is not visited. */
+    const runOutAfter = (uid: string) => {
+      let jumped = false;
+      db.onExec = (table, op) => {
+        if (jumped || table !== "email_notifications" || op !== "insert") return;
+        if (queryNow().some((c) => c.op === "insert" && (c.args[0] as Row).to_user_id === uid)) { jumped = true; vi.setSystemTime(new Date(Date.now() + 300_000)); }
+      };
+    };
+    try {
+      // run 1: oA and oB are visited and finish; oC is not
+      vi.setSystemTime(new Date(T));
+      runOutAfter(U(2));
+      const r1 = await runCron();
+      expect(r1.complianceEmails).toBe(2);
+      expect(r1.errors).toContain("compliance-digest: stopped at its deadline — 1 of 3 org(s) were not visited this run; the next run starts with them, and what they are owed stays open, so nothing is lost within 7 days");
+      expect(rows("platform_settings")[0].value).toEqual({
+        openSince: at(T - 5.5 * DAY),
+        orgs: { [ORG_A]: { since: at(T - MARGIN), after: null, unfinished: false }, [ORG_B]: { since: at(T - MARGIN), after: null, unfinished: false } },
+        nextOrg: ORG_C,
+      });
+
+      // run 2: starts with oC; oC and oA are visited and finish; oB is not
+      vi.setSystemTime(new Date(T + DAY));
+      runOutAfter(U(1));
+      db.calls = [];
+      const r2 = await runCron();
+      expect(r2.complianceEmails).toBe(2);
+      expect(searchStarts()).toEqual([{ org: ORG_C, from: at(T - 5.5 * DAY) }, { org: ORG_A, from: at(T - MARGIN) }]);
+      expect(rows("platform_settings")[0].value).toEqual({
+        openSince: at(T - 5.5 * DAY),
+        orgs: {
+          [ORG_C]: { since: at(T + DAY - MARGIN), after: null, unfinished: false },
+          [ORG_A]: { since: at(T + DAY - MARGIN), after: null, unfinished: false },
+          [ORG_B]: { since: at(T - MARGIN), after: null, unfinished: false },
+        },
+        nextOrg: ORG_B,
+      });
+
+      // run 3: every org is visited; openSince (5.5 days back) is now past the lookback, but no org searches from it
+      db.onExec = null;
+      db.calls = [];
+      vi.setSystemTime(new Date(T + 2 * DAY));
+      const r3 = await runCron();
+      expect(r3.complianceEmails).toBe(3);
+      expect(searchStarts()).toEqual([
+        { org: ORG_B, from: at(T - MARGIN) },              // run 1's asOf less the margin
+        { org: ORG_C, from: at(T + DAY - MARGIN) },
+        { org: ORG_A, from: at(T + DAY - MARGIN) },
+      ]);
+      expect(r3.errors.filter((e) => e.startsWith("compliance-digest"))).toEqual([]);
+      // as before the fix: a run that visited every org closes the window and keeps no entry for a served org
+      expect(rows("platform_settings")[0].value).toEqual({ openSince: at(T + 2 * DAY - MARGIN), orgs: {}, nextOrg: null });
+      for (const n of db.tables.notifications) {
+        const listedIn = digests().filter((d) => d.to_user_id === n.user_id && String(d.body_text).includes(String(n.title)));
+        expect(listedIn, String(n.title)).toHaveLength(1);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("REGRESSION: an org that does search from an openSince past the lookback is still named, and only it — its items older than the lookback are no longer listed", async () => {
+    db.tables.org_members = [member(ORG_A, U(1)), member(ORG_B, U(2))];
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(T));
+    db.tables.platform_settings = [{ key: "compliance_digest", value: { openSince: at(T - 8 * DAY), orgs: { [ORG_A]: { since: at(T - DAY), after: null, unfinished: false } }, nextOrg: null } }];
+    db.tables.notifications = [notice(ORG_A, U(1), "review_due", "Due A", at(T - 3_600_000)), notice(ORG_B, U(2), "review_due", "Due B", at(T - 3_600_000))];
+    try {
+      const r = await runCron();
+      expect(r.complianceEmails).toBe(2);
+      expect(r.errors.filter((e) => e.includes("reached back past"))).toEqual([
+        `compliance-digest: the window still owed to 1 org(s) reached back past 7 days (${ORG_B}) — their unread items older than ${at(T - 7 * DAY)} that no run listed are no longer listed`,
+      ]);
+      expect([...new Set(searchOrder())]).toEqual([ORG_A, ORG_B]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("by source: the margin is five minutes and every window that starts where an earlier one stopped starts that much before it; the list leaves out the last digest's tail", () => {
+    const route = src("app/api/cron/maintenance/route.ts");
+    expect(route).toContain("const DIGEST_CLOCK_OVERLAP_MS = 5 * 60_000;");
+    expect(route).toContain("const DIGEST_TAIL_IDS = 100;");
+    expect(route).toContain("readFromMs = Math.max(windowMs, through - DIGEST_CLOCK_OVERLAP_MS);");
+    expect(route).toContain('if (tail.length > 0) listQ = listQ.not("id", "in", `(${tail.join(",")})`);');
+    expect(route).toContain("const nextOpenMs = notVisited.length === 0 ? now - DIGEST_CLOCK_OVERLAP_MS : openSinceMs;");
   });
 });
 

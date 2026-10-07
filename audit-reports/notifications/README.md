@@ -29,20 +29,20 @@ stacking, and what a real OS notification would attach to.
 
 ## Findings
 
-**114 findings** — 2 CRITICAL, 17 HIGH, 76 MEDIUM, 19 LOW — plus **7 gap specs**, all buildable.
+**116 findings** — 2 CRITICAL, 17 HIGH, 77 MEDIUM, 20 LOW — plus **7 gap specs**, all buildable.
 
 > **One finding here carries `Status: REFUTED`** — `NEDGE-1`. An independent pass disproved it; the reason is on the finding. Kept rather than deleted (`DEC-41`). **Do not queue it as work.**
 
 | # | Report | Findings | Focus |
 |---|---|---|---|
 | 01 | [Producer census](./01-producer-census.md) | 14 | Which subsystems notify, which are silent, which vocabulary is dead |
-| 02 | [Delivery integrity](./02-delivery-integrity.md) | 15 | What gets dropped between an event and a person, and whether anything notices — `DELIV-15` opened by the integrator at the N1 merge, 2026-10-01 |
+| 02 | [Delivery integrity](./02-delivery-integrity.md) | 16 | What gets dropped between an event and a person, and whether anything notices — `DELIV-15` opened by the integrator at the N1 merge, 2026-10-01; `DELIV-16` (MEDIUM) by notifications N6, 2026-10-07 |
 | 03 | [Taxonomy](./03-taxonomy.md) | 16 | Alerts vs notifications — every signalling surface, and where they contradict — `TAX-15` and `TAX-16` opened by N7 CORNER, 2026-10-01 |
 | 04 | [**The cold trail**](./04-cold-trail.md) | 13 | Badge propagation. The central complaint |
 | 05 | [Realtime & lifecycle](./05-realtime-and-lifecycle.md) | 12 | Channels, teardown, multi-tab drift, events fired while nobody is looking |
 | 06 | [Stacking & progress](./06-stacking-and-progress.md) | 14 | The bottom-right corner: how many things live there and whether failures are seen — `STACK-14` opened by N7 CORNER, 2026-10-01 |
 | 07 | [OS notifications & nudges](./07-os-notifications-and-nudges.md) | 12 | Web Push, login nudges, person-to-person pokes |
-| 08 | [Edges & invariants](./08-edges-and-invariants.md) | 18 | Egress, lifecycle edges, accessibility, and what is sound. **Verified by hand** — record at the top of the file. `NEDGE-14` (HIGH), `NEDGE-15`, `NEDGE-16` (MEDIUM) and `NEDGE-17` (HIGH) opened by notifications N5, 2026-10-02; `NEDGE-18` (LOW) opened at the drafting-flow DF-P1 merge, 2026-10-07 |
+| 08 | [Edges & invariants](./08-edges-and-invariants.md) | 19 | Egress, lifecycle edges, accessibility, and what is sound. **Verified by hand** — record at the top of the file. `NEDGE-14` (HIGH), `NEDGE-15`, `NEDGE-16` (MEDIUM) and `NEDGE-17` (HIGH) opened by notifications N5, 2026-10-02; `NEDGE-18` (LOW) opened at the drafting-flow DF-P1 merge, 2026-10-07; `NEDGE-19` (LOW) by notifications N6, 2026-10-07 |
 | 90 | [**Gap register**](./90-gap-register.md) | 7 specs | What has to be built. `GAP-201`+ so they never collide with the other areas |
 | 99 | [**Execution order**](./99-fix-sequencing.md) | — | Binding. Read before claiming a file |
 

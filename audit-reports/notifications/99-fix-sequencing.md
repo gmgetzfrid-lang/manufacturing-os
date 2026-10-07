@@ -166,10 +166,15 @@ N9, N14 and the integrator):*
   per-org share in `queueComplianceDigests`, and the drain's bounded wait for
   a send batch): a new background step takes what the run has left, never a
   reservation ahead of the digest, and no digest read spans orgs
-  (`DEC-44 (N6)` §4, `NEDGE-17`). Optional follow-up, unassigned (it needs a
-  migration): a partial index on `notifications (org_id, user_id, created_at)
-  WHERE read_at IS NULL` would make each page of an org's recipient search an
-  index walk (`NEDGE-17`'s residual).*
+  (`DEC-44 (N6)` §4, `NEDGE-17`). The integrator's fix pass adds the clock
+  margin (`DIGEST_CLOCK_OVERLAP_MS`, five minutes: every window that starts
+  where an earlier one stopped starts that much before it, and the digest's
+  `metadata.tail` keeps what the last one counted there out of the next) and
+  an entry for every org a run served while it left others unvisited.
+  Optional follow-up, unassigned (it needs a migration): a partial index on
+  `notifications (org_id, user_id, created_at) WHERE read_at IS NULL` would
+  make each page of an org's recipient search an index walk (`NEDGE-17`'s
+  residual).*
 - *New, unassigned: `DELIV-16` (a compliance bell row has no retry or outbox)
   and `NEDGE-19` (an org-level timezone setting; `lib/recordTime.ts`
   `orgTimeZone` already reads `org_configurations` key `timezone`).*
@@ -184,7 +189,14 @@ N9, N14 and the integrator):*
   them as preference-exempt with `DEC-74` §9. Until then the drain leaves the
   unsubscribe header off the first two and off any mail to a member whose
   switch is already off, and `/api/notifications/unsubscribe` names them as
-  still arriving.*
+  still arriving. The integrator's fix pass (2026-10-07): the drain does not
+  leave the header off the acknowledgment receipt while the issuer's switch is
+  on — it is `watcher_activity`, a type the switch stops, and no column marks
+  it — so the receipt carries a one-click link the switch does not honour
+  (`NEDGE-10` done-when 1, ◐). Hand-off: the transmittal acknowledgment receipt
+  (`app/api/transmittal/route.ts`, `watcher_activity`) must read the
+  recipient's master switch before queueing (`DEC-90` A10: preference-gated);
+  once it does, `NEDGE-10` done-when 1 holds for it.*
 
 *Opened by N5's second review fix (2026-10-02), not this area's to sequence
 alone: **`NEDGE-15`** — `app/api/tickets/handback/route.ts`'s `emit()` runs

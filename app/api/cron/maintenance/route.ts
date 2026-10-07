@@ -806,17 +806,25 @@ function emitShortfall(r: EmitResult | null | undefined, leg: "inapp" | "email")
 }
 
 /** Where the compliance digest stands between runs (NEDGE-17; N6 fix passes
- *  2 and 3) — one platform_settings row (20260920; service role only):
- *   - openSince: the start of the window still owed to every org that has no
- *     entry in `orgs`. A run that visited every org moves it to its `asOf`;
- *     one whose deadline left orgs unvisited leaves it where it was.
- *   - orgs: one entry per org that is owed more than that — its own window
- *     start (`since`) and, when its last visit did not finish (`unfinished`),
- *     the last recipient (uid) that visit reached (`after`): the org's next
- *     visit starts with the one after them and wraps, so successive short
- *     visits reach each of its recipients in turn. A finished org has an entry
- *     only when someone was held back (the per-day dedupe, a failed read or
- *     insert) from before openSince.
+ *  2 and 3, and the integrator's fix pass) — one platform_settings row
+ *  (20260920; service role only):
+ *   - openSince: where the search starts for every org that has no entry in
+ *     `orgs`. A run that visited every org moves it to its `asOf` less
+ *     DIGEST_CLOCK_OVERLAP_MS; one whose deadline left orgs unvisited leaves
+ *     it where it was.
+ *   - orgs: one entry per org whose search starts somewhere else — its own
+ *     window start (`since`) and, when its last visit did not finish
+ *     (`unfinished`), the last recipient (uid) that visit reached (`after`):
+ *     the org's next visit starts with the one after them and wraps, so
+ *     successive short visits reach each of its recipients in turn. A
+ *     finished visit's entry starts at the older of: the oldest item someone
+ *     was held back from (the per-day dedupe, a failed read or insert), and
+ *     this run's `asOf` less the margin. An entry equal to the new openSince
+ *     says nothing openSince does not, and is dropped. So after a run that
+ *     visited every org, a finished org keeps an entry only when someone was
+ *     held back from before openSince; after a run that left orgs unvisited
+ *     (openSince stays), every org it visited keeps one, and its next search
+ *     starts where this run's stopped rather than at the older openSince.
  *   - nextOrg: the first org the last run did not visit (its deadline came
  *     first); the next run starts with it. Null when every org was visited.
  *  (Fix pass 2's single cursor — `after` beside openSince — is not read: such
@@ -831,6 +839,27 @@ const DIGEST_LOOKBACK_MS = 7 * 24 * 3600 * 1000;
 /** The window of the first run (no state row yet) — the 25 hours the digest
  *  has always covered. */
 const DIGEST_FIRST_WINDOW_MS = 25 * 3600 * 1000;
+/** The clock margin (NEDGE-17, the integrator's fix pass). `asOf` is this
+ *  server's clock; a row's created_at is the database's now() — when its
+ *  transaction began. Every read runs to `asOf`, and the next window starts
+ *  this much before where the last one stopped (each recipient's
+ *  metadata.through, the org's window, openSince). So a row the last read
+ *  could not see yet — written just after it, but stamped no later than
+ *  `asOf` because this server's clock ran ahead of the database's, or
+ *  committed after the read by a transaction that began before it — is found
+ *  by the next run. The assumption: that clock difference plus such a
+ *  transaction's length stays under five minutes (NTP keeps the two clocks
+ *  far closer). What the last digest counted inside the margin it re-reads is
+ *  left out of the next one by id (DIGEST_TAIL_IDS). */
+const DIGEST_CLOCK_OVERLAP_MS = 5 * 60_000;
+/** The most row ids a digest records (metadata.tail) of those it counted in
+ *  the last DIGEST_CLOCK_OVERLAP_MS of its window — the stretch the next
+ *  digest re-reads, which leaves them out (`not.in`, so its count stays
+ *  exact). It bounds that read's URL (~39 characters an id). A digest that
+ *  counted more there records its newest ones; the rest may be listed once
+ *  more by the next digest. */
+const DIGEST_TAIL_IDS = 100;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** The least one org's visit is given (NEDGE-17, N6 fix pass 3). Its share is
  *  the digest's time left divided among the orgs not yet visited, never less
  *  than this: the first half for finding the org's recipients, the rest for
@@ -869,6 +898,16 @@ function digestThrough(row: { created_at?: unknown; metadata?: unknown }): numbe
   return Number.isFinite(c) ? c : null;
 }
 
+/** The ids a recipient's last digest counted in its last
+ *  DIGEST_CLOCK_OVERLAP_MS (metadata.tail) — uuids only, at most
+ *  DIGEST_TAIL_IDS: anything else (a row from before the integrator's fix
+ *  pass has none; a forged one may carry anything) is not put in a filter. */
+function digestTail(row: { metadata?: unknown }): string[] {
+  const tail = (row.metadata as { tail?: unknown } | null)?.tail;
+  if (!Array.isArray(tail)) return [];
+  return tail.filter((id): id is string => typeof id === "string" && UUID_RE.test(id)).slice(0, DIGEST_TAIL_IDS);
+}
+
 /** The daily compliance digest: one email per (org, member) listing their
  *  UNREAD compliance notices that no earlier digest listed.
  *   - Window (NEDGE-17, N6 fix pass 2 — lossless): each recipient's list runs
@@ -880,6 +919,10 @@ function digestThrough(row: { created_at?: unknown; metadata?: unknown }): numbe
  *     an item twice. The first run (no state) covers the 25 hours to now; a
  *     run that cannot read the state searches the whole lookback, starts each
  *     list where that person's last digest stopped, and records nothing.
+ *     The integrator's fix pass: `asOf` is this server's clock and created_at
+ *     the database's, so every window that starts where an earlier one
+ *     stopped starts DIGEST_CLOCK_OVERLAP_MS before it, and leaves out what
+ *     the last digest counted there (its metadata.tail).
  *   - Org by org (NEDGE-17, N6 fix pass 3): the orgs (keyset-paged by id) are
  *     visited in turn, starting with the first one the last run did not
  *     visit; after a run that visited every org, the orgs whose last visit did
@@ -959,11 +1002,13 @@ async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: s
   if (stateReadable && !state && !stateMalformed) await recordFirstWindow();
   const horizon = now - DIGEST_LOOKBACK_MS;
   const searchAll = !stateReadable || stateMalformed;
-  let openSinceMs = searchAll ? horizon : state ? Date.parse(state.openSince) : now - DIGEST_FIRST_WINDOW_MS;
-  if (openSinceMs < horizon) {
-    say(`the window still owed reached back past ${lookbackDays} days (to ${state?.openSince}) — unread items older than ${iso(horizon)} that no run listed are no longer listed`);
-    openSinceMs = horizon;
-  }
+  // Not clamped to the lookback here: only an org with no entry of its own
+  // searches from openSince, and its visit clamps its window and names it
+  // (visitOrg, `clamped`). After runs that left orgs unvisited, every org
+  // visited since has its own entry, so an old openSince is no loss of theirs
+  // (the integrator's fix pass — this said, for every org, that their items
+  // past the lookback were no longer listed).
+  const openSinceMs = searchAll ? horizon : state ? Date.parse(state.openSince) : now - DIGEST_FIRST_WINDOW_MS;
   const orgState: Record<string, DigestOrgState> = searchAll ? {} : state?.orgs ?? {};
   const startOrg = searchAll ? null : state?.nextOrg ?? null;
 
@@ -1029,7 +1074,14 @@ async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: s
     // dedupe); otherwise their list starts where it stopped. A read that
     // fails sends anyway, from the window's start — a line listed twice is
     // better than none.
+    // `sinceMs` is the window the digest names (and records as
+    // metadata.since): from where their last digest stopped. Its read starts
+    // DIGEST_CLOCK_OVERLAP_MS earlier (`readFromMs`) and leaves out the ids
+    // that digest counted there (`tail`), so what it adds is only what that
+    // digest's read could not see yet (the integrator's fix pass).
     let sinceMs = windowMs;
+    let readFromMs = windowMs;
+    let tail: string[] = [];
     const { data: last, error: lastErr } = await sb
       .from("email_notifications").select("created_at, metadata")
       .eq("org_id", m.org_id)
@@ -1044,32 +1096,45 @@ async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: s
       if (row) {
         const through = digestThrough(row);
         if ((row.metadata as { day?: unknown } | null)?.day === dayKey) {
-          owe(Math.max(oldestMs - 1, through ?? windowMs));
+          owe(Math.max(oldestMs - 1, through === null ? windowMs : through - DIGEST_CLOCK_OVERLAP_MS));
           return;
         }
-        if (through !== null && through > sinceMs) sinceMs = through;
+        if (through !== null && through > sinceMs) {
+          sinceMs = through;
+          readFromMs = Math.max(windowMs, through - DIGEST_CLOCK_OVERLAP_MS);
+          tail = digestTail(row);
+        }
       }
     }
     const since = iso(sinceMs);
     // NEDGE-17: this member's own rows, in this org, newest first.
-    const { data: rows, error, count } = await sb
-      .from("notifications").select("kind, title, created_at", { count: "exact" })
+    let listQ = sb
+      .from("notifications").select("id, kind, title, created_at", { count: "exact" })
       .in("kind", COMPLIANCE_KINDS)
       .eq("org_id", m.org_id)
       .eq("user_id", m.uid)
       .is("read_at", null)
-      .gt("created_at", since)
-      .lte("created_at", asOf)
+      .gt("created_at", iso(readFromMs))
+      .lte("created_at", asOf);
+    if (tail.length > 0) listQ = listQ.not("id", "in", `(${tail.join(",")})`);
+    const { data: rows, error, count } = await listQ
       .order("created_at", { ascending: false })
       .order("id", { ascending: false })
       .limit(DIGEST_SCAN_PER_RECIPIENT);
     if (error) {
       say(`${m.org_id}/${m.uid}: their compliance items could not be read — no digest for them this run; the next run lists them: ${error.message}`);
-      owe(Math.max(oldestMs - 1, sinceMs));
+      owe(Math.max(oldestMs - 1, readFromMs));
       return;
     }
-    const list = (rows as Array<{ title: string }> | null) ?? [];
+    const list = (rows as Array<{ id: unknown; title: string; created_at: unknown }> | null) ?? [];
     if (list.length === 0) return;
+    // What the next digest re-reads (the margin before this one's `asOf`) and
+    // must leave out: the ids counted there, newest first (the read's order).
+    const nextTail = list
+      .filter((r) => Date.parse(String(r.created_at)) >= now - DIGEST_CLOCK_OVERLAP_MS)
+      .map((r) => String(r.id))
+      .filter((id) => UUID_RE.test(id))
+      .slice(0, DIGEST_TAIL_IDS);
 
     const total = typeof count === "number" && count >= list.length ? count : list.length;
     const unique = [...new Set(list.map((r) => r.title))].slice(0, DIGEST_LINES);
@@ -1100,6 +1165,7 @@ async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: s
       event_type: "compliance_digest",
       metadata: {
         day: dayKey, count: total, since, through: asOf,
+        ...(nextTail.length > 0 ? { tail: nextTail } : {}),
         ...(link ? { link, rendered: true } : {}),
         ...(unverified.has(m.uid) ? { pref_gate: "unverified" } : {}),
       },
@@ -1107,7 +1173,7 @@ async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: s
     });
     if (insErr) {
       say(`${m.org_id}/${m.uid}: the digest was not queued — the next run lists these items again: ${insErr.message}`);
-      owe(Math.max(oldestMs - 1, sinceMs));
+      owe(Math.max(oldestMs - 1, readFromMs));
       return;
     }
     queued += 1;
@@ -1115,10 +1181,12 @@ async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: s
 
   /** One org's visit: find its recipients until `searchBy`, then compose
    *  theirs until `composeBy` (each phase does one step whatever the clock
-   *  says). Returns the org's next state entry (null: none needed) and, when
-   *  the visit did not finish, a line saying why. */
+   *  says). Returns the org's next state entry and, when the visit did not
+   *  finish, a line saying why. Every entry starts no later than `asOf` less
+   *  DIGEST_CLOCK_OVERLAP_MS: what this visit's reads could not see yet is
+   *  searched again by the next. */
   const clamped: string[] = [];
-  const visitOrg = async (org: string, searchBy: number, composeBy: number): Promise<{ entry: DigestOrgState | null; line: string | null }> => {
+  const visitOrg = async (org: string, searchBy: number, composeBy: number): Promise<{ entry: DigestOrgState; line: string | null }> => {
     const own = orgState[org];
     let windowMs = own ? Date.parse(own.since) : openSinceMs;
     if (windowMs < horizon) { clamped.push(org); windowMs = horizon; }
@@ -1195,14 +1263,17 @@ async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: s
     const unreached = found.slice(reached);
     for (const f of unreached) owe(f.oldestMs - 1);
     const after = reached > 0 ? found[reached - 1].uid : cursor;
+    const marginMs = now - DIGEST_CLOCK_OVERLAP_MS;
 
     if (searched && unreached.length === 0) {
-      return { entry: owedMs < Infinity ? { since: iso(owedMs), after: null, unfinished: false } : null, line: null };
+      // Finished: the next search starts at the oldest item someone was held
+      // back from, or at the margin before `asOf` — whichever is older.
+      return { entry: { since: iso(Math.min(owedMs, marginMs)), after: null, unfinished: false }, line: null };
     }
     // Not finished. What its search did not reach may be anywhere in its
     // window, so the window stays where it was; if the search finished, the
     // oldest item of those it did not reach bounds what is owed.
-    const since = iso(searched ? owedMs : windowMs);
+    const since = iso(Math.min(searched ? owedMs : windowMs, marginMs));
     const offered = `${reached} of the ${found.length} recipient(s) found were offered their digest`;
     const line = searchFailure
       ? `${org}: the search for its recipients failed (${offered}) — its next visit starts after the last one reached and searches back to ${since}: ${searchFailure}`
@@ -1224,15 +1295,23 @@ async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: s
     const share = Math.max(DIGEST_ORG_FLOOR_MS, (opts.deadlineAt - t0) / (order.length - visited));
     const composeBy = Math.min(opts.deadlineAt, t0 + share);
     const v = await visitOrg(org, t0 + (composeBy - t0) / 2, composeBy);
-    if (v.entry) nextOrgs[org] = v.entry;
+    nextOrgs[org] = v.entry;
     if (v.line) lines.push(v.line);
   }
   const notVisited = order.slice(visited);
   // An org not visited keeps what it was owed.
   for (const org of notVisited) if (orgState[org]) nextOrgs[org] = orgState[org];
-  const nextOpenMs = notVisited.length === 0 ? now : openSinceMs;
+  const nextOpenMs = notVisited.length === 0 ? now - DIGEST_CLOCK_OVERLAP_MS : openSinceMs;
+  // A finished entry equal to openSince says nothing openSince does not:
+  // dropped. Every other entry is kept — older (someone is owed from before
+  // it) or newer (the integrator's fix pass: a run that left orgs unvisited
+  // keeps openSince where it was, and an org it served searches next from
+  // where this run stopped, not the older openSince). After a run that
+  // visited every org no finished entry is newer than openSince (each is at
+  // most `asOf` less the margin, which openSince then is), so there this
+  // rule and the earlier `since >= openSince` drop the same entries.
   for (const [org, e] of Object.entries(nextOrgs)) {
-    if (!e.unfinished && Date.parse(e.since) >= nextOpenMs) delete nextOrgs[org];
+    if (!e.unfinished && Date.parse(e.since) === nextOpenMs) delete nextOrgs[org];
   }
   const next: DigestState = { openSince: iso(nextOpenMs), orgs: nextOrgs, nextOrg: notVisited[0] ?? null };
 
