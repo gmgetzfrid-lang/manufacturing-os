@@ -3,8 +3,9 @@
 //
 //   After 20261165 two controller writes on a held RETIRED document
 //   (Superseded, Archived, Void) still passed an active hold with nothing
-//   recorded: (b) a bare move of its current_version_id — v_unforced_move
-//   bound only a move out of an issue status — and (a) the exit into an issue
+//   recorded: (b) a bare move of its current_version_id — to another
+//   revision, or cleared to NULL (fix pass 2) — v_unforced_move bound only a
+//   move out of an issue status — and (a) the exit into an issue
 //   status of a retirement whose stamp names ANOTHER revision (what such a
 //   move, or a service-role write, leaves behind), which is neither
 //   v_restoring nor the new door. 20261174 binds (b) as an unforced move
@@ -200,8 +201,8 @@ function publishGuard(NEW: Row, OLD: Row, ctx: GuardCtx): Row {
     && NEW.current_version_id === OLD.retired_issue_version_id && NEW.current_version_id === OLD.current_version_id;
   // REV-23 (P19): the stamped put-back, unless the flag names the document
   newDoor = newDoor || (restoring && !flagNamesIt && ctx.controller);
-  // REV-24 (P20) (b): a pointer move on a retired document, unless the flag names it
-  unforcedMove = unforcedMove || (has(OLD.current_version_id) && has(NEW.current_version_id) && !sameptr
+  // REV-24 (P20) (b): a pointer move on a retired document — to another revision or cleared — unless the flag names it
+  unforcedMove = unforcedMove || (has(OLD.current_version_id) && !sameptr
     && RETIRED.includes(os) && !flagNamesIt && ctx.controller);
   // REV-24 (P20) (a): the exit of a retirement whose stamp names another revision — for everyone, no flag
   newDoor = newDoor || (issuing && sameptr && RETIRED.includes(os) && has(OLD.retired_issue_version_id)
@@ -251,8 +252,8 @@ describe("the transcriptions are the SQL's (20261174 / 20261165 / 20261164, in o
       "  v_advancing := v_advancing OR v_issuing;",
       "  v_restoring := COALESCE(v_issuing\n                 AND OLD.status IN ('Superseded', 'Archived', 'Void')\n                 AND OLD.retired_issue_version_id IS NOT NULL\n                 AND NEW.current_version_id = OLD.retired_issue_version_id\n                 AND NEW.current_version_id = OLD.current_version_id, false);",
       "  v_new_door := v_new_door\n                OR COALESCE(v_restoring\n                            AND current_setting('app.publish_hold_override', true) IS DISTINCT FROM NEW.id::text\n                            AND is_org_controller(NEW.org_id), false);",
-      // P20 (b)
-      "  v_unforced_move := v_unforced_move\n                     OR COALESCE(OLD.current_version_id IS NOT NULL\n                                 AND NEW.current_version_id IS NOT NULL\n                                 AND NEW.current_version_id IS DISTINCT FROM OLD.current_version_id\n                                 AND OLD.status IN ('Superseded', 'Archived', 'Void')\n                                 AND current_setting('app.publish_hold_override', true) IS DISTINCT FROM NEW.id::text\n                                 AND is_org_controller(NEW.org_id), false);",
+      // P20 (b) — a move off the current revision, to another or cleared (fix pass 2: no NEW IS NOT NULL clause)
+      "  v_unforced_move := v_unforced_move\n                     OR COALESCE(OLD.current_version_id IS NOT NULL\n                                 AND NEW.current_version_id IS DISTINCT FROM OLD.current_version_id\n                                 AND OLD.status IN ('Superseded', 'Archived', 'Void')\n                                 AND current_setting('app.publish_hold_override', true) IS DISTINCT FROM NEW.id::text\n                                 AND is_org_controller(NEW.org_id), false);",
       // P20 (a)
       "  v_new_door := v_new_door\n                OR COALESCE(v_issuing\n                            AND NEW.current_version_id IS NOT DISTINCT FROM OLD.current_version_id\n                            AND OLD.status IN ('Superseded', 'Archived', 'Void')\n                            AND OLD.retired_issue_version_id IS NOT NULL\n                            AND OLD.retired_issue_version_id IS DISTINCT FROM OLD.current_version_id, false);",
       "  IF COALESCE(NEW.status IN ('Superseded', 'Archived', 'Void'), false) THEN\n    IF COALESCE(OLD.status IN ('Superseded', 'Archived', 'Void'), false) THEN\n      NEW.retired_issue_status := OLD.retired_issue_status;",
@@ -650,11 +651,51 @@ describe("REV-24 (P20) (b) — a controller's pointer move on a held retired doc
     expect(publishGuard({ ...OLD, current_version_id: "v2" }, OLD, { ...ctl, actor: null }).current_version_id).toBe("v2");
   });
 
-  it("outside this limb, as in P17's: a first pointer write (no current revision yet) and a pointer cleared are not a move from a revision to another — admitted for a controller (the residual this finding does not cover, recorded on REV-24's Scope)", () => {
+  it("fix pass 2 — the pointer CLEARED (current_version_id set to NULL) is a move off the current revision too: refused over an active hold for a controller — out of Superseded, Archived or Void, whatever its stamp, staying retired or into another retirement, a Draft / In Review or an issue status — in REV-20 (b)'s sentence; admitted under the flag naming the document (the stamp kept while it stays retired); refused under another's or a cleared one", () => {
+    for (const from of RETIRED) {
+      for (const [name, kind] of Object.entries(kinds)) {
+        const OLD = retiredDoc(from, kind);
+        for (const to of [from, ...RETIRED.filter((s) => s !== from), "Draft", "In Review", ...ISSUES]) {
+          expect(refused(() => publishGuard({ ...OLD, status: to, current_version_id: null }, OLD, ctl)), `${from} (${name}) -> ${to}, cleared`).toBe(S_UNFORCED_HOLD);
+        }
+        expect(publishGuard({ ...OLD, current_version_id: null }, OLD, { ...ctl, flag: "d1" }), name)
+          .toMatchObject({ status: from, current_version_id: null, retired_issue_status: kind.retired_issue_status, retired_issue_version_id: kind.retired_issue_version_id });
+        expect(refused(() => publishGuard({ ...OLD, current_version_id: null }, OLD, { ...ctl, flag: "d2" })), name).toBe(S_UNFORCED_HOLD);
+        expect(refused(() => publishGuard({ ...OLD, current_version_id: null }, OLD, { ...ctl, flag: "" })), name).toBe(S_UNFORCED_HOLD);
+      }
+    }
+  });
+
+  it("fix pass 2 regression: the clear with no hold — admitted for a controller; the owner (publisher tier) — refused over a hold in its own words as before, under a flag too, and admitted without one; the service role — untouched", () => {
+    const OLD = retiredDoc("Archived", kinds["stamped (the current revision)"]);
+    const cleared = { ...OLD, current_version_id: null };
+    expect(publishGuard(cleared, OLD, { ...ctl, held: () => false }).current_version_id).toBeNull();
+    expect(refused(() => publishGuard(cleared, OLD, owner))).toBe(S_PUBLISHER_HOLD);
+    expect(refused(() => publishGuard(cleared, OLD, { ...owner, flag: "d1" }))).toBe(S_PUBLISHER_HOLD);
+    expect(publishGuard(cleared, OLD, { ...owner, held: () => false }).current_version_id).toBeNull();
+    expect(publishGuard(cleared, OLD, { ...ctl, actor: null }).current_version_id).toBeNull();
+  });
+
+  it("outside this limb, as in P17's: a first pointer write (no current revision yet) is a creation's, not a move off a revision — admitted for a controller (the residual the integrator opens as a new finding, recorded on REV-24's Scope); an issued document's clear stays outside too (P17's limb binds a move between revisions)", () => {
     const noRevision = { ...retiredDoc("Archived", kinds["not-issued"]), current_version_id: null };
     expect(publishGuard({ ...noRevision, current_version_id: "v2" }, noRevision, ctl).current_version_id).toBe("v2");
-    const OLD = retiredDoc("Archived", kinds["stamped (the current revision)"]);
-    expect(publishGuard({ ...OLD, current_version_id: null }, OLD, ctl).current_version_id).toBeNull();
+    const issued: Row = { id: "d1", status: "Issued", current_version_id: "v3", retired_issue_status: null, retired_issue_version_id: null };
+    expect(publishGuard({ ...issued, current_version_id: null }, issued, ctl).current_version_id).toBeNull();
+  });
+
+  it("an archive with NO current revision (the dialog's basis \"unknown\") restored to Issued is no issue — nothing becomes the controlled issue — so it passes Document Control over a hold, unrecorded, as the ArchiveConfirmModal note says; the owner is refused in the publisher tier's words", async () => {
+    const noRevision: Row = { id: "d1", status: "Archived", current_version_id: null, retired_issue_status: "Issued", retired_issue_version_id: "v3" };
+    expect(publishGuard({ ...noRevision, status: "Issued" }, noRevision, ctl)).toMatchObject({ status: "Issued", current_version_id: null, retired_issue_status: null });
+    expect(refused(() => publishGuard({ ...noRevision, status: "Issued" }, noRevision, owner))).toBe(S_PUBLISHER_HOLD);
+    await retire("a9", "Archived");
+    seedHold("a9");
+    bindGuard();
+    state.session = null; // the service role's clear (its writes never touch the stamp)
+    expect((await docs().update({ current_version_id: null }).eq("id", "a9").select("id")).error).toBeNull();
+    state.session = ME;
+    await unarchiveDocument({ doc: asRecord(docRow("a9")), reason: "", orgId: ORG, actorUserId: ME, restoreStatus: "Issued" });
+    expect(docRow("a9")).toMatchObject({ status: "Issued", current_version_id: null });
+    expect(overrides("a9")).toEqual([]);
   });
 
   it("through the in-memory PostgREST — the failure scenario's first step: Document Control's direct PATCH of held, stamped archive A6's current_version_id to its previous revision is refused and nothing is written", async () => {
@@ -671,6 +712,27 @@ describe("REV-24 (P20) (b) — a controller's pointer move on a held retired doc
     await unarchiveDocument({ doc: asRecord(docRow("a6")), reason: "", orgId: ORG, actorUserId: ME, restoreStatus: "Issued", forceHold: true });
     expect(docRow("a6").status).toBe("Issued");
     expect(overrides("a6")).toHaveLength(1);
+  });
+
+  it("through the in-memory PostgREST — P-22's first step (fix pass 2): Document Control's direct PATCH clearing held, stamped archive A10's current_version_id is refused and nothing is written; the bare un-archive is then P19's (refused), and the archive comes back only through its recorded door; under the flag naming it, the clear is admitted", async () => {
+    await retire("a10", "Archived");
+    seedHold("a10");
+    const refusals = bindGuard();
+    const { supabase } = await import("@/lib/supabase");
+    const { data, error } = await supabase.from("documents").update({ current_version_id: null }).eq("id", "a10").select("id");
+    expect(data).toBeNull();
+    expect(error).toMatchObject({ message: S_UNFORCED_HOLD });
+    expect(docRow("a10")).toMatchObject({ status: "Archived", current_version_id: "a10-v3", retired_issue_version_id: "a10-v3" });
+    expect((await supabase.from("documents").update({ status: "Issued", archived_at: null }).eq("id", "a10").select("id")).error).toMatchObject({ message: S_NEW_DOOR_HOLD });
+    expect(refusals).toEqual([S_UNFORCED_HOLD, S_NEW_DOOR_HOLD]);
+    await unarchiveDocument({ doc: asRecord(docRow("a10")), reason: "", orgId: ORG, actorUserId: ME, restoreStatus: "Issued", forceHold: true });
+    expect(docRow("a10")).toMatchObject({ status: "Issued", current_version_id: "a10-v3" });
+    expect(overrides("a10")).toHaveLength(1);
+    await retire("a11", "Archived");
+    seedHold("a11");
+    state.flag = "a11";
+    expect((await supabase.from("documents").update({ current_version_id: null }).eq("id", "a11").select("id")).error).toBeNull();
+    expect(docRow("a11")).toMatchObject({ status: "Archived", current_version_id: null, retired_issue_version_id: "a11-v3" });
   });
 });
 

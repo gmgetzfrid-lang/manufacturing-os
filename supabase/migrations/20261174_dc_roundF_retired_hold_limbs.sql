@@ -16,8 +16,11 @@
 --               a move whose OLD status is an issue status, so a bare PATCH
 --               of a held retired document's current_version_id was
 --               admitted. Now a controller's move of a held retired
---               document's pointer (from a current revision to another one)
---               needs the transaction-local flag app.publish_hold_override
+--               document's pointer off its current revision — to another
+--               revision, or cleared to NULL (fix pass 2: a clear is a
+--               pointer move too, and the first step of a route to an issue
+--               with no revision, then a first pointer write) — needs the
+--               transaction-local flag app.publish_hold_override
 --               naming the document — set only by a function that records
 --               REV_HOLD_OVERRIDDEN in the same transaction
 --               (publish_revision's controller force, the review promote's)
@@ -60,17 +63,19 @@
 --   the guard executable by no client role (it RETURNS trigger).
 --
 -- NOT a widening: the guard refuses two writes it admitted (a controller's
--- bare pointer move on a held retired document; any exit into an issue
--- status of a held retirement whose stamp names another revision) and admits
--- nothing it refused. DEC-30 inventories (aggregate counts only, captured
--- BEFORE the transaction): the retired documents with a current revision
--- whose stamp names another one (the exit's population — one with no
--- current revision is not in it: (a) needs the pointer set and unmoved, and
--- its exit with no revision is REV-24's recorded residual); those of them
--- under an active hold now (their exit into an issue is refused from now on,
--- for everyone, until the hold is released — no recorded door forces it);
--- and the retired documents under an active hold in all (Document Control's
--- bare move of one's current revision needs the recorded force from now on).
+-- bare pointer move or clear on a held retired document; any exit into an
+-- issue status of a held retirement whose stamp names another revision) and
+-- admits nothing it refused. DEC-30 inventories (aggregate counts only,
+-- captured BEFORE the transaction): the retired documents with a current
+-- revision whose stamp names another one (the exit's population — one with
+-- no current revision is not in it: (a) needs the pointer set and unmoved,
+-- and its exit with no revision is REV-24's recorded residual); those of
+-- them under an active hold now (their exit into an issue is refused from
+-- now on, for everyone, until the hold is released — no recorded door
+-- forces it); and the retired documents with a current revision under an
+-- active hold (Document Control's bare move or clear of that revision needs
+-- the recorded force from now on; one with no current revision has none to
+-- move, and its first pointer write is REV-24's recorded residual).
 -- HOW TO APPLY: AFTER 20261165 (required — this re-creates 20261165's guard,
 -- and the first statement refuses to run, changing nothing, without it and
 -- its put_back_retired_issue; so after 20261164, 20261159, 20261151,
@@ -87,9 +92,11 @@
 -- definition), and pastes after it.
 -- DEPLOY ORDER: no app deploy is needed before or after this paste. It
 -- refuses no write the app makes legitimately — no app path moves a retired
--- document's pointer, and the app's exits of a held retirement into an issue
--- either go through put_back_retired_issue's recorded door (a stamp naming
--- the current revision: unchanged) or are refused and answered (the
+-- document's pointer, no app path clears any document's pointer (every
+-- pointer write the app makes names a revision: a new document's first, or
+-- a publish / promote), and the app's exits of a held retirement into an
+-- issue either go through put_back_retired_issue's recorded door (a stamp
+-- naming the current revision: unchanged) or are refused and answered (the
 -- un-archive dialog and the status editors offer the Draft restore on the
 -- new-door sentence). The app carrying P19 must already be deployed, as
 -- 20261165 requires; P20's app change is a comment only.
@@ -117,11 +124,14 @@ WITH retired AS (
   -- other than the current one it has (the exit REV-24 (a) binds — a
   -- retired document with no current revision is not in it: (a) needs the
   -- pointer set and unmoved; its exit with no revision, then a first pointer
-  -- write, is the residual REV-24 records), and whether an active hold
-  -- stands on it now.
+  -- write, is the residual REV-24 records), whether it has a current
+  -- revision at all (the one (b) binds a move or clear of — a first pointer
+  -- write is the same residual), and whether an active hold stands on it
+  -- now.
   SELECT d.retired_issue_version_id IS NOT NULL
          AND d.current_version_id IS NOT NULL
          AND d.retired_issue_version_id IS DISTINCT FROM d.current_version_id AS stamp_elsewhere,
+         d.current_version_id IS NOT NULL AS has_current,
          EXISTS (SELECT 1 FROM document_holds h
                   WHERE h.document_id = d.id AND h.released_at IS NULL) AS held
     FROM documents d
@@ -135,9 +145,9 @@ SELECT 'inventory (before apply): of those, under an active hold now (their exit
        COUNT(*)::text
   FROM retired WHERE stamp_elsewhere AND held
 UNION ALL
-SELECT 'inventory (before apply): retired documents under an active hold, in all (REV-24 (b): Document Control''s bare move of one''s current revision needs the recorded force from now on, or is refused)',
+SELECT 'inventory (before apply): retired documents with a current revision under an active hold, in all (REV-24 (b): Document Control''s bare move of that revision to another, or clear of it, needs the recorded force from now on, or is refused)',
        COUNT(*)::text
-  FROM retired WHERE held;
+  FROM retired WHERE has_current AND held;
 
 BEGIN;
 
@@ -347,17 +357,22 @@ BEGIN
   -- this document — set only around a write by a function that records
   -- REV_HOLD_OVERRIDDEN in the same transaction (publish_revision's
   -- controller force, the review promote's) — or it is refused, in REV-20
-  -- (b)'s sentence, like any other unforced move over a hold. No app write
-  -- moves a retired document's pointer: a rev-up of one is refused before
-  -- anything is written (lib/revisions.ts describeRetiredRevUp), a revert
-  -- goes through publish_revision (which answers on_hold for a held
-  -- document unless Document Control forces it, and then sets the flag),
-  -- and the split / merge / reversal sagas, their compensations and every
-  -- put-back write a status and its fields, never the pointer. A first
-  -- pointer write (no current revision yet) is a creation's — REV-17's —
-  -- not this, as in P17's limb. Bound to a controller only: below a
-  -- controller the publisher tier's own hold check still refuses every
-  -- pointer move over a hold, in its own words.
+  -- (b)'s sentence, like any other unforced move over a hold. A move is any
+  -- write that takes the pointer off the current revision: to another
+  -- revision, or cleared to NULL (fix pass 2 — a clear, then an exit into an
+  -- issue with no revision, then a first pointer write, put a revision the
+  -- retirement never issued in force over the hold, unrecorded). No app
+  -- write moves a retired document's pointer, and none clears any
+  -- document's: a rev-up of one is refused before anything is written
+  -- (lib/revisions.ts describeRetiredRevUp), a revert goes through
+  -- publish_revision (which answers on_hold for a held document unless
+  -- Document Control forces it, and then sets the flag), the split / merge /
+  -- reversal sagas, their compensations and every put-back write a status
+  -- and its fields, never the pointer, and every pointer write the app
+  -- makes names a revision. A first pointer write (no current revision yet)
+  -- is a creation's — REV-17's — not this, as in P17's limb. Bound to a
+  -- controller only: below a controller the publisher tier's own hold check
+  -- still refuses every pointer move over a hold, in its own words.
   -- (a) The exit. A stamped retirement whose stamp names ANOTHER revision
   -- than its current one (the pointer moved while it was retired, or by the
   -- service role, whose writes never touch the stamp) is not v_restoring:
@@ -375,7 +390,6 @@ BEGIN
   -- this exit is one more.
   v_unforced_move := v_unforced_move
                      OR COALESCE(OLD.current_version_id IS NOT NULL
-                                 AND NEW.current_version_id IS NOT NULL
                                  AND NEW.current_version_id IS DISTINCT FROM OLD.current_version_id
                                  AND OLD.status IN ('Superseded', 'Archived', 'Void')
                                  AND current_setting('app.publish_hold_override', true) IS DISTINCT FROM NEW.id::text
@@ -718,8 +732,9 @@ COMMIT;
 -- Probes: ok = true × 6. Inventory rows: n = the aggregate count.
 -- pg_proc.prosrc is verbatim (an apostrophe inside a body's string literal is
 -- '''' here).
-SELECT 'REV-24 (P20) (b): a controller''s move of a held retired document''s current revision (Superseded / Archived / Void) is an unforced move (refused over an active hold) unless a recorded force''s flag names the document' AS check,
+SELECT 'REV-24 (P20) (b): a controller''s move of a held retired document''s current revision (Superseded / Archived / Void) — to another revision, or cleared to NULL — is an unforced move (refused over an active hold) unless a recorded force''s flag names the document' AS check,
        (SELECT prosrc LIKE '%v_unforced_move := v_unforced_move%OR COALESCE(OLD.current_version_id IS NOT NULL%AND NEW.current_version_id IS DISTINCT FROM OLD.current_version_id%AND OLD.status IN (''Superseded'', ''Archived'', ''Void'')%AND current_setting(''app.publish_hold_override'', true) IS DISTINCT FROM NEW.id%AND is_org_controller(NEW.org_id), false);%v_new_door := v_new_door%IF COALESCE(NEW.status IN (''Superseded'', ''Archived'', ''Void''), false) THEN%'
+           AND prosrc NOT LIKE '%v_unforced_move := v_unforced_move%AND NEW.current_version_id IS NOT NULL%IF COALESCE(NEW.status IN (''Superseded'', ''Archived'', ''Void''), false) THEN%'
            AND prosrc LIKE '%IF v_unforced_move AND EXISTS (%'
           FROM pg_proc WHERE proname = 'enforce_document_publish_guard') AS ok,
        NULL::text AS n

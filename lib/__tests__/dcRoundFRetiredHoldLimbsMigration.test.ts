@@ -4,9 +4,10 @@
 //   enforce_document_publish_guard re-created from its NEWEST earlier body
 //   (scan — 20261165 today) with EXACTLY the P20 block added:
 //   (b) a controller's move of a held retired document's current revision
-//       (Superseded / Archived / Void, from a revision to another) is an
-//       unforced move — refused over an active hold unless the flag a
-//       recorded force sets names the document (v_unforced_move, widened);
+//       (Superseded / Archived / Void) off it — to another revision, or
+//       cleared to NULL (fix pass 2) — is an unforced move: refused over an
+//       active hold unless the flag a recorded force sets names the document
+//       (v_unforced_move, widened);
 //   (a) the exit into an issue status of a retirement whose stamp names
 //       ANOTHER revision than its current one, its pointer unmoved, is the
 //       new door — refused over an active hold for everyone, no flag passing
@@ -86,7 +87,6 @@ describe("20261174 — the guard re-created from its NEWEST earlier body (found 
     expect(code(G_LIMB.split("\n"))).toEqual([
       "  v_unforced_move := v_unforced_move",
       "                     OR COALESCE(OLD.current_version_id IS NOT NULL",
-      "                                 AND NEW.current_version_id IS NOT NULL",
       "                                 AND NEW.current_version_id IS DISTINCT FROM OLD.current_version_id",
       "                                 AND OLD.status IN ('Superseded', 'Archived', 'Void')",
       "                                 AND current_setting('app.publish_hold_override', true) IS DISTINCT FROM NEW.id::text",
@@ -121,9 +121,13 @@ describe("20261174 — the guard re-created from its NEWEST earlier body (found 
     expect(a).not.toMatch(/publish_hold_override|is_org_controller/);
     expect(b).toContain("AND current_setting('app.publish_hold_override', true) IS DISTINCT FROM NEW.id::text");
     expect(b).toContain("AND is_org_controller(NEW.org_id), false);");
-    // (b) binds a move FROM a revision TO another (a first pointer write, or a pointer cleared, is not this — REV-17's, as in P17's limb)
-    expect(b).toContain("OLD.current_version_id IS NOT NULL");
-    expect(b).toContain("AND NEW.current_version_id IS NOT NULL");
+    // (b) binds every move OFF a current revision — to another revision, or
+    // cleared to NULL (fix pass 2: a clear on a held retired document is a
+    // pointer move too, REV-24 done-when (b) as written). A first pointer
+    // write (OLD NULL) is not this — REV-17's, as in P17's limb, and the
+    // residual the integrator opens as a new finding.
+    expect(b).toContain("OR COALESCE(OLD.current_version_id IS NOT NULL\n                                 AND NEW.current_version_id IS DISTINCT FROM OLD.current_version_id\n");
+    expect(b).not.toContain("NEW.current_version_id IS NOT NULL");
     // (a) is the exit with its pointer unmoved, out of a retirement stamped with a revision that is not the current one
     expect(a).toContain("AND NEW.current_version_id IS NOT DISTINCT FROM OLD.current_version_id");
     expect(a).toContain("AND OLD.retired_issue_version_id IS NOT NULL");
@@ -199,7 +203,11 @@ describe("20261174 — the one-paste shape", () => {
     // admitted (REV-24's recorded residual), so it is not locked by the hold.
     expect(inventory).toContain("  SELECT d.retired_issue_version_id IS NOT NULL\n         AND d.current_version_id IS NOT NULL\n         AND d.retired_issue_version_id IS DISTINCT FROM d.current_version_id AS stamp_elsewhere,");
     expect(inventory).toContain("   WHERE d.status IN ('Superseded', 'Archived', 'Void')\n)");
-    for (const w of ["  FROM retired WHERE stamp_elsewhere\n", "  FROM retired WHERE stamp_elsewhere AND held\n", "  FROM retired WHERE held;"]) {
+    // (b)'s population is a held retired document WITH a current revision —
+    // the one whose move or clear it binds (fix pass 2). One with no current
+    // revision has none to move: its first pointer write is the residual.
+    expect(inventory).toContain("         d.current_version_id IS NOT NULL AS has_current,\n");
+    for (const w of ["  FROM retired WHERE stamp_elsewhere\n", "  FROM retired WHERE stamp_elsewhere AND held\n", "  FROM retired WHERE has_current AND held;"]) {
       expect(inventory, w).toContain(w);
     }
     const c = stripComments(tail).replace(/'(?:[^']|'')*'/g, "''");
@@ -220,7 +228,7 @@ describe("20261174 — the one-paste shape", () => {
     expect(M.slice(M.indexOf("DO $$"), M.indexOf("CREATE TEMP TABLE"))).toContain("OR NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'put_back_retired_issue') THEN");
   });
 
-  it("every prosrc LIKE probe matches the body of the function it names (prosrc verbatim), and none carries a cast; the two P20 probes are FALSE on the base", () => {
+  it("every prosrc LIKE probe matches the body of the function it names (prosrc verbatim), and none carries a cast; the two P20 probes are FALSE on the base, and (b)'s is FALSE on the first P20 body too (the pointer clear unbound — fix pass 2)", () => {
     /** The newest definition of a function in the sequence up to and including this file. */
     const newest = (head: string) => {
       const f = files.filter((x) => x <= FILE && stripComments(mig(x)).includes(head)).pop()!;
@@ -234,7 +242,7 @@ describe("20261174 — the one-paste shape", () => {
       restore_reversed_source: newest("CREATE OR REPLACE FUNCTION restore_reversed_source("),
     };
     let n = 0;
-    const p20: string[] = [];
+    const p20: Array<{ pat: string; not: boolean }> = [];
     for (const seg of tail.split(/\nUNION ALL\n/)) {
       for (const sub of seg.split(/\(SELECT (?=prosrc|pronargs|COUNT)/)) {
         const fn = /FROM pg_proc WHERE proname = '(\w+)'/.exec(sub)?.[1];
@@ -245,14 +253,24 @@ describe("20261174 — the one-paste shape", () => {
           const body = bodies[fn!];
           expect(body, fn).toBeDefined();
           expect(likeRe(pat).test(prosrcOf(body)), `${fn}: ${pat}`).toBe(m[1] ? false : true);
-          if (pat.startsWith("%v_unforced_move := v_unforced_move")) p20.push(pat);
+          if (pat.startsWith("%v_unforced_move := v_unforced_move")) p20.push({ pat, not: !!m[1] });
           n += 1;
         }
       }
     }
-    expect(n).toBe(24);
-    expect(p20).toHaveLength(2);
-    for (const pat of p20) expect(likeRe(pat).test(prosrcOf(G.live)), pat).toBe(false);
+    expect(n).toBe(25);
+    expect(p20.filter((p) => !p.not)).toHaveLength(2);
+    for (const { pat } of p20.filter((p) => !p.not)) expect(likeRe(pat).test(prosrcOf(G.live)), pat).toBe(false);
+    // (b)'s NOT LIKE: the first P20 body — limb (b) with NEW.current_version_id
+    // IS NOT NULL, so a controller's clear of a held retired document's
+    // pointer passed — matches it, so the (b) probe reads false there.
+    const notPats = p20.filter((p) => p.not).map((p) => p.pat);
+    expect(notPats).toHaveLength(1);
+    const head = "                     OR COALESCE(OLD.current_version_id IS NOT NULL\n";
+    const firstP20 = prosrcOf(G.next).replace(head, head + "                                 AND NEW.current_version_id IS NOT NULL\n");
+    expect(firstP20).not.toBe(prosrcOf(G.next));
+    expect(likeRe(notPats[0]).test(firstP20)).toBe(true);
+    expect(likeRe(notPats[0]).test(prosrcOf(G.next))).toBe(false);
   });
 
   it("the probes cover the guard's grants, its pinned search_path, its owner's EXECUTE on is_controlled_issue_status and its trigger", () => {
