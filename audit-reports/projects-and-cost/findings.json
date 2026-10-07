@@ -18,8 +18,8 @@
       "LOW": 14
     },
     "by_status": {
-      "RESOLVED": 68,
-      "OPEN": 9
+      "RESOLVED": 72,
+      "OPEN": 5
     }
   },
   "status_vocabulary": [
@@ -278,7 +278,7 @@
       "id": "PM-1",
       "title": "Closeout is a label, not a gate: completed/cancelled/archived projects stay fully writable, and their external contractor upload tokens keep publishing controlled revisions",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -695,7 +695,7 @@
       "id": "COST-2",
       "title": "Committed money is invisible to Remaining, to the over-budget flag, and to project health — a fully committed budget reads as fully available",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -806,7 +806,7 @@
       "id": "COST-6",
       "title": "Change-order approval has no authority model: the proposer can approve their own change order, for any amount, with nothing enforced server-side beyond project ownership",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2074,7 +2074,7 @@
       "id": "QUAL-10",
       "title": "The one-click project Compliance Evidence Pack — the artifact positioned as the answer to a regulator — contains no checklist, no checklist item, no turnover item and no punch item",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

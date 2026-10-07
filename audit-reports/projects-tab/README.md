@@ -25,9 +25,9 @@ before and after.
 |---|---|
 | CRITICAL | 17 |
 | HIGH | 52 |
-| MEDIUM | 67 |
+| MEDIUM | 68 |
 | LOW | 6 |
-| **Total** | **142** |
+| **Total** | **143** |
 
 Two findings here (`BID-5`, `UX-2`) carry `Status: REFUTED` — an independent pass
 disproved them. They are kept with the reason rather than deleted (`DEC-41`);
@@ -43,6 +43,9 @@ and the data-export envelope) was opened by package J9 on 2026-09-30.
 J1 on 2026-09-30.
 `SEC-20` (audit rows about a private project stay readable org-wide) was opened
 by package J8 on 2026-09-30.
+`SAF-18` (outside the quality and money paths, update / delete sites still
+discard a zero-row result) was opened by package J12 on 2026-10-01, as
+`GAP-402`'s remainder.
 `CHART-6` (two consumers paint the score band's colour as text; the 70–84 band
 is the white-label accent) was opened by package J5 on 2026-09-30.
 `SEC-21` (project audit rows written under another resource type, such as a
@@ -66,7 +69,7 @@ Work these in order. The numbering reflects priority, not just grouping —
 | # | Report | Findings | CRIT | Progress |
 |---|---|---|---|---|
 | 01 | [Security & access](./01-security-access.md) | 21 | 4 | 20 / 21 |
-| 02 | [Safety, compliance & the record](./02-safety-compliance.md) | 17 | 3 | 15 / 17 |
+| 02 | [Safety, compliance & the record](./02-safety-compliance.md) | 18 | 3 | 16 / 18 |
 | 03 | [Money & the ledger](./03-money-ledger.md) | 13 | 0 | 9 / 13 |
 | 04 | [Bid tabulation & the award decision](./04-bid-tabulation.md) | 12 | 2 | 10 / 12 |
 | 05 | [Charts & the printed RFQ](./05-charts-and-rfq.md) | 8 | 0 | 7 / 8 |

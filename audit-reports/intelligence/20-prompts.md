@@ -76,7 +76,7 @@ execute/route.ts:46 `const role = (member.role as string) ?? "Viewer";` then :57
 ## PR-2 · AI-extracted quote totals are never reconciled against their own line items, then rank the bids
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J10b UI REMAINDERS (criterion 2, the QuotesPanel display) and J12 SERVER REMAINDERS (criterion 3, the cost-docs invoice branch) — by the integrator, 2026-10-01 (at the I-04 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/projects/cost-docs/route.ts:29-37`, `app/api/projects/cost-docs/route.ts:123-147`, `lib/bidTab.ts:190-224`, `lib/bidTab.ts:149-186`
@@ -130,6 +130,24 @@ bidTab.ts:190-224 — the whole of validateParsedQuote; the only cross-field log
 3. ✗ Not done here. The cost-docs route's invoice branch (`app/api/projects/cost-docs/**`) is projects-joint J12's.
 
 **Scope / residual.** OPEN for criterion 3 (J12).
+
+**Partial (2026-10-01, projects Round G).** Package projects-joint J12 SERVER REMAINDERS closed criterion 3 in the cost-docs route's invoice branch: it stores `validateParsedInvoice(raw)` (`lib/costDocParse.ts`, new) — `vendorName` (≤ 200), `docNumber` (≤ 60), `docDate` (a real calendar date in YYYY-MM-DD or null — "2026-02-30" is not one), `total` (a positive finite number, else 422 "Couldn't read an amount due from the invoice."), `currency` (a known ISO-4217 code via `isoCurrency`, else null), `lineItems` (description ≤ 500 and a finite total or null; at most 200 lines) — and drops every other key the model returned; the row's columns are filled from the validated record, never the raw JSON.
+- Commit: `7e3999c`.
+- Tests: `lib/__tests__/costDocsRoute.test.ts` "PR-2 criterion 3 — the invoice's extraction is validated before it is stored" (only the schema's fields stored, typed and bounded, a non-calendar date and junk keys dropped; a string, zero, negative or missing amount → 422 with nothing stored; the caps).
+
+**Done-when.**
+1. ✓ (above).
+2. **Not met here:** the review screen's display is `components/projects/cost/QuotesPanel.tsx` (projects-joint J10b in this wave) — the hand-over above stands.
+3. ✓ Invoice extraction validates its payload against a schema instead of storing `raw`.
+
+**Scope / residual.** OPEN for criterion 2 (display), with J10b.
+
+**Integrator, at the projects-joint J12 merge (2026-10-07).** With J10b and J12 both merged, every criterion is now met:
+1. ✓ Intelligence Round G: `reconcileQuoteTotal` and `ParsedQuote.totalCheck`.
+2. ✓ J10b: the review screen shows the discrepancy, and its "cannot be used in the bid tab until a human resolves it" half is declined by decision. `DEC-72` item 5 says flag only, never block, and the user may ratify or reverse that.
+3. ✓ J12: the invoice extraction is validated against a schema (`lib/costDocParse.ts`).
+
+Status set to RESOLVED. The two Partial blocks above each said "OPEN" for the other package's criterion; both are now landed.
 
 ---
 

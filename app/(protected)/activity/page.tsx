@@ -22,6 +22,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import ViewTabs, { ACTIVITY_VIEWS } from "@/components/navigation/ViewTabs";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
+import { SCOPE_STAMP_ACTIONS, SCOPE_STAMPS_NOT_IN } from "@/lib/timeline";
 
 interface ActivityRow {
   id: string;
@@ -100,8 +101,12 @@ export default function ActivityFeedPage() {
     if (!activeOrgId) return;
     setLoading(true); setError(null);
     try {
+      // SEC-21: the database's scope stamp is left out IN the query, before
+      // the row limit, so a window of `limit` rows holds `limit` events (the
+      // memos below still skip it — the same set, re-applied).
       const { data, error: qErr } = await supabase.from("audit_logs")
         .select("*").eq("org_id", activeOrgId)
+        .not("action", "in", SCOPE_STAMPS_NOT_IN)
         .order("timestamp", { ascending: false }).limit(limit);
       if (qErr) throw qErr;
       const list: ActivityRow[] = ((data || []) as Array<Record<string, unknown>>).map((r) => ({
@@ -172,6 +177,7 @@ export default function ActivityFeedPage() {
     const out: Array<{ day: string; rows: ActivityRow[] }> = [];
     const map = new Map<string, ActivityRow[]>();
     for (const r of rows) {
+      if (SCOPE_STAMP_ACTIONS.has(r.action)) continue; // SEC-21: the database's stamp, not an event (its MILESTONE_DELETED row is)
       const day = new Date(r.timestamp).toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" });
       const list = map.get(day) || [];
       list.push(r);
@@ -189,6 +195,7 @@ export default function ActivityFeedPage() {
     const cat = { revisions: 0, locks: 0, holds: 0, milestones: 0, equipment: 0 };
     const actors = new Set<string>();
     for (const r of rows) {
+      if (SCOPE_STAMP_ACTIONS.has(r.action)) continue; // SEC-21: one milestone delete counts once
       if (new Date(r.timestamp).toDateString() === todayStr) today++;
       if (r.userEmail) actors.add(r.userEmail);
       if (["REV_UP", "REV_BACKFILL", "SUPERSEDE_DOC", "DOC_SPLIT", "DOC_MERGED", "DOC_RENUMBERED"].includes(r.action)) cat.revisions++;

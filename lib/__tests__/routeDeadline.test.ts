@@ -69,7 +69,8 @@ describe("beforeDeadline — the route stops waiting at the deadline", () => {
 });
 
 describe("census — the page-reading routes this package owns are on the deadline", () => {
-  for (const file of ["app/api/projects/checklist/route.ts", "app/api/companies/quality-manual/route.ts"]) {
+  // PERF-6 (projects Round G J12): the cost-document read joined the census.
+  for (const file of ["app/api/projects/checklist/route.ts", "app/api/companies/quality-manual/route.ts", "app/api/projects/cost-docs/route.ts"]) {
     it(file, () => {
       const src = readFileSync(join(process.cwd(), file), "utf8");
       expect(src).toMatch(/const deadline = routeDeadline\(maxDuration\);/);

@@ -188,6 +188,41 @@ describe("MON-7 dw1 / COST-12 dw1 — a contractor added on the Costs tab appear
   });
 });
 
+describe("MON-12 (J12 review fix 7) — a contractor linked to one of its own do-not-use look-alikes needs no reason", () => {
+  // Two do-not-use rows the name "Gulf Mechanical" could be; the NON-exact one holds the lower id. Either one,
+  // linked, is flagged and answers for itself at the award (cost_doc_company_barred's contractor branch), so
+  // the link carries no award past a flag — whichever of them barredCompanyFor names first.
+  const NON_EXACT = company("00000000-0000-0000-0000-0000000006c1", "Gulf Mechanical, Inc.", { status: "do_not_use" });
+  const EXACT = company("00000000-0000-0000-0000-0000000006c2", "Gulf Mechanical", { status: "do_not_use" });
+  const HOLDINGS = company("c-hold", "Gulf Holdings");
+  beforeEach(() => { db.rows.companies = [NON_EXACT, EXACT, HOLDINGS].map(companyRow); });
+
+  it("either look-alike passes on the Costs-tab add, the later link and the wizard's check, with no override recorded", async () => {
+    for (const target of [NON_EXACT.id, EXACT.id]) {
+      expect(await checkPartyCompanyLink("o1", "Gulf Mechanical", target)).toEqual({ ok: true });
+      expect(await saveParty({ orgId: "o1", projectId: "p1", patch: { name: "Gulf Mechanical", companyId: target }, actor })).toEqual({ ok: true });
+    }
+    expect(audits("COST_PARTY_CREATED").map((r) => (r.details as Record<string, unknown>).overrideDoNotUse)).toEqual([undefined, undefined]);
+    // a name exact to neither: barredCompanyFor names the lower id (NON_EXACT); a link to the other look-alike passes too
+    await saveParty({ orgId: "o1", projectId: "p1", patch: { name: "GULF MECHANICAL LLC" }, actor });
+    const unlinked = (await listParties("o1", "p1")).find((p) => p.name === "GULF MECHANICAL LLC")!;
+    expect(await linkPartyToCompany({ orgId: "o1", partyId: unlinked.id, companyId: EXACT.id, actor })).toEqual({ ok: true });
+    expect(audits("COST_PARTY_LINKED")[0].details).not.toHaveProperty("overrideDoNotUse");
+  });
+
+  it("negative control: a link to a company that is not one of them still asks, naming the look-alike barredCompanyFor names first", async () => {
+    const refused = await saveParty({ orgId: "o1", projectId: "p1", patch: { name: "Gulf Mechanical", companyId: "c-hold" }, actor });
+    expect(refused.ok).toBe(false);
+    expect(refused.needsOverride).toEqual({ companyId: EXACT.id, company: "Gulf Mechanical" });
+    expect(db.rows.project_parties ?? []).toHaveLength(0);
+    expect((await checkPartyCompanyLink("o1", "GULF MECHANICAL LLC", "c-hold")).ok).toBe(false);
+    // a do-not-use company the name could NOT be is no pass either
+    db.rows.companies.push(companyRow(company("c-other", "Harbor Welding", { status: "do_not_use" })));
+    const other = await saveParty({ orgId: "o1", projectId: "p1", patch: { name: "Gulf Mechanical", companyId: "c-other" }, actor });
+    expect(other.needsOverride).toEqual({ companyId: EXACT.id, company: "Gulf Mechanical" });
+  });
+});
+
 describe("DEC-76 item 3 — the wizard's name-bound link meets the same do-not-use rule", () => {
   it("a link that would need a reason is refused with a note (the wizard adds the contractor unlinked); a clean one passes; the barred company itself passes", async () => {
     // "Apex Industrial LLC" normalises to the do-not-use "Apex Industrial";

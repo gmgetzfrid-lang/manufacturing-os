@@ -34,8 +34,8 @@
       "LOW": 49
     },
     "by_status": {
-      "RESOLVED": 169,
-      "OPEN": 90,
+      "RESOLVED": 170,
+      "OPEN": 89,
       "REFUTED": 2,
       "WONTFIX": 3,
       "INVALID": 1
@@ -5294,7 +5294,7 @@
       "id": "PR-2",
       "title": "AI-extracted quote totals are never reconciled against their own line items, then rank the bids",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

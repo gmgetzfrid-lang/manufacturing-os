@@ -33,6 +33,7 @@ import NodeCover from "@/components/documents/NodeCover";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
 import { loadInbox, type InboxSnapshot } from "@/lib/inbox";
+import { SCOPE_STAMPS_NOT_IN } from "@/lib/timeline";
 import { computeNudges } from "@/lib/nudges";
 import { resolveMarkupRequest } from "@/lib/markupRequests";
 import { useTicketNotifications } from "@/hooks/useTicketNotifications";
@@ -242,11 +243,15 @@ async function headCount(build: () => Promise<{ count: number | null }>): Promis
 }
 
 /** Timestamps from `table.column` in the last `days` days — feeds day-bucket
- *  bars and week-over-week trends. Best-effort: a missing table → []. */
-async function fetchRecentDates(table: string, orgId: string, days = 14, column = "created_at"): Promise<string[]> {
+ *  bars and week-over-week trends. Best-effort: a missing table → [].
+ *  `notIn` leaves rows out in the query (a PostgREST `not.in` list on a
+ *  column), before the row cap. */
+async function fetchRecentDates(table: string, orgId: string, days = 14, column = "created_at", notIn?: { column: string; list: string }): Promise<string[]> {
   try {
     const since = new Date(Date.now() - days * 86_400_000).toISOString();
-    const { data } = await supabase.from(table).select(column).eq("org_id", orgId).gte(column, since).limit(4000);
+    let q = supabase.from(table).select(column).eq("org_id", orgId).gte(column, since);
+    if (notIn) q = q.not(notIn.column, "in", notIn.list);
+    const { data } = await q.limit(4000);
     return ((data ?? []) as unknown as Array<Record<string, string | null>>).map((r) => r[column]).filter(Boolean) as string[];
   } catch { return []; }
 }
@@ -996,11 +1001,15 @@ function ProjectsBody() {
 interface AuditRow { id: string; action: string | null; timestamp: string | null }
 function ActivityBody() {
   const { data, loading } = useWidgetData(async (orgId) => {
+    // SEC-21 (J12 review fix 7): the database's scope stamp is not an event —
+    // its MILESTONE_DELETED row is — so the list and the 14-day count leave
+    // it out in the query and one milestone delete shows (and counts) once.
     const [{ data: rows }, dates] = await Promise.all([
       supabase.from("audit_logs")
         .select("id, action, timestamp").eq("org_id", orgId)
+        .not("action", "in", SCOPE_STAMPS_NOT_IN)
         .order("timestamp", { ascending: false }).limit(30),
-      fetchRecentDates("audit_logs", orgId, 14, "timestamp"),
+      fetchRecentDates("audit_logs", orgId, 14, "timestamp", { column: "action", list: SCOPE_STAMPS_NOT_IN }),
     ]);
     return { rows: (rows ?? []) as AuditRow[], dates };
   });

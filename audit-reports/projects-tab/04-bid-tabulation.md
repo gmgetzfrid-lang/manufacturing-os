@@ -462,7 +462,7 @@ Voiding must go through a status-guarded update (see `MON-3`).
 ## BID-10 · The RFQ group is free text with no normalization, and a case difference silently splits a bid field
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J12 SERVER REMAINDERS (`quoteGroups`, `lib/costDocs.ts`, keys case-sensitively and feeds `projectSnapshot` → `projectHealth`) — by the integrator, 2026-10-01 (at the J13 merge: the record reconcile left this remainder open; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** correctness / process
@@ -506,6 +506,16 @@ selected from a dropdown, created explicitly.
 What is owed: key `quoteGroups` by `rfqKey` / `rfqGroupKey` (keeping a typed spelling as the label), or have `lib/projectSnapshot.ts` merge its groups the way the panel does. Either is about one line, plus a snapshot test that two case variants count as one field. `lib/costDocs.ts` and `lib/projectSnapshot.ts` are outside this records-only package. The record stays OPEN.
 
 The comment above the bid tab's grouping (`components/projects/cost/QuotesPanel.tsx:189-192`) is stale. It says `lib/costDocs` keys the award's rival-decline on the exact string, and calls the server-side key P3's pending limb. That limb has landed (`rfqKey`, above). Whoever owns the grouping-key fix should correct the comment in the same change.
+
+**Resolution (2026-10-01, projects Round G).** Package projects-joint J12 SERVER REMAINDERS closed the grouping key named above. `lib/costDocs.ts` `quoteGroups` keys groups by `rfqKey` (case-folded, whitespace collapsed — the award's rival key and the bid tab's `rfqGroupKey`) and labels each with the first spelling seen. Its other consumer, `lib/projectSnapshot.ts`, therefore counts "Unit 300 Repipe" and "unit 300 repipe " as ONE unawarded field, so the coach's "Pick a winner" agrees with the bid tab before and after an award. The award itself in one transaction (`20261157` `award_quote`, `GAP-406`) declines rivals by the same key.
+- Commit: `5ace9cf`.
+- Tests: `lib/__tests__/costDocs.test.ts` "BID-10 — quoteGroups keys groups case- and space-insensitively" (one field under the first spelling; voids and invoices out); `lib/__tests__/projectSnapshot.test.ts` "'Piping' and 'piping ' are ONE unawarded field, as the bid tab shows them"; `lib/__tests__/prjRoundGJ12Migration.test.ts` "declines rivals by the RFQ group KEY".
+
+**Done-when.**
+- ✓ Two case-variant group names tabulate as one group — on the bid tab (above) and in `quoteGroups` / the coach's count (here).
+- ✓ Awarding declines rivals across the case variants — the client sequence (`rfqKey`, above) and `award_quote`.
+
+**Scope / residual.** The comment above the bid tab's grouping (`components/projects/cost/QuotesPanel.tsx:189-192`) still says the lib keys the award's rival decline on the exact string and that the server-side key is pending — stale since `rfqKey` landed. `QuotesPanel.tsx` is projects-joint J10b's file in this wave: handed over (a comment-only change). `mergeQuoteGroups` on the panel now receives groups already merged by the same key; it can stay (harmless) or be simplified with that change.
 
 ---
 
@@ -612,6 +622,6 @@ still looks complete and normal.
 | BID-7 | HIGH | RESOLVED |
 | BID-8 | HIGH | RESOLVED |
 | BID-9 | HIGH | RESOLVED |
-| BID-10 | MEDIUM | OPEN |
+| BID-10 | MEDIUM | RESOLVED |
 | BID-11 | MEDIUM | RESOLVED |
 | BID-12 | MEDIUM | RESOLVED |

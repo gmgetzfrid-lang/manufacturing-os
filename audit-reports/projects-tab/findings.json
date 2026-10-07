@@ -14,18 +14,18 @@
     "audit-reports/projects-tab/10-accessibility-mobile.md"
   ],
   "totals": {
-    "findings": 142,
+    "findings": 143,
     "gaps": 10,
     "by_severity": {
       "CRITICAL": 17,
       "HIGH": 52,
-      "MEDIUM": 67,
+      "MEDIUM": 68,
       "LOW": 6
     },
     "by_status": {
-      "RESOLVED": 121,
+      "RESOLVED": 126,
       "REFUTED": 2,
-      "OPEN": 19
+      "OPEN": 15
     }
   },
   "status_vocabulary": [
@@ -2190,7 +2190,7 @@
       "id": "BID-10",
       "title": "The RFQ group is free text with no normalization, and a case difference silently splits a bid field",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "correctness / process",
@@ -2699,7 +2699,7 @@
       "id": "PERF-7",
       "title": "Applying an AI assessment issues one update per item, sequentially",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "availability / data-integrity",
@@ -2725,7 +2725,7 @@
       "id": "PERF-8",
       "title": "The full timeline loads on every project open, for a tab most users never click",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "performance",
@@ -3077,7 +3077,7 @@
       "id": "SAF-8",
       "title": "A task can be Missed and one-hundred-percent earned at the same time",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "data-integrity",
@@ -3196,6 +3196,48 @@
       ],
       "refuted": false,
       "summary": "One ✕ click erases a drawing's history from the project view. A docremoved activity row is written, but the loss is invisible: the tooltip only warns \"it will re-link on the next checkout.\" For a PSM shop this is a one-click history erasure. Combined with SEC-17, any active org member can do it.",
+      "area": "projects-tab",
+      "report": "audit-reports/projects-tab/02-safety-compliance.md"
+    },
+    {
+      "id": "SAF-18",
+      "title": "Outside the quality and money paths, 177 update / delete sites still discard a zero-row result",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by the census in `lib/__tests__/checkedWrite.test.ts`, at `2af813b` + J12; not exercised against a live database)",
+      "blast_radius": "audit integrity / silent failure",
+      "related": [
+        "GAP-402",
+        "SAF-3",
+        "DEC-31"
+      ],
+      "locations": [
+        "lib/knowledgeIngest.ts",
+        "lib/milestones.ts",
+        "lib/projects.ts",
+        "lib/reviewControl.ts",
+        "lib/acknowledgments.ts",
+        "lib/checkoutEpisodes.ts",
+        "lib/collections.ts",
+        "lib/libraryCollections.ts",
+        "lib/operationalGraph.ts",
+        "lib/revisions.ts",
+        "lib/reviewCycles.ts",
+        "app/api/intake/upload/route.ts",
+        "components/projects/IntakePanel.tsx",
+        "components/projects/EditProjectModal.tsx",
+        "components/projects/ProjectWizard.tsx",
+        "components/projects/cost/ChangeOrdersPanel.tsx",
+        "app/api/projects/cost-docs/route.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A member whose role lost a write permission edits a milestone, a collection or a review assignment; the policy filters the UPDATE to zero rows; the screen says it saved, and — where an audit row follows — the trail records a change that did not happen (SAF-3's shape).",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/02-safety-compliance.md"
     },
@@ -3712,7 +3754,7 @@
       "id": "MON-13",
       "title": "The contractor-link and item-contractor rules are enforced only in the browser",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (by reading; not exercised against a live database)",
       "blast_radius": "process / governance",

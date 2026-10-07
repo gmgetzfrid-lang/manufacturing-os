@@ -411,14 +411,118 @@ export async function createChecklist(input: {
 // ── Batched, checked, optimistic item writes ─────────────────────────────
 
 interface ItemWrite { item: ChecklistItem; patch: Record<string, unknown> }
+type ItemWriteOutcome = { landed: string[]; refused: string[]; failed: Array<{ id: string; error: string }> };
+/** One call's answer: an outcome, or the function's request to re-send the
+ *  call's writes in smaller calls (nothing of the call was applied). */
+type ApplyAnswer = ItemWriteOutcome & { split?: number };
+
+/** The columns a machine write sends through the one-request apply
+ *  (20261157 apply_checklist_item_writes); the function stamps updated_at
+ *  (the server's clock) and updated_by NULL itself. */
+const MACHINE_WRITE_COLUMNS = ["status", "applicability", "ai_rationale", "evidence", "updated_by_name"] as const;
+
+/** The most writes one apply_checklist_item_writes call carries — the
+ *  function refuses more than 2,000 (22023); a larger list goes in calls of
+ *  this size and their outcomes are merged. */
+export const APPLY_CHUNK = 1000;
+
+/** The most writes one call may judge row by row. The function applies a
+ *  call in ONE guarded statement; only when that statement is refused (a
+ *  rail judged one row) does it fall back to one sub-transaction per row —
+ *  and for a call larger than this it answers `{ split: n }` instead, so the
+ *  lib re-sends those writes in calls of n. Each landed row's
+ *  sub-transaction holds a transaction id until the call commits; kept under
+ *  PostgreSQL's 64-entry per-session subtransaction cache, a call never
+ *  pushes every other session's snapshot onto pg_subtrans. */
+export const PER_ROW_CHUNK = 50;
+
+/** A function the database does not have yet: Postgres 42883, or PostgREST's
+ *  schema-cache miss (PGRST202). */
+function isMissingRpc(err: { code?: string | null; message?: string | null }): boolean {
+  return err.code === "42883" || err.code === "PGRST202" || /could not find the function/i.test(err.message ?? "");
+}
+
+/**
+ * PERF-7 / DEC-52 item 10: the machine's writes to ONE checklist's items in
+ * ONE request — 20261157 `apply_checklist_item_writes` applies the writes in
+ * one statement, each guarded on the row's updated_at AS READ (the same
+ * optimistic guard as the single-row path), and returns what landed, what
+ * the guard refused and what failed (every 20261091 rail still judges each
+ * row; a refused statement is re-judged row by row, or answered `split` —
+ * PER_ROW_CHUNK). `null` while the migration is not applied — the caller
+ * falls back to the single-row writes.
+ */
+async function applyItemWritesInOneRequest(checklistId: string, writes: ItemWrite[]): Promise<ApplyAnswer | null> {
+  const payload = writes.map((w) => {
+    const out: Record<string, unknown> = { id: w.item.id, expected_updated_at: w.item.updatedAt };
+    for (const k of MACHINE_WRITE_COLUMNS) if (k in w.patch) out[k] = w.patch[k];
+    return out;
+  });
+  let res: { data: unknown; error: { code?: string | null; message: string } | null };
+  try {
+    res = await supabase.rpc("apply_checklist_item_writes", { p_checklist: checklistId, p_writes: payload });
+  } catch (e) {
+    const error = describeWriteError({ message: (e as Error)?.message ?? String(e) });
+    return { landed: [], refused: [], failed: writes.map((w) => ({ id: w.item.id, error })) };
+  }
+  if (res.error) {
+    if (isMissingRpc(res.error)) return null;
+    const error = describeWriteError(res.error);
+    return { landed: [], refused: [], failed: writes.map((w) => ({ id: w.item.id, error })) };
+  }
+  const out = (res.data ?? {}) as { landed?: unknown; refused?: unknown; failed?: unknown; split?: unknown };
+  // An answer without the function's shape is not an outcome: the single-row
+  // writes run instead (their updated_at guard refuses any row the function
+  // did write, so nothing lands twice).
+  if (!Array.isArray(out.landed)) return null;
+  const ids = (v: unknown) => (Array.isArray(v) ? v.map(String) : []);
+  const failed = (Array.isArray(out.failed) ? out.failed : []).map((f) => {
+    const r = (f ?? {}) as { id?: unknown; code?: unknown; message?: unknown };
+    return { id: String(r.id ?? ""), error: describeWriteError({ code: typeof r.code === "string" ? r.code : null, message: String(r.message ?? "") }) };
+  });
+  const split = typeof out.split === "number" && Number.isInteger(out.split) && out.split > 0 ? out.split : undefined;
+  return { landed: ids(out.landed), refused: ids(out.refused), failed, ...(split ? { split } : {}) };
+}
 
 /** Write each patch as a checked UPDATE guarded on the row's updated_at as
  *  read (optimistic concurrency): a row someone else changed in between is
- *  a refusal, never a lost chip. Batches of WRITE_BATCH run in parallel. */
-async function writeItemPatches(writes: ItemWrite[]): Promise<{ landed: string[]; refused: string[]; failed: Array<{ id: string; error: string }> }> {
+ *  a refusal, never a lost chip. One request through the database's apply
+ *  (PERF-7) — or, before 20261157 is applied, batches of WRITE_BATCH
+ *  single-row writes in parallel. */
+async function writeItemPatches(writes: ItemWrite[]): Promise<ItemWriteOutcome> {
   const landed: string[] = [], refused: string[] = [], failed: Array<{ id: string; error: string }> = [];
-  for (let i = 0; i < writes.length; i += WRITE_BATCH) {
-    const batch = writes.slice(i, i + WRITE_BATCH);
+  let rest = writes;
+  const checklistId = writes[0]?.item.checklistId;
+  if (checklistId && writes.every((w) => w.item.checklistId === checklistId)) {
+    // In calls of at most APPLY_CHUNK (the function's own cap is 2,000),
+    // in order. A call answering `split` applied nothing: its writes go
+    // again, first, in calls of at most PER_ROW_CHUNK (always smaller than
+    // the call that asked). A call answering "not here" (the migration is
+    // missing, a shapeless answer, or a one-write call still asking to be
+    // split) hands that call and everything after it to the single-row
+    // writes; what earlier calls landed stands.
+    const queue: ItemWrite[][] = [];
+    for (let i = 0; i < writes.length; i += APPLY_CHUNK) queue.push(writes.slice(i, i + APPLY_CHUNK));
+    rest = [];
+    while (queue.length > 0) {
+      const call = queue.shift()!;
+      const part = await applyItemWritesInOneRequest(checklistId, call);
+      if (part?.split && call.length > 1) {
+        const size = Math.max(1, Math.min(part.split, PER_ROW_CHUNK, call.length - 1));
+        const smaller: ItemWrite[][] = [];
+        for (let i = 0; i < call.length; i += size) smaller.push(call.slice(i, i + size));
+        queue.unshift(...smaller);
+        continue;
+      }
+      if (!part || part.split) {
+        rest = [call, ...queue].flat();
+        break;
+      }
+      landed.push(...part.landed); refused.push(...part.refused); failed.push(...part.failed);
+    }
+  }
+  for (let i = 0; i < rest.length; i += WRITE_BATCH) {
+    const batch = rest.slice(i, i + WRITE_BATCH);
     const results = await Promise.all(batch.map(async (w) => ({
       id: w.item.id,
       res: await checkedWrite((w.item.updatedAt

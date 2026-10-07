@@ -32,7 +32,7 @@
 import { supabase } from "@/lib/supabase";
 import { uploadToPath, deleteFile } from "@/lib/storage";
 import { addEntry, type Actor } from "@/lib/costs";
-import { validateParsedQuote, type ParsedQuote } from "@/lib/bidTab";
+import { validateParsedQuote, normalizeCompanyName, UNKNOWN_VENDOR, type ParsedQuote } from "@/lib/bidTab";
 import { emit } from "@/lib/notify/dispatch";
 import { userFacingError, userFacingReadError, userFacingCaughtError, asClause } from "@/lib/userFacingError";
 
@@ -168,6 +168,9 @@ export async function uploadCostDoc(input: {
   }
 
   const doc = mapDoc(data as Record<string, unknown>);
+  // COST-3 (DEC-48, J12 line): the upload never links the bid to a Known
+  // Company — a stored link is a person's (the bid-row picker); a machine's
+  // would clear a do-not-use look-alike added later (lib/costDocParse).
   await audit("COST_DOC_UPLOADED", input.orgId, doc.id, input.actor, {
     kind: input.kind, fileName: input.file.name, rfqGroup: input.rfqGroup ?? null, vendor: input.vendorName ?? null,
   });
@@ -189,7 +192,7 @@ export function parsedQuoteFrom(doc: CostDocument): ParsedQuote | null {
   if (!doc.parsed) return null;
   try {
     const q = validateParsedQuote(doc.parsed, doc.id);
-    if (q.vendorName === "Unknown vendor" && doc.vendorName) q.vendorName = doc.vendorName;
+    if (q.vendorName === UNKNOWN_VENDOR && doc.vendorName) q.vendorName = doc.vendorName;
     return q;
   } catch {
     return null;
@@ -197,15 +200,22 @@ export function parsedQuoteFrom(doc: CostDocument): ParsedQuote | null {
 }
 
 /** Quotes grouped for bid tabulation: rfq_group label → its competing bids.
- *  Ungrouped quotes tabulate alone under their own name. */
+ *  Ungrouped quotes tabulate alone under their own name. BID-10: the
+ *  grouping KEY is case-folded and whitespace-collapsed (rfqKey — the key
+ *  the award's rival decline and the bid tab's merge use), so "Unit 300
+ *  Repipe" and "unit 300 repipe " are ONE field, labelled with the first
+ *  spelling seen. The coach's unawarded-field count (lib/projectSnapshot)
+ *  reads this, so it counts what the bid tab shows. */
 export function quoteGroups(docs: CostDocument[]): Array<{ group: string; docs: CostDocument[] }> {
   const live = docs.filter((d) => d.kind === "quote" && d.status !== "void");
-  const by = new Map<string, CostDocument[]>();
+  const by = new Map<string, { group: string; docs: CostDocument[] }>();
   for (const d of live) {
-    const g = d.rfqGroup?.trim() || `Ungrouped — ${d.vendorName ?? d.fileName ?? "quote"}`;
-    by.set(g, [...(by.get(g) ?? []), d]);
+    const label = d.rfqGroup?.trim() || `Ungrouped — ${d.vendorName ?? d.fileName ?? "quote"}`;
+    const key = rfqKey(label);
+    const cur = by.get(key);
+    if (cur) cur.docs.push(d); else by.set(key, { group: label, docs: [d] });
   }
-  return [...by.entries()].map(([group, ds]) => ({ group, docs: ds }));
+  return [...by.values()];
 }
 
 /**
@@ -305,39 +315,120 @@ async function currencyMismatch(doc: CostDocument, costAccountId: string): Promi
 
 type CompanyRow = { id: string; name: string; status: string };
 
-/** MON-12: the company behind a quote — the document's own registry link
- *  first (cost_documents.company_id, J4's 20261096 column, read from the raw
- *  row so it is simply absent before that migration), then the party's
- *  (project_parties.company_id), then an exact name with a single match.
+/** The registry statuses an award must answer for (MON-12) on the company
+ *  the quote is BOUND to (its own link, its contractor's, or its one exact
+ *  name): `inactive` has the same behaviour as `do_not_use` — refused
+ *  without a typed override. A look-alike the quote is not bound to counts
+ *  only when it is `do_not_use` (DEC-48's gate). */
+const FLAGGED_COMPANY_STATUSES = ["do_not_use", "inactive"];
+
+/** MON-12 / DEC-48: the company behind a quote, as two answers.
+ *  - `company` — the registry row the quote BINDS to, which the award
+ *    records: the document's own registry link first (cost_documents.company_id,
+ *    J4's 20261096 column, read from the raw row so it is simply absent
+ *    before that migration), then the party's (project_parties.company_id),
+ *    then an exact name with a single match. Binding refuses ambiguity.
+ *  - `barred` — the flagged (do-not-use / inactive) row the award must ANSWER
+ *    FOR: the document's own link decides, flagged or not (a person chose it
+ *    on the bid row); the contractor's link answers for its company's own
+ *    flag, but an unflagged one never hides a do-not-use look-alike — the
+ *    intake door files a quote against the contractor it matched by name
+ *    (app/api/intake/upload, nobody choosing), and the bid tab's chip reads
+ *    only the document's own link; then ANY do-not-use registry row the
+ *    vendor name normalises to (lib/bidTab `normalizeCompanyName`, the bid
+ *    tab's `barredCompanyFor` gate, DEC-48), else the bound company itself
+ *    when it is flagged. Gating does not refuse ambiguity — it fails toward
+ *    the flag, so "Gulf Mechanical Inc" answers for a do-not-use "Gulf
+ *    Mechanical, Inc." it does not bind to. An INACTIVE look-alike the
+ *    quote does not bind to is not the bid's (the bid tab never flags it;
+ *    a registry de-duplicated by marking the old row inactive leaves one
+ *    beside the active row the bid binds to).
+ *  20261157's `cost_doc_company_behind` / `cost_doc_company_barred` are the
+ *  same two rules in SQL (the rail and `award_quote` read them as the
+ *  database's own check). A link counts only to a company of the document's
+ *  own org (the rail reads as the definer, so it checks the same).
  *  Any failed read is an ERROR, never "no company": the refusal must not
  *  pass silently because a lookup timed out. */
-async function companyBehind(doc: CostDocument, raw: Record<string, unknown>): Promise<{ company: CompanyRow | null; error?: string }> {
+async function companyBehind(doc: CostDocument, raw: Record<string, unknown>): Promise<{ company: CompanyRow | null; barred: CompanyRow | null; error?: string }> {
+  const flaggedOrNull = (c: CompanyRow): CompanyRow | null => (FLAGGED_COMPANY_STATUSES.includes(c.status) ? c : null);
   const byId = async (id: string): Promise<{ company: CompanyRow | null; error?: string }> => {
-    const { data, error } = await supabase.from("companies").select("id, name, status").eq("id", id).maybeSingle();
+    const { data, error } = await supabase.from("companies").select("id, name, status").eq("id", id).eq("org_id", doc.orgId).maybeSingle();
     if (error) return { company: null, error: userFacingReadError(error, "companyBehind") };
     return { company: (data as CompanyRow | null) ?? null };
   };
   const docCompanyId = (raw.company_id as string | null | undefined) ?? null;
   if (docCompanyId) {
     const hit = await byId(docCompanyId);
-    if (hit.error || hit.company) return hit;
+    if (hit.error) return { company: null, barred: null, error: hit.error };
+    if (hit.company) return { company: hit.company, barred: flaggedOrNull(hit.company) };
   }
   if (doc.partyId) {
     const { data, error } = await supabase.from("project_parties").select("company_id").eq("id", doc.partyId).maybeSingle();
-    if (error) return { company: null, error: userFacingReadError(error, "companyBehind") };
+    if (error) return { company: null, barred: null, error: userFacingReadError(error, "companyBehind") };
     const partyCompanyId = ((data as { company_id?: string | null } | null)?.company_id) ?? null;
     if (partyCompanyId) {
       const hit = await byId(partyCompanyId);
-      if (hit.error || hit.company) return hit;
+      if (hit.error) return { company: null, barred: null, error: hit.error };
+      if (hit.company) {
+        // A flagged contractor company answers; an unflagged one binds but
+        // never clears a do-not-use look-alike (20261157 cost_doc_company_barred).
+        const flagged = flaggedOrNull(hit.company);
+        if (flagged) return { company: hit.company, barred: flagged };
+        const lookAlike = await flaggedLookAlike(doc.orgId, doc.vendorName ?? "");
+        if (lookAlike.error) return { company: null, barred: null, error: lookAlike.error };
+        return { company: hit.company, barred: lookAlike.company };
+      }
     }
   }
   const name = doc.vendorName?.trim();
-  if (!name) return { company: null };
+  if (!name) return { company: null, barred: null };
   const { data, error } = await supabase.from("companies").select("id, name, status")
     .eq("org_id", doc.orgId).ilike("name", name.replace(/[%_\\]/g, (c) => `\\${c}`)).limit(2);
-  if (error) return { company: null, error: userFacingReadError(error, "companyBehind") };
+  if (error) return { company: null, barred: null, error: userFacingReadError(error, "companyBehind") };
   const rows = (data ?? []) as CompanyRow[];
-  return { company: rows.length === 1 ? rows[0] : null };
+  const bound = rows.length === 1 ? rows[0] : null;
+  const lookAlike = await flaggedLookAlike(doc.orgId, doc.vendorName ?? "");
+  if (lookAlike.error) return { company: null, barred: null, error: lookAlike.error };
+  return { company: bound, barred: lookAlike.company ?? (bound ? flaggedOrNull(bound) : null) };
+}
+
+/** MON-12's gate for a bid nobody has linked: ANY do-not-use registry row
+ *  of the org whose name normalises to the vendor's (`normalizeCompanyName`;
+ *  20261157's `company_name_key` is the same rule; DEC-48 and the bid tab's
+ *  `barredCompanyFor` flag do-not-use look-alikes only), the exact name
+ *  first so the refusal names the bound company when that one is barred,
+ *  then by id in byte order — `cost_doc_company_barred`'s own order
+ *  (exact name as `lower(btrim(vendor))`, which trims spaces only; then
+ *  `c.id`), with no collation in either, so the lib's prompt
+ *  (`needsOverride`) and the override row `award_quote` writes name the
+ *  same company. The bid tab's own prompt and intent row ask the award's
+ *  question at the click (components/projects/cost/QuotesPanel.tsx
+ *  `companyAwardAnswersFor`: `cost_doc_company_barred` itself once 20261157
+ *  is applied; before it this function's order through lib/bidTab.ts
+ *  `barredCompanyFor`, over the STORED vendor name — J12 review fix pass 7.
+ *  Pass 6 ordered `barredCompanyFor` this way but the panel still fed it the
+ *  letterhead the AI read, so it could name another look-alike).
+ *  The read is narrowed server-side to the org's do-not-use rows whose name
+ *  holds the key's longest word — every word of the key except "and"
+ *  (which may stand for "&") appears, case aside, in the name as written —
+ *  and paged past PostgREST's 1,000-row answer. */
+async function flaggedLookAlike(orgId: string, vendorName: string): Promise<{ company: CompanyRow | null; error?: string }> {
+  const key = normalizeCompanyName(vendorName);
+  if (!key) return { company: null };
+  const word = key.split(" ").filter((w) => w !== "and").sort((a, b) => b.length - a.length)[0] ?? null;
+  const exact = vendorName.replace(/^ +| +$/g, "").toLowerCase();
+  const hits: CompanyRow[] = [];
+  for (let from = 0; ; from += 1000) {
+    let q = supabase.from("companies").select("id, name, status").eq("org_id", orgId).eq("status", "do_not_use");
+    if (word) q = q.ilike("name", `%${word}%`);
+    const { data, error } = await q.order("id").range(from, from + 999);
+    if (error) return { company: null, error: userFacingReadError(error, "companyBehind") };
+    const rows = (data ?? []) as CompanyRow[];
+    hits.push(...rows.filter((c) => normalizeCompanyName(c.name) === key));
+    if (rows.length < 1000) break;
+  }
+  hits.sort((a, b) => Number(b.name.toLowerCase() === exact) - Number(a.name.toLowerCase() === exact) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return { company: hits[0] ?? null };
 }
 
 /** The RFQ group as a grouping KEY — case-folded, whitespace collapsed —
@@ -380,9 +471,8 @@ function postableTotal(fresh: CostDocument): { total: number | null; extracted: 
 function extentRefusal(fresh: CostDocument, raw: Record<string, unknown>, confirmedTotal: number | null | undefined): string | null {
   const { total, extracted } = postableTotal(fresh);
   if (total == null || !(total > 0)) return null;   // the no-total refusal follows the claim
-  const shown = total.toLocaleString();
   if (confirmedTotal != null && (!Number.isFinite(confirmedTotal) || Math.round(confirmedTotal) !== Math.round(total))) {
-    return `The confirmed total (${Number.isFinite(confirmedTotal) ? confirmedTotal.toLocaleString() : String(confirmedTotal)}) doesn't match the stored total (${shown}) — correct the total first if the paper says something else.`;
+    return confirmMismatchMessage(confirmedTotal, total);
   }
   if (extracted == null) return null;
   const ext = readExtentOf(raw);
@@ -391,8 +481,18 @@ function extentRefusal(fresh: CostDocument, raw: Record<string, unknown>, confir
   const unknown = ext.pagesRead == null || ext.pagesTotal == null;
   if (!truncated && !unknown) return null;
   if (confirmedTotal != null) return null;   // typed back and equal (checked above)
-  return truncated
-    ? `The AI read only pages 1–${ext.pagesRead} of ${ext.pagesTotal} of this document, so its total (${shown}) may come from an incomplete read. Type the total from the paper to confirm it (correct the row's total first if the paper says something else).`
+  return extentMessage(ext.pagesRead, ext.pagesTotal, total);
+}
+
+/** COST-13's two sentences — the lib's guard and 20261157 `award_quote`'s
+ *  re-check under its lock (`confirm_mismatch`, `extent`) say the same. */
+function confirmMismatchMessage(confirmedTotal: number, total: number): string {
+  return `The confirmed total (${Number.isFinite(confirmedTotal) ? confirmedTotal.toLocaleString() : String(confirmedTotal)}) doesn't match the stored total (${total.toLocaleString()}) — correct the total first if the paper says something else.`;
+}
+function extentMessage(pagesRead: number | null, pagesTotal: number | null, total: number): string {
+  const shown = total.toLocaleString();
+  return pagesRead != null && pagesTotal != null && pagesRead < pagesTotal
+    ? `The AI read only pages 1–${pagesRead} of ${pagesTotal} of this document, so its total (${shown}) may come from an incomplete read. Type the total from the paper to confirm it (correct the row's total first if the paper says something else).`
     : `How much of this document the AI read is unknown, so its total (${shown}) may come from an incomplete read. Type the total from the paper to confirm it (correct the row's total first if the paper says something else).`;
 }
 
@@ -465,6 +565,145 @@ async function notifyAward(fresh: CostDocument, total: number, actor: Actor, cos
   }
 }
 
+/** The refusals an award runs against the row as read, before anything
+ *  moves (MON-12 / COST-8 / COST-13): the budget line's currency, the
+ *  company registry (fail-closed — a failed read refuses), and the read
+ *  extent. Shared by the one-transaction award and the client sequence. */
+async function awardGuard(
+  f: CostDocument, raw: Record<string, unknown>, costAccountId: string,
+  override: string | null, confirmedTotal: number | null | undefined,
+): Promise<{ refusal: string | null; company: CompanyRow | null; barred: CompanyRow | null }> {
+  const mismatch = await currencyMismatch(f, costAccountId);
+  if (mismatch) return { refusal: mismatch, company: null, barred: null };
+  const behind = await companyBehind(f, raw);
+  if (behind.error) {
+    return { refusal: `Couldn't check the company registry (${asClause(behind.error)}) — try again; an award is not made without that check.`, company: null, barred: null };
+  }
+  const { company, barred } = behind;
+  if (barred && !override) return { refusal: flaggedMessage(barred), company, barred };
+  return { refusal: extentRefusal(f, raw, confirmedTotal), company, barred };
+}
+
+function flaggedMessage(company: CompanyRow): string {
+  return company.status === "do_not_use"
+    ? `${company.name} is flagged DO NOT USE in the company registry. Awarding it needs an explicit override with a reason, which goes on the audit trail.`
+    : `${company.name} is marked inactive in the company registry. Awarding it needs an explicit override with a reason, which goes on the audit trail.`;
+}
+
+/** The one-transaction award is not in the database yet (20261157 not
+ *  applied): the caller runs the client sequence instead. */
+const AWARD_RPC_MISSING: unique symbol = Symbol("award_quote missing");
+
+/** A function the database does not have: Postgres 42883, or PostgREST's
+ *  schema-cache miss (PGRST202). */
+export function isMissingRpc(err: { code?: string | null; message?: string | null } | null | undefined): boolean {
+  if (!err) return false;
+  return err.code === "42883" || err.code === "PGRST202" || /could not find the function/i.test(err.message ?? "");
+}
+
+type AwardResult = {
+  ok: boolean; error?: string; warning?: string;
+  needsOverride?: { companyId: string; companyName: string; status: string };
+};
+
+/**
+ * GAP-406: the award as ONE transaction — 20261157 `award_quote` locks the
+ * quote, re-checks it, claims it, posts the commitment, records the
+ * override, declines the open rivals of its RFQ group (by key) and writes
+ * COST_DOC_AWARDED, all or nothing: a failure at any step leaves no partial
+ * award. The guard (currency, registry, read extent) runs here first
+ * against the row as read, so a refusal reads exactly as the client
+ * sequence's; the function re-checks what it can under its lock (status,
+ * budget line, currency, the total the guard saw, the registry gate on any
+ * normalised do-not-use look-alike, and COST-13's confirmed figure and read
+ * extent).
+ * Returns AWARD_RPC_MISSING while the migration is not applied.
+ */
+async function awardInOneTransaction(
+  input: Parameters<typeof awardQuote>[0], override: string | null,
+): Promise<AwardResult | typeof AWARD_RPC_MISSING> {
+  const { data: row, error: readErr } = await supabase.from("cost_documents").select("*").eq("id", input.doc.id).maybeSingle();
+  if (readErr || !row) return { ok: false, error: readErr ? userFacingReadError(readErr, "awardQuote") : "Document not found — it may have been removed." };
+  const raw = row as Record<string, unknown>;
+  const fresh = mapDoc(raw);
+  if (fresh.status !== "draft" && fresh.status !== "parsed") {
+    return { ok: false, error: `This document is already ${costDocStatusLabel(fresh.status).toLowerCase()} — refresh to see the latest.` };
+  }
+  const verdict = await awardGuard(fresh, raw, input.costAccountId, override, input.confirmedTotal);
+  if (verdict.refusal) {
+    return verdict.barred && !override
+      ? { ok: false, error: verdict.refusal, needsOverride: { companyId: verdict.barred.id, companyName: verdict.barred.name, status: verdict.barred.status } }
+      : { ok: false, error: verdict.refusal };
+  }
+  const total = postableTotal(fresh).total;
+  if (total == null || !(total > 0)) return { ok: false, error: "No readable total on this quote yet — run the AI read (or type the total) first." };
+
+  let res: { data: unknown; error: { code?: string | null; message: string } | null };
+  try {
+    res = await supabase.rpc("award_quote", {
+      p_doc: fresh.id, p_cost_account: input.costAccountId, p_expected_total: total,
+      p_override_reason: override, p_confirmed_total: input.confirmedTotal ?? null,
+    });
+  } catch (e) {
+    return { ok: false, error: userFacingCaughtError(e, { context: "awardQuote" }) };
+  }
+  if (res.error) {
+    if (isMissingRpc(res.error)) return AWARD_RPC_MISSING;
+    return { ok: false, error: userFacingError(res.error, { context: "awardQuote" }) };
+  }
+  const out = (res.data ?? {}) as {
+    ok?: boolean; code?: string; status?: string; total?: number;
+    confirmed?: number; pagesRead?: number | null; pagesTotal?: number | null;
+    docCurrency?: string; accountCurrency?: string;
+    company?: { id?: string; name?: string; status?: string } | null;
+    rivals?: number; declined?: number; ungroupedOpen?: unknown;
+  };
+  if (!out.ok) {
+    const co = out.company;
+    switch (out.code) {
+      case "company_flagged":
+        if (co?.id && co.name && co.status) {
+          const c: CompanyRow = { id: co.id, name: co.name, status: co.status };
+          return { ok: false, error: flaggedMessage(c), needsOverride: { companyId: c.id, companyName: c.name, status: c.status } };
+        }
+        return { ok: false, error: "The company behind this quote is flagged in the registry — awarding it needs an explicit override with a reason." };
+      case "status":
+        return { ok: false, error: `This document is already ${costDocStatusLabel(out.status ?? "decided").toLowerCase()} — refresh to see the latest.` };
+      case "currency":
+        return { ok: false, error: `This document is in ${out.docCurrency} but the budget line is in ${out.accountCurrency} — pick a ${out.docCurrency} budget line or correct the document's currency before posting.` };
+      case "account":
+        return { ok: false, error: "That budget line is not on this project (or no longer exists) — pick one of the project's budget lines. Nothing was changed." };
+      case "no_total":
+        return { ok: false, error: "No readable total on this quote yet — run the AI read (or type the total) first." };
+      case "total_changed":
+        return { ok: false, error: `The total of this quote changed since it was checked${typeof out.total === "number" ? ` (it is now ${out.total.toLocaleString()})` : ""} — refresh and check it before awarding. Nothing was changed.` };
+      // COST-13, re-checked under the lock: the guard's own sentences.
+      case "confirm_mismatch":
+        return { ok: false, error: confirmMismatchMessage(Number(out.confirmed ?? input.confirmedTotal), Number(out.total ?? total)) };
+      case "extent":
+        return { ok: false, error: extentMessage(out.pagesRead ?? null, out.pagesTotal ?? null, Number(out.total ?? total)) };
+      case "not_quote":
+        return { ok: false, error: "Only quotes can be awarded." };
+      case "not_found":
+        return { ok: false, error: "This document could not be awarded — it was removed, or you don't have permission to award it. Nothing was changed." };
+      default:
+        return { ok: false, error: "Someone else just decided this document — refresh to see the latest." };
+    }
+  }
+  const warnings: string[] = [];
+  const rivals = Number(out.rivals ?? 0);
+  const declined = Number(out.declined ?? 0);
+  if (rivals > declined) {
+    warnings.push(`Awarded, but ${rivals - declined} of ${rivals} competing bid(s) could not be marked not-selected — refresh and decline them by hand.`);
+  }
+  const names = Array.isArray(out.ungroupedOpen) ? (out.ungroupedOpen as unknown[]).map(String) : [];
+  if (names.length > 0) {
+    warnings.push(`Awarded. ${names.length} other ungrouped quote${names.length === 1 ? "" : "s"} stay${names.length === 1 ? "s" : ""} open (${names.join(", ")}) — decline ${names.length === 1 ? "it" : "them"} if ${names.length === 1 ? "it" : "they"} competed for this scope.`);
+  }
+  await notifyAward(fresh, total, input.actor, input.costAccountId);
+  return warnings.length ? { ok: true, warning: warnings.join(" ") } : { ok: true };
+}
+
 /**
  * Award a quote: post its total as a COMMITMENT on the chosen budget line,
  * mark it awarded, and mark the competing bids in the same RFQ group
@@ -501,29 +740,28 @@ export async function awardQuote(input: {
   const { doc } = input;
   if (doc.kind !== "quote") return { ok: false, error: "Only quotes can be awarded." };
 
+  const override = input.overrideReason?.trim() || null;
+
+  // GAP-406: the award in ONE database transaction (20261157 award_quote).
+  // Until that migration is applied the client sequence below runs instead.
+  const inOne = await awardInOneTransaction(input, override);
+  if (inOne !== AWARD_RPC_MISSING) return inOne;
+
   // Refusals that move nothing run against the RE-READ row, before the
   // claim's UPDATE (claimDocTransition's guard).
-  const override = input.overrideReason?.trim() || null;
   let company: CompanyRow | null = null;
-  let flagged = false;
+  let barred: CompanyRow | null = null;
   const claim = await claimDocTransition(doc.id, ["draft", "parsed"], "awarded", input.actor.uid, true, async (f, raw) => {
-    const mismatch = await currencyMismatch(f, input.costAccountId);
-    if (mismatch) return mismatch;
-    const behind = await companyBehind(f, raw);
-    if (behind.error) return `Couldn't check the company registry (${asClause(behind.error)}) — try again; an award is not made without that check.`;
-    company = behind.company;
-    flagged = !!company && (company.status === "do_not_use" || company.status === "inactive");
-    if (company && flagged && !override) {
-      return company.status === "do_not_use"
-        ? `${company.name} is flagged DO NOT USE in the company registry. Awarding it needs an explicit override with a reason, which goes on the audit trail.`
-        : `${company.name} is marked inactive in the company registry. Awarding it needs an explicit override with a reason, which goes on the audit trail.`;
-    }
-    return extentRefusal(f, raw, input.confirmedTotal);
+    const verdict = await awardGuard(f, raw, input.costAccountId, override, input.confirmedTotal);
+    company = verdict.company;
+    barred = verdict.barred;
+    return verdict.refusal;
   });
   const awardedCompany = company as CompanyRow | null;
+  const barredCompany = barred as CompanyRow | null;
   if (!claim.ok) {
-    return flagged && !override && awardedCompany
-      ? { ok: false, error: claim.error, needsOverride: { companyId: awardedCompany.id, companyName: awardedCompany.name, status: awardedCompany.status } }
+    return barredCompany && !override
+      ? { ok: false, error: claim.error, needsOverride: { companyId: barredCompany.id, companyName: barredCompany.name, status: barredCompany.status } }
       : { ok: false, error: claim.error };
   }
   const fresh = claim.fresh;
@@ -556,9 +794,9 @@ export async function awardQuote(input: {
     return { ok: false, error: back.ok ? postErr : stuckMessage(doc.id, "awarded", postErr, back.error ?? "unknown") };
   }
 
-  if (flagged && override && awardedCompany) {
+  if (barredCompany && override) {
     await audit("COST_DOC_AWARD_OVERRIDE", fresh.orgId, doc.id, input.actor, {
-      companyId: awardedCompany.id, companyName: awardedCompany.name, companyStatus: awardedCompany.status, reason: override,
+      companyId: barredCompany.id, companyName: barredCompany.name, companyStatus: barredCompany.status, reason: override,
     });
   }
 

@@ -659,12 +659,39 @@ export function matchCompanyByName<T extends { name: string }>(vendorName: strin
 /** The do-not-use row a bid must answer for (MON-12 / COST-3): the
  *  explicitly linked company when there is a link (a human chose it);
  *  otherwise ANY registry row the vendor name could be. Fails toward the
- *  flag — ambiguity never clears it. */
+ *  flag — ambiguity never clears it. Of several, the exact name first
+ *  (`lower(name) = lower(btrim(vendor))` — spaces trimmed only), then the
+ *  id in byte order: the look-alike order of 20261157
+ *  `cost_doc_company_barred` and of lib/costDocs.ts `flaggedLookAlike`.
+ *  It is not the whole gate an award applies — the database and the lib
+ *  also read the contractor's company and the bound company's own
+ *  `inactive` flag — and it answers for whatever name it is given, so the
+ *  same company as the award only for the name the award reads, the STORED
+ *  `cost_documents.vendor_name`, never the letterhead the AI read. The bid
+ *  tab's award prompt and intent row ask `cost_doc_company_barred` itself
+ *  once 20261157 is applied (QuotesPanel `companyAwardAnswersFor`) and
+ *  call this over the stored name before it; the row's chip calls it over
+ *  the stored name too. The bid tab also calls it over the letterhead the
+ *  AI read — the chip's labelled hint, and the award's acknowledgement stop
+ *  (QuotesPanel `awardGateFor`, J12 review fix pass 8), which records a
+ *  typed acknowledgement and is never the override — and, for that stop,
+ *  over the stored name when the award's override names another company
+ *  (a flagged contractor answers first; J12 review fix pass 9).
+ *  ASCII names only: JavaScript's `toLowerCase` and Postgres `lower()`
+ *  disagree on a few non-ASCII letters (a final sigma, a dotted capital
+ *  İ — and Postgres' answer depends on the database's collation), in the
+ *  exact-name step here and in `normalizeCompanyName`'s lower-casing, so
+ *  for such a name this may break a tie, or match a look-alike, where the
+ *  database does not (20261157 `company_name_key`'s comment draws the
+ *  same ASCII line). */
 export function barredCompanyFor<T extends { id: string; name: string; status: string }>(
   vendorName: string | null | undefined, boundId: string | null | undefined, registry: T[],
 ): T | null {
   if (boundId) return registry.find((c) => c.id === boundId && c.status === "do_not_use") ?? null;
-  return companyCandidatesByName(vendorName, registry).find((c) => c.status === "do_not_use") ?? null;
+  const exact = (vendorName ?? "").replace(/^ +| +$/g, "").toLowerCase();
+  const isExact = (c: T) => Number(c.name.toLowerCase() === exact);
+  return companyCandidatesByName(vendorName, registry).filter((c) => c.status === "do_not_use")
+    .sort((a, b) => isExact(b) - isExact(a) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0] ?? null;
 }
 
 // ── Read extent (COST-13) ─────────────────────────────────────────────────
@@ -679,6 +706,10 @@ export function readExtent(pagesRead: number | null | undefined, pagesTotal: num
   return { truncated: false, known: true, label: `all ${pagesTotal} page${pagesTotal === 1 ? "" : "s"} read` };
 }
 
+/** The vendor name a ParsedQuote carries when the AI read none — a
+ *  placeholder, never a letterhead. */
+export const UNKNOWN_VENDOR = "Unknown vendor";
+
 /** Validate an AI-extracted quote payload into a safe ParsedQuote. Throws a
  *  plain message on a shape the review screen can't render. */
 export function validateParsedQuote(raw: unknown, id: string): ParsedQuote {
@@ -691,7 +722,7 @@ export function validateParsedQuote(raw: unknown, id: string): ParsedQuote {
   const items = Array.isArray(r.lineItems) ? r.lineItems : [];
   const quote: ParsedQuote = {
     id,
-    vendorName: str(r.vendorName) ?? "Unknown vendor",
+    vendorName: str(r.vendorName) ?? UNKNOWN_VENDOR,
     total,
     currency: str(r.currency),
     validUntil: str(r.validUntil),

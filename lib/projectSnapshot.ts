@@ -32,6 +32,19 @@ import type { Milestone, MilestoneSource, MilestoneStatus } from "@/types/schema
 type Row = Record<string, unknown>;
 type QueryResult<T> = { data: T | null; error: { message: string; code?: string | null } | null };
 
+/** PERF-8: rows the caller has ALREADY read in this load, so the gather does
+ *  not read them twice. The project page reads the project row (`select *`)
+ *  and its roster before the coach gathers; it hands both over and the
+ *  snapshot reads neither table itself. A field left out is read as before. */
+export interface SnapshotPreRead {
+  /** The project row as read (`select *`) — the gather takes purpose,
+   *  goals, sow_document_id and job_kind from it. A row without those
+   *  columns is a database 20261013 has not migrated (named as such). */
+  project?: Row | null;
+  /** The roster as read (project_members) — the gather counts it. */
+  members?: ReadonlyArray<{ userId: string }> | null;
+}
+
 /** A caller that opts in to sharing (`share: true`) is served from a round
  *  still in flight, or one that settled less than this long ago. The
  *  window exists for one reason: a tab mounting under the coach bumps the
@@ -114,7 +127,7 @@ function abortError(): Error {
 export function gatherProjectSnapshot(
   orgId: string,
   projectId: string,
-  opts?: { signal?: AbortSignal; share?: boolean; fresh?: boolean },
+  opts?: { signal?: AbortSignal; share?: boolean; fresh?: boolean; pre?: SnapshotPreRead },
 ): Promise<ProjectStateSnapshot> {
   if (opts?.signal?.aborted) return Promise.reject(abortError());
   const key = `${orgId}:${projectId}`;
@@ -127,7 +140,7 @@ export function gatherProjectSnapshot(
   } else {
     const controller = new AbortController();
     const created: MemoEntry = { controller, waiters: 0, settledAt: null, promise: Promise.resolve() as unknown as Promise<ProjectStateSnapshot> };
-    created.promise = gatherProjectSnapshotUncached(orgId, projectId, controller.signal).then(
+    created.promise = gatherProjectSnapshotUncached(orgId, projectId, controller.signal, opts?.pre).then(
       (snap) => { created.settledAt = Date.now(); return snap; },
       (err) => { if (memo.get(key) === created) memo.delete(key); throw err; },
     );
@@ -154,6 +167,7 @@ export async function gatherProjectSnapshotUncached(
   orgId: string,
   projectId: string,
   signal?: AbortSignal,
+  pre?: SnapshotPreRead,
 ): Promise<ProjectStateSnapshot> {
   const readFailures: string[] = [];
   const notMigrated: string[] = [];
@@ -251,11 +265,22 @@ export async function gatherProjectSnapshotUncached(
     return r.data ?? [];
   };
 
+  // PERF-8: a project row the caller already read is taken as read — its
+  // four 20261013 columns, or (absent from a `select *`) the known
+  // not-migrated state the read below would have named.
+  const preProject = (): Row | null => {
+    const row = pre?.project ?? null;
+    if (row && !("purpose" in row) && !("goals" in row) && !("job_kind" in row)) {
+      absent(PROJECT_FIELDS_NOT_MIGRATED);
+      return null;
+    }
+    return row;
+  };
   const [projRow, accounts, entries, costDocRows, parties, coRows, msRows, checklists, turnover, punch, links, members] =
     await Promise.all([
       // All four columns arrive with 20261013 — there is no pre-migration
       // column list worth reading, so a missing column leaves them unknown.
-      readOrLegacy<Row | null>(R.project, PROJECT_FIELDS_NOT_MIGRATED,
+      pre?.project ? Promise.resolve(preProject()) : readOrLegacy<Row | null>(R.project, PROJECT_FIELDS_NOT_MIGRATED,
         () => sig(supabase.from("projects").select("purpose, goals, sow_document_id, job_kind").eq("id", projectId)).maybeSingle(),
         null,
         null),
@@ -284,8 +309,10 @@ export async function gatherProjectSnapshotUncached(
         .select("status").eq("project_id", projectId).limit(500)), [], true),
       read<Array<{ revoked_at: string | null }>>(R.intakeLinks, sig(supabase.from("project_intake_links")
         .select("id, revoked_at").eq("project_id", projectId).limit(100)), []),
-      read<Array<{ user_id: string }>>(R.members, sig(supabase.from("project_members")
-        .select("user_id").eq("project_id", projectId).limit(200)), []),
+      pre?.members
+        ? Promise.resolve(pre.members.map((m) => ({ user_id: m.userId })))
+        : read<Array<{ user_id: string }>>(R.members, sig(supabase.from("project_members")
+          .select("user_id").eq("project_id", projectId).limit(200)), []),
     ]);
   if (signal?.aborted) throw abortError();
 
@@ -415,6 +442,7 @@ export async function gatherProjectSnapshotUncached(
     revisedBudget: rollup.revisedBudget,
     committed: rollup.committed,
     spent: rollup.spent,
+    exposure: rollup.exposure,
     cpi: rollup.cpi,
     accountCount: accounts.length,
     accountsPinned: accounts.filter((a) => a.wbsMilestoneId).length,

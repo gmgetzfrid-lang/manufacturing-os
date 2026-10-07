@@ -48,6 +48,113 @@ function listJoin(xs: string[]): string {
 
 export interface ReportGateLine { text: string; ok: boolean | null }
 
+/** COST-6: one change order as the close-out record shows it — proposer and
+ *  decider side by side, the same person flagged. */
+export interface ReportChangeOrderLine {
+  coNumber: string;
+  title: string;
+  amount: number;
+  status: string;
+  proposedBy: string | null;
+  decidedBy: string | null;
+  decidedAt: string | null;
+  /** Proposer and decider are the same person (lib/changeOrders selfDecided). */
+  samePerson: boolean;
+  decisionNote: string | null;
+}
+
+/** GAP-405 acceptance 2: a decision that greens (or closes) a closeout gate,
+ *  with the reason a person recorded and who recorded it — checklist items a
+ *  person decided (N/A, satisfied, reopened, with their note), turnover
+ *  items waived / rejected / accepted with a note, punch items voided or
+ *  closed with a note. */
+export interface ReportDecisionLine {
+  area: "Checklist" | "Turnover" | "Punch";
+  /** The item, with its checklist's title for a checklist item. */
+  item: string;
+  decision: string;
+  reason: string;
+  by: string | null;
+  at: string | null;
+}
+
+/** The decisions section prints at most this many rows (newest first) and
+ *  says how many more there are. */
+export const REPORT_DECISIONS_SHOWN = 200;
+
+/** The read label a failed decisions read is named by (GAP-405). */
+export const REPORT_DECISIONS_READ = "decisions on the record";
+
+/** PostgREST's default answer size: a page this long may have more after it. */
+const REPORT_PAGE = 1000;
+/** The most rows one decisions read (or the punch read) gathers; reaching
+ *  it is said on the page, never printed as complete. */
+export const REPORT_ROW_CEILING = 20_000;
+
+/** Every row a query matches, in pages past PostgREST's 1,000-row answer (a
+ *  short page is the end), up to REPORT_ROW_CEILING (then `capped`). A
+ *  failed page THROWS its error, code and all. */
+async function readPaged(
+  page: (from: number, to: number) => PromiseLike<{ data: unknown; error: unknown }>,
+): Promise<{ rows: Array<Record<string, unknown>>; capped: boolean }> {
+  const rows: Array<Record<string, unknown>> = [];
+  for (let from = 0; from < REPORT_ROW_CEILING; from += REPORT_PAGE) {
+    const { data, error } = await page(from, Math.min(from + REPORT_PAGE, REPORT_ROW_CEILING) - 1);
+    if (error) throw error;
+    const got = (data ?? []) as Array<Record<string, unknown>>;
+    rows.push(...got);
+    if (got.length < REPORT_PAGE) return { rows, capped: false };
+  }
+  return { rows, capped: true };
+}
+
+/**
+ * GAP-405 acceptance 2: every person-made decision on the closeout gates,
+ * read for the WHOLE project — every non-void checklist (not only the ten
+ * the progress table lists) and every turnover item, paged past PostgREST's
+ * 1,000-row answer; the punch decisions come from the report's own paged
+ * punch read. A checklist item counts when a person decided it with a note
+ * (the reason the 20261091 rail required); a machine's green carries a
+ * citation, not a reason, and is the evidence pack's to show. Throws on a
+ * failed read (the caller names it).
+ */
+async function gatherCheckpointDecisions(orgId: string, projectId: string): Promise<{ decisions: ReportDecisionLine[]; capped: boolean }> {
+  const decisions: ReportDecisionLine[] = [];
+  const lists = await readPaged((f, t) => supabase.from("project_checklists").select("id, title, status")
+    .eq("org_id", orgId).eq("project_id", projectId).order("id", { ascending: true }).range(f, t));
+  let capped = lists.capped;
+  const titleOf = new Map(lists.rows.filter((c) => c.status !== "void").map((c) => [String(c.id), String(c.title ?? "Checklist")]));
+  const ids = [...titleOf.keys()];
+  for (let i = 0; i < ids.length; i += 100) {
+    const chunk = ids.slice(i, i + 100);
+    const items = await readPaged((f, t) => supabase.from("checklist_items").select("*").in("checklist_id", chunk)
+      .not("manual_note", "is", null).order("id", { ascending: true }).range(f, t));
+    capped = capped || items.capped;
+    for (const it of items.rows) {
+      const note = String(it.manual_note ?? "").trim();
+      const title = titleOf.get(String(it.checklist_id));
+      if (!note || !it.updated_by || title == null) continue;
+      const status = String(it.status ?? "");
+      decisions.push({
+        area: "Checklist", item: `${title} — ${String(it.text ?? "")}`,
+        decision: status === "na" || it.applicability === "na" ? "not applicable" : status === "satisfied" ? "satisfied" : `${status.replace("_", " ")}, with a note`,
+        reason: note, by: (it.updated_by_name as string | null) ?? null, at: (it.updated_at as string | null) ?? null,
+      });
+    }
+  }
+  const turnover = await readPaged((f, t) => supabase.from("turnover_items").select("*")
+    .eq("org_id", orgId).eq("project_id", projectId).in("status", ["waived", "rejected", "accepted"])
+    .order("id", { ascending: true }).range(f, t));
+  capped = capped || turnover.capped;
+  for (const t of turnover.rows) {
+    const note = String(t.review_note ?? "").trim();
+    const st = String(t.status ?? "");
+    if (!note || !(st === "waived" || st === "rejected" || st === "accepted")) continue;
+    decisions.push({ area: "Turnover", item: String(t.name ?? "Turnover item"), decision: st, reason: note, by: (t.reviewed_by_name as string | null) ?? null, at: (t.reviewed_at as string | null) ?? null });
+  }
+  return { decisions, capped };
+}
+
 /** What was open when the project was completed — the gate snapshot the
  *  override audit row carries (projects-tab SAF-14). Rendered as recorded;
  *  the live figures above it are today's rows. */
@@ -65,6 +172,14 @@ export interface ReportData {
    *  note the Costs tab prints beside the same sentence. */
   forecastScopeNote: string | null;
   cos: ReturnType<typeof summarizeChangeOrders>;
+  /** COST-6: every change order, proposer and decider side by side. */
+  coLines: ReportChangeOrderLine[];
+  /** GAP-405: the decisions on the closeout gates, each with its reason —
+   *  every one on the project (paged), newest first. */
+  decisions: ReportDecisionLine[];
+  /** A decisions read (or the punch read) stopped at REPORT_ROW_CEILING —
+   *  the page says the list is the first part of the record. */
+  decisionsCapped: boolean;
   milestones: Array<{ name: string; planned_at: string | null; status: string; imported: boolean }>;
   /** How many milestone rows the project has. Larger than
    *  `milestones.length` only when the schedule exceeds
@@ -148,7 +263,7 @@ export async function gatherReportData(orgId: string, projectId: string): Promis
       return ((r.data ?? fallback) as T);
     } catch { fail(label); return fallback; }
   };
-  const [projRow, accounts, entries, coList, msRows, turnoverItems, checklists, punchRows, partyRows, closeoutRows] = await Promise.all([
+  const [projRow, accounts, entries, coList, msRows, turnoverItems, checklists, punchRead, partyRows, closeoutRows] = await Promise.all([
     safe(supabase.from("projects").select("*").eq("id", projectId).maybeSingle().then((r) => r.data), null),
     named(R.costAccounts, listAccounts(orgId, projectId), []),
     named(R.costEntries, listEntries(orgId, projectId), []),
@@ -168,8 +283,11 @@ export async function gatherReportData(orgId: string, projectId: string): Promis
       { rows: [] as Array<Record<string, unknown>>, total: 0 }),
     safe(listTurnoverItems(orgId, projectId), []),
     safe(listChecklists(orgId, projectId), []),
-    direct<Array<{ status: string }>>(R.punch,
-      supabase.from("punch_items").select("status").eq("project_id", projectId).limit(500), [], true),
+    // `select *`: the closure columns (20261091) print beside each decision
+    // when they exist, and their absence never fails the read. Every punch
+    // item, paged (GAP-405: every decision; the open count is exact too).
+    named(R.punch, readPaged((f, t) => supabase.from("punch_items").select("*").eq("project_id", projectId)
+      .order("id", { ascending: true }).range(f, t)), { rows: [] as Array<Record<string, unknown>>, capped: false }, true),
     direct<Array<{ name: string; kind: string | null; trade: string | null }>>(R.parties,
       supabase.from("project_parties").select("name, kind, trade").eq("project_id", projectId).limit(100), []),
     // The completion override's audit row — newest first; its details carry
@@ -180,6 +298,7 @@ export async function gatherReportData(orgId: string, projectId: string): Promis
         .order("timestamp", { ascending: false }).limit(1), []),
   ]);
   const project = (projRow ?? {}) as Record<string, unknown>;
+  const punchRows = punchRead.rows;
 
   // Every stored milestone counts — imported rows are commitments
   // (lib/milestoneLiveness). The EV index is keyed by the real milestone
@@ -218,6 +337,21 @@ export async function gatherReportData(orgId: string, projectId: string): Promis
       complete: c.status === "complete",
     });
   }
+  // GAP-405: the decisions are read for the whole project, apart from the
+  // ten-line progress table above.
+  const gathered = await named(REPORT_DECISIONS_READ, gatherCheckpointDecisions(orgId, projectId),
+    { decisions: [] as ReportDecisionLine[], capped: false }, true);
+  const decisions = gathered.decisions;
+  for (const pi of punchRows) {
+    const note = String(pi.closure_note ?? "").trim();
+    const st = String(pi.status ?? "");
+    if (!note || !(st === "void" || st === "done")) continue;
+    decisions.push({
+      area: "Punch", item: String(pi.title ?? "Punch item"), decision: st === "void" ? "voided" : "closed",
+      reason: note, by: (pi.closed_by_name as string | null) ?? null, at: (pi.closed_at as string | null) ?? null,
+    });
+  }
+  decisions.sort((a, b) => String(b.at ?? "").localeCompare(String(a.at ?? "")));
 
   return {
     project,
@@ -225,6 +359,13 @@ export async function gatherReportData(orgId: string, projectId: string): Promis
     forecastSentence: forecast.sentence,
     forecastScopeNote: forecast.scopeNote,
     cos: summarizeChangeOrders(coList),
+    coLines: coList.map((c) => ({
+      coNumber: c.coNumber, title: c.title, amount: c.amount, status: c.status,
+      proposedBy: c.createdByName ?? null, decidedBy: c.decidedByName ?? null, decidedAt: c.decidedAt ?? null,
+      samePerson: c.selfDecided, decisionNote: c.decisionNote ?? null,
+    })),
+    decisions,
+    decisionsCapped: gathered.capped || punchRead.capped,
     milestones: live.map((m) => ({
       name: String(m.name ?? ""), planned_at: (m.planned_at as string | null) ?? null, status: String(m.status ?? "planned"),
       imported: isImportedMilestone(m),
@@ -314,6 +455,11 @@ ${p.success_criteria ? `<p><b>Success criteria:</b> ${esc(p.success_criteria)}</
 <table>
 ${moneyRows}
 </table>
+${!failed.has(R.changeOrders) && d.coLines.length > 0 ? `
+<p class="muted" style="margin-top:10px">Change orders — who proposed each and who decided it${d.coLines.some((c) => c.samePerson) ? "; <span class=\"flag\">same person</span> marks a change order its proposer decided (allowed only when nobody else could)" : ""}:</p>
+<table><tr><th>CO</th><th>Amount</th><th>Status</th><th>Proposed by</th><th>Decided by</th></tr>
+${d.coLines.map((c) => `<tr><td>${esc(c.coNumber)} <span class="muted">${esc(c.title)}</span></td><td class="num">${esc(money(c.amount))}</td><td>${esc(c.status)}</td><td>${esc(c.proposedBy ?? "—")}</td><td>${c.decidedBy ? esc(c.decidedBy) : "—"}${c.decidedAt ? ` <span class="muted">${esc(new Date(c.decidedAt).toLocaleDateString())}</span>` : ""}${c.samePerson ? ` <span class="flag">same person</span>` : ""}${c.decisionNote ? ` <span class="muted">— ${esc(c.decisionNote)}</span>` : ""}</td></tr>`).join("")}
+</table>` : ""}
 
 <h2>Schedule</h2>
 ${failed.has(R.milestones) ? `<p><span class="flag">Could not read the schedule</span> — it is left out, not shown as empty.</p>` : d.milestones.length === 0 ? `<p class="muted">No schedule loaded.</p>` : `
@@ -335,6 +481,12 @@ ${row("Turnover package", d.turnover.required === 0 ? `<span class="muted">No re
   : `<span class="num">${d.turnover.accepted}/${d.turnover.required}</span> accepted${d.turnover.outstanding.length > 0 ? ` · outstanding: ${esc(d.turnover.outstanding.slice(0, 6).join(", "))}${d.turnover.outstanding.length > 6 ? "…" : ""}` : ""}`)}
 ${row("Punch list", failed.has(R.punch) ? couldNotRead : d.punchOpen === 0 ? `<span class="ok">Clear</span>` : `<span class="flag">${d.punchOpen} open</span>`)}
 </table>
+${failed.has(REPORT_DECISIONS_READ) ? `
+<p style="margin-top:10px"><span class="flag">Could not read the decisions on the record</span> — they are left out, not shown as none.</p>` : d.decisions.length > 0 ? `
+<p class="muted" style="margin-top:10px">Decisions on the record — each with the reason the person who made it recorded${d.decisions.length > REPORT_DECISIONS_SHOWN ? ` (the newest ${REPORT_DECISIONS_SHOWN} of ${d.decisions.length}${d.decisionsCapped ? " read" : ""})` : ""}${d.decisionsCapped ? `; the record was read to its first ${REPORT_ROW_CEILING.toLocaleString("en-US")} rows — later decisions are left out, not absent` : ""}:</p>
+<table><tr><th>Item</th><th>Decision</th><th>Reason</th><th>By</th></tr>
+${d.decisions.slice(0, REPORT_DECISIONS_SHOWN).map((x) => `<tr><td><span class="muted">${esc(x.area)}</span> ${esc(x.item)}</td><td>${esc(x.decision)}</td><td>${esc(x.reason)}</td><td>${esc(x.by ?? "—")}${x.at ? ` <span class="muted">${esc(new Date(x.at).toLocaleDateString())}</span>` : ""}</td></tr>`).join("")}
+</table>` : ""}
 ${d.closeout ? `
 <h2>Closeout</h2>
 <p>Completed ${d.closeout.at ? esc(new Date(d.closeout.at).toLocaleDateString()) : "—"}${d.closeout.reason ? ` · <i>${esc(d.closeout.reason)}</i>` : ""}</p>

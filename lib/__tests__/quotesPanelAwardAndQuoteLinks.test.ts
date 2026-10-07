@@ -51,7 +51,10 @@ vi.mock("@/lib/supabase", () => {
     };
     return new Proxy({}, h);
   };
-  return { supabase: { from: (t: string) => chain(t), auth: { getSession: async () => ({ data: { session: null } }) } } };
+  // J12 review fix 7: the award asks 20261157's cost_doc_company_barred first; absent here (PGRST202), as
+  // before that migration, so the panel takes its client-side check.
+  const rpc = async (name: string) => ({ data: null, error: { code: "PGRST202", message: `Could not find the function public.${name} in the schema cache` } });
+  return { supabase: { from: (t: string) => chain(t), rpc, auth: { getSession: async () => ({ data: { session: null } }) } } };
 });
 vi.mock("@/components/providers/DialogProvider", () => dlg);
 vi.mock("@/lib/costDocs", async (importOriginal) => ({ ...(await importOriginal<typeof import("@/lib/costDocs")>()), ...cd }));

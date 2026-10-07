@@ -12,6 +12,15 @@
 // Authority: org controllers or the project owner — the same people the
 // cost tables' RLS lets write. Runs on the caller's own AI key through the
 // standard five gates (governedAiCall).
+//
+// projects Round G J12: a CLOSED project's documents are not read (PM-1 —
+// this route writes as the service role, which the 20261103 freeze lets
+// through, so the refusal is the route's own); the read answers inside its
+// own time limit with a readable 504 (PERF-6, lib/routeDeadline); an
+// invoice's extraction is validated before it is stored (PR-2,
+// lib/costDocParse). The read never links a quote to a Known Company: a
+// stored link is a person's (COST-3, DEC-48 — a machine's link would clear a
+// do-not-use look-alike added later, because the gates read only the link).
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
@@ -20,7 +29,13 @@ import { extractJsonBlock } from "@/lib/orchestrator/protocol";
 import { renderKnowledgePages } from "@/lib/knowledgePageRender";
 import { countPdfPages } from "@/lib/pdfPageCount";
 import { validateParsedQuote, isoCurrency } from "@/lib/bidTab";
+import { validateParsedInvoice, closedProjectReadMessage } from "@/lib/costDocParse";
 import { memberHoldsAny } from "@/lib/roleHeld";
+import { CLOSED_PROJECT_STATUSES } from "@/lib/intakeLinks";
+import { isTimeoutError } from "@/lib/ai/providerCall";
+import {
+  routeDeadline, beforeDeadline, aiBudgetMs, tooLargeToReadMessage, DEADLINE_PASSED,
+} from "@/lib/routeDeadline";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -32,6 +47,10 @@ const bad = (error: string, status: number) => NextResponse.json({ error }, { st
 // response and the audit row, and the review screen says "read pages
 // 1–8 of N" before anyone awards on the number.
 const MAX_PAGES = 8;
+const AI_TIMEOUT_MS = 90_000;
+/** The page count is a detail of the answer, not a reason to wait: it gets
+ *  this long (inside the deadline) and is unknown after it. */
+const PAGE_COUNT_BUDGET_MS = 10_000;
 
 const QUOTE_SYSTEM =
   "You read vendor quotes/proposals for industrial mechanical work, extracting what is PRINTED — never inventing.\n" +
@@ -52,6 +71,8 @@ const INVOICE_SYSTEM =
   'Return STRICT JSON: {"vendorName":"…","docNumber":"INV-1042","docDate":"2026-08-01","total":41250,"currency":"USD","lineItems":[{"description":"…","total":41250}]}';
 
 export async function POST(req: NextRequest) {
+  // PERF-6: the answer must land before the function's own limit.
+  const deadline = routeDeadline(maxDuration);
   let body: { orgId?: string; projectId?: string; costDocId?: string };
   try { body = await req.json(); } catch { return bad("Bad JSON", 400); }
   const orgId = (body.orgId ?? "").trim();
@@ -67,7 +88,7 @@ export async function POST(req: NextRequest) {
 
   const [{ data: member }, { data: project }] = await Promise.all([
     supabaseAdmin.from("org_members").select("role, roles, status").eq("org_id", orgId).eq("uid", userId).maybeSingle(),
-    supabaseAdmin.from("projects").select("id, owner_user_id").eq("id", projectId).eq("org_id", orgId).maybeSingle(),
+    supabaseAdmin.from("projects").select("id, owner_user_id, status").eq("id", projectId).eq("org_id", orgId).maybeSingle(),
   ]);
   const m = member as { role?: string; status?: string } | null;
   if (!m || m.status !== "active") return bad("Not a member of this workspace.", 403);
@@ -78,6 +99,10 @@ export async function POST(req: NextRequest) {
   if (!isController && !isOwner) {
     return bad("Only the project owner or a document controller can run cost-document reads.", 403);
   }
+  // PM-1: nothing is read into a closed project's record — before the file
+  // is fetched and before the caller's key is spent.
+  const projectStatus = String((project as { status?: string | null }).status ?? "");
+  if (CLOSED_PROJECT_STATUSES.has(projectStatus)) return bad(closedProjectReadMessage(projectStatus), 409);
 
   const { data: docRow } = await supabaseAdmin
     .from("cost_documents").select("*")
@@ -114,12 +139,24 @@ export async function POST(req: NextRequest) {
   const looksPdf = (doc.mime_type ?? "").includes("pdf") || /\.pdf$/i.test(doc.file_name ?? "");
   if (!looksPdf) return bad("Only PDF quotes and invoices can be read for now — ask the vendor for a PDF.", 415);
 
-  const [images, pagesTotal] = await Promise.all([
-    renderKnowledgePages(doc.file_url, Array.from({ length: MAX_PAGES }, (_, i) => i + 1), MAX_PAGES),
-    countPdfPages(doc.file_url),
+  // PERF-6: the render races the deadline (it takes no signal — it is
+  // abandoned, not cancelled); a page count that cannot finish in its own
+  // short budget is unknown (null), never a reason to refuse the read or to
+  // spend the model's time waiting.
+  const [rendered, counted] = await Promise.all([
+    beforeDeadline(
+      renderKnowledgePages(doc.file_url, Array.from({ length: MAX_PAGES }, (_, i) => i + 1), MAX_PAGES), deadline),
+    beforeDeadline(countPdfPages(doc.file_url), Math.min(deadline, Date.now() + PAGE_COUNT_BUDGET_MS)),
   ]);
+  if (rendered === DEADLINE_PASSED) return bad(tooLargeToReadMessage(MAX_PAGES), 504);
+  const images = rendered;
+  const pagesTotal = counted === DEADLINE_PASSED ? null : counted;
   if (images.length === 0) return bad("The pages could not be rendered for reading — the file may be corrupt or password-protected.", 502);
   const pagesRead = images.map((i) => i.page);
+  // The model's budget is what is left, capped — refused outright when too
+  // little is left to be worth the caller's key.
+  const budget = aiBudgetMs(deadline, AI_TIMEOUT_MS);
+  if (budget === null) return bad(tooLargeToReadMessage(MAX_PAGES), 504);
 
   const isQuote = doc.kind === "quote";
   let text: string;
@@ -131,11 +168,12 @@ export async function POST(req: NextRequest) {
       user: `File: ${doc.file_name ?? "document"}\nPages attached in order: ${images.map((i) => i.page).join(", ")}${doc.vendor_name ? `\nExpected sender (from the submission channel): ${doc.vendor_name}` : ""}`,
       images: images.map((i) => ({ base64: i.base64, mediaType: i.mediaType })),
       maxTokens: 3000,
-      timeoutMs: 90_000,
+      timeoutMs: budget,
     });
     text = out.text;
   } catch (e) {
     if (e instanceof GovernedCallError) return bad(e.message, e.status);
+    if (isTimeoutError(e)) return bad(tooLargeToReadMessage(MAX_PAGES), 504);
     return bad((e as Error).message, 502);
   }
 
@@ -167,17 +205,18 @@ export async function POST(req: NextRequest) {
     // letterhead — only fill vendor_name when the row has none.
     if (!doc.vendor_name && quote.vendorName !== "Unknown vendor") patch.vendor_name = quote.vendorName;
   } else {
-    const r = raw as { total?: unknown; vendorName?: unknown; docNumber?: unknown; docDate?: unknown; currency?: unknown };
-    const total = typeof r.total === "number" && Number.isFinite(r.total) ? r.total : null;
-    if (total == null || total <= 0) return bad("Couldn't read an amount due from the invoice.", 422);
-    patch.total_amount = total;
-    extractedTotal = total;
-    patch.currency = isoCurrency(r.currency);
-    if (typeof r.docNumber === "string" && r.docNumber.trim()) patch.doc_number = r.docNumber.trim().slice(0, 60);
-    if (typeof r.docDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(r.docDate)) patch.doc_date = r.docDate;
-    if (!doc.vendor_name && typeof r.vendorName === "string" && r.vendorName.trim()) {
-      patch.vendor_name = r.vendorName.trim().slice(0, 200);
-    }
+    // PR-2 criterion 3: the invoice's extraction is validated against its
+    // schema (lib/costDocParse) and the validated record is what is stored —
+    // never the model's raw JSON.
+    let invoice;
+    try { invoice = validateParsedInvoice(raw); } catch (e) { return bad((e as Error).message, 422); }
+    patch.parsed = invoice;
+    patch.total_amount = invoice.total;
+    extractedTotal = invoice.total;
+    patch.currency = invoice.currency;
+    if (invoice.docNumber) patch.doc_number = invoice.docNumber;
+    if (invoice.docDate) patch.doc_date = invoice.docDate;
+    if (!doc.vendor_name && invoice.vendorName) patch.vendor_name = invoice.vendorName;
   }
 
   // COST-15: beside a typed total, the read writes ONLY the extraction and

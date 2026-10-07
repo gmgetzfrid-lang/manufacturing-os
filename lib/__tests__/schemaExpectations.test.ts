@@ -275,7 +275,21 @@ describe("/api/admin/schema-health — functions, and a table PostgREST cannot f
     const body = await (await probe()).json() as { healthy: boolean; checkedFunctions: number };
     expect(body.healthy).toBe(true);
     expect(body.checkedFunctions).toBe(EXPECTED_FUNCTIONS.length);
-    expect(state.rpcCalls).toEqual([{ fn: "bump_share_access", args: { p_share: "schema-health-probe" } }]);
+    // every curated function is probed once, with its own refused arguments
+    expect(state.rpcCalls).toEqual(EXPECTED_FUNCTIONS.map((f) => ({ fn: f.fn, args: f.probeArgs })));
+    expect(state.rpcCalls[0]).toEqual({ fn: "bump_share_access", args: { p_share: "schema-health-probe" } });
+  });
+
+  it("J12's RPCs are probed (integrator, J12 merge): every required parameter named, the uuid argument one its type refuses", () => {
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const award = EXPECTED_FUNCTIONS.find((f) => f.fn === "award_quote")!;
+    expect(sqlOf(award.migration)).toMatch(/CREATE\s+OR\s+REPLACE\s+FUNCTION\s+public\.award_quote\s*\(\s*p_doc\s+uuid,\s*p_cost_account\s+uuid,\s*p_expected_total\s+numeric,\s*p_override_reason\s+text\s+DEFAULT\s+NULL,\s*p_confirmed_total\s+numeric\s+DEFAULT\s+NULL\s*\)/i);
+    expect(Object.keys(award.probeArgs).sort()).toEqual(["p_cost_account", "p_doc", "p_expected_total"]);
+    expect(String(award.probeArgs.p_doc)).not.toMatch(uuid);
+    const writes = EXPECTED_FUNCTIONS.find((f) => f.fn === "apply_checklist_item_writes")!;
+    expect(sqlOf(writes.migration)).toMatch(/CREATE\s+OR\s+REPLACE\s+FUNCTION\s+public\.apply_checklist_item_writes\s*\(\s*p_checklist\s+uuid,\s*p_writes\s+jsonb\s*\)/i);
+    expect(Object.keys(writes.probeArgs).sort()).toEqual(["p_checklist", "p_writes"]);
+    expect(String(writes.probeArgs.p_checklist)).not.toMatch(uuid);
   });
 
   it("missing (PGRST202): named, with the file that supplies it, and the panel goes red", async () => {

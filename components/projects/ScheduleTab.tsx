@@ -21,6 +21,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import dynamic from "next/dynamic";
 import { Flag, Plus, Loader2, AlertTriangle, Check, X, Calendar, ChevronDown, Upload, ArrowRight, Eye, EyeOff, Layers } from "lucide-react";
 import {
   listMilestones, createMilestone, setMilestoneStatus, setMilestoneProgress, deleteMilestone,
@@ -36,14 +37,20 @@ import HelpTooltip from "@/components/ui/HelpTooltip";
 import FirstRunHint from "@/components/ui/FirstRunHint";
 import ScheduleProgress from "@/components/projects/ScheduleProgress";
 import { useScheduleNow } from "@/components/projects/useScheduleNow";
-import ScheduleImportModal from "@/components/projects/ScheduleImportModal";
+// PERF-9: the importer and the execution board are separate chunks, loaded
+// when they are shown — a project opened on Documents never downloads them.
+const ScheduleImportModal = dynamic(() => import("@/components/projects/ScheduleImportModal"), { ssr: false });
 import ScheduleEmptyState from "@/components/projects/ScheduleEmptyState";
 import ScheduleFilterBar from "@/components/projects/ScheduleFilterBar";
 import { filterMilestones, isFilterActive, EMPTY_FILTER, type ScheduleFilter } from "@/lib/scheduleFilter";
 import { buildProgressIndex, type ProgressInfo } from "@/lib/scheduleProgress";
 import RebaseScheduleModal from "@/components/projects/RebaseScheduleModal";
 import { ClipboardList, PlayCircle } from "lucide-react";
-import ExecutionView, { type MoveOutcome } from "@/components/projects/ExecutionView";
+import type { MoveOutcome } from "@/components/projects/ExecutionView";
+const ExecutionView = dynamic(() => import("@/components/projects/ExecutionView"), {
+  ssr: false,
+  loading: () => <div role="status" className="py-10 text-center text-xs text-[var(--color-text-muted)]">Loading the execution board…</div>,
+});
 
 // Two modes only: Planning (build & manage the schedule as a list) and
 // Execution (run it — the timeline/calendar board). The old Gantt and

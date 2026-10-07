@@ -560,3 +560,71 @@ describe("buildCoachItems — the award suggestion needs RFQ groups (migration 2
     expect(buildCoachItems(snap, "p1").map((i) => i.id)).toContain("award");
   });
 });
+
+// ── projects Round G J12 ─────────────────────────────────────────────────
+// PERF-8: the page hands the coach the project row and roster it already
+// read; the gather reads neither table again. BID-10: the unawarded-field
+// count keys RFQ groups as the bid tab does. COST-2: the snapshot carries
+// the rollup's exposure for the Cost part.
+describe("gatherProjectSnapshot — the page's pre-read (PERF-8)", () => {
+  const row = { id: "p1", name: "Unit 300", purpose: "Repipe", goals: ["On time"], sow_document_id: "d-sow", job_kind: "turnaround" };
+
+  it("with the project row and roster handed over, neither projects nor project_members is read; their figures come from the pre-read", async () => {
+    const snap = await gatherProjectSnapshot("org1", "p1", { pre: { project: row, members: [{ userId: "a" }, { userId: "b" }, { userId: "c" }] } });
+    expect(state.fromCalls).not.toContain("projects");
+    expect(state.fromCalls).not.toContain("project_members");
+    expect(snap).toMatchObject({ hasPurpose: true, hasGoals: true, hasSow: true, jobKind: "turnaround", membersCount: 3 });
+    expect(snap.notMigrated).toEqual([]);
+    expect(snap.readFailures).toEqual([]);
+  });
+
+  it("without one, both are read as before (the control)", async () => {
+    state.tables.projects = [row];
+    state.tables.project_members = [{ user_id: "a" }];
+    const snap = await gatherProjectSnapshot("org1", "p1");
+    expect(state.fromCalls).toContain("projects");
+    expect(state.fromCalls).toContain("project_members");
+    expect(snap.membersCount).toBe(1);
+  });
+
+  it("a pre-read row without the 20261013 columns reads as not migrated — exactly what the read would have said", async () => {
+    const snap = await gatherProjectSnapshot("org1", "p1", { pre: { project: { id: "p1", name: "Old" } } });
+    expect(state.fromCalls).not.toContain("projects");
+    expect(snap.notMigrated).toEqual([PROJECT_FIELDS_NOT_MIGRATED]);
+    // the roster was not handed over, so it is read
+    expect(state.fromCalls).toContain("project_members");
+  });
+
+  it("the coach and the page share the pre-read only for the round it started (a shared round is served as it was)", async () => {
+    const a = gatherProjectSnapshot("org1", "p1", { pre: { project: row, members: [] } });
+    const b = gatherProjectSnapshot("org1", "p1", { share: true });
+    const [sa, sb] = await Promise.all([a, b]);
+    expect(sb).toBe(sa);
+    expect(state.fromCalls.filter((t) => t === "projects")).toHaveLength(0);
+  });
+});
+
+describe("gatherProjectSnapshot — RFQ keys and exposure (BID-10 / COST-2)", () => {
+  it("'Piping' and 'piping ' are ONE unawarded field, as the bid tab shows them", async () => {
+    state.tables.cost_documents = [
+      { kind: "quote", status: "parsed", vendor_name: "Acme", file_name: "a.pdf", rfq_group: "Piping" },
+      { kind: "quote", status: "parsed", vendor_name: "Bolt", file_name: "b.pdf", rfq_group: "piping " },
+      { kind: "quote", status: "parsed", vendor_name: "Cole", file_name: "c.pdf", rfq_group: "Pipe racks" },
+    ];
+    const snap = await gatherProjectSnapshot("org1", "p1");
+    expect(snap.unawardedRfqGroups).toBe(2);
+  });
+
+  it("the snapshot carries spent + open commitments as exposure, and the Cost part burns on it", async () => {
+    state.tables.cost_accounts = [{ id: "a1", project_id: "p1", name: "Piping", budget: 100_000, currency: "USD", wbs_milestone_id: null }];
+    state.tables.cost_entries = [
+      { id: "e1", cost_account_id: "a1", project_id: "p1", entry_type: "commitment", amount: 100_000, status: "posted" },
+    ];
+    const snap = await gatherProjectSnapshot("org1", "p1");
+    expect(snap.spent).toBe(0);
+    expect(snap.exposure).toBe(100_000);
+    const part = computeProjectHealth(snap).parts.find((p) => p.label === "Cost")!;
+    expect(part.detail).toBe("0% of budget spent · 100% committed · 100% committed or spent");
+    expect(part.score).toBe(60);
+  });
+});

@@ -352,12 +352,17 @@ describe("SEC-20 — audit rows about a private project follow the project's vis
     const restrictive = set.filter(([, p]) => !p.permissive && (p.cmd === "SELECT" || p.cmd === "ALL"));
     expect(restrictive.map(([n]) => n)).toEqual(["audit_logs_admin_trail"]);
     const [, trail] = restrictive[0];
-    expect(trail.file).toBe("supabase/migrations/20261142_prj_roundG_project_audit_rows.sql");
+    // 20261157 (SEC-21) re-created it from 20261142's body with one more
+    // clause — the lineDiff is prjRoundGJ12Migration.test.ts's.
+    expect(trail.file).toBe("supabase/migrations/20261157_prj_roundG_server_remainders.sql");
     expect(trail.cmd).toBe("SELECT");
     // the audit roles read every row (admin.audit_view through the evaluator) …
     expect(trail.body).toMatch(/org_capability_allows\(org_id, 'admin\.audit_view', auth\.uid\(\)\)\s*\n\s*OR NOT \(/);
     // … anyone else: not the org-level trail AND the row's project is visible
-    expect(trail.body).toMatch(/\)\s*\n\s*AND \(COALESCE\(resource_type, ''\) NOT IN \('project', 'cost', 'project_checklist', 'turnover_item'\)\s*\n\s*OR audit_row_project_visible\(resource_type, resource_id\)\)\s*\n\s*\)\s*$/);
+    expect(trail.body).toMatch(/\)\s*\n\s*AND \(COALESCE\(resource_type, ''\) NOT IN \('project', 'cost', 'project_checklist', 'turnover_item'\)\s*\n\s*OR audit_row_project_visible\(resource_type, resource_id\)\)\s*\n/);
+    // … SEC-21: and a row naming a project under another type (an intake
+    // link, an INTAKE_ / MILESTONE_ action) follows that project too
+    expect(trail.body).toMatch(/AND \(\(COALESCE\(resource_type, ''\) <> 'project_intake_link'\s*\n\s*AND left\(COALESCE\(action, ''\), 10\) <> 'MILESTONE_'\s*\n\s*AND left\(COALESCE\(action, ''\), 7\) <> 'INTAKE_'\)\s*\n\s*OR audit_row_project_ref_visible\(action, resource_type, resource_id, details\)\)\s*\n\s*\)\s*$/);
     const permissiveReads = set.filter(([, p]) => p.permissive && (p.cmd === "SELECT" || p.cmd === "ALL"));
     expect(permissiveReads.map(([n]) => n)).toEqual(["audit_logs_org_access"]);
     expect(set.filter(([, p]) => p.cmd === "INSERT" && p.permissive).map(([n]) => n)).toEqual(["audit_logs_insert"]);
@@ -375,6 +380,15 @@ describe("SEC-20 — audit rows about a private project follow the project's vis
     const trail = before.get("audit_logs")!.get("audit_logs_admin_trail")!;
     expect(trail.file).toBe("supabase/migrations/20261063_rp_roundE_audit_view_capability.sql");
     expect(trail.body).not.toMatch(/audit_row_project_visible/);
+  });
+  it("before 20261157 an intake-link / INTAKE_ / MILESTONE_ row about a private project was any member's (SEC-21, reproduced)", () => {
+    const saved = files.splice(0);
+    files.push(...saved.filter((f) => !/\/\d{8}/.test(f) || f.split("/").pop()! < "20261157"));
+    const before = replay();
+    files.splice(0, files.length, ...saved);
+    const trail = before.get("audit_logs")!.get("audit_logs_admin_trail")!;
+    expect(trail.file).toBe("supabase/migrations/20261142_prj_roundG_project_audit_rows.sql");
+    expect(trail.body).not.toMatch(/project_intake_link|MILESTONE_|INTAKE_/);
   });
 });
 

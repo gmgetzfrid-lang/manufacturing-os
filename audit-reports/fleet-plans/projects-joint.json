@@ -1072,17 +1072,24 @@
      "A11Y-13 (remainder re-owned by the integrator 2026-10-02 at the J10b merge: (1) ProjectCoach.tsx:101 \u2014 dark:text-{hue}-400 beside the 600 icon, then a11y13FinalReview's RECORDED_RESIDUAL drops to {}; (2) the light tint slabs (bg-{hue}-50|100 with no dark variant) the record lists in the schedule-engine files \u2014 re-count at HEAD, convert with the token recipe, extend the census)",
      "REL-4 (remainder re-owned by the integrator 2026-10-02 at the J10b merge: the two lib/projectReport.ts lookups \u2014 CO_REASON_LABEL[x] ?? x at both sites and a fallback for why[r.reason] (:400 at J10b's base; J12 edits this file, re-locate))",
      "REL-9 (remainder re-owned by the integrator 2026-10-02 at the J10b merge: done-when 3's remaining dead declarations \u2014 equipmentTags (lib/checklists.ts), trend (lib/projectHealth.ts), setup_state (lib/projectWizardWrites.ts), addEvidence (lib/checklists.ts updateChecklistItem); remove each or record its reader; kind 'po' stays under J3's CHECK decision)",
-     "MON-10 (remainder re-owned by the integrator 2026-10-02 at the J10b merge: done-when 2, the contractor is notified of the outcome of an award or decline \u2014 reuse J12's contractor-notice path (app/api/intake/outcome-notice + lib/intakeOutcomeNotice, DEC-56: the contact the org entered on the link, outcome read from the database, one notice per decision, the audit row is the record) for the quote's award and decline, or record why a quote's contact cannot be reached that way)"
+     "MON-10 (remainder re-owned by the integrator 2026-10-02 at the J10b merge: done-when 2, the contractor is notified of the outcome of an award or decline \u2014 reuse J12's contractor-notice path (app/api/intake/outcome-notice + lib/intakeOutcomeNotice, DEC-56: the contact the org entered on the link, outcome read from the database, one notice per decision, the audit row is the record) for the quote's award and decline, or record why a quote's contact cannot be reached that way)",
+     "SEC-21 (done-when 2 remainder re-owned to J14 by J12's review fix pass 6/7, recorded at the J12 merge 2026-10-07: the Partial's residuals 2 and 4 \u2014 history written before 20261157's paste (document-typed MILESTONE_* rows with no details.projectId) and a milestone deleted by the service role writing no scope row; decide each and record it, 01-security-access.md SEC-21 Partial)",
+     "MON-12 (done-when 1 remainder re-owned to J14 by J12, recorded at the J12 merge 2026-10-07: (1) a rail on open quotes, BEFORE UPDATE OF company_id, party_id, vendor_name, refusing a signed-in move away from a flagged company without a recorded reason \u2014 the bid-row picker asks one only in the browser; (2) the award's gate names ONE company: cost_doc_company_barred (20261157 \u00a71) and lib/costDocs.ts companyBehind answer a flagged contractor, an inactive one included, before the do-not-use registry name the vendor name matches \u2014 either reorder and give the inactive flag its own question, or return every flagged company, each with its own override; the bid tab's acknowledgement covers the gap meanwhile; 03-money-ledger.md MON-12 Scope / residual, J12 fix pass 9 (d))",
+     "SAF-9 (remainder re-owned by the integrator 2026-10-07 at the J12 merge: J12 built the server half of done-when 2 (the contractor outcome notice \u2014 app/api/intake/outcome-notice, lib/intakeOutcomeNotice); owed: the Intake tab's call of notifyIntakeOutcome on approve / reject (components/projects/IntakePanel.tsx) and the turnover copy; 02-safety-compliance.md SAF-9 Scope / residual)",
+     "PERF-5 (remainder re-owned by the integrator 2026-10-07 at the J12 merge: done-when 1 on a 4x slower CPU \u2014 each change of the drag's day offset still re-renders the board's windowed bars, outline rows and dependency-arrow geometry (Bar / OutlineRow not memoised; components/projects/ExecutionView.tsx); and remediation 4, a searchable dependency picker in place of a <select> of every task; 09-performance-scale.md PERF-5 Scope / residual)"
     ],
     "projects-and-cost": [
-     "INTK-18 (opened by the integrator 2026-10-02 at the J10b merge, from document-control P14's named follow-up (REV-20): IntakePanel.tsx approve offers a controller the review promote's recorded force (finalizeReviewedRevision forceHold / overrideReason) after a hold refusal, with the HLD-2 acknowledgement, as ReviewGateSection does; the call without a force unchanged)"
+     "INTK-18 (opened by the integrator 2026-10-02 at the J10b merge, from document-control P14's named follow-up (REV-20): IntakePanel.tsx approve offers a controller the review promote's recorded force (finalizeReviewedRevision forceHold / overrideReason) after a hold refusal, with the HLD-2 acknowledgement, as ReviewGateSection does; the call without a force unchanged)",
+     "COST-3 (residual 3 re-owned to J14 by J12 fix pass 9, recorded at the J12 merge 2026-10-07: the same one-company order as MON-12's limb (2) above \u2014 one change closes both; 04-cost-and-bids.md COST-3 residual 3)"
     ]
    },
    "files": [
     "app/(protected)/projects/[id]/page.tsx (Members tab buttons), components/projects/StatusControl.tsx, ProgressControl.tsx, StaleCheckoutBanner.tsx, EditProjectModal.tsx, lib/__tests__/j10bDecisionTargets.test.ts (A11Y-15)",
     "components/projects/IntakePanel.tsx approve (INTK-18) and, if J12 left it to this file's owner, the Intake tab's call of J12's notifyIntakeOutcome; components/projects/cost/QuotesPanel.tsx award / decline (MON-10, through J12's notice path)",
     "components/projects/ProjectCoach.tsx :101 and the schedule-engine files the A11Y-13 record lists (tint slabs); lib/__tests__/a11y13FinalReview.test.ts (A11Y-13)",
-    "lib/projectReport.ts (REL-4), lib/checklists.ts, lib/projectHealth.ts, lib/projectWizardWrites.ts (REL-9 dead declarations)"
+    "lib/projectReport.ts (REL-4), lib/checklists.ts, lib/projectHealth.ts, lib/projectWizardWrites.ts (REL-9 dead declarations)",
+    "supabase/migrations: a new projects migration if MON-12's open-quote rail or the one-company reorder needs one (re-create cost_doc_company_barred / companyBehind's SQL twin from 20261157's body, lineDiff-pinned); components/projects/cost/QuotesPanel.tsx award gate (MON-12 / COST-3); lib/costDocs.ts companyBehind",
+    "components/projects/ExecutionView.tsx (PERF-5: memoise Bar / OutlineRow and the arrow geometry against the drag's day offset; the dependency picker) and the turnover copy SAF-9 names"
    ],
    "migrationsLikely": 0,
    "when": "after J12 (it edits ProjectCoach.tsx, lib/projectReport.ts, lib/projectHealth.ts and builds the contractor-notice path MON-10 reuses)",
@@ -1090,7 +1097,52 @@
     "J12 merged",
     "J10b merged"
    ],
-   "sequencingNotes": "Added by the integrator 2026-10-02 at the J10b merge: the remainders J10b left in other packages' files (A11Y-13 ProjectCoach / slabs, REL-4 projectReport, REL-9 dead declarations), MON-10's contractor notice (J12 builds the path), and two new LOW findings opened under DEC-31 (A11Y-15, INTK-18). lib/checklists.ts is also notifications N8's (emit() calls) \u2014 expect a merge; the REL-9 limb there is declaration removal only."
+   "sequencingNotes": "Added by the integrator 2026-10-02 at the J10b merge: the remainders J10b left in other packages' files (A11Y-13 ProjectCoach / slabs, REL-4 projectReport, REL-9 dead declarations), MON-10's contractor notice (J12 builds the path), and two new LOW findings opened under DEC-31 (A11Y-15, INTK-18). lib/checklists.ts is also notifications N8's (emit() calls) \u2014 expect a merge; the REL-9 limb there is declaration removal only. Added by the integrator 2026-10-07 at the J12 merge: SEC-21's done-when 2 remainder, MON-12's done-when 1 remainder and the server's one-company order (MON-12 limb 2 = COST-3 residual 3), each handed over by J12's review fix passes 6, 7 and 9."
+  },
+  {
+   "name": "J15 CHECKED-WRITE SWEEP \u2014 every update / delete outside the quality and money paths reads its matched rows (SAF-18)",
+   "projectsTabPackages": [],
+   "projectsAndCostPackages": [],
+   "findings": {
+    "projects-tab": [
+     "SAF-18 (opened by projects-joint J12 as GAP-402's remainder, DEC-31; assigned by the integrator 2026-10-07 at the J12 merge: 177 unchecked .update( / .delete( sites in lib and on the Projects surface \u2014 the census lib/__tests__/checkedWrite.test.ts LIB_RATCHET / PROJECTS_UI_RATCHET names every file and count)"
+    ]
+   },
+   "files": [
+    "every file in lib/__tests__/checkedWrite.test.ts LIB_RATCHET and PROJECTS_UI_RATCHET (route each write through lib/checkedWrite.ts or the count-checked .select('id') shape, surface the refusal, never write an audit row after a zero-row match), lowering that file's number in the same change; the census test itself"
+   ],
+   "migrationsLikely": 0,
+   "when": "last in the projects run order, and per file only after every package that edits that file has merged (the census's IN_FLIGHT list is the mechanism: put a file there while another package edits it)",
+   "dependsOn": [
+    "J12 merged (it built the census)",
+    "per file: the owning package of that file merged (knowledgeIngest.ts \u2014 intelligence I-18; milestones / checklists \u2014 J14 and notifications N8; revisions / reviewControl / acknowledgments / checkoutEpisodes \u2014 document-control P16 / P21 if they touch them; projects.ts \u2014 notifications N9)"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-07 at the J12 merge. A sweep across areas' files: it changes no behaviour except surfacing a refused write and suppressing a false audit row; each converted site needs a test that a zero-row match is reported. Split into per-area batches if the file set is too wide for one package.",
+   "decisionsNeeded": [],
+   "alreadyResolvedElsewhere": []
+  },
+  {
+   "name": "J16 INTAKE DOOR IDENTITY & UNTRUSTED ORIGIN \u2014 the unauthenticated upload door writes as an identity the database guards apply to, and door uploads are served from an origin with no app cookies or script (GAP-401)",
+   "projectsTabPackages": [],
+   "projectsAndCostPackages": [],
+   "findings": {
+    "projects-tab": [
+     "GAP-401 (remainder re-owned by the integrator 2026-10-07 at the J12 merge, which built neither: (1) the door's constrained identity \u2014 rebuild app/api/intake/upload/route.ts and the direct-upload finalize to write as a per-request identity scoped to one link (insert policies for that link's project and library) instead of the service role; (2) an UNTRUSTED_CONTENT_ORIGIN (or equivalent) that presigned GETs of door uploads use, with the operator step to stand it up; 90-gap-register.md GAP-401 'Owed')"
+    ]
+   },
+   "files": [
+    "app/api/intake/upload/route.ts and the direct-upload finalize route",
+    "a new projects migration for the link-scoped identity's insert policies (re-create any guard from its NEWEST body, lineDiff-pinned)",
+    "the presigned-GET helper for door uploads (an UNTRUSTED_CONTENT_ORIGIN setting) + its operator note in the deploy docs",
+    "lib/__tests__/intakeUploadRoute.test.ts, intakeDoorMigration.test.ts"
+   ],
+   "migrationsLikely": 1,
+   "when": "after drafting-flow DF-P1 merges (it edits app/api/intake/upload/route.ts's redline branch)",
+   "dependsOn": [
+    "drafting-flow DF-P1 merged",
+    "document-control P14 merged (owns the intake-door migrations 20261149\u201320261151 \u2014 merged)"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-07 at the J12 merge: GAP-401's two owed items. The separate origin's deployment is the user's (operator step); the package builds the code half and says exactly what the operator must stand up."
   }
  ],
  "ownershipRule": "Where the two briefs disagree on a shared file, projects-and-cost's proposal applies: libs / API routes / migrations follow the projects-and-cost brief, components / pages follow the projects-tab brief; the schedule engine (lib/milestones.ts, criticalPath.ts, executionReport.ts) follows projects-tab's P6b brief with PC-4's rollup semantics folded in.",
@@ -1100,11 +1152,15 @@
   "after DC P4: J1; after DC P6: J8; after DC P2: J9 egress half; after DC P7: J7 QUAL-10 limb, J2b",
   "then: J11 (after J2b); last: J10",
   "orphan sweep 2026-10-01: J13 any time (records only); J12 after J11; J10b after J10",
-  "integrator 2026-10-02 (J10b merge): J14 after J12"
+  "integrator 2026-10-02 (J10b merge): J14 after J12",
+  "integrator 2026-10-07 (J12 merge): J15 last (per file, after that file's owning package)",
+  "integrator 2026-10-07 (J12 merge): J16 after drafting-flow DF-P1"
  ],
  "userHeld": {
   "COST-5": "ratify DEC-48 (the silence-vs-plausible-hours gap, the declared / silent weighting, 'cheapest does not automatically win')",
   "PERF-1": "rule on 'Back does not re-run it' (GAP-409 forbids a client-side cache)",
-  "CHART-2": "ratify DEC-55 rule 1 (then the integrator flips it with no code change)"
+  "CHART-2": "ratify DEC-55 rule 1 (then the integrator flips it with no code change)",
+  "PERF-6": "measure: time one real ten-page scanned PDF through /api/projects/cost-docs on the deployed app (done-when 1; CI has no real scan) \u2014 closes PERF-6 if inside the limit",
+  "PERF-9": "rule: does done-when 2 measure the route's own JavaScript (then the recorded 474,342 bytes close it) or include the app-wide shell (~618 KB on every route \u2014 then it needs a shell-slimming owner)"
  }
 }

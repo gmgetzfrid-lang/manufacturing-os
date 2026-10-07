@@ -12,7 +12,7 @@
 // RATCHETS them — the count of unchecked sites may fall, never rise.
 
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { checkedWrite, describeWriteError, isMissingSchemaError, CHECKED_WRITE_REFUSED } from "@/lib/checkedWrite";
 
@@ -140,5 +140,91 @@ describe("census — no raw discarded write result in the quality data layers (G
       const raw = sites.filter((s) => !s.checked);
       expect(raw, `${f}: unchecked write(s): ${raw.map((s) => `L${s.line} ${s.snippet}`).join(" | ")}`).toEqual([]);
     }
+  });
+});
+
+// ── the census, widened (projects Round G J12 — GAP-402's remainder) ─────
+// GAP-402 converted the safety-critical paths and asked for "a finding for
+// the remainder" (DEC-31). The remainder is SAF-18 (projects-tab 02-safety-compliance.md):
+// the files below still carry unchecked update/delete sites. This census
+// holds the line while it is worked: a file that is clean stays clean, a
+// file on the ratchet may only FALL, and a file not named here (new code)
+// must be clean. Counts measured at 2af813b + J12 by this file's writeSites.
+const walkTs = (dir: string): string[] => {
+  const abs = join(process.cwd(), dir);
+  return readdirSync(abs).flatMap((f) => {
+    if (f === "__tests__") return [];
+    const rel = `${dir}/${f}`;
+    return statSync(join(abs, f)).isDirectory() ? walkTs(rel) : /\.tsx?$/.test(f) ? [rel] : [];
+  });
+};
+const unchecked = (f: string) => writeSites(src(f)).filter((s) => !s.checked);
+/** lib files with no unchecked update/delete — they stay that way. */
+const CLEAN_LIB = [
+    "lib/answerSkills.ts", "lib/assetAliases.ts", "lib/changeOrders.ts", "lib/checkedWrite.ts", "lib/checklists.ts",
+    "lib/codebook.ts", "lib/costDocs.ts", "lib/costs.ts", "lib/distributionAcks.ts", "lib/documentLifecycle/merge.ts",
+    "lib/linkProposals.ts", "lib/linkRules.ts", "lib/orchestrator/proposals.ts", "lib/ownership.ts", "lib/relatedResources.ts",
+    "lib/transitionIn.ts", "lib/turnover.ts", "lib/workPackages.ts",
+];
+/** lib files still carrying unchecked sites (SAF-18): the count may fall, never rise. */
+const LIB_RATCHET: Record<string, number> = {
+    "lib/accessRecert.ts": 1, "lib/acknowledgments.ts": 7, "lib/activityThread.ts": 1, "lib/ai/usageServer.ts": 3,
+    "lib/aiInstructions.ts": 2, "lib/assets.ts": 2, "lib/branches.ts": 1, "lib/checkoutEpisodes.ts": 6, "lib/collections.ts": 6,
+    "lib/companies.ts": 3, "lib/docClass.ts": 1, "lib/documentLifecycle/common.ts": 2, "lib/documentLifecycle/renumber.ts": 1,
+    "lib/documentLifecycle/reverse.ts": 1, "lib/documentLifecycle/split.ts": 1, "lib/documentOrigin.ts": 1,
+    "lib/documentShares.ts": 1, "lib/effectiveDate.ts": 4, "lib/favorites.ts": 1, "lib/holds.ts": 2,
+    "lib/inAppNotifications.ts": 3, "lib/intents.ts": 1, "lib/knowledge.ts": 4, "lib/knowledgeEmbedCore.ts": 2,
+    "lib/knowledgeIngest.ts": 17, "lib/knowledgeSourceSync.ts": 4, "lib/libraryCollections.ts": 6, "lib/libraryViews.ts": 4,
+    "lib/markupRequests.ts": 1, "lib/markups.ts": 1, "lib/mentionIndexer.ts": 1, "lib/milestones.ts": 12, "lib/notes.ts": 4,
+    "lib/operationalGraph.ts": 6, "lib/plotPlans.ts": 2, "lib/processFlows.ts": 2, "lib/projectReport.ts": 1,
+    "lib/projects.ts": 9, "lib/retention.ts": 3, "lib/reviewControl.ts": 9, "lib/reviewCycles.ts": 5, "lib/revisions.ts": 6,
+    "lib/subscriptions.ts": 1, "lib/tableViews.ts": 1, "lib/teams.ts": 3, "lib/transmittals.ts": 1, "lib/unitCodeDecode.ts": 1,
+    "lib/whiteboard.ts": 1,
+};
+/** Files packages running BESIDE this one (projects Round G wave of
+ *  2026-10-01) are editing: the census does not judge them until their
+ *  package merges, so a raw write they add fails their own review, not this
+ *  census at the merge. Their measured counts stay in the lists above; the
+ *  integrator removes a file from here when its package merges (and lowers
+ *  or re-measures its number if the package changed it). Emptied by the
+ *  integrator at the J12 merge (2026-10-07): J10b, DC P14, DC P15 and I-09 had
+ *  all merged, and each file's measured count matched the lists above. */
+const IN_FLIGHT: Record<string, string> = {};
+const judged = (f: string) => !(f in IN_FLIGHT);
+/** The Projects surface outside lib (components/projects, the project and intake routes). */
+const PROJECTS_UI_CLEAN = [
+    "components/projects/ProjectDocumentsCard.tsx", "components/projects/cost/QuotesPanel.tsx",
+];
+const PROJECTS_UI_RATCHET: Record<string, number> = {
+    "components/projects/EditProjectModal.tsx": 1, "components/projects/IntakePanel.tsx": 5,
+    "components/projects/ProjectWizard.tsx": 1, "components/projects/cost/ChangeOrdersPanel.tsx": 1,
+    "app/api/intake/upload/route.ts": 10, "app/api/projects/cost-docs/route.ts": 1,
+};
+
+describe("census, widened — every lib file and the Projects surface (GAP-402 remainder → SAF-18)", () => {
+  it("the clean files stay clean", () => {
+    for (const f of [...CLEAN_LIB, ...PROJECTS_UI_CLEAN].filter(judged)) {
+      const raw = unchecked(f);
+      expect(raw, `${f}: unchecked write(s): ${raw.map((s) => `L${s.line} ${s.snippet}`).join(" | ")}`).toEqual([]);
+    }
+  });
+  it("the ratcheted files may only fall (lower the number here when one does)", () => {
+    for (const [f, max] of Object.entries({ ...LIB_RATCHET, ...PROJECTS_UI_RATCHET }).filter(([f]) => judged(f))) {
+      const raw = unchecked(f);
+      expect(raw.length, `${f}: ${raw.length} unchecked (was ${max}): ${raw.map((s) => `L${s.line} ${s.snippet}`).join(" | ")}`).toBeLessThanOrEqual(max);
+    }
+  });
+  it("a lib or Projects file not named here (new code) has no unchecked update/delete", () => {
+    const known = new Set([...CLEAN_LIB, ...Object.keys(LIB_RATCHET), ...PROJECTS_UI_CLEAN, ...Object.keys(PROJECTS_UI_RATCHET)]);
+    const scope = [
+      ...walkTs("lib"), ...walkTs("components/projects"),
+      ...walkTs("app/api/projects"), ...walkTs("app/api/intake"), ...walkTs("app/(protected)/projects"),
+    ];
+    const offenders = scope.filter((f) => !known.has(f) && judged(f)).filter((f) => unchecked(f).length > 0);
+    expect(offenders).toEqual([]);
+  });
+  it("every in-flight file is one the lists above measured (it is set aside, never forgotten)", () => {
+    const known = new Set([...CLEAN_LIB, ...Object.keys(LIB_RATCHET), ...PROJECTS_UI_CLEAN, ...Object.keys(PROJECTS_UI_RATCHET)]);
+    for (const f of Object.keys(IN_FLIGHT)) expect(known.has(f), f).toBe(true);
   });
 });

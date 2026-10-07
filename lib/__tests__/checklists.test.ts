@@ -48,7 +48,7 @@ vi.mock("@/lib/eSignatures", () => ({
 
 import {
   applyAssessment, createChecklist, gatherProjectEvidenceState, listChecklistItems, listChecklists,
-  readChecklistItems, runAutoEvidence, setChecklistStatus, updateChecklistItem, WRITE_BATCH,
+  readChecklistItems, runAutoEvidence, setChecklistStatus, updateChecklistItem, WRITE_BATCH, APPLY_CHUNK, PER_ROW_CHUNK,
   type Checklist, type ChecklistItem,
 } from "@/lib/checklists";
 import { MACHINE_ACTOR_ASSESSMENT, MACHINE_ACTOR_SWEEP } from "@/lib/checklistEngine";
@@ -206,6 +206,179 @@ describe("applyAssessment", () => {
     expect((a[0].details as { items: unknown[] }).items).toHaveLength(120);
   });
 });
+
+// ── PERF-7 / DEC-52 item 10: one request through 20261157 ────────────────
+describe("the machine's writes in ONE request (20261157 apply_checklist_item_writes)", () => {
+  beforeEach(() => {
+    state.tables.checklist_items = [
+      row({ id: "a", text: "Weld log reviewed" }),
+      row({ id: "b", text: "NDE reports on file", updated_at: null }),
+      row({ id: "c", text: "Hydrotest", updated_at: "2026-09-02T00:00:00Z" }),
+    ];
+  });
+  const all = ["a", "b", "c"].map((id) => ({ itemId: id, applicability: "na" as const, rationale: "not in scope" }));
+  /** Plays the function: each write lands only where the row's updated_at is
+   *  still the one the caller read (the per-row guard), else it is refused. */
+  const play = (fail: Record<string, { code: string; message: string }> = {}) => (args: Record<string, unknown>) => {
+    const landed: string[] = [], refused: string[] = [], failed: Array<Record<string, unknown>> = [];
+    for (const w of args.p_writes as Array<Record<string, unknown>>) {
+      const id = String(w.id);
+      if (fail[id]) { failed.push({ id, ...fail[id] }); continue; }
+      const r = state.tables.checklist_items.find((x) => x.id === id && x.checklist_id === args.p_checklist);
+      if (!r || (r.updated_at ?? null) !== (w.expected_updated_at ?? null)) { refused.push(id); continue; }
+      for (const k of ["status", "applicability", "ai_rationale", "evidence", "updated_by_name"]) if (k in w) r[k] = w[k];
+      r.updated_at = "2026-10-01T00:00:00Z"; r.updated_by = null;
+      landed.push(id);
+    }
+    return { data: { landed, refused, failed }, error: null };
+  };
+
+  it("ONE call carries every write with the updated_at it was read at; no single-row UPDATE runs; the audit names only what landed", async () => {
+    state.rpc = { apply_checklist_item_writes: play() };
+    state.tables.checklist_items[2].updated_at = "2026-09-03T00:00:00Z";
+    const out = await applyAssessment({ orgId: "o1", projectId: "p1", checklistId: "cl1", proposals: all, confirmedItemIds: ["a", "b", "c"], actor });
+    expect(out).toMatchObject({ applied: 3, refused: 0, failed: 0 });
+    const calls = state.calls.filter((c) => c.table === "rpc:apply_checklist_item_writes");
+    expect(calls).toHaveLength(1);
+    const args = calls[0].args[0] as { p_checklist: string; p_writes: Array<Record<string, unknown>> };
+    expect(args.p_checklist).toBe("cl1");
+    expect(args.p_writes.map((w) => [w.id, w.expected_updated_at])).toEqual([["a", "2026-09-01T00:00:00Z"], ["b", null], ["c", "2026-09-03T00:00:00Z"]]);
+    // The function stamps the clock and the actor itself — the client sends neither.
+    for (const w of args.p_writes) {
+      expect(w).not.toHaveProperty("updated_at");
+      expect(w).not.toHaveProperty("updated_by");
+      expect(w).toMatchObject({ applicability: "na", status: "na", ai_rationale: "not in scope", updated_by_name: MACHINE_ACTOR_ASSESSMENT });
+    }
+    expect(itemWrites()).toHaveLength(0);
+    expect(state.tables.checklist_items.map((r) => r.status)).toEqual(["na", "na", "na"]);
+    const a = audits();
+    expect(a).toHaveLength(1);
+    expect((a[0].details as { items: unknown[] }).items).toHaveLength(3);
+  });
+
+  it("the per-row guard still decides: a row changed since it was read is REFUSED, a rail's refusal FAILS with its sentence, the rest land", async () => {
+    state.rpc = {
+      apply_checklist_item_writes: (args) => {
+        // someone touched b between the read and the write
+        state.tables.checklist_items[1].updated_at = "2026-09-30T00:00:00Z";
+        return play({ c: { code: "23514", message: "A person decided this item — the machine may not overwrite it." } })(args);
+      },
+    };
+    const out = await applyAssessment({ orgId: "o1", projectId: "p1", checklistId: "cl1", proposals: all, confirmedItemIds: ["a", "b", "c"], actor });
+    expect(out).toMatchObject({ applied: 1, refused: 1, failed: 1 });
+    expect(out.error).toBeTruthy();
+    expect(state.tables.checklist_items.map((r) => r.status)).toEqual(["na", "open", "open"]);
+    expect((audits()[0].details as { items: Array<{ itemId: string }> }).items.map((i) => i.itemId)).toEqual(["a"]);
+  });
+
+  it("a database error from the function fails every write and does NOT fall back; a missing function (PGRST202) or an answer without its shape does", async () => {
+    state.rpc = { apply_checklist_item_writes: () => ({ data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } }) };
+    const failed = await applyAssessment({ orgId: "o1", projectId: "p1", checklistId: "cl1", proposals: all, confirmedItemIds: ["a"], actor });
+    expect(failed).toMatchObject({ applied: 0, failed: 1 });
+    expect(itemWrites()).toHaveLength(0);
+    expect(audits()).toHaveLength(0);
+
+    state.rpc = { apply_checklist_item_writes: () => ({ data: null, error: null }) };
+    const shapeless = await applyAssessment({ orgId: "o1", projectId: "p1", checklistId: "cl1", proposals: all, confirmedItemIds: ["a"], actor });
+    expect(shapeless.applied).toBe(1);
+    expect(itemWrites()).toHaveLength(1);
+
+    state.rpc = undefined; // before 20261157: PGRST202, the single-row path
+    const legacy = await applyAssessment({ orgId: "o1", projectId: "p1", checklistId: "cl1", proposals: all, confirmedItemIds: ["c"], actor });
+    expect(legacy.applied).toBe(1);
+    expect(itemWrites()).toHaveLength(2);
+  });
+
+  it("more writes than one call may carry (the function refuses > 2,000) go in calls of APPLY_CHUNK, outcomes merged (review minor)", async () => {
+    state.tables.checklist_items = Array.from({ length: 2_300 }, (_, i) => row({ id: `x${i}`, text: `Line ${i}` }));
+    const many = state.tables.checklist_items.map((r) => ({ itemId: r.id as string, applicability: "na" as const, rationale: "not in scope" }));
+    state.rpc = {
+      apply_checklist_item_writes: (args) => {
+        // the function's own cap, as 20261157 has it
+        if ((args.p_writes as unknown[]).length > 2000) return { data: null, error: { code: "22023", message: "apply_checklist_item_writes takes an array of at most 2000 item writes; nothing was changed." } };
+        return play()(args);
+      },
+    };
+    const out = await applyAssessment({ orgId: "o1", projectId: "p1", checklistId: "cl1", proposals: many, confirmedItemIds: many.map((p) => p.itemId), actor });
+    expect(out).toMatchObject({ applied: 2_300, refused: 0, failed: 0 });
+    const calls = state.calls.filter((c) => c.table === "rpc:apply_checklist_item_writes");
+    expect(APPLY_CHUNK).toBeLessThanOrEqual(2000);
+    expect(calls.map((c) => ((c.args[0] as { p_writes: unknown[] }).p_writes).length)).toEqual([1000, 1000, 300]);
+    expect(itemWrites()).toHaveLength(0);
+    expect(state.tables.checklist_items.every((r) => r.status === "na")).toBe(true);
+  });
+
+  it("a later call answering without the function's shape hands only what is left to the single-row writes; the earlier calls' rows stand", async () => {
+    state.tables.checklist_items = Array.from({ length: 1_200 }, (_, i) => row({ id: `y${i}`, text: `Line ${i}` }));
+    const many = state.tables.checklist_items.map((r) => ({ itemId: r.id as string, applicability: "na" as const, rationale: "not in scope" }));
+    let n = 0;
+    state.rpc = { apply_checklist_item_writes: (args) => (++n === 1 ? play()(args) : { data: null, error: null }) };
+    const out = await applyAssessment({ orgId: "o1", projectId: "p1", checklistId: "cl1", proposals: many, confirmedItemIds: many.map((p) => p.itemId), actor });
+    expect(out).toMatchObject({ applied: 1_200, refused: 0, failed: 0 });
+    expect(itemWrites()).toHaveLength(200);
+  });
+
+  /** Plays 20261157 as written: the whole call in one statement; when a rail
+   *  refuses a row of a call larger than PER_ROW_CHUNK it applies nothing and
+   *  answers {split: 50}; a smaller call is judged row by row. */
+  const like20261157 = (rail: Record<string, { code: string; message: string }>) => (args: Record<string, unknown>) => {
+    const writes = args.p_writes as Array<Record<string, unknown>>;
+    if (writes.length > 2000) return { data: null, error: { code: "22023", message: "at most 2000" } };
+    if (!writes.some((w) => rail[String(w.id)])) return play()(args);
+    if (writes.length > 50) return { data: { landed: [], refused: [], failed: [], split: 50 }, error: null };
+    return play(rail)(args);
+  };
+
+  it("a call whose one statement a rail refuses is re-sent in calls of PER_ROW_CHUNK; only the refused row fails, nothing is written twice (review minor: subtransaction cache)", async () => {
+    state.tables.checklist_items = Array.from({ length: 300 }, (_, i) => row({ id: `z${i}`, text: `Line ${i}` }));
+    const many = state.tables.checklist_items.map((r) => ({ itemId: r.id as string, applicability: "na" as const, rationale: "not in scope" }));
+    state.rpc = { apply_checklist_item_writes: like20261157({ z137: { code: "23514", message: "A person decided this item — the machine may not overwrite it." } }) };
+    const out = await applyAssessment({ orgId: "o1", projectId: "p1", checklistId: "cl1", proposals: many, confirmedItemIds: many.map((p) => p.itemId), actor });
+    expect(out).toMatchObject({ applied: 299, refused: 0, failed: 1 });
+    expect(PER_ROW_CHUNK).toBeLessThanOrEqual(64);
+    const sizes = state.calls.filter((c) => c.table === "rpc:apply_checklist_item_writes").map((c) => ((c.args[0] as { p_writes: unknown[] }).p_writes).length);
+    expect(sizes).toEqual([300, 50, 50, 50, 50, 50, 50]);
+    expect(itemWrites()).toHaveLength(0);
+    expect(state.tables.checklist_items.filter((r) => r.status === "na")).toHaveLength(299);
+    expect(state.tables.checklist_items.find((r) => r.id === "z137")?.status).toBe("open");
+    // the writes went in order, each exactly once after the split
+    const after = state.calls.filter((c) => c.table === "rpc:apply_checklist_item_writes").slice(1)
+      .flatMap((c) => (c.args[0] as { p_writes: Array<{ id: string }> }).p_writes.map((w) => w.id));
+    expect(after).toEqual(many.map((p) => p.itemId));
+  });
+
+  it("a one-write call still answering split is handed, with everything after it, to the single-row writes — never a loop", async () => {
+    state.rpc = { apply_checklist_item_writes: () => ({ data: { landed: [], refused: [], failed: [], split: 50 }, error: null }) };
+    const out = await applyAssessment({ orgId: "o1", projectId: "p1", checklistId: "cl1", proposals: all, confirmedItemIds: ["a", "b", "c"], actor });
+    expect(out).toMatchObject({ applied: 3, refused: 0, failed: 0 });
+    const sizes = state.calls.filter((c) => c.table === "rpc:apply_checklist_item_writes").map((c) => ((c.args[0] as { p_writes: unknown[] }).p_writes).length);
+    expect(sizes).toEqual([3, 2, 1]);
+    expect(itemWrites()).toHaveLength(3);
+  });
+
+  it("the evidence sweep goes through the same one request: the citation lands, the machine actor is the function's to stamp", async () => {
+    state.rpc = { apply_checklist_item_writes: play() };
+    state.tables.projects = [{ id: "p1", intake_collection_id: "intake", sow_document_id: null }];
+    state.tables.turnover_items = [];
+    state.tables.project_checklists = [];
+    state.tables.assets = [];
+    state.tables.document_versions = [{ id: "v1", record_id: "d1", provenance: "internal", review_state: null }];
+    state.tables.documents = [doc({ id: "d1", title: "E-301 Hydrotest Report" })];
+    state.tables.checklist_items = [row({ id: "a" })];
+    const out = await runAutoEvidence({ orgId: "o1", projectId: "p1", checklistId: "cl1", actor });
+    expect(out).toMatchObject({ satisfied: 1, refused: 0, failed: 0 });
+    const calls = state.calls.filter((c) => c.table === "rpc:apply_checklist_item_writes");
+    expect(calls).toHaveLength(1);
+    const [w] = (calls[0].args[0] as { p_writes: Array<Record<string, unknown>> }).p_writes;
+    expect(w).toMatchObject({ id: "a", expected_updated_at: "2026-09-01T00:00:00Z", status: "satisfied", updated_by_name: MACHINE_ACTOR_SWEEP });
+    expect(itemWrites()).toHaveLength(0);
+    expect(state.tables.checklist_items[0]).toMatchObject({
+      status: "satisfied", updated_by: null,
+      evidence: [{ label: 'Document on file: "E-301 Hydrotest Report"', documentId: "d1", source: "auto" }],
+    });
+  });
+});
+
 
 // ── updateChecklistItem (SAF-3 / SAF-4) ──────────────────────────────────
 describe("updateChecklistItem", () => {

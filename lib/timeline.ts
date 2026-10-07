@@ -422,6 +422,12 @@ export const PROJECT_EVENT_VOCABULARY: Readonly<Record<string, ProjectEventClass
   // Money & commercial (resource_type 'cost', resource_id = the cost row)
   COST_DOC_AWARDED: "milestone",
   COST_DOC_AWARD_OVERRIDE_DO_NOT_USE: "milestone",
+  // J12 review fix passes 8 and 9: the bid tab's acknowledgement of a
+  // do-not-use row the letterhead the AI read, or the stored vendor name
+  // behind a flagged contractor, could be (`details.matchedOn`) — never an
+  // override. Like the override intent above it stays a milestone when its
+  // award is then abandoned (its ..._ABANDONED row is noise).
+  COST_DOC_AWARD_LETTERHEAD_ACK: "milestone",
   COST_DOC_UPLOADED: "noise",
   COST_DOC_PARSED: "noise",
   COST_DOC_MANUAL_TOTAL: "noise",
@@ -429,6 +435,7 @@ export const PROJECT_EVENT_VOCABULARY: Readonly<Record<string, ProjectEventClass
   COST_DOC_VOIDED: "noise",
   COST_DOC_COMPANY_LINKED: "noise",
   COST_DOC_AWARD_OVERRIDE_ABANDONED: "noise",
+  COST_DOC_AWARD_LETTERHEAD_ACK_ABANDONED: "noise",
   COST_ENTRY_POSTED: "noise",
   COST_ENTRY_VOIDED: "noise",
   COST_ACCOUNT_CREATED: "noise",
@@ -462,6 +469,7 @@ export const PROJECT_EVENT_VOCABULARY: Readonly<Record<string, ProjectEventClass
   MILESTONE_CREATED: "noise",
   MILESTONE_UPDATED: "noise",
   MILESTONE_DELETED: "noise",
+  MILESTONE_SCOPE_RECORDED: "noise", // SEC-21: the database's scope stamp (SCOPE_STAMP_ACTIONS)
   TASKS_GROUPED: "noise",
   // The project itself — the feed already carries these as activity rows
   PROJECT_CREATED: "mirrored",
@@ -488,6 +496,9 @@ export type ProjectRecordTab = "costs" | "quality" | "schedule";
 export const PROJECT_EVENT_TAB: Readonly<Record<string, ProjectRecordTab>> = {
   COST_DOC_AWARDED: "costs",
   COST_DOC_AWARD_OVERRIDE_DO_NOT_USE: "costs",
+  // J12 (merged beside J10b's tab map): the bid tab's acknowledgement of a
+  // do-not-use look-alike is a milestone on the award, so it links to Costs too.
+  COST_DOC_AWARD_LETTERHEAD_ACK: "costs",
   CHANGE_ORDER_PROPOSED: "costs",
   CHANGE_ORDER_APPROVED: "costs",
   CHANGE_ORDER_REJECTED: "costs",
@@ -534,6 +545,23 @@ export function isProjectFeedAction(action: string): boolean {
 }
 
 const pgList = (xs: string[]) => `(${xs.map((x) => `"${x}"`).join(",")})`;
+
+/** SEC-21 (20261157): audit rows the DATABASE writes to stamp a scope — not
+ *  an event anyone did. `MILESTONE_SCOPE_RECORDED` is written as a document's
+ *  milestone is deleted, beside the `MILESTONE_DELETED` row the person's
+ *  delete writes, so a timeline that showed both would show the one delete
+ *  twice. The document and project timelines, the Activity feed and the
+ *  dashboard's Activity widget leave them out; the admin audit page shows
+ *  every row. */
+export const SCOPE_STAMP_ACTIONS: ReadonlySet<string> = new Set(["MILESTONE_SCOPE_RECORDED"]);
+/** The same set as a PostgREST `not.in` list — `.not("action", "in",
+ *  SCOPE_STAMPS_NOT_IN)` — so a capped read leaves the stamps out BEFORE its
+ *  row limit and a 100-row window is 100 events, never ~50 (J12 review fix
+ *  pass 7). `audit_logs.action` is NOT NULL, so the filter drops nothing
+ *  else. */
+export const SCOPE_STAMPS_NOT_IN = pgList([...SCOPE_STAMP_ACTIONS]);
+/** Re-applied after the read, as the project read re-applies its map. */
+const withoutScopeStamps = (rows: AuditRow[]): AuditRow[] => rows.filter((r) => !SCOPE_STAMP_ACTIONS.has(r.action));
 
 const money = (v: unknown): string | null => {
   const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
@@ -587,9 +615,15 @@ export function summarizeAudit(r: Pick<AuditRow, "action" | "details">): string 
     case "MILESTONE_MISSED":    return `Milestone missed${d.name ? `: ${d.name}` : ""}`;
     case "MILESTONE_BLOCKED":   return `Milestone blocked${d.name ? `: ${d.name}` : ""}`;
     case "MILESTONE_DELETED":   return `Milestone deleted${d.name ? `: ${d.name}` : ""}`;
+    // SEC-21 (20261157): the database's own row, written as a document's
+    // milestone is deleted, so the MILESTONE_DELETED row keeps its reach.
+    case "MILESTONE_SCOPE_RECORDED": return `Milestone deletion recorded by the database${d.name ? `: ${d.name}` : ""}`;
     // SAF-6: the controls program's milestone vocabulary (PROJECT_EVENT_VOCABULARY).
     case "COST_DOC_AWARDED":    return `Quote awarded${d.vendor ? ` — ${d.vendor}` : ""}${money(d.total) ? ` (${money(d.total)})` : ""}`;
     case "COST_DOC_AWARD_OVERRIDE_DO_NOT_USE": return `Award made over a do-not-use flag${d.vendor ? ` — ${d.vendor}` : ""}`;
+    case "COST_DOC_AWARD_LETTERHEAD_ACK": return Array.isArray(d.matchedOn) && d.matchedOn.includes("vendorOnFile")
+      ? `Do-not-use look-alike acknowledged at an award${typeof d.vendorOnFile === "string" && typeof d.company === "string" ? ` — the vendor on file "${d.vendorOnFile}" could be ${d.company}` : ""}`
+      : `Do-not-use letterhead acknowledged at an award${typeof d.letterhead === "string" && typeof d.company === "string" ? ` — "${d.letterhead}" could be ${d.company}` : ""}`;
     case "CHANGE_ORDER_PROPOSED": return `Change order proposed${d.coNumber ? ` ${d.coNumber}` : ""}${money(d.amount) ? ` (${money(d.amount)})` : ""}`;
     case "CHANGE_ORDER_APPROVED": return `Change order approved${d.coNumber ? ` ${d.coNumber}` : ""}${money(d.amount) ? ` (${money(d.amount)})` : ""}`;
     case "CHANGE_ORDER_REJECTED": return `Change order rejected${d.coNumber ? ` ${d.coNumber}` : ""}`;
@@ -633,6 +667,7 @@ export async function getDocumentTimeline(params: DocumentTimelineParams): Promi
       .select("*")
       .eq("resource_type", "document")
       .eq("resource_id", documentId)
+      .not("action", "in", SCOPE_STAMPS_NOT_IN)
       .order("timestamp", { ascending: false })
       .limit(limit),
     supabase
@@ -662,7 +697,7 @@ export async function getDocumentTimeline(params: DocumentTimelineParams): Promi
   // name — an audit row whose hold row was deleted still renders. "Deleted"
   // is decided by a targeted lookup of the referenced ids, not by absence
   // from the paged holds query.
-  const auditRows = (auditResult.data as AuditRow[]) ?? [];
+  const auditRows = withoutScopeStamps((auditResult.data as AuditRow[]) ?? []);
   const holdRows = (holdResult.data as HoldRow[]) ?? [];
   const existingHoldIds = await lookupExistingHoldIds(holdIdsReferencedBy(auditRows), new Set(holdRows.map((h) => h.id)));
   const { auditEvents, holdEvents } = mergeHoldHistory(auditRows, holdRows, existingHoldIds);
@@ -830,8 +865,9 @@ export async function getProjectTimeline(params: ProjectTimelineParams): Promise
         .select("*")
         .eq("resource_type", "document")
         .in("resource_id", part)
+        .not("action", "in", SCOPE_STAMPS_NOT_IN)
         .order("timestamp", { ascending: false })
-        .limit(limit)),
+        .limit(limit)).then(withoutScopeStamps),
       readByIdChunks<VersionRow>(docIds, (part) => supabase
         .from("document_versions")
         .select("*")

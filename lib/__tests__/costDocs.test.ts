@@ -39,6 +39,8 @@ const db = vi.hoisted(() => ({
   /** Tables whose UPDATE matches zero rows — the shape an RLS filter produces. */
   denyUpdate: new Set<string>(),
   seq: 0,
+  /** Column defaults an INSERT's returned row carries (a column the table has). */
+  defaults: {} as Record<string, Row>,
 }));
 function takeFail(table: string, op: string) {
   const q = db.fail[`${table}:${op}`];
@@ -61,7 +63,7 @@ function chain(table: string) {
   const applyInsert = () => {
     const err = takeFail(table, "insert");
     if (err) return { data: null, error: err };
-    const row = { id: `${table}-${++db.seq}`, ...insertRow };
+    const row = { id: `${table}-${++db.seq}`, ...(db.defaults[table] ?? {}), ...insertRow };
     (db.tables[table] ??= []).push(row);
     return { data: row, error: null };
   };
@@ -89,8 +91,18 @@ function chain(table: string) {
             break;
           }
           case "ilike": {
-            const want = String(args[1]).replace(/\\([%_\\])/g, "$1").toLowerCase();
-            preds.push((r) => String(r[args[0] as string] ?? "").toLowerCase() === want);
+            // PostgREST ILIKE: an unescaped % is any run, _ any one character;
+            // a backslash-escaped one is itself (MON-12's look-alike read uses
+            // %word%, the exact-name read escapes its pattern).
+            const pat = String(args[1]);
+            let re = "";
+            for (let i = 0; i < pat.length; i++) {
+              const ch = pat[i];
+              if (ch === "\\" && i + 1 < pat.length) { re += pat[++i].replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); continue; }
+              re += ch === "%" ? ".*" : ch === "_" ? "." : ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            }
+            const rx = new RegExp(`^${re}$`, "is");
+            preds.push((r) => rx.test(String(r[args[0] as string] ?? "")));
             break;
           }
           case "update": mode = "update"; patch = args[0] as Row; break;
@@ -114,7 +126,23 @@ function chain(table: string) {
 const emitted = vi.hoisted(() => [] as Array<Row>);
 const audited = vi.hoisted(() => [] as Array<Row>);
 const deleted = vi.hoisted(() => [] as string[]);
-vi.mock("@/lib/supabase", () => ({ supabase: { from: (t: string) => chain(t) } }));
+/** GAP-406: the one-transaction award (20261157 award_quote). By default the
+ *  function is missing (PGRST202) — the database before the migration — so
+ *  every award below runs the client sequence; the GAP-406 block installs a
+ *  handler that plays the function. */
+const rpc = vi.hoisted(() => ({
+  calls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
+  handler: null as null | ((fn: string, args: Record<string, unknown>) => { data: unknown; error: { code?: string; message: string } | null }),
+}));
+vi.mock("@/lib/supabase", () => ({
+  supabase: {
+    from: (t: string) => chain(t),
+    rpc: async (fn: string, args: Record<string, unknown>) => {
+      rpc.calls.push({ fn, args });
+      return rpc.handler ? rpc.handler(fn, args) : { data: null, error: { code: "PGRST202", message: `Could not find the function public.${fn} in the schema cache` } };
+    },
+  },
+}));
 vi.mock("@/lib/notify/dispatch", () => ({ emit: vi.fn(async (e: Row) => { emitted.push(e); }) }));
 vi.mock("@/lib/audit", () => ({ logAuditAction: vi.fn(async (e: Row) => { audited.push(e); }) }));
 vi.mock("@/lib/storage", () => ({
@@ -124,13 +152,15 @@ vi.mock("@/lib/storage", () => ({
 
 import {
   awardQuote, declineQuote, postInvoice, voidCostDoc, setManualTotal, listLedgerOrphans, repairCostDoc, costDocStatusLabel,
-  uploadCostDoc, listCostDocs, normalizeCurrency, type CostDocument,
+  uploadCostDoc, listCostDocs, normalizeCurrency, quoteGroups, isMissingRpc, type CostDocument,
 } from "@/lib/costDocs";
 import {
   proposeChangeOrder, decideChangeOrder, unwindChangeOrder, listChangeOrders, repairChangeOrder,
   approvedChangesByAccount, changeOrderOnLedger, summarizeChangeOrders, parseThresholdAmount, isReversal, type ChangeOrder,
 } from "@/lib/changeOrders";
 import { voidEntry, listAccounts, listEntries, saveAccount, NO_ROW_MATCHED } from "@/lib/costs";
+import { barredCompanyFor } from "@/lib/bidTab";
+import { registryLinkFor } from "@/lib/costDocParse";
 
 const actor = { uid: "u-owner", email: "owner@x.test" };
 const docRow = (over: Row): Row => ({
@@ -168,7 +198,9 @@ beforeEach(() => {
   db.fail = {};
   db.denyUpdate = new Set();
   db.seq = 0;
+  db.defaults = {};
   emitted.length = 0; audited.length = 0; deleted.length = 0;
+  rpc.calls.length = 0; rpc.handler = null;
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
 });
 
@@ -1008,6 +1040,220 @@ describe("MON-12 / COST-8 / MON-10 — registry lookups fail closed, currencies 
     expect(auditRows("COST_DOC_AWARD_OVERRIDE")[0].details).toMatchObject({ companyId: "c-bad" });
   });
 
+  it("MON-12 (review fix 3): an UNLINKED bid answers for ANY flagged registry row its name normalises to — 'Gulf Mechanical Inc' for a do-not-use 'Gulf Mechanical, Inc.'", async () => {
+    db.tables.companies.push({ id: "c-dnu", org_id: "o1", name: "Gulf Mechanical, Inc.", status: "do_not_use" });
+    db.tables.cost_documents.push(docRow({ vendor_name: "Gulf Mechanical Inc" }));
+    const refused = await awardQuote({ doc: doc({ vendorName: "Gulf Mechanical Inc" }), siblings: [], costAccountId: "a1", actor });
+    expect(refused.ok).toBe(false);
+    expect(refused.error).toMatch(/Gulf Mechanical, Inc\. is flagged DO NOT USE/);
+    expect(refused.needsOverride).toEqual({ companyId: "c-dnu", companyName: "Gulf Mechanical, Inc.", status: "do_not_use" });
+    expect(db.tables.cost_documents[0].status).toBe("parsed");
+    expect(entries()).toHaveLength(0);
+    const ok = await awardQuote({ doc: doc({ vendorName: "Gulf Mechanical Inc" }), siblings: [], costAccountId: "a1", actor, overrideReason: "Sole source" });
+    expect(ok.ok).toBe(true);
+    // the override names the company it overrode; the award records the binding (none — no exact name)
+    expect(auditRows("COST_DOC_AWARD_OVERRIDE")[0].details).toMatchObject({ companyId: "c-dnu", companyStatus: "do_not_use", reason: "Sole source" });
+    expect(auditRows("COST_DOC_AWARDED")[0].details).toMatchObject({ companyId: null, override: "Sole source" });
+  });
+
+  it("MON-12 (review fix 3): an exact ACTIVE match binds but never clears the flag of a look-alike; a person's link to the active row decides; another org's row is not this registry", async () => {
+    db.tables.companies.push(
+      { id: "c-ok", org_id: "o1", name: "Harbor Welding", status: "active" },
+      { id: "c-dnu", org_id: "o1", name: "Harbor Welding, Inc.", status: "do_not_use" },
+      { id: "c-inact", org_id: "o1", name: "Keel Insulation Ltd", status: "inactive" },
+      { id: "c-other", org_id: "o2", name: "Tern Coatings, Inc.", status: "do_not_use" },
+    );
+    db.tables.cost_documents.push(
+      docRow({ id: "d-exact", vendor_name: "harbor   welding" }),
+      docRow({ id: "d-linked", vendor_name: "Harbor Welding, Inc.", company_id: "c-ok" }),
+      docRow({ id: "d-inact", vendor_name: "The Keel Insulation Company" }),
+      docRow({ id: "d-other", vendor_name: "Tern Coatings" }),
+    );
+    const exact = await awardQuote({ doc: doc({ id: "d-exact", vendorName: "harbor   welding" }), siblings: [], costAccountId: "a1", actor });
+    expect(exact.needsOverride).toEqual({ companyId: "c-dnu", companyName: "Harbor Welding, Inc.", status: "do_not_use" });
+    // an INACTIVE look-alike the quote does not bind to is not the bid's — DEC-48's gate flags do-not-use
+    // look-alikes only, as barredCompanyFor does (review fix 4; review fix 3 had flagged it)
+    const inact = await awardQuote({ doc: doc({ id: "d-inact", vendorName: "The Keel Insulation Company" }), siblings: [], costAccountId: "a1", actor });
+    expect(inact.ok).toBe(true);
+    expect(inact.needsOverride).toBeUndefined();
+    expect(auditRows("COST_DOC_AWARDED").at(-1)!.details).toMatchObject({ companyId: null, override: null });
+    const linked = await awardQuote({ doc: doc({ id: "d-linked", vendorName: "Harbor Welding, Inc." }), siblings: [], costAccountId: "a1", actor });
+    expect(linked.ok).toBe(true);
+    expect(auditRows("COST_DOC_AWARDED").at(-1)!.details).toMatchObject({ companyId: "c-ok", override: null });
+    const other = await awardQuote({ doc: doc({ id: "d-other", vendorName: "Tern Coatings" }), siblings: [], costAccountId: "a1", actor });
+    expect(other.ok).toBe(true);
+    expect(auditRows("COST_DOC_AWARD_OVERRIDE")).toHaveLength(0);
+  });
+
+  it("MON-12 (review fix 4): an INACTIVE look-alike is not the bid's — 'Harbor Welding' binds to the active row and is awarded with no prompt beside an inactive 'Harbor Welding, Inc.'", async () => {
+    // A registry de-duplicated by marking the old row inactive (the review's case).
+    db.tables.companies.push(
+      { id: "c-active", org_id: "o1", name: "Harbor Welding", status: "active" },
+      { id: "c-old", org_id: "o1", name: "Harbor Welding, Inc.", status: "inactive" },
+    );
+    db.tables.cost_documents.push(docRow({ id: "d-hw", vendor_name: "Harbor Welding" }));
+    const res = await awardQuote({ doc: doc({ id: "d-hw", vendorName: "Harbor Welding" }), siblings: [], costAccountId: "a1", actor });
+    expect(res.ok).toBe(true);
+    expect(res.needsOverride).toBeUndefined();
+    expect(auditRows("COST_DOC_AWARD_OVERRIDE")).toHaveLength(0);
+    expect(auditRows("COST_DOC_AWARDED").at(-1)!.details).toMatchObject({ companyId: "c-active", override: null });
+    // the bid tab shows no flag either
+    expect(barredCompanyFor("Harbor Welding", null, db.tables.companies as Array<{ id: string; name: string; status: string }>)).toBeNull();
+  });
+
+  it("MON-12 (review fix 4): the bound company's own inactive flag still asks; a do-not-use look-alike outranks it; the exact name is named first", async () => {
+    db.tables.companies.push(
+      { id: "k-inact", org_id: "o1", name: "Keel Insulation", status: "inactive" },
+      { id: "s-inact", org_id: "o1", name: "Spar Rigging", status: "inactive" },
+      { id: "s-dnu", org_id: "o1", name: "Spar Rigging Ltd", status: "do_not_use" },
+      { id: "t-other", org_id: "o1", name: "Tern Coatings Inc", status: "do_not_use" },
+      { id: "t-exact", org_id: "o1", name: "The Tern Coatings", status: "do_not_use" },
+    );
+    db.tables.cost_documents.push(
+      docRow({ id: "d-keel", vendor_name: "Keel Insulation" }),
+      docRow({ id: "d-spar", vendor_name: "Spar Rigging" }),
+      docRow({ id: "d-tern", vendor_name: "The Tern Coatings" }),
+    );
+    // bound by its one exact name to an inactive company, no look-alike: asked, as before 20261157
+    const keel = await awardQuote({ doc: doc({ id: "d-keel", vendorName: "Keel Insulation" }), siblings: [], costAccountId: "a1", actor });
+    expect(keel.needsOverride).toEqual({ companyId: "k-inact", companyName: "Keel Insulation", status: "inactive" });
+    // bound to an inactive company with a do-not-use look-alike beside it: the do-not-use row is named
+    const spar = await awardQuote({ doc: doc({ id: "d-spar", vendorName: "Spar Rigging" }), siblings: [], costAccountId: "a1", actor });
+    expect(spar.needsOverride).toEqual({ companyId: "s-dnu", companyName: "Spar Rigging Ltd", status: "do_not_use" });
+    // two do-not-use rows normalise alike: the one the quote binds to is named, though the other sorts first
+    const tern = await awardQuote({ doc: doc({ id: "d-tern", vendorName: "The Tern Coatings" }), siblings: [], costAccountId: "a1", actor });
+    expect(tern.needsOverride).toEqual({ companyId: "t-exact", companyName: "The Tern Coatings", status: "do_not_use" });
+    const ok = await awardQuote({ doc: doc({ id: "d-tern", vendorName: "The Tern Coatings" }), siblings: [], costAccountId: "a1", actor, overrideReason: "Sole source" });
+    expect(ok.ok).toBe(true);
+    expect(auditRows("COST_DOC_AWARD_OVERRIDE").at(-1)!.details).toMatchObject({ companyId: "t-exact", companyStatus: "do_not_use" });
+    expect(auditRows("COST_DOC_AWARDED").at(-1)!.details).toMatchObject({ companyId: "t-exact", override: "Sole source" });
+    expect(entries()).toHaveLength(1);
+  });
+
+  it("MON-12 (review fix 5): a contractor's ACTIVE company link never hides a do-not-use look-alike — the door-filed quote is flagged, as the bid tab flags it", async () => {
+    // The review's case: contractor "Gulf" linked by a person to the active "Gulf Mechanical"; the intake
+    // door filed a quote from "Gulf Mechanical Inc" against that contractor by name, with no own link.
+    db.tables.companies.push(
+      { id: "c-gulf", org_id: "o1", name: "Gulf Mechanical", status: "active" },
+      { id: "c-dnu", org_id: "o1", name: "Gulf Mechanical, Inc.", status: "do_not_use" },
+    );
+    db.tables.project_parties.push({ id: "pp-gulf", company_id: "c-gulf" });
+    db.tables.cost_documents.push(
+      docRow({ id: "d-door", party_id: "pp-gulf", vendor_name: "Gulf Mechanical Inc" }),
+      docRow({ id: "d-own", party_id: "pp-gulf", vendor_name: "Gulf Mechanical Inc", company_id: "c-gulf" }),
+    );
+    const refused = await awardQuote({ doc: doc({ id: "d-door", partyId: "pp-gulf", vendorName: "Gulf Mechanical Inc" }), siblings: [], costAccountId: "a1", actor });
+    expect(refused.ok).toBe(false);
+    expect(refused.error).toMatch(/Gulf Mechanical, Inc\. is flagged DO NOT USE/);
+    expect(refused.needsOverride).toEqual({ companyId: "c-dnu", companyName: "Gulf Mechanical, Inc.", status: "do_not_use" });
+    expect(db.tables.cost_documents.find((r) => r.id === "d-door")!.status).toBe("parsed");
+    expect(entries()).toHaveLength(0);
+    // the bid tab reads only the document's own link — none here — so it flags the same row
+    expect(barredCompanyFor("Gulf Mechanical Inc", null, db.tables.companies as Array<{ id: string; name: string; status: string }>)?.id).toBe("c-dnu");
+    const ok = await awardQuote({ doc: doc({ id: "d-door", partyId: "pp-gulf", vendorName: "Gulf Mechanical Inc" }), siblings: [], costAccountId: "a1", actor, overrideReason: "Only bidder the client cleared" });
+    expect(ok.ok).toBe(true);
+    // the override names the look-alike it overrode; the award records the binding — the contractor's company
+    expect(auditRows("COST_DOC_AWARD_OVERRIDE")[0].details).toMatchObject({ companyId: "c-dnu", companyStatus: "do_not_use" });
+    expect(auditRows("COST_DOC_AWARDED").at(-1)!.details).toMatchObject({ companyId: "c-gulf", override: "Only bidder the client cleared" });
+    // a person's OWN link to the active row still decides, here and in the bid tab
+    const own = await awardQuote({ doc: doc({ id: "d-own", partyId: "pp-gulf", vendorName: "Gulf Mechanical Inc" }), siblings: [], costAccountId: "a1", actor });
+    expect(own.ok).toBe(true);
+    expect(own.needsOverride).toBeUndefined();
+    expect(barredCompanyFor("Gulf Mechanical Inc", "c-gulf", db.tables.companies as Array<{ id: string; name: string; status: string }>)).toBeNull();
+    expect(auditRows("COST_DOC_AWARD_OVERRIDE")).toHaveLength(1);
+  });
+
+  it("MON-12 (review fix 5): a contractor's flagged company still answers; an active one with no look-alike binds and awards, even beside an inactive row of the vendor's exact name", async () => {
+    db.tables.companies.push(
+      { id: "c-apex", org_id: "o1", name: "Apex Industrial", status: "do_not_use" },
+      { id: "c-marlin", org_id: "o1", name: "Marlin Scaffold", status: "active" },
+      { id: "c-old", org_id: "o1", name: "Old Marlin", status: "inactive" },
+    );
+    db.tables.project_parties.push({ id: "pp-apex", company_id: "c-apex" }, { id: "pp-marlin", company_id: "c-marlin" });
+    db.tables.cost_documents.push(
+      docRow({ id: "d-apex", party_id: "pp-apex", vendor_name: "Someone Else" }),
+      docRow({ id: "d-marlin", party_id: "pp-marlin", vendor_name: "Old Marlin" }),
+    );
+    const apex = await awardQuote({ doc: doc({ id: "d-apex", partyId: "pp-apex", vendorName: "Someone Else" }), siblings: [], costAccountId: "a1", actor });
+    expect(apex.needsOverride).toEqual({ companyId: "c-apex", companyName: "Apex Industrial", status: "do_not_use" });
+    // the contractor's active company is the binding; no do-not-use look-alike; the exact-name row is not this bid's
+    const marlin = await awardQuote({ doc: doc({ id: "d-marlin", partyId: "pp-marlin", vendorName: "Old Marlin" }), siblings: [], costAccountId: "a1", actor });
+    expect(marlin.ok).toBe(true);
+    expect(marlin.needsOverride).toBeUndefined();
+    expect(auditRows("COST_DOC_AWARDED").at(-1)!.details).toMatchObject({ companyId: "c-marlin", override: null });
+    expect(auditRows("COST_DOC_AWARD_OVERRIDE")).toHaveLength(0);
+  });
+
+  it("MON-12 (review fix 5): on the contractor path the look-alike read fails closed too", async () => {
+    db.tables.companies.push({ id: "c-gulf", org_id: "o1", name: "Gulf Mechanical", status: "active" });
+    db.tables.project_parties.push({ id: "pp-gulf", company_id: "c-gulf" });
+    db.tables.cost_documents.push(docRow({ party_id: "pp-gulf", vendor_name: "Gulf Mechanical Inc" }));
+    db.fail["companies:select"] = [null, { message: "timeout" }]; // the contractor's company reads, the look-alike read fails
+    const res = await awardQuote({ doc: doc({ partyId: "pp-gulf", vendorName: "Gulf Mechanical Inc" }), siblings: [], costAccountId: "a1", actor });
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/Couldn't check the company registry/);
+    expect(entries()).toHaveLength(0);
+  });
+
+  it("MON-12 (review fix 5 minor): two NON-exact do-not-use look-alikes — the lower id is named by the prompt and by the override row, as cost_doc_company_barred orders them (never by name collation)", async () => {
+    // "Delta Tech, Inc." sorts before "Delta-Tech Ltd" by name; the lower id belongs to "Delta-Tech Ltd".
+    db.tables.companies.push(
+      { id: "00000000-0000-0000-0000-0000000005d2", org_id: "o1", name: "Delta Tech, Inc.", status: "do_not_use" },
+      { id: "00000000-0000-0000-0000-0000000005d1", org_id: "o1", name: "Delta-Tech Ltd", status: "do_not_use" },
+    );
+    expect("Delta Tech, Inc.".localeCompare("Delta-Tech Ltd")).toBeLessThan(0);
+    db.tables.cost_documents.push(docRow({ id: "d-delta", vendor_name: "Delta Tech" }));
+    const refused = await awardQuote({ doc: doc({ id: "d-delta", vendorName: "Delta Tech" }), siblings: [], costAccountId: "a1", actor });
+    expect(refused.needsOverride).toEqual({ companyId: "00000000-0000-0000-0000-0000000005d1", companyName: "Delta-Tech Ltd", status: "do_not_use" });
+    const ok = await awardQuote({ doc: doc({ id: "d-delta", vendorName: "Delta Tech" }), siblings: [], costAccountId: "a1", actor, overrideReason: "Client-directed sole source" });
+    expect(ok.ok).toBe(true);
+    expect(auditRows("COST_DOC_AWARD_OVERRIDE")[0].details).toMatchObject({ companyId: "00000000-0000-0000-0000-0000000005d1", companyName: "Delta-Tech Ltd" });
+    // an exact do-not-use name still comes first, whatever its id
+    db.tables.companies.push({ id: "00000000-0000-0000-0000-0000000005d9", org_id: "o1", name: "Delta Tech", status: "do_not_use" });
+    db.tables.cost_documents.push(docRow({ id: "d-delta2", vendor_name: "Delta Tech" }));
+    const exact = await awardQuote({ doc: doc({ id: "d-delta2", vendorName: "Delta Tech" }), siblings: [], costAccountId: "a1", actor });
+    expect(exact.needsOverride).toMatchObject({ companyId: "00000000-0000-0000-0000-0000000005d9" });
+  });
+
+  it("MON-12 (review fix 6): the bid tab's override prompt names the company the lib's prompt and award_quote's override row name — two do-not-use look-alikes, the exact-name one with the HIGHER id", async () => {
+    // listBarredCompanies hands the panel the org's do-not-use rows ordered by id
+    const registry = [
+      { id: "00000000-0000-0000-0000-0000000006c1", org_id: "o1", name: "Gulf Mechanical, Inc.", status: "do_not_use" },
+      { id: "00000000-0000-0000-0000-0000000006c2", org_id: "o1", name: "Gulf Mechanical", status: "do_not_use" },
+    ];
+    db.tables.companies.push(...registry);
+    db.tables.cost_documents.push(docRow({ id: "d-gulf", vendor_name: "Gulf Mechanical" }));
+    const refused = await awardQuote({ doc: doc({ id: "d-gulf", vendorName: "Gulf Mechanical" }), siblings: [], costAccountId: "a1", actor });
+    expect(refused.needsOverride).toMatchObject({ companyId: "00000000-0000-0000-0000-0000000006c2", companyName: "Gulf Mechanical" });
+    // the bid tab's chip, and its prompt and intent row before 20261157 (QuotesPanel registryFor and
+    // companyAwardAnswersFor's fallback → barredCompanyFor over the STORED vendor name; after the paste the
+    // prompt asks cost_doc_company_barred itself — J12 review fix 7, quotesPanelRender.test.ts)
+    expect(barredCompanyFor("Gulf Mechanical", null, registry)?.id).toBe("00000000-0000-0000-0000-0000000006c2");
+    // the panel's render-time list is the barred rows then the name-sorted registry — the order never decides
+    expect(barredCompanyFor("Gulf Mechanical", null, [...registry].reverse())?.id).toBe("00000000-0000-0000-0000-0000000006c2");
+    // the exact test is btrim's: spaces trimmed, nothing else, case aside
+    expect(barredCompanyFor("  GULF MECHANICAL ", null, registry)?.id).toBe("00000000-0000-0000-0000-0000000006c2");
+    expect(barredCompanyFor("\tGulf Mechanical", null, registry)?.id).toBe("00000000-0000-0000-0000-0000000006c1");
+    // with no exact name, the lower id, whatever the list's order (cost_doc_company_barred's c.id)
+    expect(barredCompanyFor("Gulf Mechanical Inc", null, [...registry].reverse())?.id).toBe("00000000-0000-0000-0000-0000000006c1");
+    const ok = await awardQuote({ doc: doc({ id: "d-gulf", vendorName: "Gulf Mechanical" }), siblings: [], costAccountId: "a1", actor, overrideReason: "Client-directed sole source" });
+    expect(ok.ok).toBe(true);
+    expect(auditRows("COST_DOC_AWARD_OVERRIDE")[0].details).toMatchObject({ companyId: "00000000-0000-0000-0000-0000000006c2", companyName: "Gulf Mechanical" });
+  });
+
+  it("MON-12 (review fix 3): the look-alike read fails closed, and the gate agrees with the bid tab's barredCompanyFor", async () => {
+    db.tables.companies.push({ id: "c-dnu", org_id: "o1", name: "Gulf Mechanical, Inc.", status: "do_not_use" });
+    db.tables.cost_documents.push(docRow({ vendor_name: "Gulf Mechanical Inc" }));
+    db.fail["companies:select"] = [null, { message: "timeout" }]; // the exact read passes, the look-alike read fails
+    const res = await awardQuote({ doc: doc({ vendorName: "Gulf Mechanical Inc" }), siblings: [], costAccountId: "a1", actor });
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/Couldn't check the company registry/);
+    expect(res.needsOverride).toBeUndefined();
+    expect(entries()).toHaveLength(0);
+    const { barredCompanyFor } = await import("@/lib/bidTab");
+    expect(barredCompanyFor("Gulf Mechanical Inc", null, db.tables.companies as Array<{ id: string; name: string; status: string }>)?.id).toBe("c-dnu");
+  });
+
   it("COST-8: '$' / 'US$' read as USD, non-codes as unstated; a null account currency is USD; setManualTotal corrects the currency", async () => {
     expect(normalizeCurrency("$")).toBe("USD");
     expect(normalizeCurrency(" us$ ")).toBe("USD");
@@ -1097,5 +1343,209 @@ describe("checked writes and honest reads (SAF-3 / REL-2)", () => {
     expect(res.ok).toBe(false);
     expect(deleted).toHaveLength(1);
     expect(deleted[0]).toMatch(/^orgs\/o1\/project-costs\/p1\//);
+  });
+});
+
+// ── GAP-406: the award in ONE database transaction (20261157 award_quote) ──
+describe("GAP-406 — awardQuote runs the award as one transaction when award_quote exists", () => {
+  /** Plays 20261157 award_quote against the in-memory tables: claim, the
+   *  commitment, the rivals and the audit row happen together or not at all. */
+  const playAward = (over: Record<string, unknown> = {}) => (fn: string, args: Record<string, unknown>) => {
+    if (fn !== "award_quote") return { data: null, error: { code: "PGRST202", message: "no" } };
+    if (over.error) return { data: null, error: over.error as { code?: string; message: string } };
+    if (over.data) return { data: over.data, error: null };
+    const d = db.tables.cost_documents.find((r) => r.id === args.p_doc)!;
+    d.status = "awarded";
+    db.tables.cost_entries.push({ id: "e-rpc", entry_type: "commitment", amount: args.p_expected_total, source_document_id: d.id, cost_account_id: args.p_cost_account });
+    db.tables.audit_logs.push({ action: "COST_DOC_AWARDED", details: { oneTransaction: true } });
+    return { data: { ok: true, entryId: "e-rpc", total: args.p_expected_total, rivals: 2, declined: 2, ungroupedOpen: [], company: null, override: false }, error: null };
+  };
+
+  it("calls award_quote ONCE with the total the guard checked; the client writes nothing itself; the owner is notified", async () => {
+    db.tables.cost_documents.push(docRow({}), docRow({ id: "r1", status: "parsed" }));
+    rpc.handler = playAward();
+    const res = await awardQuote({ doc: doc(), siblings: [], costAccountId: "a1", actor: { uid: "u-ctl", email: "ctl@x.test" } });
+    expect(res).toEqual({ ok: true });
+    expect(rpc.calls).toEqual([{ fn: "award_quote", args: { p_doc: "d1", p_cost_account: "a1", p_expected_total: 1000, p_override_reason: null, p_confirmed_total: null } }]);
+    // Exactly what the function wrote — no second entry, no client-side rival decline.
+    expect(entries()).toHaveLength(1);
+    expect(entries()[0].id).toBe("e-rpc");
+    expect(db.tables.cost_documents.map((d) => d.status)).toEqual(["awarded", "parsed"]);
+    expect(auditRows("COST_DOC_AWARDED")).toEqual([{ action: "COST_DOC_AWARDED", details: { oneTransaction: true } }]);
+    expect(emitted).toHaveLength(1);
+    expect((emitted[0].audience as { involved: string[] }).involved).toEqual(["u-owner"]);
+  });
+
+  it("the same return shape as the client sequence: rivals left undeclined and open ungrouped quotes come back as the `warning`", async () => {
+    db.tables.cost_documents.push(docRow({ rfq_group: null, vendor_name: "Acme Electrical" }));
+    rpc.handler = playAward({ data: { ok: true, entryId: "e1", total: 1000, rivals: 3, declined: 1, ungroupedOpen: ["Bravo Plumbing", "Cole Paint"] } });
+    const res = await awardQuote({ doc: doc({ rfqGroup: null }), siblings: [], costAccountId: "a1", actor });
+    expect(res.ok).toBe(true);
+    expect(res.warning).toBe(
+      "Awarded, but 2 of 3 competing bid(s) could not be marked not-selected — refresh and decline them by hand. " +
+      "Awarded. 2 other ungrouped quotes stay open (Bravo Plumbing, Cole Paint) — decline them if they competed for this scope.",
+    );
+  });
+
+  it("refusals that move nothing still run first, against the row as read — the function is not called", async () => {
+    db.tables.cost_accounts.push({ id: "a-eur", currency: "EUR" });
+    db.tables.cost_documents.push(docRow({ currency: "USD" }));
+    rpc.handler = playAward();
+    const res = await awardQuote({ doc: doc(), siblings: [], costAccountId: "a-eur", actor });
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/USD but the budget line is in EUR/);
+    expect(rpc.calls).toHaveLength(0);
+
+    db.tables.companies.push({ id: "c1", org_id: "o1", name: "Acme", status: "do_not_use" });
+    const flagged = await awardQuote({ doc: doc(), siblings: [], costAccountId: "a1", actor });
+    expect(flagged.needsOverride).toEqual({ companyId: "c1", companyName: "Acme", status: "do_not_use" });
+    expect(rpc.calls).toHaveLength(0);
+
+    const ok = await awardQuote({ doc: doc(), siblings: [], costAccountId: "a1", actor, overrideReason: "  Sole source  " });
+    expect(ok.ok).toBe(true);
+    expect(rpc.calls[0].args.p_override_reason).toBe("Sole source");
+  });
+
+  it("the function's own refusals (re-checked under its lock) read as the client sequence's sentences, and nothing falls back", async () => {
+    db.tables.cost_documents.push(docRow({}));
+    const cases: Array<[Record<string, unknown>, RegExp]> = [
+      [{ ok: false, code: "status", status: "awarded" }, /already awarded — refresh/],
+      [{ ok: false, code: "total_changed", total: 1200 }, /total of this quote changed since it was checked \(it is now 1,200\)/],
+      [{ ok: false, code: "currency", docCurrency: "USD", accountCurrency: "EUR" }, /USD but the budget line is in EUR/],
+      [{ ok: false, code: "account" }, /not on this project/],
+      [{ ok: false, code: "not_found" }, /removed, or you don't have permission/],
+    ];
+    for (const [data, msg] of cases) {
+      rpc.handler = playAward({ data });
+      const res = await awardQuote({ doc: doc(), siblings: [], costAccountId: "a1", actor });
+      expect(res.ok).toBe(false);
+      expect(res.error).toMatch(msg);
+    }
+    rpc.handler = playAward({ data: { ok: false, code: "company_flagged", company: { id: "c9", name: "Gulf", status: "inactive" } } });
+    const flagged = await awardQuote({ doc: doc(), siblings: [], costAccountId: "a1", actor });
+    expect(flagged.needsOverride).toEqual({ companyId: "c9", companyName: "Gulf", status: "inactive" });
+    // COST-13 re-checked under the lock (review fix 3): the guard's own sentences
+    rpc.handler = playAward({ data: { ok: false, code: "confirm_mismatch", total: 1000, confirmed: 1 } });
+    const mismatch = await awardQuote({ doc: doc(), siblings: [], costAccountId: "a1", actor });
+    expect(mismatch.error).toBe("The confirmed total (1) doesn't match the stored total (1,000) — correct the total first if the paper says something else.");
+    rpc.handler = playAward({ data: { ok: false, code: "extent", total: 1000, pagesRead: 8, pagesTotal: 20 } });
+    const truncated = await awardQuote({ doc: doc(), siblings: [], costAccountId: "a1", actor });
+    expect(truncated.error).toBe("The AI read only pages 1–8 of 20 of this document, so its total (1,000) may come from an incomplete read. Type the total from the paper to confirm it (correct the row's total first if the paper says something else).");
+    rpc.handler = playAward({ data: { ok: false, code: "extent", total: 1000, pagesRead: null, pagesTotal: null } });
+    const unknown = await awardQuote({ doc: doc(), siblings: [], costAccountId: "a1", actor });
+    expect(unknown.error).toMatch(/^How much of this document the AI read is unknown, so its total \(1,000\) may come from an incomplete read\./);
+    // None of these fell back to the client sequence: no entry, no claim, no notice.
+    expect(entries()).toHaveLength(0);
+    expect(db.tables.cost_documents[0].status).toBe("parsed");
+    expect(emitted).toHaveLength(0);
+  });
+
+  it("a database error from the function (not a missing function) is reported — the client sequence does NOT run behind it", async () => {
+    db.tables.cost_documents.push(docRow({}));
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    rpc.handler = playAward({ error: { code: "40001", message: "could not serialize access" } });
+    const res = await awardQuote({ doc: doc(), siblings: [], costAccountId: "a1", actor });
+    errSpy.mockRestore();
+    expect(res.ok).toBe(false);
+    expect(entries()).toHaveLength(0);
+    expect(db.tables.cost_documents[0].status).toBe("parsed");
+    expect(auditRows("COST_DOC_AWARDED")).toHaveLength(0);
+  });
+
+  it("before 20261157 (42883 / PGRST202) the client sequence runs, as it did", async () => {
+    expect(isMissingRpc({ code: "42883", message: "function award_quote does not exist" })).toBe(true);
+    expect(isMissingRpc({ code: "PGRST202", message: "x" })).toBe(true);
+    expect(isMissingRpc({ code: "PGRST203", message: "Could not find the function public.award_quote(p_doc) in the schema cache" })).toBe(true);
+    expect(isMissingRpc({ code: "42501", message: "permission denied" })).toBe(false);
+    expect(isMissingRpc(null)).toBe(false);
+
+    db.tables.cost_documents.push(docRow({}));
+    rpc.handler = (fn) => ({ data: null, error: { code: "42883", message: `function public.${fn}(uuid, uuid, numeric, text, numeric) does not exist` } });
+    const res = await awardQuote({ doc: doc(), siblings: [], costAccountId: "a1", actor });
+    expect(res).toEqual({ ok: true });
+    expect(rpc.calls).toHaveLength(1);
+    expect(entries()).toHaveLength(1);
+    expect(auditRows("COST_DOC_AWARDED")[0].details).toMatchObject({ postedEntryId: entries()[0].id });
+  });
+});
+
+// ── BID-10: one field per RFQ key ───────────────────────────────────────────
+describe("BID-10 — quoteGroups keys groups case- and space-insensitively", () => {
+  it("'Unit 300 Repipe' and 'unit 300  repipe ' are ONE field, labelled with the first spelling; voids and invoices stay out", () => {
+    const groups = quoteGroups([
+      doc({ id: "a", rfqGroup: "Unit 300 Repipe" }),
+      doc({ id: "b", rfqGroup: "unit 300  repipe " }),
+      doc({ id: "c", rfqGroup: "Pipe racks" }),
+      doc({ id: "d", rfqGroup: null, vendorName: "Solo" }),
+      doc({ id: "e", rfqGroup: "UNIT 300 REPIPE", status: "void" }),
+      doc({ id: "f", rfqGroup: "Unit 300 Repipe", kind: "invoice" }),
+    ]);
+    expect(groups.map((g) => [g.group, g.docs.map((d) => d.id)])).toEqual([
+      ["Unit 300 Repipe", ["a", "b"]],
+      ["Pipe racks", ["c"]],
+      ["Ungrouped — Solo", ["d"]],
+    ]);
+  });
+});
+
+// ── COST-3 done-when 2 (DEC-48, J12 line): a stored link is a person's ──
+describe("COST-3 — uploadCostDoc never links a bid to a Known Company by machine (review fix 2)", () => {
+  const file = { name: "q.pdf", type: "application/pdf" } as unknown as File;
+  beforeEach(() => { db.defaults.cost_documents = { company_id: null }; });
+
+  it("a link at upload, then a do-not-use look-alike added: the bid is still flagged, because no link was stored (review blocker)", async () => {
+    // The registry holds only "Gulf Mechanical" (active): the name's ONE
+    // candidate and its binding — the case the first landing linked.
+    const registry: Array<{ id: string; org_id: string; name: string; status: string }> = [
+      { id: "a", org_id: "o1", name: "Gulf Mechanical", status: "active" },
+    ];
+    db.tables.companies.push(...registry);
+    expect(registryLinkFor("Gulf Mechanical", registry)?.id).toBe("a");
+    // A registry read would fail loudly here: the upload must not make one.
+    db.fail["companies:select"] = [{ message: "the upload read the registry" }];
+    const res = await uploadCostDoc({ orgId: "o1", projectId: "p1", kind: "quote", file, vendorName: "Gulf Mechanical", actor });
+    expect(res.ok).toBe(true);
+    expect(db.fail["companies:select"]).toHaveLength(1);
+    const stored = db.tables.cost_documents[0];
+    expect(stored.company_id).toBeNull();
+    expect(auditRows("COST_DOC_UPLOADED")[0].details).not.toHaveProperty("companyLinked");
+
+    // A week later an admin adds the barred look-alike.
+    const lookAlike = { id: "dnu", org_id: "o1", name: "Gulf Mechanical, Inc.", status: "do_not_use" };
+    registry.push(lookAlike);
+    db.tables.companies.push(lookAlike);
+    // The bid tab's gate (registryFor / awardGateFor) reads the row's link — none
+    // — so it reads the name's candidates and the look-alike flags the bid;
+    // Award then asks for the typed, audited override.
+    expect(barredCompanyFor("Gulf Mechanical", (stored.company_id as string | null) ?? null, registry)?.id).toBe("dnu");
+    // Why nothing is stored: had the machine written "a", the gate would read
+    // only that row and the flag would be gone.
+    expect(barredCompanyFor("Gulf Mechanical", "a", registry)).toBeNull();
+  });
+
+  it("no quote, of any shape, is linked at upload — unique, normalised, ambiguous, with or without a contractor", async () => {
+    db.tables.companies.push({ id: "c1", org_id: "o1", name: "Gulf Mechanical" }, { id: "c3", org_id: "o1", name: "Bayline Piping" });
+    db.fail["companies:select"] = [{ message: "the upload read the registry" }];
+    for (const vendorName of ["Gulf Mechanical", "Gulf Mechanical, Inc.", "GULF MECHANICAL LLC", "Bayline Piping", "Nobody Known"]) {
+      expect((await uploadCostDoc({ orgId: "o1", projectId: "p1", kind: "quote", file, vendorName, actor })).ok).toBe(true);
+    }
+    db.tables.project_parties.push({ id: "pp2", company_id: null });
+    expect((await uploadCostDoc({ orgId: "o1", projectId: "p1", kind: "quote", file, vendorName: "Bayline Piping", partyId: "pp2", actor })).ok).toBe(true);
+    expect((await uploadCostDoc({ orgId: "o1", projectId: "p1", kind: "invoice", file, vendorName: "Bayline Piping", actor })).ok).toBe(true);
+    expect(db.tables.cost_documents.map((d) => d.company_id)).toEqual([null, null, null, null, null, null, null]);
+    expect(db.fail["companies:select"]).toHaveLength(1);
+    expect(auditRows("COST_DOC_UPLOADED").some((a) => "companyLinked" in (a.details as Row))).toBe(false);
+  });
+
+  it("registryLinkFor (kept for a suggestion a person confirms): one normalised candidate AND it is the binding", () => {
+    const registry = [
+      { id: "a", name: "Gulf Mechanical", status: "active" },
+      { id: "dnu", name: "Gulf Mechanical, Inc.", status: "do_not_use" },
+    ];
+    expect(registryLinkFor("Gulf Mechanical", registry)).toBeNull();
+    expect(registryLinkFor("Gulf Mechanical, Inc.", registry)).toBeNull();
+    expect(registryLinkFor("GULF MECHANICAL LLC", [registry[0]])?.id).toBe("a");
+    expect(registryLinkFor("Gulf Mechanical", [registry[1]])?.id).toBe("dnu");
+    expect(registryLinkFor("", registry)).toBeNull();
   });
 });

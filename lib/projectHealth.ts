@@ -30,6 +30,12 @@ export interface ProjectStateSnapshot {
   revisedBudget?: number;
   committed: number;
   spent: number;
+  /** COST-2: spent plus the OPEN commitments (a commitment counts until the
+   *  actuals invoiced against it reach it — lib/costs.ts computeCostRollup
+   *  `exposure`, the figure the Costs tab's Available tile is measured
+   *  from). The Cost part burns on this; absent → `spent` (a snapshot from
+   *  before the field existed). */
+  exposure?: number;
   cpi: number | null;
   accountCount: number;
   accountsPinned: number;      // pinned to schedule tasks (enables EV/CPI)
@@ -182,23 +188,38 @@ export function computeProjectHealth(s: ProjectStateSnapshot): ProjectHealth {
       : null);
   // The budget the Costs tab shows: baseline + on-ledger approved changes.
   const budgetNow = s.revisedBudget ?? s.budget;
+  // COST-2: money promised counts against the budget the moment it is
+  // committed — a fully committed budget is not "0% spent, all clear".
+  const exposure = s.exposure ?? s.spent;
+  // Continuous across the 100% line: the under-budget curve bottoms out at
+  // 60 as the ratio approaches 100%, and the over-budget curve continues
+  // DOWN from there — going over must never score higher than staying under.
+  const burnScore = (ratio: number) => (ratio <= 1 ? 100 - clamp((ratio - 0.85) * 400, 0, 40) : clamp(60 - (ratio - 1) * 200));
 
   // Cost health: CPI-centered when available, else budget-vs-spent sanity.
   if (costUnknown) {
     parts.push(costUnknown);
   } else if (s.cpi != null && s.cpi > 0) {
+    const cpiScore = clamp(s.cpi * 100, 0, 120) > 100 ? 100 : clamp(s.cpi * 100);
+    // CPI measures earned value against money SPENT; open commitments do
+    // not enter it. A budget committed past its end still caps the part.
+    const overCommitted = budgetNow > 0 && exposure > budgetNow;
     parts.push({
-      label: "Cost", score: clamp(s.cpi * 100, 0, 120) > 100 ? 100 : clamp(s.cpi * 100),
-      detail: s.cpi >= 1 ? `CPI ${s.cpi.toFixed(2)} — getting more done per dollar than planned` : `CPI ${s.cpi.toFixed(2)} — spending faster than earning`,
+      label: "Cost", score: overCommitted ? Math.min(cpiScore, burnScore(exposure / budgetNow)) : cpiScore,
+      detail: (s.cpi >= 1 ? `CPI ${s.cpi.toFixed(2)} — getting more done per dollar than planned` : `CPI ${s.cpi.toFixed(2)} — spending faster than earning`)
+        + (overCommitted ? ` · committed and spent run ${Math.round((exposure / budgetNow) * 100)}% of budget — over budget` : ""),
     });
   } else if (budgetNow > 0) {
-    const burned = s.spent / budgetNow;
-    // Continuous across the 100% line: the under-budget curve bottoms out at
-    // 60 as burn approaches 100%, and the over-budget curve continues DOWN
-    // from there — going over must never score higher than staying under.
+    // The score burns on exposure (spent + open commitments); the detail
+    // names both, so a fully committed budget reads as committed.
+    const burned = exposure / budgetNow;
+    const spentPct = Math.round((s.spent / budgetNow) * 100);
+    const committedPart = s.committed > 0 ? ` · ${Math.round((s.committed / budgetNow) * 100)}% committed` : "";
     parts.push({
-      label: "Cost", score: burned <= 1 ? 100 - clamp((burned - 0.85) * 400, 0, 40) : clamp(60 - (burned - 1) * 200),
-      detail: `${Math.round(burned * 100)}% of budget spent${burned > 1 ? " — over budget" : ""}${s.committed > 0 ? ` · ${Math.round((s.committed / budgetNow) * 100)}% committed` : ""}`,
+      label: "Cost", score: burnScore(burned),
+      detail: exposure > s.spent
+        ? `${spentPct}% of budget spent${committedPart} · ${Math.round(burned * 100)}% committed or spent${burned > 1 ? " — over budget" : ""}`
+        : `${spentPct}% of budget spent${burned > 1 ? " — over budget" : ""}${committedPart}`,
     });
   } else {
     parts.push({ label: "Cost", score: null, detail: "No budget set yet" });

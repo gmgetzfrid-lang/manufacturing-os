@@ -21,6 +21,7 @@
 // (REL-5): one tab crashing leaves the others usable.
 
 import React, { useCallback, useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -30,16 +31,13 @@ import {
   ExternalLink, Hash, Trash2, Plus, Flag, X, Download, Target, ShieldCheck, Pencil, CircleDollarSign,
   UploadCloud,
 } from "lucide-react";
-import IntakePanel from "@/components/projects/IntakePanel";
 import ProjectDocumentsCard from "@/components/projects/ProjectDocumentsCard";
 import TabErrorBoundary from "@/components/projects/TabErrorBoundary";
 import EditProjectModal from "@/components/projects/EditProjectModal";
-import CostsTab from "@/components/projects/CostsTab";
-import QualityTab from "@/components/projects/QualityTab";
 import ProjectCoach from "@/components/projects/ProjectCoach";
 import CloseoutGatesPending, { CLOSEOUT_GATES_WAIT } from "@/components/projects/CloseoutGatesPending";
 import { openProjectReport, draftLessonsLearned, saveLessonsLearned } from "@/lib/projectReport";
-import { gatherProjectSnapshot } from "@/lib/projectSnapshot";
+import { gatherProjectSnapshot, type SnapshotPreRead } from "@/lib/projectSnapshot";
 import { CLOSEOUT_GATE_POLICY, type ProjectStateSnapshot } from "@/lib/projectHealth";
 import { exportProjectToCsv } from "@/lib/projectExport";
 import WatchButton from "@/components/ui/WatchButton";
@@ -60,7 +58,6 @@ import {
 import { getProjectTimeline, type TimelineEvent } from "@/lib/timeline";
 import { openProjectEvidencePack } from "@/lib/evidencePack";
 import TimelineFeed from "@/components/documents/TimelineFeed";
-import ScheduleTab from "@/components/projects/ScheduleTab";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import { Modal, ModalHeader } from "@/components/ui/Modal";
 import { supabase } from "@/lib/supabase";
@@ -69,6 +66,18 @@ import { applyEmailLookup } from "@/lib/identity";
 import type {
   Project, ProjectMember, ProjectMemberRole, CheckoutSession, ProjectStatus, Timestamp,
 } from "@/types/schema";
+
+// PERF-9 (projects Round G J12): the four heavy tabs load when opened, not
+// with the page — someone reading Documents never downloads the Costs,
+// Quality, Intake or Schedule code (their libraries came with them: the
+// quote/bid-tab panel, the checklist engine, the execution board). Each
+// still renders inside its TabErrorBoundary, which also catches a failed
+// chunk load.
+const tabLoading = () => <div className="py-10 flex justify-center"><Spinner /></div>;
+const IntakePanel = dynamic(() => import("@/components/projects/IntakePanel"), { ssr: false, loading: tabLoading });
+const CostsTab = dynamic(() => import("@/components/projects/CostsTab"), { ssr: false, loading: tabLoading });
+const QualityTab = dynamic(() => import("@/components/projects/QualityTab"), { ssr: false, loading: tabLoading });
+const ScheduleTab = dynamic(() => import("@/components/projects/ScheduleTab"), { ssr: false, loading: tabLoading });
 
 type Tab = "documents" | "intake" | "costs" | "quality" | "activity" | "schedule" | "members";
 
@@ -168,6 +177,9 @@ export default function ProjectDetailPage() {
   };
   // Coach re-gathers when page data changes.
   const [coachKey, setCoachKey] = useState(0);
+  // PERF-8: the project row and roster this load already read, for the coach
+  // (it mounts once they are here, so its gather never reads them again).
+  const [coachPre, setCoachPre] = useState<SnapshotPreRead | null>(null);
 
   // Authority comes from projects.owner_user_id, never from a roster row's
   // role (PM-11: a roster 'owner' row is not the owner).
@@ -202,6 +214,9 @@ export default function ProjectDetailPage() {
         listProjectCheckouts(projectId),
       ]);
       setMembers(m);
+      // PERF-8: the coach mounts with what this load read, and gathers
+      // beside the checkout hydration below rather than after it.
+      setCoachPre({ project: got.row, members: m });
       activeOrgMemberIds(proj.orgId, m.map((x) => x.userId))
         .then(setActiveMemberIds)
         .catch(() => setActiveMemberIds(null));
@@ -615,9 +630,9 @@ export default function ProjectDetailPage() {
         className={`${tab === "schedule" ? "max-w-[1800px] mx-auto px-4" : "max-w-6xl mx-auto px-4 sm:px-6"} py-6`}>
         {/* Health + "what do I feed you" — the wizard for the rest of the
             project's life, visible from every tab. */}
-        {project.id && project.orgId && tab !== "schedule" && (
+        {project.id && project.orgId && tab !== "schedule" && coachPre && (
           <TabErrorBoundary label="The project coach" resetKey={tab}>
-            <ProjectCoach orgId={project.orgId} projectId={project.id} refreshKey={coachKey} />
+            <ProjectCoach orgId={project.orgId} projectId={project.id} refreshKey={coachKey} preRead={coachPre} />
           </TabErrorBoundary>
         )}
         {/* REL-5: each tab renders inside its own boundary — one tab's crash

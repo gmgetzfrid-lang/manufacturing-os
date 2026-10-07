@@ -259,4 +259,23 @@ export const EXPECTED_FUNCTIONS: readonly FunctionExpectation[] = [
     migration: "20261081_dc_roundF_share_access_log.sql",
     feature: "Share-link access counter (/api/share/resolve)",
   },
+  // projects-joint J12: the award and the checklist sweep call these, and
+  // fall back to their client sequences while they are missing (42883 /
+  // PGRST202). Every required parameter is named so PostgREST resolves the
+  // function; the uuid argument refuses "schema-health-probe" (22P02), so
+  // the body never runs.
+  {
+    signature: "award_quote(uuid, uuid, numeric, text, numeric)",
+    fn: "award_quote",
+    probeArgs: { p_doc: "schema-health-probe", p_cost_account: "schema-health-probe", p_expected_total: 0 },
+    migration: "20261157_prj_roundG_server_remainders.sql",
+    feature: "Awarding a quote as one transaction (lib/costDocs.ts awardQuote; GAP-406)",
+  },
+  {
+    signature: "apply_checklist_item_writes(uuid, jsonb)",
+    fn: "apply_checklist_item_writes",
+    probeArgs: { p_checklist: "schema-health-probe", p_writes: [] },
+    migration: "20261157_prj_roundG_server_remainders.sql",
+    feature: "The checklist assessment and sweep in one request (lib/checklists.ts writeItemPatches; PERF-7)",
+  },
 ];

@@ -1490,6 +1490,7 @@ const ACTOR_CALLER_PASS_THROUGHS = [
   "lib/acknowledgments.ts#waiveAcknowledgment(input.actorId)",
   "lib/activityThread.ts#postActivity(input.userId)",
   "lib/changeOrders.ts#decideChangeOrder(input.actorId)",
+  "lib/costDocs.ts#awardInOneTransaction(input.actor.uid)",   // J12: awardQuote forwards its own input (integrator, J12 merge)
   "lib/costDocs.ts#awardQuote(input.actor.uid)",
   "lib/documentLifecycle/merge.ts#finishMerge(input.actorUserId)",
   "lib/documentLifecycle/split.ts#splitDocument(input.actorUserId)",

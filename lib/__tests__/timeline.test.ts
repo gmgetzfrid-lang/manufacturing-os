@@ -138,6 +138,18 @@ describe("SAF-6 — the controls program reaches the project's Activity tab", ()
     expect(hiddenProjectActions()).toContain("PROJECT_COMPLETED");
     // The MILESTONE_* summarizers the reader carried for years now execute.
     expect(summarizeAudit({ action: "MILESTONE_MISSED", details: { name: "Hydrotest" } })).toBe("Milestone missed: Hydrotest");
+    // J12 review fix 8: the bid tab's letterhead acknowledgement is shown (it is the record of a do-not-use
+    // stop at an award) and names what it acknowledged; its abandonment, like the override's, is noise.
+    expect(PROJECT_EVENT_VOCABULARY.COST_DOC_AWARD_LETTERHEAD_ACK).toBe("milestone");
+    expect(PROJECT_EVENT_VOCABULARY.COST_DOC_AWARD_LETTERHEAD_ACK_ABANDONED).toBe("noise");
+    expect(summarizeAudit({ action: "COST_DOC_AWARD_LETTERHEAD_ACK", details: { letterhead: "Apex Industrial, Inc.", company: "Apex Industrial" } }))
+      .toBe('Do-not-use letterhead acknowledged at an award — "Apex Industrial, Inc." could be Apex Industrial');
+    // J12 review fix 9: an acknowledgement of the STORED vendor name's look-alike (a flagged contractor answered
+    // the override first) says so — it never reads as a letterhead's
+    expect(summarizeAudit({ action: "COST_DOC_AWARD_LETTERHEAD_ACK", details: { matchedOn: ["vendorOnFile", "letterhead"], vendorOnFile: "Apex Industrial", letterhead: "Apex Industrial, Inc.", company: "Apex Industrial" } }))
+      .toBe('Do-not-use look-alike acknowledged at an award — the vendor on file "Apex Industrial" could be Apex Industrial');
+    expect(summarizeAudit({ action: "COST_DOC_AWARD_LETTERHEAD_ACK", details: { matchedOn: ["letterhead"], vendorOnFile: "Bayline Scaffold", letterhead: "Apex Industrial, Inc.", company: "Apex Industrial" } }))
+      .toBe('Do-not-use letterhead acknowledged at an award — "Apex Industrial, Inc." could be Apex Industrial');
     // The map lives in lib/timeline.ts and nowhere else.
     const src = readFileSync(join(process.cwd(), "lib/timeline.ts"), "utf8");
     expect(src.match(/PROJECT_EVENT_VOCABULARY: Readonly<Record<string, ProjectEventClass>> = \{/g)).toHaveLength(1);
@@ -283,5 +295,61 @@ describe("SAF-6 / PERF-8 — a busy project's id lists are read in chunks", () =
     state.rows.project_documents = Array.from({ length: 150 }, (_, i) => ({ project_id: "p1", document_id: `d${i}` }));
     state.failIn = { table: "document_versions", id: "d149" };
     await expect(getProjectTimeline({ projectId: "p1" })).rejects.toThrow(/Request-URI Too Long/);
+  });
+});
+
+describe("SEC-21 (projects Round G J12, review fix 6) — the database's scope stamp is not an event", () => {
+  // 20261157's record_milestone_scope_on_delete writes MILESTONE_SCOPE_RECORDED on the milestone's document as
+  // a signed-in caller deletes it; lib/milestones.ts then writes MILESTONE_DELETED on the same document.
+  const pair = () => [
+    audit("21", "MILESTONE_SCOPE_RECORDED", { resource_type: "document", resource_id: "d1", details: { milestoneId: "m1", name: "Hydrotest", projectId: "p1", projectIdFrom: "milestone" }, timestamp: "2026-09-21T10:00:00Z" }),
+    audit("22", "MILESTONE_DELETED", { resource_type: "document", resource_id: "d1", details: { milestoneId: "m1", name: "Hydrotest", projectId: "p1", projectIdFrom: "milestone" }, timestamp: "2026-09-21T10:00:01Z" }),
+  ];
+  it("the document timeline shows one milestone delete as one entry", async () => {
+    state.rows.audit_logs = pair();
+    const events = await getDocumentTimeline({ documentId: "d1" });
+    expect(events.map((e) => e.summary)).toEqual(["Milestone deleted: Hydrotest"]);
+  });
+  it("the project feed's linked-document rows show it once too", async () => {
+    state.rows.project_activity = [];
+    state.rows.cost_documents = [];
+    state.rows.project_documents = [{ id: "pd1", project_id: "p1", document_id: "d1" }];
+    state.rows.audit_logs = pair();
+    const events = await getProjectTimeline({ projectId: "p1" });
+    expect(events.filter((e) => e.resourceId === "d1").map((e) => e.summary)).toEqual(["Milestone deleted: Hydrotest"]);
+  });
+  it("the stamp is classed in the one vocabulary, as MILESTONE_DELETED is; the set names it alone", async () => {
+    const { SCOPE_STAMP_ACTIONS } = await import("@/lib/timeline");
+    expect([...SCOPE_STAMP_ACTIONS]).toEqual(["MILESTONE_SCOPE_RECORDED"]);
+    expect(PROJECT_EVENT_VOCABULARY.MILESTONE_SCOPE_RECORDED).toBe("noise");
+    expect(hiddenProjectActions()).toContain("MILESTONE_SCOPE_RECORDED");
+    // the label stays for the raw audit lists (the admin audit page shows every row)
+    expect(summarizeAudit({ action: "MILESTONE_SCOPE_RECORDED", details: { name: "Hydrotest" } })).toBe("Milestone deletion recorded by the database: Hydrotest");
+  });
+
+  // J12 review fix 7: the stamp is left out IN THE QUERY, before the row limit — filtered only after it,
+  // a window of `limit` rows held about half as many events (each delete's stamp took a row).
+  const pairs = (n: number) => Array.from({ length: n }, (_, i) => {
+    const at = (s: number) => `2026-09-${String(10 + i).padStart(2, "0")}T10:00:0${s}Z`;
+    return [
+      audit(`s${i}`, "MILESTONE_SCOPE_RECORDED", { resource_type: "document", resource_id: "d1", details: { milestoneId: `m${i}`, name: `Task ${i}` }, timestamp: at(0) }),
+      audit(`d${i}`, "MILESTONE_DELETED", { resource_type: "document", resource_id: "d1", details: { milestoneId: `m${i}`, name: `Task ${i}` }, timestamp: at(1) }),
+    ];
+  }).flat();
+  const stampFilter = { table: "audit_logs", method: "not", args: ["action", "in", '("MILESTONE_SCOPE_RECORDED")'] };
+  it("the document timeline's read leaves the stamp out in the query: a 4-row window is 4 deletes, not 2", async () => {
+    state.rows.audit_logs = pairs(4);
+    const events = await getDocumentTimeline({ documentId: "d1", limit: 4 });
+    expect(events.map((e) => e.summary)).toEqual(["Milestone deleted: Task 3", "Milestone deleted: Task 2", "Milestone deleted: Task 1", "Milestone deleted: Task 0"]);
+    expect(state.calls).toContainEqual(stampFilter);
+  });
+  it("the project feed's linked-document read does too", async () => {
+    state.rows.project_activity = [];
+    state.rows.cost_documents = [];
+    state.rows.project_documents = [{ id: "pd1", project_id: "p1", document_id: "d1" }];
+    state.rows.audit_logs = pairs(4);
+    const events = await getProjectTimeline({ projectId: "p1", limit: 4 });
+    expect(events.filter((e) => e.resourceId === "d1").map((e) => e.summary)).toEqual(["Milestone deleted: Task 3", "Milestone deleted: Task 2", "Milestone deleted: Task 1", "Milestone deleted: Task 0"]);
+    expect(state.calls.filter((c) => c.table === "audit_logs" && c.method === "not" && c.args[1] === "in" && c.args[2] === '("MILESTONE_SCOPE_RECORDED")')).toHaveLength(1);
   });
 });

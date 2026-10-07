@@ -3,7 +3,7 @@
 The PSSR, turnover and closeout surfaces — where a false green is the failure
 that matters — plus the audit trail that is supposed to prove what happened.
 
-**17 findings** — 6 CRITICAL, 7 HIGH, 4 MEDIUM.
+**18 findings** — 6 CRITICAL, 7 HIGH, 5 MEDIUM (`SAF-18` opened by projects-joint J12, 2026-10-01, as `GAP-402`'s remainder).
 
 > Line numbers are from commit `6a14d7d` and drift with edits. **Match on the
 > quoted code, not the number.** See [`../README.md`](../README.md) for the
@@ -463,12 +463,14 @@ and not having a delay claim.
 
 **Scope / residual.** Pending migration: `supabase/migrations/20261099_prj_roundG_baseline_authority.sql` (J6a). The picker lives on the Report; the Planning list's "+Nd vs plan" chip and the detail panel still compare with the live baseline.
 
+*J12 fix pass 7 (2026-10-02): this report's progress table read SAF-7 OPEN, while this record's Status line, its Resolution block and its done-whens (1 ✓ pending `20261099`, 2 ✓, 3 ✓) say RESOLVED. The table row was stale, and it now reads RESOLVED.*
+
 ---
 
 ## SAF-8 · A task can be Missed and one-hundred-percent earned at the same time
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J12 SERVER REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** data-integrity
@@ -505,6 +507,17 @@ for imported rows too.
 
 **Scope / residual.** Remaining to close: route `milestonePctIndex` (`lib/costs.ts:448-460`) through `leafPercent` — or at least return 0 for status `missed` — in the money package's file (owner or integrator); its three callers (`CostsTab.tsx:106`, `projectSnapshot.ts:272`, `projectReport.ts:189`) already pass `status`, so no caller changes. A missed leaf's slider still shows 0% (its earned share) while its stored percent is kept; see projects-and-cost `SCHED-7` for how a phase of missed work now reads.
 
+**Resolution (2026-10-01, projects Round G).** Package projects-joint J12 SERVER REMAINDERS closed the money half named in the residual: `lib/costs.ts` `milestonePctIndex` returns 0 for a `missed` task whatever percent is stored (the rule `lib/scheduleProgress.ts` `leafPercent` applies to the schedule), so the cost earned value — the Costs tab's CPI, the health snapshot and the printed report, its three callers, which already pass `status` — no longer credits a task the Schedule tab counts as Missed. The stored percent is left alone (un-missing a task gives it back).
+- Commit: `87a8436`.
+- Tests: `lib/__tests__/prjRoundGJ12.test.ts` "SAF-8 — a missed task earns nothing in the cost EV index" (missed → 0 with or without a stored percent; other statuses unchanged) and "the 100%-then-missed transition: the pinned account's earned value goes 1000 → 0 and the cost CPI with it" (`computeCostRollup` CPI 2 → 0 on the same 500 spent).
+
+**Done-when.**
+- ✓ A `missed` task contributes no earned value — schedule (above) and cost (here).
+- ✓ A test pins the 100%-then-missed transition — schedule rollups (above) and the cost CPI (here).
+- ✓ The Schedule tab's "Missed" count and the EV rollup cannot disagree — both rollups read a missed task as 0.
+
+**Scope / residual.** None.
+
 ---
 
 ## SAF-9 · A rejection reason never reaches the contractor, and nothing notifies them either way
@@ -512,6 +525,7 @@ for imported rows too.
 - **Severity:** HIGH
 - **Status:** OPEN
 - **Assigned:** projects-joint J12 SERVER REMAINDERS (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
+- **Assigned:** projects-joint J14 PROJECTS FOLLOW-UPS — the remainder (the Intake tab's call of J12's `notifyIntakeOutcome` on approve / reject, and the turnover copy) — by the integrator, 2026-10-07, at the J12 merge (DEC-31; fleet plan `audit-reports/fleet-plans/projects-joint.json`).
 - **Verification:** CONFIRMED
 - **Blast radius:** ux / process
 - **Locations:**
@@ -558,6 +572,20 @@ again.
 - [ ] No UI string claims a channel that does not exist — **partly**: the Intake tab's copy is now true; the turnover claim at `components/projects/QualityTab.tsx:524` is another package's file (J2 QUALITY) and was not edited.
 
 **Scope / residual.** Stays OPEN for the contractor notification and the turnover copy.
+
+**Partial (2026-10-01, projects Round G).** Package projects-joint J12 SERVER REMAINDERS built the server half of done-when 2; the call from the Intake tab and the turnover copy are in another package's files, so the record stays OPEN.
+- `app/api/intake/outcome-notice/route.ts` (new): `POST {orgId, versionId}` emails the contact the org entered on the intake link (`project_intake_links.contact_email` — `DEC-56`: an address the org typed, never one the door collected) how the submission was decided, on approval AND on rejection, through the server's email path (Resend, the `RESEND_API_KEY` / `RESEND_FROM_EMAIL` the queue drain uses; the per-member queue cannot carry it — `email_notifications.to_user_id` is NOT NULL and the preference gate keys on it). The caller must be an active member who may decide the submission — Admin / DocCtrl held additively (`memberHoldsAny`) or the project's owner (403 otherwise; 503 when the membership cannot be read). The outcome and the reason are read from the DATABASE (`document_versions.review_state` / `review_note`; a release with no review state is an approval), never from the request (409 while undecided). One notice per submission (an `INTAKE_OUTCOME_NOTIFIED` row for that `versionId` answers `already`) — and the send is CLAIMED before the provider is called (review fix pass: the first landing read for a prior notice and then sent, so a double-click or a decision in two tabs emailed twice): an `INTAKE_OUTCOME_NOTICE_CLAIMED` row carrying the version and an attempt number is written first, unique per (org, version, attempt) by `20261157` §8's partial index; the second caller's claim is refused (23505) and answers `in_progress` with nothing sent; a failed send frees the next attempt; a claim with no outcome row after it answers `in_progress` while a send could still be under way. Review fix pass 2 — no claim is left open forever: the provider is given 15 s (`AbortSignal.timeout`, `OUTCOME_SEND_TIMEOUT_MS` in `lib/intakeOutcomeNotice.ts`), so a hang is a failed send recorded as `INTAKE_OUTCOME_NOTICE_FAILED` ("did not answer within 15 s") that frees the next attempt; the route declares `maxDuration = 30`; and a claim with no outcome row for 10 minutes (`OUTCOME_STALE_CLAIM_MS`, twenty times the route's limit — its function is long dead) is closed with a FAILED row (`stale: true`, "never finished … treated as failed") before the next attempt is claimed (a claim whose time cannot be read still counts as under way). The first landing kept answering `in_progress` for ever after a function killed mid-send, so the contractor was never told and nothing said the send had died. The trade, stated: a function that died AFTER the provider accepted the mail and BEFORE writing its outcome row can lead to a second notice after 10 minutes — rarer, and less harmful, than a contractor never told. Before `20261157` is applied the index is absent and two exactly concurrent calls can still both send. No contact → `no_contact`; email not configured → `not_configured`; the provider refusing → 502 `send_failed` with `INTAKE_OUTCOME_NOTICE_FAILED` (the error in details). The audit row is the record (resource the document, `projectId` in details so it follows the project — `SEC-21`).
+- `lib/intakeOutcomeNotice.ts` (new): `intakeOutcomeEmail` words it ("Not accepted — resubmit: …" with "Reviewer's reason: …", or "Accepted: …"; a rejection with no recorded reason says so, never invents one); `notifyIntakeOutcome(orgId, versionId)` is the Intake tab's call.
+- Review fix pass 3 — the route decided "already sent" and "in progress" from `audit_logs` rows any active member may insert (`audit_logs_insert` checks only `user_id = auth.uid()` and the org): one forged `INTAKE_OUTCOME_NOTIFIED` row for a version made every later call answer `already`, so the rejected contractor was never told, and each forged `INTAKE_OUTCOME_NOTICE_CLAIMED` held it `in_progress` for 10 minutes. `20261157` §8 adds `enforce_intake_outcome_notice_server_only` (BEFORE INSERT ON `audit_logs`, `WHEN (NEW.action IN ('INTAKE_OUTCOME_NOTICE_CLAIMED', 'INTAKE_OUTCOME_NOTICE_FAILED', 'INTAKE_OUTCOME_NOTIFIED'))` so no other row calls it; SECURITY INVOKER, `search_path` pinned, EXECUTE revoked from PUBLIC, anon and authenticated): a signed-in insert of one of the three is refused (42501); the route writes all three through `supabaseAdmin` (the service role, `auth.uid()` NULL), which passes. The DEC-30 inventory counts the notice rows already on the trail (written before the rail — by the route or by anyone), and the final SELECT probes the trigger and the function. Rows forged before the paste stay; the count shows how many to look at.
+- Commits: `b624f94`, `8a26824` (review fix pass: the claim, `20261157` §8), `ac6941a` (review fix pass 2: the send timeout, `maxDuration`, the stale claim), `e03b655` (review fix pass 3: the notice rows are the route's).
+- Tests: `lib/__tests__/intakeOutcomeNoticeRoute.test.ts` (400 / 401; inactive or non-deciding member 403 with nothing sent; a DocCtrl held in `roles[]` may send; not a door submission or another org's link 404; failed membership read 503; the rejection email to the entered contact with the reason, its claim row and its outcome row; approval and release; undecided 409 whatever the body says; no contact; once per submission; not configured; provider refusal 502 + failure row, then a retry claiming attempt 2; review fix pass: "two concurrent calls … send ONE email", "a claim with no outcome after it … answers in_progress", "a claim that cannot be written sends nothing (503)", "the claim comes BEFORE the provider call"; review fix pass 2: "the provider gets SEND_TIMEOUT_MS: a hang is a failed send (502, recorded), and the next call claims attempt 2 and sends" (the fetch carries an `AbortSignal`; `maxDuration` is 30), "a claim with no outcome older than STALE_CLAIM_MS is closed as failed ('never finished') and the next attempt sends; a fresh one is still in progress", "a stale claim that cannot be closed on the record sends nothing (503)"); `lib/__tests__/prjRoundGJ12Migration.test.ts` "SAF-9 — the contractor outcome notice is claimed once per attempt" (review fix pass 3: "the notice's three rows are the route's: a signed-in insert of one is refused; the route writes them as the service role" — the trigger and its `WHEN` clause inside the one transaction, the function's service pass first, every one of the route's three inserts through `supabaseAdmin`); on the scratch PostgreSQL 16 a second claim of the same attempt was refused 23505, attempt 2 and another version were accepted (review fix pass 3, `scratchpad/j12fix3/scenarios_fix3.sql`: a member's forged NOTIFIED, CLAIMED and FAILED rows and an Admin's forged NOTIFIED row were each refused 42501, a member's `INTAKE_REJECTED` row still landed, and the service role claimed attempt 1, was refused a second claim of it (23505), then wrote FAILED, attempt 2 and NOTIFIED); `lib/__tests__/prjRoundGJ12.test.ts` "SAF-9 — the contractor's notice says what was decided, and why".
+
+**Done-when.**
+- [x] A rejected submission shows its reason on the contractor's portal (above).
+- [ ] The contractor is notified on both outcomes — **the route is built and tested; nothing calls it yet.** Wiring is one call after a decision lands: `notifyIntakeOutcome(orgId, versionId)` in `components/projects/IntakePanel.tsx` after the reject write (`:444-462`, `INTAKE_REJECTED`) and after an approval / publish — J10b's file in this wave (handed over). A submission approved from the document review surface (`components/documents/**`, document-control P14 / P15) can call the same route; the outcome is read from the version, so any surface that decides may.
+- [ ] No UI string claims a channel that does not exist — **still the turnover copy**: `components/projects/QualityTab.tsx:1104` ("The contractor sees this reason, it lands on their record…") — a turnover rejection reaches no contractor channel. J10b's file (handed over): say "kept on the item's record as a nonconformance" or point at a channel that exists.
+
+**Scope / residual.** OPEN for the two hand-offs above. Out of scope by `DEC-56`: emailing an address the door collected.
 
 ---
 
@@ -931,6 +959,35 @@ project history for the document will be hidden.
 
 ---
 
+## SAF-18 · Outside the quality and money paths, 177 update / delete sites still discard a zero-row result
+
+*Numbered SAF-18 on this branch (opened by projects-joint J12 SERVER REMAINDERS as `GAP-402`'s remainder, per its Scope and `DEC-31`). If the number collides at merge the integrator renumbers.*
+
+- **Severity:** MEDIUM
+- **Status:** OPEN
+- **Assigned:** projects-joint J15 CHECKED-WRITE SWEEP (new) — by the integrator, 2026-10-07, at the J12 merge (DEC-31; fleet plan `audit-reports/fleet-plans/projects-joint.json`). The sweep runs last, and works each file only after the package that owns it has merged. The census's `IN_FLIGHT` list holds a file back while another package edits it.
+- **Verification:** CONFIRMED (by the census in `lib/__tests__/checkedWrite.test.ts`, at `2af813b` + J12; not exercised against a live database)
+- **Blast radius:** audit integrity / silent failure
+- **Locations:** (unchecked `.update(` / `.delete(` statements on a supabase chain, per file — the census's `writeSites`)
+  - `lib/knowledgeIngest.ts` 17, `lib/milestones.ts` 12, `lib/projects.ts` 9, `lib/reviewControl.ts` 9, `lib/acknowledgments.ts` 7, `lib/checkoutEpisodes.ts` 6, `lib/collections.ts` 6, `lib/libraryCollections.ts` 6, `lib/operationalGraph.ts` 6, `lib/revisions.ts` 6, `lib/reviewCycles.ts` 5, and 37 more `lib` files with 1–4 each (158 in `lib` in all — the `LIB_RATCHET` table names every file and count)
+  - the Projects surface: `app/api/intake/upload/route.ts` 10, `components/projects/IntakePanel.tsx` 5, `components/projects/EditProjectModal.tsx` 1, `components/projects/ProjectWizard.tsx` 1, `components/projects/cost/ChangeOrdersPanel.tsx` 1, `app/api/projects/cost-docs/route.ts` 1 (the read's save builder; its zero-row result is checked one statement later, a shape the census does not follow)
+- **Related:** `GAP-402` (whose Scope asked for this finding), `SAF-3`, `DEC-31`
+- **Independently verified:** — (`author`: opened by projects-joint J12 from the widened census; not yet challenged)
+
+**Mechanism.** `supabase-js` resolves a write with `{ data, error }` and never throws; an UPDATE or DELETE that RLS filters to zero rows returns no error at all. A statement that neither routes through `lib/checkedWrite.ts` nor asks for the matched rows (`.select("id")`) and tests their count reads a refused write as success. `GAP-402` converted the quality and money paths; these sites were left, by Scope, for a finding.
+
+**Failure scenario.** A member whose role lost a write permission edits a milestone, a collection or a review assignment; the policy filters the UPDATE to zero rows; the screen says it saved, and — where an audit row follows — the trail records a change that did not happen (`SAF-3`'s shape).
+
+**Remediation.** Per file, by its owner: route each write through `checkedWrite(…select("id"))` (or the count-checked shape) and surface the refusal; lower the file's number in `LIB_RATCHET` / `PROJECTS_UI_RATCHET` in the same change, and move a file that reaches zero to the clean list. Nine files that packages running beside J12 are editing are set aside in the census's `IN_FLIGHT` list until those packages merge (`GAP-402`'s Scope names them); the integrator removes each as its package lands.
+
+**Done when.**
+- Every `lib` file and every Projects-surface file has zero unchecked update / delete sites, and the ratchets are empty.
+- No audit row is written after a write that matched zero rows, on any of those paths.
+
+*J12 fix pass 7 (2026-10-02): the projects-tab README's row for this report did not count this finding. It read "17 | 3 | 15 / 17"; it now reads "18 | 3 | 16 / 18". The 18 findings are SAF-1 to SAF-18 (three CRITICAL), and two are open: SAF-9 and this one. SAF-7's progress-table row is corrected above.*
+
+---
+
 ## Report progress
 
 | ID | Severity | Status |
@@ -941,8 +998,8 @@ project history for the document will be hidden.
 | SAF-4 | HIGH | RESOLVED |
 | SAF-5 | CRITICAL | RESOLVED |
 | SAF-6 | HIGH | RESOLVED |
-| SAF-7 | HIGH | OPEN |
-| SAF-8 | MEDIUM | OPEN |
+| SAF-7 | HIGH | RESOLVED |
+| SAF-8 | MEDIUM | RESOLVED |
 | SAF-9 | HIGH | OPEN |
 | SAF-10 | HIGH | RESOLVED |
 | SAF-11 | HIGH | RESOLVED |
@@ -952,3 +1009,4 @@ project history for the document will be hidden.
 | SAF-15 | MEDIUM | RESOLVED |
 | SAF-16 | MEDIUM | RESOLVED |
 | SAF-17 | MEDIUM | RESOLVED |
+| SAF-18 | MEDIUM | OPEN |
