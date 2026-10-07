@@ -905,7 +905,7 @@ lib/revisions.ts:1470-1471 — "// Record the (old → new) join rows. Idempoten
 2. ◐ The issue is recorded (`DOCUMENT_ISSUED`) from every app door ✓ — the metadata editor now included. Not done: a DIRECT database write (PostgREST, not the app) records nothing — no trigger on `documents` records a status-change issue (DEC-31: a migration, not this package's; the earlier closers called it "if wanted").
 3. ✓ A test drives each door and pins the clock start and the record: the un-archive and `changeDocumentStatus` (P14), the bulk editor (P17), the metadata editor's save (here).
 
-**Scope / residual.** Stays OPEN only for done-when 2's database half — a record of a status-change issue made by a direct write (an AFTER UPDATE audit of the issue transition on `documents`, beside `enforce_document_publish_guard`). Owner: unassigned — for the integrator (the natural home is the next re-creation of the guard's neighbourhood, document-control P16 / P20's successor). No migration here.
+**Scope / residual.** Stays OPEN only for done-when 2's database half — a record of a status-change issue made by a direct write (an AFTER UPDATE audit of the issue transition on `documents`, beside `enforce_document_publish_guard`). Owner: **document-control P16 STATUS-GUARD FOLLOW-UPS** — the next package that re-creates `enforce_document_publish_guard`'s neighbourhood (`REV-21`'s owner; P20 RETIRED-DOCUMENT HOLD LIMBS if it is pasted first, each starting from the newest guard body) — proposed here, for the integrator to confirm at merge (DEC-31: never unassigned). No migration here.
 
 ---
 
