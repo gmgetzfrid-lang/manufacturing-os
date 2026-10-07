@@ -47,10 +47,15 @@
 --      superseded (a newer snapshot of the subscription — the older one is
 --      stale), or an invoice.* event applied (a newer status — an older
 --      subscription event still writes its plan, period end and id, not its
---      status) (stripe_events_subscription_order_idx). RLS is on with no
---      policy and every client role's privilege is revoked: only the service
---      role (the webhook) reads or writes it. No row is ever updated or
---      deleted by the app.
+--      status) (stripe_events_subscription_order_idx). For an incomplete
+--      snapshot a subscription event of the same second counts as newer too
+--      (Stripe never moves a subscription back to incomplete), and a
+--      customer.subscription.deleted recorded for the subscription, at any
+--      time, holds back every snapshot of it that is not ended (Stripe never
+--      revives an ended subscription); both read the same index. RLS is on
+--      with no policy and every client role's privilege is revoked: only the
+--      service role (the webhook) reads or writes it. No row is ever updated
+--      or deleted by the app.
 --   2. stripe_event_locks — one row per Stripe customer whose event the
 --      webhook is applying right now:
 --        lock_for   TEXT PRIMARY KEY   the event's customer id (its
@@ -59,7 +64,7 @@
 --        locked_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 --      The webhook inserts the row before it reads the ledger and deletes its
 --      own row when done: a second delivery for the same customer is refused
---      23505 and waits (about 1.6 s, then 503 — Stripe retries). A row older
+--      23505 and waits (up to 8 s, then 503 — Stripe retries). A row older
 --      than 60 seconds belongs to a run that died and is deleted by the next
 --      delivery. Service role only (SELECT, INSERT, DELETE); RLS on, no
 --      policy. Empty whenever no delivery is running.

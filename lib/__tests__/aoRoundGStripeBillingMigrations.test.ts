@@ -93,6 +93,11 @@ describe("20261175 — the Stripe event ledger and one workspace per customer", 
     expect(route).toMatch(/const ORDERING_OUTCOMES = \["applied", "superseded"\] as const;/);
     expect(route).toMatch(/\.eq\("subscription_id", subscriptionId\)\.in\("outcome", ORDERING_OUTCOMES\)\.like\("type", "customer\.subscription\.%"\)\.gt\("event_created", createdIso\)\.limit\(1\)/);
     expect(route).toMatch(/\.eq\("subscription_id", subscriptionId\)\.eq\("outcome", "applied"\)\.like\("type", "invoice\.%"\)\.gt\("event_created", createdIso\)\.limit\(1\)/);
+    // second review fix pass: an incomplete snapshot counts a same-second snapshot as
+    // newer (gte); a recorded deletion, at any time, holds back every non-ended snapshot —
+    // both read the same index (subscription_id, over applied and superseded rows)
+    expect(route).toMatch(/\.eq\("subscription_id", subscriptionId\)\.in\("outcome", ORDERING_OUTCOMES\)\.like\("type", "customer\.subscription\.%"\)\.gte\("event_created", createdIso\)\.limit\(1\)/);
+    expect(route).toMatch(/\.eq\("subscription_id", subscriptionId\)\.in\("outcome", ORDERING_OUTCOMES\)\.eq\("type", "customer\.subscription\.deleted"\)\.limit\(1\)/);
     expect(A.tail).toMatch(/indexname = 'stripe_events_subscription_order_idx'[\s\S]*indexdef LIKE '%WHERE \(outcome = ANY \(ARRAY\[%applied%superseded%'/);
     expect(route).toMatch(/const LEDGER_MIGRATION = "20261175_ao_roundG_stripe_events_ledger\.sql";/);
   });

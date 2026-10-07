@@ -246,6 +246,11 @@ describe("XEDGE-14 — subscribed_plan from the price id, never NULL over a payi
   const deliver = () => stripeWebhook(new NextRequest("https://app/api/stripe/webhook", {
     method: "POST", headers: { "stripe-signature": "sig" }, body: "{}",
   }));
+  // The workspace exists: the orgs update returns the row it wrote (A&O P4
+  // review fix pass: an update that writes no row is "no such workspace").
+  beforeEach(() => {
+    state.resolver = (table) => (table === "orgs" ? { data: [{ id: "org-1" }], error: null } : { data: null, error: null });
+  });
 
   it("a subscription.updated event whose metadata lacks `plan` and whose price is unmapped leaves subscribed_plan untouched", async () => {
     await withEnv({ STRIPE_PRICE_STARTER: "price_s", STRIPE_PRICE_GROWTH: "price_g" }, async () => {

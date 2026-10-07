@@ -23,21 +23,29 @@
 //     event recorded for it (applied, or superseded) is recorded 'stale' and
 //     not applied; one older only than an applied invoice event still writes
 //     its plan, period end and subscription id, but not the status the invoice
-//     set; an invoice event older than either is stale. Before 20261175 is
-//     pasted the ledger is absent and every event is applied, as before (said
-//     in the log and on the audit row);
+//     set; an invoice event older than either is stale. Stripe never moves a
+//     subscription back to incomplete, and never revives one it ended: an
+//     incomplete snapshot is stale beside a snapshot of the same second too,
+//     and once a customer.subscription.deleted is recorded for a subscription
+//     no snapshot of it but an ended one applies. Before 20261175 is pasted
+//     the ledger is absent and every event is applied, as before (said in the
+//     log and on the audit row);
 //   - one event per Stripe customer is applied at a time (stripe_event_locks,
 //     20261175, a 60-second lease): two deliveries Stripe makes at once are
-//     applied one after the other, so the ordering read above sees the first;
+//     applied one after the other, so the ordering read above sees the first.
+//     A delivery waits up to 8 s for its turn, then answers 503;
 //   - a Stripe status that means no payment was taken, or one this code does
 //     not know, never maps to access (lib/subscription.ts mapStripeStatus),
 //     the plan is written only on a status that pays for it, and an ended
 //     subscription clears it;
 //   - a subscription the workspace is not on cannot take its access away; a
 //     subscription that never started, or an unknown status, changes only a
-//     workspace already on it; an invoice changes the status only for the
-//     workspace's current subscription, a failed one only demotes a workspace
-//     that has access, and a paid one never revives a canceled workspace;
+//     workspace already on it (an incomplete one only the row the old code
+//     wrote for it, or its own unpaid), as an update or a deletion; an invoice
+//     changes the status only for the workspace's current subscription, a
+//     failed one only demotes a workspace that has access, and a paid one
+//     never revives a canceled workspace;
+//   - an orgs update that writes no row is never recorded applied;
 //   - two workspaces claiming one Stripe customer is answered 409 (Stripe
 //     retries; the operator sees it), never silently dropped.
 
@@ -65,9 +73,18 @@ const ORDERING_OUTCOMES = ["applied", "superseded"] as const;
 /** BILL-4: one event per Stripe customer at a time. A lock older than the
  *  lease belongs to a run that died, and the next delivery breaks it. */
 const LOCK_LEASE_MS = 60_000;
-/** BILL-4: how long a delivery waits for another event of the same customer
- *  to finish (about 1.6 s in all), then answers 503 and Stripe retries it. */
-const LOCK_WAITS_MS = [25, 50, 100, 200, 400, 800] as const;
+/** BILL-4: how long, in all, a delivery waits for the events of the same
+ *  customer ahead of it, then answers 503 and Stripe retries it. One event is
+ *  about eight database round trips, up to about 1.5 s with the database a
+ *  region away, so a checkout's burst (created, updated, the paid invoice)
+ *  fits several times over (second review fix pass; it was about 1.6 s). */
+const LOCK_WAIT_MS = 8_000;
+/** The pause between tries doubles from the first to the cap, each with
+ *  jitter (half to all of it), so waiting deliveries do not retry in step. */
+const LOCK_BACKOFF_FIRST_MS = 50;
+const LOCK_BACKOFF_CAP_MS = 800;
+/** The longest wait plus one event's work, with room to spare. */
+export const maxDuration = 30;
 /** The statuses an invoice event may move. A failed payment only demotes a
  *  workspace that has access: Stripe sends the last dunning step's
  *  payment_failed beside the subscription.updated that makes it unpaid, often
@@ -75,6 +92,12 @@ const LOCK_WAITS_MS = [25, 50, 100, 200, 400, 800] as const;
  *  revives a canceled workspace. */
 const PAYMENT_FAILED_MOVES: readonly string[] = [...ACCESS_STATUSES];
 const PAYMENT_SUCCEEDED_MOVES: readonly string[] = ["trialing", "active", "past_due", "unpaid", "paused"];
+/** The statuses an incomplete snapshot may move, on a workspace already on
+ *  that subscription. Stripe never moves a subscription back to incomplete,
+ *  so a workspace on it in any other state is newer than the snapshot: only
+ *  the row the old code wrote for an incomplete subscription (trialing) and an
+ *  earlier incomplete snapshot's unpaid are moved (second review fix pass). */
+const INCOMPLETE_MOVES: readonly string[] = ["trialing", "unpaid"];
 
 const HANDLED = new Set([
   "customer.subscription.created",
@@ -173,9 +196,13 @@ async function applyEvent(
 ): Promise<Handled> {
   const { obj, isInvoice, subscriptionId, customerId, eventId } = ids;
   const createdIso = typeof event.created === "number" ? new Date(event.created * 1000).toISOString() : null;
+  // The subscription snapshot's own status (a subscription event's object).
+  const stripeStatus = isInvoice ? null : (typeof obj.status === "string" ? obj.status : null);
+  const incompleteSnapshot = stripeStatus === "incomplete";
+  const endedSnapshot = event.type === "customer.subscription.deleted" || (!isInvoice && mapStripeStatus(stripeStatus).status === "canceled");
 
   // ── BILL-4: the ledger — dedupe on Stripe's event id, then the ordering guard.
-  const ledger = await readLedger(sb, eventId, subscriptionId, createdIso);
+  const ledger = await readLedger(sb, eventId, subscriptionId, createdIso, { isInvoice, incompleteSnapshot });
   if (!ledger.ok) return ledger;
   if (ledger.duplicate) return { ok: true, outcome: "duplicate" };
   const settle = async (outcome: Outcome, orgId: string | null): Promise<Handled> => {
@@ -193,10 +220,17 @@ async function applyEvent(
   // the status: a newer event of either kind makes it stale. A subscription
   // event older only than an applied invoice event is NOT stale: no invoice
   // event carries its plan, period end or id, so those still apply; only the
-  // status it would write is older (statusHeld, below).
+  // status it would write is older (statusHeld, below). An incomplete
+  // snapshot is older than any other snapshot of the same second (Stripe never
+  // moves a subscription back to incomplete: readLedger), and a subscription
+  // Stripe deleted is never revived: only an ended snapshot of it applies.
   const stale = ledger.newerSubscriptionEvent || (isInvoice && ledger.newerInvoiceEvent);
   if (stale) {
     console.warn(`[stripe/webhook] ${event.type} ${eventId}: older than the last event recorded for ${subscriptionId}; recorded, not applied.`);
+    return settle("stale", null);
+  }
+  if (ledger.subscriptionDeleted && !endedSnapshot) {
+    console.warn(`[stripe/webhook] ${event.type} ${eventId}: Stripe has deleted ${subscriptionId} (recorded), and never revives an ended subscription; this ${stripeStatus ?? "unknown"} snapshot is recorded, not applied.`);
     return settle("stale", null);
   }
 
@@ -248,6 +282,15 @@ async function applyEvent(
       // this code does not know, changes only a workspace already on that
       // subscription — never the app's own trial, never a workspace on none.
       const ownOnly = !known || UNSTARTED_STRIPE_STATUSES.has(sub.status);
+      // Stripe never moves a subscription back to incomplete: on a workspace
+      // already on it, an incomplete snapshot moves only the row the old code
+      // wrote for it, or an earlier incomplete snapshot's unpaid. A workspace
+      // on it in any other state (active, say, from the update that followed
+      // the checkout's payment) is newer than this snapshot (second review
+      // fix pass).
+      const fromStatuses = incompleteSnapshot ? INCOMPLETE_MOVES : undefined;
+      const guard = ownOnly ? { subscription: sub.id, allowNone: false, fromStatuses }
+        : removesAccess ? { subscription: sub.id, allowNone: true } : null;
 
       const write = await writeOrg(sb, orgId, {
         ...(statusHeld ? {} : { subscription_status: status }),
@@ -255,8 +298,13 @@ async function applyEvent(
         ...(ended ? { subscribed_plan: null } : {}),
         ...(live ? { stripe_subscription_id: sub.id } : {}),
         current_period_end: periodEnd,
-      }, ownOnly ? { subscription: sub.id, allowNone: false } : removesAccess ? { subscription: sub.id, allowNone: true } : null);
+      }, guard);
       if (!write.ok) return write;
+      if (!write.applied && !guard) {
+        // No guard, no row: the workspace the metadata names does not exist.
+        console.warn(`[stripe/webhook] ${event.type} ${eventId ?? ""}: no workspace ${orgId} (named by the subscription's metadata); nothing written.`);
+        return settle("unresolved", null);
+      }
       if (!write.applied) return settle("superseded", orgId);
 
       const auditErr = await auditRow(sb, `STRIPE_${event.type.toUpperCase().replace(/\./g, "_")}`, orgId, {
@@ -273,17 +321,25 @@ async function applyEvent(
 
     case "customer.subscription.deleted": {
       const sub = event.data.object as Stripe.Subscription;
+      // DEC-44 (A&O P4) §6, as for an update: a subscription that never
+      // started (an expired declined checkout), or a status this code does not
+      // know, ends only a workspace already on it — never the app's own trial,
+      // never a workspace on none (second review fix pass). A real cancellation ends
+      // the workspace's subscription, or a workspace on none, as before.
+      const { known } = mapStripeStatus(sub.status);
+      if (!known) console.warn(`[stripe/webhook] ${eventId ?? ""}: unknown Stripe status "${sub.status}" on a deleted subscription.`);
+      const ownOnly = !known || UNSTARTED_STRIPE_STATUSES.has(sub.status);
       // BILL-3 Done-when 2: a canceled subscription keeps no plan. Ended is
       // final, so a newer invoice event does not hold this status back.
       const write = await writeOrg(sb, orgId, {
         subscription_status: "canceled",
         stripe_subscription_id: null,
         subscribed_plan: null,
-      }, { subscription: sub.id, allowNone: true });
+      }, { subscription: sub.id, allowNone: !ownOnly });
       if (!write.ok) return write;
       if (!write.applied) return settle("superseded", orgId);
       const auditErr = await auditRow(sb, "STRIPE_CUSTOMER_SUBSCRIPTION_DELETED", orgId, {
-        event_id: eventId, subscription_id: sub.id, plan_cleared: true, ...ledgerNote,
+        event_id: eventId, subscription_id: sub.id, stripe_status: sub.status, plan_cleared: true, ...ledgerNote,
       });
       if (auditErr) return auditRefused(auditErr);
       return settle("applied", orgId);
@@ -332,13 +388,15 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 
 /** BILL-4: take the customer's lock — a row keyed on the customer id, so a
  *  second insert is refused 23505 while the first delivery runs. A lock past
- *  its lease (a run that died) is broken; a live one is waited on, then the
- *  delivery answers 503 and Stripe retries it. Before 20261175 is pasted the
- *  table is absent and the event runs unserialised, as before. */
+ *  its lease (a run that died) is broken; a live one is waited on, for up to
+ *  LOCK_WAIT_MS in all, then the delivery answers 503 and Stripe retries it.
+ *  Before 20261175 is pasted the table is absent and the event runs
+ *  unserialised, as before. */
 async function acquireLock(sb: Db, key: string | null, eventId: string | null):
   Promise<{ ok: true; held: boolean } | { ok: false; status: number; error: string }> {
   if (!key || !eventId) return { ok: true, held: false };
-  for (let attempt = 0; ; attempt++) {
+  const giveUpAt = Date.now() + LOCK_WAIT_MS;
+  for (let step = LOCK_BACKOFF_FIRST_MS; ; step = Math.min(step * 2, LOCK_BACKOFF_CAP_MS)) {
     const { error } = await sb.from("stripe_event_locks").insert({ lock_for: key, event_id: eventId });
     if (!error) return { ok: true, held: true };
     if (isMissingTable(error, "stripe_event_locks")) return { ok: true, held: false };
@@ -346,10 +404,11 @@ async function acquireLock(sb: Db, key: string | null, eventId: string | null):
     const lapsed = new Date(Date.now() - LOCK_LEASE_MS).toISOString();
     const { error: breakErr } = await sb.from("stripe_event_locks").delete().eq("lock_for", key).lt("locked_at", lapsed);
     if (breakErr) return { ok: false, status: 500, error: `Could not read the Stripe event lock (${breakErr.message}); Stripe will retry.` };
-    if (attempt >= LOCK_WAITS_MS.length) {
+    const pause = step / 2 + Math.random() * (step / 2);
+    if (Date.now() + pause > giveUpAt) {
       return { ok: false, status: 503, error: `Another event for this Stripe customer is being applied; this one was not applied. Stripe will retry it.` };
     }
-    await sleep(LOCK_WAITS_MS[attempt]);
+    await sleep(pause);
   }
 }
 
@@ -361,19 +420,42 @@ async function releaseLock(sb: Db, key: string, eventId: string): Promise<void> 
 }
 
 type LedgerRead =
-  | { ok: true; present: boolean; duplicate: boolean; newerSubscriptionEvent: boolean; newerInvoiceEvent: boolean }
+  | { ok: true; present: boolean; duplicate: boolean; newerSubscriptionEvent: boolean; newerInvoiceEvent: boolean; subscriptionDeleted: boolean }
   | { ok: false; status: number; error: string };
 
-/** BILL-4: has this event been handled already, and what newer events are
- *  recorded for its subscription? (1) a newer customer.subscription.* event,
- *  applied or superseded — a newer snapshot of the subscription; (2) a newer
- *  invoice.* event, applied — a newer status only. A read that fails (other
- *  than the table being absent) is a non-2xx, so Stripe retries rather than
- *  the event being applied unguarded. */
-async function readLedger(sb: Db, eventId: string | null, subscriptionId: string | null, createdIso: string | null): Promise<LedgerRead> {
-  const none = { duplicate: false, newerSubscriptionEvent: false, newerInvoiceEvent: false };
+/** BILL-4: has this event been handled already, and what is recorded for its
+ *  subscription? (1) a newer customer.subscription.* event, applied or
+ *  superseded — a newer snapshot of the subscription; for an incomplete
+ *  snapshot, one of the same second counts too, since Stripe never moves a
+ *  subscription back to incomplete (`event.created` has one-second
+ *  resolution, and Checkout's incomplete → active pair often shares it);
+ *  (2) a newer invoice.* event, applied — a newer status only; (3) for a
+ *  subscription event, a customer.subscription.deleted applied or superseded
+ *  at any time — Stripe never revives an ended subscription. The reads run
+ *  together, one round trip while the customer's lock is held. A read that
+ *  fails (other than the table being absent) is a non-2xx, so Stripe retries
+ *  rather than the event being applied unguarded. */
+async function readLedger(
+  sb: Db, eventId: string | null, subscriptionId: string | null, createdIso: string | null,
+  snapshot: { isInvoice: boolean; incompleteSnapshot: boolean },
+): Promise<LedgerRead> {
+  const none = { duplicate: false, newerSubscriptionEvent: false, newerInvoiceEvent: false, subscriptionDeleted: false };
   if (!eventId) return { ok: true, present: false, ...none };
-  const { data: seen, error } = await sb.from("stripe_events").select("id").eq("id", eventId).maybeSingle();
+  const noRows = Promise.resolve({ data: [], error: null });
+  const ordered = !!subscriptionId && !!createdIso;
+  const [seenRead, newerSubRead, newerInvRead, deletedRead] = await Promise.all([
+    sb.from("stripe_events").select("id").eq("id", eventId).maybeSingle(),
+    !ordered ? noRows : snapshot.incompleteSnapshot
+      ? sb.from("stripe_events").select("id")
+        .eq("subscription_id", subscriptionId).in("outcome", ORDERING_OUTCOMES).like("type", "customer.subscription.%").gte("event_created", createdIso).limit(1)
+      : sb.from("stripe_events").select("id")
+        .eq("subscription_id", subscriptionId).in("outcome", ORDERING_OUTCOMES).like("type", "customer.subscription.%").gt("event_created", createdIso).limit(1),
+    !ordered ? noRows : sb.from("stripe_events").select("id")
+      .eq("subscription_id", subscriptionId).eq("outcome", "applied").like("type", "invoice.%").gt("event_created", createdIso).limit(1),
+    !subscriptionId || snapshot.isInvoice ? noRows : sb.from("stripe_events").select("id")
+      .eq("subscription_id", subscriptionId).in("outcome", ORDERING_OUTCOMES).eq("type", "customer.subscription.deleted").limit(1),
+  ]);
+  const { data: seen, error } = seenRead;
   if (error) {
     if (isMissingTable(error, "stripe_events")) {
       console.warn(`[stripe/webhook] the stripe_events ledger is absent (${LEDGER_MIGRATION} not pasted): event ${eventId} is applied without the duplicate and ordering guards.`);
@@ -382,18 +464,12 @@ async function readLedger(sb: Db, eventId: string | null, subscriptionId: string
     return { ok: false, status: 500, error: `Could not read the Stripe event ledger (${error.message}); Stripe will retry.` };
   }
   if (seen) return { ok: true, present: true, ...none, duplicate: true };
-  if (!subscriptionId || !createdIso) return { ok: true, present: true, ...none };
-  const { data: newerSub, error: subErr } = await sb.from("stripe_events").select("id")
-    .eq("subscription_id", subscriptionId).in("outcome", ORDERING_OUTCOMES).like("type", "customer.subscription.%").gt("event_created", createdIso).limit(1);
-  if (subErr) return { ok: false, status: 500, error: `Could not read the Stripe event ledger (${subErr.message}); Stripe will retry.` };
-  const { data: newerInv, error: invErr } = await sb.from("stripe_events").select("id")
-    .eq("subscription_id", subscriptionId).eq("outcome", "applied").like("type", "invoice.%").gt("event_created", createdIso).limit(1);
-  if (invErr) return { ok: false, status: 500, error: `Could not read the Stripe event ledger (${invErr.message}); Stripe will retry.` };
-  return {
-    ok: true, present: true, duplicate: false,
-    newerSubscriptionEvent: Array.isArray(newerSub) && newerSub.length > 0,
-    newerInvoiceEvent: Array.isArray(newerInv) && newerInv.length > 0,
-  };
+  const found: boolean[] = [];
+  for (const read of [newerSubRead, newerInvRead, deletedRead]) {
+    if (read.error) return { ok: false, status: 500, error: `Could not read the Stripe event ledger (${read.error.message}); Stripe will retry.` };
+    found.push(Array.isArray(read.data) && read.data.length > 0);
+  }
+  return { ok: true, present: true, duplicate: false, newerSubscriptionEvent: found[0], newerInvoiceEvent: found[1], subscriptionDeleted: found[2] };
 }
 
 /** BILL-6 Done-when 3: the workspace that holds this Stripe customer. More
@@ -419,9 +495,10 @@ const pgrstQuote = (v: string) => `"${v.replace(/["\\]/g, "\\$&")}"`;
 
 /** One CHECKED orgs update. With a guard it applies only while the
  *  workspace is on that subscription (or, with allowNone, on none) — and,
- *  with fromStatuses, only from one of those statuses — and says whether it
- *  did: a subscription the workspace is not on cannot take its access away,
- *  and an invoice moves only the current subscription. */
+ *  with fromStatuses, only from one of those statuses: a subscription the
+ *  workspace is not on cannot take its access away, and an invoice moves only
+ *  the current subscription. It always says whether a row was written: with no
+ *  guard, none means the workspace does not exist (second review fix pass). */
 async function writeOrg(
   sb: Db, orgId: string, patch: Record<string, unknown>,
   guard: { subscription: string; allowNone: boolean; fromStatuses?: readonly string[] } | null,
@@ -432,11 +509,10 @@ async function writeOrg(
       ? q.or(`stripe_subscription_id.is.null,stripe_subscription_id.eq.${pgrstQuote(guard.subscription)}`)
       : q.eq("stripe_subscription_id", guard.subscription);
     if (guard.fromStatuses) q = q.in("subscription_status", guard.fromStatuses);
-    q = q.select("id");
   }
-  const { data, error } = await q;
+  const { data, error } = await q.select("id");
   if (error) return { ok: false, status: 500, error: `The workspace's billing state was not written (${error.message}); Stripe will retry.` };
-  return { ok: true, applied: guard ? Array.isArray(data) && data.length > 0 : true };
+  return { ok: true, applied: Array.isArray(data) && data.length > 0 };
 }
 
 /** DEC-87 §2: a machine audit row, CHECKED by the caller. */

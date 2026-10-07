@@ -29,8 +29,8 @@
 // subscription) writes the orgs row exactly as it did.
 //
 // The database is a small in-memory stand-in (vi.hoisted `state.tables`),
-// faithful where the routes depend on it: eq / neq / is / gt / lt / in /
-// like / or filters, order + limit, maybeSingle's PGRST116 on more than one
+// faithful where the routes depend on it: eq / neq / is / gt / gte / lt /
+// in / like / or filters, order + limit, maybeSingle's PGRST116 on more than one
 // row, filtered deletes, missing stripe_events / stripe_event_locks tables
 // answered PGRST205 (the world before 20261175 is pasted),
 // stripe_events.id and stripe_event_locks.lock_for UNIQUE (23505), the lock's
@@ -100,6 +100,7 @@ function from(table: string) {
     neq: (c: string, v: unknown) => { filters.push((r) => r[c] !== undefined && r[c] !== null && String(r[c]) !== String(v)); return b; },
     is: (c: string, v: unknown) => { filters.push((r) => (r[c] ?? null) === v); return b; },
     gt: (c: string, v: unknown) => { filters.push((r) => r[c] !== null && r[c] !== undefined && String(r[c]) > String(v)); return b; },
+    gte: (c: string, v: unknown) => { filters.push((r) => r[c] !== null && r[c] !== undefined && String(r[c]) >= String(v)); return b; },
     lt: (c: string, v: unknown) => { filters.push((r) => r[c] !== null && r[c] !== undefined && String(r[c]) < String(v)); return b; },
     in: (c: string, vs: readonly unknown[]) => { filters.push((r) => r[c] !== null && r[c] !== undefined && vs.map(String).includes(String(r[c]))); return b; },
     like: (c: string, p: string) => { const re = likeRe(p); filters.push((r) => typeof r[c] === "string" && re.test(r[c] as string)); return b; },
@@ -570,8 +571,11 @@ describe("BILL-1 — the status map (lib/subscription.ts mapStripeStatus)", () =
 
   it.each(STRIPE_STATUSES)("through the webhook: Stripe %s is stored as %s (plan written: %s)", async (stripe, stored, planWritten) => {
     // the workspace is on the subscription (a subscription that never started,
-    // or an unknown status, changes only such a workspace: DEC-44 (A&O P4) §6)
-    seed({ subscription_status: "active", stripe_subscription_id: "sub_1" });
+    // or an unknown status, changes only such a workspace: DEC-44 (A&O P4) §6);
+    // for incomplete, in the row the old code wrote for it (trialing) — an
+    // incomplete snapshot never moves a workspace that left that state
+    // (second review fix pass)
+    seed({ subscription_status: stripe === "incomplete" ? "trialing" : "active", stripe_subscription_id: "sub_1" });
     state.event = subEvent("customer.subscription.updated", { status: stripe });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try { expect((await deliver()).status).toBe(200); } finally { warn.mockRestore(); }
@@ -1006,22 +1010,56 @@ describe("BILL-4 (review minor) — one event per Stripe customer at a time (str
 
   it("a lock another delivery holds is waited on, then 503 (Stripe retries) with nothing written; a lapsed lock (a run that died) is broken", async () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
     try {
       state.tables.stripe_event_locks = [{ lock_for: "cus_1", event_id: "evt_other", locked_at: new Date().toISOString() }];
       state.event = subEvent("customer.subscription.created", { id: "evt_wait" });
-      const res = await deliver();
+      let answered = false;
+      const pending = deliver().then((r) => { answered = true; return r; });
+      // second review fix pass: it waits up to 8 s in all (it was about 1.6 s)
+      await vi.advanceTimersByTimeAsync(7_000);
+      expect(answered).toBe(false);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(answered).toBe(true);
+      const res = await pending;
       expect(res.status).toBe(503);
       expect((await res.json()).error).toMatch(/Another event for this Stripe customer is being applied; this one was not applied\. Stripe will retry it\./);
       expect(org().subscription_status).toBe("trialing");
       expect(rowsOf("stripe_events")).toEqual([]);
       expect(rowsOf("stripe_event_locks")).toEqual([expect.objectContaining({ event_id: "evt_other" })]);
-      // the same lock, two minutes old: broken, and the event applies
+      // the same lock, two minutes old: broken (after one short pause), and the event applies
+      vi.useRealTimers();
       state.tables.stripe_event_locks = [{ lock_for: "cus_1", event_id: "evt_dead", locked_at: new Date(Date.now() - 120_000).toISOString() }];
       expect(await (await deliver()).json()).toMatchObject({ outcome: "applied" });
       expect(org().subscription_status).toBe("active");
       expect(rowsOf("stripe_event_locks")).toEqual([]);
-    } finally { err.mockRestore(); }
-  }, 10_000);
+    } finally { vi.useRealTimers(); err.mockRestore(); }
+  });
+
+  it("second review fix: a lock held for 3 s (a slow event ahead, the database a region away) is waited out and the delivery applies", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
+    try {
+      state.tables.stripe_event_locks = [{ lock_for: "cus_1", event_id: "evt_ahead", locked_at: new Date().toISOString() }];
+      state.event = subEvent("customer.subscription.created", { id: "evt_behind" });
+      const pending = deliver();
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(org().subscription_status).toBe("trialing");
+      state.tables.stripe_event_locks = [];   // the event ahead finishes and releases
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(await (await pending).json()).toMatchObject({ outcome: "applied" });
+      expect(org()).toMatchObject({ subscription_status: "active", stripe_subscription_id: "sub_1" });
+      expect(rowsOf("stripe_event_locks")).toEqual([]);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("the wait is sized to the route's work and the route's maxDuration covers it (source pin)", () => {
+    const w = src("app/api/stripe/webhook/route.ts");
+    expect(w).toMatch(/const LOCK_WAIT_MS = 8_000;/);
+    expect(w).toMatch(/export const maxDuration = 30;/);
+    expect(w).not.toMatch(/LOCK_WAITS_MS/);
+    // the ledger's reads run together, one round trip while the lock is held
+    expect(w).toMatch(/const \[seenRead, newerSubRead, newerInvRead, deletedRead\] = await Promise\.all\(\[/);
+  });
 
   it("a lock write refused for another reason answers 500 and applies nothing; a refused release is logged, the event stands", async () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -1061,6 +1099,181 @@ describe("BILL-8 (review minor) — a paused workspace may subscribe again", () 
     const res = await checkoutPOST(post("/api/stripe/checkout", { orgId: ORG, plan: "growth" }));
     expect(res.status).toBe(200);
     expect(state.stripeCalls.map((c) => c.m)).toEqual(["checkout.sessions.create"]);
+  });
+});
+
+// ─── P4 second review fix pass: each reproduction failed on a23d537 ───────
+
+describe("BILL-1 / BILL-4 (second review blocker) — an incomplete snapshot never overwrites a workspace that moved on", () => {
+  // Checkout creates the subscription incomplete and makes it active once the
+  // card is paid, usually in the same second; Stripe does not order deliveries.
+  it("updated (active, T) then created (incomplete, T): the paid workspace stays active, the late snapshot is stale", async () => {
+    state.event = subEvent("customer.subscription.updated", { id: "evt_active", created: T0, status: "active" });
+    expect(await (await deliver()).json()).toMatchObject({ outcome: "applied" });
+    state.event = subEvent("customer.subscription.created", { id: "evt_incomplete", created: T0, status: "incomplete" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try { expect(await (await deliver()).json()).toMatchObject({ outcome: "stale" }); } finally { warn.mockRestore(); }
+    expect(org()).toMatchObject({ subscription_status: "active", subscribed_plan: "growth", stripe_subscription_id: "sub_1" });
+    expect(audits("STRIPE_CUSTOMER_SUBSCRIPTION_CREATED")).toEqual([]);
+  });
+
+  it("the same with the paid invoice (T) between them: active, growth, sub_1", async () => {
+    state.event = subEvent("customer.subscription.updated", { id: "evt_active", created: T0, status: "active" });
+    await deliver();
+    state.event = invEvent("invoice.payment_succeeded", { id: "evt_paid", created: T0 });
+    expect(await (await deliver()).json()).toMatchObject({ outcome: "applied" });
+    state.event = subEvent("customer.subscription.created", { id: "evt_incomplete", created: T0, status: "incomplete" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try { expect(await (await deliver()).json()).toMatchObject({ outcome: "stale" }); } finally { warn.mockRestore(); }
+    expect(org()).toMatchObject({ subscription_status: "active", subscribed_plan: "growth", stripe_subscription_id: "sub_1" });
+  });
+
+  it("created's first delivery answered 500, then retried by Stripe after the active update: active", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const created = subEvent("customer.subscription.created", { id: "evt_incomplete", created: T0, status: "incomplete" });
+      state.readError = (t) => (t === "stripe_events" ? { code: "57014", message: "canceling statement due to statement timeout" } : null);
+      state.event = created;
+      expect((await deliver()).status).toBe(500);
+      state.readError = null;
+      state.event = subEvent("customer.subscription.updated", { id: "evt_active", created: T0, status: "active" });
+      expect(await (await deliver()).json()).toMatchObject({ outcome: "applied" });
+      state.event = created;   // Stripe's retry
+      expect(await (await deliver()).json()).toMatchObject({ outcome: "stale" });
+      expect(org()).toMatchObject({ subscription_status: "active", subscribed_plan: "growth", stripe_subscription_id: "sub_1" });
+    } finally { err.mockRestore(); warn.mockRestore(); }
+  });
+
+  it("before 20261175 (no ledger) the row guard holds it: incomplete moves only trialing or unpaid on its subscription", async () => {
+    state.ledger = false;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      state.event = subEvent("customer.subscription.updated", { id: "evt_active", created: T0, status: "active" });
+      await deliver();
+      state.event = subEvent("customer.subscription.created", { id: "evt_incomplete", created: T0, status: "incomplete" });
+      expect(await (await deliver()).json()).toMatchObject({ outcome: "superseded" });
+      expect(org()).toMatchObject({ subscription_status: "active", subscribed_plan: "growth", stripe_subscription_id: "sub_1" });
+      // the legacy row the old code wrote (trialing, growth, the id) and an earlier incomplete's unpaid are still moved
+      for (const from of ["trialing", "unpaid"]) {
+        seed({ subscription_status: from, subscribed_plan: "growth", stripe_subscription_id: "sub_1" });
+        state.event = subEvent("customer.subscription.updated", { status: "incomplete" });
+        expect(await (await deliver()).json(), from).toMatchObject({ outcome: "applied" });
+        expect(org().subscription_status, from).toBe("unpaid");
+      }
+      // and never past_due, paused or canceled on that subscription
+      for (const from of ["past_due", "paused", "canceled"]) {
+        seed({ subscription_status: from, subscribed_plan: null, stripe_subscription_id: "sub_1" });
+        state.event = subEvent("customer.subscription.updated", { status: "incomplete" });
+        expect(await (await deliver()).json(), from).toMatchObject({ outcome: "superseded" });
+        expect(org().subscription_status, from).toBe(from);
+      }
+    } finally { warn.mockRestore(); }
+  });
+
+  it("an incomplete snapshot strictly newer than the last one recorded still applies to the legacy row", async () => {
+    seed({ subscription_status: "trialing", subscribed_plan: "growth", stripe_subscription_id: "sub_1" });
+    state.event = subEvent("customer.subscription.created", { id: "evt_c", created: T0, status: "incomplete" });
+    expect(await (await deliver()).json()).toMatchObject({ outcome: "applied" });
+    state.event = subEvent("customer.subscription.updated", { id: "evt_u", created: T0 + 60, status: "incomplete" });
+    expect(await (await deliver()).json()).toMatchObject({ outcome: "applied" });
+    expect(org()).toMatchObject({ subscription_status: "unpaid", stripe_subscription_id: "sub_1" });
+  });
+});
+
+describe("BILL-1 / DEC-44 (A&O P4) §6 (second review major) — a declined checkout's deletion leaves the app's trial as it was", () => {
+  it("customer.subscription.deleted (incomplete_expired) for a subscription the app-trial workspace is not on: superseded, the trial untouched, no audit row", async () => {
+    state.event = subEvent("customer.subscription.created", { id: "evt_a", created: T0, sub: "sub_1", status: "incomplete" });
+    expect(await (await deliver()).json()).toMatchObject({ outcome: "superseded" });
+    state.event = subEvent("customer.subscription.deleted", { id: "evt_b", created: T0 + 82_800, sub: "sub_1", status: "incomplete_expired" });
+    expect(await (await deliver()).json()).toMatchObject({ received: true, outcome: "superseded" });
+    expect(org()).toMatchObject({ subscription_status: "trialing", subscribed_plan: null, stripe_subscription_id: null, trial_ends_at: "2099-01-01T00:00:00.000Z" });
+    expect(audits()).toEqual([]);
+    expect(rowsOf("stripe_events").map((e) => [e.id, e.outcome])).toEqual([["evt_a", "superseded"], ["evt_b", "superseded"]]);
+  });
+
+  it("an unknown status on a deletion is held to the same rule, and logged", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      state.event = subEvent("customer.subscription.deleted", { sub: "sub_x", status: "a_status_stripe_adds_later" });
+      expect(await (await deliver()).json()).toMatchObject({ outcome: "superseded" });
+      expect(org()).toMatchObject({ subscription_status: "trialing", stripe_subscription_id: null });
+      expect(warn.mock.calls.some((c) => /unknown Stripe status "a_status_stripe_adds_later" on a deleted subscription/.test(String(c[0])))).toBe(true);
+    } finally { warn.mockRestore(); }
+  });
+
+  it("regression: the legacy row on that subscription is still ended (its audit row now names Stripe's status); a real cancellation (canceled) still ends a workspace on none", async () => {
+    seed({ subscription_status: "trialing", subscribed_plan: "growth", stripe_subscription_id: "sub_1" });
+    state.event = subEvent("customer.subscription.deleted", { status: "incomplete_expired" });
+    expect(await (await deliver()).json()).toMatchObject({ outcome: "applied" });
+    expect(org()).toMatchObject({ subscription_status: "canceled", subscribed_plan: null, stripe_subscription_id: null });
+    expect(audits("STRIPE_CUSTOMER_SUBSCRIPTION_DELETED")[0].details).toMatchObject({ stripe_status: "incomplete_expired", plan_cleared: true });
+    seed({ subscription_status: "active", subscribed_plan: "growth", stripe_subscription_id: null });
+    state.event = subEvent("customer.subscription.deleted", { status: "canceled" });
+    expect(await (await deliver()).json()).toMatchObject({ outcome: "applied" });
+    expect(org()).toMatchObject({ subscription_status: "canceled", subscribed_plan: null });
+  });
+});
+
+describe("BILL-4 (second review minor) — Stripe never revives a subscription it deleted, whatever the second", () => {
+  it("deleted (T) handled first, then a same-second updated (active, T): stale, the workspace stays canceled", async () => {
+    seed({ subscription_status: "active", subscribed_plan: "growth", stripe_subscription_id: "sub_1" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      state.event = subEvent("customer.subscription.deleted", { id: "evt_del", created: T0 + 10, status: "canceled" });
+      expect(await (await deliver()).json()).toMatchObject({ outcome: "applied" });
+      state.event = subEvent("customer.subscription.updated", { id: "evt_upd", created: T0 + 10, status: "active" });
+      expect(await (await deliver()).json()).toMatchObject({ outcome: "stale" });
+      expect(warn.mock.calls.some((c) => /Stripe has deleted sub_1 \(recorded\), and never revives an ended subscription/.test(String(c[0])))).toBe(true);
+    } finally { warn.mockRestore(); }
+    expect(org()).toMatchObject({ subscription_status: "canceled", subscribed_plan: null, stripe_subscription_id: null });
+  });
+
+  it("the same pair the other way round: canceled", async () => {
+    seed({ subscription_status: "active", subscribed_plan: "growth", stripe_subscription_id: "sub_1" });
+    state.event = subEvent("customer.subscription.updated", { id: "evt_upd", created: T0 + 10, status: "active" });
+    expect(await (await deliver()).json()).toMatchObject({ outcome: "applied" });
+    state.event = subEvent("customer.subscription.deleted", { id: "evt_del", created: T0 + 10, status: "canceled" });
+    expect(await (await deliver()).json()).toMatchObject({ outcome: "applied" });
+    expect(org()).toMatchObject({ subscription_status: "canceled", subscribed_plan: null, stripe_subscription_id: null });
+  });
+
+  it("a superseded deletion orders it too: on sub_B, sub_A deleted (T) then a same-second sub_A updated (active, T) is stale", async () => {
+    seed({ subscription_status: "active", subscribed_plan: "growth", stripe_subscription_id: "sub_B" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      state.event = subEvent("customer.subscription.deleted", { id: "evt_a_del", created: T0 + 20, sub: "sub_A", status: "canceled" });
+      expect(await (await deliver()).json()).toMatchObject({ outcome: "superseded" });
+      state.event = subEvent("customer.subscription.updated", { id: "evt_a_upd", created: T0 + 20, sub: "sub_A", status: "active", price: "price_s" });
+      expect(await (await deliver()).json()).toMatchObject({ outcome: "stale" });
+    } finally { warn.mockRestore(); }
+    expect(org()).toMatchObject({ subscription_status: "active", subscribed_plan: "growth", stripe_subscription_id: "sub_B" });
+  });
+
+  it("an ended snapshot after the deletion is not held back; another subscription's events are untouched", async () => {
+    seed({ subscription_status: "active", subscribed_plan: "growth", stripe_subscription_id: "sub_1" });
+    state.event = subEvent("customer.subscription.deleted", { id: "evt_del", created: T0 + 10, status: "canceled" });
+    await deliver();
+    state.event = subEvent("customer.subscription.updated", { id: "evt_end", created: T0 + 11, status: "canceled" });
+    expect(await (await deliver()).json()).toMatchObject({ outcome: "applied" });
+    state.event = subEvent("customer.subscription.created", { id: "evt_new", created: T0 + 12, sub: "sub_2", status: "active" });
+    expect(await (await deliver()).json()).toMatchObject({ outcome: "applied" });
+    expect(org()).toMatchObject({ subscription_status: "active", subscribed_plan: "growth", stripe_subscription_id: "sub_2" });
+  });
+});
+
+describe("BILL-4 (second review minor) — an update that writes no row is never recorded applied", () => {
+  it("a subscription event whose metadata names a workspace that does not exist: unresolved, no audit row, logged", async () => {
+    const GONE = "33333333-3333-4333-8333-333333333333";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      state.event = subEvent("customer.subscription.updated", { id: "evt_gone", metadata: { org_id: GONE } });
+      expect(await (await deliver()).json()).toEqual({ received: true, outcome: "unresolved" });
+      expect(warn.mock.calls.some((c) => new RegExp(`no workspace ${GONE} \\(named by the subscription's metadata\\); nothing written`).test(String(c[0])))).toBe(true);
+    } finally { warn.mockRestore(); }
+    expect(audits()).toEqual([]);
+    expect(rowsOf("stripe_events")).toEqual([expect.objectContaining({ id: "evt_gone", outcome: "unresolved", org_id: null })]);
+    expect(org().subscription_status).toBe("trialing");
   });
 });
 
