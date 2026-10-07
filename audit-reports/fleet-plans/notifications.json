@@ -6,7 +6,8 @@
   "A (now, concurrent with DC wave 1 — no DC wave-1 file touched)": ["N1 PREFS-GATE", "N2 KIND-REGISTRY", "N5 DISPATCH-AND-WRITE-HOLES", "N7 CORNER"],
   "B (after wave A merges; still concurrent with DC wave 1 except where noted)": ["N3 SURFACES (after N2, N7)", "N4 FEED-PROVIDER-AND-REALTIME (after N2, N7)", "N8 PRODUCERS-FREE (after N2)", "N6 EMAIL-PIPELINE-AND-CRON (after N1, N2, N5 AND DC P5 HOLDS merged — shared cron file)"],
   "C (after DC wave 2 + public-surfaces PKG-1 merge)": ["N10 PUSH (after N1, N5, N6, PKG-1)"],
-  "D (after all DC waves, IS-P1 SESS-6 and admin-and-org P1 merge)": ["N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT", "N11 TRAIL", "N12 NUDGES (after N3, N4, N9, N10)"]
+  "D (after all DC waves, IS-P1 SESS-6 and admin-and-org P1 merge)": ["N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT", "N11 TRAIL", "N12 NUDGES (after N3, N4, N9, N10)"],
+  "E (after N8, intelligence I-18, drafting-flow DF-P1 and N6 merge)": ["N14 RAW-INSERT TAIL"]
  },
  "recordOnlyCloses": {
   "DELIV-4 (dw1+dw2)": "20261047 email_notif_select_own_or_admin + email_notif_update_admin_requeue + trg_email_requeue_columns (R&P SURF-17/SURF-18) — Admin/Manager can now read and requeue dead letters; residual dw3/dw4 (error destructuring, green state only on a demonstrated read) in N6",
@@ -244,7 +245,7 @@
   },
   {
    "name": "N8 PRODUCERS-FREE — the census holes whose files no other fleet owns (Phase 2 census, severity order)",
-   "findings": ["PROD-3", "PROD-14", "PROD-2", "PROD-5", "PROD-11", "PROD-6", "projects-tab MON-11 (remainder re-owned by the integrator 2026-10-01, orphan sweep: the turnover-rejection emit in lib/turnover.ts (an emit() only, no mutator change) — J2 merged without it)", "TAX-11 (remainder re-owned by the integrator 2026-10-02 at the N5 merge: done-when 2 — the eleven raw `.from(\"notifications\").insert(` calls in nine files (listed in the TAX-11 / N2 record; the census in lib/__tests__/notificationKinds.test.ts is a ratchet, not a ban) move onto notify() / notifyMany() — each file only once its own package has merged)"],
+   "findings": ["PROD-3", "PROD-14", "PROD-2", "PROD-5", "PROD-11", "PROD-6", "projects-tab MON-11 (remainder re-owned by the integrator 2026-10-01, orphan sweep: the turnover-rejection emit in lib/turnover.ts (an emit() only, no mutator change) — J2 merged without it)", "TAX-11 (remainder re-owned by the integrator 2026-10-02 at the N5 merge: done-when 2 — the eleven raw `.from(\"notifications\").insert(` calls in nine files (listed in the TAX-11 / N2 record; the census in lib/__tests__/notificationKinds.test.ts is a ratchet, not a ban) move onto notify() / notifyMany() — each file only once its own package has merged) — narrowed by the integrator 2026-10-07 at N8's launch: N8 moves the sites whose owning package has merged (app/api/transmittal/route.ts, lib/exportAlerts.ts, lib/intakeRateLimit.ts, lib/projects.ts); the sites whose owners are still in flight (app/api/ai/usage/route.ts and lib/orchestrator/tools.ts — intelligence I-18; app/api/cron/maintenance/route.ts — N6; app/api/tickets/comment/route.ts and app/api/tickets/workflow-action/route.ts — drafting-flow DF-P1) go to N14 RAW-INSERT TAIL"],
    "severityMix": "2 HIGH, 4 MEDIUM",
    "files": [
     "lib/branches.ts (:216 resolveBranch audience mirrors announceBranchOpened :148 — { involved: [branch.createdBy], roles: ['DocCtrl'] }; resolving marks the matching unread branch_open rows read by metadata.branchId — PROD-3 dw1/dw2; the actor-strip at dispatch :87 still applies)",
@@ -403,6 +404,21 @@
     "Animation: default one 600ms spin + a 1-2-3 count-up on increase only; no permanent pulse"
    ],
    "alreadyResolvedElsewhere": []
+  },
+  {
+   "name": "N14 RAW-INSERT TAIL — the raw notifications inserts whose files were owned by in-flight packages when N8 launched move onto notify() / notifyMany() (TAX-11 done-when 2's remainder)",
+   "findings": [
+    "TAX-11 (done-when 2 remainder split off by the integrator 2026-10-07 at N8's launch: the raw `.from(\"notifications\").insert(` calls in app/api/ai/usage/route.ts (ai_cap_changed), lib/orchestrator/tools.ts (orchestrator_message), app/api/cron/maintenance/route.ts (checkout_released escalation), app/api/tickets/comment/route.ts and app/api/tickets/workflow-action/route.ts (ticket_comment / ticket_mention / ticket_assigned / ticket_status) move onto notify() / notifyMany(), the RAW_SITES census in lib/__tests__/notificationKinds.test.ts shrinking with each; a site that must stay raw (a service-role writer with no actor) records why in RAW_RESOLVED)"
+   ],
+   "files": [
+    "app/api/ai/usage/route.ts, lib/orchestrator/tools.ts (after intelligence I-18 merges; I-21 also edits tools.ts — expect a merge)",
+    "app/api/cron/maintenance/route.ts (after N6 merges)",
+    "app/api/tickets/comment/route.ts, app/api/tickets/workflow-action/route.ts (after drafting-flow DF-P1 merges)",
+    "lib/__tests__/notificationKinds.test.ts (RAW_SITES shrinks; RAW_RESOLVED proofs)"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": ["N8 merged", "intelligence I-18 merged", "drafting-flow DF-P1 merged", "N6 merged"],
+   "sequencingNotes": "Added by the integrator 2026-10-07 at N8's launch (DEC-31): TAX-11 done-when 2 says each file moves only once its own package has merged; these five were still in flight. REGRESSION: every recipient that gets a bell row from these producers today gets the same row afterwards, and the write rails (DEC-86) admit it."
   },
   {
    "name": "N13 LAYERS SWEEP — every overlay whose action row reaches the dock's lane declares it, a scan test refuses an undeclared one, and every overlay's z-index reads lib/zLayers.ts",
