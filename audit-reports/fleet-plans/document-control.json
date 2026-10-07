@@ -629,6 +629,23 @@
     "its paste follows 20261165's, which follows 20261164's and 20261159's (held until projects-and-cost INTK-18 lands or the user ratifies DEC-63's P17 Landed line)"
    ],
    "sequencingNotes": "Added by the integrator 2026-10-02 at the P19 merge (DEC-31: REV-24). Does not wait on any ratification; its paste waits on 20261165's."
+  },
+  {
+   "name": "P21 FIRST-POINTER-WRITE HOLD LIMB \u2014 a controller's first pointer write over a hold, and a clear on a held issued document, no longer put a never-issued revision in force unrecorded",
+   "findings": [
+    "REV-25 (opened by the integrator 2026-10-07 at the P20 merge, DEC-31: REV-24's residual \u2014 (i) a signed-in controller's pointer write over an active hold whose OLD pointer is NULL on an existing document (not REV-17's creation) passes only under the recorded force's flag, or is refused in REV-20 (b)'s sentence; (ii) a clear of a held document's pointer in an issue status is bound the same way; (iii) the Draft route (restore held archive to Draft, clear, Issued with no revision, set) is closed by those or by its own limb; P20 fix pass 2's PostgreSQL 16 cases P-21 / P-23 / P-25)"
+   ],
+   "files": [
+    "one migration re-creating enforce_document_publish_guard from its NEWEST body (20261174 after P20, or P16's if P16 lands first) \u2014 lineDiff test scanning supabase/migrations; DEC-30 counts-only inventory (held documents with no current revision; held documents in an issue status); one paste",
+    "tests: the three routes on PostgreSQL 16 and in a pinned transcription; a new document's first pointer write (REV-17's creation: createDocumentWithFile, lib/revisions.ts, the library page) unchanged; every legitimate write P13 / P14 / P17 / P18 / P19 / P20 keep working still completes"
+   ],
+   "migrationsLikely": 1,
+   "when": "after P20 merged (20261174 = the newest guard); any order with P16 \u2014 whichever runs second starts from the other's body",
+   "dependsOn": [
+    "P20 merged (20261174 = the newest enforce_document_publish_guard)",
+    "its paste follows 20261174's, which follows 20261165's (held with 20261164 / 20261159)"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-07 at the P20 merge (DEC-31: REV-25). Does not wait on any ratification; its paste waits on 20261174's. No app path clears current_version_id (REV-24's census), so the app needs no change unless the case shows one."
   }
  ],
  "crossAreaFileOverlaps": [

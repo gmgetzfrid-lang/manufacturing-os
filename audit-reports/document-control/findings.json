@@ -15,16 +15,16 @@
     "audit-reports/document-control/11-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 164,
+    "findings": 165,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 19,
       "HIGH": 54,
       "MEDIUM": 71,
-      "LOW": 20
+      "LOW": 21
     },
     "by_status": {
-      "RESOLVED": 149,
+      "RESOLVED": 150,
       "OPEN": 15
     }
   },
@@ -4196,7 +4196,7 @@
       "id": "REV-24",
       "title": "A controller still passes an active hold unrecorded on a held retired document: a bare pointer move on it, and the exit of a stamped retirement whose stamp names another revision",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (reproduced on a throwaway PostgreSQL 16.13 by P19 before and after `20261165`, again at its review fix, and by P19's final review: Document Control moved the pointer of held, stamped archive A6 to its previous revision — ADMITTED; then A6 Archived → Issued — ADMITTED, with 0 `REV_HOLD_OVERRIDDEN` rows — `REV-23`'s Scope, \"Found, outside this finding\")",
       "blast_radius": null,
@@ -4212,6 +4212,28 @@
       ],
       "refuted": false,
       "summary": "Drawing A6 is Issued, archived after 20261144 (stamped), then placed under a stop-work hold. Document Control PATCHes A6's currentversionid to its previous revision, then restores A6 to Issued (through the dialog or a bare PATCH): both admitted, no REVHOLDOVERRIDDEN, and a revision that was never the issued one is now in force over the hold.",
+      "area": "document-control",
+      "report": "audit-reports/document-control/02-revisions-publish.md"
+    },
+    {
+      "id": "REV-25",
+      "title": "Document Control can still put a never-issued revision in force over an active hold, unrecorded, through a first pointer write: after a clear on a held issued document, after the Draft route, or once a held document has no current revision",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (reproduced by P20 fix pass 2 on a throwaway PostgreSQL 16.13 against `20261174`: P-21, P-23 and P-25 in `REV-24`'s Resolution — each ADMITTED with 0 `REV_HOLD_OVERRIDDEN` rows)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "supabase/migrations/20261174_dc_roundF_retired_hold_limbs.sql"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "Issued drawing I1 is under a stop-work hold. Document Control, by two bare PATCHes, clears I1's currentversionid and then sets it to an earlier revision that was never the issued one. Both are admitted and no REVHOLDOVERRIDDEN row is written, so the register shows a revision in force over the hold that nobody recorded forcing.",
       "area": "document-control",
       "report": "audit-reports/document-control/02-revisions-publish.md"
     },
