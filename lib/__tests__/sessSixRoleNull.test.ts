@@ -112,6 +112,9 @@ import {
 
 const src = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
 const ROLE_CONTEXT = "components/providers/RoleContext.tsx";
+// The tree-walking censuses parse every client file; under a loaded full run
+// they outlast vitest's 5 s default (1.5 s alone, 6.4 s at load 17).
+const CENSUS_TIMEOUT_MS = 30_000;
 
 let host: HTMLDivElement;
 let root: Root;
@@ -345,7 +348,7 @@ describe("DEC-44 (IS-P1) §1 — the role is omitted, never a placeholder", () =
       if (n) found[f] = n;
     }
     for (const [f, n] of Object.entries(found)) expect(n, f).toBeLessThanOrEqual(KNOWN[f] ?? 0);
-  });
+  }, CENSUS_TIMEOUT_MS);
 });
 
 // ── OFF-8 done-when 3: the per-key census ─────────────────────────────────
@@ -541,7 +544,7 @@ describe("OFF-8 — every key the app keeps in this browser is in RoleContext's 
   it("a file that touches localStorage / sessionStorage has a row (the census of 2026-10-07: every one)", () => {
     expect(touching.filter((f) => !owners.has(f))).toEqual([]);
     expect(idbTouching).toEqual(CLIENT_INDEXED_DB_INVENTORY.flatMap((d) => d.owners));
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("per KEY: every key a file hands to getItem / setItem / removeItem matches a row of the right store that the file owns", () => {
     const failures = [...touching, ROLE_CONTEXT].flatMap((f) => censusFailures(f, src(f)));
@@ -554,7 +557,7 @@ describe("OFF-8 — every key the app keeps in this browser is in RoleContext's 
     expect(seen("components/ui/FirstRunHint.tsx")).toContain("local:first_run_hint:…");                              // a constant + a prop
     expect(seen("app/layout.tsx")).toContain("local:mfg-os.density");                                                 // an inline script
     expect(seen(ROLE_CONTEXT)).toEqual(expect.arrayContaining(["local:manufacturingos.lastIdentity", "session:manufacturingos.lastIdentity"]));
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("per KEY, negative controls: a new key in a file that already owns rows fails until it has its own row", () => {
     const kp = "app/(protected)/knowledge/[id]/page.tsx";
@@ -571,7 +574,7 @@ describe("OFF-8 — every key the app keeps in this browser is in RoleContext's 
     // a key another file owns
     expect(censusFailures(gp, `${src(gp)}\nexport function __probe() { return localStorage.getItem("requests.viewMode"); }\n`))
       .toEqual([`${gp}: local:requests.viewMode matches no inventory row it owns`]);
-  });
+  }, CENSUS_TIMEOUT_MS);
 
   it("every row names a key its owners really use, says why, and every account row says whether an evaporated session drops it", () => {
     for (const r of CLIENT_STORAGE_INVENTORY) {
@@ -911,7 +914,7 @@ describe("OFF-8 — the provider's branches, rendered", () => {
     expect(window.localStorage.getItem(LAST_IDENTITY_KEY)).toBe("u2");
   });
 
-  it("regression: the SAME identity across a reload keeps everything; a first boot with nothing remembered purges nothing and remembers it", async () => {
+  it("regression: the SAME identity across a reload keeps everything; a first boot with nothing remembered drops only the rebuildable caches, keeps the person's own work and held state, and remembers it", async () => {
     seedAccount();
     s.session = { user: { id: "u1", email: "a@x.io" } };
     s.member = ADMIN;
@@ -923,7 +926,10 @@ describe("OFF-8 — the provider's branches, rendered", () => {
     delete (after.session as Record<string, unknown>)[LAST_IDENTITY_KEY];
     delete (after.local as Record<string, unknown>)["manufacturingos.activeOrgId"];
     delete (after.local as Record<string, unknown>)["manufacturingos.activeOrgId.owner"];
+    // whose account the caches came from is unknown: only they go (integrator, at the IS-P1 merge)
+    delete (before.session as Record<string, unknown>)["org-graph-o1"];
     expect(after).toEqual(before);
+    expect(idbDeleted).toEqual([]);
     await reload({ user: { id: "u1", email: "a@x.io" } });
     expect(window.localStorage.getItem("mfg-os.palette.recents")).toBe("[]");
     expect(window.localStorage.getItem("orgGraph:pos:o1")).not.toBeNull();

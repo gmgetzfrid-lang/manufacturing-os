@@ -373,6 +373,14 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
       await purgeAccountClientStores("all");
     } else if (identityChangeEndsAccount(tabLast, nextUid)) {
       purgeAccountStorage(browserStore("session"), "session", "all");
+    } else if (!browserLast) {
+      // Nothing remembered (the first boot after IS-P1's deploy, or storage
+      // cleared): whose account the stores hold is unknown. The rebuildable
+      // caches go, at no cost to anyone. The person's own work (kind
+      // "identity") is kept — ending it would cost every same-person device
+      // its recents, layout, open thread and unsent redline hand-off once;
+      // that one-time transition residual is recorded in OFF-8's Scope.
+      await purgeAccountClientStores("cache");
     }
     lastIdentityRef.current = nextUid;
     writeLastIdentity(nextUid);
