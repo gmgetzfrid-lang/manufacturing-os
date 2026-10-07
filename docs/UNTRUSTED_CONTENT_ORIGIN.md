@@ -23,12 +23,14 @@ before; only the address in the browser's download bar is different.
 ## When to do it
 
 **Only after** the app version that reads this setting through the download
-links is live. The setting is read by `lib/untrustedContent.ts`; the two places
-that hand out download links — `app/api/storage/download-url/route.ts` and
+links is live. The setting is read by `lib/untrustedContent.ts`. The workspace
+data export (`lib/dataExport.ts`, the per-file links in an Admin's export)
+already uses it. The two places that hand out everyday download links —
+`app/api/storage/download-url/route.ts` and
 `app/api/storage/resolve/route.ts` — start using it once they call
-`signStorageGet` (handed over on projects-tab `GAP-401`). Before that the
-setting is harmless and does nothing. Ask whoever deploys the app, or check the
-release notes, before you start.
+`signStorageGet` (handed over on projects-tab `GAP-401`). Until then the
+setting changes only the export's links. Ask whoever deploys the app, or check
+the release notes, before you start.
 
 ## The steps
 
@@ -42,11 +44,11 @@ release notes, before you start.
 
    `https://<your R2 account ID>.r2.cloudflarestorage.com`
 
-   — replace `<your R2 account ID>` with the ID from step 1. Nothing after
-   `.com`: no slash-and-folder, no bucket name, no port.
-   (If your storage is in the European jurisdiction, it is
-   `https://<your R2 account ID>.eu.r2.cloudflarestorage.com` — use the same
-   form as the address the app's storage already uses.)
+   — replace `<your R2 account ID>` with the ID from step 1, copied exactly.
+   Nothing after `.com`: no slash-and-folder, no bucket name, no port. This is
+   the only address the app accepts here, because it is the one your storage
+   answers on for the app's files; any other address is refused (see the last
+   section).
 3. **Add the setting.** Vercel: your project → **Settings → Environment
    Variables** → **Add New**:
    - **Key:** `UNTRUSTED_CONTENT_ORIGIN`
@@ -85,11 +87,16 @@ is stored differently, so nothing needs cleaning up.
 
 ## If something is wrong with the value
 
-The app checks the value when it hands out a link. If it is not `https://…`,
-has anything after the address, points at the app's own address (or an address
-under it), or points at the address controlled drawings already use, the app
-ignores it, keeps working exactly as before, and writes one line to the server
-log starting with `[untrustedContent]` saying what is wrong.
+The app checks the value when it hands out a link. It accepts **only** the
+address from step 2, made from the app's own `R2_ACCOUNT_ID` setting. Anything
+else — not `https://…`, anything after the address, the app's own address (or
+an address under it), the address controlled drawings already use, a typo in
+the account ID, another account's address, a custom domain, or any other
+address — is ignored: the app keeps working exactly as before (contractor
+files keep opening from the usual address) and writes one line to the server
+log starting with `[untrustedContent]` saying what is wrong. If
+`R2_ACCOUNT_ID` itself is not set, nothing can be checked, so the value is
+ignored too.
 
 Do **not** use a custom domain of your own here: storage does not accept signed
-download links on custom domains, so contractor files would stop opening.
+download links on custom domains, which is why the app refuses one.

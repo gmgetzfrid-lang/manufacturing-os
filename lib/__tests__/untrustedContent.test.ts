@@ -76,10 +76,23 @@ describe("the setting, validated", () => {
     ["the app's own host", "https://app.refinery.example", /app's own address/],
     ["a host under the app's (its cookies could reach it)", "https://files.app.refinery.example", /app's own address/],
     ["the host controlled documents are already served from", "https://plant-docs.acct0123456789.r2.cloudflarestorage.com", /already served from/],
+    // only storage's account endpoint for THIS app's R2_ACCOUNT_ID serves its bucket — any other host would break every door download
+    ["a foreign host", "https://files.example.com", /must be exactly https:\/\/<R2_ACCOUNT_ID>\.r2\.cloudflarestorage\.com/],
+    ["a custom domain on storage", "https://files.refinery-storage.example", /must be exactly/],
+    ["a wrong account ID (one character off)", "https://acct0123456788.r2.cloudflarestorage.com", /must be exactly/],
+    ["another account's endpoint", "https://other0123456789.r2.cloudflarestorage.com", /must be exactly/],
+    ["another jurisdiction's endpoint (lib/r2.ts does not sign there)", "https://acct0123456789.eu.r2.cloudflarestorage.com", /must be exactly/],
+    ["a host that merely ends like the account endpoint", "https://evil-acct0123456789.r2.cloudflarestorage.com", /must be exactly/],
   ])("refuses %s", (_l, value, why) => {
     const r = mod.untrustedContentOrigin(env(value));
     expect(r.origin).toBeNull();
     expect((r as { problem: string }).problem).toMatch(why);
+    // the reason never echoes the account ID or the value back into the log
+    expect((r as { problem: string }).problem).not.toContain("acct0123456789");
+  });
+  it("with R2_ACCOUNT_ID unset nothing can be checked, so nothing is accepted", () => {
+    const r = mod.untrustedContentOrigin(env(UNTRUSTED, { R2_ACCOUNT_ID: "" }));
+    expect(r).toEqual({ origin: null, problem: expect.stringMatching(/R2_ACCOUNT_ID is not set/) });
   });
 });
 
@@ -118,6 +131,12 @@ describe("signStorageGet — what a door upload's presigned GET is signed for", 
     const b = new URL(await mod.signStorageGet(get(DOOR_DOC), { expiresIn: 60 }));
     expect(a.host).toBe("plant-docs.acct0123456789.r2.cloudflarestorage.com");
     expect(b.host).toBe("plant-docs.acct0123456789.r2.cloudflarestorage.com");
+    // a foreign host or a mistyped account ID is refused the same way — never signed for
+    for (const wrong of ["https://files.example.com", "https://acct0123456788.r2.cloudflarestorage.com"]) {
+      vi.stubEnv("UNTRUSTED_CONTENT_ORIGIN", wrong);
+      const u = new URL(await mod.signStorageGet(get(DOOR_DOC), { expiresIn: 60 }));
+      expect(u.host, wrong).toBe("plant-docs.acct0123456789.r2.cloudflarestorage.com");
+    }
     expect(spy).toHaveBeenCalledTimes(1);
     expect(String(spy.mock.calls[0][0])).toMatch(/app's own address/);
     spy.mockRestore();

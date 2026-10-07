@@ -113,7 +113,8 @@
 // and binds the door's identity for that one write (auth.uid() = the link;
 // for the promote, the link's creator) so every guard a member's write meets
 // judges the door's write too. While the function is not there (20261184 not
-// pasted: PGRST202, or 42883 naming an intake_door_ function) the write is
+// pasted: PGRST202, or 42883 naming an intake_door_ function at the start of
+// its message — decided by the CODE, never by a message alone) the write is
 // the service-role write below it, unchanged. Any OTHER answer — a guard, the
 // link's scope, a dead link — is answered and never followed by the
 // service-role write. The door's housekeeping of its own rows (retiring a
@@ -188,15 +189,22 @@ type DoorError = { message?: string; code?: string; details?: string | null; hin
 type DoorAnswer<T> = { kind: "absent" } | { kind: "ok"; data: T } | { kind: "error"; error: DoorError };
 
 /** The migration is not pasted: PostgREST cannot find the door function
- *  (PGRST202), or the database names an intake_door_ function as missing
- *  (42883 — also intake_door_append_redline's own answer while
- *  append_ticket_redline, 20261166, is not pasted). */
+ *  (PGRST202), or the database answers 42883 for an intake_door_ function
+ *  it does not have ("function public.intake_door_…(…) does not exist") —
+ *  or intake_door_append_redline's own 42883 while append_ticket_redline
+ *  (20261166) is not pasted, which names itself first.
+ *  Decided by the CODE: a guard's refusal (23514, P0001, …) is never
+ *  "absent", whatever its message says — a guard message can carry text the
+ *  contractor chose (a document number), and "absent" sends the request
+ *  down the service-role path the guards exempt. A 42883's message is
+ *  matched only at its START, where Postgres (or the redline door) puts the
+ *  function's name. */
 function doorFunctionAbsent(e: DoorError): boolean {
   const code = String(e.code ?? "");
-  const msg = String(e.message ?? "");
   if (code === "PGRST202") return true;
-  if (code === "42883" && msg.includes("intake_door_")) return true;
-  return /could not find the function public\.intake_door_/i.test(msg);
+  if (code !== "42883") return false;
+  const msg = String(e.message ?? "");
+  return /^function (public\.)?intake_door_[a-z_]+\(/.test(msg) || msg.startsWith("intake_door_append_redline:");
 }
 
 /** One door call. Skipped once this request has seen the migration absent. */
@@ -216,7 +224,8 @@ async function viaDoor<T>(state: DoorState, call: () => PromiseLike<{ data: unkn
  *  mid-request (28000 — its HINT says how; the same answers as the checks
  *  before the body), or a write outside the link's scope (42501). Anything
  *  else is the caller's to answer as the write's own failure. */
-function doorAnswer(e: DoorError, scope: { message: string; status: number }): { message: string; status: number; code: string } | null {
+type DoorScope = { message: string; status: number; code?: string };
+function doorAnswer(e: DoorError, scope: DoorScope): { message: string; status: number; code: string } | null {
   const code = String(e.code ?? "");
   if (code === "28000") {
     switch (String(e.hint ?? "")) {
@@ -231,12 +240,17 @@ function doorAnswer(e: DoorError, scope: { message: string; status: number }): {
     if (String(e.hint ?? "") === "not_configured") {
       return { message: "This link isn't fully configured yet — ask your contact to set the intake library.", status: 409, code: "not_configured" };
     }
-    return { ...scope, code: "door_scope" };
+    return { message: scope.message, status: scope.status, code: scope.code ?? "door_scope" };
   }
   return null;
 }
 
-const DOOR_SCOPE_DOCUMENTS = { message: "This link may only submit revisions to its own or assigned documents.", status: 403 };
+const DOOR_SCOPE_DOCUMENTS: DoorScope = { message: "This link may only submit revisions to its own or assigned documents.", status: 403 };
+/** A NEW document the door would not file: the folder the route filed into
+ *  is not (or no longer) the project's intake folder inside its intake
+ *  library — a configuration answer, never the revision sentence. (A quote
+ *  link never reaches the document branch.) */
+const DOOR_SCOPE_NEW_DOCUMENT: DoorScope = { message: "This link isn't fully configured yet — ask your contact to check the project's intake library and folder.", status: 409, code: "not_configured" };
 
 /** INTK-13: the portal gets a plain sentence and a reference id; any
  *  database detail goes to the server log under the same id. */
@@ -250,7 +264,7 @@ function refuser(ref: string) {
 /** J16: a door function's refusal as the portal's answer (doorAnswer), or
  *  null when it is not one of those — the caller answers it as the write's
  *  own failure, and never retries the write as the service role. */
-function doorRefused(e: DoorError, fail: ReturnType<typeof refuser>, scope: { message: string; status: number }): NextResponse | null {
+function doorRefused(e: DoorError, fail: ReturnType<typeof refuser>, scope: DoorScope): NextResponse | null {
   const a = doorAnswer(e, scope);
   return a ? fail(a.message, a.status, `door refused: ${e.code ?? ""} ${e.message ?? ""}`, { code: a.code }) : null;
 }
@@ -418,21 +432,43 @@ const SAME_FILE_ELSEWHERE = "This same file is already awaiting review through t
 /** INTK-13 dw3: one intake folder per project, whatever the concurrency.
  *  The folder is created, then CLAIMED with a compare-and-set on the
  *  project's still-empty pointer; the loser deletes its own folder and uses
- *  the winner's. Every write is checked. */
+ *  the winner's. Every write is checked.
+ *  J16 (GAP-401): the pointer the project row carries is used only when it
+ *  names a folder OF the project's intake library in the link's org — the
+ *  column is owner-writable and no database rail ties it to the library,
+ *  and the door (intake_door_create_document, 20261184) files only into
+ *  such a folder. Any other value (a folder of another library or org, or
+ *  one that is gone) is treated as unset: a folder is made in the intake
+ *  library and claimed with a compare-and-set on that stale value, so the
+ *  contractor's drawing is filed before and after the paste alike, never
+ *  into a folder outside the library. */
 async function ensureIntakeFolder(input: {
   orgId: string; projectId: string; projectName: string; libraryId: string; current: string | null;
 }): Promise<{ id: string } | { error: string }> {
-  if (input.current) return { id: input.current };
+  let stale: string | null = null;
+  if (input.current) {
+    const { data: cur, error: curErr } = await supabaseAdmin
+      .from("collections").select("id")
+      .eq("id", input.current).eq("org_id", input.orgId).eq("library_id", input.libraryId)
+      .maybeSingle();
+    if (curErr) return { error: `intake folder read: ${curErr.message}` };
+    if (cur) return { id: input.current };
+    stale = input.current;
+    console.error(`[intake/upload] project ${input.projectId}: intake folder ${stale} is not a folder of the project's intake library ${input.libraryId} in its org — a folder is made there and the pointer moved to it`);
+  }
   const { data: col, error: colErr } = await supabaseAdmin
     .from("collections")
     .insert({ org_id: input.orgId, library_id: input.libraryId, name: `Intake — ${input.projectName}` })
     .select("id").single();
   if (colErr || !col) return { error: `intake folder insert: ${colErr?.message ?? "no row"}` };
   const colId = String((col as { id: string }).id);
-  const { data: claimed, error: claimErr } = await supabaseAdmin
+  const claim = supabaseAdmin
     .from("projects").update({ intake_collection_id: colId })
-    .eq("id", input.projectId).is("intake_collection_id", null)
-    .select("id");
+    .eq("id", input.projectId);
+  const { data: claimed, error: claimErr } = await (stale
+    ? claim.eq("intake_collection_id", stale)
+    : claim.is("intake_collection_id", null)
+  ).select("id");
   if (claimErr) {
     await supabaseAdmin.from("collections").delete().eq("id", colId);
     return { error: `intake folder pointer write: ${claimErr.message}` };
@@ -1545,7 +1581,7 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
       if (created.data) doc = { id: created.data };
       else docErr = { message: "intake_door_create_document answered no id" };
     } else if (created.kind === "error") {
-      const refused = doorRefused(created.error, fail, DOOR_SCOPE_DOCUMENTS);
+      const refused = doorRefused(created.error, fail, DOOR_SCOPE_NEW_DOCUMENT);
       if (refused) { await deleteObject(ref, key); return refused; }
       docErr = created.error;
     } else {

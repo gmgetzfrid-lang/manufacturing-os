@@ -285,7 +285,10 @@ describe("census — every presigned GET issuer under app/api and lib signs a di
     const putOnly: string[] = [];
     for (const file of [...walk(join(root, "app", "api")), ...walk(join(root, "lib"))]) {
       const src = readFileSync(file, "utf8");
-      if (!/getSignedUrl\(/.test(src) || !/new GetObjectCommand\(/.test(src)) continue;
+      // GAP-401 (J16): lib/untrustedContent.ts signStorageGet is the same
+      // presigned GET (the command carries the disposition), so a caller of
+      // it is an issuer exactly like a caller of getSignedUrl.
+      if (!/getSignedUrl\(|signStorageGet\(/.test(src) || !/new GetObjectCommand\(/.test(src)) continue;
       const rel = file.replace(root + "/", "");
       // A file whose every signature is a PUT (projects-and-cost INTK-15: the
       // intake door presigns its staging PUT and READS staged objects with

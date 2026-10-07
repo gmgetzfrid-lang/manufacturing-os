@@ -25,21 +25,29 @@
 // one (and a public custom domain would serve the files to anyone). The
 // operator step is docs/UNTRUSTED_CONTENT_ORIGIN.md.
 //
-// Refused settings (the app then signs exactly as before and logs why, once
-// per runtime): not https; carries a path, query, credentials or a port; the
-// app's own host or a host under it (cookies set for the app's domain could
-// reach it); the host lib/r2.ts already serves the bucket from (no
-// separation).
+// The ONE accepted value is storage's account endpoint that lib/r2.ts is
+// configured with — https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com, built
+// from the same R2_ACCOUNT_ID — because it is the one host that answers the
+// bucket's signed requests with those credentials. Anything else is refused
+// (the app then signs exactly as before and logs why, once per runtime): not
+// https; carries a path, query, credentials or a port; the app's own host or
+// a host under it (cookies set for the app's domain could reach it); the host
+// lib/r2.ts already serves the bucket from (no separation); and ANY other
+// host — a typo, a wrong account ID, an unrelated or custom domain, another
+// jurisdiction's endpoint — which, accepted, would break every door-upload
+// download while controlled documents kept working. With R2_ACCOUNT_ID unset
+// nothing can be checked, so nothing is accepted.
 //
 // Who calls it. A presigned-GET issuer replaces
 //   getSignedUrl(r2, command, { expiresIn })
 // with
 //   signStorageGet(command, { expiresIn })
-// — app/api/storage/download-url/route.ts and app/api/storage/resolve/route.ts
-// are the issuers a person's browser receives a door upload's URL from. Both
-// are owned by another package in this wave (admin-and-org P6), so J16 did
-// not edit them: their adoption is handed over on GAP-401 (until then the
-// setting changes nothing).
+// — lib/dataExport.ts (the workspace export's per-file URLs, which an Admin
+// opens in a browser) calls it. app/api/storage/download-url/route.ts and
+// app/api/storage/resolve/route.ts are the other issuers a person's browser
+// receives a door upload's URL from. Both are owned by another package in
+// this wave (admin-and-org P6), so J16 did not edit them: their adoption is
+// handed over on GAP-401 (until then the setting changes the export only).
 
 import { S3Client, type GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -64,6 +72,14 @@ function bucketHost(env: Record<string, string | undefined>): string | null {
   const account = (env.R2_ACCOUNT_ID ?? "").trim().toLowerCase();
   const bucket = (env.R2_BUCKET_NAME ?? "").trim().toLowerCase();
   return account && bucket ? `${bucket}.${account}.r2.cloudflarestorage.com` : null;
+}
+
+/** The host of lib/r2.ts's endpoint — storage's account endpoint, the one
+ *  path-style host that answers the bucket's signed requests — or null when
+ *  R2_ACCOUNT_ID is not set. */
+function accountHost(env: Record<string, string | undefined>): string | null {
+  const account = (env.R2_ACCOUNT_ID ?? "").trim().toLowerCase();
+  return account ? `${account}.r2.cloudflarestorage.com` : null;
 }
 
 export type UntrustedOriginSetting =
@@ -94,6 +110,13 @@ export function untrustedContentOrigin(env: Record<string, string | undefined> =
   const served = bucketHost(env);
   if (served && host === served) {
     return { origin: null, problem: `${UNTRUSTED_CONTENT_ORIGIN_ENV} names the address controlled documents are already served from — use https://<account>.r2.cloudflarestorage.com` };
+  }
+  const account = accountHost(env);
+  if (!account) {
+    return { origin: null, problem: `${UNTRUSTED_CONTENT_ORIGIN_ENV} cannot be checked because R2_ACCOUNT_ID is not set` };
+  }
+  if (host !== account) {
+    return { origin: null, problem: `${UNTRUSTED_CONTENT_ORIGIN_ENV} must be exactly https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com, made from this app's own R2_ACCOUNT_ID — no other address serves its storage` };
   }
   return { origin: `https://${host}` };
 }

@@ -30,9 +30,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { presignedGetDisposition } from "@/lib/presignedDisposition";
+import { signStorageGet } from "@/lib/untrustedContent";
 
 // The table lists live in lib/exportTables.ts (dependency-free) so the
 // coverage tripwire test can import them without pulling in AWS clients.
@@ -289,9 +289,12 @@ export async function runOrgExport(params: {
       // SEC-18 (DEC-49): the export is a download — every per-file URL is an
       // ATTACHMENT named after its key, never inline, so a stored HTML / SVG
       // upload saves instead of rendering on the storage origin.
+      // GAP-401 (J16): signed through signStorageGet — a contractor door
+      // upload is signed for UNTRUSTED_CONTENT_ORIGIN when the operator set
+      // one, never on the bucket host the controlled documents are served
+      // from; every other key (and every key when it is unset) as before.
       const disposition = presignedGetDisposition(path, false);
-      presignedUrl = await getSignedUrl(
-        r2,
+      presignedUrl = await signStorageGet(
         new GetObjectCommand({ Bucket: R2_BUCKET, Key: path, ...disposition.overrides }),
         { expiresIn },
       );

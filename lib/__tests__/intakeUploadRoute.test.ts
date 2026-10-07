@@ -294,6 +294,8 @@ function seed(opts: { link?: Row; doc?: Row | null; versions?: Row[] } = {}) {
   db.tables.project_intake_links = [link(opts.link)];
   db.tables.projects = [{ id: "p1", org_id: ORG, status: "active", name: "Unit 4", owner_user_id: "owner1", intake_library_id: "lib1", intake_collection_id: "col1" }];
   db.tables.libraries = [{ id: "lib1", org_id: ORG, uniqueness_keys: null }];
+  // the project's intake folder, a folder OF its intake library (J16: the route checks that before filing)
+  db.tables.collections = [{ id: "col1", org_id: ORG, library_id: "lib1", name: "Intake — Unit 4" }];
   db.tables.org_members = [
     { org_id: ORG, uid: "creator1", status: "active", role: "DocCtrl", roles: ["DocCtrl"], email: "c@x" },
     { org_id: ORG, uid: "ctl2", status: "active", role: "Admin", roles: ["Admin"], email: "a@x" },
@@ -907,6 +909,39 @@ describe("a new document", () => {
     expect(res.status).toBe(200);
     expect(db.writes.find((w) => w.table === "collections" && w.method === "delete")).toBeDefined();
     expect(db.writes.find((w) => w.table === "documents" && w.method === "insert")?.args[0]).toMatchObject({ collection_id: "col-winner" });
+  });
+  it.each([
+    ["a folder of ANOTHER library", { id: "col1", org_id: ORG, library_id: "lib-other" }],
+    ["a folder of another org", { id: "col1", org_id: "o-other", library_id: "lib1" }],
+    ["a folder that is gone", null],
+  ])("J16: a project pointer naming %s is treated as unset — a folder is made in the intake library and claimed with a compare-and-set on the stale value; the drawing is filed there", async (_l, folder) => {
+    seed({ doc: null });
+    db.tables.collections = folder ? [folder] : [];
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const res = await upload({ title: "Skid GA" });
+    spy.mockRestore();
+    expect(res.status).toBe(200);
+    const made = db.writes.find((w) => w.table === "collections" && w.method === "insert")!;
+    expect(made.args[0]).toMatchObject({ org_id: ORG, library_id: "lib1", name: "Intake — Unit 4" });
+    const claim = db.writes.find((w) => w.table === "projects" && w.method === "update")!;
+    expect(claim.filters).toEqual(expect.arrayContaining([["eq", "id", "p1"], ["eq", "intake_collection_id", "col1"]]));
+    const newFolder = db.tables.projects[0].intake_collection_id;
+    expect(newFolder).not.toBe("col1");
+    expect(db.writes.find((w) => w.table === "documents" && w.method === "insert")?.args[0]).toMatchObject({ collection_id: newFolder, library_id: "lib1" });
+  });
+  it("J16: the intake folder pointer that IS a folder of the intake library is used as is (no folder made, no pointer written); a failed folder read fails the request, checked", async () => {
+    seed({ doc: null });
+    expect((await upload({ title: "Skid GA" })).status).toBe(200);
+    expect(db.writes.filter((w) => (w.table === "collections" && w.method !== "select") || (w.table === "projects" && w.method === "update"))).toEqual([]);
+    expect(db.writes.find((w) => w.table === "documents" && w.method === "insert")?.args[0]).toMatchObject({ collection_id: "col1" });
+    resetDb(); seed({ doc: null });
+    db.errors["collections.select"] = [{ message: "connection reset" }];
+    const res = await upload({ title: "Skid GA" });
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toMatch(/Couldn't prepare the intake folder/);
+    expect(body.error).not.toMatch(/connection reset/);
+    expect(db.r2Puts).toEqual([]);
   });
   it("a refused intake-folder pointer write fails the request (checked) instead of forking a folder per submission", async () => {
     seed({ doc: null });
@@ -1552,6 +1587,37 @@ describe("J16 (GAP-401) — after 20261184: the door writes as an identity the g
     expect(serviceContentWrites()).toEqual([]);
   });
 
+  it("a NEW document the door will not file (42501 'scope': the folder is not the project's intake folder) answers 409 'not fully configured' — never the revision sentence — and nothing is retried as the service role", async () => {
+    seed({ doc: null });
+    installDoor();
+    // the pointer moves between the route's folder check and the door's own read
+    const create = db.rpc.intake_door_create_document;
+    db.rpc.intake_door_create_document = (a) => { db.tables.projects[0].intake_collection_id = "col-elsewhere"; return create(a); };
+    const res = await upload({ title: "Skid GA" });
+    const body = await res.json();
+    expect(res.status).toBe(409);
+    expect(body).toMatchObject({ code: "not_configured", error: "This link isn't fully configured yet — ask your contact to check the project's intake library and folder." });
+    expect(body.error).not.toMatch(/revisions/);
+    expect(body.ref).toMatch(/^[0-9a-f]{8}$/);
+    expect(db.tables.documents).toEqual([]);
+    expect(db.r2Deletes).toHaveLength(1);
+    expect(serviceContentWrites()).toEqual([]);
+  });
+
+  it("REGRESSION: a project whose intake pointer names a folder outside its intake library files the contractor's drawing the same way before and after the paste (the route re-homes the pointer first)", async () => {
+    const arrange = () => { seed({ doc: null }); db.tables.collections = [{ id: "col1", org_id: ORG, library_id: "lib-other" }]; };
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { b, a } = await bothWorlds(arrange, () => upload({ title: "Skid GA" }));
+    spy.mockRestore();
+    expect(answer(a)).toEqual(answer(b));
+    expect(a.status).toBe(200);
+    expect(doorCalls()).toEqual(["intake_door_create_document", "intake_door_submit_version", "intake_door_point_pending"]);
+    const filedInto = (t: typeof a.tables, id: unknown) => t.documents.find((d) => d.id === id)?.collection_id;
+    expect(filedInto(a.tables, a.body.documentId)).toBe(a.tables.projects[0].intake_collection_id);
+    expect(filedInto(b.tables, b.body.documentId)).toBe(b.tables.projects[0].intake_collection_id);
+    expect(a.tables.collections.find((c) => c.id === filedInto(a.tables, a.body.documentId))).toMatchObject({ library_id: "lib1", org_id: ORG });
+  });
+
   it("the first door call answering 'not there' sends the WHOLE request down today's path — the door is asked once, not once per write", async () => {
     seed({ doc: null });
     const res = await upload({ title: "Skid GA" });
@@ -1577,6 +1643,49 @@ describe("J16 (GAP-401) — after 20261184: the door writes as an identity the g
     expect(body.error).not.toMatch(/unit_code/);
     expect(serviceContentWrites()).toEqual([]);
     expect(db.r2Deletes).toHaveLength(1);
+  });
+
+  it("'absent' is decided by the CODE: a guard's refusal whose message carries contractor text that reads like 'function not found' is still a refusal — the promote demotes, NO service-role publish_revision follows, and the rest of the request stays on the door", async () => {
+    // a document numbered by the contractor so the adoption guard's message (`% (Rev %) is already a live document…`) starts with it
+    const crafted = "could not find the function public.intake_door_x (Rev C) is already a live document in this library — retire it first.";
+    seed({ doc: { document_number: "could not find the function public.intake_door_x" } });
+    installDoor();
+    db.rpc.intake_door_promote = () => ({ data: null, error: { code: "23514", message: crafted } });
+    const res = await upload({ docId: D1, revLabel: "C" });
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.status).toBe("in_review");
+    expect(published()).toBeUndefined();
+    expect(db.rpcCalls.filter((c) => c.fn === "publish_revision")).toEqual([]);
+    expect(db.pipeline).toEqual([]);
+    // the submission that follows still goes through the door, as the link — the request never learned "absent"
+    expect(doorCalls()).toEqual(["intake_door_promote", "intake_door_submit_version", "intake_door_point_pending"]);
+    expect(serviceContentWrites()).toEqual([]);
+    // the same phrase under a non-42883 code on a create, and a 42883 that names ANOTHER function (raised inside the door) are refusals too
+    for (const error of [
+      { code: "P0001", message: "Could not find the function public.intake_door_create_document in the schema cache" },
+      { code: "42883", message: "function publish_revision(uuid, uuid, text, jsonb, uuid, text) does not exist" },
+      { code: "42883", message: "operator does not exist: text = uuid — intake_door_create_document" },
+    ]) {
+      resetDb(); seed({ doc: null }); installDoor();
+      db.rpc.intake_door_create_document = () => ({ data: null, error });
+      const r = await upload({ title: "Skid GA" });
+      expect(r.status, error.message).toBe(500);
+      expect(serviceContentWrites(), error.message).toEqual([]);
+      expect(db.tables.documents, error.message).toEqual([]);
+    }
+    // while a genuine "not there" — PGRST202, or 42883 naming the door function at its start — still takes today's path
+    for (const error of [
+      { code: "PGRST202", message: "Could not find the function public.intake_door_create_document(p_doc, p_token_hash) in the schema cache" },
+      { code: "42883", message: "function public.intake_door_create_document(p_token_hash => text, p_doc => jsonb) does not exist" },
+      { code: "42883", message: "function intake_door_create_document(text, jsonb) does not exist" },
+    ]) {
+      resetDb(); seed({ doc: null });
+      db.rpc.intake_door_create_document = () => ({ data: null, error });
+      const r = await upload({ title: "Skid GA" });
+      expect(r.status, error.message).toBe(200);
+      expect(serviceContentWrites(), error.message).toEqual(["documents.insert", "document_versions.insert", "documents.update"]);
+    }
   });
 
   it("the door's unique violations answer as before: a number already live is 'number in use'; the same bytes in flight answer with the original", async () => {

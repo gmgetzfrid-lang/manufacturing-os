@@ -211,13 +211,20 @@ describe("the route calls each door function with the parameters the SQL declare
     const call = ROUTE.match(/supabaseAdmin\.rpc\("intake_door_promote", \{([\s\S]*?)\}\)\)/)![1];
     expect(call).not.toMatch(/p_actor\s*:/);
   });
-  it("the route treats only 'the function is not there' as today's path — PGRST202, or 42883 naming an intake_door_ function", () => {
+  it("the route treats only 'the function is not there' as today's path — decided by the CODE (PGRST202, or 42883 naming an intake_door_ function at its start), never by a message alone", () => {
     const absent = between(ROUTE, "function doorFunctionAbsent(e: DoorError): boolean {", "\n}");
     expect(absent).toContain('if (code === "PGRST202") return true;');
-    expect(absent).toContain('if (code === "42883" && msg.includes("intake_door_")) return true;');
-    expect(absent).toContain("return /could not find the function public\\.intake_door_/i.test(msg);");
-    // the redline door's own 42883 names itself, so it is one of those answers
+    expect(absent).toContain('if (code !== "42883") return false;');
+    expect(absent).toContain('return /^function (public\\.)?intake_door_[a-z_]+\\(/.test(msg) || msg.startsWith("intake_door_append_redline:");');
+    // no code-agnostic message match: a guard's message can carry contractor text
+    expect(absent).not.toMatch(/could not find the function/i);
+    expect(absent).not.toMatch(/msg\.includes\(/);
+    // the redline door's own 42883 names itself FIRST, so it is one of those answers
     expect(fn("intake_door_append_redline")).toContain("RAISE EXCEPTION 'intake_door_append_redline: append_ticket_redline (20261166) is not installed yet");
+    // and no other migration raises 42883 itself (a guard's 42883 could otherwise be read as "absent")
+    const raisers = readdirSync(join(process.cwd(), "supabase/migrations"))
+      .filter((f) => /^\d+_.*\.sql$/.test(f) && readFileSync(join(process.cwd(), "supabase/migrations", f), "utf8").match(/ERRCODE\s*=\s*'42883'|undefined_function/));
+    expect(raisers).toEqual([FILE]);
   });
   it("schema health probes two door functions, every required parameter named, the uuid argument one its type refuses (the body never runs)", () => {
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
