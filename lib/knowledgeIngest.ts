@@ -266,6 +266,12 @@ type KnowledgeDocRow = {
    *  by the reset — a batch with no vision context holds them rather than
    *  consume them text-only (ING-13). */
   vision_owed_pages?: number[] | null;
+  /** 20261186: pages this index generation committed from their text layer
+   *  because the batch had no vision context, where a batch with a key would
+   *  read them with AI vision (I-22 — DEC-58 / DEC-90 A18: keyless
+   *  completion is text-only WITH this marker). Absent on an older database:
+   *  nothing is counted, as before. */
+  vision_keyless_pages?: number | null;
   /** The controlled document a mirror reflects (for the mention pass). */
   source_document_id?: string | null;
   error?: string | null;
@@ -352,6 +358,11 @@ const INGEST_COLUMNS_20261122 = [
 ];
 /** …and the one 20261162 adds (ING-13). */
 const INGEST_COLUMNS_20261162 = ["vision_owed_pages"];
+/** …and the one 20261186 adds (I-22: the keyless text-only count). On a
+ *  database without it the reset strips it here (pre-20261122) or by the
+ *  row it claimed (`known`), and the batch's commit writes it only where the
+ *  claimed row carries it — so the engine runs exactly as before. */
+const INGEST_COLUMNS_20261186 = ["vision_keyless_pages"];
 
 // ── The shared reset (ING-3 / DWG-1 / ING-12) ─────────────────────────────
 
@@ -388,6 +399,7 @@ const RESET_ROW = {
   vision_partial_accepted: false, chunk_version: null, vision_retry_after: null,
   vision_retry_tried: [] as number[], ingest_failures: 0,
   vision_owed_pages: [] as number[],
+  vision_keyless_pages: 0,
 };
 
 /** Written in vision_owed_pages in place of page numbers (no page is page
@@ -612,9 +624,9 @@ export async function resetKnowledgeIndex(
       const ladder = [
         full,
         Object.fromEntries(Object.entries(full).filter(([k]) =>
-          !INGEST_COLUMNS_20261122.includes(k) && !INGEST_COLUMNS_20261162.includes(k))),
+          !INGEST_COLUMNS_20261122.includes(k) && !INGEST_COLUMNS_20261162.includes(k) && !INGEST_COLUMNS_20261186.includes(k))),
         Object.fromEntries(Object.entries(full).filter(([k]) =>
-          !INGEST_COLUMNS_20261122.includes(k) && !INGEST_COLUMNS_20261162.includes(k) && k !== "vision_pages" && k !== "last_section")),
+          !INGEST_COLUMNS_20261122.includes(k) && !INGEST_COLUMNS_20261162.includes(k) && !INGEST_COLUMNS_20261186.includes(k) && k !== "vision_pages" && k !== "last_section")),
       ];
       for (const update of ladder) {
         const { data, error } = await expectOn(supabaseAdmin.from("knowledge_documents")
@@ -1446,6 +1458,23 @@ export async function ingestKnowledgeDocBatch(
     let visionHeldPages = 0;
     const baseVisionPages = genStart ? 0 : Number(cur.vision_pages ?? 0);
     const baseEmptyPages = genStart ? 0 : Number(cur.empty_pages ?? 0);
+    // I-22 (DEC-58 as ruled under DEC-90 A18): keyless completion is
+    // text-only WITH a marker — never a hold. A page this batch commits from
+    // its text layer with NO vision context, where a batch with a key would
+    // read it with AI vision (the page needs it, or the library reads every
+    // page), is counted on the row (vision_keyless_pages, 20261186). A page
+    // held for AI vision (noVisionReason, or owed — ING-13) is listed on
+    // vision_failed_pages instead and is not counted. The count belongs to
+    // the index generation, like vision_pages: a generation's first batch
+    // (and the one reset, RESET_ROW) starts it at 0, so a keyed regeneration
+    // ends at 0. Within a generation no committed page is read again — the
+    // resume point only moves forward under the claim's compare-and-set, and
+    // the retry pass reads only vision_failed_pages, which a counted page
+    // never joins — so the restart is what lowers it once a key reads those
+    // pages. A batch with a key never adds to it. An older database without
+    // the column: the claimed row does not carry it and nothing is written.
+    let keylessTextPages = 0;
+    const baseKeylessTextPages = genStart ? 0 : Math.max(0, Number(cur.vision_keyless_pages ?? 0) || 0);
 
     // Which chunker (ING-4 / ING-7): a document keeps the one it started
     // with — its chunk boundaries never mix — and a document (re)starting at
@@ -1497,6 +1526,10 @@ export async function ingestKnowledgeDocBatch(
       /** The page needs AI vision, and the driver has none for a reason
        *  someone can fix (`opts.noVisionReason`): held for it, not consumed. */
       visionHeld: boolean;
+      /** I-22: committed from its text layer by a batch with no vision
+       *  context where a batch with a key would read it with AI vision —
+       *  counted on the row (vision_keyless_pages), never held. */
+      keylessTextOnly: boolean;
       entities: Array<Record<string, unknown>>;
     };
 
@@ -1607,6 +1640,10 @@ export async function ingestKnowledgeDocBatch(
           visionHeld = true;
         }
       }
+      // I-22: no vision context, nothing holding the page, and a batch with
+      // a key would read it with AI vision here — it is indexed from its text
+      // layer (DEC-58: a keyless org's page is never held) and counted.
+      const keylessTextOnly = !vision && !visionHeld && (needsVision || readsEveryPage);
 
       // ── Drawing intelligence: on sparse (drawing-like) pages, extract
       //    equipment tags and drawing-number references WITH the position of
@@ -1742,7 +1779,7 @@ export async function ingestKnowledgeDocBatch(
         });
       }
 
-      return { stop: null, page: { lines, chunkLines, visionRead, visionModel, visionFailed, visionHeld, entities } };
+      return { stop: null, page: { lines, chunkLines, visionRead, visionModel, visionFailed, visionHeld, keylessTextOnly, entities } };
     };
 
     /** A drawing sheet has no sentence to finish — its foot is a title
@@ -1817,6 +1854,9 @@ export async function ingestKnowledgeDocBatch(
         else if (read.visionHeld) { failed.add(p); visionHeldPages++; }
         else failed.delete(p);
         lastCompletedPage = p;
+        // I-22: counted only once the page is part of what this batch
+        // commits (a stop before it breaks out above).
+        if (read.keylessTextOnly) keylessTextPages++;
         const built = chunkRowsFor(p, read, section, carried);
         carried = built.tail;
         section = built.lastSection;
@@ -2166,6 +2206,8 @@ export async function ingestKnowledgeDocBatch(
         ...docUpdate,
         vision_pages: baseVisionPages + visionPages,
         empty_pages: emptyTotal,
+        // I-22: written only where the claimed row carries the column (`known`).
+        vision_keyless_pages: baseKeylessTextPages + keylessTextPages,
         vision_failed_pages: failedQueue,
         vision_retry_tried: failedQueue.filter((p) => tried.has(p)),
         // A controller's acceptance is written only by accept-partial (under

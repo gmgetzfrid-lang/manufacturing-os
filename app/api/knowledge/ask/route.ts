@@ -92,6 +92,9 @@ import {
 } from "@/lib/drawingText";
 import { renderKnowledgePages, MAX_DEEP_READ_PAGES } from "@/lib/knowledgePageRender";
 import { loadCodebookAdmin, codebookToDecoderText } from "@/lib/codebookServer";
+import {
+  KEYLESS_PAGES_COLUMN, summarizeVisionUnread, visionUnreadFactsLine, VISION_UNREAD_RULE, type VisionUnreadSummary,
+} from "@/lib/knowledgeKeyless";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -1648,6 +1651,30 @@ export async function POST(req: NextRequest) {
         // PR-4: sheets whose tags came (at least in part) from an AI
         // transcription of the page image (knowledge_documents.vision_pages).
         const visionDocIds = new Set(docsList.filter((d) => (d.vision_pages ?? 0) > 0).map((d) => d.id));
+        // ING-6 (a) / I-22: how many pages AI vision could not read — pages
+        // waiting on (or accepted without) an AI vision read
+        // (vision_failed_pages, 20261122) and pages indexed from their text
+        // layer only because no AI key was available (vision_keyless_pages,
+        // 20261186) — over exactly the sheets counted above. Its own read,
+        // so the sheets' read above is untouched. A database without either
+        // column (42703 / PGRST204 naming it) has nothing to count, and the
+        // facts are exactly as before; any other failure is said in the
+        // facts as unknown, never taken as none (and the facts are then not
+        // to be trusted for counts).
+        type UnreadDoc = { id: string; vision_failed_pages?: unknown; vision_keyless_pages?: unknown };
+        const unreadOf = (cols: string) => readAll<UnreadDoc>((from, to) =>
+          supabaseAdmin.from("knowledge_documents").select(cols)
+            .in("library_id", allLibIds).order("id", { ascending: true }).range(from, to));
+        let unreadRead = await unreadOf(`id, vision_failed_pages, ${KEYLESS_PAGES_COLUMN}`);
+        if (unreadRead.error && columnsMissing(unreadRead.error, KEYLESS_PAGES_COLUMN)) {
+          unreadRead = await unreadOf("id, vision_failed_pages");
+        }
+        const factDocIds = new Set(docsList.map((d) => d.id));
+        const visionUnread: VisionUnreadSummary | "unknown" =
+          unreadRead.error && columnsMissing(unreadRead.error, "vision_failed_pages") ? { failedPages: 0, keylessPages: 0, sheets: 0 }
+            : unreadRead.error ? "unknown"
+              : summarizeVisionUnread(unreadRead.rows.filter((d) => factDocIds.has(d.id)));
+        const visionUnreadAny = visionUnread === "unknown" || visionUnread.failedPages + visionUnread.keylessPages > 0;
         const census = buildEquipmentCensus(ents.filter((e) => e.kind === "equipment"), prefixLabels);
         const refsByDoc = new Map<string, string[]>();
         for (const r of ents.filter((e) => e.kind === "ref")) {
@@ -1769,7 +1796,7 @@ export async function POST(req: NextRequest) {
         const declaredVision = docsList.filter((d) => selfByDoc.has(d.id) && visionDocIds.has(d.id)).length;
         const declaredText = declaredCount - declaredVision;
         const visionSheets = docsList.filter((d) => visionDocIds.has(d.id)).length;
-        const trusted = !drawingFactsPartial && visionSheets === 0;
+        const trusted = !drawingFactsPartial && visionSheets === 0 && !visionUnreadAny;
         drawingFacts =
           "DRAWING FACTS — tallied by the app from " +
           (drawingFactsPartial ? "the sheets whose tags could be read this time" : "EVERY sheet's extracted tags") +
@@ -1788,6 +1815,7 @@ export async function POST(req: NextRequest) {
           (visionSheets > 0
             ? `- Sheets whose tags came (at least in part) from an AI transcription of the page image: ${visionSheets} of ${docsList.length}.\n`
             : "") +
+          visionUnreadFactsLine(visionUnread, docsList.length) +
           `- Equipment, distinct tags: ${census.totalDistinct}${drawingFactsPartial ? " (at least)" : ""}` +
           (census.categories.length > 0
             ? " — " + census.categories.slice(0, 12)
@@ -1842,10 +1870,13 @@ export async function POST(req: NextRequest) {
               ? "They are PARTIAL this time: every count is a FLOOR, not a total. Say so whenever you give " +
                 "a count, and never propose a next free tag number — the sheets that were not counted may " +
                 "already use it."
-              : "Prefer them over the passages for counts and totals, but some sheets' tags were " +
-                "transcribed from page images by an AI model during indexing: a count that includes them is " +
-                "only as good as that transcription — say so when you give one, and treat a title-block " +
-                "identity read that way as unconfirmed.") + "\n" +
+              : visionSheets > 0
+                ? "Prefer them over the passages for counts and totals, but some sheets' tags were " +
+                  "transcribed from page images by an AI model during indexing: a count that includes them is " +
+                  "only as good as that transcription — say so when you give one, and treat a title-block " +
+                  "identity read that way as unconfirmed."
+                : "Prefer them over the passages for counts and totals.") +
+          (visionUnreadAny ? ` ${VISION_UNREAD_RULE}` : "") + "\n" +
           "- The full tag list is in the library's Drawing intelligence panel (equipment register export).\n" +
           "- When the user asks to SEE or FIND specific equipment, keep the answer short and lean on " +
           "the citations: every cited sheet opens in the viewer with the named tags ringed on the " +
