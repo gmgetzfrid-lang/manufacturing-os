@@ -81,7 +81,7 @@ import { reviewTurnoverItem, type TurnoverItem } from "@/lib/turnover";
 import {
   setMilestoneStatus, applyMilestoneMoves, updateMilestone, rebaseSchedule, slippedPastBaseline, scheduleDateLabel,
 } from "@/lib/milestones";
-import { resolveRecipients, type EmitInput } from "@/lib/notify/dispatch";
+import { resolveRecipients, type EmitInput, type EmitResult } from "@/lib/notify/dispatch";
 import { postMarkupRef } from "@/lib/activityThread";
 import { notifyBatchChecked, notifyBatchWithReason } from "@/lib/inAppNotifications";
 import { fmtMoney } from "@/lib/costs";
@@ -209,7 +209,7 @@ describe("PROD-14 — a markup request notifies the person asked, and its answer
     vi.mocked(emit).mockClear();
     const actions = () => vi.mocked(logAuditAction).mock.calls.map((c) => (c[0] as { action: string }).action);
     // a notice that never completes
-    vi.mocked(emit).mockImplementationOnce(() => new Promise<void>(() => {}));
+    vi.mocked(emit).mockImplementationOnce(() => new Promise<EmitResult>(() => {}));
     void createMarkupRequest({ orgId: ORG, projectId: "p1", documentId: "d1", requestedFromUserId: "holder", message: "redlines?", actorUserId: "asker", actorEmail: "asker@acme.test" });
     await flushNotices();
     expect(vi.mocked(writeActivity)).toHaveBeenCalledTimes(1);
@@ -217,7 +217,7 @@ describe("PROD-14 — a markup request notifies the person asked, and its answer
     expect(vi.mocked(emit)).toHaveBeenCalledTimes(1);                       // the notice was started, last
     s.db.tables.documents = [{ id: "d1", org_id: ORG, library_id: "lib1" }];
     s.db.tables.markup_requests = [{ id: "mr1", org_id: ORG, document_id: "d1", requested_by_user_id: "asker", requested_from_user_id: "holder", status: "open" }];
-    vi.mocked(emit).mockImplementationOnce(() => new Promise<void>(() => {}));
+    vi.mocked(emit).mockImplementationOnce(() => new Promise<EmitResult>(() => {}));
     void resolveMarkupRequest({ markupRequestId: "mr1", status: "declined", response: "busy", orgId: ORG, projectId: "p1", actorUserId: "holder", actorEmail: "holder@acme.test" });
     await flushNotices();
     expect(vi.mocked(writeActivity)).toHaveBeenCalledTimes(2);
@@ -679,7 +679,7 @@ describe("PROD-11 — the schedule speaks: status and moves to the project, a ne
     let release!: () => void;
     const gate = new Promise<void>((r) => { release = r; });
     const { emit } = await import("@/lib/notify/dispatch");
-    vi.mocked(emit).mockImplementationOnce(async (p: unknown) => { await gate; s.emits.push(p as Record<string, unknown>); });
+    vi.mocked(emit).mockImplementationOnce(async (p: unknown) => { await gate; s.emits.push(p as Record<string, unknown>); return { recipients: 0 }; });
     const m = await setMilestoneStatus({ id: "m1", status: "completed", actorUserId: "pm", actorUserName: "pm" });
     expect(m.status).toBe("completed");                                      // returned while the notice is still held
     expect(s.emits).toEqual([]);

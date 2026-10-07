@@ -91,10 +91,13 @@ export interface NotificationInput {
 /**
  * Insert one notification row. Fire-and-forget by design — callers
  * shouldn't block their main flow on the bell-icon write. Errors are
- * logged but never re-raised.
+ * logged but never re-raised: a failed signal never rolls back the action
+ * it reports (lib/postPublish.ts). It answers whether the row was written
+ * (DELIV-7 dw1, notifications Round G N6), so a caller that carries an
+ * obligation can say so; a caller that ignores the answer is unchanged.
  */
-export async function notify(input: NotificationInput): Promise<void> {
-  await notifyChecked(input);
+export async function notify(input: NotificationInput): Promise<boolean> {
+  return notifyChecked(input);
 }
 
 /** A client to write the row with instead of the shared one: a service-role
@@ -186,7 +189,8 @@ export async function notifyBatchWithReason(inputs: NotificationInput[], client?
 
 /**
  * Fan-out helper. Skips the actor automatically (so I don't notify
- * myself), dedupes recipients, and parallelises the inserts.
+ * myself), dedupes recipients, and parallelises the inserts. Answers how
+ * many rows landed and how many were refused (DELIV-7 dw1) — never throws.
  */
 export async function notifyMany(input: {
   orgId: string;
@@ -200,12 +204,12 @@ export async function notifyMany(input: {
   resourceId?: string;
   actorName?: string;
   metadata?: Record<string, unknown>;
-}): Promise<void> {
+}): Promise<{ sent: number; failed: number }> {
   const recipients = Array.from(new Set(
     input.userIds.filter((u) => u && u !== input.actorUserId),
   ));
-  if (recipients.length === 0) return;
-  await Promise.all(
+  if (recipients.length === 0) return { sent: 0, failed: 0 };
+  const landed = await Promise.all(
     recipients.map((uid) =>
       notify({
         orgId: input.orgId,
@@ -222,6 +226,8 @@ export async function notifyMany(input: {
       }),
     ),
   );
+  const sent = landed.filter(Boolean).length;
+  return { sent, failed: landed.length - sent };
 }
 
 export interface NotificationRow {

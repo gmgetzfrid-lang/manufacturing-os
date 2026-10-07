@@ -160,12 +160,15 @@ const bellIconMap = (): Record<string, string> => {
   if (!m) throw new Error("KIND_ICON not found");
   return Object.fromEntries([...m[1].matchAll(/^\s+(\w+):\s*(\w+),/gm)].map((x) => [x[1], x[2]]));
 };
-/** The cron's COMPLIANCE_KINDS, parsed from the route. */
+/** The cron's COMPLIANCE_KINDS. Since notifications N6 (TAX-5's limb) the
+ *  route derives it from this registry's `compliance` column — the source
+ *  pin below — so the list it reads is the registry's flagged kinds. */
 const cronComplianceKinds = (): string[] => {
   const s = src("app/api/cron/maintenance/route.ts").replace(/\/\/[^\n]*/g, "");
-  const m = s.match(/const COMPLIANCE_KINDS = \[([\s\S]*?)\];/);
-  if (!m) throw new Error("COMPLIANCE_KINDS not found");
-  return [...m[1].matchAll(/"([a-z_]+)"/g)].map((x) => x[1]);
+  if (!/const COMPLIANCE_KINDS: string\[\] = \(Object\.keys\(KIND_META\) as Array<keyof typeof KIND_META>\)\s*\.filter\(\(k\) => KIND_META\[k\]\.compliance\);/.test(s)) {
+    throw new Error("COMPLIANCE_KINDS is not derived from KIND_META");
+  }
+  return (Object.keys(KIND_META) as Array<keyof typeof KIND_META>).filter((k) => KIND_META[k].compliance);
 };
 
 // ── THE DEPARTURES — every change from TODAY, each with its reason ───────────
@@ -593,7 +596,9 @@ describe("action, compliance, icon, tone, group — the other classifiers, in on
   });
 
   it("compliance is the cron's COMPLIANCE_KINDS, unchanged", () => {
-    expect(cronComplianceKinds()).toEqual(TODAY_COMPLIANCE);
+    // the same set as TODAY's hand list (order is the registry's; the digest's
+    // .in("kind", …) filter does not depend on it)
+    expect([...cronComplianceKinds()].sort()).toEqual([...TODAY_COMPLIANCE].sort());
     const flagged = unionKinds().filter((k) => KIND_META[k as keyof typeof KIND_META].compliance);
     expect(flagged.sort()).toEqual([...TODAY_COMPLIANCE].sort());
   });

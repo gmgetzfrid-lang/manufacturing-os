@@ -687,15 +687,16 @@ FullScreenViewer.tsx:1268 `value={\`${window.location.origin}/documents/${docRec
 
 **Partial (2026-10-07, identity-and-session Round G).** Package **IS-P1** removed the library page's two readers (document-control `XEDGE-5`, now RESOLVED): `app/(protected)/documents/[libraryId]/page.tsx` builds both `/d/` copies on `publicOrigin()` (`:760`, `:3263`), and `window.location.origin` no longer appears in the page. Test: `lib/__tests__/isP1LibraryPage.test.ts` "XEDGE-5 / PHYS-13 —" (the Ctrl+C copy lifted and run with a configured site and a different page host).
 
+**Partial (2026-10-07, notifications Round G).** Package N6 EMAIL-PIPELINE-AND-CRON closed the `lib/notifications.ts` `ticketUrl` site (notifications `DELIV-5` done-when 2): it is now `${publicOrigin()}/requests/<id>` (`lib/notifications.ts:296`) and reads `window.location.origin` nowhere. Test: `lib/__tests__/emailRender.test.ts` "ticketUrl() is built on publicOrigin() (DELIV-5 dw2 / PHYS-13)".
+
 **Done-when (this pass).**
 1. ✓ Unchanged.
 2. ✓ Unchanged.
-3. ◐ The library page ✓. Left, by `grep -rn "window.location.origin" app components lib hooks` at this commit:
-   - `lib/notifications.ts:274` — `ticketUrl` (notifications N6, `DELIV-5`; unchanged).
-   - `app/(protected)/graph/page.tsx:675` — the graph's "Copy link" (`${window.location.origin}${pathname}?…`), added by intelligence I-14 (DEC-88 §3) after the last pass: a link to the protected `/graph` view handed to colleagues — the in-app case the verifier narrowed `FullScreenViewer`'s phone QR to, but a link that leaves the page by copy all the same. Owner: intelligence (the graph page) — for the integrator to assign.
+3. ◐ The library page ✓ (IS-P1) and the `ticketUrl` site ✓ (notifications N6). Left, by `grep -rn "window.location.origin" app components lib hooks` at the integrator's merge of N6 (2026-10-07):
+   - `app/(protected)/graph/page.tsx:675` — the graph's "Copy link" (`${window.location.origin}${pathname}?…`), added by intelligence I-14 (DEC-88 §3): a link to the protected `/graph` view handed to colleagues by copy. Owner: intelligence I-15 (the graph page's Copy link is in its plan entry).
    - Not outbound links, not assessed (as the last pass): `app/page.tsx:139` (the sign-in `redirectTo`), `components/viewers/SecureDocViewer.tsx:27` (a same-origin comparison).
 
-**Scope / residual.** OPEN for done-when 3's tree-wide clause only: `lib/notifications.ts` (notifications N6) and the graph page's Copy link (intelligence).
+**Scope / residual.** OPEN for done-when 3's tree-wide clause only: the graph page's Copy link (intelligence I-15). *Integrator at the N6 merge (2026-10-07): IS-P1 and N6 each closed their site in parallel; the two Partial blocks above are both kept, and this done-when is their union.*
 
 ---
 

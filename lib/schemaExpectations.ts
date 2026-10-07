@@ -251,6 +251,9 @@ export const EXPECTED_COLUMNS: readonly ColumnExpectation[] = [
   // admin-and-org P3 (BKP-6): until it is pasted the run row keeps its
   // purge counts only in the trace (the write retries without the columns).
   { table: "export_runs", column: "retention_deleted", migration: "20261172_ao_roundG_export_run_retention.sql", feature: "Data export — a bucket push's retention purge records on its run row what it deleted and what storage refused (BKP-6; the app retries without the columns until pasted)" },
+  // notifications N6 (DELIV-1 dw3): until it is pasted a queued email names
+  // only its recipient. No app code reads or writes the column.
+  { table: "email_notifications", column: "queued_by", migration: "20261183_notif_roundG_email_attribution.sql", feature: "Email queue — the member who queued each email is recorded by the database (DELIV-1)" },
 ];
 
 export const EXPECTED_FUNCTIONS: readonly FunctionExpectation[] = [

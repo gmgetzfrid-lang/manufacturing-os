@@ -585,7 +585,10 @@ describe("ORCH-1 / PR-1 — authority at execute: the controller tier for the au
       audience: { involved: ["u-dc"] },
     };
     const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    await expect(emit(ev)).resolves.toBeUndefined();
+    // notifications N6 (DELIV-7 dw4): it still resolves, never throws — and now
+    // says it reached nobody (a structured warning, and { recipients: 0 })
+    await expect(emit(ev)).resolves.toEqual({ recipients: 0 });
+    expect(warned).toHaveBeenCalledWith("[notify] emit reached no recipient", expect.objectContaining({ orgId: ORG, kind: "orchestrator_message" }));
     warned.mockRestore();
     // Since notifications N5 (NEDGE-3) the dispatcher limits recipients to
     // ACTIVE members first; the anon client's membership read sees nobody,

@@ -101,11 +101,20 @@ export async function POST(req: NextRequest) {
   if (auditErr) return NextResponse.json({ ok: true, metadata, history, warning: `Recorded, but the audit row failed: ${auditErr.message}` });
 
   // Tell the requester (and whoever follows the ticket): the loop closed.
+  // NEDGE-15 (notifications Round G, N6): emit() is written against the
+  // shared client, which in a route handler is the anon key with no session
+  // — its membership read returned nothing and the notice reached nobody. It
+  // runs bound to the service role for this request only
+  // (lib/serverClientScope.ts, as the cron and the intake door do), so the
+  // active members it names get the bell row and the email; a suspended one
+  // gets neither (NEDGE-3). A failure is logged, never fails the record.
   try {
-    const { emit } = await import("@/lib/notify/dispatch");
+    const [{ emit }, { runWithServerClient }] = await Promise.all([
+      import("@/lib/notify/dispatch"), import("@/lib/serverClientScope"),
+    ]);
     const involved = [ticket.requesterId, ticket.assignedDrafterId, ticket.assignedEngineerId, ...(ticket.watchers ?? [])]
       .filter((u): u is string => typeof u === "string" && u.length > 0);
-    await emit({
+    await runWithServerClient(supabaseAdmin, () => emit({
       orgId: ticket.orgId, category: "status", kind: "ticket_status",
       title: inReview ? `${ticket.ticketId}: deliverable submitted for document review` : `${ticket.ticketId}: deliverable published as Rev ${v.revision_label}`,
       body: entry.details,
@@ -113,8 +122,10 @@ export async function POST(req: NextRequest) {
       resource: { type: "ticket", id: ticketId },
       actorUserId: caller.id, actorName: callerEmail.split("@")[0],
       audience: { involved },
-    });
-  } catch { /* the record is written; notification is best-effort */ }
+    }));
+  } catch (e) {
+    console.warn("[handback] the notice could not be sent (the handback is recorded):", (e as Error).message);
+  }
 
   return NextResponse.json({ ok: true, metadata, history });
 }

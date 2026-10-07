@@ -132,6 +132,72 @@ pending reviews, due recertifications) instead of user-writable notification
 rows. The integrator adds `NEDGE-17` to N6's `findings` in
 `audit-reports/fleet-plans/notifications.json`.*
 
+*Hand-off (2026-10-07, notifications Round G, N6 EMAIL-PIPELINE-AND-CRON →
+N9, N14 and the integrator):*
+- *Email goes through one render layer, `lib/emailRender.ts` (`DEC-93`):
+  a producer that composes an email body calls `renderNotificationEmail` or
+  `wrapEmailBody` and marks the row `metadata.rendered`; a link is joined to
+  the public origin or left out, never a bare path. A row left unrendered gets
+  the footer and the mention rule from the drain at send time. The two emails
+  `app/api/transmittal/route.ts` composes (N9's file) are covered by that
+  backstop; N9 also changes that file's `new Date(now).toLocaleString()` to
+  `lib/recordTime.ts` `formatRecordTime` (`NEDGE-12` done-when 1).*
+- *`notify()` now answers whether its row landed (`Promise<boolean>`),
+  `notifyMany` returns `{ sent, failed }`, and `emit()` returns
+  `{ recipients, inapp? }` (warning on an empty audience). N14 RAW-INSERT TAIL
+  owns `DELIV-7`'s remainder: the raw inserts in `app/api/transmittal/route.ts`
+  (`ack_complete`), `lib/projects.ts` and `app/api/ai/usage/route.ts`; the
+  maintenance cron's own stale-checkout escalation (`checkout_released`,
+  `escalateStaleCheckouts` in `app/api/cron/maintenance/route.ts` — a raw insert
+  whose failures N6 reports, still N14's to route through `notify()`, TAX-11's
+  tail); and the regulatory callers that should surface the answer, among them
+  the cron's step-6 compliance scans, which ignore it inside their own files
+  (`notify()` in `lib/reviewCycles.ts`, `lib/acknowledgments.ts`,
+  `lib/reviewControl.ts`, `lib/effectiveDate.ts`, `lib/retention.ts`,
+  `lib/accessRecert.ts`, `lib/distributionAcks.ts`; `emit()` in
+  `lib/distributionAcks.ts` and `lib/holds.ts`). The cron's own two `emit()`
+  calls already read their result (N6 fix pass 2).*
+- *The compliance digest keeps its state in `platform_settings` (key
+  `compliance_digest`: the window still owed, per org where an org is owed
+  more, a resume cursor per org whose visit did not finish, and the first org
+  a run cut short did not visit; `20260920`, service role only). Nothing else
+  writes that key; a package that edits `app/api/cron/maintenance/route.ts`
+  later keeps the run clock (`runEnd`, `digestDeadlineAt`, `noTimeFor`, the
+  per-org share in `queueComplianceDigests`, and the drain's bounded wait for
+  a send batch): a new background step takes what the run has left, never a
+  reservation ahead of the digest, and no digest read spans orgs
+  (`DEC-93` §4, `NEDGE-17`). The integrator's fix pass adds the clock
+  margin (`DIGEST_CLOCK_OVERLAP_MS`, five minutes: every window that starts
+  where an earlier one stopped starts that much before it, and the digest's
+  `metadata.tail` keeps what the last one counted there out of the next) and
+  an entry for every org a run served while it left others unvisited.
+  Optional follow-up, unassigned (it needs a migration): a partial index on
+  `notifications (org_id, user_id, created_at) WHERE read_at IS NULL` would
+  make each page of an org's recipient search an index walk (`NEDGE-17`'s
+  residual).*
+- *New, unassigned: `DELIV-16` (a compliance bell row has no retry or outbox)
+  and `NEDGE-19` (an org-level timezone setting; `lib/recordTime.ts`
+  `orgTimeZone` already reads `org_configurations` key `timezone`).*
+- *Paste `20261183` (`email_notifications.queued_by`) any time; no code
+  depends on it.*
+- *Pointer for N9 (from the N6 review, `NEDGE-10`): the two service-role
+  inserts in `app/api/transmittal/route.ts` — :418 (`transmittal_unstamped` /
+  `transmittal_refused`, to the issuer) and :798 (the acknowledgment receipt,
+  `watcher_activity`) — consult no preference, so the master switch the
+  one-click unsubscribe sets does not stop them. Either gate them on the
+  recipient's row (`emailAllowedByPrefs`, read as the service role) or record
+  them as preference-exempt with `DEC-74` §9. Until then the drain leaves the
+  unsubscribe header off the first two and off any mail to a member whose
+  switch is already off, and `/api/notifications/unsubscribe` names them as
+  still arriving. The integrator's fix pass (2026-10-07): the drain does not
+  leave the header off the acknowledgment receipt while the issuer's switch is
+  on — it is `watcher_activity`, a type the switch stops, and no column marks
+  it — so the receipt carries a one-click link the switch does not honour
+  (`NEDGE-10` done-when 1, ◐). Hand-off: the transmittal acknowledgment receipt
+  (`app/api/transmittal/route.ts`, `watcher_activity`) must read the
+  recipient's master switch before queueing (`DEC-90` A10: preference-gated);
+  once it does, `NEDGE-10` done-when 1 holds for it.*
+
 *Opened by N5's second review fix (2026-10-02), not this area's to sequence
 alone: **`NEDGE-15`** — `app/api/tickets/handback/route.ts`'s `emit()` runs
 on the unbound shared client and has never delivered (drafting-flow's route);

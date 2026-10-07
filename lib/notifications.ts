@@ -17,6 +17,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { emailAllowedByPrefs, isMissingEmailGate, isPreferenceExempt } from "@/lib/notificationPrefs";
+import { publicOrigin } from "@/lib/publicOrigin";
 
 export type QueueEmailInput = {
   orgId: string;
@@ -30,8 +31,16 @@ export type QueueEmailInput = {
   eventType: string;
   metadata?: Record<string, unknown>;
   /** Absolute call-to-action URL for the message. Carried on the row as
-   *  metadata.link for the drain's renderer (N6); nothing reads it yet. */
+   *  metadata.link (a record of where the email pointed). */
   link?: string;
+  /** The body as the render layer composed it (lib/emailRender.ts — emit()
+   *  passes it, notifications Round G N6): when present it is what is gated
+   *  (email_gate()'s repeat check compares the stored body, so the gate must
+   *  see what is stored), stored and sent, and the row is marked
+   *  metadata.rendered so the drain does not wrap it a second time. `subject`
+   *  and `bodyText` stay the message as composed (the tests of who gets which
+   *  subject read them). */
+  rendered?: { bodyText: string; bodyHtml: string };
 };
 
 /** Kick the email drain from the browser, authenticated with the current
@@ -62,7 +71,7 @@ async function evaluateEmailGate(input: QueueEmailInput): Promise<GateVerdict> {
     p_event_type: input.eventType,
     p_resource_id: input.resourceId || null,
     p_subject: input.subject,
-    p_body: input.bodyText,
+    p_body: storedBody(input).text,
   });
   if (!error) return data === false ? "suppress" : "send";
   if (isMissingEmailGate(error)) {
@@ -105,12 +114,19 @@ async function legacyEmailGate(input: QueueEmailInput): Promise<GateVerdict> {
       .order("created_at", { ascending: false })
       .limit(1);
     const last = (latest as Array<{ subject?: unknown; body_text?: unknown }> | null)?.[0];
-    if (last && last.subject === input.subject && last.body_text === input.bodyText) return "suppress";
+    if (last && last.subject === input.subject && last.body_text === storedBody(input).text) return "suppress";
   }
   if (isPreferenceExempt(input.eventType)) return "send";
   if (prefsErr) return "unverified";
   if (prefs) return "send";
   return (await callerSeesRecipientRow(input.toUserId)) ? "send" : "unverified";
+}
+
+/** The body the row stores and the drain sends: the render layer's, when
+ *  emit() passed one (N6), else the producer's text and HTML as given. */
+function storedBody(input: QueueEmailInput): { text: string; html: string | null } {
+  if (input.rendered) return { text: input.rendered.bodyText, html: input.rendered.bodyHtml };
+  return { text: input.bodyText, html: input.bodyHtml || null };
 }
 
 /** Whether a caller-side read of `toUserId`'s preferences row would have
@@ -147,15 +163,17 @@ export async function queueEmail(input: QueueEmailInput): Promise<void> {
 
     const metadata: Record<string, unknown> = { ...(input.metadata ?? {}) };
     if (input.link) metadata.link = input.link;
+    if (input.rendered) metadata.rendered = true;
     if (verdict === "unverified") metadata.pref_gate = "unverified";
+    const body = storedBody(input);
 
     const { error: insErr } = await supabase.from("email_notifications").insert({
       org_id: input.orgId,
       to_user_id: input.toUserId,
       to_email: input.toEmail,
       subject: input.subject,
-      body_text: input.bodyText,
-      body_html: input.bodyHtml || null,
+      body_text: body.text,
+      body_html: body.html,
       resource_type: input.resourceType || null,
       resource_id: input.resourceId || null,
       event_type: input.eventType,
@@ -186,8 +204,8 @@ export async function queueEmail(input: QueueEmailInput): Promise<void> {
 
 // shouldSendForEvent moved to lib/notificationPrefs.ts (notifications Round G,
 // N1) with the rest of the preference rule, so queueEmail and email_gate()
-// share one definition, and the compliance digest can import it (NEDGE-9, N6;
-// until it does, the digest reads only email_enabled).
+// share one definition; the compliance digest imports emailAllowedByPrefs
+// from there too (NEDGE-9, N6).
 
 // ─── MENTION PARSING ─────────────────────────────────────────────────────
 // Mentions are stored in comment text as @[Display Name](uuid). This lets
@@ -269,11 +287,14 @@ export async function searchOrgUsers(orgId: string, query: string, limit = 8): P
 
 // ─── HELPER: build action URLs ───────────────────────────────────────────
 
+/** A ticket's URL for a link that leaves the app — on the PUBLIC origin
+ *  (lib/publicOrigin.ts: the configured site, Vercel's production domain, or
+ *  in a browser the page's own), never a preview host read off
+ *  window.location (DELIV-5 dw2 / public-surfaces PHYS-13). A server with no
+ *  origin configured gets the app-relative path, as before; an email body is
+ *  built through lib/emailRender.ts, which refuses that case. */
 export function ticketUrl(ticketId: string): string {
-  if (typeof window !== "undefined") {
-    return `${window.location.origin}/requests/${ticketId}`;
-  }
-  return `/requests/${ticketId}`;
+  return `${publicOrigin()}/requests/${ticketId}`;
 }
 
 // ─── SLA: detect tickets past their target ───────────────────────────────

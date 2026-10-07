@@ -12,18 +12,18 @@
     "audit-reports/notifications/08-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 116,
+    "findings": 119,
     "gaps": 7,
     "by_severity": {
       "CRITICAL": 2,
       "HIGH": 17,
-      "MEDIUM": 76,
-      "LOW": 21
+      "MEDIUM": 77,
+      "LOW": 23
     },
     "by_status": {
       "REFUTED": 3,
-      "RESOLVED": 33,
-      "OPEN": 80
+      "RESOLVED": 43,
+      "OPEN": 73
     }
   },
   "status_vocabulary": [
@@ -97,7 +97,7 @@
       "id": "DELIV-1",
       "title": "Any active org member can insert an arbitrary outbound email — free-text to_email, subject and body — that the drain sends from the org's verified Resend sender",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -148,7 +148,7 @@
       "id": "DELIV-4",
       "title": "The admin \"No failed deliveries\" panel is structurally incapable of ever reporting a failure — email_notifications has RLS on with an INSERT-only policy",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -202,7 +202,7 @@
       "id": "NEDGE-4",
       "title": "Every internal notification email carries a relative href, so the one call-to-action link in the message is dead in every mail client; emails sent through emit() carry no link at all",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -286,7 +286,7 @@
       "id": "NEDGE-14",
       "title": "The ticket comment and workflow-action routes still mail and bell suspended and inactive watchers: their own service-role fan-out has no membership filter",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (read from the two routes at `f1ac550` / `b97e17c`: neither `fanOut` filters its recipients by membership, and neither email lookup has a status predicate)",
       "blast_radius": null,
@@ -309,7 +309,7 @@
       "id": "NEDGE-17",
       "title": "The compliance digest reads one 2,000-row window across every org, unordered: a member's browser-legal compliance rows can push other tenants' overdue items out of their digest",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED. Reproduced on PostgreSQL 16 against `20261160` as it stands on `fleet/N5-dispatch-rails` (below).",
       "blast_radius": null,
@@ -569,7 +569,7 @@
       "id": "DELIV-5",
       "title": "Ticket notification emails carry root-relative links that are dead in any mail client — publicOrigin() exists and is not used; ticketUrl() is referenced only by its own test",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -705,7 +705,7 @@
       "id": "DELIV-11",
       "title": "The maintenance cron reports a clean run when email is unconfigured or when every send in the batch fails — `sent ?? processed` short-circuits on a legitimate zero",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -803,6 +803,36 @@
       "report": "audit-reports/notifications/02-delivery-integrity.md"
     },
     {
+      "id": "DELIV-16",
+      "title": "A compliance notice's bell row has no retry: a refused or failed insert is logged and lost, with no outbox and no dead letter",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED by reading the code at `2de62f1` + N6: `lib/inAppNotifications.ts` `notifyChecked` / `notify()` insert once and answer `false` on a refusal (N6 made the answer visible; nothing retries); `lib/notify/dispatch.ts` `emit()` reports `inapp: { sent, failed }` to its caller and stops; the email channel has a queue (`email_notifications`, attempt_count, the drain's bounded retry) and the bell channel has none.",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/inAppNotifications.ts",
+        "lib/notify/dispatch.ts",
+        "lib/acknowledgments.ts",
+        "lib/reviewControl.ts",
+        "lib/effectiveDate.ts",
+        "lib/retention.ts",
+        "lib/accessRecert.ts",
+        "lib/distributionAcks.ts",
+        "lib/holds.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A revision is published; ackrequested to 12 assignees runs in the publisher's browser while the connection drops. Ten rows land, two do not. The two assignees have no bell row; their email (queued separately) may or may not have gone. The acknowledgment roster still lists them, so the obligation is recorded, but nothing in the notification system will ever tell them until the scan's 3-day re-nag.",
+      "area": "notifications",
+      "report": "audit-reports/notifications/02-delivery-integrity.md"
+    },
+    {
       "id": "NEDGE-6",
       "title": "Notification titles broadcast document numbers and free-text hold reasons to every Admin and DocCtrl and out through Resend, with no ACL consultation anywhere on the notify path — defeating the 'hidden' node visibility the ACL layer implements",
       "severity": "MEDIUM",
@@ -863,7 +893,7 @@
       "id": "NEDGE-9",
       "title": "The compliance digest ignores digest_frequency='never' and every per-category toggle, and re-lists items the recipient has already read",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -996,7 +1026,7 @@
       "id": "NEDGE-15",
       "title": "The drafting handback route's \"deliverable submitted / published\" notice has never been delivered: it calls emit() on the unbound shared client",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED by reading `app/api/tickets/handback/route.ts`. The route imports only `supabaseAdmin` and never wraps the `emit()` call in `runWithServerClient`. The same unbound-client path is driven for another `emit()` caller in `lib/__tests__/orchestratorExecute.test.ts`, which shows the dispatcher stopping at its membership read before any insert.",
       "blast_radius": null,
@@ -2563,7 +2593,7 @@
       "id": "DELIV-8",
       "title": "Suppressed email rows older than 7 days are unrecoverable by design and then purge-eligible — a permanent, silent loss with no record of what was dropped",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "SUSPECTED",
       "verification_note": null,
       "blast_radius": null,
@@ -2633,6 +2663,51 @@
       ],
       "refuted": false,
       "summary": "After 20261161 is pasted, a drafter has 60 workflow alerts for tickets the shed archived. The route never superseded them, because the shed does not fan out. Each page load hides them and tries to mark them, and every mark is refused. The bell's unread read returns the newest 50 rows, all of them moot, so a live \"issue the IFC\" alert below them is not shown.",
+      "area": "notifications",
+      "report": "audit-reports/notifications/08-edges-and-invariants.md"
+    },
+    {
+      "id": "NEDGE-19",
+      "title": "No org-level timezone exists: every server-composed time and the compliance digest are in UTC, labelled, never the plant's own zone",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED by search at `2de62f1` + N6: no `timezone` / `time_zone` column or `org_configurations` key is written anywhere in `app/`, `lib/`, `components/` or `supabase/`.",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/recordTime.ts",
+        "app/api/cron/maintenance/route.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A plant in Houston receives its \"compliance items need you\" digest at 22:00 the evening before, labelled in UTC. Correct and unambiguous, but not the plant's morning and not its clock.",
+      "area": "notifications",
+      "report": "audit-reports/notifications/08-edges-and-invariants.md"
+    },
+    {
+      "id": "NEDGE-20",
+      "title": "A member can queue a forged \"compliance digest\" email row for a colleague whose `metadata.through` silences that colleague's next digests",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED by reading at the N6 merge (N6 integrator fix pass `30bb540`, which reported it as out of scope): the digest reads a recipient's last digest by `org_id`, `to_user_id` and `event_type = 'compliance_digest'` only (`app/api/cron/maintenance/route.ts:1085-1091`), and trusts its `metadata.through` (`digestThrough`, `:893-899`); the `email_notif_insert` policy (`20261047`, `:208-209`) lets any active member of the org queue a row.",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/api/cron/maintenance/route.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A member queues a compliancedigest row addressed to a colleague, with metadata.through set a month ahead. Every digest run until that row is purged starts the colleague's window there and lists nothing, so the colleague's daily summary of overdue acknowledgements and reviews goes silent. The bell itself is unaffected: the notices still show there. The forged row also sends one email to the colleag",
       "area": "notifications",
       "report": "audit-reports/notifications/08-edges-and-invariants.md"
     },

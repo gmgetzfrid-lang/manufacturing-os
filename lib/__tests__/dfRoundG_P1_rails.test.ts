@@ -855,7 +855,9 @@ describe("EDGE-9 — ticket emails carry absolute links", () => {
     process.env.NEXT_PUBLIC_SITE_URL = "https://ops.example.com/";
     expect((await post({ ticketId: "t1", actionType: "submit_draft" })).status).toBe(200);
     const [mail] = insertsOf("email_notifications");
-    expect(hrefs(String(mail.body_html))).toEqual(["https://ops.example.com/requests/t1", "https://ops.example.com/requests/t1"]);
+    // notifications N6 (NEDGE-10): the render layer's footer links the
+    // settings page — absolute on the same origin — after the ticket's links
+    expect(hrefs(String(mail.body_html))).toEqual(["https://ops.example.com/requests/t1", "https://ops.example.com/requests/t1", "https://ops.example.com/settings/notifications"]);
     expect(String(mail.body_text)).toContain("https://ops.example.com/requests/t1");
     // the in-app row stays an in-app (relative) link
     expect(insertsOf("notifications")[0].link).toBe("/requests/t1");
@@ -876,7 +878,8 @@ describe("EDGE-9 — ticket emails carry absolute links", () => {
     const mails = insertsOf("email_notifications");
     expect(mails.length).toBeGreaterThan(0);
     for (const m of mails) {
-      for (const h of hrefs(String(m.body_html))) expect(h).toMatch(/^https:\/\/ops\.example\.com\/requests\/t1\?c=/);
+      // notifications N6 (NEDGE-10): plus the footer's absolute settings link
+      for (const h of hrefs(String(m.body_html))) expect(h).toMatch(/^https:\/\/ops\.example\.com\/(requests\/t1\?c=|settings\/notifications$)/);
       expect(String(m.body_text)).toMatch(/https:\/\/ops\.example\.com\/requests\/t1\?c=/);
     }
     expect(insertsOf("notifications")[0].link).toMatch(/^\/requests\/t1\?c=/);

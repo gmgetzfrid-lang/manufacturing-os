@@ -27,6 +27,7 @@ function client() {
         eq: () => chain,
         lt: (_col: string, v: string) => { call.lt = v; return chain; },
         not: () => chain,
+        is: () => chain,
         in: () => chain,
         then: (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) => {
           db.calls.push(call);
@@ -68,11 +69,13 @@ describe("GOV-4 / GOV-10 — the purge never reaches this month's AI spend ledge
     expect(res.status).toBe(200);
     const sevenDaysAgo = "2026-10-13T12:00:00.000Z";
     expect(cutoffOf("notifications", "delete")).toEqual([sevenDaysAgo]);
-    expect(cutoffOf("email_notifications", "delete")).toEqual([sevenDaysAgo]);
+    // notifications N6 (DELIV-8): delivered and abandoned email are two lines of one table
+    expect(cutoffOf("email_notifications", "delete")).toEqual([sevenDaysAgo, sevenDaysAgo]);
     expect(cutoffOf("ai_usage_events", "count")).toEqual([MONTH_START]);
     expect(cutoffOf("ai_usage_events", "delete")).toEqual([MONTH_START]);
     // the DATA_PURGE audit row names the cutoff each table was purged to
-    const audit = db.calls.find((c) => c.table === "audit_logs" && c.op === "insert")!.payload as { details: { deleted: Array<{ table: string; cutoffIso: string }> } };
+    // (the abandoned-email line writes its own record first — notifications N6)
+    const audit = db.calls.find((c) => c.table === "audit_logs" && c.op === "insert" && (c.payload as { action?: string }).action === "DATA_PURGE")!.payload as { details: { deleted: Array<{ table: string; cutoffIso: string }> } };
     expect(audit.details.deleted.find((d) => d.table === "ai_usage_events")?.cutoffIso).toBe(MONTH_START);
     expect(audit.details.deleted.find((d) => d.table === "notifications")?.cutoffIso).toBe(sevenDaysAgo);
   });

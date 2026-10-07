@@ -5,6 +5,7 @@ import { rowToTicket, escapeHtml } from "@/lib/ticketTransitions";
 import { memberHoldsAny } from "@/lib/roleHeld";
 import { publicOrigin } from "@/lib/publicOrigin";
 import { ticketReadScope } from "@/lib/ticketReadScope";
+import { plainMentions, wrapEmailBody } from "@/lib/emailRender";
 
 // POST /api/tickets/comment
 //
@@ -338,8 +339,23 @@ async function fanOut(params: {
   const snippet = comment.text.length > 140 ? comment.text.slice(0, 137) + "…" : comment.text;
   const mentionSet = new Set(mentions);
 
-  await supabaseAdmin.from("notifications").insert(
-    recipients.map((uid) => ({
+  // NEDGE-14 (notifications Round G, N6): only ACTIVE members of the ticket's
+  // org hear about it — the predicate emit() applies centrally
+  // (lib/notify/recipients.ts activeMembersOf), read here on the service role
+  // together with the addresses. A read that fails keeps today's bell
+  // audience (a transient error never silently drops a notice) and mails no
+  // one (no address was read).
+  const { data: members, error: membersErr } = await supabaseAdmin
+    .from("org_members").select("uid, email").eq("org_id", ticket.orgId).eq("status", "active").in("uid", recipients);
+  if (membersErr) console.warn("[ticket-comment] active-membership read failed — recipients not filtered, no email sent", membersErr.message);
+  const active = membersErr ? null : ((members as Array<{ uid: string; email: string | null }> | null) ?? []);
+  const activeUids = new Set((active ?? []).map((m) => m.uid));
+  const audience = active ? recipients.filter((uid) => activeUids.has(uid)) : recipients;
+  if (audience.length === 0) return;
+
+  // DELIV-7 dw3: a refused insert is logged, never silently dropped.
+  const { error: bellErr } = await supabaseAdmin.from("notifications").insert(
+    audience.map((uid) => ({
       org_id: ticket.orgId,
       user_id: uid,
       kind: mentionSet.has(uid) ? "ticket_mention" : "ticket_comment",
@@ -352,13 +368,15 @@ async function fanOut(params: {
       actor_name: actorName,
     })),
   );
+  if (bellErr) console.error("[ticket-comment] bell rows were not written (comment committed):", bellErr.message);
 
-  const [{ data: members }, { data: prefs }] = await Promise.all([
-    supabaseAdmin.from("org_members").select("uid, email").eq("org_id", ticket.orgId).in("uid", recipients),
+  const [{ data: prefs }, { data: orgRow }] = await Promise.all([
     supabaseAdmin.from("notification_preferences").select("*").in("user_id", recipients),
+    supabaseAdmin.from("orgs").select("name").eq("id", ticket.orgId).maybeSingle(),
   ]);
+  const orgName = ((orgRow as { name?: string | null } | null)?.name ?? null);
   const emailByUid = new Map<string, string>();
-  ((members as Array<{ uid: string; email: string | null }>) ?? []).forEach((m) => {
+  (active ?? []).forEach((m) => {
     if (m.email) emailByUid.set(m.uid, m.email);
   });
   const prefByUid = new Map<string, Record<string, unknown>>();
@@ -372,25 +390,39 @@ async function fanOut(params: {
     return mentionSet.has(uid) ? p.email_on_mention !== false : p.email_on_watched_activity !== false;
   };
 
-  const emailRows = recipients
+  // NEDGE-10 dw2: mention markup reaches the email as names, never as
+  // @[Name](uuid); the render layer adds the footer (lib/emailRender.ts —
+  // the drain then attaches the one-click unsubscribe header).
+  const commentText = plainMentions(comment.text);
+  const composedText = `${actorEmail} commented on ${ticketLabel}:\n\n${commentText}\n\n${emailLink}`;
+  const composedHtml = `
+        <p><b>${escapeHtml(actorEmail)}</b> commented on <a href="${escapeHtml(emailLink)}">${escapeHtml(ticketLabel)}</a>:</p>
+        <blockquote style="border-left:3px solid #cbd5e1;padding-left:12px;color:#475569;white-space:pre-wrap">${escapeHtml(commentText)}</blockquote>
+        <p><a href="${escapeHtml(emailLink)}">Open ticket</a></p>`;
+  let body: { bodyText: string; bodyHtml: string } | null = null;
+  try {
+    body = wrapEmailBody({ text: composedText, html: composedHtml, orgName, origin: emailOrigin });
+  } catch (e) {
+    console.warn("[ticket-comment] email not rendered (queued as composed):", (e as Error).message);
+  }
+
+  const emailRows = audience
     .filter((uid) => emailByUid.has(uid) && wantsEmail(uid))
     .map((uid) => ({
       org_id: ticket.orgId,
       to_user_id: uid,
       to_email: emailByUid.get(uid)!,
       subject: mentionSet.has(uid) ? `You were mentioned: ${ticketLabel}` : `New comment on ${ticketLabel}`,
-      body_text: `${actorEmail} commented on ${ticketLabel}:\n\n${comment.text}\n\n${emailLink}`,
-      body_html: `
-        <p><b>${escapeHtml(actorEmail)}</b> commented on <a href="${escapeHtml(emailLink)}">${escapeHtml(ticketLabel)}</a>:</p>
-        <blockquote style="border-left:3px solid #cbd5e1;padding-left:12px;color:#475569;white-space:pre-wrap">${escapeHtml(comment.text)}</blockquote>
-        <p><a href="${escapeHtml(emailLink)}">Open ticket</a></p>`,
+      body_text: body ? body.bodyText : composedText,
+      body_html: body ? body.bodyHtml : composedHtml,
       resource_type: "ticket",
       resource_id: ticketId,
       event_type: mentionSet.has(uid) ? "comment_mention" : "watcher_activity",
-      metadata: { mention: mentionSet.has(uid), postedBy: actorUid, commentId: comment.id },
+      metadata: { mention: mentionSet.has(uid), postedBy: actorUid, commentId: comment.id, ...(body ? { rendered: true } : {}) },
       status: "queued",
     }));
   if (emailRows.length > 0) {
-    await supabaseAdmin.from("email_notifications").insert(emailRows);
+    const { error: mailErr } = await supabaseAdmin.from("email_notifications").insert(emailRows);
+    if (mailErr) console.error("[ticket-comment] emails were not queued (comment committed):", mailErr.message);
   }
 }

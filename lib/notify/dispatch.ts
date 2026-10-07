@@ -10,6 +10,7 @@
 import { notifyMany, notifyBatchWithReason, type NotificationKind } from "@/lib/inAppNotifications";
 import { queueEmail } from "@/lib/notifications";
 import { supabase } from "@/lib/supabase";
+import { renderNotificationEmail, requireEmailOrigin } from "@/lib/emailRender";
 import {
   activeMembersOf,
   resolveFollowers,
@@ -186,17 +187,40 @@ export async function resolveRecipients(input: EmitInput): Promise<string[]> {
   return activeMembersOf(input.orgId, Array.from(ids));
 }
 
-/** Fan one event out to every enabled channel. Fire-and-forget friendly. */
-export async function emit(input: EmitInput): Promise<void> {
+/** What one emit() reached (DELIV-7 dw4): how many recipients the audience
+ *  resolved to, and — when the bell channel ran — how many bell rows landed
+ *  and how many were refused (notifyMany; each refusal is logged there). */
+export interface EmitResult {
+  recipients: number;
+  inapp?: { sent: number; failed: number };
+}
+
+/** Fan one event out to every enabled channel. Fire-and-forget friendly:
+ *  never throws for a refused row; a caller that needs to know reads the
+ *  result. */
+export async function emit(input: EmitInput): Promise<EmitResult> {
   const recipients = await resolveRecipients(input);
-  if (recipients.length === 0) return;
+  if (recipients.length === 0) {
+    // DELIV-7 dw4: a fan-out that reaches nobody is observable, not silent.
+    console.warn("[notify] emit reached no recipient", {
+      orgId: input.orgId, kind: input.kind, category: input.category,
+      resource: `${input.resource.type}:${input.resource.id}`,
+      audience: {
+        involved: input.audience.involved?.length ?? 0, followers: !!input.audience.followers,
+        roles: input.audience.roles ?? [], projectId: input.audience.projectId ?? null,
+      },
+    });
+    return { recipients: 0 };
+  }
   const channels = input.channels ?? ["inapp", "email"];
+  const result: EmitResult = { recipients: recipients.length };
 
   // 1) In-app bell — reuse the existing fan-out helper (it also drops the actor
   //    and dedupes recipients defensively), or, when the producer asks for it,
-  //    ONE statement for every recipient (inappOneStatement).
+  //    ONE statement for every recipient (inappOneStatement). Either way the
+  //    result says how many bell rows landed (DELIV-7 dw4).
   if (channels.includes("inapp") && input.inappOneStatement) {
-    const { error } = await notifyBatchWithReason(recipients.map((uid) => ({
+    const { landed, error } = await notifyBatchWithReason(recipients.map((uid) => ({
       orgId: input.orgId,
       userId: uid,
       kind: input.kind,
@@ -210,8 +234,9 @@ export async function emit(input: EmitInput): Promise<void> {
       metadata: input.metadata,
     })));
     if (error) console.warn(`[notify] the ${input.kind} notice reached none of its ${recipients.length} recipient(s): ${error}`);
+    result.inapp = { sent: landed, failed: recipients.length - landed };
   } else if (channels.includes("inapp")) {
-    await notifyMany({
+    result.inapp = await notifyMany({
       orgId: input.orgId,
       userIds: recipients,
       actorUserId: input.actorUserId,
@@ -234,6 +259,19 @@ export async function emit(input: EmitInput): Promise<void> {
       ? (input.resource.type as "ticket" | "project" | "document")
       : undefined;
     const named = new Set(input.audience.involved ?? []);
+    // NEDGE-4 / NEDGE-10 (N6): the email carries the event's link, ABSOLUTE
+    // on the public origin, and the footer — rendered once per recipient by
+    // lib/emailRender.ts. No public origin (a server with nothing
+    // configured): the email is still queued, in today's plain form, and the
+    // gap is logged — a dropped notice is worse than one without a button. A
+    // producer's own HTML (email.bodyHtml) is sent as given.
+    let origin: string | null = null;
+    try {
+      origin = requireEmailOrigin();
+    } catch (e) {
+      console.warn(`[notify] ${(e as Error).message} (emit ${input.kind} — queued without a link or footer)`);
+    }
+    const orgName = origin && !input.email?.bodyHtml ? await orgNameFor(input.orgId) : null;
     await Promise.all(
       recipients.map((uid) => {
         const to = emailByUid.get(uid);
@@ -241,6 +279,9 @@ export async function emit(input: EmitInput): Promise<void> {
         // NEDGE-6: the subject is decided per recipient — never the title for
         // someone reached only through a role pool or the follow list.
         const { subject, bodyText } = emailSubjectFor(input, uid, named);
+        const rendered = origin && !input.email?.bodyHtml
+          ? renderNotificationEmail({ subject, body: bodyText, link: input.link, orgName, origin })
+          : null;
         return queueEmail({
           orgId: input.orgId,
           toUserId: uid,
@@ -252,11 +293,31 @@ export async function emit(input: EmitInput): Promise<void> {
           resourceId: input.resource.id,
           eventType: categoryToEventType(input.category),
           metadata: input.metadata,
+          ...(rendered ? { rendered: { bodyText: rendered.bodyText, bodyHtml: rendered.bodyHtml }, link: rendered.link ?? undefined } : {}),
         });
       }),
     );
   }
 
+  return result;
+}
+
+/** The workspace's name for the email's header and footer — read once per
+ *  org and kept for the life of the module (an org rename shows on the next
+ *  load). A read that fails or finds nothing renders "your workspace". */
+const orgNames = new Map<string, string>();
+async function orgNameFor(orgId: string): Promise<string | null> {
+  const hit = orgNames.get(orgId);
+  if (hit) return hit;
+  try {
+    const { data } = await supabase.from("orgs").select("name").eq("id", orgId).maybeSingle();
+    const name = ((data as { name?: unknown } | null)?.name ?? null) as string | null;
+    if (typeof name === "string" && name.trim()) {
+      orgNames.set(orgId, name.trim());
+      return name.trim();
+    }
+  } catch { /* the footer says "your workspace" */ }
+  return null;
 }
 
 /** uid → email lookup for an org, limited to the given recipients who are

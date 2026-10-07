@@ -1,6 +1,6 @@
 # 02 · Delivery integrity
 
-**15 findings** — 5 HIGH · 10 MEDIUM. `DELIV-15` opened by the integrator at the N1 merge, 2026-10-01.
+**16 findings** — 5 HIGH · 11 MEDIUM. `DELIV-15` opened by the integrator at the N1 merge, 2026-10-01; `DELIV-16` by notifications Round G (N6), 2026-10-07.
 
 What gets dropped between an event happening and a person being told — and whether anything notices.
 
@@ -33,7 +33,7 @@ What gets dropped between an event happening and a person being told — and whe
 ## DELIV-1 · Any active org member can insert an arbitrary outbound email — free-text to_email, subject and body — that the drain sends from the org's verified Resend sender
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260605_rls_policies_new_tables.sql:121-124`, `app/api/notifications/send-queued/route.ts:140-153`, `lib/notifications.ts:124-147`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: that is the only policy on the table in any migration (no UPDATE/SELECT/DELETE, no trigger, no CHECK). Partial mitigation worth recording: lib/transmittals.ts:281 already lets ANY active member (app/(protected)/transmittals/page.tsx does no role gating) queue external mail from the same sender via queueExternalEmail, so the delta an attacker gains is full control of body_html/subject rather than the ability to mail outsiders at all. Still HIGH — arbitrary HTML from the org's verified domain, with no audit row.
@@ -73,6 +73,18 @@ CREATE POLICY "email_notif_insert" ON email_notifications
 - [ ] Client INSERT on email_notifications is revoked; all queueing goes through a server route that fixes org_id/to_user_id/to_email from the authenticated session
 - [ ] Or the WITH CHECK additionally requires `to_user_id = auth.uid()` for internal mail and routes external sends through a role-gated server path
 - [ ] Outbound rows record the authenticated actor uid separately from to_user_id so a send can be attributed
+
+**Resolution (2026-10-07, notifications Round G).** Package N6 EMAIL-PIPELINE-AND-CRON. Done-when 1 and 2 are closed by record (the fleet plan's record-only close), verified at `2de62f1`: `20261047` §4 `email_notif_insert` requires an active member, `metadata.external` not true and a recipient address that belongs to a member of the same org (SURF-17); `lib/notifications.ts:182-185` records `queueExternalEmail` removed — external mail is queued server-side only, by `/api/transmittal/send-email`, rendered from the row. Done-when 3 reproduced: `email_notifications` had no column naming who queued a row (`20260529_phase_b_notifications.sql:30-55`, `supabase/schema.sql:666-684`).
+- `supabase/migrations/20261183_notif_roundG_email_attribution.sql` (new): `email_notifications.queued_by UUID` (nullable); `stamp_email_queued_by()` — plpgsql, SECURITY INVOKER (it reads only `auth.uid()`), `search_path` pinned, EXECUTE revoked from PUBLIC, anon and authenticated; `trg_email_queued_by` BEFORE INSERT FOR EACH ROW stamps `auth.uid()` for a signed-in caller whatever the row says, and leaves a service-role / cron row as the server wrote it (NULL today); a partial index on `(queued_by, created_at DESC)`. `queued_by` is immutable to a signed-in updater without re-creating anything: `enforce_email_requeue_columns` (`20261047`, its newest and only definition) compares the whole row but status / attempt_count / updated_at, so it covers a column added later. DEC-30 shape: a counts-only TEMP inventory before `BEGIN`, one final `SELECT (check, ok, n)` with six probes. Not widening. No app code reads or writes the column, so the app works before and after the paste; `lib/schemaExpectations.ts` lists it (additive row), so the Database health card names the file until it is pasted.
+- Exercised on a throwaway PostgreSQL 16 (2026-10-07; roles anon / authenticated / service_role, `auth.uid()` from `request.jwt.claim.sub`, the table from `20260529`, its policies and requeue trigger verbatim from `20261047`): pasted twice (idempotent; six probes true both times); a signed-in member's insert naming an Admin as `queued_by` stored the member; a service-role insert stored NULL; an Admin's requeue still worked; an Admin's update of `queued_by` was refused by the requeue trigger ("A queued message can be re-queued or cancelled, never rewritten."); an address outside the org was still refused by RLS (the trigger fires despite EXECUTE being revoked from authenticated).
+- Tests: `lib/__tests__/maintenanceDrain.test.ts` "20261183 — …" (the one-paste shape, the counts-only inventory, nothing re-created but the new function and trigger, the requeue trigger's newest definition scanned at test time and probed, no app reference to `queued_by`, the schema-health row).
+
+**Done-when.**
+1. ✓ (by record) Client INSERT is confined to an address of the caller's own org and never external; external mail is queued only by the server route that renders from the row — `20261047`, SURF-17.
+2. ✓ (by record) Equivalent of the "or" branch: external sends go through the role-gated server path (`/api/transmittal/send-email`).
+3. ✓ Outbound rows record the authenticated actor separately from `to_user_id` — `queued_by`, stamped by the database, once `20261183` is pasted.
+
+**Scope / residual.** Paste `20261183` (any time; either order with the deploy). Server-queued rows keep `queued_by` NULL: their actor, where they have one, is in their metadata (the comment route's `postedBy`); stamping it from the server would need the routes to pass a column the pre-paste database rejects, so it is not done here.
 
 ---
 
@@ -228,7 +240,7 @@ It evaluates the recipient's row where the row is visible. The rule is the maste
 ## DELIV-4 · The admin "No failed deliveries" panel is structurally incapable of ever reporting a failure — email_notifications has RLS on with an INSERT-only policy
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260605_rls_policies_new_tables.sql:120-124`, `app/(protected)/admin/settings/page.tsx:66-73`, `app/(protected)/admin/settings/page.tsx:87-100`, `app/(protected)/admin/settings/page.tsx:274-276`, `app/api/notifications/send-queued/route.ts:175`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Correct, and worse than stated: the remedy button is dead too — requeueFailed (lines 92-94) issues an UPDATE against a table with no UPDATE policy, so it silently affects zero rows and then re-reads the same blind 0. HIGH is right for a green 'No failed deliveries' badge that is a constant, not a measurement.
@@ -277,6 +289,18 @@ CREATE POLICY "email_notif_insert" ON email_notifications
 - [ ] Both the count read and the requeue write destructure and surface `error` instead of `?? 0`
 - [ ] The green "No failed deliveries" state is only rendered when a read demonstrably succeeded, not when it returned null/0
 
+**Resolution (2026-10-07, notifications Round G).** Package N6 EMAIL-PIPELINE-AND-CRON. Done-when 1 and 2 are closed by record (the fleet plan's record-only close): `supabase/migrations/20261047_rp_phase6_sweep_integrity_rails.sql` §4 — `email_notif_select_own_or_admin` (own rows, or Admin / Manager by collection) and `email_notif_update_admin_requeue` (Admin / Manager) with `trg_email_requeue_columns` (status / attempt_count only), roles-and-permissions SURF-17 / SURF-18; verified against the file at `2de62f1`. Done-when 3 and 4 reproduced on `2de62f1`: `setFailedEmails(dead ?? 0)` with no `error` read, and an `update` whose result was discarded (`admin/settings/page.tsx:69-75, :94-101` on the base); four of the five cases in `lib/__tests__/adminSettingsDeadLetters.test.ts` fail on the base page (the fifth is the regression).
+- `app/(protected)/admin/settings/page.tsx` (:66-130, :300-318): `readDeadLetters` destructures `{ count, error }`; a failed read leaves the count unknown (`null`) and renders "Couldn't read the failed-delivery count (<message>), so it is unknown — not zero." The requeue destructures `error` and reads back the rows it changed (`.select("id")`): an error, zero rows ("the database let this account change none of these rows. Only an Admin or a Manager can requeue failed email.") or "Requeued N emails; they send on the next drain." — the drain is kicked only when rows changed — and the count is re-read. The green "No failed deliveries" renders only for a count of 0 from a read that succeeded. The panel states that only an Admin or a Manager can requeue (the update policy). The requeue's update prefix — `.update({ status: "queued", attempt_count: 0 }).eq("org_id", activeOrgId).eq("status", "failed").gte("attempt_count", 5)` — is unchanged (pinned by `restoreApplyRoute.test.ts`); a read-back, `.select("id")`, is appended to it (corrected by the N6 fix pass: the first landing called the chain "byte-identical").
+- Tests: `lib/__tests__/adminSettingsDeadLetters.test.ts` (rendered, jsdom): a failed read is unknown, not green; REGRESSION: a read of 0 is green; a requeue that changes nothing says so; a requeue reports its count, kicks the drain and re-reads; a refused requeue shows the database's message.
+
+**Done-when.**
+1. ✓ (by record) A SELECT policy restricted to the recipient or an org Admin / Manager — `20261047`.
+2. ✓ (by record for the policy; this package for the read-back) Requeue flips rows under `email_notif_update_admin_requeue`, and the page reads back and shows the affected-row count.
+3. ✓ The count read and the requeue write destructure and surface `error`.
+4. ✓ The green state renders only after a read that demonstrably succeeded.
+
+**Scope / residual.** On a database where `20261047` was never pasted, RLS still hides the rows and a read "succeeds" with 0 (the verifier's caveat); the Database health card on the same page names that migration. The page itself stays Admin-only (DEC-17), so "who can requeue" is written for its readers.
+
 ---
 
 <a id="deliv-5"></a>
@@ -284,7 +308,7 @@ CREATE POLICY "email_notif_insert" ON email_notifications
 ## DELIV-5 · Ticket notification emails carry root-relative links that are dead in any mail client — publicOrigin() exists and is not used; ticketUrl() is referenced only by its own test
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/tickets/comment/route.ts:264`, `app/api/tickets/comment/route.ts:310-317`, `app/api/tickets/workflow-action/route.ts:313`, `app/api/tickets/workflow-action/route.ts:387-393`, `lib/publicOrigin.ts:18-22`, `lib/notifications.ts:248-253`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Factually exact — every ticket email ships a root-relative href that cannot resolve in a mail client. Downgraded to MEDIUM: the mail still carries the actor, the ticket label and the comment/status text, and the recipient reaches the ticket by opening the app; there is no data loss or security consequence, only a broken call-to-action.
@@ -322,6 +346,18 @@ export function publicOrigin(): string {
 - [ ] Every email body composed server-side prefixes publicOrigin() (or an explicit absolute base) on links
 - [ ] ticketUrl() is made absolute via publicOrigin() and its test updated, or it is deleted as dead
 - [ ] A test asserts outbound body_html contains no href starting with a bare '/'
+
+**Resolution (2026-10-07, notifications Round G).** Package N6 EMAIL-PIPELINE-AND-CRON, with `NEDGE-4` (same mechanism, recorded there in full). Reproduced on `2de62f1`: the two ticket templates were already absolute (drafting-flow `EDGE-9`, DF-P1); `ticketUrl()` still read `window.location.origin` and fell back to a relative path (`lib/notifications.ts:272-277` on the base), and `emit()` emails carried no link at all.
+- `lib/notifications.ts` `ticketUrl()` (:296): `${publicOrigin()}/requests/<id>` — the configured site, Vercel's production domain, or in a browser the page's own origin; never `window.location.origin` read directly. On a server with nothing configured it is the app-relative path, as before (it has no caller; an email body goes through `lib/emailRender.ts`, which refuses that case).
+- `emit()` emails, the digest and the ticket templates render through `lib/emailRender.ts` (`NEDGE-4`).
+- Tests: `lib/__tests__/emailRender.test.ts` ("ticketUrl() is built on publicOrigin()", "no href … starts with a bare '/'"); the old `lib/__tests__/notificationsLib.test.ts` "falls back to an app-relative path with no window" still passes unchanged (no origin configured in that test).
+
+**Done-when.**
+1. ✓ Every email body composed server-side builds its links on the public origin: the ticket routes (EDGE-9 + the render layer), the digest, and `emit()` run on the server (the handback, the cron, the intake door). The transmittal route's two internal emails carry no link.
+2. ✓ `ticketUrl()` is built on `publicOrigin()`; its test (`emailRender.test.ts`) covers the configured and the Vercel-production cases.
+3. ✓ Tests assert outbound `body_html` contains no href starting with a bare '/'.
+
+**Scope / residual.** None in this finding. public-surfaces `PHYS-13`'s `ticketUrl` site is closed by the same change (recorded there).
 
 ---
 
@@ -400,6 +436,7 @@ CREATE POLICY notifications_org_insert ON notifications FOR INSERT WITH CHECK (
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** notifications N14 RAW-INSERT TAIL — by the integrator, 2026-10-07, at the N6 merge (DEC-31), as N6's Scope / residual names: the remaining callers of done-when 1 and the raw inserts of done-when 3.
 - **Verification:** CONFIRMED
 - **Locations:** `lib/inAppNotifications.ts:79-98`, `lib/notify/dispatch.ts:83-84`, `app/api/cron/maintenance/route.ts:355-356`, `app/api/cron/maintenance/route.ts:423-437`, `app/api/tickets/comment/route.ts:268-281`, `lib/projects.ts:1116-1118`, `lib/postPublish.ts:171-183`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The substance holds — no notification write anywhere retries, and repo-wide there is no dead-letter path for them. Two citations are off: maintenance/route.ts:355-356 actually DOES check (`const { error: insErr } = …; if (!insErr) escalated += 1;`), it just never surfaces the failure into result.errors; and lib/notify/dispatch.ts:83-84 is `resolveRecipients`/empty-guard, not an error swallow (the swallowing is one level down in notify()). MEDIUM is right.
@@ -450,6 +487,22 @@ export async function notify(input: NotificationInput): Promise<void> {
 - [ ] Every server-side notifications/email_notifications insert destructures `error`; the cron pushes failures into result.errors instead of gating counters on them
 - [ ] emit() logs/returns when the audience resolves empty so a silent zero-recipient fan-out is observable
 
+**Partial (2026-10-07, notifications Round G).** Package N6 EMAIL-PIPELINE-AND-CRON. Reproduced on `2de62f1`: `notify()` resolved `void` (`lib/inAppNotifications.ts:92`), `notifyMany` `void`; the ticket routes' bell and email inserts had no `error` (`comment/route.ts:341, :394`, `workflow-action/route.ts:1041, :1092, :1159` on the base); the escalation gated a counter on `insErr` and the digest counted an unchecked insert (`maintenance/route.ts:553-554, :621-635`); `emit()` returned silently on an empty audience (`dispatch.ts:180`).
+- `lib/inAppNotifications.ts`: `notify()` returns `Promise<boolean>` (whether its row landed; still logs and never throws — a failed signal never rolls back the action it reports); `notifyMany` returns `{ sent, failed }`. `lib/distributionAcks.ts:371` widens its thunk type to `() => Promise<unknown>` so it compiles (one token; its behaviour is unchanged — filesOutsidePlan).
+- `lib/notify/dispatch.ts` `emit()` returns `EmitResult { recipients, inapp?: { sent, failed } }`; an audience that resolves to nobody logs a structured warning (`[notify] emit reached no recipient`, with org, kind, category, resource and audience shape) and returns `{ recipients: 0 }`.
+- The cron's two `emit()` calls read that result (N6 fix pass 2 — the first landing discarded it with `.then(() => undefined)`, which this record then overstated): `emitShortfall` (`app/api/cron/maintenance/route.ts` :801) names an audience of nobody, or refused bell rows. The review-health nudge (:263-:282) throws on a shortfall, so `nudgeReviewHealth` counts that org as not nudged, and the line names the org and why; the folded intake digest's email leg (:304) — whose bell rows `deliverFoldedDigest` already checks — adds a line when its email reached nobody. `emit()` reports no per-email outcome, so the email leg is judged by its audience alone.
+- `app/api/tickets/comment/route.ts` / `workflow-action/route.ts` fan-out: each bell and email insert destructures `error` and logs it; the comment / transition still answers as it did.
+- `app/api/cron/maintenance/route.ts`: the escalation pushes a refused insert (and a failed read) into `result.errors` and does not count it; the digest checks its insert, reports a refusal and counts only what landed. (The escalation's raw insert itself stays for notifications N14, TAX-11's tail.)
+- Tests: `lib/__tests__/n6TicketFanout.test.ts` (`notify()` true / false, `notifyMany` counts, `emit()`'s empty-audience result and warning, the routes' logged refusals), `lib/__tests__/maintenanceDrain.test.ts` (the escalation's and the digest's reported failures); `lib/__tests__/orchestratorExecute.test.ts` now expects `{ recipients: 0 }` from the unbound `emit()`.
+
+**Done-when.**
+1. ◐ `notify()` reports failure to its caller (boolean) — ✓. "Callers that carry a regulatory obligation surface it": `emit()` returns its reach; the cron surfaces what it writes itself — the escalation's and the digest's inserts, and (fix pass 2) its two `emit()` calls' results. Corrected by the N6 fix pass 2: this line said "`emit()` and the cron do", but the cron discarded both `emit()` results until then. Not done: the step-6 compliance scans the cron runs write their notices inside their own files and ignore the answer — `notify()` in `lib/reviewCycles.ts`, `lib/acknowledgments.ts`, `lib/reviewControl.ts`, `lib/effectiveDate.ts`, `lib/retention.ts`, `lib/accessRecert.ts` and `lib/distributionAcks.ts`, `emit()` in `lib/distributionAcks.ts` and `lib/holds.ts` (each scan returns a count the cron adds up) — as do the other direct `notify()` producers; files other packages own.
+2. ✗ Compliance-critical kinds are neither inserted transactionally with their action nor queued in a retryable outbox. Opened as `DELIV-16` (DEC-31).
+3. ◐ Every insert in this package's files destructures `error` (the two ticket routes, the cron's escalation and digest) and the cron pushes failures into `result.errors` — ✓. Not done: the raw inserts in `app/api/transmittal/route.ts:783` (`ack_complete`, unchecked), `lib/projects.ts:2078` and `app/api/ai/usage/route.ts:639` (files other packages own).
+4. ✓ `emit()` logs and returns when the audience resolves empty.
+
+**Scope / residual.** Owners: done-when 1's remaining callers — the step-6 scans' `notify()` / `emit()` calls listed above and the other producers — and done-when 3's raw inserts → notifications N14 RAW-INSERT TAIL (the plan's wave E package for the raw inserts; it converts them to `notify()`, whose answer they can then surface). The cron's own stale-checkout escalation (`checkout_released`, a raw insert whose failures this package now reports) is N14's to route through `notify()` too (`99-fix-sequencing.md` hand-off). Done-when 2 → `DELIV-16` (notifications N14, assigned by the integrator at the N6 merge).
+
 ---
 
 <a id="deliv-8"></a>
@@ -457,7 +510,7 @@ export async function notify(input: NotificationInput): Promise<void> {
 ## DELIV-8 · Suppressed email rows older than 7 days are unrecoverable by design and then purge-eligible — a permanent, silent loss with no record of what was dropped
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `app/api/notifications/send-queued/route.ts:85-94`, `app/api/admin/purge/route.ts:70`, `app/api/admin/purge/route.ts:161`, `supabase/migrations/20260529_phase_b_notifications.sql:47-48`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Accurate as written, but repo-wide grep shows NO current code path ever writes status 'suppressed' (only the recovery filter, the purge filter and the type union in types/schema.ts:1071 mention it) — the current route explicitly defers instead (lines 65-83). So the loss can only touch rows created by a build that no longer exists in this repo; the live defect is the purge misclassifying an undelivered state as delivered. LOW.
@@ -495,6 +548,20 @@ export async function notify(input: NotificationInput): Promise<void> {
 - [ ] Aging out a suppressed row is an explicit, audited decision (an admin-visible list of what will be abandoned) rather than a silent time cutoff
 - [ ] Suppressed rows are excluded from purge, or purged only after being reported
 - [ ] Dedupe watermarks used by the compliance scans are stored somewhere purge does not reach
+
+**Resolution (2026-10-07, notifications Round G).** Package N6 EMAIL-PIPELINE-AND-CRON. Reproduced on `2de62f1`: the purge classified `suppressed` with `sent` as delivered (`app/api/admin/purge/route.ts:42, :85, :178` on the base) and deleted read notification rows whatever their metadata.
+- `app/api/admin/purge/route.ts`: `email_notifications` is two lines of the plan, each with its own key. "Delivered email queue rows" (`email_notifications_sent`, :60) is `status = 'sent'` only. "Abandoned email queue rows (never sent)" (`email_notifications_suppressed`, :66) is `status = 'suppressed'`: its reason says they were never delivered and will never be sent, and, when there are any, names them — "These are: 1 comment_mention, 1 watcher_activity queued 2026-01-01 to 2026-01-05 (UTC)." — which the storage page shows on the line (its `title`). The plan's default: report-then-purge in the same plan UI; no separate abandon action.
+- The breakdown is exact whatever the volume (`abandonedDetail`, :157 — N6 fix pass; the first landing read `event_type, created_at` in one unordered, unbounded select, which the API's row cap (PostgREST max-rows, 1,000 by default) truncated while the line's head count stayed exact, so an org with 4,000 abandoned rows was shown kinds and dates from an arbitrary 1,000): the kinds are walked one at a time (the next `event_type` above the last, one row each, at most 50 kinds) and each is a head count; rows with no kind are one head count ("unknown"); the oldest and newest are two ordered one-row reads. Any read that fails leaves the breakdown out and the line's exact count speaks alone.
+- Audit-first, and checked (N6 fix pass; the first landing wrote the only record after the delete and dropped its error): before the abandoned line is deleted, an audit row of its own — `DATA_PURGE_ABANDONED_EMAIL` (:322), with the cutoff, the exact count and the breakdown — is inserted and its `error` read; if it is refused, that line is not deleted and the answer says "not purged — the record of what it holds could not be written first". The closing `DATA_PURGE` row's `error` is now read too; a refusal or failure is logged and returned as `auditError` (the deletes have happened; it is never a silent success). A `tables` subset selects lines by key, one line per name (N6 fix pass 2 — the first landing keyed the delivered line by the bare table name and let a table name select every line of its table, so a client keying lines by the plan's `table`, as the storage page does, could not pick "Delivered email" without also purging the abandoned mail it never selected). The bare `email_notifications` an older client may send selects the delivered line alone (`LEGACY_TARGET_NAMES`, :84, listed in the GET plan as `legacyTableNames`); the abandoned line is purged only when named by its own key or when no subset is given (the storage page sends none). `failed` and `queued` rows are never purge targets (unchanged). The drain's 7-day recovery bound is unchanged.
+- Done-when 3: a read notification row that carries one of the server's dedupe watermarks — the metadata keys and kinds `20261160`'s `enforce_notification_insert()` refuses from browsers (`staleSessionId`, `staleHoldId`, `reviewHealthDay`, `ackEscalation`; `transmittal_unstampable` and the storage kinds) — is never purged (`floorOf`, :128-137), so a purge cannot re-arm a stale-checkout escalation, an aging-hold nudge or an unstampable-transmittal notice. The lists are pinned to the NEWEST definition of that function, scanned at test time.
+- Tests: `lib/__tests__/maintenanceDrain.test.ts` "DELIV-8 — …" (the two lines and the breakdown; the purge deletes sent and abandoned rows only, keeps the watermark rows, and the abandoned record is in the audit log at the moment that line's delete runs; no record, no delete, and a refused `DATA_PURGE` row reported as `auditError`; the breakdown exact over 2,500 rows under a 1,000-row API cap; each `tables` name selecting one line — the delivered key leaves the abandoned rows and writes no abandoned record, the bare table name selects the delivered line alone, an unknown name selects nothing, the plan lists the alias (fix pass 2, fails on `3f1bca0`); the lists pinned); `lib/__tests__/purgeLedgerFloor.test.ts` (email purged as two lines; the ledger floor unchanged; it now picks the `DATA_PURGE` row by its action). `lib/__tests__/notificationWriteRails.test.ts`'s server-writer census excludes the purge route, which names those kinds only to keep them.
+
+**Done-when.**
+1. ✓ Aging out a suppressed row is an explicit, audited decision: its own line in the purge plan, with an exact count, kinds and dates, before the confirm; a `DATA_PURGE_ABANDONED_EMAIL` row records it before the delete (no record, no delete), and the `DATA_PURGE` row records the purge, its failure reported.
+2. ✓ Suppressed rows are purged only after being reported (the plan the page confirms counts them on their own line).
+3. ✓ The dedupe watermarks the compliance scans read are kept out of the purge's reach.
+
+**Scope / residual.** The storage page (`app/(protected)/admin/storage/page.tsx`, admin-and-org P6's) renders the new line from the existing `targets` fields; the per-kind breakdown is in its reason text, and the key it prints under each label now reads `email_notifications_sent` for the delivered line (it keys rows by `table` and sends no subset, so nothing else changes for it). Read rows of the 7-day storage watermarks are kept too (they share the list); the volume is one row per controller per week.
 
 ---
 
@@ -632,7 +699,7 @@ The pre-paste fallback reads the same key: the latest row's subject and `body_te
 ## DELIV-11 · The maintenance cron reports a clean run when email is unconfigured or when every send in the batch fails — `sent ?? processed` short-circuits on a legitimate zero
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/cron/maintenance/route.ts:103-117`, `app/api/cron/maintenance/route.ts:204-214`, `app/api/notifications/send-queued/route.ts:70-83`, `app/api/notifications/send-queued/route.ts:186`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Correct — `notificationsDrained: 0, errors: []` is byte-identical for 'queue empty', 'all sends failed' and 'RESEND_API_KEY unset', and the `configured:false`/`failed` fields the route does return are never read. The identical bug sits in the 6c re-drain at line 212. MEDIUM stands.
@@ -675,6 +742,20 @@ The pre-paste fallback reads the same key: the latest row's subject and `body_te
 - [ ] A batch where `failed > 0` pushes an error naming the count and a sample error_message
 - [ ] The second drain pass reports rather than swallowing
 - [ ] A run where the queue was non-empty and nothing sent is textually distinguishable from an empty-queue run
+
+**Resolution (2026-10-07, notifications Round G).** Package N6 EMAIL-PIPELINE-AND-CRON. Reproduced on `2de62f1`: `const batch = body?.sent ?? body?.processed ?? 0` (`maintenance/route.ts:155` on the base) and the second pass's `catch { /* the daily drain will catch up */ }`; all five DELIV-11 cases in `lib/__tests__/maintenanceDrain.test.ts` fail on the base route.
+- `app/api/cron/maintenance/route.ts` `drainEmailQueue` (:593), used by step 2 (:173) and the second pass 6c (:434): `processed` decides continuation (0 = the queue is empty, `queueEmpty: true`); `configured: false` stops, sets `configured` / `deferred` and adds "email is not configured (RESEND_API_KEY is not set) — N email(s) left queued, none sent"; failed sends add "F of A send attempt(s) failed — e.g. <provider message>"; a batch that sent nothing stops the loop (another batch would claim the same rows again and spend their attempts inside one run — the verifier's note, kept). The result carries `emailDrain` / `emailDrainAfterDigest` `{ batches, attempted, sent, failed, configured, deferred, queueEmpty, outOfTime?, unanswered? }`; `notificationsDrained` stays the number sent. Every line is also logged (the platform's cron log shows console output). With email unconfigured the second pass is skipped rather than repeating step 2's line.
+- Time (N6 fix pass 2; the wait bounded in fix pass 3). Each drain has a limit: step 2 starts no batch after 120 s of the run, the second pass none after the run's end (`DRAIN_BATCH_MS`, :765 — a batch starts only with that much of the limit left), and a drain that stops for time says so (`outOfTime`). **Fix pass 3 (the third review's minor):** that limit was an assumption about how long a batch takes, not a bound — the cron's `fetch` to `send-queued` had no timeout, so a batch whose provider call never answered held the cron until the platform killed it at 300 s, before the compliance digest ran. Now the cron waits for a batch no later than the drain's limit (`AbortSignal.timeout(max(1 s, stopBy − now))`, :604-:605); a batch that has not answered by then is reported — "a batch did not answer within the drain's limit (N s) — the cron stopped waiting for it; its rows stay 'sending' until it finishes, or the drain's 15-minute reclaim re-queues them" — and flagged `unanswered` (:620). Stopping the wait does not stop the batch, so nothing is sent twice by this change.
+- `app/api/notifications/send-queued/route.ts`: the answer carries `errorSample` (the first provider message, 200 characters) when a send failed. The CAS claim, the 15-minute orphan reclaim, the deferral and the 7-day `suppressed` recovery are unchanged (pinned).
+- Tests: `lib/__tests__/maintenanceDrain.test.ts` — `{processed:100, sent:0, failed:100}` reported and the loop stopped; `configured:false` surfaced; an empty queue distinct; partial failure totals; the second pass reports; the CAS / recovery pins; REGRESSION: unconfigured email defers the backlog untouched. Fix pass 2: step 2 stops starting 40-second batches after three and says so. Fix pass 3 (each fails on `053e9c1`, where the first times out waiting): a batch that never answers — the cron stops waiting at step 2's limit (120 s; the second pass's wait is the run's end, 290 s), says so, and the digest and the second drain still run; every `send-queued` fetch carries the wait's signal (by source).
+
+**Done-when.**
+1. ✓ The loop reads `processed` for continuation and surfaces `configured: false` / `deferred` as result fields plus an error entry.
+2. ✓ A batch with `failed > 0` pushes an error naming the count and a sample `error_message`.
+3. ✓ The second drain pass reports instead of swallowing.
+4. ✓ A non-empty-queue run that sent nothing is textually distinct from an empty-queue run (`queueEmpty`, `attempted`, `failed`, the error line).
+
+**Scope / residual.** The provider calls inside `app/api/notifications/send-queued/route.ts` have no timeout of their own (left so in fix pass 3): an aborted Resend call may already have been delivered, and counting it failed would re-queue it for a second send. A hung call holds that function, never the cron, whose wait is bounded; the batch's rows are re-queued by the 15-minute reclaim if the function is killed.
 
 ---
 
@@ -881,5 +962,29 @@ export type NotifChannel = "inapp" | "email";
 **Closer:** notifications N9 (assigned at the N1 merge, 2026-10-01).
 
 **Integrator note (2026-10-07, DEC-90 A10).** *Ratified by the integrator under the user's delegation, 2026-10-07 (DEC-90): a safety-critical alert must not be suppressible by a convenience preference (OSHA 1910.119(l)(3): affected employees are informed of a change before start-up), so drawing recalls and PSM alerts stay non-suppressible and GAP-203 acceptance 2 reads "…from any path, except drawing recalls and PSM alerts".* For N9, the recommended answer to done-when 2: exempt the issuer's unstamped / refused-PDF notice too (`transmittal_unstamped` / `transmittal_refused` — a controlled-copy integrity event, like a recall), so it joins `PREFERENCE_EXEMPT_EVENT_TYPES` and `email_gate()`'s list together and the settings page names it beside recalls and safety notices. The receipt email (`watcher_activity`) stays preference-gated (done-when 1). Status stays OPEN for N9.
+
+---
+
+<a id="deliv-16"></a>
+
+## DELIV-16 · A compliance notice's bell row has no retry: a refused or failed insert is logged and lost, with no outbox and no dead letter
+
+- **Severity:** MEDIUM
+- **Status:** OPEN
+- **Assigned:** notifications N14 RAW-INSERT TAIL — by the integrator, 2026-10-07, at the N6 merge (DEC-31). Opened 2026-10-07 by notifications Round G (N6 EMAIL-PIPELINE-AND-CRON) as the remainder of `DELIV-7` done-when 2.
+- **Verification:** CONFIRMED by reading the code at `2de62f1` + N6: `lib/inAppNotifications.ts` `notifyChecked` / `notify()` insert once and answer `false` on a refusal (N6 made the answer visible; nothing retries); `lib/notify/dispatch.ts` `emit()` reports `inapp: { sent, failed }` to its caller and stops; the email channel has a queue (`email_notifications`, attempt_count, the drain's bounded retry) and the bell channel has none.
+- **Locations:** `lib/inAppNotifications.ts` (`notifyChecked`, `notify`, `notifyMany`), `lib/notify/dispatch.ts` (`emit` → `notifyMany`), the compliance producers (`lib/acknowledgments.ts`, `lib/reviewControl.ts`, `lib/effectiveDate.ts`, `lib/retention.ts`, `lib/accessRecert.ts`, `lib/distributionAcks.ts`, `lib/holds.ts`)
+- **Independently verified:** opened 2026-10-07 by N6; not yet challenged by a second party.
+
+**Mechanism.** `DELIV-7` done-when 2 asks that compliance-critical kinds (`ack_*`, `review_*`, `effective_now`, `legal_hold_*`) be inserted transactionally with the action they attest to, or land in a retryable outbox like `email_notifications`. Neither exists. A bell-row insert that fails (a transient connection error, a cap of `20261160`, an RLS change) is logged by `notify()` and returned as `false`; the producer's action has already committed (by design — a signal never rolls back a publish), so nothing will ever write that row again. The daily scans re-nag some obligations (an unacknowledged revision, an overdue review) on their next run; a one-shot notice (`ack_requested` at publish, `legal_hold_placed`, `effective_now`) has no second chance.
+
+**Failure scenario.** A revision is published; `ack_requested` to 12 assignees runs in the publisher's browser while the connection drops. Ten rows land, two do not. The two assignees have no bell row; their email (queued separately) may or may not have gone. The acknowledgment roster still lists them, so the obligation is recorded, but nothing in the notification system will ever tell them until the scan's 3-day re-nag.
+
+**Done when.**
+
+- [ ] A compliance-kind bell row that fails to land is retried (an outbox row the cron drains, or a server-side write the producer awaits and reports), or is written in the same transaction as the action it reports.
+- [ ] A test fails a compliance insert once and shows the row lands on the retry.
+
+**Closer:** notifications N14 RAW-INSERT TAIL.
 
 ---
