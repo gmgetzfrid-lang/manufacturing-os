@@ -410,6 +410,8 @@ app/api/data-export/destinations/route.ts:83 `if (body.bucket) {` … :88 `const
 
 *Cross-note (2026-10-02, admin-and-org Round G, P3 sixth review fix pass):* comparing the bucket's name alone let a workspace off Growth keep the name and point an enabled bucket destination at another store: a new endpoint, region or type (r2 to s3). PATCH now runs the shared gate when any of `destination_type`, `endpoint`, `region` or `bucket` changes on a row that pushes to a bucket (s3 or r2 with a bucket, after the change). A region the row does not store compares as the region the push uses (`lib/exportRunner.ts S3_DEFAULT_REGION`). So the edit form's unchanged save still passes, and enabling is gated as before. The cases are pinned in `lib/__tests__/dataExportRoutes.test.ts`, "sixth review fix — moving a bucket push to another store …" (see `BKP-13`'s sixth-pass block).
 
+*Cross-note (2026-10-02, admin-and-org Round G, P4 — `BILL-3`'s create-form wart):* POST (`app/api/data-export/destinations/route.ts:100-104`) runs the shared gate only for a row that pushes to a bucket: s3 / r2 with a bucket (`lib/exportRunner.ts pushesToBucket`), the rule PATCH, Run Now and the sweep already share. A webhook created with a bucket name left over from before the type was switched is neither gated nor stores the name, and the page's create form no longer sends it. This finding's create test (an s3 row, 402) is unchanged and green. The "type-blind" PATCH test (a bucket PATCHed onto a webhook-typed row) is P3's PATCH rule and untouched. The new cases are pinned in `lib/__tests__/dataExportRoutes.test.ts`, "A&O P4 (BILL-3 Scope / residual…)".
+
 ---
 
 <a id="xedge-9"></a>
@@ -673,5 +675,10 @@ app/api/stripe/webhook/route.ts:56 `const plan = (sub.metadata?.plan as string) 
 - [x] a test replays a subscription.updated event whose metadata lacks `plan` and asserts subscribed_plan is untouched ✓.
 
 **Scope / residual.** The map is env configuration the deployment must supply (`STRIPE_PRICE_*` for every sold price — checkout already requires it). A workspace whose plan was nulled by the old code stays null until its next subscription event.
+
+*Cross-note (2026-10-02, admin-and-org Round G, P4 — `BILL-1` / `BILL-3`):* built on, not undone. `planFromSubscription` and `PRICE_ID_ENV_TO_PLAN` are unchanged, and so are this finding's three tests (`lib/__tests__/dcRoundFExportContract.test.ts`, green). The `...(plan ? { subscribed_plan: plan } : {})` line its source pin reads is kept. Three things change around it:
+- the resolved plan is written only on a status that pays for it: `active`, `trialing` or `past_due` (`app/api/stripe/webhook/route.ts:175`);
+- `customer.subscription.deleted` now clears the plan (`BILL-3` Done-when 2);
+- the audit row's `plan` is what was written; a plan resolved but withheld is recorded as `plan_withheld`.
 
 ---

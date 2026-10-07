@@ -117,3 +117,18 @@ narrowed too.
   2. **P7** takes the registry and viewer notes (P3 handoff 2 and fix-pass-8 item 2), as a `dependsOn` line. `BKP-6` is not P7's.
   3. **P4** takes `BILL-3`'s create-form wart (fix-pass-8 item 1), as a `dependsOn` line beside `DEC-87` §2's machine-row convention.
   4. `DEC-44 (A&O P3)` was renumbered `DEC-87`, and every mention moved with it. `20261172` is row 127 of `MIGRATION-PASTE-ORDER.md`.
+- *2026-10-02 (admin-and-org Round G, P4) — two pastes; five notes for the integrator.*
+  1. **Paste `supabase/migrations/20261175_ao_roundG_stripe_events_ledger.sql` and `supabase/migrations/20261176_ao_roundG_orgs_billing_columns_guard.sql`** (`DEC-30`, one paste each, idempotent).
+     - *Order.* Either order with P4's deploy, and either order with each other.
+     - *Before `20261175`.* The new webhook applies every event as the old one did, without the duplicate and ordering guards, and says so in the log and on each audit row (`details.ledger: "absent"`).
+     - *Before `20261176`.* An Admin can still write the billing columns.
+     - *What to check.* Every probe true. `20261175`'s unique-index probe is false only in the world where two workspaces already share a Stripe customer: its rows count them. Clear the stray `stripe_customer_id`, then paste again. `20261176`'s two self-test rows are true (NULL on a database with no workspace). Its inventory counts, never rewrites, three shapes: "active" with no subscription id, a trial with no end, a canceled workspace still carrying a plan.
+     - *Rollback.* In each file's header.
+  2. **For the user (`DEC-44 (A&O P4)` §2):** Stripe reconciliation (`BILL-2` Done-when 3) is WONTFIX for now, with the user as owner. `BILL-2` is RESOLVED for its other two criteria.
+  3. **For A&O P5.**
+     - *SURF-19's stripe limb.* `ADMIN_ROLES` in `app/api/stripe/{checkout,portal}/route.ts` is untouched. P4 added `liveSubscriptionRefusal` (checkout) and `customerOwnershipRefusal` (portal) after the gate line; P5 replaces only the gate line.
+     - *ORG-9.* Done-when 3 (the enforcement half) stays OPEN for P5 (`BILL-10`).
+  4. **For P7 (`ALOG-7` / `ALOG-11`).**
+     - The webhook's rows are machine rows (`user_id` NULL, `user_email` `system:stripe-webhook`, `user_role` `system`); `ALOG-7`'s trigger must leave a service-role insert's `user_id` NULL (`DEC-87` §3).
+     - Actions for the registry: `STRIPE_CUSTOMER_SUBSCRIPTION_CREATED`, `STRIPE_CUSTOMER_SUBSCRIPTION_UPDATED`, `STRIPE_CUSTOMER_SUBSCRIPTION_DELETED`, `STRIPE_INVOICE_PAYMENT_SUCCEEDED` (new), `STRIPE_INVOICE_PAYMENT_FAILED`, and `STRIPE_CHECKOUT_CREATED` (a person's row).
+  5. **Files P4 touched beyond its plan entry:** `app/api/data-export/destinations/route.ts` and `app/(protected)/admin/data-export/page.tsx` (the create-form wart the integrator routed to P4); `lib/schemaExpectations.ts` and `lib/exportTables.ts` (one row each, for the new table, which the table tripwires require).
