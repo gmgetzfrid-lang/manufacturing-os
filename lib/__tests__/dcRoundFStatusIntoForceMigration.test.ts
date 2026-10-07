@@ -217,7 +217,9 @@ describe("20261185 — the guard re-created from its NEWEST earlier body (found 
     expect(body.replace(/'(?:[^']|'')*'/g, "''")).not.toMatch(/\bUPDATE\s+documents\b|\bINSERT\s+INTO\b|\bDELETE\s+FROM\b/i);
   });
 
-  it("the flag in the whole sequence is still SET only by 20261151, 20261164 and 20261165 — this file only reads it", () => {
+  // REV-29 (document-control P25): 20261192 re-creates 20261165's and
+  // 20261164's doors (the same flag set the same way) to accept a NULL status.
+  it("the flag in the whole sequence is still SET only by 20261151, 20261164 and 20261165 (and 20261192, which re-creates the two doors) — this file only reads it", () => {
     const withoutFlagReads = (sql: string) => sql
       .split("current_setting('app.publish_hold_override', true)").join("")
       .split("current_setting(''app.publish_hold_override'', true)").join("");
@@ -226,6 +228,7 @@ describe("20261185 — the guard re-created from its NEWEST earlier body (found 
       "20261151_dc_roundF_promote_transaction_and_hold_override.sql",
       "20261164_dc_roundF_reversal_restore.sql",
       "20261165_dc_roundF_stamped_put_back.sql",
+      "20261192_dc_roundF_null_prior_status_put_back.sql",
     ]);
     expect(stripComments(M).replace(/'(?:[^']|'')*'/g, "''")).not.toMatch(/set_config|SET LOCAL/);
   });

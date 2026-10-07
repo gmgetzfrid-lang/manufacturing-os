@@ -206,6 +206,9 @@ describe("20261159 — the guard re-created from its NEWEST earlier body (found 
       // REV-23 (P19): and 20261165's put_back_retired_issue (the stamped put-back's recorded
       // door) — pinned in dcRoundFStampedPutBackMigration.test.ts.
       if (f === "20261165_dc_roundF_stamped_put_back.sql") continue;
+      // REV-29 (P25): and 20261192, which re-creates those two doors (the flag set on
+      // exactly the conditions each had) — pinned in dcRoundFNullPriorStatusMigration.test.ts.
+      if (f === "20261192_dc_roundF_null_prior_status_put_back.sql") continue;
       expect(withoutFlagReads(stripComments(mig(f))), f).not.toMatch(/publish_hold_override/);
     }
     expect(withoutFlagReads("SET LOCAL app.publish_hold_override = p_doc::text;")).toMatch(/publish_hold_override/);
