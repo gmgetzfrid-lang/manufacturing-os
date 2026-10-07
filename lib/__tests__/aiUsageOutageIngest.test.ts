@@ -339,7 +339,7 @@ describe("GOV-11 / GOV-4 — a page that needs vision is never consumed text-onl
     expect(rowsOf("knowledge_chunks").some((c) => c.page === 2 && c.source === "vision")).toBe(true);
   });
 
-  it("an outage holds the page the same way (GOV-4) — and a member with no key, or at the cap, still indexes text-only, said without promising a later read", async () => {
+  it("an outage holds the page the same way (GOV-4), and so does the cap (GOV-5) — a member with no key still indexes text-only, said without promising a later read", async () => {
     seed([docRow("kd-1")]);
     r2.objects.set(KEY("kd-1"), await makePdf([prosePage("bolting"), null]));
     const down = await (await ingest()).json();
@@ -354,12 +354,48 @@ describe("GOV-11 / GOV-4 — a page that needs vision is never consumed text-onl
     expect(keyless).toMatchObject({ done: true, visionFailedPages: [] });
     expect(docOf("kd-1").status).toBe("ready");
 
+    // At the cap (GOV-5 / DEC-73 item 3, I-18 review): held, as the drain
+    // holds it — was: indexed text-only and 'ready', "pages without a text
+    // layer were indexed from their text layer only"
     seed([docRow("kd-1")]);
     const usage = await import("@/lib/ai/usageServer");
     vi.mocked(usage.getMonthUsage).mockResolvedValueOnce({ spentUsd: 10 } as Awaited<ReturnType<typeof usage.getMonthUsage>>);
     const capped = await (await ingest()).json();
-    expect(capped).toMatchObject({ done: true });
-    expect(capped.visionSkipReason).toBe("Monthly AI budget reached ($10.00 of $10.00) — pages without a text layer were indexed from their text layer only.");
+    expect(capped).toMatchObject({ done: false, visionFailedPages: [2], visionHeldPages: 1, visionPages: 0 });
+    expect(capped.visionSkipReason).toBe(
+      "Monthly AI budget reached ($10.00 of $10.00), so pages without a text layer are held for AI vision — they are read once your cap resets "
+      + "on the 1st or is raised, or when someone with budget indexes this document. 1 page waits for AI vision on the document — it is not "
+      + "marked ready until that page is read or the partial index is accepted.",
+    );
+    expect(docOf("kd-1")).toMatchObject({ status: "indexing", vision_failed_pages: [2] });
+    expect(vi.mocked(transcribePageImage)).not.toHaveBeenCalled();
+  });
+
+  it("GOV-5 (I-18 review): the interactive route holds at the cap as the drain does — locked at $0 too; a read-every-page library indexes nothing and stays queued", async () => {
+    ledger.down = false;
+    const usage = await import("@/lib/ai/usageServer");
+    // locked at $0: the lock's own sentence, never "resets on the 1st"
+    seed([docRow("kd-1")]);
+    r2.objects.set(KEY("kd-1"), await makePdf([prosePage("bolting"), null]));
+    vi.mocked(usage.getCapUsd).mockResolvedValueOnce(Number.MIN_VALUE);
+    vi.mocked(usage.getMonthUsage).mockResolvedValueOnce({ spentUsd: Number.MIN_VALUE } as Awaited<ReturnType<typeof usage.getMonthUsage>>);
+    const locked = await (await ingest()).json();
+    expect(locked).toMatchObject({ done: false, visionFailedPages: [2], visionHeldPages: 1 });
+    expect(locked.visionSkipReason).toMatch(/^Your monthly AI cap is set to \$0 \(AI is locked for you\), so pages without a text layer are held for AI vision — they are read once someone who manages AI caps raises it, or when someone with budget indexes this document\. 1 page waits/);
+    expect(docOf("kd-1")).toMatchObject({ status: "indexing", vision_failed_pages: [2] });
+
+    // a read-every-page library at the cap: 409, nothing indexed, the row untouched
+    seed([docRow("kd-1")], { visionAllPages: true });
+    vi.mocked(usage.getMonthUsage).mockResolvedValueOnce({ spentUsd: 10 } as Awaited<ReturnType<typeof usage.getMonthUsage>>);
+    const all = await ingest();
+    expect(all.status).toBe(409);
+    const ab = await all.json();
+    expect(ab).toMatchObject({ heldForVision: true, done: false });
+    expect(ab.error).toBe("This library reads every page with AI vision, so nothing was indexed and the document stays queued — your monthly AI "
+      + "budget is reached ($10.00 of $10.00); it is indexed once your cap resets on the 1st or is raised.");
+    expect(rowsOf("knowledge_chunks")).toHaveLength(0);
+    expect(docOf("kd-1").status).toBe("pending");
+    expect(vi.mocked(transcribePageImage)).not.toHaveBeenCalled();
   });
 
   it("the drain holds the page for an uploader with a key who has not accepted, and names that on the row — its next pass no longer rewrites it with 'Add one in AI settings'", async () => {

@@ -861,6 +861,43 @@ describe("DWG-5 / GOV-8 / GOV-13 — every locate call is reserved first and met
     expect(ai.calls).toHaveLength(0);
   });
 
+  it("an agreement record that can't be read is 'couldn't confirm', never a prompt to sign again; an unsigned one still prompts (I-18 review)", async () => {
+    // was (I-18 before this fix pass): aiGates took the unreadable record as
+    // unsigned, so a member who HAD signed got agreementRequired and the text
+    // to sign — a client prompting on it could record a second acceptance
+    const UNCONFIRMED = "Couldn't confirm your AI acceptable-use agreement right now — the sheet still opens at the right page.";
+    const agreementReadsFail = (times: number) => {
+      let left = times;
+      db.hooks.push((op) => (op.table === "ai_key_agreements" && op.kind === "select" && left-- > 0
+        ? { error: { code: "57014", message: "statement timeout" } } : undefined));
+    };
+    // a signed member whose record cannot be read at all
+    locateSheet();
+    agreementReadsFail(Infinity);
+    const res = await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["V-3"] });
+    expect(res.status).toBe(200);
+    let body = await res.json();
+    expect(body.skipped).toBe(UNCONFIRMED);
+    expect(body).not.toHaveProperty("agreementRequired");
+    expect(body).not.toHaveProperty("agreementText");
+    expect(Array.isArray(body.positions)).toBe(true);
+    expect(body).toHaveProperty("elsewhere");
+    // the gate's read failed once; the record is there: still not a prompt
+    locateSheet();
+    agreementReadsFail(1);
+    body = await (await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["V-3"] })).json();
+    expect(body.skipped).toBe(UNCONFIRMED);
+    expect(body).not.toHaveProperty("agreementRequired");
+    // an unsigned member whose first read failed: the re-read finds nothing — prompted
+    locateSheet({ agreement: false });
+    agreementReadsFail(1);
+    body = await (await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["V-3"] })).json();
+    expect(body).toMatchObject({ agreementRequired: true, agreementVersion: AGREEMENT_VERSION });
+    expect(body.skipped).toMatch(/Read and accept the AI acceptable-use agreement first/);
+    expect(ai.calls).toHaveLength(0);
+    expect(meter.rows).toEqual([]);
+  });
+
   it("I-05 merge gate (GOV-4): a cap table that can't be read refuses the AI step, never the free answer", async () => {
     locateSheet();
     vi.mocked(getCapUsd).mockRejectedValueOnce(new GovernedCallError("AI usage can't be read right now, so AI calls are refused until it can (down).", 503, { usageUnavailable: true }));

@@ -15,13 +15,16 @@
 //               round's tokens — nothing left reserved
 //   ORCH-7      of N runs started at once at the cap boundary at most one
 //               reaches the provider; the rest are refused (402) before any
-//               call; a fourth run while three are in flight is 429
+//               call; a fourth run while three are in flight is 429 —
+//               whether the three are waiting on the provider or sit
+//               between rounds running a tool (a run's row stays a
+//               reservation, carrying what it has spent, until it ends)
 //   GOV-13      a round whose worst case no longer fits stops the run there
 //               (its spend metered, the stop said) — no further call
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
-import { resetDb } from "./knowledgeFakeDb";
+import { resetDb, db as fakeDb } from "./knowledgeFakeDb";
 import { AGREEMENT_VERSION, estimateCostUsd } from "@/lib/ai/pricing";
 
 type Row = Record<string, unknown>;
@@ -139,7 +142,7 @@ function seed(capUsd: number, people = ["u-1"]) {
     team_members: [], teams: [], collections: [], libraries: [], documents: [], knowledge_documents: [],
     ai_connections: people.map((uid) => ({ org_id: ORG, user_id: uid, provider: "anthropic", model: MODEL, api_key: "sealed" })),
     ai_key_agreements: people.map((uid, i) => ({ id: `ag${i}`, org_id: ORG, user_id: uid, scope: "use", agreement_version: AGREEMENT_VERSION })),
-    audit_logs: [], orchestrator_proposals: [],
+    audit_logs: [], orchestrator_proposals: [], assets: [],
   });
   ledger.tables = { ai_usage_events: [], ai_usage_limits: [{ id: "cap", org_id: ORG, user_id: null, monthly_cap_usd: capUsd }] };
   ledger.reserved = [];
@@ -227,6 +230,51 @@ describe("ORCH-7 — concurrent runs cannot all pass the same check", () => {
     // three runs and the one after: four rows, none still reserved
     expect(events()).toHaveLength(4);
     expect(events().every((e) => e.input_tokens !== null)).toBe(true);
+  });
+
+  it("three runs sitting BETWEEN rounds (their first round settled, a tool running) still count: a fourth is refused (429) before any call", async () => {
+    // was (I-18 before this fix pass): each run's row was settled after its
+    // first round, so a run running its tools held no reservation and the
+    // limit counted only calls waiting on the provider — a fourth, fifth
+    // and sixth run were admitted
+    net.script = [
+      ...Array.from({ length: 3 }, () => '{"tool_name": "query_equipment_by_unit", "parameters": {"unit_name": "U1"}}'),
+      "No equipment is registered in U1.",
+    ];
+    const ROUND1 = { inputTokens: 900, outputTokens: 30 };
+    net.usage = [ROUND1, ROUND1, ROUND1, { inputTokens: 1000, outputTokens: 40 }];
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let between = 0;
+    fakeDb.asyncHooks.push(async (op) => {
+      if (op.table === "assets") { between++; await gate; }
+    });
+    const first = [ask(), ask(), ask()];
+    await new Promise<void>((done) => { const t = () => (between >= 3 ? done() : setTimeout(t, 5)); t(); });
+    // every run has made its first round and is running its tool: no call
+    // at the provider, and each run's row is still a reservation carrying
+    // its first round's real cost (not its worst case)
+    expect(net.calls).toBe(3);
+    expect(net.waiting).toBe(0);
+    expect(events()).toHaveLength(3);
+    for (const e of events()) {
+      expect(e).toMatchObject({ op: "orchestrator", input_tokens: null, output_tokens: null, est_cost_usd: estimateCostUsd(MODEL, ROUND1) });
+    }
+    const fourth = await ask();
+    expect(fourth.status).toBe(429);
+    expect(String(fourth.body.error)).toMatch(/You already have 3 of these running — wait for one to finish\./);
+    expect(net.calls).toBe(3);
+    release();
+    const done = await Promise.all(first);
+    expect(done.map((r) => r.status)).toEqual([200, 200, 200]);
+    expect(done.map((r) => r.body.answer)).toEqual(Array(3).fill("No equipment is registered in U1."));
+    // finished runs no longer count: the next is admitted
+    expect((await ask()).status).toBe(200);
+    // three two-round runs and the one after: four rows, each settled with
+    // every round's tokens, none still reserved
+    expect(events()).toHaveLength(4);
+    expect(events().every((e) => e.input_tokens !== null)).toBe(true);
+    expect(events().filter((e) => e.input_tokens === ROUND1.inputTokens + 1000)).toHaveLength(3);
   });
 
   it("another person's runs are not counted against yours", async () => {

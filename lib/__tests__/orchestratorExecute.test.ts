@@ -67,6 +67,7 @@ vi.mock("@/lib/ai/usageServer", () => ({
   // GOV-13 / ORCH-7: each round is reserved before it is made and settled after
   reserveWithinCap: vi.fn(async () => ({ id: "reservation-1", reservedUsd: 0.01 })),
   settleUsage: vi.fn(async () => undefined),
+  holdUsage: vi.fn(async () => undefined),
   releaseUsage: vi.fn(async () => undefined),
 }));
 vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (k: string) => k }));

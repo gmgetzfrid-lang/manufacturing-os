@@ -5,7 +5,8 @@
 // cap is locked, when settled spend plus the reservations already made
 // reaches the cap, or when this call's worst case does not fit what is left;
 // a refused reservation leaves no row. settleUsage prices the call's real
-// figures with the app's own price table; releaseUsage drops the row.
+// figures with the app's own price table; holdUsage prices a run's calls so
+// far and keeps the row a reservation; releaseUsage drops the row.
 //
 // `cap` 0 is the stand-in these suites have always used for "no cap" (the
 // real getCapUsd never answers 0 — a $0 cap is LOCKED_CAP_USD): nothing is
@@ -116,6 +117,11 @@ export function fakeUsageServer() {
         inputTokens: input.usage.inputTokens, outputTokens: input.usage.outputTokens,
         costUsd: estimateCostUsd(input.model, input.usage),
       });
+    }),
+    // A run's cost so far on its row, which stays a reservation (in flight).
+    holdUsage: vi.fn(async (id: string, input: { model: string; usage: AiUsage }) => {
+      const row = meter.rows.find((r) => r.id === id);
+      if (row) Object.assign(row, { model: input.model, costUsd: estimateCostUsd(input.model, input.usage) });
     }),
     releaseUsage: vi.fn(async (id: string) => { meter.rows = meter.rows.filter((r) => r.id !== id); }),
   };

@@ -861,10 +861,15 @@ describe("ING-13 (I-06b) — the re-index's vision gate is the server's, before 
     vi.mocked(getMonthUsage).mockImplementation(async () => ({ spentUsd: 10 }) as Awaited<ReturnType<typeof getMonthUsage>>);
     const body = await (await post({ documentId: DOC })).json();
     expect(body).toMatchObject({ done: false, visionFailedPages: [2], visionHeldPages: 1 });
+    // GOV-5 (I-18 review): at the cap EVERY page that needs vision is held,
+    // as the drain holds it — no page is indexed text-only any more (was:
+    // "1 page was held for AI vision; any other page without a text layer
+    // was indexed from its text layer only")
     expect(body.visionSkipReason).toBe(
-      "Monthly AI budget reached ($10.00 of $10.00) — 1 page was held for AI vision; any other page without a text layer "
-      + `was indexed from its text layer only. ${WAITS}`,
+      "Monthly AI budget reached ($10.00 of $10.00), so pages without a text layer are held for AI vision — they are read once your cap "
+      + `resets on the 1st or is raised, or when someone with budget indexes this document. ${WAITS}`,
     );
+    expect(body.visionSkipReason).not.toMatch(/text layer only/);
     expect(body.visionSkipReason).not.toMatch(/retried automatically/);
     expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "indexing", vision_failed_pages: [2] });
   });

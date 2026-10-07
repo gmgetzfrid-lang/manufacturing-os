@@ -12,13 +12,16 @@
 // GOV-13 / ORCH-7: every round of the loop reserves its worst case (its
 // prompt at 3 characters a token, 2,000 tokens out) BEFORE it is made —
 // refused when it does not fit beside the month's spend and every other
-// call in flight — and folds its real tokens into the run's ONE metering
-// row (the first round's reservation, settled after every round, so a run
-// killed part-way leaves what it spent recorded, never less). The first
-// round also carries the in-flight limit: a person runs at most
-// ORCHESTRATOR_MAX_IN_FLIGHT assistant runs at once (429 for the next). A
-// refusal before the first call is answered with its own status; one
-// later stops the run with what it gathered.
+// call in flight — and folds its real cost into the run's ONE metering row
+// (the first round's reservation). After every round that row carries what
+// the run has spent so far but stays a reservation (holdUsage), so a run
+// killed part-way leaves what it spent recorded, never less, and a run
+// counts as in flight from its admission until the route settles the row
+// with every round's tokens at the end — between rounds too, while its
+// tools run. The first round carries the in-flight limit: a person runs at
+// most ORCHESTRATOR_MAX_IN_FLIGHT assistant runs at once (429 for the
+// next). A refusal before the first call is answered with its own status;
+// one later stops the run with what it gathered.
 //
 // A run never executes a write (ORCH-10). Write tools only PROPOSE; each
 // proposal is stored server-side for this person (ORCH-4) and runs, once,
@@ -41,7 +44,7 @@ import { atlasForPrompt } from "@/lib/featureAtlas";
 import { callAiModel, AiCallError, type AiProviderId } from "@/lib/ai/providerCall";
 import { ALLOWED_PROVIDERS, estimateCostUsd, worstCaseCostUsd, AGREEMENT_VERSION, buildAgreementText } from "@/lib/ai/pricing";
 import {
-  getMonthUsage, getCapUsd, recordAskUsage, reserveWithinCap, settleUsage, releaseUsage, type UsageReservation,
+  getMonthUsage, getCapUsd, recordAskUsage, reserveWithinCap, settleUsage, holdUsage, releaseUsage, type UsageReservation,
 } from "@/lib/ai/usageServer";
 import { GovernedCallError } from "@/lib/ai/gateError";
 import { runOrchestrator, type ModelCall } from "@/lib/orchestrator/loop";
@@ -142,7 +145,8 @@ export async function POST(req: NextRequest) {
   const playbook = instructionsBlock + answerSkills.block + atlasForPrompt();
 
   // GOV-13 / ORCH-7: reserve each round before it is made; fold every
-  // round's real tokens into ONE row per run (the first reservation).
+  // round's real cost into ONE row per run (the first reservation), which
+  // stays a reservation — the run in flight — until the run ends.
   const runUsage = { inputTokens: 0, outputTokens: 0 };
   let runRow: UsageReservation | null = null;
   const call: ModelCall = async (system, userTurn) => {
@@ -150,7 +154,8 @@ export async function POST(req: NextRequest) {
       orgId, userId: user.id, op: "orchestrator", provider, model,
       worstCaseUsd: worstCaseCostUsd(model, { inputChars: system.length + userTurn.length, maxTokens: ROUND_MAX_TOKENS }),
       capUsd,
-      // The run's first round is its admission: at most this many at once.
+      // The run's first round is its admission: at most this many runs at
+      // once (every other run's row is a reservation until that run ends).
       maxInFlight: runRow ? undefined : ORCHESTRATOR_MAX_IN_FLIGHT,
     });
     try {
@@ -174,7 +179,9 @@ export async function POST(req: NextRequest) {
     } finally {
       if (!runRow) runRow = reservation;
       else await releaseUsage(reservation.id);
-      await settleUsage(runRow.id, { model, usage: runUsage, ok: true });
+      // What the run has spent so far, on its row — still a reservation, so
+      // the run stays counted as in flight until the route settles it.
+      await holdUsage(runRow.id, { model, usage: runUsage });
     }
   };
 
@@ -187,22 +194,24 @@ export async function POST(req: NextRequest) {
       question, ctx, call, playbook, budgetMs: LOOP_BUDGET_MS,
     });
   } catch (e) {
+    // The run is over: its row (if a round was made) is settled to every
+    // round's tokens — recorded as a failed run — and stops counting as in
+    // flight.
+    const ranRow = runRow as UsageReservation | null;
+    if (ranRow) await settleUsage(ranRow.id, { model, usage: runUsage, ok: false });
     // GOV-13 / ORCH-7: the first round's reservation was refused — the cap
     // (402), the in-flight limit (429) or an unreadable ledger (503) —
     // before any provider call: answered with its own status.
     if (e instanceof GovernedCallError) return bad(e.message, e.status);
     // runOrchestrator resolves on provider errors, so reaching here means a
-    // genuine bug: say so. What its rounds spent is already on the run's row
-    // (settled after every round) — recorded as a failed run.
-    const ranRow = runRow as UsageReservation | null;
-    if (ranRow) await settleUsage(ranRow.id, { model, usage: runUsage, ok: false });
+    // genuine bug: say so. What its rounds spent is on the run's row.
     const message = e instanceof AiCallError ? e.message : "The assistant failed to run.";
     return bad(message, e instanceof AiCallError ? e.status : 500);
   }
 
   // The run's ONE metering row: its first round's reservation, settled to
-  // every round's tokens. A run that made no call writes the row it always
-  // wrote.
+  // every round's tokens — the run is no longer in flight. A run that made
+  // no call writes the row it always wrote.
   const meteredRow = runRow as UsageReservation | null;
   if (meteredRow) {
     await settleUsage(meteredRow.id, { model, usage: runUsage, ok: !run.stoppedBecause });

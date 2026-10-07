@@ -43,7 +43,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
 import { callAiModel, type AiProviderId } from "@/lib/ai/providerCall";
-import { addUsage, ZERO_USAGE, type AiUsage } from "@/lib/ai/pricing";
+import { addUsage, ZERO_USAGE, AGREEMENT_VERSION, type AiUsage } from "@/lib/ai/pricing";
 import { assertAiGates, GovernedCallError, type AiGatePass, type AiReservation } from "@/lib/ai/aiGates";
 import { VISION_MODEL } from "@/lib/knowledgeVision";
 import {
@@ -101,6 +101,27 @@ function skipFor(e: GovernedCallError): Record<string, unknown> {
   // GOV-4: an unreadable ledger or cap refuses the AI step, never the free answer.
   if (e.status === 503) return { skipped: `${e.message} The sheet still opens at the right page.` };
   return { skipped: `${e.message.replace(/\.$/, "")} — the sheet still opens at the right page.` };
+}
+
+/** Said when the agreement record cannot be read: never a prompt to sign
+ *  again (the sentence locate gave before it moved onto aiGates). */
+const AGREEMENT_UNCONFIRMED = "Couldn't confirm your AI acceptable-use agreement right now — the sheet still opens at the right page.";
+
+/** The gate stack refused on the agreement (428), which it also answers for
+ *  a record it could not read. Read it once more: true only when the read
+ *  works and finds no acceptance at AGREEMENT_VERSION — the member really
+ *  has not signed. A record that is there (the gate's read failed) or that
+ *  still cannot be read is not "unsigned". */
+async function agreementUnsigned(orgId: string, userId: string): Promise<boolean> {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("ai_key_agreements").select("id")
+      .eq("org_id", orgId).eq("user_id", userId)
+      .eq("scope", "use").eq("agreement_version", AGREEMENT_VERSION).limit(1);
+    return !error && (data ?? []).length === 0;
+  } catch {
+    return false;
+  }
 }
 
 /** A thrown provider call may still carry the usage the provider reported
@@ -277,6 +298,12 @@ export async function POST(req: NextRequest) {
     gate = await assertAiGates({ orgId, userId: user.id, op: "drawingLocate" });
   } catch (e) {
     if (!(e instanceof GovernedCallError)) throw e;
+    // An agreement record that cannot be read is not an unsigned one: a
+    // member who has signed is told it couldn't be confirmed, never asked
+    // to sign again (which can record a second acceptance).
+    if (e.status === 428 && !(await agreementUnsigned(orgId, user.id))) {
+      return NextResponse.json({ ...free(), skipped: AGREEMENT_UNCONFIRMED });
+    }
     return NextResponse.json({ ...free(), ...skipFor(e) });
   }
   const provider = gate.connection.provider as AiProviderId;

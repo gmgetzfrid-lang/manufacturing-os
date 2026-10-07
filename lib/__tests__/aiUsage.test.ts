@@ -72,7 +72,7 @@ vi.mock("@/lib/supabaseAdmin", () => {
       delete: () => { action = "delete"; db.calls.push({ table, op: "delete", args: [] }); return b; },
       eq: (c: string, v: unknown) => { db.calls.push({ table, op: "eq", args: [c, v] }); filters.push((r) => r[c] === v); return b; },
       is: (c: string, v: unknown) => { db.calls.push({ table, op: "is", args: [c, v] }); filters.push((r) => (r[c] ?? null) === v); return b; },
-      gte: (c: string, v: string) => { filters.push((r) => String(r[c]) >= v); return b; },
+      gte: (c: string, v: string) => { db.calls.push({ table, op: "gte", args: [c, v] }); filters.push((r) => String(r[c]) >= v); return b; },
       gt: (c: string, v: string) => { db.calls.push({ table, op: "gt", args: [c, v] }); filters.push((r) => String(r[c]) > v); return b; },
       or: (...args: unknown[]) => { db.calls.push({ table, op: "or", args }); return b; },
       order: (col: string, o?: { ascending?: boolean }) => { orders.push({ col, asc: o?.ascending !== false }); return b; },
@@ -185,9 +185,10 @@ describe("GOV-1 / SEM-2 / ORCH-5 / GOV-5 — every op counts toward the month", 
     expect(m.calls).toBe(800);
     expect(m.spentUsd).toBe(8);
     // the read asks for the exact count, and stops once a read's count says
-    // it holds every row that read matched — paged by key (GOV-15): the 500
-    // rows at the last row's instant first, then the rows after that
-    // instant (none; every row here shares one instant)
+    // it holds every row that read matched — paged by key (GOV-15): the
+    // first 500 rows are all one instant, so the read goes on through that
+    // instant by id (the other 300), then past it (none; every row here
+    // shares one instant)
     const selects = db.calls.filter((c) => c.table === "ai_usage_events" && c.op === "select");
     expect(selects.every((c) => (c.args[1] as { count?: string } | undefined)?.count === "exact")).toBe(true);
     expect(selects).toHaveLength(3);
@@ -230,10 +231,73 @@ describe("GOV-1 / SEM-2 / ORCH-5 / GOV-5 — every op counts toward the month", 
     expect(month.calls).toBe(1500);
     expect(month.spentUsd).toBe(15);
 
-    // the keyset reads: the cursor instant's later ids, then the rows after it
-    const keysetReads = db.calls.filter((c) => c.table === "ai_usage_events" && c.op === "gt");
-    expect(keysetReads.map((c) => c.args[0])).toEqual(["id", "created_at"]);
+    // the keyset reads: the month from its first instant, then from the
+    // instant of page 1's last row (k00999, read again on page 2, counted
+    // once) — one statement a page, bound filters only, no .or() string
+    const starts = db.calls.filter((c) => c.table === "ai_usage_events" && (c.op === "gte" || c.op === "gt"));
+    expect(starts.map((c) => [c.op, ...c.args])).toEqual([
+      ["gte", "created_at", monthStartIso()],
+      ["gte", "created_at", new Date(base + 999 * 1000).toISOString()],
+    ]);
+    expect(db.calls.filter((c) => c.table === "ai_usage_events" && c.op === "select")).toHaveLength(2);
     expect(db.calls.some((c) => c.table === "ai_usage_events" && c.op === "or")).toBe(false);
+  });
+
+  it("GOV-15: the read ceiling is 100,000 ROWS, at about one statement per 1,000 — a month of distinct instants past 50,000 rows is summed, never refused", async () => {
+    // was (I-18 before this pass): a same-instant probe after every page
+    // spent one of the 100 reads on nothing, so 50,500 rows at distinct
+    // instants threw "more than 100000 rows" and every gated call was 503
+    const base = Date.parse(monthStartIso()) + 60_000;
+    const N = 60_500;
+    db.maxRows = 1000;
+    db.tables.ai_usage_events = Array.from({ length: N }, (_, i) => row({
+      id: `d${String(i).padStart(6, "0")}`, created_at: new Date(base + i * 10).toISOString(), op: "knowledgeEmbed", est_cost_usd: 0.0001,
+    }));
+    const m = await getMonthUsage("o1", "u1");
+    expect(m.calls).toBe(N);
+    expect(m.spentUsd).toBe(6.05);
+    const selects = db.calls.filter((c) => c.table === "ai_usage_events" && c.op === "select").length;
+    // each page re-reads its last row: 999 new rows a statement
+    expect(selects).toBe(Math.ceil((N - 1) / 999));
+    expect(selects).toBeLessThanOrEqual(Math.ceil(N / 1000) + 1);
+  }, 30_000);
+
+  it("GOV-15: exactly 100,000 rows at distinct instants are summed; one more is refused as soon as a count says so, in one statement", async () => {
+    const base = Date.parse(monthStartIso()) + 60_000;
+    db.maxRows = 1000;
+    const seed = (n: number) => {
+      db.calls = [];
+      db.tables.ai_usage_events = Array.from({ length: n }, (_, i) => row({
+        id: `c${String(i).padStart(6, "0")}`, created_at: new Date(base + i * 10).toISOString(), op: "knowledgeEmbed", est_cost_usd: 0.0001,
+      }));
+    };
+    seed(100_000);
+    const m = await getMonthUsage("o1", "u1");
+    expect(m.calls).toBe(100_000);
+    expect(db.calls.filter((c) => c.table === "ai_usage_events" && c.op === "select").length).toBeLessThanOrEqual(101);
+
+    seed(100_001);
+    await expect(getMonthUsage("o1", "u1")).rejects.toThrow("the usage ledger holds more than 100000 rows this month");
+    expect(db.calls.filter((c) => c.table === "ai_usage_events" && c.op === "select")).toHaveLength(1);
+  }, 60_000);
+
+  it("GOV-15: a page that is all one instant is read on through that instant by id, then past it — every row once", async () => {
+    // 2,500 rows at one instant between 10 rows before it and 10 after
+    const base = Date.parse(monthStartIso()) + 60_000;
+    db.maxRows = 1000;
+    const at = (ms: number) => new Date(base + ms).toISOString();
+    db.tables.ai_usage_events = [
+      ...Array.from({ length: 10 }, (_, i) => row({ id: `a${String(i).padStart(4, "0")}`, created_at: at(i), est_cost_usd: 0.01 })),
+      ...Array.from({ length: 2500 }, (_, i) => row({ id: `m${String(i).padStart(4, "0")}`, created_at: at(500), est_cost_usd: 0.01 })),
+      ...Array.from({ length: 10 }, (_, i) => row({ id: `z${String(i).padStart(4, "0")}`, created_at: at(1000 + i), est_cost_usd: 0.01 })),
+    ];
+    const m = await getMonthUsage("o1", "u1");
+    expect(m.calls).toBe(2520);
+    expect(m.spentUsd).toBe(25.2);
+    const starts = db.calls.filter((c) => c.table === "ai_usage_events" && (c.op === "gte" || c.op === "gt"))
+      .map((c) => `${c.op} ${String(c.args[0])}`);
+    // the month; the instant (all one page); its later ids twice; past it
+    expect(starts).toEqual(["gte created_at", "gte created_at", "gt id", "gt id", "gt created_at"]);
   });
 
   it("without a count it still reads until a page comes back empty", async () => {
