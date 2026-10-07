@@ -715,11 +715,11 @@ function groupByTop(
 
 function chipTone(s: MilestoneStatus): string {
   switch (s) {
-    case "completed":   return "bg-emerald-50 border-emerald-200 text-emerald-900";
-    case "in_progress": return "bg-blue-50 border-blue-200 text-blue-900";
-    case "on_hold":     return "bg-amber-50 border-amber-200 text-amber-900";
-    case "blocked":     return "bg-rose-50 border-rose-200 text-rose-900";
-    case "missed":      return "bg-rose-100 border-rose-300 text-rose-900";
+    case "completed":   return "bg-emerald-500/[0.08] border-emerald-500/40 text-emerald-900 dark:text-emerald-200";
+    case "in_progress": return "bg-blue-500/[0.08] border-blue-500/40 text-blue-900 dark:text-blue-200";
+    case "on_hold":     return "bg-amber-500/[0.08] border-amber-500/40 text-amber-900 dark:text-amber-200";
+    case "blocked":     return "bg-rose-500/[0.08] border-rose-500/40 text-rose-900 dark:text-rose-200";
+    case "missed":      return "bg-rose-500/15 border-rose-500/50 text-rose-900 dark:text-rose-200";
     default:            return "bg-[var(--color-surface-2)] border-[var(--color-border)] text-[var(--color-text)]";
   }
 }

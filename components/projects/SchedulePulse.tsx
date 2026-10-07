@@ -60,9 +60,9 @@ export default function SchedulePulse({ milestones, nowMs, onShowOverdue, onShow
   const calm = items.length === 0;
 
   return (
-    <div className={`rounded-2xl border shadow-sm px-4 py-2.5 flex items-center gap-3 flex-wrap ${calm ? "border-emerald-200 bg-emerald-50/50" : "border-[var(--color-border)] bg-[var(--color-surface)] ring-1 ring-slate-900/[0.03]"}`}>
+    <div className={`rounded-2xl border shadow-sm px-4 py-2.5 flex items-center gap-3 flex-wrap ${calm ? "border-emerald-500/40 bg-emerald-500/[0.08]" : "border-[var(--color-border)] bg-[var(--color-surface)] ring-1 ring-slate-900/[0.03]"}`}>
       {calm ? (
-        <span className="inline-flex items-center gap-2 text-sm font-semibold text-emerald-700">
+        <span className="inline-flex items-center gap-2 text-sm font-semibold text-emerald-700 dark:text-emerald-300">
           <CheckCircle2 className="w-4 h-4" /> On track — nothing needs attention right now.
         </span>
       ) : (
@@ -78,7 +78,7 @@ export default function SchedulePulse({ milestones, nowMs, onShowOverdue, onShow
 function Nudge({ tone, icon, text, cta, onClick }: {
   tone: "rose" | "amber"; icon: React.ReactNode; text: React.ReactNode; cta?: string; onClick?: () => void;
 }) {
-  const c = tone === "rose" ? "text-rose-700 bg-rose-50 border-rose-200" : "text-amber-800 bg-amber-50 border-amber-200";
+  const c = tone === "rose" ? "text-rose-700 dark:text-rose-300 bg-rose-500/[0.08] border-rose-500/40" : "text-amber-800 dark:text-amber-300 bg-amber-500/[0.08] border-amber-500/40";
   const content = (
     <span className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[12px] ${c}`}>
       {icon}{text}

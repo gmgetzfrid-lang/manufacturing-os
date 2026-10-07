@@ -169,7 +169,7 @@ export default function TaskDetailPanel({
                     {i > 0 && <ChevronRight className="w-2.5 h-2.5 text-slate-300" />}
                     <button
                       onClick={() => onSelectMilestone?.(a)}
-                      className="font-semibold hover:text-indigo-700 hover:underline truncate max-w-[120px]"
+                      className="font-semibold hover:text-indigo-700 dark:hover:text-indigo-300 hover:underline truncate max-w-[120px]"
                       title={a.name}
                     >
                       {a.name}
@@ -183,7 +183,7 @@ export default function TaskDetailPanel({
               <StatusPill status={effStatus} />
               <span className="text-[10px] font-black tabular-nums text-[var(--color-text-muted)]">{effPct}%</span>
               {m.wbs && <span className="font-mono text-[10px] text-[var(--color-text-faint)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded">{m.wbs}</span>}
-              {!isLeaf && <span className="text-[9px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded">Summary</span>}
+              {!isLeaf && <span className="text-[9px] font-black uppercase tracking-wider bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 px-1.5 py-0.5 rounded">Summary</span>}
             </div>
             <h2 className="mt-1.5 text-base font-bold text-[var(--color-text)] leading-snug break-words">{m.name}</h2>
           </div>
@@ -370,14 +370,14 @@ export default function TaskDetailPanel({
                             <button
                               onClick={(e) => { e.stopPropagation(); onMoveDays(s.id!, -1); }}
                               title="Move this sub-task 1 day earlier"
-                              className="w-5 h-5 inline-flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-indigo-700 hover:bg-indigo-50"
+                              className="w-5 h-5 inline-flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-indigo-700 dark:hover:text-indigo-300 hover:bg-indigo-500/10"
                             >
                               <ChevronLeft className="w-3.5 h-3.5" />
                             </button>
                             <button
                               onClick={(e) => { e.stopPropagation(); onMoveDays(s.id!, 1); }}
                               title="Move this sub-task 1 day later"
-                              className="w-5 h-5 inline-flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-indigo-700 hover:bg-indigo-50"
+                              className="w-5 h-5 inline-flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-indigo-700 dark:hover:text-indigo-300 hover:bg-indigo-500/10"
                             >
                               <ChevronRight className="w-3.5 h-3.5" />
                             </button>
@@ -405,7 +405,7 @@ export default function TaskDetailPanel({
                       className="flex-1 text-xs px-2 py-1.5 border border-[var(--color-border-strong)] rounded-md outline-none focus:ring-2 focus:ring-indigo-500/30"
                       onKeyDown={(e) => { if (e.key === "Enter") void addNote(); }}
                     />
-                    <button onClick={() => void addNote()} disabled={!noteDraft.trim()} className="p-1.5 rounded-md text-indigo-600 hover:bg-indigo-50 disabled:opacity-40" title="Add note">
+                    <button onClick={() => void addNote()} disabled={!noteDraft.trim()} className="p-1.5 rounded-md text-indigo-600 hover:bg-indigo-500/10 disabled:opacity-40" title="Add note">
                       <MessageSquarePlus className="w-4 h-4" />
                     </button>
                   </div>
@@ -653,11 +653,11 @@ function StatusPill({ status, dotOnly }: { status: MilestoneStatus; dotOnly?: bo
     status === "missed"      ? "bg-rose-600" : "bg-slate-400";
   if (dotOnly) return <span className={`shrink-0 w-2 h-2 rounded-full ${tone}`} title={labelOf(status)} />;
   const text =
-    status === "completed"   ? "text-emerald-800 bg-emerald-100 border-emerald-200" :
-    status === "in_progress" ? "text-blue-800 bg-blue-100 border-blue-200" :
-    status === "on_hold"     ? "text-amber-900 bg-amber-100 border-amber-200" :
-    status === "blocked"     ? "text-rose-800 bg-rose-100 border-rose-200" :
-    status === "missed"      ? "text-rose-900 bg-rose-100 border-rose-200" : "text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]";
+    status === "completed"   ? "text-emerald-800 dark:text-emerald-300 bg-emerald-500/15 border-emerald-500/40" :
+    status === "in_progress" ? "text-blue-800 dark:text-blue-300 bg-blue-500/15 border-blue-500/40" :
+    status === "on_hold"     ? "text-amber-900 dark:text-amber-200 bg-amber-500/15 border-amber-500/40" :
+    status === "blocked"     ? "text-rose-800 dark:text-rose-300 bg-rose-500/15 border-rose-500/40" :
+    status === "missed"      ? "text-rose-900 dark:text-rose-200 bg-rose-500/15 border-rose-500/40" : "text-[var(--color-text)] bg-[var(--color-surface-2)] border-[var(--color-border)]";
   return <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${text}`}><span className={`w-1.5 h-1.5 rounded-full ${tone}`} />{labelOf(status)}</span>;
 }
 
@@ -772,12 +772,12 @@ function DependencyEditor({
           {deps.map((id) => {
             const t = byId.get(id);
             return (
-              <span key={id} className="inline-flex items-center gap-1 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-800 text-[11px] font-semibold pl-2 pr-1 py-0.5">
+              <span key={id} className="inline-flex items-center gap-1 rounded-full bg-indigo-500/[0.08] border border-indigo-500/40 text-indigo-800 dark:text-indigo-300 text-[11px] font-semibold pl-2 pr-1 py-0.5">
                 <button type="button" className="truncate max-w-[160px] hover:underline" onClick={() => t && onSelectMilestone?.(t)} title={t ? (hiddenIds?.has(id) ? `${t.name} — hidden by the imported-rows filter` : t.name) : "This task was deleted; the link points at nothing"}>
                   {t ? (hiddenIds?.has(id) ? `${t.name} (hidden by filter)` : t.name) : "(deleted task)"}
                 </button>
                 {canEdit && (
-                  <button type="button" disabled={saving} onClick={() => void save(deps.filter((dd) => dd !== id))} className="p-0.5 rounded-full hover:bg-indigo-200/60 text-indigo-500 hover:text-indigo-800" title="Remove dependency">
+                  <button type="button" disabled={saving} onClick={() => void save(deps.filter((dd) => dd !== id))} className="p-0.5 rounded-full hover:bg-indigo-500/20 text-indigo-500 hover:text-indigo-800 dark:hover:text-indigo-300" title="Remove dependency">
                     <XIcon className="w-3 h-3" />
                   </button>
                 )}

@@ -136,9 +136,8 @@ function uncited600(file: string, s: string): string[] {
 /** The residual the A11Y-13 record lists (final review, 2026-10-01), per
  *  file: text, icon and hover-only sites together. */
 const RECORDED_RESIDUAL: Record<string, number> = {
-  // J12's file this round (PERF-8): the coach's amber not-migrated icon —
-  // one class token, left for the file's owner.
-  "components/projects/ProjectCoach.tsx": 1,
+  // Empty since projects Round G J14: the last site — the coach's amber
+  // not-migrated icon (ProjectCoach.tsx) — wears its 400 dark twin.
 };
 
 describe("A11Y-13 (final review) — the residual list names every uncited -600 pair with no dark variant (a ratchet)", () => {
@@ -153,7 +152,7 @@ describe("A11Y-13 (final review) — the residual list names every uncited -600 
   it("no file holds more such sites than the record lists, and no unlisted file holds any", () => {
     const over = Object.entries(perFile).filter(([f, n]) => n > (RECORDED_RESIDUAL[f] ?? 0)).map(([f, n]) => `${f}: ${n} > ${RECORDED_RESIDUAL[f] ?? 0}`);
     expect(over, found.join("\n")).toEqual([]);
-    expect(found.length).toBeGreaterThan(0);   // the finding stays OPEN
+    expect(found).toEqual([]);   // J14: none left — the ratchet now holds the area at zero
   });
 
   it("the delete error, the TaskDetailPanel field note and the ExecutionReportView figures are no longer among them — they wear the recipe (J10b)", () => {
@@ -222,5 +221,100 @@ describe("A11Y-13 (J10b) — every pair the census held now clears its floor in 
     const css = readFileSync(join(ROOT, "app/globals.css"), "utf8");
     expect(css).not.toMatch(/\.dark \.text-(rose|amber|emerald|red)-600/);
     expect(css).not.toMatch(/\.dark \.hover\\:text-rose-600/);
+  });
+});
+
+// ── projects Round G J14: the coach's icon, the light tint slabs and every
+//    status-hue text step without its dark twin ──
+//
+// The last -600 site (ProjectCoach.tsx's not-migrated icon) gained its 400
+// dark twin, and the record's light tint slabs — `bg-{hue}-50|100` (and the
+// translucent `-50/NN`) with no dark variant, in the schedule engine's
+// surfaces plus the status chips of StatusControl / ProgressControl and the
+// calendar tiles — wear the token recipe: a `{hue}-500` tint at 8 % (a 50
+// slab) or 15 % (a 100 chip), a half-alpha border, and every coloured text
+// step on them (700 / 800 / 900, hover included) its dark twin (300, or 200
+// for a 900). A census over the whole Projects area pins both at zero.
+const AREA = () => [...walk("components/projects"), ...walk("app/(protected)/projects"), ...walk("app/(protected)/companies"), ...walk("app/submit")];
+const HUES = "red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose";
+/** Every `bg-{status hue}-50|100` (alpha'd or not, any state prefix) whose
+ *  own class string carries no `dark:` background variant. */
+function lightSlabs(file: string, s: string): string[] {
+  const out: string[] = [];
+  for (const mm of s.matchAll(new RegExp(`(?<![\\w:-])((?:[\\w-]+:)*)bg-(${HUES})-(50|100)\\b`, "g"))) {
+    let a = mm.index!; while (a > 0 && !"\"'`}".includes(s[a - 1])) a--;
+    let b = mm.index!; while (b < s.length && !"\"'`$".includes(s[b])) b++;
+    if (/dark:(?:[\w-]+:)*bg-/.test(s.slice(a, b))) continue;
+    out.push(`${file}:${s.slice(0, mm.index).split("\n").length} ${mm[0]}`);
+  }
+  return out;
+}
+/** Every `text-{status hue}-700|800|900|950` (any state prefix but dark:)
+ *  whose own class string carries no `dark:` text variant for that state. */
+function darklessText(file: string, s: string): string[] {
+  const out: string[] = [];
+  for (const mm of s.matchAll(new RegExp(`(?<![\\w:-])((?:[\\w-]+:)*)text-(${HUES})-(700|800|900|950)\\b`, "g"))) {
+    if (mm[1].includes("dark:")) continue;
+    let a = mm.index!; while (a > 0 && !"\"'`}".includes(s[a - 1])) a--;
+    let b = mm.index!; while (b < s.length && !"\"'`$".includes(s[b])) b++;
+    if (new RegExp(`dark:${mm[1].replace(/:/g, "\\:")}text-`).test(s.slice(a, b))) continue;
+    out.push(`${file}:${s.slice(0, mm.index).split("\n").length} ${mm[0]}`);
+  }
+  return out;
+}
+
+describe("A11Y-13 (J14) — no light tint slab and no darkless status text left in the Projects area", () => {
+  it("the coach's not-migrated icon keeps its 600 step and wears the 400 dark twin", () => {
+    const coach = readFileSync(join(ROOT, "components/projects/ProjectCoach.tsx"), "utf8");
+    expect(coach).toContain('<AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />');
+    expect(ratio(hex("#d97706"), hex("#ffffff"))).toBeGreaterThanOrEqual(3);
+    expect(ratio(hex("#fbbf24"), hex("#111827"))).toBeGreaterThanOrEqual(3);
+  });
+  it("census: no `bg-{hue}-50|100` without a dark background variant anywhere in the area (was 47 at J14's base, plus 6 translucent)", () => {
+    const found = AREA().flatMap((f) => lightSlabs(f, readFileSync(join(ROOT, f), "utf8")));
+    expect(found).toEqual([]);
+  });
+  it("census: no `text-{hue}-700|800|900` without its dark twin anywhere in the area (was 76 at J14's base, all in the schedule-engine and status files); the slabs' faded text (700/80, 800/70, 900/90) is a full step now", () => {
+    const found = AREA().flatMap((f) => darklessText(f, readFileSync(join(ROOT, f), "utf8")));
+    expect(found).toEqual([]);
+    for (const f of ["components/projects/MovePreviewSheet.tsx", "components/projects/ExecutionReportView.tsx", "components/projects/ScheduleImportModal.tsx"]) {
+      expect(readFileSync(join(ROOT, f), "utf8"), f).not.toMatch(/text-(amber|emerald|rose)-[789]00\/\d/);
+    }
+  });
+  it("the censuses are mutation-checked: they catch a bare slab, a translucent slab, a darkless text and a darkless hover, and pass the recipe", () => {
+    expect(lightSlabs("x.tsx", '<div className="rounded-xl border border-amber-200 bg-amber-50 p-3">')).toHaveLength(1);
+    expect(lightSlabs("x.tsx", '<div className={`${on ? "bg-rose-50/40" : "x"}`}>')).toHaveLength(1);
+    expect(lightSlabs("x.tsx", '<i className="hover:bg-indigo-50">')).toHaveLength(1);
+    expect(lightSlabs("x.tsx", '<div className="bg-amber-500/[0.08] border-amber-500/40">')).toHaveLength(0);
+    expect(lightSlabs("x.tsx", '<div className="bg-amber-50 dark:bg-amber-500/10">')).toHaveLength(0);
+    expect(darklessText("x.tsx", '<b className="text-amber-900">x</b>')).toHaveLength(1);
+    expect(darklessText("x.tsx", '<b className="hover:text-indigo-700">x</b>')).toHaveLength(1);
+    expect(darklessText("x.tsx", '<b className="hover:text-indigo-700 dark:text-indigo-300">x</b>')).toHaveLength(1);
+    expect(darklessText("x.tsx", '<b className="text-amber-900 dark:text-amber-200 hover:text-indigo-700 dark:hover:text-indigo-300">x</b>')).toHaveLength(0);
+  });
+  it("the recipe clears 4.5 : 1 for text in both themes, on the 8 % slab and the 15 % chip, for every hue it is used with", () => {
+    type Hue = [string, RGB, RGB, RGB, RGB, RGB, RGB];   // name, 500, 700, 800, 900, 300, 200
+    const HUE_STEPS: Hue[] = [
+      ["amber", hex("#f59e0b"), hex("#b45309"), hex("#92400e"), hex("#78350f"), hex("#fcd34d"), hex("#fde68a")],
+      ["rose", hex("#f43f5e"), hex("#be123c"), hex("#9f1239"), hex("#881337"), hex("#fda4af"), hex("#fecdd3")],
+      ["emerald", hex("#10b981"), hex("#047857"), hex("#065f46"), hex("#064e3b"), hex("#6ee7b7"), hex("#a7f3d0")],
+      ["blue", hex("#3b82f6"), hex("#1d4ed8"), hex("#1e40af"), hex("#1e3a8a"), hex("#93c5fd"), hex("#bfdbfe")],
+      ["indigo", hex("#6366f1"), hex("#4338ca"), hex("#3730a3"), hex("#312e81"), hex("#a5b4fc"), hex("#c7d2fe")],
+      ["purple", hex("#a855f7"), hex("#7e22ce"), hex("#6b21a8"), hex("#581c87"), hex("#d8b4fe"), hex("#e9d5ff")],
+    ];
+    const over = (fg: RGB, alpha: number, bg: RGB): RGB => fg.map((c, i) => Math.round(c * alpha + bg[i] * (1 - alpha))) as RGB;
+    const LIGHTS = [hex("#ffffff"), hex("#f8fafc")], DARKS = [hex("#111827"), hex("#0f172a")];
+    for (const [name, c500, c700, c800, c900, c300, c200] of HUE_STEPS) {
+      for (const alpha of [0.08, 0.15]) {
+        // The 700 step sits on the 8 % slab (and indigo's on its 15 % chip);
+        // the 15 % chips carry 800 / 900 text.
+        const lightSteps = alpha === 0.08 || name === "indigo" ? [c700, c800, c900] : [c800, c900];
+        for (const base of LIGHTS) for (const fg of lightSteps) expect(ratio(fg, over(c500, alpha, base)), `${name} light @${alpha}`).toBeGreaterThanOrEqual(4.5);
+        for (const base of DARKS) for (const fg of [c300, c200]) expect(ratio(fg, over(c500, alpha, base)), `${name} dark @${alpha}`).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+    // Before: the 800 / 900 text sat on a light slab that stayed light in dark
+    // mode; converting the slab without the twin would put it on a dark tint.
+    expect(ratio(hex("#92400e"), over(hex("#f59e0b"), 0.08, hex("#111827")))).toBeLessThan(4.5);
   });
 });

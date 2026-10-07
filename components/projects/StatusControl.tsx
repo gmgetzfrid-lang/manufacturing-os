@@ -21,17 +21,18 @@ import { createPortal } from "react-dom";
 import { Circle, Loader2, CircleCheck, PauseCircle, AlertTriangle, XCircle } from "lucide-react";
 import type { MilestoneStatus } from "@/types/schema";
 import { ProgressSlider } from "@/components/projects/ProgressControl";
+import { DECISION_TARGET } from "@/components/projects/decisionTarget";
 
 export const STATUS_ORDER: MilestoneStatus[] = ["planned", "in_progress", "completed", "on_hold", "blocked", "missed"];
 
 interface Meta { label: string; dot: string; pill: string; Icon: React.ComponentType<{ className?: string }>; needsReason?: boolean }
 export const STATUS_META: Record<MilestoneStatus, Meta> = {
   planned:     { label: "Planned",     dot: "bg-slate-300 border-slate-400",   pill: "bg-[var(--color-surface-2)] text-[var(--color-text)] border-[var(--color-border)]",     Icon: Circle },
-  in_progress: { label: "In progress", dot: "bg-blue-500 border-blue-600",     pill: "bg-blue-100 text-blue-800 border-blue-200",        Icon: Loader2 },
-  completed:   { label: "Done",        dot: "bg-emerald-500 border-emerald-600",pill: "bg-emerald-100 text-emerald-800 border-emerald-200",Icon: CircleCheck },
-  on_hold:     { label: "On hold",     dot: "bg-amber-500 border-amber-600",   pill: "bg-amber-100 text-amber-900 border-amber-200",     Icon: PauseCircle, needsReason: true },
-  blocked:     { label: "Blocked",     dot: "bg-rose-500 border-rose-600",     pill: "bg-rose-100 text-rose-800 border-rose-200",        Icon: AlertTriangle, needsReason: true },
-  missed:      { label: "Missed",      dot: "bg-rose-600 border-rose-700",     pill: "bg-rose-100 text-rose-900 border-rose-300",        Icon: XCircle },
+  in_progress: { label: "In progress", dot: "bg-blue-500 border-blue-600",     pill: "bg-blue-500/15 text-blue-800 dark:text-blue-300 border-blue-500/40",        Icon: Loader2 },
+  completed:   { label: "Done",        dot: "bg-emerald-500 border-emerald-600",pill: "bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 border-emerald-500/40",Icon: CircleCheck },
+  on_hold:     { label: "On hold",     dot: "bg-amber-500 border-amber-600",   pill: "bg-amber-500/15 text-amber-900 dark:text-amber-200 border-amber-500/40",     Icon: PauseCircle, needsReason: true },
+  blocked:     { label: "Blocked",     dot: "bg-rose-500 border-rose-600",     pill: "bg-rose-500/15 text-rose-800 dark:text-rose-300 border-rose-500/40",        Icon: AlertTriangle, needsReason: true },
+  missed:      { label: "Missed",      dot: "bg-rose-600 border-rose-700",     pill: "bg-rose-500/15 text-rose-900 dark:text-rose-200 border-rose-500/50",        Icon: XCircle },
 };
 
 export function statusLabel(s: MilestoneStatus): string { return STATUS_META[s].label; }
@@ -181,11 +182,11 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
                   placeholder={reasonFor === "on_hold" ? "waiting on parts…" : "what's blocking it…"}
                   className="w-full text-xs px-2 py-1.5 border border-[var(--color-border-strong)] rounded-md outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30"
                 />
-                <div className="flex items-center justify-end gap-1.5 mt-2">
+                <div className="flex items-center justify-end gap-2 mt-2">
                   <button onClick={() => setReasonFor(null)} className="text-[11px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 transition-colors">Back</button>
                   <button
                     onClick={() => { onPick(reasonFor, reason.trim() || undefined); setOpen(false); }}
-                    className="text-[11px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-2.5 py-1 rounded-md transition-colors"
+                    className={`${DECISION_TARGET} text-[11px] font-bold text-[var(--color-accent-fg)] bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] px-2.5 py-1 rounded-md transition-colors`}
                   >
                     Set {STATUS_META[reasonFor].label}
                   </button>
@@ -199,7 +200,7 @@ export default function StatusControl({ status, onPick, disabled, onDisabledClic
                   <button
                     key={s}
                     onClick={() => choose(s)}
-                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-[var(--color-surface-2)] transition-colors ${s === status ? "font-bold text-[var(--color-accent)]" : "font-medium text-[var(--color-text)]"}`}
+                    className={`${DECISION_TARGET} w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-[var(--color-surface-2)] transition-colors ${s === status ? "font-bold text-[var(--color-accent)]" : "font-medium text-[var(--color-text)]"}`}
                   >
                     <span className={`w-3 h-3 rounded-full border ${m.dot} inline-flex items-center justify-center`}>
                       {s === "completed" && <CircleCheck className="w-2 h-2 text-white" />}

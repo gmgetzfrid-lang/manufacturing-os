@@ -863,7 +863,7 @@ export default function ExecutionView({
           signal state), but edits are disabled — say why so it doesn't feel
           broken. */}
       {!canEdit && (
-        <div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+        <div className="flex items-center gap-2 rounded-xl border border-amber-500/40 bg-amber-500/[0.08] px-3 py-2 text-[12px] text-amber-800 dark:text-amber-300">
           <Eye className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
           <span>
             <b>View only.</b> You&apos;re not a member of this project, so status and dates are read-only.
@@ -906,7 +906,7 @@ export default function ExecutionView({
                 ? `Highlight the critical path: the unfinished tasks on the chain of finish-to-start links that drives the finish date (${criticalCalendar} — no holiday calendar)`
                 : "No dependency links yet, so only the unfinished tasks that end at the finish date are highlighted — add links to see the chain that drives it")
               + (loopCaveat && critical.ids.size > 0 ? `. ${loopCaveat} — remove one of those links to see where they fall` : "")}
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${criticalOn ? "bg-rose-600 text-white border-rose-600" : "bg-[var(--color-surface)] text-rose-700 border-rose-200 hover:border-rose-400"}`}
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${criticalOn ? "bg-rose-600 text-white border-rose-600" : "bg-[var(--color-surface)] text-rose-700 dark:text-rose-300 border-rose-500/40 hover:border-rose-400"}`}
           >
             <Zap className="w-3.5 h-3.5" /> Critical path
           </button>
@@ -1287,7 +1287,7 @@ function OutlineRow({
       // name / date range from bleeding over the row below — the rows must stay
       // pixel-aligned with the absolutely-positioned timeline bars on the right.
       // (The status picker is portaled, so it isn't clipped by this.)
-      className={`group relative flex items-center gap-1.5 border-b border-[var(--color-border)] pr-2 overflow-hidden transition-colors ${focused ? "ring-2 ring-inset ring-[var(--color-accent-ring)] bg-[var(--color-accent-soft)]/40" : selected ? "bg-[var(--color-accent-soft)]/70" : checked ? "bg-emerald-50/30" : depth === 0 ? color.tint : "hover:bg-[var(--color-surface-2)]"}`}
+      className={`group relative flex items-center gap-1.5 border-b border-[var(--color-border)] pr-2 overflow-hidden transition-colors ${focused ? "ring-2 ring-inset ring-[var(--color-accent-ring)] bg-[var(--color-accent-soft)]/40" : selected ? "bg-[var(--color-accent-soft)]/70" : checked ? "bg-emerald-500/[0.08]" : depth === 0 ? color.tint : "hover:bg-[var(--color-surface-2)]"}`}
       style={{ height: ROW_H, paddingLeft: indent }}
     >
       {/* Group color rail — same hue for a phase and all its children,

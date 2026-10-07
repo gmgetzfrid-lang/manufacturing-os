@@ -17,6 +17,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { userFacingCaughtError } from "@/lib/userFacingError";
 import type { CheckoutSession } from "@/types/schema";
+import { DECISION_TARGET } from "@/components/projects/decisionTarget";
 
 interface StaleCheckoutBannerProps {
   userId?: string;
@@ -116,9 +117,9 @@ export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps
   if (dismissed || rows.length === 0) return null;
 
   return (
-    <div className="mb-4 bg-amber-50 border border-amber-200 rounded-2xl overflow-hidden">
-      <div className="px-4 py-3 border-b border-amber-200 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-amber-800">
+    <div className="mb-4 bg-amber-500/[0.08] border border-amber-500/40 rounded-2xl overflow-hidden">
+      <div className="px-4 py-3 border-b border-amber-500/40 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-amber-800 dark:text-amber-300">
           <AlarmClock className="w-4 h-4" />
           <span className="text-sm font-bold">
             You have {rows.length} stale checkout{rows.length === 1 ? "" : "s"} past the expected release date
@@ -131,29 +132,29 @@ export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps
       {releaseError && (
         <div role="alert" className="px-4 py-2 text-[11px] font-bold text-rose-700 dark:text-rose-300 bg-rose-500/[0.08] border-b border-rose-500/50">{releaseError}</div>
       )}
-      <div className="divide-y divide-amber-100">
+      <div className="divide-y divide-amber-500/20">
         {rows.map((r) => (
           <div key={r.id} className="px-4 py-2.5 flex items-center gap-3">
             <FileText className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
             <div className="flex-1 min-w-0">
-              <div className="text-xs font-bold text-amber-900 truncate">
+              <div className="text-xs font-bold text-amber-900 dark:text-amber-200 truncate">
                 <span className="font-mono">{r.docNumber || "—"}</span>
-                {r.docTitle && <span className="ml-2 text-amber-800 font-medium">{r.docTitle}</span>}
+                {r.docTitle && <span className="ml-2 text-amber-800 dark:text-amber-300 font-medium">{r.docTitle}</span>}
               </div>
-              <div className="text-[10px] text-amber-700">
+              <div className="text-[10px] text-amber-700 dark:text-amber-300">
                 Started {formatRelative(r.startedAt)} · expected release {formatRelative(r.expectedReleaseAt)}
               </div>
             </div>
             <Link
               href={r.libraryId ? `/documents/${r.libraryId}?doc=${r.documentId}` : "#"}
-              className="text-[10px] font-bold text-amber-900 underline hover:text-amber-700 transition-colors"
+              className="text-[10px] font-bold text-amber-900 dark:text-amber-200 underline hover:text-amber-700 dark:hover:text-amber-300 transition-colors"
             >
               Open
             </Link>
             <button
               onClick={() => void release(r)}
               disabled={releasingId === r.id}
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-700 hover:bg-amber-800 text-white text-[10px] font-bold disabled:opacity-50 transition-colors"
+              className={`${DECISION_TARGET} inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-700 hover:bg-amber-800 text-white text-[10px] font-bold disabled:opacity-50 transition-colors`}
             >
               {releasingId === r.id ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
               Release
