@@ -17,7 +17,7 @@ What the database actually permits, and which writes fail without telling anyone
 ## PERS-1 · tickets has ONE permissive FOR ALL policy with only USING — every active org member can rewrite any ticket column, including status and approval stamps, straight through PostgREST
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:1079-1081`, `supabase/schema.sql:1020`, `app/api/tickets/workflow-action/route.ts:91-103`, `app/(protected)/requests/page.tsx:639`
 - **Same root cause as** `SM-2`, `AUTHZ-2`, `EVID-1` — One `CREATE POLICY ... FOR ALL USING (...)` with no `WITH CHECK` (`supabase/schema.sql:1079-1081`). Four lenses found it independently. **One migration closes all four.** Fix once; close the rest citing this one.
@@ -59,6 +59,19 @@ CREATE POLICY documents_delete_controllers ON documents
 - ✓ INSERT requires `requester_id = auth.uid()` and the intake status: `NEW.requester_id := auth.uid();` (`20261038:130`), `NEW.status := 'PENDING_ASSIGNMENT';` (`:140`), non-members refused (`:125-127`).
 
 **Scope / residual.** → **DF-P1**: the policy split with written WITH CHECKs, plus the history-in-place / client-writable arrays residual (binding, fleet plan). The `request_type` / `unit` UPDATE gap is recorded on `LEAK-10` and `LEAK-3` (same owner).
+
+**Resolution (2026-10-02, drafting-flow Round G).** DF-P1 RAILS — done-when 3 and the history / arrays residual; **Pending migration:** `supabase/migrations/20261166_df_roundG_ticket_rails.sql` (`DEC-30`: one paste, not a widening, after `20261038` / `20261039`, and after the DF-P1 app deploy, never before it: `AUTHZ-13`, "Paste order") — the database half is not closed in any database until it is pasted. Same migration and evidence as [`SM-2`](./06-state-machine.md#sm-2).
+- `supabase/migrations/20261166_df_roundG_ticket_rails.sql:354-377` — `DROP POLICY IF EXISTS "tickets_org_access"` and one permissive policy per verb, each with the same membership expression byte for byte (`org_id IN (SELECT my_org_ids())`): `tickets_org_select` (USING), `tickets_org_insert` (WITH CHECK `org_id IN (SELECT my_org_ids()) AND requester_id = auth.uid()`), `tickets_org_update` (USING and WITH CHECK), `tickets_org_delete` (USING). `tickets_delete_controllers` (RESTRICTIVE, `20261038`) is unchanged. The INSERT check is evaluated after `ticket_insert_integrity` stamps the requester, so a member naming someone else is stamped to themselves and accepted (C13), and filing into another workspace is refused (C14) — exercised on a throwaway PostgreSQL 16 built from the real function bodies, in both foreign-key worlds (orphan intents present / absent), the script applied four times in each (idempotent; 13 of 13 probes true every time).
+- The history-in-place and client-writable-arrays residual: closed by the re-created guard (`SM-2`).
+- Tests: `lib/__tests__/dfRoundG_P1_rails.test.ts:249` (the split, each USING the base expression, no `FOR ALL` left, no later migration re-creates `tickets_org_access`); the migration's probe asserts the five policies by name, command and permissiveness.
+
+**Done-when.**
+- ✓ Status / approval / assignment / `deliverable_rev` change only through the service role (trigger, `20261038`), and the client does not write them (census on `SM-2`).
+- ✓ A RESTRICTIVE DELETE policy mirroring `documents_delete_controllers` (`20261038:228-231`).
+- ✓ The FOR ALL policy is split into explicit SELECT / INSERT / UPDATE / DELETE policies with an explicit WITH CHECK on the write halves (after the paste).
+- ✓ INSERT requires `requester_id = auth.uid()` (trigger and now policy) and the intake status (trigger, `20261038:140`).
+
+**Scope / residual.** None.
 
 ---
 
@@ -159,7 +172,7 @@ contrast, app/(protected)/requests/new/page.tsx:322-330 —
 ## PERS-4 · Deleting a ticket is permitted by RLS and orphans its R2 attachment binaries and its live document_intents rows — no FK, no restrictive DELETE policy, no application guard
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `supabase/schema.sql:1080-1081`, `supabase/schema.sql:1249`, `supabase/schema.sql:495`, `supabase/schema.sql:840`, `app/api/admin/ticket-shed/commit/route.ts:186-194`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The RLS and orphaning facts check out, but the scenario is hypothetical and partly self-blocking: a repo-wide grep for `from('tickets').delete(` / `from("tickets").delete(` returns zero hits — no UI, route, or lib ever deletes a ticket — and schema.sql:840 `linked_ticket_id UUID REFERENCES tickets(id)` has no ON DELETE clause, so Postgres RESTRICTs deletion of any ticket that has a linked checkout session. This is latent future-feature risk, not a live defect: LOW.
@@ -194,6 +207,15 @@ app/api/admin/ticket-shed/commit/route.ts:136-139 (the only code that knows how 
 - [ ] A RESTRICTIVE FOR DELETE policy on tickets limits deletion to Admin/DocCtrl (or forbids it outright in favour of CANCELED + shed)
 - [ ] document_intents.ticket_id gets `REFERENCES tickets(id) ON DELETE CASCADE` so intents cannot outlive their ticket
 - [ ] If ticket deletion is ever exposed in the product, it goes through a server route that frees the R2 keys the way commit/route.ts does
+
+**Resolution (2026-10-02, drafting-flow Round G).** DF-P1 RAILS — the orphan half; **Pending migration:** `supabase/migrations/20261166_df_roundG_ticket_rails.sql` (`DEC-30`: one paste, not a widening, after `20261038` / `20261039`, and after the DF-P1 app deploy, never before it: `AUTHZ-13`, "Paste order") — the database half is not closed in any database until it is pasted. `supabase/migrations/20261166_df_roundG_ticket_rails.sql:596-617` — `document_intents.ticket_id` gets `REFERENCES tickets(id) ON DELETE CASCADE`, in the two `DEC-30` worlds: intents already naming a missing ticket → the key is added `NOT VALID` (every new and updated row bound; the residue counted by the paste's inventory and left to decay on its TTL, never deleted); none → validated at once. A partial index backs the cascade. The restore's parent rules name the new key (`lib/dataRestore.ts:287`, `ticket_id>tickets`). Exercised on a throwaway PostgreSQL 16 built from the real function bodies, in both foreign-key worlds (orphan intents present / absent), the script applied four times in each (idempotent; 13 of 13 probes true every time) in both worlds (the probe's "world taken" row reads `NOT VALID (orphans kept until their TTL)` with one orphan seeded, `validated` without): a controller's delete cascades its intents (C25); a non-controller's delete removes nothing (C24). Test: `lib/__tests__/dfRoundG_P1_rails.test.ts:320`.
+
+**Done-when.**
+- ✓ A RESTRICTIVE FOR DELETE policy limits deletion to the controller tier (`tickets_delete_controllers`, `20261038:228-231`, re-verified).
+- ✓ `document_intents.ticket_id` references `tickets(id) ON DELETE CASCADE` (after the paste).
+- ✓ (conditional, holds) Ticket deletion is not exposed in the product — no `from('tickets').delete(` / `from("tickets").delete(` anywhere in `app/`, `lib/`, `components/`, `hooks/` (grep); a future delete flow must free the R2 keys as `app/api/admin/ticket-shed/commit/route.ts` does.
+
+**Scope / residual.** None.
 
 ---
 
@@ -303,6 +325,7 @@ supabase/schema.sql:402 —
 - **Locations:** `lib/audit.ts:16-32`, `supabase/migrations/20260813_acl_close_gaps_and_audit_scope.sql:84-90`, `supabase/schema.sql:1084-1085`, `app/(protected)/requests/[id]/page.tsx:979-983`, `app/(protected)/requests/page.tsx:623-627`
 - **Same root cause as** `EVID-6` — `supabase-js` resolves with `{error}` rather than throwing, so a swallowed audit insert reads as success. Same class of fix at every call site. Fix once; close the rest citing this one.
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Correct: supabase-js resolves rather than rejects, so the catch is effectively unreachable and a policy rejection (or the literal 'unknown' string failing the uuid column) is swallowed silently. Compounding it, schema.sql:1084-1085 grants only SELECT/INSERT on audit_logs, so there is no later reconciliation path — the event is simply gone with the UI showing success.
+- **Assigned:** drafting-flow DF-P9 TICKET-PAGE (the stand-ins on its pages) and admin-and-org P7 (org_id IS NULL readability, ALOG-10) — by the integrator, 2026-10-07 (at the DF-P1 merge, DEC-31: the package that left this remainder has merged; fleet plans `audit-reports/fleet-plans/drafting-flow.json`, `admin-and-org.json`).
 
 **Mechanism.** `logAuditAction` awaits `supabase.from("audit_logs").insert({...})` inside a try/catch and never destructures `{ error }`. The shared client is a plain `createClient(url, anon, { auth: authOptions })` (lib/supabase.ts:110) with no `.throwOnError()` anywhere, so a PostgrestBuilder resolves with `{ data: null, error }` on a database error — the catch block at line 29 only ever fires for a network/transport fault. There are two live rejection paths for this exact insert. (a) The INSERT policy requires `user_id = auth.uid()` (schema.sql:1085-1086, tightened at 20260813_acl_close_gaps_and_audit_scope.sql:86-90), and `audit_logs.user_id` is `UUID` (schema.sql:777) — but the ticket call sites pass `userId: uid || 'unknown'` (requests/[id]/page.tsx:981, 1017; requests/page.tsx:625, 641), so a null uid sends the literal string 'unknown' into a uuid column, producing 22P02 which is swallowed. (b) A genuine RLS denial for any reason produces 42501, also swallowed.
 
@@ -340,6 +363,15 @@ app/(protected)/requests/[id]/page.tsx:981 —
 - [ ] logAuditAction destructures `{ error }` and surfaces or re-throws it rather than relying on try/catch
 - [ ] Call sites stop substituting the string 'unknown' for a uuid — a missing uid is a reason to refuse the action, not to write a malformed row
 - [ ] Either the INSERT policy stops allowing org_id IS NULL, or the SELECT policy is widened to cover it, so no accepted audit row is permanently unreadable
+
+**Partial (2026-10-02, drafting-flow Round G).** DF-P1 RAILS — `lib/audit.ts` internals; same change as [`EVID-6`](./10-audit-evidence.md#evid-6). `logAuditAction` (`lib/audit.ts:34-61`) destructures `{ error }`, logs a refusal with the action it lost, and returns `{ ok: boolean, error: string | null }` (every exported signature kept; existing callers that ignore the result behave as before). A `userId` that is one of the `""` / `"unknown"` / `"system"` stand-ins (`:18`) is never sent into the UUID column: the row is written with `user_id NULL` and `metadata.actor_kind = "system"` (the stand-in kept as `actor_label`) — under a browser session the insert policy (`user_id = auth.uid()`) refuses it, and that refusal is now returned and logged instead of a swallowed `22P02`. Tests: `lib/__tests__/dfRoundG_P1_rails.test.ts:1278`, `:1288`.
+
+**Done-when.**
+- ✓ `logAuditAction` destructures `{ error }` and surfaces it (returned, and logged), not relying on try/catch.
+- ✗ Call sites still substitute `'unknown'` — `app/(protected)/requests/page.tsx:660`, `:677` (`userId: uid || 'unknown'`) and others; `lib/audit.ts` now neutralises the stand-in, but the action is not refused for a missing uid. The call sites are not DF-P1's files.
+- ✗ The INSERT policy still admits `org_id IS NULL` rows the SELECT policy cannot read (not touched).
+
+**Scope / residual.** The call sites' stand-ins → the packages that own each page (the two ticket-queue sites → **DF-P9**, TICKET-PAGE, the request pages' remaining direct writes). The `org_id IS NULL` readability → admin-and-org **P7** (`ALOG-10`; P7's audit identity trigger, `ALOG-7`, builds on this `lib/audit.ts` — fleet plan, DF-P1 `dependsOn`).
 
 ---
 

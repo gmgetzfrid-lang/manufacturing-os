@@ -109,6 +109,8 @@ vi.mock("@/lib/supabaseAdmin", () => ({
 vi.mock("@/lib/supabase", () => ({ supabase: { from: (t: string) => chain(t) } }));
 vi.mock("@supabase/supabase-js", () => ({ createClient: () => ({ from: (t: string) => chain(t) }) }));
 vi.mock("next/server", async (importOriginal) => ({ ...(await importOriginal<typeof import("next/server")>()), after: vi.fn() }));
+// DF-P1 (AUTHZ-11): the route HEADs a new file in storage before appending it.
+vi.mock("@/lib/r2", () => ({ r2: { send: vi.fn(async () => ({ ContentLength: 4096, ETag: '"etag-f"' })) }, R2_BUCKET: "test-bucket" }));
 import { POST as workflowAction } from "@/app/api/tickets/workflow-action/route";
 import { POST as commentPost } from "@/app/api/tickets/comment/route";
 
@@ -417,7 +419,7 @@ describe("LEAK-3 / AUTHZ-6 (records the open gap) — every DEC-13 scoped rule r
     expect(names(WorkflowEngine.getActions({ ...onU200, unit: "U-100" } as Ticket, "Engineer-2", "req", unitRule, engCtx))).toContain("approve_draft_ifc");
   });
 
-  it("the live ticket_update_guard (20261038 — no later migration re-creates it) owns neither column; no browser writer touches them after insert", () => {
+  it("20261038's ticket_update_guard (the body DF-P1's 20261166 re-creates with both columns owned — dfRoundG_P1_rails.test.ts) owns neither column; no browser writer touches them after insert", () => {
     const guard = src("supabase/migrations/20261038_rp_phase4_ticket_workflow_rails.sql");
     const body = guard.slice(guard.indexOf("CREATE OR REPLACE FUNCTION ticket_update_guard()"), guard.indexOf("DROP TRIGGER IF EXISTS trg_ticket_update_guard"));
     expect(body).toContain("IF NEW.status ");
@@ -448,6 +450,8 @@ describe("SM-11 — rowToTicket carries metadata, so the ticket ⇄ intent bridg
   it("route: entering DRAFTING on a ticket with metadata.source_document upserts the drafter's source:'ticket' intent; closing the ticket deletes it", async () => {
     state.user = { id: "a-1" };
     state.rows.org_members = [member("a-1", "Admin"), member("req-1", "Requester"), member("d-1", "Drafter")];
+    // DF-P1 (SM-14): the bridge reads the source document in the ticket's org
+    state.rows.documents = [{ id: "doc-1", org_id: "o1", current_version_id: null, library_id: null }];
     state.rows.tickets = [ticketRow({ status: "PENDING_ASSIGNMENT", assigned_drafter_id: null, metadata: { source_document: { id: "doc-1", documentNumber: "P-100" } } })];
     expect((await post({ ticketId: "t1", actionType: "assign", assignment: { id: "d-1", name: "Hector" } })).status).toBe(200);
     const up = callIndex("document_intents", "upsert");
@@ -468,7 +472,7 @@ describe("SM-11 — rowToTicket carries metadata, so the ticket ⇄ intent bridg
 
 // ═════════════════════════════════════════════════════════════════════════════
 describe("EDGE-11 — the load-bearing invariants carry regression tests", () => {
-  it("CAS: a save_progress applies on (id, status, last_modified) and stamps a fresh last_modified; the second of two concurrent saves — the first landed between its read and its write — is a 409 with no audit row", async () => {
+  it("CAS: a save_progress applies on (id, status, last_modified) and stamps a fresh last_modified; the second of two concurrent saves — the first landed between its read and its write — is a 409, its audit attempt recorded as not applied", async () => {
     state.user = { id: "d-1" };
     state.rows.org_members = [member("d-1", "Drafter"), member("req-1", "Requester")];
     state.rows.tickets = [ticketRow({ status: "DRAFTING" })];
@@ -485,7 +489,12 @@ describe("EDGE-11 — the load-bearing invariants carry regression tests", () =>
     const second = await post({ ticketId: "t1", actionType: "save_progress" });
     expect(second.status).toBe(409);
     expect((await second.json()).conflict).toBe(true);
-    expect(insertsOf("audit_logs")).toHaveLength(0);
+    // DF-P1 (EVID-12 / SM-7): the audit row is written BEFORE the compare-and-set;
+    // a loss is recorded against it, so the trail never shows the lost save as applied
+    const [attempt, notApplied] = insertsOf("audit_logs");
+    expect(insertsOf("audit_logs")).toHaveLength(2);
+    expect(attempt.action).toBe("TICKET_SAVE_PROGRESS");
+    expect(notApplied).toMatchObject({ action: "TICKET_SAVE_PROGRESS_NOT_APPLIED", details: { attempt: attempt.id, reason: "conflict" } });
   });
 
   it("comment RPC fallback is PGRST202-only: an error raised INSIDE post_ticket_comment surfaces as a 500 and nothing is written; a genuinely absent function falls back to the legacy single-statement write", async () => {

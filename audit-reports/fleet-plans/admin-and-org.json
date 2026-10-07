@@ -269,7 +269,8 @@
     "ALOG-6",
     "ALOG-11",
     "ALOG-5 residual",
-    "roles-and-permissions SURF-19 (purge / archive-cancel limb only, assigned by the integrator 2026-10-02 at the A&O P6 launch: app/api/admin/purge/route.ts and app/api/admin/archive-cancel/route.ts call authorizeAdminSurface instead of PURGE_ROLES / SHED_ROLES, using the writes-level intent A&O P6 adds)"
+    "roles-and-permissions SURF-19 (purge / archive-cancel limb only, assigned by the integrator 2026-10-02 at the A&O P6 launch: app/api/admin/purge/route.ts and app/api/admin/archive-cancel/route.ts call authorizeAdminSurface instead of PURGE_ROLES / SHED_ROLES, using the writes-level intent A&O P6 adds)",
+    "drafting-flow EVID-6 and PERS-7 (remainders re-owned by the integrator 2026-10-07 at the DF-P1 merge: the audit dead-letter / outbox and its drain (ALOG-8), the actor_kind column and audit identity trigger (ALOG-7) building on DF-P1's lib/audit.ts, and the org_id IS NULL readability (ALOG-10); the call-site stand-ins stay with their pages' owners) \u2014 and EVID-12's reading rule: both audit viewers pair a TICKET_<ACTION> attempt row with the _NOT_APPLIED / _HOLDS_NOT_RELEASED row that names it (10-audit-evidence.md EVID-12 \"Reading the trail\")"
    ],
    "files": [
     "lib/audit.ts (internals only; keep the exported signature)",
@@ -363,7 +364,8 @@
     "ORG-14 (opened at the J2b merge 2026-10-01: the View-as simulator shows standing quality signers and project-scoped grantees as not holding quality.sign_off)",
     "document-control RET-4 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Done-when 3's second table: access_recertification_events split into member SELECT and a controller/owner-bound INSERT, with no UPDATE or DELETE (A&O P9 ALOG-2). Then close by pointer. The 20261077 half (\u00a72 library attestation \u2026)",
     "ALOG-1 (remainder re-owned by the integrator 2026-10-02 at the A&O P0 merge: done-when 2 \u2014 lib/capabilityPolicy.ts:506 turns a read error into the shipped defaults with version null; CapabilityPolicyEditor.tsx:117 and ViewAsSimulator.tsx:46,96 render that as the org's policy \u2014 a failed read must be said, never shown as the defaults)",
-    "ALOG-12 (remainder re-owned by the integrator 2026-10-02 at the A&O P0 merge: done-when 1 \u2014 the editor posts the whole grid from a mount-time snapshot (CapabilityPolicyEditor.tsx:115-126, :216); the save op carries no version (lib/capabilityPolicy.ts:587-588); the route (app/api/admin/capability-policy/route.ts) refuses a stale-version save with 409 instead of overwriting a second admin's change)"
+    "ALOG-12 (remainder re-owned by the integrator 2026-10-02 at the A&O P0 merge: done-when 1 \u2014 the editor posts the whole grid from a mount-time snapshot (CapabilityPolicyEditor.tsx:115-126, :216); the save op carries no version (lib/capabilityPolicy.ts:587-588); the route (app/api/admin/capability-policy/route.ts) refuses a stale-version save with 409 instead of overwriting a second admin's change)",
+    "drafting-flow AUTHZ-7 (remainder re-owned by the integrator 2026-10-07 at the DF-P1 merge: implement DEC-89 item 3 as ruled \u2014 what the strict policy loader and the cached loader (the browser, lib/holds.ts) answer when the stored capability policy cannot be read; the WF-1 conflict; 09-authority-surfaces.md AUTHZ-7 Partial)"
    ],
    "files": [
     "components/permissions/PermissionsExplorer.tsx (capability rows rendered from CAPABILITY_DEFS + stored policy; five named mismatches corrected)",

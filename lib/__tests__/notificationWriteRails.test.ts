@@ -550,6 +550,9 @@ const DEDUPE_READS: Record<string, Array<{ marks: string; keys?: string[]; kinds
     // and no order and is cut at .limit(2000), so browser-legal compliance rows can push other lines out
     { marks: '.in("kind", COMPLIANCE_KINDS)', none: "not a dedupe: the compliance digest composes each recipient's list from compliance rows. Its read is cross-org, unordered and cut at 2,000 rows, so a member's browser-legal compliance rows (ack_requested, doc_superseded, review_requested), within the caps, can displace other people's and other tenants' lines — NEDGE-17, handed to N6" },
   ],
+  // drafting-flow DF-P1 (EVID-13; classified by the integrator at the DF-P1 merge): the route
+  // reads a ticket's unread workflow alerts only to mark them superseded, on the service role.
+  "app/api/tickets/workflow-action/route.ts": [{ marks: '.is("metadata->>superseded_at", null)', none: "not a dedupe: the workflow route reads a ticket's unread workflow alerts (metadata.action set, not yet superseded) to mark them metadata.superseded_at on the service role (DF-P1 EVID-13); it decides no send" }],
   "app/api/transmittal/route.ts": [{ marks: '.eq("kind", UNSTAMPABLE_NOTICE_KIND)', kinds: ["transmittal_unstampable"] }],
   // ackRequest (the nag's watermark) is written by browsers by design — a manual request or
   // re-nudge counts as the nag (the scan's own comment); only the escalation's key is server-only
@@ -1736,9 +1739,24 @@ describe("REGRESSION census — every app write to notifications fits the read_a
     expect(writes.filter((w) => w.op === "update").length).toBeGreaterThanOrEqual(4);
   });
 
-  it("every UPDATE writes read_at and nothing else (mark one / many / all read, the ticket page's clear)", () => {
-    const bad = writes.filter((w) => w.op === "update" && !/^\s*\.update\(\{\s*read_at: new Date\(\)\.toISOString\(\)\s*\}\)/.test(w.text));
+  // The two updates that write metadata, not read_at (drafting-flow DF-P1, EVID-13; classified by
+  // the integrator at the DF-P1 merge). The route's runs on the service role, which 20261161's
+  // read_at-only trigger lets through. The attention hook's runs in the recipient's browser on
+  // their own rows: once 20261161 is pasted the trigger refuses it (best-effort there; the feed
+  // already filters the row) — NEDGE-18, owned by notifications N4, moves that mark server-side.
+  const METADATA_UPDATES: Record<string, { marks: string; why: string }> = {
+    "app/api/tickets/workflow-action/route.ts": { marks: "superseded_at: supersededAt, superseded_by: action.type", why: "service role: retires a ticket's moot workflow alerts (EVID-13)" },
+    "hooks/useTicketNotifications.ts": { marks: "superseded_at: supersededAt", why: "browser, own rows: refused once 20261161 is pasted (NEDGE-18, N4)" },
+  };
+
+  it("every UPDATE writes read_at and nothing else (mark one / many / all read, the ticket page's clear) — but the two classified metadata marks", () => {
+    const readAtOnly = (t: string) => /^\s*\.update\(\{\s*read_at: new Date\(\)\.toISOString\(\)\s*\}\)/.test(t);
+    const bad = writes.filter((w) => w.op === "update" && !readAtOnly(w.text) && !(METADATA_UPDATES[w.file] && w.text.includes(METADATA_UPDATES[w.file].marks)));
     expect(bad.map((w) => `${w.file}: ${w.text.slice(0, 80)}`)).toEqual([]);
+    // each classified mark is still there, exactly once — a removed one is dropped from the list
+    for (const [file, m] of Object.entries(METADATA_UPDATES)) {
+      expect(writes.filter((w) => w.file === file && w.op === "update" && w.text.includes(m.marks)).length, file).toBe(1);
+    }
   });
 
   it("no app insert into notifications sets created_at — 20261160's date stamp changes nothing the app writes", () => {

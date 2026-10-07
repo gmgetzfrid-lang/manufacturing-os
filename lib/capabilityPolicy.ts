@@ -461,16 +461,20 @@ export const normalizeStoredPolicy = parseStoredCapabilityPolicy;
 export async function loadCapabilityPolicyStrict(
   orgId: string,
   client: Pick<typeof supabase, "from">,
-): Promise<{ ok: true; policy: CapabilityPolicy } | { ok: false; error: string }> {
+): Promise<{ ok: true; policy: CapabilityPolicy; version: string | null } | { ok: false; error: string }> {
   try {
+    // drafting-flow AUTHZ-7: the workflow route reads through this loader and
+    // names the version it decided under in its audit row (WF-10), so the
+    // row's updated_at rides along (null = nothing stored).
     const { data, error } = await client
       .from("org_configurations")
-      .select("data")
+      .select("data, updated_at")
       .eq("org_id", orgId)
       .eq("key", "capability_policy")
       .maybeSingle();
     if (error) return { ok: false, error: error.message || "policy read failed" };
-    return { ok: true, policy: normalizeStoredPolicy(data?.data) };
+    const version = typeof (data as { updated_at?: unknown } | null)?.updated_at === "string" ? (data as { updated_at: string }).updated_at : null;
+    return { ok: true, policy: normalizeStoredPolicy(data?.data), version };
   } catch (e) {
     return { ok: false, error: (e as Error)?.message || "policy read threw" };
   }

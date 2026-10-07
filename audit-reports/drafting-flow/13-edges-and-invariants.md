@@ -490,7 +490,7 @@ app/api/tickets/workflow-action/route.ts:24-25 (the standard this violates)
 ## EDGE-9 · Ticket notification emails carry root-relative links — every 'you were mentioned' and status email in the drafting flow has a dead button
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/tickets/comment/route.ts:255`, `app/api/tickets/comment/route.ts:296-300`, `app/api/tickets/workflow-action/route.ts:313`, `app/api/tickets/workflow-action/route.ts:389-394`, `lib/publicOrigin.ts:17-22`, `lib/transmittals.ts:389-392`
 - **Re-verified:** hardening pass — **SURVIVES**. Same root as `notifications/NEDGE-4` — `const link = `/requests/${ticketId}?c=…`` at `comment/route.ts:263`, embedded as an `href` in mail. Fix once.
@@ -532,6 +532,18 @@ export function publicOrigin(): string {
 - [ ] Both ticket routes build their email link from publicOrigin() (or the request origin) and the resulting href starts with https://
 - [ ] A test asserts no queued email_notifications row has a body_html href starting with '/'
 - [ ] NEXT_PUBLIC_SITE_URL is documented as required for email delivery in .env.example, not only for QR printing
+
+**Resolution (2026-10-02, drafting-flow Round G).** DF-P1 RAILS (fleet plan: "fix once here, DELIV-5 closes by pointer"). Both ticket routes build email links on an absolute origin — `publicOrigin()` (`lib/publicOrigin.ts`: the configured `NEXT_PUBLIC_SITE_URL`, else Vercel's production domain on the server), else the origin the request arrived on — and keep the in-app bell link relative:
+- `app/api/tickets/workflow-action/route.ts:984-988` (`emailOrigin`), `:1035-1037` (`emailLink`), `:1146-1151` — the status email's `body_text` and both `href`s (HTML-escaped).
+- `app/api/tickets/comment/route.ts:153-157`, `:334-336`, `:382-386` — the mention / watcher email, the same way.
+- Tests: `lib/__tests__/dfRoundG_P1_rails.test.ts:851` (workflow route: on the configured origin when set, else the request's; no `href` starts with `/`), `:869` (comment route: the same) — both fail on the base code.
+
+**Done-when.**
+- ✓ Both ticket routes build their email link from `publicOrigin()` or the request origin, and the `href` is absolute (`https://` on any deployed origin).
+- ✓ A test asserts no queued `email_notifications` row's `body_html` has an `href` starting with `/`.
+- ✓ `.env.example` already documents `NEXT_PUBLIC_SITE_URL` for "every share / transmittal / emailed link" and says to set it in every environment (`.env.example:44-61`); not edited here.
+
+**Scope / residual.** Cross-area: notifications `DELIV-5` / `NEDGE-4` (same defect, same two routes) close by pointer to this record — their records are the notifications packages' to update; `DELIV-5`'s `ticketUrl()` limb is `lib/notifications.ts`'s (not DF-P1's file). With neither origin configured, a link built from a Vercel preview request carries that preview host (`publicOrigin()` answers production first whenever Vercel exposes its system variables).
 
 ---
 
@@ -811,7 +823,7 @@ export async function notify(input: NotificationInput): Promise<void> {
 ## EDGE-15 · A ticket whose `last_modified` is `NULL` gets a status-only compare-and-set, so two concurrent writes both land
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** drafting-flow DF-P1 RAILS (the route's null-token leg and the guard re-creation that refuses a client write nulling the column) — by the integrator, 2026-10-02 (opened at the DF-P0 merge from DF-P0's proposal in `99-fix-sequencing.md`, "New ids DF-P0 asks the integrator to open at merge"; fleet plan `audit-reports/fleet-plans/drafting-flow.json`).
 - **Verification:** CONFIRMED (by reading; not exercised against a live database)
 - **Blast radius:** data integrity
@@ -832,6 +844,18 @@ export async function notify(input: NotificationInput): Promise<void> {
 - The route treats a null token as its own leg or refuses it as a conflict.
 - The guard refuses a client write that nulls `last_modified` (or the column is `NOT NULL`).
 - A route test: two concurrent writes on a null-token row give one 409.
+
+**Resolution (2026-10-02, drafting-flow Round G).** DF-P1 RAILS; **Pending migration:** `supabase/migrations/20261166_df_roundG_ticket_rails.sql` (`DEC-30`: one paste, not a widening, after `20261038` / `20261039`, and after the DF-P1 app deploy, never before it: `AUTHZ-13`, "Paste order") — the database half is not closed in any database until it is pasted.
+- `app/api/tickets/workflow-action/route.ts:742-785` — a row with no token compare-and-sets on the null itself: `baseQuery.is("last_modified", null)` (and the same in the tolerant retry), so the first writer stamps it and a concurrent second matches no row → 409.
+- `supabase/migrations/20261166_df_roundG_ticket_rails.sql:333-338` — the guard refuses a client write that nulls `last_modified` ("tickets: last_modified cannot be cleared"); a client may still stamp it (the queue's mark-urgent).
+- Tests: `lib/__tests__/dfRoundG_P1_rails.test.ts:887` — the leg is `.is("last_modified", null)`; two concurrent writes on a null-token row give one 200 and one 409 (fails on the base code). The loser's audit attempt, written before its compare-and-set (`EVID-12`), is followed by a `TICKET_SAVE_PROGRESS_NOT_APPLIED` row naming it (DF-P1 fix pass 2; this line first said the loser wrote no audit row). Exercised on a throwaway PostgreSQL 16 built from the real function bodies, in both foreign-key worlds (orphan intents present / absent), the script applied four times in each (idempotent; 13 of 13 probes true every time): a member's `{ last_modified: null }` is refused (C10); a mark-read on a null-token row passes (C05). Paste-time inventory: tickets whose `last_modified` is NULL today (the first route write stamps each).
+
+**Done-when.**
+- ✓ The route treats a null token as its own leg.
+- ✓ The guard refuses a client write that nulls `last_modified` (after the paste).
+- ✓ A route test: two concurrent writes on a null-token row give one 409.
+
+**Scope / residual.** None for this finding. The same null-leg gap in `app/api/tickets/handback/route.ts:85` is noted on `SM-9` for that route's owner.
 
 ---
 

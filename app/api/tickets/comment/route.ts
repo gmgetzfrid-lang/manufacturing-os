@@ -3,6 +3,8 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { extractMentionUids } from "@/lib/notifications";
 import { rowToTicket, escapeHtml } from "@/lib/ticketTransitions";
 import { memberHoldsAny } from "@/lib/roleHeld";
+import { publicOrigin } from "@/lib/publicOrigin";
+import { ticketReadScope } from "@/lib/ticketReadScope";
 
 // POST /api/tickets/comment
 //
@@ -69,6 +71,17 @@ export async function POST(req: NextRequest) {
   if (!member) {
     return NextResponse.json({ error: "Forbidden: not an active member of this workspace" }, { status: 403 });
   }
+  // AUTHZ-13 (DEC-89): commenting makes the poster a watcher, and
+  // watching is one of the Contractor-only read scope's legs. A Contractor-only
+  // member may comment only on a ticket they can already read; any other ticket
+  // answers as an unreadable one does (404), and nothing is written. This
+  // route runs as the service role, so it cannot ask the database for
+  // auth.uid(). lib/ticketReadScope.ts holds the same predicate.
+  const scope = await ticketReadScope(supabaseAdmin, member, caller.id, { ...ticket, id: body.ticketId });
+  if (scope === "unknown") {
+    return NextResponse.json({ error: "Couldn't confirm you can see this request — try again in a moment" }, { status: 503 });
+  }
+  if (scope === "out") return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
   const callerEmail = (member.email as string | null) || caller.email || "Unknown";
   const callerRole = (member.role as string) || "Viewer";
   const now = new Date().toISOString();
@@ -114,21 +127,36 @@ export async function POST(req: NextRequest) {
       (rpcErr as { code?: string }).code === "PGRST202" ||
       /could not find the function|does not exist in the schema cache/i.test(rpcErr.message ?? "");
     if (!missing) return NextResponse.json({ error: rpcErr.message }, { status: 500 });
-    const { error: updErr } = await supabaseAdmin
+    // The legacy write merges the arrays the way the RPC does (AUTHZ-8 done-
+    // when 2): a comment adds readers and followers, never drops one.
+    // SM-9 done-when 3: it is a whole-array replace, so it rides a compare-
+    // and-set on the last_modified it read (the null token its own leg) — a
+    // workflow action landing in between is never overwritten; the loser is
+    // told to retry.
+    let legacy = supabaseAdmin
       .from("tickets")
       .update({
         comments: [...(ticket.comments || []), comment],
-        unread_by: newUnreadBy,
+        unread_by: Array.from(new Set([...(ticket.unreadBy ?? []), ...newUnreadBy])).filter((u) => u !== caller.id),
         watchers: nextWatchers,
         last_modified: now,
       })
       .eq("id", body.ticketId);
+    legacy = ticket.lastModified ? legacy.eq("last_modified", String(ticket.lastModified)) : legacy.is("last_modified", null);
+    const { data: legacyRows, error: updErr } = await legacy.select("id");
     if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
+    if (((legacyRows as unknown[] | null) ?? []).length === 0) {
+      return NextResponse.json({ error: "The ticket changed while you were commenting — refresh and try again", conflict: true }, { status: 409 });
+    }
   }
 
   // Server-side fan-out. Never fails the post (it's already committed).
+  // EDGE-9: an email link leaves the app — absolute, on the configured public
+  // origin (lib/publicOrigin.ts, with its server fallback), else this
+  // request's own origin.
+  const emailOrigin = publicOrigin() || new URL(req.url).origin;
   try {
-    await fanOut({ ticket, ticketId: body.ticketId, comment, mentions, recipients: newUnreadBy, actorUid: caller.id, actorEmail: callerEmail });
+    await fanOut({ ticket, ticketId: body.ticketId, comment, mentions, recipients: newUnreadBy, actorUid: caller.id, actorEmail: callerEmail, emailOrigin });
     // Kick the email drain AFTER the response is sent (the daily cron is the
     // fallback, not the primary path — recipients should get email in seconds).
     // WF-19 done-when 3: a blank CRON_SECRET must not leave the drain
@@ -296,12 +324,16 @@ async function fanOut(params: {
   recipients: string[];
   actorUid: string;
   actorEmail: string;
+  /** EDGE-9: the absolute origin email links are built on. */
+  emailOrigin: string;
 }) {
-  const { ticket, ticketId, comment, mentions, recipients, actorUid, actorEmail } = params;
+  const { ticket, ticketId, comment, mentions, recipients, actorUid, actorEmail, emailOrigin } = params;
   if (recipients.length === 0) return;
 
   const ticketLabel = `${ticket.ticketId || ""} ${ticket.title}`.trim();
+  // In-app rows navigate inside the app (relative); the email link leaves it.
   const link = `/requests/${ticketId}?c=${comment.id}`;
+  const emailLink = `${emailOrigin.replace(/\/+$/, "")}${link}`;
   const actorName = actorEmail.split("@")[0];
   const snippet = comment.text.length > 140 ? comment.text.slice(0, 137) + "…" : comment.text;
   const mentionSet = new Set(mentions);
@@ -347,11 +379,11 @@ async function fanOut(params: {
       to_user_id: uid,
       to_email: emailByUid.get(uid)!,
       subject: mentionSet.has(uid) ? `You were mentioned: ${ticketLabel}` : `New comment on ${ticketLabel}`,
-      body_text: `${actorEmail} commented on ${ticketLabel}:\n\n${comment.text}\n\n${link}`,
+      body_text: `${actorEmail} commented on ${ticketLabel}:\n\n${comment.text}\n\n${emailLink}`,
       body_html: `
-        <p><b>${escapeHtml(actorEmail)}</b> commented on <a href="${link}">${escapeHtml(ticketLabel)}</a>:</p>
+        <p><b>${escapeHtml(actorEmail)}</b> commented on <a href="${escapeHtml(emailLink)}">${escapeHtml(ticketLabel)}</a>:</p>
         <blockquote style="border-left:3px solid #cbd5e1;padding-left:12px;color:#475569;white-space:pre-wrap">${escapeHtml(comment.text)}</blockquote>
-        <p><a href="${link}">Open ticket</a></p>`,
+        <p><a href="${escapeHtml(emailLink)}">Open ticket</a></p>`,
       resource_type: "ticket",
       resource_id: ticketId,
       event_type: mentionSet.has(uid) ? "comment_mention" : "watcher_activity",

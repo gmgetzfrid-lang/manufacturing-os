@@ -12,18 +12,18 @@
     "audit-reports/notifications/08-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 113,
+    "findings": 114,
     "gaps": 7,
     "by_severity": {
       "CRITICAL": 2,
       "HIGH": 17,
       "MEDIUM": 76,
-      "LOW": 18
+      "LOW": 19
     },
     "by_status": {
       "REFUTED": 3,
       "RESOLVED": 28,
-      "OPEN": 82
+      "OPEN": 83
     }
   },
   "status_vocabulary": [
@@ -2610,6 +2610,31 @@
       "summary": "An engineer receives kind:'reviewoverdue' — \"Your sign-off on Rev B is 21 days late\". Rather than acting, they issue one PostgREST DELETE on that row id, or UPDATE its title/createdat. It is gone from their bell, from the /inbox cockpit, and from the maintenance cron's 25-hour compliance-digest window (maintenance/route.ts:375-381 selects from notifications). The scans in lib/reviewControl.ts will",
       "area": "notifications",
       "report": "audit-reports/notifications/02-delivery-integrity.md"
+    },
+    {
+      "id": "NEDGE-18",
+      "title": "Once 20261161 is pasted, the attention feed's browser-side mark on a stale workflow alert is refused, so an alert the workflow route missed stays in the unread window",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED by reading the two merged changes together: `20261161`'s `enforce_notification_update()` (`trg_notifications_read_at_only`) refuses a recipient's change to any column but `read_at` on their own row, and DF-P1's reconcile in `hooks/useTicketNotifications.ts` writes `metadata.superseded_at` on the recipient's own rows from the browser. The census in `lib/__tests__/notificationWriteRails.test.ts` (\"every UPDATE writes read_at and nothing else … but the two classified metadata marks\") names both writes.",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "hooks/useTicketNotifications.ts:234-283",
+        "supabase/migrations/20261161_notif_roundG_read_scope.sql",
+        "app/api/tickets/workflow-action/route.ts:1072-1088",
+        "lib/inAppNotifications.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "After 20261161 is pasted, a drafter has 60 workflow alerts for tickets the shed archived. The route never superseded them, because the shed does not fan out. Each page load hides them and tries to mark them, and every mark is refused. The bell's unread read returns the newest 50 rows, all of them moot, so a live \"issue the IFC\" alert below them is not shown.",
+      "area": "notifications",
+      "report": "audit-reports/notifications/08-edges-and-invariants.md"
     },
     {
       "id": "OS-5",

@@ -313,6 +313,14 @@ beforeEach(() => {
   db.rpc = {
     review_control_mode_for: () => ({ data: "none", error: null }),
     user_can_publish_on_library: () => ({ data: false, error: null }),
+    // drafting-flow SM-9 (DF-P1, 20261166): the redline lands as a `||` append
+    append_ticket_redline: (a) => {
+      const t = (db.tables.tickets ?? []).find((x) => x.id === a.p_ticket_id && x.org_id === a.p_org_id && !x.archived_at);
+      if (!t) return { data: false, error: null };
+      t.attachments = [...((t.attachments as Row[] | null) ?? []), a.p_attachment as Row];
+      t.history = [...((t.history as Row[] | null) ?? []), a.p_history as Row];
+      return { data: true, error: null };
+    },
     publish_revision: (a) => {
       const v = { id: "v-pub", org_id: ORG, record_id: a.p_doc, review_state: null, released_at: new Date().toISOString(), intake_link_id: null };
       (db.tables.document_versions ??= []).push(v);
@@ -1026,11 +1034,104 @@ describe("a retry returns the original; an error names no internals", () => {
     const T = "00000000-0000-4000-8000-00000000dddd";
     db.tables.tickets = [{ id: T, org_id: ORG, ticket_id: "T-9", title: "Collision", attachments: [], history: [], metadata: { intake_collision: { intakeLinkId: LINK } } }];
     const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    db.errors["tickets.update"] = [{ message: "boom" }];
-    const res = await upload({ ticketId: T });
-    expect(res.status).toBe(500);
+    // the append function refuses (20261166 pasted) …
+    db.rpc.append_ticket_redline = () => ({ data: null, error: { code: "P0001", message: "boom" } });
+    const viaRpc = await upload({ ticketId: T });
+    expect(viaRpc.status).toBe(500);
     expect(db.r2Deletes.map((d) => d.Key)).toEqual([db.r2Puts[0].Key]);
+    // … and, before it is pasted, the fallback's update fails
+    db.rpc.append_ticket_redline = () => ({ data: null, error: { code: "PGRST202", message: "Could not find the function public.append_ticket_redline" } });
+    db.errors["tickets.update"] = [{ message: "boom" }];
+    const viaFallback = await upload({ ticketId: T });
+    expect(viaFallback.status).toBe(500);
+    expect(db.r2Deletes.map((d) => d.Key)).toEqual(db.r2Puts.map((p) => p.Key));
+    expect((db.tables.tickets[0] as Row).attachments).toEqual([]);
     spy.mockRestore();
+  });
+  it("drafting-flow SM-9 (DF-P1) done-when 2: the redline is an append (append_ticket_redline) — no whole-array write of tickets from the route", async () => {
+    seed();
+    const T = "00000000-0000-4000-8000-00000000abcd";
+    db.tables.tickets = [{ id: T, org_id: ORG, ticket_id: "T-9", title: "Collision", attachments: [{ name: "a-workflow-file.pdf" }], history: [{ action: "Approve (Issue for Construction) — issued Rev 1" }], last_modified: "2026-10-02T00:00:00.000Z", metadata: { intake_collision: { intakeLinkId: LINK } } }];
+    expect((await upload({ ticketId: T })).status).toBe(200);
+    const call = db.rpcCalls.find((c) => c.fn === "append_ticket_redline")!;
+    expect(call.args).toMatchObject({ p_ticket_id: T, p_org_id: ORG });
+    expect((call.args.p_attachment as Row).name).toBe("REDLINE_sheet.pdf");
+    expect((call.args.p_history as Row).action).toBe("Redline markups received via intake portal");
+    expect(db.writes.filter((x) => x.table === "tickets" && x.method === "update")).toHaveLength(0);
+    const row = db.tables.tickets[0] as Row;
+    expect((row.attachments as Row[]).map((a) => a.name)).toEqual(["a-workflow-file.pdf", "REDLINE_sheet.pdf"]);
+    expect((row.history as Row[]).map((h) => h.action)).toEqual(["Approve (Issue for Construction) — issued Rev 1", "Redline markups received via intake portal"]);
+    // a ticket that took no append (gone between the read and the write) attaches nothing and keeps no object
+    db.r2Deletes = [];
+    db.rpc.append_ticket_redline = () => ({ data: false, error: null });
+    const gone = await upload({ ticketId: T });
+    expect(gone.status).toBe(404);
+    expect(db.r2Deletes).toHaveLength(1);
+    // … and one ARCHIVED in between is told so (409), not "no redline request matches"
+    db.r2Deletes = [];
+    db.rpc.append_ticket_redline = () => { (db.tables.tickets[0] as Row).archived_at = "2026-10-03T00:00:00Z"; return { data: false, error: null }; };
+    const archived = await upload({ ticketId: T });
+    expect(archived.status).toBe(409);
+    expect((await archived.json()).error).toMatch(/archived.*restore it/);
+    expect(db.r2Deletes).toHaveLength(1);
+  });
+  it("drafting-flow SM-9 (DF-P1): an archived ticket takes no redline on either path — a clear 409 before anything is stored; the fallback's compare-and-set excludes archived stubs", async () => {
+    seed();
+    const T = "00000000-0000-4000-8000-00000000a0a0";
+    const LM = "2026-10-02T00:00:00.000Z";
+    db.tables.tickets = [{ id: T, org_id: ORG, ticket_id: "T-9", title: "Collision", attachments: [], history: [], last_modified: LM, archived_at: "2026-10-01T00:00:00Z", metadata: { intake_collision: { intakeLinkId: LINK } } }];
+    const res = await upload({ ticketId: T });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/archived.*Ask the requester to restore it/);
+    expect(db.r2Puts).toEqual([]);
+    expect(db.rpcCalls.filter((c) => c.fn === "append_ticket_redline")).toHaveLength(0);
+    // before 20261166: the fallback's write carries the archived leg, and a ticket archived after the read is refused (409), the object removed
+    db.rpc.append_ticket_redline = () => ({ data: null, error: { code: "PGRST202", message: "Could not find the function public.append_ticket_redline" } });
+    const row = db.tables.tickets[0] as Row;
+    delete row.archived_at;
+    expect((await upload({ ticketId: T })).status).toBe(200);
+    const w = db.writes.find((x) => x.table === "tickets" && x.method === "update")!;
+    expect(w.filters).toEqual(expect.arrayContaining([["eq", "id", T], ["is", "archived_at", null], ["eq", "last_modified", LM]]));
+    db.writes = []; db.r2Puts = []; db.r2Deletes = [];
+    row.attachments = []; row.history = [];
+    let reads = 0;
+    Object.defineProperty(row, "archived_at", { get: () => (reads++ > 0 ? "2026-10-03T00:00:00Z" : null), set: () => undefined, enumerable: true, configurable: true });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const late = await upload({ ticketId: T });
+    expect(late.status).toBe(409);
+    expect((await late.json()).error).toMatch(/archived/);
+    expect(row.attachments).toEqual([]);
+    expect(db.r2Puts).toHaveLength(1); // stored after the clean read, then removed
+    expect(db.r2Deletes.map((d) => d.Key)).toEqual(db.r2Puts.map((p) => p.Key));
+  });
+  it("drafting-flow SM-9 (DF-P1): before 20261166 the redline append compare-and-sets on the ticket's last_modified as read", async () => {
+    seed();
+    db.rpc.append_ticket_redline = () => ({ data: null, error: { code: "PGRST202", message: "Could not find the function public.append_ticket_redline" } });
+    const T = "00000000-0000-4000-8000-00000000eeee";
+    const LM = "2026-10-02T00:00:00.000Z";
+    db.tables.tickets = [{ id: T, org_id: ORG, ticket_id: "T-9", title: "Collision", attachments: [], history: [], last_modified: LM, metadata: { intake_collision: { intakeLinkId: LINK } } }];
+    expect((await upload({ ticketId: T })).status).toBe(200);
+    const w = db.writes.find((x) => x.table === "tickets" && x.method === "update")!;
+    expect(w.filters).toEqual(expect.arrayContaining([["eq", "id", T], ["eq", "org_id", ORG], ["eq", "last_modified", LM]]));
+    const row = db.tables.tickets[0] as Row;
+    expect((row.attachments as Row[]).map((a) => a.name)).toEqual(["REDLINE_sheet.pdf"]);
+    expect((row.history as Row[]).map((h) => h.action)).toEqual(["Redline markups received via intake portal"]);
+  });
+  it("drafting-flow SM-9 (DF-P1): before 20261166, a ticket that keeps changing under the append is refused (409) — nothing attached over the newer arrays, the stored object removed", async () => {
+    seed();
+    db.rpc.append_ticket_redline = () => ({ data: null, error: { code: "PGRST202", message: "Could not find the function public.append_ticket_redline" } });
+    const T = "00000000-0000-4000-8000-00000000ffff";
+    let tick = 0;
+    const row: Row = { id: T, org_id: ORG, ticket_id: "T-9", title: "Collision", attachments: [{ name: "a-workflow-file.pdf" }], history: [], metadata: { intake_collision: { intakeLinkId: LINK } } };
+    // every read of the token sees a newer one: each compare-and-set loses
+    Object.defineProperty(row, "last_modified", { get: () => `2026-10-02T00:00:0${tick++ % 10}.000Z`, set: () => undefined, enumerable: true });
+    db.tables.tickets = [row];
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const res = await upload({ ticketId: T });
+    expect(res.status).toBe(409);
+    expect(db.writes.filter((x) => x.table === "tickets" && x.method === "update")).toHaveLength(2);
+    expect((row.attachments as Row[]).map((a) => a.name)).toEqual(["a-workflow-file.pdf"]);
+    expect(db.r2Deletes.map((d) => d.Key)).toEqual([db.r2Puts[0].Key]);
   });
   it("the redline branch answers the same for a ticket that is not this link's and one that does not exist", async () => {
     seed();

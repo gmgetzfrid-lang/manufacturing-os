@@ -191,7 +191,11 @@ export async function listMyNotifications(
   // current workspace's portal will never list. RLS already restricts to the
   // user; this restricts to the workspace they're actually looking at.
   if (opts?.orgId) q = q.eq("org_id", opts.orgId);
-  if (opts?.onlyUnread) q = q.is("read_at", null);
+  // drafting-flow EVID-13: a workflow alert the ticket has moved past is
+  // MARKED superseded by the workflow route (metadata.superseded_at) and keeps
+  // read_at for the recipient's own act — so "unread" leaves superseded rows
+  // out, or they would fill the bell's window and push live rows off it.
+  if (opts?.onlyUnread) q = q.is("read_at", null).is("metadata->>superseded_at", null);
   const { data, error } = await q;
   if (error) throw error;
   return (data || []).map(rowToNotification);
@@ -201,7 +205,8 @@ export async function countUnread(orgId?: string | null): Promise<number> {
   let q = supabase
     .from("notifications")
     .select("*", { count: "exact", head: true })
-    .is("read_at", null);
+    .is("read_at", null)
+    .is("metadata->>superseded_at", null);
   if (orgId) q = q.eq("org_id", orgId);
   const { count, error } = await q;
   if (error) throw error;

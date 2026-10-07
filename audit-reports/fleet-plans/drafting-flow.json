@@ -290,7 +290,8 @@
     "DCW-6",
     "FRIC-4",
     "FRIC-2",
-    "FRIC-5"
+    "FRIC-5",
+    "EVID-12 (remainder re-owned by the integrator 2026-10-07 at the DF-P1 merge: the e-signature bound to the approved attachment, with a server-computed content hash (sha256 at upload or at vetting) — the same limb as EVID-1; DF-P1 made the audit row written first and checked, 10-audit-evidence.md EVID-12 Scope / residual)"
    ],
    "severityMix": "2 HIGH, 4 MEDIUM",
    "files": [
@@ -480,7 +481,8 @@
     "LEAK-4 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': priority / unread_by browser writes (plan's binding residual))",
     "HAND-8 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': FullScreenViewer sendToDrafting: both silent fallbacks surface (appAlert + confirm-or-abort) instead of filing the clean original)",
     "SM-13 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': client half: the request page tests the attachment type the action needs, not attachments.length > 0)",
-    "FRIC-7 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': AttentionContext.requesterRoles fed by the badge hook so a departed requester's co-review is counted by badge, bell and inbox)"
+    "FRIC-7 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': AttentionContext.requesterRoles fed by the badge hook so a departed requester's co-review is counted by badge, bell and inbox)",
+    "PERS-7 (remainder re-owned by the integrator 2026-10-07 at the DF-P1 merge: the call sites' stand-ins on the pages DF-P9 owns — the two ticket-queue sites and the request pages' remaining direct writes — read logAuditAction's refusal and say it; 07-persistence-and-rls.md PERS-7 Scope / residual) — and DF-P1's hand-off: the request page shows the workflow route's new warning / holdsNotReleased (a close whose hold could not be released)"
    ],
    "severityMix": "2 HIGH, 11 MEDIUM",
    "files": [
@@ -567,7 +569,9 @@
     "EDGE-5",
     "EDGE-10",
     "EDGE-14",
-    "EVID-2 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': refuse un-acknowledging for non-service callers, bound requested_at writes, write an ACK_* audit row (substrate DC DIST-3))"
+    "EVID-2 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': refuse un-acknowledging for non-service callers, bound requested_at writes, write an ACK_* audit row (substrate DC DIST-3))",
+    "SM-9 (remainder re-owned by the integrator 2026-10-07 at the DF-P1 merge: the ticket shed's commit and restore carry a last_modified leg captured at produce time, or re-capture the arrays and refuse when they changed, so a comment or attachment written between produce and commit is not lost; 06-state-machine.md SM-9 Scope / residual)",
+    "SM-7 (remainder re-owned by the integrator 2026-10-07 at the DF-P1 merge, the record's proposed owner: a drain for what DF-P1 only logs — a ticket_comments mirror that failed twice (reconcile from tickets.comments) and a _NOT_APPLIED row that failed twice (reconcile from the ticket's history) — or the transition and its audit row as one RPC; 06-state-machine.md SM-7 Scope / residual)"
    ],
    "severityMix": "9 HIGH, 8 MEDIUM, 2 LOW",
    "files": [

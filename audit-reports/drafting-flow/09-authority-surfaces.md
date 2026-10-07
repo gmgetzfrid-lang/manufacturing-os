@@ -86,7 +86,7 @@ compare lib/ticketTransitions.ts:221-223 —
 ## AUTHZ-2 · The tickets table has one blanket RLS policy: any active org member can write any column of any ticket, so every workflow gate is decorative
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:1079-1081`, `app/(protected)/requests/page.tsx:620`, `app/(protected)/requests/[id]/page.tsx:1010-1014`, `supabase/migrations/20260901_db_hard_enforcement.sql:1-24`, `app/api/tickets/workflow-action/route.ts:15-26`
 - **Same root cause as** `SM-2`, `PERS-1`, `EVID-1` — One `CREATE POLICY ... FOR ALL USING (...)` with no `WITH CHECK` (`supabase/schema.sql:1079-1081`). Four lenses found it independently. **One migration closes all four.** Fix once; close the rest citing this one.
@@ -127,6 +127,15 @@ supabase/migrations/20260901_db_hard_enforcement.sql:3-4 — `-- Promotes the la
 - ✓ (shape, not live) `lib/__tests__/rpPhase4Migration.test.ts:153` pins that `status` is guarded and `:174` that `priority` is not; no database in CI for a live member session.
 
 **Scope / residual.** → **DF-P1** (binding, fleet plan): append-only history and service-role-only `attachments` / `comments` / `metadata` in the re-created guard. Until then the verify-ticket chain is safe on its inputs (`status` and `deliverable_rev` are guarded) but the ticket page's history and attachment list can be edited from a browser.
+
+**Resolution (2026-10-02, drafting-flow Round G).** DF-P1 RAILS — the history + arrays residual; **Pending migration:** `supabase/migrations/20261166_df_roundG_ticket_rails.sql` (`DEC-30`: one paste, not a widening, after `20261038` / `20261039`, and after the DF-P1 app deploy, never before it: `AUTHZ-13`, "Paste order") — the database half is not closed in any database until it is pasted. Same migration and evidence as [`SM-2`](./06-state-machine.md#sm-2): `history` is append-only (the entries already there are immutable, an appended entry names the caller — `supabase/migrations/20261166_df_roundG_ticket_rails.sql:293-321`) and `attachments` (with `comments`, `metadata`, `watchers` and the rest of the census) is refused to a client (`:273-287`).
+
+**Done-when.**
+- ✓ The BEFORE UPDATE trigger rejects any authenticated change to `status`, `deliverable_rev`, `revision_count`, `assigned_*`, `archived_at` (`20261038`) and now to `attachments`, and admits `history` only as an append in the caller's name, unless `auth.uid() IS NULL` (after the paste).
+- ✓ INSERT is constrained so `requester_id = auth.uid()` and `status` is the engine's initial status (`20261038` trigger; and the split policy's WITH CHECK, `PERS-1`).
+- ✓ (shape + scratch database; there is no database in CI) A member's `status` change is refused (C11) and their `priority` change succeeds (C01) on a throwaway PostgreSQL 16 built from the real function bodies, in both foreign-key worlds (orphan intents present / absent), the script applied four times in each (idempotent; 13 of 13 probes true every time); pinned in shape by `lib/__tests__/dfRoundG_P1_rails.test.ts:130` and the migration's probes.
+
+**Scope / residual.** None.
 
 ---
 
@@ -328,6 +337,15 @@ export function policyAllows(
 
 **Scope / residual.** The three descriptions → **DF-P6**, which rewrites what the ticket approval capabilities mean (`TIER-1` / `GAP-111`) and so owns their wording (DF-P11 is the other `CAPABILITY_DEFS` editor in the plan). Not in the handed-on list — found on re-verification; DF-P6's brief does not name `CAPABILITY_DEFS`, so the integrator must add it (`99-fix-sequencing.md`, "Hand-offs from DF-P0"). The forgeable resource behind done-when 1 → **DF-P1** (`request_type` / `unit` workflow-owned in the guard re-creation, `LEAK-10` / `LEAK-3`). No code changed here.
 
+**Partial (2026-10-02, drafting-flow Round G).** DF-P1 RAILS — done-when 1's forgeable input is closed; the wording is DF-P6's, so this stays OPEN. **Pending migration:** `supabase/migrations/20261166_df_roundG_ticket_rails.sql` (`DEC-30`: one paste, not a widening, after `20261038` / `20261039`, and after the DF-P1 app deploy, never before it: `AUTHZ-13`, "Paste order") — the database half is not closed in any database until it is pasted. `request_type` and `unit` — the resource a scoped rule is evaluated against — are workflow-owned in the re-created guard (`20261166:276-277`; `LEAK-10`); a member's change to either is refused (C11 on a throwaway PostgreSQL 16 built from the real function bodies, in both foreign-key worlds (orphan intents present / absent), the script applied four times in each (idempotent; 13 of 13 probes true every time)).
+
+**Done-when.**
+- ✓ `policyAllows` takes the resource and a scoped token list is evaluated against it (`DEC-13`), and the resource can no longer be rewritten by a client (after the paste).
+- ✓ The default no longer makes a plain Requester an approver on tickets they do not own (WF-8).
+- ✗ The `CAPABILITY_DEFS` descriptions still do not state the reach (`lib/capabilityPolicy.ts:108`, `:110`, `:112`, unchanged).
+
+**Scope / residual.** The three descriptions → **DF-P6** (fleet plan: DF-P6 REVIEW-MODEL lists `AUTHZ-6`).
+
 ---
 
 <a id="authz-7"></a>
@@ -339,6 +357,7 @@ export function policyAllows(
 - **Verification:** CONFIRMED
 - **Locations:** `lib/capabilityPolicy.ts:165-196`, `lib/capabilityPolicy.ts:171-178`, `lib/capabilityPolicy.ts:193-195`, `lib/capabilityPolicy.ts:159-160`, `app/api/tickets/workflow-action/route.ts:95-96`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and worse than described: the failure result is written into the module cache at line 190-191 (`cache.set(orgId, { at: Date.now(), policy })` with CACHE_TTL_MS = 60_000), so one bad read pins the widened default authority for a full minute of requests. Contrast the DB-side twin org_capability_allows, which fails CLOSED (`ELSE '[]'::jsonb`, 20260901_db_hard_enforcement.sql:55).
+- **Assigned:** admin-and-org P9 — Permissions console truth (implements DEC-89 item 3 as ruled) — by the integrator, 2026-10-07 (at the DF-P1 merge, DEC-31: the package that left this remainder has merged; fleet plans `audit-reports/fleet-plans/drafting-flow.json`, `admin-and-org.json`).
 
 **Mechanism.** The loader destructures `const { data } = await …` and never inspects `error`. supabase-js does not throw on a failed query — it returns `{ data: null, error }` — so a PostgREST timeout, a schema-cache miss, or an RLS denial produces `data === null`, `raw = {}`, `caps = {}`, and every capability resolves to `DEFAULTS`. The surrounding `try/catch` returns `{}` for the same effect. Defaults are the WIDE end of the range for the caps an org is most likely to narrow (`ticket.direct_approve: ["Engineer"]`, `ticket.initial_review: [MGMT, "Engineer"]`, `holds.release: ["*"]`). Because it is the workflow-action route that calls this, a transient DB blip hands back exactly the authority an admin deliberately removed. The 60-second module cache means a narrowing also takes up to a minute to bind, per server instance.
 
@@ -375,6 +394,18 @@ and the consumer — app/api/tickets/workflow-action/route.ts:95: `  const capPo
 - [ ] `error` from the query is inspected, not discarded
 - [ ] A stale cache entry is served in preference to defaults when a refresh fails
 
+**Partial (2026-10-02, drafting-flow Round G; corrected 2026-10-07).** DF-P1 RAILS, as the fleet plan specifies it ("loadCapabilityPolicyStrict (503 'policy unreadable', never defaults)"). The workflow route is fixed. The cached loader still answers the shipped defaults on a failed refresh, so done-when 3 does not hold and this finding stays OPEN. *(DF-P1's third fix pass, 2026-10-07: this block was a Resolution with Status RESOLVED while its own done-when 3 read ✗. Under `DEC-29` a finding with a done-when that does not hold as written is not RESOLVED.)* `app/api/tickets/workflow-action/route.ts:299-311` — the workflow route reads the policy through `loadCapabilityPolicyStrict` (fresh, never cached, `error` inspected); a failed read is a **503** `{ code: "policy_unreadable" }` with nothing written and no audit row, never the shipped defaults. "Nothing stored" is still the defaults — that is the org's policy. The strict loader now returns the row's `updated_at` as the version the audit row names (`lib/capabilityPolicy.ts:461-481`, WF-10). Tests: `lib/__tests__/dfRoundG_P1_rails.test.ts:538` (a policy read error → 503 `policy_unreadable`, nothing written; a readable empty policy still acts on the defaults — fails on the base code), `:554` (the route uses the strict loader and stamps its version in the audit row); `sweepRoundE_policyServer.test.ts` re-pinned to the strict loader.
+
+**Done-when.**
+- ✓ The loader distinguishes "no row stored" (defaults) from "lookup failed" (an error) and the workflow route **refuses** the transition on a failed lookup (the done-when's first branch).
+- ✓ `error` is inspected — by the strict loader, and (since roles-and-permissions `WF-1`) by the cached loader too.
+- ✗ (in part) At the workflow route, defaults are never served on a failed refresh: the route reads fresh and refuses. The cached loader (`loadCapabilityPolicyEntry`, `lib/capabilityPolicy.ts:487-522`), which the browser surfaces and `lib/holds.ts` use, serves neither a stale entry nor a refusal on a failed refresh. It answers the shipped defaults for that call, uncached (`:510`, `:520-521`). That is `WF-1` done-when 2's rule, left unchanged here.
+
+**Scope / residual.** **Remainder: done-when 3 for the cached loader.** On a failed refresh, `loadCapabilityPolicyEntry` answers the shipped defaults. Two records set opposite rules for that case: this finding asks for the last good entry, and roles-and-permissions `WF-1` done-when 2 asks for "`{}` without caching", which is the defaults. Choosing between them is a product decision, not a code fix. It also changes what every browser surface and `lib/holds.ts` decide during a database fault, and those surfaces are other areas'. DF-P1 therefore does not change the loader. The choice is now part of [`DEC-89`](../DECISIONS.md#dec-89) item 3, which awaits the user's ratification.
+- **Owner: the user**, ratifying `DEC-89` item 3. That item decides both what the workflow route does on an unreadable policy and, now, what the cached loader serves on a failed refresh: the last good entry, the defaults per `WF-1`, or a refusal.
+- **Implementer once ratified:** admin-and-org P9 (`ALOG-1`), which already plans to change this loader for the "unreadable" marker that the policy editor and View-as show instead of the defaults. P9 is one of the packages that list `lib/capabilityPolicy.ts` (`99-fix-sequencing.md`, "Hand-offs from DF-P1").
+- If the user ratifies `WF-1`'s rule for the route as well, the revert is the one loader call at `app/api/tickets/workflow-action/route.ts:302`, and the test at `lib/__tests__/dfRoundG_P1_rails.test.ts:538` flips.
+
 ---
 
 <a id="authz-8"></a>
@@ -382,7 +413,7 @@ and the consumer — app/api/tickets/workflow-action/route.ts:95: `  const capPo
 ## AUTHZ-8 · post_ticket_comment is SECURITY DEFINER, granted to `authenticated`, and takes the comment author's identity from the caller's JSON
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:521-560`, `supabase/schema.sql:544-545`, `supabase/schema.sql:553-558`, `app/api/tickets/comment/route.ts:101-106`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: the function's only checks are ticket existence, not-archived, and active membership in the ticket's own org (534-536), none of which constrain the author fields. Impersonation is same-org only (v_org comes from the ticket row, not the payload), which is the ceiling on the blast radius — HIGH rather than critical is right.
@@ -416,6 +447,19 @@ supabase/schema.sql:560 — `GRANT EXECUTE ON FUNCTION post_ticket_comment(UUID,
 - [ ] The function overwrites author identity from `auth.uid()` and the caller's org_members row instead of COALESCE-ing the payload — `authorUid`, `user`, `role`, `date` are ignored when `auth.uid()` is not null
 - [ ] `p_unread`/`p_watchers` are merged additively rather than replacing the arrays, or are dropped from the signature and computed in SQL
 - [ ] EXECUTE is revoked from `authenticated` and granted to `service_role` only, so the API route is the sole door
+
+**Resolution (2026-10-02, drafting-flow Round G).** DF-P1 RAILS; **Pending migration:** `supabase/migrations/20261166_df_roundG_ticket_rails.sql` (`DEC-30`: one paste, not a widening, after `20261038` / `20261039`, and after the DF-P1 app deploy, never before it: `AUTHZ-13`, "Paste order") — the database half is not closed in any database until it is pasted. `supabase/migrations/20261166_df_roundG_ticket_rails.sql:465-563` (§4) — `post_ticket_comment` re-created from its newest body (`20260810`, found by scanning; lineDiff-pinned — only the two replaced array lines leave, `lib/__tests__/dfRoundG_P1_rails.test.ts:180`):
+- **Identity.** When `auth.uid()` is not null, the payload's `authorUid`, `user`, `role`, `roles` and `date` are overwritten from `auth.uid()` and the caller's active `org_members` row (email, headline role, the whole collection) and `NOW()`, before the `ticket_comments` insert reads them (`:498-512`). The service role (the comment route) stamps identity itself.
+- **Arrays.** `unread_by` and `watchers` are merged (`ARRAY(SELECT DISTINCT …)` over old ∪ new; the poster's own unread marker clears), never replaced (`:532-543`); the route's legacy fallback merges the same way (`app/api/tickets/comment/route.ts:140`).
+- **EXECUTE** revoked from PUBLIC, anon and authenticated on the re-created signature and, by a loop, on every overload present; granted to `service_role` (`:545-563`). The only app caller is the comment route under `supabaseAdmin` (census, `lib/__tests__/dfRoundG_P1_rails.test.ts:213`). `dcHotfixAnonExecute.test.ts` updated: the newest definition now revokes anon itself.
+- Exercised on a throwaway PostgreSQL 16 built from the real function bodies, in both foreign-key worlds (orphan intents present / absent), the script applied four times in each (idempotent; 13 of 13 probes true every time): a member calling it directly → "permission denied for function post_ticket_comment" (C22); the route's call merges both arrays and clears the poster (C23); with the revoke lifted inside one transaction to observe the stamp, a member forging another identity is written as themselves — email, uid, role (C27).
+
+**Done-when.**
+- ✓ The function overwrites author identity from `auth.uid()` and the caller's `org_members` row; `authorUid`, `user`, `role`, `date` are ignored when `auth.uid()` is not null.
+- ✓ `p_unread` / `p_watchers` are merged additively.
+- ✓ EXECUTE is revoked from `authenticated` and granted to `service_role` only.
+
+**Scope / residual.** None.
 
 ---
 
@@ -527,7 +571,7 @@ CREATE POLICY org_config_key_writes_upd ON org_configurations
 ## AUTHZ-11 · The issued-IFC and redline attachments are client-supplied objects appended to the ticket without validating that the key belongs to this ticket or org
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/tickets/workflow-action/route.ts:28-39`, `app/api/tickets/workflow-action/route.ts:143-144`, `lib/ticketTransitions.ts:170-171`, `lib/ticketTransitions.ts:280-283`, `app/(protected)/requests/[id]/page.tsx:1160-1173`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. No guard anywhere in the route validates the attachment's `url` key against the ticket/org, nor overrides `uploadedBy` with the authenticated actor — the route validates the ACTION and the referenced people (lines 112-131) but never the attachment object. app/api/storage/download-url/route.ts:35-46 would block signing a key under a different org's prefix, so the bytes of a cross-org key are not readable, but the forged record (filename, someone else's `uploadedBy`, another ticket's key) is written to the ticket and displayed as the IFC package.
@@ -559,6 +603,20 @@ contrast the validation the same route does perform at :121-130 — `      retur
 - [ ] The route rejects any attachment whose `url` is not `orgs/<ticket.orgId>/tickets/<ticket.ticketId>/…` and whose object does not HEAD successfully in R2
 - [ ] `uploadedBy`, `uploadedAt`, `size` and `status` are stamped server-side from the authenticated caller, not accepted
 - [ ] A test posts submit_final with a foreign key and expects 400
+
+**Resolution (2026-10-02, drafting-flow Round G).** DF-P1 RAILS. `app/api/tickets/workflow-action/route.ts:127-194` (`vetTicketAttachment`), applied at `:395-416` to every file record an action appends — `finalAttachment` (`submit_final`), `redlineAttachment`, `attachment` (`attach_file`):
+- The key must be a plain storage key (`isSafeStorageKey`) under this ticket's own prefix — `orgs/<ticket.orgId>/tickets/<ticket number>/`, what `uploadTicketAttachment` mints — else 400 "That file is not stored under this request".
+- The object must answer a `HeadObject` in R2 (NotFound → 400; storage that cannot answer → 503, nothing written) unless the same key is already listed on the ticket.
+- The slot's type rule: a `finalAttachment` is `Final` (`SM-13`), a `redlineAttachment` is `Reference`, an attached file one of the four types.
+- `uploadedBy` (the caller's member email), `uploadedAt` (now), `size` (from storage's `ContentLength`) and `status` are stamped by the route; for a key already on the ticket the recorded uploader and time are kept. The audit row names each file (id, name, url, size, storage ETag — `EVID-12`).
+- Tests: `lib/__tests__/dfRoundG_P1_rails.test.ts:571` (`submit_final` with a key under another ticket, another org, a `..` traversal, or no prefix → 400, nothing written — fails on the base code), `:593` (missing object 400; storage down 503; neither writes), `:606` (the client's `uploadedBy` / `uploadedAt` / `size` are not kept), `:619` (redline prefix and type), `:631` (a listed file needs no storage round-trip).
+
+**Done-when.**
+- ✓ The route rejects any attachment whose `url` is not under `orgs/<ticket.orgId>/tickets/<ticket.ticketId>/` and whose object does not HEAD successfully in R2.
+- ✓ `uploadedBy`, `uploadedAt`, `size` and `status` are stamped server-side.
+- ✓ A test posts `submit_final` with a foreign key and expects 400.
+
+**Scope / residual.** None. A ticket number is fixed at creation (`ticket_id` is workflow-owned), so the prefix cannot be moved under a ticket.
 
 ---
 
@@ -617,7 +675,7 @@ app/api/verify-ticket/route.ts:9-10 (the claim) —
 ## AUTHZ-13 · Who-sees-which-tickets is enforced only by which query the React page chooses to run
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/requests/page.tsx:279-299`, `supabase/schema.sql:1079-1081`, `app/(protected)/requests/[id]/page.tsx:913`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: no restrictive policy, no per-role or requester-scoped policy, and no trigger constrains ticket reads. A Contractor's own session token reads every ticket row in the org via PostgREST, and even inside the UI any member can open any ticket by URL because the detail fetch is unscoped.
@@ -648,13 +706,28 @@ and the policy that makes the narrowing optional — supabase/schema.sql:1080-10
 - [ ] The queue and detail pages rely on that policy rather than re-implementing the filter
 - [ ] A test signs in as a Contractor and confirms an unscoped `select('*')` returns only their own rows
 
+**Resolution (2026-10-02, drafting-flow Round G).** DF-P1 RAILS, on the decision the fleet plan asked for — [`DEC-89`](../DECISIONS.md#dec-89) item 1 (provisional label; the integrator renumbers it at merge): every member role keeps the org-wide read (the existing product model — coordination, impact, dashboards and the notification surfaces read tickets org-wide); **only a member every one of whose held roles is Contractor** (the headline role and the `roles` collection together, as `heldRoles()` reads them) is narrowed, at the database, to tickets they requested, are assigned to (drafter or engineer), follow, or were mentioned on in a comment that is not deleted. **Pending migration:** `supabase/migrations/20261166_df_roundG_ticket_rails.sql` (`DEC-30`: one paste, not a widening, after `20261038` / `20261039`, and **after the DF-P1 app deploy, never before it** — see "Paste order" below) — the database half is not closed in any database until it is pasted.
+- `supabase/migrations/20261166_df_roundG_ticket_rails.sql` §3 (`:379-463`) — two RESTRICTIVE SELECT policies **for the authenticated role**: `tickets_read_scope` on `tickets`, and `ticket_comments_read_scope` on `ticket_comments` (a comment row is readable only where its ticket is — the second copy of every thread). The row-independent leg, the caller's Contractor-only orgs (`contractor_only_org_ids()`), is read through a scalar sub-select, so it runs once per statement as an InitPlan. A row in any other org passes on that first leg, so no other member pays a per-row function call. The only per-row call is `ticket_mentions_me(id)`, made only for a Contractor-only caller's rows that requester, drafter, engineer or watcher did not already admit. Both functions are `SECURITY DEFINER`, `search_path` pinned and `STABLE`; EXECUTE is granted to authenticated and the service role and revoked from PUBLIC and anon. A member is "Contractor-only" when every role they hold is Contractor and they hold at least one. "Hold" is the union of the headline `role` and `roles`, with NULL and blank entries dropped and the rest trimmed (`:422-424`, and the same expression in the paste's inventory, `:110-112`). That is how the rest of the codebase reads authority (`heldRoles()`, `lib/roleHeld.ts:13`; `is_org_controller`). A Contractor who also holds Drafter keeps the org read, and so does a member whose headline is Manager while `roles` reads `{Contractor}`. *(DF-P1's third fix pass, 2026-10-07. The rule had read `roles` alone whenever it was non-empty and ignored the headline. A drifted row, headline Manager with `roles = {Contractor}`, read zero tickets: the review's PostgreSQL 16 case R8. The three routes below also answered 404 for that member, because they share the predicate. The 20261024 backfill and the 20261046 sync trigger keep the headline inside `roles`, so only a row written around them could drift.)* *(DF-P1 fix pass, 2026-10-02: the first draft's `ticket_read_scope_ok(...)` was a definer call per row on every authenticated ticket read, and the comments policy re-evaluated the tickets policies per comment, for every member. Both are replaced by the per-statement shape above.)*
+- **The service-role routes cannot widen it.** Three routes write `watchers` under the service role, and following is one of the scope's own legs: `/api/tickets/watch` (follow), `/api/tickets/comment` (a commenter becomes a watcher) and `/api/tickets/workflow-action` (every transition adds its actor, `lib/ticketTransitions.ts:369`). Before they write, all three ask `lib/ticketReadScope.ts` (`ticketReadScope`, `isContractorOnly`), the same predicate in TypeScript: `isContractorOnly` is `heldRoles(member)` non-empty and every entry Contractor (`lib/ticketReadScope.ts:48-51`), identical to the SQL. JavaScript's `trim()` strips every whitespace character and `btrim()` strips spaces only, so on a hand-written entry padded with a tab the route can only be stricter than the database, never looser. The mention leg read from `ticket_comments` (comments not deleted), as the SQL reads it. A Contractor-only member may follow, comment on or act on only a ticket they can already read. Any other ticket answers 404 "Ticket not found" (as an unreadable one does — the workflow route no longer answers 403 naming the ticket's status and the action) and nothing is written, with no audit row. A failed mention lookup is a 503, also with nothing written. Unfollowing is always allowed. The workflow route's check runs right after the membership read (`app/api/tickets/workflow-action/route.ts:243-258`), before the state machine is asked. *(Added by DF-P1's fix passes, 2026-10-02. The first closed the self-follow bypass at the watch and comment routes: a Contractor-only member could self-follow any ticket whose UUID they held and so read it. The second closed the workflow route: this record first said it needed no check because a Contractor-only member holds no ticket capability by default, but an org that grants Contractors `ticket.draft_work` offers `attach_file` on every unassigned ticket (`lib/workflow.ts:210-211`, `:604`), and that action made them a watcher.)* `app/api/tickets/watch/route.ts` is in no package's file list; it is edited here and named under the package's files outside plan.
+- The detail page's unscoped fetch relies on it: no row → back to the queue (`app/(protected)/requests/[id]/page.tsx:970-972`).
+- Paste-time inventory: the Contractor-only members, an upper bound on the (member, ticket) reads the scope removes, and the (member, ticket) follows the scope keeps although the member neither requested nor is assigned to the ticket. Those include follows made before the DF-P1 deploy, and the member keeps reading each ticket until they unfollow it.
+- **Paste order: deploy the DF-P1 app first, then paste `20261166`.** The routes before DF-P1 (`/api/tickets/watch`, `/api/tickets/comment`, `/api/tickets/workflow-action`) write `watchers` under the service role with no scope check. If the policy were live before the DF-P1 routes, a Contractor-only member could follow any ticket in that window, and the follow would survive the deploy and keep the ticket readable. With the DF-P1 app deployed first, no such follow can be made. The migration header says the same (`20261166:71-84`). *(DF-P1's third fix pass, 2026-10-07. This record and the header had said the paste could come before or after the deploy. The app does keep working in either order, but this finding's guarantee does not.)*
+- Exercised on a throwaway PostgreSQL 16 built from the real function bodies, in both foreign-key worlds (orphan intents present / absent), the script applied four times in each (idempotent; 13 of 13 probes true every time): a Contractor-only member's unscoped `select` returns exactly the requested, followed and mentioned tickets (C16); a headline-only Contractor is narrowed too (C17); Contractor + Drafter keeps the org read (C18); a Manager reads the org and never another org (C19); comments follow their ticket (C20, C21); a Contractor still files a ticket and reads it back (C15); anon reads nothing (C26). Re-run after the fix pass with the per-statement policies (both worlds, four applies each, 13 of 13 probes true every time, case outputs identical across worlds): C16-C21 and C26 unchanged; a Manager's read of every ticket and every comment calls `contractor_only_org_ids()` once and `ticket_mentions_me` never (C30, C31); a Contractor-only read calls the mention function only for the rows no cheaper leg admitted (C32); the plan shows an InitPlan, not a per-row sub-plan (C33); with 200 more tickets and 400 more comments the org-list call count stays at one per statement (C35). Re-run after fix pass 2 (the mention leg now reads `c.deleted_at IS NULL`) on a throwaway PostgreSQL 16 holding the bodies the paste builds on (`20260810`, `20261039`, `20261038`) over the tables they read, in both foreign-key worlds, the script applied four times in each (idempotent; 13 of 13 probes true every time, including the new `c.deleted_at IS NULL` term): a Contractor-only member mentioned only in a deleted comment no longer reads that ticket, while the live mention and their own request still read (D01), and sees only the live comment (D02); a Manager still reads every ticket with no mention-function call (D03); clearing `deleted_at` admits the ticket again (D04); the function answers false / true / false for a deleted mention, a live one and no session (D05); a Contractor-only read calls it only for the rows no cheaper leg admitted (D06). The cluster was deleted afterwards. Re-run after fix pass 3 (2026-10-07), with the held-role union, on a throwaway PostgreSQL 16 built the same way (the `schema.sql` tickets table with the 20260610 search trigger, then `20260810`, `20261038`, `20261039`), in both foreign-key worlds, the script applied twice in each (idempotent; 13 of 13 probes true on every apply, including the new union term). Cases, identical across worlds: a Contractor-only member reads exactly the ticket they requested and the one they follow (F02). The drifted Manager (`Manager`, `{Contractor}`) reads every ticket, and `contractor_only_org_ids()` returns no org for them (F03). Contractor + Drafter reads every ticket (F04). A headline-only Contractor (`roles` empty) is narrowed (F05), and so is a Contractor with a blank extra entry (F06). A member holding no role is not narrowed (F07). Manager and Admin read every ticket, and anon is refused (F08). The comments policy agrees: the drifted Manager sees the comment and the Contractor-only member does not (F09). The inventory counted 3 Contractor-only members (the drifted Manager not among them), 7 removed reads and 1 kept follow. A parity run then classified 77 (headline, `roles`) combinations through `contractor_only_org_ids()` and through `isContractorOnly`. 66 agreed, covering blanks, NULL entries, space padding and drifted headlines. The other 11 all involved a tab character, and in each the TypeScript was the stricter side; none was looser. The cluster was deleted afterwards. Shape: `lib/__tests__/dfRoundG_P1_rails.test.ts:261` (the policies block: the union expression byte-identical in the function and the inventory, nothing reading `roles` alone, the probe, and the mention leg's `c.deleted_at IS NULL`). Routes: `lib/__tests__/dfRoundG_P1_rails.test.ts:1017`, "AUTHZ-13 — the service-role routes that write watchers honour the Contractor-only read scope" (self-follow and drive-by comment refused, in-scope legs admitted, lookup failure 503; `:1027` `isContractorOnly` against the SQL rule, the drifted Manager included; `:1051` the drifted Manager follows and comments on a ticket outside every Contractor leg, with no scope lookup; `:1120` the workflow route refuses a Contractor-only `attach_file` on an unassigned ticket even when the org grants `ticket.draft_work` — 404 naming no status, no write, no audit row — and admits the assigned drafter; `:1151` its lookup failure is 503; `:1160` a deleted comment's mention no longer admits; each fails on the code before it).
+
+**Done-when.**
+- ✓ (as `DEC-89` scopes it) A SELECT policy on `tickets` expresses the read rule: the org for every member role; requester / assigned / watcher / mentioned for a Contractor-only collection. The finding's fuller per-role table (drafters assigned + unassigned, everyone else own rows) is **not** adopted — the decision records why and how to reverse it.
+- ✓ (as scoped) The detail page relies on the policy instead of re-implementing a filter. The queue's per-role query (`app/(protected)/requests/page.tsx:311-331`) stays as each role's default *work view* — what is theirs to act on — not a read boundary.
+- ✓ (scratch database; there is no database in CI) Signed in as a Contractor, an unscoped `select('*')` returns only their own rows (C16). It stays that way: the three service-role routes that write `watchers` refuse to put a Contractor-only member on a ticket outside the scope (route tests).
+
+**Scope / residual.** If the user wants the per-role table, it is `DEC-89`'s reversal note. `AUTHZ-4` (DF-P11) builds on this rule for ticket-attachment downloads. An edited comment keeps the mentions it was posted with: the comment edit (`app/api/tickets/comment/route.ts`, PATCH) rewrites the body, not `mentioned_uids`, so editing a mention out of the text does not withdraw it; deleting the comment does. Re-deriving mentions on edit belongs with the mention engine, not here. The workflow route still answers an archived ticket with its 409 before the membership read (pre-existing; it says only that the ticket is archived).
+
 ---
 
 ## AUTHZ-14 · The gated requester's note to the engineer is required only by the browser
 
 - **Severity:** LOW
 - **Severity rationale:** The engineer gate itself holds (`AUTHZ-1` / `SM-1` stay RESOLVED on the bypass); only the requester can omit their own note, and only by going around their own UI.
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** drafting-flow DF-P1 RAILS (the engine action requires its comment server-side) — by the integrator, 2026-10-02 (opened at the DF-P0 merge from DF-P0's proposal in `99-fix-sequencing.md`, "New ids DF-P0 asks the integrator to open at merge"; fleet plan `audit-reports/fleet-plans/drafting-flow.json`).
 - **Verification:** CONFIRMED (by reading)
 - **Blast radius:** workflow / evidence
@@ -674,5 +747,13 @@ and the policy that makes the narrowing optional — supabase/schema.sql:1080-10
 **Done when.**
 - The action requires a comment server-side; a direct POST without one is a 400 with nothing written.
 - A route test pins it.
+
+**Resolution (2026-10-02, drafting-flow Round G).** DF-P1 RAILS — the route check the remediation offers. `app/api/tickets/workflow-action/route.ts:491-497` — `request_final_engineer_approval` without a non-blank `comment` → 400 "Sending for engineer final approval requires a note for the engineer", after the engineer pick's own validation and before anything is computed or written. Test: `lib/__tests__/dfRoundG_P1_rails.test.ts:944` — without a note: 400, no write of any kind to `tickets`, no audit row (fails on the base code); with one: `PENDING_FINAL_APPROVAL`, the note carried.
+
+**Done-when.**
+- ✓ The action requires a comment server-side; a direct POST without one is a 400 with nothing written.
+- ✓ A route test pins it.
+
+**Scope / residual.** None. (The engine action has no `requiresComment` flag; the picker dialog's default still pre-fills the note for the UI path.)
 
 ---

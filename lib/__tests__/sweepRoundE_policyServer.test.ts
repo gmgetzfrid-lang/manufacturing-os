@@ -308,7 +308,10 @@ describe("WF-10 — loadCapabilityPolicy on the server", () => {
     expect(cp).toContain("const sessionless = !client && typeof window === \"undefined\";");
     expect(cp).toContain("if (!sessionless) cache.set(orgId, { at: Date.now(), policy, version });");
     const r = src("app/api/tickets/workflow-action/route.ts");
-    expect(r).toContain("const { policy: capPolicy, version: policyVersion } = await loadCapabilityPolicyEntry(ticket.orgId, supabaseAdmin);");
+    // drafting-flow AUTHZ-7 (DF-P1): the route's read is the STRICT loader — fresh,
+    // a failed read a 503, never the defaults — and it still names the version.
+    expect(r).toContain("const loadedPolicy = await loadCapabilityPolicyStrict(ticket.orgId, supabaseAdmin);");
+    expect(r).toContain("const policyVersion = loadedPolicy.version;");
     expect(r).not.toContain("loadCapabilityPolicy(ticket.orgId");
   });
 });
@@ -816,7 +819,8 @@ describe("20261056 — the write guard at the database", () => {
 const ticketRow = (over: Record<string, unknown>) => ({
   id: "t1", org_id: "o1", ticket_id: "REQ-1", title: "x", status: "PENDING_ASSIGNMENT", request_type: "ISO", unit: "U-100",
   requester_id: "req-1", requester_role: "Requester", assigned_drafter_id: null, assigned_engineer_id: null,
-  attachments: [], history: [], watchers: [], unread_by: [], comments: [], ...over,
+  // the column exists on every row (NULL here): DF-P1's EDGE-15 leg compare-and-sets on the null
+  attachments: [], history: [], watchers: [], unread_by: [], comments: [], last_modified: null, ...over,
 });
 const authorityOf = () => (inserts("audit_logs").find((a) => String(a.action).startsWith("TICKET_"))!.details as { authority: Record<string, unknown> }).authority;
 

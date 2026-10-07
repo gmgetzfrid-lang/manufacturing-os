@@ -103,7 +103,7 @@
   },
   {
    "name": "N4 FEED-PROVIDER-AND-REALTIME — one subscription per tab, reconcile on return, a true count, and the publication/replica-identity gaps",
-   "findings": ["RT-3", "TRAIL-8", "RT-1", "RT-8", "RT-4", "RT-12", "TAX-6", "DELIV-10", "TRAIL-7", "PROD-7", "TRAIL-9", "TRAIL-12"],
+   "findings": ["RT-3", "TRAIL-8", "RT-1", "RT-8", "RT-4", "RT-12", "TAX-6", "DELIV-10", "TRAIL-7", "PROD-7", "TRAIL-9", "TRAIL-12", "NEDGE-18 (opened by the integrator 2026-10-07 at the drafting-flow DF-P1 merge, DEC-31: after 20261161 the attention hook's browser-side metadata.superseded_at mark is refused by the read_at-only trigger, so a stale workflow alert the route missed stays in the 50-row unread window; move the reconcile's mark — and any browser-side retirement this package adds (TRAIL-9) — to a server path that sets only metadata.superseded_at on the caller's own unread workflow rows; drop the hook from METADATA_UPDATES in lib/__tests__/notificationWriteRails.test.ts)"],
    "severityMix": "1 HIGH, 8 MEDIUM, 3 LOW",
    "files": [
     "new components/providers/AttentionProvider.tsx (the hook's state and its ONE realtime channel hoisted; fetchAll debounced 300-600ms trailing per components/projects/ScheduleTab.tsx:112-116; .subscribe((status) => …) re-runs fetchAll on every SUBSCRIBED after the first; visibilitychange + focus + a 60s visible-only interval per app/(protected)/inbox/page.tsx:117-127; CHANNEL_ERROR/TIMED_OUT expose stale:true; the reconcile pass records the ids it just wrote and ignores their echo (RT-8) and runs once per tab; ticket select lists the attention columns only, not select('*'))",

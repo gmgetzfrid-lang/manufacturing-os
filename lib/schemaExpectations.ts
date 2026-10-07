@@ -278,4 +278,15 @@ export const EXPECTED_FUNCTIONS: readonly FunctionExpectation[] = [
     migration: "20261157_prj_roundG_server_remainders.sql",
     feature: "The checklist assessment and sweep in one request (lib/checklists.ts writeItemPatches; PERF-7)",
   },
+  // drafting-flow DF-P1: the intake portal's redline append, one guarded row
+  // update (SM-9). The routes fall back to their read-modify-write while it
+  // is missing. Both uuid arguments refuse "schema-health-probe" (22P02), so
+  // the body never runs; EXECUTE is the service role's, as this probe is.
+  {
+    signature: "append_ticket_redline(uuid, uuid, jsonb, jsonb)",
+    fn: "append_ticket_redline",
+    probeArgs: { p_ticket_id: "schema-health-probe", p_org_id: "schema-health-probe", p_attachment: {}, p_history: {} },
+    migration: "20261166_df_roundG_ticket_rails.sql",
+    feature: "The intake portal's redline append in one guarded update (app/api/intake/upload; SM-9)",
+  },
 ];

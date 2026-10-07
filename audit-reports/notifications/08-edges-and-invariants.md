@@ -746,3 +746,24 @@ There is no status predicate and no membership filter on `recipients`. `20261160
 **Closer:** unassigned (the integrator; plan owner N6, `99-fix-sequencing.md` Phase 1 hand-off).
 
 ---
+
+<a id="nedge-18"></a>
+
+## NEDGE-18 · Once 20261161 is pasted, the attention feed's browser-side mark on a stale workflow alert is refused, so an alert the workflow route missed stays in the unread window
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** notifications N4 FEED-PROVIDER-AND-REALTIME (it owns `hooks/useTicketNotifications.ts` and its reconcile pass; TRAIL-9's retirements meet the same rail) — opened and assigned by the integrator, 2026-10-07, at the drafting-flow DF-P1 merge (DEC-31; fleet plan `audit-reports/fleet-plans/notifications.json`).
+- **Verification:** CONFIRMED by reading the two merged changes together: `20261161`'s `enforce_notification_update()` (`trg_notifications_read_at_only`) refuses a recipient's change to any column but `read_at` on their own row, and DF-P1's reconcile in `hooks/useTicketNotifications.ts` writes `metadata.superseded_at` on the recipient's own rows from the browser. The census in `lib/__tests__/notificationWriteRails.test.ts` ("every UPDATE writes read_at and nothing else … but the two classified metadata marks") names both writes.
+- **Locations:** `hooks/useTicketNotifications.ts:234-283` (the reconcile: stale workflow rows filtered from the feed, then `.update({ metadata: { …, superseded_at } })` on each, best-effort), `supabase/migrations/20261161_notif_roundG_read_scope.sql` (`enforce_notification_update`, the read_at-only trigger; the service role passes), `app/api/tickets/workflow-action/route.ts:1072-1088` (the route's own supersede, on the service role, unaffected), `lib/inAppNotifications.ts` (the unread list leaves superseded rows out)
+- **Independently verified:** — opened 2026-10-07 by the integrator at the DF-P1 merge; not yet challenged by a second party.
+
+**Mechanism.** Two merged packages meet here. notifications N5 (`DEC-86`, `20261161`) holds a recipient to changing only `read_at` on their own notification rows. drafting-flow DF-P1 (`EVID-13`) retires a moot workflow alert by marking `metadata.superseded_at`, never `read_at`. The route does this on the service role. The attention hook does it in the recipient's browser for any alert the route missed: a ticket the shed archived, or a status reached by a path that does not fan out. Before `20261161` is pasted the hook's mark lands. After it, the trigger refuses it. The hook swallows the refusal, and the feed still hides the row in that session, so nothing breaks on screen. But the row stays unread and unsuperseded in the database, so it keeps its place in the 50-row unread window that `listMyNotifications` reads, and enough of them push live alerts off the bell. The hook's comment names that exact harm as the reason for the mark.
+
+**Failure scenario.** After `20261161` is pasted, a drafter has 60 workflow alerts for tickets the shed archived. The route never superseded them, because the shed does not fan out. Each page load hides them and tries to mark them, and every mark is refused. The bell's unread read returns the newest 50 rows, all of them moot, so a live "issue the IFC" alert below them is not shown.
+
+**Done when.**
+- [ ] The reconcile's supersede mark is made where `20261161` lets it land: a server path (a route on the service role, or a SECURITY DEFINER function that sets only `metadata.superseded_at` on the CALLER's own unread workflow rows whose ticket status no longer matches, refusing anything else), never a browser write of `metadata`.
+- [ ] The same holds for any other browser-side retirement N4 adds (TRAIL-9's `hold_released` → `hold_opened`, `branch_resolved` → `branch_open`).
+- [ ] The census in `lib/__tests__/notificationWriteRails.test.ts` drops the hook from its `METADATA_UPDATES` list, and every browser UPDATE of notifications writes `read_at` only.
+- [ ] Regression: an alert the route supersedes is unchanged, and the feed shows exactly what it shows today.

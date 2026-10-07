@@ -188,10 +188,13 @@ describe("pinned at the source — the publish path is reused, never reimplement
     const r = src("app/api/tickets/workflow-action/route.ts");
     expect(r).toContain('import { noteDeliverableNotInRegister, deliverableStateOf } from "@/lib/ticketHandback";');
     expect(r).toMatch(/if \(newStatus === "CLOSED"\) \{/);
-    expect(r).toContain('deliverableStateOf(ticket.metadata)?.state !== "published"');
+    // drafting-flow DCW-4 / HAND-3 (DF-P1): a recorded "published" state is believed only
+    // when the register backs it — otherwise the close records not_in_register too
+    expect(r).toContain("const recorded = deliverableStateOf(ticket.metadata);");
+    expect(r).toContain('if (src?.id && (recorded?.state !== "published" || unbackedPublish)) {');
     expect(r).toContain("updates.metadata = merged;");
     expect(r).toContain('action: "Closed — deliverable not in the register"');
-    expect(r).toContain("comment: fanOutComment });");
+    expect(r).toContain("comment: fanOutComment, emailOrigin });");
     expect(r).not.toMatch(/revUpDocument|publish_revision/);
   });
 });

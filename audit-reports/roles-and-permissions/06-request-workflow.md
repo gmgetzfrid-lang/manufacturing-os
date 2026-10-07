@@ -79,6 +79,10 @@ which are currently masked. Read those three before shipping this.
 
 *Cross-area note (2026-10-02, admin-and-org Round G, P0): admin-and-org `ALOG-1` closes its done-when 1 and 3 on this record. Its done-when 2 asks for more than this record's done-when 2: a failed read must be distinguishable from an unset policy, not only left uncached. ALOG-1's record suggests a marker on the loader, which the policy editor and the View-as panel show instead of the defaults. It does not decide evaluation, and no decision is minted for it. For the workflow-action route, this record's rule (defaults for that call) conflicts with drafting-flow `AUTHZ-7` (HIGH, OPEN, DF-P1), which asks the route to refuse or to use the last good cached policy. The conflict is flagged for the user's ratification. Owner of ALOG-1's remainder: admin-and-org P9, once the plan is amended.*
 
+*Landed 2026-10-02 (drafting-flow Round G, DF-P1 RAILS): the workflow-action route now reads the policy through `loadCapabilityPolicyStrict` and refuses with 503 `policy_unreadable`, writing nothing, when the read fails. It never acts on the defaults. This is drafting-flow [`AUTHZ-7`](../drafting-flow/09-authority-surfaces.md) as the fleet plan set it. This record's rule (defaults for that call, uncached) still governs every other caller of the cached loader. The conflict this note flags for the workflow-action route is recorded as [`DEC-89`](../DECISIONS.md#dec-89) **item 3, awaiting the user's ratification**. If the user ratifies this record's rule for the route, the revert is the route's one loader call.*
+
+*Updated 2026-10-07 (drafting-flow Round G, DF-P1's third fix pass): drafting-flow `AUTHZ-7` is OPEN again. Its done-when 3 asks the cached loader to serve the last good entry on a failed refresh, and this record's done-when 2 has it answer the defaults for that call. That conflict for the cached loader, not only for the route, is now part of `DEC-89` item 3, awaiting the user's ratification. DF-P1 does not change the loader, so this record's rule stands until then. Admin-and-org P9 (`ALOG-1`) implements whichever is ratified.*
+
 ---
 
 ## WF-2 · `tickets` RLS is `FOR ALL USING (org membership)` — any member can PATCH any ticket's status
@@ -137,6 +141,8 @@ clock, and the document-intent bridge.
 3. A test attempts the raw PATCH above and asserts refusal.
 
 *Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`SM-2`](../drafting-flow/06-state-machine.md#sm-2), [`PERS-1`](../drafting-flow/07-persistence-and-rls.md), [`AUTHZ-2`](../drafting-flow/09-authority-surfaces.md#authz-2) and [`EVID-1`](../drafting-flow/10-audit-evidence.md) — one cluster — record this guard (re-verified on `f1ac550`) and stay OPEN on the residual this record names (history rewritable in place; `attachments` / `comments` / `metadata` client-writable) plus items found on re-verification and review: the FOR ALL policy is not split (`PERS-1`); `request_type` **and `unit`** — the whole `DEC-13` resource every scoped capability rule reads — are unguarded on UPDATE (`LEAK-3`, and [`LEAK-10`](../drafting-flow/04-flow-leaks.md#leak-10) for the scoped-gate escape); `last_modified`, the route's compare-and-set token, is nullable and unguarded, so nulling it reduces the CAS to status-only (found on `EDGE-11`; requested as a new id, proposed `EDGE-15`); and, by the full census on `SM-2`, every other column outside the guard — `title` / `description` (the approved scope) and the SLA clocks among them. Owner: drafting-flow DF-P1.*
+
+*Landed 2026-10-02 (drafting-flow Round G, DF-P1 RAILS): the residual this note names is closed in `supabase/migrations/20261166_df_roundG_ticket_rails.sql` (pending paste). `ticket_update_guard` is re-created from this record's body (`20261038`, lineDiff-pinned) and decides all 41 `tickets` columns. 37 are refused to a client, among them `request_type`, `unit`, `title`, `description`, the arrays, `metadata` and the SLA clocks. Four stay client-writable in a fixed shape: `priority`; `last_modified` (never cleared); `unread_by` (only the caller's own marker leaves, never an error); and `history` (append-only, in the caller's name). `tickets_org_access` (FOR ALL) is split per verb with written WITH CHECKs. Drafting-flow [`SM-2`](../drafting-flow/06-state-machine.md#sm-2), [`PERS-1`](../drafting-flow/07-persistence-and-rls.md), [`AUTHZ-2`](../drafting-flow/09-authority-surfaces.md#authz-2) and `EDGE-15` are RESOLVED (code half). [`EVID-1`](../drafting-flow/10-audit-evidence.md) stays OPEN on its project-link limb (DF-P8) and its approval-signature limb (DF-P5). ⚠ The later guard re-creations (DF-P3/P4/P6/P7/P8) start from `20261166`; `20261038` must never be re-pasted after it.*
 
 ---
 
@@ -1032,6 +1038,8 @@ closed. **Fix them together or the `WF-3` remediation is a no-op.**
 
 *Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`SM-12`](../drafting-flow/06-state-machine.md#sm-12) records the drafting-authority check on the assignee (route test added in `lib/__tests__/dfRoundG_P0.test.ts`) and stays OPEN on `assigned_drafter_name`, still client-supplied or email-derived — owner DF-P1.*
 
+*Landed 2026-10-02 (drafting-flow Round G, DF-P1 RAILS): `assigned_drafter_name` is stamped server-side for `assign`, `reassign_drafter` and `self_assign`. It comes from `org_members.display_name`, else the membership email's local part, else the account's sign-in email, else "Unnamed member", and never from the client's string (`app/api/tickets/workflow-action/route.ts`). Drafting-flow [`SM-12`](../drafting-flow/06-state-machine.md#sm-12) is RESOLVED.*
+
 ---
 
 ## WF-15 · `RequestType` is an open `string`, unvalidated, and gates a terminal transition
@@ -1079,6 +1087,8 @@ org's configured list, and the close-without-review behaviour is a property of
 the configured type rather than a hardcoded string comparison.
 
 *Cross-area note (2026-10-02, drafting-flow Round G): drafting-flow [`LEAK-3`](../drafting-flow/04-flow-leaks.md) records this record's two halves and stays OPEN: `request_type` is validated at INSERT only, so the assigned drafter can PATCH it to a close-without-review type and close from `DRAFTING` without review — owner DF-P1 (`ticket_update_guard` re-creation). With `unit`, the same unguarded columns let a member rewrite the resource every `DEC-13` scoped rule reads (a Manager can re-type a request out of a type-scoped engineer-gate rule and issue for construction with no engineer): opened at the DF-P0 merge as its own finding, drafting-flow [`LEAK-10`](../drafting-flow/04-flow-leaks.md#leak-10) (HIGH — CRITICAL if any org's policy carries such a rule; the inventory query is there), same owner. This record's own done-when (creation) holds.*
+
+*Landed 2026-10-02 (drafting-flow Round G, DF-P1 RAILS): `request_type` and `unit` are workflow-owned in the re-created `ticket_update_guard` (`supabase/migrations/20261166_df_roundG_ticket_rails.sql`, pending paste), so neither the drafter's re-type nor a Manager's re-scope is possible from a browser once it is pasted. Drafting-flow [`LEAK-3`](../drafting-flow/04-flow-leaks.md) and [`LEAK-10`](../drafting-flow/04-flow-leaks.md#leak-10) are RESOLVED (code half; the migration is pending paste). `LEAK-10` stays HIGH unless the paste's first inventory row is non-zero, in which case it becomes CRITICAL. Tickets that already carry an off-list type are counted, not rewritten.*
 
 ---
 
