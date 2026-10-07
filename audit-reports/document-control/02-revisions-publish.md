@@ -1054,7 +1054,7 @@ lib/revisions.ts:1470-1471 — "// Record the (old → new) join rows. Idempoten
 ## REV-21 · Moving an existing "IFC" document to Issued or Locked puts it in force with no guard — the database counts IFC as an issue already, so the status-transition guard never sees the move
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** — unassigned; for the user to ratify with DEC-77 (public-surfaces `VFY-20`), then the next owner of `20261144`'s guard (document-control).
 - **Assigned:** the user first (ratify the database limb with DEC-77 §4: either `20261144`'s guard judges a status-only move INTO Issued / Locked from any status outside them as an issue, or the existing IFC / empty / unrecognised rows with a current revision are moved under the user's decision), then document-control P16 STATUS-GUARD FOLLOW-UPS (new) — by the integrator, 2026-10-01 (P15 merge; fleet plan `audit-reports/fleet-plans/document-control.json`, `userHeld` and P16). *Ratified by the integrator under the user's delegation, 2026-10-07 (DEC-90): ISO 19650 keeps a purpose-of-issue code (IFC) apart from the lifecycle status, so IFC stays out of the editors and existing IFC rows read not in force; `REV-21` takes option 1 (the guard judges any status-only move into Issued / Locked from outside them as an issue — defence in depth, fail closed, no data moved; document-control P16), no IFC rows are mass-moved, and the import keeps its warning rather than refusing.* The user's part is done; P16 owns the rest and runs after P21 merges (`userHeld.REV-21` removed).
 - **Verification:** CONFIRMED (read from `20261144`'s `v_issuing` and `is_controlled_issue_status`, `lib/issueStatus.ts`, `lib/verifyVerdict.ts` and `lib/docPack.ts`; the app half's behaviour is pinned by test)
@@ -1079,6 +1079,102 @@ lib/revisions.ts:1470-1471 — "// Record the (old → new) join rows. Idempoten
 2. ✗ Waits on P16: the guard re-created from its newest body (after P21's), the test driving IFC → Issued and IFC → Locked against it, and `isUnguardedEntryIntoForce` retired into `isIssueTransition` or pinned equal to the new limb.
 
 Status stays OPEN for done-when 2. No IFC rows are moved: Document Control re-issues each through the guarded path. P16's migration pastes after `20261174` (and P21's), which wait behind `20261159`'s gate on `INTK-18`, so the database limb goes live only after INTK-18 is deployed.
+
+**Resolution (2026-10-07, document-control Round F wave 3).** Package **P16 STATUS-GUARD FOLLOW-UPS** — done-when 2, the database limb (done-when 1 is the integrator's ruling above, unchanged). Reproduced first on `b0a03b1`, where `20261182` (P21) holds the newest guard body, on a throwaway PostgreSQL 16.13 cluster. The stub was P19's / P20's / P21's (roles `anon` / `authenticated` / `service_role`, `auth.uid()` from a session setting, RLS on `documents` / `document_versions` / `document_holds` / `audit_logs`, the real `is_org_controller` (`20260814`), `review_control_mode_for` (`20261070`) and `is_controlled_issue_status` (`20261144`)), then the repository's `20261151`, `20261159`, `20261164`, `20261165`, `20261174` and `20261182` applied whole, and a library-publisher table behind `user_can_publish_on_library`. Each case ran in its own rolled-back transaction as `authenticated` with the caller's uid. On HEAD every one of these was ADMITTED:
+- A Viewer (no publish grant, owns nothing) moved an IFC document to Issued, and another to Locked, in a `none` library.
+- A Viewer moved an unreviewed IFC document to Issued in a require library.
+- A Viewer moved `'issued'`, `''`, `' Issued'` and `'For Construction'` documents into Issued / Locked.
+- Document Control moved held IFC documents to Issued and to Locked, in a `none` library and in a require library, and moved a held document whose status was NULL to Issued.
+- The owner (publisher tier), and a library publisher, moved an unreviewed IFC document to Issued in a require library; the owner did the same for held documents.
+
+Only the Viewer's move out of a NULL status was refused on HEAD ("You do not have authority…"). This was by accident of SQL's three-valued logic: `v_advancing` was NULL, so the guard did not return early. Document Control still passed over a hold there. The finding holds as written.
+- **Migration `supabase/migrations/20261185_dc_roundF_status_into_force_issue.sql`** (one paste; not a widening). `enforce_document_publish_guard` is re-created from its NEWEST body (`20261182`, found by scanning). Every base line is kept, and one statement is added, right after `20261144`'s `v_issuing` and before the new door is computed from it:
+  `v_issuing := v_issuing OR COALESCE(NEW.current_version_id IS NOT NULL AND NEW.current_version_id IS NOT DISTINCT FROM OLD.current_version_id AND is_controlled_issue_status(OLD.status) AND COALESCE(OLD.status, '') NOT IN ('Issued', 'Locked') AND NEW.status IN ('Issued', 'Locked'), false);`
+  A status-only move out of an issue status other than Issued / Locked (IFC, an empty status, a case or spacing variant, a library's own; a NULL status included) into Issued or Locked, on a document with a current revision, is now `v_issuing`. Out of Draft, In Review or a retirement it already was, so the union is exactly the ratified rule: any status-only move into Issued / Locked from any status outside them. The move then meets the rules every status-only issue meets, none of them changed and no sentence added:
+  - the new door: "Document has an active hold; release the hold before issuing it.", for everyone, Document Control included;
+  - the require limb, short of Document Control or a complete roster (the folder / library chain OR the document's own policy, DEC-71);
+  - the publisher tier: "You do not have authority to publish revisions in this library."
+  No declaration is added, nothing else is created, and no row is moved (DEC-77 §2: Document Control re-issues each IFC row through this path). Grants: the guard executable by no client role (DRLS-16).
+  - **Decided — status-only, as ratified.** A write that ALSO moves the pointer is not this limb. `publish_revision`'s rev-up and revert write `'Issued'` with the new pointer, so a library publisher's Minor / Correction rev-up of an IFC document in a require library works today (RG-7's declared hatch), and binding it here would refuse it. Such a write keeps the pointer move's rules: the review gate, RG-7, RG-14, the publisher tier and its hold, and for Document Control over a hold P17's `v_unforced_move` (IFC and Issued are both issue statuses): a recorded force, or refused.
+  - **DEC-30 inventory** (aggregate counts only, before the transaction):
+    1. documents with a current revision in a status the guard counts as an issue but no gate reads as in force;
+    2. of those, in status IFC — counted as `20261134` and `VFY-20`'s query count them, so the paste reports the IFC count `VFY-20` waits on;
+    3. of those, under an active hold now;
+    4. of those, under a require policy whose current revision carries no complete roster (20261144's per-slot count, byte for byte).
+  - **Probes and prerequisite.** Eight probes: the P16 limb (false on the base) and where it sits; the judging path; P21's, P20's, P19's / P18's / P17's / RG-14's and REV-20's / REV-17's / 20261144's rules surviving; the definer, the pinned `search_path`, no client EXECUTE, the owner's EXECUTE on the predicate, and the trigger BEFORE UPDATE only; the recorded forces unchanged. The first statement refuses to run, changing nothing, without 20261182's limb (i) and `put_back_retired_issue`.
+- **App: `lib/issueStatus.ts` and `lib/documentStatusOptions.ts`, comments only; no behaviour changes.** **Decided: done-when 2's second branch.** `isUnguardedEntryIntoForce` is pinned equal to the new limb, for a write that leaves the pointer where it is, and the new `v_issuing` is pinned equal to `isIssueTransition || isUnguardedEntryIntoForce` (the two never overlap). `isIssueTransition` is not widened, because it decides what the app RECORDS as a new issue (`REV-19`):
+  - `changeDocumentStatus` and `unarchiveDocument` start the compliance clocks and write `DOCUMENT_ISSUED` on it;
+  - the bulk editor routes its rows through `changeDocumentStatus` by it.
+  Widening it would send the bulk editor's IFC rows through that record, and change what `changeDocumentStatus` records and which clocks start for an IFC row (`putBackFromRetirementStamp` answers `null` for one, with a note that speaks of a retirement). That is a `REV-19` decision, not this finding's. It would also overturn three pinned flows that work today:
+  - P15's "the two never overlap" (`dcRoundFP15StatusVocabulary.test.ts`);
+  - P17's "an IFC row → Issued … neither is recorded" (`dcRoundFBulkStatusIssue.test.ts`);
+  - P17's integrator fix, "`already_issued` … for IFC → Issued" (`dcRoundFStatusIssueRecord.test.ts`).
+  The app-side remainder (that decision, and the editors' sentence "The database does not check this change", which overstates once the migration is pasted) is opened as **`REV-26`** (DEC-31).
+- **Regression — the user's top rule; the app works the same before and after the paste.** The two editors that can make the move are Document Control's only: `MetadataEditor`'s `canEdit` reads Admin / DocCtrl from the role collection, and the library page shows Bulk Edit to `isController` only. `is_org_controller` reads the same collection. Both editors already treat the move as an issue and refuse it over an active hold themselves (P15; `lib/holdGate.ts`, fail closed). Document Control passes the publisher tier and is never bound by the require limb. So every save they make lands exactly as before, and a hold placed between the editor's own hold read and its write is now refused by the database too. No other app write makes the move (P13's census of every `documents.status` writer, `dcRoundFStatusTransition.test.ts`):
+  - every other writer leaves Draft / In Review / a retirement, already `v_issuing`;
+  - or moves the pointer (`publish_revision`, the review promote);
+  - or INSERTs (the trigger fires BEFORE UPDATE only);
+  - and the intake route and the cron are the service role, untouched.
+- **Exercised on the throwaway PostgreSQL 16** (16.13; `initdb` under `/var/lib/postgresql/p16`, a private port and socket; stopped and deleted afterwards). `20261185` was applied twice from the repository file: 8 probes `t` both times, inventory 11 / 6 / 3 / 2 on the seed, the two outputs identical. Each case ran on its own in a rolled-back transaction.
+  - **The finding, now refused:**
+    - A-1 / A-2: the Viewer's IFC → Issued and → Locked: "You do not have authority…".
+    - A-3: the Viewer's unreviewed IFC → Issued in a require library: the require sentence.
+    - A-10, A-11, A-13, A-14: `'issued'`, `''`, `'For Construction'` → Locked and `' Issued'`: "You do not have authority…".
+    - A-4 / A-5 / A-9: Document Control on held IFC documents (Issued, Locked, a require library): "Document has an active hold; release the hold before issuing it.".
+    - A-15: a held NULL-status document → Issued by Document Control: the same.
+    - A-6 / A-7: the owner and a library publisher, unreviewed, in a require library: the require sentence.
+    - A-8 / A-8b: the owner on held documents: the new-door sentence.
+    - A-12: the Viewer's NULL → Issued: still refused.
+    Each document stayed as it was.
+  - **Unchanged — every regression case answered exactly as on HEAD:**
+    - B-1 / B-1b / B-2: Document Control's IFC → Issued / Locked with no hold, in a require library too.
+    - B-3 / B-5 / B-4: the owner's and a library publisher's IFC → Issued / Locked, in a `none` library or with a complete roster.
+    - B-6 / B-7 / B-8: a register row (no current revision) → Issued; Issued → Locked; Locked → Issued.
+    - B-9 / B-10 / B-11 / B-11b: a metadata-only write; IFC → Draft, → `' Issued'`, → another issue status.
+    - B-13: the owner's pointer + IFC → Issued (the Minor rev-up shape) in a require library: ADMITTED.
+    - B-16 / B-16b / B-17: Draft → Issued (the owner admitted, the Viewer refused, REV-18); a stamped un-archive by the owner.
+    - B-12: the service role over a hold.
+    - B-14 / B-15 / B-15b: Document Control's unforced pointer + Issued over a hold refused (P17); `publish_revision` forced published with one `REV_HOLD_OVERRIDDEN`, unforced answered `on_hold`.
+    - B-18: a bare stamped put-back over a hold refused (P19).
+    - B-19: anon: `permission denied for table documents`.
+  - **Earlier packages' cases.** P20's and P21's case scripts ran against both databases with identical answers: 149 cases (P21's 59, P20's 46 + 4, P20 fix pass 2's 21, P21's review 19). Only the seed timestamps differ.
+  - **The prerequisite.** On a database without `20261182` the first statement refused, `20261185 needs 20261182 …; nothing was changed.`, and the guard was untouched.
+  The stub, seed and case scripts were scratch files, not committed.
+- **Tests.**
+  - **`lib/__tests__/dcRoundFStatusIntoForceMigration.test.ts`** (13) pins:
+    - the base as the newest earlier definition (scan);
+    - lineDiff (nothing removed, every new line the P16 block) AND the exact cut (the body minus the block IS the base, byte for byte);
+    - the added code line for line and where it sits (after 20261144's `v_issuing`, before the new door), with no declaration, no RAISE and no other variable touched;
+    - the in-force pair read from the SQL as `IN_FORCE_STATUSES`, the status-only, current-revision and NULL conditions, and the exact compare;
+    - the judging path's order unchanged;
+    - DRLS-16, nothing else created and no row moved;
+    - the flag setters still `20261151` / `20261164` / `20261165`;
+    - the one-paste shape and the inventory's population, IFC count and roster count (20261144's, byte for byte);
+    - the prerequisite (passes on 20261182 and on itself, refuses on 20261174 / 20261165 / 20261164);
+    - all 22 `prosrc` patterns against the bodies they name, the limb's probe false on the base;
+    - the header.
+  - **`lib/__tests__/dcRoundFStatusIntoForce.test.ts`** (24, jsdom) covers:
+    - the guard TRANSCRIBED (P21's transcription plus the limb), pinned fragment by fragment, in order, to 20261185's body, and the same fragments minus the limb found in 20261182's;
+    - the parity: for every pair of 26 statuses (the editors' lists, the import's, IFC, case / space / Unicode-space variants, library statuses, empty, NULL), with and without a current revision, the SQL limb IS `isUnguardedEntryIntoForce`, 20261144's `v_issuing` IS `isIssueTransition`, the union is the ratified rule, and the two never overlap;
+    - done-when 2's cases against the transcription — IFC → Issued and → Locked refused for a non-publisher, for a held document (Document Control too) and under require for a non-controller; each ADMITTED by the same transcription without the limb (the finding);
+    - the regression cases above;
+    - **rendered**, the REAL `BulkEditModal` and `MetadataEditor` as Document Control against the guard bound as the in-memory PostgREST's BEFORE UPDATE trigger, with and without the limb. A free IFC row is put in force identically and nothing is recorded; a held one is refused by the editor before any write, identically. The race (a hold placed after the editor's read) is refused by the database after the paste, in the guard's sentence, and the row stays IFC; before it, the row was put in force over the hold.
+  - **Negative control:** with the status-only condition dropped from the migration, 4 of the 37 fail.
+  - The earlier guard tests (P13's, P14's, P17's, P18's, P19's, P20's, P21's) still pass against their own bases: each scans for the definition BEFORE its own file.
+
+**Done-when.**
+1. ✓ by the integrator's ruling of 2026-10-07 (DEC-90 A3), unchanged (above).
+2. ✓ (pending the paste of `20261185`, which waits behind the held `20261159` with `20261182`) — on its first branch, the test, and its second, `isUnguardedEntryIntoForce`:
+   - A test drives IFC → Issued and IFC → Locked against the guard: a non-publisher is refused; a held document is refused for a controller too; and under a require policy an unreviewed revision is refused for a non-controller. This holds on PostgreSQL 16 against the repository's file (A-1..A-15) and against the pinned transcription.
+   - The app's `isUnguardedEntryIntoForce` is pinned equal to the new limb, the done-when's second alternative (not retired into `isIssueTransition`, for the reason above).
+
+**Scope / residual.** **Pending migration:** `20261185`. It pastes AFTER `20261182` (required; its first statement refuses otherwise), which follows `20261174` / `20261165` / `20261164` / `20261159`, held behind projects-and-cost `INTK-18`'s deploy (paste guide row 119). Never re-paste `20261182` or any earlier guard migration after it. **Deploy order:** none; the app works the same before and after the paste.
+
+Not touched here:
+- **The IFC rows themselves.** None are moved (DEC-77 §2). Their number is the paste's inventory row 2, and `VFY-20` stays OPEN until that count is recorded.
+- **A pointer-moving IFC → Issued** keeps the pointer move's rules, by design (above).
+- **The app's side** (the editors' "the database does not check this change" sentence, the metadata editor's refusal suffix, and whether the move owes `REV-19`'s clocks and record) is **`REV-26`**, opened here (DEC-31), for the integrator to assign.
+- **The paste guide.** The paste row is in the package's report; `MIGRATION-PASTE-ORDER.md` is the integrator's to update.
 
 ---
 
@@ -1358,3 +1454,34 @@ Status stays OPEN for done-when 2. No IFC rows are moved: Document Control re-is
 - **Deploy order: none needed.** No app deploy is needed before or after the paste, and P21 changes no app code. One app result changes, and the migration header says so: the unforced review promote of a held document in an issue status (Issued, IFC, Locked or a library's own) with no current revision (the inspector's `ReviewGateSection`, or `IntakePanel` through `finalizeReviewedRevision`), admitted unrecorded before, is now refused in `REV-20` (b)'s sentence (F-14a). The inspector offers Document Control the recorded force on that sentence; the intake approve offers none until projects-and-cost `INTK-18` (J14) lands. Every other app write is unchanged (the census above). The app carrying P19 must already be deployed, as `20261165` requires.
 - **What now needs the hold released or a recorded force (counted by the inventory).** Document Control's first pointer write on a held document with no current revision, and its clear of a held issued document's current revision, pass only through `publish_revision`'s force (a new revision, recorded) or the review promote's (a reviewed draft, recorded); a bare PATCH is refused. The review promote of a held ISSUED document with no current revision, which passed unrecorded, now takes the inspector's recorded force; the intake approve offers none (as for a held Issued document since P17 — projects-and-cost `INTK-18`, owned by J14).
 - **Outside this finding, by design:** a held Draft / In Review document's pointer move between two revisions or clear by Document Control stays admitted. Nothing is in force there: its exit into an issue status is the new door (refused over a hold for everyone, or `REV-20` (b) when the pointer moves with it), and a first pointer write is (i). The service role is untouched, as everywhere in this guard.
+
+---
+
+<a id="rev-26"></a>
+
+## REV-26 · After 20261185 a move into force out of "IFC" is an issue to the database, but the app still calls it unguarded and never records it as one
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** unassigned — opened 2026-10-07 by document-control P16 STATUS-GUARD FOLLOW-UPS (DEC-31: the app-side remainder of `REV-21`, whose database limb `20261185` closes); the integrator assigns it (the status editors' next owner, with `REV-19`'s decision).
+- **Verification:** CONFIRMED (read from the code; the database refusal of the move driven against the real editors in `lib/__tests__/dcRoundFStatusIntoForce.test.ts`)
+- **Locations:** `components/documents/MetadataEditor.tsx:490` (the entry-into-force note: "The database does not check this change"), `components/documents/MetadataEditor.tsx:247` (the refusal suffix keys on `issuing && isIssueRefusal(…)` or a `HoldBlockedError`), `components/documents/BulkEditModal.tsx:294` (the same note) and `:205` (a refused row is marked "not issued:" only for an `issuingRows` row), `lib/revisions.ts:2534` (`changeDocumentStatus` answers `notRecordedBecause: "already_issued"` for an IFC → Issued write), `lib/revisions.ts:2366` (`putBackFromRetirementStamp` answers `null` for an IFC row), `lib/issueStatus.ts` (`isIssueTransition` — not widened by P16, deliberately)
+- **Independently verified:** — opened 2026-10-07 by P16 while closing `REV-21`; not yet challenged by a second party.
+
+**Mechanism.** `20261185` (`REV-21`) makes a status-only move into Issued / Locked, out of an issue status no gate reads as in force, a `v_issuing` write. That covers an existing IFC row, an empty status, a case or spacing variant, and a library's own status. The guard now judges it as every status-only issue: the new door's hold for everyone, the require limb short of Document Control, the publisher tier. The app half P15 built (`isUnguardedEntryIntoForce`) is unchanged, and P16 deliberately did not widen `isIssueTransition`, because it decides what the app records as a new issue (`REV-19`). That leaves three things:
+1. **The editors' notes overstate.** Both editors' entry-into-force notes say "The database does not check this change". That is true before the paste and overstated after it.
+2. **A database refusal is shown less clearly.** Suppose a hold is placed after the editor's own hold read. The metadata editor then shows the database's refusal of the move raw, without "The status was not changed to Issued, and nothing else in this edit was saved". The bulk editor names the row but does not mark it "not issued:".
+3. **The move is not recorded as an issue.** It starts no compliance clock and writes no `DOCUMENT_ISSUED`: the bulk editor writes an IFC row with the bare write, and `changeDocumentStatus` answers `already_issued` for one. Two things were never decided: whether a move into force out of IFC owes `REV-19`'s clocks and record, and on which put-back basis (`putBackFromRetirementStamp` answers `null`, whose note speaks of a retirement).
+
+**Failure scenario.** After the paste, Document Control bulk-sets five legacy IFC drawings to Issued. The dialog says the database does not check the change, although it now does. The five land as before, but the audit trail holds no `DOCUMENT_ISSUED` saying who put which revision in force under which policy decision, and no acknowledgment roster opens. Every other status-change issue gets both since `REV-19`.
+
+**Done when.**
+
+- [ ] The editors' entry-into-force notes say what the database does, truthfully before and after `20261185` (for example "the database also refuses it over a hold"). The metadata editor's refusal suffix covers the database's refusal of the move, and the bulk editor marks such a row.
+- [ ] It is decided and recorded whether a status-only move into force out of an issue status no gate reads as in force owes `REV-19`'s clocks and `DOCUMENT_ISSUED`. If it does, one of these lands, with a clock basis that never resets a review on no evidence:
+  - `isIssueTransition` widens to the database's `v_issuing`;
+  - or `changeDocumentStatus` / the bulk editor route `isUnguardedEntryIntoForce` rows through `recordStatusIssue`.
+  The pins that encode today's answer move with the decision: `dcRoundFP15StatusVocabulary.test.ts` "the two never overlap", `dcRoundFBulkStatusIssue.test.ts` "an IFC row … neither is recorded", and `dcRoundFStatusIssueRecord.test.ts` "`already_issued` … for IFC → Issued".
+- [ ] Tests drive both editors.
+
+**Closer:** unassigned — the integrator assigns it (`components/documents/MetadataEditor.tsx` and `BulkEditModal.tsx` were outside P16's files).

@@ -592,6 +592,43 @@ one-paste migration:
   second starts from the other's body (the lineDiff scan finds it) and
   pastes after it.
 
+⚠ **Paste order — P16 STATUS-GUARD FOLLOW-UPS (2026-10-07).** One
+one-paste migration:
+- `20261185_dc_roundF_status_into_force_issue.sql` (`REV-21`, the database
+  limb of DEC-77 §4 — ratified, DEC-90 A3, option 1) — **after `20261182`
+  (required)**, so after `20261174`, `20261165`, `20261164`, `20261159`,
+  `20261151`, `20261144`, `20261130` and `20261070` too. Its first statement
+  refuses to run, changing nothing, without `20261182`'s guard and
+  `put_back_retired_issue`. `20261182` waits on `20261174`, which waits on
+  `20261165`, `20261164` and the held `20261159` (paste guide row 119), so
+  this file waits with them. It re-creates `enforce_document_publish_guard`
+  from `20261182`'s body (every P21, P20, P19, P18, REV-22 limb 1, RG-14,
+  REV-20, REV-18 and REV-17 rule kept) and adds one statement to
+  `v_issuing`. Nothing else is created or re-created; no row is moved.
+  **Never re-paste `20261182`, `20261174`, `20261165`, `20261164`,
+  `20261159`, `20261151`, `20261144`, `20261139`, `20261105` or any earlier
+  guard migration after it** — each drops the P16 rule.
+- **Deploy order: none.** The app works the same before and after the
+  paste: the two editors that can make the move are Document Control's
+  only and already treat it as an issue (P15: said before the save, the
+  hold checked first); Document Control passes the publisher tier and the
+  require limb never binds it. P16 changes no app code (comments in
+  `lib/issueStatus.ts` and `lib/documentStatusOptions.ts`).
+- **After the paste:** a status-only move into Issued / Locked out of an
+  issue status outside them (IFC, an empty status, a case or spacing
+  variant, a library's own), on a document with a current revision, is
+  judged as an issue: refused below the publisher tier ("You do not have
+  authority…"), over an active hold for everyone ("…release the hold before
+  issuing it."), and under a require policy short of Document Control or a
+  complete roster. A write that also moves the pointer (a rev-up or revert
+  of an IFC document) keeps the pointer move's rules. The inventory counts
+  the documents concerned, the IFC ones among them (`VFY-20`'s count), the
+  held ones and the unreviewed ones under require.
+- **Not closed by P16 (opened as `REV-26`, DEC-31):** the editors' "The
+  database does not check this change" sentence (overstated once pasted),
+  the metadata editor's refusal suffix for the database's refusal of the
+  move, and whether the move owes `REV-19`'s clocks and `DOCUMENT_ISSUED`.
+
 ⚠ **Deploy note — P12 (operators, public-surfaces `SHR-11`).** Before
 deploying the app carrying P12, a self-hosted deployment (the Docker image,
 `next start`) must set `NEXT_PUBLIC_SITE_URL` to its public address — a
