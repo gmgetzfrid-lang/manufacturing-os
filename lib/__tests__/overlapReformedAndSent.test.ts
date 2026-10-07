@@ -74,7 +74,17 @@ describe("TAX-8 dw3 — recordIntent replaces an EXPIRED row instead of reviving
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     await recordIntent(input as never);
     expect(state.calls.filter((c) => c.table === "document_intents").map((c) => c.op)).toEqual(["delete", "upsert"]);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("a lapsed intent could not be cleared"), "permission denied");
+    // checkedWrite's plain sentence, never the raw driver text
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("a lapsed intent could not be cleared"), "You don't have permission to do this — nothing was changed.");
+    warn.mockRestore();
+  });
+
+  it("zero rows cleared (nothing had lapsed — the usual answer) is not a failure: no warning, the intent is recorded", async () => {
+    state.deleteResult = { data: [], error: null };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await recordIntent(input as never);
+    expect(state.calls.filter((c) => c.table === "document_intents").map((c) => c.op)).toEqual(["delete", "upsert"]);
+    expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
   });
 

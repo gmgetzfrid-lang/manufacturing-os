@@ -27,6 +27,7 @@
 //     as checkoutEpisodes.
 
 import { supabase } from "@/lib/supabase";
+import { checkedWrite } from "@/lib/checkedWrite";
 
 export type IntentKind = "view" | "reference" | "edit";
 export type IntentSource =
@@ -156,21 +157,22 @@ export async function recordIntent(input: RecordIntentInput): Promise<void> {
     // about (components/documents/EditOverlapBanner.tsx). Clear the caller's
     // own lapsed row for this key first; the upsert then inserts a fresh row.
     // A live intent is untouched (renewed in place, its start kept). Zero
-    // rows is the usual answer (nothing had lapsed), never a refusal.
-    const { data: lapsed, error: lapsedErr } = await supabase
-      .from("document_intents")
-      .delete()
-      .eq("document_id", input.documentId)
-      .eq("user_id", input.userId)
-      .eq("kind", input.kind)
-      .eq("source", input.source)
-      .lte("expires_at", new Date(now).toISOString())
-      .select("id");
-    if (lapsedErr) {
-      if (isMissingIntentSchema(lapsedErr)) { intentSchemaMissing = true; return; }
-      console.warn("[intents] a lapsed intent could not be cleared — the renewed one keeps its old start (non-blocking)", lapsedErr.message);
-    } else if (((lapsed as unknown[] | null) ?? []).length > 0) {
-      // A lapsed row was cleared: the intent below starts now.
+    // rows is the usual answer (nothing had lapsed): checkedWrite reads it as
+    // "refused", which here is not a failure — only a database error is.
+    const cleared = await checkedWrite(
+      supabase
+        .from("document_intents")
+        .delete()
+        .eq("document_id", input.documentId)
+        .eq("user_id", input.userId)
+        .eq("kind", input.kind)
+        .eq("source", input.source)
+        .lte("expires_at", new Date(now).toISOString())
+        .select("id"),
+    );
+    if (!cleared.ok && cleared.code === "db") {
+      if (isMissingIntentSchema({ code: cleared.pgCode })) { intentSchemaMissing = true; return; }
+      console.warn("[intents] a lapsed intent could not be cleared — the renewed one keeps its old start (non-blocking)", cleared.error);
     }
     const { error } = await supabase
       .from("document_intents")

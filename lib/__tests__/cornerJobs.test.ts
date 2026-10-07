@@ -713,8 +713,10 @@ describe("TAX-8 (N7 third review; N9 done-when 3) — a re-formed overlap is a n
     const intents = readFileSync(resolve("lib/intents.ts"), "utf8");
     const start = intents.indexOf("export async function recordIntent(");
     const body = intents.slice(start, intents.indexOf("\n}\n", start));
-    const del = body.indexOf('.from("document_intents")\n      .delete()');
-    const up = body.indexOf('.from("document_intents")\n      .upsert(');
+    // The delete goes through checkedWrite (the checkedWrite census holds
+    // lib/intents.ts at its one unchecked site); zero rows is not a failure.
+    const del = body.search(/checkedWrite\(\s*supabase\s*\.from\("document_intents"\)\s*\.delete\(\)/);
+    const up = body.search(/\.from\("document_intents"\)\s*\.upsert\(/);
     expect(del).toBeGreaterThan(0);
     expect(up).toBeGreaterThan(del);
     const clear = body.slice(del, up);
