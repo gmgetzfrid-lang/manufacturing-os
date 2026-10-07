@@ -787,19 +787,94 @@ function DependencyEditor({
         </div>
       )}
       {canEdit && (
-        <select
-          value=""
-          disabled={saving || candidates.length === 0}
-          onChange={(e) => { if (e.target.value) void save([...deps, e.target.value]); }}
-          className="w-full text-[12px] border border-[var(--color-border-strong)] rounded-md px-2 py-1.5 bg-[var(--color-surface)] text-[var(--color-text)] disabled:opacity-50"
-        >
-          <option value="">{candidates.length === 0 ? "No other tasks available" : "+ Add a predecessor…"}</option>
-          {candidates.map((t) => (
-            <option key={t.id} value={t.id!}>{t.name}{t.id && hiddenIds?.has(t.id) ? " (hidden by filter)" : ""}</option>
-          ))}
-        </select>
+        <PredecessorPicker
+          candidates={candidates}
+          hiddenIds={hiddenIds}
+          disabled={saving}
+          onPick={(id) => void save([...deps, id])}
+        />
       )}
       {error && <div role="alert" className="text-[11px] text-rose-700 dark:text-rose-300 mt-1">{error}</div>}
+    </div>
+  );
+}
+
+/** PERF-5 remediation 4 (projects Round G J14): the most matches the
+ *  predecessor picker draws at once — the picker never renders every task
+ *  (a 5,000-task schedule was a 5,000-option <select>). */
+export const PREDECESSOR_PICKER_LIMIT = 20;
+
+/** The tasks a typed query matches, in the candidates' own order (planned
+ *  date, then name): every word of the query appears in the name, case
+ *  aside. An empty query matches every candidate. */
+export function matchPredecessors(candidates: readonly Milestone[], query: string): Milestone[] {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return [...candidates];
+  return candidates.filter((t) => { const n = (t.name ?? "").toLowerCase(); return words.every((w) => n.includes(w)); });
+}
+
+/** PERF-5 remediation 4 (projects Round G J14): a searchable predecessor
+ *  picker in place of a <select> of every task. Type to narrow; at most
+ *  PREDECESSOR_PICKER_LIMIT matches are drawn, and the rest are counted.
+ *  The candidates are DependencyEditor's own (no cycle, not already a
+ *  dependency, never this task), so what may be picked is unchanged. */
+function PredecessorPicker({ candidates, hiddenIds, disabled, onPick }: {
+  candidates: Milestone[];
+  hiddenIds?: ReadonlySet<string>;
+  disabled: boolean;
+  onPick: (id: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const matches = useMemo(() => matchPredecessors(candidates, query), [candidates, query]);
+  const shown = matches.slice(0, PREDECESSOR_PICKER_LIMIT);
+  const pick = (id: string) => { setQuery(""); setOpen(false); onPick(id); };
+  if (candidates.length === 0) {
+    return <div className="text-[11px] text-[var(--color-text-faint)] italic">No other tasks available</div>;
+  }
+  return (
+    <div
+      className="relative"
+      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOpen(false); }}
+    >
+      <input
+        type="search"
+        value={query}
+        disabled={disabled}
+        onFocus={() => setOpen(true)}
+        onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") { setOpen(false); return; }
+          if (e.key === "Enter" && shown[0]?.id) { e.preventDefault(); pick(shown[0].id); }
+        }}
+        placeholder="+ Add a predecessor — type to search…"
+        aria-label="Add a predecessor — type to search the project's tasks"
+        className="w-full text-[12px] border border-[var(--color-border-strong)] rounded-md px-2 py-1.5 bg-[var(--color-surface)] text-[var(--color-text)] disabled:opacity-50"
+      />
+      {open && !disabled && (
+        <div className="mt-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm">
+          <ul data-testid="dep-candidates" aria-label="Matching tasks" className="max-h-56 overflow-y-auto py-1">
+            {shown.map((t) => (
+              <li key={t.id}>
+                <button
+                  type="button"
+                  onClick={() => t.id && pick(t.id)}
+                  className="w-full text-left px-2 py-1.5 text-[12px] text-[var(--color-text)] hover:bg-[var(--color-surface-2)] focus:bg-[var(--color-surface-2)] outline-none truncate"
+                >
+                  {t.name}{t.id && hiddenIds?.has(t.id) ? " (hidden by filter)" : ""}
+                </button>
+              </li>
+            ))}
+          </ul>
+          <div role="status" className="px-2 py-1 border-t border-[var(--color-border)] text-[10px] text-[var(--color-text-faint)]">
+            {matches.length === 0
+              ? "No task matches — try another word."
+              : matches.length > shown.length
+                ? `Showing ${shown.length} of ${matches.length} — type to narrow.`
+                : `${matches.length} task${matches.length === 1 ? "" : "s"}.`}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

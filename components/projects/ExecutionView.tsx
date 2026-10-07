@@ -24,7 +24,7 @@
 // drag to move, "Set duration" to stretch, "Group" to build missing
 // WBS — all write through to the same audited mutations.
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { userFacingCaughtError } from "@/lib/userFacingError";
 import {
@@ -117,6 +117,27 @@ interface FlatRow {
   /** Effective status: a leaf's own, a summary's derived roll-up. */
   derivedStatus: MilestoneStatus;
 }
+
+/** PT PERF-5 (projects Round G J14): one task's row handlers — built once per
+ *  task id, stable across renders, each calling the board's LATEST callback
+ *  (so the memo'd Bar / OutlineRow skip a drag frame without ever holding a
+ *  stale closure). */
+interface RowHandlers {
+  onToggleCollapse: () => void;
+  onToggleSelected: () => void;
+  onSetStatus: (s: MilestoneStatus, reason?: string) => void;
+  onSetProgress: (percent: number) => void;
+  onSetDuration: () => void;
+  onOpenDetail: () => void;
+  onViewOnly: () => void;
+  onSequence: () => void;
+  onPointerDown: (e: React.PointerEvent) => void;
+  onPointerMove: (e: React.PointerEvent) => void;
+  onPointerUp: (e: React.PointerEvent) => void;
+  onNudge: (deltaDays: number) => void;
+  onResize: (edge: "start" | "finish", deltaDays: number) => void;
+}
+const NOOP = () => undefined;
 
 export default function ExecutionView({
   milestones, hideImported = false, canEdit, orgId, projectId, userId, userName, userEmail, userRole,
@@ -827,6 +848,65 @@ export default function ExecutionView({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // ── Stable row handlers (PT PERF-5, projects Round G J14) ─────
+  // A drag changes only `drag`; every windowed Bar and OutlineRow used to
+  // re-render on each change of its day offset because each got fresh
+  // inline closures. Each row now gets ONE handler object per task id,
+  // built once, that calls the LATEST callbacks through a ref (refreshed
+  // after every commit, before any event can fire) — so the memo'd rows
+  // re-render only when their own props change (the dragged bar's offset,
+  // a row's data, selection or focus), and a handler never acts on stale
+  // state.
+  const rowById = useMemo(() => {
+    const m = new Map<string, FlatRow>();
+    for (const r of rows) if (r.ms.id) m.set(r.ms.id, r);
+    return m;
+  }, [rows]);
+  const latest = useRef({
+    rowById, toggleCollapse, toggleSelected, setStatus, setProgress, setDurationFor, setDetailId, notifyViewOnly,
+    sequencePhase, onBarPointerDown, onBarPointerMove, onBarPointerUp, moveByDays, resizeEdge, resizeSummaryEdge,
+  });
+  useLayoutEffect(() => {
+    latest.current = {
+      rowById, toggleCollapse, toggleSelected, setStatus, setProgress, setDurationFor, setDetailId, notifyViewOnly,
+      sequencePhase, onBarPointerDown, onBarPointerMove, onBarPointerUp, moveByDays, resizeEdge, resizeSummaryEdge,
+    };
+  }, [rowById, toggleCollapse, toggleSelected, setStatus, setProgress, notifyViewOnly, sequencePhase, onBarPointerDown, onBarPointerMove, onBarPointerUp, moveByDays, resizeEdge, resizeSummaryEdge]);
+  const rowHandlers = useMemo(() => {
+    const cache = new Map<string, RowHandlers>();
+    const L = () => latest.current;
+    const shared = {
+      onPointerMove: (e: React.PointerEvent) => L().onBarPointerMove(e),
+      onPointerUp: (e: React.PointerEvent) => L().onBarPointerUp(e),
+      onViewOnly: () => L().notifyViewOnly(),
+    };
+    return (id: string): RowHandlers => {
+      let h = cache.get(id);
+      if (!h) {
+        const row = () => L().rowById.get(id);
+        h = {
+          ...shared,
+          onToggleCollapse: () => L().toggleCollapse(id),
+          onToggleSelected: () => L().toggleSelected(id),
+          onSetStatus: (st, reason) => { void L().setStatus(id, st, reason); },
+          onSetProgress: (pct) => { void L().setProgress(id, pct); },
+          onSetDuration: () => { const r = row(); if (r) L().setDurationFor(r.ms); },
+          onOpenDetail: () => L().setDetailId(id),
+          onSequence: () => { void L().sequencePhase(id); },
+          onPointerDown: (e) => { const r = row(); if (r) L().onBarPointerDown(e, r.ms); },
+          onNudge: (d) => { const r = row(); if (r) L().moveByDays(r.ms, d); },
+          onResize: (edge, d) => {
+            const r = row(); if (!r) return;
+            if (r.ms.isSummary || r.hasChildren) void L().resizeSummaryEdge(id, edge, d);
+            else void L().resizeEdge(id, edge, d);
+          },
+        };
+        cache.set(id, h);
+      }
+      return h;
+    };
+  }, []);
+
   // Phases a selection may be grouped under: not an imported one — its dates
   // are the scheduling tool's and it would not follow tasks added here (PT
   // SCH-13; groupTasksUnderParent refuses it too).
@@ -1002,26 +1082,30 @@ export default function ExecutionView({
               {/* Windowed (PT PERF-5): only the rows in view are rendered; a
                   spacer above and below keeps every row where it was. */}
               <div style={{ height: win.start * ROW_H }} aria-hidden />
-              {windowRows.map((r) => (
-                <OutlineRow
-                  key={r.ms.id}
-                  row={r}
-                  color={colors.colorOf(r.ms)}
-                  collapsed={!!r.ms.id && collapsed.has(r.ms.id)}
-                  selected={!!r.ms.id && selectedIds.has(r.ms.id)}
-                  focused={!!r.ms.id && focusedId === r.ms.id}
-                  canEdit={canEdit}
-                  busy={!!r.ms.id && busy.has(r.ms.id)}
-                  onToggleCollapse={() => r.ms.id && toggleCollapse(r.ms.id)}
-                  onToggleSelected={() => r.ms.id && toggleSelected(r.ms.id)}
-                  onSetStatus={(s, reason) => { if (r.ms.id) void setStatus(r.ms.id, s, reason); }}
-                  onSetProgress={(p) => { if (r.ms.id) void setProgress(r.ms.id, p); }}
-                  onSetDuration={() => setDurationFor(r.ms)}
-                  onOpenDetail={() => r.ms.id && setDetailId(r.ms.id)}
-                  onViewOnly={notifyViewOnly}
-                  onSequence={() => r.ms.id && void sequencePhase(r.ms.id)}
-                />
-              ))}
+              {windowRows.map((r) => {
+                // A task with no id writes nothing; its row keeps inline no-ops.
+                const h = r.ms.id ? rowHandlers(r.ms.id) : null;
+                return (
+                  <OutlineRow
+                    key={r.ms.id}
+                    row={r}
+                    color={colors.colorOf(r.ms)}
+                    collapsed={!!r.ms.id && collapsed.has(r.ms.id)}
+                    selected={!!r.ms.id && selectedIds.has(r.ms.id)}
+                    focused={!!r.ms.id && focusedId === r.ms.id}
+                    canEdit={canEdit}
+                    busy={!!r.ms.id && busy.has(r.ms.id)}
+                    onToggleCollapse={h?.onToggleCollapse ?? NOOP}
+                    onToggleSelected={h?.onToggleSelected ?? NOOP}
+                    onSetStatus={h?.onSetStatus ?? NOOP}
+                    onSetProgress={h?.onSetProgress ?? NOOP}
+                    onSetDuration={h?.onSetDuration ?? (() => setDurationFor(r.ms))}
+                    onOpenDetail={h?.onOpenDetail ?? NOOP}
+                    onViewOnly={h?.onViewOnly ?? notifyViewOnly}
+                    onSequence={h?.onSequence ?? NOOP}
+                  />
+                );
+              })}
               <div style={{ height: (rows.length - win.end) * ROW_H }} aria-hidden />
             </div>
 
@@ -1036,29 +1120,28 @@ export default function ExecutionView({
                   <div className="absolute -top-0 -left-[3px] w-[7px] h-[7px] rounded-full bg-rose-500 shadow" />
                 </div>
               )}
-              {windowRows.map((r, j) => (
-                <Bar
-                  key={r.ms.id}
-                  row={r}
-                  top={AXIS_H + (win.start + j) * ROW_H}
-                  domain={domain}
-                  pxPerDay={pxPerDay}
-                  canEdit={canEdit}
-                  dragDelta={drag && drag.id === r.ms.id ? drag.deltaDays : 0}
-                  onPointerDown={(e) => onBarPointerDown(e, r.ms)}
-                  onPointerMove={onBarPointerMove}
-                  onPointerUp={onBarPointerUp}
-                  onNudge={(d) => moveByDays(r.ms, d)}
-                  onResize={(edge, d) => {
-                    if (!r.ms.id) return;
-                    if (r.ms.isSummary || r.hasChildren) void resizeSummaryEdge(r.ms.id, edge, d);
-                    else void resizeEdge(r.ms.id, edge, d);
-                  }}
-                  onOpenDetail={() => r.ms.id && setDetailId(r.ms.id)}
-                  critical={criticalOn ? (r.ms.id ? critical.ids.has(r.ms.id) : false) : null}
-                  color={colors.colorOf(r.ms)}
-                />
-              ))}
+              {windowRows.map((r, j) => {
+                const h = r.ms.id ? rowHandlers(r.ms.id) : null;
+                return (
+                  <Bar
+                    key={r.ms.id}
+                    row={r}
+                    top={AXIS_H + (win.start + j) * ROW_H}
+                    domain={domain}
+                    pxPerDay={pxPerDay}
+                    canEdit={canEdit}
+                    dragDelta={drag && drag.id === r.ms.id ? drag.deltaDays : 0}
+                    onPointerDown={h?.onPointerDown ?? ((e) => onBarPointerDown(e, r.ms))}
+                    onPointerMove={h?.onPointerMove ?? onBarPointerMove}
+                    onPointerUp={h?.onPointerUp ?? onBarPointerUp}
+                    onNudge={h?.onNudge ?? ((d) => moveByDays(r.ms, d))}
+                    onResize={h?.onResize ?? NOOP}
+                    onOpenDetail={h?.onOpenDetail ?? NOOP}
+                    critical={criticalOn ? (r.ms.id ? critical.ids.has(r.ms.id) : false) : null}
+                    color={colors.colorOf(r.ms)}
+                  />
+                );
+              })}
             </div>
           </div>
         </div>
@@ -1263,7 +1346,9 @@ function Toolbar({
 
 // ─── Outline row (left, frozen) ────────────────────────────────
 
-function OutlineRow({
+// PT PERF-5 (projects Round G J14): memo'd — with the board's stable row
+// handlers, a drag frame re-renders no outline row.
+const OutlineRow = React.memo(function OutlineRow({
   row, color, collapsed, selected, focused, canEdit, busy,
   onToggleCollapse, onToggleSelected, onSetStatus, onSetProgress, onSetDuration, onOpenDetail, onViewOnly, onSequence,
 }: {
@@ -1360,11 +1445,14 @@ function OutlineRow({
       )}
     </div>
   );
-}
+});
 
 // ─── Timeline bar (right) ──────────────────────────────────────
 
-function Bar({
+// PT PERF-5 (projects Round G J14): memo'd — a change of the drag's day
+// offset re-renders only the dragged bar (its dragDelta is the only prop
+// that moves).
+const Bar = React.memo(function Bar({
   row, top, domain, pxPerDay, canEdit, dragDelta,
   onPointerDown, onPointerMove, onPointerUp, onNudge, onResize, onOpenDetail, critical, color,
 }: {
@@ -1543,7 +1631,7 @@ function Bar({
       )}
     </div>
   );
-}
+});
 
 // ─── Axis + gridlines ──────────────────────────────────────────
 
@@ -1589,7 +1677,11 @@ const Gridlines = React.memo(function Gridlines({ domain, pxPerDay, rowCount }: 
 
 // ─── Dependency arrows (finish-to-start connectors) ─────────────
 
-function DependencyArrows({ rows, byId, domain, pxPerDay }: {
+// PT PERF-5 (projects Round G J14): memo'd — its props (the rows, the task
+// map, the domain, the zoom) are memos a drag never touches, so a drag frame
+// no longer rebuilds the arrows' geometry. (It was a plain function
+// component: a parent re-render re-ran it whatever its props.)
+const DependencyArrows = React.memo(function DependencyArrows({ rows, byId, domain, pxPerDay }: {
   rows: FlatRow[];
   byId: Map<string, Milestone>;
   domain: { start: Date; end: Date; totalDays: number };
@@ -1666,7 +1758,7 @@ function DependencyArrows({ rows, byId, domain, pxPerDay }: {
       {paths}
     </svg>
   );
-}
+});
 
 // ─── Status affordances ────────────────────────────────────────
 

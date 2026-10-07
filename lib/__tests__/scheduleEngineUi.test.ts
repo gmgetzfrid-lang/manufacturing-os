@@ -145,8 +145,9 @@ describe("PERF-5 · the board renders a window of rows, not every row", () => {
     const src = readFileSync(join(process.cwd(), "components/projects/ExecutionView.tsx"), "utf8");
     expect(src).not.toMatch(/items\.filter\(\(m\) => !items\.some\(/);
     expect(src).toMatch(/const SummaryStrip = React\.memo\(/);
-    expect(src).toMatch(/\{windowRows\.map\(\(r\) => \(\s*<OutlineRow/);
-    expect(src).toMatch(/\{windowRows\.map\(\(r, j\) => \(\s*<Bar/);
+    // (projects Round G J14: each windowed row takes its stable handlers first.)
+    expect(src).toMatch(/\{windowRows\.map\(\(r\) => \{[\s\S]{0,200}?<OutlineRow/);
+    expect(src).toMatch(/\{windowRows\.map\(\(r, j\) => \{[\s\S]{0,200}?<Bar/);
   });
 });
 
@@ -427,7 +428,12 @@ describe("SCH-9 · the dependency picker reasons over every task; a hidden one i
       milestone: all[0], subtasks: [], allTasks: all, hiddenIds: new Set(["b"]), childCount: () => 0,
       canEdit: true, userId: "u", onClose: () => undefined, onChanged: () => undefined,
     }));
-    const options = [...host.querySelectorAll("option")].map((o) => o.textContent);
+    // projects Round G J14 (PERF-5 remediation 4): the picker is a search
+    // box whose matches are drawn on focus — the same candidates as the old
+    // <select> of every task, at most PREDECESSOR_PICKER_LIMIT at a time.
+    const search = host.querySelector('input[aria-label^="Add a predecessor"]') as HTMLInputElement;
+    await act(async () => { search.focus(); });
+    const options = [...host.querySelectorAll('[data-testid="dep-candidates"] button')].map((o) => o.textContent);
     expect(options).toContain("Paint");
     expect(options).not.toContain("NDE");                     // c depends on a through the hidden b
     expect(options.some((o) => o?.startsWith("Weld"))).toBe(false);
