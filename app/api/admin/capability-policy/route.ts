@@ -22,14 +22,18 @@
 //      is stored only once the live database reads projectId (QUAL-4,
 //      20261136 — probed, fail closed);
 //   5. the write is compare-and-set on the row's updated_at (two concurrent
-//      grant writes cannot lose one another — WF-16 done-when 2);
+//      grant writes cannot lose one another — WF-16 done-when 2), and a
+//      `save` that carries the `version` its grid was LOADED at is refused
+//      (409 `policy_changed`) when the stored row has moved on since — a
+//      second admin's change is never overwritten from a stale grid
+//      (ALOG-12);
 //   6. this process's policy cache is invalidated (WF-10) and a before/after
 //      CAPABILITY_POLICY_CHANGED row is written — a client cannot skip it.
 //
 // The 20261056 trigger holds rails 1–3 against a direct INSERT, UPDATE or
 // DELETE that bypasses this route, and audits such a write itself.
 //
-// Body: { op: "save", orgId, caps }
+// Body: { op: "save", orgId, caps, version? }
 //     | { op: "grant", orgId, uid, cap, expiresAt?, note? }
 //     | { op: "revoke", orgId, uid, cap }
 
@@ -38,22 +42,28 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
   CAPABILITY_DEFS, RESOURCE_KEYS, baseTokensFor, grantActive, isRuleArray, normalizeCapabilityEntry,
   parseStoredCapabilityPolicy, ruleIsConditional, validateCapabilityPolicy, invalidateCapabilityPolicy,
-  policyHasProjectScopedRule,
+  policyHasProjectScopedRule, samePolicyVersion, POLICY_CHANGED,
   type CapabilityId, type CapabilityPolicy, type UserGrant,
 } from "@/lib/capabilityPolicy";
 import { memberHoldsAny } from "@/lib/roleHeld";
+import { isControllerRole } from "@/lib/permissions";
+import { ALL_ROLES } from "@/types/schema";
 
 export const runtime = "nodejs";
 
-const CONTROLLER_ROLES = ["Admin", "DocCtrl"] as const;
+/** The controller tier — every role isControllerRole admits (ALOG-9: one
+ *  declaration of the tier, never a literal here). */
+const CONTROLLER_ROLES = ALL_ROLES.filter((r) => isControllerRole(r));
 const OPS = new Set(["save", "grant", "revoke"]);
 
 interface Body {
-  op?: unknown; orgId?: unknown; caps?: unknown;
+  op?: unknown; orgId?: unknown; caps?: unknown; version?: unknown;
   uid?: unknown; cap?: unknown; expiresAt?: unknown; note?: unknown;
 }
 
 const bad = (error: string, status: number) => NextResponse.json({ error }, { status });
+/** A write the stored row moved under — the editor reloads on this code. */
+const changed = (error: string) => NextResponse.json({ error, code: POLICY_CHANGED }, { status: 409 });
 const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
 
 /** The entry a policy EFFECTIVELY holds for one capability, in a form that
@@ -148,6 +158,17 @@ export async function POST(req: NextRequest) {
 
   if (op === "save") {
     if (!body.caps || typeof body.caps !== "object" || Array.isArray(body.caps)) return bad("caps must be an object", 400);
+    // ALOG-12: the grid was loaded at `version` (null = nothing was stored).
+    // A row that has moved on since — another admin's save, a grant, a
+    // revoke — is refused, never overwritten from the stale grid. A body
+    // without the key (a pre-ALOG-12 bundle mid-deploy) keeps the
+    // compare-and-set below only.
+    if (Object.prototype.hasOwnProperty.call(body, "version")) {
+      if (body.version !== null && typeof body.version !== "string") return bad("version must be the policy version the grid was loaded at, or null", 400);
+      if (!samePolicyVersion(body.version as string | null, storedVersion)) {
+        return changed("The action permissions were changed by someone else since you opened them — the page has the newer version now; make your change again.");
+      }
+    }
     const caps: NonNullable<CapabilityPolicy["caps"]> = {};
     const raw = body.caps as Record<string, unknown>;
     for (const def of CAPABILITY_DEFS) {
@@ -224,7 +245,7 @@ export async function POST(req: NextRequest) {
     const { data: written, error: writeErr } = await q.select("org_id");
     if (writeErr) return bad(`Couldn't save the policy: ${writeErr.message}`, 500);
     if (!written || (written as unknown[]).length === 0) {
-      return bad("The policy changed while you were editing — reload and try again", 409);
+      return changed("The policy changed while you were editing — reload and try again");
     }
   } else {
     const { error: insErr } = await supabaseAdmin
@@ -232,7 +253,7 @@ export async function POST(req: NextRequest) {
       .insert({ org_id: orgId, key: "capability_policy", data: after, updated_at: nowIso });
     if (insErr) {
       return insErr.code === "23505"
-        ? bad("The policy was created concurrently — reload and try again", 409)
+        ? changed("The policy was created concurrently — reload and try again")
         : bad(`Couldn't save the policy: ${insErr.message}`, 500);
     }
   }

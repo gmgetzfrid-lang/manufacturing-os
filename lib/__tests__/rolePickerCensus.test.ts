@@ -125,6 +125,27 @@ describe("the add-role picker offers the whole roster, grouped and explained (RO
   });
 });
 
+// ALOG-9 / ALOG-14 (admin-and-org Round G, P9): the permissions console's two
+// role axes — the action grid's tokens (POLICY_TOKENS, declared once in
+// lib/roleCapabilities.ts) and the app-wide matrix's columns — each reach the
+// whole role model. The grid reaches a role through a token that matches it
+// (the four Engineer tiers through `Engineer`); the matrix puts every role in
+// exactly one column (the tiers share one, the dormant labels share "Staff*").
+describe("the permissions console's role axes cover the role model (ALOG-9, ALOG-14)", () => {
+  it("every role is matched by some grid token, and the matrix columns hold every role exactly once", async () => {
+    const { POLICY_TOKENS } = await import("@/lib/roleCapabilities");
+    const { roleTokenMatches } = await import("@/lib/capabilityPolicy");
+    for (const r of ALL_ROLES) expect(POLICY_TOKENS.some((t) => t !== "*" && roleTokenMatches(t, r)), r).toBe(true);
+    const { EXPLORER_COLUMNS } = await import("@/components/permissions/PermissionsExplorer");
+    const cols = EXPLORER_COLUMNS.flatMap((c) => [...c.roles]);
+    expect(new Set(cols)).toEqual(new Set(ALL_ROLES));
+    expect(cols.length).toBe(ALL_ROLES.length);
+    // the grid's list is declared once; the editor imports it
+    expect(read("components/permissions/CapabilityPolicyEditor.tsx")).not.toMatch(/const POLICY_TOKENS\b/);
+    expect(read("lib/roleCapabilities.ts")).toMatch(/export const POLICY_TOKENS: readonly string\[\] = \["\*", "Admin"/);
+  });
+});
+
 function between(text: string, from: string, to: string): string {
   const a = text.indexOf(from);
   if (a < 0) throw new Error(`anchor not found: ${from}`);

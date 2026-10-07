@@ -191,6 +191,20 @@ export function normalizeRoles(rolesArr: unknown, legacyRole: unknown): Role[] {
  *  marked dormant. */
 export const DORMANT_ROLES: readonly Role[] = ["Accounting", "Safety", "HR", "Maintenance", "Operations"];
 
+/** ALOG-9 (admin-and-org Round G, P9): THE one declaration of the tokens the
+ *  permissions console's action grid and override rows can set — moved here
+ *  from CapabilityPolicyEditor so the role vocabulary lives in this module.
+ *  ROLE-1 / DEC-3: the five dormant department labels are addressable too —
+ *  the one job they keep is to be NAMED, and a request-type override
+ *  ("INCIDENT requests are reviewed by Safety") is how a department becomes a
+ *  reviewing group without a new role. Every role in ALL_ROLES is reachable:
+ *  the four Engineer tiers through the single `Engineer` token (DEC-4), the
+ *  capability policy's alias for all of them. "*" is everyone. A display
+ *  vocabulary, like the rest of this module: the evaluator is
+ *  lib/capabilityPolicy.ts policyAllows. A stored token outside this list is
+ *  still live there — the console names it rather than hiding it. */
+export const POLICY_TOKENS: readonly string[] = ["*", "Admin", "DocCtrl", "Manager", "Supervisor", "DraftingSupervisor", "Engineer", "Drafter", "Requester", "Viewer", "Contractor", "Auditor", ...DORMANT_ROLES];
+
 export function isDormantRole(role: string): boolean {
   return (DORMANT_ROLES as readonly string[]).includes(role);
 }

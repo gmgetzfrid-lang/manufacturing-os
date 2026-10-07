@@ -293,7 +293,10 @@ describe("WF-10 — loadCapabilityPolicy on the server", () => {
   });
   it("an errored read still returns defaults without caching; parseStoredCapabilityPolicy reads both stored shapes", async () => {
     const errored = { data: null, error: { message: "boom" } };
-    expect((await loadCapabilityPolicyEntry("o-err", clientReturning(errored)))).toEqual({ policy: {}, version: null });
+    // admin-and-org P9 (DEC-89 item 3, ratified DEC-90 A26): with no last good
+    // copy the answer is the defaults MARKED unreadable — an authority check
+    // refuses on the marker; a non-authoritative reader may show the defaults.
+    expect((await loadCapabilityPolicyEntry("o-err", clientReturning(errored)))).toEqual({ policy: {}, version: null, unreadable: "boom" });
     expect((await loadCapabilityPolicy("o-err", clientReturning(A))).caps?.["ticket.assign"]).toEqual(["Admin"]);
     expect(parseStoredCapabilityPolicy({ "ticket.assign": ["Admin"], nope: ["x"] })).toEqual({ caps: { "ticket.assign": ["Admin"] }, grants: [] });
     expect(parseStoredCapabilityPolicy({ caps: { "ticket.assign": ["Admin"] }, grants: [{ cap: "nope", uid: "u" }, { cap: "ticket.assign" }, { cap: "ticket.assign", uid: "u" }] }))

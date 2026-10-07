@@ -222,7 +222,17 @@ export function expectedReleaseDate(iso: Date | number | string | null | undefin
 /** Self-contained capability check for holds — enforced HERE so every entry
  *  point (inspector strip, quick-hold button, admin page) obeys the org's
  *  Action-permissions policy without each caller re-plumbing role state.
- *  Default policy is "*" (everyone) = historical behavior. */
+ *  Default policy is "*" (everyone) = historical behavior.
+ *
+ *  FAIL-CLOSED (DEC-89 item 3, ratified by DEC-90 A26 — admin-and-org P9,
+ *  drafting-flow AUTHZ-7): this used to swallow any lookup failure and let
+ *  the hold through ("policy lookup hiccup: fail open"). Now a failed refresh
+ *  of the policy is decided on the LAST GOOD copy (loadCapabilityPolicyEntry
+ *  serves it); with none, or when the caller's membership cannot be read, or
+ *  when the check itself fails, the hold is refused with a sentence saying so
+ *  — nothing is written. A healthy read answers exactly as before. The
+ *  document_holds policies enforce the same capability in the database
+ *  (org_capability_allows, which fails closed too). */
 async function assertHoldCapability(
   orgId: string,
   cap: "holds.open" | "holds.release",
@@ -232,27 +242,38 @@ async function assertHoldCapability(
   // the 3-argument org_capability_allows. Both halves agree by construction.
   resource?: import("@/lib/capabilityPolicy").CapabilityResource,
 ): Promise<void> {
+  const verb = cap === "holds.open" ? "placed" : "released";
+  const unchecked = (why: string) => new Error(
+    `The hold was not ${verb}: your permission to ${cap === "holds.open" ? "place" : "release"} holds could not be checked (${why}). Try again in a moment.`);
   try {
-    const [{ loadCapabilityPolicy, policyAllows }, { data: auth }] = await Promise.all([
+    const [{ loadCapabilityPolicyEntry, policyAllows }, { data: auth }] = await Promise.all([
       import("@/lib/capabilityPolicy"),
       supabase.auth.getUser(),
     ]);
     const uid = auth.user?.id;
     if (!uid) return; // server/cron contexts: not policy-gated here
-    const [{ data: member }, policy] = await Promise.all([
+    const [{ data: member, error: memberErr }, loaded] = await Promise.all([
       supabase.from("org_members").select("role, roles").eq("org_id", orgId).eq("uid", uid).eq("status", "active").maybeSingle(),
-      loadCapabilityPolicy(orgId),
+      loadCapabilityPolicyEntry(orgId),
     ]);
-    const role = (member?.role as string | undefined) ?? "Viewer";
+    if (memberErr) throw unchecked(`your membership could not be read: ${memberErr.message}`);
+    if (loaded.unreadable) throw unchecked(`the workspace's permission policy could not be read: ${loaded.unreadable}`);
+    // DEC-91: no role known is no role — a non-member holds nothing.
+    const role = (member?.role as string | null | undefined) ?? null;
     const extra = (member?.roles as string[] | null) ?? [];
+    const policy = loaded.policy;
     if (!policyAllows(policy, cap, role, extra, uid, resource)) {
       throw new Error(cap === "holds.open"
         ? "Your role isn't allowed to place holds. An Admin can change this under Admin → Permissions → Action permissions."
         : "Your role isn't allowed to release holds. An Admin can change this under Admin → Permissions → Action permissions.");
     }
   } catch (e) {
-    if ((e as Error).message?.includes("Action permissions")) throw e;
-    /* policy lookup hiccup: fail open — matches historical behavior */
+    const msg = (e as Error)?.message ?? "";
+    // A refusal, or an unchecked answer already said in words, stands.
+    if (msg.includes("Action permissions") || msg.startsWith("The hold was not ")) throw e;
+    // Anything else — the import, the session read, the evaluator — is a
+    // check that did not happen: refuse (fail closed), never fail open.
+    throw unchecked(msg || "the check failed");
   }
 }
 
