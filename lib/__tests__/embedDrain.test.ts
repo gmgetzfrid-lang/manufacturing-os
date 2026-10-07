@@ -1170,10 +1170,19 @@ describe("20261121 — the paste contract, byte fidelity, the census", () => {
   it("census: 20261121 is the last definer of semantic_search, semantic_coverage, semantic_coverage_detail, embed_claim_batch and the two marker-safe writers", () => {
     const files = readdirSync(join(process.cwd(), "supabase", "migrations")).filter((f) => /^\d{8}.*\.sql$/.test(f)).sort();
     const last = (re: RegExp) => files.filter((f) => re.test(strip(mig(f)))).pop();
-    for (const name of ["semantic_search", "semantic_coverage", "semantic_coverage_detail", "embed_claim_batch", "embed_build_marker_write", "knowledge_library_save_ai_features", "knowledge_libraries_embed_build_guard"]) {
+    for (const name of ["semantic_search", "semantic_coverage", "semantic_coverage_detail", "embed_claim_batch", "embed_build_marker_write", "knowledge_libraries_embed_build_guard"]) {
       expect(last(new RegExp(`CREATE (OR REPLACE )?FUNCTION ${name}\\(`))).toBe(FILE);
     }
-    expect(last(/CREATE TRIGGER \w+\s+BEFORE [\w ,]*\bON knowledge_libraries\b/)).toBe(FILE);
+    // intelligence I-16 (ASK-8 done-when 2): 20261178 re-creates the toggles save
+    // from this file's body plus ONE line (the legend-id check) — pinned there by
+    // an exact cut (intelRoundGCodebookLifecycleMigration.test.ts); the marker
+    // handling below is this file's, unchanged.
+    expect(last(/CREATE (OR REPLACE )?FUNCTION knowledge_library_save_ai_features\(/)).toBe("20261178_intel_roundG_codebook_lifecycle.sql");
+    // …and adds trg_knowledge_libraries_legend_guard, a refuse-only check of the
+    // legend ids beside this file's embedBuild guard, which stays this file's.
+    expect(last(/CREATE TRIGGER trg_knowledge_libraries_embed_build_guard\b/)).toBe(FILE);
+    expect(files.filter((f) => /CREATE TRIGGER \w+\s+BEFORE [\w ,]*\bON knowledge_libraries\b/.test(strip(mig(f)))).filter((f) => f > FILE))
+      .toEqual(["20261178_intel_roundG_codebook_lifecycle.sql"]);
   });
   it("review fix pass 4 (SEM-8 / GOV-14 limb): only the service role changes the consent marker — a controller's direct PostgREST write of ai_features.embedBuild is refused", () => {
     // knowledge_libraries_write lets every controller UPDATE the row; the
