@@ -243,7 +243,7 @@ describe("20261185 — the one-paste shape", () => {
     expect((M.match(/^BEGIN;$/gm) ?? []).length).toBe(1);
     expect((M.match(/^COMMIT;$/gm) ?? []).length).toBe(1);
     const inventory = stripComments(M.slice(M.indexOf("CREATE TEMP TABLE"), M.indexOf("\nBEGIN;")));
-    expect((inventory.match(/COUNT\(\*\)::text/g) ?? []).length).toBe(5);
+    expect((inventory.match(/COUNT\(\*\)::text/g) ?? []).length).toBe(7);
     expect(inventory).not.toMatch(/SELECT \*|document_number|title|d\.id\s+AS|user_email/);
     const c = stripComments(tail).replace(/'(?:[^']|'')*'/g, "''");
     expect((c.match(/;/g) ?? []).length).toBe(1); // one statement: the final SELECT
@@ -259,8 +259,18 @@ describe("20261185 — the one-paste shape", () => {
     for (const w of ["  FROM outside\n", "  FROM outside WHERE is_ifc\n", "  FROM outside WHERE held\n", "  FROM outside WHERE under_require AND NOT roster_complete\n"]) {
       expect(inv, w).toContain(w);
     }
-    // row 5 (review fix): the retirements whose put-back into the pair the second block judges — the block's own population
-    expect(inv).toContain("  FROM documents d\n WHERE d.status IN ('Superseded', 'Archived', 'Void')\n   AND d.retired_issue_version_id IS NOT NULL\n   AND COALESCE(d.retired_issue_status, '') NOT IN ('Issued', 'Locked');");
+    // row 5 (review fix): the retirements whose put-back into the pair the second block CHANGES — the block's own population,
+    // less a stamp naming another revision than the current one (P20's limb judged that exit already; second review fix)
+    expect(inv).toContain("  FROM documents d\n WHERE d.status IN ('Superseded', 'Archived', 'Void')\n   AND d.retired_issue_version_id IS NOT NULL\n   AND d.retired_issue_version_id = d.current_version_id\n   AND COALESCE(d.retired_issue_status, '') NOT IN ('Issued', 'Locked')\nUNION ALL\n");
+    // rows 6 and 7 (second review fix): the NULL-status population whose rollback changes — of row 1, a NULL status; of row 5, a NULL stamp status
+    expect(inv).toContain("  SELECT d.status = 'IFC' AS is_ifc,\n         d.status IS NULL AS is_null,\n");
+    expect(inv).toContain("  FROM outside WHERE is_null\n");
+    expect(inv).toContain("  FROM documents d\n WHERE d.status IN ('Superseded', 'Archived', 'Void')\n   AND d.retired_issue_version_id IS NOT NULL\n   AND d.retired_issue_version_id = d.current_version_id\n   AND d.retired_issue_status IS NULL;");
+    const labels = [...inv.matchAll(/^SELECT '(inventory \(before apply\): (?:[^']|'')*)'/gm)].map((m) => m[1]);
+    expect(labels).toHaveLength(7);
+    expect(labels[5]).toMatch(/^inventory \(before apply\): of the first row, documents whose status is NULL — the app rolls a failed supersede \/ split \/ merge of one back to ''Issued''/);
+    expect(labels[5]).toMatch(/REV-29/);
+    expect(labels[6]).toMatch(/^inventory \(before apply\): of the retired row, documents whose stamp status is NULL/);
     // the require read is the guard's own (the chain OR the document's own policy — DEC-71)
     expect(inv).toContain("(review_control_mode_for(NULL, d.collection_id, d.library_id) = 'require'\n          OR review_control_mode_for(d.review_control, d.collection_id, d.library_id) = 'require') AS under_require");
     const rosterOf = (sql: string) => stripComments(between(sql, "WITH slot_fill AS (", "HAVING sum(reqs) > 0 AND sum(LEAST(reqs, filled)) >= sum(reqs)"))
@@ -337,7 +347,7 @@ describe("20261185 — the one-paste shape", () => {
     expect(tail.split(/\nUNION ALL\n/).filter((s) => /AS ok,|^SELECT '/.test(s) && !/FROM dc_round_f_185_before/.test(s))).toHaveLength(9);
   });
 
-  it("the header states the finding, the retirement exit, the decision (status-only) and its remainder, the paste order (after 20261182, behind the held 20261159), the never-re-paste list, the deploy order and the one app result that changes, and that it is not a widening", () => {
+  it("the header states the finding, the retirement exit, the decision (status-only) and its remainder, the paste order (after 20261182, behind the held 20261159), the never-re-paste list, the deploy order (the app change of REV-26 / REV-27 / REV-29 first, or the integrator's recorded acceptance) and the two app results that change, and that it is not a widening", () => {
     const head = M.slice(0, M.indexOf("DO $$"));
     expect(head).toMatch(/REV-21 {2}20261144's v_issuing decides a status-only issue/);
     expect(head).toMatch(/DEC-77 §4, ratified by the integrator under the user's delegation,\n-- 2026-10-07: DEC-90 A3, option 1; no IFC row is moved/);
@@ -348,9 +358,17 @@ describe("20261185 — the one-paste shape", () => {
     expect(head).toMatch(/20261182 follows 20261174 \/ 20261165 \/ 20261164 \/\n-- 20261159, the last HELD \(paste guide row 119\)/);
     expect(head).toMatch(/INTK-18/);
     expect(head).toMatch(/Never\n-- re-paste 20261182, 20261174, 20261165, 20261164, 20261159, 20261151,\n-- 20261144, 20261139, 20261105 or any earlier guard migration after this\n-- one/);
-    expect(head).toMatch(/DEPLOY ORDER: none — no app deploy is needed before or after this paste\./);
-    expect(head).toMatch(/ONE APP RESULT\n-- CHANGES, from the retirement exit/);
+    expect(head).not.toMatch(/DEPLOY ORDER: none/);
+    expect(head).toMatch(/DEPLOY ORDER: the app change of document-control REV-26, REV-27 and\n-- REV-29 \(P23 STATUS-SURFACE FOLLOW-UPS, proposed at P16's second review fix;\n-- the integrator adds it to the fleet plan\) is deployed BEFORE this paste\./);
+    expect(head).toMatch(/Pasting this first needs the integrator's recorded acceptance, on the paste\n-- guide row, of what the app gets wrong until it lands\./);
+    expect(head).toMatch(/TWO APP RESULTS\n-- CHANGE, both from the retirement exit\. \(1\) The un-archive/);
+    expect(head).toMatch(/\(2\) The rollback\n-- of a NULL-status document's retirement\./);
+    expect(head).toMatch(/undoFailedSupersede/);
+    expect(head).toMatch(/restoreSupersededSource/);
+    expect(head).toMatch(/restore_reversed_source/);
     expect(head).toMatch(/document-control REV-27/);
+    expect(head).toMatch(/document-control REV-29; inventory rows 6 and 7 count the documents\n-- concerned\./);
+    expect(head).not.toMatch(/ONE APP RESULT/);
     expect(head).toMatch(/NOT a widening/);
     expect(head).toMatch(/RE-CREATED FROM THE NEWEST BODY/);
   });

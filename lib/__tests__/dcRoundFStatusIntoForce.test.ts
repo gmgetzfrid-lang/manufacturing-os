@@ -42,7 +42,14 @@
 //      transcription of put_back_retired_issue's un-archive door) before and
 //      after — the IFC-stamped un-archive into Issued now judged, every other
 //      put-back (to the stamped status, of an Issued / Locked stamp, to a
-//      Draft) landing as before.
+//      Draft) landing as before;
+//   5. (second review fix) the second app result that changes: the REAL
+//      rollbacks — lib/revisions.ts undoFailedSupersede (through
+//      supersedeDocument) and lib/documentLifecycle/common.ts
+//      restoreSupersededSource (through markSupersededAndLink) — of a
+//      NULL-status document, which put back "Issued" (`?? "Issued"`), through
+//      put_back_retired_issue's rollback doors, before and after; the guard's
+//      transcription now answers a NULL status with SQL's three-valued logic.
 //
 // There is no database here; 20261185 was applied twice to a throwaway
 // PostgreSQL 16 with the repository's guard chain and the cases run there
@@ -130,7 +137,8 @@ import { supabase } from "@/lib/supabase";
 import { isControlledIssueStatus, isIssueTransition, isIssueRefusal } from "@/lib/issueStatus";
 import { isUnguardedEntryIntoForce, BULK_EDIT_STATUS_OPTIONS, METADATA_EDITOR_STATUS_OPTIONS, IMPORT_STATUSES, RETIRED_STATUS_OPTIONS } from "@/lib/documentStatusOptions";
 import { IN_FORCE_STATUSES } from "@/lib/verifyVerdict";
-import { unarchiveDocument, unarchiveRestoreDefault } from "@/lib/revisions";
+import { unarchiveDocument, unarchiveRestoreDefault, supersedeDocument } from "@/lib/revisions";
+import { markSupersededAndLink, withCompensation } from "@/lib/documentLifecycle/common";
 import type { DocumentRecord, LibraryConfig } from "@/types/schema";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -190,56 +198,70 @@ type GuardCtx = {
 const raise = (message: string) => { throw { code: "23514", message }; };
 const has = (v: unknown) => v !== null && v !== undefined;
 
+/** SQL's three-valued AND / OR, and a comparison of a value that may be NULL (null: unknown). */
+type B3 = boolean | null;
+const and3 = (...xs: B3[]): B3 => (xs.includes(false) ? false : xs.includes(null) ? null : true);
+const or3 = (...xs: B3[]): B3 => (xs.includes(true) ? true : xs.includes(null) ? null : false);
+const eq3 = (x: string | null, v: string): B3 => (x === null ? null : x === v);
+const in3 = (x: string | null, vs: string[]): B3 => (x === null ? null : vs.includes(x));
+/** `COALESCE(x IN ('Superseded', 'Archived', 'Void'), false)` — a NULL status is not retired. */
+const isRetired = (x: string | null) => x !== null && RETIRED.includes(x);
+
 /** enforce_document_publish_guard() (20261185), transcribed: P21's
  *  transcription of 20261182 (dcRoundFFirstPointerHoldLimb.test.ts) plus the
  *  REV-21 limb right after v_issuing, and the retirement exit right after
- *  v_restoring (review fix). A NULL status is outside it (the SQL's
- *  three-valued answers for one were run on PostgreSQL 16 — REV-21's
- *  record); the rest of the review gate admits every pointer move here. */
+ *  v_restoring (review fix). A NULL status is SQL's NULL (second review fix):
+ *  v_advancing is three-valued — unknown when no term is true and a NULL
+ *  status leaves one unknown — so `IF NOT v_advancing THEN RETURN` does not
+ *  return on it (PostgreSQL 16's A-12); every other test of a NULL status
+ *  sits inside COALESCE(…, false) or an IF, where unknown is false. Those
+ *  answers were run on PostgreSQL 16 (REV-21's record: A-12, A-15, N-1..N-7);
+ *  the rest of the review gate admits every pointer move here. */
 function publishGuard(NEW: Row, OLD: Row, ctx: GuardCtx): Row {
   if (ctx.actor === null) return NEW;
-  if (!has(NEW.status) || !has(OLD.status)) throw new Error("transcription: a NULL status is outside this transcription");
   NEW = { ...NEW };
-  const ns = String(NEW.status), os = String(OLD.status);
+  const ns = has(NEW.status) ? String(NEW.status) : null, os = has(OLD.status) ? String(OLD.status) : null;
   const sameptr = (NEW.current_version_id ?? null) === (OLD.current_version_id ?? null);
-  let advancing = !sameptr
-    || (ns === "Superseded" && os !== "Superseded")
-    || (RETIRED.includes(os) && ns !== os)
-    || (ns === "Archived" && os !== "Archived");
+  let advancing: B3 = or3(
+    !sameptr,
+    and3(eq3(ns, "Superseded"), (os ?? "") !== "Superseded"),
+    and3(in3(os, RETIRED), ns !== os), // IS DISTINCT FROM: never unknown
+    and3(eq3(ns, "Archived"), (os ?? "") !== "Archived"),
+  );
   let issuing = has(NEW.current_version_id) && !isControlledIssueStatus(os) && isControlledIssueStatus(ns);
   // REV-21 (P16): a status-only move INTO Issued / Locked out of an issue status outside them
   if (ctx.p16 !== false) issuing = issuing || sqlLimb(os, ns, has(NEW.current_version_id), !sameptr);
-  let newDoor = issuing && (!advancing
-    || (sameptr && RETIRED.includes(os) && OLD.retired_issue_status === "not-issued" && !has(OLD.retired_issue_version_id)));
-  newDoor = newDoor || (issuing && sameptr && ["Archived", "Void"].includes(os) && !has(OLD.retired_issue_status) && ctx.controller);
+  let newDoor = issuing && (advancing !== true // NOT COALESCE(v_advancing, false)
+    || (sameptr && isRetired(os) && OLD.retired_issue_status === "not-issued" && !has(OLD.retired_issue_version_id)));
+  newDoor = newDoor || (issuing && sameptr && (os === "Archived" || os === "Void") && !has(OLD.retired_issue_status) && ctx.controller);
   const flagNamesIt = (ctx.flag ?? null) === NEW.id;
   newDoor = newDoor || (issuing && sameptr && os === "Superseded" && !has(OLD.retired_issue_status) && !flagNamesIt && ctx.controller);
   const unforced = issuing && !sameptr && !flagNamesIt && ctx.controller;
   let unforcedMove = has(OLD.current_version_id) && has(NEW.current_version_id) && !sameptr
     && isControlledIssueStatus(os) && isControlledIssueStatus(ns) && !flagNamesIt && ctx.controller;
-  advancing = advancing || issuing;
-  let restoring = issuing && RETIRED.includes(os) && has(OLD.retired_issue_version_id)
+  advancing = or3(advancing, issuing);
+  let restoring = issuing && isRetired(os) && has(OLD.retired_issue_version_id)
     && NEW.current_version_id === OLD.retired_issue_version_id && NEW.current_version_id === OLD.current_version_id;
   // REV-21 (P16 review fix): a put-back INTO Issued / Locked of a stamp outside them is not v_restoring, and is the new door
   if (ctx.p16 !== false) {
     const stampInForce = SQL_IN_FORCE.has(String(OLD.retired_issue_status ?? ""));
-    restoring = restoring && !(SQL_IN_FORCE.has(ns) && !stampInForce);
-    newDoor = newDoor || (issuing && sameptr && RETIRED.includes(os) && has(OLD.retired_issue_version_id)
-      && !stampInForce && SQL_IN_FORCE.has(ns));
+    restoring = restoring && !(SQL_IN_FORCE.has(ns ?? "") && !stampInForce);
+    newDoor = newDoor || (issuing && sameptr && isRetired(os) && has(OLD.retired_issue_version_id)
+      && !stampInForce && SQL_IN_FORCE.has(ns ?? ""));
   }
   newDoor = newDoor || (restoring && !flagNamesIt && ctx.controller);
-  unforcedMove = unforcedMove || (has(OLD.current_version_id) && !sameptr && RETIRED.includes(os) && !flagNamesIt && ctx.controller);
-  newDoor = newDoor || (issuing && sameptr && RETIRED.includes(os) && has(OLD.retired_issue_version_id)
+  unforcedMove = unforcedMove || (has(OLD.current_version_id) && !sameptr && isRetired(os) && !flagNamesIt && ctx.controller);
+  newDoor = newDoor || (issuing && sameptr && isRetired(os) && has(OLD.retired_issue_version_id)
     && OLD.retired_issue_version_id !== (OLD.current_version_id ?? null));
   unforcedMove = unforcedMove || (!has(OLD.current_version_id) && has(NEW.current_version_id) && !flagNamesIt && ctx.controller);
   unforcedMove = unforcedMove || (has(OLD.current_version_id) && !has(NEW.current_version_id)
     && isControlledIssueStatus(os) && !flagNamesIt && ctx.controller);
-  if (RETIRED.includes(ns)) {
-    if (RETIRED.includes(os)) {
+  if (isRetired(ns)) {
+    if (isRetired(os)) {
       NEW.retired_issue_status = OLD.retired_issue_status ?? null;
       NEW.retired_issue_version_id = OLD.retired_issue_version_id ?? null;
     } else if (has(OLD.current_version_id) && isControlledIssueStatus(os)) {
-      NEW.retired_issue_status = os;
+      NEW.retired_issue_status = os; // a NULL-status document's retirement: the stamp is NULL WITH its revision
       NEW.retired_issue_version_id = OLD.current_version_id;
     } else {
       NEW.retired_issue_status = "not-issued";
@@ -249,9 +271,9 @@ function publishGuard(NEW: Row, OLD: Row, ctx: GuardCtx): Row {
     NEW.retired_issue_status = null;
     NEW.retired_issue_version_id = null;
   }
-  if (!advancing) return NEW;
+  if (advancing === false) return NEW; // IF NOT v_advancing: an unknown does not return
   if (has(NEW.current_version_id) && !sameptr && !ctx.rosterComplete && !has(OLD.current_version_id) && !ctx.intake
-      && !["Draft", "In Review", "Superseded", "Void", "Archived"].includes(ns) && !ctx.controller && ctx.requireMode) {
+      && !["Draft", "In Review", "Superseded", "Void", "Archived"].includes(ns ?? "") && !ctx.controller && ctx.requireMode) {
     raise(S_FIRST_ISSUE_REQUIRE);
   }
   const held = ctx.held(String(NEW.id));
@@ -442,6 +464,23 @@ describe("REV-21 — IFC -> Issued / Locked against the guard (20261185), and ag
     const arch = OLD("Archived", { retired_issue_status: "Issued", retired_issue_version_id: "d1-v3" });
     expect(both(arch, to(arch, "Issued"), OWNER)).toEqual({ after: "ADMITTED", before: "ADMITTED" });
     expect(both(arch, to(arch, "Issued"), { ...DOCCTRL, held: heldAll })).toEqual({ after: S_NEW_DOOR_HOLD, before: S_NEW_DOOR_HOLD });
+  });
+
+  it("a NULL status answers as PostgreSQL 16 answered it (three-valued v_advancing): A-12 the Viewer's NULL -> Issued refused before and after; A-15 Document Control's held NULL -> Issued admitted before, the new door after; a NULL-status document's retirement stamped NULL WITH its revision; its put-back into Issued judged after (N-1 / N-2)", () => {
+    const nul = OLD(null as unknown as string);
+    expect(both(nul, to(nul, "Issued"), VIEWER)).toEqual({ after: S_AUTHORITY, before: S_AUTHORITY });
+    expect(both(nul, to(nul, "Issued"), { ...DOCCTRL, held: heldAll })).toEqual({ after: S_NEW_DOOR_HOLD, before: "ADMITTED" });
+    // a metadata-only write on a NULL-status document still meets the publisher tier (v_advancing unknown: no early return)
+    expect(both(nul, to(nul, null as unknown as string, { title: "x" }), VIEWER)).toEqual({ after: S_AUTHORITY, before: S_AUTHORITY });
+    expect(both(nul, to(nul, null as unknown as string, { title: "x" }), OWNER)).toEqual({ after: "ADMITTED", before: "ADMITTED" });
+    // the retirement (the supersede's flip, the owner): stamped with the NULL status and the revision
+    const sup = publishGuard(to(nul, "Superseded"), nul, { ...OWNER, requireMode: true, rosterComplete: false, p16: true });
+    expect([sup.retired_issue_status, sup.retired_issue_version_id]).toEqual([null, "d1-v3"]);
+    // its put-back to 'Issued' (the app's rollback of a NULL prior status): a put-back before; judged as an issue after
+    expect(both(sup, to(sup, "Issued"), { ...OWNER, requireMode: true, rosterComplete: false })).toEqual({ after: S_REQUIRE, before: "ADMITTED" });
+    expect(both(sup, to(sup, "Issued"), { ...DOCCTRL, held: heldAll, flag: "d1" })).toEqual({ after: S_NEW_DOOR_HOLD, before: "ADMITTED" });
+    expect(both(sup, to(sup, "Issued"), OWNER)).toEqual({ after: "ADMITTED", before: "ADMITTED" }); // a none library
+    expect(both(sup, to(sup, "Issued"), { ...DOCCTRL, requireMode: true, rosterComplete: false })).toEqual({ after: "ADMITTED", before: "ADMITTED" });
   });
 });
 
@@ -714,17 +753,28 @@ const M165 = read("20261165_dc_roundF_stamped_put_back.sql");
 /** put_back_retired_issue's recorded door (20261165), the condition this transcription mirrors — read from the SQL. */
 const PUT_BACK_DOOR_SQL = "  IF COALESCE(p_force_hold, false)\n     AND v_status = (CASE WHEN p_via = 'unarchive' THEN 'Archived' ELSE 'Superseded' END)\n     AND (p_via = 'unarchive' OR v_retired_by = v_uid)\n     AND v_stamped IS NOT NULL\n     AND v_stamped = v_version\n     AND btrim(p_status) NOT IN ('Draft', 'In Review', 'Superseded', 'Void', 'Archived')\n     AND is_org_controller(v_org)\n     AND EXISTS (SELECT 1 FROM document_holds h\n                  WHERE h.document_id = p_document_id AND h.released_at IS NULL) THEN";
 
-/** put_back_retired_issue (20261165), its un-archive door only, transcribed
- *  (P19's full transcription is pinned in dcRoundFStampedPutBack.test.ts):
- *  the flag names the document around its own write when Document Control
- *  asks for the force over a hold on a stamped archive, and the pass is
- *  recorded after the write (a refused write records nothing — the
- *  transaction rolls back). */
-async function putBackUnarchive(args: Record<string, unknown>): Promise<{ data: unknown; error: unknown }> {
+/** put_back_retired_issue's blank-status refusal (20261165) and its rollback write — read from the SQL. */
+const PUT_BACK_BLANK_SQL = "  IF btrim(COALESCE(p_status, '')) = '' THEN\n    RAISE EXCEPTION 'put_back_retired_issue: name the status to put the document back to.'";
+const S_PB_STATUS = "put_back_retired_issue: name the status to put the document back to.";
+const PUT_BACK_ROLLBACK_WRITE_SQL = "    UPDATE documents\n       SET status = p_status,\n           superseded_at = p_superseded_at,\n           superseded_by_user = p_superseded_by_user,\n           supersession_reason = p_supersession_reason,\n           supersession_moc = p_supersession_moc,";
+
+/** put_back_retired_issue (20261165), transcribed for its four doors (P19's
+ *  full transcription is pinned in dcRoundFStampedPutBack.test.ts): a blank
+ *  status refused; the flag names the document around its own write when
+ *  Document Control asks for the force over a hold on a stamped retirement —
+ *  for a rollback, one the caller made (superseded_by_user = the session) —
+ *  and the pass is recorded after the write (a refused write records
+ *  nothing: the transaction rolls back). The un-archive clears the archive
+ *  fields; a rollback puts the supersession fields back as given. */
+async function putBackRetiredIssueSql(args: Record<string, unknown>): Promise<{ data: unknown; error: unknown }> {
+  if (!String(args.p_status ?? "").trim()) return { data: null, error: { code: "23514", message: S_PB_STATUS } };
   const id = String(args.p_document_id);
+  const via = String(args.p_via ?? "");
+  const uid = state.as.actor ?? ME;
   const d = T("documents").find((x) => x.id === id);
-  if (!d || args.p_via !== "unarchive") return { data: "no_match", error: null };
-  const forced = args.p_force_hold === true && d.status === "Archived"
+  if (!d || !["unarchive", "supersede_rollback", "lifecycle_rollback", "reversal_rollback"].includes(via)) return { data: "no_match", error: null };
+  const forced = args.p_force_hold === true && d.status === (via === "unarchive" ? "Archived" : "Superseded")
+    && (via === "unarchive" || (has(d.superseded_by_user) && d.superseded_by_user === uid))
     && has(d.retired_issue_version_id) && d.retired_issue_version_id === d.current_version_id
     && !["Draft", "In Review", "Superseded", "Void", "Archived"].includes(String(args.p_status).trim())
     && (state.as.controller ?? true) && activeHolds(id).length > 0;
@@ -732,14 +782,19 @@ async function putBackUnarchive(args: Record<string, unknown>): Promise<{ data: 
   let res: { data: unknown; error: unknown };
   try {
     // the function's own UPDATE, as the caller (SECURITY INVOKER): the guard, bound as the BEFORE UPDATE trigger, reads the flag
-    const payload: Record<string, unknown> = { status: args.p_status, archived_at: null, archived_by: null, archive_reason: null, updated_by: state.as.actor ?? ME };
+    const payload: Record<string, unknown> = via === "unarchive"
+      ? { status: args.p_status, archived_at: null, archived_by: null, archive_reason: null, updated_by: uid }
+      : {
+          status: args.p_status, superseded_at: args.p_superseded_at ?? null, superseded_by_user: args.p_superseded_by_user ?? null,
+          supersession_reason: args.p_supersession_reason ?? null, supersession_moc: args.p_supersession_moc ?? null, updated_by: uid,
+        };
     res = await supabase.from("documents").update(payload).eq("id", id).select("id");
   } finally {
     state.flag = null;
   }
   if (res.error) return { data: null, error: res.error };
   if (((res.data as unknown[] | null) ?? []).length === 0) return { data: "no_match", error: null };
-  if (forced) T("audit_logs").push({ id: `ovr-${id}`, action: "REV_HOLD_OVERRIDDEN", resource_id: id, resource_type: "document", org_id: ORG });
+  if (forced) T("audit_logs").push({ id: `ovr-${id}`, action: "REV_HOLD_OVERRIDDEN", resource_id: id, resource_type: "document", org_id: ORG, details: { via } });
   return { data: forced ? "restored_over_hold" : "restored", error: null };
 }
 
@@ -752,13 +807,15 @@ describe("REV-21 (review fix) — the REAL un-archive (lib/revisions.ts unarchiv
   const overrides = (id: string) => T("audit_logs").filter((a) => a.action === "REV_HOLD_OVERRIDDEN" && a.resource_id === id).length;
   beforeEach(() => {
     state.rpc = async (fn: string, args: Record<string, unknown>) => fn === "put_back_retired_issue"
-      ? putBackUnarchive(args)
+      ? putBackRetiredIssueSql(args)
       : { data: null, error: { code: "PGRST202", message: `Could not find the function public.${fn} in the schema cache` } };
   });
 
   it("the transcribed door is 20261165's", () => {
     expect(M165).toContain(PUT_BACK_DOOR_SQL);
     expect(M165).toContain("    PERFORM set_config('app.publish_hold_override', p_document_id::text, true);");
+    expect(M165).toContain(PUT_BACK_BLANK_SQL);
+    expect(M165).toContain(PUT_BACK_ROLLBACK_WRITE_SQL);
   });
 
   for (const p16 of [false, true]) {
@@ -828,5 +885,126 @@ describe("REV-21 (review fix) — the REAL un-archive (lib/revisions.ts unarchiv
     archivedFrom("t1", "IFC");
     const d = await unarchiveRestoreDefault("t1");
     expect(d).not.toEqual({ status: "Issued", basis: "issued" });
+  });
+});
+
+// ─── 5. the second app result that changes: the rollback of a NULL-status document (second review fix) ───
+describe("REV-21 (second review fix) — the REAL rollbacks of a NULL-status document (undoFailedSupersede, restoreSupersededSource) put back 'Issued', which the guard judges as an issue after 20261185", () => {
+  const OWNER_RQ = { actor: "w1", controller: false, publisher: true, requireMode: true, rosterComplete: false };
+  const supersede = (id: string, replacements: string[], force?: boolean) =>
+    supersedeDocument({ doc: asRecord(docRow(id)), replacementDocNumbers: replacements, libraryId: "lib1", reason: "replaced", orgId: ORG, actorUserId: state.as.actor ?? ME, force });
+  const lineage = (id: string) => T("document_supersessions").filter((r) => r.superseded_doc_id === id).map((r) => r.replacement_doc_id);
+  const overrides = (id: string) => T("audit_logs").filter((a) => a.action === "REV_HOLD_OVERRIDDEN" && a.resource_id === id).length;
+  const src = (f: string) => readFileSync(join(process.cwd(), f), "utf8");
+  beforeEach(() => {
+    state.db.unique.document_supersessions = [["superseded_doc_id", "replacement_doc_id"]];
+    state.rpc = async (fn: string, args: Record<string, unknown>) => fn === "put_back_retired_issue"
+      ? putBackRetiredIssueSql(args)
+      : { data: null, error: { code: "PGRST202", message: `Could not find the function public.${fn} in the schema cache` } };
+  });
+
+  it("the population: the three fallbacks that turn a NULL prior status into 'Issued' (REV-29 — when it lands, this pin moves with it)", () => {
+    expect(src("lib/revisions.ts")).toContain("  const priorStatus = String(prior.status ?? \"Issued\");\n  let restoreProblem: string | null = null;");
+    expect(src("lib/documentLifecycle/common.ts")).toContain("  const priorStatus = String(prior.status ?? \"Issued\");\n\n  // The pairs that already exist are not this attempt's to remove.");
+    expect(src("lib/documentLifecycle/merge.ts")).toContain("priorStatuses[r.id] = String(r.status ?? \"Issued\");");
+  });
+
+  for (const p16 of [false, true]) {
+    it(`${p16 ? "after" : "before"} the paste: the owner's failed supersede of a NULL-status document with an unreviewed revision in a require library is ${p16 ? "NOT put back — the require sentence; the document stays Superseded and the lineage pair the attempt added is left" : "put back as 'Issued' (not NULL: REV-29) and the pair it added removed"}`, async () => {
+      state.p16 = p16;
+      state.as = OWNER_RQ;
+      seedDoc("n1", { status: null }); seedDoc("n1a"); seedDoc("n1b");
+      // one pair lands, the other is refused: the lineage is incomplete, so undoFailedSupersede runs
+      state.db.beforeInsert!.document_supersessions = (row) => (row.replacement_doc_id === "n1b" ? null : row);
+      const run = supersede("n1", ["N1A", "N1B"]);
+      if (p16) {
+        await expect(run).rejects.toThrow(`The document is now Superseded and its previous status could not be restored (${S_REQUIRE}) — ask Doc Control to restore it to Issued or record the replacement links.`);
+        expect(docRow("n1")).toMatchObject({ status: "Superseded", retired_issue_status: null, retired_issue_version_id: "n1-v2", supersession_reason: "replaced" });
+        expect(lineage("n1")).toEqual(["n1a"]);
+        expect(state.refusals).toEqual([S_REQUIRE]);
+      } else {
+        await expect(run).rejects.toThrow(/^Nothing was superseded: .* The document is back to Issued\. Fix the cause and supersede it again\.$/);
+        expect(docRow("n1")).toMatchObject({ status: "Issued", retired_issue_status: null, supersession_reason: null });
+        expect(lineage("n1")).toEqual([]);
+        expect(state.refusals).toEqual([]);
+      }
+    });
+
+    it(`${p16 ? "after" : "before"} the paste: Document Control's failed supersede of a held NULL-status document (forced over the hold) — its forced rollback is ${p16 ? "REFUSED in the new door's sentence, nothing recorded (C-9 / N-2)" : "put back as 'Issued', one REV_HOLD_OVERRIDDEN"}`, async () => {
+      state.p16 = p16;
+      seedDoc("n2", { status: null }); seedDoc("n2a"); seedHold("n2");
+      state.db.refuseWrites.add("document_supersessions");
+      const run = supersede("n2", ["N2A"], true);
+      if (p16) {
+        await expect(run).rejects.toThrow(`The document is now Superseded and its previous status could not be restored (${S_NEW_DOOR_HOLD}) — ask Doc Control to restore it to Issued`);
+        expect([docRow("n2").status, overrides("n2")]).toEqual(["Superseded", 0]);
+      } else {
+        await expect(run).rejects.toThrow(/The document is back to Issued\./);
+        expect([docRow("n2").status, overrides("n2")]).toEqual(["Issued", 1]);
+      }
+      expect(state.flag).toBeNull();
+    });
+
+    it(`${p16 ? "after" : "before"} the paste: a split / merge source with a NULL status, flipped by markSupersededAndLink (which records 'Issued' as its prior status), is ${p16 ? "NOT put back by restoreSupersededSource (the require sentence, named for manual attention; the lineage pair left)" : "put back as 'Issued' by restoreSupersededSource"} when a later step fails`, async () => {
+      state.p16 = p16;
+      state.as = OWNER_RQ;
+      seedDoc("n3", { status: null }); seedDoc("n3a");
+      let recorded: string | null = null;
+      const run = withCompensation(async (register) => {
+        const r = await markSupersededAndLink({ sourceDocId: "n3", replacementDocIds: ["n3a"], reason: "split", actor: { orgId: ORG, actorUserId: "w1" }, register, label: "N3" });
+        recorded = r.priorStatus;
+        throw new Error("a later step failed");
+      });
+      if (p16) {
+        await expect(run).rejects.toThrow(`a later step failed\n\nThe operation was rolled back, but some cleanup steps failed and may need manual attention:\n- restore N3 from Superseded: source n3 is still Superseded — restore it to Issued (${S_REQUIRE})`);
+        expect(docRow("n3").status).toBe("Superseded");
+        expect(lineage("n3")).toEqual(["n3a"]);
+      } else {
+        await expect(run).rejects.toThrow("a later step failed (the operation was rolled back — no partial changes were kept).");
+        expect(docRow("n3").status).toBe("Issued");
+        expect(lineage("n3")).toEqual([]);
+      }
+      // the event the split / merge would have written carries the same 'Issued' — a reversal restores it (N-6 on PostgreSQL 16)
+      expect(recorded).toBe("Issued");
+    });
+
+    it(`REGRESSION ${p16 ? "after" : "before"} the paste: every other rollback puts back the status read before the retirement and lands — an IFC document back to IFC (the owner, require, unreviewed; Document Control's forced one over a hold, recorded), an Issued one back to Issued; a NULL-status one where nothing binds (a none library; Document Control unheld)`, async () => {
+      state.p16 = p16;
+      state.as = OWNER_RQ;
+      seedDoc("k1"); seedDoc("k1a"); // IFC
+      state.db.refuseWrites.add("document_supersessions");
+      await expect(supersede("k1", ["K1A"])).rejects.toThrow(/The document is back to IFC\./);
+      seedDoc("k2", { status: "Issued" }); seedDoc("k2a");
+      await expect(supersede("k2", ["K2A"])).rejects.toThrow(/The document is back to Issued\./);
+      state.as = { ...OWNER_RQ, requireMode: false };
+      seedDoc("k3", { status: null, library_id: "lib-none" }); seedDoc("k3a");
+      await expect(supersede("k3", ["K3A"])).rejects.toThrow(/The document is back to Issued\./);
+      state.as = { requireMode: true, rosterComplete: false };
+      seedDoc("k4", { status: null }); seedDoc("k4a");
+      await expect(supersede("k4", ["K4A"])).rejects.toThrow(/The document is back to Issued\./);
+      seedDoc("k5"); seedDoc("k5a"); seedHold("k5");
+      await expect(supersede("k5", ["K5A"], true)).rejects.toThrow(/The document is back to IFC\./);
+      expect([docRow("k1").status, docRow("k2").status, docRow("k3").status, docRow("k4").status, docRow("k5").status]).toEqual(["IFC", "Issued", "Issued", "Issued", "IFC"]);
+      expect(overrides("k5")).toBe(1);
+      expect(state.refusals).toEqual([]);
+      state.db.refuseWrites.delete("document_supersessions");
+      state.as = OWNER_RQ;
+      seedDoc("k6"); seedDoc("k6a"); // IFC, through the split / merge rollback
+      await expect(withCompensation(async (register) => {
+        await markSupersededAndLink({ sourceDocId: "k6", replacementDocIds: ["k6a"], reason: "merge", actor: { orgId: ORG, actorUserId: "w1" }, register, label: "K6" });
+        throw new Error("later");
+      })).rejects.toThrow("later (the operation was rolled back — no partial changes were kept).");
+      expect(docRow("k6").status).toBe("IFC");
+    });
+  }
+
+  // REV-29 (opened by this fix, DEC-31): a NULL prior status goes back as "Issued" (the three fallbacks above), and
+  // put_back_retired_issue refuses a blank status, so it cannot go back as what it was. When REV-29 lands this fails: flip it to `it`.
+  it.fails("REV-29 tripwire: the owner's failed supersede of a NULL-status document is put back as NULL — what it was — after the paste", async () => {
+    state.as = OWNER_RQ;
+    seedDoc("z1", { status: null }); seedDoc("z1a");
+    state.db.refuseWrites.add("document_supersessions");
+    await supersede("z1", ["Z1A"]).catch(() => undefined);
+    expect(docRow("z1").status).toBeNull();
   });
 });

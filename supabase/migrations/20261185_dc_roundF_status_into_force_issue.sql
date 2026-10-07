@@ -79,17 +79,21 @@
 -- into Issued / Locked out of an issue status outside them, by a member below
 -- the publisher tier; over an active hold, by anyone; under a require policy
 -- with no complete roster, by anyone short of Document Control; and the same
--- move out of a retirement stamped with such a status, under a require policy
--- short of Document Control or a complete roster, and over an active hold by
--- anyone, Document Control's recorded override included) and admits nothing
--- it refused. DEC-30 inventories (aggregate counts only, captured BEFORE the
--- transaction): the documents with a current revision in a status the guard
--- counts as an issue but no gate reads as in force (their move into force is
--- judged from now on); of those, the ones in status IFC (DEC-77 / VFY-20 —
--- not moved); the ones under an active hold now; the ones under a policy that
--- requires sign-off whose current revision carries no complete roster; and
--- the retired documents whose stamp names such a status at a revision (their
--- put-back into Issued / Locked is judged from now on).
+-- move out of a retirement stamped with such a status — a NULL status
+-- included — under a require policy short of Document Control or a complete
+-- roster, and over an active hold by anyone, Document Control's recorded
+-- override included) and admits nothing it refused. DEC-30 inventories
+-- (aggregate counts only, captured BEFORE the transaction): (1) the documents
+-- with a current revision in a status the guard counts as an issue but no
+-- gate reads as in force (their move into force is judged from now on); of
+-- those, (2) the ones in status IFC (DEC-77 / VFY-20 — not moved), (3) the
+-- ones under an active hold now and (4) the ones under a policy that requires
+-- sign-off whose current revision carries no complete roster; (5) the retired
+-- documents whose stamp names their current revision with such a status
+-- (their put-back into Issued / Locked is judged from now on; a stamp naming
+-- another revision was judged already, P20); and the NULL-status population
+-- whose rollback changes (below): (6) of row 1, the ones whose status is
+-- NULL, and (7) of row 5, the ones whose stamp status is NULL.
 -- HOW TO APPLY: AFTER 20261182 (required — this re-creates 20261182's guard,
 -- and the first statement refuses to run, changing nothing, without it; so
 -- after 20261174, 20261165, 20261164, 20261159, 20261151, 20261144, 20261130
@@ -101,7 +105,16 @@
 -- 20261144, 20261139, 20261105 or any earlier guard migration after this
 -- one: each would drop this rule (and an earlier one the P21, P20, P19, P18,
 -- REV-22 limb 1, RG-14 and REV-20 rules).
--- DEPLOY ORDER: none — no app deploy is needed before or after this paste.
+-- DEPLOY ORDER: the app change of document-control REV-26, REV-27 and
+-- REV-29 (P23 STATUS-SURFACE FOLLOW-UPS, proposed at P16's second review fix;
+-- the integrator adds it to the fleet plan) is deployed BEFORE this paste.
+-- Pasting this first needs the integrator's recorded acceptance, on the paste
+-- guide row, of what the app gets wrong until it lands. Each fails closed (no
+-- write the guard refuses is admitted): the status editors' note "The
+-- database does not check this change" is false; the un-archive dialog offers
+-- an IFC-stamped archive's restore into Issued as "puts that issue back" and
+-- asks Document Control to confirm a hold override the database then
+-- refuses; and the NULL-status rollbacks below are refused, not put back.
 -- The two editors that can make the direct move (components/documents/
 -- MetadataEditor.tsx, BulkEditModal.tsx) are Document Control's only and
 -- already treat it as an issue (P15, VFY-20): they say so before the save and
@@ -112,20 +125,34 @@
 -- the new door's sentence. Every other status writer that makes an issue
 -- leaves Draft / In Review / a retirement (v_issuing already), moves the
 -- pointer, or INSERTs (this trigger fires BEFORE UPDATE only); the intake
--- route and the cron are the service role (untouched). ONE APP RESULT
--- CHANGES, from the retirement exit: the un-archive (lib/revisions.ts
+-- route and the cron are the service role (untouched). TWO APP RESULTS
+-- CHANGE, both from the retirement exit. (1) The un-archive (lib/revisions.ts
 -- unarchiveDocument through put_back_retired_issue; its dialog offers Issued
 -- by default for any stamp naming the current revision) of a document
--- archived from IFC (or another status no gate reads as in force) back to
--- Issued is now judged as an issue — under a require policy refused short of
--- Document Control or a complete roster, and over an active hold refused for
--- everyone, Document Control's confirmed override included. The dialog
--- answers both sentences (it offers the Draft restore); its own copy for such
--- a stamp ("puts that issue back") and its missing restore to the stamped
--- status are document-control REV-27. The rollbacks (a failed supersede,
--- split / merge or reversal) put back the status read before the retirement
--- (IFC for an IFC document), which this does not touch. P16 changes no app
--- code (comments in lib/issueStatus.ts and lib/documentStatusOptions.ts).
+-- archived from IFC (or another status no gate reads as in force, a NULL
+-- status included) back to Issued is now judged as an issue — under a require
+-- policy refused short of Document Control or a complete roster, and over an
+-- active hold refused for everyone, Document Control's confirmed override
+-- included. The dialog answers both sentences (it offers the Draft restore);
+-- its own copy for such a stamp ("puts that issue back") and its missing
+-- restore to the stamped status are document-control REV-27. (2) The rollback
+-- of a NULL-status document's retirement. A failed supersede's rollback
+-- (lib/revisions.ts undoFailedSupersede) and a failed split / merge's
+-- (lib/documentLifecycle/common.ts restoreSupersededSource) put back "Issued"
+-- for a NULL prior status (`?? "Issued"`); the split / merge events record
+-- that "Issued" too (common.ts, merge.ts), so a reversal through
+-- restore_reversed_source restores it. That is a move into force out of a
+-- stamp outside the pair: under a require policy it is refused short of
+-- Document Control or a complete roster (the document stays Superseded, the
+-- saga says to ask Document Control, and the lineage pairs it added are
+-- left), and over an active hold it is refused for everyone, Document
+-- Control's forced rollback and the reversal over a carried hold included
+-- (nothing recorded). Putting a NULL prior status back as NULL is
+-- document-control REV-29; inventory rows 6 and 7 count the documents
+-- concerned. Every other rollback puts back the status read before the
+-- retirement (IFC for an IFC document), which this does not touch. P16
+-- changes no app code (comments in lib/issueStatus.ts and
+-- lib/documentStatusOptions.ts).
 -- Single paste: prerequisite check → temp-table inventory →
 -- BEGIN/DDL/COMMIT → one SELECT (check text, ok boolean, n text).
 -- ⚠ APPLIED BY HAND (DEC-30). Idempotent.
@@ -170,6 +197,7 @@ WITH slot_fill AS (
   -- Every document whose move into force this limb now judges: a current
   -- revision, a status the guard counts as an issue, not Issued / Locked.
   SELECT d.status = 'IFC' AS is_ifc,
+         d.status IS NULL AS is_null,
          EXISTS (SELECT 1 FROM document_holds h
                   WHERE h.document_id = d.id AND h.released_at IS NULL) AS held,
          (review_control_mode_for(NULL, d.collection_id, d.library_id) = 'require'
@@ -196,12 +224,25 @@ SELECT 'inventory (before apply): of those, under a policy that requires sign-of
        COUNT(*)::text
   FROM outside WHERE under_require AND NOT roster_complete
 UNION ALL
-SELECT 'inventory (before apply): retired documents (Superseded / Archived / Void) whose retirement stamp names a revision and a status no gate reads as in force (IFC, empty, a variant, a library''s own) — REV-21: putting one back into Issued / Locked is judged as an issue from now on (the require limb; the new door''s hold for everyone); putting it back to its stamped status is unchanged',
+SELECT 'inventory (before apply): retired documents (Superseded / Archived / Void) whose retirement stamp names their current revision and a status no gate reads as in force (IFC, empty, a variant, a library''s own, NULL) — REV-21: putting one back into Issued / Locked is judged as an issue from now on (the require limb; the new door''s hold for everyone); putting it back to its stamped status is unchanged (a stamp naming another revision is not counted: P20 judged its exit already)',
        COUNT(*)::text
   FROM documents d
  WHERE d.status IN ('Superseded', 'Archived', 'Void')
    AND d.retired_issue_version_id IS NOT NULL
-   AND COALESCE(d.retired_issue_status, '') NOT IN ('Issued', 'Locked');
+   AND d.retired_issue_version_id = d.current_version_id
+   AND COALESCE(d.retired_issue_status, '') NOT IN ('Issued', 'Locked')
+UNION ALL
+SELECT 'inventory (before apply): of the first row, documents whose status is NULL — the app rolls a failed supersede / split / merge of one back to ''Issued'' (and a reversal restores the ''Issued'' its event recorded), which is judged as an issue from now on: refused under a require policy short of Document Control or a complete roster, and over an active hold for everyone (REV-29 puts a NULL back as NULL)',
+       COUNT(*)::text
+  FROM outside WHERE is_null
+UNION ALL
+SELECT 'inventory (before apply): of the retired row, documents whose stamp status is NULL (a NULL-status document''s retirement) — their rollback or reversal to ''Issued'' is judged as an issue from now on, as the row above (REV-29)',
+       COUNT(*)::text
+  FROM documents d
+ WHERE d.status IN ('Superseded', 'Archived', 'Void')
+   AND d.retired_issue_version_id IS NOT NULL
+   AND d.retired_issue_version_id = d.current_version_id
+   AND d.retired_issue_status IS NULL;
 
 BEGIN;
 

@@ -88,7 +88,10 @@ export const RETIRED_NOT_ISSUED_STAMP = "not-issued";
  *  an active hold it is the new door, for everyone. The app's put-back basis
  *  (lib/revisions.ts putBackFromRetirementStamp, unarchiveRestoreDefault —
  *  the un-archive dialog's default and its record) does not follow yet:
- *  document-control REV-27. */
+ *  document-control REV-27. Nor do the rollbacks for a NULL status: a failed
+ *  supersede / split / merge puts a NULL prior status back as 'Issued' (a
+ *  move into force out of a NULL stamp, judged the same way) —
+ *  document-control REV-29. */
 export function isIssueTransition(input: {
   fromStatus: string | null | undefined; toStatus: string | null | undefined; hasCurrentRevision: boolean;
 }): boolean {
