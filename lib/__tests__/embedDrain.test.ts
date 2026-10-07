@@ -53,6 +53,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { freshAdminState, installMarkerRpc, type FakeAdminState, type Row } from "./helpers/knowledgeFakeAdmin";
+import { meter, resetMeter } from "./helpers/fakeUsageMeter";
 
 const admin = vi.hoisted(() => ({ state: null as unknown as import("./helpers/knowledgeFakeAdmin").FakeAdminState }));
 vi.mock("@/lib/supabaseAdmin", async () => {
@@ -62,11 +63,18 @@ vi.mock("@/lib/supabaseAdmin", async () => {
   return { supabaseAdmin: proxy };
 });
 const usage = vi.hoisted(() => ({ spent: 0, cap: 0, recorded: [] as Array<Record<string, unknown>> }));
-vi.mock("@/lib/ai/usageServer", () => ({
-  getMonthUsage: vi.fn(async () => ({ spentUsd: usage.spent })),
-  getCapUsd: vi.fn(async () => usage.cap),
-  recordAskUsage: vi.fn(async (r: Record<string, unknown>) => { usage.recorded.push(r); }),
-}));
+vi.mock("@/lib/ai/usageServer", async () => {
+  const { reserveWithinCap, settleUsage, releaseUsage } = (await import("./helpers/fakeUsageMeter")).fakeUsageServer();
+  return {
+    getMonthUsage: vi.fn(async () => ({ spentUsd: usage.spent })),
+    getCapUsd: vi.fn(async () => usage.cap),
+    recordAskUsage: vi.fn(async (r: Record<string, unknown>) => { usage.recorded.push(r); }),
+    // GOV-5 / GOV-13: every claimed batch is reserved against the payer's
+    // cap before it is sent, and the run metered into one row as it goes —
+    // the ledger stand-in (./helpers/fakeUsageMeter)
+    reserveWithinCap, settleUsage, releaseUsage,
+  };
+});
 vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (v: unknown) => v }));
 
 import { embedLibrarySlice, parseEmbedBuildMarker, loadEmbedDetail } from "@/lib/knowledgeEmbedCore";
@@ -74,7 +82,7 @@ import { drainEmbedBacklog, orderDrainQueue, nextMonthStartIso, errorBackoffMs, 
 import { EMBED_MAX_ATTEMPTS, EMBEDDING_DIMENSIONS, EMBEDDING_PROVIDERS } from "@/lib/ai/embeddings";
 import { buildFates } from "@/lib/embedKeyOverview";
 // The CURRENT agreement version (GOV-6 bumped it; a pinned literal would go stale).
-import { AGREEMENT_VERSION } from "@/lib/ai/pricing";
+import { AGREEMENT_VERSION, estimateCostUsd, worstCaseCostUsd } from "@/lib/ai/pricing";
 
 const repo = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
 const mig = (f: string) => repo(join("supabase", "migrations", f));
@@ -178,6 +186,7 @@ beforeEach(() => {
   provider.mode = "ok";
   provider.during = null;
   usage.spent = 0; usage.cap = 0; usage.recorded = [];
+  resetMeter();
   stubProvider();
 });
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -707,6 +716,132 @@ describe("SEM-1 — the claim hands out nothing while another model is in the li
   });
 });
 
+describe("GOV-5 / GOV-13 (I-18) — the drain re-checks the payer's headroom before EVERY batch, and meters as it goes", () => {
+  // The drain used to read the payer's cap once per library and meter once,
+  // after the library's last slice: a payer under the cap at the start was
+  // taken any distance past it in one run (64 passages a batch, batch after
+  // batch), and a run killed mid-library recorded nothing. Now every
+  // claimed batch's worst case is reserved against the cap before it is
+  // sent, and the run's ONE knowledgeEmbed row is settled after every batch.
+  const BODY = "x".repeat(3_000);
+  /** Passages that all read the same length to the provider. */
+  const evenChunks = (n: number) => Array.from({ length: n }, (_, i) => chunk(i + 1, { page: 1, content: BODY }));
+  const passage = `EP-5-6-2 Pipe supports — p.1\n${BODY}`;
+  /** One full batch's worst case, as the drain prices it (and the canary). */
+  const BATCH_WORST = Math.round(worstCaseCostUsd(CONN.model, { inputChars: 64 * passage.length + "Embedding check.".length, maxTokens: 0 }) * 1e6) / 1e6;
+  /** What a batch costs once the provider's figures are in (the stub: 10 tokens a passage). */
+  const BATCH_COST = estimateCostUsd(CONN.model, { inputTokens: 640, outputTokens: 0 });
+  const embedRows = () => meter.rows.filter((r) => r.op === "knowledgeEmbed");
+  const markerOf = () => parseEmbedBuildMarker((admin.state.tables.knowledge_libraries[0].ai_features as Row).embedBuild)!;
+  const providerCalls = () => vi.mocked(fetch).mock.calls.length;
+  const run = () => drainEmbedBacklog({ scopeOrgIds: null, budgetMs: 200_000 });
+  const seedLibrary = (n: number) => {
+    seedDrainWorld();
+    admin.state.tables.knowledge_libraries = [marked(LIB, { userId: PAYER, at: "2026-09-01T00:00:00Z" })];
+    admin.state.tables.knowledge_chunks = evenChunks(n);
+  };
+
+  it("the batch's worst case is above what it costs (the reservation never under-counts)", () => {
+    expect(BATCH_WORST).toBeGreaterThan(BATCH_COST);
+  });
+
+  it("a payer at 100% of the cap: ZERO embedding calls from the drain — held 'cap' until the 1st, nothing reserved", async () => {
+    seedLibrary(100);
+    usage.cap = 10; usage.spent = 10;
+    const out = await run();
+    expect(providerCalls()).toBe(0);
+    expect(provider.inputs).toEqual([]);
+    expect(meter.asked).toEqual([]);
+    expect(out.drained[0]).toMatchObject({ outcome: "blocked", embedded: 0 });
+    expect(markerOf()).toMatchObject({ blockedReason: "cap", blockedUntil: nextMonthStartIso(Date.now()) });
+    expect(meter.rows).toEqual([]);
+  });
+
+  it("a payer UNDER the cap whose headroom fits no batch: zero calls — the claimed batch goes back to the queue untouched, and the library is held 'cap' with the reason", async () => {
+    seedLibrary(100);
+    usage.cap = 10; usage.spent = 9.5;                   // the first check passes
+    meter.spent = 10 - BATCH_WORST / 2;                  // the reservation sees the same month
+    const out = await run();
+    expect(providerCalls()).toBe(0);
+    expect(meter.asked.map((a) => a.refused)).toEqual(["does not fit"]);
+    expect(out.drained[0]).toMatchObject({ outcome: "blocked", embedded: 0 });
+    expect(markerOf()).toMatchObject({ blockedReason: "cap", blockedUntil: nextMonthStartIso(Date.now()) });
+    expect(markerOf().lastError).toMatch(/^monthly cap reached — This call could cost up to \$\d+\.\d\d and \$\d+\.\d\d is left of your \$10\.00 monthly AI cap/);
+    // nothing leased, nothing embedded, nothing charged
+    expect(chunks().every((c) => c.embedding == null && c.embed_claimed_until == null && Number(c.embed_attempts ?? 0) === 0)).toBe(true);
+    expect(meter.rows).toEqual([]);
+  });
+
+  it("crossing the cap mid-run: the drain embeds the batches that fit and stops at the first that does not — re-checked before every batch, in one run", async () => {
+    seedLibrary(200);
+    usage.cap = 10;
+    // batch 1: WORST fits; batch 2: COST + WORST fits; batch 3: 2·COST + WORST does not
+    meter.spent = 10 - (2 * BATCH_COST + BATCH_WORST - BATCH_COST / 2);
+    const out = await run();
+    expect(provider.inputs).toHaveLength(128);
+    expect(out.drained[0]).toMatchObject({ outcome: "blocked", embedded: 128 });
+    expect(markerOf()).toMatchObject({ blockedReason: "cap" });
+    expect(chunks().filter((c) => c.embedding != null)).toHaveLength(128);
+    expect(chunks().filter((c) => c.embed_claimed_until != null)).toHaveLength(0);
+    // what the two batches spent, in the run's ONE row
+    expect(embedRows()).toEqual([expect.objectContaining({ userId: PAYER, reserved: false, ok: true, inputTokens: 1_280, outputTokens: 0 })]);
+    expect(meter.spent + embedRows()[0].costUsd).toBeLessThanOrEqual(10);
+  });
+
+  it("metered as it goes: while the second batch is at the provider, the run's row already carries the first batch's tokens (a run killed mid-slice has recorded them)", async () => {
+    seedLibrary(100);
+    const inner = fetch;
+    const seen: Array<{ reserved: boolean; inputTokens: number | null }> = [];
+    let call = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+      if (++call === 2) for (const r of embedRows()) seen.push({ reserved: r.reserved, inputTokens: r.inputTokens });
+      return (inner as unknown as (u: string, i: RequestInit) => Promise<unknown>)(url, init);
+    }));
+    await run();
+    expect(seen).toEqual([
+      { reserved: false, inputTokens: 640 },
+      { reserved: true, inputTokens: null },
+    ]);
+    expect(embedRows()).toEqual([expect.objectContaining({ reserved: false, inputTokens: 1_000 })]);
+  });
+
+  it("REGRESSION — a payer under the cap: the same passages embedded, the library completes, and ONE knowledgeEmbed row carries the run's tokens (as recordAskUsage wrote it); nothing left reserved", async () => {
+    seedLibrary(100);
+    usage.cap = 10;
+    const out = await run();
+    expect(out.drained[0]).toMatchObject({ outcome: "complete", embedded: 100, remaining: 0 });
+    expect(provider.inputs).toHaveLength(100);
+    expect(meter.asked.every((a) => a.refused === null)).toBe(true);
+    expect(embedRows()).toEqual([expect.objectContaining({
+      orgId: ORG, userId: PAYER, op: "knowledgeEmbed", provider: "voyage", model: CONN.model,
+      reserved: false, ok: true, inputTokens: 1_000, outputTokens: 0,
+      costUsd: estimateCostUsd(CONN.model, { inputTokens: 1_000, outputTokens: 0 }),
+    })]);
+    expect(usage.recorded).toEqual([]);
+  });
+
+  it("a run that embeds nothing leaves no row (as before): every passage refused by the provider", async () => {
+    seedLibrary(3);
+    provider.mode = "400-all";
+    await run();
+    expect(embedRows()).toEqual([]);
+  });
+
+  it("a ledger that cannot be read at the next batch: nothing is sent, the library is looked at again within the hour — never released, no error run counted", async () => {
+    seedLibrary(100);
+    usage.cap = 10;
+    meter.ledgerDown = true;
+    const out = await run();
+    expect(providerCalls()).toBe(0);
+    expect(out.drained[0]).toMatchObject({ outcome: "blocked", embedded: 0 });
+    const m = markerOf();
+    expect(m).toMatchObject({ blockedReason: "error", userId: PAYER });
+    expect(m.errorRuns ?? 0).toBe(0);
+    expect(Date.parse(String(m.blockedUntil)) - Date.now()).toBeLessThanOrEqual(3_600_000);
+    expect(m.lastError).toMatch(/the payer's AI usage could not be read, so nothing more was sent: AI usage can't be read right now/);
+  });
+});
+
 describe("SEM-8 — a standing consent keeps the index current", () => {
   it("at 100% a standing stamp stays (outcome current); a plain one clears (complete)", async () => {
     seedDrainWorld();
@@ -730,7 +865,8 @@ describe("SEM-8 — a standing consent keeps the index current", () => {
     const out = await drainEmbedBacklog({ scopeOrgIds: null, budgetMs: 200_000 });
     expect(out.drained[0]).toMatchObject({ outcome: "current", embedded: 2 });
     expect(chunks().every((c) => c.embedding != null)).toBe(true);
-    expect(usage.recorded.at(-1)).toMatchObject({ userId: PAYER, op: "knowledgeEmbed" });
+    // metered to the payer as it went (GOV-5): the run's one knowledgeEmbed row, settled
+    expect(meter.rows.at(-1)).toMatchObject({ userId: PAYER, op: "knowledgeEmbed", reserved: false });
   });
 });
 

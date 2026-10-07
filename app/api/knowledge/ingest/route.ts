@@ -44,13 +44,13 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { openAiKey } from "@/lib/ai/keyVault";
 import {
   ingestKnowledgeDocBatch, refuseNonPdf, reindexLibraryChunks, onDocumentReady, markIngestFailed,
-  claimIngestLease, releaseIngestLease,
+  claimIngestLease, releaseIngestLease, visionCallMeter,
   type VisionContext, type IngestBatchResult,
 } from "@/lib/knowledgeIngest";
 import { memberHoldsAny } from "@/lib/roleHeld";
 import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
 import { ALLOWED_PROVIDERS, AGREEMENT_VERSION, buildAgreementText, estimateCostUsd, type AiUsage } from "@/lib/ai/pricing";
-import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
+import { getMonthUsage, getCapUsd } from "@/lib/ai/usageServer";
 import { isAiUsageUnavailable } from "@/lib/ai/gateError";
 import { assertAiGates, GovernedCallError } from "@/lib/ai/aiGates";
 import type { AiProviderId } from "@/lib/ai/providerCall";
@@ -158,6 +158,12 @@ export async function POST(req: NextRequest) {
   // that needs vision: the engine holds it on the row (`noVisionReason`),
   // the text layer of the rest still indexes, and a read-every-page library
   // is not indexed at all (below) — as the cron drain does.
+  // GOV-13 (the ingest batches): every page's AI vision call is reserved
+  // against this member's cap BEFORE it is made — the cap check below is
+  // only the first — and metered as it happens, into the request's ONE
+  // knowledgeVision row (visionCallMeter). A page whose worst case no longer
+  // fits is sent nowhere: it waits for AI vision on the row with the reason
+  // (ING-6), never consumed text-only.
   const orgId = doc.org_id as string;
   // Library option: read EVERY page with vision (drawing sets where even the
   // text layer can't be trusted).
@@ -168,6 +174,10 @@ export async function POST(req: NextRequest) {
     ((libRow?.ai_features ?? {}) as Record<string, unknown>).visionAllPages === true;
   const visionUsage: AiUsage = { inputTokens: 0, outputTokens: 0 };
   let visionModel = "";
+  const visionMeter = visionCallMeter({
+    orgId, userId: user.id, documentName: String(doc.name ?? ""),
+    cause: (e) => (e instanceof GovernedCallError ? e.message.replace(/\.$/, "") : `couldn't check your AI budget (${(e as Error)?.message || "unknown error"})`),
+  });
   let vision: VisionContext | undefined;
   let visionSkipReason: string | null = null;
   // GOV-11 / GOV-4: the reason vision was withheld when it is NOT the missing
@@ -246,12 +256,15 @@ export async function POST(req: NextRequest) {
           // and free-tier functions die at 60s. The client loop continues.
           budgetPages: 4,
           forceAllPages,
-          onUsage: (u, model) => {
+          onUsage: async (u, model) => {
             visionUsage.inputTokens += u.inputTokens;
             visionUsage.outputTokens += u.outputTokens;
             visionModel = model;
+            await visionMeter.onUsage(u, model);
           },
         };
+        const ctx = vision;
+        ctx.beforeCall = () => visionMeter.beforeCall(ctx, cap);
       }
     }
   }
@@ -326,13 +339,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: refused.message, removed: refused.removed, detected: res.notPdf }, { status: 415 });
     }
 
-    if (visionUsage.inputTokens + visionUsage.outputTokens > 0) {
-      await recordAskUsage({
-        orgId, userId: user.id,
-        provider: vision!.provider, model: visionModel || vision!.model,
-        usage: visionUsage, ok: true, op: "knowledgeVision",
-      });
-    }
 
     if (res.done && !res.busy) await onIndexed(doc as Record<string, unknown>, user.id, res.pageCount, res.visionPages);
 
@@ -388,6 +394,10 @@ export async function POST(req: NextRequest) {
       ...("ingest_failures" in doc ? { ingest_failures: (doc.ingest_failures as number | null) ?? 0 } : {}),
     }, e);
     return NextResponse.json({ error: `Indexing failed: ${message}`, retryAfter: failed.retryAfter }, { status: 502 });
+  } finally {
+    // Metered call by call (GOV-13): whatever the batch answered, only a
+    // reservation no call used is left to drop.
+    await visionMeter.finish(vision);
   }
 }
 

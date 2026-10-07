@@ -18,7 +18,7 @@
 // once the reason is gone.
 // Driven over real PDFs and the real engine against the in-memory database.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
 import { db, resetDb, rowsOf, type Row } from "./knowledgeFakeDb";
 import { makePdf, prosePage, drawingSheet } from "./knowledgePdfFixtures";
@@ -39,7 +39,10 @@ vi.mock("@/lib/r2", () => ({
     },
   },
 }));
-vi.mock("@/lib/knowledgeVision", () => ({ transcribePageImage: vi.fn(async () => { throw new Error("no vision in this test"); }) }));
+vi.mock("@/lib/knowledgeVision", async (orig) => ({
+  ...(await orig<typeof import("@/lib/knowledgeVision")>()),
+  transcribePageImage: vi.fn(async () => { throw new Error("no vision in this test"); }),
+}));
 vi.mock("unpdf", async (orig) => ({
   ...(await orig<typeof import("unpdf")>()),
   renderPageAsImage: vi.fn(async () => new Uint8Array([137, 80, 78, 71]).buffer),
@@ -57,7 +60,11 @@ vi.mock("@/lib/ai/providerCall", async (orig) => ({
 vi.mock("@/lib/ai/usageServer", async () => {
   const { GovernedCallError: G } = await import("@/lib/ai/gateError");
   const down = () => new G("AI usage can't be read right now, so AI calls are refused until it can (couldn't read the usage ledger: statement timeout).", 503, { usageUnavailable: true });
+  const { fakeUsageServer } = await import("./helpers/fakeUsageMeter");
   return {
+    // the reservation calls (GOV-13 / GOV-5): every page's AI vision call is
+    // reserved first, against the $10 cap these reads answer
+    ...fakeUsageServer(),
     getMonthUsage: vi.fn(async () => { if (ledger.down) throw down(); return { spentUsd: 0 }; }),
     getCapUsd: vi.fn(async () => { if (ledger.down) throw down(); return 10; }),
     recordAskUsage: vi.fn(async () => undefined),
@@ -69,7 +76,8 @@ import { POST as codebookPOST } from "@/app/api/codebook/import/route";
 import { drainKnowledgeIngestQueue, visionRetryMessage } from "@/lib/knowledgeIngest";
 import { transcribePageImage } from "@/lib/knowledgeVision";
 import { callAiModel } from "@/lib/ai/providerCall";
-import { AGREEMENT_VERSION } from "@/lib/ai/pricing";
+import { AGREEMENT_VERSION, estimateCostUsd } from "@/lib/ai/pricing";
+import { meter, resetMeter } from "./helpers/fakeUsageMeter";
 
 const KEY = (id: string) => `orgs/o1/knowledge/kl-1/${id}.pdf`;
 const docRow = (id: string, over: Row = {}): Row => ({
@@ -399,5 +407,57 @@ describe("GOV-4 — the codebook import answers the ledger's 503 sentence, not a
     expect((await res.json()).error).toMatch(/AI usage can't be read right now/);
     expect(vi.mocked(callAiModel)).not.toHaveBeenCalled();
     expect(db.ops.some((o) => o.table === "ai_usage_events")).toBe(false);
+  });
+});
+
+describe("GOV-13 (I-18) — the codebook import reserves its call's worst case before it is made", () => {
+  // It read the month and called: a member at $9.99 of $10 could start any
+  // number of imports at once, each up to 4,000 tokens out on their model,
+  // and each was metered only after it answered. Now the call's worst case
+  // is reserved first (reserveWithinCap) and that row is settled to the
+  // provider's figures — the same codebookImport row it always wrote.
+  const post = () => codebookPOST(new NextRequest("http://x/api/codebook/import", {
+    method: "POST", headers: { authorization: "Bearer good", "content-type": "application/json" },
+    body: JSON.stringify({ orgId: "o1", text: "UNIT 02 = Crude unit\nP = pumps" }),
+  }));
+  const OUT = { inputTokens: 900, outputTokens: 120 };
+  beforeEach(() => {
+    ledger.down = false;
+    resetMeter();
+    vi.mocked(callAiModel).mockImplementation(async () => ({
+      text: JSON.stringify({ units: [{ code: "02", label: "Crude unit" }], equipmentTypes: [], drawingTypes: [], notes: "" }),
+      usage: OUT,
+    }) as never);
+  });
+  afterEach(() => { vi.mocked(callAiModel).mockImplementation(async () => { throw new Error("no provider call in this test"); }); });
+
+  it("REGRESSION — a member under the cap: the same proposal, and ONE codebookImport row carrying the call's figures (nothing left reserved)", async () => {
+    seed([]);
+    const res = await post();
+    expect(res.status).toBe(200);
+    expect((await res.json()).proposals).toEqual([{ kind: "unit", code: "02", label: "Crude unit" }]);
+    expect(meter.rows).toEqual([expect.objectContaining({
+      orgId: "o1", userId: "u-ctrl", op: "codebookImport", provider: "anthropic", model: "user-model",
+      reserved: false, ok: true, inputTokens: OUT.inputTokens, outputTokens: OUT.outputTokens,
+      costUsd: estimateCostUsd("user-model", OUT),
+    })]);
+  });
+
+  it("a member under the cap whose headroom is less than the call could cost: refused (402, the reservation's sentence) before the provider — nothing reserved, nothing spent", async () => {
+    seed([]);
+    meter.spent = 9.99;                                   // the route's own read says $0 of $10: the first check passes
+    const res = await post();
+    expect(res.status).toBe(402);
+    expect((await res.json()).error).toMatch(/^This call could cost up to \$\d+\.\d\d and \$0\.01 is left of your \$10\.00 monthly AI cap, so it was not made\.$/);
+    expect(vi.mocked(callAiModel)).not.toHaveBeenCalled();
+    expect(meter.rows).toEqual([]);
+  });
+
+  it("a call that fails leaves the row it always left — no figures, not ok", async () => {
+    seed([]);
+    vi.mocked(callAiModel).mockImplementation(async () => { throw new Error("provider 529 overloaded"); });
+    const res = await post();
+    expect(res.status).toBe(502);
+    expect(meter.rows).toEqual([expect.objectContaining({ op: "codebookImport", reserved: false, ok: false, inputTokens: 0, outputTokens: 0, costUsd: 0 })]);
   });
 });

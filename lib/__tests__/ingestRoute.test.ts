@@ -26,6 +26,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
 import { db, resetDb, rowsOf, type Row } from "./knowledgeFakeDb";
 import { makePdf, prosePage, drawingSheet } from "./knowledgePdfFixtures";
+import { meter, resetMeter } from "./helpers/fakeUsageMeter";
 
 const r2 = vi.hoisted(() => ({ objects: new Map<string, Uint8Array>(), deleted: [] as string[] }));
 vi.mock("@/lib/supabaseAdmin", async () => ({ supabaseAdmin: (await import("./knowledgeFakeDb")).fakeAdmin }));
@@ -41,7 +42,7 @@ vi.mock("@/lib/r2", () => ({
     },
   },
 }));
-vi.mock("@/lib/knowledgeVision", () => ({ transcribePageImage: vi.fn() }));
+vi.mock("@/lib/knowledgeVision", async (orig) => ({ ...(await orig<typeof import("@/lib/knowledgeVision")>()), transcribePageImage: vi.fn() }));
 vi.mock("unpdf", async (orig) => ({
   ...(await orig<typeof import("unpdf")>()),
   renderPageAsImage: vi.fn(async () => new Uint8Array([137, 80, 78, 71]).buffer),
@@ -50,22 +51,28 @@ vi.mock("@/lib/equipmentBridgeServer", () => ({ computeForKnowledgeDoc: vi.fn(as
 vi.mock("@/lib/mentionIndexer", () => ({ loadAliasDictionary: vi.fn(async () => []), indexDocumentMentions: vi.fn(async () => undefined) }));
 // The real module underneath (capReached, capIsLocked … for lib/ai/aiGates,
 // which the re-index's vision gate runs — ING-13); the ledger reads stubbed.
-vi.mock("@/lib/ai/usageServer", async (orig) => ({
-  ...(await orig<typeof import("@/lib/ai/usageServer")>()),
-  getMonthUsage: vi.fn(async () => ({ spentUsd: 0 })), getCapUsd: vi.fn(async () => 0), recordAskUsage: vi.fn(),
-}));
+vi.mock("@/lib/ai/usageServer", async (orig) => {
+  const { reserveWithinCap, settleUsage, releaseUsage } = (await import("./helpers/fakeUsageMeter")).fakeUsageServer();
+  return {
+    ...(await orig<typeof import("@/lib/ai/usageServer")>()),
+    getMonthUsage: vi.fn(async () => ({ spentUsd: 0 })), getCapUsd: vi.fn(async () => 0), recordAskUsage: vi.fn(),
+    // every page's AI vision call is reserved first (GOV-13): the ledger stand-in
+    reserveWithinCap, settleUsage, releaseUsage,
+  };
+});
 vi.mock("@/lib/aiInstructionsServer", () => ({ loadOrgInstructionsBlock: vi.fn(async () => "") }));
 vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: vi.fn((k: string) => k) }));
 
 import { POST } from "@/app/api/knowledge/ingest/route";
 import {
   sniffBytes, reindexLibraryChunks, resetKnowledgeIndex, ingestFailureMessage, ingestFailureBackoffMs, visionRetryMessage,
+  visionPageWorstCaseUsd,
 } from "@/lib/knowledgeIngest";
 import { computeForKnowledgeDoc } from "@/lib/equipmentBridgeServer";
 import { transcribePageImage } from "@/lib/knowledgeVision";
 import { getMonthUsage, getCapUsd } from "@/lib/ai/usageServer";
 import { openAiKey } from "@/lib/ai/keyVault";
-import { AGREEMENT_VERSION } from "@/lib/ai/pricing";
+import { AGREEMENT_VERSION, estimateCostUsd } from "@/lib/ai/pricing";
 
 const DOC = "kd-9";
 const post = (body: unknown, token = "good") => POST(new NextRequest("http://x/api/knowledge/ingest", {
@@ -860,5 +867,59 @@ describe("ING-13 (I-06b) — the re-index's vision gate is the server's, before 
     );
     expect(body.visionSkipReason).not.toMatch(/retried automatically/);
     expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "indexing", vision_failed_pages: [2] });
+  });
+});
+
+describe("GOV-13 (I-18) — the interactive batch reserves every page's AI vision call before it is made, and meters it as it goes", () => {
+  // The route checked the member's cap once per POST and metered once, after
+  // the batch: up to four page images on frontier pricing past a cap the
+  // first check passed. Now each page's worst case is reserved first
+  // (visionCallMeter) and each call settles into the request's ONE
+  // knowledgeVision row.
+  const OUT = { inputTokens: 2_000, outputTokens: 3_000 };
+  const WORST = visionPageWorstCaseUsd({ provider: "anthropic", model: "m", instructions: "" }, "equipment-list.pdf");
+  const CALL = estimateCostUsd("vision-tier", OUT);
+  const keyed = async () => {
+    seed(docRow());
+    r2.objects.set(KEY, await makePdf([null, prosePage("bolting"), null]));
+    db.tables.ai_connections = [{ org_id: "o1", user_id: "u-ctrl", provider: "anthropic", model: "m", api_key: "k" }];
+    vi.mocked(transcribePageImage).mockReset();
+    vi.mocked(transcribePageImage).mockImplementation(async (input: { page: number }) => ({
+      text: `DRAWING NO: 025-PID-0101\nSHEET: ${input.page} OF 3\nREV: 4\nV-10${input.page} SUCTION DRUM\nP-20${input.page}A CHARGE PUMP\n`,
+      usage: OUT, model: "vision-tier",
+    }));
+  };
+  beforeEach(() => resetMeter());
+
+  it("REGRESSION — a member under the cap: both textless pages read, the document 'ready', ONE knowledgeVision row with both calls' tokens, and the answer's vision cost unchanged", async () => {
+    await keyed();
+    const res = await post({ documentId: DOC });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({ done: true, visionPages: 2, visionFailedPages: [] });
+    expect(vi.mocked(transcribePageImage)).toHaveBeenCalledTimes(2);
+    const total = { inputTokens: 2 * OUT.inputTokens, outputTokens: 2 * OUT.outputTokens };
+    expect(body.visionCostUsd).toBe(estimateCostUsd("vision-tier", total));
+    expect(meter.rows).toEqual([expect.objectContaining({
+      orgId: "o1", userId: "u-ctrl", op: "knowledgeVision", provider: "anthropic", model: "vision-tier",
+      reserved: false, ok: true, ...total, costUsd: estimateCostUsd("vision-tier", total),
+    })]);
+    expect(rowsOf("knowledge_documents")[0].status).toBe("ready");
+  });
+
+  it("a page whose worst case no longer fits is sent nowhere: it waits for AI vision with the reason, the page before it is read and metered", async () => {
+    await keyed();
+    // under the cap at the first check; the first page fits, the second does not once the first is in
+    const spent = 10 - (WORST + CALL / 2);
+    vi.mocked(getCapUsd).mockResolvedValueOnce(10);
+    vi.mocked(getMonthUsage).mockResolvedValueOnce({ spentUsd: spent } as never);
+    meter.spent = spent;
+    const body = await (await post({ documentId: DOC })).json();
+    expect(vi.mocked(transcribePageImage)).toHaveBeenCalledTimes(1);
+    expect(body).toMatchObject({ done: false, visionPages: 1, visionFailedPages: [3] });
+    expect(body.visionSkipReason).toMatch(/1 page could not be read by AI vision \(This call could cost up to \$\d+\.\d\d and \$\d+\.\d\d is left of your \$10\.00 monthly AI cap, so it was not made\) — retried automatically/);
+    expect(rowsOf("knowledge_documents")[0]).toMatchObject({ status: "indexing", vision_failed_pages: [3] });
+    expect(meter.rows).toEqual([expect.objectContaining({ reserved: false, inputTokens: OUT.inputTokens, outputTokens: OUT.outputTokens })]);
+    expect(meter.asked.map((a) => a.refused)).toEqual([null, "does not fit"]);
   });
 });

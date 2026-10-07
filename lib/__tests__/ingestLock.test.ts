@@ -27,6 +27,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { db, resetDb, rowsOf, type Op, type Row } from "./knowledgeFakeDb";
 import { makePdf, drawingSheet, prosePage, type PageSpec } from "./knowledgePdfFixtures";
+import { meter, resetMeter } from "./helpers/fakeUsageMeter";
 
 const r2 = vi.hoisted(() => ({ objects: new Map<string, Uint8Array>(), deleted: [] as string[] }));
 const vision = vi.hoisted(() => ({
@@ -47,7 +48,8 @@ vi.mock("@/lib/r2", () => ({
     },
   },
 }));
-vi.mock("@/lib/knowledgeVision", () => ({
+vi.mock("@/lib/knowledgeVision", async (orig) => ({
+  ...(await orig<typeof import("@/lib/knowledgeVision")>()),
   transcribePageImage: vi.fn(async (input: { page: number }) => {
     vision.calls.push(input.page);
     if (!vision.impl) throw new Error("no vision in this test");
@@ -59,11 +61,9 @@ vi.mock("unpdf", async (orig) => ({
   renderPageAsImage: vi.fn(async () => new Uint8Array([137, 80, 78, 71]).buffer),
 }));
 vi.mock("@/lib/equipmentBridgeServer", () => ({ computeForKnowledgeDoc: vi.fn(async () => undefined) }));
-vi.mock("@/lib/ai/usageServer", () => ({
-  getMonthUsage: vi.fn(async () => ({ spentUsd: 0 })),
-  getCapUsd: vi.fn(async () => 0),
-  recordAskUsage: vi.fn(async () => undefined),
-}));
+// The ledger stand-in (GOV-13 / GOV-5): the drain reserves every page's AI
+// vision call against the uploader's cap; cap 0 = no cap here, as before.
+vi.mock("@/lib/ai/usageServer", async () => (await import("./helpers/fakeUsageMeter")).fakeUsageServer());
 vi.mock("@/lib/aiInstructionsServer", () => ({ loadOrgInstructionsBlock: vi.fn(async () => "") }));
 vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (k: string) => k }));
 
@@ -71,9 +71,9 @@ import {
   ingestKnowledgeDocBatch, drainKnowledgeIngestQueue, claimIngestLease, resetKnowledgeIndex,
   INGEST_LEASE_TTL_MS, VISION_RETRY_BACKOFF_MS, visionRetryMessage, type VisionContext,
   INGEST_FAILURE_MAX_ATTEMPTS, ingestFailureBackoffMs, markIngestFailed, failureBackoffUntil, ingestFailureMessage,
-  IngestBatchError, refuseNonPdf, OWES_EVERY_VISION_PAGE,
+  IngestBatchError, refuseNonPdf, OWES_EVERY_VISION_PAGE, visionPageWorstCaseUsd, VISION_PAGE_MAX_TOKENS,
 } from "@/lib/knowledgeIngest";
-import { AGREEMENT_VERSION } from "@/lib/ai/pricing";
+import { AGREEMENT_VERSION, estimateCostUsd } from "@/lib/ai/pricing";
 import { indexDocumentMentions, withoutCarriedSentence } from "@/lib/mentionIndexer";
 
 const DOC = "kd-1";
@@ -106,6 +106,7 @@ const transcript = (page: number) =>
 beforeEach(() => {
   r2.objects.clear(); r2.deleted = [];
   vision.calls = []; vision.impl = null;
+  resetMeter();
 });
 
 describe("ING-2 — one driver at a time", () => {
@@ -1855,5 +1856,148 @@ describe("ING-4 / ING-7 — chunker 2 through the engine", () => {
     await ingestKnowledgeDocBatch(asArg(doc));
     expect(docRow().chunk_version).toBe(1);
     expect(contents().some((c) => c.startsWith("[cont."))).toBe(false);
+  });
+});
+
+describe("GOV-5 / GOV-13 (I-18) — the ingest drain re-checks the uploader's headroom before EVERY page, and meters as it goes", () => {
+  // The drain reads textless pages with AI vision on the uploader's key
+  // (loadSponsorVision). It used to check the uploader's cap once per
+  // document and meter once, after the document's last batch: a sponsor
+  // under the cap at the start could be taken any distance past it in one
+  // run, a run killed mid-document recorded nothing, and a sponsor AT the
+  // cap had their pages consumed text-only — the document 'ready' with
+  // those pages unread. Now every page's call is reserved against the cap
+  // first (visionCallMeter), each call settles into the document's ONE
+  // knowledgeVision row as it is made, and a refusal holds the page with
+  // the reason on the row.
+  const VISION_OUT = { inputTokens: 2_000, outputTokens: 3_000 };
+  const DOC_NAME = "025-PID-0101.pdf";
+  const sponsored = async (pages: PageSpec[], ai: Row = {}) => {
+    const doc = await seed(pages);
+    db.tables.knowledge_libraries = [{ id: "kl-1", org_id: "o1", ai_features: ai }];
+    db.tables.ai_connections = [{ org_id: "o1", user_id: "u1", provider: "anthropic", model: "m", api_key: "k" }];
+    db.tables.ai_key_agreements = [{ id: "ag-1", org_id: "o1", user_id: "u1", scope: "use", agreement_version: AGREEMENT_VERSION }];
+    vision.impl = async (page) => ({ text: transcript(page), usage: VISION_OUT, model: "vision-tier" });
+    return doc;
+  };
+  const drain = () => drainKnowledgeIngestQueue({ maxPages: 100, deadlineMs: Date.now() + 120_000 });
+  /** One page's worst case, as the drain prices it. */
+  const WORST = visionPageWorstCaseUsd({ provider: "anthropic", model: "m", instructions: "" }, DOC_NAME);
+  /** What one call costs once its figures are in. */
+  const CALL = estimateCostUsd("vision-tier", VISION_OUT);
+  const visionRows = () => meter.rows.filter((r) => r.op === "knowledgeVision");
+
+  it("a page's worst case is priced on the transcription's own output ceiling", async () => {
+    const vision = await import("@/lib/knowledgeVision");
+    const src = (await import("node:fs")).readFileSync("lib/knowledgeVision.ts", "utf8");
+    expect(src).toContain(`maxTokens: ${VISION_PAGE_MAX_TOKENS},`);
+    expect(vision.VISION_MODEL.anthropic).toBeTruthy();
+    expect(WORST).toBeGreaterThan(CALL);
+  });
+
+  it("a sponsor at 100% of the cap: ZERO AI vision calls from the drain — the pages that need vision are held (never consumed text-only) and the row says why", async () => {
+    await sponsored([null, prosePage("bolting"), null]);
+    meter.cap = 10; meter.spent = 10;
+    const out = await drain();
+    expect(vision.calls).toEqual([]);
+    expect(meter.asked).toEqual([]);                    // refused at the first check: nothing even reserved
+    expect(out.errors).toEqual([]);
+    // was: status 'ready', pages 1 and 3 indexed as empty, nothing to read them once the cap reset
+    expect(docRow()).toMatchObject({ status: "indexing" });
+    expect(pageListOf(docRow().vision_failed_pages)).toEqual([1, 3]);
+    expect(String(docRow().error)).toMatch(/can't be retried for you now: The uploader's monthly AI cap is reached \(\$10\.00 of \$10\.00\), so pages without a text layer are held for AI vision — they are read once it resets on the 1st or is raised/);
+    // the rest of the document is searchable meanwhile
+    expect(rowsOf("knowledge_chunks").some((c) => c.page === 2)).toBe(true);
+    expect(meter.rows).toEqual([]);
+  });
+
+  it("a sponsor locked at $0: zero calls — the reservation is refused before the first page, and the row says the lock", async () => {
+    await sponsored([null, prosePage("bolting")]);
+    meter.cap = Number.MIN_VALUE;                        // getCapUsd's answer for a stored 0
+    await drain();
+    expect(vision.calls).toEqual([]);
+    expect(meter.asked.map((a) => a.refused)).toContain("locked");
+    expect(docRow()).toMatchObject({ status: "indexing", vision_failed_pages: [1] });
+    expect(String(docRow().error)).toMatch(/the uploader's monthly AI cap is set to \$0 \(AI is locked for them\)/);
+    expect(meter.rows).toEqual([]);
+  });
+
+  it("a sponsor UNDER the cap with less headroom than one page could cost: zero calls — the page waits with the reason, and no reservation is left standing", async () => {
+    await sponsored([null, prosePage("bolting")]);
+    meter.cap = 10; meter.spent = 10 - WORST / 2;        // under the cap: the first check passes
+    await drain();
+    expect(vision.calls).toEqual([]);
+    expect(meter.asked.length).toBeGreaterThan(0);
+    expect(meter.asked.every((a) => a.refused === "does not fit")).toBe(true);
+    expect(docRow()).toMatchObject({ status: "indexing", vision_failed_pages: [1] });
+    expect(String(docRow().error)).toMatch(/AI vision could not read 1 page \(p\. 1\): the uploader's \$10\.00 monthly AI cap has \$\d+\.\d\d left; one page could cost up to \$\d+\.\d\d\. They are tried again automatically/);
+    expect(meter.rows).toEqual([]);
+  });
+
+  it("headroom for two pages: the drain reads two and the third page's reservation is refused in the SAME run — the cap is re-checked before every call", async () => {
+    await sponsored([null, null, null]);
+    // page 1: 0 + WORST fits; page 2: CALL + WORST fits; page 3: 2·CALL + WORST does not
+    meter.cap = 10; meter.spent = 10 - (2 * CALL + WORST - 0.001);
+    await drain();
+    expect(vision.calls).toEqual([1, 2]);
+    expect(pageListOf(docRow().vision_failed_pages)).toEqual([3]);
+    expect(docRow().status).toBe("indexing");
+    // the two calls, in the document's ONE row
+    expect(visionRows()).toHaveLength(1);
+    expect(visionRows()[0]).toMatchObject({
+      userId: "u1", reserved: false, ok: true, model: "vision-tier",
+      inputTokens: 2 * VISION_OUT.inputTokens, outputTokens: 2 * VISION_OUT.outputTokens,
+    });
+    expect(meter.spent + visionRows()[0].costUsd).toBeLessThanOrEqual(meter.cap);
+  });
+
+  it("metered as it goes: the first page's figures are in the row before the second call is made (a cron killed mid-document has recorded what it spent)", async () => {
+    await sponsored([null, null]);
+    meter.cap = 10;
+    const seenAtPage2: Array<{ reserved: boolean; inputTokens: number | null }> = [];
+    vision.impl = async (page) => {
+      if (page === 2) for (const r of visionRows()) seenAtPage2.push({ reserved: r.reserved, inputTokens: r.inputTokens });
+      return { text: transcript(page), usage: VISION_OUT, model: "vision-tier" };
+    };
+    await drain();
+    // at the second call: the document's row, settled to page 1's figures,
+    // and the second call's own reservation beside it
+    expect(seenAtPage2).toEqual([
+      { reserved: false, inputTokens: VISION_OUT.inputTokens },
+      { reserved: true, inputTokens: null },
+    ]);
+    // after: one row, both calls, nothing left reserved
+    expect(visionRows()).toEqual([expect.objectContaining({ reserved: false, inputTokens: 2 * VISION_OUT.inputTokens })]);
+  });
+
+  it("REGRESSION — an uploader under the cap: the same pages read, the document 'ready', and ONE knowledgeVision row carrying every call's tokens (nothing left reserved, nothing metered twice)", async () => {
+    await sponsored([null, prosePage("bolting"), null]);
+    meter.cap = 10;
+    const out = await drain();
+    expect(out).toMatchObject({ completed: 1, errors: [] });
+    expect(vision.calls).toEqual([1, 3]);
+    expect(docRow()).toMatchObject({ status: "ready", vision_failed_pages: [], error: null });
+    expect(meter.asked.every((a) => a.refused === null)).toBe(true);
+    expect(visionRows()).toEqual([expect.objectContaining({
+      orgId: "o1", userId: "u1", provider: "anthropic", model: "vision-tier", reserved: false, ok: true,
+      inputTokens: 2 * VISION_OUT.inputTokens, outputTokens: 2 * VISION_OUT.outputTokens,
+      costUsd: estimateCostUsd("vision-tier", { inputTokens: 2 * VISION_OUT.inputTokens, outputTokens: 2 * VISION_OUT.outputTokens }),
+    })]);
+    expect(meter.recorded).toEqual([]);
+  });
+
+  it("a read-every-page library whose uploader is at the cap: nothing is read or indexed, the document waits in the queue, and the row says why", async () => {
+    await sponsored([null, prosePage("bolting")], { visionAllPages: true });
+    meter.cap = 10; meter.spent = 12.5;
+    const t0 = Date.now();
+    const out = await drain();
+    expect(out).toMatchObject({ docsTouched: 0, errors: [] });
+    expect(vision.calls).toEqual([]);
+    expect(rowsOf("knowledge_chunks")).toHaveLength(0);
+    expect(docRow().status).toBe("pending");
+    expect(Date.parse(String(docRow().vision_retry_after))).toBeGreaterThanOrEqual(t0);
+    expect(docRow().error).toBe(
+      "This library reads every page with AI vision, so the document waits in the queue: the uploader's monthly AI cap is reached ($12.50 of $10.00). " +
+      "It is indexed once it resets on the 1st or is raised, or when a controller with budget indexes it.");
   });
 });

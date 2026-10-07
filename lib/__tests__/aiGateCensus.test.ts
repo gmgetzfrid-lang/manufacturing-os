@@ -52,7 +52,10 @@ const FIVE_GATES: Array<[gate: string, ref: RegExp]> = [
   ["provider allowlist", /\b(ALLOWED_PROVIDERS|EMBEDDING_PROVIDERS)\b/],
   ["signed agreement", /\bAGREEMENT_VERSION\b/],
   ["monthly cap", /\b(getCapUsd|getMonthUsage|reserveWithinCap)\s*\(/],
-  ["metering", /\b(recordAskUsage|settleUsage)\s*\(/],
+  // visionCallMeter (lib/knowledgeIngest.ts, I-18 GOV-13): the ingest
+  // engine's per-page reservation and metering — it calls reserveWithinCap
+  // and settleUsage itself (pinned below).
+  ["metering", /\b(recordAskUsage|settleUsage|visionCallMeter)\s*\(/],
 ];
 const missingGates = (s: string) => FIVE_GATES.filter(([, re]) => !re.test(s)).map(([g]) => g);
 const carriesAllFive = (s: string) => missingGates(s).length === 0;
@@ -76,7 +79,7 @@ const HELPERS: Record<string, string> = {
   "lib/ai/governedCall.ts": "governedAiCall — runs assertAiGates (checked below)",
   "lib/knowledgeVision.ts": "page transcription for the ingest engine: the drain gates the sponsor's key (loadSponsorVision); the interactive route builds its own VisionContext and is classified on its own below (INLINE)",
   "lib/knowledgeEmbedCore.ts": "the embed slice for /api/knowledge/embed and the drain, which gate the payer",
-  "lib/knowledgeIngest.ts": "the ingest drain's sponsor path (loadSponsorVision: key, allowlist, agreement, cap)",
+  "lib/knowledgeIngest.ts": "the ingest drain's sponsor path (loadSponsorVision: key, allowlist, agreement, cap; every page reserved and metered through visionCallMeter)",
 };
 
 describe("GOV-11 / PR-12 — every provider call is behind the gates, or named", () => {
@@ -133,6 +136,12 @@ describe("GOV-11 / PR-12 — every provider call is behind the gates, or named",
     // re-index's vision test; its own VisionContext is still the INLINE
     // stack, checked gate by gate here.
     expect(missingGates(src(f))).toEqual([]);
+    // GOV-13 (I-18): every page's call is reserved and metered through
+    // visionCallMeter — which itself reserves against the cap and settles
+    expect(src(f)).toMatch(/ctx\.beforeCall = \(\) => visionMeter\.beforeCall\(ctx, cap\);/);
+    const meterSrc = src("lib/knowledgeIngest.ts").slice(src("lib/knowledgeIngest.ts").indexOf("export function visionCallMeter("));
+    expect(meterSrc).toMatch(/await reserveWithinCap\(/);
+    expect(meterSrc).toMatch(/await settleUsage\(/);
     // the agreement is read for the requester, at the current version, before the VisionContext is built
     const s = src(f);
     const agreementAt = s.indexOf('.from("ai_key_agreements")');

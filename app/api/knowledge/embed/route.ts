@@ -88,8 +88,10 @@ import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { loadPrincipal } from "@/lib/knowledgeAccess";
-import { estimateCostUsd, buildAgreementText, AGREEMENT_VERSION } from "@/lib/ai/pricing";
-import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
+import { estimateCostUsd, worstCaseCostUsd, buildAgreementText, AGREEMENT_VERSION } from "@/lib/ai/pricing";
+import {
+  getMonthUsage, getCapUsd, reserveWithinCap, settleUsage, releaseUsage, type UsageReservation,
+} from "@/lib/ai/usageServer";
 import {
   embeddingConnectionFrom, buildModelConflict, estimateEmbeddingCostUsd, embeddingRateIsPlaceholder,
   EMBED_BATCH, EMBED_MAX_ATTEMPTS, NO_EMBEDDING_KEY_MESSAGE, type EmbeddingConnection,
@@ -784,17 +786,47 @@ export async function POST(req: NextRequest) {
     if (unaudited) backgroundNote = buildConsentNote(unaudited);
   }
 
+  // GOV-13 (I-18): the check above is only the first. Every batch the slice
+  // claims is reserved against the cap before it is sent — its worst case,
+  // every passage at 3 characters a token — with every other reservation in
+  // view; one that does not fit sends nothing, goes back to the queue, and
+  // its refusal is the answer's error. The request is metered as it goes:
+  // ONE knowledgeEmbed row (the first batch's reservation), settled after
+  // every batch, so a request the platform kills part-way has recorded what
+  // its finished batches spent. A request that spent nothing leaves no row.
+  let meterRow: UsageReservation | null = null;
+  let pending: UsageReservation | null = null;
+  const meterTo = async (inputTokens: number, ok: boolean) => {
+    if (pending) {
+      if (!meterRow) meterRow = pending; else await releaseUsage(pending.id);
+      pending = null;
+    }
+    if (meterRow) await settleUsage(meterRow.id, { model: embedding.model, usage: { inputTokens, outputTokens: 0 }, ok });
+  };
   const slice = await embedLibrarySlice({
     orgId, libraryId,
     connection: embedding,
     batchSize,
     budgetMs: BUDGET_MS,
     hardStopMs: EMBED_HARD_STOP_MS,
+    beforeEmbed: async (inputChars) => {
+      try {
+        pending = await reserveWithinCap({
+          orgId, userId: user.id, op: "knowledgeEmbed", provider: embedding.provider, model: embedding.model,
+          worstCaseUsd: worstCaseCostUsd(embedding.model, { inputChars, maxTokens: 0 }), capUsd,
+        });
+        return null;
+      } catch (e) {
+        return (e as Error)?.message || "the AI budget could not be checked";
+      }
+    },
+    afterBatch: (u) => meterTo(u.inputTokens, true),
   });
   const usage = slice.usage;
   const embedded = slice.embedded;
   const rateLimited = slice.rateLimited;
-  let lastError = slice.error;
+  // A batch the cap refused (the slice stopped on it) is said as the error.
+  let lastError = slice.error ?? slice.stopReason;
   const detailAfter = await loadEmbedDetail(orgId, libraryId);
   const remainingBefore = detailBefore ? detailBefore.remaining : stats.total - stats.embedded;
   const conflictAfter = detailAfter ? buildModelConflict(detailAfter.corpus, embedding) : null;
@@ -819,12 +851,10 @@ export async function POST(req: NextRequest) {
   }
 
 
-  if (usage.inputTokens > 0) {
-    await recordAskUsage({
-      orgId, userId: user.id, provider: embedding.provider, model: embedding.model,
-      usage, ok: !lastError, op: "knowledgeEmbed",
-    });
-  }
+  // The request's ONE row, settled to its tokens with its outcome (GOV-13).
+  await meterTo(usage.inputTokens, !lastError);
+  const ranRow = meterRow as UsageReservation | null;
+  if (ranRow && usage.inputTokens <= 0) await releaseUsage(ranRow.id);
 
   const after = await coverage(orgId, libraryId);
   // If the post-run count can't be read, DON'T claim done — an unverifiable
