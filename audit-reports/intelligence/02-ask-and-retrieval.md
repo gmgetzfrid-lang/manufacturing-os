@@ -518,7 +518,7 @@ Tests: `askRouteHonesty.test.ts` "aiGates in the ask route — the lock, the cap
 ## ASK-8 · The legend-sheet prompt block reads knowledge_chunks by document id alone — no org and no library scope
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-16 CODEBOOK LIFECYCLE (done-when 2: `legendDocIds` validated on write by `knowledge_library_save_ai_features` and the codebook save) — by the integrator, 2026-10-02 (at the I-03 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** SUSPECTED
 - **Locations:** `app/api/knowledge/ask/route.ts:1366-1385`, `app/api/knowledge/ask/route.ts:150-155`, `lib/knowledge.ts:279-289`, `lib/codebookServer.ts:31`
@@ -556,6 +556,41 @@ app/api/knowledge/ask/route.ts:1369-1374 — the only filter is `.in("document_i
 2. ✗ Not done here. Validating `legendDocIds` on write (`saveLibraryAiFeatures` → `knowledge_library_save_ai_features`, `lib/knowledge.ts` / `20261121`, and the codebook save, `app/(protected)/admin/codebook`) belongs to those writers' owners (I-02 / I-02b for the library toggles, I-10 for the codebook). With the read now scoped, an unreachable stored id contributes nothing.
 
 **Scope / residual.** OPEN on done-when 2 (write-time validation).
+
+**Resolution (2026-10-02, intelligence Round G).** Package I-16 CODEBOOK LIFECYCLE closes done-when 2: legend ids are validated on write.
+
+*Reproduced on `f5073fc`.*
+- `saveConfig` (`lib/codebook.ts:657-669`) wrote any string into `codebook_config.legend_doc_ids`. A throwaway test (another org's knowledge document id, saved through `saveConfig`) resolved and stored the id. With the fix the same test is refused before anything is written.
+- `knowledge_library_save_ai_features` (newest body `20261121`, confirmed by scanning `supabase/migrations`) stored `p_features` as given.
+
+*What landed.*
+- **The rule, once.** 20261178 §4a adds `assert_legend_doc_ids(org, new, old)`: invoker rights, `search_path` pinned, anon revoked. Every id a save ADDS must be uuid-shaped (22023) and name a `knowledge_documents` row of the same org (23503); the org predicate is explicit. An id already stored is kept as it is, so detaching another sheet never trips on a stale one. That includes the page's upsert: its BEFORE INSERT arm compares with the stored row.
+- **The codebook save.**
+  - `trg_codebook_config_version_guard` applies the rule to every person's `codebook_config` write — the page's save, and a direct PostgREST write too.
+  - `lib/codebook.ts` `saveConfig` checks the ids it adds (`legendIdsAdded`, `assertOrgKnowledgeDocIds`, with the org predicate in the query) before it writes, so the rule holds before the paste as well, and translates the database's refusal.
+- **The library toggles save.**
+  - `knowledge_library_save_ai_features` is re-created from 20261121's body plus ONE line: the check, on the saved library only, through a CASE. Invoker rights and the `embedBuild` stamp are unchanged. An exact cut is pinned, and `embedDrain.test.ts`'s census names 20261178 as its newest definer.
+  - `trg_knowledge_libraries_legend_guard` (refuse-only, beside 20261121's `embedBuild` guard, which is untouched) applies the same rule to a person's direct PostgREST write of `ai_features`.
+  - `lib/knowledge.ts` `saveLibraryAiFeatures` translates the RPC's refusal, and in its pre-20261121 fallback checks the ids it adds before its update.
+  - The service role — the org restore, the embed drain's marker writes — passes.
+
+*Tests.*
+- `lib/__tests__/intelRoundGCodebookLifecycle.test.ts` "ASK-8 done-when 2": the reproduction → fix; an own document saves; a detach beside a stale id saves; a code-rule save reads nothing new; the database's refusal is translated; the library save is refused through the RPC and through the fallback, and the fallback keeps the marker.
+- `lib/__tests__/intelRoundGCodebookLifecycleMigration.test.ts`: the rule's shape, and the RPC's exact cut.
+- PG16 (CB-5's run):
+  - another org's document and a non-uuid are refused, through the codebook upsert, the toggles RPC and a direct library write;
+  - an own document saves;
+  - a stale stored id stays detachable;
+  - a non-controller's RPC answers false without running the check on a row RLS hides;
+  - the service role passes.
+
+**Done-when.**
+1. ✓ (2026-10-01, I-03) The legend chunk query is org-scoped, and the ids are constrained to the org's own knowledge documents.
+2. ✓ `legendDocIds` are validated on write — by `saveLibraryAiFeatures` (the RPC, and a direct write) and by the codebook save (the page, and a direct write) — against `knowledge_documents` of the same org, so an unreachable id cannot be stored by a person. The app half holds today; the database half is migration 20261178.
+
+**Scope / residual.**
+- **Pending migration:** `supabase/migrations/20261178_intel_roundG_codebook_lifecycle.sql` (DEC-30).
+- Ids stored before the rule are counted in the paste's inventory and kept, not rewritten. The ask route reads only the org's own readable documents (I-03).
 
 ---
 

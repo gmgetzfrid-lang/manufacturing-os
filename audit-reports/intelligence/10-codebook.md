@@ -211,7 +211,7 @@ lib/roleCapabilities.ts:74-84 — `Admin: 100, Manager: 90, Supervisor: 80, Draf
 ## CB-5 · Deleting or re-adding a codebook entry has no referential integrity and the confirm text understates the blast radius
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-16 CODEBOOK LIFECYCLE (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/admin/codebook/page.tsx:208-216`, `lib/codebook.ts:356`, `lib/codebook.ts:360-363`, `supabase/migrations/20260928_site_codebook.sql:78-83`, `supabase/migrations/20261017_process_flows.sql:17-20`
@@ -246,6 +246,73 @@ lib/codebook.ts:360-363 — `export async function deleteEntry(id: string): Prom
 
 **Scope / residual.** Limb 2 (in-place code rename with a cascade) remains open for a later round. Until it lands, the database refuses a code change while the code is in use, so a rename can no longer strand equipment either. The guard's `20261128` must be applied.
 
+**Resolution (2026-10-02, intelligence Round G).** Package I-16 CODEBOOK LIFECYCLE closes limb 2, the in-place rename with a cascade.
+
+*Reproduced on `f5073fc`.* No migration defines a rename (a scan of `supabase/migrations` for `rename_codebook_code` finds nothing). `EntryRow` renders the code read-only (`app/(protected)/admin/codebook/page.tsx:392-394`), so correcting a code is still delete-and-re-add, and 20261128 §6 refuses that while the code is in use. On a scratch PostgreSQL 16, a legacy unit "2O" with two filings and a flow was refused: `codebook_entries_in_use: unit 2O is still referenced by 2 asset(s) and 1 process flow(s)`.
+
+*The rename.* `supabase/migrations/20261178_intel_roundG_codebook_lifecycle.sql` §2 adds `rename_codebook_code(p_org_id, p_kind, p_old_code, p_new_code, p_dry_run, p_expected)`.
+- SECURITY DEFINER with `search_path` pinned. It refuses a NULL `auth.uid()` and anyone outside `is_org_controller`. EXECUTE is revoked from PUBLIC and anon and granted to authenticated only (DRLS-16).
+- It is one transaction, serialized per org (an advisory lock), with the entry row locked:
+  - a. the new code is inserted as a row of its own, with the same label, meta (pinned links, knowledge binding), sort, origin and author; the digit guard (20261128 §4) checks it;
+  - b. `assets.unit_code` and the unit or type part of `assets.code` are rewritten — the same `<unit><type>` head 20261128 §6 counts;
+  - c. `units.codebook_code` follows a renamed unit, and 20261138's two triggers move `assets.unit_id` with it, as for any remap;
+  - d. `process_flows` unit ends naming the old code take the new one;
+  - e. the old row is deleted through `trg_codebook_entries_guard_in_use`, which now counts zero;
+  - f. the new row takes the old row's id, and a `CODEBOOK_CODE_RENAMED` audit row records the counts.
+- `p_dry_run` answers the same counts and writes nothing. It also names any blocker: a rewritten site code another asset carries, a head that also reads as another unit and type, a flow that would duplicate or start and end at one unit, or the new code mapped to another operational unit. The apply refuses on a blocker (23514). It also refuses (40001) when its counts differ from `p_expected`, the counts the person confirmed: preview = apply.
+- An asset already filed under the new code (not a codebook unit today: the `unknownUnits` bucket) belongs to the renamed unit afterwards. The preview counts it (`adopted`), and the confirm says so.
+
+*How it passes the two guards, neither weakened.*
+- 20261128 §6 is not touched. The rename moves every reference it counts first, then deletes the old row through it. Anything filed under the old code meanwhile makes it refuse, and the whole rename rolls back.
+- 20261155 `process_flows_guard` runs for a SECURITY DEFINER function as for any writer: `auth.uid()` is still the caller. Its endpoint check runs first, unchanged; the new code is already a codebook unit (step a). Its person rule "a flow's endpoints are fixed" would refuse step d.
+- The guard is therefore re-created from 20261155's body plus ONE block (an exact cut is pinned). The block admits an UPDATE only when all of these hold:
+  - the transaction-local setting `app.codebook_rename` names the row's org, the old code and the new code. Only the rename sets it, around its UPDATE, and it clears it after; no other migration sets it (pinned), and PostgREST lets a client set only `request.*`;
+  - the caller is in the controller tier;
+  - nothing but a unit end's ref moves, from the old code to the new one.
+- Every other update meets the rules as before. On PG16 each of these was refused with `process_flows_fixed`: a forged setting with another column changed, an asset end moved, a non-controller author, another org. A new code that is no unit was refused with `process_flows_endpoint`, before the block.
+
+*The route and the page.*
+- `app/api/admin/codebook/route.ts`, actions "rename-preview" and "rename": `authorizeAdminSurface(req, orgId, "codebook")`, then `adminSurface("codebook").writes` checked against the caller's full role collection (no role list in the route).
+  - The RPC is called with the caller's session (`callerScopedClient`), and the apply carries the preview's counts (`renameExpectedCounts`).
+  - PGRST202 / 42883 answers 409 `needsMigration` with today's way (`RENAME_NOT_APPLIED`).
+- `lib/codebook.ts` adds `renameCodebookCode`, `renameSummary`, `renameExpectedCounts` and `RENAME_COUNT_KEYS`.
+- On the codebook page, `EntryRow` gains a "Rename the code in place" action on unit and equipment-type rows. It prompts, shows the server's preview (blockers, with nothing changed), confirms with what follows, then applies.
+  - Before the paste it says the migration is needed and gives today's way.
+  - The in-use refusal now points at the rename as well as refiling.
+
+*Tests.*
+- `lib/__tests__/intelRoundGCodebookLifecycleMigration.test.ts`: the rename's shape, DRLS-16, the order of the steps, the guard re-creation's exact cut, and the setting set only here.
+- `lib/__tests__/codebookLifecycleRoute.test.ts`: authority, a dry run without counts, an apply with counts, the refusals mapped, and `needsMigration`.
+- `lib/__tests__/intelRoundGCodebookLifecycle.test.ts`: the client half and the page pins.
+
+*PostgreSQL 16.* A scratch cluster was initdb'd under `/var/lib/postgresql`, with a stub schema whose guard objects were extracted verbatim from 20261128, 20261138, 20261155 and 20261121. 20261178 was pasted twice: all 11 probes were true both times. 68 assertions passed:
+- anon is refused EXECUTE; a NULL uid, a Manager without DocCtrl and another org's Admin are refused;
+- the dry-run counts are right, and a preview ≠ apply is refused with 40001;
+- **atomicity:** a failure injected at the last step (the audit insert) left every table exactly as before — entries, asset codes and filings, `unit_id`, flows, the mapping;
+- the rename 21 → 20:
+  - the entry keeps its id, links and binding;
+  - 4 filings and 4 codes are rewritten, archived included;
+  - the orphan filed under 20 is adopted, and `unit_id` follows the mapping;
+  - the flows' provenance, author and status are unchanged, and the mapping moves;
+  - one audit row is written and the setting is cleared;
+- a blocker refuses the rename whole; a rename onto an existing code, onto a letter code, or of a drawing type is refused;
+- an equipment type 30 → 35 is renamed;
+- the finding's own case: legacy "2O" → "20" — today's delete is refused, and the rename strands nothing.
+
+The cluster was deleted afterwards.
+
+**Done-when.**
+1. ✓ (2026-09-30) The confirm, or the refusal, names exact counts.
+2. ✓ Codes are editable in place, with a cascade that rewrites the referencing rows (assets.unit_code, the unit or type part of assets.code, process_flows unit ends, units.codebook_code) in one transaction. That is the code half; the database half is migration 20261178.
+3. ✓ (2026-09-30) Re-adding an existing code is refused with "already exists".
+
+**Scope / residual.**
+- **Pending migration:** `supabase/migrations/20261178_intel_roundG_codebook_lifecycle.sql` (DEC-30). Until it is pasted, the rename answers "needs migration 20261178" and the page keeps today's way: add the new code, refile, remove the old one. Paste and deploy in either order.
+- What is not rewritten:
+  - `documents.unit_code` (I-13's drawing-number decode) is a fact about the number; the unit-identity decode re-derives it;
+  - drawing-type codes are referenced by nothing stored and are not renamed here.
+- A later package that re-creates `process_flows_guard` starts from 20261178's body and keeps the CB-5 block (99-fix-sequencing).
+
 ---
 
 <a id="cb-6"></a>
@@ -253,7 +320,7 @@ lib/codebook.ts:360-363 — `export async function deleteEntry(id: string): Prom
 ## CB-6 · Derived identity is a frozen snapshot: editing the codebook never re-decodes existing assets, so codes and units drift silently forever
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-16 CODEBOOK LIFECYCLE (new) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/equipmentBridgeServer.ts:211-212`, `lib/equipmentBridgeServer.ts:251-253`, `lib/assetCategorize.ts:51-57`, `app/(protected)/admin/assets/page.tsx:1016-1019`, `app/(protected)/admin/codebook/page.tsx:344-347`
@@ -289,6 +356,51 @@ Two differently-shaped searches for a recompute path both returned nothing: (1) 
 4. ✓ Deleting a code shows the counts of assets, process flows and unit bindings that reference it (codes are not editable in place — CB-5 limb 2).
 
 **Scope / residual.** Limbs 1 (server-side job) and 2 (version stamp) remain.
+
+**Resolution (2026-10-02, intelligence Round G).** Package I-16 CODEBOOK LIFECYCLE closes limbs 1 (the server-side job) and 2 (the version stamp).
+
+*Reproduced on `f5073fc`.*
+- No route re-decodes: the only recompute is the Identity review's per-asset accept in the browser, under the user's RLS (`planIdentityReview`, `lib/assetCategorize.ts:211`).
+- A scan of `supabase/migrations`, `lib` and `app` for `codebook_version` finds nothing: the codebook is unversioned, and an asset records nothing about the codebook its code came from.
+
+*Limb 1 — the server re-decode, preview = apply.*
+- `lib/assetCategorize.ts` `planRedecode(assets, book, codeHolders)` is pure. Its plan is the Identity review's own `code_rederives` rows (`planIdentityReview`, unchanged), narrowed to what a job may write without a person's judgement: a filed asset whose stored code the codebook as it stands derives differently, re-derived from its own tag and filing.
+  - The filing is the job's input and is never rewritten.
+  - A code naming another unit (AREA-11), or a derived code another asset carries (archived holders count) or an earlier row takes (CB-10), is listed and left to a person under Identity review.
+  - A blank code is the categorizer's fill, not a re-decode.
+- `redecodeDigest(rows)` is the canonical text of what an apply writes.
+- `app/api/admin/codebook/route.ts` "redecode-preview" reads the whole codebook and every asset of the org (keyset pages; an unreadable book plans nothing). It returns every row, the skipped rows, a token (sha-256 of the digest), the codebook version, and how many coded assets were written under an earlier version.
+- "redecode-apply" recomputes the plan and refuses (409, `changed`, nothing written) unless the token matches. Otherwise it writes exactly the previewed rows:
+  - through the caller's session (RLS and the registry guards decide, as for today's per-asset accept), each only while the asset still carries the previewed code and filing (compare-and-set);
+  - at most 400 per call (`REDECODE_WRITE_BUDGET`), the rest reported as `remaining`, and the page previews again;
+  - `changed`, `taken` (23505) and `refused` (with the reason) are counted, never silent;
+  - `CODEBOOK_REDECODE` audit rows (counts only) are written before the writes — no record, no writes — and after.
+- Authority: `authorizeAdminSurface(req, orgId, "codebook")`, then `adminSurface("codebook").writes` checked against the full role collection.
+- The codebook page gains a "Re-decode site codes" panel: preview (the rows `tag: from → to`, the skipped counts, the version line), then "Re-derive N codes". A moved plan re-previews.
+- It works before 20261178 is pasted. The `codebook_version` read falls back on 42703, and the panel says "Codebook versions start once migration 20261178 is applied; the re-decode itself works now."
+
+*Limb 2 — the version.* 20261178 §1 adds:
+- `codebook_config.codebook_version`, the org's codebook version. It only moves forward; a person cannot lower it. It goes up when `iterable_rule` or `drawing_number` changes (`trg_codebook_config_version_guard`) and when an entry is added, removed, re-coded or re-prefixed (`trg_codebook_entries_version_stamp`, which fires after 20261128's guards, so a refused change bumps nothing). A label, a pinned library or a knowledge binding is no new version.
+- `codebook_entries.codebook_version`, the org version the entry last changed in.
+- `assets.codebook_version`, the version in force when the asset's site code was last written. It is stamped by `trg_assets_codebook_version` for every writer — the registry page, the importer, the Bridge, the re-decode, a rename — so no app writer changed. It is NULL for no code, or a code written before the paste. A person cannot set it; an org restore carries its backup's.
+- The service role never creates a `codebook_config` row there (a restore inserts the backup's own row afterwards and must not find one waiting).
+
+*Tests.*
+- `lib/__tests__/intelRoundGCodebookLifecycle.test.ts`: `planRedecode`, the digest, and a regression check that the codec, the categorizer's plan, the identity review and `rederivationImpact` answer as before.
+- `lib/__tests__/codebookLifecycleRoute.test.ts`: **preview = apply**. The written set equals the previewed rows: same values, compare-and-set on code and filing, the caller's client, org-scoped. Also: a moved plan is refused whole; a changed row, a taken code and a refusal are counted; the budget; the audit; the 42703 fallback; an unreadable codebook.
+- `lib/__tests__/intelRoundGCodebookLifecycleMigration.test.ts`: the triggers' shape and order.
+- PG16 (CB-5's run): a label or link edit is no new version; a padTo change, an entry insert or delete, and a prefix change each are; a person cannot lower the version or set an asset's stamp; a code written now records the current version; a cleared code clears it; a restore keeps its own; an org purge passes every trigger.
+
+**Done-when.**
+1. ✓ A re-decode job exists — server-side, admin-triggered — that recomputes the codes of assets whose derivation inputs changed, with a preview diff before it writes. The apply writes exactly the preview. The filing (`unit_code`) is the job's input; a unit moves only through the rename (CB-5) or a person.
+2. ✓ `codebook_config` and `codebook_entries` carry a version, and assets record the codebook version their code was written under. That is the code half; the database half is migration 20261178.
+3. ✓ (2026-09-30) The page warns before a padTo / mirroring / prefix save.
+4. ✓ (2026-09-30) Deleting a code shows its reference counts, and codes are now editable in place (CB-5).
+
+**Scope / residual.**
+- **Pending migration:** `supabase/migrations/20261178_intel_roundG_codebook_lifecycle.sql` (DEC-30), for limb 2. Limb 1 works without it.
+- The stamp records the version in force when the code was written — by derivation or by hand. Whether a code still derives is answered by re-derivation (the plan), not by the stamp.
+- The re-decode rewrites active assets only, as the Identity review lists them. Archived assets count as code holders.
 
 ---
 

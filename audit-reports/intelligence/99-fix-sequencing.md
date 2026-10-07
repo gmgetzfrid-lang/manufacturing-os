@@ -473,6 +473,17 @@ ledger past the ceiling leaves the usage GET up (the viewer's own meter and
 the default's editor) and says the team view is unavailable
 (`teamUnavailable`).
 
+**Paste / deploy order — intelligence Round G I-16 (`20261178`, CB-5 / CB-6 / ASK-8).** The paste and the deploy can come in either order. `20261178` needs `20261128`, `20261138`, `20261155` and `20261121` pasted first. Until it is pasted:
+- the in-place rename answers "needs migration 20261178", and the codebook page says to use today's way (add the new code, refile, remove the old one);
+- the server re-decode works and shows no version;
+- legend ids are checked by the app before it writes.
+
+**Re-creation chain.** `20261178` re-creates two functions:
+- `process_flows_guard`, from `20261155` plus the CB-5 rename block;
+- `knowledge_library_save_ai_features`, from `20261121` plus the legend-id line.
+
+A later package that re-creates either starts from `20261178`'s body and keeps the added lines. Each has a lineDiff test that scans for the newest earlier definer (`intelRoundGCodebookLifecycleMigration.test.ts`). The setting `app.codebook_rename` is set by `rename_codebook_code` only, and that is pinned: no other migration may set it.
+
 ---
 
 ## Do not do these
