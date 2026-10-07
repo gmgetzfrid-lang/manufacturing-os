@@ -25,6 +25,10 @@
 //     listener (MetadataStagingModal's, which aborts its upload) never hears
 //     it, and neither does it when an app dialog over the center answers its
 //     own Escape; the center stays open (third review fix).
+//   * Only a dialog that paints ABOVE the center answers an Escape in its
+//     stead: with focus in a dialog under it (InspectorDrawer at z-60, whose
+//     Escape is a `window` listener), Escape closes the center and stops
+//     there, as on base (fourth review fix).
 //
 // The REAL Sidebar, NotificationBell, NotificationCenter and the REAL
 // attention hook render here; only the database, the session and the router
@@ -106,7 +110,8 @@ import { useTicketNotifications } from "@/hooks/useTicketNotifications";
 import { CornerDock, __resetDockForTests, useDockAllowances, useDockRaise, NOTIFICATION_CENTER_RAIL_PX } from "@/components/ui/CornerDock";
 import { ToastProvider, useToast } from "@/components/providers/ToastProvider";
 import { Z } from "@/lib/zLayers";
-import { MARK_READ_FAILED, confirmLeaveDuringUploads, LEAVE_QUESTION } from "@/components/notifications/NotificationCenter";
+import { MARK_READ_FAILED, confirmLeaveDuringUploads, LEAVE_QUESTION, dialogPaintsAbovePanel, CENTER_PANEL_Z_AT_REST } from "@/components/notifications/NotificationCenter";
+import InspectorDrawer from "@/components/documents/InspectorDrawer";
 import { beginUpload, endUpload, hasUploadsInFlight } from "@/lib/uploadActivity";
 import { DialogHost, appAlert } from "@/components/providers/DialogProvider";
 
@@ -695,6 +700,87 @@ describe("RT-11 (review fix) — above an upload modal, a link asks before it le
     await flush();
     expect(panel().hasAttribute("inert")).toBe(true);
     expect(staging.aborted).toBe(0);
+  });
+
+  it("focus in a dialog UNDER the center (the real InspectorDrawer, z-60, its Escape a window listener): Escape closes the center and stops there; the next Escape closes the drawer — as on base (fourth review fix)", async () => {
+    let drawerClosed = 0;
+    const drawerProps = { isOpen: true, onClose: () => { drawerClosed++; }, title: "Inspector" } as React.ComponentProps<typeof InspectorDrawer>;
+    const drawer = React.createElement(InspectorDrawer, drawerProps,
+      React.createElement("button", { type: "button", "data-drawer-control": true }, "Drawer control"));
+    await mount(React.createElement(ToastProvider, null, React.createElement(NotificationCenterProvider, null, drawer, React.createElement(Shell, { raised: false }), React.createElement(GrabCenter))));
+    await act(async () => { opener.open(); });
+    await flush();
+    expect(panel().hasAttribute("inert")).toBe(false);
+    expect(panel().className).toContain(`z-[${CENTER_PANEL_Z_AT_REST}]`);
+    // the center does not trap Tab: Shift+Tab from its first control lands in
+    // the drawer, earlier in the document than the center's body-level portal
+    const control = document.querySelector("[data-drawer-control]") as HTMLButtonElement;
+    await act(async () => { control.focus(); });
+    expect(document.activeElement).toBe(control);
+    expect(control.closest('[role="dialog"]')).not.toBeNull();
+    expect(panel().compareDocumentPosition(control) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+    await escapeAtFocus();
+    await flush();
+    // the topmost layer — the center — closed; the drawer under it never heard the key
+    expect(panel().hasAttribute("inert")).toBe(true);
+    expect(drawerClosed).toBe(0);
+    // the next Escape is the drawer's
+    await escapeAtFocus();
+    await flush();
+    expect(drawerClosed).toBe(1);
+  });
+
+  it("raised over an upload modal, the same: focus in a role=\"dialog\" at z-60 — Escape closes the center and stops there; neither the drawer's nor the staging modal's window listener hears it (fourth review fix)", async () => {
+    window.addEventListener("keydown", stagingOnKey);
+    let drawerEscapes = 0;
+    const drawerOnKey = (e: KeyboardEvent) => { if (e.key === "Escape") drawerEscapes++; };
+    window.addEventListener("keydown", drawerOnKey);
+    try {
+      const drawer = React.createElement("aside", { role: "dialog", "aria-modal": "true", "aria-label": "Drawer", style: { position: "fixed", zIndex: 60 } },
+        React.createElement("button", { type: "button", "data-drawer-control": true }, "Drawer control"));
+      await openRaised(drawer);
+      beginUpload();
+      try {
+        const control = document.querySelector("[data-drawer-control]") as HTMLButtonElement;
+        await act(async () => { control.focus(); });
+        await escapeAtFocus();
+        await flush();
+        expect(panel().hasAttribute("inert")).toBe(true);
+        expect(drawerEscapes).toBe(0);
+        expect(staging.aborted).toBe(0);
+        expect(hasUploadsInFlight()).toBe(true);
+      } finally { endUpload(); }
+    } finally { window.removeEventListener("keydown", drawerOnKey); }
+  });
+
+  it("dialogPaintsAbovePanel: a higher layer is above, a lower one under, an equal one by document order; the outermost z-index counts; the panel's layer is where it opened (pure)", () => {
+    const made: Element[] = [];
+    const mk = (z: number | null, parent: Element = document.body) => {
+      const el = document.createElement("div");
+      el.style.position = "fixed";
+      if (z !== null) el.style.zIndex = String(z);
+      parent.appendChild(el);
+      if (parent === document.body) made.push(el);
+      return el;
+    };
+    try {
+      const earlierAtRest = mk(CENTER_PANEL_Z_AT_REST);
+      const panelEl = mk(null); // the panel's own layer is known, not read
+      const laterAtRest = mk(CENTER_PANEL_Z_AT_REST);
+      // at rest (241): drawers under, a 300-band modal above, an equal layer by order
+      expect(dialogPaintsAbovePanel(mk(60), panelEl, false)).toBe(false);
+      expect(dialogPaintsAbovePanel(mk(70), panelEl, false)).toBe(false);
+      expect(dialogPaintsAbovePanel(mk(Z.metadataStagingModal), panelEl, false)).toBe(true);
+      expect(dialogPaintsAbovePanel(laterAtRest, panelEl, false)).toBe(true);
+      expect(dialogPaintsAbovePanel(earlierAtRest, panelEl, false)).toBe(false);
+      // no z-index anywhere: the page's layer
+      expect(dialogPaintsAbovePanel(mk(null), panelEl, false)).toBe(false);
+      // raised (Z.dialog): the upload modals are under; the dialog host, opened after, above
+      expect(dialogPaintsAbovePanel(mk(Z.assetPhotoUploader), panelEl, true)).toBe(false);
+      expect(dialogPaintsAbovePanel(mk(Z.dialog), panelEl, true)).toBe(true);
+      // the outermost layer counts: a 900 inside a z-60 drawer paints at 60
+      expect(dialogPaintsAbovePanel(mk(900, mk(60)), panelEl, true)).toBe(false);
+    } finally { for (const el of made) el.remove(); }
   });
 
   it("the premise: MetadataStagingModal's Escape is a window bubble listener that aborts the upload (pinned so the copy above stays honest)", () => {

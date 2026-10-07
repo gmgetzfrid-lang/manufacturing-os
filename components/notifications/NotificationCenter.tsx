@@ -208,10 +208,10 @@ function CenterPanel({
   // leave question is up, Escape answers it ("Stay") and goes no further: the
   // center stays open, and a raising modal's `window` listener under it
   // (MetadataStagingModal's Escape closes the modal and aborts its upload)
-  // never hears the key (third review fix). An Escape inside another dialog
-  // above the center (an app dialog opened over it) is that dialog's to
-  // answer on `document` (Modal's convention); once it has, the key stops
-  // there too, so nothing under the center acts on it as well.
+  // never hears the key (third review fix). An Escape inside a dialog that
+  // paints ABOVE the center (an app dialog opened over it) is that dialog's
+  // to answer on `document`, then stops there; one inside a dialog UNDER the
+  // center (a drawer focus reached by Tab) closes the center, as on base.
   useEffect(() => {
     if (!isOpen) return;
     const h = (e: KeyboardEvent) => {
@@ -224,7 +224,7 @@ function CenterPanel({
       const at = e.target instanceof Element && e.target !== document.body ? e.target : document.activeElement;
       const dialog = at?.closest('[role="dialog"], [role="alertdialog"]');
       const panel = panelRef.current;
-      if (dialog && panel && dialog !== panel && !panel.contains(dialog)) {
+      if (dialog && panel && dialog !== panel && !panel.contains(dialog) && dialogPaintsAbovePanel(dialog, panel, aboveModal)) {
         // Added during this dispatch, so it runs after every `document`
         // listener already there (the dialog's), before any `window` one.
         const stopAfterDialog = (ev: Event) => { if (ev === e) ev.stopPropagation(); };
@@ -237,7 +237,7 @@ function CenterPanel({
     };
     window.addEventListener("keydown", h, { capture: true });
     return () => window.removeEventListener("keydown", h, { capture: true });
-  }, [isOpen, onClose, answerLeave]);
+  }, [isOpen, onClose, answerLeave, aboveModal]);
 
   // Focus (NEDGE-5): opening moves focus into the panel; closing returns it
   // to whatever opened it, when that is still on the page and focus has
@@ -454,4 +454,30 @@ function CenterPanel({
     </>,
     document.body,
   );
+}
+
+/** The panel's layer at rest — its `z-[241]` class (opened above a raising
+ *  modal it is `Z.dialog`, inline). */
+export const CENTER_PANEL_Z_AT_REST = 241;
+
+/** Whether `dialog` paints above the center's panel, so that an Escape inside
+ *  it is that dialog's to answer (N3 fourth review fix). The center declares
+ *  `aria-modal` but does not trap Tab, so focus can reach a dialog UNDER it —
+ *  InspectorDrawer (60) or HistoryDrawer (70) under a center opened from the
+ *  dock's doorway or a keyboard-reached badge, or the upload modal (300–510)
+ *  under a raised center; deferring to one of those closed nothing (its own
+ *  `window` listener never hears the key). A dialog's layer is the outermost
+ *  numeric z-index on it or an ancestor below `<body>` (none: the page, 0); a
+ *  higher layer than the panel's paints above, a lower one under, and at an
+ *  equal layer the later in the document paints above (the app's dialog host
+ *  at `Z.dialog` over a raised center). */
+export function dialogPaintsAbovePanel(dialog: Element, panel: Element, aboveModal: boolean): boolean {
+  const panelZ = aboveModal ? Z.dialog : CENTER_PANEL_Z_AT_REST;
+  let z = 0;
+  for (let n: Element | null = dialog; n && n !== document.body && n !== document.documentElement; n = n.parentElement) {
+    const v = Number.parseInt(getComputedStyle(n).zIndex, 10);
+    if (Number.isFinite(v)) z = v;
+  }
+  if (z !== panelZ) return z > panelZ;
+  return (panel.compareDocumentPosition(dialog) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
 }
