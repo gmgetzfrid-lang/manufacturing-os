@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { normalizeEmail, applyEmailLookup } from "@/lib/identity";
+import { notifyMany } from "@/lib/inAppNotifications";
+import { queueEmail } from "@/lib/notifications";
+import { resolveRoleRecipients } from "@/lib/notify/recipients";
+import { runWithServerClient } from "@/lib/serverClientScope";
 
 // This public, unauthenticated endpoint was the one door in the auth pair with
 // no rate limit — its neighbour /api/auth/signup carries the full
@@ -30,6 +34,68 @@ async function requestAccessRateLimited(ip: string): Promise<boolean> {
 async function recordAttempt(ip: string, email: string | null, outcome: string): Promise<void> {
   await supabaseAdmin.from("signup_attempts").insert({ ip, email, outcome })
     .then(() => undefined, () => undefined);
+}
+
+/** The roles told about a request: the org's Admin / DocCtrl pool (PROD-2,
+ *  DEC-44 (N8) item 1 — the pool the holds audience uses; both may grant the
+ *  membership at /api/admin/create-user and decline at
+ *  /api/admin/access-requests). Exported for the test. */
+export const ACCESS_REQUEST_AUDIENCE = ["Admin", "DocCtrl"] as const;
+
+/** PROD-2: a request nobody hears about is a request nobody answers. After
+ *  the row is written, every active member of the org holding Admin or
+ *  DocCtrl (headline or additive role, lib/notify/recipients.ts) gets a bell
+ *  row (access_request_pending, linking to Admin → Users, where the pending
+ *  requests are listed) and an email. The row names no actor — the person
+ *  at the door has no account; a service-role row (20261160 passes it
+ *  untouched). The email's subject names no one (a role pool, NEDGE-6);
+ *  the requester's name and address are in its body. Best-effort and never
+ *  thrown: the request is already recorded and the response is unchanged.
+ *  The bound client is the service role (runWithServerClient), so the
+ *  shared-client helpers write as the server. */
+async function notifyAccessRequest(input: {
+  orgId: string; orgName: string; displayName: string; email: string; requestId: string | null;
+}): Promise<void> {
+  try {
+    await runWithServerClient(supabaseAdmin, async () => {
+      const recipients = await resolveRoleRecipients(input.orgId, [...ACCESS_REQUEST_AUDIENCE]);
+      if (recipients.length === 0) return;
+      // The name is typed at a public door: bounded before it reaches a bell.
+      const name = input.displayName.trim().slice(0, 80) || input.email;
+      const title = `${name} asked to join ${input.orgName}`;
+      const body = `${name} (${input.email}) asked for access to ${input.orgName}. Review the request under Admin → Users: add them as a member, or decline it.`;
+      await notifyMany({
+        orgId: input.orgId,
+        userIds: recipients,
+        kind: "access_request_pending",
+        title,
+        body,
+        link: "/admin/users",
+        resourceType: "access_request",
+        resourceId: input.requestId ?? undefined,
+        metadata: input.requestId ? { accessRequestId: input.requestId } : undefined,
+      });
+      const { data: rows } = await supabaseAdmin
+        .from("org_members")
+        .select("uid, email")
+        .eq("org_id", input.orgId)
+        .eq("status", "active")
+        .in("uid", recipients);
+      await Promise.all(((rows as Array<{ uid: string; email: string | null }> | null) ?? [])
+        .filter((m) => !!m.email)
+        .map((m) => queueEmail({
+          orgId: input.orgId,
+          toUserId: m.uid,
+          toEmail: m.email as string,
+          subject: "Access request waiting for review",
+          bodyText: `${title}.\n\n${body}`,
+          eventType: "assignment",
+          metadata: input.requestId ? { accessRequestId: input.requestId } : undefined,
+        })));
+    });
+  } catch (e) {
+    console.warn("[request-access] the access request was recorded but its notice was not sent", (e as Error).message);
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -100,18 +166,24 @@ export async function POST(req: NextRequest) {
     }
 
     // 3. Insert request linked to the org
-    const { error: insertError } = await supabaseAdmin.from("access_requests").insert({
+    const { data: inserted, error: insertError } = await supabaseAdmin.from("access_requests").insert({
       org_id: orgId,
       org_name: orgRealName,
       display_name: displayName,
       email,
       status: "pending",
       created_at: new Date().toISOString(),
-    });
+    }).select("id").maybeSingle();
 
     if (insertError) {
       return NextResponse.json({ error: `Failed to submit request: ${insertError.message}` }, { status: 500 });
     }
+
+    // 4. Tell the people who can answer it (PROD-2).
+    await notifyAccessRequest({
+      orgId, orgName: orgRealName, displayName: String(displayName), email,
+      requestId: ((inserted as { id?: string } | null)?.id) ?? null,
+    });
 
     return NextResponse.json({ ok: true, orgName: orgRealName });
   } catch (err: unknown) {

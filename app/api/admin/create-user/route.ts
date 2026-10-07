@@ -4,6 +4,7 @@ import { ALL_ROLES, type Role } from "@/types/schema";
 import { normalizeEmail, applyEmailLookup } from "@/lib/identity";
 import { normalizeRoles, primaryRole } from "@/lib/roleCapabilities";
 import { assertOrgHasAccess } from "@/lib/serverAuth";
+import { queueAccessRequestOutcome } from "@/lib/accessRequestOutcome";
 
 // Bounded lookup of auth users by email. Only used in the rare path where the
 // auth account already exists (e.g. they signed in with Microsoft first) but
@@ -35,14 +36,30 @@ async function findAuthUsersByEmail(email: string): Promise<string[] | null> {
  *  Best-effort by design — membership is already granted; a failure here only
  *  leaves the card row visible — but logged so it is never invisible. Both
  *  sides store emails normalized (lib/identity.ts / 20261018), so eq matches. */
-async function resolvePendingAccessRequests(orgId: string, email: string): Promise<void> {
-  const { error } = await supabaseAdmin
+async function resolvePendingAccessRequests(orgId: string, email: string, memberUid: string): Promise<void> {
+  const { data, error } = await supabaseAdmin
     .from("access_requests")
     .update({ status: "approved" })
     .eq("org_id", orgId)
     .eq("email", email)
-    .eq("status", "pending");
-  if (error) console.warn(`[create-user] couldn't resolve pending access request for ${email}: ${error.message}`);
+    .eq("status", "pending")
+    .select("id, org_name");
+  if (error) { console.warn(`[create-user] couldn't resolve pending access request for ${email}: ${error.message}`); return; }
+  // PROD-2 dw2: the membership IS the approval. When it answered a pending
+  // request, the person who asked hears so at the address they gave (now
+  // their member address — the lookup matched it). Only rows THIS call
+  // resolved; an "Add member" that answered no request emails nobody.
+  const rows = (Array.isArray(data) ? data : []) as Array<{ id: string; org_name: string | null }>;
+  if (rows.length === 0) return;
+  await queueAccessRequestOutcome(supabaseAdmin, {
+    outcome: "approved",
+    orgId,
+    orgName: rows[0].org_name ?? null,
+    requestIds: rows.map((r) => String(r.id)),
+    toEmail: email,
+    queuedBy: memberUid,
+    toMember: true,
+  });
 }
 
 /** The refusal every ambiguous-identity path lands on. Copies the pattern the
@@ -270,7 +287,7 @@ export async function POST(req: NextRequest) {
       updated_at: new Date().toISOString(),
     });
 
-    await resolvePendingAccessRequests(orgId, email);
+    await resolvePendingAccessRequests(orgId, email, userId);
 
     return NextResponse.json({ uid: userId, roles: merged, merged: true });
   }
@@ -348,7 +365,7 @@ export async function POST(req: NextRequest) {
     updated_at: new Date().toISOString(),
   });
 
-  await resolvePendingAccessRequests(orgId, email);
+  await resolvePendingAccessRequests(orgId, email, userId);
 
   return NextResponse.json({ uid: userId });
 }

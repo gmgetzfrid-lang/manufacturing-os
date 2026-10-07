@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { queueAccessRequestOutcome } from "@/lib/accessRequestOutcome";
 
 // Decline a pending access request (EGRESS-5 follow-through). The public
 // request door (/api/auth/request-access) refuses a second request while one
@@ -30,7 +31,7 @@ export async function POST(req: NextRequest) {
 
   const { data: request, error: lookupError } = await supabaseAdmin
     .from("access_requests")
-    .select("id, org_id, status")
+    .select("id, org_id, status, email, org_name")
     .eq("id", id)
     .maybeSingle();
   if (lookupError) {
@@ -57,13 +58,29 @@ export async function POST(req: NextRequest) {
 
   // Only a pending row can be declined — approving happened elsewhere and a
   // decided row stays decided.
-  const { error: updateError } = await supabaseAdmin
+  const { data: declined, error: updateError } = await supabaseAdmin
     .from("access_requests")
     .update({ status: "declined" })
     .eq("id", id)
-    .eq("status", "pending");
+    .eq("status", "pending")
+    .select("id");
   if (updateError) {
     return NextResponse.json({ error: updateError.message }, { status: 500 });
+  }
+
+  // PROD-2 dw2: the person who asked hears the answer, at the address they
+  // gave — only when THIS call declined the row (a row already decided is
+  // not re-announced). Queued here, server-side, from the stored row; best-
+  // effort, never failing the decline.
+  if (Array.isArray(declined) && declined.length > 0) {
+    await queueAccessRequestOutcome(supabaseAdmin, {
+      outcome: "declined",
+      orgId: request.org_id as string,
+      orgName: (request.org_name as string | null) ?? null,
+      requestIds: [String(request.id ?? id)],
+      toEmail: (request.email as string | null) ?? null,
+      queuedBy: caller.id,
+    });
   }
 
   return NextResponse.json({ ok: true });
