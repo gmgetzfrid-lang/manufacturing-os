@@ -667,6 +667,8 @@ Tests: `lib/__tests__/orgGraph.test.ts` GM-10 block (the system hangs from `cbun
 
 **Scope / residual.** None in this package.
 
+*Cross-note (2026-10-07, intelligence Round G, I-24): the lens labels quoted above were renamed label-only (`DEC-88` item 1 as rewritten under `DEC-90`): Whole map · Process layout · Governing paper · Records & filing, keys unchanged. The second test cited is now "no lens label contains a node-type word (the Filters drawer's own labels), and none is named for what it hides" (`lib/__tests__/graphSettingsUrl.test.ts`). Each lens still shows what its title names. See `GPV-4`.*
+
 ---
 
 <a id="gm-11"></a>

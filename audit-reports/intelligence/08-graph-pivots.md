@@ -177,7 +177,7 @@ Tests: `lib/__tests__/orgGraph.test.ts` — `cbunit:20` reaches the drawing in o
 ## GPV-4 · "Equipment" names three different things on the same screen; "Units" names two disjoint node families
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/graph/page.tsx:45-48`, `app/(protected)/graph/page.tsx:431`, `components/graph/GraphControls.tsx:22-26`, `components/graph/GraphControls.tsx:153`, `components/graph/NodePeek.tsx:88-90`, `app/(protected)/graph/page.tsx:864`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The substance holds, but "three different things" is an overcount: page.tsx:45-48 (TYPE_LABELS) and NodePeek.tsx:88-90 (`labelFor(node.type)`, fed `TYPE_LABELS[t].replace(/s$/, "")` at page.tsx:864) are the SAME referent — the asset node type — rendered in two places, not two meanings. The real collision is two-way: the type-filter row "Equipment" (hides nodes when unchecked) vs the lens button "Equipment ↔ Docs" (hides four OTHER types). That is a nomenclature/label defect with a stale-count wart and no data consequence, which reads LOW rather than MEDIUM.
@@ -232,6 +232,39 @@ Owner / decision: the user's ratification of `DEC-88` item 1. The integrator ren
 - **If not**, the follow-on is label-only: one `label` per entry of `GRAPH_LENSES` in `lib/graphSettings.ts` (for example the finding's own "Governing paper" for `equipment-docs`), plus the label strings pinned in `lib/__tests__/graphSettingsUrl.test.ts` and `lib/__tests__/graphPageRender.test.ts`. Keys, URLs and stored settings do not change. The integrator assigns it to the intelligence package that takes the ratification.
 
 **Integrator note (2026-10-07, DEC-90 A16).** *Not ratified by the integrator under the user's delegation, 2026-10-07 (DEC-90): one name per concept — three of the four lens names reuse node-type words, so the finding's scenario still happens; the lenses are renamed label-only (`all` → "Whole map", `plant` → "Process layout", `equipment-docs` → "Governing paper", `documents` → "Records & filing"), the URL keys unchanged (intelligence I-24).* DEC-88 item 1 is rewritten to the new labels. Status stays OPEN on done-when 1 until I-24 lands; then done-when 1 holds **as written** ("the lens names and the node-type names occupy different vocabularies (e.g. lens 'Governing paper', type 'Equipment')"), done-whens 2 and 3 are already ✓, and the finding can be RESOLVED on I-24's record. I-24's scope: one `label` per `GRAPH_LENSES` entry in `lib/graphSettings.ts`; `lib/__tests__/graphSettingsUrl.test.ts` strengthened from "no lens is named by a single node-type word" to "no lens label contains a node-type word" (the node-type list in `components/graph/GraphControls.tsx`); the label strings pinned in `lib/__tests__/graphPageRender.test.ts`. The keys URLs carry (`all`, `plant`, `equipment-docs`, `documents`), stored settings and saved views do not change. `userHeld.GPV-4` is removed.
+
+**Resolution (2026-10-07, intelligence Round G).** Package I-24 GRAPH LENS LABELS (`DEC-88` item 1 as rewritten under `DEC-90` A16). Reproduced first (DEC-29) on the base `b0a03b1`:
+- `lib/graphSettings.ts:146-158` labelled the lenses "Everything", "Plant (units & equipment)", "Equipment ↔ Documents" and "Documents & libraries". Three of the four carry node-type words (plant, units, equipment; equipment, documents; documents, libraries), beside the Filters rows "Equipment", "Units", "Plants", "Documents" and "Libraries" (`components/graph/GraphControls.tsx:30-33`). The strengthened test failed on that base: `lens "Plant (units & equipment)" (plant): expected [ 'plant', 'units', 'equipment' ] to deeply equal []`.
+- Three other places named a lens by a name the lens bar does not show: the graph page's Connect help, "drawn with an arrow on the Plant lens" (`app/(protected)/graph/page.tsx:1396`); the setup navigator, "draw them on the Process lens" (`app/(protected)/setup/page.tsx:207`); and the feature atlas, "with lenses: Everything, Process (flow map), Equipment ↔ Docs, Documents" (`lib/featureAtlas.ts:91`). The atlas feeds the command palette and the assistant's app map (`atlasForPrompt`), so the finding's own scenario — "turn on the Equipment lens" — could be told to a user by the assistant.
+
+What landed:
+- **The labels.** `lib/graphSettings.ts` `GRAPH_LENSES` (`:150-167`), one `label` per entry: `all` → "Whole map", `plant` → "Process layout", `equipment-docs` → "Governing paper", `documents` → "Records & filing". The keys, hidden lists, `libEdges` and titles are unchanged. The module header and the `GraphLens` doc say a label is display only and the key is the URL / storage contract.
+- **Every other place that names a lens names it by its label.** The Connect help reads "drawn with an arrow on the Process layout lens" (`page.tsx:1396`); the setup step reads "draw them on the Process layout lens" (`setup/page.tsx:207`); the atlas reads "with lenses: Whole map, Process layout (the flow map), Governing paper, Records & filing" (`featureAtlas.ts:91`; its aliases are unchanged, so "flow map" and "process lens" still find the graph); the lens bar's header example reads "≈ Process layout — adjusted" (`components/graph/GraphLensBar.tsx:8`).
+- The node-type label "Equipment", and every other Filters label, is unchanged.
+
+Tests:
+- `lib/__tests__/graphSettingsUrl.test.ts`:
+  - "is DEC-88's lens set, in order: the labels renamed (I-24), the keys unchanged".
+  - "no lens label contains a node-type word (the Filters drawer's own labels), and none is named for what it hides" — strengthened from "no lens is named by a single node-type word". The words are read from the source of `GraphControls.tsx` `TYPE_LABELS`, and the read is checked whole (one label per `GRAPH_NODE_TYPES` entry, `asset` still "Equipment"). Each word counts plural and singular, with the type keys and the unit class's System kind added.
+  - "the check is real: the labels I-14 shipped each fail it (GPV-4's reproduction)".
+  - "the rename is label-only: every link, stored blob and saved view loads the same lens". Every existing `?lens=` key parses, applies the same literal hidden list, matches exactly and writes the same URL. A label, old or new, is never read as a key. A v1 blob holding each lens's filter loads as that lens, under its new label. A v2 blob with saved views keeps each view's filter, scope and name. A saved blob never holds a label.
+  - "every place outside the lens bar that names a lens names it by its label" — the page, the setup step, the atlas and the lens bar header.
+- `lib/__tests__/graphPageRender.test.ts`:
+  - the label strings it pinned ("≈ Whole map"; "Governing paper", twice);
+  - the v1-blob regression pin now also checks that "Process layout" is lit;
+  - a new block. The lens bar and the phone select read the four labels, while the Filters drawer still says "Equipment" and the two share no word. `?lens=all`, `plant`, `equipment-docs` and `documents` each apply that lens's filter, light exactly its label, set the select to the key and keep `lens=<key>` in the URL. Tapping a lens writes its key, never its label. The Connect help names the Process layout lens.
+
+**Done-when.**
+1. ✓ The lens names and the node-type names occupy different vocabularies. No lens label contains a word of any Filters label (singular or plural), a type key or the System kind (`graphSettingsUrl.test.ts`; as rendered, `graphPageRender.test.ts`). The node type keeps "Equipment". In the product, the places outside the lens bar that name a lens use these labels (the public marketing page is `GPV-15`). This holds as written: `DEC-88` item 1 was not ratified, so nothing is superseded.
+2. ✓ (I-14, unchanged) The unit kinds are labelled apart in the Filters list and coloured (in 2D, shaped) apart (`graphView.test.ts` "GPV-4 — the unit class's three kinds").
+3. ✓ (I-14, unchanged) The Filters counts say whether they count the view or the whole map.
+
+**Scope / residual.**
+- No migration. Nothing stored changes: the keys, stored settings and saved views are untouched (pinned above). A saved view a person named after an old lens (for example "Plant lens — crude") keeps the person's own name.
+- "Process lens" survives in two code comments that no one sees: `lib/processFlows.ts:5` and `supabase/migrations/20261017_process_flows.sql:7`. They are left as written; a migration is never edited.
+- The public marketing page still shows and describes the lenses in the node-type words. That is not this finding's screen; it is opened as `GPV-15`.
+- Files outside I-24's plan list, one string each: `app/(protected)/graph/page.tsx` (I-15 and I-23 own it later), `app/(protected)/setup/page.tsx` and `lib/featureAtlas.ts` (I-05's, merged), and `components/graph/GraphLensBar.tsx` (I-14's, merged).
+- `GPV-10` and `GM-10` quote the old labels and the old test name; each carries a cross-note.
 
 ---
 
@@ -496,6 +529,8 @@ app/(protected)/graph/page.tsx:430 — `{ key: "process", label: "Process", hidd
 
 **Scope / residual.** None.
 
+*Cross-note (2026-10-07, intelligence Round G, I-24): the lens labels quoted above were renamed label-only (`DEC-88` item 1 as rewritten under `DEC-90`): Whole map · Process layout · Governing paper · Records & filing, keys unchanged. The near-miss now reads, for example, "≈ Process layout". The tests cited still hold. See `GPV-4`.*
+
 ---
 
 <a id="gpv-11"></a>
@@ -720,5 +755,34 @@ Both renderers read the same function.
 Test: `graphView.test.ts` "GPV-14 — a pinned shelf, a bound knowledge library and filing are told apart".
 
 **Scope / residual.** Library edges are drawn when library links are on (Settings → Library links). That visibility rule is unchanged.
+
+---
+
+<a id="gpv-15"></a>
+
+## GPV-15 · The marketing page still shows and describes the graph's lenses in the node-type words GPV-4 retired
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Locations:** `components/marketing/TourTabs.tsx:307`, `app/about/page.tsx:337`, `app/about/page.tsx:343`
+- **Assigned:** proposed — an intelligence follow-on (copy only, label-only like I-24); no package's file list holds `app/about/page.tsx` or `components/marketing/**`; the integrator assigns at merge — opened by intelligence I-24 GRAPH LENS LABELS, 2026-10-07 (DEC-31: the remainder outside `GPV-4`'s screen, split rather than widened past five files).
+
+**Mechanism.** The product's lenses are labelled apart from the node types (`GPV-4`, `DEC-88` item 1: Whole map · Process layout · Governing paper · Records & filing). The public marketing page was never updated. It still shows them in the vocabulary the product retired, which is older than I-14's labels too:
+- the site-graph mockup draws a lens bar reading "Everything", "Process flow", "Equipment", "Documents" (`TourTabs.tsx:307`);
+- the "A living map of your site" pillar describes "lenses: process flow, equipment, documents — or everything at once" (`about/page.tsx:337`) and "Process / equipment / document lenses" (`about/page.tsx:343`).
+
+**Failure scenario.** A prospect or new user reads the tour, opens /graph and looks for the "Equipment" lens the mockup showed. They find the Filters row "Equipment" — the node type — and untick it. That is `GPV-4`'s scenario, set up by the marketing page instead of the product.
+
+**Evidence.**
+
+```
+components/marketing/TourTabs.tsx:307 — `{["Everything", "Process flow", "Equipment", "Documents"].map((l, i) => (`. app/about/page.tsx:337 — `"Interactive 2D/3D graph with lenses: process flow, equipment, documents — or everything at once"`. app/about/page.tsx:343 — `"Process / equipment / document lenses"`. lib/graphSettings.ts:150-167 — the lens labels the product shows.
+```
+
+**Done when.**
+
+- [ ] the marketing mockup's lens bar reads the product's lens labels (from `GRAPH_LENSES` or pinned to it by a test), or shows no lens names
+- [ ] the marketing copy describes the lenses without naming a lens by a node-type word
 
 ---
