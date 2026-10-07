@@ -70,6 +70,7 @@ import { publicOrigin } from "@/lib/publicOrigin";
 import { portalKeyAllowed, portalRowRefusal } from "@/lib/transmittals";
 import { effectiveStatusFor } from "@/lib/effectiveDate";
 import { isPdfFile } from "@/lib/verifyVerdict";
+import { notifyChecked, notifyWithReason } from "@/lib/inAppNotifications";
 
 export const runtime = "nodejs";
 // The download is streamed through the function, so the function lives while
@@ -399,15 +400,17 @@ async function tellIssuerUnstampable(
         "It was checked as stampable when this transmittal was issued, and a PDF that passed that check leaves the portal " +
         "stamped or not at all, so they do not have it. Re-save it without restrictions (or split it), then issue a new " +
         "transmittal — this one still reads issued on the register.";
-    const { error: bellErr } = await supabaseAdmin.from("notifications").insert({
-      org_id: orgId, user_id: issuer,
+    // The typed insert (TAX-11), on the service-role client; a refusal is
+    // logged by notifyChecked and said here, never read as delivered.
+    const bell = await notifyWithReason({
+      orgId, userId: issuer,
       kind: UNSTAMPABLE_NOTICE_KIND,
       title, body,
       link: "/transmittals",
-      resource_type: "transmittal", resource_id: String(t.id),
+      resourceType: "transmittal", resourceId: String(t.id),
       metadata: { documentId: item.documentId, reason, outcome },
-    });
-    if (bellErr) console.error("[transmittal portal] the issuer's bell notice of an unstamped PDF was refused", bellErr.message);
+    }, supabaseAdmin);
+    if (!bell.ok) console.error("[transmittal portal] the issuer's bell notice of an unstamped PDF was refused", bell.error);
     const { data: member, error: memberErr } = await supabaseAdmin
       .from("org_members").select("email")
       .eq("org_id", orgId).eq("uid", issuer)
@@ -780,15 +783,16 @@ export async function POST(req: NextRequest) {
 
   // Tell the issuer their receipt landed — bell now, email via the queue.
   if (t.created_by) {
-    await supabaseAdmin.from("notifications").insert({
-      org_id: t.org_id, user_id: t.created_by,
+    // The typed insert (TAX-11), on the service-role client; best-effort, as before.
+    await notifyChecked({
+      orgId: String(t.org_id), userId: String(t.created_by),
       kind: "ack_complete",
       title: `Transmittal ${t.number} acknowledged`,
       body: `${name} confirmed receipt through the portal.`,
       link: "/transmittals",
-      resource_type: "transmittal", resource_id: String(t.id),
-      actor_name: name,
-    }).then(() => undefined, () => undefined);
+      resourceType: "transmittal", resourceId: String(t.id),
+      actorName: name,
+    }, supabaseAdmin);
 
     const { data: issuer } = await supabaseAdmin
       .from("org_members").select("email")

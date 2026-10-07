@@ -12,7 +12,7 @@ import { isControllerPrincipal } from "@/lib/permissions";
 import { SNAPSHOT_READS, type ProjectStateSnapshot } from "@/lib/projectHealth";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { logAuditAction } from "@/lib/audit";
-import { notify, notifyMany } from "@/lib/inAppNotifications";
+import { notify, notifyMany, notifyChecked } from "@/lib/inAppNotifications";
 import { listFollowerIds } from "@/lib/subscriptions";
 import {
   ensureActiveEpisode,
@@ -2059,23 +2059,23 @@ async function sweepSessions(
   }
 
   // Personal interrupt: tell each former holder their checkout evaporated —
-  // built from the rows the UPDATE actually changed. Direct notification-row
-  // inserts (works under both the RLS client and the cron's service-role
-  // client); never fails the sweep.
+  // built from the rows the UPDATE actually changed. The typed insert
+  // (notifyChecked, TAX-11) on THIS sweep's client — the RLS client in the
+  // browser, the cron's service-role client — one row per holder; a refusal
+  // is logged by notifyChecked and never fails the sweep.
   try {
-    const inserts = released.map((r) => ({
-      org_id: r.org_id,
-      user_id: r.user_id,
+    await Promise.all(released.map((r) => notifyChecked({
+      orgId: r.org_id,
+      userId: r.user_id,
       kind: "checkout_released",
       title: o.title,
       body: o.body,
       link: r.library_id ? `/documents/${r.library_id}?doc=${r.document_id}` : "/checkouts",
-      resource_type: "document",
-      resource_id: r.document_id,
-      actor_name: "System",
+      resourceType: "document",
+      resourceId: r.document_id,
+      actorName: "System",
       metadata: { autoReleasedSessionId: r.id },
-    }));
-    if (inserts.length > 0) await db.from("notifications").insert(inserts);
+    }, db)));
   } catch (e) {
     console.warn("[autoReleaseExpiredAdHoc] holder notify failed (non-blocking)", e);
   }
