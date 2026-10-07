@@ -63,6 +63,7 @@ import {
   loadEmbedDetail, unembeddedCount, embedAgreementSigned, readEmbedBuildMarker, expectationOf,
   type EmbedBuildMarker,
 } from "@/lib/knowledgeEmbedCore";
+import { headroomWaitNote } from "@/lib/knowledgeKeyless";
 
 /** Per-slice loop budget / in-flight hard stop, relative to slice start. */
 const SLICE_BUDGET_MS = 45_000;
@@ -211,8 +212,15 @@ export async function drainEmbedBacklog(opts: {
         continue;
       }
 
-      // Claim the rotation slot before spending anything.
-      await patchEmbedBuildMarker(lib.id, { lastDrainAt: new Date().toISOString() }, expect);
+      // Claim the rotation slot before spending anything. GOV-5 residual
+      // (I-22): a headroom wait an earlier run recorded is cleared here, so
+      // the marker only ever says what the LATEST run that reached this
+      // library found (a no-fit stop below records it again). Untouched
+      // when there is none — the write is exactly as before.
+      await patchEmbedBuildMarker(lib.id, {
+        lastDrainAt: new Date().toISOString(),
+        ...(m.headroomWaitAt || m.headroomNote ? { headroomWaitAt: undefined, headroomNote: undefined } : {}),
+      }, expect);
 
       const detail = await loadEmbedDetail(lib.org_id, lib.id);
       const remainingBefore = detail ? detail.remaining : await unembeddedCount(lib.org_id, lib.id);
@@ -388,6 +396,18 @@ export async function drainEmbedBacklog(opts: {
           // fit what is left (a call in flight may settle below its own).
           // No hold and no reason on the stamp: this run's work on the
           // library ends here, and the next run looks again.
+          // GOV-5 residual (I-22): the run's outcome is recorded on the
+          // build marker — `headroomWaitAt` and a note built from the
+          // refusal's figures, never blockedUntil, so it holds nothing back —
+          // and the library's meaning-index panel says it is waiting for
+          // budget headroom, retried each run. The note is in the third
+          // person ("the payer's … cap"), never the reservation's own
+          // sentence ("your … cap"): every member of the library reads that
+          // panel, not only the payer. The run's report says it too, as before.
+          await patchEmbedBuildMarker(lib.id, {
+            headroomWaitAt: new Date().toISOString(),
+            headroomNote: e instanceof GovernedCallError ? headroomWaitNote(e.details) : undefined,
+          }, expect);
           record({
             embedded, remaining: -1, outcome: embedded > 0 ? "advanced" : "blocked",
             note: `the next batch did not fit what is left of the payer's monthly AI cap, which is not reached — `

@@ -589,6 +589,34 @@ and six counts; paste before or with the app deploy.
   releases). A test mock of either that answers nothing makes a fold keep
   the folded reservation: answer `true`, as the stand-in does.
 
+**MERGE note — I-22's limbs in other packages' files** (intelligence Round G, 2026-10-07; `ING-13`, `ING-6`, the `GOV-5` residual). Whoever next edits each file keeps the limb. I-23 edits the engine next.
+
+- `lib/knowledgeIngest.ts` (I-06's / I-06b's / I-18's):
+  - `readPage`'s `keylessTextOnly` is `!vision && !visionHeld && (needsVision || readsEveryPage)`. A held page is listed, never counted.
+  - The main pass counts a page only after `lastCompletedPage`.
+  - The commit writes `vision_keyless_pages: baseKeylessTextPages + keylessTextPages`, only where the claimed row carries the column.
+  - `baseKeylessTextPages` is 0 on a generation's first batch, and `RESET_ROW` carries `vision_keyless_pages: 0`.
+  - `INGEST_COLUMNS_20261186` strips it from the legacy reset ladder.
+  - Every I-05, I-06b and I-18 limb named above is untouched.
+- `app/api/knowledge/ask/route.ts` (I-03's; I-12 and I-25 next): the DRAWING FACTS' own read of `id, vision_failed_pages, vision_keyless_pages`.
+  - On 42703 / PGRST204 naming the keyless column, it falls back to `id, vision_failed_pages`, then to nothing.
+  - Any other error is "unknown", never none.
+  - `visionUnreadFactsLine`, `trusted` false while any page is unread, and `VISION_UNREAD_RULE` in the rules for a known non-zero count. For an unknown count the rules carry `VISION_UNREAD_UNKNOWN_RULE` instead.
+  - The sheets' own read (`id, name, library_id, vision_pages`) is unchanged; I-03's tests pin it.
+- `app/(protected)/knowledge/[id]/page.tsx`: `docRowCounters(doc, keylessCount)` and the `data-keyless-pages` line, fed by `readKeylessTextPages` (`lib/knowledgeKeylessClient.ts`) beside the list. When `lib/knowledge.ts`'s `KnowledgeDocument` gains the column (I-16 or later), fold it in and drop that read.
+- `lib/knowledgeEmbedDrain.ts` (I-02's / I-18's):
+  - The `no_fit` branch patches `headroomWaitAt` and `headroomNote` on the build marker, never `blockedUntil`. `headroomNote` is `headroomWaitNote(e.details)`, in the third person. It is never the reservation's "your … cap" sentence, because every library member reads it.
+  - The slot claim drops both, only when present. The patch is otherwise unchanged.
+- `app/api/knowledge/embed/route.ts`: `background` carries the two fields only when recorded.
+- `components/knowledge/SemanticIndexPanel.tsx`: the `data-headroom-wait` line (`headroomWaitLine`).
+
+**Paste and deploy order for `20261186`:** after `20261122`; independent of `20261162` and `20261173`. The app may be deployed before or after the paste. Unpasted:
+- the engine writes nothing new, and the reset strips the column;
+- the ask route states only the failed pages;
+- the library page shows what it showed (42703 / PGRST204 is today's behaviour).
+
+The GOV-5 residual needs no migration. For the integrator's `MIGRATION-PASTE-ORDER.md` row: not a widening; no re-created object; one result set of two probes and two counts; paste any time after `20261122`. `lib/schemaExpectations.ts` probe for the integrator to add: `knowledge_documents.vision_keyless_pages` → `20261186_intel_roundG_keyless_text_only.sql`.
+
 ---
 
 ## Do not do these

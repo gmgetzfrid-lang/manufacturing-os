@@ -1171,6 +1171,8 @@
     "ING-4": "paste 20261122 (then a controller presses the re-index button per DEC-58)",
     "ING-7": "paste 20261122",
     "SEM-9": "paste 20261121 and send back its last row (recall@12 vs exact scan; >= 0.90 closes it, below turns it back into code work)",
-    "GAP-305": "paste 20261138, run the unit-identity decode on /admin/scope, paste 20261138 again and send back the disagreement inventory"
+    "GAP-305": "paste 20261138, run the unit-identity decode on /admin/scope, paste 20261138 again and send back the disagreement inventory",
+    "ING-13": "paste 20261186 (after 20261122; I-22 merged 2026-10-07) and send back its result set \u2014 the integrator sets RESOLVED then (DEC-58 as ruled under DEC-90 A18)",
+    "ING-6": "paste 20261186 (after 20261122; I-22 merged 2026-10-07) and send back its result set \u2014 the integrator sets RESOLVED then (DEC-58 as ruled under DEC-90 A18)"
   }
 }

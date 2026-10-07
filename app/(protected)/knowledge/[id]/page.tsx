@@ -46,6 +46,8 @@ import LibraryAiModal from "@/components/knowledge/LibraryAiModal";
 import SourcesPanel from "@/components/knowledge/SourcesPanel";
 import DrawingIntelPanel from "@/components/knowledge/DrawingIntelPanel";
 import SemanticIndexPanel from "@/components/knowledge/SemanticIndexPanel";
+import { keylessPagesShown, keylessTextOnlyLabel } from "@/lib/knowledgeKeyless";
+import { readKeylessTextPages } from "@/lib/knowledgeKeylessClient";
 import { ClarifyCard, NeedCard } from "@/components/knowledge/AssistantAskCards";
 import EquipmentTablePanel from "@/components/knowledge/EquipmentTablePanel";
 
@@ -97,17 +99,20 @@ const canAcceptPartial = (d: KnowledgeDocument) =>
  *  counter is shown on a row with no pages indexed. vision_pages already
  *  inflated past the page count (ING-12) is clamped to the pages indexed,
  *  and an empty-page count larger than the pages it is counted against is
- *  left out rather than shown as "34 of 0". */
-function docRowCounters(d: KnowledgeDocument): {
-  visionPages: number; failedPages: number[]; emptyPages: number | null; emptyOf: number;
+ *  left out rather than shown as "34 of 0". I-22: the keyless text-only
+ *  count (vision_keyless_pages, 20261186 — read beside the list) follows the
+ *  same rule; 0 when the database has no such column. */
+function docRowCounters(d: KnowledgeDocument, keylessCount = 0): {
+  visionPages: number; failedPages: number[]; emptyPages: number | null; emptyOf: number; keylessPages: number;
 } | null {
   if (!(d.pagesIndexed > 0)) return null;
   const visionPages = clampedVisionPages(d);
   const emptyOf = d.status === "ready" ? (d.pageCount ?? d.pagesIndexed) : d.pagesIndexed;
   const emptyPages = d.emptyPages > 0 && d.emptyPages <= emptyOf ? d.emptyPages : null;
   const failedPages = d.visionFailedPages;
-  if (visionPages === 0 && failedPages.length === 0 && emptyPages === null) return null;
-  return { visionPages, failedPages, emptyPages, emptyOf };
+  const keylessPages = keylessPagesShown(keylessCount, d.pagesIndexed);
+  if (visionPages === 0 && failedPages.length === 0 && emptyPages === null && keylessPages === 0) return null;
+  return { visionPages, failedPages, emptyPages, emptyOf, keylessPages };
 }
 
 // ── Instant proof ───────────────────────────────────────────────────────────
@@ -1142,6 +1147,10 @@ export default function KnowledgeLibraryPage() {
 
   const [library, setLibrary] = useState<KnowledgeLibrary | null>(null);
   const [docs, setDocs] = useState<KnowledgeDocument[]>([]);
+  // I-22 (DEC-58 / DEC-90 A18): each document's keyless text-only count,
+  // read beside the list whenever a row's progress changes. Empty on a
+  // database without 20261186 — nothing is shown, as before.
+  const [keylessByDoc, setKeylessByDoc] = useState<Map<string, number>>(() => new Map());
   const [history, setHistory] = useState<KnowledgeQuestion[]>([]);
   // Answers the history route left out for THIS reader (they cite a document
   // the reader cannot open) and a failed read — both said, never hidden.
@@ -1377,6 +1386,13 @@ export default function KnowledgeLibraryPage() {
     setLoading(false);
   }, [libraryId, activeOrgId, applyHistory]);
   useEffect(() => { void refresh(); }, [refresh]);
+  const keylessKey = useMemo(() => docs.map((d) => `${d.id}:${d.status}:${d.pagesIndexed}`).join("|"), [docs]);
+  useEffect(() => {
+    if (!keylessKey) return;
+    let live = true;
+    void readKeylessTextPages(libraryId).then((m) => { if (live) setKeylessByDoc(m); });
+    return () => { live = false; };
+  }, [libraryId, keylessKey]);
 
   // ── Auto-index queued documents while the page is open ─────────────────
   // Linked sources create docs in "pending"; a rev-up marks them "stale".
@@ -2230,7 +2246,7 @@ export default function KnowledgeLibraryPage() {
                       </div>
                     )}
                     {(() => {
-                      const c = docRowCounters(doc);
+                      const c = docRowCounters(doc, keylessByDoc.get(doc.id) ?? 0);
                       if (!c) return null;
                       return (
                         <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-[var(--color-text-muted)]">
@@ -2245,6 +2261,15 @@ export default function KnowledgeLibraryPage() {
                               {doc.visionPartialAccepted
                                 ? ` accepted unread — AI vision could not read p. ${pageListLabel(c.failedPages)}`
                                 : ` AI vision could not read yet (p. ${pageListLabel(c.failedPages)})`}
+                            </span>
+                          )}
+                          {/* I-22 (ING-13 / ING-6, DEC-58): pages committed from their
+                              text layer because no AI key was available, where a
+                              driver with a key would read them with AI vision. */}
+                          {c.keylessPages > 0 && (
+                            <span data-keyless-pages="true" className="text-amber-700 dark:text-amber-400"
+                              title="These pages need AI vision — no text layer, tags drawn as line-work, or a library that reads every page with it — but no AI key was available when they were indexed, so only their text layer is searchable.">
+                              {keylessTextOnlyLabel(c.keylessPages)}
                             </span>
                           )}
                           {/* ING-11: the running count the engine keeps on the row. */}

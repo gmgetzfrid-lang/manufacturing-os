@@ -202,6 +202,10 @@ async function detailFields(orgId: string, libraryId: string, userId: string, de
       blockedUntil: marker.blockedUntil ?? null,
       blockedReason: marker.blockedReason ?? null,
       lastError: marker.lastError ?? null,
+      // GOV-5 residual (I-22): the last run stopped for budget headroom (no
+      // hold) — present only when the drain recorded it, so every other
+      // status keeps its shape.
+      ...(marker.headroomWaitAt ? { headroomWaitAt: marker.headroomWaitAt, headroomNote: marker.headroomNote ?? null } : {}),
     } : null,
   };
 }
