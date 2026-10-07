@@ -603,31 +603,54 @@ one-paste migration:
   `20261165`, `20261164` and the held `20261159` (paste guide row 119), so
   this file waits with them. It re-creates `enforce_document_publish_guard`
   from `20261182`'s body (every P21, P20, P19, P18, REV-22 limb 1, RG-14,
-  REV-20, REV-18 and REV-17 rule kept) and adds one statement to
-  `v_issuing`. Nothing else is created or re-created; no row is moved.
+  REV-20, REV-18 and REV-17 rule kept) and adds two blocks: one statement
+  to `v_issuing`, and (review fix) a narrowing of `v_restoring` with one
+  more new-door limb for the same move out of a retirement. Nothing else is
+  created or re-created; no row is moved.
   **Never re-paste `20261182`, `20261174`, `20261165`, `20261164`,
   `20261159`, `20261151`, `20261144`, `20261139`, `20261105` or any earlier
   guard migration after it** — each drops the P16 rule.
-- **Deploy order: none.** The app works the same before and after the
-  paste: the two editors that can make the move are Document Control's
-  only and already treat it as an issue (P15: said before the save, the
-  hold checked first); Document Control passes the publisher tier and the
-  require limb never binds it. P16 changes no app code (comments in
-  `lib/issueStatus.ts` and `lib/documentStatusOptions.ts`).
+- **Deploy order: none** (no app deploy is needed before or after the
+  paste). The two editors that can make the direct move are Document
+  Control's only and already treat it as an issue (P15: said before the
+  save, the hold checked first); Document Control passes the publisher
+  tier and the require limb never binds it, so their saves land as before.
+  P16 changes no app code (comments in `lib/issueStatus.ts` and
+  `lib/documentStatusOptions.ts`). **One app result changes** (review fix;
+  *corrected: this paragraph first said the app works the same before and
+  after*): the un-archive of a document archived from IFC (or another
+  status no gate reads as in force) back to Issued is judged as an issue —
+  refused under a require policy short of Document Control or a complete
+  roster, and over an active hold for everyone, Document Control's
+  confirmed override included. The dialog answers both refusals (it offers
+  the Draft restore). The rollbacks put back the prior status (IFC), which
+  this does not touch.
 - **After the paste:** a status-only move into Issued / Locked out of an
   issue status outside them (IFC, an empty status, a case or spacing
   variant, a library's own), on a document with a current revision, is
   judged as an issue: refused below the publisher tier ("You do not have
   authority…"), over an active hold for everyone ("…release the hold before
   issuing it."), and under a require policy short of Document Control or a
-  complete roster. A write that also moves the pointer (a rev-up or revert
-  of an IFC document) keeps the pointer move's rules. The inventory counts
-  the documents concerned, the IFC ones among them (`VFY-20`'s count), the
-  held ones and the unreviewed ones under require.
-- **Not closed by P16 (opened as `REV-26`, DEC-31):** the editors' "The
-  database does not check this change" sentence (overstated once pasted),
-  the metadata editor's refusal suffix for the database's refusal of the
-  move, and whether the move owes `REV-19`'s clocks and `DOCUMENT_ISSUED`.
+  complete roster. The same move out of a retirement stamped with such a
+  status (IFC → Archived / Void / Superseded → Issued / Locked) is judged
+  the same way, and over a hold no flag passes it; a put-back to the
+  stamped status (Archived → IFC) is unchanged. A write that also moves the
+  pointer (a rev-up or revert of an IFC document) keeps the pointer move's
+  rules. The inventory counts the documents concerned, the IFC ones among
+  them (`VFY-20`'s count), the held ones, the unreviewed ones under
+  require, and the retired documents whose stamp names such a status.
+- **Not closed by P16 (DEC-31):** `REV-26` — the editors' "The database
+  does not check this change" sentence (overstated once pasted), the
+  metadata editor's refusal suffix for the database's refusal of the move,
+  and whether the move owes `REV-19`'s clocks and `DOCUMENT_ISSUED`;
+  `REV-27` — the un-archive dialog for an IFC-stamped archive (its "puts
+  that issue back" copy and Issued default, the hold-override confirmation
+  the database now refuses, no restore to the stamped status, and the issue
+  record calling the restore a put-back); `REV-26` and `REV-27` should be
+  assigned, to one status-surface package, before `20261185` is pasted.
+  `REV-28` — a publisher's Minor / Correction rev-up of an unreviewed IFC
+  document under require (RG-7's hatch, a pointer move, so outside the
+  status-only rule): for the integrator or the user to decide.
 
 ⚠ **Deploy note — P12 (operators, public-surfaces `SHR-11`).** Before
 deploying the app carrying P12, a self-hosted deployment (the Docker image,
