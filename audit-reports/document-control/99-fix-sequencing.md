@@ -519,12 +519,18 @@ one-paste migration:
   Archived / Void document's current revision is refused ("…release the
   hold before issuing it, or publish over it with Document Control's
   recorded override."); `publish_revision`'s recorded force still passes.
-  The exit into an issue status of a held retirement whose stamp names
-  another revision is refused for everyone ("…release the hold before
-  issuing it."). No door forces it: the hold is released first, and the
-  Draft restore stays open to Document Control. A legacy reversal of such a
-  source over a carried hold rolls back. The inventory counts both
-  populations.
+  The exit into an issue status of a held retirement with a current
+  revision whose stamp names another revision is refused for everyone
+  ("…release the hold before issuing it."). No door forces it: the hold is
+  released first, and the Draft restore stays open to Document Control. A
+  legacy reversal of such a source over a carried hold rolls back. The
+  inventory counts both populations.
+- **Not closed by P20 (for the integrator to open, DEC-31; `REV-24`'s
+  Scope):** the first pointer write over a hold. A pointer cleared and then
+  set — on a held Issued document, on a held archive un-archived to Issued
+  with no revision, or through a Draft — still lets Document Control
+  put a never-issued revision in force over a hold, unrecorded, on any
+  document. The inventory does not count those documents.
 - **P16 (`REV-21`) and P20 re-create the same guard.** Whichever is pasted
   second starts from the other's body (the lineDiff scan finds it) and
   pastes after it.

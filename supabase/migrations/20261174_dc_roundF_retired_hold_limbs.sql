@@ -63,8 +63,10 @@
 -- bare pointer move on a held retired document; any exit into an issue
 -- status of a held retirement whose stamp names another revision) and admits
 -- nothing it refused. DEC-30 inventories (aggregate counts only, captured
--- BEFORE the transaction): the retired documents whose stamp names another
--- revision than their current one (the exit's population); those of them
+-- BEFORE the transaction): the retired documents with a current revision
+-- whose stamp names another one (the exit's population — one with no
+-- current revision is not in it: (a) needs the pointer set and unmoved, and
+-- its exit with no revision is REV-24's recorded residual); those of them
 -- under an active hold now (their exit into an issue is refused from now on,
 -- for everyone, until the hold is released — no recorded door forces it);
 -- and the retired documents under an active hold in all (Document Control's
@@ -112,16 +114,20 @@ DROP TABLE IF EXISTS dc_round_f_174_before;
 CREATE TEMP TABLE dc_round_f_174_before AS
 WITH retired AS (
   -- Every retired document: whether its retirement stamp names a revision
-  -- other than its current one (the exit REV-24 (a) binds), and whether an
-  -- active hold stands on it now.
+  -- other than the current one it has (the exit REV-24 (a) binds — a
+  -- retired document with no current revision is not in it: (a) needs the
+  -- pointer set and unmoved; its exit with no revision, then a first pointer
+  -- write, is the residual REV-24 records), and whether an active hold
+  -- stands on it now.
   SELECT d.retired_issue_version_id IS NOT NULL
+         AND d.current_version_id IS NOT NULL
          AND d.retired_issue_version_id IS DISTINCT FROM d.current_version_id AS stamp_elsewhere,
          EXISTS (SELECT 1 FROM document_holds h
                   WHERE h.document_id = d.id AND h.released_at IS NULL) AS held
     FROM documents d
    WHERE d.status IN ('Superseded', 'Archived', 'Void')
 )
-SELECT 'inventory (before apply): retired documents (Superseded / Archived / Void) whose retirement stamp names ANOTHER revision than their current one (REV-24 (a): their exit into an issue status is not the stamped put-back)' AS inventory,
+SELECT 'inventory (before apply): retired documents (Superseded / Archived / Void) with a current revision whose retirement stamp names ANOTHER revision (REV-24 (a): their exit into an issue status is not the stamped put-back)' AS inventory,
        COUNT(*)::text AS n
   FROM retired WHERE stamp_elsewhere
 UNION ALL

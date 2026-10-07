@@ -192,7 +192,12 @@ describe("20261174 — the one-paste shape", () => {
     const inventory = stripComments(M.slice(M.indexOf("CREATE TEMP TABLE"), M.indexOf("\nBEGIN;")));
     expect((inventory.match(/COUNT\(\*\)::text/g) ?? []).length).toBe(3);
     expect(inventory).not.toMatch(/SELECT \*|document_number|title|d\.id\s+AS|user_email/);
-    expect(inventory).toContain("  SELECT d.retired_issue_version_id IS NOT NULL\n         AND d.retired_issue_version_id IS DISTINCT FROM d.current_version_id AS stamp_elsewhere,");
+    // The exit's population is exactly what limb (a) binds: a stamp naming
+    // another revision on a document that HAS a current revision (v_issuing
+    // needs the pointer set, and (a) needs it unmoved). A retired document
+    // with no current revision is not counted: its exit with no revision is
+    // admitted (REV-24's recorded residual), so it is not locked by the hold.
+    expect(inventory).toContain("  SELECT d.retired_issue_version_id IS NOT NULL\n         AND d.current_version_id IS NOT NULL\n         AND d.retired_issue_version_id IS DISTINCT FROM d.current_version_id AS stamp_elsewhere,");
     expect(inventory).toContain("   WHERE d.status IN ('Superseded', 'Archived', 'Void')\n)");
     for (const w of ["  FROM retired WHERE stamp_elsewhere\n", "  FROM retired WHERE stamp_elsewhere AND held\n", "  FROM retired WHERE held;"]) {
       expect(inventory, w).toContain(w);
