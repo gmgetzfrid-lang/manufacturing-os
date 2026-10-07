@@ -223,6 +223,34 @@ describe("MON-12 (J12 review fix 7) — a contractor linked to one of its own do
   });
 });
 
+describe("COST-3 residual 2 (J17; DEC-90 A21) — the contractor link's check reads the same gate: a do-not-use name that LEADS the contractor's", () => {
+  // lib/costs.ts partyLinkCheck reads lib/bidTab barredCompanyFor and companyCandidatesByName (unchanged
+  // file): a contractor "Apex Industrial Services, LLC" could be the do-not-use "Apex Industrial".
+  const APEX_DNU = company("c-apex-dnu", "Apex Industrial", { status: "do_not_use" });
+  const REAL = company("c-real", "Apex Industrial Services");
+  beforeEach(() => { db.rows.companies = [APEX_DNU, REAL].map(companyRow); });
+
+  it("a link to the real company asks the typed reason naming the leading do-not-use row (it carried no question before J17); the reason is recorded", async () => {
+    const refused = await saveParty({ orgId: "o1", projectId: "p1", patch: { name: "Apex Industrial Services, LLC", companyId: "c-real" }, actor });
+    expect(refused.ok).toBe(false);
+    expect(refused.needsOverride).toEqual({ companyId: "c-apex-dnu", company: "Apex Industrial" });
+    expect(refused.error).toMatch(/"Apex Industrial Services, LLC" could be Apex Industrial, flagged DO NOT USE in the registry\. Linking it to another company needs a reason/);
+    expect(db.rows.project_parties ?? []).toHaveLength(0);
+    const ok = await saveParty({ orgId: "o1", projectId: "p1", patch: { name: "Apex Industrial Services, LLC", companyId: "c-real" }, linkOverrideReason: "Apex Industrial Services is a separate firm", actor });
+    expect(ok).toEqual({ ok: true });
+    expect((audits("COST_PARTY_CREATED")[0].details as Record<string, unknown>).overrideDoNotUse).toMatchObject({ companyId: "c-apex-dnu", reason: "Apex Industrial Services is a separate firm" });
+    // the wizard's name-bound link is not written, with the note pointing at the Costs tab
+    expect((await checkPartyCompanyLink("o1", "Apex Industrial Services, LLC", "c-real")).ok).toBe(false);
+  });
+
+  it("a link to the leading do-not-use row ITSELF needs no reason (it answers for itself at the award); a name it does not lead word for word is not its", async () => {
+    expect(await checkPartyCompanyLink("o1", "Apex Industrial Services, LLC", "c-apex-dnu")).toEqual({ ok: true });
+    expect(await saveParty({ orgId: "o1", projectId: "p1", patch: { name: "Apex Industrial Services, LLC", companyId: "c-apex-dnu" }, actor })).toEqual({ ok: true });
+    expect(await checkPartyCompanyLink("o1", "Apex Industrialists Group", "c-real")).toEqual({ ok: true });
+    expect(await checkPartyCompanyLink("o1", "Apex", "c-real")).toEqual({ ok: true });       // a longer registry name never leads a shorter one
+  });
+});
+
 describe("DEC-76 item 3 — the wizard's name-bound link meets the same do-not-use rule", () => {
   it("a link that would need a reason is refused with a note (the wizard adds the contractor unlinked); a clean one passes; the barred company itself passes", async () => {
     // "Apex Industrial LLC" normalises to the do-not-use "Apex Industrial";

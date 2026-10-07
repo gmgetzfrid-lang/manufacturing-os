@@ -1622,3 +1622,213 @@ describe("MON-12 / COST-3 (J14) — the bid tab answers for every flagged compan
     });
   });
 });
+
+// ── projects Round G J17 BARRED LOOK-ALIKE — COST-3 residual 2 (DEC-90 A21, the
+// Apex ruling): a do-not-use registry row whose normalised name LEADS the bid's
+// vendor name flags the bid in the bid tab — the chip, the award's question
+// (before 20261157 through barredCompanyFor; after it the database's own,
+// 20261190) and the acknowledgement stop — and the prompts say it is a partial
+// match; the binding (the "matched to" chip, the "ambiguous" note) is unchanged.
+describe.each(MODES)("COST-3 residual 2 (J17) — a do-not-use name that LEADS the vendor's flags the bid, $mode", ({ after }) => {
+  const APEX_SVC = "Apex Industrial Services, LLC";
+  const PARTIAL = 'The vendor on file, "Apex Industrial Services, LLC", only begins with the registry name "Apex Industrial" — a partial match, flagged for you to rule on; if another company sent this bid, cancel and link the bidder to it.';
+  const ZENITH = company("c-zenith1", "Zenith", "do_not_use");
+  const COASTAL_I = company("c-coastal", "Coastal Fabricators", "inactive");
+  /** The database's answer (20261157 + 20261179 + 20261190 applied): the one-company gate and the list. */
+  const database = (...cs: Array<Pick<Company, "id" | "name" | "status">>) => {
+    if (!after) return;
+    const flags = cs.map((c) => ({ id: c.id, name: c.name, status: c.status }));
+    db.rpc.cost_doc_company_barred = { data: flags[0] ?? null, error: null };
+    db.rpc.cost_doc_companies_barred = { data: flags, error: null };
+  };
+  const intent = () => db.inserts.find((i) => i.row.action === "COST_DOC_AWARD_OVERRIDE_DO_NOT_USE")?.row.details as Record<string, unknown> | undefined;
+  const apexSvc = (over: Partial<CostDocument> = {}) => doc({ id: "svc", vendorName: APEX_SVC, currency: "EUR", totalAmount: 150_000, parsed: parsedFrom(APEX_SVC), ...over });
+  beforeEach(() => {
+    reg.listCompanies.mockResolvedValue([APEX]);
+    reg.listBarredCompanies.mockResolvedValue([APEX]);
+    dlg.appPrompt.mockResolvedValue("Apex Industrial Services is a separate firm — W-9 and licence checked");
+    dlg.appConfirm.mockResolvedValue(true);
+    cd.awardQuote.mockResolvedValue({ ok: true });
+  });
+
+  it("the record's failure scenario: the chip flags 'Apex Industrial' as a partial match, Award asks the typed override naming it, the intent row records it (partialMatch), and the reason goes with the award for that company", async () => {
+    database(APEX);
+    const d = apexSvc();
+    db.single.cost_documents = storedRow(d);
+    await render(fieldOf(d));
+    const row = rowOf(/Apex Industrial Services, LLC/);
+    expect(row.textContent).toMatch(/do not use\? · Apex Industrial/);
+    expect(row.textContent).not.toMatch(/matched to Apex Industrial/);            // never bound
+    expect(row.querySelector('[title*="a partial match"]')?.getAttribute("title")).toMatch(/could be "Apex Industrial", flagged DO NOT USE in the registry \(a partial match: the registry name "Apex Industrial" only begins this one\)/);
+    await awardOn(/Apex Industrial Services, LLC/);
+    expect(promptTitles()).toEqual(["Apex Industrial is flagged DO NOT USE"]);
+    expect(promptText(0)).toContain(PARTIAL);
+    expect(intent()).toMatchObject({ companyId: "c-apex", company: "Apex Industrial", companyStatus: "do_not_use", partialMatch: true, vendorOnFile: APEX_SVC });
+    expect(auditActions()).toEqual(["COST_DOC_AWARD_OVERRIDE_DO_NOT_USE"]);
+    expect(cd.awardQuote).toHaveBeenCalledTimes(1);
+    expect(cd.awardQuote.mock.calls[0][0]).toMatchObject({ overrideReason: "Apex Industrial Services is a separate firm — W-9 and licence checked", overrideCompanyId: "c-apex" });
+  });
+
+  it("cancelling the partial-match override stops the award: nothing recorded, nothing awarded", async () => {
+    database(APEX);
+    const d = apexSvc();
+    db.single.cost_documents = storedRow(d);
+    dlg.appPrompt.mockResolvedValue(null);
+    await render(fieldOf(d));
+    await awardOn(/Apex Industrial Services, LLC/);
+    expect(promptTitles()).toEqual(["Apex Industrial is flagged DO NOT USE"]);
+    expect(auditActions()).toEqual([]);
+    expect(cd.awardQuote).not.toHaveBeenCalled();
+    expect(errors.at(-1)).toMatch(/Award stopped — Apex Industrial is flagged do-not-use and no override reason was given/);
+  });
+
+  it("a ONE-word registry name flags broadly: 'Zenith' asks for 'Zenith Rigging' (a partial match) and never for 'Zenithal Corp'", async () => {
+    reg.listCompanies.mockResolvedValue([ZENITH]);
+    reg.listBarredCompanies.mockResolvedValue([ZENITH]);
+    database(ZENITH);
+    const z = doc({ id: "zr", vendorName: "Zenith Rigging", currency: "EUR", totalAmount: 150_000, parsed: parsedFrom("Zenith Rigging") });
+    db.single.cost_documents = storedRow(z);
+    await render(fieldOf(z));
+    await awardOn(/Zenith Rigging/);
+    expect(promptTitles()).toEqual(["Zenith is flagged DO NOT USE"]);
+    expect(promptText(0)).toContain('The vendor on file, "Zenith Rigging", only begins with the registry name "Zenith" — a partial match');
+    expect(intent()).toMatchObject({ companyId: "c-zenith1", partialMatch: true });
+    // a name the registry row does not lead word for word: nothing
+    db.inserts = []; dlg.appPrompt.mockClear(); cd.awardQuote.mockClear();
+    database();
+    const zz = doc({ id: "zl", vendorName: "Zenithal Corp", currency: "EUR", totalAmount: 150_000, parsed: parsedFrom("Zenithal Corp") });
+    db.single.cost_documents = storedRow(zz);
+    await render(fieldOf(zz));
+    expect(rowOf(/Zenithal Corp/).textContent).not.toMatch(/do not use/);
+    await awardOn(/Zenithal Corp/);
+    expect(dlg.appPrompt).not.toHaveBeenCalled();
+    expect(auditActions()).toEqual([]);
+    expect(cd.awardQuote).toHaveBeenCalledTimes(1);
+  });
+
+  it("the LETTERHEAD's leading-name look-alike (on file 'Bayline Scaffold') stops the award for the typed acknowledgement, which says it is a partial match and records partialMatch", async () => {
+    database();                                                               // the stored name answers for nothing
+    const d = frontBid({ parsed: parsedFrom(APEX_SVC) });
+    db.single.cost_documents = storedRow(d);
+    dlg.appPrompt.mockResolvedValue("Bayline is the bidder; Apex Services letterhead reused");
+    await render(fieldOf(d));
+    expect(rowOf(/Apex Industrial Services, LLC/).textContent).toMatch(/letterhead: do not use\? · Apex Industrial/);
+    await awardOn(/Apex Industrial Services, LLC/);
+    expect(promptTitles()).toEqual([LETTERHEAD_TITLE]);
+    expect(promptText(0)).toMatch(/The AI read the letterhead as "Apex Industrial Services, LLC", which could be Apex Industrial, flagged DO NOT USE in the registry \(a partial match: the registry name "Apex Industrial" only begins this one\)\. The vendor on file is "Bayline Scaffold"/);
+    expect(auditRow("COST_DOC_AWARD_LETTERHEAD_ACK")).toMatchObject({ companyId: "c-apex", matchedOn: ["letterhead"], letterhead: APEX_SVC, partialMatch: true, overrideCompanyId: null });
+    expect(cd.awardQuote.mock.calls[0][0].overrideReason ?? null).toBeNull();     // an acknowledgement, never an override
+    const confirm = dlg.appConfirm.mock.calls[0][0] as { message: string; tone?: string };
+    expect(confirm.message).toMatch(/could be Apex Industrial, flagged DO NOT USE \(a partial match\) — the vendor on file is "Bayline Scaffold"/);
+  });
+
+  it("behind an INACTIVE contractor the stored name's leading-name look-alike is acknowledged (a partial match) and its reason goes with the award as that company's own override", async () => {
+    database(COASTAL_I, APEX);
+    const d = apexSvc({ partyId: "pp-coastal" });
+    db.single.cost_documents = storedRow(d);
+    db.single.project_parties = { company_id: "c-coastal" };
+    db.single.companies = [companyRow(COASTAL_I)];
+    dlg.appPrompt.mockResolvedValueOnce("Coastal reactivated last week").mockResolvedValueOnce("Not Apex Industrial — different owner");
+    await render(fieldOf(d));
+    await awardOn(/Apex Industrial Services, LLC/);
+    expect(promptTitles()).toEqual(["Coastal Fabricators is marked INACTIVE", VENDOR_TITLE]);
+    expect(promptText(0)).not.toMatch(/partial match/);                         // the contractor's own flag is no name match
+    expect(promptText(1)).toMatch(/could be Apex Industrial, flagged DO NOT USE in the registry \(a partial match: the registry name "Apex Industrial" only begins this one\)/);
+    expect(auditRow("COST_DOC_AWARD_LETTERHEAD_ACK")).toMatchObject({ companyId: "c-apex", matchedOn: ["vendorOnFile", "letterhead"], partialMatch: true, overrideCompanyId: "c-coastal" });
+    expect(intent()).toMatchObject({ companyId: "c-coastal", companyStatus: "inactive" });
+    expect(intent()).not.toHaveProperty("partialMatch");
+    expect(cd.awardQuote.mock.calls[0][0]).toMatchObject({
+      overrideReason: "Coastal reactivated last week", overrideCompanyId: "c-coastal",
+      alsoOverrides: [{ companyId: "c-apex", reason: "Not Apex Industrial — different owner" }],
+    });
+  });
+
+  it("regression: an equal-key look-alike reads exactly as before — no partial-match words, no partialMatch on the intent row", async () => {
+    database(APEX);
+    const d = apexSvc({ vendorName: "Apex Industrial, Inc.", parsed: parsedFrom("Apex Industrial, Inc.") });
+    db.single.cost_documents = storedRow(d);
+    await render(fieldOf(d));
+    expect(rowOf(/Apex Industrial, Inc\./).querySelector('[title*="a partial match"]')).toBeNull();
+    await awardOn(/Apex Industrial, Inc\./);
+    expect(promptTitles()).toEqual(["Apex Industrial is flagged DO NOT USE"]);
+    expect(promptText(0)).toBe("The registry flags the company this award answers for — this bidder is linked to it, its contractor is, or its name matches it (if the name matches more than one registry record, link the bidder to the right one). To award anyway, state the reason — it is recorded against this award and the company's record.");
+    expect(intent()).not.toHaveProperty("partialMatch");
+    expect(intent()).not.toHaveProperty("vendorOnFile");
+  });
+
+  it("a person's link of the org decides: linked to the real 'Apex Industrial Services', nothing is asked; linked to 'Apex Industrial' itself, its override is no partial match", async () => {
+    const REAL = company("c-real", "Apex Industrial Services", "active");
+    reg.listCompanies.mockResolvedValue([APEX, REAL]);
+    const d = apexSvc();
+    db.single.cost_documents = storedRow(d, { company_id: "c-real" });
+    db.single.companies = [companyRow(REAL), companyRow(APEX)];
+    database();
+    await render(fieldOf(d));
+    await awardOn(/Apex Industrial Services, LLC/);
+    expect(dlg.appPrompt).not.toHaveBeenCalled();
+    expect(cd.awardQuote).toHaveBeenCalledTimes(1);
+    db.inserts = []; dlg.appPrompt.mockClear(); cd.awardQuote.mockClear();
+    db.single.cost_documents = storedRow(d, { company_id: "c-apex" });
+    database(APEX);
+    await awardOn(/Apex Industrial Services, LLC/);
+    expect(promptTitles()).toEqual(["Apex Industrial is flagged DO NOT USE"]);
+    expect(promptText(0)).not.toMatch(/partial match/);
+    expect(intent()).not.toHaveProperty("partialMatch");
+  });
+
+  it("regression: the binding's ambiguity note is the exact-key set's — two ACTIVE rows that only LEAD the name ('Apex', 'Apex Industrial') are no ambiguity and no flag", async () => {
+    const A1 = company("c-a1", "Apex", "active");
+    const A2 = company("c-a2", "Apex Industrial", "active");
+    reg.listCompanies.mockResolvedValue([A1, A2]);
+    reg.listBarredCompanies.mockResolvedValue([]);
+    database();
+    const d = apexSvc();
+    db.single.cost_documents = storedRow(d);
+    await render(fieldOf(d));
+    const row = rowOf(/Apex Industrial Services, LLC/);
+    expect(row.textContent).not.toMatch(/ambiguous/);
+    expect(row.textContent).not.toMatch(/do not use/);
+    expect(row.textContent).not.toMatch(/matched to/);
+    await awardOn(/Apex Industrial Services, LLC/);
+    expect(dlg.appPrompt).not.toHaveBeenCalled();
+  });
+
+  it("regression: two rows of the vendor name's OWN key are still the binding's ambiguity (unchanged)", async () => {
+    reg.listCompanies.mockResolvedValue([company("c-s1", "Apex Industrial Services"), company("c-s2", "Apex Industrial Services Inc")]);
+    reg.listBarredCompanies.mockResolvedValue([]);
+    database();
+    const d = apexSvc();
+    db.single.cost_documents = storedRow(d);
+    await render(fieldOf(d));
+    expect(rowOf(/Apex Industrial Services, LLC/).textContent).toMatch(/ambiguous — link to registry/);
+  });
+});
+
+describe("COST-3 residual 2 (J17) — between the 20261179 and 20261190 pastes the database does not read a leading name yet; the award still completes", () => {
+  beforeEach(() => {
+    reg.listCompanies.mockResolvedValue([APEX]);
+    reg.listBarredCompanies.mockResolvedValue([APEX]);
+    dlg.appConfirm.mockResolvedValue(true);
+  });
+
+  it("the click asks nothing (the database's list is empty), the lib's own gate refuses without a reason (needsOverride), the bid tab asks it, records the intent and retries naming the company", async () => {
+    db.rpc.cost_doc_company_barred = { data: null, error: null };
+    db.rpc.cost_doc_companies_barred = { data: [], error: null };
+    const d = doc({ id: "svc", vendorName: "Apex Industrial Services, LLC", currency: "EUR", totalAmount: 150_000, parsed: parsedFrom("Apex Industrial Services, LLC") });
+    db.single.cost_documents = storedRow(d);
+    cd.awardQuote
+      .mockResolvedValueOnce({ ok: false, error: "Apex Industrial is flagged DO NOT USE in the company registry.", needsOverride: { companyId: "c-apex", companyName: "Apex Industrial", status: "do_not_use" } })
+      .mockResolvedValueOnce({ ok: true });
+    dlg.appPrompt.mockResolvedValue("Separate firm — W-9 checked");
+    await render(fieldOf(d));
+    // the chip reads the bid tab's own gate, which already reads the leading name
+    expect(rowOf(/Apex Industrial Services, LLC/).textContent).toMatch(/do not use\? · Apex Industrial/);
+    await awardOn(/Apex Industrial Services, LLC/);
+    expect(promptTitles()).toEqual(["Apex Industrial is flagged DO NOT USE"]);
+    expect(auditActions()).toEqual(["COST_DOC_AWARD_OVERRIDE_DO_NOT_USE"]);
+    expect(cd.awardQuote).toHaveBeenCalledTimes(2);
+    expect(cd.awardQuote.mock.calls[0][0].overrideReason ?? null).toBeNull();
+    expect(cd.awardQuote.mock.calls[1][0]).toMatchObject({ overrideReason: "Separate firm — W-9 checked", overrideCompanyId: "c-apex" });
+    expect(errors.filter((e) => e)).toEqual([]);
+  });
+});

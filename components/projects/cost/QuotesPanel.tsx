@@ -46,8 +46,13 @@
 //    stored or letterhead — it could be) needs a typed, audited reason.
 // The barred rows are read in full (never the name list, which is capped)
 // and flagging fails toward the flag: two rows normalising alike both
-// flag. A truncated read is said out loud and the award total must be
-// typed back from the paper (COST-13).
+// flag, and (COST-3 residual 2; DEC-90 A21, the Apex ruling) so does a
+// do-not-use row whose normalised name LEADS the bid's ("Apex Industrial"
+// for "Apex Industrial Services, LLC") — the chip, the prompts and their
+// audit rows say it is a partial match; it never binds (the "matched to"
+// chip and the "ambiguous" note read the binding's exact-key set). A
+// truncated read is said out loud and the award total must be typed back
+// from the paper (COST-13).
 
 import React, { useMemo, useState } from "react";
 import {
@@ -73,7 +78,7 @@ import {
 import {
   computeBidEconomics, scoreBids, effectiveWeights, MANPOWER_MAX_COMPOSITE_SWING, MIN_CORROBORATING_STATEMENTS, HOURS_PLAUSIBILITY_RATIO,
   withHumanTotal, priceOnlyQuote, mergeQuoteGroups, snapRfqGroup, matchCompanyByName, alignGroupSpelling, normalizeCompanyName,
-  companyCandidatesByName, barredCompanyFor, UNKNOWN_VENDOR,
+  companiesNamedAlike, barredCompanyFor, leadsOnly, UNKNOWN_VENDOR,
   quoteExpired, readExtent, fieldCurrency, bidCurrency, isoCurrency, parseTypedAmount, reconcileQuoteTotal,
   type ParsedQuote, type BidEconomics,
 } from "@/lib/bidTab";
@@ -156,6 +161,9 @@ export interface NameFlag {
   onFile: boolean;
   /** The letterhead the AI read, when IT could be `company`; else null. */
   letterhead: string | null;
+  /** DEC-90 A21: `company`'s name only LEADS the name(s) asked about — a
+   *  partial match; the prompt says so and the row records `partialMatch`. */
+  partial?: boolean;
 }
 
 /** What an award of a bid must answer for, asked at the click: the override
@@ -164,7 +172,13 @@ export interface NameFlag {
  *  reason and is recorded under its own override), and the acknowledgements
  *  it stops for — one per name key, so a company two names could be is
  *  asked about once. */
-export interface AwardGate { override: AwardFlag | null; also: AwardFlag[]; acks: NameFlag[] }
+export interface AwardGate {
+  override: AwardFlag | null; also: AwardFlag[]; acks: NameFlag[];
+  /** DEC-90 A21: the vendor name on file when the override is a do-not-use
+   *  row whose name only LEADS it (no person's link of the org decides) —
+   *  the prompt says it is a partial match; else null or absent. */
+  overridePartialOf?: string | null;
+}
 
 const FLAGGED_COMPANY_STATUSES: readonly string[] = ["do_not_use", "inactive"];
 
@@ -332,16 +346,25 @@ export async function awardGateFor(doc: CostDocument): Promise<AwardGate> {
   // name's acknowledgement IS that company's reason (it goes with the award
   // as its override — J14), so it is not asked twice.
   const alsoOf = (acks: NameFlag[]) => listedAlso.filter((c) => !acks.some((a) => a.onFile && a.company.id === c.id));
-  if (!asks.length) return { override, also: alsoOf([]), acks: [] };
-  if (companyId && (await linkedCompany())) return { override, also: alsoOf([]), acks: [] };
+  // COST-3 residual 2 (DEC-90 A21): a do-not-use override whose name only
+  // LEADS the vendor name on file is a partial match, flagged for a person to
+  // rule on — the prompt says so. A person's link of the org decides, and is
+  // none (read only in that case).
+  const overridePartialOf = override?.status === "do_not_use" && vendorName && leadsOnly(vendorName, override.name)
+    && !(companyId && (await linkedCompany())) ? vendorName : null;
+  if (!asks.length) return { override, also: alsoOf([]), acks: [], overridePartialOf };
+  if (companyId && (await linkedCompany())) return { override, also: alsoOf([]), acks: [], overridePartialOf };
   const acks: NameFlag[] = [];
   for (const a of asks) {
     const hit = barredCompanyFor(a.name, null, await barredRows());
     if (hit && hit.id !== override?.id) {
-      acks.push({ company: { id: hit.id, name: hit.name, status: hit.status }, vendorOnFile: vendorName, onFile: a.onFile, letterhead: a.letterhead });
+      acks.push({
+        company: { id: hit.id, name: hit.name, status: hit.status }, vendorOnFile: vendorName, onFile: a.onFile, letterhead: a.letterhead,
+        ...(leadsOnly(a.name, hit.name) ? { partial: true } : {}),
+      });
     }
   }
-  return { override, also: alsoOf(acks), acks };
+  return { override, also: alsoOf(acks), acks, overridePartialOf };
 }
 
 /** Which names of the bid an acknowledgement is for — its audit rows' `matchedOn`. */
@@ -354,13 +377,20 @@ const ackTitle = (ack: NameFlag) => `The ${ack.onFile ? "vendor on file" : "lett
 /** The vendor on file as a letterhead prompt names it: quoted, or "not set"
  *  when the stored name is empty or blank. */
 const onFileShown = (ack: NameFlag) => (ack.vendorOnFile?.trim() ? `"${ack.vendorOnFile.trim()}"` : "not set");
+/** DEC-90 A21: what the bid tab says beside a do-not-use company whose name
+ *  only LEADS the bid's — a partial match (COST-3 residual 2). */
+const partialNote = (company: string) => ` (a partial match: the registry name "${company}" only begins this one)`;
+/** The override prompt's sentence for a partial match (`overridePartialOf`). */
+const partialOverride = (vendorOnFile: string, company: string) =>
+  ` The vendor on file, "${vendorOnFile}", only begins with the registry name "${company}" — a partial match, flagged for you to rule on; if another company sent this bid, cancel and link the bidder to it.`;
 /** The acknowledgement prompt's text: which name could be the company, why
  *  no override for it is recorded, and what to do instead. */
 function ackMessage(ack: NameFlag, override: AwardFlag | null): string {
   const c = ack.company.name;
+  const partial = ack.partial ? partialNote(c) : "";
   const what = "To award it as it stands, state why — the acknowledgement is recorded against this award.";
   if (!ack.onFile) {
-    return `The AI read the letterhead as "${ack.letterhead}", which could be ${c}, flagged DO NOT USE in the registry. The vendor on file is ${onFileShown(ack)}; the award is checked against that name and this bid's links, so no override for ${c} is recorded. If ${c} sent this bid, cancel and link the bidder to it; if the vendor on file did, cancel and link the bidder to that company. ${what}`;
+    return `The AI read the letterhead as "${ack.letterhead}", which could be ${c}, flagged DO NOT USE in the registry${partial}. The vendor on file is ${onFileShown(ack)}; the award is checked against that name and this bid's links, so no override for ${c} is recorded. If ${c} sent this bid, cancel and link the bidder to it; if the vendor on file did, cancel and link the bidder to that company. ${what}`;
   }
   const names = ack.letterhead
     ? `The vendor on file, "${ack.vendorOnFile}", and the letterhead the AI read, "${ack.letterhead}",`
@@ -371,15 +401,16 @@ function ackMessage(ack: NameFlag, override: AwardFlag | null): string {
     ? `The award's first override names the first flagged company it reaches through this bid's company link, its contractor and then its vendor name — here that is ${override.name}, ${override.status === "inactive" ? "marked inactive" : "flagged do-not-use"}`
     : "The award's override does not name it";
   const recorded = override ? `so ${c} is recorded as an override of its own, with the reason you give here` : `so no override for ${c} is recorded`;
-  return `${names} could be ${c}, flagged DO NOT USE in the registry. ${why}, ${recorded}. If ${c} sent this bid, cancel and link the bidder to it; if another company did, cancel and link the bidder to that company. ${what}`;
+  return `${names} could be ${c}, flagged DO NOT USE in the registry${partial}. ${why}, ${recorded}. If ${c} sent this bid, cancel and link the bidder to it; if another company did, cancel and link the bidder to that company. ${what}`;
 }
 /** The acknowledgement's line in the award's confirm (or check-the-paper prompt). */
 function ackWarning(ack: NameFlag, override: AwardFlag | null): string {
   const c = ack.company.name;
+  const partial = ack.partial ? " (a partial match)" : "";
   if (!ack.onFile) {
-    return `The letterhead the AI read ("${ack.letterhead}") could be ${c}, flagged DO NOT USE — the vendor on file is ${onFileShown(ack)}, and your acknowledgement is recorded with this award.`;
+    return `The letterhead the AI read ("${ack.letterhead}") could be ${c}, flagged DO NOT USE${partial} — the vendor on file is ${onFileShown(ack)}, and your acknowledgement is recorded with this award.`;
   }
-  return `The vendor on file ("${ack.vendorOnFile}")${ack.letterhead ? ` and the letterhead the AI read ("${ack.letterhead}")` : ""} could be ${c}, flagged DO NOT USE — the award's override ${override ? `names ${override.name}, and ${c} is recorded as an override of its own with your reason` : "does not name it, and your acknowledgement is recorded with this award"}.`;
+  return `The vendor on file ("${ack.vendorOnFile}")${ack.letterhead ? ` and the letterhead the AI read ("${ack.letterhead}")` : ""} could be ${c}, flagged DO NOT USE${partial} — the award's override ${override ? `names ${override.name}, and ${c} is recorded as an override of its own with your reason` : "does not name it, and your acknowledgement is recorded with this award"}.`;
 }
 
 /** MON-10 (projects Round G J14): the outcomes of a quote's notice that say
@@ -944,7 +975,9 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
     return {
       known: matchCompanyByName(e.vendorName, companies), bound: false,
       barred: onFile ?? letterhead, letterheadOnly: !!letterhead,
-      candidates: companyCandidatesByName(e.vendorName, companies),
+      // the binding's ambiguity — rows of the vendor name's own key, never a
+      // leading name (DEC-90 A21 is the gate's, not the binding's)
+      candidates: companiesNamedAlike(e.vendorName, companies),
     };
   };
 
@@ -1019,7 +1052,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
           : `This bid's company link, contractor or vendor name changed while the award was being confirmed; the award now answers for ${flag.name}. `;
         overrideReason = (await appPrompt({
           title: `${flag.name} is ${inactive ? "marked INACTIVE" : "flagged DO NOT USE"}`,
-          message: `${movedNote}The registry flags the company this award answers for — this bidder is linked to it, its contractor is, or its name matches it (if the name matches more than one registry record, link the bidder to the right one). To award anyway, state the reason — it is recorded against this award and the company's record.`,
+          message: `${movedNote}The registry flags the company this award answers for — this bidder is linked to it, its contractor is, or its name matches it (if the name matches more than one registry record, link the bidder to the right one).${gate.overridePartialOf ? partialOverride(gate.overridePartialOf, flag.name) : ""} To award anyway, state the reason — it is recorded against this award and the company's record.`,
           placeholder: "Override reason (required)",
         }))?.trim() || null;
         if (!overrideReason) { setErr(`Award stopped — ${flag.name} is ${inactive ? "marked inactive" : "flagged do-not-use"} and no override reason was given.`); return false; }
@@ -1105,7 +1138,11 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
       const { error } = await supabase.from("audit_logs").insert({
         action: "COST_DOC_AWARD_OVERRIDE_DO_NOT_USE", resource_type: "cost", resource_id: doc.id,
         org_id: orgId, user_id: actor.uid, user_email: actor.email,
-        details: { companyId: who.id, company: who.name, companyStatus: status, reason, total, currency: cur, rfqGroup: group, costAccountId: accountId, ...(also ? { also: true } : {}) },
+        details: {
+          companyId: who.id, company: who.name, companyStatus: status, reason, total, currency: cur, rfqGroup: group, costAccountId: accountId, ...(also ? { also: true } : {}),
+          // DEC-90 A21: the click gate's override is a do-not-use row whose name only leads the vendor name on file
+          ...(!also && held.overridePartialOf && who.id === held.override?.id ? { partialMatch: true, vendorOnFile: held.overridePartialOf } : {}),
+        },
       });
       return error ? `The override could not be recorded (${userFacingError(error, { clause: true })}) — award stopped.` : null;
     };
@@ -1131,6 +1168,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
         details: {
           matchedOn: ackMatchedOn(ack), letterhead: ack.letterhead, vendorOnFile: ack.vendorOnFile,
           companyId: ack.company.id, company: ack.company.name, companyStatus: ack.company.status,
+          ...(ack.partial ? { partialMatch: true } : {}),
           // The click gate's override — null when it asked none, even if the lib's
           // needsOverride asks one later (that intent row names its own company).
           overrideCompanyId: held.override?.id ?? null, overrideCompany: held.override?.name ?? null,
@@ -1417,10 +1455,10 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
                             {barred && (
                               <span className="ml-1.5 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border border-rose-500/50 bg-rose-500/10 text-rose-700 dark:text-rose-300"
                                 title={letterheadOnly
-                                  ? `The letterhead the AI read ("${e.vendorName}") could be "${barred.name}", flagged DO NOT USE in the registry. The award's override is checked against the vendor name on file${doc?.vendorName ? ` ("${doc.vendorName}")` : " (none yet)"}, which no barred record matches — so Award stops for a typed acknowledgement, recorded with the award. If ${barred.name} sent this bid, link the bidder to it; if the vendor on file did, link the bidder to that company.`
+                                  ? `The letterhead the AI read ("${e.vendorName}") could be "${barred.name}", flagged DO NOT USE in the registry${leadsOnly(e.vendorName, barred.name) ? partialNote(barred.name) : ""}. The award's override is checked against the vendor name on file${doc?.vendorName ? ` ("${doc.vendorName}")` : " (none yet)"}, which no barred record matches — so Award stops for a typed acknowledgement, recorded with the award. If ${barred.name} sent this bid, link the bidder to it; if the vendor on file did, link the bidder to that company.`
                                   : barred.id === known?.id
                                   ? "Flagged in the registry — an award needs a typed, recorded override"
-                                  : `This bidder's name could be "${barred.name}", flagged DO NOT USE in the registry — link the bidder to the right record; until then an award needs a typed, recorded override`}>
+                                  : `This bidder's name could be "${barred.name}", flagged DO NOT USE in the registry${!bound && leadsOnly(doc?.vendorName, barred.name) ? partialNote(barred.name) : ""} — link the bidder to the right record; until then an award needs a typed, recorded override`}>
                                 {letterheadOnly ? `letterhead: do not use? · ${barred.name}` : barred.id === known?.id ? "do not use" : `do not use? · ${barred.name}`}
                               </span>
                             )}

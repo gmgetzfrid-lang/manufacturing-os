@@ -234,8 +234,11 @@ describe("MON-12 — the registry rail on an award", () => {
     expect(look).toContain("const key = normalizeCompanyName(vendorName);");
     expect(look).toContain('.eq("status", "do_not_use")');
     expect(look).not.toContain("FLAGGED_COMPANY_STATUSES");
-    expect(look).toContain("Number(b.name.toLowerCase() === exact) - Number(a.name.toLowerCase() === exact) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)");
-    expect(look).toContain("hits.push(...rows.filter((c) => normalizeCompanyName(c.name) === key));");
+    // projects Round G J17 (COST-3 residual 2; DEC-90 A21, 20261190): the look-alike is also a row whose
+    // normalised name LEADS the vendor's, ordered the exact name, then the longest key, then id —
+    // prjRoundGJ17Migration.test.ts pins that rule against 20261190's SQL
+    expect(look).toContain("Number(b.name.toLowerCase() === exact) - Number(a.name.toLowerCase() === exact) || keyLength(b) - keyLength(a) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)");
+    expect(look).toContain("hits.push(...rows.filter((c) => companyKeyLeads(normalizeCompanyName(c.name), key)));");
     expect(look).toContain("if (rows.length < 1000) break;");
     expect(lib).toContain('const FLAGGED_COMPANY_STATUSES = ["do_not_use", "inactive"];');
     const behind = between(lib, "async function companyBehind(", "\n}\n");
