@@ -68,7 +68,7 @@ import { DECISION_TARGET } from "@/components/projects/decisionTarget";
 import {
   type CostDocument, costDocStatusLabel,
   uploadCostDoc, awardQuote, postInvoice, declineQuote, voidCostDoc,
-  parsedQuoteFrom, quoteGroups, normalizeCurrency,
+  parsedQuoteFrom, quoteGroups, normalizeCurrency, relinkQuoteCompany, RELINK_RPC_MISSING,
 } from "@/lib/costDocs";
 import {
   computeBidEconomics, scoreBids, effectiveWeights, MANPOWER_MAX_COMPOSITE_SWING, MIN_CORROBORATING_STATEMENTS, HOURS_PLAUSIBILITY_RATIO,
@@ -159,9 +159,12 @@ export interface NameFlag {
 }
 
 /** What an award of a bid must answer for, asked at the click: the override
- *  the award records, and the acknowledgements it stops for — one per
- *  name key, so a company two names could be is asked about once. */
-export interface AwardGate { override: AwardFlag | null; acks: NameFlag[] }
+ *  the award records, the OTHER flagged companies it answers for that no
+ *  acknowledgement already names (projects Round G J14 — each needs its own
+ *  reason and is recorded under its own override), and the acknowledgements
+ *  it stops for — one per name key, so a company two names could be is
+ *  asked about once. */
+export interface AwardGate { override: AwardFlag | null; also: AwardFlag[]; acks: NameFlag[] }
 
 const FLAGGED_COMPANY_STATUSES: readonly string[] = ["do_not_use", "inactive"];
 
@@ -237,6 +240,27 @@ export async function companyAwardAnswersFor(
 }
 
 /**
+ * MON-12 / COST-3 (projects Round G J14): EVERY flagged company an award of
+ * the bid answers for, in the database's order — 20261179
+ * `cost_doc_companies_barred` (SECURITY INVOKER, EXECUTE granted to
+ * authenticated), the list `award_quote` checks under its lock: the
+ * override first (`cost_doc_company_barred`'s answer), then each other one,
+ * which needs its own reason. Null when the function is absent
+ * (`isMissingRpc`) — the caller asks the one-company question instead. A
+ * failed call throws — the award stops.
+ */
+export async function companiesAwardAnswersFor(bid: BidAtClick): Promise<AwardFlag[] | null> {
+  const { data, error } = await supabase.rpc("cost_doc_companies_barred", {
+    p_org: bid.orgId, p_company: bid.companyId, p_party: bid.partyId, p_vendor: bid.vendorName,
+  });
+  if (error) {
+    if (isMissingRpc(error)) return null;
+    throw new Error(userFacingReadError(error));
+  }
+  return (Array.isArray(data) ? data : []).map(flagOf).filter((c): c is AwardFlag => !!c && FLAGGED_COMPANY_STATUSES.includes(c.status));
+}
+
+/**
  * Everything an award of `doc` must answer for, asked AT THE CLICK of the
  * row as it stands (never the lists the table rendered from); the bid tab
  * asks it again just before `awardQuote`, after its dialogs, and asks again
@@ -283,7 +307,12 @@ export async function awardGateFor(doc: CostDocument): Promise<AwardGate> {
   let barred: Promise<Company[]> | null = null;
   const barredRows = () => (barred ??= listBarredCompanies(orgId));
 
-  const override = await companyAwardAnswersFor({ orgId, companyId, partyId, vendorName }, linkedCompany, barredRows);
+  const bid = { orgId, companyId, partyId, vendorName };
+  // J14: the database's whole list once 20261179 is applied (the override
+  // first); before it, its one-company question.
+  const listed = await companiesAwardAnswersFor(bid);
+  const override = listed ? listed[0] ?? null : await companyAwardAnswersFor(bid, linkedCompany, barredRows);
+  const listedAlso = listed ? listed.slice(1) : [];
 
   // The override answers for a name when it is a do-not-use row with that
   // name's key; for the stored name also when there is none (the database's
@@ -298,8 +327,13 @@ export async function awardGateFor(doc: CostDocument): Promise<AwardGate> {
   if (letterhead && letterKey && letterKey !== storedKey && letterKey !== overrideKey) {
     asks.push({ name: letterhead, onFile: false, letterhead });
   }
-  if (!asks.length) return { override, acks: [] };
-  if (companyId && (await linkedCompany())) return { override, acks: [] };
+  // The other companies of the database's list that no acknowledgement of
+  // the stored name names: each is asked for its own reason. The stored
+  // name's acknowledgement IS that company's reason (it goes with the award
+  // as its override — J14), so it is not asked twice.
+  const alsoOf = (acks: NameFlag[]) => listedAlso.filter((c) => !acks.some((a) => a.onFile && a.company.id === c.id));
+  if (!asks.length) return { override, also: alsoOf([]), acks: [] };
+  if (companyId && (await linkedCompany())) return { override, also: alsoOf([]), acks: [] };
   const acks: NameFlag[] = [];
   for (const a of asks) {
     const hit = barredCompanyFor(a.name, null, await barredRows());
@@ -307,7 +341,7 @@ export async function awardGateFor(doc: CostDocument): Promise<AwardGate> {
       acks.push({ company: { id: hit.id, name: hit.name, status: hit.status }, vendorOnFile: vendorName, onFile: a.onFile, letterhead: a.letterhead });
     }
   }
-  return { override, acks };
+  return { override, also: alsoOf(acks), acks };
 }
 
 /** Which names of the bid an acknowledgement is for — its audit rows' `matchedOn`. */
@@ -331,10 +365,13 @@ function ackMessage(ack: NameFlag, override: AwardFlag | null): string {
   const names = ack.letterhead
     ? `The vendor on file, "${ack.vendorOnFile}", and the letterhead the AI read, "${ack.letterhead}",`
     : `The vendor on file "${ack.vendorOnFile}"`;
+  // J14 (MON-12 / COST-3): the award answers for this company too — the
+  // reason typed here goes with it as that company's own override.
   const why = override
-    ? `The award's override names one company — the first flagged one it reaches through this bid's company link, its contractor and then its vendor name — and here that is ${override.name}, ${override.status === "inactive" ? "marked inactive" : "flagged do-not-use"}`
+    ? `The award's first override names the first flagged company it reaches through this bid's company link, its contractor and then its vendor name — here that is ${override.name}, ${override.status === "inactive" ? "marked inactive" : "flagged do-not-use"}`
     : "The award's override does not name it";
-  return `${names} could be ${c}, flagged DO NOT USE in the registry. ${why}, so no override for ${c} is recorded. If ${c} sent this bid, cancel and link the bidder to it; if another company did, cancel and link the bidder to that company. ${what}`;
+  const recorded = override ? `so ${c} is recorded as an override of its own, with the reason you give here` : `so no override for ${c} is recorded`;
+  return `${names} could be ${c}, flagged DO NOT USE in the registry. ${why}, ${recorded}. If ${c} sent this bid, cancel and link the bidder to it; if another company did, cancel and link the bidder to that company. ${what}`;
 }
 /** The acknowledgement's line in the award's confirm (or check-the-paper prompt). */
 function ackWarning(ack: NameFlag, override: AwardFlag | null): string {
@@ -342,7 +379,7 @@ function ackWarning(ack: NameFlag, override: AwardFlag | null): string {
   if (!ack.onFile) {
     return `The letterhead the AI read ("${ack.letterhead}") could be ${c}, flagged DO NOT USE — the vendor on file is ${onFileShown(ack)}, and your acknowledgement is recorded with this award.`;
   }
-  return `The vendor on file ("${ack.vendorOnFile}")${ack.letterhead ? ` and the letterhead the AI read ("${ack.letterhead}")` : ""} could be ${c}, flagged DO NOT USE — the award's override ${override ? `names ${override.name}` : "does not name it"}, and your acknowledgement is recorded with this award.`;
+  return `The vendor on file ("${ack.vendorOnFile}")${ack.letterhead ? ` and the letterhead the AI read ("${ack.letterhead}")` : ""} could be ${c}, flagged DO NOT USE — the award's override ${override ? `names ${override.name}, and ${c} is recorded as an override of its own with your reason` : "does not name it, and your acknowledgement is recorded with this award"}.`;
 }
 
 /** MON-10 (projects Round G J14): the outcomes of a quote's notice that say
@@ -469,11 +506,40 @@ export default function QuotesPanel({ orgId, projectId, canManage, actor, accoun
    *  Moving a bidder AWAY from a do-not-use company — its explicit link or
    *  a name it could be — is an override like awarding it: a typed reason
    *  is required, and the change is undone if its audit row cannot be
-   *  written (MON-12). */
+   *  written (MON-12).
+   *  J14 (MON-12, 20261179): the move runs on the server —
+   *  `relinkQuoteCompany` (relink_cost_document) decides which flagged
+   *  companies it leaves behind (every one the award answered for, an
+   *  inactive one and a flagged contractor included), asks for the reason
+   *  only then, and moves the link with its record in one transaction; the
+   *  database refuses the same move written directly. Before the migration
+   *  (the function absent) the question and the write below stand. */
   const linkCompany = async (doc: CostDocument, companyId: string | null, current: Company | null) => {
     setErr(null);
     if (!isOpenDoc(doc)) { setErr("A decided bid keeps its company link — it is evidence on that company's record."); return; }
     const previousLink = extras.get(doc.id)?.companyId ?? null;
+    const moved = () => setExtras((prev) => new Map(prev).set(doc.id, { ...(prev.get(doc.id) ?? { pagesTotal: null, pagesRead: null }), companyId }));
+    const first = await relinkQuoteCompany({ docId: doc.id, companyId });
+    if (first !== RELINK_RPC_MISSING) {
+      let res = first;
+      if (!res.ok && res.code === "reason_required") {
+        const left = res.leaving ?? [];
+        const lead = left[0];
+        const flagWord = (c: { status: string }) => (c.status === "inactive" ? "marked INACTIVE" : "flagged DO NOT USE");
+        const reason = (await appPrompt({
+          title: lead ? `${lead.name} is ${flagWord(lead)}` : "A flagged company answers for this bid",
+          message: `This bid answers for ${left.map((c) => `${c.name} (${c.status === "inactive" ? "inactive" : "do not use"})`).join(", ") || "a flagged company"} — through its own link, its contractor or its name. ${companyId ? "Linking it elsewhere" : "Unlinking it"} removes ${left.length === 1 ? "that flag" : "those flags"} from this bid — state why; the reason is recorded.`,
+          placeholder: "Reason (required)",
+        }))?.trim() || null;
+        if (!reason) { setErr(`Link unchanged — ${lead ? `${lead.name} is ${lead.status === "inactive" ? "marked inactive" : "flagged do-not-use"}` : "a flagged company answers for this bid"} and no reason was given.`); return; }
+        const again = await relinkQuoteCompany({ docId: doc.id, companyId, reason });
+        if (again === RELINK_RPC_MISSING) { setErr("Couldn't link the company — the server's link check went missing while this was open. Reload and try again."); return; }
+        res = again;
+      }
+      if (!res.ok) { setErr(res.error); return; }
+      moved();
+      return;
+    }
     const leavingBarred = current?.status === "do_not_use" && companyId !== current.id;
     let reason: string | null = null;
     if (leavingBarred) {
@@ -894,10 +960,18 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
     const sameAck = (a: NameFlag, b: NameFlag) =>
       a.company.id === b.company.id && a.onFile === b.onFile && a.letterhead === b.letterhead && a.vendorOnFile === b.vendorOnFile;
     const sameAcks = (a: NameFlag[], b: NameFlag[]) => a.length === b.length && a.every((x, i) => sameAck(x, b[i]));
+    const sameFlags = (a: AwardFlag[], b: AwardFlag[]) => a.length === b.length && a.every((x, i) => sameFlag(x, b[i]));
     // The answer the reasons in hand were typed for, and those reasons.
-    let held: AwardGate = { override: null, acks: [] };
+    let held: AwardGate = { override: null, also: [], acks: [] };
     let overrideReason: string | null = null;
     let ackReasons: Array<{ ack: NameFlag; reason: string }> = [];
+    // J14: a reason for each other flagged company the award answers for.
+    let alsoReasons: Array<{ flag: AwardFlag; reason: string }> = [];
+    const askAlso = async (flag: AwardFlag, first: AwardFlag | null, moved: boolean): Promise<string | null> => (await appPrompt({
+      title: `${flag.name} is ${flag.status === "inactive" ? "marked INACTIVE" : "flagged DO NOT USE"} too`,
+      message: `${moved ? "This bid's company link, contractor or vendor name changed while the award was being confirmed. " : ""}This award also answers for ${flag.name}${first ? `, besides ${first.name}` : ""} — the registry flags it, and this bidder's contractor or its name is bound to or matches it. To award anyway, state the reason for ${flag.name} — it is recorded against this award and the company's record as an override of its own.`,
+      placeholder: "Override reason (required)",
+    }))?.trim() || null;
     /** Ask for a reason for every part of `gate` that has none yet; false
      *  when one was refused (the award stops). `moved`: the answer changed
      *  while the dialogs were open — the prompt says so. */
@@ -917,6 +991,15 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
         }))?.trim() || null;
         if (!overrideReason) { setErr(`Award stopped — ${flag.name} is ${inactive ? "marked inactive" : "flagged do-not-use"} and no override reason was given.`); return false; }
       }
+      const keptAlso: typeof alsoReasons = [];
+      for (const flag of gate.also) {
+        const prior = alsoReasons.find((r) => sameFlag(r.flag, flag));
+        if (prior) { keptAlso.push(prior); continue; }
+        const reason = await askAlso(flag, gate.override, moved);
+        if (!reason) { setErr(`Award stopped — ${flag.name} is ${flag.status === "inactive" ? "marked inactive" : "flagged do-not-use"} and no override reason was given for it.`); return false; }
+        keptAlso.push({ flag, reason });
+      }
+      alsoReasons = keptAlso;
       const kept: typeof ackReasons = [];
       for (const ack of gate.acks) {
         const prior = ackReasons.find((r) => sameAck(r.ack, ack));
@@ -972,7 +1055,7 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
     for (let tries = 0; ; tries++) {
       const again = await ask();
       if (!again) return;
-      if (sameFlag(again.override, held.override) && sameAcks(again.acks, held.acks)) break;
+      if (sameFlag(again.override, held.override) && sameFlags(again.also, held.also) && sameAcks(again.acks, held.acks)) break;
       if (tries === 2) { setErr("Award stopped — this bid's company link, contractor, vendor name or letterhead kept changing while the award was being confirmed. Reload and try again."); return; }
       if (!(await answer(again, true))) return;
     }
@@ -985,11 +1068,11 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
     // reads intent → completed, or intent → abandoned; an acknowledgement
     // is followed by the award's own COST_DOC_AWARDED, or by its
     // abandonment. The acknowledgement is never the override.
-    const recordIntent = async (who: { id: string; name: string }, reason: string, status: string): Promise<string | null> => {
+    const recordIntent = async (who: { id: string; name: string }, reason: string, status: string, also = false): Promise<string | null> => {
       const { error } = await supabase.from("audit_logs").insert({
         action: "COST_DOC_AWARD_OVERRIDE_DO_NOT_USE", resource_type: "cost", resource_id: doc.id,
         org_id: orgId, user_id: actor.uid, user_email: actor.email,
-        details: { companyId: who.id, company: who.name, companyStatus: status, reason, total, currency: cur, rfqGroup: group, costAccountId: accountId },
+        details: { companyId: who.id, company: who.name, companyStatus: status, reason, total, currency: cur, rfqGroup: group, costAccountId: accountId, ...(also ? { also: true } : {}) },
       });
       return error ? `The override could not be recorded (${userFacingError(error, { clause: true })}) — award stopped.` : null;
     };
@@ -1029,16 +1112,43 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
       }
       acked.push(ack);
     }
-    let overridden: { id: string; name: string } | null = null;
-    if (held.override && overrideReason) {
-      const failed = await recordIntent(held.override, overrideReason, held.override.status);
+    // Every override intent recorded (the first company's, then each other
+    // one's — J14); an award that then fails closes each.
+    const overridden: Array<{ id: string; name: string }> = [];
+    const closeOverrides = async (why: string): Promise<string | null> => {
+      const unclosed: string[] = [];
+      for (const o of overridden) {
+        const { error } = await supabase.from("audit_logs").insert({
+          action: "COST_DOC_AWARD_OVERRIDE_ABANDONED", resource_type: "cost", resource_id: doc.id,
+          org_id: orgId, user_id: actor.uid, user_email: actor.email,
+          details: { companyId: o.id, company: o.name, why },
+        });
+        if (error) unclosed.push(`The override for ${o.name} was recorded but could not be closed: ${userFacingError(error, { embed: true })}`);
+      }
+      return unclosed.length ? unclosed.join("; ") : null;
+    };
+    const intents: Array<{ flag: AwardFlag; reason: string; also: boolean }> = [
+      ...(held.override && overrideReason ? [{ flag: held.override, reason: overrideReason, also: false }] : []),
+      ...alsoReasons.map((r) => ({ ...r, also: true })),
+    ];
+    for (const it of intents) {
+      const failed = await recordIntent(it.flag, it.reason, it.flag.status, it.also);
       if (failed) {
+        const unclosedOverrides = await closeOverrides(failed);
         const unclosed = await closeAck(failed);
-        setErr(unclosed ? `${failed} (${unclosed})` : failed);
+        const tails = [unclosedOverrides, unclosed].filter((x): x is string => !!x);
+        setErr(tails.length ? `${failed} (${tails.join("; ")})` : failed);
         return;
       }
-      overridden = { id: held.override.id, name: held.override.name };
+      overridden.push({ id: it.flag.id, name: it.flag.name });
     }
+    // The reasons that go with the award for the companies after the first:
+    // each other company's own, and the stored name's acknowledgement (the
+    // award answers for that look-alike too — J14). The letterhead's never.
+    const alsoOverrides = [
+      ...alsoReasons.map((r) => ({ companyId: r.flag.id, reason: r.reason })),
+      ...ackReasons.filter((r) => r.ack.onFile).map((r) => ({ companyId: r.ack.company.id, reason: r.reason })),
+    ];
 
     // BID-10: every spelling of this merged field is one field, so its
     // rivals are handed to the award under one spelling and all decline.
@@ -1050,28 +1160,35 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
     // could not be marked not selected, or ungrouped quotes left open.
     let warning: string | null = null;
     try {
-      // overrideReason only — the letterhead's acknowledgement is never an override reason.
-      let res = await awardQuote({ doc, siblings, costAccountId: accountId, actor, overrideReason, confirmedTotal });
-      // The lib found a flag this table did not (an inactive company, or a
-      // registry link read differently): ask for the reason, record the
-      // intent, and try once more with it. A refusal here stops the award
-      // as a failed result, so a recorded acknowledgement is closed.
-      if (!res.ok && res.needsOverride && !overrideReason) {
+      // overrideReason for the first company (named, so a moved answer is
+      // refused — J14), and a reason for each other one; the letterhead's
+      // acknowledgement is never an override reason.
+      let overrideCompanyId = held.override && overrideReason ? held.override.id : null;
+      let res = await awardQuote({ doc, siblings, costAccountId: accountId, actor, overrideReason, overrideCompanyId, alsoOverrides: [...alsoOverrides], confirmedTotal });
+      // The lib found a flag this table did not (an inactive company, a
+      // registry link read differently, or — `also` — another company the
+      // award answers for): ask for the reason, record the intent, and try
+      // again with it, at most twice. A refusal here stops the award as a
+      // failed result, so a recorded acknowledgement is closed.
+      for (let tries = 0; tries < 2 && !res.ok && res.needsOverride && (!overrideReason || res.needsOverride.also); tries++) {
         const flag = res.needsOverride;
+        const also: boolean = !!flag.also && !!overrideReason;
         setBusy(null);
-        const reason = (await appPrompt({
-          title: `${flag.companyName} is ${flag.status === "inactive" ? "marked INACTIVE" : "flagged DO NOT USE"}`,
-          message: "The company registry flags the company behind this quote. To award anyway, state the reason — it is recorded against this award and the company's record.",
-          placeholder: "Override reason (required)",
-        }))?.trim() || null;
-        const failed = reason ? await recordIntent({ id: flag.companyId, name: flag.companyName }, reason, flag.status) : null;
-        if (!reason) res = { ok: false, error: `Award stopped — ${flag.companyName} is flagged and no override reason was given.` };
-        else if (failed) res = { ok: false, error: failed };
-        else {
-          overridden = { id: flag.companyId, name: flag.companyName };
-          setBusy(doc.id);
-          res = await awardQuote({ doc, siblings, costAccountId: accountId, actor, overrideReason: reason, confirmedTotal });
-        }
+        const reason: string | null = also
+          ? await askAlso({ id: flag.companyId, name: flag.companyName, status: flag.status }, held.override, false)
+          : (await appPrompt({
+              title: `${flag.companyName} is ${flag.status === "inactive" ? "marked INACTIVE" : "flagged DO NOT USE"}`,
+              message: "The company registry flags the company behind this quote. To award anyway, state the reason — it is recorded against this award and the company's record.",
+              placeholder: "Override reason (required)",
+            }))?.trim() || null;
+        const failed = reason ? await recordIntent({ id: flag.companyId, name: flag.companyName }, reason, flag.status, also) : null;
+        if (!reason) { res = { ok: false, error: `Award stopped — ${flag.companyName} is flagged and no override reason was given.` }; break; }
+        if (failed) { res = { ok: false, error: failed }; break; }
+        overridden.push({ id: flag.companyId, name: flag.companyName });
+        if (also) alsoOverrides.push({ companyId: flag.companyId, reason });
+        else { overrideReason = reason; overrideCompanyId = flag.companyId; }
+        setBusy(doc.id);
+        res = await awardQuote({ doc, siblings, costAccountId: accountId, actor, overrideReason, overrideCompanyId, alsoOverrides: [...alsoOverrides], confirmedTotal });
       }
       if (!res.ok) failure = res.error ?? "Couldn't award.";
       else warning = res.warning ?? null;
@@ -1095,13 +1212,9 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
       if (said) setErr(said);
       return;
     }
-    if (overridden) {
-      const { error } = await supabase.from("audit_logs").insert({
-        action: "COST_DOC_AWARD_OVERRIDE_ABANDONED", resource_type: "cost", resource_id: doc.id,
-        org_id: orgId, user_id: actor.uid, user_email: actor.email,
-        details: { companyId: overridden.id, company: overridden.name, why: failure },
-      });
-      if (error) failure = `${failure} (The do-not-use override was recorded but could not be closed: ${userFacingError(error, { embed: true })})`;
+    if (overridden.length) {
+      const unclosedOverrides = await closeOverrides(failure);
+      if (unclosedOverrides) failure = `${failure} (${unclosedOverrides})`;
     }
     const unclosed = await closeAck(failure);
     if (unclosed) failure = `${failure} (${unclosed})`;
