@@ -141,6 +141,10 @@ The Bridge reads the page's kind `'self'` entities on the same query as its equi
 
 **Scope / residual.** **Pending migrations:** `supabase/migrations/20261170_intel_roundG_document_assets_source.sql`, then `supabase/migrations/20261171_intel_roundG_provenance.sql` (hand-applied, in that order). The app deploys in either order: before 20261170 the Bridge says the relation was not recorded and keeps its column write; before 20261171 it writes the relation without the provenance columns and says so. Read both ways: open a vessel and see its sheets (the asset hub, ⌘K); open a sheet and see its equipment (the library's equipment column and the sweep's chips per document).
 
+**Fix pass 3 (2026-10-02, review).** The residual's clause "before 20261171 it writes the relation without the provenance columns and says so" has been false since fix pass 2. Before 20261171 the Bridge writes NO 'drawing' row: `notRecorded` names 20261171, the column write still lands, and the first recompute after the paste relates the applied tags with their provenance (`GAP-304`'s fix pass 2).
+
+**Scope / residual (corrected).** Pending migrations: `20261170`, then `20261171`, in that order. The app deploys in either order. Before either is pasted, the suggestions carry their sheet addresses, but no relation row is written, and the Bridge says why. The vessel-to-sheets direction (the asset hub, ⌘K) shows sheets once the relation is written.
+
 ---
 
 <a id="gap-302"></a>
@@ -315,6 +319,10 @@ No confidence score is stored or shown. Nothing AI-derived drives a hold, an MOC
 
 Acceptance 2 gains the ⌘K and coverage-report AI-read marks (GOV-9's fix pass 2). Acceptance 3: every Bridge write's and every correction's audit insert is now checked.
 
+**Fix pass 3 (2026-10-02, review).**
+- **What `asserted_by_user` records.** It was documented as "the person, when a person asserted it". For a `jsonb_sync` row it is not that. `documents_resync_assets` deletes and re-inserts every synced row of a document on each `asset_tags` edit, and the BEFORE INSERT stamp sets the uid of whoever made that edit, for all of the document's tags, including tags other people typed. `assets_backfill_documents` stamps the asset's creator on links to documents someone else tagged. The 20261171 header now states the semantics. For a 'manual' row it is the person who linked it, and a drawing pair a person made theirs through `adopt` records that person. For a 'jsonb_sync' row it is the person whose write last re-derived the row: the latest editor of that document's equipment tags, or the asset's creator, not necessarily who typed the tag. It is NULL on a 'drawing' row, and on a synced row the Bridge handed back to the person's tags. No screen shows the uid; export and restore carry it with that meaning. The SQL is unchanged.
+- **A person's assertion kept at transition-in.** `lib/transitionIn.ts` now sends a drawing-held pair through `adopt` (`AREA-2`'s fix pass 3), so a controller's link is recorded as theirs (`asserted_by` human).
+
 ---
 
 <a id="gap-304"></a>
@@ -388,6 +396,8 @@ The relation is authoritative and the column is kept: see `BR-2` / `WIRE-1`. The
 - A library configuration that cannot be read now stops the apply and the compute, and nothing is written (`loadBridgeConfig` returns `{ config, tagColumns, error }`). Before, a failed read was taken as "no column, discovery on": the apply created assets a library had opted out of (`createAssets: false`) and marked tags applied that never reached the mapped column. The compute throws rather than skipping only the auto-apply and the column plan, which is stricter than the review's ask: a proposal computed without the configuration would also lose the library's default unit. The sweep counts the document failed; ingest's call is already caught. Tests: "a library whose settings cannot be read: apply writes nothing …" and "…and a compute writes nothing: no proposal without the library's default unit, no column plan, no auto-apply".
 
 **Scope / residual (corrected).** Pending migrations: `20261170`, then `20261171`, in that order. The app deploys in either order. Before 20261170, and now also before 20261171, the Bridge says the relation was not recorded and keeps its column write.
+
+**Fix pass 3 (2026-10-02, review).** "The backlog is related by sweeps" could not be checked: the compute's relation refresh, which is that backfill, discarded its outcome. `computeForDocument` now returns it (`ComputeResult.relations`, merged with its automatic apply's). The sweep sums it into `outcomes` (`relationsWritten`, `relationsRefreshed`, `relationsKeptHuman`, `relationsNotRecorded`, `relationNote`), and the sweep modal shows the links recorded and, with the reason, the documents whose links were not recorded. A sweep now says whether the backfill was recorded. See `BR-2`'s fix pass 3 for the tests. At ingest the outcome goes to a fire-and-forget caller (I-18's `lib/knowledgeIngest.ts`); the next sweep reports it.
 
 ---
 
@@ -672,6 +682,12 @@ and keep feeding the census, the Bridge and asset discovery.
 1. The review surface read its rows unpaged. GET's relation read and `markRevisionTruth` are now keyset-paged, and the review actions filter at the database (BR-11's fix pass 2), so a max-rows cut never drops a vanished or superseded mark.
 2. `readingOf` fell back to the document's `current_version_id` when no used copy carried a revision id. A legacy copy holding an earlier revision's text therefore stamped its reading as the current revision's, and the superseded mark could never fire for it. The revision is now null (not known) in that case. Test: "a copy that carries no revision id stamps NO revision — never the document's current one" (fails on the fix-pass-1 library).
 3. The vanished line marks a sheet read off an AI transcription "(AI-read, unconfirmed)" (GOV-9).
+
+**Fix pass 3 (2026-10-02, review).**
+1. **The review list is never hidden by a read error.** GET treated any failure of its full-column 'drawing' relation read as a missing migration. It retried with fewer columns and said "Revision marks need migration 20261171" (or, when that also failed, that 20261170 was not applied) on a database that had both. The vanished-review buttons disappeared, and the person was told the wrong cause. It now falls back only on a missing column (42703 / PGRST204). Any other error is said as what it is ("The drawing links could not be read (…) — the list of links the current revision no longer shows is incomplete …"). Tests in `lib/__tests__/equipmentBridgeRoutes.test.ts`:
+   - "GET: a relation read that fails for any reason but a missing column is said as a read failure — never as a missing migration" (fails on the fix-pass-2 route);
+   - "GET: a missing column still falls back — …" (the regression guard).
+2. **The vanished line.** The line was built in two halves, so a vanished row with no sheet label but a revision rendered "(, read from Rev B)". That is common: every relation written from a page with no title block has a null `sheet_label`. `vanishedWhere` now builds the parenthesis from the parts it has: "(was on SHT 4 (AI-read, unconfirmed), read from Rev B)", "(read from Rev B)", or nothing. Tests: `lib/__tests__/equipmentSweepModalRender.test.ts` "no sheet label, a revision: '(read from Rev B)' — never '(, read from Rev B)'" and "neither sheet nor revision: no parenthesis at all".
 
 ---
 

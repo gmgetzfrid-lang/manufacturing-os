@@ -125,6 +125,17 @@ equipmentBridgeServer.ts:272-274 — `.update({ metadata: { ...metadata, [target
 
 **Scope / residual.** **Pending migrations:** `supabase/migrations/20261170_intel_roundG_document_assets_source.sql`, then `supabase/migrations/20261171_intel_roundG_provenance.sql` (hand-applied, in that order). The app deploys in either order: before 20261170 the Bridge says the relation was not recorded and keeps its column write; before 20261171 it writes the relation without the provenance columns and says so. The relation is written for tags that resolve to an asset. A discovered asset is created first, then related. A held tag (BR-13) is neither.
 
+**Fix pass 3 (2026-10-02, review).** The residual's clause "before 20261171 it writes the relation without the provenance columns and says so" has been false since fix pass 2. Before 20261171 the Bridge writes NO 'drawing' row: `notRecorded` names 20261171, the column write still lands, and the first recompute after the paste relates the applied tags with their provenance (`GAP-304`'s fix pass 2).
+
+The compute's relation refresh (the GAP-304 backfill of tags applied before the relation existed) used to discard its outcome. A refused or unrecorded refresh during a sweep went unsaid. `computeForDocument` now returns it as `ComputeResult.relations`, merged with its automatic apply's outcome. The sweep sums it into `outcomes` (`relationsWritten`, `relationsRefreshed`, `relationsKeptHuman`, `relationsNotRecorded` and the first `relationNote`), and the sweep modal's progress line shows the links recorded and the documents whose links were not recorded, with the reason. Tests:
+- `lib/__tests__/equipmentBridge.test.ts` "GAP-304: the compute returns its relation refresh's outcome — …";
+- `lib/__tests__/equipmentBridgeRoutes.test.ts` "a relation refresh that records nothing is counted with its reason";
+- `lib/__tests__/equipmentSweepModalRender.test.ts` "column dismissals, recorded links, an unrecorded relation and refused audit rows are shown, summed over the pages".
+
+Each fails on the fix-pass-2 files.
+
+**Scope / residual (corrected).** Pending migrations: `20261170`, then `20261171`, in that order. The app deploys in either order. Before either is pasted, the Bridge writes no 'drawing' row, says the relation was not recorded (naming the file it needs), and keeps its column write. At ingest, the outcome is returned to a fire-and-forget caller (`lib/knowledgeIngest.ts` `onDocumentReady`, I-18's file) that reads nothing; the next sweep of the library reports it.
+
 ---
 
 <a id="br-3"></a>
@@ -267,6 +278,18 @@ Now:
 - Tests in `lib/__tests__/equipmentBridge.test.ts`: "a tag is removed only when it is in NO tag column the document holds — never on a re-map, a dropped key, or a move to another column (fix pass 2)", "(a) tags applied before the column was recorded, the library re-mapped onto a column the document now holds: …", "(b) a tag missing from one reading keeps its recorded column — …", "(c) the recorded column's key gone from the document is not a removal". Each fails on the fix-pass-1 library. The regression guard "a person's real removal still is one: out of every tag column, with the key still there" passes on both.
 
 Done-when 3 (restated): ✓ the dismissed list and the preserved `applied`; ✓ a column removal becomes a dismissal; ✓ (fix pass 2) a re-map onto a column the document holds, a dropped column key, a move to another tag column and a tag missing from one reading never read as removals. Residual: a historical tag on a document whose only tag column a person deleted outright (the key gone, not emptied) is not dismissed, because nothing says where it was. The backfill relates it, and a person removes it with Dismiss.
+
+**Fix pass 3 (2026-10-02, review).** A column removal could fail half-way and leave its 'drawing' rows standing for good.
+- **Order.** `computeForDocument` saved the 'column' dismissals (`upsertSuggestions`) BEFORE it removed the relations. A removal that threw left the tags dismissed, so the next compute's `planColumnRemovals` skipped them and never retried. Their 'drawing' rows stayed on the hub, the graph and the impact scan, against the recorded decision. The relations are now removed FIRST. A removal that fails throws before anything is saved, and the next compute plans the same removal again. The `EQUIPMENT_BRIDGE_DISMISSED` audit is written after the ledger lands.
+- **Batches.** `removeDrawingRelations` read the pairs' assets (`.in("id", assetIds)`) and deleted the rows (`.delete().in("id", …)`) in one request each. A person clearing a column of more than about 200 tags overflowed the request line. Both now run in batches of 100.
+- **Counted.** Column dismissals are counted in the sweep's results (`outcomes.columnDismissed`) and shown on its progress line ("N applied tags were no longer in any tag column — dismissed …"). DEC-44 (I-11)'s Risk said they were, and nothing had counted them.
+
+Tests:
+- `lib/__tests__/equipmentBridge.test.ts` "BR-5: a column removal whose relation delete fails saves nothing — the next compute plans it again and removes the link …";
+- `lib/__tests__/equipmentBridge.test.ts` "a person clearing a large tag column (250 tags) removes every link, in batches under the URL limit";
+- `lib/__tests__/equipmentBridgeRoutes.test.ts` "DEC-44 (I-11) Risk: a first sweep's column dismissals and the relation backfill are counted in the sweep's results".
+
+Each fails on the fix-pass-2 files. The in-memory stand-in gained `maxInList` (an `.in()` past it fails as the gateway does) and `selectErrors`.
 
 ---
 
@@ -500,6 +523,10 @@ Every applied tag, matched or discovered, gets a relation row with `sheet_label`
 4. ✓ The tooltip and the stored field agree. The chip's title (`chipTitle`) names the sheet address, or "page N (no title block read)", never a page number called a sheet. The relation stores sheets in `sheet_label` and PDF pages in `pages`.
 
 **Scope / residual.** **Pending migrations:** `supabase/migrations/20261170_intel_roundG_document_assets_source.sql`, then `supabase/migrations/20261171_intel_roundG_provenance.sql` (hand-applied, in that order). The app deploys in either order: before 20261170 the Bridge says the relation was not recorded and keeps its column write; before 20261171 it writes the relation without the provenance columns and says so.
+
+**Fix pass 3 (2026-10-02, review).** The residual's clause "before 20261171 it writes the relation without the provenance columns and says so" has been false since fix pass 2. Before 20261171 the Bridge writes NO 'drawing' row: `notRecorded` names 20261171, the column write still lands, and the first recompute after the paste relates the applied tags with their provenance (`GAP-304`'s fix pass 2).
+
+**Scope / residual (corrected).** Pending migrations: `20261170`, then `20261171`, in that order. The app deploys in either order. Before either is pasted, the suggestions still carry their sheets. No relation row (and so no `sheet_label` / `pages`) is written, and the Bridge says why.
 
 ---
 

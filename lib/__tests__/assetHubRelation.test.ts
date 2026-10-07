@@ -64,6 +64,7 @@ async function render() {
 
 beforeEach(() => {
   Object.assign(s.db, newFakeDb());
+  s.db.maxInList = undefined;
   s.db.tables = {
     documents: [
       { id: "d1", org_id: "o1", document_number: "2002-D-10001", title: "Crude charge", rev: "B", status: "Issued", library_id: "lib1", asset_tags: [] },
@@ -153,5 +154,76 @@ describe("GAP-303 (fix pass 2) — a pair a person typed on the document is not 
     expect(item.textContent).toContain("read from drawing");
     expect(item.innerHTML).toContain("Not typed by a person");
     expect(item.textContent).not.toContain("tagged · also on drawing");
+  });
+});
+
+describe("I-11 fix pass 3 — the hold indicator is never a silent 0 (the field-facing value)", () => {
+  /** n documents the relation links to E-22 (drawing rows), d-000 … */
+  const manyDrawings = (n: number) => {
+    for (let i = 0; i < n; i++) {
+      const id = `d-${String(i).padStart(3, "0")}`;
+      s.db.tables.documents.push({ id, org_id: "o1", document_number: `P-${String(i).padStart(3, "0")}`, title: "P&ID", rev: "A", status: "Issued", library_id: "lib1", asset_tags: [] });
+      s.db.tables.document_assets.push({ id: `rx-${i}`, org_id: "o1", document_id: id, asset_id: "a-e22", tag_text: "E-22", source: "drawing", sheet_label: null, asserted_by: "machine" });
+    }
+  };
+  const itemOf = (num: string) => [...container.querySelectorAll("li")].find((li) => (li.textContent ?? "").includes(num))!;
+
+  it("a tag on 250 drawings: holds are read in batches under the URL limit, and a held drawing is badged and counted", async () => {
+    // The gateway refuses a request line carrying more than ~200 ids.
+    // Reproduction: fix pass 2 sent all 250 ids in one .in() and ignored the
+    // error — the hub read 'On hold 0' and badged nothing.
+    s.db.maxInList = 200;
+    manyDrawings(250);
+    s.db.tables.document_holds = [{ id: "h1", document_id: "d-230", released_at: null }];
+    await render();
+    expect(itemOf("P-230").textContent).toContain("hold");
+    expect(container.textContent).toMatch(/On hold\s*1/);
+    expect(container.querySelector('[data-testid="holds-unchecked"]')).toBeNull();
+    const holdReads = s.db.calls.filter((c) => c.table === "document_holds" && c.method === "in");
+    expect(holdReads.length).toBe(3);
+    for (const c of holdReads) expect((c.args[1] as unknown[]).length).toBeLessThanOrEqual(100);
+  });
+
+  it("a hold read that fails says the holds could not be checked — never 'On hold 0' — and marks every unchecked document", async () => {
+    s.db.selectErrors = { document_holds: { code: "57014", message: "canceling statement due to statement timeout" } };
+    await render();
+    const banner = container.querySelector('[data-testid="holds-unchecked"]');
+    expect(banner?.textContent).toMatch(/Holds could not be checked/);
+    expect(banner?.textContent).toContain("statement timeout");
+    expect(container.textContent).toMatch(/On hold\s*not checked/);
+    expect(container.textContent).not.toMatch(/On hold\s*0/);
+    expect(itemOf("DS-22").textContent).toContain("hold not checked");
+    expect(itemOf("2002-D-10001").textContent).toContain("hold not checked");
+  });
+
+  it("a hold read that succeeds with no open hold reads 0 and no warning", async () => {
+    await render();
+    expect(container.textContent).toMatch(/On hold\s*0/);
+    expect(container.querySelector('[data-testid="holds-unchecked"]')).toBeNull();
+    expect(container.textContent).not.toContain("hold not checked");
+  });
+
+  it("a relation read that reaches its 1000-row cap says the list may be cut (never a silent truncation)", async () => {
+    for (let i = 0; i < 1000; i++) {
+      s.db.tables.document_assets.push({ id: `rz-${i}`, org_id: "o1", document_id: `gone-${i}`, asset_id: "a-e22", tag_text: "E-22", source: "drawing" });
+    }
+    await render();
+    const note = container.querySelector('[data-testid="list-cut"]');
+    expect(note?.textContent).toContain("Only the first 1000 links to E-22 were read");
+    expect(note?.textContent).toContain("some documents may not be listed here");
+  });
+
+  it("an asset_tags read that reaches its 500-row cap says so too; under the caps, no note", async () => {
+    await render();
+    expect(container.querySelector('[data-testid="list-cut"]')).toBeNull();
+    act(() => root.unmount());
+    container.remove();
+    s.tag = "Q-1";
+    s.asset = null;
+    for (let i = 0; i < 499; i++) {
+      s.db.tables.documents.push({ id: `q-${i}`, org_id: "o1", document_number: `QQ-${i}`, title: "Q", rev: "0", status: "Issued", library_id: "lib1", asset_tags: [{ tag: "Q-1" }] });
+    }
+    await render();
+    expect(container.querySelector('[data-testid="list-cut"]')?.textContent).toContain("the first 500 documents whose equipment tags name Q-1");
   });
 });

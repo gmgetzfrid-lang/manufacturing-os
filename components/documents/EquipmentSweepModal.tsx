@@ -40,6 +40,42 @@ interface RelationRow {
 interface ColumnDef { key: string; label?: string; type?: string; isPill?: boolean }
 
 type SweepCounts = Record<string, number>;
+/** What the sweep's computes did beyond their reason (the route's
+ *  `outcomes`, summed over the pages): the relation refresh, column
+ *  dismissals, audit rows that could not be written. */
+interface SweepOutcomes {
+  relationsWritten: number; relationsRefreshed: number; relationsKeptHuman: number;
+  relationsNotRecorded: number; relationNote: string | null;
+  columnDismissed: number; auditErrors: number; auditError: string | null;
+}
+const NO_OUTCOMES: SweepOutcomes = {
+  relationsWritten: 0, relationsRefreshed: 0, relationsKeptHuman: 0,
+  relationsNotRecorded: 0, relationNote: null, columnDismissed: 0, auditErrors: 0, auditError: null,
+};
+function addOutcomes(a: SweepOutcomes, b: Partial<SweepOutcomes> | undefined): SweepOutcomes {
+  if (!b) return a;
+  return {
+    relationsWritten: a.relationsWritten + Number(b.relationsWritten ?? 0),
+    relationsRefreshed: a.relationsRefreshed + Number(b.relationsRefreshed ?? 0),
+    relationsKeptHuman: a.relationsKeptHuman + Number(b.relationsKeptHuman ?? 0),
+    relationsNotRecorded: a.relationsNotRecorded + Number(b.relationsNotRecorded ?? 0),
+    relationNote: a.relationNote ?? b.relationNote ?? null,
+    columnDismissed: a.columnDismissed + Number(b.columnDismissed ?? 0),
+    auditErrors: a.auditErrors + Number(b.auditErrors ?? 0),
+    auditError: a.auditError ?? b.auditError ?? null,
+  };
+}
+
+/** GAP-309 / GOV-9: where a vanished link was, built from the parts it has —
+ *  "(was on SHT 4 (AI-read, unconfirmed), read from Rev B)", "(read from Rev
+ *  B)", or nothing at all; never an empty or half-open parenthesis. */
+export function vanishedWhere(v: { sheet_label?: string | null; model?: string | null; source_revision?: string | null }): string {
+  const parts = [
+    v.sheet_label ? `was on ${v.sheet_label}${v.model ? " (AI-read, unconfirmed)" : ""}` : null,
+    v.source_revision ? `read from Rev ${v.source_revision}` : null,
+  ].filter(Boolean);
+  return parts.length > 0 ? ` (${parts.join(", ")})` : "";
+}
 
 /** How a sheet reads (kept beside lib/equipmentBridgeServer sheetText so the
  *  client bundle never imports the server module): the address, or the page
@@ -84,7 +120,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
   const [uploadOrigin, setUploadOrigin] = useState(0);
   const [loading, setLoading] = useState(true);
   const [sweeping, setSweeping] = useState(false);
-  const [sweepProgress, setSweepProgress] = useState<{ counts: SweepCounts; cursor: string | null; done: boolean } | null>(null);
+  const [sweepProgress, setSweepProgress] = useState<{ counts: SweepCounts; outcomes: SweepOutcomes; cursor: string | null; done: boolean } | null>(null);
   const [applying, setApplying] = useState<string | null>(null); // doc id or "__all"
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -151,6 +187,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
     setSweeping(true); setError(null); setNotice(null);
     let cursor: string | null = resume ? sweepProgress?.cursor ?? null : null;
     const counts: SweepCounts = resume && sweepProgress ? { ...sweepProgress.counts } : {};
+    let outcomes: SweepOutcomes = resume && sweepProgress ? sweepProgress.outcomes : NO_OUTCOMES;
     try {
       const headers = { ...(await authed()), "Content-Type": "application/json" };
       for (let guard = 0; guard < 500; guard++) {
@@ -161,13 +198,14 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
         const json = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
         for (const [k, v] of Object.entries((json.counts ?? {}) as SweepCounts)) counts[k] = (counts[k] ?? 0) + Number(v);
+        outcomes = addOutcomes(outcomes, json.outcomes as Partial<SweepOutcomes> | undefined);
         cursor = (json.nextCursor as string | null) ?? null;
-        setSweepProgress({ counts: { ...counts }, cursor, done: !!json.done });
+        setSweepProgress({ counts: { ...counts }, outcomes, cursor, done: !!json.done });
         if (json.done || !cursor) break;
       }
       await refresh();
     } catch (e) {
-      setSweepProgress({ counts: { ...counts }, cursor, done: false });
+      setSweepProgress({ counts: { ...counts }, outcomes, cursor, done: false });
       setError(`${(e as Error).message} — the sweep stopped part-way; Resume continues from where it stopped.`);
     } finally { setSweeping(false); }
   };
@@ -276,6 +314,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
     return m;
   }, [relations]);
   const counts = sweepProgress?.counts;
+  const sweepOutcomes = sweepProgress?.outcomes;
 
   return (
     <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm flex items-start sm:items-center justify-center overflow-y-auto p-4 animate-in fade-in">
@@ -380,6 +419,18 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
               {counts.computed ?? 0} computed · {counts.no_entities ?? 0} no tags found · {counts.twin_not_ready ?? 0} not indexed yet · {counts.twin_stale ?? 0} indexed copy behind the current revision · {counts.no_twin ?? 0} not in a knowledge library
               {(counts.unreadable ?? 0) > 0 && ` · ${counts.unreadable} not readable to you`}
               {(counts.failed ?? 0) > 0 && ` · ${counts.failed} failed`}
+              {sweepOutcomes && sweepOutcomes.relationsWritten > 0 && ` · ${sweepOutcomes.relationsWritten} drawing link${sweepOutcomes.relationsWritten === 1 ? "" : "s"} recorded`}
+              {sweepOutcomes && sweepOutcomes.columnDismissed > 0 && ` · ${sweepOutcomes.columnDismissed} applied tag${sweepOutcomes.columnDismissed === 1 ? " was" : "s were"} no longer in any tag column — dismissed (no person named; see the audit log) and taken off the drawing links`}
+              {sweepOutcomes && sweepOutcomes.relationsNotRecorded > 0 && (
+                <span className="block text-amber-800" data-testid="sweep-relation-note">
+                  The drawing links were not recorded on {sweepOutcomes.relationsNotRecorded} document{sweepOutcomes.relationsNotRecorded === 1 ? "" : "s"}: {sweepOutcomes.relationNote}
+                </span>
+              )}
+              {sweepOutcomes && sweepOutcomes.auditErrors > 0 && (
+                <span className="block text-rose-700" data-testid="sweep-audit-error">
+                  {sweepOutcomes.auditErrors} audit record{sweepOutcomes.auditErrors === 1 ? "" : "s"} could not be written: {sweepOutcomes.auditError}
+                </span>
+              )}
             </div>
           )}
 
@@ -472,7 +523,7 @@ export default function EquipmentSweepModal({ orgId, libraryId, libraryName, onC
                         {vanished.map((v) => (
                           <div key={`${v.tag_text}`} className="text-[10px] text-amber-800 flex items-center gap-2 flex-wrap">
                             {/* GOV-9: a sheet address read off an AI transcription is shown unconfirmed. */}
-                            <span><span className="font-mono font-bold">{v.tag_text}</span> is no longer read on the current revision{v.sheet_label ? ` (was on ${v.sheet_label}${v.model ? " (AI-read, unconfirmed)" : ""}` : " ("}{v.source_revision ? `, read from Rev ${v.source_revision})` : ")"}</span>
+                            <span><span className="font-mono font-bold">{v.tag_text}</span> is no longer read on the current revision{vanishedWhere(v)}</span>
                             <button onClick={() => void reviewVanished(r.document_id, String(v.tag_text), "remove")} disabled={applying !== null} className="font-black text-rose-700 hover:underline">It left the sheet — remove the link</button>
                             <button onClick={() => void reviewVanished(r.document_id, String(v.tag_text), "keep")} disabled={applying !== null} className="font-black text-[var(--color-accent)] hover:underline">It is still there — keep</button>
                           </div>

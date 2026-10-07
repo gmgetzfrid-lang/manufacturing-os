@@ -114,6 +114,22 @@ The trigger-maintained `jsonb_sync` rows keep flowing for every member who edits
 
 **Fix pass 2 (2026-10-02, review): a second 23505-class door, handed to projects.** `lib/transitionIn.ts` links a transition-in document's matched equipment as source 'manual' with an upsert `ON CONFLICT (document_id, asset_id) DO NOTHING` (`ignoreDuplicates: true`). On a pair a 'drawing' row already holds, it writes nothing, silently. If that drawing row is later dismissed, the controller's assertion is lost. This is the same class as the graph's Connect (I-14), but it was not listed. Handed to projects (owner of `lib/transitionIn.ts`): when the pair is a drawing row, route the link through `POST /api/equipment-bridge` `action "adopt"` (or `adoptDrawingRelation` on the server), which makes the row the controller's. Recorded in the 20261170 header and in DEC-44 (I-11)'s Risk; not edited here.
 
+**Fix pass 3 (2026-10-02, review): transition-in's door, closed here.** `lib/transitionIn.ts` is not on this package's parallel do-not-edit list, so fix pass 2's hand-off to projects is withdrawn and the change is made here. `adoptDocument` links the matched equipment through `linkAdoptedEquipment`:
+1. The insert stays `ON CONFLICT DO NOTHING`. A DO UPDATE onto a pair a person's `asset_tags` already link (`jsonb_sync`), or onto a 'drawing' row, is refused by 20261170's per-verb policies and would fail every link in the batch.
+2. Its error is now checked: a refused write is said, never swallowed.
+3. It reads which of the pairs a 'drawing' row holds and sends each one through `POST /api/equipment-bridge` `action "adopt"`, the registry drawer's path. The row becomes the controller's (source `manual`, asserted by them), and a later Dismiss or "It left the sheet" no longer deletes it.
+4. A refused link or adopt comes back as `equipmentNote` on the result.
+
+Tests in `lib/__tests__/transitionIn.test.ts`:
+- "the drawing-held pair goes through the Bridge's 'adopt' (the other is inserted as the controller's link)";
+- "a refused link write is said, never swallowed";
+- "an adopt the Bridge refuses is said: the tag is still the sweep's reading";
+- "no drawing-held pair: nothing is adopted and nothing is said".
+
+The first three fail on the fix-pass-2 file.
+
+Residual: `components/projects/TransitionInPanel.tsx` (on the do-not-edit list, projects J12) shows `note` only. Showing `equipmentNote` is handed to projects; the panel's bulk path counts a `note` as "adopted without a uniqueness key", so the new sentence is not folded into `note`. AREA-2 stays OPEN on done-when 2: the graph's Connect and `components/graph/GraphShapeWizard.tsx` are I-14's.
+
 ---
 
 <a id="area-3"></a>

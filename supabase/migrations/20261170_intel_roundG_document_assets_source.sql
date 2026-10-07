@@ -75,17 +75,19 @@
 -- GAP-304, 99-fix-sequencing Phase 2), so until 20261171 lands it says the
 -- relation needs that file and keeps its column write.
 --
--- Two consequences outside this area (recorded under DACL-11 / AREA-2 and
--- handed to projects, which owns lib/projects.ts and lib/transitionIn.ts):
--- (1) the project_documents read rail means a link row whose document the
--- caller cannot read is no longer returned at all, so the projects
--- register's "N linked documents are hidden by your permissions" disclosure
+-- Two consequences outside this area (recorded under DACL-11 / AREA-2):
+-- (1) handed to projects (lib/projects.ts, components/projects/**): the
+-- project_documents read rail means a link row whose document the caller
+-- cannot read is no longer returned at all, so the projects register's
+-- "N linked documents are hidden by your permissions" disclosure
 -- (listProjectDocuments' hiddenByPermissions / hiddenDocIds) reads 0 from
 -- now on — the hiding is total, the disclosure goes dark; (2) transition-in's
--- link of matched equipment (an upsert ON CONFLICT DO NOTHING) onto a pair a
--- 'drawing' row already holds writes nothing, silently — the controller's
--- assertion is lost if the drawing row is later dismissed; it should go
--- through /api/equipment-bridge action 'adopt' when the pair is a drawing row.
+-- link of matched equipment (an insert ON CONFLICT DO NOTHING) onto a pair a
+-- 'drawing' row already holds writes nothing — lib/transitionIn.ts now sends
+-- such a pair through /api/equipment-bridge action 'adopt', so the
+-- controller's link survives a later dismissal of the drawing row, and says
+-- a refused link or adopt (`equipmentNote`; showing it in the panel is
+-- projects').
 --
 -- Requires 20260609 (the tables), 20260814 (is_org_controller) and 20261045
 -- (caller_holds_any_role). Paste order: after 20261128 / 20261138 (no object

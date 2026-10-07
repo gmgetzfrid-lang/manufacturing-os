@@ -14,7 +14,20 @@
 --        asserted_by       'machine' | 'human' (NOT NULL, default 'human' —
 --                          every row before this file was typed by a person:
 --                          documents.asset_tags, or a manual link)
---        asserted_by_user  the person, when a person asserted it
+--        asserted_by_user  whose write stamped the row (see below) — for a
+--                          'manual' row, the person who linked it (a drawing
+--                          pair a person made theirs through the Bridge's
+--                          adopt records that person). For a 'jsonb_sync'
+--                          row, the person whose write last RE-DERIVED it:
+--                          the tag sync deletes and re-inserts every synced
+--                          row of a document on each asset_tags edit, and the
+--                          asset backfill inserts them when an asset is
+--                          created, so it names the latest editor of that
+--                          document's equipment tags (or the asset's
+--                          creator) — not necessarily who typed that tag.
+--                          NULL on a 'drawing' row, and on a synced row the
+--                          Bridge handed back to the person's tags (who typed
+--                          the tag is not known).
 --        model             the AI model that transcribed the page the tag was
 --                          read from (NULL: the PDF's own text layer)
 --        source_revision   the controlled document's revision label it was

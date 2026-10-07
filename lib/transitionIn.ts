@@ -395,7 +395,7 @@ export interface AdoptInput {
  *  sheet — and its refusal reaches the operator as a sentence. A tuple part
  *  the sheet does not carry (an intake sheet has no sheet field) leaves the
  *  key NULL, and `note` tells the operator what to set. */
-export async function adoptDocument(input: AdoptInput): Promise<{ ok: boolean; error?: string; note?: string }> {
+export async function adoptDocument(input: AdoptInput): Promise<{ ok: boolean; error?: string; note?: string; equipmentNote?: string }> {
   const nowIso = new Date().toISOString();
   const { data: before, error: readErr } = await supabase
     .from("documents")
@@ -577,17 +577,12 @@ export async function adoptDocument(input: AdoptInput): Promise<{ ok: boolean; e
     .then(() => undefined, () => undefined);
 
   // Link matched equipment so where-used / impact sees the new sheet.
-  if (input.linkAssets.length) {
-    await supabase.from("document_assets")
-      .upsert(
-        input.linkAssets.map((a) => ({
-          org_id: input.orgId, document_id: input.docId, asset_id: a.id,
-          tag_text: a.tag, source: "manual",
-        })),
-        { onConflict: "document_id,asset_id", ignoreDuplicates: true },
-      )
-      .then(() => undefined, () => undefined);
-  }
+  // The sheet has moved: a link step that throws is said, never an error
+  // that reads as "not adopted".
+  const equipmentNote = input.linkAssets.length
+    ? await linkAdoptedEquipment(input.orgId, input.docId, input.linkAssets)
+        .catch(() => `The sheet was adopted, but its equipment links could not be recorded — link ${input.linkAssets.map((a) => a.tag).join(", ")} from the equipment registry.`)
+    : null;
 
   // adopt_intake_document wrote the audit row with the move (the same
   // details, its before / after its own); the pre-20261141 path writes it here.
@@ -604,7 +599,56 @@ export async function adoptDocument(input: AdoptInput): Promise<{ ok: boolean; e
     }).then(() => undefined, () => undefined);
   }
 
-  return note ? { ok: true, note } : { ok: true };
+  return { ok: true, ...(note ? { note } : {}), ...(equipmentNote ? { equipmentNote } : {}) };
+}
+
+/** The adoption's equipment links are the controller's assertion (intelligence
+ *  Round G I-11, GAP-302 / AREA-2). A pair the equipment sweep already read
+ *  off the drawing is held by a 'drawing' row a person cannot write: the
+ *  insert's ON CONFLICT DO NOTHING writes nothing for it, and a later Dismiss
+ *  (or "It left the sheet") of the drawing's reading would delete the link the
+ *  controller asserted. Such a pair is made the controller's through the
+ *  Bridge's 'adopt' (the registry drawer's Link does the same on its 23505).
+ *  The insert stays DO NOTHING: a DO UPDATE onto a pair a person's asset_tags
+ *  already link (jsonb_sync) or onto a drawing row is refused by 20261170's
+ *  per-verb policies and would fail every link in the batch. A refused write
+ *  or adopt is said (`equipmentNote`), never swallowed. */
+async function linkAdoptedEquipment(
+  orgId: string, docId: string, assets: Array<{ id: string; tag: string }>,
+): Promise<string | null> {
+  const { error } = await supabase.from("document_assets")
+    .upsert(
+      assets.map((a) => ({ org_id: orgId, document_id: docId, asset_id: a.id, tag_text: a.tag, source: "manual" })),
+      { onConflict: "document_id,asset_id", ignoreDuplicates: true },
+    );
+  if (error) {
+    return `The sheet was adopted, but its equipment links were not recorded (${userFacingError(error, { clause: true, context: "transitionIn" })}) — link ${assets.map((a) => a.tag).join(", ")} from the equipment registry.`;
+  }
+  // The pairs the sweep's reading holds (written before this adoption).
+  const { data: held, error: readErr } = await supabase.from("document_assets").select("asset_id")
+    .eq("org_id", orgId).eq("document_id", docId).eq("source", "drawing")
+    .in("asset_id", assets.map((a) => a.id));
+  if (readErr) {
+    return `The sheet was adopted and its equipment linked, but whether the equipment sweep already holds any of those links could not be checked — open each tag in the equipment registry and Link it so the link is yours.`;
+  }
+  const drawingHeld = new Set(((held ?? []) as Array<{ asset_id: string }>).map((r) => String(r.asset_id)));
+  if (drawingHeld.size === 0) return null;
+  const notMine: string[] = [];
+  let token = "";
+  try { token = (await supabase.auth.getSession()).data.session?.access_token ?? ""; } catch { /* the route refuses it, said below */ }
+  for (const a of assets.filter((x) => drawingHeld.has(x.id))) {
+    try {
+      const res = await fetch("/api/equipment-bridge", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "adopt", orgId, documentId: docId, assetId: a.id }),
+      });
+      if (!res.ok) notMine.push(a.tag);
+    } catch { notMine.push(a.tag); }
+  }
+  return notMine.length > 0
+    ? `The sheet was adopted, but ${notMine.join(", ")} ${notMine.length === 1 ? "is" : "are"} still the equipment sweep's reading, not your link — Link ${notMine.length === 1 ? "it" : "them"} from the equipment registry so a later Dismiss of the reading cannot remove ${notMine.length === 1 ? "it" : "them"}.`
+    : null;
 }
 
 /** INTK-16: did the door create this document (documents.authored_by_link_id,

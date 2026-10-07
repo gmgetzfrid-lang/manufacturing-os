@@ -21,8 +21,14 @@ export interface FakeDb {
   calls: Array<{ table: string; method: string; args: unknown[] }>;
   /** Max rows a plain select returns (PostgREST max-rows); undefined = no cap. */
   maxRows?: number;
+  /** Max values one `.in()` may carry: a longer list is a request line past
+   *  the gateway's URL limit, and the statement fails (I-11 fix pass 3). */
+  maxInList?: number;
   /** table → a database error its DELETEs raise (a trigger's refusal). */
   deleteErrors?: Record<string, { code?: string; message: string }>;
+  /** table → an error its plain SELECTs return (a read that fails) — or a
+   *  function of the selected columns (a column the database lacks). */
+  selectErrors?: Record<string, { code?: string; message: string } | ((cols: string) => { code?: string; message: string } | null)>;
   /** table → a BEFORE INSERT row trigger, transcribed by the test: the row
    *  to insert (possibly rewritten), or null to drop it silently. It fires
    *  ahead of an upsert's ON CONFLICT check, as Postgres fires it. Throwing
@@ -35,7 +41,7 @@ export interface FakeDb {
 }
 
 export function newFakeDb(): FakeDb {
-  return { tables: {}, unique: {}, refuseWrites: new Set(), calls: [], deleteErrors: {}, beforeInsert: {}, beforeUpdate: {}, seq: 0 };
+  return { tables: {}, unique: {}, refuseWrites: new Set(), calls: [], deleteErrors: {}, selectErrors: {}, beforeInsert: {}, beforeUpdate: {}, seq: 0 };
 }
 
 /** A trigger's RAISE, as the statement's error. */
@@ -109,6 +115,8 @@ export function makeFakeSupabase(db: FakeDb) {
     const orderBy: Array<{ col: string; asc: boolean }> = [];
     let lim: number | null = null;
     let rng: [number, number] | null = null;
+    let inTooLong = false;
+    let selectCols = "*";
 
     const rowsOf = () => (db.tables[table] ??= []);
     const matches = () => rowsOf().filter((r) => filters.every((f) => f(r)));
@@ -126,6 +134,7 @@ export function makeFakeSupabase(db: FakeDb) {
     };
 
     const run = (): { data: unknown; error: unknown; count?: number } => {
+      if (inTooLong) return { data: null, error: { code: "", message: "414 Request-URI Too Large" } };
       if (op === "insert" || op === "upsert") {
         if (db.refuseWrites.has(table)) return { data: null, error: { code: "42501", message: "new row violates row-level security policy" } };
         const out: Row[] = [];
@@ -176,6 +185,9 @@ export function makeFakeSupabase(db: FakeDb) {
         db.tables[table] = rowsOf().filter((r) => !hit.includes(r));
         return { data: returning ? hit : null, error: null };
       }
+      const failWith = db.selectErrors?.[table];
+      const readErr = typeof failWith === "function" ? failWith(selectCols) : failWith;
+      if (readErr) return { data: null, error: readErr };
       let rows = matches();
       const count = rows.length;
       if (head) return { data: null, error: null, count };
@@ -204,6 +216,7 @@ export function makeFakeSupabase(db: FakeDb) {
           switch (prop) {
             case "select": {
               if (op !== "select") returning = true;
+              else selectCols = String(args[0] ?? "*");
               const o = args[1] as { head?: boolean; count?: string } | undefined;
               if (o?.head) head = true;
               if (o?.count) wantCount = true;
@@ -232,7 +245,12 @@ export function makeFakeSupabase(db: FakeDb) {
               else if (o === "eq") filters.push((r) => r[k] !== v);
               return self;
             }
-            case "in": { const [k, v] = args as [string, unknown[]]; filters.push((r) => v.includes(r[k])); return self; }
+            case "in": {
+              const [k, v] = args as [string, unknown[]];
+              if (db.maxInList != null && v.length > db.maxInList) inTooLong = true;
+              filters.push((r) => v.includes(r[k]));
+              return self;
+            }
             case "contains": { const [k, v] = args as [string, unknown]; filters.push((r) => jsonContains(r[k], v)); return self; }
             case "is": { const [k, v] = args as [string, unknown]; filters.push((r) => (v === null ? r[k] == null : r[k] === v)); return self; }
             case "ilike": { const [k, p] = args as [string, string]; const re = likeToRegex(p); filters.push((r) => re.test(String(r[k] ?? ""))); return self; }

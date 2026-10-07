@@ -66,6 +66,18 @@ type LinkRow = {
   vanished_at?: string | null; superseded_at?: string | null;
 };
 
+/** Ids per `.in()` request: the request line carries every id, and a longer
+ *  list goes past the gateway's URL limit (lib/projects.ts IN_FILTER_CHUNK). */
+const IN_CHUNK = 100;
+/** The most links the relation read returns, and the most documents the
+ *  asset_tags containment read returns. A read that reaches its cap may have
+ *  left documents out — said on the page, never a silent cut. */
+const HUB_LINK_CAP = 1000;
+const HUB_TAGGED_CAP = 500;
+/** A hold read that returns this many rows may have been cut at PostgREST's
+ *  max-rows (no error): its documents count as not checked. */
+const HOLD_ROWS_CAP = 1000;
+
 /** WIRE-1 / WIRE-8: the asset's documents come from the relation
  *  (document_assets — every source: the tags typed on a document, manual
  *  links, and the drawings the Bridge read it on), read under the viewer's
@@ -79,7 +91,7 @@ async function readAssetLinks(assetId: string): Promise<{ rows: LinkRow[]; error
   ];
   let last: string | null = null;
   for (const cols of attempts) {
-    const { data, error } = await supabase.from("document_assets").select(cols).eq("asset_id", assetId).limit(1000);
+    const { data, error } = await supabase.from("document_assets").select(cols).eq("asset_id", assetId).limit(HUB_LINK_CAP);
     if (!error) return { rows: (data ?? []) as unknown as LinkRow[], error: null };
     last = error.message;
     if (!(error.code === "42703" || error.code === "PGRST204" || /column/i.test(error.message ?? ""))) break;
@@ -118,6 +130,11 @@ export default function AssetHubPage() {
   const [asset, setAsset] = useState<Asset | null>(null);
   const [docs, setDocs] = useState<HubDoc[]>([]);
   const [holdsByDoc, setHoldsByDoc] = useState<Map<string, number>>(new Map());
+  // Documents whose holds could not be read (a failed or cut read) — the
+  // page says so, never "0 on hold" (fail closed), and the reason.
+  const [holdsUnchecked, setHoldsUnchecked] = useState<{ ids: Set<string>; why: string } | null>(null);
+  // A read that reached its cap — documents may be missing from the list.
+  const [listCut, setListCut] = useState<string[]>([]);
   const [photos, setPhotos] = useState<AssetPhoto[]>([]);
   const [extracted, setExtracted] = useState<ExtractedSheet[]>([]);
   const [loading, setLoading] = useState(true);
@@ -213,9 +230,9 @@ export default function AssetHubPage() {
       for (const l of links.rows) linkByDoc.set(String(l.document_id), l);
       const rowsById = new Map<string, Record<string, unknown>>();
       const linkedIds = [...linkByDoc.keys()];
-      for (let i = 0; i < linkedIds.length; i += 150) {
+      for (let i = 0; i < linkedIds.length; i += IN_CHUNK) {
         const { data, error: le } = await supabase.from("documents").select(docCols)
-          .eq("org_id", activeOrgId).in("id", linkedIds.slice(i, i + 150)).neq("status", "Archived");
+          .eq("org_id", activeOrgId).in("id", linkedIds.slice(i, i + IN_CHUNK)).neq("status", "Archived");
         if (le) throw new Error(le.message);
         for (const r of (data ?? []) as Array<Record<string, unknown>>) rowsById.set(String(r.id), r);
       }
@@ -225,8 +242,12 @@ export default function AssetHubPage() {
         .eq("org_id", activeOrgId)
         .contains("asset_tags", [{ tag }])
         .neq("status", "Archived")
-        .limit(500);
+        .limit(HUB_TAGGED_CAP);
       if (de) throw new Error(de.message);
+      const cut: string[] = [];
+      if (links.rows.length >= HUB_LINK_CAP) cut.push(`the first ${HUB_LINK_CAP} links to ${tag}`);
+      if ((docRows ?? []).length >= HUB_TAGGED_CAP) cut.push(`the first ${HUB_TAGGED_CAP} documents whose equipment tags name ${tag}`);
+      setListCut(cut);
       for (const r of (docRows ?? []) as Array<Record<string, unknown>>) if (!rowsById.has(String(r.id))) rowsById.set(String(r.id), r);
       const mapped: HubDoc[] = [...rowsById.values()].map((r) => {
         const l = linkByDoc.get(String(r.id));
@@ -266,17 +287,29 @@ export default function AssetHubPage() {
         setExtracted(res.ok ? ((json.extracted as ExtractedSheet[]) ?? []) : []);
       } catch { setExtracted([]); }
 
-      // Open holds on those documents.
+      // Open holds on those documents — in batches of IN_CHUNK ids (the list
+      // grows with every drawing the relation links), each read checked. A
+      // batch that fails, or comes back at the max-rows cap, leaves its
+      // documents NOT CHECKED: the page says so instead of "0 on hold" — the
+      // equipment QR code opens this page in the field.
       const ids = mapped.map((d) => d.id);
       const hold = new Map<string, number>();
-      if (ids.length > 0) {
-        const { data: holdRows } = await supabase
-          .from("document_holds").select("document_id").in("document_id", ids).is("released_at", null);
-        for (const h of (holdRows ?? []) as Array<{ document_id: string }>) {
-          hold.set(h.document_id, (hold.get(h.document_id) ?? 0) + 1);
+      const unchecked = new Set<string>();
+      let why: string | null = null;
+      for (let i = 0; i < ids.length; i += IN_CHUNK) {
+        const batch = ids.slice(i, i + IN_CHUNK);
+        const { data: holdRows, error: he } = await supabase
+          .from("document_holds").select("document_id").in("document_id", batch).is("released_at", null);
+        const rows = (holdRows ?? []) as Array<{ document_id: string }>;
+        if (he || rows.length >= HOLD_ROWS_CAP) {
+          for (const id of batch) unchecked.add(id);
+          why ??= he ? (he.message || "the read failed") : "too many open holds to read in one request";
+          continue;
         }
+        for (const h of rows) hold.set(h.document_id, (hold.get(h.document_id) ?? 0) + 1);
       }
       setHoldsByDoc(hold);
+      setHoldsUnchecked(unchecked.size > 0 ? { ids: unchecked, why: why ?? "the read failed" } : null);
 
       if (a?.id) setPhotos(await listAssetPhotos(a.id).catch(() => []));
       else setPhotos([]);
@@ -387,10 +420,22 @@ export default function AssetHubPage() {
 
         {error && <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800">{error}</div>}
 
+        {holdsUnchecked && (
+          <div role="alert" data-testid="holds-unchecked" className="mb-4 rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-800">
+            Holds could not be checked for {holdsUnchecked.ids.size === docs.length ? "these documents" : `${holdsUnchecked.ids.size} of these documents`} ({holdsUnchecked.why}).
+            Treat {holdsUnchecked.ids.size === 1 ? "it" : "them"} as possibly on hold, and Refresh before you work from {holdsUnchecked.ids.size === 1 ? "it" : "them"}.
+          </div>
+        )}
+        {listCut.length > 0 && (
+          <div data-testid="list-cut" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+            Only {listCut.join(" and ")} were read — some documents may not be listed here. Search the register for {tag} to see them all.
+          </div>
+        )}
+
         {/* Stat strip */}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-5">
           <Stat icon={FileText} tone="blue" label="Controlled documents" value={docCount} />
-          <Stat icon={AlertOctagon} tone="rose" label="On hold" value={heldCount} />
+          <Stat icon={AlertOctagon} tone="rose" label="On hold" value={holdsUnchecked ? (heldCount > 0 ? `${heldCount}+` : "not checked") : heldCount} />
           <Stat icon={ImageIcon} tone="violet" label="Photos" value={photos.length} />
         </div>
 
@@ -428,6 +473,7 @@ export default function AssetHubPage() {
                     {d.rev && <span className="text-[10px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded shrink-0">Rev {d.rev}</span>}
                     {d.status && <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded border shrink-0 ${stateStyle(documentState(d.status)).pill}`}>{d.status}</span>}
                     {(holdsByDoc.get(d.id) ?? 0) > 0 && <span className="text-[10px] font-bold text-rose-700 inline-flex items-center gap-0.5 shrink-0"><AlertOctagon className="w-3 h-3" /> hold</span>}
+                    {holdsUnchecked?.ids.has(d.id) && <span className="text-[10px] font-bold text-rose-700 border border-rose-300 px-1 rounded inline-flex items-center gap-0.5 shrink-0" title="This document's holds could not be read — it may be on hold."><AlertOctagon className="w-3 h-3" /> hold not checked</span>}
                     {d.checkedOutByName && <span className="text-[10px] font-bold text-blue-700 inline-flex items-center gap-0.5 shrink-0"><Lock className="w-3 h-3" />{d.checkedOutByName}</span>}
                   </Link>
                 </li>
@@ -491,7 +537,7 @@ export default function AssetHubPage() {
   );
 }
 
-function Stat({ icon: Icon, label, value, tone }: { icon: React.ComponentType<{ className?: string }>; label: string; value: number; tone: "blue" | "rose" | "violet" }) {
+function Stat({ icon: Icon, label, value, tone }: { icon: React.ComponentType<{ className?: string }>; label: string; value: number | string; tone: "blue" | "rose" | "violet" }) {
   const tones = { blue: "text-blue-700 bg-blue-50 border-blue-200", rose: "text-rose-700 bg-rose-50 border-rose-200", violet: "text-violet-700 bg-violet-50 border-violet-200" };
   return (
     <div className={`rounded-2xl border p-3 ${tones[tone]}`}>

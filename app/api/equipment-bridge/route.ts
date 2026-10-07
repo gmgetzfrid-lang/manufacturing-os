@@ -131,10 +131,16 @@ async function libraryGate(orgId: string, libraryId: string, principal: Knowledg
   return { lib: lib as { id: string; equipment_bridge?: unknown; custom_columns?: unknown } };
 }
 
+type PgErr = { code?: string; message?: string } | null;
+/** The database does not have a column the read named (a migration not
+ *  pasted yet) — the only error a narrower read can answer. */
+const missingColumn = (e: PgErr) =>
+  !!e && (e.code === "42703" || e.code === "PGRST204" || /column [\w."]+ does not exist|could not find the .* column/i.test(e.message ?? ""));
+
 /** Every 'drawing' relation row of these documents (this workspace's),
  *  keyset-paged on id until an EMPTY page — a short page is not the end
  *  (PostgREST cuts at its max-rows without an error). */
-async function drawingRelations(orgId: string, documentIds: string[], cols: string): Promise<{ rows: Array<Record<string, unknown>>; error: string | null }> {
+async function drawingRelations(orgId: string, documentIds: string[], cols: string): Promise<{ rows: Array<Record<string, unknown>>; error: PgErr }> {
   const rows: Array<Record<string, unknown>> = [];
   for (let after: string | null = null; ;) {
     let q = supabaseAdmin.from("document_assets").select(cols)
@@ -142,7 +148,7 @@ async function drawingRelations(orgId: string, documentIds: string[], cols: stri
       .order("id", { ascending: true }).limit(1000);
     if (after) q = q.gt("id", after);
     const { data, error } = await q;
-    if (error) return { rows: [], error: error.message };
+    if (error) return { rows: [], error: { code: error.code, message: error.message } };
     const batch = (data ?? []) as unknown as Array<Record<string, unknown>>;
     if (batch.length === 0) return { rows, error: null };
     rows.push(...batch);
@@ -195,6 +201,7 @@ export async function GET(req: NextRequest) {
   const rows: Array<Record<string, unknown>> = [];
   const relations: Array<Record<string, unknown>> = [];
   let relationNote: string | null = null;
+  let relationReadFailed: string | null = null;
   for (let i = 0; i < ids.length; i += 100) {
     const slice = ids.slice(i, i + 100);
     const { data } = await supabaseAdmin
@@ -204,10 +211,17 @@ export async function GET(req: NextRequest) {
     // GAP-309's only review surface: every 'drawing' row of these documents,
     // keyset-paged to an EMPTY page (100 applied P&IDs carry thousands of
     // rows; one response is cut at PostgREST's max-rows without an error).
+    // Only a MISSING COLUMN is a migration not pasted yet; any other failure
+    // (a timeout, a refused read) is said as the read failure it is — never
+    // taken for a missing migration, which would hide the review list.
     let rel = await drawingRelations(orgId, slice, "id, document_id, asset_id, tag_text, sheet_label, pages, vanished_at, superseded_at, source_revision, model");
-    if (rel.error) {
+    if (rel.error && missingColumn(rel.error)) {
       rel = await drawingRelations(orgId, slice, "id, document_id, asset_id, tag_text, sheet_label, pages");
-      relationNote = rel.error ? "The document↔equipment relation has no drawing rows yet (migration 20261170 is not applied)." : "Revision marks need migration 20261171.";
+      if (!rel.error) relationNote ??= "Revision marks need migration 20261171.";
+      else if (missingColumn(rel.error)) relationNote ??= "The document↔equipment relation has no drawing rows yet (migration 20261170 is not applied).";
+    }
+    if (rel.error && !missingColumn(rel.error)) {
+      relationReadFailed ??= rel.error.message || "the read failed";
     }
     relations.push(...rel.rows);
   }
@@ -230,6 +244,9 @@ export async function GET(req: NextRequest) {
     .eq("org_id", orgId).is("source_document_id", null).eq("status", "ready");
 
   const lib = gate.lib;
+  if (relationReadFailed) {
+    relationNote = `The drawing links could not be read (${relationReadFailed}) — the list of links the current revision no longer shows is incomplete. Close and reopen the sweep to read it again.`;
+  }
 
   return NextResponse.json({
     suggestions: rows.map((r) => ({ ...r, documentLabel: nameById.get(String(r.document_id)) ?? "—" })),
@@ -296,6 +313,16 @@ export async function POST(req: NextRequest) {
     const counts: Record<ComputeReason | "failed" | "unreadable", number> = {
       computed: 0, no_entities: 0, upload_origin: 0, no_twin: 0, twin_not_ready: 0, twin_stale: 0, not_found: 0, failed: 0, unreadable: 0,
     };
+    // What the computes did beyond their reason (DEC-44 (I-11) Risk, GAP-304):
+    // the relation refresh (the backfill of tags applied before the relation
+    // existed — a refresh that recorded nothing says why), tags dismissed
+    // because a person took them out of their column, and audit rows that
+    // could not be written. Summed per page; the modal sums the pages.
+    const outcomes = {
+      relationsWritten: 0, relationsRefreshed: 0, relationsKeptHuman: 0,
+      relationsNotRecorded: 0, relationNote: null as string | null,
+      columnDismissed: 0, auditErrors: 0, auditError: null as string | null,
+    };
     let last: string | null = cursor;
     let stoppedEarly = false;
     for (const id of page.ids) {
@@ -305,6 +332,17 @@ export async function POST(req: NextRequest) {
       try {
         const r = await computeForDocument(supabaseAdmin, orgId, id, { trigger: "sweep" });
         counts[r.reason]++;
+        if (r.relations) {
+          outcomes.relationsWritten += r.relations.written;
+          outcomes.relationsRefreshed += r.relations.refreshed;
+          outcomes.relationsKeptHuman += r.relations.keptHuman;
+          if (r.relations.notRecorded) {
+            outcomes.relationsNotRecorded++;
+            outcomes.relationNote ??= r.relations.notRecorded;
+          }
+        }
+        outcomes.columnDismissed += r.columnDismissed?.length ?? 0;
+        if (r.auditError) { outcomes.auditErrors++; outcomes.auditError ??= r.auditError; }
       } catch { counts.failed++; /* per-doc failures never sink the sweep */ }
     }
     // Done only on an EMPTY page: a page PostgREST cut at its max-rows (no
@@ -315,6 +353,7 @@ export async function POST(req: NextRequest) {
       ok: true,
       computed: counts.computed + counts.no_entities,
       counts,
+      outcomes,
       nextCursor: done ? null : last,
       done,
     });

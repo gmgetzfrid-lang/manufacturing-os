@@ -159,6 +159,11 @@ export interface ComputeResult {
   /** BR-5: applied tags a person removed from their column — dismissed (via
    *  'column') by this compute, their relations removed. */
   columnDismissed?: string[];
+  /** GAP-304: what this compute's relation refresh did (the backfill of tags
+   *  applied before the relation existed, and the revision each row was read
+   *  from) — `notRecorded` says why nothing was written. Absent when no
+   *  applied tag is read on this revision. */
+  relations?: RelationOutcome;
   /** The audit row recording a correction could not be written. */
   auditError?: string;
 }
@@ -774,17 +779,24 @@ export async function computeForDocument(admin: SupabaseClient, orgId: string, d
     })
     .sort((a, b) => a.tag.localeCompare(b.tag, undefined, { numeric: true }));
 
+  // ── BR-5: a tag a person took out of its column leaves the relation too
+  // (the dismissal saved below is the record of the decision; who removed the
+  // chip is not known, so `by` is null). A pair the document's asset_tags
+  // still names stays as the person's synced link. The relation is removed
+  // BEFORE the dismissal is saved: a removal that fails throws here, nothing
+  // is saved, and the next compute plans the same removal again — saved
+  // first, the tag would already be dismissed and never re-planned, its
+  // 'drawing' rows standing against the recorded decision.
+  const removal = columnRemoved.length > 0
+    ? await removeDrawingRelations(admin, orgId, documentId, columnRemoved, null, "EQUIPMENT_BRIDGE_RELATION_REMOVED", { via: "column" })
+    : null;
+
   await upsertSuggestions(admin, orgId, documentId, suggestions, unit, {
     applied: appliedNext, dismissed: dismissalsNext, sources, appliedColumns,
   });
 
-  // ── BR-5: a tag a person took out of its column leaves the relation too
-  // (the dismissal above is the record of the decision; who removed the
-  // chip is not known, so `by` is null). A pair the document's asset_tags
-  // still names stays as the person's synced link.
   let auditError: string | undefined;
-  if (columnRemoved.length > 0) {
-    const removal = await removeDrawingRelations(admin, orgId, documentId, columnRemoved, null, "EQUIPMENT_BRIDGE_RELATION_REMOVED", { via: "column" });
+  if (removal) {
     const { error: auditErr } = await admin.from("audit_logs").insert({
       action: "EQUIPMENT_BRIDGE_DISMISSED", resource_type: "document", resource_id: documentId, org_id: orgId, user_id: null,
       details: { tags: columnRemoved, via: "column", revision: revisionLabel, relationsRemoved: removal.removed, keptAsPersonsLink: removal.keptAsPersonsLink },
@@ -805,11 +817,13 @@ export async function computeForDocument(admin: SupabaseClient, orgId: string, d
   const complete = !ents.error && !ents.truncated && !visionReadFailed && ents.rows.length > 0
     && used.every((t) => !(t.vision_failed_pages ?? []).length);
   const keep = suggestions.filter((s) => appliedNext.includes(s.tag) && !s.dismissed && s.assetId);
-  if (keep.length > 0) {
-    await syncDrawingRelations(admin, orgId, documentId, keep.map((s) => ({
-      assetId: String(s.assetId), tag: s.tag, sheetLabel: relationSheetLabel(s.sheets), pages: s.pages, model: s.model ?? null,
-    })), { revision: revisionLabel, versionId: revision });
-  }
+  // Its outcome is returned (and the sweep counts it): a refused or
+  // unrecorded refresh is said, never dropped.
+  const refreshed = keep.length > 0
+    ? await syncDrawingRelations(admin, orgId, documentId, keep.map((s) => ({
+        assetId: String(s.assetId), tag: s.tag, sheetLabel: relationSheetLabel(s.sheets), pages: s.pages, model: s.model ?? null,
+      })), { revision: revisionLabel, versionId: revision })
+    : null;
   const truth = await markRevisionTruth(admin, orgId, documentId, new Set(byTag.keys()), revision, complete);
 
   // GAP-314: the unit decode at create time — the document's own number,
@@ -825,18 +839,23 @@ export async function computeForDocument(admin: SupabaseClient, orgId: string, d
   // Auto-apply when the library opted in (AREA-4: a mapped column is no
   // longer required once the library has been reviewed — BR-9).
   let autoApplied = false;
+  let autoRelations: RelationOutcome | null = null;
   if (autoApplyActs(bridge) && suggestions.some((s) => !appliedNext.includes(s.tag) && !s.dismissed && !s.held)) {
     try {
-      await applyForDocument(admin, { orgId, documentId, userId: null });
+      const done = await applyForDocument(admin, { orgId, documentId, userId: null });
       autoApplied = true;
+      autoRelations = done.relations;
+      auditError ??= done.auditError;
     } catch { /* stays pending for manual review — never breaks ingest */ }
   }
+  const relations = mergeRelations(refreshed, autoRelations);
   return {
     documentId, suggestions, autoApplied,
     reason: byTag.size === 0 ? "no_entities" : "computed",
     unitCode: unit.unitCode, unitSource: unit.source, unitRejected: unit.rejected,
     revision: truth, truncated: ents.truncated,
     ...(columnRemoved.length > 0 ? { columnDismissed: columnRemoved } : {}),
+    ...(relations ? { relations } : {}),
     ...(auditError ? { auditError } : {}),
   };
 }
@@ -941,6 +960,16 @@ export async function syncDrawingRelations(
     if (existing) out.refreshed++; else out.written++;
   }
   return out;
+}
+
+/** Two relation outcomes as one (the compute's refresh and its automatic
+ *  apply): counts add up, the first reason nothing was recorded is kept. */
+function mergeRelations(a: RelationOutcome | null, b: RelationOutcome | null): RelationOutcome | null {
+  if (!a || !b) return a ?? b;
+  return {
+    written: a.written + b.written, refreshed: a.refreshed + b.refreshed, keptHuman: a.keptHuman + b.keptHuman,
+    notRecorded: a.notRecorded ?? b.notRecorded,
+  };
 }
 
 /** GAP-309: on a complete reading, relations whose tag this revision no
@@ -1057,13 +1086,17 @@ async function removeDrawingRelations(
     const elems = (Array.isArray((doc as { asset_tags?: unknown } | null)?.asset_tags) ? (doc as { asset_tags: unknown[] }).asset_tags : []) as Array<Record<string, unknown>>;
     const spellings = elems.map((e) => (e && typeof e.tag === "string" ? e.tag : "")).filter((t) => t !== "");
     if (spellings.length > 0) {
+      // In batches of 100 ids: a person clearing a large tag column removes
+      // hundreds at once, and one longer `.in()` overflows the request line.
       const assetIds = [...new Set(doomed.map((r) => String(r.asset_id)))];
-      const { data: assets, error: aErr } = await admin.from("assets").select("id, tag_normalized")
-        .eq("org_id", orgId).in("id", assetIds);
-      if (aErr) throw new Error(`The equipment could not be read: ${aErr.message ?? "read failed"}`);
-      for (const a of (assets ?? []) as Array<{ id: string; tag_normalized: string | null }>) {
-        const hit = spellings.find((t) => tagKey(t) === (a.tag_normalized ?? ""));
-        if (hit) personTag.set(String(a.id), hit);
+      for (let i = 0; i < assetIds.length; i += 100) {
+        const { data: assets, error: aErr } = await admin.from("assets").select("id, tag_normalized")
+          .eq("org_id", orgId).in("id", assetIds.slice(i, i + 100));
+        if (aErr) throw new Error(`The equipment could not be read: ${aErr.message ?? "read failed"}`);
+        for (const a of (assets ?? []) as Array<{ id: string; tag_normalized: string | null }>) {
+          const hit = spellings.find((t) => tagKey(t) === (a.tag_normalized ?? ""));
+          if (hit) personTag.set(String(a.id), hit);
+        }
       }
     }
   }
@@ -1081,9 +1114,9 @@ async function removeDrawingRelations(
     if (error) throw new Error(`The relation could not be removed: ${error.message}`);
     converted.push(r);
   }
-  if (deleted.length > 0) {
+  for (let i = 0; i < deleted.length; i += 100) {
     const { error } = await admin.from("document_assets").delete()
-      .in("id", deleted.map((r) => String(r.id))).eq("org_id", orgId).eq("source", "drawing");
+      .in("id", deleted.slice(i, i + 100).map((r) => String(r.id))).eq("org_id", orgId).eq("source", "drawing");
     if (error) throw new Error(`The relation could not be removed: ${error.message}`);
   }
   out.removed = doomed.length;

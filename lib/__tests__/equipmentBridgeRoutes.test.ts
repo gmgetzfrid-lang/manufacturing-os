@@ -440,3 +440,61 @@ describe("GAP-314 acceptance 2 — how many documents carry no decode since the 
     expect((await unitIdentityGET(getReq("http://x/api/admin/unit-identity?orgId=o1", "viewer"))).status).toBe(403);
   });
 });
+
+describe("I-11 fix pass 3 — the sweep says what its computes did; GET says a failed relation read as one", () => {
+  it("DEC-44 (I-11) Risk: a first sweep's column dismissals and the relation backfill are counted in the sweep's results", async () => {
+    library(2);
+    st.readable = new Set(["d0000", "d0001"]);
+    st.db.tables.assets.push(
+      { id: "a-p1", org_id: "o1", tag: "P-1", tag_normalized: "p1", unit_code: null, code: null },
+      { id: "a-p2", org_id: "o1", tag: "P-2", tag_normalized: "p2", unit_code: null, code: null },
+    );
+    // History from before this deploy: both applied into the column (no column recorded) …
+    for (const [d, t] of [["d0000", "P-1"], ["d0001", "P-2"]]) {
+      st.db.tables.document_equipment_suggestions.push({ org_id: "o1", document_id: d, applied: [t], dismissed: [], suggested: [{ tag: t }] });
+    }
+    // … and a person since took P-1 out of d0000's column.
+    st.db.tables.documents[0].metadata = { equipment: ["X-9"] };
+    st.db.tables.documents[1].metadata = { equipment: ["P-2"] };
+    const json = await (await POST(req({ action: "sweep", orgId: "o1", libraryId: "lib1" }))).json();
+    // Reproduction: the fix-pass-2 sweep answered only `counts` — the dismissal (by: null) and the backfill went unsaid.
+    expect(json.outcomes).toMatchObject({ columnDismissed: 1, relationsWritten: 1, relationsNotRecorded: 0, auditErrors: 0 });
+  });
+  it("a relation refresh that records nothing is counted with its reason", async () => {
+    library(1);
+    st.readable = new Set(["d0000"]);
+    st.db.tables.assets.push({ id: "a-p1", org_id: "o1", tag: "P-1", tag_normalized: "p1", unit_code: null, code: null });
+    st.db.tables.document_equipment_suggestions.push({ org_id: "o1", document_id: "d0000", applied: ["P-1"], dismissed: [], suggested: [{ tag: "P-1" }] });
+    st.db.tables.documents[0].metadata = { equipment: ["P-1"] };
+    st.db.beforeInsert = {
+      document_assets: (row) => {
+        if ("asserted_by" in row) throw { code: "PGRST204", message: "Could not find the 'asserted_by' column of 'document_assets' in the schema cache" };
+        return row;
+      },
+    };
+    const json = await (await POST(req({ action: "sweep", orgId: "o1", libraryId: "lib1" }))).json();
+    expect(json.outcomes.relationsNotRecorded).toBe(1);
+    expect(json.outcomes.relationNote).toMatch(/migration 20261171/);
+  });
+  it("GET: a relation read that fails for any reason but a missing column is said as a read failure — never as a missing migration", async () => {
+    library(1);
+    st.readable = new Set(["d0000"]);
+    st.db.tables.document_equipment_suggestions.push({ org_id: "o1", document_id: "d0000", suggested: [], applied: [], status: "applied" });
+    st.db.selectErrors = { document_assets: { code: "57014", message: "canceling statement due to statement timeout" } };
+    const listed = await (await GET(getReq("http://x/api/equipment-bridge?orgId=o1&libraryId=lib1"))).json();
+    // Reproduction: the fix-pass-2 route retried with fewer columns and, both failing, said 20261170 was not applied.
+    expect(listed.relationNote).toMatch(/The drawing links could not be read \(canceling statement due to statement timeout\)/);
+    expect(listed.relationNote).not.toMatch(/2026117[01]/);
+  });
+  it("GET: a missing column still falls back — 'Revision marks need migration 20261171', or 20261170 when the sheet columns are missing too", async () => {
+    library(1);
+    st.readable = new Set(["d0000"]);
+    st.db.tables.document_equipment_suggestions.push({ org_id: "o1", document_id: "d0000", suggested: [], applied: [], status: "applied" });
+    st.db.selectErrors = { document_assets: (cols) => (cols.includes("vanished_at") ? { code: "42703", message: "column document_assets.vanished_at does not exist" } : null) };
+    let listed = await (await GET(getReq("http://x/api/equipment-bridge?orgId=o1&libraryId=lib1"))).json();
+    expect(listed.relationNote).toBe("Revision marks need migration 20261171.");
+    st.db.selectErrors = { document_assets: (cols) => (cols.includes("sheet_label") ? { code: "42703", message: "column document_assets.sheet_label does not exist" } : null) };
+    listed = await (await GET(getReq("http://x/api/equipment-bridge?orgId=o1&libraryId=lib1"))).json();
+    expect(listed.relationNote).toMatch(/migration 20261170 is not applied/);
+  });
+});

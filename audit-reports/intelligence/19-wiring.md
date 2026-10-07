@@ -68,6 +68,19 @@ The Bridge's apply writes `document_assets` rows (source 'drawing', with the she
 
 **Scope / residual.** **Pending migrations:** `supabase/migrations/20261170_intel_roundG_document_assets_source.sql`, then `supabase/migrations/20261171_intel_roundG_provenance.sql` (hand-applied, in that order). The app deploys in either order: before 20261170 the Bridge says the relation was not recorded and keeps its column write; before 20261171 it writes the relation without the provenance columns and says so.
 
+**Fix pass 3 (2026-10-02, review).** Two corrections.
+- The residual's clause "before 20261171 it writes the relation without the provenance columns and says so" has been false since fix pass 2. Before 20261171 the Bridge writes NO 'drawing' row: `notRecorded` names 20261171, the column write still lands, and the first recompute after the paste relates the applied tags with their provenance (`GAP-304`'s fix pass 2).
+- Done-when 2's surface, the asset hub, lists every document the relation links (up to 1,000 rows), so its open-hold lookup grew with it. That lookup sent every listed id in one `.in()` and ignored the error: a tag on more than about 200 drawings read "On hold 0" with no hold badge, on the page the equipment QR code opens. The hold read is now batched by 100 ids and every batch's error is checked. A batch that fails, or comes back at the max-rows cap, leaves its documents "not checked": a banner says "Holds could not be checked …", the stat reads "not checked" (or "N+" beside a found hold), and each such row carries "hold not checked". The page never shows 0 for holds it did not read. A relation read at its 1,000-row cap, or an `asset_tags` read at its 500-row cap, now says the list may be cut. The documents read is batched by 100 too (it was 150). Tests in `lib/__tests__/assetHubRelation.test.ts`:
+  - "a tag on 250 drawings: holds are read in batches under the URL limit, and a held drawing is badged and counted";
+  - "a hold read that fails says the holds could not be checked — never 'On hold 0' — and marks every unchecked document";
+  - "a hold read that succeeds with no open hold reads 0 and no warning";
+  - "a relation read that reaches its 1000-row cap says the list may be cut (never a silent truncation)";
+  - "an asset_tags read that reaches its 500-row cap says so too; under the caps, no note".
+
+  The four failure cases fail on the fix-pass-2 page.
+
+**Scope / residual (corrected).** Pending migrations: `20261170`, then `20261171`, in that order. The app deploys in either order. Before either is pasted, the Bridge writes no 'drawing' row, says the relation was not recorded (naming the file it needs), and keeps its column write.
+
 ---
 
 <a id="wire-2"></a>
@@ -329,7 +342,7 @@ types/schema.ts:1112 `unit: string;` on Ticket; supabase/schema.sql:403 `unit TE
 ## WIRE-8 · Transmittal↔document and ticket↔document are unindexed JSONB scans, and the ticket link is written in two incompatible shapes
 
 - **Severity:** LOW
-- **Status:** RESOLVED
+- **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `lib/transmittals.ts:394-406`, `supabase/migrations/20260717_transmittals.sql:40,53-54`, `lib/impact.ts:111-118`, `lib/transitionIn.ts:321-322`, `app/(protected)/requests/new/page.tsx:290-297`, `app/api/intake/resolve/route.ts:151-154`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. SURVIVES on facts, downgraded on impact. Both queries stay org-scoped, and the finding's own scale ("a few thousand transmittals") is a sub-millisecond scan in Postgres — the performance claim does not carry MEDIUM. The shape mismatch is currently unreachable: intake/resolve pre-filters on `metadata->intake_collision->>intakeLinkId`, which only transitionIn writes, so it only ever sees the `number` shape. Latent inconsistency worth fixing, LOW.
@@ -362,9 +375,13 @@ On a scratch PostgreSQL 16 with seqscan off, `EXPLAIN` uses each (case P5 in `GA
 **Done-when.**
 1. ✓ GIN indexes exist on `transmittals.items` (jsonb_path_ops) and `tickets.metadata`, with a b-tree on the ticket→document expression (`lib/__tests__/intelRoundGBridgeMigrations.test.ts` "WIRE-8: GIN (jsonb_path_ops) on transmittals.items and tickets.metadata; a b-tree on the expression the impact scan filters").
 2. ✓ Record-only. `LIFE-15` (roles-and-permissions, resolved 2026-09-02) made all three writers of `tickets.metadata.source_document` write one canonical shape through `buildSourceDocumentRef` (`lib/sourceDocRef.ts`; `CheckInPanel`, `requests/new`, `lib/transitionIn.ts`), and readers go through the tolerant parser.
-3. ✓ The asset hub reads `document_assets` first. The `.contains("asset_tags", …)` read is kept beside it as the only answer for an unregistered tag; it stays unindexed by choice, because an index build would lock `documents`, the most-written table, inside the one-paste transaction.
+3. ◐ The asset hub reads `document_assets` first. The `.contains("asset_tags", …)` read is kept beside it as the only answer for an unregistered tag; it stays unindexed by choice, because an index build would lock `documents`, the most-written table, inside the one-paste transaction. *(Corrected at fix pass 3: this was ticked ✓. Neither limb of the criterion holds: the read has no index and did not move. See the Partial below.)*
 
 **Scope / residual.** Pending migration: `supabase/migrations/20261171_intel_roundG_provenance.sql`. The index builds run inside the paste's transaction (non-concurrent); the inventory counts the transmittals and source-document tickets they cover.
+
+**Partial (2026-10-02, intelligence Round G, I-11 fix pass 3).** Done-when 3 was ticked "by choice", and it does not hold. The asset hub still runs the unindexed `documents.asset_tags` containment read (`.contains("asset_tags", [{ tag }])`, the `docRows` read in `app/(protected)/assets/[tag]/page.tsx`) on every open. It is kept beside the relation read because it is the only answer for an unregistered tag. No index was added, and the read did not move to `document_assets`. Limbs 1 and 2 are done, as recorded above. Since fix pass 3 the read says when it reaches its 500-row cap; it no longer cuts the list silently.
+
+Left: either index `documents.asset_tags` (GIN `jsonb_path_ops`) or answer an unregistered tag without the containment scan. The index cannot be built in this package's one-paste shape without locking `documents`, its most-written table, for the build; `CREATE INDEX CONCURRENTLY` cannot run inside a transaction, so it needs a paste of its own. That paste needs a migration number outside this package's two (20261170, 20261171). The integrator assigns it. Status OPEN.
 
 ---
 

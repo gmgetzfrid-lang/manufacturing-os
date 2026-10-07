@@ -1037,3 +1037,62 @@ describe("GAP-310 — the Bridge's key is the one tag grammar (an import, not a 
     expect(normalizeTag("North Furnace")).not.toBe(normalizeTag("NORTH-FURNACE"));
   });
 });
+
+describe("I-11 fix pass 3 — the compute says what its relation refresh did; a column removal that fails is retried", () => {
+  it("GAP-304: the compute returns its relation refresh's outcome — the backfill's refreshed rows, an automatic apply's written ones, and why nothing was recorded", async () => {
+    seed({ bridge: { targetColumnKey: "equipment", autoApply: true, autoApplyBy: "u-admin" } });
+    const first = await computeForDocument(admin(), "o1", "d1"); // auto-applies (column mapped)
+    // Reproduction: the fix-pass-2 compute discarded both outcomes — no `relations` on the result.
+    expect(first.relations).toMatchObject({ written: 3, notRecorded: null });
+    const again = await computeForDocument(admin(), "o1", "d1");
+    expect(again.relations).toEqual({ written: 0, refreshed: 3, keptHuman: 0, notRecorded: null });
+    // 20261171 missing: the refresh records nothing, and the result says why.
+    db.beforeUpdate = {
+      document_assets: (next) => {
+        if ("asserted_by" in next && next.source === "drawing") throw { code: "PGRST204", message: "Could not find the 'asserted_by' column of 'document_assets' in the schema cache" };
+        return next;
+      },
+    };
+    const unrecorded = await computeForDocument(admin(), "o1", "d1");
+    expect(unrecorded.relations?.notRecorded).toMatch(/migration 20261171/);
+  });
+
+  it("BR-5: a column removal whose relation delete fails saves nothing — the next compute plans it again and removes the link (never a dismissal standing beside its 'drawing' row)", async () => {
+    seed();
+    await computeForDocument(admin(), "o1", "d1");
+    await applyForDocument(admin(), { orgId: "o1", documentId: "d1", userId: "u1" });
+    const p7 = db.tables.assets.find((a) => a.tag === "P-7")!;
+    db.tables.documents[0].metadata = { equipment: ["E-22", "V-101"] }; // a person removed P-7
+    db.deleteErrors = { document_assets: { code: "57014", message: "canceling statement due to statement timeout" } };
+    await expect(computeForDocument(admin(), "o1", "d1")).rejects.toThrow(/could not be removed/);
+    // Nothing was saved: P-7 is not dismissed yet, so the next compute plans it again.
+    expect(((ledger().dismissed ?? []) as Row[]).map((d) => d.tag)).not.toContain("P-7");
+    expect(relations().filter((x) => x.asset_id === p7.id)).toHaveLength(1);
+    db.deleteErrors = {};
+    const r = await computeForDocument(admin(), "o1", "d1");
+    // Reproduction: the fix-pass-2 compute saved the 'column' dismissal first; the retry skipped
+    // the dismissed tag and P-7's drawing row stayed for good.
+    expect(r.columnDismissed).toEqual(["P-7"]);
+    expect(relations().filter((x) => x.asset_id === p7.id)).toEqual([]);
+    expect((ledger().dismissed as Row[]).find((d) => d.tag === "P-7")).toMatchObject({ via: "column", by: null });
+    expect(audit("EQUIPMENT_BRIDGE_DISMISSED")).toHaveLength(1);
+  });
+
+  it("a person clearing a large tag column (250 tags) removes every link, in batches under the URL limit", async () => {
+    const tags = Array.from({ length: 250 }, (_, i) => `P-${100 + i}`);
+    seed({ entities: tags.map((t, i) => ({ id: `e${String(i).padStart(4, "0")}`, document_id: "k1", page: 1, kind: "equipment", tag: t, raw: t })) });
+    db.tables.documents[0].asset_tags = [{ tag: "X-999" }]; // a person's own tag elsewhere on the document
+    await computeForDocument(admin(), "o1", "d1");
+    await applyForDocument(admin(), { orgId: "o1", documentId: "d1", userId: "u1" });
+    expect(relations().filter((x) => x.source === "drawing")).toHaveLength(250);
+    db.tables.documents[0].metadata = { equipment: [] }; // the column cleared by hand
+    // The gateway refuses a request line carrying more than ~200 ids.
+    db.maxInList = 200;
+    const r = await computeForDocument(admin(), "o1", "d1");
+    // Reproduction: the fix-pass-2 removal sent all 250 asset ids (and then all 250 row ids) in one .in() and threw.
+    expect(r.columnDismissed).toHaveLength(250);
+    expect(relations().filter((x) => x.source === "drawing")).toEqual([]);
+    expect(audit("EQUIPMENT_BRIDGE_RELATION_REMOVED")[0].details).toMatchObject({ via: "column" });
+    expect((audit("EQUIPMENT_BRIDGE_RELATION_REMOVED")[0].details as { removed: unknown[] }).removed).toHaveLength(250);
+  });
+});

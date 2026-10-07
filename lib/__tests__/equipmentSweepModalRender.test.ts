@@ -25,12 +25,13 @@ vi.mock("@/lib/codebook", async (importOriginal) => {
 });
 vi.mock("@/components/assets/CoverageReport", () => ({ default: () => null }));
 
-import EquipmentSweepModal from "@/components/documents/EquipmentSweepModal";
+import EquipmentSweepModal, { vanishedWhere } from "@/components/documents/EquipmentSweepModal";
 
 type Body = Record<string, unknown>;
 const st = {
   posts: [] as Body[],
   postAnswer: (_b: Body): Body => ({ ok: true }),
+  listing: null as Body | null,
 };
 
 const LISTING = {
@@ -56,13 +57,14 @@ let root: Root;
 beforeEach(() => {
   st.posts = [];
   st.postAnswer = () => ({ ok: true });
+  st.listing = null;
   vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: { method?: string; body?: string }) => {
     if (init?.method === "POST") {
       const body = JSON.parse(String(init.body)) as Body;
       st.posts.push(body);
       return { ok: true, json: async () => st.postAnswer(body) };
     }
-    return { ok: true, json: async () => LISTING };
+    return { ok: true, json: async () => st.listing ?? LISTING };
   }));
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -127,5 +129,43 @@ describe("GOV-9 — the vanished delta marks a sheet read off an AI transcriptio
     await open();
     const delta = container.querySelector("[data-testid=vanished-delta]")!;
     expect(delta.textContent).toContain("V-101 is no longer read on the current revision (was on 2002-D-10001 SHT 5 (AI-read, unconfirmed), read from Rev B)");
+  });
+});
+
+describe("I-11 fix pass 3 — the vanished line's parenthesis is built from the parts it has", () => {
+  it("no sheet label, a revision: '(read from Rev B)' — never '(, read from Rev B)'", async () => {
+    st.listing = { ...LISTING, relations: [{ ...LISTING.relations[0], sheet_label: null, model: null }] };
+    await open();
+    const delta = container.querySelector("[data-testid=vanished-delta]")!;
+    // Reproduction: the fix-pass-2 modal rendered "the current revision (, read from Rev B)".
+    expect(delta.textContent).toContain("V-101 is no longer read on the current revision (read from Rev B)");
+    expect(delta.textContent).not.toContain("(,");
+  });
+  it("neither sheet nor revision: no parenthesis at all", () => {
+    expect(vanishedWhere({ sheet_label: null, source_revision: null })).toBe("");
+    expect(vanishedWhere({ sheet_label: "SHT 4", source_revision: null })).toBe(" (was on SHT 4)");
+    expect(vanishedWhere({ sheet_label: "SHT 4", model: "m", source_revision: "C" })).toBe(" (was on SHT 4 (AI-read, unconfirmed), read from Rev C)");
+  });
+});
+
+describe("I-11 fix pass 3 — the sweep says what its computes did (DEC-44 (I-11) Risk, GAP-304)", () => {
+  it("column dismissals, recorded links, an unrecorded relation and refused audit rows are shown, summed over the pages", async () => {
+    await open();
+    let call = 0;
+    st.postAnswer = (b) => {
+      if (b.action !== "sweep") return { ok: true };
+      call++;
+      return call === 1
+        ? { ok: true, counts: { computed: 2 }, outcomes: { relationsWritten: 2, relationsRefreshed: 0, relationsKeptHuman: 0, relationsNotRecorded: 0, relationNote: null, columnDismissed: 3, auditErrors: 0, auditError: null }, nextCursor: "d2", done: false }
+        : { ok: true, counts: { computed: 1 }, outcomes: { relationsWritten: 0, relationsRefreshed: 0, relationsKeptHuman: 0, relationsNotRecorded: 1, relationNote: "The document↔equipment relation was not recorded: the database does not have migration 20261171 yet", columnDismissed: 1, auditErrors: 1, auditError: "The column removal's audit record could not be written: refused" }, nextCursor: null, done: true };
+    };
+    await click(button("Re-sweep")!);
+    const line = container.querySelector("[data-testid=sweep-progress]")!;
+    // Reproduction: the fix-pass-2 modal read only `counts` — none of this was shown.
+    expect(line.textContent).toContain("3 computed");
+    expect(line.textContent).toContain("2 drawing links recorded");
+    expect(line.textContent).toContain("4 applied tags were no longer in any tag column — dismissed");
+    expect(container.querySelector("[data-testid=sweep-relation-note]")?.textContent).toContain("not recorded on 1 document: The document↔equipment relation was not recorded: the database does not have migration 20261171 yet");
+    expect(container.querySelector("[data-testid=sweep-audit-error]")?.textContent).toContain("1 audit record could not be written: The column removal's audit record could not be written: refused");
   });
 });
