@@ -30,6 +30,48 @@ describe("feature atlas — the app's map of itself", () => {
     expect(searchAtlas("flow map")[0]?.href).toBe("/graph");
   });
 
+  it("regression (I-24 fix pass): ⌘K finds the graph by the same words as before the lens rename", () => {
+    // The palette asks for 4 (components/navigation/GlobalCommandPalette.tsx).
+    // These are the exact results on the base b0a03b1, before the /graph
+    // blurb named the lenses by their new labels: the blurb is part of what
+    // is searched, so dropping its words "everything", "documents", "docs"
+    // and "equipment" lost the graph from each of these. An atlas entry added
+    // later may change a list legitimately — update it deliberately.
+    const BEFORE: Record<string, string[]> = {
+      "equipment graph": ["/graph"],
+      "equipment map": ["/plot-plans", "/graph"],
+      "document map": ["/graph"],
+      "documents graph": ["/graph"],
+      "docs graph": ["/graph"],
+      "equipment docs": ["/graph"],
+      "everything": ["/admin/data-export", "/activity", "/graph"],
+      "documents": ["/documents", "/transmittals", "/admin/assets", "/graph"],
+      "docs": ["/output-templates", "/graph"],
+      "equipment": ["/documents", "/admin/assets", "/admin/codebook", "/plot-plans"],
+      // …and the words that never left (the aliases, the label, Connect).
+      "flow map": ["/graph"],
+      "process lens": ["/graph"],
+      "graph": ["/graph", "/knowledge"],
+      "map": ["/plot-plans", "/graph"],
+      "whole": ["/assistant", "/graph"],
+      "lenses": ["/graph"],
+      "process": ["/admin/assets", "/graph"],
+      "connect": ["/admin/proposed-links", "/graph", "/intelligence/skills", "/intelligence"],
+    };
+    for (const [q, hrefs] of Object.entries(BEFORE)) {
+      expect(searchAtlas(q, 4).map((e) => e.href), `query "${q}"`).toEqual(hrefs);
+    }
+    // At the default limit the graph is still the fifth "equipment" result.
+    expect(searchAtlas("equipment").map((e) => e.href)).toEqual(
+      ["/documents", "/admin/assets", "/admin/codebook", "/plot-plans", "/graph"]);
+  });
+
+  it("the graph is also found by its lenses' new labels", () => {
+    for (const q of ["whole map", "process layout", "governing paper", "records filing"]) {
+      expect(searchAtlas(q, 4).map((e) => e.href), `query "${q}"`).toContain("/graph");
+    }
+  });
+
   it("returns nothing for junk instead of guessing", () => {
     expect(searchAtlas("zzqx")).toHaveLength(0);
   });

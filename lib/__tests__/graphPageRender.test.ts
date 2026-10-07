@@ -58,6 +58,11 @@
 //           says "Equipment"; every existing ?lens=<key> link and a v1 blob
 //           light the same lens as before; the Connect help names the flow
 //           lens by its label
+//   I-24 fix pass: the counts, the Insights basis and the focus exits no
+//           longer say "the whole map" — a lens is labelled "Whole map" and
+//           leaves libraries out, so the unfiltered graph is "the full graph"
+//           and leaving focus says the lens stays; no lens label appears in
+//           any of those strings
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -341,6 +346,47 @@ describe("GPV-4 (I-24) — lens labels apart from the node types, as rendered; e
     expect(text()).toContain("drawn with an arrow on the Process layout lens.");
     expect(text()).not.toMatch(/\b(Plant|Process|Equipment|Documents?) lens\b/);
   });
+
+  it("the counts, the Insights basis and the focus exits never use a lens label — the unfiltered graph is 'the full graph' (fix pass)", async () => {
+    // A bare /graph lights "Whole map", which leaves library nodes out; the
+    // counts beside it measure the assembled graph, libraries included. Before
+    // the fix pass both were "the whole map" on the same screen.
+    nav.params = new URLSearchParams("local=asset%3Aa1&depth=1&select=asset%3Aa1");
+    await render(page());
+    const strings: Record<string, string> = {};
+    const exit = [...host.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") ?? "").startsWith("Leave focus"));
+    strings.focusChipExit = exit?.getAttribute("aria-label") ?? "";
+    const goOut = [...host.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Go out");
+    strings.peekGoOut = goOut?.getAttribute("title") ?? "";
+    const insightsBtn = btn(/^\s*Insights/);
+    strings.insightsTitle = insightsBtn?.getAttribute("title") ?? "";
+    await click(insightsBtn);
+    strings.insightsBasis = host.querySelector('[data-testid="insights-basis"]')?.textContent ?? "";
+    await click(btn("Settings"));
+    const caption = host.querySelector('[data-testid="filter-count-caption"]')!;
+    strings.countsCaption = caption.textContent ?? "";
+    const tips = [...caption.parentElement!.querySelectorAll("label span[title]")].map((el) => el.getAttribute("title") ?? "");
+    expect(tips.length).toBeGreaterThan(0);
+    tips.forEach((t, i) => { strings[`countTip${i}`] = t; });
+
+    for (const [where, s] of Object.entries(strings)) {
+      expect(s, where).not.toBe("");
+      for (const l of LABELS) expect(s.toLowerCase(), `${where}: "${s}"`).not.toContain(l.toLowerCase());
+      expect(s.toLowerCase(), where).not.toContain("whole");
+    }
+    // What each one says instead.
+    expect(strings.countsCaption).toBe("Node types · in this view / on the full graph");
+    expect(tips).toContain("1 in this view, 2 on the full graph");     // Equipment: P-101 of P-101, P-102
+    expect(strings.insightsTitle).toBe("Orphans, hubs and bridges — counted on the full graph, whatever this view shows");
+    expect(strings.insightsBasis).toContain("Counted on the full graph, whatever this view shows.");
+    expect(strings.focusChipExit).toBe("Leave focus — back out of the neighbourhood; the lens stays");
+    expect(strings.peekGoOut).toBe("Back out of the neighbourhood; the lens stays");
+    // Leaving focus keeps the lens: on Governing paper it stays Governing paper.
+    await click(lensButtons().find((b) => b.textContent === "Governing paper"));
+    await click(exit);
+    expect(window.location.search).not.toContain("local=");
+    expect(window.location.search).toContain("lens=equipment-docs");
+  });
 });
 
 describe("GPV-5 — a ?focus= link is honoured once", () => {
@@ -407,7 +453,7 @@ describe("GPV-11 — the view is in the URL, and Back to graph restores it", () 
     expect(text()).toContain("2 hops");
     expect(window.location.search).toContain("local=asset%3Aa1");
     expect(window.location.search).toContain("depth=2");
-    await click(btn("Leave focus — back to the whole map"));
+    await click(btn("Leave focus — back out of the neighbourhood; the lens stays"));
     expect(window.location.search).not.toContain("local=");
   });
 
@@ -459,7 +505,7 @@ describe("GM-1 / GM-6 / GM-11 — insights and degrees say what they count", () 
     expect(host.querySelector('[data-testid="orphan-badge"]')?.textContent).toBe(before);
     await click(btn(/^\s*Insights/));
     const basis = host.querySelector('[data-testid="insights-basis"]')?.textContent ?? "";
-    expect(basis).toContain("Counted on the whole map");
+    expect(basis).toContain("Counted on the full graph");
     expect(basis).toContain("3 more are outside your access");
   });
 

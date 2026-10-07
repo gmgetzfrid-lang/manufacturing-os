@@ -214,7 +214,7 @@ export default function NodePeek({
             className="flex-1 inline-flex items-center justify-center gap-1 text-[11px] font-black text-violet-700 border border-violet-300 dark:border-violet-800 rounded-lg px-2 py-1.5 hover:bg-violet-50 dark:hover:bg-violet-950/40">
             <Focus className="w-3.5 h-3.5" /> Go in
           </button>
-          <button onClick={onGoOut} disabled={!focused} title="Back to the whole map"
+          <button onClick={onGoOut} disabled={!focused} title="Back out of the neighbourhood; the lens stays"
             className="flex-1 inline-flex items-center justify-center gap-1 text-[11px] font-black text-[var(--color-text)] border border-[var(--color-border)] rounded-lg px-2 py-1.5 hover:bg-[var(--color-surface-2)] disabled:opacity-40">
             <Layers className="w-3.5 h-3.5" /> Go out
           </button>

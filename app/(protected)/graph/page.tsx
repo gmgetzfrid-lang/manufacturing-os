@@ -925,7 +925,7 @@ function GraphPageInner() {
             <button onClick={() => patchSettings({ localDepth: Math.min(LOCAL_DEPTH_MAX, settings.localDepth + 1) })}
               disabled={settings.localDepth >= LOCAL_DEPTH_MAX} aria-label="One hop more"
               className="p-0.5 rounded hover:bg-violet-100 dark:hover:bg-violet-900/50 disabled:opacity-30"><Plus className="w-3 h-3" /></button>
-            <button onClick={() => setFocusId(null)} aria-label="Leave focus — back to the whole map"
+            <button onClick={() => setFocusId(null)} aria-label="Leave focus — back out of the neighbourhood; the lens stays"
               className="p-0.5 rounded hover:bg-violet-100 dark:hover:bg-violet-900/50"><X className="w-3 h-3" /></button>
           </div>
         )}
@@ -1022,7 +1022,7 @@ function GraphPageInner() {
             {/* Insights */}
             <div className="absolute top-2 left-3 flex flex-col items-start gap-2 max-h-[calc(100%-1rem)] z-10">
               <button onClick={() => setInsightsOpen((v) => !v)} aria-expanded={insightsOpen}
-                title="Orphans, hubs and bridges — counted on the whole map, whatever this view shows"
+                title="Orphans, hubs and bridges — counted on the full graph, whatever this view shows"
                 className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border text-[11px] font-black shadow-sm ${
                   insightsOpen ? "border-violet-400 text-violet-700 bg-[var(--color-surface)]"
                                : "border-[var(--color-border-strong)] text-[var(--color-text)] bg-[var(--color-surface)]/90 backdrop-blur"
@@ -1055,7 +1055,7 @@ function GraphPageInner() {
 
                   {/* GM-1 / GM-6: what these were computed on. */}
                   <div className="px-2.5 pt-2 text-[10px] text-[var(--color-text-faint)] leading-snug" data-testid="insights-basis">
-                    Counted on the whole map, whatever this view shows. {insights.basis.note}
+                    Counted on the full graph, whatever this view shows. {insights.basis.note}
                   </div>
 
                   <div className="overflow-y-auto max-h-72 p-1.5 space-y-0.5">

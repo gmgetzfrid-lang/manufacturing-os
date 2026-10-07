@@ -7,6 +7,7 @@
 //   * GPV-4 (I-24, DEC-88 item 1 as rewritten under DEC-90): no lens LABEL
 //     contains a node-type word — the words are read from the Filters
 //     drawer's own labels (components/graph/GraphControls.tsx TYPE_LABELS),
+//     an abbreviation ("docs") or derivative of one counting too (fix pass),
 //     so a lens and a node type never share a name. The rename is label-only:
 //     the keys a URL (?lens=), a stored settings blob and a saved view carry
 //     are unchanged, and every place outside the lens bar that names a lens
@@ -59,9 +60,26 @@ function nodeTypeWords(): Set<string> {
   return out;
 }
 
-/** The node-type words a label uses, in order (both forms compared). */
+/** A word names a node type when it is one (plural or singular), or when it
+ *  and a node-type word start the same at 3+ letters, the shorter whole: an
+ *  abbreviation ("doc", "docs", "lib", "proj", "equip" — "Docs" was the word
+ *  in the pre-I-14 lens "Equipment ↔ Docs") or a derivative
+ *  ("documentation") names the type as surely as the word itself. */
+function isTypeWord(w: string, typeWords: Set<string>): boolean {
+  const forms = [w, singular(w)];
+  if (forms.some((f) => typeWords.has(f))) return true;
+  for (const t of typeWords) {
+    for (const f of forms) {
+      if (f.length >= 3 && t.startsWith(f)) return true;   // abbreviation
+      if (t.length >= 3 && f.startsWith(t)) return true;   // derivative
+    }
+  }
+  return false;
+}
+
+/** The node-type words a label uses, in order. */
 const typeWordsIn = (label: string, typeWords = nodeTypeWords()) =>
-  wordsOf(label).filter((w) => typeWords.has(w) || typeWords.has(singular(w)));
+  wordsOf(label).filter((w) => isTypeWord(w, typeWords));
 
 const store = new Map<string, string>();
 beforeEach(() => {
@@ -123,6 +141,16 @@ describe("GPV-10 / GPV-4 / GM-10 — lenses named for what they show", () => {
     expect(typeWordsIn("Plot plan")).toEqual(["plot", "plan"]);
     expect(typeWordsIn("Asset view")).toEqual(["asset"]);
     expect(typeWordsIn("Systems")).toEqual(["systems"]);
+    // Abbreviations and derivatives of a node-type word are caught too
+    // (fix pass): "Docs" was the pre-I-14 lens word for the Documents type.
+    expect(typeWordsIn("Docs & filing")).toEqual(["docs"]);
+    expect(typeWordsIn("Equipment ↔ Docs")).toEqual(["equipment", "docs"]);
+    expect(typeWordsIn("Doc web")).toEqual(["doc"]);
+    expect(typeWordsIn("Lib & proj view")).toEqual(["lib", "proj"]);
+    expect(typeWordsIn("Equip layout")).toEqual(["equip"]);
+    expect(typeWordsIn("Documentation")).toEqual(["documentation"]);
+    // …and the check does not over-reach: the four labels' own words pass it.
+    expect(typeWordsIn("Whole map · Process layout · Governing paper · Records & filing")).toEqual([]);
   });
 
   it("matchLens: exact, a near miss names the lens it drifted from, far is none", () => {
@@ -364,6 +392,18 @@ describe("GPV-4 (I-24) — every place outside the lens bar that names a lens na
     for (const l of GRAPH_LENSES) expect(graph.blurb, l.key).toContain(l.label);
     for (const old of ["Everything", "Equipment ↔ Docs", "Process (flow map)", "Documents."]) {
       expect(graph.blurb).not.toContain(old);
+    }
+    // The lens list itself is exactly the four labels (the flow map is the
+    // Process layout lens's gloss) and names no node type. The words ⌘K
+    // found the graph by — everything, documents, docs, equipment — stay in
+    // the blurb, outside the list (fix pass; lib/__tests__/featureAtlas.test.ts
+    // pins the palette's results).
+    const list = graph.blurb.match(/with lenses: ([^.]+)\./)?.[1];
+    expect(list).toBe(GRAPH_LENSES.map((l) => (l.key === "plant" ? `${l.label} (the flow map)` : l.label)).join(", "));
+    expect(typeWordsIn(list!)).toEqual([]);
+    for (const w of ["everything", "documents", "docs", "equipment"]) {
+      expect(graph.blurb.toLowerCase(), w).toContain(w);
+      expect(list!.toLowerCase(), w).not.toContain(w);
     }
   });
 
