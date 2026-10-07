@@ -557,8 +557,8 @@ describe("OFF-8 — every key the app keeps in this browser is in RoleContext's 
     expect(seen("components/ui/FirstRunHint.tsx")).toContain("local:first_run_hint:…");                              // a constant + a prop
     expect(seen("app/layout.tsx")).toContain("local:mfg-os.density");                                                 // an inline script
     expect(seen(ROLE_CONTEXT)).toEqual(expect.arrayContaining(["local:manufacturingos.lastIdentity", "session:manufacturingos.lastIdentity"]));
-    // OFF-15 (PS-P6): the uid-keyed stamp list (a local arrow's template) and the legacy device-wide key (a constant, read once to move it)
-    expect(seen("components/viewers/FullScreenViewer.tsx")).toEqual(expect.arrayContaining(["local:manufacturingos.customStamps:…", "local:manufacturingos.customStamps"]));
+    // OFF-15 (PS-P6): the uid-keyed stamp list (a local arrow's template), the legacy device-wide key (a constant, read until it is moved) and the device's moved marker (a constant)
+    expect(seen("components/viewers/FullScreenViewer.tsx")).toEqual(expect.arrayContaining(["local:manufacturingos.customStamps:…", "local:manufacturingos.customStamps", "local:manufacturingos.customStamps.moved"]));
   }, CENSUS_TIMEOUT_MS);
 
   it("per KEY, negative controls: a new key in a file that already owns rows fails until it has its own row", () => {
@@ -611,10 +611,12 @@ describe("OFF-8 — every key the app keeps in this browser is in RoleContext's 
     for (const k of ["intel-status-", "schema-gaps-"]) { expect(kind("local", k), k).toBe("cache"); expect(kind("session", k), k).toBe("cache"); }
     for (const k of ["org-graph-", "mfg-os:lib:"]) expect(kind("session", k), k).toBe("cache");
     expect(kind("local", "dismissed:")).toBe("held");
-    // OFF-15 (PS-P6): a person's uploaded stamp images are their own work, keyed by uid; the legacy device-wide list is not an account read (moved once, by the viewer)
+    // OFF-15 (PS-P6): a person's uploaded stamp images are their own work, keyed by uid; the legacy device-wide list (whose is unknown) is
+    // ended like it at the next identity change, so only the identity running the app when the code arrives can take it; the moved marker is a device flag
     expect(kind("local", "manufacturingos.customStamps:")).toBe("identity");
-    expect(CLIENT_STORAGE_INVENTORY.find((r) => r.store === "local" && r.key === "manufacturingos.customStamps:")?.class).toBe("account");
-    expect(CLIENT_STORAGE_INVENTORY.find((r) => r.store === "local" && r.key === "manufacturingos.customStamps")?.class).toBe("device");
+    expect(kind("local", "manufacturingos.customStamps")).toBe("identity");
+    const stampCls = (key: string) => CLIENT_STORAGE_INVENTORY.find((r) => r.store === "local" && r.key === key)?.class;
+    expect(["manufacturingos.customStamps:", "manufacturingos.customStamps", "manufacturingos.customStamps.moved"].map(stampCls)).toEqual(["account", "account", "device"]);
     // which end takes which kind
     expect(["cache", "held", "identity"].map((k) => purgeTakes("all", k as "cache"))).toEqual([true, true, true]);
     expect(["cache", "held", "identity"].map((k) => purgeTakes("signout", k as "cache"))).toEqual([true, true, false]);
@@ -633,7 +635,7 @@ describe("OFF-8 — the purge", () => {
     L.setItem("manufacturingos.preferMicrosoft", "true"); L.setItem("manufacturingos.rememberSession", "true");
     L.setItem("sb-ref-auth-token", "tok");
     L.setItem("mfgos.theme.mode", "dark"); L.setItem("orgGraph:settings:o1", "{}"); L.setItem("manufacturingos.dashboard.u1", "{}");
-    L.setItem("manufacturingos.customStamps", "[]"); L.setItem("manufacturingos.customStamps:u1", "[]");
+    L.setItem("manufacturingos.customStamps", "[]"); L.setItem("manufacturingos.customStamps:u1", "[]"); L.setItem("manufacturingos.customStamps.moved", "1");
     S.setItem("org-graph-o1", "{}"); S.setItem("mfg-os:lib:l1:o1", "{}"); S.setItem("kl-active-thread-l1", "[]");
     S.setItem("manufacturingos.silentSSOAttempted", "1"); S.setItem("manufacturingos.signInNext", "{}"); S.setItem("kl-embed-nudge-at", "1");
   };
@@ -644,7 +646,7 @@ describe("OFF-8 — the purge", () => {
     purgeAccountStorage(window.localStorage, "local", "all");
     purgeAccountStorage(window.sessionStorage, "session", "all");
     expect(keys(window.localStorage)).toEqual([
-      "manufacturingos.activeOrgId", "manufacturingos.activeOrgId.owner", "manufacturingos.customStamps", "manufacturingos.dashboard.u1",
+      "manufacturingos.activeOrgId", "manufacturingos.activeOrgId.owner", "manufacturingos.customStamps.moved", "manufacturingos.dashboard.u1",
       "manufacturingos.preferMicrosoft", "manufacturingos.rememberSession", "mfgos.theme.mode", "orgGraph:settings:o1", "sb-ref-auth-token",
     ]);
     expect(keys(window.sessionStorage)).toEqual(["kl-embed-nudge-at", "manufacturingos.signInNext", "manufacturingos.silentSSOAttempted"]);
@@ -655,7 +657,7 @@ describe("OFF-8 — the purge", () => {
     purgeAccountStorage(window.localStorage, "local", "signout");
     purgeAccountStorage(window.sessionStorage, "session", "signout");
     expect(keys(window.localStorage)).toEqual([
-      "manufacturingos.activeOrgId", "manufacturingos.activeOrgId.owner", "manufacturingos.customStamps", "manufacturingos.customStamps:u1", "manufacturingos.dashboard.u1",
+      "manufacturingos.activeOrgId", "manufacturingos.activeOrgId.owner", "manufacturingos.customStamps", "manufacturingos.customStamps.moved", "manufacturingos.customStamps:u1", "manufacturingos.dashboard.u1",
       LAST_IDENTITY_KEY, "manufacturingos.preferMicrosoft", "manufacturingos.rememberSession", "mfg-os.palette.recents", "mfgos.theme.mode",
       "orgGraph:pos3d:o1", "orgGraph:pos:o1", "orgGraph:settings:o1", "sb-ref-auth-token",
     ].sort());
@@ -675,6 +677,7 @@ describe("OFF-8 — the purge", () => {
     expect(window.sessionStorage.getItem("kl-active-thread-l1")).toBe("[]");
     expect(window.localStorage.getItem("dismissed:u1:o1:hint")).toBe("1");
     expect(window.localStorage.getItem("manufacturingos.customStamps:u1")).toBe("[]");
+    expect(window.localStorage.getItem("manufacturingos.customStamps")).toBe("[]");
     expect(window.localStorage.getItem(LAST_IDENTITY_KEY)).toBe("u1"); // so a different identity later still ends the held data
     expect(window.localStorage.getItem("manufacturingos.activeOrgId")).toBe("o1");
   });
@@ -808,11 +811,14 @@ describe("OFF-8 — the provider's branches, rendered", () => {
     await mount();
     seedAccount();
     window.localStorage.setItem("manufacturingos.customStamps:u1", "[{\"id\":\"cs-1\",\"name\":\"initials.png\",\"src\":\"data:\"}]");
+    window.localStorage.setItem("manufacturingos.customStamps", "[{\"id\":\"cs-0\",\"name\":\"legacy.png\",\"src\":\"data:\"}]");
     await act(async () => { await s.authCb!("SIGNED_OUT", null); });
+    expect(window.localStorage.getItem("manufacturingos.customStamps")).toContain("legacy.png"); // OFF-15: kept across the sign-out
     s.member = { ...ADMIN, uid: "u2", email: "b@x.io" };
     await reload({ user: { id: "u2", email: "b@x.io" } });
     expect(probe()).toBe("Admin|Admin|member|any");
     expect(window.localStorage.getItem("manufacturingos.customStamps:u1")).toBeNull(); // OFF-15: never offered to u2
+    expect(window.localStorage.getItem("manufacturingos.customStamps")).toBeNull();   // OFF-15 review fix: nor the legacy list u1 never moved
     expect(window.localStorage.getItem("orgGraph:pos:o1")).toBeNull();
     expect(window.localStorage.getItem("mfg-os.palette.recents")).toBeNull();
     expect(window.sessionStorage.getItem("kl-active-thread-l1")).toBeNull();
@@ -929,6 +935,7 @@ describe("OFF-8 — the provider's branches, rendered", () => {
 
   it("regression: the SAME identity across a reload keeps everything; a first boot with nothing remembered drops only the rebuildable caches, keeps the person's own work and held state, and remembers it", async () => {
     seedAccount();
+    window.localStorage.setItem("manufacturingos.customStamps", "[]"); // OFF-15: the legacy stamp list, left for this first identity to take
     s.session = { user: { id: "u1", email: "a@x.io" } };
     s.member = ADMIN;
     const before = everything();

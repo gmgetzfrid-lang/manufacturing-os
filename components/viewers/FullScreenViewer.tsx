@@ -128,14 +128,26 @@ const STAMPS: { label: string; tone: ColorKey }[] = [
 // is offered. CLIENT_STORAGE_INVENTORY (RoleContext) classes the uid key
 // "account" / kind "identity" — kept across the person's own sign-out for
 // their next sign-in, ended when a different identity runs the app here
-// (noteIdentity) — and the legacy device-wide key "device", read only to
-// move it once.
+// (noteIdentity). The legacy device-wide key is "account" / "identity" too
+// (whose it is is unknown), so only the identity running the app here when
+// this code arrives can take it, and the next identity change ends it.
 type CustomStamp = { id: string; name: string; src: string };
-/** The device-wide list of before OFF-15. Never written now: the first
- *  signed-in uid that opens the viewer with no list of its own takes it
- *  (moved to its key, then removed) — a one-time move (OFF-15 Scope). */
+/** The device-wide list of before OFF-15. Never written now (only put back
+ *  when its move is refused). The first signed-in uid that opens the viewer
+ *  with no list of its own takes it — moved to its key, then removed — a
+ *  one-time move (OFF-15 Scope); a different identity running the app here
+ *  first ends it instead (RoleContext's "all" purge). */
 const LEGACY_CUSTOM_STAMPS_KEY = "manufacturingos.customStamps";
+/** Set once the legacy list has been moved on this device: after it the
+ *  legacy key is never read again (a tab still running the code of before
+ *  that writes it again is offered to no one). Holds no stamp and no uid. */
+const LEGACY_CUSTOM_STAMPS_MOVED_KEY = "manufacturingos.customStamps.moved";
 const customStampsKey = (uid: string) => `manufacturingos.customStamps:${uid}`;
+
+/** The stamps offered, with the uid they were read for. `legacyPending`: the
+ *  legacy list is offered but the store refused its move — the person's
+ *  first write that lands finishes it (persistCustomStamps). */
+type StampShelf = { uid: string | null; stamps: CustomStamp[]; legacyPending: boolean };
 
 function parseCustomStamps(raw: string | null): CustomStamp[] {
   if (!raw) return [];
@@ -145,23 +157,39 @@ function parseCustomStamps(raw: string | null): CustomStamp[] {
   } catch { return []; }
 }
 
+/** The legacy list now lives under a uid: remove it and mark the device, so
+ *  it is never read again. */
+function retireLegacyStamps(): void {
+  try { window.localStorage.removeItem(LEGACY_CUSTOM_STAMPS_KEY); } catch { /* forbidden */ }
+  try { window.localStorage.setItem(LEGACY_CUSTOM_STAMPS_MOVED_KEY, "1"); } catch { /* full — the legacy key is gone all the same */ }
+}
+
 /** The signed-in person's stamps. No uid (signed out): none. On a uid's
- *  first read — no list of its own yet — the legacy device-wide list is
- *  MOVED to it: written under the uid first, and the legacy key removed
- *  only once that write landed (never lose the stamps on a full store). */
-function loadCustomStamps(uid: string | null): CustomStamp[] {
-  if (!uid || typeof window === "undefined") return [];
+ *  first read — no list of its own yet, and the legacy list not yet moved on
+ *  this device — the legacy device-wide list is MOVED to it: removed FIRST
+ *  (a dozen data-URL images can be most of the quota, so the copy needs the
+ *  room the original holds), then written under the uid; a refused write
+ *  puts the legacy list back and offers it, pending, to this person only. */
+function loadStampShelf(uid: string | null): StampShelf {
+  const none: StampShelf = { uid, stamps: [], legacyPending: false };
+  if (!uid || typeof window === "undefined") return none;
   try {
     const own = window.localStorage.getItem(customStampsKey(uid));
-    if (own !== null) return parseCustomStamps(own);
+    if (own !== null) return { uid, stamps: parseCustomStamps(own), legacyPending: false };
+    if (window.localStorage.getItem(LEGACY_CUSTOM_STAMPS_MOVED_KEY) !== null) return none;
     const legacy = window.localStorage.getItem(LEGACY_CUSTOM_STAMPS_KEY);
-    if (legacy === null) return [];
-    const moved = parseCustomStamps(legacy);
-    let kept = false;
-    try { window.localStorage.setItem(customStampsKey(uid), JSON.stringify(moved)); kept = true; } catch { /* full or forbidden — leave the legacy list */ }
-    if (kept) { try { window.localStorage.removeItem(LEGACY_CUSTOM_STAMPS_KEY); } catch { /* forbidden */ } }
-    return moved;
-  } catch { return []; }
+    if (legacy === null) return none;
+    const stamps = parseCustomStamps(legacy);
+    window.localStorage.removeItem(LEGACY_CUSTOM_STAMPS_KEY);
+    try {
+      window.localStorage.setItem(customStampsKey(uid), JSON.stringify(stamps));
+    } catch {
+      try { window.localStorage.setItem(LEGACY_CUSTOM_STAMPS_KEY, legacy); } catch { /* the bytes it held a moment ago — not expected */ }
+      return { uid, stamps, legacyPending: true };
+    }
+    retireLegacyStamps();
+    return { uid, stamps, legacyPending: false };
+  } catch { return none; }
 }
 
 interface FullScreenViewerProps {
@@ -384,16 +412,21 @@ export default function FullScreenViewer({
   // stamps are offered or written. A different person signing in while the
   // viewer is open reads their own list, never the last person's.
   const stampUid = currentUserId || null;
-  const [stampShelf, setStampShelf] = useState<{ uid: string | null; stamps: CustomStamp[] }>(
-    () => ({ uid: stampUid, stamps: loadCustomStamps(stampUid) }));
-  if (stampShelf.uid !== stampUid) setStampShelf({ uid: stampUid, stamps: loadCustomStamps(stampUid) });
+  const [stampShelf, setStampShelf] = useState<StampShelf>(() => loadStampShelf(stampUid));
+  if (stampShelf.uid !== stampUid) setStampShelf(loadStampShelf(stampUid));
   const customStamps = stampShelf.uid === stampUid ? stampShelf.stamps : [];
   const stampFileInputRef = useRef<HTMLInputElement>(null);
 
   const persistCustomStamps = (next: CustomStamp[]) => {
     if (!stampUid) return;
-    setStampShelf({ uid: stampUid, stamps: next });
-    try { window.localStorage.setItem(customStampsKey(stampUid), JSON.stringify(next)); } catch {}
+    let saved = false;
+    try { window.localStorage.setItem(customStampsKey(stampUid), JSON.stringify(next)); saved = true; } catch { /* full or forbidden — ignored, as before */ }
+    // The legacy list was offered to this person but the store refused its
+    // move: their first write that lands finishes it (legacy key removed,
+    // device marked), so it is offered to no one else.
+    const legacyPending = stampShelf.uid === stampUid && stampShelf.legacyPending;
+    if (saved && legacyPending) retireLegacyStamps();
+    setStampShelf({ uid: stampUid, stamps: next, legacyPending: legacyPending && !saved });
   };
 
   const onUploadStamp = (file: File) => {
