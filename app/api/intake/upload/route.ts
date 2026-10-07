@@ -115,7 +115,11 @@
 // document and the quote are also written UNDER ROW-LEVEL SECURITY: their
 // door functions switch to the NOLOGIN role intake_door (granted to
 // authenticator) for the one INSERT, and policies keyed on the bound link
-// judge it — a policy refusal answers like any scope refusal (42501). While
+// judge it — their refusal is a 42501 without the door's HINT, answered as
+// the write's own failure (500). Where the database lacks a privilege the
+// role needs, or holds a restrictive policy for every role that the link
+// may fail, the door function keeps that write's bound identity instead and
+// the upload is filed as today (20261184; projects-tab SEC-22). While
 // the function is not there (20261184 not
 // pasted: PGRST202, or 42883 naming an intake_door_ function at the start of
 // its message — decided by the CODE, never by a message alone) the write is

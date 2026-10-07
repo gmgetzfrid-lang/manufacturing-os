@@ -17,12 +17,18 @@ storage service, where the app never puts its sign-in, its pages or its
 scripts. Even a file that somehow slipped past the checks could then never run
 next to the app or next to your controlled drawings.
 
-People open and download contractor files as before; only the address in the
-browser's download bar is different. One thing has to be confirmed once, after
-you set it, because nothing in the app can check it ahead of time: the
-**Full ZIP** backup is built inside your browser, which fetches every file from
-storage itself, and storage must let it do that from the new address too. Step
-5 of "How to check it worked" covers it, and says what to do if it fails.
+One thing has to be confirmed once, after you set it, because nothing in the
+app can check it ahead of time: some parts of the app fetch a contractor's
+file from storage themselves, inside your browser, and storage must let them
+do that from the new address too. Today that is the **Full ZIP** backup, which
+is built inside your browser and fetches every file from storage itself. Once
+the Intake tab switches over (see "When to do it"), the app's own document
+viewer does the same every time someone opens a contractor drawing — in the
+intake review, for example (its full-screen view and a marked-up download
+fetch the file the same way). If storage does not allow it, the Full ZIP
+misses those files and, after the switch-over, contractor drawings may fail to
+display in the viewer. Step 5 of "How to check it worked" checks it, and it is
+**required**: do not leave the setting in place unless step 5 passes.
 
 ## When to do it
 
@@ -33,9 +39,13 @@ the same links). The everyday download links — the
 **Intake** tab, the document viewer — keep coming from the usual address until
 two small code changes land (`app/api/storage/download-url/route.ts` and
 `app/api/storage/resolve/route.ts` start calling `signStorageGet`; recorded on
-projects-tab `GAP-401`, owner: the integrator at the J16 / P6 merge). Setting it
-early is harmless: nothing breaks, and those links switch over on their own the
-day that change is deployed.
+projects-tab `GAP-401`, owner: the integrator at the J16 / P6 merge). You can
+set it before then, but only together with step 5 of "How to check it worked":
+those links switch over on their own the day that change is deployed, and from
+that day the app's viewer opens contractor files from the new address, which
+works only if step 5 passed. If you set it early, run step 5 again after that
+change is deployed, and open one contractor drawing from the **Intake** tab to
+see it display.
 
 ## The steps
 
@@ -71,8 +81,9 @@ day that change is deployed.
 You should not need to change anything in Cloudflare: the address in step 2 is
 one your storage already answers on, with the same keys the app already holds.
 The one thing that is not known in advance is whether storage lets a browser
-fetch files from that address for the **Full ZIP** backup — step 5 below
-checks it.
+fetch files from that address — for the **Full ZIP** backup today, and for the
+app's document viewer once the Intake tab switches over. Step 5 below checks
+it, and it is required.
 
 ## How to check it worked
 
@@ -92,7 +103,7 @@ If the contractor file's link still starts with `https://<bucket name>.…`, the
 value was refused: the server log has one line starting with
 `[untrustedContent]` that says why (see the last section).
 
-5. **Check that the Full ZIP backup still gets contractor files.** Back on
+5. **Check that the Full ZIP backup still gets contractor files (required).** Back on
    **Admin → Data export**, click **Download Full ZIP** and let it finish
    (allow several downloads if the browser asks). While it runs, the card
    shows how many files failed. When it is done, open the last zip part and
@@ -104,14 +115,18 @@ value was refused: the server log has one line starting with
    If those files are listed under `errors` (usually with a network error
    such as "Failed to fetch") while your organization's own files are in the
    zip, storage is not letting the browser read files from the new address.
-   Undo the setting (next section) so the Full ZIP gets every file again, and
-   pass the result on to whoever looks after the app (`GAP-401` records this
-   check). Opening a link from the JSON file, and the everyday download links,
-   do not depend on this check.
+   Undo the setting (next section) so the Full ZIP gets every file again —
+   and so the app's viewer keeps opening contractor drawings once the Intake
+   tab switches over — and pass the result on to whoever looks after the app
+   (`GAP-401` records this check). Only opening a link from the JSON file
+   directly in a browser tab does not depend on this check.
 
 The **Intake** tab's own download links do not change yet (see "When to do
 it"): a contractor file opened there still comes from the usual address, and
-that is expected, not a sign the setting is broken.
+that is expected, not a sign the setting is broken. Once they do, open one
+contractor drawing from the **Intake** tab in the app's viewer, and in its
+full-screen view, and check that it displays; if it does not, undo the
+setting.
 
 ## How to undo it
 

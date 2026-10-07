@@ -174,7 +174,7 @@ describe("the operator step", () => {
   });
   it("it does not promise that nothing else changes: the browser-built Full ZIP fetches each signed URL itself, cross-origin, so the check step ends with a Full ZIP whose report lists no contractor file under errors, and says what to do if it does (review fix pass 4)", () => {
     expect(doc).not.toContain("Nothing else changes");
-    expect(doc).toContain("the **Full ZIP** backup is built inside your browser, which fetches every file from storage itself");
+    expect(doc).toContain("Today that is the **Full ZIP** backup, which is built inside your browser and fetches every file from storage itself.");
     expect(doc).not.toContain("You do **not** need to change anything in Cloudflare");
     const check = doc.slice(doc.indexOf("## How to check it worked"), doc.indexOf("## How to undo it"));
     expect(check).toContain("**Download Full ZIP**");
@@ -189,6 +189,30 @@ describe("the operator step", () => {
     expect(backup).toContain("const r = await fetch(f.presignedUrl);");
     expect(backup).toContain("errors: progress.errors,");
     expect(readFileSync(join(process.cwd(), "app/api/data-export/structured/route.ts"), "utf8")).toContain('import { runOrgExport, recordExportUndelivered } from "@/lib/dataExport";');
+  });
+  it("it does not promise that viewing is unaffected: once the Intake tab switches over, the app's own viewer fetches the contractor file cross-origin too, so step 5 is required before the setting is left in place, and the viewer is checked after the switch-over (review fix pass 5)", () => {
+    // the overstatements are gone
+    expect(doc).not.toMatch(/nothing breaks/i);
+    expect(doc).not.toContain("Setting it early is harmless");
+    expect(doc).not.toContain("only the address in the browser's download bar is different");
+    expect(doc).not.toContain("the everyday download links, do not depend on this check");
+    // the viewer is named, and step 5 is required
+    expect(doc).toContain("the app's own document viewer does the same every time someone opens a contractor drawing — in the intake review, for example");
+    expect(doc).toContain("its full-screen view and a marked-up download fetch the file the same way");
+    expect(doc).toContain("after the switch-over, contractor drawings may fail to display in the viewer");
+    expect(doc).toContain("it is **required**: do not leave the setting in place unless step 5 passes");
+    expect(doc).toContain("You can set it before then, but only together with step 5 of \"How to check it worked\"");
+    const check = doc.slice(doc.indexOf("## How to check it worked"), doc.indexOf("## How to undo it"));
+    expect(check).toContain("5. **Check that the Full ZIP backup still gets contractor files (required).**");
+    expect(check).toContain("Only opening a link from the JSON file directly in a browser tab does not depend on this check.");
+    expect(check).toContain("open one contractor drawing from the **Intake** tab in the app's viewer, and in its full-screen view, and check that it displays; if it does not, undo the setting.");
+    // the cross-origin fetches it describes are the app's own: the in-app viewer, its full-screen view (react-pdf loads the
+    // signed URL itself) and the marked-up download
+    const viewer = readFileSync(join(process.cwd(), "components/viewers/SecureDocViewer.tsx"), "utf8");
+    expect(viewer).toContain("const response = await fetch(resolvedUrl);");
+    const full = readFileSync(join(process.cwd(), "components/viewers/FullScreenViewer.tsx"), "utf8");
+    expect(full).toContain("file={resolvedUrl}");
+    expect(full).toContain("const res = await fetch(resolvedUrl);");
   });
   it(".env.example lists the variable, blank by default", () => {
     const env = readFileSync(join(process.cwd(), ".env.example"), "utf8");

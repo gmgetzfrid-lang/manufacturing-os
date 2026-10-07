@@ -358,21 +358,22 @@ describe("row-level security for the new document and the quote — the dedicate
     expect(roleBlock()).toMatch(/BEGIN\s*\n\s*GRANT EXECUTE ON FUNCTION auth\.uid\(\) TO intake_door;\s*\n\s*EXCEPTION WHEN OTHERS THEN\s*\n\s*RAISE NOTICE/);
   });
 
-  it("the paste's three row-level-security rows ask intake_door_rls_gaps — the function the door functions decide by — so the probe can never read true while the door skips the switch (review fix pass 3, minor: the probe tested MEMBER, the door SET)", () => {
+  it("the paste's four row-level-security rows ask intake_door_rls_gaps — the function the door functions decide by — so the probe can never read true while the door skips the switch (review fix pass 3, minor: the probe tested MEMBER, the door SET; review fix pass 5: the fourth row too)", () => {
     const tail = C.slice(C.indexOf("\nCOMMIT;"));
     expect(tail).toContain("AND NOT (intake_door_rls_gaps('authenticator', false) && ARRAY['role', 'switch']),");
     expect(tail).toContain("NOT (intake_door_rls_gaps('authenticator', true) && ARRAY['role', 'auth usage']),");
-    expect(tail).toContain("FROM unnest(intake_door_rls_gaps('authenticator', true) || intake_door_rls_gaps('authenticator', false)) g");
+    expect(tail.match(/FROM unnest\(intake_door_rls_gaps\('authenticator', true\) \|\| intake_door_rls_gaps\('authenticator', false\)\) g/g)).toHaveLength(2);
     expect(tail).toContain("WHERE g = 'role' OR g LIKE 'execute %' OR g LIKE 'read %'),");
+    expect(tail).toContain("WHERE g LIKE 'policy %'),");
     // no probe makes a role test of its own, and the version-dependent privilege (SET from PG16, MEMBER before) is written once, in rls_gaps
     expect(tail).not.toMatch(/pg_has_role\(/);
     expect(C.match(/CASE WHEN current_setting\('server_version_num'\)::int >= 160000 THEN 'SET' ELSE 'MEMBER' END/g)).toHaveLength(1);
     expect(fn("intake_door_rls_gaps")).toContain("pg_has_role(p_login, 'intake_door',\n                        CASE WHEN current_setting('server_version_num')::int >= 160000 THEN 'SET' ELSE 'MEMBER' END)");
     // and the runtime asks it for the session's own login
     expect(fn("intake_door_rls_ready")).toContain("SELECT cardinality(intake_door_rls_gaps(session_user, p_new_document)) = 0;");
-    // every gap the function can report is read by one of the three rows
+    // every gap the function can report is read by one of the four rows
     const reported = [...fn("intake_door_rls_gaps").matchAll(/(?:ARRAY\[|\|\| |SELECT DISTINCT )'(\w+(?: \w+)?)/g)].map((m) => m[1]);
-    expect(reported.sort()).toEqual(["auth usage", "execute ", "read ", "role", "switch"].map((x) => x.trim()).sort());
+    expect(reported.sort()).toEqual(["auth usage", "execute ", "policy ", "read ", "role", "switch"].map((x) => x.trim()).sort());
   });
 
   it("the role holds exactly: USAGE on public and auth, column INSERT on documents and cost_documents, what the document rails read as the writer, EXECUTE on its two policy predicates and, by name, on what the policies for all roles call — no UPDATE, nothing on document_versions", () => {
@@ -423,15 +424,18 @@ describe("row-level security for the new document and the quote — the dedicate
       expect(body.match(/set_config\('role'/g)).toHaveLength(3);
     });
 
-  it.each([["intake_door_create_document", "new document"], ["intake_door_file_quote", "quote"]])(
-    "%s: a privilege the role lacks ('permission denied …') runs the same INSERT once more with the bound identity alone and a WARNING — never a refused upload; a policy's refusal and every other error are raised (review fix pass 3, major)", (name, what) => {
+  it.each([["intake_door_create_document", "new document", "documents"], ["intake_door_file_quote", "quote", "cost_documents"]])(
+    "%s: a privilege the role lacks ('permission denied …'), or a policy that is not the door's own refusing it, runs the same INSERT once more with the bound identity alone and a WARNING — never a refused upload; the door's own policies' refusal and every other error are raised (review fix pass 3, major; review fix pass 5, major)", (name, what, table) => {
       const body = fn(name);
       const handler = between(body, "    EXCEPTION WHEN insufficient_privilege THEN\n", "\n    END;\n  END LOOP;");
       expect(body).toMatch(/\n  LOOP\n    BEGIN\n      IF v_rls THEN PERFORM set_config\('role', 'intake_door', true\); END IF;\n/);
       expect(handler).toBe([
         "    EXCEPTION WHEN insufficient_privilege THEN",
         "      IF v_rls THEN PERFORM set_config('role', v_role, true); END IF;",
-        "      IF NOT v_rls OR SQLERRM NOT LIKE 'permission denied%' THEN",
+        "      IF NOT v_rls",
+        `         OR SQLERRM IN ('new row violates row-level security policy for table "${table}"',`,
+        `                        'new row violates row-level security policy "${table}_intake_door_scope" for table "${table}"')`,
+        "         OR NOT (SQLERRM LIKE 'permission denied%' OR SQLERRM LIKE 'new row violates row-level security policy \"%') THEN",
         "        RAISE;",
         "      END IF;",
         `      RAISE WARNING '${name}: % — this ${what} is written with the bound identity alone, without row-level security (projects-tab SEC-22).', SQLERRM;`,
@@ -443,8 +447,13 @@ describe("row-level security for the new document and the quote — the dedicate
       expect(body.match(/EXCEPTION WHEN/g)).toHaveLength(1);
       expect(body).not.toMatch(/WHEN OTHERS/);
       // Postgres's own message for a privilege gap starts "permission denied"; an RLS refusal starts "new row violates", and
-      // no migration's own RAISE starts with "permission denied" (so no guard's refusal is ever mistaken for a gap)
-      for (const f of numbered()) expect(code(mig(f)), f).not.toMatch(/RAISE EXCEPTION\s+'permission denied/i);
+      // no migration's own RAISE starts with either (so no guard's refusal is ever mistaken for a gap or a policy's refusal)
+      for (const f of numbered()) expect(code(mig(f)), f).not.toMatch(/RAISE EXCEPTION\s+'(permission denied|new row violates)/i);
+      // the door's own refusals are the ones Postgres raises for THIS table's door policies: no permissive policy admitted
+      // the row (Postgres names none — the door's permissive policy is the one a link can pass), or the scope policy, named
+      // exactly as section 9 creates it on that table
+      expect(C).toContain(`CREATE POLICY ${table}_intake_door_scope ON ${table}\n  AS RESTRICTIVE FOR INSERT TO intake_door`);
+      expect(C).toContain(`CREATE POLICY ${table}_intake_door_insert ON ${table}\n  AS PERMISSIVE FOR INSERT TO intake_door`);
     });
 
   it("no other function switches role (the submission, pointer, promote and redline stay SECURITY DEFINER, where Postgres forbids it)", () => {
@@ -585,16 +594,23 @@ describe("intake_door keeps EXECUTE on what the policies for all roles call (rev
   });
 });
 
-// ── Review fix pass 4 (major): a RESTRICTIVE INSERT / ALL policy written for
-// every role judges the door's INSERT as intake_door exactly as it judges a
-// member's. One the link's identity cannot satisfy (a membership test, say)
-// REFUSES that write — the route answers 500 — and is never stepped around:
-// the door is judged by every guard. The handler above catches only a
-// privilege gap, so nothing else would notice. Two detectors: the paste's
-// fourth row-level-security row reads the live pg_policy, and this test fails
-// a later migration that adds such a policy without saying how intake_door is
-// treated (a TO clause that leaves it out, a predicate naming it, or a comment
-// `-- intake_door: <policy> …` in the same file).
+// ── Review fix pass 4 (major), revised by review fix pass 5 (major): a
+// RESTRICTIVE INSERT / ALL policy written for every role judges the door's
+// INSERT as intake_door exactly as it judges a member's, and one the link's
+// identity cannot satisfy (a membership test, say) would REFUSE that write —
+// an upload that works today would answer 500. Fix pass 4 detected one only
+// after the fact (a paste row). Since fix pass 5 intake_door_rls_gaps names
+// it ('policy <name>') BEFORE the switch, so readiness is false and that
+// table's write keeps the bound identity under the service key — every
+// trigger guard still judging it, the upload filed as today — and the
+// paste's fourth row reads that gap. A refusal the check could not see (a
+// policy made since it ran, one for a role intake_door inherits) falls back
+// the same way, with a WARNING; only the door's own policies refuse after
+// the switch. This test still fails a later migration that adds such a
+// policy without saying how intake_door is treated (a TO clause that leaves
+// it out, a predicate naming it, or a comment `-- intake_door: <policy> …` in
+// the same file), because the door's new documents or quotes would then
+// leave row-level security unannounced.
 const DOOR_TABLE = String.raw`(?:public\.)?"?(documents|cost_documents)"?`;
 const CREATE_ON_DOOR_TABLE = new RegExp(String.raw`\bCREATE POLICY "?(\w+)"? ON ${DOOR_TABLE} (.*)$`, "i");
 const ALTER_ON_DOOR_TABLE = new RegExp(String.raw`\bALTER POLICY "?(\w+)"? ON ${DOOR_TABLE} (.*)$`, "i");
@@ -660,36 +676,59 @@ function restrictsDoor(sql: string, known: ReadonlySet<string> = restrictiveDoor
   return out;
 }
 
-describe("a restrictive policy for every role refuses the door's write — detected at the paste and in later migrations (review fix pass 4, major)", () => {
+describe("a restrictive policy for every role that the link may fail is a gap — found before the switch, reported at the paste, and refused in later migrations (review fix pass 4, major; review fix pass 5, major)", () => {
   const tail = () => C.slice(C.indexOf("\nCOMMIT;"));
-  it("the paste's fourth row-level-security row reads pg_policy: restrictive INSERT / ALL policies for PUBLIC or intake_door on documents and cost_documents, beyond documents_deny_upload_guard (only in the repository's shape) and the two scope policies", () => {
+  /** The predicate fix pass 4's fourth row held; since fix pass 5 it is a limb of intake_door_rls_gaps (once in the file). */
+  const POLICY_LIMB = [
+    "v_gaps := v_gaps || ARRAY(\n    SELECT DISTINCT 'policy ' || pol.polname::text\n      FROM pg_policy pol",
+    "WHERE pol.polrelid = v_table AND NOT pol.polpermissive AND pol.polcmd IN ('a', '*')",
+    "AND (0::oid = ANY (pol.polroles) OR v_door = ANY (pol.polroles))",
+    "AND NOT ((pol.polrelid, pol.polname) IN ((to_regclass('public.documents'), 'documents_intake_door_scope'),",
+    "(to_regclass('public.cost_documents'), 'cost_documents_intake_door_scope'))",
+    "AND pol.polroles = ARRAY[v_door])",
+    "AND NOT (pol.polrelid = to_regclass('public.documents') AND pol.polname = 'documents_deny_upload_guard'",
+    "AND NOT EXISTS (SELECT 1 FROM pg_depend d",
+    "WHERE d.classid = 'pg_policy'::regclass AND d.objid = pol.oid",
+    "AND d.refobjid IN (pol.polrelid, to_regclass('public.libraries')))",
+    "AND d.refobjid IN (to_regprocedure('auth.uid()'), to_regprocedure('public.is_org_controller(uuid)'),",
+    "to_regprocedure('public.acl_index_denies(jsonb, uuid, uuid, text)'))))))\n     ORDER BY 1);",
+  ];
+  it("intake_door_rls_gaps names each restrictive INSERT / ALL policy of the door's table for PUBLIC or intake_door, beyond documents_deny_upload_guard (only in the repository's shape) and the door's own scope policy, as 'policy <name>' — so intake_door_rls_ready is false and the write keeps the bound identity (the shape before row-level security), never a refused upload", () => {
+    const g = fn("intake_door_rls_gaps");
+    const limb = between(g, "  v_gaps := v_gaps || ARRAY(\n    SELECT DISTINCT 'policy '", "     ORDER BY 1);");
+    for (const piece of POLICY_LIMB) expect(limb, piece).toContain(piece.replace(/^v_gaps := v_gaps \|\| ARRAY\(\n    /, ""));
+    // it is the last limb, read from the catalogs (no deparsed text), and the function answers every gap it found
+    expect(g.indexOf("SELECT DISTINCT 'policy '")).toBeGreaterThan(g.indexOf("SELECT DISTINCT 'read '"));
+    expect(limb).not.toMatch(/pg_policies|pg_get_expr|with_check|qual/);
+    expect(g).toMatch(/ORDER BY 1\);\n  RETURN v_gaps;\nEND;/);
+    // the predicate is written once — in the function the door decides by — and the paste reads that function, never a copy
+    expect(C.match(/'documents_deny_upload_guard'/g)).toHaveLength(1);
+    expect(C.match(/pg_depend d\s+WHERE d\.classid = 'pg_policy'::regclass AND d\.objid = pol\.oid/g)).toHaveLength(1);
+    // the door functions decide by it before the switch
+    for (const [name, newDoc] of [["intake_door_create_document", "true"], ["intake_door_file_quote", "false"]]) {
+      expect(fn(name)).toContain(`v_rls  boolean := intake_door_rls_ready(${newDoc});`);
+    }
+    expect(M).toMatch(/'policy <name>'' for a RESTRICTIVE INSERT or ALL policy of that table for every role \(or intake_door\) the link may fail/);
+  });
+  it("the paste's fourth row-level-security row reads that gap from intake_door_rls_gaps for authenticator — false means the door's new documents or quotes keep the bound identity, filed as before (no 'send back at once', no 500)", () => {
     const row = between(tail(), "SELECT 'row-level security for both: no restrictive INSERT or ALL policy", "       NULL\nUNION ALL");
-    expect(row).toContain("REFUSES the door''s writes it fails (the route answers 500); send this row back at once (SEC-22)");
-    for (const limb of [
-      "NOT EXISTS (SELECT 1 FROM pg_policy pol",
-      "WHERE pol.polrelid IN (to_regclass('public.documents'), to_regclass('public.cost_documents'))",
-      "AND NOT pol.polpermissive AND pol.polcmd IN ('a', '*')",
-      "AND (0::oid = ANY (pol.polroles) OR to_regrole('intake_door') = ANY (pol.polroles))",
-      "AND NOT ((pol.polrelid, pol.polname) IN ((to_regclass('public.documents'), 'documents_intake_door_scope'),",
-      "(to_regclass('public.cost_documents'), 'cost_documents_intake_door_scope'))",
-      "AND pol.polroles = ARRAY[to_regrole('intake_door')::oid])",
-      "AND NOT (pol.polrelid = to_regclass('public.documents') AND pol.polname = 'documents_deny_upload_guard'",
-      "AND NOT EXISTS (SELECT 1 FROM pg_depend d",
-      "WHERE d.classid = 'pg_policy'::regclass AND d.objid = pol.oid",
-      "AND d.refobjid IN (pol.polrelid, to_regclass('public.libraries')))",
-      "AND d.refobjid IN (to_regprocedure('auth.uid()'), to_regprocedure('public.is_org_controller(uuid)'),",
-      "to_regprocedure('public.acl_index_denies(jsonb, uuid, uuid, text)'))))))),",
-    ]) expect(row, limb).toContain(limb);
-    // it is a probe (ok, n NULL), placed with the other three row-level-security rows, and reads no deparsed text
-    expect(row).not.toMatch(/pg_policies|with_check|qual/);
+    expect(row).toContain("by the door''s own test");
+    expect(row).toContain("keep the bound identity alone, filed as before, until it says how it treats intake_door (SEC-22)");
+    expect(row).toContain("NOT EXISTS (SELECT 1\n                     FROM unnest(intake_door_rls_gaps('authenticator', true) || intake_door_rls_gaps('authenticator', false)) g\n                    WHERE g LIKE 'policy %'),");
+    expect(row).not.toMatch(/pg_policy|pg_depend|500|at once|REFUSES/);
+    // it is a probe (ok, n NULL), the fourth of the row-level-security rows
     const rls = [...tail().matchAll(/SELECT 'row-level security for /g)].map((m) => m.index!);
     expect(rls).toHaveLength(4);
     expect(tail().indexOf("SELECT 'row-level security for both: no restrictive INSERT")).toBe(rls[3]);
-    // the header says a policy's refusal is not a gap, and the operator sends the fourth row back at once
+    // the header: a policy the link may fail is a gap, not a refusal; four rows, each filed as before
     const head = prose(M.slice(0, M.indexOf("-- ── Prerequisite")));
-    expect(head).toContain("A POLICY'S REFUSAL IS NOT A GAP.");
-    expect(head).toContain("refuses that write — the route answers 500 — instead of being stepped around");
-    expect(head).toContain("if one of the four \"row-level security\" rows reads false, the paste still applied");
+    expect(head).toContain("A POLICY THE LINK MAY FAIL IS A GAP TOO.");
+    expect(head).toContain("would refuse that write — an upload that works today would answer 500. So intake_door_rls_gaps names each RESTRICTIVE INSERT or ALL policy");
+    expect(head).toContain("After the switch only the door's own policies refuse its write (the route answers 500): they are the link's boundary.");
+    expect(head).toContain("if one of the four \"row-level security\" rows reads false, the paste still applied and the door's uploads are filed as before");
+    expect(head).not.toContain("A POLICY'S REFUSAL IS NOT A GAP");
+    expect(head).not.toMatch(/the fourth at once|instead of being stepped around/);
+    expect(tail()).not.toMatch(/send that row back at once/);
   });
   it("its exclusions are exactly what the sequence holds: up to 20261184 the one restrictive INSERT / ALL policy for every role on these tables is documents_deny_upload_guard, which reads only libraries, auth.uid, is_org_controller and acl_index_denies", () => {
     const upTo = [readFileSync(join(root, "supabase", "schema.sql"), "utf8"), ...numbered().filter((f) => f <= FILE).map(mig)];
@@ -706,7 +745,7 @@ describe("a restrictive policy for every role refuses the door's write — detec
     expect(C).toContain("CREATE POLICY documents_intake_door_scope ON documents\n  AS RESTRICTIVE FOR INSERT TO intake_door");
     expect(C).toContain("CREATE POLICY cost_documents_intake_door_scope ON cost_documents\n  AS RESTRICTIVE FOR INSERT TO intake_door");
   });
-  it("no migration after 20261184 adds or re-writes a restrictive INSERT / ALL policy on documents or cost_documents that applies to intake_door without saying how intake_door is treated", () => {
+  it("no migration after 20261184 adds or re-writes a restrictive INSERT / ALL policy on documents or cost_documents that applies to intake_door without saying how intake_door is treated (it would take the door's writes on that table off row-level security, unannounced)", () => {
     for (const f of numbered().filter((x) => x > FILE)) expect(restrictsDoor(mig(f)), f).toEqual([]);
   });
   it("the detector: the reviewer's hardening policy is caught, as are ALL / no FOR, TO public / intake_door, one in a DO block, a format() one in a file naming the table, a re-created upload guard and an ALTER of it; a TO clause leaving intake_door out, a predicate or a comment naming it, a permissive or an UPDATE policy are not", () => {

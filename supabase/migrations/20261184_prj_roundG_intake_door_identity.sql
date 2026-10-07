@@ -40,29 +40,36 @@
 --     up, and a later REVOKE … FROM PUBLIC must not take them away.
 --     WHERE THE PASTE CANNOT GRANT IT. Before each switch the door function
 --     asks intake_door_rls_ready, which reads the LIVE catalogs: the session's
---     login may SET the role, and the role holds USAGE on auth (a new
---     document) and EXECUTE / SELECT on every function and column the live
---     INSERT policies use. If anything is missing — authenticator could not
---     be made a member, the paster holds no grant option on schema auth or
---     auth.uid() (Postgres then only WARNS), a policy that differs here — the
---     final SELECT says so in three rows (from the same function), and that
---     write keeps the bound identity below without the role switch — exactly
---     the shape before this decision. A privilege the check could not see
---     ("permission denied …" from the INSERT as intake_door) does the same
---     for that one write, with a WARNING in the database log; the upload is
---     never refused for it.
---     A POLICY'S REFUSAL IS NOT A GAP. Every policy written for all roles
---     judges the INSERT as intake_door as it judges a member's, and a
+--     login may SET the role, the role holds USAGE on auth (a new document)
+--     and EXECUTE / SELECT on every function and column the live INSERT
+--     policies use, and no restrictive policy the link may fail stands in
+--     the way (below). If anything is missing — authenticator could not be
+--     made a member, the paster holds no grant option on schema auth or
+--     auth.uid() (Postgres then only WARNS), a policy that differs here —
+--     the final SELECT says so in four rows (from the same function), and
+--     that write keeps the bound identity below without the role switch —
+--     exactly the shape before this decision. A privilege the check could
+--     not see ("permission denied …" from the INSERT as intake_door), or the
+--     refusal of a policy that is not the door's own, does the same for that
+--     one write, with a WARNING in the database log; the upload is never
+--     refused for either.
+--     A POLICY THE LINK MAY FAIL IS A GAP TOO. Every policy written for all
+--     roles judges the INSERT as intake_door as it judges a member's, and a
 --     RESTRICTIVE one the link's identity cannot satisfy (one that asks for
---     membership, say) refuses that write — the route answers 500 — instead
---     of being stepped around: the door is judged by every guard, so it
---     waits until such a policy says how it treats intake_door (a TO clause,
---     or a limb for the role). On the repository's sequence there is one,
---     documents_deny_upload_guard, which a link passes (it reads only
---     libraries rows, and row-level security shows a link none). A fourth
---     "row-level security" row of the final SELECT says whether this
---     database holds any other; a shape test fails a later migration that
---     adds one without saying how intake_door is treated.
+--     membership, say) would refuse that write — an upload that works today
+--     would answer 500. So intake_door_rls_gaps names each RESTRICTIVE
+--     INSERT or ALL policy of the table for PUBLIC or intake_door ('policy
+--     <name>') beyond the door's own *_intake_door_scope and
+--     documents_deny_upload_guard as the repository writes it (by pg_depend
+--     it reads only libraries, of which row-level security shows a link no
+--     row, through auth.uid, is_org_controller and acl_index_denies), and
+--     that table's write keeps the bound identity — every trigger guard
+--     still judges it — until the policy says how it treats intake_door (a
+--     TO clause, or a limb for the role). The fourth "row-level security"
+--     row of the final SELECT reports it (SEC-22); a shape test fails a
+--     later migration that adds one without saying how intake_door is
+--     treated. After the switch only the door's own policies refuse its
+--     write (the route answers 500): they are the link's boundary.
 --   * A BOUND IDENTITY for every content write. Before its write, each door
 --     function binds — for the transaction, restored before it returns —
 --     request.jwt.claims (and the legacy request.jwt.claim.sub / .role) to
@@ -148,10 +155,10 @@
 -- HOW TO APPLY: paste the whole file into the Supabase SQL editor and run it
 -- once (a re-run is safe: every step is idempotent). The final SELECT is the
 -- only result set shown — probe rows must read ok = true (if one of the four
--- "row-level security" rows reads false, the paste still applied: send that
--- row back, it is SEC-22's next step — the fourth at once, because until it
--- is settled the door's new documents or quotes that policy refuses answer
--- 500); inventory rows carry ok NULL and a count in n.
+-- "row-level security" rows reads false, the paste still applied and the
+-- door's uploads are filed as before, with the bound identity: send that row
+-- back, it is SEC-22's next step); inventory rows carry ok NULL and a count
+-- in n.
 -- PASTE ORDER: after 20261141 (required — this file re-creates its
 -- documents_authorship_fixed and reads token_hash; the first statement
 -- refuses to run, changing nothing, without it; 20261141 itself follows
@@ -453,12 +460,38 @@ BEGIN
        AND CASE WHEN d.refobjsubid > 0 THEN NOT has_column_privilege('intake_door', d.refobjid, d.refobjsubid::smallint, 'SELECT')
                 ELSE NOT has_any_column_privilege('intake_door', d.refobjid, 'SELECT') END
      ORDER BY 1);
+  -- A RESTRICTIVE INSERT or ALL policy of the table for every role (or for
+  -- intake_door) judges the INSERT as intake_door as it judges a member's,
+  -- and one the link's identity may fail would refuse an upload that works
+  -- today. Beyond the door's own scope policy (TO intake_door alone) and
+  -- documents_deny_upload_guard while pg_depend shows the repository's shape
+  -- (it reads only libraries, of which row-level security shows a link no
+  -- row, through auth.uid, is_org_controller and acl_index_denies), each is
+  -- a gap: the write keeps the bound identity until the policy says how it
+  -- treats intake_door (SEC-22).
+  v_gaps := v_gaps || ARRAY(
+    SELECT DISTINCT 'policy ' || pol.polname::text
+      FROM pg_policy pol
+     WHERE pol.polrelid = v_table AND NOT pol.polpermissive AND pol.polcmd IN ('a', '*')
+       AND (0::oid = ANY (pol.polroles) OR v_door = ANY (pol.polroles))
+       AND NOT ((pol.polrelid, pol.polname) IN ((to_regclass('public.documents'), 'documents_intake_door_scope'),
+                                                (to_regclass('public.cost_documents'), 'cost_documents_intake_door_scope'))
+                AND pol.polroles = ARRAY[v_door])
+       AND NOT (pol.polrelid = to_regclass('public.documents') AND pol.polname = 'documents_deny_upload_guard'
+                AND NOT EXISTS (SELECT 1 FROM pg_depend d
+                                 WHERE d.classid = 'pg_policy'::regclass AND d.objid = pol.oid
+                                   AND NOT ((d.refclassid = 'pg_class'::regclass
+                                             AND d.refobjid IN (pol.polrelid, to_regclass('public.libraries')))
+                                         OR (d.refclassid = 'pg_proc'::regclass
+                                             AND d.refobjid IN (to_regprocedure('auth.uid()'), to_regprocedure('public.is_org_controller(uuid)'),
+                                                                to_regprocedure('public.acl_index_denies(jsonb, uuid, uuid, text)'))))))
+     ORDER BY 1);
   RETURN v_gaps;
 END;
 $$;
 
 COMMENT ON FUNCTION public.intake_door_rls_gaps(name, boolean) IS
-  'GAP-401 (J16): what the door''s INSERT as intake_door would lack here — ''role'', ''switch'' (p_login may not SET the role; MEMBER before PG16), ''auth usage'' (a new document), ''execute <function>'' and ''read <table.column>'' for what the live INSERT policies of documents (p_new_document) or cost_documents call and read, and auth.uid(). Empty: the door may switch. Read by intake_door_rls_ready and the paste''s final SELECT. Service role only.';
+  'GAP-401 (J16): what the door''s INSERT as intake_door would lack here — ''role'', ''switch'' (p_login may not SET the role; MEMBER before PG16), ''auth usage'' (a new document), ''execute <function>'' and ''read <table.column>'' for what the live INSERT policies of documents (p_new_document) or cost_documents call and read, and auth.uid(); and ''policy <name>'' for a RESTRICTIVE INSERT or ALL policy of that table for every role (or intake_door) the link may fail — any but the door''s own scope policy and documents_deny_upload_guard in the repository''s shape. Empty: the door may switch. Read by intake_door_rls_ready and the paste''s final SELECT. Service role only.';
 
 CREATE OR REPLACE FUNCTION public.intake_door_rls_ready(p_new_document boolean)
 RETURNS boolean
@@ -470,7 +503,7 @@ AS $$
 $$;
 
 COMMENT ON FUNCTION public.intake_door_rls_ready(boolean) IS
-  'GAP-401 (J16): whether the door''s INSERT may run as intake_door on this database — intake_door_rls_gaps(session_user, …) finds no gap: this session''s login may switch to the role and the role holds what the live INSERT policies (and, for a new document, the triggers'' auth.uid()) need. False: the door function writes with the bound identity alone, as before row-level security. Service role only.';
+  'GAP-401 (J16): whether the door''s INSERT may run as intake_door on this database — intake_door_rls_gaps(session_user, …) finds no gap: this session''s login may switch to the role, the role holds what the live INSERT policies (and, for a new document, the triggers'' auth.uid()) need, and no restrictive policy for every role that the link may fail is live on the table. False: the door function writes with the bound identity alone, as before row-level security. Service role only.';
 
 -- The bound link, as the policies TO intake_door read it: only inside the
 -- door's role, only for the identity a door function bound, re-read from the
@@ -623,12 +656,15 @@ BEGIN
   -- here: a RETURNING would also need the read policies, which show a link
   -- nothing). Back to the caller's role before anything else runs.
   -- A privilege the role lacks here that intake_door_rls_ready could not
-  -- foresee ("permission denied …") is not the contractor's to answer for:
-  -- the failed INSERT is undone with its role switch, a WARNING names the
-  -- privilege, and the same INSERT runs once more with the bound identity
-  -- alone — the shape before row-level security (SEC-22). A policy's refusal
-  -- ("new row violates row-level security policy …") and every other error
-  -- are raised as they are.
+  -- foresee ("permission denied …"), or the refusal of a policy that is not
+  -- the door's own (one the readiness check let through, or made since it
+  -- ran: Postgres names it), is not the contractor's to answer for: the
+  -- failed INSERT is undone with its role switch, a WARNING names the cause,
+  -- and the same INSERT runs once more with the bound identity alone — the
+  -- shape before row-level security (SEC-22). The door's own policies'
+  -- refusal (no permissive policy admits the row, which Postgres reports
+  -- naming none, or the scope policy, named) and every other error are
+  -- raised as they are: they are the link's boundary.
   LOOP
     BEGIN
       IF v_rls THEN PERFORM set_config('role', 'intake_door', true); END IF;
@@ -640,7 +676,10 @@ BEGIN
       EXIT;
     EXCEPTION WHEN insufficient_privilege THEN
       IF v_rls THEN PERFORM set_config('role', v_role, true); END IF;
-      IF NOT v_rls OR SQLERRM NOT LIKE 'permission denied%' THEN
+      IF NOT v_rls
+         OR SQLERRM IN ('new row violates row-level security policy for table "documents"',
+                        'new row violates row-level security policy "documents_intake_door_scope" for table "documents"')
+         OR NOT (SQLERRM LIKE 'permission denied%' OR SQLERRM LIKE 'new row violates row-level security policy "%') THEN
         RAISE;
       END IF;
       RAISE WARNING 'intake_door_create_document: % — this new document is written with the bound identity alone, without row-level security (projects-tab SEC-22).', SQLERRM;
@@ -871,8 +910,8 @@ BEGIN
   END IF;
   v_prev := intake_door_bind(v_link, v_link, v_org, v_proj);
   -- The INSERT as intake_door, under row-level security; a privilege the
-  -- role lacks here runs it once more with the bound identity alone (see
-  -- section 2).
+  -- role lacks here, or a policy not the door's own refusing it, runs it
+  -- once more with the bound identity alone (see section 2).
   LOOP
     BEGIN
       IF v_rls THEN PERFORM set_config('role', 'intake_door', true); END IF;
@@ -884,7 +923,10 @@ BEGIN
       EXIT;
     EXCEPTION WHEN insufficient_privilege THEN
       IF v_rls THEN PERFORM set_config('role', v_role, true); END IF;
-      IF NOT v_rls OR SQLERRM NOT LIKE 'permission denied%' THEN
+      IF NOT v_rls
+         OR SQLERRM IN ('new row violates row-level security policy for table "cost_documents"',
+                        'new row violates row-level security policy "cost_documents_intake_door_scope" for table "cost_documents"')
+         OR NOT (SQLERRM LIKE 'permission denied%' OR SQLERRM LIKE 'new row violates row-level security policy "%') THEN
         RAISE;
       END IF;
       RAISE WARNING 'intake_door_file_quote: % — this quote is written with the bound identity alone, without row-level security (projects-tab SEC-22).', SQLERRM;
@@ -1034,14 +1076,13 @@ COMMIT;
 
 -- ── Verification + inventory — ONE result set (the editor shows only the last)
 --    Expect ok = true on every probe row; inventory rows carry n only. If one
---    of the first three "row-level security" rows reads false the paste still
---    applied and the door keeps the bound identity for those inserts — send
---    the row back (projects-tab SEC-22). Those three rows ask
---    intake_door_rls_gaps, the function the door functions decide by. The
---    fourth reads pg_policy: false means a restrictive INSERT or ALL policy
---    for every role (or for intake_door) that the link's identity may fail is
---    live on documents or cost_documents — it refuses the door's writes it
---    fails (500), so send that row back at once (SEC-22).
+--    of the four "row-level security" rows reads false the paste still
+--    applied and the door keeps the bound identity for those inserts (each
+--    upload is filed as before) — send the row back (projects-tab SEC-22).
+--    All four ask intake_door_rls_gaps, the function the door functions
+--    decide by; the fourth reports a restrictive INSERT or ALL policy for
+--    every role (or for intake_door) that the link's identity may fail, live
+--    on documents or cost_documents.
 --    pg_proc.prosrc is verbatim (an apostrophe in a literal is written '''');
 --    pg_policies.with_check is deparsed, so it is matched on names only.
 SELECT 'the six door functions exist with search_path pinned, and only the service role may EXECUTE them; the new document and the quote are SECURITY INVOKER (they switch to intake_door), the submission, the pointer, the promote and the redline SECURITY DEFINER' AS check,
@@ -1141,25 +1182,13 @@ SELECT 'row-level security for both: intake_door may EXECUTE every function, and
                     WHERE g = 'role' OR g LIKE 'execute %' OR g LIKE 'read %'),
        NULL
 UNION ALL
-SELECT 'row-level security for both: no restrictive INSERT or ALL policy for every role (or for intake_door) on documents or cost_documents besides documents_deny_upload_guard as the repository writes it (it reads only libraries, auth.uid, is_org_controller and acl_index_denies) and the two intake_door scope policies — false: one the link''s identity may fail is live, and it REFUSES the door''s writes it fails (the route answers 500); send this row back at once (SEC-22)',
-       NOT EXISTS (SELECT 1 FROM pg_policy pol
-                    WHERE pol.polrelid IN (to_regclass('public.documents'), to_regclass('public.cost_documents'))
-                      AND NOT pol.polpermissive AND pol.polcmd IN ('a', '*')
-                      AND (0::oid = ANY (pol.polroles) OR to_regrole('intake_door') = ANY (pol.polroles))
-                      AND NOT ((pol.polrelid, pol.polname) IN ((to_regclass('public.documents'), 'documents_intake_door_scope'),
-                                                               (to_regclass('public.cost_documents'), 'cost_documents_intake_door_scope'))
-                               AND pol.polroles = ARRAY[to_regrole('intake_door')::oid])
-                      AND NOT (pol.polrelid = to_regclass('public.documents') AND pol.polname = 'documents_deny_upload_guard'
-                               AND NOT EXISTS (SELECT 1 FROM pg_depend d
-                                                WHERE d.classid = 'pg_policy'::regclass AND d.objid = pol.oid
-                                                  AND NOT ((d.refclassid = 'pg_class'::regclass
-                                                            AND d.refobjid IN (pol.polrelid, to_regclass('public.libraries')))
-                                                        OR (d.refclassid = 'pg_proc'::regclass
-                                                            AND d.refobjid IN (to_regprocedure('auth.uid()'), to_regprocedure('public.is_org_controller(uuid)'),
-                                                                               to_regprocedure('public.acl_index_denies(jsonb, uuid, uuid, text)'))))))),
+SELECT 'row-level security for both: no restrictive INSERT or ALL policy for every role (or for intake_door) on documents or cost_documents that the link''s identity may fail, by the door''s own test (any but the two intake_door scope policies and documents_deny_upload_guard as the repository writes it, reading only libraries, auth.uid, is_org_controller and acl_index_denies) — false: one is live, and the door''s new documents or quotes keep the bound identity alone, filed as before, until it says how it treats intake_door (SEC-22)',
+       NOT EXISTS (SELECT 1
+                     FROM unnest(intake_door_rls_gaps('authenticator', true) || intake_door_rls_gaps('authenticator', false)) g
+                    WHERE g LIKE 'policy %'),
        NULL
 UNION ALL
-SELECT 'every door function resolves the link from its hash; the five that write as the door bind and then restore the identity; the new document and the quote switch to intake_door and back, and a privilege the role lacks runs the INSERT again with the bound identity alone',
+SELECT 'every door function resolves the link from its hash; the five that write as the door bind and then restore the identity; the new document and the quote switch to intake_door and back, and a privilege the role lacks, or a policy not the door''s own, runs the INSERT again with the bound identity alone',
        (SELECT COUNT(*) = 6 FROM pg_proc
          WHERE proname IN ('intake_door_create_document', 'intake_door_submit_version', 'intake_door_point_pending',
                            'intake_door_promote', 'intake_door_file_quote', 'intake_door_append_redline')
@@ -1174,7 +1203,8 @@ SELECT 'every door function resolves the link from its hash; the five that write
                AND prosrc LIKE '%IF v_rls THEN PERFORM set_config(''role'', ''intake_door'', true); END IF;%'
                AND prosrc LIKE '%IF v_rls THEN PERFORM set_config(''role'', v_role, true); END IF;%'
                AND prosrc LIKE '%EXCEPTION WHEN insufficient_privilege THEN%'
-               AND prosrc LIKE '%IF NOT v_rls OR SQLERRM NOT LIKE ''permission denied\%'' THEN%')
+               AND prosrc LIKE '%_intake_door_scope" for table %'
+               AND prosrc LIKE '%OR NOT (SQLERRM LIKE ''permission denied\%'' OR SQLERRM LIKE ''new row violates row-level security policy "\%'') THEN%')
        AND (SELECT prosrc NOT LIKE '%intake_door_bind(%' FROM pg_proc WHERE proname = 'intake_door_append_redline'),
        NULL
 UNION ALL
