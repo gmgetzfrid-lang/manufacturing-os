@@ -12,7 +12,9 @@
 //     unit identity (GPV-7 / AREA-10);
 //   * the keyboard's walk over the map (GPV-13), and the per-node-set
 //     memos the page and the renderers keep (fix pass 3);
-//   * what the map says when it draws no mention links (IRLS-14);
+//   * what the map says when it draws no mention links (IRLS-14), and what
+//     the mention index's run state adds — the last build that failed, a
+//     build that never reported, a rebuild that stopped (I-23);
 //   * the rate at which the view is written to the URL (GPV-11 — the
 //     History API throws past a browser's budget; clock and timer injected).
 //
@@ -25,6 +27,7 @@ import type {
 } from "@/lib/orgGraph";
 import { buildAdjacency, neighborhood } from "@/lib/graphSim";
 import type { GraphSettings } from "@/lib/graphSettings";
+import { BUILD_STALE_MS, type MentionRunSource, type MentionRunState } from "@/lib/mentionRunState";
 
 export interface GraphViewSlice {
   nodes: GraphNode[];
@@ -250,15 +253,48 @@ export function nodeIndexer(): (nodes: readonly GraphNode[]) => Map<string, Grap
 
 // ── IRLS-14: no mention links, and why ──────────────────────────────────
 
-export interface MentionNotice { text: string; canRebuild: boolean }
+export interface MentionNotice {
+  text: string;
+  canRebuild: boolean;
+  /** I-23: a rebuild from the map stopped at its time limit; the next press
+   *  continues after the last document it finished. Set only then. */
+  canContinue?: boolean;
+}
 
 /** With zero mention links drawn, the sentence that says which case it is
  *  and the next step. What the read can tell (lib/orgGraph.ts
  *  MentionCoverage): not installed; installed with no row this reader can
  *  see; rows read but none on this map. It cannot tell "never built" from
- *  "built, nothing named" — so it says both — and the indexer keeps no run
- *  state, so a failed build elsewhere is not something it can name. */
-export function mentionNotice(cov: MentionCoverage | undefined | null, equipmentOnMap: number): MentionNotice | null {
+ *  "built, nothing named" — so it says both.
+ *
+ *  I-23: the mention index's run state (lib/mentionRunState.ts, read by the
+ *  page as the member; `readAt` is when) adds what the coverage cannot
+ *  tell: the last build that FAILED — where it ran (ingest or this map),
+ *  when, and its error in plain words — a build that never reported how it
+ *  ended, and a rebuild that stopped at its time limit (offered to
+ *  continue). It is said beside the coverage's sentence, and also when
+ *  links ARE drawn (some may be missing) — never on a map whose index is
+ *  not installed or that has no equipment for a document to name. With no
+ *  run state (none read, 20261194 not pasted) or nothing to add (the last
+ *  build succeeded or is running), the notice is exactly what it was. */
+export function mentionNotice(
+  cov: MentionCoverage | undefined | null, equipmentOnMap: number,
+  run?: MentionRunState | null, readAt?: number,
+): MentionNotice | null {
+  const base = coverageNotice(cov, equipmentOnMap);
+  if (!cov || !cov.installed) return base;
+  if (cov.drawn === 0 && cov.rows === 0 && equipmentOnMap === 0) return base;
+  const notes = mentionRunNotes(run, readAt ?? 0);
+  if (!notes) return base;
+  const extra = notes.canContinue ? { canContinue: true } : {};
+  if (!base) {
+    return { text: `Some “mentioned in the text” links may be missing from this map. ${notes.text}`, canRebuild: true, ...extra };
+  }
+  return { text: `${base.text} ${notes.text}`, canRebuild: true, ...extra };
+}
+
+/** The coverage's own sentence (IRLS-14 as I-14 shipped it). */
+function coverageNotice(cov: MentionCoverage | undefined | null, equipmentOnMap: number): MentionNotice | null {
   if (!cov || cov.drawn > 0) return null;
   if (!cov.installed) {
     return {
@@ -279,6 +315,42 @@ export function mentionNotice(cov: MentionCoverage | undefined | null, equipment
     text: "No “mentioned in the text” links on this map. Either the mention index has not been built for these documents, or it found none of this registry's equipment named in the documents you can see — the map cannot tell which. Each document is indexed when it finishes reading; an admin, document controller, manager or supervisor can rebuild the whole index from this map.",
     canRebuild: true,
   };
+}
+
+/** A run's time as the map says it (the reader's locale and zone). */
+export function formatRunTime(iso: string): string {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "an unknown time";
+  return new Date(t).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" });
+}
+
+const RUN_WHERE: Record<MentionRunSource, string> = {
+  ingest: "at ingest (when a document finished indexing)",
+  map: "from this map (a rebuild of the whole index)",
+};
+
+/** The sentences the run state adds, or null when it has nothing to add —
+ *  no row, a last build that succeeded or is still running, no failure
+ *  standing and no rebuild stopped. `now` decides whether a build that never
+ *  reported was cut off (BUILD_STALE_MS). */
+export function mentionRunNotes(
+  state: MentionRunState | null | undefined, now: number,
+): { text: string; canContinue: boolean } | null {
+  if (!state) return null;
+  const lines: string[] = [];
+  const f = state.lastFailure;
+  if (f) lines.push(`The last mention build that failed ran ${RUN_WHERE[f.source]}, on ${formatRunTime(f.at)}. ${f.error}`);
+  const r = state.lastRun;
+  const started = r ? Date.parse(r.startedAt) : NaN;
+  if (r && r.outcome === "running" && Number.isFinite(started) && now - started > BUILD_STALE_MS) {
+    lines.push(`The last mention build, ${RUN_WHERE[r.source]}, started on ${formatRunTime(r.startedAt)} and never reported how it ended — it may have been cut off before it finished.`);
+  }
+  const b = state.backfill;
+  if (b) {
+    const n = `${b.documents.toLocaleString("en-US")} document${b.documents === 1 ? "" : "s"}`;
+    lines.push(`The last rebuild from this map${b.startedAt ? ` (started ${formatRunTime(b.startedAt)})` : ""} stopped at its time limit after ${n}; the rest have not been read yet — continue it to pick up where it stopped.`);
+  }
+  return lines.length > 0 ? { text: lines.join(" "), canContinue: b !== null } : null;
 }
 
 // ── GPV-11: writing the view to the URL within the History API's budget ──

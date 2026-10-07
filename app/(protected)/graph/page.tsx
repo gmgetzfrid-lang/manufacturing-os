@@ -53,6 +53,8 @@ import {
   type GraphSettings, type GraphLens, type SavedGraphView,
 } from "@/lib/graphSettings";
 import { formatScopeParam, parseScopeParam, type ScopeRef } from "@/lib/scope";
+import { readMentionRunState, type MentionRunState } from "@/lib/mentionRunState";
+import { supabase } from "@/lib/supabase";
 import {
   sliceView, viewDegree, answerVisibility, planConnect, connectOffer, keyboardOrder, keyboardBaseOrder,
   keyboardQuery, mentionNotice, rateLimitedWriter, GRAPH_PATH, type UrlWriteResult,
@@ -134,6 +136,11 @@ function GraphPageInner() {
   const [lensUndo, setLensUndo] = React.useState<Pick<GraphSettings, "hiddenTypes" | "showLibraryEdges"> | null>(null);
   const [unitOptions, setUnitOptions] = React.useState<Array<{ code: string; label: string }>>([]);
   const [mentionRun, setMentionRun] = React.useState<{ running: boolean; message: string | null; error: boolean } | null>(null);
+  // IRLS-14 (I-23): the mention index's run state as this member may read it
+  // (their org's row), and when it was read. null: none read — no row,
+  // 20261194 not pasted, or the read failed — and the notice says what it
+  // said before.
+  const [mentionRuns, setMentionRuns] = React.useState<{ state: MentionRunState | null; readAt: number } | null>(null);
   // Drawing a connection BY HAND, right on the map: pick the source in the
   // peek, click the target, the edge is written and drawn. Documents and
   // equipment only — every other tie is derived from the registry.
@@ -251,6 +258,18 @@ function GraphPageInner() {
       });
     return () => { alive = false; };
   }, [activeOrgId]);
+
+  // The mention index's run state: the last build that failed (wherever it
+  // ran), a build that never reported, a rebuild that stopped. Re-read with
+  // the map after a rebuild.
+  React.useEffect(() => {
+    if (!activeOrgId) return;
+    let alive = true;
+    readMentionRunState(supabase, activeOrgId)
+      .then((state) => { if (alive) setMentionRuns({ state, readAt: Date.now() }); })
+      .catch(() => { if (alive) setMentionRuns(null); });
+    return () => { alive = false; };
+  }, [activeOrgId, reloadNonce]);
 
   // The scope picker's units (the Site Codebook's, by its own names).
   React.useEffect(() => {
@@ -783,7 +802,7 @@ function GraphPageInner() {
   const focusNode = focusId ? view?.nodes.find((n) => n.id === focusId) ?? null : null;
   const scopeLabel = settings.scope ? (graph?.scope?.label ?? `Unit ${settings.scope.code}`) : null;
   const visibility = answer && view && graph ? answerVisibility(answer.nodeIds, view, graph, settings) : null;
-  const mention = graph ? mentionNotice(graph.mentionCoverage, counts.asset) : null;
+  const mention = graph ? mentionNotice(graph.mentionCoverage, counts.asset, mentionRuns?.state, mentionRuns?.readAt) : null;
   const canRebuildMentions = hasAnyRole(["Admin", "DocCtrl", "Manager", "Supervisor"]);
   const missNode = selectMiss ? graph?.nodes.find((n) => n.id === selectMiss) ?? null : null;
   const orphansHidden = insights ? insights.orphans.filter((n) => !inView.has(n.id)).length : 0;
@@ -802,7 +821,10 @@ function GraphPageInner() {
         body: JSON.stringify({ orgId: activeOrgId }),
         signal: AbortSignal.timeout(70_000),
       });
-      const body = await res.json().catch(() => ({})) as { error?: string; documents?: number; mentionsWritten?: number; incomplete?: boolean };
+      const body = await res.json().catch(() => ({})) as {
+        error?: string; documents?: number; mentionsWritten?: number; incomplete?: boolean;
+        resumable?: boolean; continued?: boolean; passDocuments?: number;
+      };
       if (!res.ok) {
         setMentionRun({ running: false, error: true, message: `The mention index could not be rebuilt: ${body.error ?? `HTTP ${res.status}`}` });
         return;
@@ -812,7 +834,11 @@ function GraphPageInner() {
         running: false, error: false,
         message: body.incomplete
           ? `The rebuild stopped at its time limit after ${plural(docs, "document")} (${plural(written, "mention")} written) — the rest were not reached this run.`
-          : `Mention index rebuilt — ${plural(docs, "document")} read, ${plural(written, "mention")} written.`,
+            // I-23: its place is saved — the next press continues after it.
+            + (body.resumable ? " Continue the rebuild to pick up where it stopped." : "")
+          : body.continued
+            ? `Mention index rebuilt — the stopped rebuild is finished: ${plural(docs, "more document")} read (${plural(Number(body.passDocuments ?? docs), "document")} in all), ${plural(written, "mention")} written.`
+            : `Mention index rebuilt — ${plural(docs, "document")} read, ${plural(written, "mention")} written.`,
       });
       setReloadNonce((x) => x + 1);
     } catch (e) {
@@ -1221,7 +1247,9 @@ function GraphPageInner() {
                   <Info className="w-3 h-3" /> {proposals.length.toLocaleString("en-US")} read (the newest) of {pendingTotal !== null ? pendingTotal.toLocaleString("en-US") : `at least ${PENDING_PAIRS_CAP.toLocaleString("en-US")}`} proposed connections.
                 </div>
               )}
-              {/* IRLS-14: no mention links, and which case it is. */}
+              {/* IRLS-14: no mention links, and which case it is; I-23: the
+                  last build that failed (wherever it ran), and a rebuild that
+                  stopped, offered to continue. */}
               {mention && (
                 <div className="inline-flex flex-wrap items-center justify-center gap-1 text-[10px] text-sky-800 dark:text-sky-200 bg-sky-50 dark:bg-sky-950/50 border border-sky-200 dark:border-sky-900 rounded-2xl px-2 py-0.5 pointer-events-auto" data-testid="mention-notice">
                   <Info className="w-3 h-3 shrink-0" /> {mention.text}
@@ -1229,7 +1257,7 @@ function GraphPageInner() {
                     <button onClick={() => void rebuildMentions()} disabled={mentionRun?.running}
                       className="inline-flex items-center gap-1 font-black underline disabled:opacity-50">
                       <RefreshCw className={`w-3 h-3 ${mentionRun?.running ? "animate-spin" : ""}`} />
-                      {mentionRun?.running ? "Rebuilding…" : "Rebuild the mention index"}
+                      {mentionRun?.running ? "Rebuilding…" : mention.canContinue ? "Continue the rebuild" : "Rebuild the mention index"}
                     </button>
                   )}
                 </div>

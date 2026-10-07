@@ -25,6 +25,10 @@
 //   GPV-13  the map region is focusable and walkable; Escape closes overlays
 //   HUB-11  the Intelligence strip is titled
 //   IRLS-14 with no mention links the map says which case and offers the rebuild
+//   IRLS-14 (I-23) the mention index's run state, read as the member: a build
+//           that failed at ingest is named on the map; a stopped rebuild is
+//           offered to continue and the second press continues it; with the
+//           run state absent or a last build that succeeded, as before
 //
 // Fix pass (review of the first build):
 //   GPV-11  the URL is written within the History API's budget — typing never
@@ -82,6 +86,9 @@ const g = vi.hoisted(() => ({
   askBody: null as unknown,
   // Render the REAL 2D renderer under the recording stand-in (fix pass 4).
   real2D: false,
+  // I-23: what a read of mention_index_runs answers (none: no row).
+  runState: { data: null as Record<string, unknown> | null, error: null as { code: string; message: string } | null },
+  runReads: 0,
 }));
 
 vi.mock("next/navigation", () => ({
@@ -152,7 +159,15 @@ vi.mock("@/lib/relatedResources", () => ({ addRelatedResource: vi.fn(async () =>
 vi.mock("@/lib/supabase", () => ({
   supabase: {
     auth: { getSession: async () => ({ data: { session: { access_token: "tok" } } }) },
-    from: () => ({ insert: async () => ({ error: null }) }),
+    from: (table: string) => table === "mention_index_runs"
+      ? {
+        select: () => ({
+          eq: () => ({
+            maybeSingle: async () => { g.runReads += 1; return g.runState; },
+          }),
+        }),
+      }
+      : ({ insert: async () => ({ error: null }) }),
   },
 }));
 
@@ -232,6 +247,8 @@ beforeEach(() => {
   g.scopedGraph = null;
   g.build = []; g.renders = []; g.flows = []; g.fetches = [];
   g.real2D = false;
+  g.runState = { data: null, error: null };
+  g.runReads = 0;
   g.proposals = { pairs: [], total: 0, capped: false, error: null };
   role.roles = ["Admin"];
   nav.params = new URLSearchParams("");
@@ -821,6 +838,89 @@ describe("HUB-11 / IRLS-14", () => {
     await render(page());
     await click(btn("Rebuild the mention index"));
     expect(host.querySelector('[data-testid="mention-run"]')?.textContent).toContain("could not be rebuilt: mention index write: permission denied");
+  });
+});
+
+describe("IRLS-14 (I-23) — the mention index's run state on the map", () => {
+  const AT = "2026-10-07T10:02:00.000Z";
+  const PLAIN = "Writing the document's links to equipment failed: the database refused it (permission denied).";
+  const notice = () => host.querySelector('[data-testid="mention-notice"]')?.textContent ?? "";
+  const cannotTell = "No “mentioned in the text” links on this map. Either the mention index has not been built for these documents, or it found none of this registry's equipment named in the documents you can see — the map cannot tell which. Each document is indexed when it finishes reading; an admin, document controller, manager or supervisor can rebuild the whole index from this map.";
+
+  it("a failed ingest-time build is named on the map — where, when, and its error in plain words — read as the member", async () => {
+    g.runState = { data: {
+      org_id: "o1", last_run_source: "ingest", last_run_started_at: AT, last_run_finished_at: AT, last_run_outcome: "failed", last_run_document_id: "k2",
+      last_failed_source: "ingest", last_failed_at: AT, last_failed_error: PLAIN, last_failed_document_id: "k2",
+    }, error: null };
+    await render(page());
+    expect(g.runReads).toBe(1);
+    expect(notice()).toContain("The last mention build that failed ran at ingest (when a document finished indexing), on");
+    expect(notice()).toContain(PLAIN);
+    expect(btn("Rebuild the mention index")).toBeTruthy();
+    // Named for a Viewer too (the row is the org's); the rebuild stays a controller's.
+    role.roles = ["Viewer"];
+    act(() => root.unmount());
+    root = createRoot(host);
+    await render(page());
+    expect(notice()).toContain(PLAIN);
+    expect(btn("Rebuild the mention index")).toBeUndefined();
+  });
+
+  it("a stopped rebuild is offered to continue, with links drawn too; the second press continues it and says so", async () => {
+    g.graph = { ...baseGraph(), mentionCoverage: { installed: true, rows: 4, drawn: 2, unmapped: 0, capped: false } };
+    g.runState = { data: {
+      org_id: "o1", last_run_source: "map", last_run_started_at: AT, last_run_finished_at: AT, last_run_outcome: "stopped",
+      backfill_cursor: "k2", backfill_started_at: AT, backfill_documents: 2,
+    }, error: null };
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: { body?: string }) => {
+      g.fetches.push({ url, body: init?.body ? JSON.parse(init.body) : null });
+      return { ok: true, status: 200, json: async () => ({ documents: 3, mentionsWritten: 5, incomplete: false, continued: true, passDocuments: 5 }) };
+    }));
+    await render(page());
+    expect(notice()).toContain("stopped at its time limit after 2 documents");
+    g.runState = { data: { org_id: "o1", last_run_source: "map", last_run_started_at: AT, last_run_finished_at: AT, last_run_outcome: "succeeded" }, error: null };
+    await click(btn("Continue the rebuild"));
+    // The same request as a rebuild: the server continues from the saved place.
+    expect(g.fetches.find((f) => f.url === "/api/graph/mentions")?.body).toEqual({ orgId: "o1" });
+    expect(host.querySelector('[data-testid="mention-run"]')?.textContent)
+      .toContain("Mention index rebuilt — the stopped rebuild is finished: 3 more documents read (5 documents in all), 5 mentions written.");
+    expect(g.build.length).toBe(2);
+    expect(g.runReads).toBe(2);
+    // Finished, with links drawn: nothing left to say.
+    expect(host.querySelector('[data-testid="mention-notice"]')).toBeNull();
+  });
+
+  it("a press that stops says its place is saved", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ documents: 2, mentionsWritten: 3, incomplete: true, resumable: true }) })));
+    await render(page());
+    await click(btn("Rebuild the mention index"));
+    expect(host.querySelector('[data-testid="mention-run"]')?.textContent)
+      .toContain("The rebuild stopped at its time limit after 2 documents (3 mentions written) — the rest were not reached this run. Continue the rebuild to pick up where it stopped.");
+  });
+
+  it("a failed map-started build is named as today, with a run state present", async () => {
+    g.runState = { data: { org_id: "o1", last_run_source: "map", last_run_started_at: AT, last_run_finished_at: AT, last_run_outcome: "succeeded" }, error: null };
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 500, json: async () => ({ error: "mention index cleanup: permission denied for table entity_mentions" }) })));
+    await render(page());
+    await click(btn("Rebuild the mention index"));
+    expect(host.querySelector('[data-testid="mention-run"]')?.textContent)
+      .toBe(" The mention index could not be rebuilt: mention index cleanup: permission denied for table entity_mentions");
+  });
+
+  it("regression: the run state absent (20261194 unpasted), unreadable, or a last build that succeeded — the notice and the button are exactly as before", async () => {
+    for (const runState of [
+      { data: null, error: { code: "PGRST205", message: "Could not find the table 'public.mention_index_runs' in the schema cache" } },
+      { data: null, error: { code: "42P01", message: 'relation "public.mention_index_runs" does not exist' } },
+      { data: null, error: { code: "42501", message: "permission denied for table mention_index_runs" } },
+      { data: { org_id: "o1", last_run_source: "ingest", last_run_started_at: AT, last_run_finished_at: AT, last_run_outcome: "succeeded" }, error: null },
+      { data: null, error: null },
+    ]) {
+      g.runState = runState;
+      act(() => root.unmount());
+      root = createRoot(host);
+      await render(page());
+      expect(notice().trim(), JSON.stringify(runState)).toBe(`${cannotTell}Rebuild the mention index`);
+    }
   });
 });
 

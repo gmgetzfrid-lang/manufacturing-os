@@ -17,6 +17,9 @@ import {
   type AliasEntry,
 } from "@/lib/mentionIndex";
 import { pageTail } from "@/lib/knowledgeText";
+import {
+  startMentionRun, finishMentionRun, clearStandingFailure, saveBackfillCursor, clearBackfillCursor,
+} from "@/lib/mentionRunState";
 
 /** The head chunker 2 gives a page's first chunk when it carries in the
  *  previous page's unfinished sentence (ING-7: carriedTailMarker in
@@ -202,6 +205,24 @@ export async function indexDocumentMentions(
   return result;
 }
 
+/** Ready documents listed per window, in id order (keyset). */
+const DOC_WINDOW = 500;
+/** How often a running rebuild saves its place (IRLS-14 / I-23): a rebuild
+ *  the platform kills between two saves continues from the last one. */
+const PLACE_SAVE_MS = 10_000;
+
+export interface BackfillResult extends IndexResult {
+  documents: number;
+  incomplete: boolean;
+  /** I-23 — set only where the run state is recorded (20261194 pasted):
+   *  this stopped rebuild's place is saved, so the next press continues. */
+  resumable?: boolean;
+  /** This press continued a rebuild that had stopped. */
+  continued?: boolean;
+  /** With `continued`: documents read by the whole rebuild so far. */
+  passDocuments?: number;
+}
+
 /**
  * Re-index every ready document in an org.
  *
@@ -210,38 +231,115 @@ export async function indexDocumentMentions(
  * was never read for entities. `onProgress` exists so a long backfill can
  * report instead of appearing hung, which is the mistake that made bulk
  * upload feel broken.
+ *
+ * IRLS-14 (intelligence Round G I-23): every rebuild is recorded in the
+ * mention index's run state (lib/mentionRunState.ts, source 'map') — its
+ * start, then how it ended: 'succeeded', 'stopped' at its time limit, or
+ * 'failed' with the document and the error (in plain words) that stopped
+ * it. The documents are read in id order, a window at a time, and a rebuild
+ * that stops (its deadline, or a failure) saves the last document it
+ * finished, when the rebuild began and how many it has read, every
+ * PLACE_SAVE_MS and when it stops. The next press continues after that
+ * document instead of starting at the first one again (a failing document
+ * is tried again first); a rebuild that reads to the end clears the place,
+ * and the failure that stood when it began. With the run state not
+ * installed (20261194 not pasted) nothing is recorded and every press starts
+ * at the first document, as before.
  */
 export async function backfillOrgMentions(
   orgId: string,
   onProgress?: (done: number, total: number) => void,
   deadline?: number,
-): Promise<IndexResult & { documents: number; incomplete: boolean }> {
+): Promise<BackfillResult> {
   const dictionary = await loadAliasDictionary(orgId);
-  const { data, error } = await supabaseAdmin
-    .from("knowledge_documents")
-    .select("id, status")
-    .eq("org_id", orgId)
-    .eq("status", "ready");
-  if (error) throw new Error(error.message);
+  const run = await startMentionRun(supabaseAdmin, orgId, "map");
+  const resume = run.backfill;
+  const passStartedAt = resume?.startedAt ?? run.startedAt;
+  let passDocuments = resume?.documents ?? 0;
+  let after: string | null = resume?.cursor ?? null;
+  /** The last document this rebuild finished — where its place is saved. */
+  let lastDone: string | null = after;
+  let current: string | null = null;
 
-  const docs = (data ?? []) as Array<{ id: string }>;
-  const total: IndexResult & { documents: number; incomplete: boolean } = {
+  const total: BackfillResult = {
     chunksScanned: 0, mentionsWritten: 0, assetsTouched: 0, lowConfidence: 0,
     documents: 0, incomplete: false,
   };
   const assets = new Set<string>();
-
-  for (const [i, d] of docs.entries()) {
-    // A backfill that gets killed mid-flight must leave the rows it already
-    // wrote intact and report what's left, not silently truncate.
-    if (deadline && Date.now() > deadline) { total.incomplete = true; break; }
-    const r = await indexDocumentMentions(orgId, d.id, dictionary);
-    total.chunksScanned += r.chunksScanned;
-    total.mentionsWritten += r.mentionsWritten;
-    total.lowConfidence += r.lowConfidence;
-    total.documents += 1;
-    onProgress?.(i + 1, docs.length);
+  // Progress is counted against what is left to read; asked only when someone listens.
+  let toRead = 0;
+  if (onProgress) {
+    let q = supabaseAdmin.from("knowledge_documents").select("id", { count: "exact", head: true })
+      .eq("org_id", orgId).eq("status", "ready");
+    if (after) q = q.gt("id", after);
+    toRead = (await q).count ?? 0;
   }
+  let placeSaved = false;
+  const savePlace = async () => {
+    if (!lastDone) return false;
+    const ok = await saveBackfillCursor(supabaseAdmin, run, { cursor: lastDone, startedAt: passStartedAt, documents: passDocuments });
+    placeSaved = placeSaved || ok;
+    return ok;
+  };
+  let savedAt = Date.now();
+
+  try {
+    reading: for (;;) {
+      let q = supabaseAdmin
+        .from("knowledge_documents")
+        .select("id, status")
+        .eq("org_id", orgId)
+        .eq("status", "ready")
+        .order("id", { ascending: true })
+        .limit(DOC_WINDOW);
+      if (after) q = q.gt("id", after);
+      current = null;
+      const { data, error } = await q;
+      if (error) throw new Error(error.message);
+      const docs = (data ?? []) as Array<{ id: string }>;
+
+      for (const d of docs) {
+        // A backfill that gets killed mid-flight must leave the rows it already
+        // wrote intact and report what's left, not silently truncate.
+        if (deadline && Date.now() > deadline) { total.incomplete = true; break reading; }
+        current = d.id;
+        const r = await indexDocumentMentions(orgId, d.id, dictionary);
+        current = null;
+        total.chunksScanned += r.chunksScanned;
+        total.mentionsWritten += r.mentionsWritten;
+        total.lowConfidence += r.lowConfidence;
+        total.documents += 1;
+        passDocuments += 1;
+        lastDone = d.id;
+        onProgress?.(total.documents, Math.max(toRead, total.documents));
+        // This document's own failure is superseded by this build of it.
+        if (run.standingFailure?.documentId === d.id) await clearStandingFailure(supabaseAdmin, run);
+        if (run.recorded && Date.now() - savedAt >= PLACE_SAVE_MS) { await savePlace(); savedAt = Date.now(); }
+      }
+      if (docs.length < DOC_WINDOW) break;
+      after = docs[docs.length - 1].id;
+    }
+  } catch (e) {
+    // The place stays at the last document finished: the next press tries
+    // the one that failed again. The route answers the error as before.
+    await savePlace();
+    await finishMentionRun(supabaseAdmin, run, { outcome: "failed", error: e, documentId: current });
+    throw e;
+  }
+
+  if (total.incomplete) {
+    const saved = await savePlace();
+    await finishMentionRun(supabaseAdmin, run, { outcome: "stopped" });
+    if (saved) total.resumable = true;
+  } else {
+    // The whole corpus is read: nothing is left to continue, and a failure
+    // that stood before this rebuild began is superseded by it.
+    if (resume || placeSaved) await clearBackfillCursor(supabaseAdmin, run);
+    const stood = run.standingFailure;
+    if (stood && Date.parse(stood.at) <= Date.parse(passStartedAt)) await clearStandingFailure(supabaseAdmin, run);
+    await finishMentionRun(supabaseAdmin, run, { outcome: "succeeded" });
+  }
+  if (run.recorded && resume) { total.continued = true; total.passDocuments = passDocuments; }
   total.assetsTouched = assets.size || total.assetsTouched;
   return total;
 }

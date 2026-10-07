@@ -86,6 +86,14 @@ const PC_COLUMNS = [
 /** Unlisted when the tripwire landed (2026-09-30); emptied by the BKP-14
  *  regeneration (admin-and-org Round G P2). It stays empty. */
 const GRANDFATHERED = new Set<string>();
+/** A table a running package creates whose EXPECTED_TABLES row the
+ *  integrator adds AT MERGE (lib/schemaExpectations.ts is the integrator's in
+ *  the 2026-10-07 wave), with the file that creates it. The integrator adds
+ *  the row and removes the table from here in the same merge — the tripwire
+ *  below fails once both say it, so the entry cannot outlive its merge. */
+const ROW_AT_MERGE: Record<string, string> = {
+  mention_index_runs: "20261194_intel_roundG_mention_run_state.sql", // intelligence I-23
+};
 
 const BASE = "schema.sql (base schema)";
 const sqlOf = (file: string) =>
@@ -176,13 +184,20 @@ describe("REL-7 tripwire — every table a migration creates is on the health ch
 
   it("no created table is missing from EXPECTED_TABLES — add a row when a migration creates one", () => {
     const retired = new Set(RETIRED_TABLES.map((r) => r.table));
-    const missing = [...created.keys()].filter((t) => !listed.has(t) && !GRANDFATHERED.has(t) && !retired.has(t))
+    const missing = [...created.keys()].filter((t) => !listed.has(t) && !GRANDFATHERED.has(t) && !retired.has(t) && !(t in ROW_AT_MERGE))
       .map((t) => `${t} (${created.get(t)!.join(", ")})`);
     expect(missing, "add these to lib/schemaExpectations.ts EXPECTED_TABLES").toEqual([]);
   });
 
   it("the grandfather set is empty (BKP-14 regenerated the list)", () => {
     expect([...GRANDFATHERED]).toEqual([]);
+  });
+
+  it("a row awaiting its merge names a table its file really creates and that is not listed yet — remove it from ROW_AT_MERGE when EXPECTED_TABLES lists it", () => {
+    for (const [t, file] of Object.entries(ROW_AT_MERGE)) {
+      expect(created.get(t), t).toEqual([file]);
+      expect(listed.has(t), `${t} is listed in EXPECTED_TABLES — drop it from ROW_AT_MERGE`).toBe(false);
+    }
   });
 
   it("BKP-14: every row names a file that really creates that table — no phantom (the scraped `statements` row is gone)", () => {
@@ -196,7 +211,7 @@ describe("REL-7 tripwire — every table a migration creates is on the health ch
     for (const t of ["documents", "document_versions", "tickets", "audit_logs", "org_members", "collections", "libraries", "process_flows", "answer_skills", "link_rules", "document_markups"]) {
       expect(listed.has(t), t).toBe(true);
     }
-    expect(listed.size).toBe(created.size - RETIRED_TABLES.length);
+    expect(listed.size).toBe(created.size - RETIRED_TABLES.length - Object.keys(ROW_AT_MERGE).length);
   });
 
   it("a retired table was created and dropped where the row says, and is never probed (IRLS-12: knowledge_line_traces must not exist)", () => {

@@ -79,6 +79,15 @@ function discoverColumns(): Map<string, Set<string>> {
 const created = discoverCreatedTables();
 const exported = new Set<string>([...ORG_SCOPED_TABLES, ...USER_SCOPED_FOR_ORG_TABLES]);
 const excluded = new Set<string>(Object.keys(EXPORT_EXCLUDED_TABLES));
+/** A table created by a package whose backup decision lands AT MERGE, in a
+ *  file another running package owns (lib/exportTables.ts is admin-and-org
+ *  AO-P4's in the 2026-10-07 wave). The integrator writes the decision and
+ *  removes the table from here in the same merge — the test after the gap
+ *  check fails once both say it, so the entry cannot outlive its merge. */
+const DECISION_AT_MERGE: Record<string, string> = {
+  mention_index_runs:
+    "intelligence I-23 (20261194): EXPORT_EXCLUDED_TABLES — the mention index's run state (last build, last failure, a stopped rebuild's place) is operational, re-derived by the next build, and names knowledge-document ids a restore re-keys; a restore starts with none",
+};
 
 // EGR-7 / XEDGE-10: a column whose NAME says "credential". `_key` alone is
 // not in the pattern — file_key / template_file_key / builtin_key are storage
@@ -97,11 +106,19 @@ describe("backup coverage tripwire", () => {
   });
 
   it("every existing table is exported or deliberately excluded (no silent gaps)", () => {
-    const unaccounted = [...created].filter((t) => !exported.has(t) && !excluded.has(t)).sort();
+    const unaccounted = [...created].filter((t) => !exported.has(t) && !excluded.has(t) && !(t in DECISION_AT_MERGE)).sort();
     expect(
       unaccounted,
       `Tables with NO backup decision (add to exportTables.ts): ${unaccounted.join(", ")}`,
     ).toEqual([]);
+  });
+
+  it("a decision awaiting its merge names a created table not yet decided — remove it from DECISION_AT_MERGE when exportTables.ts decides it", () => {
+    for (const [t, why] of Object.entries(DECISION_AT_MERGE)) {
+      expect(created.has(t), t).toBe(true);
+      expect(exported.has(t) || excluded.has(t), `${t} is decided in exportTables.ts — drop it from DECISION_AT_MERGE`).toBe(false);
+      expect(why.trim().length, t).toBeGreaterThan(10);
+    }
   });
 
   it("no table is both exported and excluded", () => {
