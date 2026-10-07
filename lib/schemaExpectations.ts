@@ -162,6 +162,7 @@ export const EXPECTED_TABLES: readonly TableExpectation[] = [
   { table: "revision_branches", migration: "20260823_publish_contract.sql" },
   { table: "signup_attempts", migration: "20261010_signup_rate_limit.sql" },
   { table: "sla_defaults", migration: "20260529_phase_b_notifications.sql" },
+  { table: "stripe_events", migration: "20261175_ao_roundG_stripe_events_ledger.sql" },
   { table: "subscriptions", migration: "20260622_subscriptions.sql" },
   { table: "systems", migration: "20260606_operational_entity_graph.sql" },
   { table: "table_views", migration: "schema.sql (base schema)" },
