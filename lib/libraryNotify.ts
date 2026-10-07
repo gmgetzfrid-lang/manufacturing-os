@@ -11,9 +11,10 @@
 // so a follower's bell carries it and their inbox does not.
 //
 // Callers: components/documents/CsvImportModal.tsx (after a batch that
-// inserted at least one row). The staged-upload page still calls its own
-// closure (dual channel); swapping it onto this helper is N9's (after DC P6 /
-// IS-P1, which edit that page), so a third insert path has one call to make.
+// inserted at least one row) and, since notifications N9 (PROD-5 dw2), the
+// staged-upload path (app/(protected)/documents/[libraryId]/page.tsx
+// handleStagedUpload, which passes the member's email) — so a third insert
+// path has one call to make.
 //
 // The actor is named the way the staged-upload closure names them — by the
 // signed-in member's email (RoleContext's userEmail). A caller that passes no
