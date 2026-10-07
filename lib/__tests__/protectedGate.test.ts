@@ -15,8 +15,12 @@
 // the 6s watchdog can clear `loading` while an expired token is still being
 // refreshed, and rendering the app then is the same placeholder render.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, expectTypeOf } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { resolveProtectedView, type MembershipState } from "@/lib/protectedGate";
+import type { useRole } from "@/components/providers/RoleContext";
+import type { Role } from "@/types/schema";
 
 const STATES: MembershipState[] = ["resolving", "member", "none", "error"];
 
@@ -76,5 +80,27 @@ describe("resolveProtectedView", () => {
     for (const membershipState of STATES) {
       expect(resolveProtectedView({ loading: false, uid: null, membershipState, booted: true })).toBe("app");
     }
+  });
+});
+
+// SESS-6 (identity-and-session Round G, IS-P1): the placeholder this gate
+// exists to keep off the screen is gone at its source — RoleContext seeds
+// `activeRole` with null, not the literal "Viewer", and the type says so, so
+// a consumer that reads it as a Role without a null branch fails tsc.
+describe("SESS-6 — the role the gate withholds is null until resolved, not a placeholder Viewer", () => {
+  const roleContext = readFileSync(join(process.cwd(), "components/providers/RoleContext.tsx"), "utf8");
+  it("the seed is null and no reset writes \"Viewer\"", () => {
+    expect(roleContext).toMatch(/useState<Role \| null>\(null\)/);
+    expect(roleContext).not.toMatch(/useState<Role>\("Viewer"\)/);
+    expect(roleContext).not.toMatch(/setActiveRole\("Viewer"\)/);
+  });
+  it("tsc shape: activeRole is Role | null, and an unchecked Role-typed read does not compile", () => {
+    type Ctx = ReturnType<typeof useRole>;
+    expectTypeOf<Ctx["activeRole"]>().toEqualTypeOf<Role | null>();
+    const read = (c: Ctx): Role | null => c.activeRole;
+    // @ts-expect-error — SESS-6: no Role-typed use of activeRole without a null branch
+    const unchecked = (c: Ctx): Role => c.activeRole;
+    expect(typeof read).toBe("function");
+    expect(typeof unchecked).toBe("function");
   });
 });

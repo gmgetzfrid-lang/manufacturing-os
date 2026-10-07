@@ -8,16 +8,16 @@
     "audit-reports/public-surfaces/04-offline-pwa.md"
   ],
   "totals": {
-    "findings": 62,
+    "findings": 63,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 4,
       "HIGH": 13,
       "MEDIUM": 21,
-      "LOW": 24
+      "LOW": 25
     },
     "by_status": {
-      "RESOLVED": 51,
+      "RESOLVED": 52,
       "OPEN": 10,
       "WONTFIX": 1
     }
@@ -584,7 +584,7 @@
       "id": "OFF-8",
       "title": "Nothing ever clears Cache Storage on sign-out, so a shared field tablet carries the previous user's cached API responses — and the OAuth authorization code as a cache key",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1270,6 +1270,30 @@
       ],
       "refuted": false,
       "summary": "An engineer fixes the verify-verdict caching by adding a path exclusion, runs npm test, sees six green service-worker tests, and ships. A later refactor reorders the branch checks and silently reintroduces caching for /api/verify — all six tests still pass, because none of them ever looks at the cache. The suite's existence makes the worker look guarded and therefore safe to change.",
+      "area": "public-surfaces",
+      "report": "audit-reports/public-surfaces/04-offline-pwa.md"
+    },
+    {
+      "id": "OFF-15",
+      "title": "The viewer's custom stamp images are kept device-wide, not per account, so the next person on a shared tablet is offered the last person's uploaded stamps",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "components/viewers/FullScreenViewer.tsx:344",
+        "components/viewers/FullScreenViewer.tsx:352",
+        "components/providers/RoleContext.tsx"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "On a shared field tablet an inspector uploads a stamp image of their initials and \"VERIFIED IN FIELD\" and signs out at the end of the shift. The next person signs in on the same tablet, opens a drawing and finds that stamp in their stamp menu; they can place the previous person's initials on a markup.",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/04-offline-pwa.md"
     },

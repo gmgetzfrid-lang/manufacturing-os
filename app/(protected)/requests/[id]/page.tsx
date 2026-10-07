@@ -1074,7 +1074,9 @@ export default function TicketDetailView() {
     let alive = true;
     const docId = sourceDoc.state === 'loaded' ? sourceDoc.doc?.id ?? null : null;
     const libId = sourceDoc.state === 'loaded' ? sourceDoc.doc?.libraryId ?? null : null;
-    if (!docId || !libId || !uid) { setCanPublishSource(false); return; }
+    // SESS-6: no role known (activeRole null) is the least-privileged state —
+    // no publish affordance, exactly as an unknown caller gets.
+    if (!docId || !libId || !uid || activeRole === null) { setCanPublishSource(false); return; }
     (async () => {
       try {
         const teamIds = await getMyTeamIds(uid);
@@ -1356,7 +1358,7 @@ export default function TicketDetailView() {
 
          await logAuditAction({
             action: 'TICKET_REDLINE_CREATED', resourceId: ticketId, resourceType: 'ticket',
-            orgId: activeOrgId, userId: uid || 'unknown', userRole: activeRole,
+            orgId: activeOrgId, userId: uid || 'unknown', userRole: activeRole ?? undefined,
             details: { originalFile: fileToRedline.name, newFile: fileName }
          });
       }
@@ -1600,7 +1602,9 @@ export default function TicketDetailView() {
     );
   }
 
-  const availableActions = WorkflowEngine.getActions(ticket, activeRole, uid ?? undefined, capPolicy, {
+  // SESS-6: no role known (activeRole null) offers no action at all — the
+  // engine is asked only with a real role.
+  const availableActions = activeRole === null ? [] : WorkflowEngine.getActions(ticket, activeRole, uid ?? undefined, capPolicy, {
     userRoles: roles,
     activeMemberCount,
     engineeringFirstTypes,
@@ -1649,7 +1653,7 @@ export default function TicketDetailView() {
           orgId={activeOrgId}
           actorUserId={uid}
           actorEmail={userEmail || undefined}
-          actorRole={activeRole}
+          actorRole={activeRole ?? undefined}
           presetFile={handbackFile}
           presetIssueType={handback.issueType}
           presetIssueTypeNote={handback.issueTypeNote}

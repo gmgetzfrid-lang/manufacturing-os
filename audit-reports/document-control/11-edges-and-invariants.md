@@ -214,7 +214,7 @@ lib/exportRunner.ts:386 `Prefix: params.prefix ? params.prefix.replace(/^\/+|\/+
 ## XEDGE-5 · The printed transmittal cover sheet's QR and the emailed portal link are built from window.location.origin — the exact failure lib/publicOrigin.ts exists to prevent, on the one artifact that leaves the site
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint J10b UI REMAINDERS (IntakePanel / QuotesPanel) and identity-and-session IS-P1 (the library page) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/transmittals.ts:389-393`, `lib/transmittals.ts:278`, `lib/transmittals.ts:309-321`, `lib/publicOrigin.ts:1-22`, `lib/docPack.ts:104-105`, `app/api/share/file/route.ts:114-116`
@@ -276,6 +276,17 @@ lib/transmittals.ts:390 `const origin = typeof window !== "undefined" ? window.l
 3. ✓ Unchanged (P7).
 
 **Scope / residual.** OPEN for the library page's two `/d/` copies (IS-P1). The `/submit` links have one gap, shared with every `publicOrigin()` browser caller: in a Vercel deployment with nothing configured and the production-domain exposure off, they carry the page's own host. That is `PHYS-11`'s residual.
+
+**Resolution (2026-10-07, identity-and-session Round G).** Package **IS-P1**, the library page's limb (commit `6dd12d2`). Reproduced on `f8d5eb5`: `app/(protected)/documents/[libraryId]/page.tsx:755` (`copySelectionLinks`, Ctrl+C) and `:3159` (the row menu's "Copy link") built `${window.location.origin}/d/<number>`.
+- Both now build `${publicOrigin()}/d/<number>` (`:760`, `:3263`), as `RelatedPanel` and the projects' `/submit` builders do: the configured site, else Vercel's production domain, else (in a browser only) the page's own origin — `lib/publicOrigin.ts`, PS-STAMP's contract, unchanged. `window.location.origin` no longer appears in the page.
+- Tests: `lib/__tests__/isP1LibraryPage.test.ts` "XEDGE-5 / PHYS-13 —": `copySelectionLinks` lifted from the page and run in jsdom with `NEXT_PUBLIC_SITE_URL` set and the page on another host — the clipboard gets `https://docs.example-plant.com/d/P-101%20A`, never the page's host (fails against the base page); a pin on the row menu's builder and the page-wide absence of `window.location.origin`.
+
+**Done-when.**
+1. ✓ Every builder named is on `lib/publicOrigin.ts`: `transmittalPortalUrl` on its `recipientOrigin()` (the stricter outside-recipient form DEC-64 / `TRX-14` chose, accepted ✓ by the P7 and PS-STAMP passes), `ShareLinkModal` (P1), the `/submit` builders (J10b), and now the two `/d/` copies on `publicOrigin()`.
+2. ✓ Unchanged (public-surfaces Round F).
+3. ✓ Unchanged (P7).
+
+**Scope / residual.** None for this finding. The browser fallback's preview-host gap (Vercel's production-domain exposure off and nothing configured) is `PHYS-11`'s residual, shared by every `publicOrigin()` caller. The other `window.location.origin` readers that hand a link out (`lib/notifications.ts` `ticketUrl`, the graph's Copy link) are public-surfaces `PHYS-13` done-when 3's.
 
 ---
 

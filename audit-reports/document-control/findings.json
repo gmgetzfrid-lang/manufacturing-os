@@ -24,8 +24,8 @@
       "LOW": 21
     },
     "by_status": {
-      "RESOLVED": 151,
-      "OPEN": 14
+      "RESOLVED": 152,
+      "OPEN": 13
     }
   },
   "status_vocabulary": [
@@ -3677,7 +3677,7 @@
       "id": "XEDGE-5",
       "title": "The printed transmittal cover sheet's QR and the emailed portal link are built from window.location.origin — the exact failure lib/publicOrigin.ts exists to prevent, on the one artifact that leaves the site",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

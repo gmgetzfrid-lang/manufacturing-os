@@ -217,7 +217,7 @@ export default function ProjectsPage() {
           orgId={activeOrgId}
           actorUserId={uid}
           actorEmail={userEmail ?? undefined}
-          actorRole={activeRole}
+          actorRole={activeRole ?? undefined}
           onClose={() => setShowCreate(false)}
           onCreated={() => { setShowCreate(false); void refresh(); }}
         />

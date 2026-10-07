@@ -16,10 +16,9 @@
       "LOW": 1
     },
     "by_status": {
-      "RESOLVED": 14,
+      "RESOLVED": 15,
       "BLOCKED": 1,
-      "REFUTED": 1,
-      "OPEN": 1
+      "REFUTED": 1
     }
   },
   "status_vocabulary": [
@@ -410,7 +409,7 @@
       "id": "SESS-6",
       "title": "`activeRole: Role` → `Role | null` type migration — the remainder of `SESS-5`, split out under DEC-31",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (blast radius measured against HEAD by a dedicated consumer census, 2026-08-23)",
       "blast_radius": null,

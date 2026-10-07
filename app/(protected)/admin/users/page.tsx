@@ -224,7 +224,7 @@ export default function AdminUsersPage() {
           resourceId: (member.uid as string | null) || member.id,
           orgId: activeOrgId || undefined,
           userId: uid,
-          userRole: activeRole,
+          userRole: activeRole ?? undefined,
           details: { memberEmail: member.email, removed, before, after: cleaned, headlineBefore: member.role, headlineAfter: headline },
         });
       }

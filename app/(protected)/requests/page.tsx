@@ -44,6 +44,7 @@ import {
   isActionRequired as ticketNeedsAction,
   isQueueViewer,
 } from '@/lib/ticketAttention';
+import { isEngineerRole } from '@/lib/workflow';
 import { loadCapabilityPolicy, type CapabilityPolicy } from '@/lib/capabilityPolicy';
 import { flaggedRequestTypes } from '@/lib/requestTypes';
 import { isTerminalTicketStatus } from '@/lib/ticketShed';
@@ -362,7 +363,13 @@ export default function RequestPortal() {
     let slot3Count = 0;
     let slot4Count = 0;
 
-    if (activeRole === 'Drafter') {
+    // SESS-6: no role is known yet (activeRole null) — no role lens, so the
+    // three role tiles stay 0, exactly as the old "Viewer" placeholder fell
+    // through every branch. The lens is the headline's (display only).
+    if (activeRole === null) {
+      // nothing to count
+    }
+    else if (activeRole === 'Drafter') {
       slot2Count = activeTickets.filter(t => t.assignedDrafterId === uid).length; 
       slot3Count = activeTickets.filter(t => t.assignedDrafterId === uid && t.status === 'REVISION_REQ').length; 
       slot4Count = activeTickets.filter(t => t.status === 'PENDING_ASSIGNMENT').length; 
@@ -377,7 +384,7 @@ export default function RequestPortal() {
       slot3Count = activeTickets.filter(t => t.status === 'PENDING_ASSIGNMENT').length; 
       slot4Count = activeTickets.filter(t => t.status === 'REVISION_REQ').length; 
     }
-    else if (activeRole.includes('Engineer')) {
+    else if (isEngineerRole(activeRole)) {
       slot2Count = activeTickets.filter(t => t.status === 'PENDING_ENG_TEAM').length; 
       slot3Count = activeTickets.filter(t => t.status === 'PENDING_REVIEW').length; 
       slot4Count = activeTickets.filter(t => t.status === 'PENDING_FINAL_APPROVAL').length; 
@@ -408,7 +415,7 @@ export default function RequestPortal() {
   const cardLabels = useMemo(() => {
     if (activeRole === 'Drafter') return { slot2: 'My Workload', slot3: 'Revisions Needed', slot4: 'Available to Claim' };
     if (activeRole === 'Requester') return { slot2: 'My Open Requests', slot3: 'Waiting on Review', slot4: 'Completed History' };
-    if (['Admin', 'Manager', 'Supervisor', 'DraftingSupervisor'].includes(activeRole)) return { slot2: 'Engineering Review', slot3: 'Unassigned Pool', slot4: 'Revision Status' };
+    if (activeRole !== null && ['Admin', 'Manager', 'Supervisor', 'DraftingSupervisor'].includes(activeRole)) return { slot2: 'Engineering Review', slot3: 'Unassigned Pool', slot4: 'Revision Status' };
     if (activeRole === 'DocCtrl') return { slot2: 'Ready to Issue', slot3: 'Pending Closure', slot4: 'Total Archives' };
     // DEC-14: the retired initial-review stage's tiles now count the
     // engineering-review queue (management) and final sign-offs (engineers).
@@ -630,7 +637,7 @@ export default function RequestPortal() {
 
       await logAuditAction({
         action: 'TICKET_BULK_ARCHIVE', resourceId: 'bulk', resourceType: 'ticket',
-        orgId: activeOrgId || undefined, userId: uid || 'unknown', userRole: activeRole,
+        orgId: activeOrgId || undefined, userId: uid || 'unknown', userRole: activeRole ?? undefined,
         details: { count: selectedTicketIds.size, ticketIds: Array.from(selectedTicketIds) }
       });
 
@@ -657,7 +664,7 @@ export default function RequestPortal() {
 
       await logAuditAction({
         action: 'TICKET_BULK_URGENT', resourceId: 'bulk', resourceType: 'ticket',
-        orgId: activeOrgId || undefined, userId: uid || 'unknown', userRole: activeRole,
+        orgId: activeOrgId || undefined, userId: uid || 'unknown', userRole: activeRole ?? undefined,
         details: { count: selectedTicketIds.size, ticketIds: Array.from(selectedTicketIds) }
       });
 
@@ -674,7 +681,7 @@ export default function RequestPortal() {
       await supabase.from('tickets').update({ priority: 1, last_modified: new Date().toISOString() }).eq('id', ticketId);
       await logAuditAction({
         action: 'TICKET_MARK_URGENT', resourceId: ticketId, resourceType: 'ticket',
-        orgId: activeOrgId || undefined, userId: uid || 'unknown', userRole: activeRole,
+        orgId: activeOrgId || undefined, userId: uid || 'unknown', userRole: activeRole ?? undefined,
         details: { priority: 1 }
       });
       setOpenRowMenu(null);

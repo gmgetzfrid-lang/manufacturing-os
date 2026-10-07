@@ -162,6 +162,22 @@
    "sequencingNotes": "Run with the drafting-flow fleet (same files).",
    "decisionsNeeded": [],
    "alreadyResolvedElsewhere": []
+  },
+  {
+   "name": "PS-P6 STAMP IMAGES PER ACCOUNT \u2014 the viewer's uploaded stamp images are kept per account, not device-wide",
+   "findings": [
+    "OFF-15 (opened 2026-10-07 by identity-and-session IS-P1 while inventorying the client storage for OFF-8; assigned by the integrator at the IS-P1 merge, DEC-31: key manufacturingos.customStamps by the signed-in uid so the next person on a shared tablet is never offered the last person's uploaded stamps; decide what happens to the legacy device-wide key \u2014 never delete a person's uploaded stamps silently \u2014 and keep RoleContext's CLIENT_STORAGE_INVENTORY row in step, kind 'identity')"
+   ],
+   "files": [
+    "components/viewers/FullScreenViewer.tsx (:344 the useState initialiser, :352 persistCustomStamps \u2014 the uid-scoped key)",
+    "components/providers/RoleContext.tsx (CLIENT_STORAGE_INVENTORY: the manufacturingos.customStamps row's key, class and kind)",
+    "tests: lib/__tests__/sessSixRoleNull.test.ts per-key census stays green; a stamp uploaded by one uid is not offered to another; regression \u2014 the same person's stamps survive a sign-out and come back"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "identity-and-session IS-P1 merged (the client storage inventory and its per-key census)"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-07 at the IS-P1 merge (DEC-31: OFF-15 had no owner). Can run now; FullScreenViewer.tsx has no other running owner."
   }
  ],
  "crossAreaFileOverlaps": [

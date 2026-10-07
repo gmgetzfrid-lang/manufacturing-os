@@ -622,6 +622,7 @@ stamping.ts:118-119 `const base = page.getViewport({ scale: 1 });\n        const
 - **Severity:** MEDIUM
 - **Status:** OPEN
 - **Assigned:** projects-joint J10b (IntakePanel / QuotesPanel), identity-and-session IS-P1 (the library page) and notifications N6 (lib/notifications.ts ticketUrl) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
+- **Assigned:** intelligence I-15 GRAPH SERVER ASSEMBLY (the graph page's Copy link, added by I-14 after the last pass) — by the integrator, 2026-10-07 (IS-P1 merge, DEC-31; fleet plan `intelligence.json`). The library page's limb is done (IS-P1); `lib/notifications.ts` stays with notifications N6.
 - **Verification:** CONFIRMED
 - **Locations:** `components/viewers/FullScreenViewer.tsx:1268`, `components/viewers/FullScreenViewer.tsx:63`, `components/viewers/FullScreenViewer.tsx:1015-1016`, `components/documents/ShareLinkModal.tsx:81`, `components/documents/ShareLinkModal.tsx:209`, `lib/publicOrigin.ts:8-12`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both call sites confirmed, and the file-local inconsistency in FullScreenViewer (publicOrigin at :1016, window.location.origin at :1268) makes it plainly an oversight rather than a deliberate exception. The share-link QR is the one that reaches an external party, so the preview-deploy dead-end is real; the /documents QR at :1268 targets a protected route the scanner must log into anyway, which limits the blast radius of that half.
@@ -683,6 +684,18 @@ FullScreenViewer.tsx:1268 `value={\`${window.location.origin}/documents/${docRec
    Two other readers build no outbound share link and are not assessed here: `app/page.tsx:103`, the sign-in `redirectTo`, and `components/viewers/SecureDocViewer.tsx:27`, a same-origin comparison.
 
 **Scope / residual.** OPEN for those two files' owners.
+
+**Partial (2026-10-07, identity-and-session Round G).** Package **IS-P1** removed the library page's two readers (document-control `XEDGE-5`, now RESOLVED): `app/(protected)/documents/[libraryId]/page.tsx` builds both `/d/` copies on `publicOrigin()` (`:760`, `:3263`), and `window.location.origin` no longer appears in the page. Test: `lib/__tests__/isP1LibraryPage.test.ts` "XEDGE-5 / PHYS-13 —" (the Ctrl+C copy lifted and run with a configured site and a different page host).
+
+**Done-when (this pass).**
+1. ✓ Unchanged.
+2. ✓ Unchanged.
+3. ◐ The library page ✓. Left, by `grep -rn "window.location.origin" app components lib hooks` at this commit:
+   - `lib/notifications.ts:274` — `ticketUrl` (notifications N6, `DELIV-5`; unchanged).
+   - `app/(protected)/graph/page.tsx:675` — the graph's "Copy link" (`${window.location.origin}${pathname}?…`), added by intelligence I-14 (DEC-88 §3) after the last pass: a link to the protected `/graph` view handed to colleagues — the in-app case the verifier narrowed `FullScreenViewer`'s phone QR to, but a link that leaves the page by copy all the same. Owner: intelligence (the graph page) — for the integrator to assign.
+   - Not outbound links, not assessed (as the last pass): `app/page.tsx:139` (the sign-in `redirectTo`), `components/viewers/SecureDocViewer.tsx:27` (a same-origin comparison).
+
+**Scope / residual.** OPEN for done-when 3's tree-wide clause only: `lib/notifications.ts` (notifications N6) and the graph page's Copy link (intelligence).
 
 ---
 

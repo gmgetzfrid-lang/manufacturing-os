@@ -40,9 +40,13 @@ export function heldRoles(p: Pick<Principal, "role" | "roles">): Role[] {
 /** OWN-3/DEC-2: the controller tier is a property of the COLLECTION — a
  *  DocCtrl who also holds Manager (headline `Manager`, since Manager
  *  outranks DocCtrl) is still a controller. Mirrors the database's
- *  `is_org_controller` (role IN (...) OR roles && ARRAY[...]). */
-export function isControllerPrincipal(p: Pick<Principal, "role" | "roles">): boolean {
-  return heldRoles(p).some(isControllerRole);
+ *  `is_org_controller` (role IN (...) OR roles && ARRAY[...]).
+ *  SESS-6: the client's headline is `null` until a membership resolves
+ *  (RoleContext), and its collection is then empty — so "no role known" is
+ *  never a controller. The same answer as heldRoles(p).some(isControllerRole)
+ *  for every real headline; Principal.role itself stays a Role. */
+export function isControllerPrincipal(p: Pick<Principal, "roles"> & { role: Role | null }): boolean {
+  return (p.role !== null && isControllerRole(p.role)) || (p.roles ?? []).some(isControllerRole);
 }
 
 export function canWithAclChain(params: {
