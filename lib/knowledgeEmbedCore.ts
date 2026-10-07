@@ -528,6 +528,14 @@ export interface EmbedBuildMarker {
   lastError?: string;
   errorRuns?: number;
   completedAt?: string;
+  /** GOV-5 residual (I-22): the last run that reached this library stopped
+   *  because the next batch's worst case did not fit what is left of the
+   *  payer's monthly AI cap, which is not reached (capRefusalKind "no_fit").
+   *  NOT a hold — no blockedUntil, so every run looks again; the next run
+   *  that reaches the library clears it. `headroomNote` is the reservation's
+   *  sentence. The library's meaning-index panel says it is waiting. */
+  headroomWaitAt?: string;
+  headroomNote?: string;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -550,6 +558,8 @@ export function parseEmbedBuildMarker(raw: unknown): (EmbedBuildMarker & { valid
     lastError: str(r.lastError),
     errorRuns: typeof r.errorRuns === "number" ? r.errorRuns : 0,
     completedAt: str(r.completedAt),
+    headroomWaitAt: str(r.headroomWaitAt),
+    headroomNote: str(r.headroomNote),
     valid: UUID_RE.test(userId),
   };
 }

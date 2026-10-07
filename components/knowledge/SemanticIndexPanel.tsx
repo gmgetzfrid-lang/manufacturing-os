@@ -39,6 +39,7 @@ import {
   setKeepIndexCurrent, releaseBackgroundBuild, acceptAiAgreement, releaseOutcome, keepCurrentOutcome, retryOutcome,
   type SemanticProgress, type AgreementRequiredError, type EmbedControlOutcome,
 } from "@/lib/knowledge";
+import { headroomWaitLine, type BackgroundHeadroom } from "@/lib/knowledgeKeyless";
 
 /** A dollar figure a person can read: cents under a dollar, never "$0.00"
  *  for a real (tiny) cost. */
@@ -287,6 +288,11 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController, onS
   const failed = status.failed ?? 0;
   const conflict = status.conflict ?? null;
   const bg = status.background ?? null;
+  // GOV-5 residual (I-22): the last run stopped because the next batch did
+  // not fit what is left of the payer's cap (not reached — nothing held).
+  const bgHeadroom = bg as (NonNullable<typeof bg> & BackgroundHeadroom) | null;
+  const headroomWait = headroomWaitLine(bgHeadroom, status.remaining, Date.now());
+  const headroomNote = bgHeadroom?.headroomNote ?? null;
   const canRelease = !!bg && (isController || bg.mine);
 
   return (
@@ -422,6 +428,11 @@ export default function SemanticIndexPanel({ orgId, libraryId, isController, onS
                 : bg.blockedReason === "agreement" ? "the payer has not accepted the current AI agreement"
                 : "the last runs failed"}
               {bg.lastError ? `: ${bg.lastError.slice(0, 200)}` : "."}
+            </span>
+          )}
+          {headroomWait && (
+            <span data-headroom-wait="true" className="block mt-0.5 text-amber-800 dark:text-amber-300 font-bold">
+              {headroomWait}{headroomNote ? `: ${headroomNote.slice(0, 200)}` : "."}
             </span>
           )}
           {canRelease && !building && (
