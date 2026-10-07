@@ -50,10 +50,10 @@ const RR_BLANK = "restore_reversed_source: name the status to restore the docume
 vi.mock("@/lib/supabase", () => ({
   get supabase() {
     const base = makeFakeSupabase(state.db);
-    const writeDoc = async (id: string, payload: Row) => {
+    const writeDoc = async (id: string, payload: Row): Promise<RpcAnswer> => {
       const docs = base.from("documents") as unknown as { update: (p: Row) => { eq: (k: string, v: unknown) => { select: (c: string) => Promise<{ data: unknown; error: unknown }> } } };
       const r = await docs.update(payload).eq("id", id).select("id");
-      if (r.error) return { data: null, error: r.error };
+      if (r.error) return { data: null, error: r.error as { code?: string; message: string } };
       return { data: ((r.data as unknown[] | null) ?? []).length === 0 ? "no_match" : "restored", error: null };
     };
     return {
