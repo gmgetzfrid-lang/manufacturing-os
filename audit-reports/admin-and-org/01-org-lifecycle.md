@@ -520,7 +520,7 @@ SubscriptionGate.tsx:46-48 — `const ENFORCE = false;` / `if (!ENFORCE || loadi
 ## ORG-10 · The "View as" access simulator queries team_members by a column that does not exist, so team-derived access is invisible in the one screen built to show effective access
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/permissions/ViewAsSimulator.tsx:55-64`, `supabase/migrations/20260707_teams.sql:19-26`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by repo-wide search for the column. The simulator silently reports 'no team grants' for every user, which is worst-case in the one screen built to certify access.
@@ -553,6 +553,19 @@ ViewAsSimulator.tsx:59 — `const { data } = await supabase.from("team_members")
 - [ ] A test asserts the simulator reports team-derived access for a member whose only grant is via a team
 
 *Cross-area note (2026-09-30, intelligence Round G): intelligence `DACL-5` criterion 3 is handed to the package that fixes this finding (admin-and-org P9, `components/permissions/ViewAsSimulator.tsx`) — show the member's full role collection in the picker (today `:160` shows the headline only) and, for a role rule, which held role it matches. DACL-5 stays OPEN on that limb alone.*
+
+**Resolution (2026-10-07, admin-and-org Round G).** Package P9 — "ORG-10 residual"; the column bug closed earlier (the plan's `alreadyResolvedElsewhere`: "ORG-10 column bug ← DB-2", Round E `OWN-10`). Reproduced on base `c537602` (DEC-29): `components/permissions/ViewAsSimulator.tsx:74` read `team_members … .eq("uid", pick)` with the error destructured and shown ("Team memberships could not be loaded … do not sign off on them", `:76`, `:189-193`), but with no `org_id` filter — a member's teams in another workspace fed this workspace's ACL evaluation — and no test drove a team-only grant through the simulator (`rpPhase5Additive.test.ts` "OWN-10" pins source text only).
+
+Landed: the team read is scoped to the ACTIVE org (`ViewAsSimulator.tsx:114`, `.eq("uid", pick).eq("org_id", activeOrgId ?? "")`) and re-runs when the org changes. The content-rules list now names the team a rule reaches the member by ("via team <name>"; DACL-5's simulator half, below).
+
+Tests: `lib/__tests__/aoRoundGP9ConsoleRendered.test.ts` (rendered, the real simulator and the real evaluators over a PostgREST stand-in) "ORG-10 done-when 3: a member whose only access is a team grant shows as SEEING the library; the team read is scoped to the active org" — a private library whose only rule admitting the member is a team rule shows "visible"; the read's filters are exactly `uid` and `org_id`; the member's row in another org's team is not read; with the membership removed the same member shows "hidden". "ORG-10: a failed team read is said, never shown as 'no team access'".
+
+**Done-when.**
+- ✓ The filter uses `uid` (Round E) and is scoped by `org_id` to the active org (this package).
+- ✓ The `{ error }` is destructured and a failed lookup renders "Team memberships could not be loaded (…)" — the text names the omission, rendered-tested here.
+- ✓ A test asserts the simulator reports team-derived access for a member whose only grant is via a team.
+
+**Scope / residual.** None. The cross-area note above (intelligence `DACL-5` criterion 3, the simulator half) is built here: the picker shows each member's whole role collection and a role or team rule names the held role or team it matches; the Permissions drawer's half is admin-and-org P7's (`DACL-5`'s Partial).
 
 ---
 
@@ -670,7 +683,7 @@ Separately, `updateTeam` writes `supervisor_user_id` with no validation that the
 
 - **Severity:** MEDIUM
 - **Severity rationale:** The author's estimate (an upper bound, like every unchallenged grade here). The same harm class as `ORG-10`, whose verifier set MEDIUM: the screen built to certify effective access gives a wrong compliance answer, fail-closed — it under-reports, so nobody gains access from it. Mitigated, not removed, by the permissions grid: the `quality.sign_off` row's description names the standing holders, but the simulator itself does not.
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** admin-and-org P9 (permissions console truth) — by the integrator, 2026-10-01
 - **Verification:** CONFIRMED (by reading)
 - **Locations:** `components/permissions/ViewAsSimulator.tsx:142-148` (the capability list is `policyAllows(policy, d.id, who.role, who.roles, who.uid, resource)` for every `CAPABILITY_DEFS` row, with `resource` a request type or nothing — never a project), `components/permissions/ViewAsSimulator.tsx:157` ("computed with the SAME evaluators the app enforces with"), `components/permissions/ViewAsSimulator.tsx:185` (the only standing rights it mentions are ticket identity rights), `lib/capabilityPolicy.ts:168-170` (`quality.sign_off`, `defaultRoles: []`), `supabase/migrations/20261136_prj_roundG_quality_signoff.sql:428-437` (`quality_signer_eligible`: a controller, the owner, or the capability for that project)
@@ -687,6 +700,21 @@ Separately, `updateTeam` writes `supervisor_user_id` with no validation that the
 - The simulator does not report an Admin, a Document Control member or a project's owner as unable to sign off quality records the database lets them sign off.
 - A member granted `quality.sign_off` on one project is shown as holding it for that project (and not for another).
 - A test compares the simulator's quality sign-off answer against `quality_signer_eligible`'s rule for a controller, an owner, a project-scoped grantee and an ungranted member.
+
+**Resolution (2026-10-07, admin-and-org Round G).** Package P9. Reproduced on base `c537602` (DEC-29): the simulator answered every capability with `policyAllows` alone (`ViewAsSimulator.tsx:143-150`) and its only resource was a request type (`:142`), so `quality.sign_off` (default `[]`) drew Admin, Document Control and a project's owner unticked, and a rule scoped to one project could never match.
+
+Landed:
+- `lib/capabilityPolicy.ts qualitySignOffEligible` (`:394`) — the TypeScript mirror of `quality_signer_eligible` (`20261136:428-438`) for an active member: a controller by the collection (`is_org_controller_for`), the project's owner, or a holder of `quality.sign_off` FOR THAT PROJECT (`policyAllows` with `{ projectId }` — a project-scoped rule, the base list, or a live personal grant) who can see the project (`quality_signoff_granted_for`'s visibility rule: not private, or a project member).
+- `ViewAsSimulator.tsx`: a **project** picker beside the request-type picker; the project-scoped capability is evaluated with `{ projectId }`, the ticket capabilities with `{ requestType }` (DEC-13). For `quality.sign_off` with a project picked the answer is `qualitySignOffEligible` and says why ("they own the project", "Admin / Document Control always can", "granted by the policy for this project"); with none picked a controller is shown as holding it on every project, anyone else as "per project — pick a project". A failed project-members read is said. The footnote names the project owner's standing right beside the ticket identity rights.
+
+Tests: `lib/__tests__/aoRoundGP9PermissionsConsole.test.ts` "ORG-14 — qualitySignOffEligible against quality_signer_eligible (20261136)" (a controller by the collection, the owner, a project-scoped grantee on p1 and not p2, an ungranted member; a grantee who cannot see a private project; an org-wide personal grant; and the SQL it mirrors has the same three disjuncts and the same visibility rule); `lib/__tests__/aoRoundGP9ConsoleRendered.test.ts` "ORG-14: …" (rendered: DocCtrl held only in the collection holds it; the owner does not until their project is picked, then does; the Safety grantee holds it on p1 and not p2; the ungranted engineer never; the Admin always).
+
+**Done-when.**
+- ✓ The simulator does not report an Admin, a Document Control member or a project's owner as unable to sign off what the database lets them.
+- ✓ A member granted `quality.sign_off` on one project is shown as holding it for that project and not for another — the grant being a project-scoped rule naming a role they hold (a person-scoped project grant does not exist yet: projects-and-cost `QUAL-14` done-when 2, Partial).
+- ✓ A test compares the simulator's answer against `quality_signer_eligible`'s rule for a controller, an owner, a project-scoped grantee and an ungranted member.
+
+**Scope / residual.** None for this finding. The database's rule is `20261136`'s, which is PASTE pending: until it is pasted the database does not yet decide quality sign-off per project, and the simulator shows the rule the database WILL apply.
 
 ---
 

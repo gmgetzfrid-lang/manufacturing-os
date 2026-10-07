@@ -229,6 +229,15 @@ lib/acl.ts:73 — `return !!ctx.role && ctx.role === (id as Role);`. app/(protec
 
 **Remaining / owner.** Criterion 3 only — show a member's full role collection in the simulator and, for a role rule, which held role it matches. `ViewAsSimulator.tsx` is on admin-and-org **P9** (permissions-console truth; its `ORG-10` residual touches the same component), `PermissionDrawer.tsx` on A&O **P7** (`ALOG-8`); P9 is the owner named here. P9's findings list does not carry this criterion yet — the integrator adds it; reverse pointer on `ORG-10` (`admin-and-org/01-org-lifecycle.md`).
 
+**Partial (2026-10-07, admin-and-org Round G).** Package P9 builds criterion 3's SIMULATOR half, handed to it by `ORG-10`'s cross-area note (the plan's P9 entry names `ViewAsSimulator.tsx`; this finding is not on its list, so it stays OPEN). `components/permissions/ViewAsSimulator.tsx`: the member picker shows each member's whole role collection — "Dee Control — Manager, DocCtrl", not the headline alone (`heldRoles`); the content-rules list (renamed "Content rules that reach them") now lists, beside rules naming the person, a role rule that names ANY role they hold ("via their role Safety") and a team rule naming a team they are in, in the active org ("via team Contract crew"). Tests: `lib/__tests__/aoRoundGP9ConsoleRendered.test.ts` "DACL-5: the picker names each member's whole role collection…", "DACL-5: a role rule names the held role it matches", and the team case inside "ORG-10 done-when 3".
+
+**Done-when.**
+1. ✓ (intelligence Round G, unchanged).
+2. ✓ (intelligence Round G, unchanged).
+3. ✗ in part: the simulator states which held role (or team) a rule matches for a given member; the Permissions DRAWER does not yet — `components/permissions/PermissionDrawer.tsx` is admin-and-org P7's file and was not edited here.
+
+**Remaining / owner.** Criterion 3's drawer half only — admin-and-org P7 (owner of `PermissionDrawer.tsx`); status stays OPEN.
+
 ---
 
 <a id="dacl-6"></a>

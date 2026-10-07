@@ -550,7 +550,7 @@ intermittent unexplained 409s during approval.
 ## WF-10 · The 60-second policy cache is never invalidated on the server — a revoked person keeps acting
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** admin-and-org P9 (permissions console truth and access recertification) — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (currently masked by `WF-1`)
 - **Blast radius:** security
@@ -651,6 +651,21 @@ inside the transition's transaction — neither is built, so the finding stays
 OPEN on that item while the mechanism it describes (60 s per warm instance,
 never invalidated) is gone and done-when 2 and 3 hold. The browser-side 60 s
 cache is unchanged and governs only which buttons are drawn.
+
+**Resolution (2026-10-07, admin-and-org Round G).** Package P9 — done-when 1, the remainder the Round E Partial left open. Reproduced on base `c537602` (DEC-29), by census rather than by assumption: since Round E four packages moved every SERVER-side authority decision off the cached loader onto `loadCapabilityPolicyStrict` (`lib/capabilityPolicy.ts`, fresh on every call, never cached): the workflow-action route (drafting-flow `AUTHZ-7`, DF-P1, `route.ts:302`), the admin-surface gate (`lib/adminGate.ts:56`, `SURF-9` / `WF-20`), the transmittal issue rail (`lib/transmittals.ts:1195`) and the AI-cap route (`app/api/ai/usage/route.ts:113`). No route under `app/api` calls `loadCapabilityPolicy` / `loadCapabilityPolicyEntry`; the remaining callers are browser components, hooks and `lib/holds.ts` (a client module: its gate and the hold-notification audience). The SQL evaluator (`org_capability_allows_for`) reads the row on every call. So the 5-second server window the Partial described no longer has a server-side authority caller.
+
+What this package adds so that stays true, and the parts of the brief it covers:
+- **A census that keeps it true** — `lib/__tests__/aoRoundGP9PermissionsConsole.test.ts` "WF-10 — a revocation binds on the very next server-side decision": no file under `app/api` reads the cached loader; the four server authority callers read the strict one; every other caller of the cached loader is a `"use client"` file, a hook, or `lib/holds.ts`. A new server route that reached for the cached loader fails it.
+- **Policy, grant and membership changes.** A policy or grant change goes through `POST /api/admin/capability-policy`, which writes the row (the strict readers see it on their next read) and drops its own instance's copy; the browser drops its copy in the tab that made the change (`postPolicyChange`; the editor reads fresh; View-as calls `invalidateCapabilityPolicy(orgId)` after a grant or revoke). A membership change needs no policy-cache invalidation on the server: every route re-reads `org_members` per request, and `revoke_member` strips a removed member's grants from the stored row, which the strict readers read fresh. **For the members page (admin-and-org P8's file, not edited here):** after a removal or a role change it may call `invalidateCapabilityPolicy(activeOrgId)` so the admin's own tab re-reads the stripped grants at once; it is a browser display refresh, not an authority fix — recorded for P8 in `99-fix-sequencing.md`.
+- **The cached loader's failure rule** (DEC-89 item 3, `AUTHZ-7` / `ALOG-1`): on a failed refresh it serves the last good entry or says `unreadable`; it never caches a failure (done-when 2 re-pinned).
+- `lib/capabilityPolicy.ts`'s WF-10 comment now says all of this (`:451`).
+
+**Done-when.**
+1. ✓ A revocation takes effect on the next server-side authority decision: every server-side authority decision reads the stored policy fresh (`loadCapabilityPolicyStrict`, never cached), on every instance; the census pins it.
+2. ✓ `loadCapabilityPolicy` never caches a result whose read errored (WF-1; re-pinned with DEC-89's last-good rule).
+3. ✓ A sessionless read cannot poison the server cache (Round E, unchanged).
+
+**Scope / residual.** None for this finding. The browser's copy (60 s) still governs which controls a page DRAWS until it ages out or the tab that changed the policy drops it; it decides nothing (the server and the database do). The `SERVER_CACHE_TTL_MS` path is kept for a future server caller that only displays, and the census refuses an authority caller there.
 
 ---
 
