@@ -593,7 +593,11 @@ function DestinationModal({
         orgId, name, destination_type: type, enabled,
         endpoint: endpoint || undefined,
         region: region || undefined,
-        bucket: bucket || undefined,
+        // A&O P4 (BILL-3): a webhook created after a bucket was typed for s3
+        // sends no bucket — it pushes to no bucket, and the plan gate is for
+        // a row that does. (An edit still sends the field, as before; the
+        // PATCH route judges the row after the save.)
+        bucket: type === "webhook" && mode === "create" ? undefined : bucket || undefined,
         prefix: prefix || undefined,
         webhook_url: webhookUrl || undefined,
         schedule_kind: schedule,

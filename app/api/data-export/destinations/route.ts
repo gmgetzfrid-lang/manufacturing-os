@@ -18,7 +18,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeAdminSurface } from "@/lib/adminGate";
 import { encryptSecret, maskSecret } from "@/lib/serverCrypto";
-import { computeNextRunAt } from "@/lib/exportRunner";
+import { computeNextRunAt, pushesToBucket } from "@/lib/exportRunner";
 import { assertCloudBucketEntitlement } from "@/lib/exportEntitlement";
 import { alertAdminsOfDestination } from "@/lib/exportAlerts";
 
@@ -91,8 +91,14 @@ export async function POST(req: NextRequest) {
 
   // Plan gate: cloud bucket (S3/R2) backup destinations are a Growth feature.
   // Trials may still configure one to evaluate; Starter cannot. XEDGE-8: the
-  // SAME helper gates PATCH and the scheduled runner.
-  if (body.bucket) {
+  // SAME helper gates PATCH and the scheduled runner. A&O P4 (BILL-3 Scope /
+  // residual): the Growth act is a row that pushes to a bucket — s3 / r2 with
+  // a bucket (lib/exportRunner.ts pushesToBucket, the rule PATCH, Run Now and
+  // the sweep share). A webhook never touches a bucket, so a bucket name the
+  // create form still carries from before the type was switched is neither
+  // gated nor stored.
+  const bucket = body.destination_type === "webhook" ? null : (body.bucket ?? null);
+  if (pushesToBucket({ destination_type: body.destination_type, bucket })) {
     const gate = await assertCloudBucketEntitlement(auth.admin, orgId);
     if (gate) return NextResponse.json({ error: gate.error }, { status: gate.status });
   }
@@ -133,7 +139,7 @@ export async function POST(req: NextRequest) {
     enabled: body.enabled ?? true,
     endpoint: body.endpoint ?? null,
     region: body.region ?? null,
-    bucket: body.bucket ?? null,
+    bucket,
     prefix: body.prefix ?? null,
     access_key_id_encrypted,
     secret_access_key_encrypted,
