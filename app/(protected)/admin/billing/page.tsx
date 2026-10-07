@@ -10,10 +10,12 @@
 // 'Manage subscription' opens the Stripe Customer Portal where the admin
 // can update card, view invoices, change plan, or cancel.
 //
-// admin-and-org P4 (BILL-8): a workspace that holds a subscription Stripe can
-// still bill (past due, unpaid, paused — holdsLiveSubscription) is sent to
-// the portal, not shown the plans grid: subscribing again would start a
-// second subscription and bill it twice (the checkout route refuses it 409).
+// admin-and-org P4 (BILL-8): a workspace that holds a subscription Stripe
+// still bills (past due, unpaid, a Stripe trial — holdsLiveSubscription) is
+// sent to the portal, not shown the plans grid: subscribing again would start
+// a second subscription beside it (the checkout route refuses it 409). A
+// paused subscription raises no invoice and the portal cannot resume it, so a
+// paused workspace still sees the plans.
 
 import React, { useState } from "react";
 import { useSearchParams } from "next/navigation";
@@ -189,7 +191,9 @@ export default function BillingPage() {
                 <div className="text-xs text-[var(--color-text-muted)] mt-0.5">
                   {expired
                     ? "Your free trial has ended. Pick a plan below to continue."
-                    : liveSubscription
+                    : info.status === "paused"
+                      ? "Stripe raises no invoice on a paused subscription, and the billing portal cannot resume it. Pick a plan below to subscribe again, or ask support to resume it."
+                      : liveSubscription
                       ? "Update your payment method in the billing portal to restore access."
                       : "Update your payment method to restore access."}
                 </div>

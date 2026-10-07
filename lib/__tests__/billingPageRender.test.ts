@@ -2,12 +2,13 @@
 //
 // admin-and-org Round G, package P4 — BILL-8 Done-when 1, the page half: the
 // billing page (app/(protected)/admin/billing/page.tsx) sends a workspace
-// that holds a subscription Stripe can still bill (past due, unpaid, paused,
-// a Stripe trial — lib/subscription.ts holdsLiveSubscription) to the
-// Customer Portal instead of showing the plans grid, since subscribing again
-// would start a second subscription and bill it twice. A workspace with no
-// live subscription (the app's own trial, a canceled one, an incomplete
-// first checkout that never paid) still sees the plans, as before.
+// that holds a subscription Stripe still bills (past due, unpaid, a Stripe
+// trial — lib/subscription.ts holdsLiveSubscription) to the Customer Portal
+// instead of showing the plans grid, since subscribing again would start a
+// second subscription beside it. A workspace with no billed subscription (the
+// app's own trial, a canceled one, an incomplete first checkout that never
+// paid, and — review fix pass — a paused one, which raises no invoice and
+// which the portal cannot resume) still sees the plans.
 // Rendered: the page is mounted with the subscription context answering.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -66,13 +67,12 @@ describe("BILL-8 — a workspace with a live subscription is sent to the portal,
     expect(r.plans).toBe(false);
   });
 
-  it("unpaid or paused on a Stripe subscription: the portal from the red card, no plans", async () => {
-    for (const status of ["unpaid", "paused"] as const) {
-      const r = await render({ status, plan: "growth", stripeSubscriptionId: "sub_1", stripeCustomerId: "cus_1" });
-      expect(r.portal, status).toBe(true);
-      expect(r.plans, status).toBe(false);
-      expect(r.text).toMatch(/Update your payment method in the billing portal to restore access\./);
-    }
+  it("unpaid on a Stripe subscription: the portal from the red card, no plans", async () => {
+    const r = await render({ status: "unpaid", plan: null, stripeSubscriptionId: "sub_1", stripeCustomerId: "cus_1" });
+    expect(r.portal).toBe(true);
+    expect(r.plans).toBe(false);
+    expect(r.text).toMatch(/Payment Failed/);
+    expect(r.text).toMatch(/Update your payment method in the billing portal to restore access\./);
   });
 
   it("a Stripe trial (trialing with a subscription id): the portal, no plans", async () => {
@@ -101,7 +101,15 @@ describe("regression — a workspace with no live subscription still sees the pl
     expect(r.text).toMatch(/Subscription Canceled/);
   });
 
-  it("an incomplete first checkout (stored unpaid, no subscription id written): plans, so the admin can try another card", async () => {
+  it("paused on a Stripe subscription (review fix pass): the plans, and a line saying the portal cannot resume it", async () => {
+    const r = await render({ status: "paused", plan: null, stripeSubscriptionId: "sub_1", stripeCustomerId: "cus_1" });
+    expect(r.plans).toBe(true);
+    expect(r.portal).toBe(false);
+    expect(r.text).toMatch(/Subscription Paused/);
+    expect(r.text).toMatch(/Stripe raises no invoice on a paused subscription, and the billing portal cannot resume it\. Pick a plan below to subscribe again, or ask support to resume it\./);
+  });
+
+  it("an unpaid row with no subscription id (no subscription to manage in the portal): plans, so the admin can subscribe", async () => {
     const r = await render({ status: "unpaid", plan: null, stripeSubscriptionId: null, stripeCustomerId: "cus_1" });
     expect(r.plans).toBe(true);
     expect(r.portal).toBe(false);

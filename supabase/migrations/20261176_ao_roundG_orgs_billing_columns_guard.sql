@@ -10,6 +10,8 @@
 --     non-service-role writes to subscription_status / trial_ends_at /
 --     subscribed_plan / stripe_customer_id / stripe_subscription_id".
 --   BILL-6 Done-when 1: "stripe_customer_id is not writable by any client role".
+--   BILL-3 Done-when 2 (the rows the old code left): a canceled workspace
+--     keeps no plan.
 --
 -- WHY: orgs_admin_write (FOR UPDATE, USING only; schema.sql, re-created by
 -- 20261046_rp_phase6_sweep_authority_by_collection.sql:136-138 on the role
@@ -38,16 +40,27 @@
 --   search_path pinned; EXECUTE revoked from PUBLIC, anon and authenticated
 --   (the DRLS-16 rule — a trigger function's privilege is checked when the
 --   trigger is created, never when it fires).
+--   BILL-3: inside the same transaction, before the trigger, the plan is
+--   cleared on every canceled workspace (subscription_status = 'canceled'
+--   AND subscribed_plan IS NOT NULL). The webhook clears it on every write
+--   that ends a subscription from P4 on, but a workspace the old code
+--   canceled kept its plan and gets no further subscription event to clear
+--   it, while the cloud-backup create gate (lib/exportEntitlement.ts
+--   cloudBucketAllowed) reads the plan alone. A canceled workspace has no
+--   access and no subscription paying for a plan, so the value is
+--   unambiguous; the inventory counts the rows before, a probe says none is
+--   left. Nothing else is rewritten.
 --   After COMMIT a self-test runs inside a subtransaction that is always
 --   rolled back: as a request carrying the authenticated role it tries one
 --   billing change (must be refused) and one update that leaves the billing
 --   columns alone (must pass). Nothing it writes survives; on a database with
 --   no orgs row it reports n/a.
 --
--- WIDENING? No — it takes a write away from members. The before-apply
--- inventory (aggregate counts only) counts the row shapes a self-granted
--- state leaves (reported, never rewritten): "active" with no Stripe
--- subscription id, a trial with no end, a plan on a canceled workspace.
+-- WIDENING? No — it takes a write away from members, and a plan away from
+-- canceled workspaces. The before-apply inventory (aggregate counts only)
+-- counts the row shapes a self-granted state leaves: "active" with no Stripe
+-- subscription id and a trial with no end (reported, never rewritten), and a
+-- plan on a canceled workspace (cleared, BILL-3, above).
 --
 -- WHEN TO PASTE: either order with the P4 deploy is safe, and either order
 -- with 20261175. Every billing-column write the app makes, before and after
@@ -56,11 +69,14 @@
 -- UPDATE trigger never sees); the only orgs update made with a member's
 -- session (the ticket-numbering save) touches none of the six columns
 -- (pinned in lib/__tests__/stripeWebhook.test.ts, "every orgs write").
+-- Pasted before the deploy, a workspace the old webhook cancels in between
+-- keeps its plan; paste again after the deploy (idempotent) to clear it.
 --
 -- ROLLBACK:
 --   DROP TRIGGER IF EXISTS trg_orgs_billing_columns_guard ON orgs;
 --   DROP FUNCTION IF EXISTS orgs_billing_columns_guard();
--- The app keeps working; the columns are member-writable again.
+-- The app keeps working; the columns are member-writable again. The plans
+-- cleared on canceled workspaces are not restored (none was paid for).
 --
 -- ⚠ APPLIED BY HAND (DEC-30). Idempotent: paste the whole file once into the
 -- Supabase SQL editor. The editor shows only the LAST result set — the one
@@ -97,7 +113,7 @@ SELECT 'trial_no_end',
        (SELECT COUNT(*) FROM orgs WHERE subscription_status = 'trialing' AND trial_ends_at IS NULL)::text
 UNION ALL
 SELECT 'canceled_with_plan',
-       'inventory: canceled workspaces still carrying a plan (canceled before P4 cleared the plan on cancellation; the cloud-backup gate reads the plan) — reported, never rewritten',
+       'inventory: canceled workspaces still carrying a plan before this paste (canceled before P4 cleared the plan on cancellation; the cloud-backup gate reads the plan) — cleared by this paste (BILL-3)',
        (SELECT COUNT(*) FROM orgs WHERE subscription_status = 'canceled' AND subscribed_plan IS NOT NULL)::text
 UNION ALL
 SELECT 'other_triggers',
@@ -106,6 +122,10 @@ SELECT 'other_triggers',
          WHERE tgrelid = to_regclass('public.orgs') AND NOT tgisinternal AND tgname <> 'trg_orgs_billing_columns_guard')::text;
 
 BEGIN;
+
+-- ── BILL-3: a canceled workspace keeps no plan (counted before; probed after)
+UPDATE orgs SET subscribed_plan = NULL
+ WHERE subscription_status = 'canceled' AND subscribed_plan IS NOT NULL;
 
 CREATE OR REPLACE FUNCTION orgs_billing_columns_guard()
 RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$
@@ -208,6 +228,8 @@ UNION ALL SELECT 'orgs_admin_write is kept as 20261046 left it (FOR UPDATE, by c
        EXISTS (SELECT 1 FROM pg_policies
                 WHERE schemaname = 'public' AND tablename = 'orgs' AND policyname = 'orgs_admin_write'
                   AND cmd = 'UPDATE' AND qual LIKE '%caller_holds_any_role(%'), NULL
+UNION ALL SELECT 'BILL-3: no canceled workspace carries a plan (the inventory row counts the plans this paste cleared)',
+       NOT EXISTS (SELECT 1 FROM orgs WHERE subscription_status = 'canceled' AND subscribed_plan IS NOT NULL), NULL
 UNION ALL SELECT 'orgs: RLS still on',
        COALESCE((SELECT relrowsecurity FROM pg_class WHERE oid = to_regclass('public.orgs')), false), NULL
 UNION ALL SELECT 'self-test: a request with the authenticated role changing subscribed_plan is refused 42501 (NULL = no orgs row to test on; rolled back)',

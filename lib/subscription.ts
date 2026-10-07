@@ -71,11 +71,24 @@ export function shouldShowTrialBanner(info: SubscriptionInfo | null): boolean {
 /** The app statuses that grant access (hasAccess, before the trial clock). */
 export const ACCESS_STATUSES: ReadonlySet<SubscriptionStatus> = new Set<SubscriptionStatus>(["active", "trialing", "past_due"]);
 
-/** Stripe statuses under which Stripe keeps the subscription and can still
- *  bill it: a second checkout beside one of these bills the customer twice
- *  (BILL-8). incomplete (never paid; it expires on its own), incomplete_expired
- *  and canceled are not live. */
+/** Stripe statuses under which Stripe keeps the subscription: the webhook
+ *  records it as the workspace's stripe_subscription_id. incomplete (never
+ *  paid; it expires on its own), incomplete_expired and canceled are not live. */
 export const LIVE_STRIPE_STATUSES: ReadonlySet<string> = new Set(["active", "trialing", "past_due", "unpaid", "paused"]);
+
+/** The live statuses under which Stripe keeps billing the subscription, or
+ *  raising its invoices (unpaid): checkout refuses a second subscription beside
+ *  one of these (BILL-8). A paused subscription raises no invoice and the
+ *  Customer Portal cannot resume it, so a paused workspace may subscribe again
+ *  (review fix pass). */
+export const BILLED_STRIPE_STATUSES: ReadonlySet<string> = new Set(["active", "trialing", "past_due", "unpaid"]);
+
+/** Stripe statuses of a subscription that never started: its first invoice was
+ *  never paid (incomplete), and Stripe then gave up on it (incomplete_expired).
+ *  Such a subscription, and one in a status this code does not know, changes
+ *  only a workspace already on it: never the app's own trial (DEC-44 (A&O P4)
+ *  §6, review fix pass). */
+export const UNSTARTED_STRIPE_STATUSES: ReadonlySet<string> = new Set(["incomplete", "incomplete_expired"]);
 
 /** Stripe statuses on which the subscription's plan is written to the org
  *  (BILL-1 Done-when 2): the subscription has been paid for, or is in a
@@ -102,9 +115,10 @@ export function mapStripeStatus(stripeStatus: string | null | undefined): { stat
   }
 }
 
-/** Does the workspace hold a subscription Stripe can still bill (BILL-8)? Read
- *  from the org row: a subscription id with any status but canceled. The
- *  checkout route confirms it with Stripe before refusing. */
+/** Does the workspace hold a subscription Stripe still bills (BILL-8)? Read
+ *  from the org row: a subscription id with any status but canceled or paused
+ *  (BILLED_STRIPE_STATUSES). The checkout route confirms it with Stripe before
+ *  refusing. */
 export function holdsLiveSubscription(info: Pick<SubscriptionInfo, "status" | "stripeSubscriptionId"> | null): boolean {
-  return !!info?.stripeSubscriptionId && info.status !== "canceled";
+  return !!info?.stripeSubscriptionId && info.status !== "canceled" && info.status !== "paused";
 }

@@ -12,7 +12,7 @@
 // are added.
 
 import Stripe from "stripe";
-import { LIVE_STRIPE_STATUSES, holdsLiveSubscription, type SubscriptionStatus } from "@/lib/subscription";
+import { BILLED_STRIPE_STATUSES, holdsLiveSubscription, type SubscriptionStatus } from "@/lib/subscription";
 
 let client: Stripe | null = null;
 
@@ -126,12 +126,14 @@ export async function customerOwnershipRefusal(stripe: Stripe, customerId: strin
   return null;
 }
 
-/** BILL-8 Done-when 1: the live subscription a second checkout would sit
+/** BILL-8 Done-when 1: the billed subscription a second checkout would sit
  *  beside, or null. The org row is read first (no subscription id, or a
- *  canceled one: no Stripe call, as before); a row that names a live
+ *  canceled or paused one: no Stripe call); a row that names a billed
  *  subscription is confirmed with Stripe, so a stale row (a cancellation
  *  whose event was lost, an incomplete subscription that never paid) does
- *  not block a legitimate subscribe. */
+ *  not block a legitimate subscribe. A paused subscription raises no invoice
+ *  and the Customer Portal cannot resume it, so it does not block either
+ *  (BILLED_STRIPE_STATUSES). */
 export async function liveSubscriptionRefusal(
   stripe: Stripe,
   row: { stripe_subscription_id?: string | null; subscription_status?: string | null },
@@ -145,7 +147,15 @@ export async function liveSubscriptionRefusal(
     if (isStripeMissing(e)) return null;
     return { status: 502, error: `Could not confirm this workspace's existing subscription with Stripe (${(e as Error).message}); nothing was started. Try again.` };
   }
-  if (!LIVE_STRIPE_STATUSES.has(sub.status)) return null;
+  if (!BILLED_STRIPE_STATUSES.has(sub.status)) return null;
+  if (sub.status === "unpaid") {
+    // Stripe keeps an unpaid subscription and keeps raising its invoices, but
+    // charges none of them: "billed twice" would overstate it.
+    return {
+      status: 409,
+      error: `This workspace already has a subscription (unpaid): Stripe keeps it and keeps raising its invoices without charging them. Use "Manage subscription / payment" to update the card and pay the open invoice, or to cancel it — subscribing again would leave a second subscription beside it.`,
+    };
+  }
   return {
     status: 409,
     error: `This workspace already has a subscription (${sub.status.replace(/_/g, " ")}). Use "Manage subscription / payment" to change plan or update the card — subscribing again would bill the workspace twice.`,

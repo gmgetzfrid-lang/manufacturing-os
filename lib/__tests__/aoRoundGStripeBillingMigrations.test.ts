@@ -2,12 +2,14 @@
 // migrations (DEC-30: a guard, a TEMP inventory of counts before ONE
 // transaction, ONE final (check, ok, n) SELECT) and over what they rely on.
 //
-//   20261175 (migration A) — the stripe_events ledger (BILL-4) and the UNIQUE
-//     partial index on orgs(stripe_customer_id) (BILL-6 / ORG-9 / BILL-8),
-//     built only in the world with no duplicates.
+//   20261175 (migration A) — the stripe_events ledger and the per-customer
+//     stripe_event_locks (BILL-4) and the UNIQUE partial index on
+//     orgs(stripe_customer_id) (BILL-6 / ORG-9 / BILL-8), built only in the
+//     world with no duplicates.
 //   20261176 (migration B) — the BEFORE UPDATE guard on orgs that refuses a
 //     member's change to the six billing columns (BILL-2 / ORG-9 / BILL-6);
-//     orgs_admin_write (20261046) is not re-created.
+//     orgs_admin_write (20261046) is not re-created; a canceled workspace's
+//     plan is cleared, counted before and probed after (BILL-3).
 //
 // Neither file re-creates an existing object: the table, the index, the
 // function and the trigger are new, and no earlier migration defines any of
@@ -84,9 +86,14 @@ describe("20261175 — the Stripe event ledger and one workspace per customer", 
     const recorded = new Set(Array.from(route.matchAll(/settle\("(\w+)"/g), (x) => x[1]));
     expect([...recorded].sort()).toEqual(["applied", "ignored", "stale", "superseded", "unresolved"]);
     expect(route).toMatch(/type Outcome = "applied" \| "duplicate" \| "stale" \| "unresolved" \| "superseded" \| "ignored";/);
-    // the webhook's reads match the index: by id, and by (subscription_id, applied, event_created >)
-    expect(A.ddl).toMatch(/CREATE INDEX IF NOT EXISTS stripe_events_subscription_applied_idx\s+ON stripe_events \(subscription_id, event_created DESC\)\s+WHERE outcome = 'applied';/);
-    expect(route).toMatch(/\.eq\("subscription_id", subscriptionId\)\.eq\("outcome", "applied"\)\.gt\("event_created", createdIso\)\.limit\(1\)/);
+    // the webhook's reads match the index: by id, and by (subscription_id, outcome in the
+    // ordering set, event_created >) — a newer subscription event applied or superseded,
+    // a newer invoice event applied
+    expect(A.ddl).toMatch(/CREATE INDEX IF NOT EXISTS stripe_events_subscription_order_idx\s+ON stripe_events \(subscription_id, event_created DESC\)\s+WHERE outcome IN \('applied', 'superseded'\);/);
+    expect(route).toMatch(/const ORDERING_OUTCOMES = \["applied", "superseded"\] as const;/);
+    expect(route).toMatch(/\.eq\("subscription_id", subscriptionId\)\.in\("outcome", ORDERING_OUTCOMES\)\.like\("type", "customer\.subscription\.%"\)\.gt\("event_created", createdIso\)\.limit\(1\)/);
+    expect(route).toMatch(/\.eq\("subscription_id", subscriptionId\)\.eq\("outcome", "applied"\)\.like\("type", "invoice\.%"\)\.gt\("event_created", createdIso\)\.limit\(1\)/);
+    expect(A.tail).toMatch(/indexname = 'stripe_events_subscription_order_idx'[\s\S]*indexdef LIKE '%WHERE \(outcome = ANY \(ARRAY\[%applied%superseded%'/);
     expect(route).toMatch(/const LEDGER_MIGRATION = "20261175_ao_roundG_stripe_events_ledger\.sql";/);
   });
 
@@ -106,9 +113,27 @@ describe("20261175 — the Stripe event ledger and one workspace per customer", 
     expect(A.tail).toMatch(/after: Stripe customer ids still claimed by more than one workspace/);
   });
 
-  it("no earlier migration defines stripe_events or the unique index", () => {
+  it("stripe_event_locks: one row per customer (lock_key the primary key), service role may read, insert and delete; RLS on, no policy", () => {
+    expect(A.ddl).toMatch(/CREATE TABLE IF NOT EXISTS stripe_event_locks \(\s+lock_key\s+TEXT PRIMARY KEY,\s+event_id\s+TEXT NOT NULL,\s+locked_at\s+TIMESTAMPTZ NOT NULL DEFAULT now\(\)\s+\);/);
+    expect(A.ddl).toMatch(/ALTER TABLE stripe_event_locks ENABLE ROW LEVEL SECURITY;/);
+    expect(A.ddl).toMatch(/REVOKE ALL ON stripe_event_locks FROM PUBLIC, anon, authenticated;/);
+    expect(A.ddl).toMatch(/GRANT SELECT, INSERT, DELETE ON stripe_event_locks TO service_role;/);
+    expect(A.tail).toMatch(/pg_get_constraintdef\(oid\) = 'PRIMARY KEY \(lock_key\)'/);
+    expect(A.tail).toMatch(/NOT EXISTS \(SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'stripe_event_locks'\)/);
+    expect(A.tail).toMatch(/has_table_privilege\('service_role', 'public\.stripe_event_locks', 'DELETE'\)/);
+    // the route writes the columns the table has, and its lease is the header's
+    const route = readFileSync(join(root, "app", "api", "stripe", "webhook", "route.ts"), "utf8");
+    expect(route).toMatch(/\.from\("stripe_event_locks"\)\.insert\(\{ lock_key: key, event_id: eventId \}\)/);
+    expect(route).toMatch(/\.from\("stripe_event_locks"\)\.delete\(\)\.eq\("lock_key", key\)\.lt\("locked_at", lapsed\)/);
+    expect(route).toMatch(/\.from\("stripe_event_locks"\)\.delete\(\)\.eq\("lock_key", key\)\.eq\("event_id", eventId\)/);
+    expect(route).toMatch(/const LOCK_LEASE_MS = 60_000;/);
+    expect(A.raw).toMatch(/A row older\s+--\s+than 60 seconds belongs to a run that died/);
+  });
+
+  it("no earlier migration defines stripe_events, stripe_event_locks or the unique index", () => {
     for (const { f, sql } of others) {
       expect(sql, f).not.toMatch(/\bstripe_events\b/);
+      expect(sql, f).not.toMatch(/\bstripe_event_locks\b/);
       expect(sql, f).not.toMatch(/orgs_stripe_customer_unique/);
     }
   });
@@ -154,6 +179,16 @@ describe("20261176 — the orgs billing-columns guard", () => {
       expect(sql, f).not.toMatch(/CREATE\s+(OR\s+REPLACE\s+)?TRIGGER[^;]*\bON\s+(public\.)?orgs\b/i);
       expect(sql, f).not.toMatch(/orgs_billing_columns_guard/);
     }
+  });
+
+  it("BILL-3: inside the transaction, before the trigger, the plan is cleared on canceled workspaces only — counted before, probed after", () => {
+    const backfill = /UPDATE orgs SET subscribed_plan = NULL\n WHERE subscription_status = 'canceled' AND subscribed_plan IS NOT NULL;/;
+    expect(B.ddl).toMatch(backfill);
+    expect(B.ddl.search(backfill)).toBeLessThan(B.ddl.indexOf("CREATE TRIGGER trg_orgs_billing_columns_guard"));
+    // the only orgs UPDATE outside the always-rolled-back self-test
+    expect(B.ddl.match(/^\s*UPDATE orgs\b/gm)).toHaveLength(1);
+    expect(B.inventory).toMatch(/'canceled_with_plan'[\s\S]*cleared by this paste \(BILL-3\)'[\s\S]*\(SELECT COUNT\(\*\) FROM orgs WHERE subscription_status = 'canceled' AND subscribed_plan IS NOT NULL\)::text/);
+    expect(B.tail).toMatch(/NOT EXISTS \(SELECT 1 FROM orgs WHERE subscription_status = 'canceled' AND subscribed_plan IS NOT NULL\), NULL/);
   });
 
   it("the self-test runs after COMMIT, in subtransactions it always rolls back, and feeds two probes", () => {
