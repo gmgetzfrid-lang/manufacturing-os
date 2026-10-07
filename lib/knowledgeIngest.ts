@@ -51,11 +51,14 @@ import {
   isDrawingLikePage, extractEquipmentTags, extractDrawingRefs, extractTitleBlock, extractLineNumbers,
   parseOpcBoxes, parseOpcLine, pageNeedsVision, TEXTLESS_PAGE_MAX_CHARS, MIN_TAGS_THIN_PAGE,
 } from "@/lib/drawingText";
-import { transcribePageImage } from "@/lib/knowledgeVision";
+import { transcribePageImage, VISION_MODEL, VISION_SYSTEM } from "@/lib/knowledgeVision";
 import { isTimeoutError, type AiProviderId } from "@/lib/ai/providerCall";
-import { ALLOWED_PROVIDERS, AGREEMENT_VERSION, type AiUsage } from "@/lib/ai/pricing";
-import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
-import { isAiUsageUnavailable } from "@/lib/ai/gateError";
+import { ALLOWED_PROVIDERS, AGREEMENT_VERSION, worstCaseCostUsd, type AiUsage } from "@/lib/ai/pricing";
+import {
+  getMonthUsage, getCapUsd, capIsLocked, recordAskUsage,
+  reserveWithinCap, settleUsage, releaseUsage, type UsageReservation,
+} from "@/lib/ai/usageServer";
+import { GovernedCallError, isAiUsageUnavailable } from "@/lib/ai/gateError";
 import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
 
 export const PAGE_BATCH = 50;
@@ -127,7 +130,17 @@ export interface VisionContext {
   forceAllPages?: boolean;
   /** Org Playbooks block appended to the transcription system prompt. */
   instructions?: string;
-  onUsage: (usage: { inputTokens: number; outputTokens: number }, model: string) => void;
+  /** Meters one transcription's real figures (awaited). */
+  onUsage: (usage: { inputTokens: number; outputTokens: number }, model: string) => void | Promise<void>;
+  /** GOV-13 / GOV-5: asked before EVERY page's vision call — the payer's
+   *  headroom checked again (the drain and the interactive route reserve
+   *  the call's worst case through visionCallMeter). A
+   *  reason answered here sends nothing: the page is listed for an AI-vision
+   *  retry with that reason on the row (ING-6), as a provider failure is,
+   *  never consumed text-only, and the rest of the batch's vision pages wait
+   *  the same way without asking again. Absent: no per-call check (a caller
+   *  that gated the batch itself). */
+  beforeCall?: () => Promise<string | null>;
 }
 
 export interface IngestBatchResult {
@@ -1388,6 +1401,9 @@ export async function ingestKnowledgeDocBatch(
     let section: string | null = cur.last_section ?? null;
     let visionLeft = vision?.budgetPages ?? 0;
     let visionError: string | null = null;
+    // GOV-13 / GOV-5: a refusal of the payer's headroom (VisionContext.
+    // beforeCall) — the batch's remaining vision pages wait with it.
+    let headroomRefused: string | null = null;
 
     // ING-6: pages whose vision read failed on a provider error. They are
     // committed with whatever their text layer holds, remembered on the row,
@@ -1521,7 +1537,15 @@ export async function ingestKnowledgeDocBatch(
         // a 60s function is pure waste, and worse, it takes the whole batch's
         // committed progress down with it.
         const timeForVision = !deadlineMs || Date.now() + VISION_PAGE_RESERVE_MS <= deadlineMs;
-        if (vision && visionLeft > 0 && timeForVision) {
+        // GOV-13 / GOV-5: the payer's headroom, asked before EVERY call.
+        if (vision && visionLeft > 0 && timeForVision && !headroomRefused && vision.beforeCall) {
+          headroomRefused = await vision.beforeCall();
+        }
+        if (vision && headroomRefused) {
+          // Nothing sent: the page waits for AI vision with the reason on
+          // the row, like a provider failure (ING-6) — never text-only.
+          visionFailed = sanitizeStorageText(headroomRefused).slice(0, 300);
+        } else if (vision && visionLeft > 0 && timeForVision) {
           try {
             const img = await renderPageAsImage(pdf, p, {
               width: 1800,                                  // small tags stay legible
@@ -1539,7 +1563,7 @@ export async function ingestKnowledgeDocBatch(
               // Whatever's left after rendering, minus room to commit.
               timeoutMs: deadlineMs ? Math.max(5_000, deadlineMs - Date.now() - 4_000) : undefined,
             });
-            vision.onUsage(out.usage, out.model);
+            await vision.onUsage(out.usage, out.model);
             visionLeft--;
             const transcript = out.text.trim();
             // A transcript this short means the model found nothing legible:
@@ -2220,6 +2244,19 @@ export async function ingestKnowledgeDocBatch(
   }
 }
 
+/** GOV-5 / ING-13: what a queued document in a read-every-page library
+ *  says on its row while the nightly run cannot read it (fileBehind): the
+ *  blocker of the moment, written on every run, so a reason that has gone
+ *  away never stays on the row after another takes its place. */
+const everyPageWait = (cause: string, until: string): string =>
+  `This library reads every page with AI vision, so the document waits in the queue: ${cause}. It is indexed ${until}.`;
+
+/** loadSponsorVision's answer: a vision context, or none — and then, for a
+ *  read-every-page library, the sentence its queued row says (`waitReason`). */
+type SponsorVision =
+  | { ctx: VisionContext; forceAllPages: boolean; noVisionReason?: undefined; waitReason?: undefined }
+  | { ctx?: undefined; forceAllPages: boolean; noVisionReason?: string; waitReason: string };
+
 /** Background drain used by the maintenance cron: keep ingesting queued
  *  (pending/stale) documents until the page budget or deadline runs out.
  *  Errors mark the row and continue — one broken PDF must not starve the
@@ -2234,11 +2271,13 @@ export async function ingestKnowledgeDocBatch(
  *  not accepted the current agreement, an acceptance or a ledger that
  *  cannot be read (GOV-11 / GOV-4) — it says so (`noVisionReason`): the
  *  engine then holds the pages that need vision instead of consuming them,
- *  and names that reason on the row, as the interactive route does. */
+ *  and names that reason on the row, as the interactive route does. With
+ *  no context it always says why a read-every-page library's document
+ *  waits (`waitReason`, everyPageWait). */
 async function loadSponsorVision(
   doc: KnowledgeDocRow,
-  onUsage: (usage: { inputTokens: number; outputTokens: number }, model: string) => void,
-): Promise<{ ctx?: VisionContext; forceAllPages: boolean; noVisionReason?: string }> {
+  meter: VisionCallMeter,
+): Promise<SponsorVision> {
   const { data: libRow } = await supabaseAdmin
     .from("knowledge_libraries").select("ai_features")
     .eq("id", doc.library_id).maybeSingle();
@@ -2246,12 +2285,22 @@ async function loadSponsorVision(
     ((libRow?.ai_features ?? {}) as Record<string, unknown>).visionAllPages === true;
 
   const sponsor = doc.created_by ?? null;
-  if (!sponsor) return { forceAllPages };
+  if (!sponsor) {
+    return {
+      forceAllPages,
+      waitReason: everyPageWait("it has no uploader whose AI key the nightly run could use (a doc-control mirror has none)",
+        "when a controller with budget indexes it"),
+    };
+  }
   const { data: conn } = await supabaseAdmin
     .from("ai_connections").select("provider, model, api_key")
     .eq("org_id", doc.org_id).eq("user_id", sponsor).maybeSingle();
   if (!conn || !ALLOWED_PROVIDERS.includes(conn.provider as AiProviderId)) {
-    return { forceAllPages };
+    return {
+      forceAllPages,
+      waitReason: everyPageWait("the uploader has no AI key the nightly run can use (none is saved, or its provider is not allowed)",
+        "once the uploader saves an allowed key, or when a controller with budget indexes it"),
+    };
   }
   {
     const { data: agree, error: agreeError } = await supabaseAdmin
@@ -2260,13 +2309,20 @@ async function loadSponsorVision(
       .eq("scope", "use").eq("agreement_version", AGREEMENT_VERSION).limit(1);
     const tableMissing = !!agreeError && (agreeError.code === "42P01" || /does not exist/i.test(agreeError.message));
     if (agreeError && !tableMissing) {
-      return { forceAllPages, noVisionReason: "The uploader's AI acceptable-use agreement can't be checked right now, so pages without a text layer are held for AI vision." };
+      return {
+        forceAllPages,
+        noVisionReason: "The uploader's AI acceptable-use agreement can't be checked right now, so pages without a text layer are held for AI vision.",
+        waitReason: everyPageWait("the uploader's AI acceptable-use agreement can't be checked right now",
+          "once it can be, or when a controller with budget indexes it"),
+      };
     }
     if (!tableMissing && (agree ?? []).length === 0) {
       return {
         forceAllPages,
         noVisionReason: "The uploader has not accepted the current AI acceptable-use agreement, so pages without a text layer are held for AI vision " +
           "— they are read once the uploader accepts it, or when a controller who has accepted it indexes this document.",
+        waitReason: everyPageWait("the uploader has not accepted the current AI acceptable-use agreement",
+          "once the uploader accepts it, or when a controller who has accepted it indexes it"),
       };
     }
   }
@@ -2279,21 +2335,163 @@ async function loadSponsorVision(
     getCapUsd(doc.org_id, sponsor),
   ]).catch((e: unknown) => { if (isAiUsageUnavailable(e)) return null; throw e; });
   if (!ledger) {
-    return { forceAllPages, noVisionReason: "AI usage can't be read right now, so pages without a text layer are held for AI vision." };
+    return {
+      forceAllPages,
+      noVisionReason: "AI usage can't be read right now, so pages without a text layer are held for AI vision.",
+      waitReason: everyPageWait("AI usage can't be read right now", "once it can be, or when a controller with budget indexes it"),
+    };
   }
   const [spent, cap] = ledger;
-  if (cap > 0 && spent.spentUsd >= cap) return { forceAllPages };
-
-  return {
-    forceAllPages,
-    ctx: {
-      provider: conn.provider as AiProviderId,
-      model: conn.model as string,
-      apiKey: openAiKey(conn.api_key as string),
-      budgetPages: 4,                       // per batch — same as interactive
+  // GOV-5 done-when 3: a sponsor with no headroom left HOLDS the pages that
+  // need vision and says why on the document — they used to be consumed
+  // text-only, the document reaching 'ready' with those pages unread and
+  // nothing to read them once the cap reset. (The same `cap > 0 && spent >=
+  // cap` shape as before: getCapUsd never answers 0 — a $0 cap is the lock,
+  // LOCKED_CAP_USD — and getMonthUsage floors a locked member's month at it.)
+  if (cap > 0 && spent.spentUsd >= cap) {
+    const capCause = capIsLocked(cap)
+      ? "the uploader's monthly AI cap is set to $0 (AI is locked for them)"
+      : `the uploader's monthly AI cap is reached ($${spent.spentUsd.toFixed(2)} of $${cap.toFixed(2)})`;
+    const until = capIsLocked(cap)
+      ? "once someone who manages AI caps raises it"
+      : "once it resets on the 1st or is raised";
+    return {
       forceAllPages,
-      instructions: await loadOrgInstructionsBlock(supabaseAdmin, doc.org_id, "equipment"),
-      onUsage,
+      noVisionReason: `${capCause[0].toUpperCase()}${capCause.slice(1)}, so pages without a text layer are held for AI vision ` +
+        `— they are read ${until}, or when a controller with budget indexes this document.`,
+      waitReason: everyPageWait(capCause, `${until}, or when a controller with budget indexes it`),
+    };
+  }
+
+  const ctx: VisionContext = {
+    provider: conn.provider as AiProviderId,
+    model: conn.model as string,
+    apiKey: openAiKey(conn.api_key as string),
+    budgetPages: 4,                       // per batch — same as interactive
+    forceAllPages,
+    instructions: await loadOrgInstructionsBlock(supabaseAdmin, doc.org_id, "equipment"),
+    onUsage: meter.onUsage,
+  };
+  // GOV-13 / GOV-5: every page's call is reserved against the uploader's
+  // cap before it is made — the check above is only the first.
+  ctx.beforeCall = () => meter.beforeCall(ctx, cap);
+  return { forceAllPages, ctx };
+}
+
+/** transcribePageImage's output ceiling per attempt (lib/knowledgeVision.ts
+ *  — a test pins the two together): a page's worst case is priced on it. */
+export const VISION_PAGE_MAX_TOKENS = 4000;
+
+/** GOV-13 / GOV-5: one page's AI vision read at its worst — one image, the
+ *  full output ceiling, the system prompt with the org's instructions, and
+ *  the dearer of the two models transcribePageImage may use (it asks the
+ *  cheap tier first; a 400 / 404 there is a refusal, never billed, before it
+ *  asks the payer's own model). */
+export function visionPageWorstCaseUsd(ctx: Pick<VisionContext, "provider" | "model" | "instructions">, documentName: string): number {
+  const inputChars = VISION_SYSTEM.length + (ctx.instructions?.length ?? 0) + documentName.length + 80;
+  return Math.max(0, ...[VISION_MODEL[ctx.provider], ctx.model].filter(Boolean)
+    .map((m) => worstCaseCostUsd(m, { inputChars, images: 1, maxTokens: VISION_PAGE_MAX_TOKENS })));
+}
+
+/** GOV-5 / GOV-13: the uploader's refusal, said on the document as the
+ *  cause its pages wait on AI vision for (visionRetryMessage frames it).
+ *  Third person — the row is read by whoever opens the document, not by
+ *  the uploader the ledger's own sentences address. */
+export function sponsorHeadroomCause(e: unknown): string {
+  if (!(e instanceof GovernedCallError) || e.status === 503) {
+    return `AI usage can't be read right now (${(e as Error)?.message || "unknown error"})`;
+  }
+  const d = (e.details ?? {}) as { spentUsd?: number; capUsd?: number; reservedUsd?: number; locked?: boolean };
+  if (d.locked) return "the uploader's monthly AI cap is set to $0 (AI is locked for them)";
+  const spentUsd = Number(d.spentUsd ?? 0);
+  const capUsd = Number(d.capUsd ?? 0);
+  const reservedUsd = Number(d.reservedUsd ?? 0);
+  if (spentUsd >= capUsd) return `the uploader's monthly AI cap is reached ($${spentUsd.toFixed(2)} of $${capUsd.toFixed(2)})`;
+  // Short: the row's message fits it into ERROR_MAX_CHARS with the retry cadence.
+  return `the uploader's $${capUsd.toFixed(2)} monthly AI cap has $${Math.max(0, capUsd - spentUsd).toFixed(2)} left; ` +
+    `one page could cost up to $${reservedUsd.toFixed(2)}`;
+}
+
+/** The payer's AI vision spend on one document (the drain) or one request
+ *  (the interactive route), reserved before each call and metered as it
+ *  happens. */
+export interface VisionCallMeter {
+  /** VisionContext.beforeCall: reserve the next page's worst case against
+   *  `capUsd`; the reason (said on the row) when it does not fit. */
+  beforeCall: (ctx: VisionContext, capUsd: number) => Promise<string | null>;
+  /** VisionContext.onUsage: fold one call's real figures into the ONE row. */
+  onUsage: (usage: AiUsage, model: string) => Promise<void>;
+  /** After the last batch: drops a reservation no call used (and meters,
+   *  once, calls made on a context without beforeCall). */
+  finish: (ctx: VisionContext | undefined) => Promise<void>;
+}
+
+/** GOV-5 / GOV-13: before each page's call its worst case
+ *  (visionPageWorstCaseUsd) is reserved against the payer's cap with every
+ *  other reservation in view (reserveWithinCap): a refusal sends nothing,
+ *  and the page waits for AI vision with `cause(refusal)` on the row. After
+ *  the call its real figures fold into ONE knowledgeVision row — the first
+ *  reservation, settled with the running total after every call, each
+ *  later call's reservation released only after that write landed — so a
+ *  run killed part-way has already recorded what it spent, and a payer
+ *  under the cap is metered exactly the totals, in the one row, that were
+ *  written after the batch before. A reservation whose call reported no
+ *  figures (a provider failure, a timeout) is released, as such a call was
+ *  never metered. */
+export function visionCallMeter(payer: {
+  orgId: string; userId: string; documentName: string;
+  /** The sentence a refusal is said in, on the row. */
+  cause: (e: unknown) => string;
+}): VisionCallMeter {
+  const usage: AiUsage = { inputTokens: 0, outputTokens: 0 };
+  let model = "";
+  let row: UsageReservation | null = null;      // the ONE metering row
+  let pending: UsageReservation | null = null;  // the call about to be made
+  const dropPending = async () => {
+    const p = pending;
+    pending = null;
+    if (p) await releaseUsage(p.id);
+  };
+  return {
+    async beforeCall(ctx, capUsd) {
+      await dropPending();
+      try {
+        pending = await reserveWithinCap({
+          orgId: payer.orgId, userId: payer.userId, op: "knowledgeVision",
+          provider: ctx.provider, model: VISION_MODEL[ctx.provider] || ctx.model,
+          worstCaseUsd: visionPageWorstCaseUsd(ctx, payer.documentName), capUsd,
+        });
+        return null;
+      } catch (e) {
+        return payer.cause(e);
+      }
+    },
+    async onUsage(u, m) {
+      usage.inputTokens += u.inputTokens;
+      usage.outputTokens += u.outputTokens;
+      model = m;
+      // A later call folds into the ONE row: the row's new total is written
+      // FIRST and the call's own reservation given back after, only once
+      // that write landed — so at no moment is what the call spent on the
+      // ledger nowhere (a failed write leaves its worst case standing).
+      const folded = row ? pending : null;
+      if (!row) row = pending;
+      pending = null;
+      if (!row) return;
+      const written = await settleUsage(row.id, { model, usage, ok: true });
+      if (folded && written) await releaseUsage(folded.id);
+    },
+    async finish(ctx) {
+      await dropPending();
+      // Calls made with no reservation (a context used without beforeCall)
+      // are still metered, once, as they were before.
+      if (!row && ctx && usage.inputTokens + usage.outputTokens > 0) {
+        await recordAskUsage({
+          orgId: payer.orgId, userId: payer.userId,
+          provider: ctx.provider, model: model || ctx.model,
+          usage, ok: true, op: "knowledgeVision",
+        }).catch(() => undefined);
+      }
     },
   };
 }
@@ -2344,12 +2542,19 @@ export async function drainKnowledgeIngestQueue(opts: {
    *  overwrites a writer's — and a back-off still in force already files it
    *  behind now, and is never shortened. Checked: a stamp that cannot be
    *  written is reported. */
-  const fileBehind = async (d: KnowledgeDocRow): Promise<void> => {
+  const fileBehind = async (d: KnowledgeDocRow, reason: string): Promise<void> => {
     if (!hasStamp) return;
     const nowMs = Date.now();
     const at = Date.parse(String(d.vision_retry_after ?? ""));
     if (Number.isFinite(at) && at > nowMs) return;
-    let q = supabaseAdmin.from("knowledge_documents").update({ vision_retry_after: new Date(nowMs).toISOString() })
+    // GOV-5: why the document waits is said on the row (a queued row's
+    // reason shows on the library page), never only in the run's report —
+    // and it is the reason of THIS run, whatever the blocker, so a sentence
+    // a later run no longer holds (the cap, once it reset) never stays.
+    let q = supabaseAdmin.from("knowledge_documents").update({
+      vision_retry_after: new Date(nowMs).toISOString(),
+      error: truncateSafe(reason, ERROR_MAX_CHARS),
+    })
       .eq("id", d.id).eq("file_key", d.file_key)
       .or(`ingest_claimed_at.is.null,ingest_claimed_at.lt."${cutoff}"`);
     q = d.vision_retry_after == null ? q.is("vision_retry_after", null) : q.eq("vision_retry_after", d.vision_retry_after);
@@ -2367,14 +2572,16 @@ export async function drainKnowledgeIngestQueue(opts: {
     // drawings as empty pages. Leave it queued for an interactive driver,
     // filed behind what lapsed before now (a mirror has no uploader, so no
     // sponsor ever: left where it was, it would come first every night).
-    const visionUsage: AiUsage = { inputTokens: 0, outputTokens: 0 };
-    let visionModel = "";
-    const sponsor = await loadSponsorVision(doc, (u, model) => {
-      visionUsage.inputTokens += u.inputTokens;
-      visionUsage.outputTokens += u.outputTokens;
-      visionModel = model;
+    // GOV-5 / GOV-13: each page's call reserved against the uploader's cap
+    // first, and metered as it happens into one row per document.
+    const meter = visionCallMeter({
+      orgId: doc.org_id, userId: doc.created_by ?? "", documentName: doc.name ?? "", cause: sponsorHeadroomCause,
     });
-    if (!sponsor.ctx && sponsor.forceAllPages) { await fileBehind(doc); continue; }
+    const sponsor = await loadSponsorVision(doc, meter);
+    // GOV-5 done-when 3: no context for a read-every-page library — the
+    // document waits in the queue, and the row says why, whatever the
+    // blocker (the uploader's cap, agreement, ledger or key, or no uploader).
+    if (!sponsor.ctx && sponsor.forceAllPages) { await fileBehind(doc, sponsor.waitReason); continue; }
 
     out.docsTouched++;
     let row: KnowledgeDocRow = doc;
@@ -2432,13 +2639,8 @@ export async function drainKnowledgeIngestQueue(opts: {
       // Only onto the row the failing batch read (ING-1).
       await markIngestFailed(row, e).catch(() => undefined);
     }
-    if (visionUsage.inputTokens + visionUsage.outputTokens > 0 && sponsor.ctx && doc.created_by) {
-      await recordAskUsage({
-        orgId: doc.org_id, userId: doc.created_by,
-        provider: sponsor.ctx.provider, model: visionModel || sponsor.ctx.model,
-        usage: visionUsage, ok: true, op: "knowledgeVision",
-      }).catch(() => undefined);
-    }
+    // Already metered call by call: only an unused reservation to drop.
+    await meter.finish(sponsor.ctx);
   }
   return out;
 }

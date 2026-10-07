@@ -43,7 +43,11 @@ vi.mock("@/lib/r2", () => ({
 }));
 vi.mock("@/lib/knowledgeVision", () => ({ transcribePageImage: vi.fn() }));
 vi.mock("@/lib/equipmentBridgeServer", () => ({ computeForKnowledgeDoc: vi.fn(async () => undefined) }));
-vi.mock("@/lib/ai/usageServer", () => ({ getMonthUsage: vi.fn(), getCapUsd: vi.fn(), recordAskUsage: vi.fn() }));
+vi.mock("@/lib/ai/usageServer", async () => ({
+  // the reservation calls (GOV-13 / GOV-5) from the ledger stand-in
+  ...(await import("./helpers/fakeUsageMeter")).fakeUsageServer(),
+  getMonthUsage: vi.fn(), getCapUsd: vi.fn(), recordAskUsage: vi.fn(),
+}));
 vi.mock("@/lib/aiInstructionsServer", () => ({ loadOrgInstructionsBlock: vi.fn(async () => "") }));
 vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (k: string) => k }));
 

@@ -493,6 +493,102 @@ DESC, id DESC)` and keeps the reader's order. I-14 added no migration.
 SERVER ASSEMBLY ships it, since its route runs this read; no planned
 package named a migration on `proposed_links`.*
 
+**APPLIED by I-18 (intelligence Round G, 2026-10-02; completed 2026-10-07).**
+`supabase/migrations/20261173_intel_roundG_ai_cap_change.sql` adds
+`ai_cap_change`, one SECURITY DEFINER function (`search_path` pinned,
+EXECUTE for `service_role` only, a signed-in session refused). It takes the
+workspace's cap-change lock and `FOR UPDATE` on the rows it reads, decides
+the ban, the sole holder, the hold, `unchanged` and `pinnedAtDefault`,
+writes, and audits in one transaction. `lib/ai/capChange.ts` calls it and,
+until the file is pasted (PGRST202 / a 42883 naming it), makes the change
+app-side: today's sequential path, without the race machinery, said once in
+the server log. The route's machinery is deleted (1,328 lines to 429). The
+self-clear that is not a raise is allowed through the function, and
+`readMonthRows` pages by key. Verified on PostgreSQL 16 (`GOV-15`'s
+Resolution).
+
+**Paste and deploy order for `20261173`:** after `20260916`; independent of
+`20261137`. Paste it BEFORE the deploy of I-18, or in the same window. The
+app keeps working unpasted (PGRST202 / 42883 take the app-side path, and
+the server log says so), but the unpasted app is weaker than `3015a7f`
+against cap changes in flight. The app-side path has none of `3015a7f`'s
+guards (the guarded writes, the re-reads against the default, the
+put-backs), so interleavings like review 8 (a) are open again until the
+paste: a holder's own $5 insert racing another holder's $0 workspace lock
+ends at $5 with a 200. *(I-18 fix pass, 2026-10-07: this said "either
+order with the deploy".)* For the integrator's `MIGRATION-PASTE-ORDER.md`
+row: not a widening; no re-created object; one result set of seven probes
+and six counts; paste before or with the app deploy.
+
+*Integrator at the I-18 merge (2026-10-07): projects J12's widened checked-write census (`lib/__tests__/checkedWrite.test.ts`, SAF-18), merged after I-18's base, judges a write checked only through `checkedWrite` or a `.select("id")` whose rows are counted. I-18's new `holdUsage` and `lib/ai/capChange.ts`'s two deletes are now count-checked: `holdUsage` answers false when no row matched (no reservation left to carry the figure); the clear counts the override rows it removed; the hold's put-back counts what it took out (a no-match stays silent, as before). `lib/ai/usageServer.ts` stays at its measured 3. The orchestrator test's fake answers an update's `.select("id")` with the rows it matched, as PostgREST does.*
+
+**MERGE note — I-18's limbs in other packages' files** (intelligence Round G,
+2026-10-02). Whoever next edits each keeps the limb:
+
+- `lib/knowledgeIngest.ts` (I-06's / I-06b's). `VisionContext.beforeCall` is
+  asked before every page's AI vision call; a refusal holds the page
+  (`vision_failed_pages`) with the reason and the batch's later vision pages
+  wait with it. `visionCallMeter` reserves each page and settles every call
+  into one row, writing each later call's figures into it before that
+  call's reservation is released, and only once the write landed (I-18
+  fix pass 3). `loadSponsorVision` holds an uploader at the cap with the
+  reason (`noVisionReason`); for a read-every-page library it returns the
+  sentence `fileBehind` writes on the row for EVERY blocker of that run
+  (`waitReason`: the cap, the agreement, the ledger, no key, no uploader;
+  I-18 fix pass 3 — it was the cap alone, as `capHeld`). I-06b's
+  `fileBehind` tests in `ingestLock.test.ts` match the stamp and the
+  reason since then. I-06b's MERGE note items are untouched:
+  the reset reads the owed pages before any delete, the drain passes
+  `visionAllPages: sponsor.forceAllPages`, and `reindex()`'s JSON 500 is
+  the route's.
+- `app/api/knowledge/ingest/route.ts` (I-06's). Its VisionContext carries
+  `beforeCall` through `visionCallMeter`, and the meter's `finish` runs in
+  the batch's `finally`. At the requester's cap (or a $0 lock) it sets
+  `noVisionReason` and `heldForVision` (GOV-5, I-18 fix pass): the pages
+  that need vision are held, never indexed text-only, and a read-every-page
+  library answers 409 with nothing indexed.
+- `app/api/knowledge/locate/route.ts` (I-07's). It runs `assertAiGates`
+  and reserves every call (coarse pass, close-ups, relocate), folding them
+  into one `drawingLocate` row; a call that reports no figures gives its
+  reservation back, so a request that spent nothing writes no row (I-18
+  fix pass 2). A 428 from the gate is re-read once
+  (`agreementUnsigned`): a record that is there, or that cannot be read, is
+  "Couldn't confirm…", never `agreementRequired`.
+- `app/api/orchestrator/route.ts` (I-04's). Each round is reserved; the
+  run's row stays a reservation (`holdUsage`) until the route settles it
+  when the run ends, and later rounds reserve under `orchestratorRound`
+  (`ORCHESTRATOR_ROUND_OP`, which `rollupUsage` shows on the assistant's
+  line), so ORCH-7's `maxInFlight` counts runs, not calls or rows.
+- `lib/knowledgeEmbedCore.ts` (I-02's). `embedLibrarySlice`'s
+  `beforeEmbed` (after the claim, before any call; a refusal gives the
+  batch back and stops the slice) and `afterBatch`.
+- `lib/knowledgeEmbedDrain.ts` (I-02's; I-18 owned it here). Each batch
+  reserved against the payer's cap; one row per library run settled after
+  every batch, each later batch written in before its reservation is
+  released; a refusal holds the library `cap` until the 1st only when the
+  cap is reached (`capRefusalKind`; a batch that only does not fit what is
+  left ends the run's work on it with no hold; `error` for an hour on an
+  unreadable ledger; I-18 fix pass 3). `beforeEmbed` releases a
+  reservation no batch folded in (a legacy-queue 429) before it reserves
+  the next (I-18 fix pass 2; the embed route does the same).
+- `app/api/knowledge/embed/route.ts` (I-02's). Each batch reserved; the
+  refusal is the answer's error; one row per request settled after every
+  batch.
+- `app/api/codebook/import/route.ts` (I-10's). The call is reserved before
+  it is made (402 with the reservation's sentence), and its row is settled
+  after.
+- Test mocks of `lib/ai/usageServer` that drive these paths take the
+  reservation stand-in `lib/__tests__/helpers/fakeUsageMeter.ts`.
+- Every fold (I-18 fix pass 3): `settleUsage` and `holdUsage`
+  (`lib/ai/usageServer.ts`) and `AiReservation.settle` (`lib/ai/aiGates.ts`,
+  I-05's) answer whether the row now carries the figures (a boolean, where
+  they answered nothing). The orchestrator, locate, `visionCallMeter`, the
+  embed drain and the embed route write the row first and release the
+  folded reservation only when that answer is true. A caller that ignores
+  the answer is unchanged (the ask route, which already settles before it
+  releases). A test mock of either that answers nothing makes a fold keep
+  the folded reservation: answer `true`, as the stand-in does.
+
 ---
 
 ## Do not do these

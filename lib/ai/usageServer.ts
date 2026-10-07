@@ -136,12 +136,22 @@ export const isReservationRow = (r: Pick<UsageRow, "est_cost_usd" | "input_token
 
 const round4 = (n: number) => Math.round(n * 10000) / 10000;
 
+/** ORCH-7: the op an assistant run's SECOND and later rounds reserve under.
+ *  A run's first round is its 'orchestrator' row — the one row per run that
+ *  maxInFlight counts, a reservation until the run ends; a later round's
+ *  reservation is spend every check sees while the round is at the
+ *  provider, released once the round is folded into that row, and never a
+ *  second run. Its spend shows on the assistant's line. */
+export const ORCHESTRATOR_ROUND_OP = "orchestratorRound";
+/** The op line a row's spend is shown on, when it is not its own op. */
+const OP_LINE = new Map<string, string>([[ORCHESTRATOR_ROUND_OP, "orchestrator"]]);
+
 /** Pure: one member's rows → their month. Every op counts toward spentUsd. */
 export function rollupUsage(rows: UsageRow[]): MonthUsage {
   const out = emptyUsage();
   let askInput = 0;
   for (const r of rows) {
-    const op = r.op || "unknown";
+    const op = OP_LINE.get(r.op ?? "") ?? (r.op || "unknown");
     const line = (out.byOp[op] ??= { spentUsd: 0, calls: 0, inputTokens: 0, outputTokens: 0 });
     if (isReservationRow(r)) {
       const reserved = Number(r.est_cost_usd) || 0;
@@ -189,34 +199,81 @@ const PAGE = 1000;
 /** 100k rows in one month for one org is past anything metered today; a
  *  ledger that size is reported as unreadable rather than summed partially. */
 const MAX_PAGES = 100;
+/** The most rows one read sums: MAX_PAGES full pages. */
+const MAX_ROWS = PAGE * MAX_PAGES;
+/** A backstop on statements, never the row ceiling: a page re-reads the
+ *  rows at its last instant, so a month whose instants each hold hundreds
+ *  of rows (or a max-rows setting below PAGE) takes more statements than
+ *  MAX_PAGES to reach MAX_ROWS. */
+const MAX_READS = 3 * MAX_PAGES;
 
-/** Every current-month row matching the filter, paged past PostgREST's row
- *  cap (a partial sum would read as headroom that does not exist). A page
- *  shorter than asked for is NOT taken as the last one — the project's
- *  max-rows setting may be below PAGE — so the read continues from where the
- *  rows end until it holds the exact count PostgREST reports, or a page
- *  comes back empty. */
+/** Every current-month row matching the filter, read past PostgREST's row
+ *  cap (a partial sum would read as headroom that does not exist).
+ *
+ *  Paged by KEY, never by offset (GOV-15), with bound filters only (GOV-14:
+ *  nothing is spliced into a filter string). Rows come in (created_at, id)
+ *  order. Every row of a page before the instant of its last row is final;
+ *  the rows AT that instant may continue past the page, so they are left
+ *  for the next page, which starts at that instant (`gte`) and reads them
+ *  again with the rest. One statement per page, about one per PAGE rows.
+ *  A page that is all one instant (a page or more of rows written at the
+ *  same moment) is read on through that instant by id, then the read moves
+ *  past it (`gt`). An offset page shifted under a reservation inserted or
+ *  released between two reads (a row skipped, or one counted twice); a key
+ *  does not move.
+ *
+ *  A page shorter than asked for is NOT taken as the last one — the
+ *  project's max-rows setting may be below PAGE — so a read is finished
+ *  only when PostgREST's exact count for that read says it holds every row
+ *  the read matched, or a read comes back empty. Rows already summed plus
+ *  the rows a read matched is the month's size (at least), so a ledger past
+ *  MAX_ROWS is refused as soon as a count says so. */
 async function readMonthRows(orgId: string, userId: string | null): Promise<UsageRow[]> {
   const rows: UsageRow[] = [];
-  for (let page = 0; page < MAX_PAGES; page++) {
+  const tooMany = () => new AiUsageUnavailableError(`the usage ledger holds more than ${MAX_ROWS} rows this month`);
+  /** Where the next page starts: at or after `at` (`strict`: after it only). */
+  let from: { at: string; strict: boolean } = { at: monthStartIso(), strict: false };
+  /** Reading on through one instant by id (it fills a page by itself). */
+  let instant: { at: string; afterId: string } | null = null;
+  for (let reads = 0; reads < MAX_READS; reads++) {
     let q = supabaseAdmin
       .from("ai_usage_events")
       .select(USAGE_COLUMNS, { count: "exact" })
       .eq("org_id", orgId);
     if (userId !== null) q = q.eq("user_id", userId);
-    const from = rows.length;
+    if (instant) q = q.eq("created_at", instant.at).gt("id", instant.afterId);
+    else q = from.strict ? q.gt("created_at", from.at) : q.gte("created_at", from.at);
     const { data, error, count } = await q
-      .gte("created_at", monthStartIso())
       .order("created_at", { ascending: true })
       .order("id", { ascending: true })
-      .range(from, from + PAGE - 1);
+      .range(0, PAGE - 1);
     if (error) throw new AiUsageUnavailableError(`couldn't read the usage ledger: ${error.message}`);
     const batch = (data ?? []) as UsageRow[];
-    rows.push(...batch);
-    if (batch.length === 0) return rows;
-    if (typeof count === "number" && rows.length >= count) return rows;
+    if (typeof count === "number" && rows.length + count > MAX_ROWS) throw tooMany();
+    const whole = batch.length === 0 || (typeof count === "number" && batch.length >= count);
+    const last = batch[batch.length - 1];
+    if (instant) {
+      rows.push(...batch);
+      // The instant is done: on to the rows after it.
+      if (whole) { from = { at: instant.at, strict: true }; instant = null; }
+      else instant = { at: instant.at, afterId: String(last.id ?? "") };
+    } else if (whole) {
+      rows.push(...batch);
+      return rows;
+    } else {
+      const lastAt = String(last.created_at ?? "");
+      const before = batch.filter((r) => String(r.created_at ?? "") !== lastAt);
+      if (before.length > 0) {
+        rows.push(...before);
+        from = { at: lastAt, strict: false };
+      } else {
+        rows.push(...batch);
+        instant = { at: lastAt, afterId: String(last.id ?? "") };
+      }
+    }
+    if (rows.length > MAX_ROWS) throw tooMany();
   }
-  throw new AiUsageUnavailableError(`the usage ledger holds more than ${PAGE * MAX_PAGES} rows this month`);
+  throw new AiUsageUnavailableError(`the usage ledger took more than ${MAX_READS} reads to sum this month`);
 }
 
 /** One user's current-month usage, every op. Throws AiUsageUnavailableError
@@ -400,17 +457,45 @@ export async function reserveWithinCap(input: {
 
 /** Replace a reservation with the call's real figures. Never throws:
  *  metering must not mask the call's own outcome. A settle that fails leaves
- *  the reservation's worst case standing — over-counted, never under. */
-export async function settleUsage(id: string, input: { model: string; usage: AiUsage; ok: boolean }): Promise<void> {
+ *  the reservation's worst case standing — over-counted, never under.
+ *  Answers whether the row now carries the figures: a caller folding another
+ *  call's reservation into this row gives that reservation back only after
+ *  the write, and only when it landed (GOV-13), so the call's spend is never
+ *  on the ledger nowhere. */
+export async function settleUsage(id: string, input: { model: string; usage: AiUsage; ok: boolean }): Promise<boolean> {
   try {
-    await supabaseAdmin.from("ai_usage_events").update({
+    const res = await supabaseAdmin.from("ai_usage_events").update({
       model: input.model,
       input_tokens: Math.max(0, input.usage.inputTokens),
       output_tokens: Math.max(0, input.usage.outputTokens),
       est_cost_usd: estimateCostUsd(input.model, input.usage),
       ok: input.ok,
     }).eq("id", id);
-  } catch { /* the reservation stands */ }
+    return !res?.error;
+  } catch {
+    return false; // the reservation stands
+  }
+}
+
+/** Fold a run's real cost so far into its reservation and KEEP it a
+ *  reservation: the cost replaces the worst case, the token counts stay
+ *  unset until settleUsage. A multi-call run (the assistant's loop) uses it
+ *  between calls, so the run counts as in flight for maxInFlight until it
+ *  finishes — not only while a call is at the provider — while what it has
+ *  spent is already on the ledger if it dies part-way. Never throws: a
+ *  failed update leaves the figure it had. Answers whether the row now
+ *  carries the new figure, as settleUsage does. */
+export async function holdUsage(id: string, input: { model: string; usage: AiUsage }): Promise<boolean> {
+  try {
+    const res = await supabaseAdmin.from("ai_usage_events").update({
+      model: input.model,
+      est_cost_usd: estimateCostUsd(input.model, input.usage),
+    }).eq("id", id).select("id");
+    // No row matched: there is no reservation left to carry the figure.
+    return !res?.error && ((res?.data as unknown[] | null) ?? []).length > 0;
+  } catch {
+    return false; // the figure it had stands
+  }
 }
 
 /** Drop a reservation for a call that was never made. If the delete fails

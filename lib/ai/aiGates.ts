@@ -85,8 +85,11 @@ export interface AiCallEstimate {
 export interface AiReservation {
   id: string;
   reservedUsd: number;
-  /** Meter the call's real figures. Never throws. */
-  settle(result: { usage: AiUsage; ok: boolean; model?: string }): Promise<void>;
+  /** Meter the call's real figures. Never throws. Answers whether the row
+   *  now carries them (false: the write failed and the reservation's worst
+   *  case stands) — a caller folding another call's reservation into this
+   *  row releases that one only after, and only once, they do (GOV-13). */
+  settle(result: { usage: AiUsage; ok: boolean; model?: string }): Promise<boolean>;
   /** The call was not made after all. Never throws. */
   release(): Promise<void>;
 }

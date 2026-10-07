@@ -27,8 +27,10 @@
 //           pages it waits on and why
 //   DWG-7   text with no tags says drawing or prose
 //   DWG-4   box pairing with no input says so
-//   DWG-5 / GOV-8  every locate call is metered in one row written after the
-//           last; the cap is re-consulted before each extra call
+//   DWG-5 / GOV-8  every locate call is metered in ONE row (the first call's
+//           reservation, settled after every call); GOV-13 (I-18): locate
+//           runs assertAiGates and reserves each call's worst case before it
+//           is made — one that no longer fits ends the refining
 //   DWG-13 / PR-10  a close-up that refutes the coarse point triggers the
 //           relocate round; a refuted point is never cached; a point no
 //           close-up checked is cached as an estimate; a viewer can reject one
@@ -45,6 +47,18 @@ const ai = vi.hoisted(() => ({
   script: [] as Array<{ text?: string; throws?: string; usage?: { inputTokens: number; outputTokens: number } }>,
   calls: [] as Array<{ user: string }>,
   log: [] as string[],
+}));
+/** GOV-13 (I-18): the meter locate's gate stack reserves into, settles and
+ *  releases — a ledger of reservations over the seeded month. */
+const meter = vi.hoisted(() => ({
+  seq: 0,
+  rows: [] as Array<{ id: string; op: string; model: string; worstUsd: number; usage: { inputTokens: number; outputTokens: number } | null; ok: boolean | null; released: boolean; costUsd: number }>,
+  /** Every settle and release, in order (`settle:<id>`, `release:<id>`). */
+  trail: [] as string[],
+  settles: 0,
+  /** The n-th settle (from 1) writes nothing and answers false, as a
+   *  refused update does; 0 = none. */
+  failSettleAt: 0,
 }));
 
 vi.mock("@/lib/supabaseAdmin", async () => {
@@ -122,22 +136,59 @@ vi.mock("@/lib/ai/providerCall", () => ({
 }));
 vi.mock("@/lib/equipmentBridgeServer", () => ({ computeForKnowledgeDoc: vi.fn(async () => undefined) }));
 vi.mock("@/lib/mentionIndexer", () => ({ loadAliasDictionary: vi.fn(async () => []), indexDocumentMentions: vi.fn(async () => undefined) }));
-vi.mock("@/lib/ai/usageServer", () => ({
-  getMonthUsage: vi.fn(async () => ({ spentUsd: 0 })),
-  // I-05 (GOV-3): 0 is no longer "no cap" — getCapUsd answers
-  // LOCKED_CAP_USD for a $0 lock — so the default is a figure the scripted
-  // calls never reach (the integrator's I-05 merge gate).
-  getCapUsd: vi.fn(async () => 1000),
-  capIsLocked: (c: number) => c <= Number.MIN_VALUE,
-  monthStartIso: () => "2026-10-01T00:00:00.000Z",
-  recordAskUsage: vi.fn(async () => { ai.log.push("meter"); }),
-}));
+vi.mock("@/lib/ai/usageServer", async (orig) => {
+  const real = await orig<typeof import("@/lib/ai/usageServer")>();
+  const { GovernedCallError: Refusal } = await import("@/lib/ai/gateError");
+  const { estimateCostUsd: price } = await import("@/lib/ai/pricing");
+  const { supabaseAdmin } = await import("@/lib/supabaseAdmin");
+  /** The month as the gate reads it: the seeded rows (through the stand-in,
+   *  so a test's hook can fail the read) plus this request's reservations. */
+  const monthSpend = async (): Promise<number> => {
+    const { data, error } = await supabaseAdmin.from("ai_usage_events").select("est_cost_usd");
+    if (error) throw new real.AiUsageUnavailableError(`couldn't read the usage ledger: ${(error as { message: string }).message}`);
+    const seeded = ((data ?? []) as Array<{ est_cost_usd: number | null }>).reduce((n, r) => n + (Number(r.est_cost_usd) || 0), 0);
+    return seeded + meter.rows.filter((r) => !r.released).reduce((n, r) => n + r.costUsd, 0);
+  };
+  return {
+    ...real,
+    getMonthUsage: vi.fn(async () => ({ spentUsd: await monthSpend() })),
+    // I-05 (GOV-3): 0 is no longer "no cap" — getCapUsd answers
+    // LOCKED_CAP_USD for a $0 lock — so the default is a figure the scripted
+    // calls never reach (the integrator's I-05 merge gate).
+    getCapUsd: vi.fn(async () => 1000),
+    monthStartIso: () => "2026-10-01T00:00:00.000Z",
+    recordAskUsage: vi.fn(async () => { ai.log.push("meter"); }),
+    reserveWithinCap: vi.fn(async (input: { op: string; model: string; worstCaseUsd: number; capUsd: number }) => {
+      const before = await monthSpend();
+      if (before + input.worstCaseUsd > input.capUsd) {
+        throw new Refusal(`This call could cost up to $${input.worstCaseUsd.toFixed(2)} and $${Math.max(0, input.capUsd - before).toFixed(2)} is left of your $${input.capUsd.toFixed(2)} monthly AI cap, so it was not made.`, 402,
+          { spentUsd: before, capUsd: input.capUsd, reservedUsd: input.worstCaseUsd, locked: false });
+      }
+      const id = `res-${++meter.seq}`;
+      ai.log.push("reserve");
+      meter.rows.push({ id, op: input.op, model: input.model, worstUsd: input.worstCaseUsd, usage: null, ok: null, released: false, costUsd: input.worstCaseUsd });
+      return { id, reservedUsd: input.worstCaseUsd };
+    }),
+    settleUsage: vi.fn(async (id: string, input: { model: string; usage: { inputTokens: number; outputTokens: number }; ok: boolean }) => {
+      if (++meter.settles === meter.failSettleAt) { meter.trail.push(`settle-failed:${id}`); return false; }
+      const row = meter.rows.find((r) => r.id === id)!;
+      Object.assign(row, { usage: { ...input.usage }, ok: input.ok, model: input.model, costUsd: price(input.model, input.usage) });
+      ai.log.push("meter");
+      meter.trail.push(`settle:${id}`);
+      return true;
+    }),
+    releaseUsage: vi.fn(async (id: string) => { meter.rows.find((r) => r.id === id)!.released = true; meter.trail.push(`release:${id}`); }),
+  };
+});
+/** The request's ONE metering row: what is left of the ledger once the
+ *  reservations folded into it are released. */
+const meteredRows = () => meter.rows.filter((r) => !r.released);
 vi.mock("@/lib/aiInstructionsServer", () => ({ loadOrgInstructionsBlock: vi.fn(async () => "") }));
 vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (k: string) => k }));
 
 import { GET as drawingGET, POST as drawingPOST } from "@/app/api/knowledge/drawing/route";
 import { POST as locatePOST } from "@/app/api/knowledge/locate/route";
-import { recordAskUsage, getCapUsd } from "@/lib/ai/usageServer";
+import { getCapUsd } from "@/lib/ai/usageServer";
 import { GovernedCallError } from "@/lib/ai/gateError";
 import { estimateCostUsd, AGREEMENT_VERSION } from "@/lib/ai/pricing";
 import { VISION_MODEL } from "@/lib/knowledgeVision";
@@ -176,7 +227,7 @@ function seed(tables: Record<string, Row[]>) {
 beforeEach(() => {
   net.maxRows = 1000; net.rpcMissing = false; net.rpcCalls = [];
   ai.script = []; ai.calls = []; ai.log = [];
-  vi.mocked(recordAskUsage).mockClear();
+  meter.rows = []; meter.seq = 0; meter.trail = []; meter.settles = 0; meter.failSettleAt = 0;
   vi.mocked(getCapUsd).mockResolvedValue(1000);
 });
 afterEach(() => { vi.unstubAllEnvs(); });
@@ -755,7 +806,7 @@ function locateSheet(over: { agreement?: boolean; spent?: number } = {}) {
 }
 const U = { inputTokens: 1000, outputTokens: 50 };
 
-describe("DWG-5 / GOV-8 — every locate call is metered, once, after the last", () => {
+describe("DWG-5 / GOV-8 / GOV-13 — every locate call is reserved first and metered in ONE row", () => {
   it("one coarse pass + four close-ups = five calls, one metering row covering all five, written after the last call", async () => {
     locateSheet();
     ai.script = [
@@ -765,15 +816,19 @@ describe("DWG-5 / GOV-8 — every locate call is metered, once, after the last",
     ];
     const body = await (await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["V-3", "P-101A"] })).json();
     expect(ai.calls).toHaveLength(5);
-    expect(vi.mocked(recordAskUsage)).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(recordAskUsage).mock.calls[0][0]).toMatchObject({
-      op: "drawingLocate", ok: true, usage: { inputTokens: 5000, outputTokens: 250 },
+    // five reservations (one per call, each before it), folded into ONE row
+    expect(meter.rows).toHaveLength(5);
+    expect(meteredRows()).toHaveLength(1);
+    expect(meteredRows()[0]).toMatchObject({
+      op: "drawingLocate", model: VISION_MODEL.anthropic, ok: true, usage: { inputTokens: 5000, outputTokens: 250 },
     });
+    // never a call without its reservation first
+    expect(ai.log.filter((x) => x !== "meter")).toEqual(Array.from({ length: 5 }, () => ["reserve", "call"]).flat());
     expect(ai.log.at(-1)).toBe("meter");
     expect(body.positions.find((p: { tag: string }) => p.tag === "V-3")).toMatchObject({ source: "vision", approximate: true, readOnRevision: "C" });
   });
 
-  it("the cap is re-consulted before each extra call: a coarse pass that reaches it stops the refining", async () => {
+  it("each extra call is reserved before it is made: a coarse pass that leaves no room stops the refining", async () => {
     const big = { inputTokens: 200_000, outputTokens: 100 };
     // The connection's provider is anthropic: the route prices the call by
     // that provider's (mocked, placeholder) vision model.
@@ -782,36 +837,119 @@ describe("DWG-5 / GOV-8 — every locate call is metered, once, after the last",
     vi.mocked(getCapUsd).mockResolvedValue(1 + cost * 1.5);   // room for the coarse pass, not for two more
     ai.script = [{ text: '{"V-3": [0.5, 0.5]}', usage: big }, { text: '{"V-3": [0.5, 0.5]}', usage: big }];
     await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["V-3"] });
-    expect(ai.calls).toHaveLength(2);   // coarse + ONE close-up; the second close-up would cross the cap
-    expect(vi.mocked(recordAskUsage).mock.calls[0][0].usage).toEqual({ inputTokens: 400_000, outputTokens: 200 });
+    expect(ai.calls).toHaveLength(2);   // coarse + ONE close-up; the second close-up's reservation does not fit
+    expect(meteredRows().map((r) => r.usage)).toEqual([{ inputTokens: 400_000, outputTokens: 200 }]);
   });
 
   it("a refine call that throws still counts the usage it carries; the coarse point is kept", async () => {
     locateSheet();
     ai.script = [{ text: '{"V-3": [0.5, 0.5]}', usage: U }, { throws: "overloaded", usage: { inputTokens: 700, outputTokens: 0 } }];
     const body = await (await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["V-3"] })).json();
-    expect(vi.mocked(recordAskUsage).mock.calls[0][0].usage).toEqual({ inputTokens: 1700, outputTokens: 50 });
+    expect(meteredRows().map((r) => r.usage)).toEqual([{ inputTokens: 1700, outputTokens: 50 }]);
     expect(body.positions.find((p: { tag: string }) => p.tag === "V-3")).toMatchObject({ nx: 0.5, ny: 0.5 });
+  });
+
+  it("a call that reports no figures was never metered (I-18 review): a coarse pass failing without usage writes no row, as before — its reservation given back; a close-up failing so adds nothing to the row", async () => {
+    // was: ask()'s finally adopted the failed coarse pass's reservation as
+    // the request's row and settled it — a $0, ok:false drawingLocate row
+    // the base (which metered only when a call reported usage) never wrote
+    locateSheet();
+    ai.script = [{ throws: "overloaded" }];
+    let body = await (await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["V-3"] })).json();
+    expect(body.skipped).toBe("Couldn't point at those tags: overloaded");
+    expect(ai.calls).toHaveLength(1);
+    expect(meter.rows).toHaveLength(1);         // it was reserved before it was made…
+    expect(meteredRows()).toEqual([]);          // …and given back: no row
+    expect(ai.log).not.toContain("meter");
+    // the coarse pass answers, the first close-up fails with no figures: the
+    // row carries the coarse pass alone and the close-up's reservation is gone
+    locateSheet();
+    meter.rows = []; ai.calls = []; ai.log = [];
+    ai.script = [{ text: '{"V-3": [0.5, 0.5]}', usage: U }, { throws: "overloaded" }];
+    body = await (await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["V-3"] })).json();
+    expect(ai.calls).toHaveLength(2);
+    expect(meteredRows()).toEqual([expect.objectContaining({ op: "drawingLocate", ok: true, usage: U })]);
+    expect(body.positions.find((p: { tag: string }) => p.tag === "V-3")).toMatchObject({ nx: 0.5, ny: 0.5 });
+  });
+
+  it("I-18 fix pass 3: a call's figures are written into the row BEFORE its reservation is given back, and only once the write landed — at no moment is what it spent on the ledger nowhere", async () => {
+    locateSheet();
+    ai.script = [1, 2, 3].map(() => ({ text: '{"V-3": [0.5, 0.5]}', usage: U }));
+    await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["V-3"] });
+    expect(ai.calls).toHaveLength(3);
+    // was: release:res-2 then settle:res-1 — between the two statements the
+    // close-up's spend was on no row of the ledger (the last settle is the
+    // request's own, once the refining is done)
+    expect(meter.trail).toEqual(["settle:res-1", "settle:res-1", "release:res-2", "settle:res-1", "release:res-3", "settle:res-1"]);
+    expect(meteredRows()).toEqual([expect.objectContaining({ id: "res-1", usage: { inputTokens: 3000, outputTokens: 150 } })]);
+    // a fold whose write fails gives nothing back: that call's reservation
+    // stands at its worst case (over-counted, never under)
+    locateSheet();
+    meter.rows = []; meter.seq = 0; meter.trail = []; meter.settles = 0; ai.calls = []; ai.log = [];
+    meter.failSettleAt = 2;
+    ai.script = [1, 2, 3].map(() => ({ text: '{"V-3": [0.5, 0.5]}', usage: U }));
+    await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["V-3"] });
+    expect(meter.trail).toEqual(["settle:res-1", "settle-failed:res-1", "settle:res-1", "release:res-3", "settle:res-1"]);
+    expect(meteredRows().map((r) => r.id)).toEqual(["res-1", "res-2"]);
+    expect(meteredRows()[1]).toMatchObject({ usage: null, costUsd: meteredRows()[1].worstUsd });
   });
 
   it("a user over this month's cap — counting every op, not only asks — sends nothing", async () => {
     locateSheet({ spent: 9.5 });
     vi.mocked(getCapUsd).mockResolvedValue(9);
     const body = await (await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["V-3"] })).json();
-    expect(body.skipped).toMatch(/Monthly AI budget reached/);
+    expect(body.skipped).toMatch(/Monthly AI budget reached \(\$9\.50 of \$9\.00\) — the sheet still opens at the right page\./);
     expect(ai.calls).toHaveLength(0);
-    expect(vi.mocked(recordAskUsage)).not.toHaveBeenCalled();
+    expect(meter.rows).toEqual([]);
   });
 
   it("an unreadable ledger refuses rather than assume $0; an unsigned agreement sends nothing", async () => {
     locateSheet();
     db.hooks.push((op) => (op.table === "ai_usage_events" && op.kind === "select" ? { error: { code: "XX000", message: "down" } } : undefined));
     let body = await (await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["V-3"] })).json();
-    expect(body.skipped).toMatch(/Couldn't read your AI usage/);
+    // the gate stack's sentence (GOV-4), with the free answer
+    expect(body.skipped).toMatch(/AI usage can't be read right now, so AI calls are refused until it can \(couldn't read the usage ledger: down\)\. The sheet still opens at the right page\./);
     locateSheet({ agreement: false });
     body = await (await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["V-3"] })).json();
     expect(body).toMatchObject({ agreementRequired: true, agreementVersion: AGREEMENT_VERSION });
     expect(ai.calls).toHaveLength(0);
+  });
+
+  it("an agreement record that can't be read is 'couldn't confirm', never a prompt to sign again; an unsigned one still prompts (I-18 review)", async () => {
+    // was (I-18 before this fix pass): aiGates took the unreadable record as
+    // unsigned, so a member who HAD signed got agreementRequired and the text
+    // to sign — a client prompting on it could record a second acceptance
+    const UNCONFIRMED = "Couldn't confirm your AI acceptable-use agreement right now — the sheet still opens at the right page.";
+    const agreementReadsFail = (times: number) => {
+      let left = times;
+      db.hooks.push((op) => (op.table === "ai_key_agreements" && op.kind === "select" && left-- > 0
+        ? { error: { code: "57014", message: "statement timeout" } } : undefined));
+    };
+    // a signed member whose record cannot be read at all
+    locateSheet();
+    agreementReadsFail(Infinity);
+    const res = await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["V-3"] });
+    expect(res.status).toBe(200);
+    let body = await res.json();
+    expect(body.skipped).toBe(UNCONFIRMED);
+    expect(body).not.toHaveProperty("agreementRequired");
+    expect(body).not.toHaveProperty("agreementText");
+    expect(Array.isArray(body.positions)).toBe(true);
+    expect(body).toHaveProperty("elsewhere");
+    // the gate's read failed once; the record is there: still not a prompt
+    locateSheet();
+    agreementReadsFail(1);
+    body = await (await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["V-3"] })).json();
+    expect(body.skipped).toBe(UNCONFIRMED);
+    expect(body).not.toHaveProperty("agreementRequired");
+    // an unsigned member whose first read failed: the re-read finds nothing — prompted
+    locateSheet({ agreement: false });
+    agreementReadsFail(1);
+    body = await (await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["V-3"] })).json();
+    expect(body).toMatchObject({ agreementRequired: true, agreementVersion: AGREEMENT_VERSION });
+    expect(body.skipped).toMatch(/Read and accept the AI acceptable-use agreement first/);
+    expect(ai.calls).toHaveLength(0);
+    expect(meter.rows).toEqual([]);
   });
 
   it("I-05 merge gate (GOV-4): a cap table that can't be read refuses the AI step, never the free answer", async () => {
@@ -826,11 +964,40 @@ describe("DWG-5 / GOV-8 — every locate call is metered, once, after the last",
     expect(body).toHaveProperty("notOnPage");
     expect(body).toHaveProperty("elsewhere");
     expect(ai.calls).toHaveLength(0);
-    expect(recordAskUsage).not.toHaveBeenCalled();
+    expect(meter.rows).toEqual([]);
     // any other error still throws
     locateSheet();
     vi.mocked(getCapUsd).mockRejectedValueOnce(new Error("boom"));
     await expect(locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["V-3"] })).rejects.toThrow("boom");
+  });
+
+  it("GOV-13: a coarse pass whose worst case no longer fits what is left is refused BEFORE it is made — the free answer kept, the refusal said", async () => {
+    locateSheet({ spent: 999.995 });
+    const res = await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["V-3"] });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.skipped).toMatch(/^This call could cost up to \$[\d.]+ and \$0\.00 is left of your \$1000\.00 monthly AI cap, so it was not made — the sheet still opens at the right page\.$/);
+    expect(body).toHaveProperty("notOnPage");
+    expect(body).toHaveProperty("elsewhere");
+    expect(ai.calls).toHaveLength(0);
+    expect(meter.rows).toEqual([]);
+  });
+
+  it("GOV-13 / GOV-11: locate runs THE gate stack — no key of one's own (or a provider off the allowlist) skips the AI step with the free answer", async () => {
+    locateSheet();
+    db.tables.ai_connections = [];
+    let body = await (await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["V-3"] })).json();
+    expect(body.skipped).toMatch(/needs your own AI key \(add one in AI settings\)\. The sheet still opens at the right page\./);
+    expect(Array.isArray(body.positions)).toBe(true);
+    locateSheet();
+    db.tables.ai_connections = [{ org_id: "o1", user_id: "u-ctrl", provider: "unlisted-vendor", model: "m", api_key: "k" }];
+    body = await (await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["V-3"] })).json();
+    expect(body.skipped).toMatch(/needs your own AI key/);
+    expect(ai.calls).toHaveLength(0);
+    // the census sees locate behind aiGates now
+    const src = readFileSync(join(process.cwd(), "app/api/knowledge/locate/route.ts"), "utf8");
+    expect(src).toMatch(/await assertAiGates\(\{ orgId, userId: user\.id, op: "drawingLocate" \}\)/);
+    expect(src).not.toMatch(/monthSpendAllOps|recordAskUsage|ALLOWED_PROVIDERS/);
   });
 
   it("I-05 merge gate (GOV-3): a $0 cap is refused before the first call, at $0 spent too", async () => {
@@ -842,7 +1009,7 @@ describe("DWG-5 / GOV-8 — every locate call is metered, once, after the last",
     expect(body.skipped).toMatch(/Your monthly AI cap is set to \$0, so AI is locked for you until someone who manages AI caps raises it/);
     expect(Array.isArray(body.positions)).toBe(true);
     expect(ai.calls).toHaveLength(0);
-    expect(recordAskUsage).not.toHaveBeenCalled();
+    expect(meter.rows).toEqual([]);
   });
 });
 
@@ -858,7 +1025,7 @@ describe("DWG-13 / PR-10 — the relocate round: a refuted point is never cached
     expect(ai.calls[2].user).toMatch(/A previous attempt placed V-3 at \[0\.50, 0\.05\] — but a close-up of that spot does NOT show/);
     expect(body.positions.find((p: { tag: string }) => p.tag === "V-3")).toMatchObject({ nx: 0.3, ny: 0.6, approximate: true });
     expect(rowsOf("knowledge_page_entities").find((e) => e.tag === "V-3")).toMatchObject({ nx: 0.3, ny: 0.6, pos_source: "vision" });
-    expect(vi.mocked(recordAskUsage).mock.calls[0][0].usage.inputTokens).toBe(3000);
+    expect(meteredRows().map((r) => r.usage?.inputTokens)).toEqual([3000]);
   });
 
   it("when the relocate round finds nothing either, the tag is not visible and nothing is cached", async () => {

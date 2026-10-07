@@ -18,10 +18,15 @@
 // already lives (the org's own BYO connection).
 
 import { randomBytes } from "node:crypto";
+import { GovernedCallError } from "@/lib/ai/gateError";
 import { parseTurn, validateParams, isRepeatCall, neutralizeUntrusted, neutralizeUntrustedReport, type ToolCall } from "@/lib/orchestrator/protocol";
 import { TOOL_NAMES, toolByName, toolCatalogue, type PendingAction, type ToolContext } from "@/lib/orchestrator/tools";
 
-/** One model turn. Injected so the loop is testable and provider-agnostic. */
+/** One model turn. Injected so the loop is testable and provider-agnostic.
+ *  GOV-13 / ORCH-7: the caller reserves each turn's worst case before it is
+ *  made; a reservation the cap (or the ledger, or the in-flight limit)
+ *  refuses is thrown as a GovernedCallError — a stop, never a provider
+ *  failure (see runOrchestrator). */
 export type ModelCall = (system: string, user: string) => Promise<{
   text: string;
   usage?: { inputTokens: number; outputTokens: number };
@@ -175,12 +180,24 @@ function showsRewrittenMarker(result: unknown): boolean {
   return rewrote && clip(JSON.stringify(value)) !== clip(JSON.stringify(result));
 }
 
+/** GOV-13 / ORCH-7: why a turn's reservation was refused, in the run's own words. */
+function capStopReason(e: GovernedCallError): string {
+  if (e.status === 429) return "too many assistant runs at once";
+  if (e.status === 503) return "AI usage could not be read";
+  return "the monthly AI cap";
+}
+
 /**
  * Run the cycle.
  *
- * Always resolves. A run that fails to reach an answer still returns the steps
- * it took and says why it stopped — a controller that goes quiet is worse than
- * one that says "I got three of the way there, here's what I found".
+ * Always resolves — but for one case: a refusal of the FIRST turn's
+ * reservation (GOV-13 / ORCH-7: the cap, the ledger, the in-flight limit),
+ * before anything is spent, is thrown to the caller, which answers it with
+ * the refusal's own status. A run that fails to reach an answer still
+ * returns the steps it took and says why it stopped — a controller that goes
+ * quiet is worse than one that says "I got three of the way there, here's
+ * what I found". A refusal of a LATER turn stops the run there, with what it
+ * gathered, and no closing call (it would need a reservation too).
  */
 export async function runOrchestrator(opts: RunOptions): Promise<OrchestratorRun> {
   const { question, ctx, call } = opts;
@@ -221,6 +238,15 @@ export async function runOrchestrator(opts: RunOptions): Promise<OrchestratorRun
     try {
       turn = await call(system, transcript(question, steps, resultId, note));
     } catch (e) {
+      if (e instanceof GovernedCallError) {
+        // Nothing run and nothing spent: the caller answers the refusal.
+        if (steps.length === 0 && usage.inputTokens + usage.outputTokens === 0) throw e;
+        return {
+          answer: `I stopped before the next step: ${e.message} What I gathered so far is listed below — it may still answer part of it.`,
+          steps, pending: proposals(), usage,
+          stoppedBecause: capStopReason(e),
+        };
+      }
       // A provider failure is the user's problem to see, not something to
       // paper over with a confident-sounding answer.
       return {
@@ -325,7 +351,8 @@ export async function runOrchestrator(opts: RunOptions): Promise<OrchestratorRun
         return { answer: parsed.text, steps, pending: proposals(), usage, stoppedBecause };
       }
     } catch {
-      // fall through to the honest fallback
+      // fall through to the honest fallback (a refused reservation too: the
+      // loop's own stop reason is already said)
     }
   }
 

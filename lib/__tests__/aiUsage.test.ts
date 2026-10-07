@@ -27,6 +27,8 @@ const db = vi.hoisted(() => ({
   maxRows: Infinity,
   /** Simulate a response without `count` (the read must still page to the end). */
   noCount: false,
+  /** Runs before each statement (a test changes the ledger between two pages). */
+  beforeExec: null as null | ((table: string, action: string) => void),
 }));
 
 vi.mock("@/lib/supabaseAdmin", () => {
@@ -70,14 +72,18 @@ vi.mock("@/lib/supabaseAdmin", () => {
       delete: () => { action = "delete"; db.calls.push({ table, op: "delete", args: [] }); return b; },
       eq: (c: string, v: unknown) => { db.calls.push({ table, op: "eq", args: [c, v] }); filters.push((r) => r[c] === v); return b; },
       is: (c: string, v: unknown) => { db.calls.push({ table, op: "is", args: [c, v] }); filters.push((r) => (r[c] ?? null) === v); return b; },
-      gte: (c: string, v: string) => { filters.push((r) => String(r[c]) >= v); return b; },
+      gte: (c: string, v: string) => { db.calls.push({ table, op: "gte", args: [c, v] }); filters.push((r) => String(r[c]) >= v); return b; },
+      gt: (c: string, v: string) => { db.calls.push({ table, op: "gt", args: [c, v] }); filters.push((r) => String(r[c]) > v); return b; },
       or: (...args: unknown[]) => { db.calls.push({ table, op: "or", args }); return b; },
       order: (col: string, o?: { ascending?: boolean }) => { orders.push({ col, asc: o?.ascending !== false }); return b; },
       range: (a: number, z: number) => { range = [a, z]; return b; },
       limit: (n: number) => { limit = n; return b; },
       single: () => { single = true; return b; },
       maybeSingle: () => { single = true; return b; },
-      then: (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) => Promise.resolve(exec()).then(res, rej),
+      then: (res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) => Promise.resolve().then(() => {
+        db.beforeExec?.(table, action);
+        return exec();
+      }).then(res, rej),
     };
     return b;
   }
@@ -87,7 +93,7 @@ vi.mock("@/lib/supabaseAdmin", () => {
 import {
   getMonthUsage, getMonthUsageByUser, getCapUsd, rollupUsage, capReached, capIsLocked, displayCapUsd,
   reserveWithinCap, settleUsage, releaseUsage, reservationVerdict, recordAskUsage,
-  AiUsageUnavailableError, LOCKED_CAP_USD, DEFAULT_MONTHLY_CAP_USD, UNPRICED_CALL_USD, monthStartIso, type UsageRow,
+  AiUsageUnavailableError, LOCKED_CAP_USD, DEFAULT_MONTHLY_CAP_USD, UNPRICED_CALL_USD, monthStartIso, ORCHESTRATOR_ROUND_OP, type UsageRow,
 } from "@/lib/ai/usageServer";
 import { GovernedCallError } from "@/lib/ai/governedCall";
 
@@ -105,6 +111,7 @@ beforeEach(() => {
   db.clock = 0;
   db.maxRows = Infinity;
   db.noCount = false;
+  db.beforeExec = null;
 });
 
 describe("GOV-1 / SEM-2 / ORCH-5 / GOV-5 — every op counts toward the month", () => {
@@ -177,10 +184,120 @@ describe("GOV-1 / SEM-2 / ORCH-5 / GOV-5 — every op counts toward the month", 
     const m = await getMonthUsage("o1", "u1");
     expect(m.calls).toBe(800);
     expect(m.spentUsd).toBe(8);
-    // the read asks for the exact count, and stops once it holds it
+    // the read asks for the exact count, and stops once a read's count says
+    // it holds every row that read matched — paged by key (GOV-15): the
+    // first 500 rows are all one instant, so the read goes on through that
+    // instant by id (the other 300), then past it (none; every row here
+    // shares one instant)
     const selects = db.calls.filter((c) => c.table === "ai_usage_events" && c.op === "select");
     expect(selects.every((c) => (c.args[1] as { count?: string } | undefined)?.count === "exact")).toBe(true);
-    expect(selects).toHaveLength(2);
+    expect(selects).toHaveLength(3);
+  });
+
+  it("GOV-15: paged by key, not offset — a reservation released or inserted between two pages never skips a row or counts one twice", async () => {
+    // 1,500 rows, each at its own instant; PostgREST's max-rows is 1,000.
+    const base = Date.parse(monthStartIso()) + 60_000;
+    const seed = () => {
+      db.calls = [];
+      db.tables.ai_usage_events = Array.from({ length: 1500 }, (_, i) => row({
+        id: `k${String(i).padStart(5, "0")}`, created_at: new Date(base + i * 1000).toISOString(), est_cost_usd: 0.01,
+      }));
+    };
+    /** Change the ledger between the first page and the next. */
+    const betweenPages = (change: () => void) => {
+      let selects = 0;
+      db.beforeExec = (table, action) => {
+        if (table === "ai_usage_events" && action === "select" && ++selects === 2) change();
+      };
+    };
+    db.maxRows = 1000;
+
+    // An early reservation is released after page 1: an offset page would
+    // then start one row late and skip k01000.
+    seed();
+    betweenPages(() => { db.tables.ai_usage_events = db.tables.ai_usage_events.filter((r) => r.id !== "k00005"); });
+    let month = (await getMonthUsageByUser("o1")).get("u1")!;
+    expect(month.calls).toBe(1500);          // k00005 was read before it went; k01000 is not skipped
+    expect(month.spentUsd).toBe(15);
+
+    // A row from a transaction that began before the cursor lands after
+    // page 1: an offset page would start one row early and read k00999
+    // twice. By key it sorts before the cursor and is read once at most.
+    seed();
+    betweenPages(() => {
+      db.tables.ai_usage_events.push(row({ id: "late", created_at: new Date(base + 10_500).toISOString(), est_cost_usd: 0.01 }));
+    });
+    month = (await getMonthUsageByUser("o1")).get("u1")!;
+    expect(month.calls).toBe(1500);
+    expect(month.spentUsd).toBe(15);
+
+    // the keyset reads: the month from its first instant, then from the
+    // instant of page 1's last row (k00999, read again on page 2, counted
+    // once) — one statement a page, bound filters only, no .or() string
+    const starts = db.calls.filter((c) => c.table === "ai_usage_events" && (c.op === "gte" || c.op === "gt"));
+    expect(starts.map((c) => [c.op, ...c.args])).toEqual([
+      ["gte", "created_at", monthStartIso()],
+      ["gte", "created_at", new Date(base + 999 * 1000).toISOString()],
+    ]);
+    expect(db.calls.filter((c) => c.table === "ai_usage_events" && c.op === "select")).toHaveLength(2);
+    expect(db.calls.some((c) => c.table === "ai_usage_events" && c.op === "or")).toBe(false);
+  });
+
+  it("GOV-15: the read ceiling is 100,000 ROWS, at about one statement per 1,000 — a month of distinct instants past 50,000 rows is summed, never refused", async () => {
+    // was (I-18 before this pass): a same-instant probe after every page
+    // spent one of the 100 reads on nothing, so 50,500 rows at distinct
+    // instants threw "more than 100000 rows" and every gated call was 503
+    const base = Date.parse(monthStartIso()) + 60_000;
+    const N = 60_500;
+    db.maxRows = 1000;
+    db.tables.ai_usage_events = Array.from({ length: N }, (_, i) => row({
+      id: `d${String(i).padStart(6, "0")}`, created_at: new Date(base + i * 10).toISOString(), op: "knowledgeEmbed", est_cost_usd: 0.0001,
+    }));
+    const m = await getMonthUsage("o1", "u1");
+    expect(m.calls).toBe(N);
+    expect(m.spentUsd).toBe(6.05);
+    const selects = db.calls.filter((c) => c.table === "ai_usage_events" && c.op === "select").length;
+    // each page re-reads its last row: 999 new rows a statement
+    expect(selects).toBe(Math.ceil((N - 1) / 999));
+    expect(selects).toBeLessThanOrEqual(Math.ceil(N / 1000) + 1);
+  }, 30_000);
+
+  it("GOV-15: exactly 100,000 rows at distinct instants are summed; one more is refused as soon as a count says so, in one statement", async () => {
+    const base = Date.parse(monthStartIso()) + 60_000;
+    db.maxRows = 1000;
+    const seed = (n: number) => {
+      db.calls = [];
+      db.tables.ai_usage_events = Array.from({ length: n }, (_, i) => row({
+        id: `c${String(i).padStart(6, "0")}`, created_at: new Date(base + i * 10).toISOString(), op: "knowledgeEmbed", est_cost_usd: 0.0001,
+      }));
+    };
+    seed(100_000);
+    const m = await getMonthUsage("o1", "u1");
+    expect(m.calls).toBe(100_000);
+    expect(db.calls.filter((c) => c.table === "ai_usage_events" && c.op === "select").length).toBeLessThanOrEqual(101);
+
+    seed(100_001);
+    await expect(getMonthUsage("o1", "u1")).rejects.toThrow("the usage ledger holds more than 100000 rows this month");
+    expect(db.calls.filter((c) => c.table === "ai_usage_events" && c.op === "select")).toHaveLength(1);
+  }, 60_000);
+
+  it("GOV-15: a page that is all one instant is read on through that instant by id, then past it — every row once", async () => {
+    // 2,500 rows at one instant between 10 rows before it and 10 after
+    const base = Date.parse(monthStartIso()) + 60_000;
+    db.maxRows = 1000;
+    const at = (ms: number) => new Date(base + ms).toISOString();
+    db.tables.ai_usage_events = [
+      ...Array.from({ length: 10 }, (_, i) => row({ id: `a${String(i).padStart(4, "0")}`, created_at: at(i), est_cost_usd: 0.01 })),
+      ...Array.from({ length: 2500 }, (_, i) => row({ id: `m${String(i).padStart(4, "0")}`, created_at: at(500), est_cost_usd: 0.01 })),
+      ...Array.from({ length: 10 }, (_, i) => row({ id: `z${String(i).padStart(4, "0")}`, created_at: at(1000 + i), est_cost_usd: 0.01 })),
+    ];
+    const m = await getMonthUsage("o1", "u1");
+    expect(m.calls).toBe(2520);
+    expect(m.spentUsd).toBe(25.2);
+    const starts = db.calls.filter((c) => c.table === "ai_usage_events" && (c.op === "gte" || c.op === "gt"))
+      .map((c) => `${c.op} ${String(c.args[0])}`);
+    // the month; the instant (all one page); its later ids twice; past it
+    expect(starts).toEqual(["gte created_at", "gte created_at", "gt id", "gt id", "gt created_at"]);
   });
 
   it("without a count it still reads until a page comes back empty", async () => {
@@ -364,6 +481,31 @@ describe("GOV-13 / ORCH-7 — reserve, then call", () => {
     const err = await reserve(0.01, 10, { maxInFlight: 2 }).catch((e) => e);
     expect((err as GovernedCallError).status).toBe(429);
     expect(db.tables.ai_usage_events).toHaveLength(2);
+  });
+
+  it("ORCH-7 (I-18 review): an assistant round's reservation is spend every check sees, on the assistant's line, but never another run — two runs past their first round are two runs", () => {
+    const at = (ms: number) => new Date(Date.now() - 60_000 + ms).toISOString();
+    const held = (id: string, ms: number, op: string, usd: number) =>
+      row({ id, created_at: at(ms), op, input_tokens: null, output_tokens: null, est_cost_usd: usd }) as UsageRow;
+    // runs A and B each hold their run row and, at the provider, a later round's reservation
+    const rows = [
+      held("a1", 1, "orchestrator", 0.02), held("b1", 2, "orchestrator", 0.02),
+      held("a2", 3, ORCHESTRATOR_ROUND_OP, 0.1), held("b2", 4, ORCHESTRATOR_ROUND_OP, 0.1),
+      held("c1", 5, "orchestrator", 0.1),
+    ];
+    const opts = { op: "orchestrator", maxInFlight: 3 };
+    // a third run is admitted: two runs in flight, not four rows
+    expect(reservationVerdict(rows, { id: "c1", reservedUsd: 0.1 }, 10, opts)).toEqual({ ok: true });
+    // a fourth is refused once three runs are in flight
+    const d = reservationVerdict([...rows, held("d1", 6, "orchestrator", 0.1)], { id: "d1", reservedUsd: 0.1 }, 10, opts);
+    expect(d).toMatchObject({ ok: false, status: 429, message: "You already have 3 of these running — wait for one to finish." });
+    // every round's reservation is spend the cap sees…
+    expect(reservationVerdict(rows, { id: "c1", reservedUsd: 0.1 }, 0.3, opts)).toMatchObject({ ok: false, status: 402 });
+    // …shown on the assistant's line, never as a line of its own
+    const m = rollupUsage(rows);
+    expect(m.spentUsd).toBe(0.34);
+    expect(m.byOp.orchestrator.spentUsd).toBe(0.34);
+    expect(m.byOp[ORCHESTRATOR_ROUND_OP]).toBeUndefined();
   });
 
   it("a ledger read failure after reserving releases the reservation and refuses (503)", async () => {

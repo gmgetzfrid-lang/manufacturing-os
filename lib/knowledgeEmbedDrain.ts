@@ -19,6 +19,18 @@
 // run read, and a failed read never releases or completes one: a count the
 // drain could not read is unknown, never 0.
 //
+// THE CAP IS RE-CHECKED BEFORE EVERY BATCH, AND THE RUN IS METERED AS IT
+// GOES (GOV-5 / GOV-13). The cap read before a library's first batch is only
+// the first check: once a batch is claimed, its worst case (every passage as
+// the provider sees it, at 3 characters a token) is reserved against the
+// payer's cap with every other reservation in view, before anything is sent.
+// One refused sends nothing; its passages go back to the queue. Only a cap
+// really reached holds the library "cap" until the 1st (capRefusalKind: a
+// batch that only does not fit what is left is not held; an unreadable
+// ledger is looked at again within the hour). The run's spend is ONE
+// knowledgeEmbed row, settled to the run's tokens after every batch, so a
+// run killed part-way has already recorded what its finished batches spent.
+//
 // NO LIBRARY STARVES ANOTHER (SEM-11). Every marked library is read (paged —
 // no fixed window), and they are worked least-recently-drained first
 // (lastDrainAt on the stamp). A library that cannot proceed records WHY and
@@ -41,7 +53,11 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { embeddingConnectionFrom, buildModelConflict, EMBED_MAX_ATTEMPTS } from "@/lib/ai/embeddings";
 import { openAiKey } from "@/lib/ai/keyVault";
-import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
+import {
+  getMonthUsage, getCapUsd, reserveWithinCap, settleUsage, releaseUsage, type UsageReservation,
+} from "@/lib/ai/usageServer";
+import { worstCaseCostUsd } from "@/lib/ai/pricing";
+import { GovernedCallError } from "@/lib/ai/gateError";
 import {
   embedLibrarySlice, setEmbedBuildMarker, patchEmbedBuildMarker, parseEmbedBuildMarker,
   loadEmbedDetail, unembeddedCount, embedAgreementSigned, readEmbedBuildMarker, expectationOf,
@@ -69,7 +85,7 @@ export type DrainOutcome =
   | "advanced"   // embedded passages this run, more remain
   | "complete"   // reached 100%; the stamp cleared
   | "current"    // standing consent, nothing new to embed
-  | "blocked"    // holding off (cap / error backoff / model conflict / agreement) — see note
+  | "blocked"    // holding off (cap / error backoff / model conflict / agreement), or stopped this run — see note
   | "released"   // stamp removed (invalid consent, no key, repeated failure) — see note
   | "busy"       // every remaining passage is claimed by another driver right now
   | "retrying"   // what remains was refused by the provider and waits to be offered again
@@ -268,6 +284,50 @@ export async function drainEmbedBacklog(opts: {
         continue;
       }
 
+      // GOV-5 / GOV-13: each claimed batch's worst case is reserved against
+      // the payer's cap before it is sent; the run folds every batch's tokens
+      // into ONE knowledgeEmbed row (the first reservation), settled after
+      // every batch.
+      let capRefusal: unknown = null;
+      let meterRow: UsageReservation | null = null;
+      let pending: UsageReservation | null = null;
+      /** Input tokens of this library's slices already returned this run. */
+      let tokensBefore = 0;
+      const meterTo = async (inputTokens: number, ok: boolean) => {
+        // A later batch folds into the ONE row: the row's new total is
+        // written FIRST and the batch's own reservation given back after,
+        // only once that write landed — so at no moment is what the batch
+        // spent on the ledger nowhere (a failed write leaves its worst case
+        // standing).
+        const folded = meterRow ? pending : null;
+        if (!meterRow) meterRow = pending;
+        pending = null;
+        if (!meterRow) return;
+        const written = await settleUsage(meterRow.id, { model: connection.model, usage: { inputTokens, outputTokens: 0 }, ok });
+        if (folded && written) await releaseUsage(folded.id);
+      };
+      const beforeEmbed = async (inputChars: number): Promise<string | null> => {
+        // A reservation no batch folded in — its call stopped the slice
+        // before afterBatch (the provider's 429 or the clock on the
+        // pre-20261121 queue) and reported no figures — is released before
+        // the next slice reserves: such a call was never metered, and its
+        // worst case must not stand as the payer's spend for the month.
+        const stale = pending as UsageReservation | null;
+        pending = null;
+        if (stale) await releaseUsage(stale.id);
+        try {
+          pending = await reserveWithinCap({
+            orgId: lib.org_id, userId, op: "knowledgeEmbed", provider: connection.provider, model: connection.model,
+            worstCaseUsd: worstCaseCostUsd(connection.model, { inputChars, maxTokens: 0 }), capUsd,
+          });
+          return null;
+        } catch (e) {
+          capRefusal = e;
+          return e instanceof GovernedCallError ? e.message : `couldn't reserve the next batch: ${(e as Error)?.message ?? "unknown error"}`;
+        }
+      };
+      const afterBatch = (sliceUsage: { inputTokens: number }) => meterTo(tokensBefore + sliceUsage.inputTokens, true);
+
       // The consent is re-read before every batch: withdrawn or replaced
       // (Stop, another member's Rebuild) or unreadable, nothing more is spent.
       let consentLost = null as "withdrawn" | "unverified" | null;
@@ -293,10 +353,11 @@ export async function drainEmbedBacklog(opts: {
           batchSize: paced ? PACED_BATCH : FULL_BATCH,
           budgetMs: Math.min(SLICE_BUDGET_MS, left - 15_000),
           hardStopMs: Math.min(SLICE_HARD_STOP_MS, left - 10_000),
-          beforeBatch,
+          beforeBatch, beforeEmbed, afterBatch,
         });
         embedded += slice.embedded;
         usage.inputTokens += slice.usage.inputTokens;
+        tokensBefore = usage.inputTokens;
         if (slice.stopReason) { stopReason = slice.stopReason; break; }
         if (slice.error) { sliceError = slice.error; break; }
         if (slice.rateLimited) {
@@ -308,11 +369,35 @@ export async function drainEmbedBacklog(opts: {
         if (slice.fetchedNone || (slice.embedded === 0 && slice.refused === 0)) break;
       }
 
-      if (usage.inputTokens > 0) {
-        await recordAskUsage({
-          orgId: lib.org_id, userId, provider: connection.provider, model: connection.model,
-          usage, ok: !sliceError, op: "knowledgeEmbed",
-        });
+      // The run's ONE row, settled to its tokens with the run's outcome; a
+      // run that spent nothing leaves no row (as before).
+      await meterTo(usage.inputTokens, !sliceError);
+      const ranRow = meterRow as UsageReservation | null;
+      if (ranRow && usage.inputTokens <= 0) await releaseUsage(ranRow.id);
+
+      // GOV-5 done-when 3: the next batch's reservation was refused — its
+      // passages are left queued, and why it was refused decides the rest.
+      if (capRefusal) {
+        const e = capRefusal;
+        const kind = capRefusalKind(e);
+        if (kind === "cap") {
+          // The cap is really reached: held until it resets.
+          await hold("cap", nextMonthStartIso(Date.now()), `monthly cap reached — ${(e as Error).message}`, embedded);
+        } else if (kind === "no_fit") {
+          // The cap is not reached; only this batch's worst case does not
+          // fit what is left (a call in flight may settle below its own).
+          // No hold and no reason on the stamp: this run's work on the
+          // library ends here, and the next run looks again.
+          record({
+            embedded, remaining: -1, outcome: embedded > 0 ? "advanced" : "blocked",
+            note: `the next batch did not fit what is left of the payer's monthly AI cap, which is not reached — `
+              + `nothing more was sent this run and the library is not held; the next run looks again: ${(e as Error).message}`,
+          });
+        } else {
+          await hold("error", new Date(Date.now() + RECHECK_HOLD_MS).toISOString(),
+            `the payer's AI usage could not be read, so nothing more was sent: ${(e as Error)?.message ?? "unknown error"}`, embedded);
+        }
+        continue;
       }
 
       if (stopReason) {
@@ -368,4 +453,19 @@ export async function drainEmbedBacklog(opts: {
     drained.push({ libraryId: "-", embedded: 0, remaining: -1, outcome: "blocked", note: (e as Error).message });
   }
   return { drained, ranMs: Date.now() - startedAt };
+}
+
+/** GOV-5: why a batch's reservation was refused. "cap" — the payer's cap is
+ *  really reached: locked at $0, or the month (settled spend plus the
+ *  reservations in flight, the reading the drain's first check makes) at or
+ *  past it. "no_fit" — the cap is not reached, only this batch's worst case
+ *  does not fit what is left of it (another call's reservation may be in
+ *  flight and settle below its worst case). "unreadable" — the ledger could
+ *  not be read (503), or the refusal is not the gate's. */
+export function capRefusalKind(e: unknown): "cap" | "no_fit" | "unreadable" {
+  if (!(e instanceof GovernedCallError) || e.status === 503) return "unreadable";
+  const d = (e.details ?? {}) as { spentUsd?: unknown; capUsd?: unknown; locked?: unknown };
+  if (d.locked === true) return "cap";
+  // A refusal that does not carry both figures is read as the cap reached.
+  return typeof d.spentUsd === "number" && typeof d.capUsd === "number" && d.spentUsd < d.capUsd ? "no_fit" : "cap";
 }

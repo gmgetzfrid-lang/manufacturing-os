@@ -51,6 +51,7 @@ vi.mock("@/lib/supabaseAdmin", () => {
       eq: (c: string, v: unknown) => { filters.push((r) => r[c] === v); return b; },
       is: (c: string, v: unknown) => { filters.push((r) => (r[c] ?? null) === v); return b; },
       gte: (c: string, v: string) => { filters.push((r) => String(r[c]) >= v); return b; },
+      gt: (c: string, v: string) => { filters.push((r) => String(r[c]) > v); return b; },
       order: () => b,
       range: (a: number, z: number) => { range = [a, z]; return b; },
       limit: () => b,

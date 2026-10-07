@@ -64,6 +64,12 @@ vi.mock("@/lib/ai/usageServer", () => ({
   getMonthUsage: vi.fn(async () => ({ spentUsd: 0, inputTokens: 0, outputTokens: 0, asks: 0 })),
   getCapUsd: vi.fn(async () => 0),
   recordAskUsage: vi.fn(async () => undefined),
+  // GOV-13 / ORCH-7: each round is reserved before it is made and settled after
+  reserveWithinCap: vi.fn(async () => ({ id: "reservation-1", reservedUsd: 0.01 })),
+  settleUsage: vi.fn(async () => true),
+  holdUsage: vi.fn(async () => true),
+  releaseUsage: vi.fn(async () => undefined),
+  ORCHESTRATOR_ROUND_OP: "orchestratorRound",
 }));
 vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (k: string) => k }));
 vi.mock("@/lib/aiInstructionsServer", () => ({ loadOrgInstructionsBlock: vi.fn(async () => "") }));

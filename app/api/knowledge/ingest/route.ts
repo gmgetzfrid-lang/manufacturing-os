@@ -44,13 +44,13 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { openAiKey } from "@/lib/ai/keyVault";
 import {
   ingestKnowledgeDocBatch, refuseNonPdf, reindexLibraryChunks, onDocumentReady, markIngestFailed,
-  claimIngestLease, releaseIngestLease,
+  claimIngestLease, releaseIngestLease, visionCallMeter,
   type VisionContext, type IngestBatchResult,
 } from "@/lib/knowledgeIngest";
 import { memberHoldsAny } from "@/lib/roleHeld";
 import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
 import { ALLOWED_PROVIDERS, AGREEMENT_VERSION, buildAgreementText, estimateCostUsd, type AiUsage } from "@/lib/ai/pricing";
-import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
+import { getMonthUsage, getCapUsd, capIsLocked } from "@/lib/ai/usageServer";
 import { isAiUsageUnavailable } from "@/lib/ai/gateError";
 import { assertAiGates, GovernedCallError } from "@/lib/ai/aiGates";
 import type { AiProviderId } from "@/lib/ai/providerCall";
@@ -149,15 +149,21 @@ export async function POST(req: NextRequest) {
   // ── Vision fallback context ────────────────────────────────────────────
   // Pages with no text layer (AutoCAD SHX exports, scans) get READ by the
   // model. It spends THIS user's key — the person who triggered indexing —
-  // metered as its own op and stopped at their monthly cap. No key or no
-  // headroom just means text-only indexing, never a failure — except for a
-  // page the document owes AI vision (ING-13), which the engine holds for a
-  // key and the answer says is waiting. A reason the member can fix — an
-  // agreement that is unsigned or cannot be read, a ledger that cannot be
-  // read (GOV-11 / GOV-4) — never consumes a page
+  // metered as its own op and stopped at their monthly cap. No key just
+  // means text-only indexing, never a failure — except for a page the
+  // document owes AI vision (ING-13), which the engine holds for a key and
+  // the answer says is waiting. A reason the member can fix — an agreement
+  // that is unsigned or cannot be read, a ledger that cannot be read, the
+  // monthly cap reached (GOV-11 / GOV-4 / GOV-5) — never consumes a page
   // that needs vision: the engine holds it on the row (`noVisionReason`),
   // the text layer of the rest still indexes, and a read-every-page library
   // is not indexed at all (below) — as the cron drain does.
+  // GOV-13 (the ingest batches): every page's AI vision call is reserved
+  // against this member's cap BEFORE it is made — the cap check below is
+  // only the first — and metered as it happens, into the request's ONE
+  // knowledgeVision row (visionCallMeter). A page whose worst case no longer
+  // fits is sent nowhere: it waits for AI vision on the row with the reason
+  // (ING-6), never consumed text-only.
   const orgId = doc.org_id as string;
   // Library option: read EVERY page with vision (drawing sets where even the
   // text layer can't be trusted).
@@ -168,6 +174,10 @@ export async function POST(req: NextRequest) {
     ((libRow?.ai_features ?? {}) as Record<string, unknown>).visionAllPages === true;
   const visionUsage: AiUsage = { inputTokens: 0, outputTokens: 0 };
   let visionModel = "";
+  const visionMeter = visionCallMeter({
+    orgId, userId: user.id, documentName: String(doc.name ?? ""),
+    cause: (e) => (e instanceof GovernedCallError ? e.message.replace(/\.$/, "") : `couldn't check your AI budget (${(e as Error)?.message || "unknown error"})`),
+  });
   let vision: VisionContext | undefined;
   let visionSkipReason: string | null = null;
   // GOV-11 / GOV-4: the reason vision was withheld when it is NOT the missing
@@ -178,9 +188,6 @@ export async function POST(req: NextRequest) {
   // agreement. `allPages` says the same for a read-every-page library.
   let noVisionReason: string | null = null;
   let heldForVision: { allPages: string; status: 409 | 428; provider?: string } | null = null;
-  /** The cap sentence, when the member's monthly cap is reached: what the
-   *  answer says once the batch shows whether it held pages (ING-13). */
-  let capReached: string | null = null;
   {
     const { data: conn } = await supabaseAdmin
       .from("ai_connections").select("provider, model, api_key")
@@ -230,12 +237,25 @@ export async function POST(req: NextRequest) {
         noVisionReason = visionSkipReason;
         heldForVision = { allPages: "AI usage can't be read right now.", status: 409 };
       } else if (cap > 0 && spent.spentUsd >= cap) {
-        // At the cap the pages are indexed from their text layer only, and
-        // nothing reads them again by itself (never promised here) — except
-        // a page the document owes AI vision (ING-13), which the engine
-        // holds for it, and the answer then says so (below).
-        capReached = `Monthly AI budget reached ($${spent.spentUsd.toFixed(2)} of $${cap.toFixed(2)})`;
-        visionSkipReason = `${capReached} — pages without a text layer were indexed from their text layer only.`;
+        // GOV-5 / DEC-73 item 3: at the cap the pages that need AI vision
+        // are HELD for it, with the reason — as the drain holds them for an
+        // uploader at the cap — never consumed text-only. (They used to be
+        // indexed from their text layer, the document going 'ready' with
+        // them unread, whenever a member at the cap had the library open:
+        // the drain's hold never took effect.) A read-every-page library
+        // indexes nothing and the document stays queued (409, below).
+        const locked = capIsLocked(cap);
+        const capCause = locked
+          ? "your monthly AI cap is set to $0 (AI is locked for you)"
+          : `your monthly AI budget is reached ($${spent.spentUsd.toFixed(2)} of $${cap.toFixed(2)})`;
+        const until = locked
+          ? "once someone who manages AI caps raises it"
+          : "once your cap resets on the 1st or is raised";
+        visionSkipReason = (locked ? "Your monthly AI cap is set to $0 (AI is locked for you)"
+          : `Monthly AI budget reached ($${spent.spentUsd.toFixed(2)} of $${cap.toFixed(2)})`)
+          + `, so pages without a text layer are held for AI vision — they are read ${until}, or when someone with budget indexes this document.`;
+        noVisionReason = visionSkipReason;
+        heldForVision = { allPages: `${capCause}; it is indexed ${until}.`, status: 409 };
       } else {
         vision = {
           provider: conn!.provider as AiProviderId,
@@ -246,12 +266,15 @@ export async function POST(req: NextRequest) {
           // and free-tier functions die at 60s. The client loop continues.
           budgetPages: 4,
           forceAllPages,
-          onUsage: (u, model) => {
+          onUsage: async (u, model) => {
             visionUsage.inputTokens += u.inputTokens;
             visionUsage.outputTokens += u.outputTokens;
             visionModel = model;
+            await visionMeter.onUsage(u, model);
           },
         };
+        const ctx = vision;
+        ctx.beforeCall = () => visionMeter.beforeCall(ctx, cap);
       }
     }
   }
@@ -264,7 +287,7 @@ export async function POST(req: NextRequest) {
     agreementVersion: AGREEMENT_VERSION,
   } : {};
   // ── A read-every-page library, and vision withheld for a reason the
-  //    member can fix (GOV-11 / GOV-4): nothing is indexed. Consumed
+  //    member can fix (GOV-11 / GOV-4 / GOV-5): nothing is indexed. Consumed
   //    text-only, every drawing would be indexed as an empty page and
   //    nothing would read it again — the drain refuses the same document for
   //    the same reason (it files it behind and leaves it queued). The row is
@@ -326,13 +349,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: refused.message, removed: refused.removed, detected: res.notPdf }, { status: 415 });
     }
 
-    if (visionUsage.inputTokens + visionUsage.outputTokens > 0) {
-      await recordAskUsage({
-        orgId, userId: user.id,
-        provider: vision!.provider, model: visionModel || vision!.model,
-        usage: visionUsage, ok: true, op: "knowledgeVision",
-      });
-    }
 
     if (res.done && !res.busy) await onIndexed(doc as Record<string, unknown>, user.id, res.pageCount, res.visionPages);
 
@@ -343,16 +359,10 @@ export async function POST(req: NextRequest) {
     if (res.visionFailedPages.length > 0) {
       const n = res.visionFailedPages.length;
       // No vision context here — a reason the member can fix (GOV-11 /
-      // GOV-4), no key, or the cap reached: nothing retries the pages on
-      // their own, and a page this batch held (ING-13) was not indexed
-      // text-only. The reason leads visionSkipReason already; this says
-      // where the pages are.
+      // GOV-4), the cap reached (GOV-5), or no key: a page this batch held
+      // was not indexed text-only. The reason leads visionSkipReason
+      // already; this says where the pages are.
       const waiting = !vision && !res.legacy;
-      if (waiting && capReached && res.visionHeldPages > 0) {
-        const h = res.visionHeldPages;
-        visionSkipReason = `${capReached} — ${h} page${h === 1 ? " was" : "s were"} held for AI vision; ` +
-          "any other page without a text layer was indexed from its text layer only.";
-      }
       const note = waiting
         ? `${n} page${n === 1 ? " waits" : "s wait"} for AI vision on the document — it is not marked ready until ` +
           `${n === 1 ? "that page is" : "they are"} read or the partial index is accepted.`
@@ -388,6 +398,10 @@ export async function POST(req: NextRequest) {
       ...("ingest_failures" in doc ? { ingest_failures: (doc.ingest_failures as number | null) ?? 0 } : {}),
     }, e);
     return NextResponse.json({ error: `Indexing failed: ${message}`, retryAfter: failed.retryAfter }, { status: 502 });
+  } finally {
+    // Metered call by call (GOV-13): whatever the batch answered, only a
+    // reservation no call used is left to drop.
+    await visionMeter.finish(vision);
   }
 }
 

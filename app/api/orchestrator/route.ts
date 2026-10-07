@@ -9,6 +9,24 @@
 // metering row per run. The only difference is what happens in the middle —
 // instead of one retrieval and one answer, the model drives a tool loop.
 //
+// GOV-13 / ORCH-7: every round of the loop reserves its worst case (its
+// prompt at 3 characters a token, 2,000 tokens out) BEFORE it is made —
+// refused when it does not fit beside the month's spend and every other
+// call in flight — and folds its real cost into the run's ONE metering row
+// (the first round's reservation). After every round that row carries what
+// the run has spent so far but stays a reservation (holdUsage), so a run
+// killed part-way leaves what it spent recorded, never less, and a run
+// counts as in flight from its admission until the route settles the row
+// with every round's tokens at the end — between rounds too, while its
+// tools run. The first round carries the in-flight limit: a person runs at
+// most ORCHESTRATOR_MAX_IN_FLIGHT assistant runs at once (429 for the
+// next). That row is the only one the limit counts: a later round reserves
+// under ORCHESTRATOR_ROUND_OP — spend every check sees while the round is
+// at the provider, released once folded in (its figures written to the
+// run's row first) — so a run past its first round is still one run, never
+// two. A refusal before the first call is answered with its own status; one
+// later stops the run with what it gathered.
+//
 // A run never executes a write (ORCH-10). Write tools only PROPOSE; each
 // proposal is stored server-side for this person (ORCH-4) and runs, once,
 // only through /api/orchestrator/execute, which writes AI_ACTION_ATTEMPTED
@@ -28,8 +46,12 @@ import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
 import { loadAnswerSkills } from "@/lib/answerSkillsServer";
 import { atlasForPrompt } from "@/lib/featureAtlas";
 import { callAiModel, AiCallError, type AiProviderId } from "@/lib/ai/providerCall";
-import { ALLOWED_PROVIDERS, estimateCostUsd, AGREEMENT_VERSION, buildAgreementText } from "@/lib/ai/pricing";
-import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
+import { ALLOWED_PROVIDERS, estimateCostUsd, worstCaseCostUsd, AGREEMENT_VERSION, buildAgreementText } from "@/lib/ai/pricing";
+import {
+  getMonthUsage, getCapUsd, recordAskUsage, reserveWithinCap, settleUsage, holdUsage, releaseUsage,
+  ORCHESTRATOR_ROUND_OP, type UsageReservation,
+} from "@/lib/ai/usageServer";
+import { GovernedCallError } from "@/lib/ai/gateError";
 import { runOrchestrator, type ModelCall } from "@/lib/orchestrator/loop";
 import type { ToolContext } from "@/lib/orchestrator/tools";
 import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
@@ -41,6 +63,10 @@ export const maxDuration = 120;
 /** Wall clock for the loop. Comfortably inside maxDuration so the run always
  *  gets to write its metering row and return prose rather than being killed. */
 const LOOP_BUDGET_MS = 75_000;
+/** ORCH-7: assistant runs one person may have in flight at once. */
+const ORCHESTRATOR_MAX_IN_FLIGHT = 3;
+/** Each round's output ceiling — what its reservation prices. */
+const ROUND_MAX_TOKENS = 2000;
 
 function bad(msg: string, status = 400) {
   return NextResponse.json({ error: msg }, { status });
@@ -123,14 +149,59 @@ export async function POST(req: NextRequest) {
   const answerSkills = await loadAnswerSkills(supabaseAdmin, orgId, user.id);
   const playbook = instructionsBlock + answerSkills.block + atlasForPrompt();
 
+  // GOV-13 / ORCH-7: reserve each round before it is made; fold every
+  // round's real cost into ONE row per run (the first reservation), which
+  // stays a reservation — the run in flight — until the run ends.
+  const runUsage = { inputTokens: 0, outputTokens: 0 };
+  let runRow: UsageReservation | null = null;
   const call: ModelCall = async (system, userTurn) => {
-    const out = await callAiModel({
-      provider, model, apiKey, system, user: userTurn,
-      maxTokens: 2000,
-      // Bound each turn so one slow call can't eat the whole loop budget.
-      timeoutMs: 30_000,
+    const reservation = await reserveWithinCap({
+      orgId, userId: user.id,
+      // The run's first round is its admission and its reservation is the
+      // run's ONE 'orchestrator' row — the row the in-flight limit counts,
+      // one per run until the run ends. A later round reserves under its own
+      // op: judged against the month and every reservation in flight like
+      // any call, released once it is folded into the run's row, and never
+      // counted as another run (ORCH-7).
+      op: runRow ? ORCHESTRATOR_ROUND_OP : "orchestrator",
+      provider, model,
+      worstCaseUsd: worstCaseCostUsd(model, { inputChars: system.length + userTurn.length, maxTokens: ROUND_MAX_TOKENS }),
+      capUsd,
+      // At most this many runs at once: every other run's row is an
+      // 'orchestrator' reservation until that run ends.
+      maxInFlight: runRow ? undefined : ORCHESTRATOR_MAX_IN_FLIGHT,
     });
-    return { text: out.text, usage: out.usage };
+    try {
+      const out = await callAiModel({
+        provider, model, apiKey, system, user: userTurn,
+        maxTokens: ROUND_MAX_TOKENS,
+        // Bound each turn so one slow call can't eat the whole loop budget.
+        timeoutMs: 30_000,
+      });
+      runUsage.inputTokens += out.usage.inputTokens;
+      runUsage.outputTokens += out.usage.outputTokens;
+      return { text: out.text, usage: out.usage };
+    } catch (e) {
+      // A call that failed may still carry what the provider billed (GOV-8).
+      const spent = (e as { usage?: { inputTokens?: number; outputTokens?: number } } | null)?.usage;
+      if (spent) {
+        runUsage.inputTokens += spent.inputTokens ?? 0;
+        runUsage.outputTokens += spent.outputTokens ?? 0;
+      }
+      throw e;
+    } finally {
+      // A later round folds into the run's row: the row's new figure is
+      // written FIRST and the round's own reservation given back after,
+      // only once that write landed — so at no moment is what the round
+      // spent on the ledger nowhere (over-counted for that moment, never
+      // under; a failed write leaves the round's worst case standing).
+      const round = runRow ? reservation : null;
+      if (!runRow) runRow = reservation;
+      // What the run has spent so far, on its row — still a reservation, so
+      // the run stays counted as in flight until the route settles it.
+      const held = await holdUsage(runRow.id, { model, usage: runUsage });
+      if (round && held) await releaseUsage(round.id);
+    }
   };
 
   // ORCH-10: nothing is pre-approved in a run — every write tool proposes.
@@ -142,16 +213,33 @@ export async function POST(req: NextRequest) {
       question, ctx, call, playbook, budgetMs: LOOP_BUDGET_MS,
     });
   } catch (e) {
+    // The run is over: its row (if a round was made) is settled to every
+    // round's tokens — recorded as a failed run — and stops counting as in
+    // flight.
+    const ranRow = runRow as UsageReservation | null;
+    if (ranRow) await settleUsage(ranRow.id, { model, usage: runUsage, ok: false });
+    // GOV-13 / ORCH-7: the first round's reservation was refused — the cap
+    // (402), the in-flight limit (429) or an unreadable ledger (503) —
+    // before any provider call: answered with its own status.
+    if (e instanceof GovernedCallError) return bad(e.message, e.status);
     // runOrchestrator resolves on provider errors, so reaching here means a
-    // genuine bug. Meter nothing and say so rather than billing for a crash.
+    // genuine bug: say so. What its rounds spent is on the run's row.
     const message = e instanceof AiCallError ? e.message : "The assistant failed to run.";
     return bad(message, e instanceof AiCallError ? e.status : 500);
   }
 
-  await recordAskUsage({
-    orgId, userId: user.id, provider, model,
-    usage: run.usage, ok: !run.stoppedBecause, op: "orchestrator",
-  });
+  // The run's ONE metering row: its first round's reservation, settled to
+  // every round's tokens — the run is no longer in flight. A run that made
+  // no call writes the row it always wrote.
+  const meteredRow = runRow as UsageReservation | null;
+  if (meteredRow) {
+    await settleUsage(meteredRow.id, { model, usage: runUsage, ok: !run.stoppedBecause });
+  } else {
+    await recordAskUsage({
+      orgId, userId: user.id, provider, model,
+      usage: run.usage, ok: !run.stoppedBecause, op: "orchestrator",
+    });
+  }
 
   // ORCH-4: every proposal that executes server-side is stored for THIS
   // user in THIS org with a 15-minute expiry; the card carries its id, and

@@ -26,8 +26,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { openAiKey } from "@/lib/ai/keyVault";
 import { callAiModel, AiCallError, type AiProviderId, type AiCallImage } from "@/lib/ai/providerCall";
-import { ALLOWED_PROVIDERS, AGREEMENT_VERSION } from "@/lib/ai/pricing";
-import { getMonthUsage, getCapUsd, recordAskUsage } from "@/lib/ai/usageServer";
+import { ALLOWED_PROVIDERS, AGREEMENT_VERSION, worstCaseCostUsd } from "@/lib/ai/pricing";
+import {
+  getMonthUsage, getCapUsd, recordAskUsage, reserveWithinCap, settleUsage, type UsageReservation,
+} from "@/lib/ai/usageServer";
 import { GovernedCallError } from "@/lib/ai/gateError";
 import { ensurePdfPolyfills } from "@/lib/knowledgeText";
 import { codeProblem, type ProposedEntry } from "@/lib/codebook";
@@ -108,6 +110,28 @@ async function governedPropose(opts: {
   // import call ("our drawing types never include vendor codes", ...).
   const orgInstructions = await loadOrgInstructionsBlock(supabaseAdmin, orgId, "codebook");
 
+  // GOV-13 (I-18): the check above reads spend already made; the call's
+  // worst case (its prompt at 3 characters a token, 1,600 tokens a page
+  // image, the full 4,000 tokens out) is reserved against the cap BEFORE it
+  // is made, with every other call in flight in view — refused when it does
+  // not fit — and that row is settled to the provider's figures after (the
+  // same codebookImport row the call always wrote).
+  let reservation: UsageReservation;
+  try {
+    reservation = await reserveWithinCap({
+      orgId, userId, op: "codebookImport", provider: String(conn.provider), model: String(conn.model),
+      worstCaseUsd: worstCaseCostUsd(String(conn.model), {
+        inputChars: PROMPT.length + orgInstructions.length + opts.userMessage.length,
+        images: opts.images?.length ?? 0, maxTokens: 4000,
+      }),
+      capUsd,
+    });
+  } catch (e) {
+    if (e instanceof GovernedCallError) return bad(e.message, e.status);
+    throw e;
+  }
+  let settled = false;
+
   try {
     const out = await callAiModel({
       provider: conn.provider as AiProviderId,
@@ -123,10 +147,8 @@ async function governedPropose(opts: {
       // the function into an opaque 502.
       timeoutMs: 40_000,
     });
-    await recordAskUsage({
-      orgId, userId, provider: String(conn.provider), model: String(conn.model),
-      usage: out.usage, ok: true, op: "codebookImport",
-    }).catch(() => undefined);
+    await settleUsage(reservation.id, { model: String(conn.model), usage: out.usage, ok: true });
+    settled = true;
 
     // Tolerant parse: survives fences, prose prefixes, and token-cap
     // truncation (salvages every complete row instead of failing wholesale).
@@ -172,10 +194,16 @@ async function governedPropose(opts: {
       sourceName: opts.sourceName,
     });
   } catch (e) {
-    await recordAskUsage({
-      orgId, userId, provider: String(conn.provider), model: String(conn.model),
-      usage: { inputTokens: 0, outputTokens: 0 }, ok: false, op: "codebookImport",
-    }).catch(() => undefined);
+    // The failed call's row, as before: no figures, not ok — the
+    // reservation itself when the call never answered.
+    if (!settled) {
+      await settleUsage(reservation.id, { model: String(conn.model), usage: { inputTokens: 0, outputTokens: 0 }, ok: false });
+    } else {
+      await recordAskUsage({
+        orgId, userId, provider: String(conn.provider), model: String(conn.model),
+        usage: { inputTokens: 0, outputTokens: 0 }, ok: false, op: "codebookImport",
+      }).catch(() => undefined);
+    }
     const msg = e instanceof AiCallError ? e.message : (e as Error).message;
     return bad(`AI call failed: ${msg}`, 502);
   }

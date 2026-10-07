@@ -18,7 +18,7 @@
 // once the reason is gone.
 // Driven over real PDFs and the real engine against the in-memory database.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
 import { db, resetDb, rowsOf, type Row } from "./knowledgeFakeDb";
 import { makePdf, prosePage, drawingSheet } from "./knowledgePdfFixtures";
@@ -39,7 +39,10 @@ vi.mock("@/lib/r2", () => ({
     },
   },
 }));
-vi.mock("@/lib/knowledgeVision", () => ({ transcribePageImage: vi.fn(async () => { throw new Error("no vision in this test"); }) }));
+vi.mock("@/lib/knowledgeVision", async (orig) => ({
+  ...(await orig<typeof import("@/lib/knowledgeVision")>()),
+  transcribePageImage: vi.fn(async () => { throw new Error("no vision in this test"); }),
+}));
 vi.mock("unpdf", async (orig) => ({
   ...(await orig<typeof import("unpdf")>()),
   renderPageAsImage: vi.fn(async () => new Uint8Array([137, 80, 78, 71]).buffer),
@@ -57,7 +60,11 @@ vi.mock("@/lib/ai/providerCall", async (orig) => ({
 vi.mock("@/lib/ai/usageServer", async () => {
   const { GovernedCallError: G } = await import("@/lib/ai/gateError");
   const down = () => new G("AI usage can't be read right now, so AI calls are refused until it can (couldn't read the usage ledger: statement timeout).", 503, { usageUnavailable: true });
+  const { fakeUsageServer } = await import("./helpers/fakeUsageMeter");
   return {
+    // the reservation calls (GOV-13 / GOV-5): every page's AI vision call is
+    // reserved first, against the $10 cap these reads answer
+    ...fakeUsageServer(),
     getMonthUsage: vi.fn(async () => { if (ledger.down) throw down(); return { spentUsd: 0 }; }),
     getCapUsd: vi.fn(async () => { if (ledger.down) throw down(); return 10; }),
     recordAskUsage: vi.fn(async () => undefined),
@@ -69,7 +76,8 @@ import { POST as codebookPOST } from "@/app/api/codebook/import/route";
 import { drainKnowledgeIngestQueue, visionRetryMessage } from "@/lib/knowledgeIngest";
 import { transcribePageImage } from "@/lib/knowledgeVision";
 import { callAiModel } from "@/lib/ai/providerCall";
-import { AGREEMENT_VERSION } from "@/lib/ai/pricing";
+import { AGREEMENT_VERSION, estimateCostUsd } from "@/lib/ai/pricing";
+import { meter, resetMeter } from "./helpers/fakeUsageMeter";
 
 const KEY = (id: string) => `orgs/o1/knowledge/kl-1/${id}.pdf`;
 const docRow = (id: string, over: Row = {}): Row => ({
@@ -331,7 +339,7 @@ describe("GOV-11 / GOV-4 — a page that needs vision is never consumed text-onl
     expect(rowsOf("knowledge_chunks").some((c) => c.page === 2 && c.source === "vision")).toBe(true);
   });
 
-  it("an outage holds the page the same way (GOV-4) — and a member with no key, or at the cap, still indexes text-only, said without promising a later read", async () => {
+  it("an outage holds the page the same way (GOV-4), and so does the cap (GOV-5) — a member with no key still indexes text-only, said without promising a later read", async () => {
     seed([docRow("kd-1")]);
     r2.objects.set(KEY("kd-1"), await makePdf([prosePage("bolting"), null]));
     const down = await (await ingest()).json();
@@ -346,12 +354,48 @@ describe("GOV-11 / GOV-4 — a page that needs vision is never consumed text-onl
     expect(keyless).toMatchObject({ done: true, visionFailedPages: [] });
     expect(docOf("kd-1").status).toBe("ready");
 
+    // At the cap (GOV-5 / DEC-73 item 3, I-18 review): held, as the drain
+    // holds it — was: indexed text-only and 'ready', "pages without a text
+    // layer were indexed from their text layer only"
     seed([docRow("kd-1")]);
     const usage = await import("@/lib/ai/usageServer");
     vi.mocked(usage.getMonthUsage).mockResolvedValueOnce({ spentUsd: 10 } as Awaited<ReturnType<typeof usage.getMonthUsage>>);
     const capped = await (await ingest()).json();
-    expect(capped).toMatchObject({ done: true });
-    expect(capped.visionSkipReason).toBe("Monthly AI budget reached ($10.00 of $10.00) — pages without a text layer were indexed from their text layer only.");
+    expect(capped).toMatchObject({ done: false, visionFailedPages: [2], visionHeldPages: 1, visionPages: 0 });
+    expect(capped.visionSkipReason).toBe(
+      "Monthly AI budget reached ($10.00 of $10.00), so pages without a text layer are held for AI vision — they are read once your cap resets "
+      + "on the 1st or is raised, or when someone with budget indexes this document. 1 page waits for AI vision on the document — it is not "
+      + "marked ready until that page is read or the partial index is accepted.",
+    );
+    expect(docOf("kd-1")).toMatchObject({ status: "indexing", vision_failed_pages: [2] });
+    expect(vi.mocked(transcribePageImage)).not.toHaveBeenCalled();
+  });
+
+  it("GOV-5 (I-18 review): the interactive route holds at the cap as the drain does — locked at $0 too; a read-every-page library indexes nothing and stays queued", async () => {
+    ledger.down = false;
+    const usage = await import("@/lib/ai/usageServer");
+    // locked at $0: the lock's own sentence, never "resets on the 1st"
+    seed([docRow("kd-1")]);
+    r2.objects.set(KEY("kd-1"), await makePdf([prosePage("bolting"), null]));
+    vi.mocked(usage.getCapUsd).mockResolvedValueOnce(Number.MIN_VALUE);
+    vi.mocked(usage.getMonthUsage).mockResolvedValueOnce({ spentUsd: Number.MIN_VALUE } as Awaited<ReturnType<typeof usage.getMonthUsage>>);
+    const locked = await (await ingest()).json();
+    expect(locked).toMatchObject({ done: false, visionFailedPages: [2], visionHeldPages: 1 });
+    expect(locked.visionSkipReason).toMatch(/^Your monthly AI cap is set to \$0 \(AI is locked for you\), so pages without a text layer are held for AI vision — they are read once someone who manages AI caps raises it, or when someone with budget indexes this document\. 1 page waits/);
+    expect(docOf("kd-1")).toMatchObject({ status: "indexing", vision_failed_pages: [2] });
+
+    // a read-every-page library at the cap: 409, nothing indexed, the row untouched
+    seed([docRow("kd-1")], { visionAllPages: true });
+    vi.mocked(usage.getMonthUsage).mockResolvedValueOnce({ spentUsd: 10 } as Awaited<ReturnType<typeof usage.getMonthUsage>>);
+    const all = await ingest();
+    expect(all.status).toBe(409);
+    const ab = await all.json();
+    expect(ab).toMatchObject({ heldForVision: true, done: false });
+    expect(ab.error).toBe("This library reads every page with AI vision, so nothing was indexed and the document stays queued — your monthly AI "
+      + "budget is reached ($10.00 of $10.00); it is indexed once your cap resets on the 1st or is raised.");
+    expect(rowsOf("knowledge_chunks")).toHaveLength(0);
+    expect(docOf("kd-1").status).toBe("pending");
+    expect(vi.mocked(transcribePageImage)).not.toHaveBeenCalled();
   });
 
   it("the drain holds the page for an uploader with a key who has not accepted, and names that on the row — its next pass no longer rewrites it with 'Add one in AI settings'", async () => {
@@ -399,5 +443,57 @@ describe("GOV-4 — the codebook import answers the ledger's 503 sentence, not a
     expect((await res.json()).error).toMatch(/AI usage can't be read right now/);
     expect(vi.mocked(callAiModel)).not.toHaveBeenCalled();
     expect(db.ops.some((o) => o.table === "ai_usage_events")).toBe(false);
+  });
+});
+
+describe("GOV-13 (I-18) — the codebook import reserves its call's worst case before it is made", () => {
+  // It read the month and called: a member at $9.99 of $10 could start any
+  // number of imports at once, each up to 4,000 tokens out on their model,
+  // and each was metered only after it answered. Now the call's worst case
+  // is reserved first (reserveWithinCap) and that row is settled to the
+  // provider's figures — the same codebookImport row it always wrote.
+  const post = () => codebookPOST(new NextRequest("http://x/api/codebook/import", {
+    method: "POST", headers: { authorization: "Bearer good", "content-type": "application/json" },
+    body: JSON.stringify({ orgId: "o1", text: "UNIT 02 = Crude unit\nP = pumps" }),
+  }));
+  const OUT = { inputTokens: 900, outputTokens: 120 };
+  beforeEach(() => {
+    ledger.down = false;
+    resetMeter();
+    vi.mocked(callAiModel).mockImplementation(async () => ({
+      text: JSON.stringify({ units: [{ code: "02", label: "Crude unit" }], equipmentTypes: [], drawingTypes: [], notes: "" }),
+      usage: OUT,
+    }) as never);
+  });
+  afterEach(() => { vi.mocked(callAiModel).mockImplementation(async () => { throw new Error("no provider call in this test"); }); });
+
+  it("REGRESSION — a member under the cap: the same proposal, and ONE codebookImport row carrying the call's figures (nothing left reserved)", async () => {
+    seed([]);
+    const res = await post();
+    expect(res.status).toBe(200);
+    expect((await res.json()).proposals).toEqual([{ kind: "unit", code: "02", label: "Crude unit" }]);
+    expect(meter.rows).toEqual([expect.objectContaining({
+      orgId: "o1", userId: "u-ctrl", op: "codebookImport", provider: "anthropic", model: "user-model",
+      reserved: false, ok: true, inputTokens: OUT.inputTokens, outputTokens: OUT.outputTokens,
+      costUsd: estimateCostUsd("user-model", OUT),
+    })]);
+  });
+
+  it("a member under the cap whose headroom is less than the call could cost: refused (402, the reservation's sentence) before the provider — nothing reserved, nothing spent", async () => {
+    seed([]);
+    meter.spent = 9.99;                                   // the route's own read says $0 of $10: the first check passes
+    const res = await post();
+    expect(res.status).toBe(402);
+    expect((await res.json()).error).toMatch(/^This call could cost up to \$\d+\.\d\d and \$0\.01 is left of your \$10\.00 monthly AI cap, so it was not made\.$/);
+    expect(vi.mocked(callAiModel)).not.toHaveBeenCalled();
+    expect(meter.rows).toEqual([]);
+  });
+
+  it("a call that fails leaves the row it always left — no figures, not ok", async () => {
+    seed([]);
+    vi.mocked(callAiModel).mockImplementation(async () => { throw new Error("provider 529 overloaded"); });
+    const res = await post();
+    expect(res.status).toBe(502);
+    expect(meter.rows).toEqual([expect.objectContaining({ op: "codebookImport", reserved: false, ok: false, inputTokens: 0, outputTokens: 0, costUsd: 0 })]);
   });
 });

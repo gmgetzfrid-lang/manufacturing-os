@@ -52,7 +52,10 @@ const FIVE_GATES: Array<[gate: string, ref: RegExp]> = [
   ["provider allowlist", /\b(ALLOWED_PROVIDERS|EMBEDDING_PROVIDERS)\b/],
   ["signed agreement", /\bAGREEMENT_VERSION\b/],
   ["monthly cap", /\b(getCapUsd|getMonthUsage|reserveWithinCap)\s*\(/],
-  ["metering", /\b(recordAskUsage|settleUsage)\s*\(/],
+  // visionCallMeter (lib/knowledgeIngest.ts, I-18 GOV-13): the ingest
+  // engine's per-page reservation and metering — it calls reserveWithinCap
+  // and settleUsage itself (pinned below).
+  ["metering", /\b(recordAskUsage|settleUsage|visionCallMeter)\s*\(/],
 ];
 const missingGates = (s: string) => FIVE_GATES.filter(([, re]) => !re.test(s)).map(([g]) => g);
 const carriesAllFive = (s: string) => missingGates(s).length === 0;
@@ -62,7 +65,9 @@ const PENDING: Record<string, string> = {
   // app/api/flows/read/route.ts left this list with intelligence Round G
   // I-09: it runs assertAiGates before the render and calls the model
   // through governedAiCall with its page images — GATED, checked below.
-  "app/api/knowledge/locate/route.ts": "I-07 — locate adopts aiGates with the refine-pass metering (GOV-8 / DWG-5)",
+  // app/api/knowledge/locate/route.ts left this list with intelligence
+  // Round G I-18 (GOV-13): it runs assertAiGates before its first call and
+  // reserves every call (coarse, close-ups, relocate) — GATED, checked below.
   // app/api/knowledge/ingest/route.ts left this list in I-05's fix pass 5:
   // its vision context now checks the agreement (the GOV-11 verifier's sixth
   // route), so it is INLINE — checked below.
@@ -74,7 +79,7 @@ const HELPERS: Record<string, string> = {
   "lib/ai/governedCall.ts": "governedAiCall — runs assertAiGates (checked below)",
   "lib/knowledgeVision.ts": "page transcription for the ingest engine: the drain gates the sponsor's key (loadSponsorVision); the interactive route builds its own VisionContext and is classified on its own below (INLINE)",
   "lib/knowledgeEmbedCore.ts": "the embed slice for /api/knowledge/embed and the drain, which gate the payer",
-  "lib/knowledgeIngest.ts": "the ingest drain's sponsor path (loadSponsorVision: key, allowlist, agreement, cap)",
+  "lib/knowledgeIngest.ts": "the ingest drain's sponsor path (loadSponsorVision: key, allowlist, agreement, cap; every page reserved and metered through visionCallMeter)",
 };
 
 describe("GOV-11 / PR-12 — every provider call is behind the gates, or named", () => {
@@ -106,6 +111,15 @@ describe("GOV-11 / PR-12 — every provider call is behind the gates, or named",
     for (const f of inline) expect(missingGates(src(f)), f).toEqual([]);
   });
 
+  it("locate runs aiGates and reserves every call it makes (GOV-13, I-18) — no longer PENDING", () => {
+    const f = "app/api/knowledge/locate/route.ts";
+    expect(PENDING[f]).toBeUndefined();
+    expect(usesGates(src(f))).toBe(true);
+    const s = src(f);
+    expect(s.indexOf("await assertAiGates(")).toBeLessThan(s.indexOf("await callAiModel("));
+    expect(s.indexOf("await gate.reserve(")).toBeLessThan(s.indexOf("await callAiModel("));
+  });
+
   it("the routes this package owns run aiGates: governedAiCall, /api/ai/connection, /api/templates/generate", () => {
     expect(src("lib/ai/governedCall.ts")).toMatch(/await assertAiGates\(\{ orgId, userId, op: input\.op \}\)/);
     expect(usesGates(src("app/api/ai/connection/route.ts"))).toBe(true);
@@ -122,6 +136,12 @@ describe("GOV-11 / PR-12 — every provider call is behind the gates, or named",
     // re-index's vision test; its own VisionContext is still the INLINE
     // stack, checked gate by gate here.
     expect(missingGates(src(f))).toEqual([]);
+    // GOV-13 (I-18): every page's call is reserved and metered through
+    // visionCallMeter — which itself reserves against the cap and settles
+    expect(src(f)).toMatch(/ctx\.beforeCall = \(\) => visionMeter\.beforeCall\(ctx, cap\);/);
+    const meterSrc = src("lib/knowledgeIngest.ts").slice(src("lib/knowledgeIngest.ts").indexOf("export function visionCallMeter("));
+    expect(meterSrc).toMatch(/await reserveWithinCap\(/);
+    expect(meterSrc).toMatch(/await settleUsage\(/);
     // the agreement is read for the requester, at the current version, before the VisionContext is built
     const s = src(f);
     const agreementAt = s.indexOf('.from("ai_key_agreements")');

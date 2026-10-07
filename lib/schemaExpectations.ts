@@ -289,4 +289,15 @@ export const EXPECTED_FUNCTIONS: readonly FunctionExpectation[] = [
     migration: "20261166_df_roundG_ticket_rails.sql",
     feature: "The intake portal's redline append in one guarded update (app/api/intake/upload; SM-9)",
   },
+  // intelligence I-18: an AI cap change is one database transaction (GOV-15).
+  // The route falls back to its app-side path while it is missing. The uuid
+  // arguments refuse "schema-health-probe" (22P02), so the body never runs;
+  // EXECUTE is the service role's, as this probe is.
+  {
+    signature: "ai_cap_change(uuid, uuid, uuid, numeric, boolean, boolean)",
+    fn: "ai_cap_change",
+    probeArgs: { p_org_id: "schema-health-probe", p_actor: "schema-health-probe", p_target: "schema-health-probe", p_cap_usd: 0, p_clear: false, p_other_holders: false },
+    migration: "20261173_intel_roundG_ai_cap_change.sql",
+    feature: "An AI cap change locked, decided, written and audited in one transaction (lib/ai/capChange.ts; GOV-15)",
+  },
 ];

@@ -43,16 +43,21 @@ vi.mock("@/lib/supabase", () => ({
 }));
 vi.mock("@/lib/storage", () => ({ uploadToPath: vi.fn() }));
 vi.mock("@/lib/r2", () => ({ R2_BUCKET: "bucket", r2: { send: vi.fn() } }));
-vi.mock("@/lib/knowledgeVision", () => ({ transcribePageImage: vi.fn() }));
+vi.mock("@/lib/knowledgeVision", async (orig) => ({ ...(await orig<typeof import("@/lib/knowledgeVision")>()), transcribePageImage: vi.fn() }));
 vi.mock("@/lib/equipmentBridgeServer", () => ({ computeForKnowledgeDoc: vi.fn(async () => undefined) }));
 vi.mock("@/lib/mentionIndexer", () => ({ loadAliasDictionary: vi.fn(async () => []), indexDocumentMentions: vi.fn(async () => undefined) }));
 // The real module underneath (lib/ai/aiGates reads capReached …): the
 // re-index of a library holding AI-vision pages puts the caller through the
 // vision test (ING-13) — the controller here has a key, signed, under a cap.
-vi.mock("@/lib/ai/usageServer", async (orig) => ({
-  ...(await orig<typeof import("@/lib/ai/usageServer")>()),
-  getMonthUsage: vi.fn(async () => ({ spentUsd: 0 })), getCapUsd: vi.fn(async () => 10), recordAskUsage: vi.fn(),
-}));
+vi.mock("@/lib/ai/usageServer", async (orig) => {
+  const { reserveWithinCap, settleUsage, releaseUsage } = (await import("./helpers/fakeUsageMeter")).fakeUsageServer();
+  return {
+    ...(await orig<typeof import("@/lib/ai/usageServer")>()),
+    getMonthUsage: vi.fn(async () => ({ spentUsd: 0 })), getCapUsd: vi.fn(async () => 10), recordAskUsage: vi.fn(),
+    // every page's AI vision call is reserved first (GOV-13): the ledger stand-in
+    reserveWithinCap, settleUsage, releaseUsage,
+  };
+});
 vi.mock("@/lib/aiInstructionsServer", () => ({ loadOrgInstructionsBlock: vi.fn(async () => "") }));
 vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (k: string) => k }));
 

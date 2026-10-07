@@ -130,8 +130,21 @@ export async function embedLibrarySlice(opts: {
    *  claimed or spent), or null to go on. The background drain uses it to
    *  stop the moment the consent it runs on is withdrawn or replaced. */
   beforeBatch?: () => Promise<string | null>;
+  /** GOV-5 / GOV-13: asked once a batch is claimed, before any provider
+   *  call for it, with the characters that batch can be billed for — every
+   *  passage once, as the provider sees it, and the one-line canary. (A
+   *  split re-sends passages only after the provider REFUSED the request
+   *  they were in, which is not billed, so no passage is paid for twice.) A
+   *  reason refuses the batch: its passages go back to the queue untouched
+   *  and the slice stops with that reason (`stopReason`). The background
+   *  drain reserves the batch's worst case against the payer's cap here. */
+  beforeEmbed?: (inputChars: number) => Promise<string | null>;
+  /** GOV-5: called after every batch with the slice's usage so far, so the
+   *  drain meters as it goes (a run killed mid-slice has recorded what its
+   *  finished batches spent). */
+  afterBatch?: (sliceUsage: { inputTokens: number; outputTokens: number }) => Promise<void>;
 }): Promise<EmbedSliceResult> {
-  const { orgId, libraryId, connection, batchSize, budgetMs, hardStopMs, beforeBatch } = opts;
+  const { orgId, libraryId, connection, batchSize, budgetMs, hardStopMs, beforeBatch, beforeEmbed, afterBatch } = opts;
   const startedAt = Date.now();
   const usage = { inputTokens: 0, outputTokens: 0 };
   let embedded = 0;
@@ -374,6 +387,11 @@ export async function embedLibrarySlice(opts: {
       if (embedded === 0 && refused === 0) fetchedNone = true;
       break;
     }
+    if (beforeEmbed) {
+      const chars = batch.reduce((n, c) => n + passageText(c).length, 0) + CANARY_PASSAGE.length;
+      stopReason = await beforeEmbed(chars).catch((e: unknown) => `couldn't check the AI budget: ${(e as Error)?.message ?? "unknown error"}`);
+      if (stopReason) { await release(batch); break; }
+    }
     if (queue === "legacy") {
       // The original behaviour, unchanged: one call, stop on any error.
       try {
@@ -396,6 +414,7 @@ export async function embedLibrarySlice(opts: {
     } else {
       await embedBatch(batch);
     }
+    if (afterBatch) await afterBatch({ ...usage }).catch(() => undefined);
     if (lastError) break;
   }
 
