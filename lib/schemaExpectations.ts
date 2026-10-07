@@ -310,6 +310,17 @@ export const EXPECTED_FUNCTIONS: readonly FunctionExpectation[] = [
     migration: "20261181_notif_roundG_producers_free.sql",
     feature: "A resolved branch clears its branch_open alerts for the DocCtrl pool (lib/branches.ts clearBranchOpenAlerts; PROD-3)",
   },
+  // notifications N9 (OS-6 / TAX-16): a member reads back the nudges and
+  // heads-ups they sent; the /checkouts cooldown and the edit-overlap banner
+  // keep today's per-browser path while it is missing (42883 / PGRST202).
+  // The uuid argument refuses "schema-health-probe" (22P02): the body never runs.
+  {
+    signature: "notifications_i_sent(uuid, text, timestamptz, text, text, jsonb)",
+    fn: "notifications_i_sent",
+    probeArgs: { p_org: "schema-health-probe", p_kind: "overlap_advisory", p_since: "2026-01-01T00:00:00Z" },
+    migration: "20261191_notif_roundG_kind_split.sql",
+    feature: "The nudges and heads-ups a member sent, read back on every device (lib/sentNotices.ts; OS-6, TAX-16)",
+  },
   // projects-joint J14 (MON-12 / COST-3): the bid tab asks the award's whole
   // list and its company picker moves a link through the server; both fall
   // back to today's path while missing (42883 / PGRST202). The uuid argument

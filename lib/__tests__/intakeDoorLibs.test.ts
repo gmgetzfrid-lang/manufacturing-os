@@ -375,7 +375,7 @@ describe("intakeRateLimit — the window", () => {
       const sent: FoldedDigest[] = [];
       await flushFoldedIntakeNotices(client, { now, send: landing(sent) });
       expect(sent[0]).toMatchObject({ actorName: "Beta", links: [{ linkId: "L2", company: "Beta", folded: { total: 2, published: 0, displaced: 1 } }] });
-      expect(foldedDigestKind(sent[0])).toBe("review_requested");
+      expect(foldedDigestKind(sent[0])).toBe("intake_submission"); // DEC-90 A13 (N9): was review_requested
       expect(sent[0].body).toMatch(/replaced 1 submission that was awaiting review, and sent 1 more for review after the team's last notice/);
     });
     it("a send that throws writes no marker — the next run retries; a link that no longer exists is counted as gone", async () => {

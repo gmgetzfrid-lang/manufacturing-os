@@ -103,11 +103,15 @@ export function prefsFromRow(row: Record<string, unknown> | null | undefined): N
 /** Event types no preference may silence — no per-event toggle, not the
  *  master switch, not 'never': a drawing recall and a PSM alert
  *  (lib/notify/dispatch.ts categoryToEventType, DIST-13 / LIFE-7; "recall/
- *  safety categories are un-mutable regardless"). The 60-second dedupe still
+ *  safety categories are un-mutable regardless"), and — DELIV-15, ratified by
+ *  the integrator under the user's delegation, 2026-10-07 (DEC-90 A10) — the
+ *  transmittal issuer's notice that the portal released a PDF without its
+ *  UNCONTROLLED marking or refused one (app/api/transmittal/route.ts, a
+ *  controlled-copy integrity event like a recall). The 60-second dedupe still
  *  applies to them, and their bell row is always written. email_gate()
- *  (20261148) exempts the same list; a test pins the two equal. DEC-74
- *  §9. */
-export const PREFERENCE_EXEMPT_EVENT_TYPES: readonly string[] = Object.freeze(["safety_recall", "safety_alert"]);
+ *  (20261148; the transmittal pair added by 20261191) exempts the same list;
+ *  a test pins the two equal. DEC-74 §9. */
+export const PREFERENCE_EXEMPT_EVENT_TYPES: readonly string[] = Object.freeze(["safety_recall", "safety_alert", "transmittal_unstamped", "transmittal_refused"]);
 
 export function isPreferenceExempt(eventType: string): boolean {
   return PREFERENCE_EXEMPT_EVENT_TYPES.includes(eventType);

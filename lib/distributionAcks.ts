@@ -177,7 +177,9 @@ export async function requestAcks(input: {
     await emit({
       orgId: input.orgId,
       category: "assignment",
-      kind: "doc_superseded",
+      // PROD-13 / TAX-13 (N9): an acknowledgment request rides the
+      // acknowledgment kind (ack_requested), never the supersede notice.
+      kind: "ack_requested",
       title: `Please confirm: ${input.docLabel} Rev ${input.revLabel ?? "?"}`,
       body: `${input.actorName} needs your confirmation that you have the current revision. Open the document and tap "I have this revision" — takes two seconds, goes on the distribution record.`,
       link: input.libraryId ? `/documents/${input.libraryId}?doc=${input.documentId}` : undefined,
@@ -192,7 +194,7 @@ export async function requestAcks(input: {
     await emit({
       orgId: input.orgId,
       category: "assignment",
-      kind: "doc_superseded",
+      kind: "ack_requested",   // PROD-13 / TAX-13 (N9)
       title: `Reminder: confirm ${input.docLabel} Rev ${input.revLabel ?? "?"}`,
       body: `Still waiting on your confirmation that you have the current revision — open the document and tap "I have this revision".`,
       link: input.libraryId ? `/documents/${input.libraryId}?doc=${input.documentId}` : undefined,
@@ -336,6 +338,12 @@ export async function scanDistributionAcks(orgId: string, opts?: {
   // (recipient, document) and one escalation per (requester, document) per
   // nagEveryDays window; a manual request/re-nudge inside the window also
   // counts, so a controller's fresh nudge isn't followed by a robot's.
+  // PROD-13 / TAX-13 (N9): a manual request and re-nudge are ack_requested
+  // rows now (they rode doc_superseded until N9; 20261191 re-files the rows
+  // already written with metadata.ackRequest), so the read is the two
+  // acknowledgment kinds. The metadata keys still tell this register's rows
+  // from the read-&-understood roster's ack_requested rows
+  // (lib/acknowledgments.ts), which carry neither key.
   const cooldownIso = new Date(Date.now() - nagEveryDays * 86_400_000).toISOString();
   const recentlyNagged = new Set<string>();
   const recentlyEscalated = new Set<string>();
@@ -344,7 +352,7 @@ export async function scanDistributionAcks(orgId: string, opts?: {
       .from("notifications")
       .select("user_id, resource_id, metadata")
       .eq("org_id", orgId)
-      .in("kind", ["ack_requested", "ack_overdue", "doc_superseded"])
+      .in("kind", ["ack_requested", "ack_overdue"])
       .gte("created_at", cooldownIso);
     for (const r of ((recent ?? []) as Array<Record<string, unknown>>)) {
       const meta = (r.metadata as Record<string, unknown> | null) ?? {};
@@ -440,7 +448,7 @@ export async function renudgeUnacked(input: {
   await emit({
     orgId: input.orgId,
     category: "assignment",
-    kind: "doc_superseded",
+    kind: "ack_requested",   // PROD-13 / TAX-13 (N9)
     title: `Reminder: confirm ${input.docLabel} Rev ${input.revLabel ?? "?"}`,
     body: `Still waiting on your confirmation that you have the current revision — open the document and tap "I have this revision".`,
     link: input.libraryId ? `/documents/${input.libraryId}?doc=${input.documentId}` : undefined,

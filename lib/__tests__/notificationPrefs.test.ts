@@ -53,11 +53,17 @@ const MIG = "supabase/migrations";
 const numbered = readdirSync(join(root, MIG)).filter((f) => /^\d{8}.*\.sql$/.test(f)).sort();
 const P529 = strip(read(`${MIG}/20260529_phase_b_notifications.sql`));
 const P1148 = strip(read(`${MIG}/20261148_notif_roundG_prefs_gate.sql`));
-/** email_gate()'s body as the database stores it (prosrc). */
+/** email_gate()'s body as the database stores it (prosrc) — the NEWEST
+ *  definition in the sequence (20261148's, re-created by 20261191 with the
+ *  transmittal pair added to the exempt list — notifications N9, DELIV-15). */
+const GATE_SRC = (() => {
+  const defining = numbered.filter((f) => /CREATE OR REPLACE FUNCTION email_gate\s*\(/.test(strip(read(`${MIG}/${f}`))));
+  return strip(read(`${MIG}/${defining[defining.length - 1]}`));
+})();
 const GATE_BODY = (() => {
-  const at = P1148.indexOf("CREATE OR REPLACE FUNCTION email_gate");
-  const open = P1148.indexOf("AS $$", at) + "AS $$".length;
-  return P1148.slice(open, P1148.indexOf("$$;", open));
+  const at = GATE_SRC.indexOf("CREATE OR REPLACE FUNCTION email_gate");
+  const open = GATE_SRC.indexOf("AS $$", at) + "AS $$".length;
+  return GATE_SRC.slice(open, GATE_SRC.indexOf("$$;", open));
 })();
 
 const checkList = (sql: string) => {
@@ -173,8 +179,12 @@ describe("DELIV-2 — one rule, evaluated in the app and in email_gate()", () =>
     expect(read("lib/notificationPrefs.ts")).not.toMatch(/case "safety_/);
   });
 
-  it("DEC-74 §9 — the exempt list is the recall and safety categories, and email_gate() exempts exactly the same", () => {
-    expect([...PREFERENCE_EXEMPT_EVENT_TYPES]).toEqual([categoryToEventType("recall"), categoryToEventType("safety")]);
+  it("DEC-74 §9 / DEC-90 A10 — the exempt list is the recall and safety categories and the transmittal unmarked / refused-PDF notice, and email_gate() exempts exactly the same", () => {
+    expect([...PREFERENCE_EXEMPT_EVENT_TYPES]).toEqual([categoryToEventType("recall"), categoryToEventType("safety"), "transmittal_unstamped", "transmittal_refused"]);
+    // the two transmittal event types are the ones the portal route writes (DELIV-15)
+    expect(read("app/api/transmittal/route.ts")).toContain('event_type: outcome === "released" ? "transmittal_unstamped" : "transmittal_refused",');
+    // the receipt email (watcher_activity) is NOT exempt — it stays preference-gated
+    expect(PREFERENCE_EXEMPT_EVENT_TYPES).not.toContain("watcher_activity");
     const m = GATE_BODY.match(/IF COALESCE\(p_event_type, ''\) NOT IN \(([^)]*)\) THEN\s*SELECT \* INTO v_prefs FROM notification_preferences WHERE user_id = p_to_user;/);
     expect(m).not.toBeNull();
     expect([...m![1].matchAll(/'(\w+)'/g)].map((x) => x[1])).toEqual([...PREFERENCE_EXEMPT_EVENT_TYPES]);

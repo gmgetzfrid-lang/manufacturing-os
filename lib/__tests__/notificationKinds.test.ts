@@ -186,6 +186,28 @@ const N8_ADDED: Record<string, "projects" | null> = {
   milestone_slipped: "projects",
   access_request_pending: null,
 };
+// Kinds declared by notifications N9 (DC-OWNED-PRODUCERS-AND-KIND-SPLIT —
+// PROD-13 / TAX-13 / DEC-90 A13 / PROD-12): the doc_superseded and
+// checkout_released overloads split one name per meaning, the intake notices
+// off review_requested, and the transmittal-issued notice. Each split-off
+// kind keeps its parent's action / compliance flags (the departures below
+// pin that); icon / tone / group are the feed's predicates on the name.
+const N9_ADDED: Record<string, "documents" | "projects"> = {
+  doc_recalled: "documents",          // lib/staleCopies.ts (was doc_superseded + metadata.recall)
+  doc_upstream_changed: "documents",  // lib/revisionImpact.ts (was doc_superseded)
+  package_doc_stale: "documents",     // lib/workPackages.ts (was doc_superseded + metadata.workPackageId)
+  package_doc_retired: "documents",   // lib/postPublish.ts (was doc_superseded + metadata.retirement)
+  checkout_force_released: "documents", // lib/checkoutEpisodes.ts (was checkout_released)
+  checkout_auto_released: "documents",  // lib/projects.ts (was checkout_released + metadata.autoReleasedSessionId)
+  transmittal_issued: "documents",    // lib/transmittals.ts (PROD-12 — new)
+  intake_quote: "projects",           // app/api/intake/upload/route.ts (was review_requested — DEC-90 A13)
+  intake_submission: "projects",      // the same route + lib/intakeRateLimit.ts (was review_requested)
+};
+/** The N9 kinds that inherit their parent's compliance flag (doc_superseded's
+ *  four, review_requested's two) — dismiss-only and in the digest as before. */
+const N9_COMPLIANCE_ADDED = [
+  "doc_recalled", "doc_upstream_changed", "package_doc_stale", "package_doc_retired", "intake_quote", "intake_submission",
+];
 // Section: TODAY's 'other' becomes bell-only (null) — the same thing to a user
 // (no rail row counted it; the header bell did) — except the kinds the records
 // name as misfiled, which now badge a row.
@@ -198,21 +220,28 @@ const SECTION_DEPARTURES: Record<string, { to: "documents" | "projects"; why: st
     "access_recert_due",
   ].map((k) => [k, { to: "documents" as const, why: "document-scoped: TRAIL-2 dw1 / PROD-1 / DELIV-3 / TAX-2 / OS-12 / RT-6" }]),
   ["project_comment", { to: "projects" as const, why: "a comment on a project: TRAIL-2 dw1" }],
+  // N9: bell-only until N9; badges Documents since (DEC-90 A12 — OS-12 / RT-6)
+  ["transmittal_unstampable", { to: "documents" as const, why: "a controlled copy released without its marking — DEC-90 A12 (N9)" }],
 ]);
 // Bell-only by decision (DEC-81 §1): TODAY 'other', and kept off every
 // rail row — the header bell owns them. A new bell-only kind must be added
 // here deliberately.
 const BELL_ONLY = [
   "orchestrator_message", "security_export", "member_revoked", "library_unowned",
-  "storage_alert", "storage_platform_r2", "storage_platform_db", "ai_cap_changed", "transmittal_unstampable",
+  "storage_alert", "storage_platform_r2", "storage_platform_db", "ai_cap_changed",
   "access_request_pending", // N8 (PROD-2): admin housekeeping, as member_revoked / library_unowned
+  // transmittal_unstampable left this list in N9 (DEC-90 A12): it badges
+  // Documents. The eight above stay bell-only.
 ];
 // actionRequired: exactly TODAY_ACTION — no departure (DEC-81 §2). The
 // plan's default would add the PSM obligations, but an action row stays red,
 // pulsing and in the Action count until it is read, and nothing marks a PSM
 // row read when the obligation is met; they flip with the change that clears
 // them on discharge. Pinned FYI here so the flip is deliberate.
-const ACTION_ADDED: string[] = [];
+// N9: the two kinds split off checkout_released keep its action flag — the
+// holder's own checkout was released under them (force-release, ad-hoc
+// expiry), exactly the notices checkout_released carried until N9.
+const ACTION_ADDED: string[] = ["checkout_force_released", "checkout_auto_released"];
 const PSM_OBLIGATIONS_FYI_UNTIL_CLEARED = [
   "ack_requested", "review_requested", "review_invalidated", "ack_overdue", "review_overdue", "access_recert_due", "effective_now",
 ];
@@ -230,6 +259,7 @@ const GROUP_DEPARTURES: Record<string, string> = { member_revoked: "other" };
 const expectedSection = (k: string): string | null => {
   if (RETIRED.includes(k)) return null; // a legacy row: bell-only, as its unrendered bucket was
   if (k in N8_ADDED) return N8_ADDED[k];
+  if (k in N9_ADDED) return N9_ADDED[k];
   if (SECTION_DEPARTURES[k]) return SECTION_DEPARTURES[k].to;
   const today = TODAY_SECTION[k] ?? "other";
   return today === "other" ? null : today;
@@ -487,9 +517,9 @@ afterEach(() => {
 });
 
 describe("the union (PROD-8 / OS-7 / NEDGE-13 retired; PROD-10 / TAX-11 added)", () => {
-  it("is TODAY's union, minus the four retired kinds, plus the five that were written outside it (and N8's four, with their producers)", () => {
+  it("is TODAY's union, minus the four retired kinds, plus the five that were written outside it (and N8's four and N9's nine, with their producers)", () => {
     const today = Object.keys(TODAY_SECTION);
-    expect(unionKinds().sort()).toEqual([...today.filter((k) => !RETIRED.includes(k)), ...ADDED, ...Object.keys(N8_ADDED)].sort());
+    expect(unionKinds().sort()).toEqual([...today.filter((k) => !RETIRED.includes(k)), ...ADDED, ...Object.keys(N8_ADDED), ...Object.keys(N9_ADDED)].sort());
   });
 
   it("KIND_META classifies exactly the union — no kind missing, none extra", () => {
@@ -571,7 +601,7 @@ describe("sections — every kind where it was, except the kinds the records nam
 describe("action, compliance, icon, tone, group — the other classifiers, in one table", () => {
   it("actionRequired: exactly the conflict class, as before (DEC-81 §2)", () => {
     for (const k of unionKinds()) expect(KIND_META[k as keyof typeof KIND_META].actionRequired, k).toBe(expectedAction(k));
-    expect(unionKinds().filter((k) => KIND_META[k as keyof typeof KIND_META].actionRequired).sort()).toEqual([...TODAY_ACTION].sort());
+    expect(unionKinds().filter((k) => KIND_META[k as keyof typeof KIND_META].actionRequired).sort()).toEqual([...TODAY_ACTION, ...ACTION_ADDED].sort());
   });
 
   it("the PSM obligations stay FYI until their rows clear on discharge — a met obligation must not keep the rail red", () => {
@@ -592,10 +622,15 @@ describe("action, compliance, icon, tone, group — the other classifiers, in on
     }
   });
 
-  it("compliance is the cron's COMPLIANCE_KINDS, unchanged", () => {
-    expect(cronComplianceKinds()).toEqual(TODAY_COMPLIANCE);
+  it("compliance: today's set plus the N9 kinds that inherit it — and the cron's hand list misses exactly those until N6 derives it", () => {
     const flagged = unionKinds().filter((k) => KIND_META[k as keyof typeof KIND_META].compliance);
-    expect(flagged.sort()).toEqual([...TODAY_COMPLIANCE].sort());
+    expect(flagged.sort()).toEqual([...TODAY_COMPLIANCE, ...N9_COMPLIANCE_ADDED].sort());
+    // On this branch the cron (N6's file) still carries its hand-kept list;
+    // N6 derives COMPLIANCE_KINDS from KIND_META, which closes the gap — the
+    // integrator merges N6 with or before N9 (records: 99-fix-sequencing).
+    const cron = cronComplianceKinds();
+    expect(cron).toEqual(TODAY_COMPLIANCE);
+    expect(flagged.filter((k) => !cron.includes(k)).sort()).toEqual([...N9_COMPLIANCE_ADDED].sort());
   });
 
   it("icon: every kind has one — the bell's where it had one, else the feed's, except the named departures", () => {
@@ -642,6 +677,9 @@ describe("action, compliance, icon, tone, group — the other classifiers, in on
       // N8 (PROD-2 / PROD-6 / PROD-11): the bell (N3's file) has no entry
       // for them yet; N3's derivation from KIND_META empties this list
       "change_order_status", "milestone_assigned", "milestone_slipped", "access_request_pending",
+      // N9: the split kinds and the transmittal-issued notice — the same
+      // (until N3's derivation, the bell draws its fallback for them)
+      ...Object.keys(N9_ADDED),
     ];
     const bell = bellIconMap();
     const missing: string[] = [];
@@ -708,9 +746,10 @@ describe("the hook — one row of every kind written on b9cdfdc", () => {
       projects: { total: total("projects"), actionRequired: action("projects") },
     });
     // TODAY: requests 5, documents 12, projects 2 — the same plus the named
-    // moves; the four conflict rows are now red on Documents (TRAIL-5)
+    // moves; the four conflict rows are now red on Documents (TRAIL-5);
+    // transmittal_unstampable badges Documents since N9 (DEC-90 A12)
     expect(r.sectionCounts.requests).toEqual({ total: 5, actionRequired: 0 });
-    expect(r.sectionCounts.documents).toEqual({ total: 12 + 22, actionRequired: 4 });
+    expect(r.sectionCounts.documents).toEqual({ total: 12 + 22 + 1, actionRequired: 4 });
     expect(r.sectionCounts.projects).toEqual({ total: 2 + 1, actionRequired: 0 });
   });
 
@@ -830,10 +869,11 @@ describe("the producer census — every written kind is declared and classified"
     expect(src("lib/intakeRateLimit.ts")).toContain("if (error) throw new Error(`the digest's notices were refused: ${error}`);");
     // the moved sites write through the typed sink, on the client they hold
     expect(src("app/api/transmittal/route.ts")).toMatch(/notifyWithReason\(\{[\s\S]*?kind: UNSTAMPABLE_NOTICE_KIND,[\s\S]*?\}, supabaseAdmin\)/);
-    expect(src("app/api/transmittal/route.ts")).toMatch(/notifyChecked\(\{[\s\S]*?kind: "ack_complete",[\s\S]*?\}, supabaseAdmin\)/);
+    // the issuer's receipt notice (N9 — PROD-12): one helper for both doors
+    expect(src("lib/transmittalReceiptNotice.ts")).toMatch(/notifyWithReason\(\{[\s\S]*?kind: "ack_complete",[\s\S]*?\}, admin\)/);
     // the sweep's holder notices: ONE typed batch statement per batch of
     // released sessions, on the sweep's own client (N8's review fix)
-    expect(src("lib/projects.ts")).toMatch(/notifyBatchChecked\(released\.map\(\(r\) => \(\{[\s\S]*?kind: "checkout_released" as const,[\s\S]*?\}\)\), db\)/);
+    expect(src("lib/projects.ts")).toMatch(/notifyBatchChecked\(released\.map\(\(r\) => \(\{[\s\S]*?kind: "checkout_auto_released" as const,[\s\S]*?\}\)\), db\)/);
   });
 
   it("the census counts an insert call whose rows it cannot see — the drift it exists to stop (probe)", () => {
@@ -862,12 +902,14 @@ describe("the producer census — every written kind is declared and classified"
     // a typed parameter: notifyHold(kind: "legal_hold_placed" | "legal_hold_released")
     expect(kindsAt("lib/retention.ts")).toEqual(expect.arrayContaining(["legal_hold_placed", "legal_hold_released"]));
     // raw inserts, through a module constant and a literal
-    expect(new Set(kindsAt("app/api/transmittal/route.ts"))).toEqual(new Set(["transmittal_unstampable", "ack_complete"]));
+    expect(new Set(kindsAt("app/api/transmittal/route.ts"))).toEqual(new Set(["transmittal_unstampable"]));
+    expect(kindsAt("lib/transmittalReceiptNotice.ts")).toEqual(["ack_complete"]);
     expect(kindsAt("app/api/ai/usage/route.ts")).toEqual(["ai_cap_changed"]);
     // through a function's literal return type (typed since N8's review fix)
-    expect(new Set(kindsAt("lib/intakeRateLimit.ts"))).toEqual(new Set(["doc_superseded", "review_requested"]));
+    expect(new Set(kindsAt("lib/intakeRateLimit.ts"))).toEqual(new Set(["doc_superseded", "intake_submission"]));
     expect(kindsAt("lib/exportAlerts.ts")).toEqual(["security_export"]);
-    expect(kindsAt("lib/projects.ts")).toEqual(expect.arrayContaining(["checkout_released"]));
+    expect(kindsAt("lib/projects.ts")).toEqual(expect.arrayContaining(["checkout_auto_released"]));
+    expect(kindsAt("lib/projects.ts")).not.toContain("checkout_released");
     // the storage watchdogs: typed now (PROD-10)
     expect(kindsAt("lib/storageAlerts.ts")).toEqual(["storage_alert"]);
   });
@@ -879,6 +921,13 @@ describe("the producer census — every written kind is declared and classified"
     // the literals in storageUsage's hot[] list
     const usage = src("lib/storageUsage.ts");
     for (const k of ["storage_platform_r2", "storage_platform_db"]) if (usage.includes(`kind: "${k}",`)) written.add(k);
+    // intake_quote / intake_submission (N9 — DEC-90 A13): the intake door's
+    // notifyTeam({ kind, title, … }) carries no orgId (the closure holds it),
+    // so its literal is no payload the census reads; the kind is passed to
+    // emit() as the closure's typed `n.kind`
+    const intake = src("app/api/intake/upload/route.ts");
+    expect(intake).toMatch(/kind: "intake_quote" \| "intake_submission" \| "doc_superseded"; title: string;/);
+    for (const k of ["intake_quote", "intake_submission"]) if (new RegExp(`await notifyTeam\\(\\{\\s+kind: "${k}",`).test(intake)) written.add(k);
     expect(unionKinds().filter((k) => !written.has(k))).toEqual([]);
   });
 });

@@ -1152,7 +1152,7 @@ describe("notices and attribution", () => {
     await upload({ docId: D1, revLabel: "C" });
     expect(db.emits).toHaveLength(1);
     const e = db.emits[0] as Row & { audience: { involved: string[]; followers: boolean } };
-    expect(e.kind).toBe("review_requested");
+    expect(e.kind).toBe("intake_submission"); // DEC-90 A13 (notifications N9): its own kind, section Projects
     expect(e.boundToServiceRole).toBe(true);
     expect(e.audience.followers).toBe(true);
     expect(new Set(e.audience.involved)).toEqual(new Set(["creator1", "ctl2", "owner1", "intent-holder"]));

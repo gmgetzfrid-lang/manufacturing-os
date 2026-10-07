@@ -21,6 +21,8 @@
 //   UX-11  the register lists approved intake documents and counts the hidden
 //   PM-10  csvSafe neutralises formula-leading cells
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 type Row = Record<string, unknown>;
@@ -233,6 +235,27 @@ describe("PM-4 — the project release is per session, and says what really happ
   });
 });
 
+describe("PROD-4 dw2 (notifications N9) — a project notice's audience is the dispatcher's, not hand-resolved", () => {
+  it("postComment hands emit() the project and its followers — no hand-read of members or watchers — and pins the email it always sent", async () => {
+    state.rows.projects = [PROJECT];
+    state.rows.project_members = [{ project_id: "p1", user_id: "ann" }];
+    await postComment({ projectId: "p1", orgId: "o1", body: "valve list attached", actorUserId: "own", actorEmail: "own@x.io" });
+    expect(state.emits).toHaveLength(1);
+    const e = state.emits[0] as { kind: string; audience: Record<string, unknown>; email?: { subject?: string; bodyText?: string }; title: string; body?: string };
+    expect(e.kind).toBe("project_comment");
+    // members (projectId → resolveProjectMembers) ∪ watchers (followers → resolveFollowers on the project),
+    // minus the actor, active members only — resolved once, by the dispatcher
+    expect(e.audience).toEqual({ projectId: "p1", followers: true });
+    // the title as every recipient's subject, as when everyone was named in `involved`
+    expect(e.email).toEqual({ subject: e.title, bodyText: e.body ?? e.title });
+    // the hand-resolution is gone: no project_members read by notifyProjectAudience, no listFollowerIds
+    const src = readFileSync(join(process.cwd(), "lib/projects.ts"), "utf8");
+    const fn = src.slice(src.indexOf("async function notifyProjectAudience("), src.indexOf("\n}\n", src.indexOf("async function notifyProjectAudience(")));
+    expect(fn).not.toMatch(/project_members|listFollowerIds|involved:/);
+    expect(src).not.toMatch(/from "@\/lib\/subscriptions"/);
+  });
+});
+
 describe("PM-4 dw4 — the sweep releases checkouts stranded on a closed project, after 24h", () => {
   it("the cron releases a project checkout whose project closed more than a day ago, with its own reason", async () => {
     const { supabase } = await import("@/lib/supabase");
@@ -257,7 +280,7 @@ describe("PM-4 dw4 — the sweep releases checkouts stranded on a closed project
     expect(writesTo("notifications", "insert")).toHaveLength(1);
     const notes = writesTo("notifications", "insert").flatMap((w) => [w.payload].flat()) as Row[];
     expect(notes).toHaveLength(1);
-    expect(notes[0]).toMatchObject({ user_id: "ann", title: "Your project checkout was released", kind: "checkout_released" });
+    expect(notes[0]).toMatchObject({ user_id: "ann", title: "Your project checkout was released", kind: "checkout_auto_released" }); // N9 (PROD-13): its own kind
   });
 
   it("the window runs from the CLOSURE, not updated_at: a later edit to a closed project does not restart it; an archive reads its closing feed row", async () => {

@@ -13,7 +13,6 @@ import { SNAPSHOT_READS, type ProjectStateSnapshot } from "@/lib/projectHealth";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { logAuditAction } from "@/lib/audit";
 import { notify, notifyMany, notifyBatchChecked } from "@/lib/inAppNotifications";
-import { listFollowerIds } from "@/lib/subscriptions";
 import {
   ensureActiveEpisode,
   postEpisodeSystemMessage,
@@ -1437,6 +1436,17 @@ export async function updateMember(input: {
 // ─── AUDIENCE FAN-OUT ────────────────────────────────────────────────────
 // Members ∪ watchers, minus the actor. This is what makes the Watch button
 // real: following a project previously produced zero notifications ever.
+//
+// PROD-4 dw2 (notifications Round G, N9): the dispatcher resolves the
+// audience — `projectId` (resolveProjectMembers) and `followers`
+// (resolveFollowers on the project: the subscriptions table, the one store
+// listFollowerIds read) — instead of this function pre-resolving it by hand.
+// The set is the same: members ∪ watchers, minus the actor, active members
+// only. The email is pinned to what it was when everyone was named: the
+// title as the subject and the body as the text, for members and watchers
+// alike (`email`) — the dispatcher otherwise gives anyone reached through
+// the follow list a category subject (NEDGE-6), which would change every
+// member's project email.
 
 async function notifyProjectAudience(input: {
   projectId: string; orgId: string; actorUserId: string; actorName?: string;
@@ -1444,15 +1454,6 @@ async function notifyProjectAudience(input: {
   title: string; body?: string;
 }): Promise<void> {
   try {
-    const [{ data: mem }, watchers] = await Promise.all([
-      supabase.from("project_members").select("user_id").eq("project_id", input.projectId),
-      listFollowerIds("project", input.projectId),
-    ]);
-    const ids = [...new Set([
-      ...(((mem ?? []) as Array<{ user_id: string }>).map((m) => m.user_id)),
-      ...watchers,
-    ])].filter((id) => id && id !== input.actorUserId);
-    if (!ids.length) return;
     const { emit } = await import("@/lib/notify/dispatch");
     await emit({
       orgId: input.orgId,
@@ -1464,7 +1465,8 @@ async function notifyProjectAudience(input: {
       resource: { type: "project", id: input.projectId },
       actorUserId: input.actorUserId,
       actorName: input.actorName,
-      audience: { involved: ids },
+      audience: { projectId: input.projectId, followers: true },
+      email: { subject: input.title, bodyText: input.body ?? input.title },
     });
   } catch { /* fan-out is best-effort — never blocks the mutation */ }
 }
@@ -2071,7 +2073,8 @@ async function sweepSessions(
     const told = await notifyBatchChecked(released.map((r) => ({
       orgId: r.org_id,
       userId: r.user_id,
-      kind: "checkout_released" as const,
+      // PROD-13 / TAX-13 (N9): an expiry release is its own kind.
+      kind: "checkout_auto_released" as const,
       title: o.title,
       body: o.body,
       link: r.library_id ? `/documents/${r.library_id}?doc=${r.document_id}` : "/checkouts",

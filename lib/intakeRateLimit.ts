@@ -316,9 +316,12 @@ function sumFolded(links: FoldedLink[]): FoldedCounts {
 }
 
 /** The bell kind a digest carries: a published revision outranks a
- *  replacement. */
-export function foldedDigestKind(d: Pick<FoldedDigest, "folded">): "doc_superseded" | "review_requested" {
-  return d.folded.published > 0 ? "doc_superseded" : "review_requested";
+ *  replacement. Without one the digest is about submissions waiting on the
+ *  team — intake_submission (DEC-90 A13, notifications N9: a project notice
+ *  has a kind of its own, never the PSM sign-off kind review_requested it
+ *  rode until then). */
+export function foldedDigestKind(d: Pick<FoldedDigest, "folded">): "doc_superseded" | "intake_submission" {
+  return d.folded.published > 0 ? "doc_superseded" : "intake_submission";
 }
 
 /** What a digest's notice records (bell and email alike). */

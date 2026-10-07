@@ -276,7 +276,8 @@ export async function notifyPackagesOfRetirement(input: {
         userIds: [p.owner_user_id],
         actorUserId: input.actorUserId,
         actorName: input.actorName,
-        kind: "doc_superseded",
+        // PROD-13 / TAX-13 (N9): a packed document's retirement is its own kind.
+        kind: "package_doc_retired",
         title: `${input.docLabel} was ${input.newStatus.toLowerCase()} — it's in your pack "${p.name}"`,
         body: `A document pinned in your work package has been ${input.newStatus.toLowerCase()}. Pull it from the pack or replace it before the pack is used again.`,
         link: `/packages?pkg=${p.id}`,
