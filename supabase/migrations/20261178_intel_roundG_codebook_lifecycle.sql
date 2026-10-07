@@ -32,7 +32,9 @@
 --      auth.uid() (anon and the service role: a rename is a person's act,
 --      recorded under their name) and anyone outside is_org_controller.
 --      EXECUTE is revoked from PUBLIC and anon and granted to authenticated
---      only (DRLS-16). One transaction, serialized per org:
+--      only (DRLS-16). One transaction, serialized per org. Its writes run
+--      inside the transaction-local setting app.codebook_rename (org, kind,
+--      old and new code), set right before a. and cleared right after e.:
 --        a. the new code is inserted as a row of its own (same label, meta,
 --           sort, origin and author) — the digit guard (20261128 §4) checks it;
 --        b. assets: the filing (unit_code) and the unit or type part of the
@@ -46,14 +48,18 @@
 --        f. the new row takes the old row's id (the entry keeps its
 --           identity), and a CODEBOOK_CODE_RENAMED audit row records the
 --           counts.
+--      A rename is ONE new codebook version: a.'s insert bumps it, and the
+--      old row's delete in e. (the setting names it) does not bump it again,
+--      so every site code b. rewrites records the version the rename made.
 --      p_dry_run answers the same counts and writes nothing. p_expected
 --      (the counts a person confirmed) makes the apply refuse (40001) if
 --      what it would touch changed since the preview: preview = apply.
 --      A rename that would collide (a rewritten site code another asset
---      carries, a head that also reads as another unit and type, a flow that
---      would duplicate or loop, a mapping held elsewhere) is refused whole;
---      the dry run names it first. drawing_type codes are referenced by
---      nothing stored and are not renamed here.
+--      carries, a head that already reads — or once renamed would read — as
+--      another unit and type, a flow that would duplicate or loop, a mapping
+--      held elsewhere) is refused whole; the dry run names it first.
+--      drawing_type codes are referenced by nothing stored and are not
+--      renamed here.
 --   3. process_flows_guard re-created from its only (newest) definition,
 --      20261155, plus ONE block and its variable (lineDiff-pinned): see below.
 --   4. ASK-8 — a legend sheet is a knowledge document of the same workspace.
@@ -86,13 +92,14 @@
 --     new unit end validates. Its person rule "a flow's endpoints are fixed"
 --     would refuse d.; the ONE added block admits exactly this update and
 --     nothing else: the transaction-local setting app.codebook_rename names
---     the org, the old and the new code (set by rename_codebook_code right
---     before its UPDATE and cleared right after; no other migration sets it
---     — pinned by test; PostgREST lets a client set only request.*
---     settings), the caller is in the controller tier, and NOTHING but a
---     unit end's ref changes, from the old code to the new one. Every other
---     update — a different column, a different code, an asset end, another
---     org, no setting — meets the rules exactly as before. The flow still
+--     the org, a unit rename, the old and the new code (set by
+--     rename_codebook_code around its writes and cleared right after; no
+--     other migration sets it — pinned by test; PostgREST lets a client set
+--     only request.* settings), the caller is in the controller tier, and
+--     NOTHING but a unit end's ref changes, from the old code to the new
+--     one. Every other update — a different column, a different code, an
+--     asset end, another org, a type rename, no setting — meets the rules
+--     exactly as before. The flow still
 --     ends at the same Site Codebook unit, now spelled with its new code.
 --
 -- WIDENS: the controller tier gains renaming a code in place (counted
@@ -251,6 +258,7 @@ RETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$
 DECLARE
   v_org     uuid;
   v_version bigint;
+  v_rename  text;
 BEGIN
   IF TG_OP = 'UPDATE'
      AND NEW.code IS NOT DISTINCT FROM OLD.code
@@ -264,6 +272,18 @@ BEGIN
        SELECT 1 FROM codebook_entries e
         WHERE e.id = NEW.id OR (e.org_id = NEW.org_id AND e.kind = NEW.kind AND e.code = NEW.code)) THEN
     RETURN NEW;
+  END IF;
+  -- CB-5: a rename is ONE new version. Its new code's insert bumped it; the
+  -- old code's delete inside the same rename (rename_codebook_code's
+  -- transaction-local setting names it) does not bump it again.
+  IF TG_OP = 'DELETE' THEN
+    v_rename := NULLIF(current_setting('app.codebook_rename', true), '');
+    IF v_rename IS NOT NULL
+       AND (v_rename::jsonb ->> 'org') = OLD.org_id::text
+       AND (v_rename::jsonb ->> 'kind') = OLD.kind
+       AND (v_rename::jsonb ->> 'old') = OLD.code THEN
+      RETURN OLD;
+    END IF;
   END IF;
   v_org := CASE WHEN TG_OP = 'DELETE' THEN OLD.org_id ELSE NEW.org_id END;
   -- An org being deleted (its cascade) has no codebook left to version.
@@ -405,14 +425,15 @@ BEGIN
   -- CB-5 (20261178): the Site Codebook's own rename moves a unit end from
   -- the old code to the new code of the SAME unit. It passes here only
   -- inside rename_codebook_code's transaction (the one place this setting
-  -- is set: transaction-local, cleared right after its UPDATE; pinned by
-  -- test), only for the controller tier, and only when nothing but a unit
-  -- end's ref moves, from the renamed code to its new one. The endpoint
-  -- check above has already run on the new code; every other UPDATE meets
-  -- the rules below.
+  -- is set: transaction-local, cleared right after its writes; pinned by
+  -- test), only for a unit rename and the controller tier, and only when
+  -- nothing but a unit end's ref moves, from the renamed code to its new
+  -- one. The endpoint check above has already run on the new code; every
+  -- other UPDATE meets the rules below.
   v_rename := NULLIF(current_setting('app.codebook_rename', true), '');
   IF v_rename IS NOT NULL
      AND (v_rename::jsonb ->> 'org') = NEW.org_id::text
+     AND (v_rename::jsonb ->> 'kind') = 'unit'
      AND is_org_controller(NEW.org_id)
      AND (to_jsonb(NEW) - 'from_ref' - 'to_ref') = (to_jsonb(OLD) - 'from_ref' - 'to_ref')
      AND (NEW.from_ref IS NOT DISTINCT FROM OLD.from_ref
@@ -484,6 +505,7 @@ DECLARE
   v_adopted       bigint := 0;
   v_adopted_flows bigint := 0;
   v_ambiguous     bigint := 0;
+  v_ambiguous_new bigint := 0;
   v_taken         bigint := 0;
   v_flow_clash    bigint := 0;
   v_flow_loop     bigint := 0;
@@ -547,6 +569,16 @@ BEGIN
                      ON t2.org_id = u2.org_id AND t2.kind = 'equipment_type'
                     WHERE u2.org_id = p_org_id AND u2.kind = 'unit' AND u2.code <> v_old_code
                       AND split_part(a.code, '.', 1) = u2.code || t2.code);
+    -- A rewritten head that would ALSO read as another unit and type.
+    SELECT COUNT(*) INTO v_ambiguous_new FROM assets a
+     WHERE a.org_id = p_org_id AND a.code IS NOT NULL
+       AND EXISTS (SELECT 1 FROM codebook_entries t
+                    WHERE t.org_id = p_org_id AND t.kind = 'equipment_type'
+                      AND split_part(a.code, '.', 1) = v_old_code || t.code)
+       AND EXISTS (SELECT 1 FROM codebook_entries u2 JOIN codebook_entries t2
+                     ON t2.org_id = u2.org_id AND t2.kind = 'equipment_type'
+                    WHERE u2.org_id = p_org_id AND u2.kind = 'unit' AND u2.code <> v_old_code
+                      AND v_new_code || substr(split_part(a.code, '.', 1), length(v_old_code) + 1) = u2.code || t2.code);
     SELECT COUNT(*) INTO v_taken FROM assets a
      WHERE a.org_id = p_org_id AND a.code IS NOT NULL
        AND EXISTS (SELECT 1 FROM codebook_entries t
@@ -590,6 +622,14 @@ BEGIN
                      ON t2.org_id = u2.org_id AND t2.kind = 'equipment_type'
                     WHERE u2.org_id = p_org_id AND u2.kind = 'unit' AND t2.code <> v_old_code
                       AND split_part(a.code, '.', 1) = u2.code || t2.code);
+    -- A rewritten head that would ALSO read as another unit and type.
+    SELECT COUNT(*) INTO v_ambiguous_new FROM assets a JOIN codebook_entries u
+       ON u.org_id = a.org_id AND u.kind = 'unit' AND split_part(a.code, '.', 1) = u.code || v_old_code
+     WHERE a.org_id = p_org_id
+       AND EXISTS (SELECT 1 FROM codebook_entries u2 JOIN codebook_entries t2
+                     ON t2.org_id = u2.org_id AND t2.kind = 'equipment_type'
+                    WHERE u2.org_id = p_org_id AND u2.kind = 'unit' AND t2.code <> v_old_code
+                      AND u.code || v_new_code = u2.code || t2.code);
     SELECT COUNT(*) INTO v_taken FROM assets a JOIN codebook_entries u
        ON u.org_id = a.org_id AND u.kind = 'unit' AND split_part(a.code, '.', 1) = u.code || v_old_code
      WHERE a.org_id = p_org_id
@@ -600,6 +640,9 @@ BEGIN
 
   IF v_ambiguous > 0 THEN
     v_blockers := v_blockers || format('%s site code(s) read both as %s %s and as another unit and type — resolve those codes first (Operating areas → Identity review)', v_ambiguous, p_kind, v_old_code);
+  END IF;
+  IF v_ambiguous_new > 0 THEN
+    v_blockers := v_blockers || format('%s site code(s) would read, once renamed, both as %s %s and as another unit and type — the codebook could no longer decode them; choose another code', v_ambiguous_new, p_kind, v_new_code);
   END IF;
   IF v_taken > 0 THEN
     v_blockers := v_blockers || format('%s renamed site code(s) are already carried by another asset — one site code is one asset; resolve them first', v_taken);
@@ -633,6 +676,12 @@ BEGIN
       USING ERRCODE = '40001';
   END IF;
 
+  -- The rename's writes run inside this transaction-local setting: it lets
+  -- process_flows_guard's CB-5 block admit d. (a unit rename only), and the
+  -- version stamp count the rename as ONE new version (e. bumps nothing).
+  PERFORM set_config('app.codebook_rename',
+                     jsonb_build_object('org', p_org_id::text, 'kind', p_kind, 'old', v_old_code, 'new', v_new_code)::text, true);
+
   -- a. The new code, as a row of its own (the digit guard checks it).
   INSERT INTO codebook_entries (org_id, kind, code, label, meta, sort, origin, created_by, created_at, updated_at)
   VALUES (v_old.org_id, v_old.kind, v_new_code, v_old.label, v_old.meta, v_old.sort, v_old.origin, v_old.created_by, v_old.created_at, now())
@@ -658,15 +707,12 @@ BEGIN
     -- c. The operational unit mapped to it (20261138's triggers move unit_id).
     UPDATE units SET codebook_code = v_new_code WHERE org_id = p_org_id AND codebook_code = v_old_code;
     -- d. Unit ends: admitted by process_flows_guard's CB-5 block only while
-    --    this transaction-local setting names this org and these two codes.
-    PERFORM set_config('app.codebook_rename',
-                       jsonb_build_object('org', p_org_id::text, 'old', v_old_code, 'new', v_new_code)::text, true);
+    --    the setting names this org, a unit rename and these two codes.
     UPDATE process_flows
        SET from_ref = CASE WHEN from_kind = 'unit' AND from_ref = v_old_code THEN v_new_code ELSE from_ref END,
            to_ref   = CASE WHEN to_kind = 'unit' AND to_ref = v_old_code THEN v_new_code ELSE to_ref END
      WHERE org_id = p_org_id
        AND ((from_kind = 'unit' AND from_ref = v_old_code) OR (to_kind = 'unit' AND to_ref = v_old_code));
-    PERFORM set_config('app.codebook_rename', '', true);
   ELSE
     -- b. The type part of the site code.
     UPDATE assets a
@@ -680,6 +726,7 @@ BEGIN
 
   -- e. Nothing references the old code now: 20261128's guard counts zero.
   DELETE FROM codebook_entries WHERE id = v_old.id;
+  PERFORM set_config('app.codebook_rename', '', true);
   -- f. The entry keeps its identity.
   UPDATE codebook_entries SET id = v_old.id WHERE id = v_new_id;
 
@@ -760,13 +807,14 @@ SELECT 'trg_codebook_config_version_guard: the version moves only forward, a cod
               FROM pg_proc WHERE proname = 'codebook_config_version_guard'),
        NULL
 UNION ALL
-SELECT 'trg_codebook_entries_version_stamp: an entry added, removed, re-coded or re-prefixed is a new version (fires after 20261128''s guards); the service role never creates a config row',
+SELECT 'trg_codebook_entries_version_stamp: an entry added, removed, re-coded or re-prefixed is a new version (fires after 20261128''s guards), a rename is one; the service role never creates a config row',
        EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_codebook_entries_version_stamp'
                 AND tgrelid = 'codebook_entries'::regclass AND NOT tgisinternal)
        AND 'trg_codebook_entries_version_stamp' COLLATE "C" > 'trg_codebook_entries_guard_in_use'
        AND (SELECT prosrc LIKE '%(NEW.meta -> ''tagPrefixes'') IS NOT DISTINCT FROM (OLD.meta -> ''tagPrefixes'')%'
                    AND prosrc LIKE '%ON CONFLICT (org_id) DO UPDATE SET codebook_version = c.codebook_version + 1%'
                    AND prosrc LIKE '%IF auth.uid() IS NOT NULL THEN%'
+                   AND prosrc LIKE '%AND (v_rename::jsonb ->> ''old'') = OLD.code THEN%'
                    AND NOT prosecdef
                    AND array_to_string(proconfig, ',') LIKE '%search_path=public%'
               FROM pg_proc WHERE proname = 'codebook_entries_version_stamp'),
@@ -784,13 +832,14 @@ SELECT 'trg_assets_codebook_version: every writer''s site code records the versi
               FROM pg_proc WHERE proname = 'assets_codebook_version_stamp'),
        NULL
 UNION ALL
-SELECT 'rename_codebook_code: SECURITY DEFINER, search_path pinned, refuses a NULL uid and anyone outside is_org_controller, one transaction, sets app.codebook_rename only around its flows UPDATE',
+SELECT 'rename_codebook_code: SECURITY DEFINER, search_path pinned, refuses a NULL uid and anyone outside is_org_controller, one transaction, sets app.codebook_rename only around its own writes, refuses a code that would read two ways',
        (SELECT prosecdef
                AND array_to_string(proconfig, ',') LIKE '%search_path=public%'
                AND prosrc LIKE '%IF v_uid IS NULL THEN%'
                AND prosrc LIKE '%NOT is_org_controller(p_org_id)%'
                AND prosrc LIKE '%PERFORM set_config(''app.codebook_rename'', '''', true);%'
                AND prosrc LIKE '%DELETE FROM codebook_entries WHERE id = v_old.id;%'
+               AND prosrc LIKE '%would read, once renamed, both as%'
           FROM pg_proc WHERE proname = 'rename_codebook_code'),
        NULL
 UNION ALL
@@ -812,6 +861,7 @@ SELECT 'process_flows_guard: 20261155''s rules intact (endpoints for every write
                    AND prosrc LIKE '%OR (NEW.source_document_id IS NOT NULL AND NEW.source_document_id IS DISTINCT FROM OLD.source_document_id)%'
                    AND prosrc LIKE '%IF v_uid IS NULL THEN RETURN NEW; END IF;%'
                    AND prosrc LIKE '%v_rename := NULLIF(current_setting(''app.codebook_rename'', true), '''');%'
+                   AND prosrc LIKE '%AND (v_rename::jsonb ->> ''kind'') = ''unit''%'
                    AND prosrc LIKE '%AND (to_jsonb(NEW) - ''from_ref'' - ''to_ref'') = (to_jsonb(OLD) - ''from_ref'' - ''to_ref'')%'
                    AND NOT prosecdef
                    AND array_to_string(proconfig, ',') LIKE '%search_path=public%'

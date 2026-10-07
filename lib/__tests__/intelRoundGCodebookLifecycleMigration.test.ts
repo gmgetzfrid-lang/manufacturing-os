@@ -12,7 +12,11 @@
 //     definition, found by scanning the sequence, and differ by exactly the
 //     added lines (an exact cut gives the base back byte for byte);
 //   * the rename's setting app.codebook_rename is SET by this file only, and
-//     only around the rename's flows UPDATE (transaction-local, cleared);
+//     only around the rename's own writes (transaction-local, cleared right
+//     after the old row's delete); it names the kind, so a type rename never
+//     moves a flow end, and it makes a rename ONE new codebook version;
+//   * a rename whose rewritten head would read as another unit and type is
+//     refused (named by the dry run first);
 //   * rename_codebook_code: SECURITY DEFINER, search_path pinned, refuses a
 //     NULL uid and anyone outside is_org_controller before it writes,
 //     EXECUTE for authenticated only (DRLS-16), the order of its steps;
@@ -107,9 +111,10 @@ describe("process_flows_guard — re-created from its newest definition plus ONE
     expect(at).toBeLessThan(next.indexOf("process_flows_fixed"));
     expect(at).toBeLessThan(next.indexOf("process_flows_decide"));
   });
-  it("it admits only: the setting naming THIS org, the controller tier, nothing but a unit end's ref moving from the old code to the new", () => {
+  it("it admits only: the setting naming THIS org and a UNIT rename, the controller tier, nothing but a unit end's ref moving from the old code to the new", () => {
     expect(block).toContain("v_rename := NULLIF(current_setting('app.codebook_rename', true), '');");
     expect(block).toContain("AND (v_rename::jsonb ->> 'org') = NEW.org_id::text");
+    expect(block).toContain("AND (v_rename::jsonb ->> 'kind') = 'unit'");
     expect(block).toContain("AND is_org_controller(NEW.org_id)");
     expect(block).toContain("AND (to_jsonb(NEW) - 'from_ref' - 'to_ref') = (to_jsonb(OLD) - 'from_ref' - 'to_ref')");
     expect(block).toContain("OR (NEW.from_kind = 'unit' AND OLD.from_ref = (v_rename::jsonb ->> 'old') AND NEW.from_ref = (v_rename::jsonb ->> 'new')))");
@@ -124,21 +129,37 @@ describe("process_flows_guard — re-created from its newest definition plus ONE
   });
 });
 
-describe("app.codebook_rename — set by rename_codebook_code only, transaction-local, cleared after its UPDATE", () => {
+describe("app.codebook_rename — set by rename_codebook_code only, transaction-local, around its own writes", () => {
   it("no other numbered migration mentions the setting", () => {
     for (const f of files.filter((x) => x !== FILE)) expect(text(f), f).not.toContain("app.codebook_rename");
   });
-  it("in this file it is SET twice, both in rename_codebook_code, around the flows UPDATE, with is_local = true", () => {
+  it("in this file it is SET twice, both in rename_codebook_code: after every check, right before the first write, and cleared right after the old row's delete (is_local = true)", () => {
     const sets = [...strip(m).matchAll(/set_config\('app\.codebook_rename'/g)];
     expect(sets).toHaveLength(2);
     const r = body("rename_codebook_code");
     const set = r.indexOf("PERFORM set_config('app.codebook_rename',");
+    const firstWrite = r.indexOf("INSERT INTO codebook_entries");
     const upd = r.indexOf("UPDATE process_flows");
+    const del = r.indexOf("DELETE FROM codebook_entries WHERE id = v_old.id;");
     const clear = r.indexOf("PERFORM set_config('app.codebook_rename', '', true);");
-    expect(set).toBeGreaterThan(0);
+    expect(set).toBeGreaterThan(r.indexOf("USING ERRCODE = '40001'"));
+    expect(set).toBeLessThan(firstWrite);
     expect(upd).toBeGreaterThan(set);
-    expect(clear).toBeGreaterThan(upd);
-    expect(r.slice(set, upd)).toContain("jsonb_build_object('org', p_org_id::text, 'old', v_old_code, 'new', v_new_code)::text, true);");
+    expect(del).toBeGreaterThan(upd);
+    expect(clear).toBeGreaterThan(del);
+    expect(clear).toBeLessThan(r.indexOf("UPDATE codebook_entries SET id = v_old.id WHERE id = v_new_id;"));
+    expect(r.slice(set, firstWrite)).toContain("jsonb_build_object('org', p_org_id::text, 'kind', p_kind, 'old', v_old_code, 'new', v_new_code)::text, true);");
+  });
+  it("its readers: process_flows_guard's CB-5 block (a unit rename only) and the version stamp (the rename's own delete bumps nothing)", () => {
+    const readers = files.filter((f) => f <= FILE).flatMap((f) => [...strip(text(f)).matchAll(/current_setting\('app\.codebook_rename'/g)].map(() => f));
+    expect(readers).toEqual([FILE, FILE]);
+    expect(body("process_flows_guard")).toContain("current_setting('app.codebook_rename', true)");
+    const v = body("codebook_entries_version_stamp");
+    expect(v).toContain("current_setting('app.codebook_rename', true)");
+    const skip = v.slice(v.indexOf("IF TG_OP = 'DELETE' THEN\n    v_rename"), v.indexOf("v_org := CASE"));
+    expect(skip).toContain("AND (v_rename::jsonb ->> 'org') = OLD.org_id::text");
+    expect(skip).toContain("AND (v_rename::jsonb ->> 'kind') = OLD.kind");
+    expect(skip).toContain("AND (v_rename::jsonb ->> 'old') = OLD.code THEN\n      RETURN OLD;");
   });
 });
 
@@ -156,6 +177,13 @@ describe("rename_codebook_code — DRLS-16, the controller tier, one transaction
     expect(m).toContain("REVOKE ALL ON FUNCTION rename_codebook_code(uuid, text, text, text, boolean, jsonb) FROM PUBLIC, anon;");
     expect(m).toContain("GRANT EXECUTE ON FUNCTION rename_codebook_code(uuid, text, text, text, boolean, jsonb) TO authenticated;");
     expect(strip(m)).not.toMatch(/GRANT[^;]*rename_codebook_code[^;]*(anon|service_role|PUBLIC)/i);
+  });
+  it("a rewritten head that would ALSO read as another unit and type is a blocker, for a unit and for a type rename", () => {
+    expect(r.match(/SELECT COUNT\(\*\) INTO v_ambiguous_new FROM assets a/g)).toHaveLength(2);
+    expect(r).toContain("AND v_new_code || substr(split_part(a.code, '.', 1), length(v_old_code) + 1) = u2.code || t2.code);");
+    expect(r).toContain("AND u.code || v_new_code = u2.code || t2.code);");
+    expect(r).toContain("would read, once renamed, both as %s %s and as another unit and type");
+    expect(r.indexOf("IF v_ambiguous_new > 0 THEN")).toBeLessThan(r.indexOf("IF p_dry_run THEN RETURN v_counts; END IF;"));
   });
   it("the dry run, the blockers and the preview = apply check all come before the first write", () => {
     const firstWrite = r.indexOf("INSERT INTO codebook_entries");
