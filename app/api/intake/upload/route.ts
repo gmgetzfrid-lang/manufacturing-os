@@ -106,13 +106,17 @@
 // J16 (GAP-401) — the door's constrained identity. Every CONTENT write the
 // door makes, on both paths (multipart and finalize) — a new document, a
 // submission, its pending pointer, the trusted promote, a quote, a redline —
-// goes first through a door function (20261184): SECURITY DEFINER and the
-// service role's only, it resolves the link from its token HASH in the
-// database (live, its project open — a revocation is effective mid-request
-// too), refuses a write outside the link's project / library / documents,
-// and binds the door's identity for that one write (auth.uid() = the link;
-// for the promote, the link's creator) so every guard a member's write meets
-// judges the door's write too. While the function is not there (20261184 not
+// goes first through a door function (20261184): the service role's only, it
+// resolves the link from its token HASH in the database (live, its project
+// open — a revocation is effective mid-request too), refuses a write outside
+// the link's project / library / documents, and binds the door's identity for
+// that one write (auth.uid() = the link; for the promote, the link's creator)
+// so every guard a member's write meets judges the door's write too. The new
+// document and the quote are also written UNDER ROW-LEVEL SECURITY: their
+// door functions switch to the NOLOGIN role intake_door (granted to
+// authenticator) for the one INSERT, and policies keyed on the bound link
+// judge it — a policy refusal answers like any scope refusal (42501). While
+// the function is not there (20261184 not
 // pasted: PGRST202, or 42883 naming an intake_door_ function at the start of
 // its message — decided by the CODE, never by a message alone) the write is
 // the service-role write below it, unchanged. Any OTHER answer — a guard, the
@@ -1048,8 +1052,9 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
     };
     // J16 (GAP-401): filed through the door's identity (20261184) — the
     // link's org, project, company and RFQ group are the database's, the
-    // party must be the project's, and the project record rail judges the
-    // write. Before the paste, the service-role insert, unchanged.
+    // party must be the project's, the project record rail judges the
+    // write, and it is inserted as intake_door under the quote policies.
+    // Before the paste, the service-role insert, unchanged.
     let qdoc: unknown = null;
     let qErr: PgError = null;
     const filed = await viaDoor<string>(doorState, () => supabaseAdmin.rpc("intake_door_file_quote", {
@@ -1573,7 +1578,8 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
     // J16 (GAP-401): created through the door's identity (20261184) — into
     // the project's intake library and folder only, authored by this link
     // (INTK-16's rail admits the door for its OWN link), every insert rail
-    // judging it. Before the paste, the service-role insert, unchanged.
+    // judging it, inserted as intake_door under the documents policies.
+    // Before the paste, the service-role insert, unchanged.
     let doc: unknown = null;
     let docErr: PgError = null;
     const created = await viaDoor<string>(doorState, () => supabaseAdmin.rpc("intake_door_create_document", { p_token_hash: tokenHash, p_doc: docRow }));

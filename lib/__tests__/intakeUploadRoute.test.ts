@@ -1388,7 +1388,10 @@ function installDoor() {
     if (!r.link.created_by) return doorScope("no member to publish under", "no_creator");
     const doc = (db.tables.documents ?? []).find((x) => x.id === a.p_doc && x.org_id === r.link.org_id);
     if (!doc || doc.authored_by_link_id !== r.link.id || assignedTo(r.link, a.p_doc) || !doc.current_version_id) return doorScope("own, unassigned, approved only");
-    const inner = { p_doc: a.p_doc, p_expected_base: a.p_expected_base, p_op_class: "content", p_version: { ...(a.p_version as Row), provenance: "external" }, p_actor: r.link.created_by, p_actor_name: a.p_actor_name };
+    // 20261184 builds the published version from an allow-list (review fix pass 2)
+    const pv = a.p_version as Row;
+    const allowed = Object.fromEntries(["revision_label", "file_url", "file_type", "size", "change_log", "created_by_name", "file_hash"].map((k) => [k, pv[k] ?? null]));
+    const inner = { p_doc: a.p_doc, p_expected_base: a.p_expected_base, p_op_class: "content", p_version: { ...allowed, provenance: "external" }, p_actor: r.link.created_by, p_actor_name: a.p_actor_name };
     db.doorInner.push({ fn: "publish_revision", args: inner });
     seen("intake_door_promote", r.link.created_by);
     const out = db.rpc.publish_revision(inner);

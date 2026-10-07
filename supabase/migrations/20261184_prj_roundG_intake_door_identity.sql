@@ -4,42 +4,49 @@
 -- contractor door's content writes run as an identity the database guards
 -- apply to, scoped to ONE link (projects-tab GAP-401, owed item 1).
 --
--- WHY THIS SHAPE (and not RLS insert policies). The door has no signed-in
--- user: app/api/intake/upload/route.ts writes through the service role,
--- whose JWT carries no `sub`, so auth.uid() is NULL and every guard that
--- reads it returns early ("the service pass") — the publish guard, the
--- register / hold-label rails, the insert-pointer rail, the intake
--- authorship rail (INTK-16), the project record rail. A per-request identity
--- PostgREST would apply row-level security to needs a JWT the database
--- trusts, and minting one needs the project's JWT signing secret, which this
--- app does not hold (no such variable anywhere in the code or .env.example:
--- only the URL, the public anon key and the service-role key). The one other
--- non-bypass role the server can reach is `anon`, whose key is PUBLIC:
--- insert policies granted to it would let anyone holding the public key and
--- a contractor link write documents straight past the route's sniff, rate
--- window and budget — and every guard still exempts it (NULL uid). So this
--- file takes the strongest step that is safe without that secret:
+-- WHY THIS SHAPE. The door has no signed-in user: app/api/intake/upload/
+-- route.ts writes through the service role, whose JWT carries no `sub`, so
+-- auth.uid() is NULL and every guard that reads it returns early ("the
+-- service pass") — the publish guard, the register / hold-label rails, the
+-- insert-pointer rail, the intake authorship rail (INTK-16), the project
+-- record rail — and the service role bypasses row-level security outright.
+-- This file gives the door two things, neither of which needs a JWT or its
+-- signing secret:
 --
---   * DOOR FUNCTIONS (SECURITY DEFINER, search_path pinned, EXECUTE for the
---     service role only — never PUBLIC, anon or authenticated; each refuses
---     a signed-in caller). Each one resolves the link FROM ITS TOKEN HASH IN
---     THE DATABASE (never an id the caller names): it must exist, be neither
---     revoked nor expired, and its project must exist and be open — so a
---     revocation is effective mid-request too. Each takes its org, project,
---     intake library and folder, company and RFQ group from those rows, and
---     refuses a write outside the link's scope: a new document only into the
---     project's intake library and intake folder; a revision only to a
---     document the link authored or was assigned; a pending pointer only to
---     the link's own in-review submission; a publish only on a TRUSTED link,
---     only on its own approved, unassigned document; a quote only on a quote
---     link's own project, with a party of that project; a redline only on a
---     ticket that names the link; every storage key under the link's own
---     project prefix (the keys the route builds).
---   * A BOUND IDENTITY. Before its write, each function binds — for the
---     transaction, restored before it returns — request.jwt.claims (and the
---     legacy request.jwt.claim.sub / .role) to { sub, role: 'intake_door',
---     intake_link_id, org_id, project_id }. auth.uid() is then NOT NULL, so
---     every guard a member's write meets now judges the door's write:
+--   * ROW-LEVEL SECURITY FOR THE DOOR'S NEW DOCUMENT AND QUOTE, through a
+--     dedicated role. `intake_door` is a NOLOGIN role with no BYPASSRLS,
+--     granted to `authenticator` (the role PostgREST logs in as). The two
+--     door functions that make those rows are SECURITY INVOKER: called under
+--     the service key, they resolve the link and bind its identity, then
+--     switch to intake_door for the one INSERT (set_config('role',
+--     'intake_door', true); Postgres refuses a role switch only inside a
+--     SECURITY DEFINER function) and switch back. That INSERT is judged by
+--     the policies written TO intake_door — a permissive and a restrictive
+--     pair per table, keyed on the BOUND link (its org, project, intake
+--     library and folder, its storage prefix, its company and RFQ group, a
+--     party of its project), re-reading the link row so a revocation holds
+--     there too — and by every policy written for all roles. The role
+--     inherits no `TO authenticated` policy and adds no row to auth.users.
+--     It holds only: INSERT on the columns the door writes in documents and
+--     cost_documents; what the existing rails read AS the writer during a
+--     document INSERT — SELECT (id, org_id, acl_index) on libraries
+--     (documents_deny_upload_guard) and SELECT (document_id, source) with
+--     DELETE on document_assets (documents_resync_assets clears tag links
+--     after it), rows row-level security shows a link none of; and USAGE on
+--     schema auth, so the INVOKER document triggers that call auth.uid() run
+--     as it.
+--     WHERE THE PASTE CANNOT GRANT IT. If authenticator cannot be made a
+--     member of intake_door, or the paster holds no grant option on schema
+--     auth (Postgres then only WARNS), the final SELECT says so in two rows,
+--     and the door function keeps the bound identity below without the role
+--     switch for that write (a new document needs both; a quote the first)
+--     — exactly the shape before this decision.
+--   * A BOUND IDENTITY for every content write. Before its write, each door
+--     function binds — for the transaction, restored before it returns —
+--     request.jwt.claims (and the legacy request.jwt.claim.sub / .role) to
+--     { sub, role: 'intake_door', intake_link_id, org_id, project_id }.
+--     auth.uid() is then NOT NULL, so every trigger guard a member's write
+--     meets judges the door's write:
 --       - document, version, pointer and quote writes: sub = the LINK's id
 --         (no member is that id — the guards see a writer with no
 --         membership and no authority, which is what a link is);
@@ -52,7 +59,17 @@
 --         early on the service role (projects-tab SEC-4's residual: those
 --         were the route's own checks until now; the route keeps them, so a
 --         refusal still DEMOTES with its sentence, and the database is the
---         boundary).
+--         boundary). The version it publishes is built from an allow-list of
+--         the route's fields (label, key, type, size, note, name, hash; the
+--         provenance 'external') — no field that turns a guard off (change
+--         type, issue type, MOC, revert, ticket, source) ever comes from the
+--         caller.
+--     Every door function resolves the link FROM ITS TOKEN HASH IN THE
+--     DATABASE (never an id the caller names): it must exist, be neither
+--     revoked nor expired, and its project must exist and be open — so a
+--     revocation is effective mid-request too. Each refuses a write outside
+--     the link's scope with its own HINT (for the new document and the
+--     quote, the policies above refuse the same rows again, as the boundary).
 --     The redline is the one write that does NOT bind: the ticket rails
 --     (drafting-flow DF-P1, 20261166) make a ticket's attachments a
 --     service-only column and append_ticket_redline refuses a signed-in
@@ -65,34 +82,53 @@
 --     signed-in writer: it never changes authorship afterwards, and a
 --     member never stamps a link at all (unchanged).
 --
--- NOT built here (projects-tab SEC-22, opened by this package): RLS insert
--- policies keyed on a minted per-request JWT (needs the JWT secret in the
--- server environment — an operator step), and the door's housekeeping of
--- its own rows (retiring a displaced submission, withdrawing a lost race,
--- restoring, discarding a just-created document, the intake folder, the
--- project reference), which still run as the service role.
+-- NOT under row-level security here (projects-tab SEC-22, opened by this
+-- package), each for a reason a scratch PostgreSQL 16 run of the whole
+-- sequence showed:
+--   - the submission (a document_versions INSERT): any INSERT into
+--     document_versions by a role row-level security applies to fails at
+--     rewrite with 42P17 "infinite recursion detected in policy" —
+--     20261037's document_versions_insert_integrity reads document_versions
+--     in its first-version test while document_versions_org_access holds a
+--     subquery. That is true for a signed-in member today too (owner:
+--     roles-and-permissions); until it is fixed the door's submission keeps
+--     the bound identity under the service key;
+--   - the pending pointer (an UPDATE: documents_acl_select, a restrictive
+--     read policy for every role, hides even the link's own Draft from a
+--     writer with no membership, so the compare-and-set would match no row);
+--   - the trusted promote (publish_revision is SECURITY DEFINER; it is
+--     judged by the trigger guards as the creator), the redline (the ticket
+--     rails' service-only append), and the door's housekeeping of its own
+--     rows (retiring a displaced submission, withdrawing a lost race,
+--     restoring, discarding a just-created document, the intake folder, the
+--     project reference), which still run as the service role.
 --
--- NOT a widening for any client role. Every function is EXECUTE-able by the
--- service role alone (which could already write all of this, unguarded);
--- the rail's added block admits only the identity those functions bind. Net
--- effect: the door's content writes go from "exempt from every guard" to
--- "judged by every guard". The DEC-30 inventory (aggregate counts only,
+-- NOT a widening for any client role. Every door function is EXECUTE-able by
+-- the service role alone (which could already write all of this, unguarded);
+-- intake_door cannot log in and only a session that logs in as
+-- authenticator can switch to it; the policies and the rail's added block
+-- admit only the identity the door functions bind. Net effect: the door's
+-- content writes go from "exempt from every guard" to "judged by every
+-- guard", and its new documents and quotes from "bypassing row-level
+-- security" to "under it". The DEC-30 inventory (aggregate counts only,
 -- captured BEFORE the transaction) shows the populations the door's writes
 -- will now meet the guards with.
 --
 -- THE APP BEFORE AND AFTER THE PASTE. The route calls each door function
 -- first and, when it is not there (PostgREST PGRST202, or 42883 naming an
 -- intake_door_ function), writes exactly as today — so the app works before
--- this paste and after it. Any OTHER refusal (a guard, the link's scope, a
--- link revoked mid-request) is answered and is never followed by the
--- service-role write. intake_door_append_redline answers 42883 while
+-- this paste and after it. Any OTHER refusal (a guard, a policy, the link's
+-- scope, a link revoked mid-request) is answered and is never followed by
+-- the service-role write. intake_door_append_redline answers 42883 while
 -- append_ticket_redline (20261166) is not pasted, and the route then takes
 -- today's redline path (its own fallback included).
 --
 -- HOW TO APPLY: paste the whole file into the Supabase SQL editor and run it
 -- once (a re-run is safe: every step is idempotent). The final SELECT is the
--- only result set shown — probe rows must read ok = true; inventory rows
--- carry ok NULL and a count in n.
+-- only result set shown — probe rows must read ok = true (if one of the two
+-- "row-level security" rows reads false, the paste still applied: send that
+-- row back, it is SEC-22's next step); inventory rows carry ok NULL and a
+-- count in n.
 -- PASTE ORDER: after 20261141 (required — this file re-creates its
 -- documents_authorship_fixed and reads token_hash; the first statement
 -- refuses to run, changing nothing, without it; 20261141 itself follows
@@ -103,9 +139,9 @@
 -- refused by the rail (the route answers 500 — "Couldn't create the
 -- document") until this file is pasted again.
 -- DEPLOY ORDER: none required. Before the J16 build is deployed nothing calls
--- the door functions (the old route writes as today; the rail's new block is
--- reachable only through them). After it is deployed, the route uses them
--- from the moment this file is pasted.
+-- the door functions (the old route writes as today; the rail's new block
+-- and the intake_door policies are reachable only through them). After it
+-- is deployed, the route uses them from the moment this file is pasted.
 
 -- ── Prerequisite (refuse to run, changing nothing, without 20261141) ──────
 DO $$
@@ -150,9 +186,67 @@ SELECT 'inventory: …live links whose project has no intake library yet (a new 
 UNION ALL
 SELECT 'inventory: intake-born documents (authored_by_link_id set) — the authorship rail''s population',
        COUNT(*)::text
-  FROM documents WHERE authored_by_link_id IS NOT NULL;
+  FROM documents WHERE authored_by_link_id IS NOT NULL
+UNION ALL
+SELECT 'inventory: roles named intake_door before this paste (0 on the first paste; this file makes it)',
+       COUNT(*)::text
+  FROM pg_roles WHERE rolname = 'intake_door';
 
 BEGIN;
+
+-- ── 0. The door's role: row-level security for its new document and quote ─
+-- NOLOGIN, no BYPASSRLS, member of nothing. A role of that name made by
+-- anyone else, able to log in or to bypass row-level security, is refused.
+DO $$
+DECLARE
+  r record;
+BEGIN
+  SELECT rolsuper, rolbypassrls, rolcanlogin, rolcreaterole, rolcreatedb, rolreplication
+    INTO r FROM pg_roles WHERE rolname = 'intake_door';
+  IF NOT FOUND THEN
+    CREATE ROLE intake_door NOLOGIN NOINHERIT;
+  ELSIF r.rolsuper OR r.rolbypassrls OR r.rolcanlogin OR r.rolcreaterole OR r.rolcreatedb OR r.rolreplication THEN
+    RAISE EXCEPTION 'A role named intake_door already exists and can log in, create roles or bypass row-level security — this file needs it to be the contractor door''s constrained role. Nothing was changed.';
+  END IF;
+  -- PostgREST logs in as authenticator: only a session of that login can
+  -- switch to intake_door, and only the door functions do.
+  IF to_regrole('authenticator') IS NOT NULL THEN
+    BEGIN
+      GRANT intake_door TO authenticator;
+    EXCEPTION WHEN OTHERS THEN
+      RAISE NOTICE 'J16: intake_door could not be granted to authenticator (%) — the door''s new documents and quotes keep the bound identity without row-level security (see the final SELECT).', SQLERRM;
+    END;
+  END IF;
+  -- The INVOKER document triggers call auth.uid(). Without a grant option on
+  -- schema auth Postgres only WARNS here; the final SELECT says which.
+  IF to_regnamespace('auth') IS NOT NULL THEN
+    BEGIN
+      GRANT USAGE ON SCHEMA auth TO intake_door;
+    EXCEPTION WHEN OTHERS THEN
+      RAISE NOTICE 'J16: USAGE on schema auth could not be granted to intake_door (%) — a new document keeps the bound identity without row-level security (see the final SELECT).', SQLERRM;
+    END;
+  END IF;
+  -- The intake route has always written documents.created_by_name; the
+  -- repository's base schema does not define it (a column of the live
+  -- table), so it is granted where it exists.
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'documents' AND column_name = 'created_by_name') THEN
+    GRANT INSERT (created_by_name) ON documents TO intake_door;
+  END IF;
+END;
+$$;
+
+GRANT USAGE ON SCHEMA public TO intake_door;
+GRANT INSERT (id, org_id, library_id, collection_id, name, title, document_number, status,
+              updated_at, uniqueness_key, authored_by_link_id)
+  ON documents TO intake_door;
+GRANT INSERT (id, org_id, project_id, kind, file_url, file_name, mime_type, vendor_name,
+              rfq_group, intake_link_id, party_id, status, created_by, file_hash)
+  ON cost_documents TO intake_door;
+-- What the existing rails read AS the writer during those inserts (row-level
+-- security shows a link none of these rows):
+GRANT SELECT (id, org_id, acl_index) ON libraries TO intake_door;             -- documents_deny_upload_guard
+GRANT SELECT (document_id, source), DELETE ON document_assets TO intake_door;  -- documents_resync_assets
 
 -- ── 1. The door's identity: the link from its hash, bound for one write ───
 CREATE OR REPLACE FUNCTION public.intake_door_resolve(p_token_hash text)
@@ -205,7 +299,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION public.intake_door_resolve(text) IS
-  'GAP-401 (J16): the live link a token hash names, with its project''s intake library and folder — refused (28000, HINT revoked / expired / link_gone / project_closed / notfound) when it no longer opens anything. Called only inside the intake_door_* functions; no client role may execute it.';
+  'GAP-401 (J16): the live link a token hash names, with its project''s intake library and folder — refused (28000, HINT revoked / expired / link_gone / project_closed / notfound) when it no longer opens anything. Called inside the intake_door_* functions; the service role alone may execute it.';
 
 CREATE OR REPLACE FUNCTION public.intake_door_bind(p_sub uuid, p_link uuid, p_org uuid, p_project uuid)
 RETURNS jsonb
@@ -227,7 +321,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION public.intake_door_bind(uuid, uuid, uuid, uuid) IS
-  'GAP-401 (J16): binds the door''s identity for the rest of the transaction (auth.uid() = p_sub, role intake_door, the link, org and project named) and answers what to restore. Called only inside the intake_door_* functions; no client role may execute it.';
+  'GAP-401 (J16): binds the door''s identity for the rest of the transaction (auth.uid() = p_sub, role intake_door, the link, org and project named) and answers what to restore. Called inside the intake_door_* functions; the service role alone may execute it.';
 
 CREATE OR REPLACE FUNCTION public.intake_door_unbind(p_prev jsonb)
 RETURNS void
@@ -241,13 +335,142 @@ END;
 $$;
 
 COMMENT ON FUNCTION public.intake_door_unbind(jsonb) IS
-  'GAP-401 (J16): restores the claims intake_door_bind replaced. Called only inside the intake_door_* functions; no client role may execute it.';
+  'GAP-401 (J16): restores the claims intake_door_bind replaced. Called inside the intake_door_* functions; the service role alone may execute it.';
+
+CREATE OR REPLACE FUNCTION public.intake_door_rls_ready(p_new_document boolean)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SET search_path = public
+AS $$
+  SELECT CASE
+    WHEN to_regrole('intake_door') IS NULL THEN false
+    WHEN NOT pg_has_role(session_user, 'intake_door',
+                         CASE WHEN current_setting('server_version_num')::int >= 160000 THEN 'SET' ELSE 'MEMBER' END) THEN false
+    WHEN NOT p_new_document THEN true
+    WHEN to_regnamespace('auth') IS NULL THEN false
+    ELSE has_schema_privilege('intake_door', 'auth', 'USAGE')
+  END;
+$$;
+
+COMMENT ON FUNCTION public.intake_door_rls_ready(boolean) IS
+  'GAP-401 (J16): whether this session may switch to intake_door for the door''s INSERT (its login role is a member) — and, for a new document, whether intake_door may resolve auth.uid() in the INVOKER document triggers. False: the door function writes with the bound identity alone, as before row-level security. Service role only.';
+
+-- The bound link, as the policies TO intake_door read it: only inside the
+-- door's role, only for the identity a door function bound, re-read from the
+-- link row (live, its project open). NULL otherwise — a policy reads false.
+CREATE OR REPLACE FUNCTION public.intake_door_bound()
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_text    text := NULLIF(current_setting('request.jwt.claims', true), '');
+  v_claims  jsonb;
+  v_link    project_intake_links%ROWTYPE;
+  v_project projects%ROWTYPE;
+BEGIN
+  IF COALESCE(current_setting('role', true), '') <> 'intake_door' OR v_text IS NULL THEN
+    RETURN NULL;
+  END IF;
+  v_claims := v_text::jsonb;
+  IF v_claims->>'role' IS DISTINCT FROM 'intake_door'
+     OR COALESCE(v_claims->>'intake_link_id', '') !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+     OR auth.uid() IS DISTINCT FROM (v_claims->>'intake_link_id')::uuid THEN
+    RETURN NULL;
+  END IF;
+  SELECT * INTO v_link FROM project_intake_links WHERE id = (v_claims->>'intake_link_id')::uuid;
+  IF NOT FOUND OR v_link.revoked_at IS NOT NULL OR (v_link.expires_at IS NOT NULL AND v_link.expires_at < NOW())
+     OR v_link.org_id::text IS DISTINCT FROM v_claims->>'org_id'
+     OR v_link.project_id::text IS DISTINCT FROM v_claims->>'project_id' THEN
+    RETURN NULL;
+  END IF;
+  SELECT * INTO v_project FROM projects WHERE id = v_link.project_id AND org_id = v_link.org_id;
+  -- lib/intakeLinks.ts CLOSED_PROJECT_STATUSES
+  IF NOT FOUND OR v_project.status IN ('completed', 'cancelled', 'archived') THEN
+    RETURN NULL;
+  END IF;
+  RETURN jsonb_build_object(
+    'link_id', v_link.id,
+    'org_id', v_link.org_id,
+    'project_id', v_link.project_id,
+    'library_id', v_project.intake_library_id,
+    'collection_id', v_project.intake_collection_id,
+    'assigned', to_jsonb(COALESCE(v_link.assigned_doc_ids, ARRAY[]::uuid[])),
+    'company', v_link.company_name,
+    'purpose', COALESCE(v_link.purpose, 'documents'),
+    'rfq_group', v_link.rfq_group);
+END;
+$$;
+
+COMMENT ON FUNCTION public.intake_door_bound() IS
+  'GAP-401 (J16): the link a door function bound (role intake_door, auth.uid() = the link), re-read live from its row — NULL for any other caller or a link no longer live. Read only by the intake_door_may_* policy predicates; no role may execute it.';
+
+CREATE OR REPLACE FUNCTION public.intake_door_may_create(p_org uuid, p_library uuid, p_collection uuid, p_author uuid, p_status text)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_door jsonb := intake_door_bound();
+BEGIN
+  RETURN COALESCE(
+        v_door IS NOT NULL
+    AND v_door->>'purpose' IS DISTINCT FROM 'quote'
+    AND p_org::text = v_door->>'org_id'
+    AND p_library::text = v_door->>'library_id'
+    AND p_collection::text = v_door->>'collection_id'
+    AND p_author::text = v_door->>'link_id'
+    AND p_status = 'Draft'
+    AND EXISTS (SELECT 1 FROM collections c WHERE c.id = p_collection AND c.org_id = p_org AND c.library_id = p_library),
+    false);
+END;
+$$;
+
+COMMENT ON FUNCTION public.intake_door_may_create(uuid, uuid, uuid, uuid, text) IS
+  'GAP-401 (J16): the documents INSERT policies TO intake_door — a Draft in the bound link''s project intake library and intake folder, authored by that link. Only intake_door may execute it.';
+
+CREATE OR REPLACE FUNCTION public.intake_door_may_quote(p_org uuid, p_project uuid, p_kind text, p_link uuid, p_file_url text,
+                                                       p_party uuid, p_vendor text, p_rfq text, p_status text, p_created_by uuid)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_door jsonb := intake_door_bound();
+BEGIN
+  RETURN COALESCE(
+        v_door IS NOT NULL
+    AND v_door->>'purpose' = 'quote'
+    AND p_org::text = v_door->>'org_id'
+    AND p_project::text = v_door->>'project_id'
+    AND p_kind = 'quote'
+    AND p_link::text = v_door->>'link_id'
+    AND p_file_url ~ ('^orgs/' || (v_door->>'org_id') || '/project-costs/' || (v_door->>'project_id') || '/quote-[^/]+$')
+    AND (p_party IS NULL
+         OR EXISTS (SELECT 1 FROM project_parties pp WHERE pp.id = p_party AND pp.project_id = p_project AND pp.org_id = p_org))
+    AND p_vendor IS NOT DISTINCT FROM v_door->>'company'
+    AND p_rfq IS NOT DISTINCT FROM v_door->>'rfq_group'
+    AND p_status = 'draft'
+    AND p_created_by IS NULL,
+    false);
+END;
+$$;
+
+COMMENT ON FUNCTION public.intake_door_may_quote(uuid, uuid, text, uuid, text, uuid, text, text, text, uuid) IS
+  'GAP-401 (J16): the cost_documents INSERT policies TO intake_door — a draft quote of the bound QUOTE link on its own project, vendor and RFQ group the link''s, a party only of that project, the file under the project''s costs prefix. Only intake_door may execute it.';
 
 -- ── 2. A new document: the project's intake library and folder only ───────
 CREATE OR REPLACE FUNCTION public.intake_door_create_document(p_token_hash text, p_doc jsonb)
 RETURNS uuid
 LANGUAGE plpgsql
-SECURITY DEFINER
+SECURITY INVOKER
 SET search_path = public
 AS $$
 DECLARE
@@ -259,7 +482,9 @@ DECLARE
   v_col  uuid  := NULLIF(v_door->>'collection_id', '')::uuid;
   v_row  documents%ROWTYPE;
   v_prev jsonb;
-  v_id   uuid;
+  v_id   uuid  := gen_random_uuid();
+  v_rls  boolean := intake_door_rls_ready(true);
+  v_role text  := current_setting('role');
 BEGIN
   IF v_door->>'purpose' = 'quote' THEN
     RAISE EXCEPTION 'intake_door: a quote link files prices, never documents.' USING ERRCODE = '42501', HINT = 'scope';
@@ -278,18 +503,22 @@ BEGIN
   END IF;
   v_row := jsonb_populate_record(NULL::documents, p_doc);
   v_prev := intake_door_bind(v_link, v_link, v_org, v_proj);
-  INSERT INTO documents (org_id, library_id, collection_id, name, title, document_number, status,
+  -- The INSERT as intake_door, under row-level security (the id is chosen
+  -- here: a RETURNING would also need the read policies, which show a link
+  -- nothing). Back to the caller's role before anything else runs.
+  IF v_rls THEN PERFORM set_config('role', 'intake_door', true); END IF;
+  INSERT INTO documents (id, org_id, library_id, collection_id, name, title, document_number, status,
                          created_by_name, updated_at, uniqueness_key, authored_by_link_id)
-  VALUES (v_org, v_lib, v_col, v_row.name, v_row.title, v_row.document_number, 'Draft',
-          v_row.created_by_name, COALESCE(v_row.updated_at, NOW()), v_row.uniqueness_key, v_link)
-  RETURNING id INTO v_id;
+  VALUES (v_id, v_org, v_lib, v_col, v_row.name, v_row.title, v_row.document_number, 'Draft',
+          v_row.created_by_name, COALESCE(v_row.updated_at, NOW()), v_row.uniqueness_key, v_link);
+  IF v_rls THEN PERFORM set_config('role', v_role, true); END IF;
   PERFORM intake_door_unbind(v_prev);
   RETURN v_id;
 END;
 $$;
 
 COMMENT ON FUNCTION public.intake_door_create_document(text, jsonb) IS
-  'GAP-401 (J16): the contractor door creates a Draft document in its project''s intake library and folder, authored by its own link, as the door''s identity (auth.uid() = the link) — every insert rail judges it. Service role only.';
+  'GAP-401 (J16): the contractor door creates a Draft document in its project''s intake library and folder, authored by its own link, as the door''s identity (auth.uid() = the link) — every insert rail judges it — and, where the paste could grant it, as the role intake_door under the documents_intake_door_* policies. Service role only.';
 
 -- ── 3. A submission: a version of the link's own or assigned document ─────
 CREATE OR REPLACE FUNCTION public.intake_door_submit_version(p_token_hash text, p_version jsonb)
@@ -437,12 +666,23 @@ BEGIN
   -- DEC-56 item 2: the promote acts as the link's creator — now in the
   -- database too, so publish_revision's own session check and every guard on
   -- its documents write judge the creator, not "the service pass".
+  -- The version is built from an allow-list of what the route sends: no
+  -- change type, issue type, MOC, revert, ticket or source field — each of
+  -- which turns a guard limb off — ever comes from the caller.
   v_prev := intake_door_bind(v_creator::uuid, v_link, v_org, v_proj);
   v_res := publish_revision(
     p_doc => p_doc,
     p_expected_base => p_expected_base,
     p_op_class => 'content',
-    p_version => p_version || jsonb_build_object('provenance', 'external'),
+    p_version => jsonb_build_object(
+      'revision_label', p_version->'revision_label',
+      'file_url', p_version->'file_url',
+      'file_type', p_version->'file_type',
+      'size', p_version->'size',
+      'change_log', p_version->'change_log',
+      'created_by_name', p_version->'created_by_name',
+      'file_hash', p_version->'file_hash',
+      'provenance', 'external'),
     p_actor => v_creator::uuid,
     p_actor_name => p_actor_name);
   IF v_res->>'status' = 'published' THEN
@@ -460,13 +700,13 @@ END;
 $$;
 
 COMMENT ON FUNCTION public.intake_door_promote(text, uuid, uuid, jsonb, text) IS
-  'GAP-401 (J16): a TRUSTED link''s revision of its own, unassigned, approved document published through publish_revision acting as the link''s creator (DEC-56 item 2), with the creator bound as auth.uid() so the publish guard and the register / hold-label rails judge the write; stamps the new version''s intake_link_id in the same transaction. Answers publish_revision''s result. Service role only.';
+  'GAP-401 (J16): a TRUSTED link''s revision of its own, unassigned, approved document published through publish_revision acting as the link''s creator (DEC-56 item 2), with the creator bound as auth.uid() so the publish guard and the register / hold-label rails judge the write; stamps the new version''s intake_link_id in the same transaction. The version is an allow-list of the route''s fields (label, key, type, size, note, name, hash; provenance external). Answers publish_revision''s result. Service role only.';
 
 -- ── 6. A quote: the quote link's own project, a party of that project ─────
 CREATE OR REPLACE FUNCTION public.intake_door_file_quote(p_token_hash text, p_quote jsonb)
 RETURNS uuid
 LANGUAGE plpgsql
-SECURITY DEFINER
+SECURITY INVOKER
 SET search_path = public
 AS $$
 DECLARE
@@ -476,7 +716,9 @@ DECLARE
   v_proj uuid  := (v_door->>'project_id')::uuid;
   v_q    cost_documents%ROWTYPE;
   v_prev jsonb;
-  v_id   uuid;
+  v_id   uuid  := gen_random_uuid();
+  v_rls  boolean := intake_door_rls_ready(false);
+  v_role text  := current_setting('role');
 BEGIN
   IF v_door->>'purpose' IS DISTINCT FROM 'quote' THEN
     RAISE EXCEPTION 'intake_door: only a quote link files a quote.' USING ERRCODE = '42501', HINT = 'scope';
@@ -493,18 +735,20 @@ BEGIN
     RAISE EXCEPTION 'intake_door: the quote''s party is not a party of this link''s project.' USING ERRCODE = '42501', HINT = 'scope';
   END IF;
   v_prev := intake_door_bind(v_link, v_link, v_org, v_proj);
-  INSERT INTO cost_documents (org_id, project_id, kind, file_url, file_name, mime_type, vendor_name,
+  -- The INSERT as intake_door, under row-level security (see section 2).
+  IF v_rls THEN PERFORM set_config('role', 'intake_door', true); END IF;
+  INSERT INTO cost_documents (id, org_id, project_id, kind, file_url, file_name, mime_type, vendor_name,
                               rfq_group, intake_link_id, party_id, status, created_by, file_hash)
-  VALUES (v_org, v_proj, 'quote', v_q.file_url, v_q.file_name, v_q.mime_type, v_door->>'company',
-          v_door->>'rfq_group', v_link, v_q.party_id, 'draft', NULL, v_q.file_hash)
-  RETURNING id INTO v_id;
+  VALUES (v_id, v_org, v_proj, 'quote', v_q.file_url, v_q.file_name, v_q.mime_type, v_door->>'company',
+          v_door->>'rfq_group', v_link, v_q.party_id, 'draft', NULL, v_q.file_hash);
+  IF v_rls THEN PERFORM set_config('role', v_role, true); END IF;
   PERFORM intake_door_unbind(v_prev);
   RETURN v_id;
 END;
 $$;
 
 COMMENT ON FUNCTION public.intake_door_file_quote(text, jsonb) IS
-  'GAP-401 (J16): a quote link files a draft quote on its own project — vendor name, RFQ group and link from the link row, a party only of that project, the file under the project''s costs prefix — as the door''s identity (the project record rail judges it). Service role only.';
+  'GAP-401 (J16): a quote link files a draft quote on its own project — vendor name, RFQ group and link from the link row, a party only of that project, the file under the project''s costs prefix — as the door''s identity (the project record rail judges it) and, where the paste could grant it, as the role intake_door under the cost_documents_intake_door_* policies. Service role only.';
 
 -- ── 7. A redline: only on a ticket that names the link (the ticket rails' append) ─
 CREATE OR REPLACE FUNCTION public.intake_door_append_redline(p_token_hash text, p_ticket uuid, p_attachment jsonb, p_history jsonb)
@@ -547,10 +791,22 @@ $$;
 COMMENT ON FUNCTION public.intake_door_append_redline(text, uuid, jsonb, jsonb) IS
   'GAP-401 (J16): the contractor door appends a redline only to a ticket of its org whose intake collision names its link, the file under the link''s project redlines prefix, through append_ticket_redline (20261166; 42883 until it is pasted). Service role only.';
 
--- ── Grants (DRLS-16): the door functions are the service role's; the helpers no client's
-REVOKE ALL ON FUNCTION public.intake_door_resolve(text) FROM PUBLIC, anon, authenticated, service_role;
-REVOKE ALL ON FUNCTION public.intake_door_bind(uuid, uuid, uuid, uuid) FROM PUBLIC, anon, authenticated, service_role;
-REVOKE ALL ON FUNCTION public.intake_door_unbind(jsonb) FROM PUBLIC, anon, authenticated, service_role;
+-- ── Grants (DRLS-16): the door functions are the service role's; the helpers
+--    the INVOKER door functions call, the service role's too; the policy
+--    predicates intake_door's alone; the bound-link reader no role's
+REVOKE ALL ON FUNCTION public.intake_door_resolve(text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.intake_door_bind(uuid, uuid, uuid, uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.intake_door_unbind(jsonb) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.intake_door_rls_ready(boolean) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.intake_door_resolve(text) TO service_role;
+GRANT EXECUTE ON FUNCTION public.intake_door_bind(uuid, uuid, uuid, uuid) TO service_role;
+GRANT EXECUTE ON FUNCTION public.intake_door_unbind(jsonb) TO service_role;
+GRANT EXECUTE ON FUNCTION public.intake_door_rls_ready(boolean) TO service_role;
+REVOKE ALL ON FUNCTION public.intake_door_bound() FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public.intake_door_may_create(uuid, uuid, uuid, uuid, text) FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON FUNCTION public.intake_door_may_quote(uuid, uuid, text, uuid, text, uuid, text, text, text, uuid) FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.intake_door_may_create(uuid, uuid, uuid, uuid, text) TO intake_door;
+GRANT EXECUTE ON FUNCTION public.intake_door_may_quote(uuid, uuid, text, uuid, text, uuid, text, text, text, uuid) TO intake_door;
 REVOKE ALL ON FUNCTION public.intake_door_create_document(text, jsonb) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.intake_door_submit_version(text, jsonb) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.intake_door_point_pending(text, uuid, uuid, uuid, timestamptz) FROM PUBLIC, anon, authenticated;
@@ -600,43 +856,136 @@ COMMENT ON FUNCTION documents_authorship_fixed() IS
 -- the function's grants as 20261141 left them (it is SECURITY INVOKER: a
 -- member's insert runs it as that member).
 
+-- ── 9. Row-level security for the new document and the quote: TO intake_door
+-- A permissive policy lets the door's role insert at all; a restrictive one
+-- with the same predicate keeps every policy written for all roles from
+-- widening it. Both read the BOUND link (intake_door_bound). The role has no
+-- SELECT, UPDATE or DELETE on these tables, so no other command needs one.
+DROP POLICY IF EXISTS documents_intake_door_insert ON documents;
+CREATE POLICY documents_intake_door_insert ON documents
+  AS PERMISSIVE FOR INSERT TO intake_door
+  WITH CHECK (intake_door_may_create(org_id, library_id, collection_id, authored_by_link_id, status));
+DROP POLICY IF EXISTS documents_intake_door_scope ON documents;
+CREATE POLICY documents_intake_door_scope ON documents
+  AS RESTRICTIVE FOR INSERT TO intake_door
+  WITH CHECK (intake_door_may_create(org_id, library_id, collection_id, authored_by_link_id, status));
+
+DROP POLICY IF EXISTS cost_documents_intake_door_insert ON cost_documents;
+CREATE POLICY cost_documents_intake_door_insert ON cost_documents
+  AS PERMISSIVE FOR INSERT TO intake_door
+  WITH CHECK (intake_door_may_quote(org_id, project_id, kind, intake_link_id, file_url, party_id, vendor_name, rfq_group, status, created_by));
+DROP POLICY IF EXISTS cost_documents_intake_door_scope ON cost_documents;
+CREATE POLICY cost_documents_intake_door_scope ON cost_documents
+  AS RESTRICTIVE FOR INSERT TO intake_door
+  WITH CHECK (intake_door_may_quote(org_id, project_id, kind, intake_link_id, file_url, party_id, vendor_name, rfq_group, status, created_by));
+
 COMMIT;
 
 -- ── Verification + inventory — ONE result set (the editor shows only the last)
---    Expect ok = true on every probe row; inventory rows carry n only.
---    pg_proc.prosrc is verbatim (an apostrophe in a literal is written '''').
-SELECT 'the six door functions exist, are SECURITY DEFINER with search_path pinned, and only the service role may EXECUTE them' AS check,
+--    Expect ok = true on every probe row; inventory rows carry n only. If one
+--    of the two "row-level security" rows reads false the paste still applied
+--    and the door keeps the bound identity for those inserts — send the row
+--    back (projects-tab SEC-22).
+--    pg_proc.prosrc is verbatim (an apostrophe in a literal is written '''');
+--    pg_policies.with_check is deparsed, so it is matched on names only.
+SELECT 'the six door functions exist with search_path pinned, and only the service role may EXECUTE them; the new document and the quote are SECURITY INVOKER (they switch to intake_door), the submission, the pointer, the promote and the redline SECURITY DEFINER' AS check,
        (SELECT COUNT(*) = 6
           FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
          WHERE n.nspname = 'public'
            AND p.proname IN ('intake_door_create_document', 'intake_door_submit_version', 'intake_door_point_pending',
                              'intake_door_promote', 'intake_door_file_quote', 'intake_door_append_redline')
-           AND p.prosecdef
+           AND p.prosecdef = (p.proname NOT IN ('intake_door_create_document', 'intake_door_file_quote'))
            AND EXISTS (SELECT 1 FROM unnest(p.proconfig) c WHERE c = 'search_path=public')
            AND has_function_privilege('service_role', p.oid, 'EXECUTE')
            AND NOT has_function_privilege('anon', p.oid, 'EXECUTE')
            AND NOT has_function_privilege('authenticated', p.oid, 'EXECUTE')) AS ok,
        NULL::text AS n
 UNION ALL
-SELECT 'the three helpers (resolve, bind, unbind) exist and NO client role may EXECUTE them (only the door functions, as their owner)',
-       (SELECT COUNT(*) = 3
+SELECT 'the four helpers the door functions call (resolve, bind, unbind, rls_ready) are SECURITY INVOKER and only the service role may EXECUTE them',
+       (SELECT COUNT(*) = 4
           FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
          WHERE n.nspname = 'public'
-           AND p.proname IN ('intake_door_resolve', 'intake_door_bind', 'intake_door_unbind')
-           AND NOT has_function_privilege('service_role', p.oid, 'EXECUTE')
+           AND p.proname IN ('intake_door_resolve', 'intake_door_bind', 'intake_door_unbind', 'intake_door_rls_ready')
+           AND NOT p.prosecdef
+           AND has_function_privilege('service_role', p.oid, 'EXECUTE')
            AND NOT has_function_privilege('anon', p.oid, 'EXECUTE')
            AND NOT has_function_privilege('authenticated', p.oid, 'EXECUTE')),
        NULL
 UNION ALL
-SELECT 'every door function resolves the link from its hash; the five that write as the door bind and then restore the identity',
+SELECT 'the policy predicates (may_create, may_quote) are SECURITY DEFINER with search_path pinned and only intake_door may EXECUTE them; the bound-link reader no role',
+       (SELECT COUNT(*) = 2
+          FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+         WHERE n.nspname = 'public'
+           AND p.proname IN ('intake_door_may_create', 'intake_door_may_quote')
+           AND p.prosecdef
+           AND EXISTS (SELECT 1 FROM unnest(p.proconfig) c WHERE c = 'search_path=public')
+           AND has_function_privilege('intake_door', p.oid, 'EXECUTE')
+           AND NOT has_function_privilege('service_role', p.oid, 'EXECUTE')
+           AND NOT has_function_privilege('anon', p.oid, 'EXECUTE')
+           AND NOT has_function_privilege('authenticated', p.oid, 'EXECUTE'))
+       AND (SELECT p.prosecdef
+                   AND NOT has_function_privilege('intake_door', p.oid, 'EXECUTE')
+                   AND NOT has_function_privilege('service_role', p.oid, 'EXECUTE')
+                   AND NOT has_function_privilege('anon', p.oid, 'EXECUTE')
+                   AND NOT has_function_privilege('authenticated', p.oid, 'EXECUTE')
+              FROM pg_proc p WHERE p.proname = 'intake_door_bound'),
+       NULL
+UNION ALL
+SELECT 'the role intake_door exists, cannot log in, is no superuser, cannot bypass row-level security, create roles or databases',
+       EXISTS (SELECT 1 FROM pg_roles
+                WHERE rolname = 'intake_door' AND NOT rolcanlogin AND NOT rolsuper AND NOT rolbypassrls
+                  AND NOT rolcreaterole AND NOT rolcreatedb AND NOT rolreplication),
+       NULL
+UNION ALL
+SELECT 'intake_door holds column INSERT on documents and cost_documents, nothing on document_versions, and no SELECT, UPDATE or DELETE on the door tables',
+       NOT has_table_privilege('intake_door', 'public.documents', 'INSERT')
+       AND has_column_privilege('intake_door', 'public.documents', 'authored_by_link_id', 'INSERT')
+       AND NOT has_column_privilege('intake_door', 'public.documents', 'current_version_id', 'INSERT')
+       AND has_column_privilege('intake_door', 'public.cost_documents', 'intake_link_id', 'INSERT')
+       AND NOT has_column_privilege('intake_door', 'public.cost_documents', 'total_amount', 'INSERT')
+       AND NOT has_any_column_privilege('intake_door', 'public.document_versions', 'INSERT')
+       AND NOT has_any_column_privilege('intake_door', 'public.document_versions', 'SELECT')
+       AND NOT has_any_column_privilege('intake_door', 'public.documents', 'SELECT')
+       AND NOT has_any_column_privilege('intake_door', 'public.cost_documents', 'SELECT')
+       AND NOT has_any_column_privilege('intake_door', 'public.documents', 'UPDATE')
+       AND NOT has_any_column_privilege('intake_door', 'public.cost_documents', 'UPDATE')
+       AND NOT has_table_privilege('intake_door', 'public.documents', 'DELETE')
+       AND NOT has_table_privilege('intake_door', 'public.cost_documents', 'DELETE'),
+       NULL
+UNION ALL
+SELECT 'documents and cost_documents each carry a permissive and a restrictive INSERT policy TO intake_door, reading the bound link',
+       (SELECT COUNT(*) = 4 FROM pg_policies
+         WHERE schemaname = 'public' AND roles = '{intake_door}' AND cmd = 'INSERT'
+           AND ((tablename = 'documents' AND with_check LIKE '%intake_door_may_create(%')
+             OR (tablename = 'cost_documents' AND with_check LIKE '%intake_door_may_quote(%')))
+       AND (SELECT COUNT(DISTINCT permissive) = 2 FROM pg_policies
+             WHERE schemaname = 'public' AND roles = '{intake_door}' AND cmd = 'INSERT')
+       AND NOT EXISTS (SELECT 1 FROM pg_policies
+                        WHERE schemaname = 'public' AND roles = '{intake_door}' AND cmd <> 'INSERT'),
+       NULL
+UNION ALL
+SELECT 'row-level security for the door''s new document and quote: authenticator (the API''s login) may switch to intake_door — false: they keep the bound identity alone (SEC-22)',
+       to_regrole('authenticator') IS NOT NULL AND pg_has_role('authenticator', 'intake_door', 'MEMBER'),
+       NULL
+UNION ALL
+SELECT 'row-level security for a NEW document: intake_door may resolve auth.uid() in the document triggers — false: a new document keeps the bound identity alone (SEC-22)',
+       to_regnamespace('auth') IS NOT NULL AND has_schema_privilege('intake_door', 'auth', 'USAGE'),
+       NULL
+UNION ALL
+SELECT 'every door function resolves the link from its hash; the five that write as the door bind and then restore the identity; the new document and the quote switch to intake_door and back',
        (SELECT COUNT(*) = 6 FROM pg_proc
-         WHERE proname LIKE 'intake_door\_%' AND prosecdef
+         WHERE proname IN ('intake_door_create_document', 'intake_door_submit_version', 'intake_door_point_pending',
+                           'intake_door_promote', 'intake_door_file_quote', 'intake_door_append_redline')
            AND prosrc LIKE '%intake_door_resolve(p_token_hash)%')
        AND (SELECT COUNT(*) = 5 FROM pg_proc
              WHERE proname IN ('intake_door_create_document', 'intake_door_submit_version', 'intake_door_point_pending',
                                'intake_door_promote', 'intake_door_file_quote')
                AND prosrc LIKE '%v_prev := intake_door_bind(%'
                AND prosrc LIKE '%PERFORM intake_door_unbind(v_prev);%')
+       AND (SELECT COUNT(*) = 2 FROM pg_proc
+             WHERE proname IN ('intake_door_create_document', 'intake_door_file_quote')
+               AND prosrc LIKE '%IF v_rls THEN PERFORM set_config(''role'', ''intake_door'', true); END IF;%'
+               AND prosrc LIKE '%IF v_rls THEN PERFORM set_config(''role'', v_role, true); END IF;%')
        AND (SELECT prosrc NOT LIKE '%intake_door_bind(%' FROM pg_proc WHERE proname = 'intake_door_append_redline'),
        NULL
 UNION ALL
@@ -649,9 +998,11 @@ SELECT 'the bound identity names the role intake_door; the resolver refuses a si
               FROM pg_proc WHERE proname = 'intake_door_resolve'),
        NULL
 UNION ALL
-SELECT 'the promote binds the link''s CREATOR and publishes through publish_revision; the new version''s link is stamped in the same transaction',
+SELECT 'the promote binds the link''s CREATOR, publishes an allow-listed version through publish_revision, and stamps the new version''s link in the same transaction',
        (SELECT prosrc LIKE '%v_prev := intake_door_bind(v_creator::uuid, v_link, v_org, v_proj);%'
                AND prosrc LIKE '%v_res := publish_revision(%'
+               AND prosrc LIKE '%p_version => jsonb_build_object(%'
+               AND prosrc NOT LIKE '%p_version ||%'
                AND prosrc LIKE '%UPDATE document_versions SET intake_link_id = v_link WHERE id = v_vid AND record_id = p_doc;%'
           FROM pg_proc WHERE proname = 'intake_door_promote'),
        NULL
@@ -670,8 +1021,9 @@ SELECT 'trg_documents_authorship_fixed is still bound to documents',
                   AND t.tgrelid = 'public.documents'::regclass),
        NULL
 UNION ALL
-SELECT 'this editor session carries no door identity after the paste (the binding never outlives a door function)',
-       COALESCE(current_setting('request.jwt.claims', true), '') NOT LIKE '%intake_door%',
+SELECT 'this editor session carries no door identity or role after the paste (neither outlives a door function)',
+       COALESCE(current_setting('request.jwt.claims', true), '') NOT LIKE '%intake_door%'
+       AND current_user <> 'intake_door',
        NULL
 UNION ALL
 SELECT inventory, NULL::boolean, n FROM prj_g_j16_inventory;

@@ -1,20 +1,25 @@
 // projects-joint J16 INTAKE DOOR IDENTITY — the shape of 20261184 (projects-tab
-// GAP-401, owed item 1): the contractor door's content writes go through
-// SECURITY DEFINER door functions that resolve the link from its token hash,
-// refuse a write outside the link's scope, and bind a transaction-local
-// identity (the link; for the promote, the link's creator) so every guard
-// judges the door's write; INTK-16's authorship rail re-created from its
-// NEWEST body with one block admitting that identity for its own link.
+// GAP-401, owed item 1): the contractor door's content writes go through door
+// functions that resolve the link from its token hash, refuse a write outside
+// the link's scope, and bind a transaction-local identity (the link; for the
+// promote, the link's creator) so every guard judges the door's write. The new
+// document and the quote are also written UNDER ROW-LEVEL SECURITY: the door
+// function (SECURITY INVOKER, under the service key) switches to the dedicated
+// NOLOGIN role intake_door — granted to authenticator, no BYPASSRLS — for the
+// one INSERT, and policies TO intake_door keyed on the bound link judge it (no
+// JWT and no signing secret: review fix pass 2). INTK-16's authorship rail is
+// re-created from its NEWEST body with one block admitting that identity for
+// its own link.
 //
 // No live database here: the migration is read as text — the one-paste
-// protocol (DEC-30), DRLS-16 for every function it adds, the byte-fidelity of
-// the one function it RE-creates against its newest definition found by
-// scanning the sequence at test time, and the parity of the SQL with the route
-// that calls it. The file also ran end to end on a scratch PostgreSQL 16
-// cluster with a Supabase-shaped stub and the REAL guards (publish guard
-// 20261174, publish_revision 20261151, register / hold-label / insert-pointer
-// rails, unit-code guard, the project record rail, append_ticket_redline
-// 20261166) — the scenarios and their answers are recorded on GAP-401.
+// protocol (DEC-30), DRLS-16 for every function it adds, the role's grants and
+// policies, the byte-fidelity of the one function it RE-creates against its
+// newest definition found by scanning the sequence at test time, and the
+// parity of the SQL with the route that calls it. The file also ran end to end
+// on a scratch PostgreSQL 16 cluster carrying the WHOLE sequence (schema.sql
+// and every migration, applied as a non-superuser postgres with a
+// Supabase-shaped auth schema and authenticator login) — the scenarios and
+// their answers are recorded on GAP-401.
 
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
@@ -44,14 +49,24 @@ function lineDiff(a: string, b: string) {
   return { onlyInA: A.filter((l) => !B.includes(l)), onlyInB: B.filter((l) => !A.includes(l)) };
 }
 const fn = (name: string) => between(M, `CREATE OR REPLACE FUNCTION public.${name}(`, "\n$$;");
+/** A comment block as one line of prose (the "-- " prefixes and line breaks gone). */
+const prose = (text: string) => text.split("\n").map((l) => l.replace(/^--\s?/, "")).join(" ").replace(/\s+/g, " ");
+/** The two door functions that INSERT under row-level security, as intake_door. */
+const RLS_DOOR = ["intake_door_create_document", "intake_door_file_quote"] as const;
+/** The policy predicates the intake_door policies call (intake_door's alone). */
+const PREDICATES = ["intake_door_may_create", "intake_door_may_quote"] as const;
 
 const DOOR = ["intake_door_create_document", "intake_door_submit_version", "intake_door_point_pending",
   "intake_door_promote", "intake_door_file_quote", "intake_door_append_redline"] as const;
-const HELPERS = ["intake_door_resolve", "intake_door_bind", "intake_door_unbind"] as const;
+const HELPERS = ["intake_door_resolve", "intake_door_bind", "intake_door_unbind", "intake_door_rls_ready"] as const;
 const SIG: Record<string, string> = {
   intake_door_resolve: "text",
   intake_door_bind: "uuid, uuid, uuid, uuid",
   intake_door_unbind: "jsonb",
+  intake_door_rls_ready: "boolean",
+  intake_door_bound: "",
+  intake_door_may_create: "uuid, uuid, uuid, uuid, text",
+  intake_door_may_quote: "uuid, uuid, text, uuid, text, uuid, text, text, text, uuid",
   intake_door_create_document: "text, jsonb",
   intake_door_submit_version: "text, jsonb",
   intake_door_point_pending: "text, uuid, uuid, uuid, timestamptz",
@@ -84,11 +99,21 @@ describe("the one-paste protocol (DEC-30)", () => {
   it("is the package's reserved number, and the sequence holds no other 20261184", () => {
     expect(numbered().filter((f) => f.startsWith("20261184"))).toEqual([FILE]);
   });
-  it("the header says why this is not RLS, the paste order, the re-paste warning and the deploy order", () => {
+  it("the header names the dedicated-role switch (no JWT, no signing secret), why the other writes are not under RLS, the paste order, the re-paste warning and the deploy order", () => {
     const head = M.slice(0, M.indexOf("-- ── Prerequisite"));
-    expect(head).toContain("WHY THIS SHAPE (and not RLS insert policies)");
-    expect(head).toContain("minting one needs the project's JWT signing secret, which this\n-- app does not hold");
-    expect(head).toContain("projects-tab SEC-22, opened by this package");
+    const text = prose(head);
+    expect(text).toContain("neither of which needs a JWT or its signing secret");
+    expect(text).toContain("`intake_door` is a NOLOGIN role with no BYPASSRLS, granted to `authenticator` (the role PostgREST logs in as)");
+    expect(text).toContain("set_config('role', 'intake_door', true); Postgres refuses a role switch only inside a SECURITY DEFINER function");
+    expect(text).toContain("The role inherits no `TO authenticated` policy and adds no row to auth.users.");
+    // the review fix: the earlier claim that RLS needs the JWT signing secret is gone
+    expect(text).not.toMatch(/minting one needs the project's JWT signing secret/);
+    expect(text).not.toMatch(/JWT secret in the server environment/);
+    // each write left outside RLS says why, with the run that showed it
+    expect(text).toContain("42P17 \"infinite recursion detected in policy\"");
+    expect(text).toContain("documents_acl_select, a restrictive read policy for every role, hides even the link's own Draft");
+    expect(text).toContain("projects-tab SEC-22, opened by this package");
+    expect(text).toContain("WHERE THE PASTE CANNOT GRANT IT.");
     expect(head).toContain("PASTE ORDER: after 20261141 (required");
     expect(head).toContain("⚠ Never re-paste 20261141 after this file");
     expect(head).toContain("DEPLOY ORDER: none required.");
@@ -102,28 +127,50 @@ describe("DRLS-16 — every function this migration adds", () => {
       expect(code(mig(f)), f).not.toMatch(/FUNCTION\s+(public\.)?intake_door_\w+\s*\(/);
     }
   });
-  it("the six door functions — and only they — are SECURITY DEFINER, pin search_path, are revoked from PUBLIC, anon and authenticated and granted to the service role alone", () => {
-    const definers = [...C.matchAll(/CREATE OR REPLACE FUNCTION public\.(\w+)\([^)]*\)[\s\S]*?AS \$\$/g)].filter((m) => /SECURITY DEFINER/.test(m[0]));
-    expect(definers.map((m) => m[1])).toEqual([...DOOR]);
-    for (const d of definers) {
-      expect(d[0]).toMatch(/SECURITY DEFINER\s*\n\s*SET search_path = public/);
-      expect(C).toContain(`REVOKE ALL ON FUNCTION public.${d[1]}(${SIG[d[1]]}) FROM PUBLIC, anon, authenticated;`);
-      expect(C).toContain(`GRANT EXECUTE ON FUNCTION public.${d[1]}(${SIG[d[1]]}) TO service_role;`);
+  it("every function pins search_path; SECURITY DEFINER are exactly the bound-link reader, the two policy predicates and the four door functions that do not switch role — the new document and the quote are SECURITY INVOKER", () => {
+    const heads = [...C.matchAll(/CREATE OR REPLACE FUNCTION public\.(\w+)\([^)]*\)[\s\S]*?AS \$\$/g)];
+    expect(heads.map((m) => m[1])).toEqual([...HELPERS.slice(0, 3), "intake_door_rls_ready", "intake_door_bound", ...PREDICATES,
+      "intake_door_create_document", "intake_door_submit_version", "intake_door_point_pending", "intake_door_promote",
+      "intake_door_file_quote", "intake_door_append_redline"]);
+    const definers = heads.filter((m) => /SECURITY DEFINER/.test(m[0])).map((m) => m[1]);
+    // every SECURITY DEFINER function and every door function pins search_path (bind / unbind, INVOKER helpers, never did)
+    for (const h of heads.filter((m) => definers.includes(m[1]) || (DOOR as readonly string[]).includes(m[1]))) {
+      expect(h[0], h[1]).toMatch(/\nSET search_path = public\nAS \$\$/);
     }
-    // no client role but the service role is ever granted one
+    expect(definers).toEqual(["intake_door_bound", ...PREDICATES, "intake_door_submit_version", "intake_door_point_pending",
+      "intake_door_promote", "intake_door_append_redline"]);
+    for (const name of RLS_DOOR) expect(heads.find((m) => m[1] === name)![0], name).toMatch(/\nSECURITY INVOKER\nSET search_path = public\n/);
+  });
+  it("the six door functions are revoked from PUBLIC, anon and authenticated and granted to the service role alone; no intake_door_ function is ever granted to a client role", () => {
+    for (const d of DOOR) {
+      expect(C).toContain(`REVOKE ALL ON FUNCTION public.${d}(${SIG[d]}) FROM PUBLIC, anon, authenticated;`);
+      expect(C).toContain(`GRANT EXECUTE ON FUNCTION public.${d}(${SIG[d]}) TO service_role;`);
+    }
     expect(C).not.toMatch(/GRANT EXECUTE ON FUNCTION public\.intake_door_\w+\([^)]*\) TO [^;]*(anon|authenticated|PUBLIC)/);
+    // only the two policy predicates are the door role's to execute
+    const toDoor = [...C.matchAll(/GRANT EXECUTE ON FUNCTION public\.(intake_door_\w+)\([^)]*\) TO intake_door;/g)].map((m) => m[1]);
+    expect(toDoor).toEqual([...PREDICATES]);
+  });
+  it("the policy predicates are intake_door's alone and the bound-link reader no role's — not even the service role's", () => {
+    for (const name of PREDICATES) {
+      expect(C).toContain(`REVOKE ALL ON FUNCTION public.${name}(${SIG[name]}) FROM PUBLIC, anon, authenticated, service_role;`);
+      expect(C).toContain(`GRANT EXECUTE ON FUNCTION public.${name}(${SIG[name]}) TO intake_door;`);
+    }
+    expect(C).toContain("REVOKE ALL ON FUNCTION public.intake_door_bound() FROM PUBLIC, anon, authenticated, service_role;");
+    expect(C).not.toMatch(/GRANT [^;]*intake_door_bound\(/);
   });
   it("each door function resolves the link from its token hash first — and the resolver refuses a signed-in caller (a NULL auth.uid() is trusted only because anon and authenticated cannot EXECUTE)", () => {
     for (const name of DOOR) expect(fn(name)).toMatch(/DECLARE\s*\n\s*v_door\s+jsonb\s*:= intake_door_resolve\(p_token_hash\);/);
     const resolve = fn("intake_door_resolve");
     expect(resolve).toMatch(/BEGIN\s*\n\s*IF auth\.uid\(\) IS NOT NULL THEN\s*\n\s*RAISE EXCEPTION 'intake_door: only the intake route, under the service key, opens the contractor door\.'\s*\n\s*USING ERRCODE = '42501';/);
   });
-  it("the three helpers are SECURITY INVOKER and no client role — not even the service role — may EXECUTE them (only the door functions, as their owner)", () => {
+  it("the four helpers the door functions call are SECURITY INVOKER and the service role's alone (the INVOKER door functions run them as the service role)", () => {
     for (const name of HELPERS) {
       const head = between(M, `CREATE OR REPLACE FUNCTION public.${name}(`, "AS $$");
       expect(head, name).not.toMatch(/SECURITY DEFINER/);
-      expect(C).toContain(`REVOKE ALL ON FUNCTION public.${name}(${SIG[name]}) FROM PUBLIC, anon, authenticated, service_role;`);
-      expect(C).not.toMatch(new RegExp(`GRANT [^;]*${name}`));
+      expect(C).toContain(`REVOKE ALL ON FUNCTION public.${name}(${SIG[name]}) FROM PUBLIC, anon, authenticated;`);
+      expect(C).toContain(`GRANT EXECUTE ON FUNCTION public.${name}(${SIG[name]}) TO service_role;`);
+      expect(C).not.toMatch(new RegExp(`GRANT [^;]*${name}[^;]*TO (?!service_role;)`));
     }
   });
 });
@@ -155,7 +202,7 @@ describe("the door's identity and scope", () => {
   });
   it("every write is pinned to the link: org, library, folder, link, provenance and review state from the database — never from the caller's row", () => {
     const create = fn("intake_door_create_document");
-    expect(create).toContain("VALUES (v_org, v_lib, v_col, v_row.name, v_row.title, v_row.document_number, 'Draft',");
+    expect(create).toContain("VALUES (v_id, v_org, v_lib, v_col, v_row.name, v_row.title, v_row.document_number, 'Draft',");
     expect(create).toContain("v_row.created_by_name, COALESCE(v_row.updated_at, NOW()), v_row.uniqueness_key, v_link)");
     expect(create).toContain("IF NULLIF(p_doc->>'collection_id', '')::uuid IS DISTINCT FROM v_col");
     const submit = fn("intake_door_submit_version");
@@ -173,7 +220,7 @@ describe("the door's identity and scope", () => {
     expect(promote).toContain("p_actor => v_creator::uuid,");
     const quote = fn("intake_door_file_quote");
     expect(quote).toContain("IF v_door->>'purpose' IS DISTINCT FROM 'quote' THEN");
-    expect(quote).toContain("VALUES (v_org, v_proj, 'quote', v_q.file_url, v_q.file_name, v_q.mime_type, v_door->>'company',");
+    expect(quote).toContain("VALUES (v_id, v_org, v_proj, 'quote', v_q.file_url, v_q.file_name, v_q.mime_type, v_door->>'company',");
     expect(quote).toContain("v_door->>'rfq_group', v_link, v_q.party_id, 'draft', NULL, v_q.file_hash)");
     const red = fn("intake_door_append_redline");
     expect(red).toContain("SELECT t.metadata->'intake_collision'->>'intakeLinkId' INTO v_named FROM tickets t WHERE t.id = p_ticket AND t.org_id = v_org;");
@@ -283,5 +330,158 @@ describe("INTK-16's authorship rail — re-created from its NEWEST body + one bl
     expect(fn("intake_door_bind")).toContain("'role', 'intake_door'");
     // the trigger is not re-created: CREATE OR REPLACE keeps it and its grants
     expect(C).not.toMatch(/CREATE TRIGGER|DROP TRIGGER/);
+  });
+});
+
+describe("row-level security for the new document and the quote — the dedicated-role switch (GAP-401 item 1, review fix pass 2)", () => {
+  const tx = () => between(C, "\nBEGIN;", "\nCOMMIT;");
+  const roleBlock = () => between(C, "DO $$\nDECLARE\n  r record;", "END;\n$$;");
+  /** Every GRANT … TO intake_door statement, whitespace-collapsed. */
+  const toDoor = () => [...C.matchAll(/GRANT [^;]*? TO intake_door;/g)].map((m) => m[0].replace(/\s+/g, " "));
+  const cols = (list: string) => list.split(",").map((c) => c.trim()).filter(Boolean);
+  const insertCols = (body: string, table: string) => cols(between(body, `INSERT INTO ${table} (`, ")").slice(`INSERT INTO ${table} (`.length, -1));
+
+  it("the role is made inside the one transaction: NOLOGIN, no BYPASSRLS, member of nothing — a pre-existing role that can log in, create roles or bypass RLS refuses the paste", () => {
+    expect(tx()).toContain(roleBlock());
+    expect(roleBlock()).toContain("CREATE ROLE intake_door NOLOGIN NOINHERIT;");
+    expect(roleBlock()).toMatch(/IF NOT FOUND THEN\s*\n\s*CREATE ROLE intake_door NOLOGIN NOINHERIT;\s*\n\s*ELSIF r\.rolsuper OR r\.rolbypassrls OR r\.rolcanlogin OR r\.rolcreaterole OR r\.rolcreatedb OR r\.rolreplication THEN\s*\n\s*RAISE EXCEPTION/);
+    // nothing grants intake_door another role's privileges, and only authenticator is made its member
+    expect(C).not.toMatch(/GRANT (anon|authenticated|service_role|postgres|authenticator)[^;]* TO intake_door/);
+    expect([...C.matchAll(/GRANT intake_door TO (\w+)/g)].map((m) => m[1])).toEqual(["authenticator"]);
+    expect(C).not.toMatch(/ALTER ROLE intake_door/);
+  });
+
+  it("authenticator's membership and USAGE on schema auth are SOFT: a refusal leaves a notice and the final SELECT reports it, the paste still applies", () => {
+    expect(roleBlock()).toMatch(/BEGIN\s*\n\s*GRANT intake_door TO authenticator;\s*\n\s*EXCEPTION WHEN OTHERS THEN\s*\n\s*RAISE NOTICE/);
+    expect(roleBlock()).toMatch(/BEGIN\s*\n\s*GRANT USAGE ON SCHEMA auth TO intake_door;\s*\n\s*EXCEPTION WHEN OTHERS THEN\s*\n\s*RAISE NOTICE/);
+    const tail = C.slice(C.indexOf("\nCOMMIT;"));
+    expect(tail).toContain("to_regrole('authenticator') IS NOT NULL AND pg_has_role('authenticator', 'intake_door', 'MEMBER')");
+    expect(tail).toContain("to_regnamespace('auth') IS NOT NULL AND has_schema_privilege('intake_door', 'auth', 'USAGE')");
+  });
+
+  it("the role holds exactly: USAGE on public and auth, column INSERT on documents and cost_documents, what the document rails read as the writer, and EXECUTE on its two policy predicates — no UPDATE, nothing on document_versions", () => {
+    expect(toDoor().sort()).toEqual([
+      "GRANT EXECUTE ON FUNCTION public.intake_door_may_create(uuid, uuid, uuid, uuid, text) TO intake_door;",
+      "GRANT EXECUTE ON FUNCTION public.intake_door_may_quote(uuid, uuid, text, uuid, text, uuid, text, text, text, uuid) TO intake_door;",
+      "GRANT INSERT (created_by_name) ON documents TO intake_door;",
+      "GRANT INSERT (id, org_id, library_id, collection_id, name, title, document_number, status, updated_at, uniqueness_key, authored_by_link_id) ON documents TO intake_door;",
+      "GRANT INSERT (id, org_id, project_id, kind, file_url, file_name, mime_type, vendor_name, rfq_group, intake_link_id, party_id, status, created_by, file_hash) ON cost_documents TO intake_door;",
+      "GRANT SELECT (document_id, source), DELETE ON document_assets TO intake_door;",
+      "GRANT SELECT (id, org_id, acl_index) ON libraries TO intake_door;",
+      "GRANT USAGE ON SCHEMA auth TO intake_door;",
+      "GRANT USAGE ON SCHEMA public TO intake_door;",
+    ].sort());
+    expect(toDoor().join("\n")).not.toMatch(/UPDATE|document_versions|TRUNCATE|REFERENCES|TRIGGER|ALL/);
+  });
+
+  it("the granted INSERT columns are exactly the columns each door function inserts (created_by_name only where the live table has it)", () => {
+    const docGrant = cols(toDoor().find((g) => /GRANT INSERT \(id, [^)]*\) ON documents/.test(g))!.match(/INSERT \(([^)]*)\)/)![1]);
+    expect([...docGrant, "created_by_name"].sort()).toEqual(insertCols(fn("intake_door_create_document"), "documents").sort());
+    expect(roleBlock()).toMatch(/AND column_name = 'created_by_name'\) THEN\s*\n\s*GRANT INSERT \(created_by_name\) ON documents TO intake_door;/);
+    const quoteGrant = cols(toDoor().find((g) => / ON cost_documents /.test(g))!.match(/INSERT \(([^)]*)\)/)![1]);
+    expect(quoteGrant.sort()).toEqual(insertCols(fn("intake_door_file_quote"), "cost_documents").sort());
+  });
+
+  it.each([["intake_door_create_document", "documents", "true"], ["intake_door_file_quote", "cost_documents", "false"]])(
+    "%s switches to intake_door for its one INSERT (no RETURNING; the id chosen first) and back before anything else runs", (name, table, newDoc) => {
+      const body = fn(name);
+      expect(body).toContain("v_id   uuid  := gen_random_uuid();");
+      expect(body).toContain(`v_rls  boolean := intake_door_rls_ready(${newDoc});`);
+      expect(body).toContain("v_role text  := current_setting('role');");
+      const insert = between(body, `INSERT INTO ${table} (`, ");\n");
+      expect(insert).not.toMatch(/RETURNING/);
+      expect(insert).toMatch(/VALUES \(v_id, /);
+      expect(body).toContain(`IF v_rls THEN PERFORM set_config('role', 'intake_door', true); END IF;\n  INSERT INTO ${table} (`);
+      expect(body).toContain(`${insert}  IF v_rls THEN PERFORM set_config('role', v_role, true); END IF;\n  PERFORM intake_door_unbind(v_prev);\n  RETURN v_id;`);
+      // the identity is bound before the switch
+      expect(body.indexOf("v_prev := intake_door_bind(v_link, v_link, v_org, v_proj);")).toBeLessThan(body.indexOf("set_config('role', 'intake_door', true)"));
+      expect(body.match(/set_config\('role'/g)).toHaveLength(2);
+    });
+
+  it("no other function switches role (the submission, pointer, promote and redline stay SECURITY DEFINER, where Postgres forbids it)", () => {
+    for (const name of DOOR.filter((d) => !(RLS_DOOR as readonly string[]).includes(d))) {
+      expect(fn(name), name).not.toMatch(/set_config\('role'/);
+    }
+    expect(C.match(/set_config\('role', 'intake_door', true\)/g)).toHaveLength(2);
+  });
+
+  it("intake_door_rls_ready: the role exists, this session's login may SET it (MEMBER before PG16), and for a new document intake_door may resolve auth.uid()", () => {
+    const r = fn("intake_door_rls_ready");
+    expect(r).toContain("WHEN to_regrole('intake_door') IS NULL THEN false");
+    expect(r).toContain("WHEN NOT pg_has_role(session_user, 'intake_door',");
+    expect(r).toContain("CASE WHEN current_setting('server_version_num')::int >= 160000 THEN 'SET' ELSE 'MEMBER' END) THEN false");
+    expect(r).toContain("WHEN NOT p_new_document THEN true");
+    expect(r).toContain("ELSE has_schema_privilege('intake_door', 'auth', 'USAGE')");
+  });
+
+  it("four policies TO intake_door, INSERT only: a permissive and a restrictive pair on documents and on cost_documents, each re-created idempotently and reading the predicate with the row's own columns", () => {
+    const pols = [...C.matchAll(/CREATE POLICY (\w+) ON (\w+)\s*\n\s*AS (PERMISSIVE|RESTRICTIVE) FOR (\w+) TO (\w+)\s*\n\s*WITH CHECK \((\w+)\(([^)]*)\)\);/g)]
+      .map((m) => ({ name: m[1], table: m[2], kind: m[3], cmd: m[4], to: m[5], pred: m[6], args: m[7] }));
+    expect(pols.map((p) => `${p.table}:${p.kind}:${p.cmd}:${p.to}:${p.pred}`)).toEqual([
+      "documents:PERMISSIVE:INSERT:intake_door:intake_door_may_create",
+      "documents:RESTRICTIVE:INSERT:intake_door:intake_door_may_create",
+      "cost_documents:PERMISSIVE:INSERT:intake_door:intake_door_may_quote",
+      "cost_documents:RESTRICTIVE:INSERT:intake_door:intake_door_may_quote",
+    ]);
+    for (const p of pols) {
+      expect(C, p.name).toContain(`DROP POLICY IF EXISTS ${p.name} ON ${p.table};\nCREATE POLICY ${p.name} ON ${p.table}`);
+      expect(cols(p.args).length).toBe(cols(SIG[p.pred]).length);
+    }
+    expect(pols.find((p) => p.table === "documents")!.args).toBe("org_id, library_id, collection_id, authored_by_link_id, status");
+    expect(pols.find((p) => p.table === "cost_documents")!.args).toBe("org_id, project_id, kind, intake_link_id, file_url, party_id, vendor_name, rfq_group, status, created_by");
+    // the file creates no other policy, and none on document_versions
+    expect(C.match(/CREATE POLICY/g)).toHaveLength(4);
+    expect(C).not.toMatch(/ON document_versions[^;]*TO intake_door/);
+  });
+
+  it("the policies read the BOUND link, re-read live: the role is intake_door, the claims are the door's, sub is the link, the link neither revoked nor expired, its project open", () => {
+    const b = fn("intake_door_bound");
+    expect(b).toContain("IF COALESCE(current_setting('role', true), '') <> 'intake_door' OR v_text IS NULL THEN");
+    expect(b).toContain("IF v_claims->>'role' IS DISTINCT FROM 'intake_door'");
+    expect(b).toContain("OR auth.uid() IS DISTINCT FROM (v_claims->>'intake_link_id')::uuid THEN");
+    expect(b).toContain("SELECT * INTO v_link FROM project_intake_links WHERE id = (v_claims->>'intake_link_id')::uuid;");
+    expect(b).toContain("IF NOT FOUND OR v_link.revoked_at IS NOT NULL OR (v_link.expires_at IS NOT NULL AND v_link.expires_at < NOW())");
+    expect(b).toContain("OR v_link.org_id::text IS DISTINCT FROM v_claims->>'org_id'");
+    expect(b).toContain("OR v_link.project_id::text IS DISTINCT FROM v_claims->>'project_id' THEN");
+    const closed = b.match(/v_project\.status IN \(([^)]+)\) THEN/)![1].split(",").map((x) => x.trim().replace(/'/g, ""));
+    expect(closed.sort()).toEqual([...CLOSED_PROJECT_STATUSES].sort());
+    const create = fn("intake_door_may_create");
+    for (const limb of ["AND v_door->>'purpose' IS DISTINCT FROM 'quote'", "AND p_org::text = v_door->>'org_id'", "AND p_library::text = v_door->>'library_id'",
+      "AND p_collection::text = v_door->>'collection_id'", "AND p_author::text = v_door->>'link_id'", "AND p_status = 'Draft'",
+      "AND EXISTS (SELECT 1 FROM collections c WHERE c.id = p_collection AND c.org_id = p_org AND c.library_id = p_library)"]) {
+      expect(create, limb).toContain(limb);
+    }
+    const quote = fn("intake_door_may_quote");
+    for (const limb of ["AND v_door->>'purpose' = 'quote'", "AND p_project::text = v_door->>'project_id'", "AND p_kind = 'quote'", "AND p_link::text = v_door->>'link_id'",
+      "AND p_file_url ~ ('^orgs/' || (v_door->>'org_id') || '/project-costs/' || (v_door->>'project_id') || '/quote-[^/]+$')",
+      "OR EXISTS (SELECT 1 FROM project_parties pp WHERE pp.id = p_party AND pp.project_id = p_project AND pp.org_id = p_org))",
+      "AND p_vendor IS NOT DISTINCT FROM v_door->>'company'", "AND p_rfq IS NOT DISTINCT FROM v_door->>'rfq_group'",
+      "AND p_status = 'draft'", "AND p_created_by IS NULL,"]) {
+      expect(quote, limb).toContain(limb);
+    }
+    // a predicate that cannot decide answers false, never NULL
+    for (const name of PREDICATES) expect(fn(name)).toMatch(/RETURN COALESCE\([\s\S]*,\s*\n\s*false\);/);
+  });
+});
+
+describe("the promote publishes an ALLOW-LISTED version (review fix pass 2, minor)", () => {
+  const ALLOW = ["revision_label", "file_url", "file_type", "size", "change_log", "created_by_name", "file_hash"];
+  it("publish_revision's p_version is a jsonb_build_object of exactly the route's seven fields and provenance 'external' — nothing from the caller passes through", () => {
+    const promote = fn("intake_door_promote");
+    const built = between(promote, "p_version => jsonb_build_object(", "'provenance', 'external'),");
+    const pairs = [...built.matchAll(/'(\w+)', p_version->'(\w+)'/g)].map((m) => [m[1], m[2]]);
+    expect(pairs.map((p) => p[0])).toEqual(ALLOW);
+    for (const [k, v] of pairs) expect(v).toBe(k);
+    expect([...built.matchAll(/\n\s*'(\w+)', /g)].map((m) => m[1])).toEqual([...ALLOW, "provenance"]);
+    expect(promote).not.toMatch(/p_version \|\|/);
+    for (const off of ["change_type", "issue_type", "moc_reference", "reverted_from_version_id", "related_ticket_id", "source_file_key", "source_file_name", "drawn_by_name", "checked_by_name", "approved_by_name"]) {
+      expect(promote, off).not.toContain(`'${off}'`);
+    }
+  });
+  it("the route sends no field the allow-list drops (so the promote publishes what the route meant), and its provenance is 'external' either way", () => {
+    const route = between(ROUTE, "  const version = {", "  };");
+    const keys = [...route.matchAll(/^\s+(\w+):/gm)].map((m) => m[1]);
+    expect(keys.filter((k) => k !== "provenance").sort()).toEqual([...ALLOW].sort());
+    expect(route).toContain('provenance: "external",');
   });
 });
