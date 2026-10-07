@@ -170,7 +170,7 @@ Repo-wide, `grep -rni "requestPermission|Notification.permission|showNotificatio
 ## OS-4 · NotificationListener toasts on every incoming notification row with no batching or cap — a nudge burst becomes a toast burst
 
 - **Severity:** MEDIUM
-- **Status:** RESOLVED
+- **Status:** OPEN
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/NotificationListener.tsx:78-96`, `components/providers/ToastProvider.tsx:39-49`, `components/ui/CornerDock.tsx:22-27`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed with no mitigating guard anywhere: N inserts within 6s produce N simultaneously-mounted toast cards. The 6-second figure in the claim is exact (duration: 6000 at NotificationListener.tsx:96).
@@ -222,12 +222,21 @@ components/ui/CornerDock.tsx:24 (no max-height / overflow) —
 
 **Done-when.**
 - ✓ ToastProvider caps concurrent toasts, collapsing the rest into "+N more" (N7, above).
-- ✓ Bursts from the same actor/resource within a short window coalesce into one toast — **a burst of repeats**: the same row again and again (the finding's failure scenario: a colleague clicking a poke button repeatedly, two identical "Coordinate — overlapping checkout" rows) is one card ×N, whoever sends it. Rows about one resource that say different things — a newer status, a second message, another person's sign-off — are separate cards, each in its own words, because the merge keeps the first card's words and would hide the newer ones (*third review fix*; the second review's per-actor key merged one person's differently worded rows into "Approve · DR-12 ×2" / "hey ×2"); past two cards in six seconds the window's remainder is one summary card (`TAX-9`). Reading recorded in `DEC-44 (N3)` item 4 for the integrator.
+- **Partial, NOT met as written — the reading is pending ratification.** Bursts from the same actor/resource within a short window coalesce into one toast **only as a burst of repeats**: the same row again and again (the finding's failure scenario: a colleague clicking a poke button repeatedly, two identical "Coordinate — overlapping checkout" rows) is one card ×N, whoever sends it. Rows about one resource that say different things — a newer status, a second message, another person's sign-off — are separate cards, each in its own words, because the merge keeps the first card's words and would hide the newer ones (*third review fix*; the second review's per-actor key merged one person's differently worded rows into "Approve · DR-12 ×2" / "hey ×2"); past two cards in six seconds the window's remainder is one summary card (`TAX-9`). So a burst from one actor and resource worded differently — the gap this record's N7 Partial block names ("a burst from the same actor and resource worded differently does not yet") — still shows as two cards plus an "N more notifications" summary per 6 s window, and the landed key closes none of it: N7's content key (type, title, message) already merged word-identical toasts. Reading done-when 2 as "a burst of repeats" is `DEC-44 (N3)` item 4's, **for the integrator to ratify**. *Overstated: ticked ✓ at the third review fix; by the standard that sent `TAX-9` and `TAX-15` back to OPEN, it is not met (N3 fourth review, 2026-10-02).*
 - ✓ The CornerDock has a max-height and does not grow past the viewport (N7, above).
 
 *Third review fix (2026-10-02, N3): the key is now `notificationCoalesceKey` (`components/providers/NotificationListener.tsx:94`) — kind, resource, title and body — and the actor left it: keyed by actor, two status changes or two thread posts by one person within 10 s merged into one card in the first row's words, so the newer status or the substantive message never reached a toast (on `7c27b0c` each was its own card). A repeat of the same row still joins its card in the burst window (`route` :223). Tests: `lib/__tests__/notificationListenerToasts.test.ts` "a nudge burst about one thing from one person is one card with a count…" (unchanged, green), "the same row twice (same kind, resource and words) is one card with a count", "one person's two thread posts are two cards…", "Approve then Release on DR-12…: two cards, the newer status shown…"; `lib/__tests__/notificationListener.test.ts` "rows that say different things about one resource never share a key, whoever sent them…". Verified after the third review fix: `npx tsc --noEmit` exit 0; `npx eslint` on the 19 changed code and test files of the branch `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 407 files, 8522 passed, 7 expected-fail. `next build` is the integrator's.*
 
 **Scope / residual.** The rate of nudges itself (`OS-1` / GAP-206) is not this finding's. No migration.
+
+**Partial (2026-10-02, notifications Round G — N3 fourth review fix).** Status corrected from RESOLVED to OPEN. Done-when 1 and 3 stand (N7, verified above). Done-when 2 is not met as written: the listener's key (`notificationCoalesceKey`, kind + resource + title + body, `components/providers/NotificationListener.tsx:94`) coalesces a burst of repeats — which N7's content key already did — and not a burst from the same actor and resource worded differently, the gap this record's N7 Partial block names. The assigned `` `${row.kind}:${row.resource_id}` `` key would close it, but N7's merge keeps the first row's words, so today it would hide the newer rows (`RT-11`'s Partial block). Remaining step and owner as in `RT-11`'s Partial block: the integrator ratifies `DEC-44 (N3)` item 4's reading, or whoever next holds `components/providers/ToastProvider.tsx` makes a merge show the newest row's words (or "N updates on <resource>") and the listener then passes the assigned key (hand-off in `99-fix-sequencing.md`). Records only; no code changed for this finding in the fourth review fix.
+
+**Done-when.**
+- ✓ ToastProvider caps concurrent toasts, collapsing the rest into "+N more" (N7).
+- Partial, NOT met as written (pending ratification): a burst of repeats is one card ×N; a burst from one actor/resource worded differently is not coalesced.
+- ✓ The CornerDock has a max-height and does not grow past the viewport (N7).
+
+**Scope / residual.** Stays OPEN on done-when 2 (owner as in `RT-11`). The rate of nudges itself (`OS-1` / GAP-206) is not this finding's. No migration.
 
 ---
 

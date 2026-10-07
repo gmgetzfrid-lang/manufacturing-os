@@ -278,7 +278,7 @@ Tests: `lib/__tests__/notificationCenterScope.test.ts` — "is named with its co
 - ✓ The dropdown is a labelled dialog with focus moved in on open and restored on close; Escape still closes it.
 - ✓ Every icon-only control on these surfaces has an aria-label: the toast dismiss (N7), the center's close, the feed's per-row mark-read and its mark-all on a phone, the sidebar badge (a count, now named "Documents: 3 items need attention…").
 
-**Scope / residual.** The bell animation (`OS-5`, GAP-204) is N12's and builds on this. Observed in jsdom with the real components; no screen reader was run. No migration.
+**Scope / residual.** The bell animation (`OS-5`, GAP-204) is N12's and builds on this. The center declares `aria-modal` but does not trap Tab (as on `7c27b0c`), so Tab can leave it for a drawer underneath; since the N3 fourth review fix an Escape there closes the center, as on base (`RT-11`'s note). Observed in jsdom with the real components; no screen reader was run. No migration.
 
 ---
 
