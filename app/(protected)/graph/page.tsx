@@ -1062,12 +1062,12 @@ function GraphPageInner() {
                     {insightTab === "orphans" && (
                       insights.orphans.length === 0 ? (
                         <div className="text-[11px] text-[var(--color-text-muted)] p-2">
-                          No orphans — every document and item of equipment on the map is tied into the web.
+                          No orphans — every document and item of equipment on the full graph is tied into the web.
                         </div>
                       ) : (
                         <>
                           <div className="text-[10px] text-[var(--color-text-muted)] px-1.5 pb-1">
-                            No equipment, unit, project or link anywhere on the map — not just in this view — so no context yet.
+                            No equipment, unit, project or link anywhere on the full graph — not just in this view — so no context yet.
                             {orphansHidden > 0 && ` ${orphansHidden} of these ${orphansHidden === 1 ? "is" : "are"} hidden by the current view (faded).`}
                           </div>
                           {insights.orphans.slice(0, 100).map((n) => (
@@ -1092,7 +1092,7 @@ function GraphPageInner() {
                       ) : (
                         <>
                           <div className="text-[10px] text-[var(--color-text-muted)] px-1.5 pb-1">
-                            The most-referenced nodes on the map. The number is its links, not counting library filing. Touch one and the blast radius is wide.
+                            The most-referenced nodes on the full graph. The number is its links, not counting library filing. Touch one and the blast radius is wide.
                           </div>
                           {insights.hubs.map((h) => (
                             <button key={h.node.id} onClick={() => (inView.has(h.node.id) ? spotlight([h.node.id], h.node) : reveal(h.node))}
@@ -1100,7 +1100,7 @@ function GraphPageInner() {
                               className={`w-full flex items-center gap-1.5 px-1.5 py-1 rounded-lg hover:bg-[var(--color-surface-2)] text-left ${inView.has(h.node.id) ? "" : "opacity-50"}`}>
                               <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: nodeColorFor(h.node) }} />
                               <span className="flex-1 min-w-0 text-[11px] font-bold text-[var(--color-text)] truncate">{h.node.label}</span>
-                              <span className="shrink-0 text-[10px] font-mono text-amber-700" title="Links on the map, not counting library filing">{h.degree}</span>
+                              <span className="shrink-0 text-[10px] font-mono text-amber-700" title="Links on the full graph, not counting library filing">{h.degree}</span>
                             </button>
                           ))}
                         </>
@@ -1245,7 +1245,7 @@ function GraphPageInner() {
                 <div className="inline-flex items-center gap-1 text-[10px] text-amber-700 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900 rounded-full px-2 py-0.5 pointer-events-auto" data-testid="select-miss">
                   <Info className="w-3 h-3" />
                   {missNode
-                    ? <>{missNode.label} is on the map but hidden by this view.
+                    ? <>{missNode.label} is on the full graph but hidden by this view.
                         <button className="font-black underline" onClick={() => reveal(missNode)}>Show it</button></>
                     : <>The linked item isn&apos;t on this map — beyond a cap, outside {scopeLabel ?? "the map"}, or outside your access.</>}
                   <button aria-label="Dismiss" onClick={() => setSelectMiss(null)}><X className="w-3 h-3" /></button>

@@ -512,7 +512,7 @@ describe("GM-1 / GM-6 / GM-11 — insights and degrees say what they count", () 
   it("the peek labels the whole-map degree, the library-filing part and the in-view count", async () => {
     nav.params = new URLSearchParams("focus=d1");
     await render(page());
-    expect(host.querySelector('[data-testid="peek-degree"]')?.textContent).toBe("Document · 3 links on the map (1 library filing) · 1 link in this view");
+    expect(host.querySelector('[data-testid="peek-degree"]')?.textContent).toBe("Document · 3 links on the full graph (1 library filing) · 1 link in this view");
   });
 });
 
@@ -669,10 +669,10 @@ describe("GPV-5 / GPV-2 — after a scope change the URL's node is honoured on t
     g.scopedGraph = scoped();
     nav.params = new URLSearchParams("select=cbunit%3A20");
     await render(page());
-    expect(host.querySelector('[data-testid="peek-degree"]')?.textContent).toContain("3 links on the map");
+    expect(host.querySelector('[data-testid="peek-degree"]')?.textContent).toContain("3 links on the full graph");
     await click(btn("Scope the map to this unit"));
     expect(g.build[g.build.length - 1]).toEqual(["o1", { scope: { kind: "unit", code: "20" } }]);
-    expect(host.querySelector('[data-testid="peek-degree"]')?.textContent).toContain("7 links on the map");
+    expect(host.querySelector('[data-testid="peek-degree"]')?.textContent).toContain("7 links on the full graph");
   });
 
   it("an outside link that changes the scope selects its node once the scoped map lands — never a false 'not on this map'", async () => {
@@ -975,7 +975,7 @@ describe("GM-11 — the peek's numbers say what each counts (fix pass 3)", () =>
     g.proposals = { pairs: [{ documentId: "d1", targetDocumentId: "d2", proposer: "tag", nodeA: "doc:d1", nodeB: "doc:d2" }], total: 1, capped: false, error: null };
     nav.params = new URLSearchParams("focus=d1");
     await render(page());
-    expect(host.querySelector('[data-testid="peek-degree"]')?.textContent).toBe("Document · 3 links on the map (1 library filing) · 1 link in this view");
+    expect(host.querySelector('[data-testid="peek-degree"]')?.textContent).toBe("Document · 3 links on the full graph (1 library filing) · 1 link in this view");
     expect(host.querySelector('[data-testid="peek-connected"]')?.textContent).toBe("Connected in this view · 2 nodes (1 only by a proposed link)");
   });
 

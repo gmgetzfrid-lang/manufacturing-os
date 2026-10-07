@@ -381,6 +381,30 @@ describe("GPV-4 (I-24) — every place outside the lens bar that names a lens na
     expect(page).not.toMatch(/\b(Plant|Process|Equipment|Documents?) lens\b/);
   });
 
+  it("one name for the unfiltered graph: the peek's count and the Insights copy say 'the full graph', never 'the map' (integrator, I-24 merge)", () => {
+    const page = src("app/(protected)/graph/page.tsx");
+    const peek = src("components/graph/NodePeek.tsx");
+    for (const s of [
+      "every document and item of equipment on the full graph",
+      "anywhere on the full graph",
+      "The most-referenced nodes on the full graph",
+      'title="Links on the full graph, not counting library filing"',
+      "is on the full graph but hidden by this view",
+    ]) expect(page).toContain(s);
+    expect(peek).toContain("{links(node.degree)} on the full graph");
+    expect(page).not.toMatch(/(anywhere|nodes|equipment|Links) on the map\b/);
+    expect(peek).not.toMatch(/\)\} on the map\b/);
+  });
+
+  it("'paper' names one lens: the filing lens's title is 'The filing web', not 'The paper web' beside 'Governing paper' (integrator, I-24 merge)", () => {
+    // "Library filing" stays in the Whole map title: it names the edge type
+    // the Settings toggle adds, as it always has.
+    for (const lens of GRAPH_LENSES.filter((l) => l.key !== "equipment-docs")) {
+      expect(`${lens.label} ${lens.title}`.toLowerCase(), lens.key).not.toMatch(/\bpaper\b/);
+    }
+    expect(lensByKey("documents")!.title.startsWith("The filing web")).toBe(true);
+  });
+
   it("the setup navigator's 'Map the process' step names the same lens", () => {
     const setup = src("app/(protected)/setup/page.tsx");
     expect(setup).toContain(`draw them on the ${label("plant")} lens`);

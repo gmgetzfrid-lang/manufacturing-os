@@ -162,7 +162,7 @@ export const GRAPH_LENSES: readonly GraphLens[] = [
   },
   {
     key: "documents", label: "Records & filing", hidden: ["asset", "unit", "plant", "plot"], libEdges: true,
-    title: "The paper web — documents, the libraries they are filed in, the projects they travel through, and which revision replaced which.",
+    title: "The filing web — documents, the libraries they are filed in, the projects they travel through, and which revision replaced which.",
   },
 ];
 

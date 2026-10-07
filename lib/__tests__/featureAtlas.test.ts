@@ -57,6 +57,11 @@ describe("feature atlas — the app's map of itself", () => {
       "lenses": ["/graph"],
       "process": ["/admin/assets", "/graph"],
       "connect": ["/admin/proposed-links", "/graph", "/intelligence/skills", "/intelligence"],
+      // …and the blurb adds no unrelated word (integrator at the I-24 merge:
+      // "everything it holds … included" had made "hold(s)" and "include" find the graph).
+      "hold": [],
+      "holds": [],
+      "include": ["/admin/ai-instructions"],
     };
     for (const [q, hrefs] of Object.entries(BEFORE)) {
       expect(searchAtlas(q, 4).map((e) => e.href), `query "${q}"`).toEqual(hrefs);

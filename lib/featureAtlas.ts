@@ -88,7 +88,7 @@ export const FEATURE_ATLAS: AtlasEntry[] = [
   },
   {
     label: "Org graph", href: "/graph", area: "intelligence",
-    blurb: "The whole org as one map — everything it holds, documents (docs) and equipment included — with lenses: Whole map, Process layout (the flow map), Governing paper, Records & filing. Draw links and flows with Connect.",
+    blurb: "The whole org as one map — documents (docs), equipment and everything else — with lenses: Whole map, Process layout (the flow map), Governing paper, Records & filing. Draw links and flows with Connect.",
     aliases: ["graph", "map", "web", "connections view", "lenses", "process lens", "flow map", "draw connection", "3d"],
   },
   {
