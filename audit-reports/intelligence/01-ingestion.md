@@ -878,9 +878,11 @@ app/api/knowledge/ask/route.ts:954 `.limit(20000);` immediately followed at 955 
 
 *Landed 2026-10-07 (intelligence Round G, I-21 CONFIRMED TOPOLOGY): the `loadLineGraph` residual above.*
 - *What it was: reproduced on `6797c48`, where `lib/orchestrator/tools.ts:554-561` read `knowledge_page_entities` once with `.limit(20000)` and no check. The base trace never saw a pair on a sheet past the 20,000th row, and with a project max-rows below the page size it read one response.*
-- *What it does now (`lib/orchestrator/tools.ts:649`): the read goes through `readAll` (`lib/knowledgeAskGuards.ts`), ordered by `document_id` then `id` and named by kind (ING-5). It pages to an empty page or to `LINE_GRAPH_ROW_CEILING` (50,000), the way this record's census does.*
-- *Past the ceiling, the sheet the ceiling cut is dropped whole. The answer carries `graph_partial`, which says a route not found is not proof the equipment is unconnected.*
-- *Tests: `lib/__tests__/intelRoundGConfirmedTopology.test.ts`, "ING-10 residual — …" (rows past 20,000 are read; a short page is not the last; past 50,000 the trace says PARTIAL). The details are on `GAP-315`'s Partial.*
+- *What it does now (`lib/orchestrator/tools.ts:699`): the read goes through `readAll` (`lib/knowledgeAskGuards.ts`), ordered by `document_id` then `id` and named by kind (ING-5). It pages to an empty page, to `LINE_GRAPH_ROW_CEILING` (50,000), or to `LINE_GRAPH_READ_BUDGET_MS` (10 s of wall clock; no page starts past it).*
+- *Past the ceiling or the time budget, the sheet the read stopped in is dropped whole. The answer carries `graph_partial`, which says a route not found is not proof the equipment is unconnected.*
+- *A page that fails discards the rows read before it, and the answer carries `graph_unavailable` (fix pass): the index could not be read, the trace has no sheet co-occurrence, and "no route" or "doesn't appear" is not proof. Before, a failed read answered "doesn't appear" with nothing saying why.*
+- *Tests: `lib/__tests__/intelRoundGConfirmedTopology.test.ts`, "ING-10 residual — …" (rows past 20,000 are read; a short page is not the last; past 50,000 the sheet the ceiling cuts is dropped whole, its rows inside the ceiling too, and the trace says PARTIAL; no page starts past the time budget; a page that fails, on the first page or a later one, with or without flows, is said). The details are on `GAP-315`'s Partial.*
+- *Not measured: each page is a fresh query filtered on `org_id` (no index on it) and sorted by (`document_id`, `id`). The time budget bounds what that costs one trace: no page starts after 10 s, though a page already running finishes (it is not aborted). If a real org's trace reports PARTIAL on time, the index to add is on (`org_id`, `kind`, `document_id`, `id`), with its probe in `lib/schemaExpectations.ts`; this package added none.*
 - *No status change: ING-10 was already RESOLVED.*
 
 ---

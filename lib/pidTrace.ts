@@ -215,12 +215,19 @@ export function tracePath(
  * (what feeds this). It means something only for directional edges — the
  * confirmed process flows — so a caller passes only those. Omitted, the walk
  * is undirected, exactly as before.
+ *
+ * `terminal` (GAP-315) names nodes (normalised) the walk may reach but never
+ * passes through, unless the walk starts there: a whole operating unit
+ * ("UNIT <code>", lib/processFlows `unitTraceTag`) is not a piece of
+ * equipment, and walking through it would make everything it feeds
+ * "downstream" of everything that feeds it. Omitted, no node is terminal.
  */
 export function traceNeighbourhood(
   edges: readonly LineEdge[],
   startTag: string,
   hops = 2,
   direction?: "downstream" | "upstream",
+  terminal?: ReadonlySet<string>,
 ): Array<{ tag: string; hops: number }> {
   const start = normalizeTag(startTag);
   const adj = buildAdjacency(edges);
@@ -236,6 +243,7 @@ export function traceNeighbourhood(
         if (direction === "upstream" && !link.reversed) continue;
         if (distance.has(link.to)) continue;
         distance.set(link.to, d);
+        if (terminal?.has(link.to)) continue;
         next.push(link.to);
       }
     }

@@ -354,6 +354,12 @@ export interface FlowLineEdges {
    *  FLOW-6), an asset ref that is not a registry id, a unit the Site
    *  Codebook does not hold (AREA-10), or a flow from an endpoint to itself. */
   skipped: number;
+  /** The trace keys ("UNIT<code>", unitTraceTag) of the unit ends among
+   *  `edges`, sorted. A unit is a whole operating unit, not equipment: an
+   *  undirected walk never passes through one (lib/orchestrator/tools
+   *  `trace_pid_lines`), and a directional walk stops at one
+   *  (lib/pidTrace `traceNeighbourhood`'s `terminal`). */
+  unitNodes: string[];
 }
 
 type FlowEdgeRow = {
@@ -367,8 +373,10 @@ const flowSchemaMissing = (e: { code?: string; message?: string }) =>
   missingTable(e) || e.code === "42703" || e.code === "PGRST204";
 
 /** The line-trace node a unit end becomes: "UNIT <code>", tag-normalised
- *  ("UNIT20"), so a codebook unit code can never be mistaken for an equipment
- *  tag or an off-page reference that happens to read "20". */
+ *  ("UNIT20"), so a unit code is not read as a tag or an off-page reference
+ *  that reads "20". The trace's keys are punctuation-blind (pidTrace
+ *  normalizeTag): a tag or reference that itself reads "UNIT-20" or "UNIT 20"
+ *  normalises to the same key and merges with the unit node. */
 export function unitTraceTag(code: string): string {
   return normalizeTag(`UNIT ${code}`);
 }
@@ -385,7 +393,7 @@ export function unitTraceTag(code: string): string {
  */
 export async function flowsToLineEdges(orgId: string, client: FlowReadClient = supabase): Promise<FlowLineEdges> {
   const none = (state: "missing" | "error", error?: string): FlowLineEdges =>
-    ({ edges: [], state, ...(error ? { error } : {}), truncated: false, skipped: 0 });
+    ({ edges: [], state, ...(error ? { error } : {}), truncated: false, skipped: 0, unitNodes: [] });
   const failed = (e: { code?: string; message?: string }) =>
     (flowSchemaMissing(e) ? none("missing") : none("error", e.message || "the read failed"));
 
@@ -410,7 +418,7 @@ export async function flowsToLineEdges(orgId: string, client: FlowReadClient = s
     if (rows.length > FLOW_EDGE_CEILING) { truncated = true; rows.length = FLOW_EDGE_CEILING; break; }
     after = batch[batch.length - 1].id;
   }
-  if (rows.length === 0) return { edges: [], state: "ok", truncated, skipped: 0 };
+  if (rows.length === 0) return { edges: [], state: "ok", truncated, skipped: 0, unitNodes: [] };
 
   // Asset ends → live registry tags (an archived or deleted asset resolves to nothing).
   const tagOf = new Map<string, string>();
@@ -444,11 +452,14 @@ export async function flowsToLineEdges(orgId: string, client: FlowReadClient = s
     return null;
   };
   const edges: LineEdge[] = [];
+  const unitNodes = new Set<string>();
   let skipped = 0;
   for (const r of rows) {
     const from = endKey(r.from_kind, r.from_ref);
     const to = endKey(r.to_kind, r.to_ref);
     if (!from || !to || from === to) { skipped += 1; continue; }
+    if (r.from_kind === "unit") unitNodes.add(from);
+    if (r.to_kind === "unit") unitNodes.add(to);
     const label = (r.label ?? "").trim();
     edges.push({
       lineId: r.id, from, to,
@@ -457,5 +468,5 @@ export async function flowsToLineEdges(orgId: string, client: FlowReadClient = s
       ...(label ? { label } : {}),
     });
   }
-  return { edges, state: "ok", truncated, skipped };
+  return { edges, state: "ok", truncated, skipped, unitNodes: [...unitNodes].sort() };
 }
