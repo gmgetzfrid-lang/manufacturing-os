@@ -136,12 +136,22 @@ export const isReservationRow = (r: Pick<UsageRow, "est_cost_usd" | "input_token
 
 const round4 = (n: number) => Math.round(n * 10000) / 10000;
 
+/** ORCH-7: the op an assistant run's SECOND and later rounds reserve under.
+ *  A run's first round is its 'orchestrator' row — the one row per run that
+ *  maxInFlight counts, a reservation until the run ends; a later round's
+ *  reservation is spend every check sees while the round is at the
+ *  provider, released once the round is folded into that row, and never a
+ *  second run. Its spend shows on the assistant's line. */
+export const ORCHESTRATOR_ROUND_OP = "orchestratorRound";
+/** The op line a row's spend is shown on, when it is not its own op. */
+const OP_LINE = new Map<string, string>([[ORCHESTRATOR_ROUND_OP, "orchestrator"]]);
+
 /** Pure: one member's rows → their month. Every op counts toward spentUsd. */
 export function rollupUsage(rows: UsageRow[]): MonthUsage {
   const out = emptyUsage();
   let askInput = 0;
   for (const r of rows) {
-    const op = r.op || "unknown";
+    const op = OP_LINE.get(r.op ?? "") ?? (r.op || "unknown");
     const line = (out.byOp[op] ??= { spentUsd: 0, calls: 0, inputTokens: 0, outputTokens: 0 });
     if (isReservationRow(r)) {
       const reserved = Number(r.est_cost_usd) || 0;

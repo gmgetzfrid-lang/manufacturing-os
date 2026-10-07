@@ -521,19 +521,25 @@ and six counts; paste before or with the app deploy.
   library answers 409 with nothing indexed.
 - `app/api/knowledge/locate/route.ts` (I-07's). It runs `assertAiGates`
   and reserves every call (coarse pass, close-ups, relocate), folding them
-  into one `drawingLocate` row. A 428 from the gate is re-read once
+  into one `drawingLocate` row; a call that reports no figures gives its
+  reservation back, so a request that spent nothing writes no row (I-18
+  fix pass 2). A 428 from the gate is re-read once
   (`agreementUnsigned`): a record that is there, or that cannot be read, is
   "Couldn't confirm…", never `agreementRequired`.
 - `app/api/orchestrator/route.ts` (I-04's). Each round is reserved; the
   run's row stays a reservation (`holdUsage`) until the route settles it
-  when the run ends, so ORCH-7's `maxInFlight` counts runs, not calls.
+  when the run ends, and later rounds reserve under `orchestratorRound`
+  (`ORCHESTRATOR_ROUND_OP`, which `rollupUsage` shows on the assistant's
+  line), so ORCH-7's `maxInFlight` counts runs, not calls or rows.
 - `lib/knowledgeEmbedCore.ts` (I-02's). `embedLibrarySlice`'s
   `beforeEmbed` (after the claim, before any call; a refusal gives the
   batch back and stops the slice) and `afterBatch`.
 - `lib/knowledgeEmbedDrain.ts` (I-02's; I-18 owned it here). Each batch
   reserved against the payer's cap; one row per library run settled after
   every batch; a refusal holds the library `cap` until the 1st (or `error`
-  for an hour on an unreadable ledger).
+  for an hour on an unreadable ledger). `beforeEmbed` releases a
+  reservation no batch folded in (a legacy-queue 429) before it reserves
+  the next (I-18 fix pass 2; the embed route does the same).
 - `app/api/knowledge/embed/route.ts` (I-02's). Each batch reserved; the
   refusal is the answer's error; one row per request settled after every
   batch.

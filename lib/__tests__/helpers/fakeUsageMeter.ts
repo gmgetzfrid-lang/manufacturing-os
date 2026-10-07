@@ -124,5 +124,6 @@ export function fakeUsageServer() {
       if (row) Object.assign(row, { model: input.model, costUsd: estimateCostUsd(input.model, input.usage) });
     }),
     releaseUsage: vi.fn(async (id: string) => { meter.rows = meter.rows.filter((r) => r.id !== id); }),
+    ORCHESTRATOR_ROUND_OP: "orchestratorRound",
   };
 }

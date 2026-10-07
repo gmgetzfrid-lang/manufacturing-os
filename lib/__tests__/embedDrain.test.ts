@@ -820,6 +820,33 @@ describe("GOV-5 / GOV-13 (I-18) — the drain re-checks the payer's headroom bef
     expect(usage.recorded).toEqual([]);
   });
 
+  it("I-18 review: on the pre-20261121 queue a batch the provider answers 429 stops its slice before it is metered — its reservation is released when the next slice reserves, never left standing as the payer's spend", async () => {
+    // was: beforeEmbed overwrote the pending reservation, so the 429'd
+    // batch's worst case stayed a reservation row — counted as the payer's
+    // spend for the rest of the month — once the drain waited out the
+    // provider's minute and sliced again
+    seedLibrary(10);
+    delete admin.state.rpc.embed_claim_batch;             // the legacy queue
+    usage.cap = 10;
+    // the drain waits out the provider's minute (65 s): not a real minute here
+    const realSetTimeout = globalThis.setTimeout;
+    vi.stubGlobal("setTimeout", ((fn: (...a: unknown[]) => void, ms?: number, ...rest: unknown[]) =>
+      realSetTimeout(fn, ms === 65_000 ? 0 : ms, ...rest)) as unknown as typeof setTimeout);
+    let calls = 0;
+    provider.mode = "429";
+    provider.during = () => { if (++calls === 2) provider.mode = "ok"; };
+    const out = await run();
+    // the first slice's batch was refused 429; the second slice embedded all ten
+    expect(calls).toBe(2);
+    expect(provider.inputs).toHaveLength(10);
+    expect(out.drained[0]).toMatchObject({ outcome: "complete", embedded: 10, remaining: 0 });
+    // both batches were reserved before they were sent…
+    expect(meter.asked.map((a) => a.refused)).toEqual([null, null]);
+    // …and nothing is left reserved: the run's ONE row carries what it spent
+    expect(meter.rows.filter((r) => r.reserved)).toEqual([]);
+    expect(embedRows()).toEqual([expect.objectContaining({ reserved: false, ok: true, inputTokens: 100, outputTokens: 0 })]);
+  });
+
   it("a run that embeds nothing leaves no row (as before): every passage refused by the provider", async () => {
     seedLibrary(3);
     provider.mode = "400-all";

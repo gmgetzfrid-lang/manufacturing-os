@@ -62,6 +62,7 @@ vi.mock("@/lib/ai/usageServer", () => ({
   settleUsage: vi.fn(async () => undefined),
   holdUsage: vi.fn(async () => undefined),
   releaseUsage: vi.fn(async () => undefined),
+  ORCHESTRATOR_ROUND_OP: "orchestratorRound",
 }));
 vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (k: string) => k }));
 vi.mock("@/lib/aiInstructionsServer", () => ({ loadOrgInstructionsBlock: vi.fn(async () => "\n\nORG INSTRUCTIONS BLOCK") }));

@@ -20,8 +20,12 @@
 // with every round's tokens at the end — between rounds too, while its
 // tools run. The first round carries the in-flight limit: a person runs at
 // most ORCHESTRATOR_MAX_IN_FLIGHT assistant runs at once (429 for the
-// next). A refusal before the first call is answered with its own status;
-// one later stops the run with what it gathered.
+// next). That row is the only one the limit counts: a later round reserves
+// under ORCHESTRATOR_ROUND_OP — spend every check sees while the round is
+// at the provider, released as soon as it is folded in — so a run past its
+// first round is still one run, never two. A refusal before the first call
+// is answered with its own status; one later stops the run with what it
+// gathered.
 //
 // A run never executes a write (ORCH-10). Write tools only PROPOSE; each
 // proposal is stored server-side for this person (ORCH-4) and runs, once,
@@ -44,7 +48,8 @@ import { atlasForPrompt } from "@/lib/featureAtlas";
 import { callAiModel, AiCallError, type AiProviderId } from "@/lib/ai/providerCall";
 import { ALLOWED_PROVIDERS, estimateCostUsd, worstCaseCostUsd, AGREEMENT_VERSION, buildAgreementText } from "@/lib/ai/pricing";
 import {
-  getMonthUsage, getCapUsd, recordAskUsage, reserveWithinCap, settleUsage, holdUsage, releaseUsage, type UsageReservation,
+  getMonthUsage, getCapUsd, recordAskUsage, reserveWithinCap, settleUsage, holdUsage, releaseUsage,
+  ORCHESTRATOR_ROUND_OP, type UsageReservation,
 } from "@/lib/ai/usageServer";
 import { GovernedCallError } from "@/lib/ai/gateError";
 import { runOrchestrator, type ModelCall } from "@/lib/orchestrator/loop";
@@ -151,11 +156,19 @@ export async function POST(req: NextRequest) {
   let runRow: UsageReservation | null = null;
   const call: ModelCall = async (system, userTurn) => {
     const reservation = await reserveWithinCap({
-      orgId, userId: user.id, op: "orchestrator", provider, model,
+      orgId, userId: user.id,
+      // The run's first round is its admission and its reservation is the
+      // run's ONE 'orchestrator' row — the row the in-flight limit counts,
+      // one per run until the run ends. A later round reserves under its own
+      // op: judged against the month and every reservation in flight like
+      // any call, released once it is folded into the run's row, and never
+      // counted as another run (ORCH-7).
+      op: runRow ? ORCHESTRATOR_ROUND_OP : "orchestrator",
+      provider, model,
       worstCaseUsd: worstCaseCostUsd(model, { inputChars: system.length + userTurn.length, maxTokens: ROUND_MAX_TOKENS }),
       capUsd,
-      // The run's first round is its admission: at most this many runs at
-      // once (every other run's row is a reservation until that run ends).
+      // At most this many runs at once: every other run's row is an
+      // 'orchestrator' reservation until that run ends.
       maxInFlight: runRow ? undefined : ORCHESTRATOR_MAX_IN_FLIGHT,
     });
     try {

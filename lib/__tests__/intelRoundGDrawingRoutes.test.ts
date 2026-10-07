@@ -840,6 +840,29 @@ describe("DWG-5 / GOV-8 / GOV-13 — every locate call is reserved first and met
     expect(body.positions.find((p: { tag: string }) => p.tag === "V-3")).toMatchObject({ nx: 0.5, ny: 0.5 });
   });
 
+  it("a call that reports no figures was never metered (I-18 review): a coarse pass failing without usage writes no row, as before — its reservation given back; a close-up failing so adds nothing to the row", async () => {
+    // was: ask()'s finally adopted the failed coarse pass's reservation as
+    // the request's row and settled it — a $0, ok:false drawingLocate row
+    // the base (which metered only when a call reported usage) never wrote
+    locateSheet();
+    ai.script = [{ throws: "overloaded" }];
+    let body = await (await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["V-3"] })).json();
+    expect(body.skipped).toBe("Couldn't point at those tags: overloaded");
+    expect(ai.calls).toHaveLength(1);
+    expect(meter.rows).toHaveLength(1);         // it was reserved before it was made…
+    expect(meteredRows()).toEqual([]);          // …and given back: no row
+    expect(ai.log).not.toContain("meter");
+    // the coarse pass answers, the first close-up fails with no figures: the
+    // row carries the coarse pass alone and the close-up's reservation is gone
+    locateSheet();
+    meter.rows = []; ai.calls = []; ai.log = [];
+    ai.script = [{ text: '{"V-3": [0.5, 0.5]}', usage: U }, { throws: "overloaded" }];
+    body = await (await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["V-3"] })).json();
+    expect(ai.calls).toHaveLength(2);
+    expect(meteredRows()).toEqual([expect.objectContaining({ op: "drawingLocate", ok: true, usage: U })]);
+    expect(body.positions.find((p: { tag: string }) => p.tag === "V-3")).toMatchObject({ nx: 0.5, ny: 0.5 });
+  });
+
   it("a user over this month's cap — counting every op, not only asks — sends nothing", async () => {
     locateSheet({ spent: 9.5 });
     vi.mocked(getCapUsd).mockResolvedValue(9);

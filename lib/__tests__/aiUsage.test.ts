@@ -93,7 +93,7 @@ vi.mock("@/lib/supabaseAdmin", () => {
 import {
   getMonthUsage, getMonthUsageByUser, getCapUsd, rollupUsage, capReached, capIsLocked, displayCapUsd,
   reserveWithinCap, settleUsage, releaseUsage, reservationVerdict, recordAskUsage,
-  AiUsageUnavailableError, LOCKED_CAP_USD, DEFAULT_MONTHLY_CAP_USD, UNPRICED_CALL_USD, monthStartIso, type UsageRow,
+  AiUsageUnavailableError, LOCKED_CAP_USD, DEFAULT_MONTHLY_CAP_USD, UNPRICED_CALL_USD, monthStartIso, ORCHESTRATOR_ROUND_OP, type UsageRow,
 } from "@/lib/ai/usageServer";
 import { GovernedCallError } from "@/lib/ai/governedCall";
 
@@ -481,6 +481,31 @@ describe("GOV-13 / ORCH-7 — reserve, then call", () => {
     const err = await reserve(0.01, 10, { maxInFlight: 2 }).catch((e) => e);
     expect((err as GovernedCallError).status).toBe(429);
     expect(db.tables.ai_usage_events).toHaveLength(2);
+  });
+
+  it("ORCH-7 (I-18 review): an assistant round's reservation is spend every check sees, on the assistant's line, but never another run — two runs past their first round are two runs", () => {
+    const at = (ms: number) => new Date(Date.now() - 60_000 + ms).toISOString();
+    const held = (id: string, ms: number, op: string, usd: number) =>
+      row({ id, created_at: at(ms), op, input_tokens: null, output_tokens: null, est_cost_usd: usd }) as UsageRow;
+    // runs A and B each hold their run row and, at the provider, a later round's reservation
+    const rows = [
+      held("a1", 1, "orchestrator", 0.02), held("b1", 2, "orchestrator", 0.02),
+      held("a2", 3, ORCHESTRATOR_ROUND_OP, 0.1), held("b2", 4, ORCHESTRATOR_ROUND_OP, 0.1),
+      held("c1", 5, "orchestrator", 0.1),
+    ];
+    const opts = { op: "orchestrator", maxInFlight: 3 };
+    // a third run is admitted: two runs in flight, not four rows
+    expect(reservationVerdict(rows, { id: "c1", reservedUsd: 0.1 }, 10, opts)).toEqual({ ok: true });
+    // a fourth is refused once three runs are in flight
+    const d = reservationVerdict([...rows, held("d1", 6, "orchestrator", 0.1)], { id: "d1", reservedUsd: 0.1 }, 10, opts);
+    expect(d).toMatchObject({ ok: false, status: 429, message: "You already have 3 of these running — wait for one to finish." });
+    // every round's reservation is spend the cap sees…
+    expect(reservationVerdict(rows, { id: "c1", reservedUsd: 0.1 }, 0.3, opts)).toMatchObject({ ok: false, status: 402 });
+    // …shown on the assistant's line, never as a line of its own
+    const m = rollupUsage(rows);
+    expect(m.spentUsd).toBe(0.34);
+    expect(m.byOp.orchestrator.spentUsd).toBe(0.34);
+    expect(m.byOp[ORCHESTRATOR_ROUND_OP]).toBeUndefined();
   });
 
   it("a ledger read failure after reserving releases the reservation and refuses (503)", async () => {

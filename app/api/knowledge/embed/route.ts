@@ -810,6 +810,11 @@ export async function POST(req: NextRequest) {
     budgetMs: BUDGET_MS,
     hardStopMs: EMBED_HARD_STOP_MS,
     beforeEmbed: async (inputChars) => {
+      // A reservation no batch folded in (its call stopped before afterBatch
+      // and reported no figures) is released, never left standing as spend.
+      const stale = pending as UsageReservation | null;
+      pending = null;
+      if (stale) await releaseUsage(stale.id);
       try {
         pending = await reserveWithinCap({
           orgId, userId: user.id, op: "knowledgeEmbed", provider: embedding.provider, model: embedding.model,

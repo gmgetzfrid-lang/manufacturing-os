@@ -301,6 +301,14 @@ export async function drainEmbedBacklog(opts: {
         if (meterRow) await settleUsage(meterRow.id, { model: connection.model, usage: { inputTokens, outputTokens: 0 }, ok });
       };
       const beforeEmbed = async (inputChars: number): Promise<string | null> => {
+        // A reservation no batch folded in — its call stopped the slice
+        // before afterBatch (the provider's 429 or the clock on the
+        // pre-20261121 queue) and reported no figures — is released before
+        // the next slice reserves: such a call was never metered, and its
+        // worst case must not stand as the payer's spend for the month.
+        const stale = pending as UsageReservation | null;
+        pending = null;
+        if (stale) await releaseUsage(stale.id);
         try {
           pending = await reserveWithinCap({
             orgId: lib.org_id, userId, op: "knowledgeEmbed", provider: connection.provider, model: connection.model,

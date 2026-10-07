@@ -18,7 +18,10 @@
 //               call; a fourth run while three are in flight is 429 —
 //               whether the three are waiting on the provider or sit
 //               between rounds running a tool (a run's row stays a
-//               reservation, carrying what it has spent, until it ends)
+//               reservation, carrying what it has spent, until it ends);
+//               a run past its first round is ONE run (its later rounds
+//               reserve under their own op), so two runs at their second
+//               round leave room for a third
 //   GOV-13      a round whose worst case no longer fits stops the run there
 //               (its spend metered, the stop said) — no further call
 
@@ -34,6 +37,8 @@ const net = vi.hoisted(() => ({
   calls: 0,
   /** When set, a provider call waits for it (a call kept in flight). */
   hold: null as null | Promise<void>,
+  /** Calls before this one (in call order) are not held. */
+  holdFrom: 0,
   waiting: 0,
   log: [] as string[],
 }));
@@ -109,7 +114,7 @@ vi.mock("@/lib/ai/providerCall", () => ({
   callAiModel: vi.fn(async () => {
     const i = net.calls++;
     net.log.push("call");
-    if (net.hold) { net.waiting++; await net.hold; net.waiting--; }
+    if (net.hold && i >= net.holdFrom) { net.waiting++; await net.hold; net.waiting--; }
     return { text: net.script[Math.min(i, net.script.length - 1)] ?? "Done.", usage: net.usage[Math.min(i, net.usage.length - 1)] ?? { inputTokens: 1, outputTokens: 1 } };
   }),
   AiCallError: class AiCallError extends Error { status = 502; },
@@ -153,6 +158,7 @@ beforeEach(() => {
   net.usage = [];
   net.calls = 0;
   net.hold = null;
+  net.holdFrom = 0;
   net.waiting = 0;
   net.log = [];
   seed(1000);
@@ -275,6 +281,40 @@ describe("ORCH-7 — concurrent runs cannot all pass the same check", () => {
     expect(events()).toHaveLength(4);
     expect(events().every((e) => e.input_tokens !== null)).toBe(true);
     expect(events().filter((e) => e.input_tokens === ROUND1.inputTokens + 1000)).toHaveLength(3);
+  });
+
+  it("two runs waiting at their SECOND round are two runs, not four: a third is admitted (200); a fourth is refused (429) only once three are in flight", async () => {
+    // was (I-18 before this fix pass): a later round reserved under
+    // 'orchestrator' too, so a run past its first round held two counted
+    // rows — its run row and its round's — and the third run was refused
+    // "You already have 4 of these running" with two runs in flight
+    const CORRECTION = '{"tool_name": "no_such_tool", "parameters": {}}';
+    net.script = [CORRECTION, CORRECTION, "No documents mention pipe supports."];
+    let release!: () => void;
+    net.hold = new Promise<void>((r) => { release = r; });
+    net.holdFrom = 2; // the two runs' first rounds return; every call after waits at the provider
+    const twoRounds = [ask(), ask()];
+    await new Promise<void>((done) => { const t = () => (net.waiting >= 2 ? done() : setTimeout(t, 5)); t(); });
+    // both runs are at the provider on round two: each holds its run row and
+    // that round's reservation, under the round's own op
+    expect(net.calls).toBe(4);
+    expect(events().filter((e) => e.input_tokens === null).map((e) => e.op).sort())
+      .toEqual(["orchestrator", "orchestrator", "orchestratorRound", "orchestratorRound"]);
+    const third = ask();
+    await new Promise<void>((done) => { const t = () => (net.waiting >= 3 ? done() : setTimeout(t, 5)); t(); });
+    expect(net.calls).toBe(5); // admitted: its first round reached the provider
+    const fourth = await ask();
+    expect(fourth.status).toBe(429);
+    expect(String(fourth.body.error)).toMatch(/You already have 3 of these running — wait for one to finish\./);
+    expect(net.calls).toBe(5);
+    release();
+    const done = await Promise.all([...twoRounds, third]);
+    expect(done.map((r) => r.status)).toEqual([200, 200, 200]);
+    expect(done.map((r) => r.body.answer)).toEqual(Array(3).fill("No documents mention pipe supports."));
+    // three runs, three rows, each settled with its rounds' tokens; no
+    // round's reservation is left on the ledger
+    expect(events()).toHaveLength(3);
+    expect(events().every((e) => e.op === "orchestrator" && e.input_tokens !== null)).toBe(true);
   });
 
   it("another person's runs are not counted against yours", async () => {

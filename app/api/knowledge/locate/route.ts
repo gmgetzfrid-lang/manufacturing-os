@@ -32,9 +32,11 @@
 // any relocate round — reserves its worst case BEFORE it is made (refused
 // when it no longer fits beside the month and every call in flight: the
 // refining stops there, the coarser point kept) and is metered in ONE
-// ai_usage_events row — the first call's reservation, settled to every
-// call's tokens after each one (DWG-5 / GOV-8), so a request cut short
-// part-way leaves what it spent recorded.
+// ai_usage_events row — the first reservation whose call reported figures,
+// settled to every call's tokens after each one (DWG-5 / GOV-8), so a
+// request cut short part-way leaves what it spent recorded. A call that
+// reported none gives its reservation back: a request that spent nothing
+// writes no row, as before.
 //
 // ACL: the same fail-closed check as every other knowledge read — a mirror
 // of a controlled document the caller can't read never resolves here either.
@@ -310,12 +312,15 @@ export async function POST(req: NextRequest) {
   const model = VISION_MODEL[provider] ?? gate.connection.model;
 
   // Every model call this request makes reserves its worst case first and
-  // folds its tokens into ONE metering row (the first call's reservation,
-  // settled after every call — a throw part-way still records what it spent).
+  // folds its tokens into ONE metering row (the first reservation whose call
+  // reported figures, settled after every call — a throw part-way still
+  // records what it spent). A call that reported none was never metered, so
+  // a request that spent nothing leaves no row (as before).
   let spent: AiUsage = ZERO_USAGE;
   let row: AiReservation | null = null;
   let failed = false;
-  const meter = (u: AiUsage | null) => { if (u) spent = addUsage(spent, u); };
+  /** Folds one call's figures in; false when the call reported none. */
+  const meter = (u: AiUsage | null): boolean => { if (!u) return false; spent = addUsage(spent, u); return true; };
 
   try {
     ensurePdfPolyfills();
@@ -330,9 +335,13 @@ export async function POST(req: NextRequest) {
     const pageB64 = Buffer.from(img as ArrayBuffer).toString("base64");
     /** One reserved, metered model call (GOV-13): its worst case is
      *  reserved before it is made — a GovernedCallError when it does not
-     *  fit — and its tokens, a throw's included, fold into the one row. */
+     *  fit — and its tokens, a throw's included, fold into the one row. A
+     *  call that reported no figures (a provider error carrying no usage, a
+     *  timeout) gives its reservation back, as such a call was never
+     *  metered: it neither makes the row nor stands as spend. */
     const ask = async (userText: string, image: string, maxTokens: number) => {
       const reservation = await gate.reserve({ inputChars: LOCATE_SYSTEM.length + userText.length, images: 1, maxTokens, model });
+      let reported = false;
       try {
         const res = await callAiModel({
           provider, model,
@@ -343,15 +352,19 @@ export async function POST(req: NextRequest) {
           images: [{ base64: image, mediaType: "image/png" }],
           timeoutMs: Math.max(5_000, startedAt + LOCATE_BUDGET_MS - Date.now()),
         });
-        meter(res.usage);
+        reported = meter(res.usage);
         return res;
       } catch (e) {
-        meter(usageOf(e));
+        reported = meter(usageOf(e));
         throw e;
       } finally {
-        if (!row) row = reservation;
-        else await reservation.release();
-        await row.settle({ usage: spent, ok: true });
+        if (!reported) {
+          await reservation.release();
+        } else {
+          if (!row) row = reservation;
+          else await reservation.release();
+          await row.settle({ usage: spent, ok: true });
+        }
       }
     };
     let out;
@@ -480,8 +493,9 @@ export async function POST(req: NextRequest) {
     });
   } finally {
     // ONE metering row covering every call this request made — the first
-    // call's reservation, settled once more with the request's outcome
-    // (DWG-5): nothing spent goes unrecorded.
+    // reservation whose call reported figures, settled once more with the
+    // request's outcome (DWG-5): nothing spent goes unrecorded, and a
+    // request whose calls reported nothing writes no row (as before).
     const metered = row as AiReservation | null;
     if (metered) await metered.settle({ usage: spent, ok: !failed });
   }
