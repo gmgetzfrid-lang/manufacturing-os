@@ -921,20 +921,22 @@
     {
       "name": "I-15 GRAPH SERVER ASSEMBLY — one route assembles the graph under the caller's own document visibility (GAP-313)",
       "findings": [
-        "GAP-313 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Whole spec unbuilt: one route assembles the graph (and a scoped graph) under the caller's own document visibility, the page loads one payload and says when a cached snapshot was skipped, and the page comment matches the real …)"
+        "GAP-313 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Whole spec unbuilt: one route assembles the graph (and a scoped graph) under the caller's own document visibility, the page loads one payload and says when a cached snapshot was skipped, and the page comment matches the real …)",
+        "GM-7 residual (assigned by the integrator 2026-10-07 at the I-14 merge: the keyset read of pending proposals, lib/linkProposals.ts readPendingProposalPairs, orders created_at desc then id desc, and proposed_links_org_status_idx holds no id, so inside one Find-connections run's single upsert every window reads the run's remaining rows — measured on PG16 at 9,000 then 8,000 for a 9,000-row run; CREATE INDEX IF NOT EXISTS on proposed_links (org_id, status, created_at DESC, id DESC), keeping the reader's order; one migration, DEC-30 counts-only inventory, one paste)"
       ],
       "files": [
         "new app/api/graph/route.ts (per-caller assembly through loadPrincipal + readableControlledDocIds — never one cached payload shared across callers)",
         "lib/orgGraph.ts (a server entry beside the client one; buildOrgGraph's scope option unchanged)",
         "app/(protected)/graph/page.tsx (one payload; says when a cached snapshot was skipped; the page comment matches the real request count) — I-14's file, edited after I-14 merges",
-        "a payload-comparison test: a controller's and a granted-nothing member's payloads against the client assembly for the same org"
+        "a payload-comparison test: a controller's and a granted-nothing member's payloads against the client assembly for the same org",
+        "one migration: the proposed_links (org_id, status, created_at DESC, id DESC) index (GM-7's residual) — CREATE INDEX IF NOT EXISTS; the reader needs no change"
       ],
-      "migrationsLikely": 0,
+      "migrationsLikely": 1,
       "dependsOn": [
         "I-12 DOCUMENT ACL BOUNDARY merged (the per-caller read predicate the route must use)",
         "I-14 merged (graph/page.tsx)"
       ],
-      "sequencingNotes": "Added by the integrator 2026-10-01 (orphan sweep): GAP-313 was opened at the I-13 merge as GM-12's follow-up and had no owner. Runs after I-12 and I-14."
+      "sequencingNotes": "Added by the integrator 2026-10-01 (orphan sweep): GAP-313 was opened at the I-13 merge as GM-12's follow-up and had no owner. Runs after I-12 and I-14. GM-7's index residual added by the integrator at the I-14 merge (2026-10-07): this route runs the pending-proposal read, and no other planned package ships a migration on proposed_links."
     },
     {
       "name": "I-16 CODEBOOK LIFECYCLE — a code renamed in place cascades atomically; a server-side re-decode with a preview; a codebook version stamped on derived codes (CB-5, CB-6)",
@@ -1080,6 +1082,25 @@
       "decisionsNeeded": [
         "DEC-58 — accept a keyless first index / keyless regeneration ending text-only with only a marker (proposed default: yes, marked on the row and said on the library surface), or hold such pages for a key (rejected at I-06b fix pass 3: it parks every revised drawing of a keyless org)"
       ]
+    },
+    {
+      "name": "I-23 MENTION INDEX RUN STATE — the mention index records each build's outcome, so the graph can name a build that failed elsewhere; the org-wide backfill continues where it stopped (IRLS-14)",
+      "findings": [
+        "IRLS-14 (remainder re-owned by the integrator 2026-10-07 at the I-14 merge: done-when 1's unmet limb — a mention build that failed ELSEWHERE cannot be named, because lib/knowledgeIngest.ts rebuildDocumentMentions swallows its errors (catch {}) and lib/mentionIndexer.ts keeps no run state; needs a last run, its outcome and its error, written by both, plus a migration to hold it, read by the graph's mention notice (lib/graphView.ts mentionNotice). Noted with it: backfillOrgMentions restarts at the first document on each POST (no cursor), so a rebuild that hits its time limit is not continued by a second press)"
+      ],
+      "files": [
+        "lib/mentionIndexer.ts (record each build's start, outcome and error; a cursor for backfillOrgMentions)",
+        "lib/knowledgeIngest.ts (the ingest-time rebuildDocumentMentions pass records its failure instead of catch {}) — AFTER I-18 and I-22 merge, which edit this file first",
+        "one migration: the mention index's run state (per org: last run, outcome, error, the backfill cursor) — ADD/CREATE IF NOT EXISTS, DEC-30 counts-only inventory, one paste; tolerated absent by every reader",
+        "lib/graphView.ts mentionNotice and app/(protected)/graph/page.tsx (name the last failed build and its error; offer to continue a stopped backfill) — I-14's files, merged",
+        "tests: a failed ingest-time build named on the map; a failed map-started build as today; a stopped backfill continued by the second press; regression — a successful build and an absent table behave exactly as before"
+      ],
+      "migrationsLikely": 1,
+      "dependsOn": [
+        "I-14 merged (the mention notice on the graph)",
+        "I-18 and I-22 merged (both edit lib/knowledgeIngest.ts first)"
+      ],
+      "sequencingNotes": "Added by the integrator 2026-10-07 at the I-14 merge (DEC-31: IRLS-14's remainder had no running owner; lib/knowledgeIngest.ts is I-06b / I-20's, both merged)."
     }
   ],
   "crossAreaFileOverlaps": [
@@ -1115,6 +1136,7 @@
     "ING-7": "paste 20261122",
     "SEM-9": "paste 20261121 and send back its last row (recall@12 vs exact scan; >= 0.90 closes it, below turns it back into code work)",
     "GAP-305": "paste 20261138, run the unit-identity decode on /admin/scope, paste 20261138 again and send back the disagreement inventory",
-    "PR-9": "decide done-when 2 (DEC-83 item 6): re-derive the model's arithmetic server-side (an evaluator for the transcribed formula and inputs), or stop presenting the model's computed number as the answer (show the formula and inputs, withhold the result); the label 'arithmetic: unverified' is done-when 1 and has landed"
+    "PR-9": "decide done-when 2 (DEC-83 item 6): re-derive the model's arithmetic server-side (an evaluator for the transcribed formula and inputs), or stop presenting the model's computed number as the answer (show the formula and inputs, withhold the result); the label 'arithmetic: unverified' is done-when 1 and has landed",
+    "GPV-4": "ratify DEC-88 item 1 (the lens names as written: Everything · Plant (units & equipment) · Equipment ↔ Documents · Documents & libraries) — closes done-when 1 as superseded; if not ratified, the rename is label-only (one label per GRAPH_LENSES entry, the URL keys unchanged) and is queued as a package"
   }
 }

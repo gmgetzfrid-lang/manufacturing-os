@@ -7,6 +7,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { carrierOrder, orderPair, TIER_RANK } from "@/lib/linkProposalLogic";
+import { isMissingRelation } from "@/lib/orgGraph";
 
 /** Built-in keys plus `rule:<id>` for org-authored Connection Skills.
  *  LNK-11: no similarity proposer runs, so none is named. */
@@ -250,14 +251,119 @@ export async function requestProposalInvalidation(documentId: string): Promise<{
   }
 }
 
-/** Every pending pair, for drawing ghost edges on the graph. */
+/** Every pending pair, for drawing ghost edges on the graph. Kept for any
+ *  caller that only wants the pairs: an error reads as none here. The graph
+ *  reads readPendingProposalPairs, which says which (GM-7). */
 export async function listPendingPairs(orgId: string): Promise<Array<{
   a: string; b: string; proposer: ProposerKind;
 }>> {
-  const { data, error } = await supabase
-    .from("proposed_links").select("document_id, target_document_id, proposer")
-    .eq("org_id", orgId).eq("status", "pending").limit(4000);
-  if (error) return [];
-  return ((data as Array<{ document_id: string; target_document_id: string; proposer: ProposerKind }>) ?? [])
-    .map((r) => ({ a: r.document_id, b: r.target_document_id, proposer: r.proposer }));
+  const r = await readPendingProposalPairs(orgId);
+  return r.pairs.map((p) => ({ a: p.documentId, b: p.targetDocumentId, proposer: p.proposer }));
+}
+
+/** How many pending pairs the graph draws at most. */
+export const PENDING_PAIRS_CAP = 4000;
+/** PostgREST cuts every response at db-max-rows (1,000 by default) without
+ *  an error, so the pairs are read in windows no larger than that. */
+const PAIR_WINDOW = 1000;
+
+export interface PendingPairsRead {
+  /** Both ends are documents: proposed_links.document_id and
+   *  target_document_id are NOT NULL references to documents (20260807), so
+   *  the kind is a fact of the schema, carried as data (`nodeA` / `nodeB`
+   *  are the graph node ids). */
+  pairs: Array<{
+    documentId: string; targetDocumentId: string; proposer: ProposerKind;
+    nodeA: string; nodeB: string;
+  }>;
+  /** Pending proposals this reader can see (proposed_links RLS: both
+   *  documents readable — LNK-4). null when it could not be counted. */
+  total: number | null;
+  /** The read stopped at the cap with more pending (`total` above the rows
+   *  read), or at the cap with the count failed (`total` null: at least the
+   *  cap are pending, perhaps no more). */
+  capped: boolean;
+  /** The read failed — never the same as "none pending". */
+  error: string | null;
+}
+
+/** A PostgREST filter value inside an `or` tree, double-quoted: a
+ *  timestamptz carries `.`, `:` and `+`, which the tree syntax reserves. */
+const orValue = (v: string) => `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+
+/** GM-7 — the pending pairs for the graph, telling a failed read and a
+ *  capped one apart from an empty queue. A database without proposed_links
+ *  (before 20260807 — Postgres 42P01, PostgREST PGRST205, lib/orgGraph.ts
+ *  isMissingRelation) has none pending, which is not an error; any other
+ *  failure, a missing column included, is.
+ *
+ *  The read (I-14 fix pass 3, fix pass 4): newest first, in KEYSET windows
+ *  on (created_at desc, id desc). proposed_links_org_status_idx is
+ *  (org_id, status, created_at DESC) — it holds no id. Each later window
+ *  also says `created_at <= c` (c: the last row's created_at), which the
+ *  `or` tree alone does not give the planner as an index bound: that
+ *  condition is the index range, the `or` picks the rows after the last one
+ *  inside it. Where created_at values are spread, a window reads about the
+ *  rows it returns, and the RESTRICTIVE proposed_links_read_endpoints policy
+ *  is evaluated on about those rows (measured on PG16 with 9,000 pending:
+ *  window 2 read 1,001 rows instead of 8,000). The rows one
+ *  Find-connections run inserts share one created_at (lib/linkProposerServer.ts
+ *  writes a run in one upsert). Inside such a tied group the index cannot
+ *  order by id, so each window reads — and runs the policy on — every
+ *  remaining row of the group, and "the newest" inside one run means uuid
+ *  order (id desc), not the order the rows were written. An index on
+ *  (org_id, status, created_at DESC, id DESC) would bound those reads too;
+ *  it needs a migration and is GM-7's recorded residual.
+ *
+ *  It stops at an EMPTY window, never a short one (a project whose
+ *  db-max-rows is below the window returns short windows that are not the
+ *  end; the keyset makes the extra request safe), or at the cap. The queue
+ *  is counted only when the cap is reached — one head count; below the cap
+ *  the read itself is the count. */
+export async function readPendingProposalPairs(orgId: string, cap = PENDING_PAIRS_CAP): Promise<PendingPairsRead> {
+  type Row = { id: string; document_id: string; target_document_id: string; proposer: ProposerKind; created_at: string };
+  const pairs: PendingPairsRead["pairs"] = [];
+  let last: { created_at: string; id: string } | null = null;
+  while (pairs.length < cap) {
+    const want = Math.min(PAIR_WINDOW, cap - pairs.length);
+    let q = supabase.from("proposed_links")
+      .select("id, document_id, target_document_id, proposer, created_at")
+      .eq("org_id", orgId).eq("status", "pending");
+    // "After" the last row in (created_at desc, id desc) order. The `lte` is
+    // implied by the `or` and changes no row; it is the index's range bound.
+    if (last) {
+      q = q.lte("created_at", last.created_at)
+        .or(`created_at.lt.${orValue(last.created_at)},and(created_at.eq.${orValue(last.created_at)},id.lt.${last.id})`);
+    }
+    const { data, error } = await q
+      .order("created_at", { ascending: false }).order("id", { ascending: false })
+      .limit(want);
+    if (error) {
+      if (!last && isMissingRelation(error)) {
+        return { pairs: [], total: 0, capped: false, error: null };
+      }
+      return { pairs, total: null, capped: false, error: error.message || "the read failed" };
+    }
+    const rows = (data as Row[] | null) ?? [];
+    if (rows.length === 0) return { pairs, total: pairs.length, capped: false, error: null };
+    for (const r of rows) {
+      pairs.push({
+        documentId: r.document_id, targetDocumentId: r.target_document_id, proposer: r.proposer,
+        nodeA: `doc:${r.document_id}`, nodeB: `doc:${r.target_document_id}`,
+      });
+    }
+    const tail = rows[rows.length - 1];
+    if (typeof tail.created_at !== "string" || !tail.created_at || !tail.id
+      || (last && tail.created_at === last.created_at && tail.id === last.id)) {
+      // No usable key on the last row: refuse to page on rather than loop.
+      return { pairs, total: null, capped: false, error: "the read cannot page past its last row" };
+    }
+    last = { created_at: tail.created_at, id: tail.id };
+  }
+  // At the cap: one head count says how many are pending.
+  const { count, error } = await supabase.from("proposed_links")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", orgId).eq("status", "pending");
+  const total = !error && typeof count === "number" ? count : null;
+  return { pairs, total, capped: total === null || total > pairs.length, error: null };
 }

@@ -6,12 +6,22 @@
 // do better: crisp text, curved links that don't overlap, directional
 // arrows, and hover halos. Camera moves are eased rather than teleporting,
 // which is most of what makes a graph feel expensive rather than homemade.
+//
+// Direction is drawn where direction is the meaning — a process flow feeds,
+// a supersession replaces (GPV-8 / FLOW-10) — and a flow sits in the visible
+// band so its arrow shows without a hover. In focus mode a node fades and
+// shrinks with its hop distance from the root (GPV-9). The canvas is
+// presentational: the page's map region is the focusable, labelled element
+// the keyboard walks (GPV-13).
 
 import React from "react";
-import type { GraphNode, GraphEdge, GraphNodeType, GraphEdgeType } from "@/lib/orgGraph";
-import type { GraphSim } from "@/lib/graphSim";
+import type { GraphNode, GraphEdge, GraphNodeType } from "@/lib/orgGraph";
+import { depthFade, type GraphSim } from "@/lib/graphSim";
 import { groupColorFor, type GraphSettings } from "@/lib/graphSettings";
-import { NODE_COLORS, EDGE_RGB, ACCENT } from "@/components/graph/graphTheme";
+import { nodeIndexer } from "@/lib/graphView";
+import {
+  ACCENT, ARROW_EDGE_TYPES, PATH_RGB, edgeRgbFor, nodeColorFor, unitVariant,
+} from "@/components/graph/graphTheme";
 
 const BASE_R: Record<GraphNodeType, number> = {
   document: 3.5, asset: 4, unit: 7, library: 6, project: 6, plant: 8, plot: 6,
@@ -31,14 +41,37 @@ interface Props {
   regions: Array<{ label: string; ids: string[] }>;
   /** Set to fly the camera somewhere; bump `nonce` to re-fly the same target. */
   flyTo: { ids: string[]; nonce: number } | null;
+  /** Focus mode: each node's hop distance from the root (GPV-9). */
+  depthOf?: Map<string, number> | null;
+  /** The focus depth those distances are out of. */
+  depthMax?: number;
   onSelect: (n: GraphNode | null) => void;
   onOpen: (n: GraphNode) => void;
   onSettled?: () => void;
 }
 
+/** Base alpha of an edge before spotlight / opacity: a flow sits in the
+ *  visible band, above the arrow threshold (FLOW-10); a pinned or bound
+ *  shelf is a deliberate statement, not filing noise (GPV-14). */
+export function baseEdgeAlpha(e: Pick<GraphEdge, "type" | "via">): number {
+  switch (e.type) {
+    case "proposed": return 0.55;
+    case "flow": return 0.6;
+    case "related": return 0.5;
+    case "supersession": return 0.4;
+    case "library": return e.via ? 0.45 : 0.1;
+    default: return 0.2;
+  }
+}
+/** Below this an edge is background — no arrowhead is drawn on it. */
+export const ARROW_MIN_ALPHA = 0.12;
+
+const radiusOf = (n: GraphNode, nodeScale: number) =>
+  (BASE_R[n.type] + Math.min(9, Math.sqrt(n.degree) * 1.1)) * nodeScale;
+
 export default function OrgGraph2D({
   nodes, edges, sim, settings, query, selectedId, highlightIds, pathIds,
-  regions, flyTo, onSelect, onOpen, onSettled,
+  regions, flyTo, depthOf = null, depthMax = 2, onSelect, onOpen, onSettled,
 }: Props) {
   const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const wrapRef = React.useRef<HTMLDivElement | null>(null);
@@ -56,8 +89,8 @@ export default function OrgGraph2D({
   // Node scale-in animation: id → 0..1 progress, so new nodes grow in.
   const bornRef = React.useRef(new Map<string, number>());
 
-  const live = React.useRef({ nodes, edges, sim, settings, query, selectedId, highlightIds, pathIds, regions, onSelect, onOpen, onSettled });
-  live.current = { nodes, edges, sim, settings, query, selectedId, highlightIds, pathIds, regions, onSelect, onOpen, onSettled };
+  const live = React.useRef({ nodes, edges, sim, settings, query, selectedId, highlightIds, pathIds, regions, depthOf, depthMax, onSelect, onOpen, onSettled });
+  live.current = { nodes, edges, sim, settings, query, selectedId, highlightIds, pathIds, regions, depthOf, depthMax, onSelect, onOpen, onSettled };
 
   // ── Fly to a set of nodes ──────────────────────────────────────────────
   React.useEffect(() => {
@@ -85,6 +118,9 @@ export default function OrgGraph2D({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     let raf = 0, alive = true, wasSettled = false;
+    // The arrowheads read each target's radius: an id index rebuilt only when
+    // the node set changes, never per frame (I-14 fix pass 3).
+    const indexNodes = nodeIndexer();
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
@@ -101,7 +137,7 @@ export default function OrgGraph2D({
     const draw = () => {
       if (!alive) return;
       raf = requestAnimationFrame(draw);
-      const { nodes: ns, edges: es, sim: s, settings: st, query: q, selectedId: sel, highlightIds, pathIds, regions: regs } = live.current;
+      const { nodes: ns, edges: es, sim: s, settings: st, query: q, selectedId: sel, highlightIds, pathIds, regions: regs, depthOf: dOf, depthMax: dMax } = live.current;
 
       const running = s.tick();
       if (!running && !wasSettled) { wasSettled = true; live.current.onSettled?.(); }
@@ -165,6 +201,7 @@ export default function OrgGraph2D({
 
       // ── Links ────────────────────────────────────────────────────────
       ctx.lineCap = "round";
+      const nodeById = st.showArrows ? indexNodes(ns) : null;
       for (const e of es) {
         const na = s.get(e.a), nb = s.get(e.b);
         if (!na || !nb) continue;
@@ -174,12 +211,16 @@ export default function OrgGraph2D({
         const inSpot = !spotId || e.a === spotId || e.b === spotId;
         const proposed = e.type === "proposed";
 
-        let alpha = proposed ? 0.55 : e.type === "related" ? 0.5 : e.type === "library" ? 0.1 : 0.2;
+        let alpha = baseEdgeAlpha(e);
         if (spotId) alpha = inSpot ? 0.8 : alpha * 0.16;
+        // Focus depth: a link fades with its farther end.
+        if (dOf && !onPath && !spotId) {
+          alpha *= Math.min(depthFade(dOf.get(e.a), dMax).alpha, depthFade(dOf.get(e.b), dMax).alpha);
+        }
         if (onPath) alpha = 1;
         alpha *= st.linkOpacity;
 
-        const rgb = onPath ? "34,211,238" : EDGE_RGB[e.type as GraphEdgeType] ?? "148,163,184";
+        const rgb = onPath ? PATH_RGB : edgeRgbFor(e);
         ctx.strokeStyle = `rgba(${rgb},${alpha})`;
         ctx.lineWidth = ((onPath ? 2.6 : 1) * st.linkThickness) / cam.scale;
         if (proposed) ctx.setLineDash([6 / cam.scale, 5 / cam.scale]);
@@ -198,12 +239,15 @@ export default function OrgGraph2D({
         ctx.stroke();
         ctx.setLineDash([]);
 
-        // Direction, where direction means something.
-        if (st.showArrows && (alpha > 0.3) && (e.type === "supersession" || e.type === "related" || onPath)) {
+        // Direction, where direction IS the meaning: a flow feeds, a
+        // supersession replaces (GPV-8). A curated link is an unordered pair
+        // — an arrow on it would be invented.
+        if (st.showArrows && alpha > ARROW_MIN_ALPHA && (ARROW_EDGE_TYPES.has(e.type) || onPath)) {
           const tipX = nb.x, tipY = nb.y;
           const fromX = bow > 0 ? cxp : na.x, fromY = bow > 0 ? cyp : na.y;
           const ang = Math.atan2(tipY - fromY, tipX - fromX);
-          const rN = BASE_R[ns.find((n) => n.id === e.b)?.type ?? "document"] + 3;
+          const target = nodeById?.get(e.b);
+          const rN = (target ? radiusOf(target, st.nodeScale) : BASE_R.document) + 2 / cam.scale;
           const ax = tipX - Math.cos(ang) * rN, ay = tipY - Math.sin(ang) * rN;
           const size = 7 / cam.scale;
           ctx.fillStyle = `rgba(${rgb},${Math.min(1, alpha + 0.2)})`;
@@ -234,15 +278,19 @@ export default function OrgGraph2D({
         const inPath = pathIds.has(n.id);
         const matches = q.length >= 2 && n.label.toLowerCase().replace(/[^a-z0-9]+/g, "").includes(q);
 
-        let dim = 1;
+        // Focus depth (GPV-9): the rim of the neighbourhood is fainter and
+        // smaller than the root's own ring.
+        const fade = dOf ? depthFade(dOf.get(n.id), dMax) : { alpha: 1, shrink: 1 };
+
+        let dim = isSpot ? 1 : fade.alpha;
         if (spotId && !isSpot && !isNeighbour && !inPath) dim = 0.18;
         if (q.length >= 2 && !matches) dim = Math.min(dim, 0.15);
         if (isGold || inPath) dim = 1;
 
-        const r = (BASE_R[n.type] + Math.min(9, Math.sqrt(n.degree) * 1.1)) * st.nodeScale * ease;
+        const r = radiusOf(n, st.nodeScale) * fade.shrink * ease;
         const color = inPath ? ACCENT.path
           : isGold ? ACCENT.found
-          : (groupColorFor(n, st.groups) ?? NODE_COLORS[n.type]);
+          : (groupColorFor(n, st.groups) ?? nodeColorFor(n));
 
         // Halo — the cheap trick that reads as "expensive".
         if (st.glow && (isSpot || isGold || inPath || matches)) {
@@ -257,9 +305,45 @@ export default function OrgGraph2D({
 
         ctx.globalAlpha = dim;
         ctx.fillStyle = color;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-        ctx.fill();
+        // GPV-4: the unit class holds three things — a Site Codebook unit (a
+        // disc), an operational unit not mapped to it (a ring) and a system
+        // (a square) — told apart by shape as well as colour.
+        const variant = unitVariant(n);
+        if (variant === "system") {
+          const side = r * 1.7;
+          ctx.fillRect(p.x - side / 2, p.y - side / 2, side, side);
+        } else if (variant === "operational") {
+          ctx.strokeStyle = color;
+          ctx.lineWidth = Math.max(1.5 / cam.scale, r * 0.45);
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, r * 0.78, 0, Math.PI * 2);
+          ctx.stroke();
+        } else {
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // GAP-306: a scoped map draws a stub where links leave the scope —
+        // "N more this way" — rather than hiding them.
+        if (n.outside && n.outside > 0) {
+          const ang = Math.atan2(p.y, p.x) || 0;
+          const r0 = r + 2 / cam.scale, r1 = r + 16 / cam.scale;
+          ctx.strokeStyle = textColor;
+          ctx.lineWidth = 1.2 / cam.scale;
+          ctx.setLineDash([3 / cam.scale, 3 / cam.scale]);
+          ctx.beginPath();
+          ctx.moveTo(p.x + Math.cos(ang) * r0, p.y + Math.sin(ang) * r0);
+          ctx.lineTo(p.x + Math.cos(ang) * r1, p.y + Math.sin(ang) * r1);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          if (cam.scale > 0.7 || isSpot) {
+            ctx.fillStyle = textColor;
+            ctx.font = `700 ${Math.max(8, 10 / cam.scale)}px ui-monospace, monospace`;
+            ctx.textAlign = "center";
+            ctx.fillText(`+${n.outside}`, p.x + Math.cos(ang) * (r1 + 8 / cam.scale), p.y + Math.sin(ang) * (r1 + 8 / cam.scale));
+          }
+        }
 
         if (isSpot || matches || isGold || inPath) {
           ctx.strokeStyle = inPath ? ACCENT.path : (isGold || matches) && !isSpot ? ACCENT.search : textColor;
@@ -317,7 +401,7 @@ export default function OrgGraph2D({
     for (const n of live.current.nodes) {
       const sp = live.current.sim.get(n.id);
       if (!sp) continue;
-      const r = (BASE_R[n.type] + Math.min(9, Math.sqrt(n.degree) * 1.1)) * live.current.settings.nodeScale;
+      const r = radiusOf(n, live.current.settings.nodeScale);
       const d = Math.hypot(sp.x - p.x, sp.y - p.y);
       if (d < r + slop && d < bestD) { best = n; bestD = d; }
     }
@@ -427,6 +511,7 @@ export default function OrgGraph2D({
     <div ref={wrapRef} className="absolute inset-0 overflow-hidden">
       <canvas
         ref={canvasRef}
+        aria-hidden="true"
         className="block select-none"
         style={{ touchAction: "none", cursor: "grab" }}
         onPointerDown={onPointerDown}

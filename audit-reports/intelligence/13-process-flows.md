@@ -480,7 +480,7 @@ Tests: `lib/__tests__/processFlowsLib.test.ts` ("listProcessFlowsPaged — FLOW-
 ## FLOW-10 · Flows are directional in the database and undirected on screen — the renderer excludes 'flow' from arrowheads, arrows default OFF, and a flow edge's alpha sits below the arrow threshold anyway
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/graph/OrgGraph2D.tsx:202`, `components/graph/OrgGraph2D.tsx:177-180`, `lib/graphSettings.ts:65`, `components/graph/GraphControls.tsx:213-215`, `app/(protected)/graph/page.tsx:430`, `lib/orgGraph.ts:34`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. All three barriers confirmed, and they compound: even with Arrows toggled on, a flow edge only clears alpha>0.3 when it is the hovered/selected edge (alpha 0.8), and it is still excluded by type. The unit hub's FlowPanel does print direction (UnitOpsPanels.tsx:212, ArrowRight between endpoints), but the Process lens the finding targets does not.
@@ -504,6 +504,20 @@ OrgGraph2D.tsx:202 verbatim: `if (st.showArrows && (alpha > 0.3) && (e.type === 
 - [ ] `"flow"` is added to the arrow type list and given an alpha above the arrow threshold (or the threshold is evaluated per type)
 - [ ] Arrows default ON when the Process lens is active, and the Arrows tooltip names flows
 - [ ] The 3D renderer either draws direction on flow edges or the Process lens says it cannot
+
+**Resolution (2026-10-02, intelligence Round G).** Reproduced first (DEC-29): base `components/graph/OrgGraph2D.tsx:202` (flow not in the arrow list), `:177` (flow alpha 0.2 under the 0.3 gate), `lib/graphSettings.ts:65` (arrows default off), and no arrow code in `OrgGraph3D.tsx`. What landed (with `GPV-8`):
+- A flow is in the arrow set (`ARROW_EDGE_TYPES` = `DIRECTED_EDGE_TYPES`) and is drawn at alpha 0.6, above `ARROW_MIN_ALPHA` 0.12.
+- Arrows default ON for every lens, the Plant lens included (settings version 2; a version-1 blob migrates on). The Arrows tooltip reads "Direction on process flows (what feeds what) and supersession (what replaced what), in 2D and 3D".
+- The 3D view draws a direction cone at the fed end. The legend says an arrow points from what feeds to what is fed.
+
+**Done-when.**
+1. ✓ `"flow"` is in the arrow type list with an alpha above the threshold.
+2. ✓ Arrows default ON (on the Plant lens too), and the tooltip names flows.
+3. ✓ The 3D renderer draws direction on flow edges.
+
+Tests: `graphView.test.ts` "GPV-8 / FLOW-10 …"; `graphSettingsUrl.test.ts` ("a v1 blob … arrows migrate on", "the defaults: arrows on …").
+
+**Scope / residual.** A proposed flow is still not drawn (I-13: counted in the map's notes; the unit hub lists it).
 
 ---
 

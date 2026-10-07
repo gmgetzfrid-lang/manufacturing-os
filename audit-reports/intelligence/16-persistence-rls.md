@@ -605,6 +605,7 @@ Tests: `lib/__tests__/orchestratorSkills.test.ts` (the route returns the packs f
 - **Severity:** LOW
 - **Status:** OPEN
 - **Assigned:** intelligence I-14 GRAPH PAGE, LENSES & RENDERERS (the `lib/orgGraph.ts` half coordinates with I-13) — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
+- **Assigned:** intelligence I-23 MENTION INDEX RUN STATE (done-when 1's remainder: a build that failed elsewhere is named on the map; plus the backfill's missing cursor) — by the integrator, 2026-10-07 (at the I-14 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/intelligence.json`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/graph/page.tsx`, `lib/orgGraph.ts` (mention edges), `lib/mentions.ts` `mentionCoverage`
 - **Opened 2026-09-30 (intelligence Round G, I-08)** as the remainder of `IRLS-4` (`DEC-31`): the graph page belongs to another package (I-14).
@@ -616,6 +617,19 @@ Tests: `lib/__tests__/orchestratorSkills.test.ts` (the route returns the packs f
 - [ ] The graph reads `mentionCoverage` and, with zero mention edges, says which case it is, with the next step (run the indexer / see the failure).
 
 *Handoff (2026-10-01, intelligence Round G, I-13; corrected at the fourth review): `OrgGraph.mentionCoverage { installed, rows, drawn, unmapped, capped }` exposes only what the mention read can tell — `installed: false` when entity_mentions does not exist (42P01), and `installed: true, rows: 0` when it exists but no row is visible to this reader; `drawn` the mention edges on the map, `capped` when the read stopped at the edge cap. It does NOT tell "never built" from "built, nothing named" from "built, every row out of view" (with `rows: 0` all three look the same), and it carries no failed build: the indexer (`lib/mentionIndexer.ts`) keeps no run state — a failure is logged and thrown to its caller. The done-when's "see the failure" therefore needs an index-run state (a last run, its outcome, its error) that does not exist yet; I-14 must read or add it elsewhere, not infer it from `mentionCoverage`. The first handoff line said the lib half was exposed whole; it is not.*
+
+**Partial (2026-10-02, intelligence Round G).** The graph reads `OrgGraph.mentionCoverage` (I-13's half). With zero mention edges drawn, the map says which case it can tell, with the next step (`lib/graphView.ts` `mentionNotice`; `app/(protected)/graph/page.tsx:786`, the notice in the map's note strip):
+- **Not installed** (42P01): "The mention index is not installed (migration 20260929_mention_engine.sql) …".
+- **Installed, no row visible to this reader**, equipment on the map: the map names both cases it cannot tell apart — "Either the mention index has not been built for these documents, or it found none of this registry's equipment named in the documents you can see — the map cannot tell which." It offers "Rebuild the mention index" to the roles `/api/graph/mentions` admits (Admin, DocCtrl, Manager, Supervisor by the role collection, `hasAnyRole`). The rebuild POSTs the route. It says what was read and written, or the route's failure verbatim ("The mention index could not be rebuilt: …"), and rebuilds the map.
+- **Installed, no equipment on the map**: "there is no registry equipment on this map for a document to name".
+- **Rows read but none drawn**: points at the map's notes, which say why (unmapped / unresolved / beyond the cap).
+
+Tests: `graphView.test.ts` "IRLS-14 — no mention links, and which case"; `graphPageRender.test.ts` (the notice; the rebuild for a controller, not for a Viewer; a failed rebuild said with the route's reason).
+
+**Done-when.**
+1. Partly. ✓ The graph reads the coverage, says which case, and gives the next step: run the indexer, from the map. A run's failure is shown when the run is started from the map. **Not met:** a build that failed ELSEWHERE cannot be named. The ingest-time pass (`lib/knowledgeIngest.ts` `rebuildDocumentMentions`) swallows its errors (`catch {}`), and the indexer keeps no run state. So "the last build failed" is indistinguishable from "never built", and the map does not claim either.
+
+**Scope / residual.** "See the failure" needs an index-run state: a last run, its outcome and its error, written by `lib/mentionIndexer.ts` and `lib/knowledgeIngest.ts`'s pass, plus a migration to hold it. Neither file is this package's: `lib/knowledgeIngest.ts` is I-06b / I-20's, and the plan expects no migration here. Noted for the owner: the org-wide backfill (`backfillOrgMentions`) restarts at the first document on each POST (no cursor). A rebuild that hits its time limit says so ("the rest were not reached this run"), and a second press does not continue where it stopped.
 
 ---
 

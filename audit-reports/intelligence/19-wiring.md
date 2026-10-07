@@ -163,6 +163,8 @@ Tests: `lib/__tests__/searchUnitDocuments.test.ts` (a mapped unit finds its file
 
 **Scope / residual.** Pending migration `20261138` (the mapping and the decode). The decode must have run for decoded documents to be found. The "sibling documents in the same system" narrowing in `lib/search.ts` still reads `documents.system_id` / `unit_id` / `plant_id`. That is a ranking aid, not a filter this finding names.
 
+*Verified 2026-10-02 (intelligence Round G, I-14 — the lens-UI limb named on the Assigned line; DEC-29 record close): the `lib/search.ts` limb holds on this base (`unitDocumentFilter` `lib/search.ts:244`, `plantDocumentFilter` `:256`, used at `:272-273`). The lens UI the graph half pointed at is renamed to what each lens shows (`GM-10` / `GPV-10`, `lib/graphSettings.ts` `GRAPH_LENSES`). No code here; `20261138` remains Pending in `audit-reports/MIGRATION-PASTE-ORDER.md`, so a unit's decoded documents are found once it is pasted and the decode has run.*
+
 ---
 
 <a id="wire-4"></a>

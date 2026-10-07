@@ -217,7 +217,7 @@ Tests: `lib/__tests__/flowsReadRoute.test.ts` (the roster cases on `FLOW-4`), `l
 ## AREA-6 · No pivot from an operating area to the graph — the deep link the graph already understands is used by nothing, and even it only selects a node rather than scoping the view
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/graph/page.tsx:226-237`, `lib/orgGraph.ts:198-202`, `components/assets/UnitOpsPanels.tsx:176-178`, `app/(protected)/admin/assets/page.tsx:1602`, `components/assets/AreaKnowledgePanel.tsx:231-350`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The unit-scoped pivot genuinely does not exist and the focus handler only selects rather than scopes — both true. Two corrections: "the deep link ... is used by nothing" is imprecise, since admin/assets/page.tsx:1602 (a location the finding itself cites) uses the `asset:` form; and the impact is a missing navigation affordance with no correctness, security or data consequence, which is LOW rather than MEDIUM.
@@ -254,6 +254,13 @@ Tests: `lib/__tests__/flowPanelRender.test.ts` ("the graph link carries the unit
 3. ✗ Not met here: "show only this unit" on the graph is the same page, over `lib/scope.ts` (built, I-13).
 
 **Scope / residual.** OPEN until I-14's page reads `?scope=`; no change here is needed then.
+
+**Resolution (2026-10-07, by the integrator at the intelligence I-14 merge).** Done-whens 2 and 3 were left to I-14's page, and I-14 built them. The graph reads `?scope=unit:<code>` (`parseScopeParam`, `app/(protected)/graph/page.tsx:199-223`) and assembles that unit's world through `buildOrgGraph(orgId, { scope })` over `lib/scope.ts`: containment by unit membership, never a node-type filter. `focus=cbunit:<code>` still selects the unit's node. Checked at the merge against the record's own criteria:
+1. ✓ (2026-10-01) The area panel's header and FlowPanel link to `/graph?scope=unit:<code>&focus=cbunit:<code>`.
+2. ✓ Landing on a unit scopes the map to it. `graphPageRender.test.ts` "the operating area's ?scope=unit:<code>&focus=cbunit:<code> assembles that unit and opens it (AREA-6 / GAP-306)": the page builds with `{ scope: { kind: "unit", code: "20" } }`, opens the "Unit: Crude Unit" peek and shows the scope chip.
+3. ✓ The "show only this unit" state is `GraphSettings.scope` (`lib/graphSettings.ts`), a control separate from the node-type filter (`DEC-88` items 1 and 5). A person who never opened the graph reaches it from the area page's link. "picking a unit in the top bar assembles that unit's world; the chip clears it" pins the same state from the graph's side.
+
+**Scope / residual.** None in this record. Until `20261138` (Pending) maps operational units to codebook codes, a scope holds the codebook filing and the pins (`GAP-306`'s residual, `GAP-305`).
 
 ---
 
@@ -397,7 +404,7 @@ lib/assets.ts:123-133 — `let q = supabase.from("assets").select("*").eq("org_i
 ## AREA-10 · Two independent, simultaneously live 'unit' models — and the columns the graph reads for one of them are never written by any code path
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-14 (GPV-7: Connect writes node.unitCode) and I-09 (WIRE-10: the endpoint-existence trigger) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260606_operational_entity_graph.sql:52-70`, `supabase/migrations/20260606_operational_entity_graph.sql:106-116`, `app/(protected)/admin/scope/page.tsx:126`, `lib/orgGraph.ts:190-201`, `lib/orgGraph.ts:253-259`, `app/(protected)/graph/page.tsx:318-324`
@@ -442,6 +449,21 @@ Tests: `lib/__tests__/orgGraph.test.ts`, `lib/__tests__/intelRoundGUnitIdentity.
 3. ✓ No `process_flows` row can be created whose unit ref resolves to no `codebook_entries` row (`20261155`).
 
 **Scope / residual.** Pending migrations `20261138` and `20261155`. Remaining limb: I-14 GPV-7.
+
+**Resolution (2026-10-02, intelligence Round G).** The last limb, done-when 2's Connect half (I-14 `GPV-7`). The graph's Connect writes a unit end as the node's own codebook code (`GraphNode.unitCode`). It refuses a `unit:` endpoint, an operational unit with no codebook mapping, with the reason, and does not offer Connect on one (`lib/graphView.ts` `flowEndpoint` / `planConnect` / `connectOffer`). It never writes a units-table code into `process_flows.from_ref`. Tests: `graphView.test.ts` "an operational unit with no codebook identity is refused with the reason — never written as its own code"; `graphPageRender.test.ts` GPV-7 cases.
+
+**Done-when.**
+1. ✓ (I-13, DEC-67) One unit identity, joined as data.
+2. ✓ One node family per unit (I-13), and Connect refuses a `unit:` endpoint (this package). An unmapped unit whose free-text code equals a codebook code is no longer written as that codebook unit: the code is never read.
+3. ✓ in the migration file, not live (I-09, `20261155` — Pending). Once `20261155` is pasted, no `process_flows` row can be CREATED whose unit ref resolves to no `codebook_entries` row. Existing dangling rows (for example ones the base page's Connect wrote with `units.code` refs) are counted in the paste's inventory and kept, never rewritten — so "no row names such a ref" is not claimed. *(Checked at fix pass 3 against what `20261155` delivers. The wording holds and is not stronger than the file: the BEFORE INSERT OR UPDATE guard checks a `unit` end against `codebook_entries` kind `unit` of the same org, for every writer — the service role and the org restore included — on INSERT and whenever an endpoint changes (`20261155_intel_roundG_process_flows_authority.sql:160-185`, `:265-268`). After creation, a unit ref can stop resolving only if its codebook entry is deleted or re-coded. `20261128`'s CB-5 guard refuses that to a person while a flow names the unit, but lets the service role's org purge and restore cascades through, and `20261128` is Pending too. Neither case is a creation.)*
+
+**Scope / residual.** Pending migrations (never claimed live): `20261138` (unit identity) and `20261155` (process-flow guard) are hand-applied and still Pending in `audit-reports/MIGRATION-PASTE-ORDER.md`. Until they are pasted, the app-side refusal holds and the database's does not yet; after the paste, existing dangling rows remain (counted, kept).
+
+**I-14 fix pass 3 (2026-10-02).** Record check only; no code changed for AREA-10. An earlier review had found done-when 3 restated too strongly, and the first I-14 fix pass narrowed it to "cannot be CREATED, once pasted". This pass re-read `20261155` against that wording (the note on done-when 3 above):
+- The claim matches the file. The guard covers INSERT and any endpoint change, for every writer. Rows that already dangle are counted (`:113-116`) and kept.
+- The ✓ stands for the code half only, per DEC-30, with the explicit line DEC-30 asks for, below. AREA-10 is not fully closed until both files are pasted.
+
+**Pending migration:** `supabase/migrations/20261155_intel_roundG_process_flows_authority.sql` (done-when 3) and `supabase/migrations/20261138_intel_roundG_unit_identity.sql` (done-when 1's mapping), both hand-applied.
 
 ---
 

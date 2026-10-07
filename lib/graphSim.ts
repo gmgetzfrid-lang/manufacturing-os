@@ -308,6 +308,20 @@ export function neighborhood(
   return seen;
 }
 
+/** GPV-9 — how strongly a renderer draws a node `distance` hops from the
+ *  focused root, out of a `depth`-hop neighbourhood: the root and its direct
+ *  neighbours at full weight, the rim faded to FADE_FLOOR. A node with no
+ *  distance (no focus) is drawn as it always was. `shrink` is the matching
+ *  size factor. Both renderers read the same numbers. */
+export const FADE_FLOOR = 0.4;
+export function depthFade(
+  distance: number | undefined | null, depth: number,
+): { alpha: number; shrink: number } {
+  if (distance === undefined || distance === null || distance <= 1 || depth <= 1) return { alpha: 1, shrink: 1 };
+  const t = Math.min(1, (distance - 1) / Math.max(1, depth - 1));
+  return { alpha: 1 - (1 - FADE_FLOOR) * t, shrink: 1 - 0.3 * t };
+}
+
 /** Shortest chain of connections between two nodes — "how are these two
  *  related?", answered with the actual path rather than a vague score.
  *  Breadth-first, so the first path found is the shortest. */

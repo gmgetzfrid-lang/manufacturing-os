@@ -6,6 +6,12 @@
 // that grouping is genuinely well designed, with one addition of its own:
 // every force is live, so the layout answers while you drag. Sliders that
 // only apply on release are the difference between a toy and an instrument.
+//
+// The focus depth is a filter, not a force, so it sits in Filters beside
+// what it filters (GPV-9). Counts say what they count — in this view, of the
+// whole map (GPV-4) — and the three things the Units filter covers are named
+// apart. Arrows mean direction on flows and supersession and work in 3D;
+// curved links are a 2D drawing and say so (GPV-8).
 
 import React from "react";
 import {
@@ -14,10 +20,12 @@ import {
 } from "lucide-react";
 import type { GraphNodeType } from "@/lib/orgGraph";
 import {
-  DEFAULT_GRAPH_SETTINGS, GROUP_PALETTE,
+  DEFAULT_GRAPH_SETTINGS, GROUP_PALETTE, LOCAL_DEPTH_MIN, LOCAL_DEPTH_MAX,
   type GraphSettings, type ColorGroup,
 } from "@/lib/graphSettings";
-import { NODE_COLORS } from "@/components/graph/graphTheme";
+import {
+  NODE_COLORS, UNIT_VARIANT_COLORS, UNIT_VARIANT_LABELS, type UnitVariant,
+} from "@/components/graph/graphTheme";
 
 const TYPE_LABELS: Record<GraphNodeType, string> = {
   document: "Documents", asset: "Equipment", unit: "Units",
@@ -65,12 +73,12 @@ function Slider({ label, value, min, max, step, onChange, hint }: {
   );
 }
 
-function Toggle({ label, checked, onChange, hint }: {
-  label: string; checked: boolean; onChange: (v: boolean) => void; hint?: string;
+function Toggle({ label, checked, onChange, hint, disabled }: {
+  label: string; checked: boolean; onChange: (v: boolean) => void; hint?: string; disabled?: boolean;
 }) {
   return (
-    <label className="flex items-start gap-2 cursor-pointer">
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)}
+    <label className={`flex items-start gap-2 ${disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}>
+      <input type="checkbox" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)}
         className="mt-0.5 accent-violet-600" />
       <span className="min-w-0">
         <span className="block text-[11px] font-bold text-[var(--color-text)]">{label}</span>
@@ -81,11 +89,16 @@ function Toggle({ label, checked, onChange, hint }: {
 }
 
 export default function GraphControls({
-  settings, onChange, counts, onReset,
+  settings, onChange, counts, viewCounts, unitBreakdown, onReset,
 }: {
   settings: GraphSettings;
   onChange: (patch: Partial<GraphSettings>) => void;
+  /** Nodes of each type on the whole map (the assembled graph). */
   counts: Record<GraphNodeType, number>;
+  /** … and in the current view (lens, focus, hide-unlinked applied). */
+  viewCounts?: Record<GraphNodeType, number>;
+  /** The Units filter's three kinds, on the whole map. */
+  unitBreakdown?: Record<UnitVariant, number>;
   onReset: () => void;
 }) {
   const [open, setOpen] = React.useState(false);
@@ -143,16 +156,38 @@ export default function GraphControls({
       {open && (
         <div className="w-72 max-w-[calc(100vw-1.5rem)] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/97 backdrop-blur shadow-2xl overflow-y-auto">
           <Section icon={Filter} title="Filters" defaultOpen>
+            <div className="text-[9px] text-[var(--color-text-faint)]" data-testid="filter-count-caption">
+              {viewCounts ? "Node types · in this view / on the whole map" : "Node types · on the whole map"}
+            </div>
             <div className="space-y-1">
               {TYPE_ORDER.map((t) => (
                 (t === "plant" && counts[t] === 0) ? null : (
-                  <label key={t} className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" checked={!settings.hiddenTypes.includes(t)}
-                      onChange={() => toggleType(t)} className="accent-violet-600" />
-                    <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: NODE_COLORS[t] }} />
-                    <span className="flex-1 text-[11px] font-bold text-[var(--color-text)]">{TYPE_LABELS[t]}</span>
-                    <span className="text-[10px] font-mono text-[var(--color-text-faint)]">{counts[t]}</span>
-                  </label>
+                  <React.Fragment key={t}>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={!settings.hiddenTypes.includes(t)}
+                        onChange={() => toggleType(t)} className="accent-violet-600" />
+                      <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: NODE_COLORS[t] }} />
+                      <span className="flex-1 text-[11px] font-bold text-[var(--color-text)]">{TYPE_LABELS[t]}</span>
+                      <span className="text-[10px] font-mono text-[var(--color-text-faint)]"
+                        title={viewCounts ? `${viewCounts[t]} in this view, ${counts[t]} on the whole map` : `${counts[t]} on the whole map`}>
+                        {viewCounts && viewCounts[t] !== counts[t] ? `${viewCounts[t]} / ${counts[t]}` : counts[t]}
+                      </span>
+                    </label>
+                    {t === "unit" && unitBreakdown && (unitBreakdown.operational > 0 || unitBreakdown.system > 0) && (
+                      <div className="pl-6 space-y-0.5" data-testid="unit-breakdown">
+                        {(["codebook", "operational", "system"] as UnitVariant[]).map((v) => unitBreakdown[v] > 0 && (
+                          <div key={v} className="flex items-center gap-1.5 text-[10px] text-[var(--color-text-muted)]">
+                            <span className={`w-1.5 h-1.5 shrink-0 ${v === "system" ? "" : "rounded-full"}`}
+                              style={v === "operational"
+                                ? { border: `2px solid ${UNIT_VARIANT_COLORS[v]}` }
+                                : { backgroundColor: UNIT_VARIANT_COLORS[v] }} />
+                            <span className="flex-1">{UNIT_VARIANT_LABELS[v]}</span>
+                            <span className="font-mono text-[var(--color-text-faint)]">{unitBreakdown[v]}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </React.Fragment>
                 )
               ))}
             </div>
@@ -166,6 +201,11 @@ export default function GraphControls({
               <Toggle label="Proposed connections" checked={settings.showProposals}
                 onChange={(v) => onChange({ showProposals: v })}
                 hint="Dashed gold: found, awaiting your review." />
+            </div>
+            <div className="pt-1.5 border-t border-[var(--color-border)]">
+              <Slider label="Neighbourhood depth" value={settings.localDepth} min={LOCAL_DEPTH_MIN} max={LOCAL_DEPTH_MAX} step={1}
+                onChange={(v) => onChange({ localDepth: v })}
+                hint="Hops shown when you Go in on a node — nearer nodes are drawn stronger." />
             </div>
           </Section>
 
@@ -212,9 +252,11 @@ export default function GraphControls({
             <div className="space-y-1.5 pt-1">
               <Toggle label="Arrows" checked={settings.showArrows}
                 onChange={(v) => onChange({ showArrows: v })}
-                hint="Direction on supersession and curated links." />
+                hint="Direction on process flows (what feeds what) and supersession (what replaced what), in 2D and 3D." />
               <Toggle label="Curved links" checked={settings.curvedLinks}
-                onChange={(v) => onChange({ curvedLinks: v })} />
+                onChange={(v) => onChange({ curvedLinks: v })}
+                disabled={settings.mode === "3d"}
+                hint={settings.mode === "3d" ? "2D only — the 3D view draws straight links." : undefined} />
               <Toggle label="Glow" checked={settings.glow}
                 onChange={(v) => onChange({ glow: v })}
                 hint="Halos in 2D, additive blending in 3D." />
@@ -232,9 +274,6 @@ export default function GraphControls({
               onChange={(v) => onChange({ linkForce: v })} />
             <Slider label="Link distance" value={settings.linkDistance} min={20} max={320} step={5}
               onChange={(v) => onChange({ linkDistance: v })} />
-            <Slider label="Neighbourhood depth" value={settings.localDepth} min={1} max={5} step={1}
-              onChange={(v) => onChange({ localDepth: v })}
-              hint="Hops shown when you focus a single node." />
           </Section>
 
           <div className="p-2">

@@ -33,7 +33,7 @@ Every edge, every cap, and what the graph does not model. **Your comprehensivene
 ## GM-1 · All four Insights lenses are computed on the FILTERED view, so orphan/hub/bridge counts change every time you tap a lens — and the orphan copy is false under three of the four
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/graph/page.tsx:239-242`, `app/(protected)/graph/page.tsx:151-180`, `app/(protected)/graph/page.tsx:428-433`, `lib/graphInsights.ts:43`, `lib/graphInsights.ts:67-69`, `app/(protected)/graph/page.tsx:614-616`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Mechanism confirmed exactly, including the badge at page.tsx:581-585 rendering `insights.orphans.length` unqualified. Downgraded from HIGH because view-scoped analysis is a defensible design (the empty-state copy at page.tsx:610 already says 'everything SHOWN is tied into the web') — the actual defect is the non-empty branch's copy asserting a plant-wide fact and an unlabelled count, i.e. misleading UI rather than broken analysis.
@@ -66,6 +66,37 @@ page.tsx:240 passes `view.nodes, view.edges`. page.tsx:153-155: `const typeOk = 
 - [ ] computeInsights runs on the full assembled graph (graph.nodes/graph.edges) and the panel filters the RESULT for display, or the panel labels every count with the lens it was computed under
 - [ ] The orphan copy states the real predicate ("no visible link in this view") whenever hiddenTypes is non-empty
 - [ ] A test asserts that hiding node types does not change the orphan count for a node that still has a hidden-type edge
+
+**Resolution (2026-10-02, intelligence Round G).** Reproduced first (DEC-29): on the base `d6335b1`, `app/(protected)/graph/page.tsx:239-242` fed `computeInsights(view.nodes, view.edges)` — the lens-filtered slice. `lib/__tests__/graphView.test.ts` "GM-1 …" shows that computation orphaning P-102 (tied only to its unit and a plot plan) under the Equipment ↔ Documents lens, and `lib/__tests__/graphPageRender.test.ts` "the orphan badge does not move …" fails against the base page. What landed, in `app/(protected)/graph/page.tsx`:
+- `insights` is `computeInsights(graph.nodes, graph.edges, { access: graph.access })` over the whole assembled map (`:375`). Only the map's region names follow the view (`:380`), because they label what is drawn.
+- The panel filters the RESULT for display: an orphan or hub the current view hides is listed faded, and the orphan copy says how many ("N of these are hidden by the current view (faded)"). Clicking a faded row shows the item before selecting it, by the same path as the "hidden by this view — Show it" note (`reveal`, `:695`, through `showTypesOf`, `:685`: unhide its type — library links with a library — leave focus, and select it once the map draws it), so a row never selects a node the map does not draw (fix pass). *(Corrected at fix pass 3: bridges were left out of this. A bridge whose end the lens hid was listed neither faded nor revealed, and its click spotlighted node ids the map did not draw. Bridges are now displayed through the view like orphans and hubs — the I-14 fix pass 3 note below.)*
+- The copy states the real predicate: "No equipment, unit, project or link anywhere on the map — not just in this view — so no context yet." Above the lists: "Counted on the whole map, whatever this view shows." The red badge is the whole map's count, so it no longer moves with the lens.
+
+**Done-when.**
+1. ✓ `computeInsights` runs on the full assembled graph and the panel filters the result for display (faded rows, the hidden count; a faded row is shown before it is selected — `graphPageRender.test.ts` "an orphan the lens hides is shown, then selected …", "a hub the lens hides is shown, then selected"). *(Corrected at fix pass 3: first ticked with bridges unfiltered; orphans, hubs and bridges are all filtered for display now.)*
+2. ✓ The orphan copy states the real predicate. Computed on the whole map, the predicate no longer depends on `hiddenTypes`, and the panel says so.
+3. ✓ `graphView.test.ts` "hiding the unit and plot types does not orphan equipment whose only tie is a hidden-type edge"; `graphPageRender.test.ts` "the orphan badge does not move when a lens hides the types an item is tied by".
+
+**Scope / residual.** Hubs and bridges are the whole map's too. A scoped map is a different assembled graph (I-13's scoped assembly), so its insights are the scope's, and the basis note says so (`GM-6`).
+
+**I-14 fix pass 3 (2026-10-02).** Reproduced first (DEC-29): at `035207c` the Bridges tab drew every row alike and its click ran `spotlight([b.a.id, b.b.id])` whatever the view drew. Under the Plant lens a document ↔ equipment bridge was listed at full strength, and a click lit up a document the map did not draw. What changed, in `app/(protected)/graph/page.tsx`:
+- A bridge is drawn only when both its ends are. Otherwise its row is faded, with "Hidden by the current lens or filter — click to show it". The copy counts them: "N of these are hidden by the current view (faded) — a click shows it." (`bridgesHidden`, `:790`; the rows at `:1121-1141`). *(Corrected at fix pass 4: the rows were cited as `:1107-1127`; at fix pass 3 they ran from `:1108` to `:1128`. Both references here are remapped to the fix-pass-4 page.)*
+- A click on a hidden bridge shows both ends' types through the same path as `reveal`. That leaves focus and "hide unlinked", and turns library links on with a library (`showTypesOf`, `:685`). It then lights the pair up (`revealBridge`, `:703`), so the spotlight names only drawn nodes. An in-view bridge's click is unchanged. *(Corrected at fix pass 4: in 2D, "lights the pair up" did not frame the pair. The spotlight was set in the same commit as the filter change, so the camera flew to the end already drawn, or nowhere when both ends were hidden. The spotlight now waits one commit — the I-14 fix pass 4 note below.)*
+
+Tests: `graphPageRender.test.ts` "GM-1 — a bridge the view hides (fix pass 3)" — "drawn: the row is not faded and a click lights the pair up (as before)", "hidden by the lens: faded and said; a click shows both ends, then lights the pair up on the map", "hidden by focus: a click leaves focus so both ends are drawn". All three fail against `035207c`'s page. *(Corrected at fix pass 4: this said "the last two fail". The first fails too, but only because `data-testid="bridge-row"` is new at fix pass 3: at `035207c` it finds no row.)* Line references in this block were remapped to the fix-pass-3 page, and again to the fix-pass-4 page.
+
+**I-14 fix pass 4 (2026-10-07).** The re-review of fix pass 3 found that in 2D a hidden-bridge click did not frame the pair. Reproduced (DEC-29) with the fix-pass-3 `revealBridge` on the real `OrgGraph2D` (the re-review's scratch, and this pass's test run against that code), with the two ends saved at x = −600 and x = +600: after the reveal the camera ended at the drawn end (the frame's translate settled at 599.5), not at the midpoint. The cause is effect order. `revealBridge` set the spotlight in the same commit as the filter change. `OrgGraph2D`'s fly effect (`components/graph/OrgGraph2D.tsx:96-112`) belongs to a child, so it runs before the page's effects, and the page feeds the new view to the simulation in its own effect (`app/(protected)/graph/page.tsx:312-331`). When the fly ran, the revealed end was not in the simulation yet, so the fly framed only the end already there, or did not move when both ends had been hidden. What changed, in `app/(protected)/graph/page.tsx`:
+- `revealBridge` (`:703`) shows both ends' types and clears the selection as before. It then sets `pendingSpotlight` (`:702`) instead of the highlight.
+- An effect declared after the simulation-feed effect (`:715-719`) applies it with `spotlight`, the in-view bridge's own path. By then the simulation holds both ends, so the fly the new spotlight starts frames the pair. This is how a URL's node already waits in `pendingSelect` (`:360-372`). It also covers review nit (d): the reveal now goes through `spotlight` with the selection cleared. The highlight it sets is the one the earlier code set.
+- 3D was not affected. `OrgGraph3D` reads the fly target in its frame loop, after effects have run. The page-level fix applies to both renderers.
+
+Tests: `graphPageRender.test.ts` "on the REAL 2D renderer, the reveal frames both ends (fix pass 4)". The page's renderer stand-in can render the real `OrgGraph2D` (`g.real2D`), with a stub canvas and hand-run animation frames:
+- "one end hidden by the lens: the camera ends at the pair's midpoint, not at the drawn end";
+- "both ends hidden by focus: the camera still flies, to the pair's midpoint".
+
+Negative control: with `revealBridge` setting the highlight in the same commit again, both fail. In the first the camera ends at x = −599.53, the drawn end. In the second it stays at (0, 0), where it started. Both pass with the fix. The three fix-pass-3 bridge cases pass on both versions.
+
+Left as is (review nit (c)): a reveal's filter change has no one-click undo. "Show it" and the faded Insights rows work the same way (`reveal`), and the lens bar's undo covers only a lens tap (GPV-10). Changing that is a different behaviour for all three, not part of this finding.
 
 ---
 
@@ -316,7 +347,7 @@ Tests: `lib/__tests__/graphInsights.test.ts` — the PID-4402 / E-2201 tag+menti
 ## GM-6 · Insights are ACL-dependent but presented as facts about the plant: the same map yields different orphan, hub and bridge answers for a controller and a viewer
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-14 GRAPH PAGE, LENSES & RENDERERS — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** SUSPECTED
 - **Locations:** `supabase/migrations/20260708_acl_rls_enforcement.sql:41-86`, `lib/orgGraph.ts:109-117`, `supabase/migrations/20260605_rls_policies_new_tables.sql:26-27`, `app/(protected)/graph/page.tsx:581-586`
@@ -359,6 +390,15 @@ Tests: `lib/__tests__/orgGraph.test.ts` GM-6 block — a controller and a grante
 
 **Scope / residual.** One read widens and is declared in the migration header: an active member learns how many documents the org holds (never which). Before 20261138 is applied the graph makes no access claim (`access` null). Remaining limb: I-14 passes `graph.access` to `computeInsights` and places `basis.note` in the Insights panel. Corrected 2026-10-01 at review: first recorded RESOLVED, with a scoped `outsideAccess` that under-counted and a basis note that could say "every document in the org".
 
+**Resolution (2026-10-02, intelligence Round G).** The remaining limb. The page passes `graph.access` to `computeInsights` (`app/(protected)/graph/page.tsx:375`). It renders `GraphInsights.basis.note` under the Insights tabs (`data-testid="insights-basis"`, `:1057`), after "Counted on the whole map, whatever this view shows." Test: `lib/__tests__/graphPageRender.test.ts` "the orphan badge does not move …" asserts the note carries "3 more are outside your access" for a graph whose `access.outsideAccess` is 3; it fails against the base page, which displayed no basis.
+
+**Done-when.**
+1. ✓ (I-13) The org-wide graph reports the count the reader's ACL removed.
+2. ✓ Insights counts are labelled viewer-scoped where a user sees them: `basis.note` sits beside the counts.
+3. ✓ (I-13) `orgGraph.test.ts` compares the two readers.
+
+**Scope / residual.** `documents_total_for_org` is `20261138`'s, still Pending in `audit-reports/MIGRATION-PASTE-ORDER.md`. Until it is pasted, `access` is null and the note says only "Computed on the documents you can see." — no count is claimed. A scoped map's note says it was computed on the scope's documents the reader can see.
+
 ---
 
 <a id="gm-7"></a>
@@ -366,10 +406,11 @@ Tests: `lib/__tests__/orgGraph.test.ts` GM-6 block — a controller and a grante
 ## GM-7 · Link proposals are drawn as document↔document unconditionally and swallow their own errors, so a failed or capped proposal read is indistinguishable from "no proposals"
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/graph/page.tsx:125-130`, `lib/linkProposals.ts:196-206`, `app/(protected)/graph/page.tsx:744-750`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The truncation/error half is real: 4000 is a hard silent cap, an error resolves to an empty array indistinguishable from 'no proposals', and the on-map chip reports the drawn count as if it were the queue. The 'drawn as document↔document unconditionally' half is REFUTED — both endpoint columns are NOT NULL FKs to `documents`, so the `doc:` prefix at page.tsx:128 is correct by schema, not an unchecked assumption. Impact is a misleading count on a map that links straight to the authoritative /admin/proposed-links queue, so LOW.
+- **Assigned:** intelligence I-15 GRAPH SERVER ASSEMBLY (the residual index on `proposed_links` (org_id, status, created_at DESC, id DESC); the server route runs this read) — by the integrator, 2026-10-07 (at the I-14 merge: "the next intelligence package that ships a migration touching `proposed_links`" named no package; fleet plan `audit-reports/fleet-plans/intelligence.json`).
 
 **Mechanism.** `listPendingPairs` caps at 4000 and returns `[]` on any error:
 
@@ -404,6 +445,58 @@ lib/linkProposals.ts:200-204 quoted above (`.limit(4000)`, `if (error) return []
 - [ ] listPendingPairs distinguishes error, capped and empty, and the page surfaces the first two
 - [ ] The proposals count shown on the chip is the true pending count, not the drawn count
 - [ ] Proposal endpoints carry their entity kind rather than assuming document
+
+**Resolution (2026-10-02, intelligence Round G).** Reproduced first (DEC-29): base `lib/linkProposals.ts:252-261` `listPendingPairs` answered `[]` on any error and read one `.limit(4000)`, which PostgREST cuts at db-max-rows (1,000) with no error. `app/(protected)/graph/page.tsx:125-130` swallowed the rejection too. The chip counted `view.ghosts.length`. `lib/__tests__/graphPendingProposals.test.ts` pins the new reader; `graphPageRender.test.ts`'s GM-7 cases fail against the base page. What landed:
+- `lib/linkProposals.ts` `readPendingProposalPairs(orgId)` → `{ pairs, total, capped, error }` (`:323`):
+  - reads in windows of at most 1,000 rows, in a fixed order, so "the first 4,000" is a rule. *(Corrected at fix pass 3: first built as OFFSET windows (`range`) ordered by `confidence` desc then id. No index covers `confidence`, so every window sorted the whole pending queue under the RESTRICTIVE `proposed_links_read_endpoints` policy. The read is now KEYSET windows, newest first, on (`created_at` desc, `id` desc). `proposed_links_org_status_idx` (org_id, status, created_at DESC) orders the first of the two.)* *(Corrected at fix pass 4: this called (`created_at` desc, `id` desc) "the order of" the index. The index holds no `id`. The rows one Find-connections run inserts share one `created_at`, so inside one run the order is uuid order, and "the newest" inside a run means uuid order — the I-14 fix pass 4 note below.)*;
+  - counts the reader's pending queue (proposed_links RLS shows only pairs whose documents the reader can read — LNK-4). *(Corrected at fix pass 3: first an exact count on the first window. Now the read itself is the count below the cap. At the cap, one head count says how many are pending, or the map says "at least 4,000" if that count fails.)* *(Corrected at fix pass 4: it said "more than 4,000". With exactly 4,000 pending and the count failed, that overclaims.)*;
+  - tells a failed read (`error`, keeping what it read) and a capped one (`total` above what was read) from an empty queue. *(Corrected at fix pass 3: a server cutting responses shorter than a window was first reported as capped. Now the read pages on by keyset and stops only at an EMPTY window or the cap, so a short window is never mistaken for the end.)*;
+  - treats a missing table (before `20260807`: Postgres 42P01, or PostgREST's own PGRST205 "Could not find the table …", through `lib/orgGraph.ts` `isMissingRelation`) as empty, not as an error; any other failure — a missing column included — is an error, never "nothing pending";
+  - carries each pair's graph node ids (`nodeA` / `nodeB` = `doc:<id>`; both ends are NOT NULL document references by schema).
+  `listPendingPairs` keeps its old contract as a wrapper (`:257`).
+- The page reads it (`app/(protected)/graph/page.tsx:241`). A failed read is said on the map (`:1212`): "Proposed connections couldn't be loaded (…) — none are drawn; the review queue still has them." A read that failed partway draws the pairs it read and says so: "Only the first N proposed connections (the newest) could be loaded (…) — the rest are not drawn; the review queue still has them." A capped one is said too, counting the rows READ (the view draws those whose two ends it shows; the chip says how many): "N read (the newest) of M proposed connections." (`:1220`). *(Corrected at fix pass 3: the notes said "the most confident", the first build's order. They also appeared with Proposals off. Now they appear only while Proposals are on.)* The chip counts the queue: "9,000 connections awaiting review · 1 drawn here" (`:1262`). *(Corrected at fix pass 3: the first build showed the chip whenever the queue was non-empty, even with Proposals turned off. The base drew it only over drawn ghosts. That rule is restored, and the chip still counts the queue.)*
+- Tests (fix pass): `graphPendingProposals.test.ts` "PostgREST's own missing-table answer (PGRST205) is also nothing pending — not an error", "a missing COLUMN is an error, never an empty queue (fails closed)"; `graphPageRender.test.ts` "says how many it loaded, never 'none are drawn' over the pairs it drew".
+
+**Done-when.**
+1. ✓ The reader distinguishes error, capped and empty; the page surfaces the first two.
+2. ✓ The chip shows the true pending count (the reader's queue), not the drawn count.
+3. ✓ The endpoints carry their kind as data (node ids from the reader); the kind is the schema's.
+
+**Scope / residual.** `lib/linkProposals.ts` is I-08's (merged) file. The change is additive: a new reader and a wrapper that keeps the old contract. **Residual (added at fix pass 4): an index for one run's rows.** The rows one Find-connections run inserts share one `created_at`. Inside such a run, each keyset window still reads every remaining row of the run, and the RESTRICTIVE policy runs on each of them, because `proposed_links_org_status_idx` (org_id, status, created_at DESC) holds no `id`. For one run of 9,000 that is 9,000 + 8,000 + 7,000 + 6,000 rows over the four windows (measured on PG16: 9,000 for window 1, 8,000 for window 2). The fix is an index on (org_id, status, created_at DESC, id DESC). That needs a migration, which this package does not add. **Owner:** the next intelligence package that ships a migration touching `proposed_links`, or the user if they want it sooner. It is listed in `99-fix-sequencing.md`. The read is correct without it; only its cost inside one run's batch is unbounded by the window.
+
+**I-14 fix pass 3 (2026-10-02).** Two of the final review's minors.
+- **The read is cheap again.** *(Corrected at fix pass 4: cheaper, not cheap in every case. Inside one Find-connections run's batch each window still reads the run's remaining rows — the I-14 fix pass 4 note below.)* At `035207c`, `readPendingProposalPairs` ordered by `confidence` and paged by `range` with `count: "exact"`. `proposed_links` is indexed on (org_id, status, created_at DESC) (`supabase/migrations/20260807_link_proposals.sql:70-71`), not on `confidence`, so each of up to four windows sorted the whole pending queue. The RESTRICTIVE `proposed_links_read_endpoints` policy (`20261126`, LNK-4) ran on every row of the queue each time. The base issued one unordered LIMIT read. Now (`lib/linkProposals.ts:323`):
+  - **Order and windows.** Windows of at most 1,000 rows, ordered `created_at` desc then `id` desc. Each window starts after the last row read: `created_at < c OR (created_at = c AND id < id)`, with the timestamp double-quoted because it carries `.`, `:` and `+`. Each window carries a LIMIT. *(Corrected at fix pass 4: this said "Each window is an index range with a LIMIT, and the policy runs only on rows the read walks". Measured on PG16 (the real index, both SELECT policies, 9,000 pending), it was not an index range. With spread timestamps, window 2 was planned as a BitmapOr and a sort of every remaining row, and the policy's subplans ran about 8,000 times. With one run's rows (one `created_at`), each window ran them over every remaining row of the run. Each later window now also carries `created_at <= c`. The I-14 fix pass 4 note below says what that bounds and what it does not.)*
+  - **Stop and count.** The read stops at an empty window or at the cap. Below the cap the rows read are the count, with no count request. At the cap, ONE head count (`count: "exact", head: true`) gives the queue. If that count fails, `total` is null and the map says "at least 4,000". *(Corrected at fix pass 4: it said "more than 4,000", which overclaims when exactly 4,000 are pending.)*
+  - **Kept.** GM-7's three answers stand. An error keeps what was read and says so, and `total` is null. A missing table (42P01 / PGRST205) is an empty queue. A missing column is an error. A capped read gives `total` above the rows read.
+  - **Order of the drawing.** The first 4,000 are now the NEWEST, not the most confident, and the notes say so. The review queue (`/admin/proposed-links`) keeps its own strongest-first order (`listProposals`, LNK-10).
+- **The chip follows the drawing.** Restored to the base's rule: the chip shows only when this view draws proposal ghosts, so never with Proposals off (`app/(protected)/graph/page.tsx:1259`). When shown, it counts the reader's queue (done-when 2). The error and capped notes likewise show only while Proposals are on (`:1208-1223`). Why not an explicit "N pending (hidden)" chip: done-when 2 asks for the true count on the chip, not a chip when nothing is drawn. With Proposals off there is no drawing to qualify. The queue stays one tab away on the same screen: the Intelligence strip's "Review" tab (`components/navigation/ViewTabs.tsx:113`).
+
+Tests: `graphPendingProposals.test.ts`, rewritten for the keyset read:
+- "orders by created_at desc (the index's column), then id desc — never by confidence, never by offset" (no data window asks for a count; renamed at fix pass 4 from "orders by the index's columns (created_at desc, id desc) …", since the index holds no `id`);
+- "each window starts after the last row read, with the timestamp quoted (it carries . : +)";
+- "rows sharing one created_at across a window edge are neither skipped nor read twice";
+- "past the cap: draws the newest 4,000 and says how many are pending — one count, at the cap";
+- "below the cap the read is the count: no count request at all, and nothing capped";
+- "a server cutting responses shorter than a window is paged on, never reported complete over a cut set";
+- "the count failing at the cap says 'at least the cap', never a wrong total" (renamed at fix pass 4 from "… 'more than the cap' …");
+- "a row with no usable key ends the read with an error rather than looping".
+
+`graphPageRender.test.ts` "GM-7 — the proposals chip follows what is drawn (fix pass 3)" has four cases: Proposals off with a 9,000 queue; Proposals off with a failed read; Proposals on with no ghost in the view; Proposals on, then toggled off in Settings. Negative controls: against `035207c`'s reader, 11 of the 15 reader cases fail. The order, keyset and count cases fail on the mechanism itself: a `confidence` order, `range` windows, a count on a data window. The rest fail because the stand-in serves keyset windows only. Against `035207c`'s page, all four chip cases fail. Line references in this record were remapped to the fix-pass-3 code.
+
+**I-14 fix pass 4 (2026-10-07).** The re-review of fix pass 3 measured the keyset read on PG16, with the real `proposed_links_org_status_idx` and both SELECT policies, over 9,000 pending rows. The windows were not index ranges, as the code comment and this record had said. Reproduced first (DEC-29) on a scratch PG16 with synthetic rows, the same index and the same two policies:
+- **Spread timestamps.** Window 2's `created_at < c OR (created_at = c AND id < x)` was planned as a BitmapOr of two bitmap index scans, then a heap scan and a sort. It read 8,000 rows, and the policy's subplans ran 8,000 times.
+- **One Find-connections run.** `lib/linkProposerServer.ts:835` writes a run in one upsert, so every row it inserts shares one `created_at` (a stale row the upsert flips back to pending keeps its own). Window 1 read all 9,000 rows and window 2 read 8,000, the policy running on each, because the index holds no `id` to order the tie.
+
+What changed (`lib/linkProposals.ts:332-337`): each window after the first also carries `.lte("created_at", last.created_at)`. The `or` already implies that bound, so it changes no row and no order. On the same data, window 2 with spread timestamps is now one index scan with `created_at <= c` as its index condition. It reads 1,001 rows and runs the policy 1,001 times, and returns the same 1,000 rows in the same order (checked with the two queries side by side). Inside one run's tie it changes nothing: each window still reads the remaining rows of the run in full. The order inside one run is uuid order (`id` desc), so "the newest" inside a run means uuid order, not write order. The index that would bound those reads is the residual above, with its owner. The comment above the reader (`:300-316`) says all this now.
+
+Also: if the head count fails at the cap, the map says "N read (the newest) of at least 4,000 proposed connections." (`app/(protected)/graph/page.tsx:1221`), not "more than 4,000". The reader's `capped` comment says the same (`lib/linkProposals.ts:282-284`).
+
+Tests:
+- `graphPendingProposals.test.ts` "each later window also bounds the index range: created_at <= the last row's, beside the or (fix pass 4)". The first window has no bound; each later one has `lte("created_at", <the last row read>)` beside its `or`; the 2,500 rows come back in the same order. The stand-in now applies `lte` too, so every earlier case checks the bound changes no row.
+- `graphPageRender.test.ts` "the count failing at the cap says 'at least' the cap — exactly 4,000 pending is not 'more than' (fix pass 4)".
+
+Negative controls: without the `.lte`, the bound case fails and the other 15 pass. With "more than" restored, the page case fails. Line references in this record were remapped to the fix-pass-4 code.
 
 ---
 
@@ -521,7 +614,7 @@ Tests: `graphInsights.test.ts` — a component holding a plot plan and a unit is
 ## GM-10 · The graph does not model an entire level of the plant hierarchy (systems) and never reads documents.plant_id or documents.system_id, despite both being persisted FK columns
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-14 GRAPH PAGE, LENSES & RENDERERS — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/orgGraph.ts:23`, `lib/orgGraph.ts:109-113`, `lib/operationalGraph.ts:172-208`, `supabase/migrations/20260606_operational_entity_graph.sql:113`
@@ -565,6 +658,15 @@ Tests: `lib/__tests__/orgGraph.test.ts` GM-10 block (the system hangs from `cbun
 
 **Scope / residual.** Remaining limb: I-14's lens rename. No migration is needed for this finding's half (the columns exist since 20260606); a system's unit is a codebook node only once 20261138's mapping is set.
 
+**Resolution (2026-10-02, intelligence Round G).** The remaining limb: the lens presets are renamed to what they show. `lib/graphSettings.ts` `GRAPH_LENSES` holds the plan's lens set — 'Everything', 'Plant (units & equipment)', 'Equipment ↔ Documents', 'Documents & libraries' (`DEC-88`). Each title is true of its hidden list (`GPV-10`). Test: `lib/__tests__/graphSettingsUrl.test.ts` "each lens's hidden list produces exactly the node types its title names" and "no lens is named by a single node-type word, and none is named for what it hides".
+
+**Done-when.**
+1. ✓ (I-13) documents.plant_id / system_id are drawn.
+2. ✓ (I-13) Systems are folded into units, documented.
+3. ✓ The lens presets are renamed to what they show. The scope (one unit's world) is a separate control, the scope picker (`GPV-2`), not a lens.
+
+**Scope / residual.** None in this package.
+
 ---
 
 <a id="gm-11"></a>
@@ -572,7 +674,7 @@ Tests: `lib/__tests__/orgGraph.test.ts` GM-10 block (the system hangs from `cbun
 ## GM-11 · The same node shows two contradictory connection counts on one screen: NodePeek prints the full-graph degree, the Hubs list prints the filtered context degree
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/orgGraph.ts:173-181`, `components/graph/NodePeek.tsx:89`, `lib/graphInsights.ts:39`, `lib/graphInsights.ts:60-65`, `app/(protected)/graph/page.tsx:645`, `app/(protected)/graph/page.tsx:408-418`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Confirmed: the peek header's number comes from the unfiltered full graph, while both the row list beneath it and the Hubs number come from the filtered context web, so the same node can show 3 in the header and 2 rows / 2 in Hubs on one screen. Genuine but cosmetic — no data is lost or wrong, only inconsistently labelled — so LOW.
@@ -600,6 +702,24 @@ lib/orgGraph.ts:179-180 increments GraphNode.degree unconditionally inside addEd
 - [ ] One degree is authoritative for display; the peek, the hubs list and the connections list agree
 - [ ] If both a total and a contextual degree are worth showing, they are labelled distinctly ("3 links · 2 in this view")
 - [ ] Node radius/mass and the displayed count derive from the same number
+
+**Resolution (2026-10-02, intelligence Round G).** Reproduced first (DEC-29): base `components/graph/NodePeek.tsx:89` printed `node.degree` (the whole map, library filing included). Beneath it the list (`page.tsx:408-418`) and the Hubs number (`page.tsx:645`) counted the filtered context web. `graphPageRender.test.ts` "the peek labels …" fails against the base. What landed:
+- The peek's header reads "Document · 3 links on the map (1 library filing) · 1 link in this view" (`components/graph/NodePeek.tsx:123`, props `viewDegree` / `libraryLinks`; the page computes both in `peekCounts`, `app/(protected)/graph/page.tsx:631`). *(Corrected at fix pass 3: it read "· 1 in this view", with no unit.)*
+- The list header reads "Connected in this view · K nodes (J only by a proposed link) (the 12 most connected)" (`NodePeek.tsx:187`; the page computes K and J at `page.tsx:609`). *(Corrected at fix pass 3: it read "Connected in this view · K". That put two different numbers on one panel under the same "in this view" label. The header counts LINKS: edges, never a proposal ghost (`viewDegree`, `lib/graphView.ts:75`). The list counts distinct neighbour NODES, ghosts included. Each label now says what it counts.)*
+- The Hubs panel says "The number is its links, not counting library filing", with the same tooltip on each count.
+
+**Done-when.**
+1. ✓ by its stated alternative (done-when 2): the numbers are not forced equal, they are labelled.
+2. ✓ The whole map, its library-filing part and this view are labelled distinctly. A hub's number is the whole map less filing, and the peek shows both parts. *(Corrected at fix pass 3: as first ticked, this did not hold. The header's "N in this view" (links, no ghosts) and the list's "Connected in this view · K" (nodes, ghosts included) were different counts under one label. It holds since fix pass 3: "N links in this view" against "K nodes (J only by a proposed link)".)*
+3. ✓ Node radius and mass (`Math.sqrt(n.degree)` in both renderers, the page's sim mass) and the peek's "links on the map" are the same number, `GraphNode.degree`.
+
+**Scope / residual.** None.
+
+**I-14 fix pass 3 (2026-10-02).** The final review found done-when 2 ticked over two numbers that were both labelled "in this view". The header's count came from `viewDegree(selected.id, view.edges)`: edges, without proposal ghosts. The list's count was the distinct neighbour nodes over `[...view.edges, ...view.ghosts]` (`035207c` `page.tsx:591-611`). With one tag to P-101 and one proposal to LOOSE-2, a document's peek said "1 in this view" above "Connected in this view · 2". The counts are kept as they are, because the header must count what `degree` and the radius count: links. Each label now says what it counts:
+- the header: "· 1 link in this view" (`components/graph/NodePeek.tsx:126`);
+- the list: "Connected in this view · 2 nodes (1 only by a proposed link)" (`NodePeek.tsx:187-194`). The page splits a neighbour reached by a drawn link from one reached only by a proposal ghost (`app/(protected)/graph/page.tsx:609-624`).
+
+Tests: `graphPageRender.test.ts` "GM-11 — the peek's numbers say what each counts (fix pass 3)": "the header counts links (no proposal); the list counts nodes, naming those tied only by a proposal" and "with no proposal, the list names no proposal part". Both fail against `035207c`'s page and peek. The older case "the peek labels the whole-map degree, the library-filing part and the in-view count" now expects "· 1 link in this view". The record is corrected in place per DEC-29 rule 3, and GM-11 stays RESOLVED on the corrected done-when 2.
 
 ---
 

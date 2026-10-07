@@ -408,6 +408,19 @@ Tests: `lib/__tests__/scope.test.ts` — containment by every rule and nothing o
 
 *Landed 2026-10-01 (intelligence Round G, I-09 — the operating-area limb, `AREA-6`).* The operating area consumes the scope through its URL key. `components/assets/UnitOpsPanels.tsx` `unitGraphHref(code)` builds `/graph?scope=<formatScopeParam({ kind: "unit", code })>&focus=cbunit:<code>`. The unit hub's FlowPanel and the area panel's header carry it: the place is the first delivery (DEC-67 item 6). FlowPanel's own flow list keeps the area's filing set (`assets.unit_code`, every page), not `resolveScope`, whose document rules a flow list does not need. Acceptance 2 holds once the graph page reads `?scope=` (I-14); acceptance 1 (the picker) and 3 (saved, nameable scopes) stay I-14's.
 
+**Resolution (2026-10-02, intelligence Round G).** The remaining acceptance limbs:
+- **Picking.** The graph's scope picker (top bar `select`, `app/(protected)/graph/page.tsx:895`; a Site Codebook unit's peek, "Scope the map to this unit") sets `GraphSettings.scope` and assembles that unit's world through `buildOrgGraph(orgId, { scope })`. Boundary stubs are now DRAWN: a dashed stub with "+N" on the node in 2D, "+N out" on its label in 3D, and "N links lead out of <unit> — not drawn here" in its peek.
+- **The URL key.** The graph reads the operating area's link (`?scope=unit:<code>&focus=cbunit:<code>`, `UnitOpsPanels.unitGraphHref`, I-09 AREA-6) through the same key (`parseScopeParam`).
+- **Named and shared.** A scope is nameable and savable — a saved view carries the scope with the filter and depth (`GraphSettings.savedViews`) — and shareable by URL (`scope=`, "Copy a link to this view").
+
+**Done-when (acceptance).**
+1. ✓ Picking a unit yields that unit's world and nothing else, with boundary stubs (the lib half by I-13; the picker and the drawn stubs here). `graphPageRender.test.ts` "picking a unit in the top bar assembles that unit's world; the chip clears it".
+2. ✓ The same scope object drives two surfaces. The operating area (I-09) links the scope by its key, the graph (here) reads it and assembles by `lib/scope.ts`. `graphPageRender.test.ts` "the operating area's ?scope=… assembles that unit and opens it".
+3. ✓ A scope is nameable, savable and shareable by URL (`graphSettingsUrl.test.ts` saved-view round trip; the URL round trip).
+4. ✓ (I-13) Scoped assembly is complete within the caps.
+
+**Scope / residual.** The mapping and the decode (`GAP-305`, `20261138` — Pending in `audit-reports/MIGRATION-PASTE-ORDER.md`) must be applied and run for the decoded and filed rules to find anything. Until then a scope holds the codebook filing and the pins.
+
 ---
 
 <a id="gap-307"></a>
