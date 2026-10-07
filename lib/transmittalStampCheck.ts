@@ -34,9 +34,11 @@
 //     (nothing is kept). TRX-15 (P22 review fix): the stamp is the TEXT the
 //     download stamps (portalStampText — the item's number, the revision
 //     the issue will pin, the transmittal's number, today's date, the verify
-//     link), so a number or revision label the stamp's font cannot print
-//     fails here, warned at issue (`unloadable`, `unprintable` naming the
-//     characters), never only at every download of an armed item.
+//     link), so the check stamps what the download stamps. PHYS-15
+//     (public-surfaces PS-P7): a character in that text the stamp's font
+//     cannot print no longer fails the stamp — lib/stamping.ts `stampText`
+//     draws it in a form the font prints and the copy says so — so such an
+//     item is `stampable` (and armed), not `unloadable`.
 // It reads with the caller's (service-role) client, scoped to the
 // transmittal's org; a storage key outside the org is never fetched
 // (portalKeyAllowed, the portal's rule). Nothing is written. A time budget
@@ -49,7 +51,7 @@ import { r2, R2_BUCKET } from "@/lib/r2";
 import { applyStampToPdfDoc } from "@/lib/stamping";
 import { publicOrigin } from "@/lib/publicOrigin";
 import type { supabase } from "@/lib/supabase";
-import { PORTAL_STAMP_MAX_BYTES, STAMP_CHECK_TIME_BUDGET_MS, portalKeyAllowed, portalStampText, stampFooterUnprintable, type ItemStampCheck, type TransmittalItem } from "@/lib/transmittals";
+import { PORTAL_STAMP_MAX_BYTES, STAMP_CHECK_TIME_BUDGET_MS, portalKeyAllowed, portalStampText, type ItemStampCheck, type TransmittalItem } from "@/lib/transmittals";
 
 /** The check's total time budget across a transmittal's items (defined in
  *  lib/transmittals.ts, so the issuer's browser bounds its wait by it). */
@@ -214,10 +216,15 @@ async function checkOne(sb: Reader, orgId: string, it: TransmittalItem, transmit
   } catch (e) {
     // A character the stamp's font cannot print can only come from the text
     // stamped (the PDF's own content is never re-encoded): the item's number,
-    // its revision label, or the transmittal's number.
+    // its revision label, or the transmittal's number. PHYS-15: the stamp
+    // draws every such character in a form the font prints, so this answers
+    // only a stamp that still refuses one — a defect, pinned against pdf-lib
+    // code point by code point (lib/__tests__/psP7StampText.test.ts).
     const refused = unencodableCharacter(e);
     if (refused !== null) {
-      const unprintable = stampFooterUnprintable(`${it.number ?? ""} ${rev ?? ""} ${transmittalNumber ?? ""}`) || refused;
+      // the character pdf-lib named (the label's other characters are drawn
+      // in their plain form, so they are not why it failed)
+      const unprintable = refused;
       return {
         ...base,
         verdict: "unloadable",

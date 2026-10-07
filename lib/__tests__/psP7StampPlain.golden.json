@@ -1,0 +1,1744 @@
+{
+ "share link (app/api/share/file/route.ts)": {
+  "calls": [
+   {
+    "op": "drawText",
+    "args": [
+     "UNCONTROLLED — SHARED COPY • shared-link • Downloaded: 10/7/2026, 9:15:00 AM",
+     {
+      "color": {
+       "blue": 0.2,
+       "green": 0.2,
+       "red": 0.2,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.15,
+      "rotate": {
+       "angle": -30,
+       "type": "degrees"
+      },
+      "size": 29,
+      "x": 88.02684956527492,
+      "y": 681.7728816451256
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "UNCONTROLLED COPY • Downloaded: 10/7/2026, 9:15:00 AM • Do Not Distribute",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0,
+       "red": 0.5,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 10,
+      "x": 161.8,
+      "y": 767.744
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "P-101 Rev B (Issued) at time of download — a share always serves the current revision. Scan the QR to confirm it is still",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0.3,
+       "red": 0.55,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 8.5,
+      "x": 161.8,
+      "y": 757.244
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "current.",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0.3,
+       "red": 0.55,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 8.5,
+      "x": 161.8,
+      "y": 746.744
+     }
+    ]
+   },
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "height": 80.03999999999999,
+      "opacity": 0.92,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "width": 70,
+      "x": 30.6,
+      "y": 696.12
+     }
+    ]
+   },
+   {
+    "op": "drawImage",
+    "args": [
+     "<image>",
+     {
+      "height": 64,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "width": 64,
+      "x": 33.6,
+      "y": 709.16
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "SCAN TO VERIFY",
+     {
+      "color": {
+       "blue": 0.25,
+       "green": 0.25,
+       "red": 0.25,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.9,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 7.04,
+      "x": 33.6,
+      "y": 699.12
+     }
+    ]
+   }
+  ],
+  "sha256": "e4f8547c9b4c825e7dbec642abbd52d7b02f4b1349af94bfcf9af76aee3bcc92"
+ },
+ "in-app download (lib/downloads.ts), current revision": {
+  "calls": [
+   {
+    "op": "drawText",
+    "args": [
+     "UNCONTROLLED — FOR REVIEW ONLY • Jane Doe • jane@example.com • Downloaded: 10/7/2026, 9:15:00 AM • Expires: 10/7/2026, 9:15:00 AM",
+     {
+      "color": {
+       "blue": 0.2,
+       "green": 0.2,
+       "red": 0.2,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.15,
+      "rotate": {
+       "angle": -30,
+       "type": "degrees"
+      },
+      "size": 8,
+      "x": 60.80018737118684,
+      "y": 553.0398983848622
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "UNCONTROLLED COPY • Downloaded:",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0,
+       "red": 0.5,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 9.596774193548388,
+      "x": 94.20833333333333,
+      "y": 817.2472258064516
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "10/7/2026, 9:15:00 AM • Do Not",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0,
+       "red": 0.5,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 9.596774193548388,
+      "x": 94.20833333333333,
+      "y": 805.6504516129032
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Distribute",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0,
+       "red": 0.5,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 9.596774193548388,
+      "x": 94.20833333333333,
+      "y": 794.0536774193548
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev B at time of issue — verify current revision",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0.3,
+       "red": 0.55,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 8.096774193548388,
+      "x": 94.20833333333333,
+      "y": 783.9569032258064
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "before use. ACTIVE CHANGE IN PROGRESS:",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0.3,
+       "red": 0.55,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 8.096774193548388,
+      "x": 94.20833333333333,
+      "y": 773.860129032258
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "checked out by José Núñez at time of issue.",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0.3,
+       "red": 0.55,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 8.096774193548388,
+      "x": 94.20833333333333,
+      "y": 763.7633548387096
+     }
+    ]
+   },
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "height": 64.0375,
+      "opacity": 0.92,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "width": 55.583333333333336,
+      "x": 14.875,
+      "y": 761.1225
+     }
+    ]
+   },
+   {
+    "op": "drawImage",
+    "args": [
+     "<image>",
+     {
+      "height": 49.583333333333336,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "width": 49.583333333333336,
+      "x": 17.875,
+      "y": 772.5766666666666
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "SCAN TO VERIFY",
+     {
+      "color": {
+       "blue": 0.25,
+       "green": 0.25,
+       "red": 0.25,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.9,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 5.454166666666667,
+      "x": 17.875,
+      "y": 764.1225
+     }
+    ]
+   }
+  ],
+  "sha256": "5bbc76b5c84843cdd2ae699c5f28dfadd69fc566faa369f04201e2a417b98223"
+ },
+ "in-app download (lib/downloads.ts), older revision of a held document": {
+  "calls": [
+   {
+    "op": "drawText",
+    "args": [
+     "ON HOLD — DO NOT USE • Jane Doe • jane@example.com • Downloaded: 10/7/2026, 9:15:00 AM • Expires: 10/7/2026, 9:15:00 AM",
+     {
+      "color": {
+       "blue": 0.2,
+       "green": 0.2,
+       "red": 0.2,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.15,
+      "rotate": {
+       "angle": 60,
+       "type": "degrees"
+      },
+      "size": 13,
+      "x": 419.6781651245989,
+      "y": 49.88881059093313
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "UNCONTROLLED COPY • Downloaded: 10/7/2026,",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0,
+       "red": 0.5,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 90,
+       "type": "degrees"
+      },
+      "size": 10,
+      "x": 32.031999999999925,
+      "y": 125.4
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "9:15:00 AM • Do Not Distribute",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0,
+       "red": 0.5,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 90,
+       "type": "degrees"
+      },
+      "size": 10,
+      "x": 44.031999999999925,
+      "y": 125.4
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "ON HOLD at time of issue (Safety, Engineering) — work from",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0.3,
+       "red": 0.55,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 90,
+       "type": "degrees"
+      },
+      "size": 8.5,
+      "x": 54.531999999999925,
+      "y": 125.4
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "this document is stopped until Document Control releases",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0.3,
+       "red": 0.55,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 90,
+       "type": "degrees"
+      },
+      "size": 8.5,
+      "x": 65.03199999999993,
+      "y": 125.4
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "the hold. SUPERSEDED REVISION — Rev A. This is NOT the",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0.3,
+       "red": 0.55,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 90,
+       "type": "degrees"
+      },
+      "size": 8.5,
+      "x": 75.53199999999993,
+      "y": 125.4
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "current revision; do not use for construction. Scan to verify.",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0.3,
+       "red": 0.55,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 90,
+       "type": "degrees"
+      },
+      "size": 8.5,
+      "x": 86.03199999999993,
+      "y": 125.4
+     }
+    ]
+   },
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "height": 80.03999999999999,
+      "opacity": 0.92,
+      "rotate": {
+       "angle": 90,
+       "type": "degrees"
+      },
+      "width": 70,
+      "x": 104.51999999999998,
+      "y": 19.8
+     }
+    ]
+   },
+   {
+    "op": "drawImage",
+    "args": [
+     "<image>",
+     {
+      "height": 64,
+      "rotate": {
+       "angle": 90,
+       "type": "degrees"
+      },
+      "width": 64,
+      "x": 91.48000000000002,
+      "y": 22.8
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "SCAN TO VERIFY",
+     {
+      "color": {
+       "blue": 0.25,
+       "green": 0.25,
+       "red": 0.25,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.9,
+      "rotate": {
+       "angle": 90,
+       "type": "degrees"
+      },
+      "size": 7.04,
+      "x": 101.51999999999998,
+      "y": 22.8
+     }
+    ]
+   }
+  ],
+  "sha256": "f07648dc0600d1e8cb89dd46e83c5373b2ac100b78e3fe3758d457c53ecb11fc"
+ },
+ "field pack (lib/docPack.ts)": {
+  "calls": [
+   {
+    "op": "drawText",
+    "args": [
+     "UNCONTROLLED — FIELD PACK • jane • jane@example.com • Downloaded: 10/7/2026, 9:15:00 AM",
+     {
+      "color": {
+       "blue": 0.2,
+       "green": 0.2,
+       "red": 0.2,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.15,
+      "rotate": {
+       "angle": -30,
+       "type": "degrees"
+      },
+      "size": 32,
+      "x": 538.7902895709024,
+      "y": 1200.655593539449
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "UNCONTROLLED COPY • Downloaded: 10/7/2026, 9:15:00 AM • Do Not Distribute",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0,
+       "red": 0.5,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 10,
+      "x": 248.8,
+      "y": 1643.688
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "P–101 Rev “A” at time of issue — verify current revision before use. ACTIVE CHANGE IN PROGRESS: checked out by Zoë at time of issue.",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0.3,
+       "red": 0.55,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 8.5,
+      "x": 248.8,
+      "y": 1633.188
+     }
+    ]
+   },
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "height": 80.03999999999999,
+      "opacity": 0.92,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "width": 70,
+      "x": 59.6,
+      "y": 1570.28
+     }
+    ]
+   },
+   {
+    "op": "drawImage",
+    "args": [
+     "<image>",
+     {
+      "height": 64,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "width": 64,
+      "x": 62.6,
+      "y": 1583.32
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "SCAN TO VERIFY",
+     {
+      "color": {
+       "blue": 0.25,
+       "green": 0.25,
+       "red": 0.25,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.9,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 7.04,
+      "x": 62.6,
+      "y": 1573.28
+     }
+    ]
+   }
+  ],
+  "sha256": "1e0fc32576dbc257c1464a8a75b045913f164da9c44011cacfbc7f9ff7f76ef1"
+ },
+ "book (components/viewers/MultiDocViewer.tsx), a held sheet": {
+  "calls": [
+   {
+    "op": "drawText",
+    "args": [
+     "ON HOLD — DO NOT USE • jane@example.com • jane@example.com • Downloaded: 10/7/2026, 9:15:00 AM • Expires: 10/7/2026, 9:15:00 AM",
+     {
+      "color": {
+       "blue": 0.2,
+       "green": 0.2,
+       "red": 0.2,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.15,
+      "rotate": {
+       "angle": -30,
+       "type": "degrees"
+      },
+      "size": 18,
+      "x": 94.80343468017065,
+      "y": 684.21127136594
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "UNCONTROLLED COPY • Downloaded: 10/7/2026, 9:15:00 AM • Do Not Distribute",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0,
+       "red": 0.5,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 10,
+      "x": 161.8,
+      "y": 767.744
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "ON HOLD at time of issue (Safety, Engineering) — work from this document is stopped until Document Control releases the",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0.3,
+       "red": 0.55,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 8.5,
+      "x": 161.8,
+      "y": 757.244
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "hold. P-101 Rev B at time of issue — verify current revision before use.",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0.3,
+       "red": 0.55,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 8.5,
+      "x": 161.8,
+      "y": 746.744
+     }
+    ]
+   },
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "height": 80.03999999999999,
+      "opacity": 0.92,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "width": 70,
+      "x": 30.6,
+      "y": 696.12
+     }
+    ]
+   },
+   {
+    "op": "drawImage",
+    "args": [
+     "<image>",
+     {
+      "height": 64,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "width": 64,
+      "x": 33.6,
+      "y": 709.16
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "SCAN TO VERIFY",
+     {
+      "color": {
+       "blue": 0.25,
+       "green": 0.25,
+       "red": 0.25,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.9,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 7.04,
+      "x": 33.6,
+      "y": 699.12
+     }
+    ]
+   }
+  ],
+  "sha256": "d504bbc0fbe736be6a559a31b8e439fff904e0e267c756d303f0b289abde41ea"
+ },
+ "linked drawings (components/assets/FileReferenceModal.tsx), no public origin": {
+  "calls": [
+   {
+    "op": "drawText",
+    "args": [
+     "UNCONTROLLED — P-101 Rev B • jane@example.com • jane@example.com • Downloaded: 10/7/2026, 9:15:00 AM • Expires: 10/7/2026, 9:15:00 AM",
+     {
+      "color": {
+       "blue": 0.2,
+       "green": 0.2,
+       "red": 0.2,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.15,
+      "rotate": {
+       "angle": -30,
+       "type": "degrees"
+      },
+      "size": 12,
+      "x": 58.852336847363006,
+      "y": 499.6578475772933
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "UNCONTROLLED COPY • Downloaded: 10/7/2026, 9:15:00 AM • Do Not",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0,
+       "red": 0.5,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 10,
+      "x": 25.259999999999998,
+      "y": 574.29
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Distribute",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0,
+       "red": 0.5,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 10,
+      "x": 25.259999999999998,
+      "y": 562.29
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "P-101 Rev B at time of issue — verify current revision before use.",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0.3,
+       "red": 0.55,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 8.5,
+      "x": 25.259999999999998,
+      "y": 551.79
+     }
+    ]
+   }
+  ],
+  "sha256": "a37ce9d9c10328e53c708133075a8209a86da3a98a52b2fceee345be65d15036"
+ },
+ "transmittal portal (portalStampText), with a QR": {
+  "calls": [
+   {
+    "op": "drawText",
+    "args": [
+     "UNCONTROLLED — TRANSMITTAL COPY • transmittal TR-0042 • Downloaded: 10/7/2026, 9:15:00 AM",
+     {
+      "color": {
+       "blue": 0.2,
+       "green": 0.2,
+       "red": 0.2,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.15,
+      "rotate": {
+       "angle": -30,
+       "type": "degrees"
+      },
+      "size": 25,
+      "x": 89.46895553390686,
+      "y": 683.2496824526945
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "UNCONTROLLED COPY • Downloaded: 10/7/2026, 9:15:00 AM • Do Not Distribute",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0,
+       "red": 0.5,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 10,
+      "x": 161.8,
+      "y": 767.744
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "VDS-7 ‘GA’ Rev Rév 2 as issued on transmittal TR-0042 (2026-10-07). Scan the QR to confirm it is still current.",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0.3,
+       "red": 0.55,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 8.5,
+      "x": 161.8,
+      "y": 757.244
+     }
+    ]
+   },
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "height": 80.03999999999999,
+      "opacity": 0.92,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "width": 70,
+      "x": 30.6,
+      "y": 696.12
+     }
+    ]
+   },
+   {
+    "op": "drawImage",
+    "args": [
+     "<image>",
+     {
+      "height": 64,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "width": 64,
+      "x": 33.6,
+      "y": 709.16
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "SCAN TO VERIFY",
+     {
+      "color": {
+       "blue": 0.25,
+       "green": 0.25,
+       "red": 0.25,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.9,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 7.04,
+      "x": 33.6,
+      "y": 699.12
+     }
+    ]
+   }
+  ],
+  "sha256": "8065e26f8f9c9e0d0580ee786603f140d733bf76eab2662cb97f4cc7bc209556"
+ },
+ "transmittal portal (portalStampText), no configured origin": {
+  "calls": [
+   {
+    "op": "drawText",
+    "args": [
+     "UNCONTROLLED — TRANSMITTAL COPY • transmittal TR-0042 • Downloaded: 10/7/2026, 9:15:00 AM",
+     {
+      "color": {
+       "blue": 0.2,
+       "green": 0.2,
+       "red": 0.2,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.15,
+      "rotate": {
+       "angle": -30,
+       "type": "degrees"
+      },
+      "size": 25,
+      "x": 89.46895553390686,
+      "y": 683.2496824526945
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "UNCONTROLLED COPY • Downloaded: 10/7/2026, 9:15:00 AM • Do Not Distribute",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0,
+       "red": 0.5,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 10,
+      "x": 36.72,
+      "y": 767.744
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "P-101 Rev 3 as issued on transmittal TR-0042. Confirm the current revision with the issuer before use.",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0.3,
+       "red": 0.55,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 8.5,
+      "x": 36.72,
+      "y": 757.244
+     }
+    ]
+   }
+  ],
+  "sha256": "e34f281a0b6454c9817f3e2492ac7c1ac19320f8270d732127496e5a0dc85358"
+ },
+ "review copy, no watermark text; NBSP, euro, ellipsis, bullet and a long wrapping notice": {
+  "calls": [
+   {
+    "op": "drawText",
+    "args": [
+     "REVIEW ONLY — DO NOT DISTRIBUTE • A B € … • ‰ ™ • Downloaded: 10/7/2026, 9:15:00 AM",
+     {
+      "color": {
+       "blue": 0.2,
+       "green": 0.2,
+       "red": 0.2,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.15,
+      "rotate": {
+       "angle": -30,
+       "type": "degrees"
+      },
+      "size": 13,
+      "x": 54.34620138170189,
+      "y": 533.7868348754012
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "UNCONTROLLED COPY — REVIEW",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0,
+       "red": 0.5,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 9.870967741935484,
+      "x": 96.89999999999999,
+      "y": 767.8730322580645
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "ONLY • Downloaded: 10/7/2026, 9:15:00",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0,
+       "red": 0.5,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 9.870967741935484,
+      "x": 96.89999999999999,
+      "y": 756.002064516129
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "AM • Do Not Distribute",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0,
+       "red": 0.5,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 9.870967741935484,
+      "x": 96.89999999999999,
+      "y": 744.1310967741936
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Very long plain notice text that wraps across",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0.3,
+       "red": 0.55,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 8.370967741935484,
+      "x": 96.89999999999999,
+      "y": 733.7601290322581
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "several lines of the footer band — Very long",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0.3,
+       "red": 0.55,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 8.370967741935484,
+      "x": 96.89999999999999,
+      "y": 723.3891612903226
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "plain notice text that wraps across several lines",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0.3,
+       "red": 0.55,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 8.370967741935484,
+      "x": 96.89999999999999,
+      "y": 713.0181935483871
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "of the footer band — Very long plain notice text",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0.3,
+       "red": 0.55,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 8.370967741935484,
+      "x": 96.89999999999999,
+      "y": 702.6472258064516
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "that wraps across several lines of the footer",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0.3,
+       "red": 0.55,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 8.370967741935484,
+      "x": 96.89999999999999,
+      "y": 692.2762580645161
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "band — Very long plain notice text that wraps",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0.3,
+       "red": 0.55,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 8.370967741935484,
+      "x": 96.89999999999999,
+      "y": 681.9052903225806
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "across several lines of the footer band — Very",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0.3,
+       "red": 0.55,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 8.370967741935484,
+      "x": 96.89999999999999,
+      "y": 671.5343225806452
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "long plain notice text that wraps across several",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0.3,
+       "red": 0.55,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 8.370967741935484,
+      "x": 96.89999999999999,
+      "y": 661.1633548387097
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "lines of the footer band — Very long plain",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0.3,
+       "red": 0.55,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 8.370967741935484,
+      "x": 96.89999999999999,
+      "y": 650.7923870967742
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "notice text that wraps across several lines of",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0.3,
+       "red": 0.55,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 8.370967741935484,
+      "x": 96.89999999999999,
+      "y": 640.4214193548387
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "the footer band — end.",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0.3,
+       "red": 0.55,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 8.370967741935484,
+      "x": 96.89999999999999,
+      "y": 630.0504516129032
+     }
+    ]
+   },
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "height": 65.61,
+      "opacity": 0.92,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "width": 57,
+      "x": 15.3,
+      "y": 710.55
+     }
+    ]
+   },
+   {
+    "op": "drawImage",
+    "args": [
+     "<image>",
+     {
+      "height": 51,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "width": 51,
+      "x": 18.3,
+      "y": 722.16
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "SCAN TO VERIFY",
+     {
+      "color": {
+       "blue": 0.25,
+       "green": 0.25,
+       "red": 0.25,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.9,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 5.61,
+      "x": 18.3,
+      "y": 713.55
+     }
+    ]
+   }
+  ],
+  "sha256": "341a10a1c9b5bde2290b4612b05b3003b3fdec1519002787e806ef5c07ffa6f2"
+ },
+ "a watermark too long for the page (truncated with an ellipsis)": {
+  "calls": [
+   {
+    "op": "drawText",
+    "args": [
+     "UNCONTROLLED — UNCONTROLLED — UNCONTROLLED — UN…",
+     {
+      "color": {
+       "blue": 0.2,
+       "green": 0.2,
+       "red": 0.2,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.15,
+      "rotate": {
+       "angle": -30,
+       "type": "degrees"
+      },
+      "size": 9,
+      "x": 22.20056516256234,
+      "y": 268.58888568297004
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "UNCONTROLLED COPY • Downloaded:",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0,
+       "red": 0.5,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 6.5,
+      "x": 10,
+      "y": 385.5
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "10/7/2026, 9:15:00 AM • Do Not Distribute",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0,
+       "red": 0.5,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 6.5,
+      "x": 10,
+      "y": 377
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 4 at time of issue — verify current",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0.3,
+       "red": 0.55,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 6,
+      "x": 10,
+      "y": 369
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "revision before use.",
+     {
+      "color": {
+       "blue": 0,
+       "green": 0.3,
+       "red": 0.55,
+       "type": "RGB"
+      },
+      "font": "<font>",
+      "opacity": 0.85,
+      "rotate": {
+       "angle": 0,
+       "type": "degrees"
+      },
+      "size": 6,
+      "x": 10,
+      "y": 361
+     }
+    ]
+   }
+  ],
+  "sha256": "16626c33b963e20cf9e854541c168424fb35c819315064515b6d986306bf2b8e"
+ }
+}

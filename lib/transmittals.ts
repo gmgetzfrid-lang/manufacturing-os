@@ -941,14 +941,20 @@ export interface ItemStampCheck {
   detail?: string | null;
   /** TRX-15 (P22 review fix): set on an `unloadable` verdict caused by the
    *  item's own number or revision label — the characters in it the stamp
-   *  cannot print (the file itself loaded). */
+   *  cannot print (the file itself loaded). PHYS-15: the stamp now draws
+   *  every character in a form its font prints (lib/stamping.ts
+   *  `stampText`), so the check no longer answers this for a label; it is
+   *  kept for a stamp that still refuses a character (a defect the PHYS-15
+   *  code-point test pins against) and for an answer from an older server. */
   unprintable?: string | null;
 }
 
 /** The characters the portal stamp's font prints beyond printable ASCII
  *  (0x20–0x7E) and Latin-1 (0xA0–0xFF): the rest of WinAnsi (cp1252). The
  *  stamp draws with pdf-lib's standard Helvetica-Bold, whose WinAnsi
- *  encoding refuses anything else ("WinAnsi cannot encode …"). */
+ *  encoding refuses anything else ("WinAnsi cannot encode …"). The same set
+ *  as lib/stamping.ts `stampFontPrints` (kept here so this client module
+ *  does not import pdf-lib; a test pins the two equal). */
 const WIN_ANSI_EXTRA = new Set<number>([
   0x152, 0x153, 0x160, 0x161, 0x178, 0x17d, 0x17e, 0x192, 0x2c6, 0x2dc,
   0x2013, 0x2014, 0x2018, 0x2019, 0x201a, 0x201c, 0x201d, 0x201e,
@@ -956,12 +962,18 @@ const WIN_ANSI_EXTRA = new Set<number>([
 ]);
 
 /** TRX-15 (P22 review fix): the characters of `text` the portal's stamp
- *  cannot print in its footer, each once — "" when it can print them all.
- *  The footer is word-wrapped on whitespace (lib/stampLayout.ts
+ *  cannot print in its footer AS TYPED, each once — "" when it can print
+ *  them all. The footer is word-wrapped on whitespace (lib/stampLayout.ts
  *  `wrapToWidth`), so whitespace of any kind prints as a space; any other
  *  character must be in WinAnsi. A Greek delta ("Δ1"), an arrow or a Unicode
- *  hyphen (U+2010, common in pasted text) is not, and the stamp throws on
- *  it. A test pins this against pdf-lib itself, code point by code point. */
+ *  hyphen (U+2010, common in pasted text) is not. A test pins this against
+ *  pdf-lib itself, code point by code point.
+ *
+ *  PHYS-15 (public-surfaces PS-P7): the stamp no longer throws on such a
+ *  character — lib/stamping.ts `stampText` draws it in a form the font
+ *  prints ("-", "Delta", or a visible "?") and the copy says so. So these
+ *  are the characters the stamp REPLACES; none of them makes an item
+ *  unstampable, and none keeps an item from being armed (armCheckedItems). */
 export function stampFooterUnprintable(text: string | null | undefined): string {
   const bad: string[] = [];
   for (const ch of String(text ?? "")) {
@@ -1059,13 +1071,14 @@ export class UnstampableItemsError extends Error {
  *  are otherwise the draft's JSON as stored. `changed` is false when the
  *  result equals the draft's items (the issue then leaves them alone).
  *
- *  P22 review fix: an item whose own number or revision label has a
- *  character the portal's stamp cannot print (`stampFooterUnprintable`) is
- *  never armed, whatever its check said — the download stamps both into the
- *  footer, so it would fail there on every attempt, and an armed item would
- *  be refused for good. The check stamps them too (lib/transmittalStampCheck.ts
- *  → `unloadable`, warned at issue); this guard holds even for a check that
- *  did not (one answered by an older server). */
+ *  P22 review fix, superseded by PHYS-15 (public-surfaces PS-P7): P22 never
+ *  armed an item whose own number or revision label had a character the
+ *  stamp's font cannot print (`stampFooterUnprintable`), because the
+ *  download then failed to stamp it on every attempt and an armed item
+ *  would be refused for good. The stamp now draws such a character in a
+ *  form the font prints (lib/stamping.ts `stampText`) and never fails on
+ *  it, so such an item is armed again — on its check's `stampable` verdict
+ *  alone, as every other item is: the arming still requires the check. */
 export function armCheckedItems(
   rawItems: unknown,
   checks: readonly ItemStampCheck[] | null,
@@ -1073,16 +1086,13 @@ export function armCheckedItems(
   const stampable = new Set<string>();
   const other = new Set<string>();
   for (const c of checks ?? []) (c.verdict === "stampable" ? stampable : other).add(c.documentId);
-  const labelPrintable = (it: Record<string, unknown>) =>
-    !stampFooterUnprintable(it.number == null ? "" : String(it.number)) &&
-    !stampFooterUnprintable(it.rev == null ? "" : String(it.rev));
   let changed = false;
   let armed = 0;
   const items = (Array.isArray(rawItems) ? rawItems : []).map((raw: unknown) => {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
     const it = raw as Record<string, unknown>;
     const id = typeof it.documentId === "string" ? it.documentId : "";
-    if (id && stampable.has(id) && !other.has(id) && labelPrintable(it)) {
+    if (id && stampable.has(id) && !other.has(id)) {
       armed += 1;
       if (it.stampable === true) return it;
       changed = true;
