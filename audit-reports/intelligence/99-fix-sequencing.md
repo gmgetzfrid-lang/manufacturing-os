@@ -617,6 +617,39 @@ and six counts; paste before or with the app deploy.
 
 The GOV-5 residual needs no migration. For the integrator's `MIGRATION-PASTE-ORDER.md` row: not a widening; no re-created object; one result set of two probes and two counts; paste any time after `20261122`. `lib/schemaExpectations.ts` probe for the integrator to add: `knowledge_documents.vision_keyless_pages` → `20261186_intel_roundG_keyless_text_only.sql`.
 
+**MERGE note — I-23's limbs in other packages' files** (intelligence Round G, 2026-10-07; `IRLS-14`, opened `IRLS-16`). Whoever next edits each file keeps the limb.
+
+- `lib/knowledgeIngest.ts` (I-06's / I-06b's / I-18's / I-22's). `rebuildDocumentMentions` records each ingest-time build through `lib/mentionRunState.ts`:
+  - `startMentionRun(…, "ingest", doc.id)` before the build;
+  - the outcome is chained onto the build itself, so it is written when the build settles, even after the 8 s cap let the batch go on: `finishMentionRun` succeeded or failed, and `clearStandingFailure` when the standing failure is this document's;
+  - the outer `catch` records a pass that could not start (`recordMentionFailure`). It is never `catch {}` again.
+  - An empty equipment dictionary still builds and records nothing.
+  - Every I-05, I-06b, I-18 and I-22 limb named above is untouched.
+- `lib/mentionIndexer.ts`. `backfillOrgMentions`:
+  - reads the ready documents in id order by keyset windows (`DOC_WINDOW` 500) and records each rebuild (source `map`);
+  - saves its place (`saveBackfillCursor`) every `PLACE_SAVE_MS` and when it stops or fails, and continues after it on the next press;
+  - clears the place and the failure that stood before it began only when it reads to the end;
+  - adds `resumable` / `continued` / `passDocuments` to its answer only where the run state is recorded.
+  - `indexDocumentMentions` is unchanged.
+- `lib/graphView.ts` (I-14's) `mentionNotice(cov, equipmentOnMap, run?, readAt?)`. The coverage's own sentences are `coverageNotice`, byte for byte as I-14 shipped them. `mentionRunNotes` only appends, and never on a map whose index is not installed or that has no equipment.
+- `app/(protected)/graph/page.tsx` (I-14's). The run-state read `readMentionRunState(supabase, activeOrgId)` is re-read on `reloadNonce`.
+  - Keep the STATIC `supabase` import. With a dynamic import there, `graphPageRender.test.ts` "a URL carrying an asked question asks it again, once" failed 2 runs in 3: the ask's fetch had not landed within the test's flush.
+  - Also keep "Continue the rebuild" (same request body `{ orgId }`) and the stopped / continued messages.
+- `lib/orgGraph.ts` (I-15 next). The `MentionCoverage` comment still says the indexer keeps no run state; reword it when the file is next edited (no behaviour depends on it).
+- `app/api/graph/mentions/route.ts` (no owner). The per-document branch records nothing → `IRLS-16`, a six-line limb for the integrator or the next editor of the route.
+
+**Paste and deploy order for `20261194`:** after `20260929`; independent of every other pending file. The app may be deployed before or after the paste. Unpasted (PGRST205 / 42P01 / 42703 / PGRST204 are "not installed"):
+- nothing is recorded, said once in the server log;
+- the map says exactly what I-14 shipped;
+- every rebuild press starts at the first document, as before.
+
+For the integrator's `MIGRATION-PASTE-ORDER.md` row: a narrow WIDENING (a new table; every active member may read their own org's one row, the service role writes); no re-created object, no function; one result set of seven probes, one after-count and five inventory counts.
+
+The integrator adds at merge:
+- the `lib/schemaExpectations.ts` row `{ table: "mention_index_runs", migration: "20261194_intel_roundG_mention_run_state.sql" }`;
+- the `lib/exportTables.ts` `EXPORT_EXCLUDED_TABLES` entry, after AO-P4. Reason: the run state is operational, re-derived by the next build, and names knowledge-document ids a restore re-keys, so a restore starts with none.
+- In the same merge, it removes the table from the tripwires' at-merge lists: `ROW_AT_MERGE` in `lib/__tests__/schemaExpectations.test.ts` and `DECISION_AT_MERGE` in `lib/__tests__/exportCoverage.test.ts`. Each list fails once the real row exists.
+
 ---
 
 ## Do not do these
