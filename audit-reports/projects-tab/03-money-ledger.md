@@ -699,6 +699,23 @@ already shows state.
 
 **Scope / residual.** None here. The rest of the controls program's silence (checklists, punch, costs, companies) is notifications `PROD-6`'s, with each silent subsystem's decision recorded there.
 
+**Final review fix (2026-10-07, notifications Round G, N8 fix pass 3).** The final review found two things in this record's notices:
+- **People named by hand ignored private-project visibility (SEC-2).** A turnover rejection named the item's creator, and an approval named the proposer, after checking only that each was an active org member. `turnover_items` and `change_orders` are readable only where `project_visible_to_me` holds (`20260913:40`, `20261102`). So a creator or proposer since removed from a private project's roster was still told the rejection reason, or the approved amount.
+  - `lib/turnover.ts` `notifyTurnoverRejected` (:469) now passes the creator through `lib/notify/recipients.ts` `projectVisibleAmong` (:474). It uses the project row it already reads, now `owner_user_id, visibility`.
+  - `lib/changeOrders.ts` `notifyApproval` (:570) does the same for the proposer (:573).
+  - On a private project, someone who is not the owner, not on the roster and not an Admin or DocCtrl is not told. A project that cannot be read tells nobody named by hand. The owner is told as before.
+- **The approval's amount.** It is now written the same for every reader ("CAD 12,345.67" — the writer's locale no longer shapes it). When the budget line cannot be read, it is written with no currency rather than as dollars. This is notifications `PROD-6`'s final-review block, `coNoticeMoney` / `coLine`.
+- Tests (`lib/__tests__/producers.test.ts`):
+  - "MON-11 dw3" "SEC-2: the item's creator is told only while they can see the project…" (new): on a private project, a creator removed from the roster is not told and the owner is. REGRESSION: a creator on the roster, or any creator on a project that is not private, is told as before.
+  - "PROD-6 dw1" "SEC-2…" (new) covers the approval's removed proposer.
+  - Both fail without the fix. `lib/__tests__/turnover.test.ts` and `lib/__tests__/costDocs.test.ts` are unchanged and green.
+- Verified: see notifications `PROD-6`'s final-review block (`audit-reports/notifications/01-producer-census.md`) — one loop for the whole of fix pass 3.
+
+**Done-when (after fix pass 3).**
+1. ✓ (unchanged) Awarding notifies the project owner (and project followers).
+2. ✓ A change-order approval notifies the proposer, with the exact amount in a locale-proof form. On a private project, this holds only for a proposer who can still see it.
+3. ✓ A turnover rejection notifies whoever is responsible for the item: the project owner, and its creator while the creator can see the project. On a private project, a creator who is off the roster and is not an Admin or DocCtrl is not told. They can no longer read the item, so telling them the reason would leak it.
+
 ---
 
 ## MON-12 · A company flagged "do not use" can still be awarded work

@@ -226,8 +226,8 @@ this phase. They are the largest and the least urgent: nobody is currently
 relying on a notification that does not exist. Do not start here because the
 list is long.
 
-*Hand-off (2026-10-07, notifications Round G, N8 PRODUCERS-FREE → N3, N9,
-N14, the integrator):*
+*Hand-off (2026-10-07, notifications Round G, N8 PRODUCERS-FREE → N3, N6,
+N9, N10, N14, the integrator):*
 - *Paste `20261181` (four kinds on `notification_kinds()`, and
   `clear_resolved_branch_alerts`) after `20261160` / `20261161` and BEFORE
   the deploy: `change_order_status`, `milestone_assigned` and
@@ -239,7 +239,10 @@ N14, the integrator):*
 - *N9: swap the library page's `notifyLibrarySubscribers` closure onto
   `lib/libraryNotify.ts` `notifyLibraryDocsAdded` (in-app only) and pass
   `actorName` to `CsvImportModal` — `PROD-5` done-when 2 and `PROD-7`
-  done-when 3 close with it.*
+  done-when 3 close with it. (Fix pass 3: the helper now names an actor
+  passed without a name by their email in the org, as the staged-upload
+  path does. Passing `actorName` is optional, and a passed name is used
+  verbatim.)*
 - *N14: `TAX-11`'s six remaining raw calls, in your five assigned files;
   none of N8's is left (fix pass 2 moved the export alert and the folded
   intake digest itself, so `RAW_RESOLVED` keeps no raw site by reason).
@@ -251,10 +254,29 @@ N14, the integrator):*
   `notifyBatchChecked` is its count alone. Do not add a `.select()`
   read-back: from a browser it is a RETURNING that the own-rows read policy
   refuses for another person's row.*
-- *Integrator: ratify `DEC-44 (N8)` item 2's reading of `PROD-6` done-when 2
-  (punch / checklist items have no person-assignee), and route `PROD-15`
-  (assigned: admin-and-org P5 — the pending list and
-  `access_requests_admin_select`).*
+- *N14 (fix pass 3): **`PROD-16`** (LOW, `01-producer-census.md`). Two
+  access requests past the per-org cap that land at once can give a pool
+  member two burst rows: `notifyAccessRequestBurst`'s open-row read and its
+  insert are not serialised. The fix is a migration: one SECURITY DEFINER
+  function, service role only, that checks and inserts under an advisory
+  lock keyed on the org. The integrator adds `PROD-16` to N14's `findings`
+  in `audit-reports/fleet-plans/notifications.json`.*
+- *Integrator: ratify `DEC-44 (N8)` item 1's per-org burst limit as the
+  narrowing of `PROD-2` done-when 1. As written ("emits … on insert") it
+  holds only for the first five requests to an org in an hour. `PROD-2` is
+  RESOLVED only as narrowed, and is OPEN on done-when 1 if the narrowing is
+  not ratified (its Pending ratification line). Ratify item 2's reading of
+  `PROD-6` done-when 2 (punch / checklist items have no person-assignee).
+  Route `PROD-15` (assigned: admin-and-org P5 — the pending list and
+  `access_requests_admin_select`) and `PROD-16` (assigned: N14).*
+- *N6 / N10 (`lib/notify/dispatch.ts`, N5's merged file; fix pass 3):
+  `EmitInput` gained an optional `inappOneStatement`. When it is set, the
+  in-app leg is ONE `notifyBatchWithReason` statement instead of
+  `notifyMany`. Only `lib/milestones.ts` `notifyScheduleChange` sets it; no
+  other `emit()` caller changes. `lib/notify/recipients.ts` gained
+  `projectVisibleAmong`, the app-side reading of `project_visible_to_me`
+  for recipients a producer names by hand (SEC-2). Rebase on both; they are
+  additive.*
 - *N3 / N9 (`lib/activityThread.ts`, merged N2 file): `PostInput` gained
   `notifyExclude` (N8's review fix: a markup share's requester is told by
   `resolveMarkupRequest`, not by the thread's notice). The thread's
@@ -266,13 +288,20 @@ N14, the integrator):*
   so no new finding was raised. The schedule's notices now run behind the
   write (`inBackground`), so the board no longer waits on them. A change
   order's notice now also reaches its budget line's `cam_user_id` when set.
-  Nothing writes that column yet; a feature that sets it changes who hears.*
+  Nothing writes that column yet; a feature that sets it changes who hears.
+  (Fix pass 3: on a private project the CAM, a change order's proposer, a
+  turnover item's creator and a task's new assignee are told only while
+  they can see the project — its owner, its roster, or an Admin / DocCtrl.
+  Removing someone from a private project's roster now also stops these
+  notices to them.)*
 - *admin-and-org P5 (`request-access` rebases on this): the door's per-org
   cap (`ACCESS_REQUEST_NOTICES_PER_ORG_HOUR`) gates the bell leg as well as
   the email leg. Past the cap, the pool holds one "more access requests are
   waiting" row each (`resource_type 'org'`, no actor), which no decision
-  clears. If the pending list moves or becomes DocCtrl-readable
-  (`PROD-15`), keep that row's link pointing at it.*
+  clears. When the count cannot be read, that row says "access requests are
+  waiting" and gives no number (fix pass 3). If the pending list moves or
+  becomes DocCtrl-readable (`PROD-15`), keep that row's link pointing at
+  it.*
 
 ---
 
