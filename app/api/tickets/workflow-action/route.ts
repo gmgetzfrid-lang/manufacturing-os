@@ -20,6 +20,7 @@ import { parseSourceDocument } from "@/lib/sourceDocRef";
 import { heldRoles } from "@/lib/roleHeld";
 import { noteDeliverableNotInRegister, deliverableStateOf } from "@/lib/ticketHandback";
 import { resolveTicketRecipients } from "@/lib/ticketRouting";
+import { ticketReadScope } from "@/lib/ticketReadScope";
 
 // POST /api/tickets/workflow-action
 //
@@ -30,9 +31,12 @@ import { resolveTicketRecipients } from "@/lib/ticketRouting";
 //   3. validates the action against WorkflowEngine.getActions — the same
 //      state machine the UI renders, now enforced where the client can't lie
 //   4. recomputes the full update server-side (lib/ticketTransitions)
-//   5. applies it compare-and-set on status (concurrent transitions -> 409)
-//   6. writes the audit row and fans out notifications + emails server-side,
-//      so neither can be skipped by a closed tab or a tampered client.
+//   5. writes the audit row FIRST (EVID-12 / SM-7: a row that cannot be
+//      written refuses the transition, nothing applied)
+//   6. applies it compare-and-set on status (concurrent transitions -> 409,
+//      recorded against the audit row as not applied)
+//   7. fans out notifications + emails server-side, so neither can be
+//      skipped by a closed tab or a tampered client.
 
 interface Body {
   ticketId: string;
@@ -94,6 +98,23 @@ async function accountName(uid: string): Promise<string | null> {
  *  it is the store's tag, not a content hash this route computed. */
 function fileIdentity(a: TicketAttachment, etag: string | null | undefined) {
   return { id: a.id ?? null, name: a.name ?? null, url: a.url ?? null, size: a.size ?? null, etag: etag ?? null };
+}
+
+/** EVID-12 / SM-7 (DF-P1): one audit row, written with the fixed id it
+ *  carries, so a retry after a lost reply finds it there (23505, the primary
+ *  key) instead of writing it twice. Retried once. null when the row is in
+ *  the table; otherwise the error. */
+async function insertAuditRowOnce(row: { id: string } & Record<string, unknown>): Promise<string | null> {
+  const attempt = async (): Promise<string | null> => {
+    try {
+      const { error } = await supabaseAdmin.from("audit_logs").insert(row);
+      if (!error || (error as { code?: string }).code === "23505") return null;
+      return error.message || "insert refused";
+    } catch (e) {
+      return (e as Error)?.message ?? String(e);
+    }
+  };
+  return (await attempt()) && (await attempt());
 }
 
 function formatBytes(n: number | undefined): string | undefined {
@@ -219,6 +240,22 @@ export async function POST(req: NextRequest) {
   if (!member) {
     return NextResponse.json({ error: "Forbidden: not an active member of this workspace" }, { status: 403 });
   }
+  // AUTHZ-13 (DEC-44 (DF-P1)): every action writes the ticket row, and the
+  // transition adds its actor to `watchers` (lib/ticketTransitions.ts), which
+  // is one of the Contractor-only read scope's legs. So a Contractor-only
+  // member may act only on a ticket they can already read. Any other ticket
+  // answers as an unreadable one does (404, naming neither its status nor the
+  // actions on it), and nothing is written. This route runs as the service
+  // role and cannot ask the database for auth.uid(); lib/ticketReadScope.ts
+  // holds the same predicate as 20261166.
+  const scope = await ticketReadScope(supabaseAdmin, member, caller.id, {
+    id: body.ticketId, requesterId: ticket.requesterId, assignedDrafterId: ticket.assignedDrafterId,
+    assignedEngineerId: ticket.assignedEngineerId, watchers: ticket.watchers,
+  });
+  if (scope === "unknown") {
+    return NextResponse.json({ error: "Couldn't confirm you can see this request — try again in a moment" }, { status: 503 });
+  }
+  if (scope === "out") return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
   const callerRole = (member.role as Role) ?? "Viewer";
   const callerEmail = (member.email as string | null) || caller.email || "Unknown";
   // WF-7: authority is evaluated against the FULL additive collection —
@@ -545,7 +582,14 @@ export async function POST(req: NextRequest) {
   // WF-17: the gate keys on the TERMINAL TRANSITION, not the action name —
   // `cancel_request` (DEC-14) ends the ticket exactly as a close does, so it
   // meets the same 409 holds_open and the same release-or-keep resolution.
+  // EVID-12 / SM-7 (DF-P1): the hold read and its 409 come first; the release
+  // or keep WRITES wait until the audit row has landed (below).
   const TERMINAL_STATUSES: readonly string[] = ["CLOSED", "CANCELED"];
+  let holdPlan: {
+    holds: Array<{ id: string; document_id: string; reason: string; notes: string | null }>;
+    resolution: NonNullable<Body["holdResolution"]>;
+    reason: string;
+  } | null = null;
   if (TERMINAL_STATUSES.includes(String(newStatus))) {
     const { data: openHolds, error: holdsErr } = await supabaseAdmin
       .from("document_holds")
@@ -566,29 +610,109 @@ export async function POST(req: NextRequest) {
           holds: holds.map((h) => ({ id: h.id, documentId: h.document_id, reason: h.reason })),
         }, { status: 409 });
       }
-      const nowIso = new Date().toISOString();
-      if (resolution.action === "release") {
-        const { data: released, error: relErr } = await supabaseAdmin
-          .from("document_holds")
-          .update({ released_at: nowIso, released_by: caller.id, released_by_name: callerEmail ?? null,
-                    released_reason: reason || `Released on ${newStatus === "CANCELED" ? "cancellation" : "close"} of ticket ${ticket.ticketId ?? body.ticketId}` })
-          .in("id", holds.map((h) => h.id)).is("released_at", null).select("id");
-        if (relErr) return NextResponse.json({ error: `Couldn't release the hold: ${relErr.message}` }, { status: 500 });
-        for (const h of holds) {
-          await supabaseAdmin.from("audit_logs").insert({
-            action: "HOLD_RELEASED", resource_type: "document", resource_id: h.document_id, org_id: ticket.orgId,
-            user_id: caller.id, user_email: callerEmail ?? null,
-            details: { holdId: h.id, reason: h.reason, releasedReason: reason || null, viaTicketClose: body.ticketId, released: (released ?? []).length },
-          }).then(() => undefined, () => undefined);
-        }
-      } else {
-        for (const h of holds) {
-          await supabaseAdmin.from("audit_logs").insert({
-            action: "HOLD_KEPT_ON_CLOSE", resource_type: "document", resource_id: h.document_id, org_id: ticket.orgId,
-            user_id: caller.id, user_email: callerEmail ?? null,
-            details: { holdId: h.id, reason: h.reason, keptBecause: reason, ticketId: body.ticketId, ticketOutcome: newStatus },
-          }).then(() => undefined, () => undefined);
-        }
+      holdPlan = { holds, resolution, reason };
+    }
+  }
+
+  // Audit — server-written, cannot be skipped by the client.
+  // EVID-12 / SM-7 (DF-P1, the fleet plan's default): the row is written
+  // BEFORE anything is applied — before the hold release and the ticket's
+  // compare-and-set. A transition whose audit row cannot be written is
+  // refused: a 500 with nothing applied, so a retry is safe. It is never
+  // "ok" with a missing row. The row carries a fixed id: a retry after a lost
+  // reply finds it there (23505) instead of writing it twice. If the
+  // transition then does not land (a lost compare-and-set, a refused write),
+  // a TICKET_<ACTION>_NOT_APPLIED row names this row's id, so the trail never
+  // shows a transition that did not happen as one that did. audit_logs stays
+  // append-only: no row is ever updated. The details name what was decided
+  // on: the deliverable revision, and the identity of every file the action
+  // carried or approved.
+  const auditRow = {
+    id: crypto.randomUUID(),
+    action: `TICKET_${action.action.toUpperCase()}`,
+    resource_id: body.ticketId,
+    resource_type: "ticket",
+    org_id: ticket.orgId,
+    user_id: caller.id,
+    user_email: callerEmail,
+    user_role: callerRole,
+    details: {
+      from: ticket.status, to: newStatus, label: action.label, authority,
+      deliverable_rev: (updates.deliverable_rev as string | null | undefined) ?? ticket.deliverableRev ?? null,
+      // WF-9 / WF-18: the audit row names WHAT was attached or WHO now drafts.
+      ...(vetted.attachment
+        ? { attachment: { ...fileIdentity(vetted.attachment, vettedEtags.attachment), type: vetted.attachment.type } }
+        : {}),
+      ...(vetted.finalAttachment ? { finalAttachment: fileIdentity(vetted.finalAttachment, vettedEtags.finalAttachment) } : {}),
+      ...(vetted.redlineAttachment ? { redlineAttachment: fileIdentity(vetted.redlineAttachment, vettedEtags.redlineAttachment) } : {}),
+      ...(APPROVING_ACTIONS.has(action.action)
+        ? { approvedDrafts: (ticket.attachments ?? []).filter((a) => a?.type === "Draft" && a.status === "submitted").map((a) => fileIdentity(a, null)) }
+        : {}),
+      ...(action.action === "reassign_drafter" && body.assignment
+        ? { from_drafter_id: ticket.assignedDrafterId ?? null, to_drafter_id: body.assignment.id, reason: body.comment ?? null }
+        : {}),
+      // Written before the compare-and-set; a TICKET_<ACTION>_NOT_APPLIED row
+      // naming this id follows when the transition did not land.
+      recordedBeforeApply: true,
+    },
+  };
+  const auditErr = await insertAuditRowOnce(auditRow);
+  if (auditErr) {
+    console.error(`[workflow-action] AUDIT ROW NOT WRITTEN for ${auditRow.action} on ticket ${body.ticketId} (${ticket.status} → ${newStatus}) by ${caller.id}: ${auditErr} — the transition was refused, nothing applied`);
+    return NextResponse.json({
+      error: "The action was not applied: its audit record could not be written. Nothing changed — try again in a moment.",
+      code: "audit_unwritable",
+      applied: false,
+    }, { status: 500 });
+  }
+  // The attempt row above stands for a transition that did not land: say so,
+  // naming it. Retried once (fixed id, 23505 = landed); a failure is LOGGED
+  // with both ids so the trail can be reconciled against the ticket's history.
+  const recordNotApplied = async (reason: "conflict" | "write_failed" | "hold_release_failed", error?: string) => {
+    const notApplied = {
+      id: crypto.randomUUID(),
+      action: `${auditRow.action}_NOT_APPLIED`,
+      resource_id: body.ticketId,
+      resource_type: "ticket",
+      org_id: ticket.orgId,
+      user_id: caller.id,
+      user_email: callerEmail,
+      user_role: callerRole,
+      details: { attempt: auditRow.id, from: ticket.status, to: newStatus, reason, ...(error ? { error } : {}) },
+    };
+    const err = await insertAuditRowOnce(notApplied);
+    if (err) {
+      console.error(`[workflow-action] could not record that ${auditRow.action} (audit row ${auditRow.id}) on ticket ${body.ticketId} was NOT applied (${reason}) — reconcile from the ticket's history: ${err}`);
+    }
+  };
+
+  if (holdPlan) {
+    const { holds, resolution, reason } = holdPlan;
+    const nowIso = new Date().toISOString();
+    if (resolution.action === "release") {
+      const { data: released, error: relErr } = await supabaseAdmin
+        .from("document_holds")
+        .update({ released_at: nowIso, released_by: caller.id, released_by_name: callerEmail ?? null,
+                  released_reason: reason || `Released on ${newStatus === "CANCELED" ? "cancellation" : "close"} of ticket ${ticket.ticketId ?? body.ticketId}` })
+        .in("id", holds.map((h) => h.id)).is("released_at", null).select("id");
+      if (relErr) {
+        await recordNotApplied("hold_release_failed", relErr.message);
+        return NextResponse.json({ error: `Couldn't release the hold: ${relErr.message}` }, { status: 500 });
+      }
+      for (const h of holds) {
+        await supabaseAdmin.from("audit_logs").insert({
+          action: "HOLD_RELEASED", resource_type: "document", resource_id: h.document_id, org_id: ticket.orgId,
+          user_id: caller.id, user_email: callerEmail ?? null,
+          details: { holdId: h.id, reason: h.reason, releasedReason: reason || null, viaTicketClose: body.ticketId, released: (released ?? []).length },
+        }).then(() => undefined, () => undefined);
+      }
+    } else {
+      for (const h of holds) {
+        await supabaseAdmin.from("audit_logs").insert({
+          action: "HOLD_KEPT_ON_CLOSE", resource_type: "document", resource_id: h.document_id, org_id: ticket.orgId,
+          user_id: caller.id, user_email: callerEmail ?? null,
+          details: { holdId: h.id, reason: h.reason, keptBecause: reason, ticketId: body.ticketId, ticketOutcome: newStatus },
+        }).then(() => undefined, () => undefined);
       }
     }
   }
@@ -677,8 +801,12 @@ export async function POST(req: NextRequest) {
       .select("id")
       .maybeSingle());
   }
-  if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
+  if (updErr) {
+    await recordNotApplied("write_failed", updErr.message);
+    return NextResponse.json({ error: updErr.message }, { status: 500 });
+  }
   if (!updated) {
+    await recordNotApplied("conflict");
     return NextResponse.json(
       { error: "The ticket changed while you were acting — refresh and try again", conflict: true },
       { status: 409 },
@@ -718,73 +846,6 @@ export async function POST(req: NextRequest) {
     const mirrorErr = (await mirror()) && (await mirror());
     if (mirrorErr) {
       console.error(`[workflow-action] ticket_comments mirror failed for comment ${mirrorRow.id} on ticket ${body.ticketId} — reconcile from tickets.comments: ${mirrorErr}`);
-    }
-  }
-
-  // Audit — server-written, cannot be skipped by the client.
-  // EVID-12 / SM-7: the write is CHECKED. supabase-js resolves a refused
-  // insert with { error } rather than throwing, so the old bare await reported
-  // success either way. A failure is retried once; if the row still cannot be
-  // written, the ticket's own (append-only) history records that the audit
-  // row for this transition is missing, and the caller is told — a 500, never
-  // "ok" with a missing row. The details name what was decided on: the
-  // deliverable revision, and the identity of every file the action carried
-  // or approved.
-  const auditRow = {
-    action: `TICKET_${action.action.toUpperCase()}`,
-    resource_id: body.ticketId,
-    resource_type: "ticket",
-    org_id: ticket.orgId,
-    user_id: caller.id,
-    user_email: callerEmail,
-    user_role: callerRole,
-    details: {
-      from: ticket.status, to: newStatus, label: action.label, authority,
-      deliverable_rev: (updates.deliverable_rev as string | null | undefined) ?? ticket.deliverableRev ?? null,
-      // WF-9 / WF-18: the audit row names WHAT was attached or WHO now drafts.
-      ...(vetted.attachment
-        ? { attachment: { ...fileIdentity(vetted.attachment, vettedEtags.attachment), type: vetted.attachment.type } }
-        : {}),
-      ...(vetted.finalAttachment ? { finalAttachment: fileIdentity(vetted.finalAttachment, vettedEtags.finalAttachment) } : {}),
-      ...(vetted.redlineAttachment ? { redlineAttachment: fileIdentity(vetted.redlineAttachment, vettedEtags.redlineAttachment) } : {}),
-      ...(APPROVING_ACTIONS.has(action.action)
-        ? { approvedDrafts: (ticket.attachments ?? []).filter((a) => a?.type === "Draft" && a.status === "submitted").map((a) => fileIdentity(a, null)) }
-        : {}),
-      ...(action.action === "reassign_drafter" && body.assignment
-        ? { from_drafter_id: ticket.assignedDrafterId ?? null, to_drafter_id: body.assignment.id, reason: body.comment ?? null }
-        : {}),
-    },
-  };
-  const writeAudit = async (): Promise<string | null> => {
-    try {
-      const { error } = await supabaseAdmin.from("audit_logs").insert(auditRow);
-      return error ? (error.message || "insert refused") : null;
-    } catch (e) {
-      return (e as Error)?.message ?? String(e);
-    }
-  };
-  const auditErr = (await writeAudit()) && (await writeAudit());
-  if (auditErr) {
-    console.error(`[workflow-action] AUDIT ROW NOT WRITTEN for ${auditRow.action} on ticket ${body.ticketId} (${ticket.status} → ${newStatus}) by ${caller.id}: ${auditErr}`);
-    const markedAt = new Date().toISOString();
-    const marker = {
-      action: "Audit record not written",
-      user: "system",
-      role: "System",
-      date: markedAt,
-      details: `The audit row for "${action.label}" (${ticket.status} → ${newStatus}, by ${callerEmail}) could not be written: ${auditErr}. This entry stands in its place.`,
-      auditUnrecorded: { action: auditRow.action, from: ticket.status, to: newStatus, actor: caller.id, at: String(updates.last_modified) },
-    };
-    const priorHistory = Array.isArray(updates.history) ? (updates.history as unknown[]) : [...(ticket.history ?? [])];
-    const { data: marked, error: markErr } = await supabaseAdmin
-      .from("tickets")
-      .update({ history: [...priorHistory, marker], last_modified: markedAt })
-      .eq("id", body.ticketId)
-      .eq("last_modified", String(updates.last_modified))
-      .select("id")
-      .maybeSingle();
-    if (markErr || !marked) {
-      console.error(`[workflow-action] could not record the missing audit row on ticket ${body.ticketId}: ${markErr?.message ?? "the ticket changed first"}`);
     }
   }
 
@@ -904,14 +965,6 @@ export async function POST(req: NextRequest) {
     console.error("[workflow-action] fan-out failed (transition committed):", e);
   }
 
-  if (auditErr) {
-    return NextResponse.json({
-      error: "The action was applied, but its audit record could not be written. The request's history records that the audit row is missing — tell your administrator.",
-      code: "audit_unrecorded",
-      applied: true,
-      status: newStatus,
-    }, { status: 500 });
-  }
   return NextResponse.json({ ok: true, status: newStatus });
 }
 

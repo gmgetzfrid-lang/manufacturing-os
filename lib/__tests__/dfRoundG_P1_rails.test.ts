@@ -285,7 +285,11 @@ describe("20261166 — the policies (PERS-1 done-when 3, AUTHZ-13 / DEC-44 (DF-P
     expect(orgs).toContain("WHERE auth.uid() IS NOT NULL");
     const mentions = between(M, "CREATE OR REPLACE FUNCTION ticket_mentions_me(p_ticket uuid)", "\n$$;");
     expect(mentions).toContain("LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$");
-    expect(mentions).toContain("WHERE c.ticket_id = p_ticket AND auth.uid() = ANY (COALESCE(c.mentioned_uids, '{}'::uuid[]))");
+    // the mention leg counts a comment that is not deleted (deleting it withdraws the mention)
+    expect(mentions).toContain("WHERE c.ticket_id = p_ticket AND c.deleted_at IS NULL\n       AND auth.uid() = ANY (COALESCE(c.mentioned_uids, '{}'::uuid[]))");
+    expect(M).toContain("ALTER TABLE ticket_comments ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;");
+    expect(M.indexOf("ADD COLUMN IF NOT EXISTS deleted_at")).toBeLessThan(M.indexOf("CREATE OR REPLACE FUNCTION ticket_mentions_me"));
+    expect(M).toContain("AND (SELECT prosrc LIKE '%c.deleted_at IS NULL%' FROM pg_proc WHERE proname = 'ticket_mentions_me')");
     for (const f of ["contractor_only_org_ids()", "ticket_mentions_me(uuid)"]) {
       expect(M).toContain(`REVOKE ALL ON FUNCTION ${f} FROM PUBLIC, anon;`);
       expect(M).toContain(`GRANT EXECUTE ON FUNCTION ${f} TO authenticated, service_role;`);
@@ -608,38 +612,108 @@ describe("AUTHZ-11 / SM-13 — a file the route appends is vetted: this ticket's
   });
 });
 
-describe("EVID-12 / SM-7 — the audit write is checked: retried once, then recorded on the ticket and reported, never 'ok' with a missing row", () => {
+describe("EVID-12 / SM-7 — the audit row is written FIRST: a row that cannot be written refuses the transition, nothing applied; never 'ok' with a missing row", () => {
   const atReview = () => {
     state.user = { id: "e-1" };
     state.rows.org_members = [member("e-1", "Engineer-2"), member("req-1", "Requester"), member("d-1", "Drafter")];
     state.rows.tickets = [ticketRow({ status: "PENDING_REVIEW", requester_role: "Engineer-2", requester_id: "e-1", attachments: [DRAFT], deliverable_rev: "1A" })];
   };
-  it("a transient first failure is retried: one row lands, 200; the details carry the issued rev and the approved drafts", async () => {
+  const firstIndex = (table: string, method: string, pred: (args: unknown[]) => boolean = () => true) =>
+    state.calls.findIndex((c) => c.table === table && c.method === method && pred(c.args));
+  it("a transient first failure is retried with the SAME id: one row lands, 200; the details carry the issued rev and the approved drafts", async () => {
     atReview();
     state.errors["audit_logs.insert"] = [{ message: "connection reset" }];
     const res = await post({ ticketId: "t1", actionType: "approve_draft_ifc" });
     expect(res.status).toBe(200);
-    expect(insertsOf("audit_logs").filter((a) => a.action === "TICKET_APPROVE_DRAFT_IFC")).toHaveLength(2); // the refused attempt + the retry
-    const details = insertsOf("audit_logs").at(-1)!.details as Record<string, unknown>;
-    expect(details).toMatchObject({ from: "PENDING_REVIEW", to: "PENDING_IFC", deliverable_rev: "1" });
+    const rows = insertsOf("audit_logs").filter((a) => a.action === "TICKET_APPROVE_DRAFT_IFC");
+    expect(rows).toHaveLength(2); // the refused attempt + the retry
+    expect(typeof rows[0].id).toBe("string");
+    expect(rows[1].id).toBe(rows[0].id);
+    const details = rows[1].details as Record<string, unknown>;
+    expect(details).toMatchObject({ from: "PENDING_REVIEW", to: "PENDING_IFC", deliverable_rev: "1", recordedBeforeApply: true });
     expect(details.approvedDrafts).toEqual([{ id: "a-d", name: "iso_1A.pdf", url: DRAFT.url, size: null, etag: null }]);
   });
 
-  it("a row that cannot be written: 500 'audit_unrecorded' (applied), and the ticket's history records the missing row, compare-and-set on the token just written", async () => {
+  it("a retry whose first insert landed but lost its reply (23505 on the primary key) counts as landed — never a second row, never a third attempt", async () => {
+    atReview();
+    state.errors["audit_logs.insert"] = [{ message: "connection reset" }, { code: "23505", message: 'duplicate key value violates unique constraint "audit_logs_pkey"' }];
+    const res = await post({ ticketId: "t1", actionType: "approve_draft_ifc" });
+    expect(res.status).toBe(200);
+    const rows = insertsOf("audit_logs").filter((a) => a.action === "TICKET_APPROVE_DRAFT_IFC");
+    expect(rows).toHaveLength(2);
+    expect(new Set(rows.map((r) => r.id)).size).toBe(1);
+    expect(updatesOf("tickets")[0].status).toBe("PENDING_IFC");
+  });
+
+  it("a row that cannot be written: 500 'audit_unwritable' with applied:false — no ticket write, no mirror, no history marker, no notification; the retry applies once", async () => {
     atReview();
     const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     state.errors["audit_logs.insert"] = [{ message: "permission denied" }, { message: "permission denied" }];
-    const res = await post({ ticketId: "t1", actionType: "approve_draft_ifc" });
+    const res = await post({ ticketId: "t1", actionType: "request_revision", comment: "tag is wrong" });
     expect(res.status).toBe(500);
-    expect(await res.json()).toMatchObject({ code: "audit_unrecorded", applied: true, status: "PENDING_IFC" });
-    const [transition, marker] = updatesOf("tickets");
-    expect(transition.status).toBe("PENDING_IFC");
-    const markerEntry = (marker.history as Array<Record<string, unknown>>).at(-1)!;
-    expect(markerEntry).toMatchObject({ action: "Audit record not written", user: "system", auditUnrecorded: { action: "TICKET_APPROVE_DRAFT_IFC", from: "PENDING_REVIEW", to: "PENDING_IFC", actor: "e-1" } });
-    expect((marker.history as unknown[]).slice(0, -1)).toEqual(transition.history);
-    const i = state.calls.findIndex((c) => c.table === "tickets" && c.method === "update" && c.args[0] === marker);
-    expect(state.calls.slice(i + 1, i + 3).map((c) => c.args)).toEqual([["id", "t1"], ["last_modified", transition.last_modified]]);
-    expect(spy.mock.calls.some((c) => String(c[0]).includes("AUDIT ROW NOT WRITTEN"))).toBe(true);
+    expect(await res.json()).toMatchObject({ code: "audit_unwritable", applied: false });
+    expect(ticketWrites()).toHaveLength(0);
+    expect(insertsOf("ticket_comments")).toHaveLength(0);
+    expect(insertsOf("notifications")).toHaveLength(0);
+    expect(insertsOf("email_notifications")).toHaveLength(0);
+    expect(insertsOf("audit_logs").filter((a) => a.action === "TICKET_REQUEST_REVISION")).toHaveLength(2); // tried, retried, refused
+    expect(spy.mock.calls.some((c) => String(c[0]).includes("AUDIT ROW NOT WRITTEN") && String(c[0]).includes("nothing applied"))).toBe(true);
+    // the page treats the 500 as a failure and the user retries: exactly one transition, one row
+    state.calls = [];
+    const again = await post({ ticketId: "t1", actionType: "request_revision", comment: "tag is wrong" });
+    expect(again.status).toBe(200);
+    expect(updatesOf("tickets")).toHaveLength(1);
+    expect(insertsOf("audit_logs").filter((a) => a.action === "TICKET_REQUEST_REVISION")).toHaveLength(1);
+  });
+
+  it("the row is written before the hold release and before the compare-and-set; an unwritable row releases no hold", async () => {
+    state.user = { id: "req-1" };
+    state.rows.org_members = [member("req-1", "Requester"), member("d-1", "Drafter")];
+    state.rows.tickets = [ticketRow({ status: "FINAL_DRAFT", attachments: [FINAL] })];
+    state.rows.document_holds = [{ id: "h-1", document_id: "doc-1", reason: "rev in progress", notes: null, origin_ticket_id: "t1", released_at: null }];
+    expect((await post({ ticketId: "t1", actionType: "close_ticket", holdResolution: { action: "release", reason: "done" } })).status).toBe(200);
+    const audit = firstIndex("audit_logs", "insert", (a) => (a[0] as { action?: string }).action === "TICKET_CLOSE_TICKET");
+    expect(audit).toBeGreaterThanOrEqual(0);
+    expect(audit).toBeLessThan(firstIndex("document_holds", "update"));
+    expect(audit).toBeLessThan(firstIndex("tickets", "update"));
+    state.calls = [];
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    state.errors["audit_logs.insert"] = [{ message: "permission denied" }, { message: "permission denied" }];
+    expect((await post({ ticketId: "t1", actionType: "close_ticket", holdResolution: { action: "release", reason: "done" } })).status).toBe(500);
+    expect(updatesOf("document_holds")).toHaveLength(0);
+    expect(ticketWrites()).toHaveLength(0);
+  });
+
+  it("a transition that does not land after its row did (a lost compare-and-set, a refused write) leaves a TICKET_<ACTION>_NOT_APPLIED row naming the attempt; nothing is ever updated in audit_logs", async () => {
+    atReview();
+    state.onCall = (table, method) => { if (table === "tickets" && method === "update") state.rows.tickets[0].last_modified = "2026-10-02T00:00:07.000Z"; };
+    const lost = await post({ ticketId: "t1", actionType: "approve_draft_ifc" });
+    expect(lost.status).toBe(409);
+    const [attempt, notApplied] = insertsOf("audit_logs");
+    expect(attempt).toMatchObject({ action: "TICKET_APPROVE_DRAFT_IFC" });
+    expect(notApplied).toMatchObject({ action: "TICKET_APPROVE_DRAFT_IFC_NOT_APPLIED", resource_id: "t1", user_id: "e-1", details: { attempt: attempt.id, from: "PENDING_REVIEW", to: "PENDING_IFC", reason: "conflict" } });
+    expect(notApplied.id).not.toBe(attempt.id);
+    expect(insertsOf("audit_logs")).toHaveLength(2);
+    expect(state.calls.filter((c) => c.table === "audit_logs" && ["update", "upsert", "delete"].includes(c.method))).toHaveLength(0);
+    // a refused write
+    state.calls = []; state.onCall = null;
+    state.rows.tickets = [ticketRow({ status: "PENDING_REVIEW", requester_role: "Engineer-2", requester_id: "e-1", attachments: [DRAFT] })];
+    state.errors["tickets.update"] = [{ code: "P0001", message: "refused by the guard" }];
+    const refused = await post({ ticketId: "t1", actionType: "approve_draft_ifc" });
+    expect(refused.status).toBe(500);
+    expect(insertsOf("audit_logs").at(-1)).toMatchObject({ action: "TICKET_APPROVE_DRAFT_IFC_NOT_APPLIED", details: { reason: "write_failed", error: "refused by the guard" } });
+    expect(insertsOf("notifications")).toHaveLength(0);
+  });
+
+  it("a NOT_APPLIED row that cannot be written is LOGGED with both ids (reconcile from the ticket's history); the answer is still the 409", async () => {
+    atReview();
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    state.onCall = (table, method) => { if (table === "tickets" && method === "update") state.rows.tickets[0].last_modified = "2026-10-02T00:00:08.000Z"; };
+    state.errors["audit_logs.insert"] = [null, { message: "down" }, { message: "down" }];
+    const res = await post({ ticketId: "t1", actionType: "approve_draft_ifc" });
+    expect(res.status).toBe(409);
+    const attemptId = insertsOf("audit_logs")[0].id as string;
+    expect(spy.mock.calls.some((c) => String(c[0]).includes(`audit row ${attemptId}`) && String(c[0]).includes("NOT applied (conflict)"))).toBe(true);
   });
 
   it("the ticket_comments mirror is retried and then LOGGED with the ids (never swallowed); the transition itself stands", async () => {
@@ -735,7 +809,8 @@ describe("EDGE-15 — a row with no token compare-and-sets on the null itself", 
     state.onCall = (table, method) => { if (table === "tickets" && method === "update") state.rows.tickets[0].last_modified = "2026-10-02T00:00:05.000Z"; };
     const second = await post({ ticketId: "t1", actionType: "save_progress" });
     expect(second.status).toBe(409);
-    expect(insertsOf("audit_logs")).toHaveLength(0);
+    // EVID-12: the attempt row was written first; the loss is recorded against it
+    expect(insertsOf("audit_logs").map((a) => a.action)).toEqual(["TICKET_SAVE_PROGRESS", "TICKET_SAVE_PROGRESS_NOT_APPLIED"]);
   });
 });
 
@@ -881,7 +956,7 @@ describe("AUTHZ-13 — the service-role routes that write watchers honour the Co
     expect(ticketWrites()).toHaveLength(0);
     // the mention leg was asked, of the comment table, as the SQL reads it
     const i = state.calls.findIndex((c) => c.table === "ticket_comments" && c.method === "select");
-    expect(state.calls.slice(i + 1, i + 3).map((c) => [c.method, ...c.args])).toEqual([["eq", "ticket_id", "t1"], ["contains", "mentioned_uids", ["c-1"]]]);
+    expect(state.calls.slice(i + 1, i + 4).map((c) => [c.method, ...c.args])).toEqual([["eq", "ticket_id", "t1"], ["contains", "mentioned_uids", ["c-1"]], ["is", "deleted_at", null]]);
     // already following (e.g. added before the scope existed): leaving is fine
     state.calls = [];
     state.rows.tickets = [ticketRow({ watchers: ["c-1"] })];
@@ -933,6 +1008,58 @@ describe("AUTHZ-13 — the service-role routes that write watchers honour the Co
     expect((await comment("my request")).status).toBe(200);
     const rpc = state.calls.find((c) => c.table === "rpc" && c.method === "post_ticket_comment")!;
     expect((rpc.args[1] as { p_watchers: string[] }).p_watchers).toContain("c-1");
+  });
+
+  it("the workflow route (a third writer of watchers) refuses a Contractor-only member's action on a ticket outside its scope: 404 naming no status, nothing written, no audit row — even when the org grants ticket.draft_work", async () => {
+    // the org lets outside drafters pick up queue work: attach_file is offered on an unassigned ticket
+    const grant = { org_id: "o1", key: "capability_policy", data: { caps: { "ticket.draft_work": ["Drafter", "Contractor"] } }, updated_at: "2026-10-01T09:00:00+00:00" };
+    setup({ assigned_drafter_id: null, status: "PENDING_ASSIGNMENT" });
+    state.rows.org_configurations = [grant];
+    const res = await post({ ticketId: "t1", actionType: "attach_file", attachment: { ...DRAFT, id: "a-x", type: "Reference" } });
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error).toBe("Ticket not found");
+    expect(JSON.stringify(body)).not.toMatch(/PENDING_ASSIGNMENT|not available/);
+    expect(ticketWrites()).toHaveLength(0);
+    expect(insertsOf("audit_logs")).toHaveLength(0);
+    expect(state.calls.filter((c) => c.table === "r2")).toHaveLength(0);
+    // any action, any status: the same 404 (no status is named)
+    state.calls = [];
+    const probe = await post({ ticketId: "t1", actionType: "close_ticket" });
+    expect(probe.status).toBe(404);
+    expect((await probe.json()).error).toBe("Ticket not found");
+    // in scope (it is the assigned drafter): the action lands and it follows
+    state.calls = [];
+    setup({ assigned_drafter_id: "c-1" });
+    state.rows.org_configurations = [grant];
+    expect((await post({ ticketId: "t1", actionType: "attach_file", attachment: { ...DRAFT, id: "a-y", type: "Reference" } })).status).toBe(200);
+    expect(updatesOf("tickets")[0].watchers).toContain("c-1");
+    // not Contractor-only: no mention lookup, the org-wide read stands
+    state.calls = [];
+    setup({}, member("d-1", "Drafter"));
+    expect((await post({ ticketId: "t1", actionType: "save_progress" })).status).toBe(200);
+    expect(state.calls.filter((c) => c.table === "ticket_comments" && c.method === "select")).toHaveLength(0);
+  });
+
+  it("the workflow route answers a failed mention lookup with a 503 and writes nothing", async () => {
+    setup({ assigned_drafter_id: null, status: "PENDING_ASSIGNMENT" });
+    state.errors["ticket_comments.select"] = [{ message: "connection reset" }];
+    const res = await post({ ticketId: "t1", actionType: "attach_file", attachment: { ...DRAFT, id: "a-x", type: "Reference" } });
+    expect(res.status).toBe(503);
+    expect(ticketWrites()).toHaveLength(0);
+    expect(insertsOf("audit_logs")).toHaveLength(0);
+  });
+
+  it("the mention leg ignores a deleted comment (20261166's ticket_mentions_me and the TS mirror agree)", async () => {
+    setup();
+    state.rows.ticket_comments = [{ id: "cm-1", ticket_id: "t1", mentioned_uids: ["c-1"], deleted_at: "2026-10-03T00:00:00Z" }];
+    expect((await watch(true)).status).toBe(404);
+    const i = state.calls.findIndex((c) => c.table === "ticket_comments" && c.method === "select");
+    expect(state.calls.slice(i + 1, i + 4).map((c) => [c.method, ...c.args])).toContainEqual(["is", "deleted_at", null]);
+    state.calls = [];
+    state.rows.ticket_comments = [{ id: "cm-1", ticket_id: "t1", mentioned_uids: ["c-1"], deleted_at: null }];
+    expect((await watch(true)).status).toBe(200);
+    expect(M).toMatch(/WHERE c\.ticket_id = p_ticket AND c\.deleted_at IS NULL\s+AND auth\.uid\(\) = ANY/);
   });
 });
 

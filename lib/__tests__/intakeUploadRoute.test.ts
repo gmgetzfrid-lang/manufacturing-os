@@ -1061,12 +1061,48 @@ describe("a retry returns the original; an error names no internals", () => {
     const row = db.tables.tickets[0] as Row;
     expect((row.attachments as Row[]).map((a) => a.name)).toEqual(["a-workflow-file.pdf", "REDLINE_sheet.pdf"]);
     expect((row.history as Row[]).map((h) => h.action)).toEqual(["Approve (Issue for Construction) — issued Rev 1", "Redline markups received via intake portal"]);
-    // a ticket that took no append (archived between the read and the write) attaches nothing and keeps no object
+    // a ticket that took no append (gone between the read and the write) attaches nothing and keeps no object
     db.r2Deletes = [];
     db.rpc.append_ticket_redline = () => ({ data: false, error: null });
     const gone = await upload({ ticketId: T });
     expect(gone.status).toBe(404);
     expect(db.r2Deletes).toHaveLength(1);
+    // … and one ARCHIVED in between is told so (409), not "no redline request matches"
+    db.r2Deletes = [];
+    db.rpc.append_ticket_redline = () => { (db.tables.tickets[0] as Row).archived_at = "2026-10-03T00:00:00Z"; return { data: false, error: null }; };
+    const archived = await upload({ ticketId: T });
+    expect(archived.status).toBe(409);
+    expect((await archived.json()).error).toMatch(/archived.*restore it/);
+    expect(db.r2Deletes).toHaveLength(1);
+  });
+  it("drafting-flow SM-9 (DF-P1): an archived ticket takes no redline on either path — a clear 409 before anything is stored; the fallback's compare-and-set excludes archived stubs", async () => {
+    seed();
+    const T = "00000000-0000-4000-8000-00000000a0a0";
+    const LM = "2026-10-02T00:00:00.000Z";
+    db.tables.tickets = [{ id: T, org_id: ORG, ticket_id: "T-9", title: "Collision", attachments: [], history: [], last_modified: LM, archived_at: "2026-10-01T00:00:00Z", metadata: { intake_collision: { intakeLinkId: LINK } } }];
+    const res = await upload({ ticketId: T });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/archived.*Ask the requester to restore it/);
+    expect(db.r2Puts).toEqual([]);
+    expect(db.rpcCalls.filter((c) => c.fn === "append_ticket_redline")).toHaveLength(0);
+    // before 20261166: the fallback's write carries the archived leg, and a ticket archived after the read is refused (409), the object removed
+    db.rpc.append_ticket_redline = () => ({ data: null, error: { code: "PGRST202", message: "Could not find the function public.append_ticket_redline" } });
+    const row = db.tables.tickets[0] as Row;
+    delete row.archived_at;
+    expect((await upload({ ticketId: T })).status).toBe(200);
+    const w = db.writes.find((x) => x.table === "tickets" && x.method === "update")!;
+    expect(w.filters).toEqual(expect.arrayContaining([["eq", "id", T], ["is", "archived_at", null], ["eq", "last_modified", LM]]));
+    db.writes = []; db.r2Puts = []; db.r2Deletes = [];
+    row.attachments = []; row.history = [];
+    let reads = 0;
+    Object.defineProperty(row, "archived_at", { get: () => (reads++ > 0 ? "2026-10-03T00:00:00Z" : null), set: () => undefined, enumerable: true, configurable: true });
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const late = await upload({ ticketId: T });
+    expect(late.status).toBe(409);
+    expect((await late.json()).error).toMatch(/archived/);
+    expect(row.attachments).toEqual([]);
+    expect(db.r2Puts).toHaveLength(1); // stored after the clean read, then removed
+    expect(db.r2Deletes.map((d) => d.Key)).toEqual(db.r2Puts.map((p) => p.Key));
   });
   it("drafting-flow SM-9 (DF-P1): before 20261166 the redline append compare-and-sets on the ticket's last_modified as read", async () => {
     seed();

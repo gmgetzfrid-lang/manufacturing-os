@@ -929,7 +929,7 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
     const { data: ticket, error: tErr } = UUID_RE.test(ticketId)
       ? await supabaseAdmin
           .from("tickets")
-          .select("id, ticket_id, title, attachments, history, metadata, assigned_drafter_id, requester_id, last_modified")
+          .select("id, ticket_id, title, attachments, history, metadata, assigned_drafter_id, requester_id, last_modified, archived_at")
           .eq("id", ticketId).eq("org_id", orgId)
           .eq("metadata->intake_collision->>intakeLinkId", linkId)
           .maybeSingle()
@@ -938,6 +938,13 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
     const meta = ((ticket?.metadata ?? {}) as { intake_collision?: { intakeLinkId?: string | null } });
     if (!ticket || String(meta.intake_collision?.intakeLinkId ?? "") !== linkId) {
       return fail("No redline request on this link matches that ticket.", 404);
+    }
+    // SM-9 (DF-P1): an archived ticket takes no redline on either path (the
+    // append function refuses one; the compare-and-set fallback below does
+    // too), and the sender is told why — before anything is stored.
+    const ARCHIVED_REDLINE = "This request is archived, so it can't take a redline. Ask the requester to restore it, then send the redline again.";
+    if ((ticket as { archived_at?: string | null }).archived_at) {
+      return fail(ARCHIVED_REDLINE, 409);
     }
 
     const safeName = file.name.replace(/[^\w.\-]+/g, "_").slice(0, 120) || "redline";
@@ -981,17 +988,24 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
     if (!appendErr) {
       if (appended !== true) {
         await deleteObject(ref, key);
-        return fail("No redline request on this link matches that ticket.", 404, "ticket append: the ticket took no append (gone or archived)");
+        // The append refuses a ticket that is gone or archived. It was neither
+        // when read above, so ask which happened in between.
+        const { data: now } = await supabaseAdmin.from("tickets")
+          .select("archived_at").eq("id", ticketId).eq("org_id", orgId).maybeSingle();
+        if ((now as { archived_at?: string | null } | null)?.archived_at) {
+          return fail(ARCHIVED_REDLINE, 409, "ticket append: the ticket was archived after it was read");
+        }
+        return fail("No redline request on this link matches that ticket.", 404, "ticket append: the ticket took no append (gone)");
       }
       attached = true;
     }
-    let current = ticket as { attachments?: unknown; history?: unknown; last_modified?: string | null };
+    let current = ticket as { attachments?: unknown; history?: unknown; last_modified?: string | null; archived_at?: string | null };
     for (let attempt = 0; attempt < 2 && !attached; attempt++) {
       let cas = supabaseAdmin.from("tickets").update({
         attachments: [...((current.attachments as unknown[] | null) ?? []), attachment],
         history: [...((current.history as unknown[] | null) ?? []), historyEntry],
         last_modified: nowIso,
-      }).eq("id", ticketId).eq("org_id", orgId);
+      }).eq("id", ticketId).eq("org_id", orgId).is("archived_at", null);
       cas = current.last_modified ? cas.eq("last_modified", current.last_modified) : cas.is("last_modified", null);
       const { data: casRows, error: updErr } = await cas.select("id");
       if (updErr) {
@@ -1000,9 +1014,13 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
       }
       if (((casRows as unknown[] | null) ?? []).length > 0) { attached = true; break; }
       const { data: fresh, error: reErr } = await supabaseAdmin.from("tickets")
-        .select("attachments, history, last_modified").eq("id", ticketId).eq("org_id", orgId).maybeSingle();
+        .select("attachments, history, last_modified, archived_at").eq("id", ticketId).eq("org_id", orgId).maybeSingle();
       if (reErr || !fresh) break;
       current = fresh as typeof current;
+      if (current.archived_at) {
+        await deleteObject(ref, key);
+        return fail(ARCHIVED_REDLINE, 409, "ticket update: the ticket was archived after it was read");
+      }
     }
     if (!attached) {
       await deleteObject(ref, key);

@@ -12,8 +12,10 @@
 // so it cannot ask the database. If such a route let a Contractor-only member
 // follow or comment on any ticket, that member would land in `watchers`, and
 // `watchers` is one of the scope's own legs, so the narrowing would be undone.
-// /api/tickets/watch and /api/tickets/comment ask this module first and refuse
-// a ticket outside the scope, with the same "not found" an RLS read gives.
+// /api/tickets/watch, /api/tickets/comment and /api/tickets/workflow-action
+// (whose transitions add the actor to `watchers`) ask this module first and
+// refuse a ticket outside the scope, with the same "not found" an RLS read
+// gives.
 //
 // The predicate mirrors the SQL exactly:
 //   * Contractor-only = `roles` when it is non-empty, else the headline, and
@@ -23,7 +25,10 @@
 //     adds the headline to the collection): a looser test here than in the
 //     database would re-open the bypass for a member the database narrows.
 //   * the legs: requester, drafter, engineer, watcher, mentioned on a comment
-//     row (the `ticket_comments` copy, as the SQL reads it).
+//     row that is not deleted (the `ticket_comments` copy, as the SQL's
+//     ticket_mentions_me reads it: deleting the comment withdraws the
+//     mention). An edited comment keeps the mentions it was posted with:
+//     the comment PATCH does not rewrite `mentioned_uids` in either copy.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -67,6 +72,7 @@ export async function ticketReadScope(
     .select("id")
     .eq("ticket_id", ticket.id)
     .contains("mentioned_uids", [uid])
+    .is("deleted_at", null)
     .limit(1);
   if (error) return "unknown";
   return (data ?? []).length > 0 ? "in" : "out";

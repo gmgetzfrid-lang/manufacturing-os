@@ -33,7 +33,8 @@
 --       keeps the org-wide read (the product model); ONLY a member whose
 --       whole collection is Contractor is narrowed — to tickets they
 --       requested, are assigned to (drafter or engineer), follow, or were
---       mentioned on — by a RESTRICTIVE SELECT policy on tickets and the same
+--       mentioned on in a comment not deleted — by a RESTRICTIVE SELECT
+--       policy on tickets and the same
 --       scope on ticket_comments (the second copy of every thread). The
 --       row-independent leg (the caller's Contractor-only orgs) runs once per
 --       statement, so no other member pays a per-row function call.
@@ -198,6 +199,7 @@ ALTER TABLE tickets ADD COLUMN IF NOT EXISTS deliverable_rev TEXT;
 ALTER TABLE tickets ADD COLUMN IF NOT EXISTS draft_iteration INT NOT NULL DEFAULT 0;
 ALTER TABLE ticket_comments ADD COLUMN IF NOT EXISTS mentioned_uids UUID[] DEFAULT '{}';
 ALTER TABLE ticket_comments ADD COLUMN IF NOT EXISTS org_id UUID;
+ALTER TABLE ticket_comments ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
 ALTER TABLE document_intents ADD COLUMN IF NOT EXISTS ticket_id UUID;
 
 -- ── 1. ticket_update_guard — re-created from 20261038 (lineDiff-pinned) ─────
@@ -353,7 +355,9 @@ CREATE POLICY tickets_org_delete ON tickets FOR DELETE
 -- A member whose WHOLE collection is Contractor (headline Contractor with no
 -- additive role, or every additive role Contractor) reads a ticket only when
 -- they requested it, are its drafter or engineer, follow it, or were
--- mentioned on it. Everyone else keeps the org-wide read (the product model).
+-- mentioned on it in a comment that is not deleted (deleting the comment
+-- withdraws the mention). Everyone else keeps the org-wide read (the product
+-- model).
 --
 -- Cost: the row-independent part is one call per STATEMENT, not per row.
 -- contractor_only_org_ids() returns the caller's Contractor-only orgs, and the
@@ -368,9 +372,10 @@ CREATE POLICY tickets_org_delete ON tickets FOR DELETE
 -- nothing: no org, no mention. The policies bind the authenticated role only:
 -- anon reads no ticket under the org policy anyway and may not execute the
 -- functions (DRLS-16), so they never appear in an anon query's plan.
--- /api/tickets/watch and /api/tickets/comment run as the service role and
--- write watchers, which is one of the scope's legs. They ask
--- lib/ticketReadScope.ts, the same predicate in TypeScript, before writing.
+-- /api/tickets/watch, /api/tickets/comment and /api/tickets/workflow-action
+-- run as the service role and write watchers, which is one of the scope's
+-- legs. They ask lib/ticketReadScope.ts, the same predicate in TypeScript,
+-- before writing.
 CREATE OR REPLACE FUNCTION contractor_only_org_ids()
 RETURNS uuid[]
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
@@ -388,7 +393,8 @@ RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
   SELECT auth.uid() IS NOT NULL AND EXISTS (
     SELECT 1 FROM ticket_comments c
-     WHERE c.ticket_id = p_ticket AND auth.uid() = ANY (COALESCE(c.mentioned_uids, '{}'::uuid[]))
+     WHERE c.ticket_id = p_ticket AND c.deleted_at IS NULL
+       AND auth.uid() = ANY (COALESCE(c.mentioned_uids, '{}'::uuid[]))
   );
 $$;
 REVOKE ALL ON FUNCTION ticket_mentions_me(uuid) FROM PUBLIC, anon;
@@ -645,7 +651,7 @@ SELECT 'PERS-1 done-when 3: tickets_org_access (FOR ALL) is gone; one permissive
        AND NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'tickets' AND cmd = 'ALL'),
        NULL
 UNION ALL
-SELECT 'AUTHZ-13 (DEC-44 (DF-P1)): a RESTRICTIVE read scope on tickets and on ticket_comments (authenticated) whose row-independent leg is a per-statement sub-select; both scope functions are SECURITY DEFINER with search_path pinned, executable by authenticated, not by anon or PUBLIC',
+SELECT 'AUTHZ-13 (DEC-44 (DF-P1)): a RESTRICTIVE read scope on tickets and on ticket_comments (authenticated) whose row-independent leg is a per-statement sub-select; the mention leg counts only comments not deleted; both scope functions are SECURITY DEFINER with search_path pinned, executable by authenticated, not by anon or PUBLIC',
        EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'tickets' AND policyname = 'tickets_read_scope'
                 AND cmd = 'SELECT' AND permissive = 'RESTRICTIVE' AND roles = ARRAY['authenticated']::name[]
                 AND qual LIKE '%SELECT contractor_only_org_ids()%' AND qual LIKE '%ticket_mentions_me(id)%'
@@ -657,6 +663,7 @@ SELECT 'AUTHZ-13 (DEC-44 (DF-P1)): a RESTRICTIVE read scope on tickets and on ti
              WHERE n.nspname = 'public' AND p.proname IN ('contractor_only_org_ids', 'ticket_mentions_me')
                AND p.prosecdef AND p.proconfig @> ARRAY['search_path=public'])
        AND (SELECT prosrc LIKE '%<@ ARRAY[''Contractor'']::text[]%' FROM pg_proc WHERE proname = 'contractor_only_org_ids')
+       AND (SELECT prosrc LIKE '%c.deleted_at IS NULL%' FROM pg_proc WHERE proname = 'ticket_mentions_me')
        AND has_function_privilege('authenticated', 'contractor_only_org_ids()', 'EXECUTE')
        AND NOT has_function_privilege('anon', 'contractor_only_org_ids()', 'EXECUTE')
        AND has_function_privilege('authenticated', 'ticket_mentions_me(uuid)', 'EXECUTE')

@@ -472,7 +472,7 @@ describe("SM-11 — rowToTicket carries metadata, so the ticket ⇄ intent bridg
 
 // ═════════════════════════════════════════════════════════════════════════════
 describe("EDGE-11 — the load-bearing invariants carry regression tests", () => {
-  it("CAS: a save_progress applies on (id, status, last_modified) and stamps a fresh last_modified; the second of two concurrent saves — the first landed between its read and its write — is a 409 with no audit row", async () => {
+  it("CAS: a save_progress applies on (id, status, last_modified) and stamps a fresh last_modified; the second of two concurrent saves — the first landed between its read and its write — is a 409, its audit attempt recorded as not applied", async () => {
     state.user = { id: "d-1" };
     state.rows.org_members = [member("d-1", "Drafter"), member("req-1", "Requester")];
     state.rows.tickets = [ticketRow({ status: "DRAFTING" })];
@@ -489,7 +489,12 @@ describe("EDGE-11 — the load-bearing invariants carry regression tests", () =>
     const second = await post({ ticketId: "t1", actionType: "save_progress" });
     expect(second.status).toBe(409);
     expect((await second.json()).conflict).toBe(true);
-    expect(insertsOf("audit_logs")).toHaveLength(0);
+    // DF-P1 (EVID-12 / SM-7): the audit row is written BEFORE the compare-and-set;
+    // a loss is recorded against it, so the trail never shows the lost save as applied
+    const [attempt, notApplied] = insertsOf("audit_logs");
+    expect(insertsOf("audit_logs")).toHaveLength(2);
+    expect(attempt.action).toBe("TICKET_SAVE_PROGRESS");
+    expect(notApplied).toMatchObject({ action: "TICKET_SAVE_PROGRESS_NOT_APPLIED", details: { attempt: attempt.id, reason: "conflict" } });
   });
 
   it("comment RPC fallback is PGRST202-only: an error raised INSIDE post_ticket_comment surfaces as a 500 and nothing is written; a genuinely absent function falls back to the legacy single-statement write", async () => {

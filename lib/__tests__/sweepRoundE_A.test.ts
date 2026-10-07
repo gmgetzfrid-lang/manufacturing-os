@@ -196,7 +196,8 @@ describe("WF-9 — attaching a file is a workflow action: engine authority, rout
     const res = await post({ ticketId: "t1", actionType: "attach_file", attachment: { ...file, type: "Reference" } });
     expect(res.status).toBe(409);
     expect((await res.json()).conflict).toBe(true);
-    expect(insertsOf("audit_logs")).toHaveLength(0);
+    // DF-P1 (EVID-12 / SM-7): the audit row is written first; the lost race is recorded against it
+    expect(insertsOf("audit_logs").map((a) => a.action)).toEqual(["TICKET_ATTACH_FILE", "TICKET_ATTACH_FILE_NOT_APPLIED"]);
   });
   it("comment route PATCH: the root-cause category is Admin-or-DocCtrl (the page's pencil gate), compare-and-set, mirrored to the table and audited", async () => {
     state.user = { id: "a-1" };
