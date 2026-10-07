@@ -184,7 +184,9 @@ export default function DocumentsHomePage() {
           pageConfig: row.page_config ?? undefined,
         };
 
-        const _canRead = computeCanRead(normalized, activeRole, roles);
+        // SESS-6: no role known (activeRole null) reads nothing by role —
+        // not even an "ALL" library; the least-privileged state.
+        const _canRead = activeRole !== null && computeCanRead(normalized, activeRole, roles);
         const _isPublicRead = computeIsPublicRead(normalized);
 
         return {

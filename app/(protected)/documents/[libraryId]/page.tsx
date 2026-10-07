@@ -67,7 +67,9 @@ const MultiDocViewer = dynamic(() => import("@/components/viewers/MultiDocViewer
 import type { TagColumnDef } from "@/lib/documentTags";
 import RevUpModal from "@/components/documents/RevUpModal";
 import { loadMyMarkup, saveMyMarkup, myActiveSessionId, type DocumentMarkup } from "@/lib/markups";
-import { listVersions } from "@/lib/revisions";
+import { listVersions, changeDocumentStatus } from "@/lib/revisions";
+import { isIssueTransition } from "@/lib/issueStatus";
+import { publicOrigin } from "@/lib/publicOrigin";
 import SupersedeModal from "@/components/documents/SupersedeModal";
 import ArchiveConfirmModal from "@/components/documents/ArchiveConfirmModal";
 import RevertConfirmModal from "@/components/documents/RevertConfirmModal";
@@ -77,7 +79,7 @@ import CsvImportModal from "@/components/documents/CsvImportModal";
 import RouteLoader from "@/components/ui/RouteLoader";
 import { listItems as listCollectionItems } from "@/lib/collections";
 import { buildAclIndexFromChain } from "@/lib/acl";
-import { canDiscover, canWithAclChain, canPublishOnLibrary, canPublishViaIndex } from "@/lib/permissions";
+import { canDiscover, canWithAclChain, canPublishOnLibrary, canPublishViaIndex, type Principal } from "@/lib/permissions";
 import { getMyTeamIds } from "@/lib/teams";
 import {
   createFolder,
@@ -746,13 +748,16 @@ export default function LibraryExplorerPage() {
     }
   };
 
-  /** Ctrl+C — copy the selected documents' permanent /d/ links. */
+  /** Ctrl+C — copy the selected documents' permanent /d/ links. Built on
+   *  the configured public origin (XEDGE-5 / PHYS-13), as RelatedPanel and
+   *  the projects' /submit links are — never the page's own host, which on a
+   *  preview deploy is a link nobody outside can open. */
   const copySelectionLinks = () => {
     const rows = sortedDocs.filter((d) => selectedDocIds.has(d.id!));
     if (rows.length === 0) return;
     const text = rows
       .map((d) => d.documentNumber
-        ? `${window.location.origin}/d/${encodeURIComponent(d.documentNumber)}`
+        ? `${publicOrigin()}/d/${encodeURIComponent(d.documentNumber)}`
         : (d.title || d.name || d.id))
       .join("\n");
     void navigator.clipboard?.writeText(text);
@@ -1014,12 +1019,38 @@ export default function LibraryExplorerPage() {
       return;
     }
     if (!(await appConfirm({ title: `Permanently delete ${selectedDocIds.size} document(s)?`, message: "This cannot be undone.", tone: "danger" }))) return;
+    // DRLS-14 (the deploy prerequisite of 20261149): every delete is CHECKED,
+    // one statement per document as confirmDeleteDoc's (DRLS-17). A refusal —
+    // the evidence guard's sentence, a legal hold, RLS — or a delete that
+    // matched no row keeps that document in the list and selected, and says
+    // why in the database's own words; only the documents the database
+    // actually deleted leave the screen. Never a false success.
+    const deleted = new Set<string>();
+    const refused: Array<{ id: string; label: string; reason: string }> = [];
     for (const id of selectedDocIds) {
-      await supabase.from("documents").delete().eq("id", id);
+      const row = documents.find((d) => d.id === id);
+      const label = row?.documentNumber || row?.title || row?.name || "A document";
+      try {
+        const { data: gone, error: delErr } = await supabase.from("documents").delete().eq("id", id).select("id");
+        if (delErr) { refused.push({ id, label, reason: delErr.message }); continue; }
+        if (!gone || gone.length === 0) {
+          refused.push({ id, label, reason: "the database deleted nothing (you may not have permission to delete this document); nothing was changed." });
+          continue;
+        }
+        deleted.add(id);
+      } catch (e) {
+        refused.push({ id, label, reason: (e as Error)?.message || String(e) });
+      }
     }
-    setDocuments((prev) => prev.filter((d) => !selectedDocIds.has(d.id!)));
-    setSelectedDocIds(new Set());
+    setDocuments((prev) => prev.filter((d) => !deleted.has(d.id!)));
+    setSelectedDocIds(new Set(refused.map((r) => r.id)));
     setSelectedDoc(null);
+    if (refused.length > 0) {
+      const lines = refused.map((r) => `${r.label}: ${r.reason}`);
+      const head = `${refused.length} of ${deleted.size + refused.length} document${deleted.size + refused.length === 1 ? "" : "s"} could not be deleted and ${refused.length === 1 ? "is" : "are"} still here (left selected)${deleted.size > 0 ? `; ${deleted.size} ${deleted.size === 1 ? "was" : "were"} deleted` : ""}.`;
+      setError(`Delete failed: ${head} ${lines.join(" ")}`);
+      await appAlert({ title: "Some documents were not deleted", message: `${head}\n\n${lines.join("\n")}`, tone: "danger" });
+    }
   };
 
   // Bulk archive — preserves history, sets status=Archived. Reversible
@@ -1675,7 +1706,12 @@ export default function LibraryExplorerPage() {
     return () => { cancelled = true; };
   }, [uid]);
 
-  const principal = useMemo(() => {
+  // SESS-6: with no role known (activeRole null — membership not resolved,
+  // or none) there is no principal, and every decision below that takes one
+  // answers least-privileged: nothing readable or discoverable, no publish,
+  // no permission management. Principal.role stays a real Role.
+  const principal = useMemo<Principal | null>(() => {
+    if (activeRole === null) return null;
     return {
       uid: uid ?? "",
       role: activeRole,
@@ -1695,6 +1731,7 @@ export default function LibraryExplorerPage() {
   // acl_index first — the SAME column the DB publish guard reads — then the
   // raw ACL fallback. The button and the mutator can no longer disagree.
   const canPublish = useMemo(() => {
+    if (!principal) return false;
     const viaIndex = canPublishViaIndex(library?.aclIndex ?? null, principal);
     if (viaIndex !== null) return viaIndex;
     return canPublishOnLibrary({ principal, libraryAcl: library?.acl });
@@ -1813,6 +1850,7 @@ export default function LibraryExplorerPage() {
   }, [folders, currentFolderId]);
 
   const filteredFolders = useMemo(() => {
+    if (!principal) return [];
     return visibleFolders.filter((f) =>
       canDiscover({
         principal,
@@ -1831,6 +1869,7 @@ export default function LibraryExplorerPage() {
   // filter pass against the deferred (slightly stale) value.
   const deferredSearch = useDeferredValue(search);
   const filteredDocs = useMemo(() => {
+    if (!principal) return [];
     const q = deferredSearch.trim().toLowerCase();
     return documents.filter((docRecord) => {
       const canRead = canWithAclChain({
@@ -2740,6 +2779,50 @@ export default function LibraryExplorerPage() {
       status: next.core?.status ?? selectedDoc.status,
       customFields: next.metadata as Record<string, unknown>,
     }, library?.uniquenessKeys);
+    // REV-19: a save whose status change makes the document a controlled
+    // issue (isIssueTransition — the same test the editor shows its
+    // "issuing" note on) goes through lib/revisions.ts changeDocumentStatus,
+    // as the bulk editor and the un-archive do: the SAME one checked UPDATE
+    // (every column below rides in it as the patch), then the compliance
+    // clocks (review clock, read-&-understood roster) and the DOCUMENT_ISSUED
+    // record. Every other save is the bare checked write below, unchanged.
+    const toStatus = next.core?.status;
+    if (toStatus !== undefined && isIssueTransition({ fromStatus: selectedDoc.status, toStatus, hasCurrentRevision: !!selectedDoc.currentVersionId })) {
+      const orgId = selectedDoc.orgId || activeOrgId || library?.orgId || null;
+      if (!uid || !orgId) {
+        throw new Error("Save refused — nothing was saved: this status change issues the document, and who is issuing it (your sign-in and workspace) is not known yet. Try again in a moment.");
+      }
+      let outcome: Awaited<ReturnType<typeof changeDocumentStatus>>;
+      try {
+        outcome = await changeDocumentStatus({
+          orgId, documentId: selectedDoc.id, toStatus, door: "metadata",
+          actorUserId: uid, actorEmail: userEmail ?? null, actorRole: activeRole ?? null,
+          patch: payload,
+        });
+      } catch (e) {
+        throw new Error(`Save refused — nothing was saved: ${(e as Error)?.message || String(e)}`);
+      }
+      // The save landed. Anything that did not follow it is said, and the
+      // save is not repeated — the status change stands (REV-19, as the bulk
+      // editor and the un-archive dialog say it).
+      const label = selectedDoc.documentNumber || selectedDoc.title || selectedDoc.name || "The document";
+      const problems = outcome.issued
+        ? [
+            ...outcome.complianceClockErrors,
+            ...(outcome.recordError ? [`The issue record could not be written (${outcome.recordError}), so this issue is not on the document's history.`] : []),
+          ]
+        : outcome.notRecordedBecause === "read_failed"
+          ? ["The status was changed, but it was not recorded as an issue — its status before the change could not be read, so no review clock or acknowledgment roster was started and no issue record was written. Check its history and start its clocks from the document."]
+          : [];
+      if (problems.length > 0) {
+        const head = `${label} was saved as ${toStatus}, but ${problems.length} follow-up step${problems.length === 1 ? "" : "s"} did not complete. The status change stands and is not rolled back — do not save it again.`;
+        setError(`${head} ${problems.join(" ")}`);
+        void appAlert({ title: "Saved — follow-up steps did not complete", message: `${head}\n\n${problems.join("\n")}`, tone: "danger" });
+      } else if (!outcome.issued && outcome.notRecordedBecause === "already_issued") {
+        setError(`${label} was already issued when this save reached it (issued by another change after this page loaded), so this save issued nothing: no clock was started and no issue record written for it, and nothing more is owed.`);
+      }
+      return;
+    }
     // Checked: a refusal, or a write the database filtered to no row, is
     // thrown — the editor stays open and shows it (it never closes as saved).
     const { data: saved, error: saveErr } = await supabase
@@ -3046,7 +3129,7 @@ export default function LibraryExplorerPage() {
   // (canWithAclChain mirrors the DB's can_manage_node). Owners edit in
   // delegation mode — bounded grants with an expiry.
   const drawerDelegationAuthority = (() => {
-    if (!uid) return false;
+    if (!uid || !principal) return false;
     const folder = renameFolderId ? folderMap.get(renameFolderId) ?? null : null;
     const ownerId = selectedDoc
       ? (selectedDoc.ownerUserId ?? library?.ownerUserId ?? null)
@@ -3156,7 +3239,7 @@ export default function LibraryExplorerPage() {
         entries.push({
           key: "link", label: "Copy link", icon: <LinkIcon className="w-3.5 h-3.5" />,
           onSelect: () => {
-            void navigator.clipboard?.writeText(`${window.location.origin}/d/${encodeURIComponent(doc.documentNumber!)}`);
+            void navigator.clipboard?.writeText(`${publicOrigin()}/d/${encodeURIComponent(doc.documentNumber!)}`);
           },
         });
       }
@@ -3258,7 +3341,7 @@ export default function LibraryExplorerPage() {
           orgId={activeOrgId}
           actorUserId={uid}
           actorEmail={userEmail || undefined}
-          actorRole={activeRole}
+          actorRole={activeRole ?? undefined}
           onSuccess={(newVersion) => {
             // Refresh the doc + the version + the history list
             setSelectedVersion(newVersion);
@@ -3283,7 +3366,7 @@ export default function LibraryExplorerPage() {
           orgId={activeOrgId}
           actorUserId={uid}
           actorEmail={userEmail || undefined}
-          actorRole={activeRole}
+          actorRole={activeRole ?? undefined}
           onSuccess={() => {
             setSelectedDoc((prev) => prev ? { ...prev, status: "Superseded" } : prev);
             setVersionHistoryRefreshKey((k) => k + 1);
@@ -3300,7 +3383,7 @@ export default function LibraryExplorerPage() {
           orgId={activeOrgId}
           actorUserId={uid}
           actorEmail={userEmail || undefined}
-          actorRole={activeRole}
+          actorRole={activeRole ?? undefined}
           onSuccess={() => {
             const newStatus = selectedDoc.status === "Archived" ? "Issued" : "Archived";
             setSelectedDoc((prev) => prev ? { ...prev, status: newStatus as DocumentRecord["status"] } : prev);
@@ -3309,7 +3392,7 @@ export default function LibraryExplorerPage() {
         />
       )}
 
-      {showBulkCheckout && activeOrgId && uid && (
+      {showBulkCheckout && activeOrgId && uid && activeRole && (
         <BulkCheckoutToProjectModal
           isOpen={showBulkCheckout}
           onClose={() => setShowBulkCheckout(false)}
@@ -3362,7 +3445,7 @@ export default function LibraryExplorerPage() {
           orgId={activeOrgId}
           actorUserId={uid}
           actorEmail={userEmail || undefined}
-          actorRole={activeRole}
+          actorRole={activeRole ?? undefined}
           onSuccess={(newVersion) => {
             setSelectedVersion(newVersion);
             setSelectedDoc((prev) => prev ? {
@@ -3681,39 +3764,42 @@ export default function LibraryExplorerPage() {
                     if (doc) setSelectedDoc(doc);
                   }}
                 />
-                <CollectionsStrip
-                  orgId={activeOrgId}
-                  libraryId={libraryId}
-                  userId={uid}
-                  userRole={activeRole}
-                  userRoles={roles}
-                  folderId={currentFolderId}
-                  folderName={currentFolder?.name ?? null}
-                  folders={folders}
-                  libraryDocs={documents.map((d) => ({
-                    id: d.id!,
-                    documentNumber: d.documentNumber || "",
-                    title: d.title || d.name || "",
-                    rev: d.rev,
-                    status: d.status,
-                    sheetNumber: d.sheetNumber ?? null,
-                  }))}
-                  onOpenAsBook={(docIds, collectionId) => {
-                    // Look up each doc id in the loaded document list and
-                    // stage them in the same order the collection defined.
-                    const ordered = docIds
-                      .map((id) => documents.find((d) => d.id === id))
-                      .filter(Boolean) as DocumentRecord[];
-                    if (ordered.length === 0) return;
-                    setStagedDocs(ordered);
-                    // Record the curated-collection id so the URL becomes a
-                    // shareable ?book=<id>; mark it handled so the reader doesn't
-                    // redundantly re-fetch the same book we just opened.
-                    if (collectionId) handledBookLink.current = collectionId;
-                    setOpenBookId(collectionId ?? null);
-                    setShowMultiView(true);
-                  }}
-                />
+                {/* SESS-6: no role known, no collection controls (least-privileged). */}
+                {activeRole && (
+                  <CollectionsStrip
+                    orgId={activeOrgId}
+                    libraryId={libraryId}
+                    userId={uid}
+                    userRole={activeRole}
+                    userRoles={roles}
+                    folderId={currentFolderId}
+                    folderName={currentFolder?.name ?? null}
+                    folders={folders}
+                    libraryDocs={documents.map((d) => ({
+                      id: d.id!,
+                      documentNumber: d.documentNumber || "",
+                      title: d.title || d.name || "",
+                      rev: d.rev,
+                      status: d.status,
+                      sheetNumber: d.sheetNumber ?? null,
+                    }))}
+                    onOpenAsBook={(docIds, collectionId) => {
+                      // Look up each doc id in the loaded document list and
+                      // stage them in the same order the collection defined.
+                      const ordered = docIds
+                        .map((id) => documents.find((d) => d.id === id))
+                        .filter(Boolean) as DocumentRecord[];
+                      if (ordered.length === 0) return;
+                      setStagedDocs(ordered);
+                      // Record the curated-collection id so the URL becomes a
+                      // shareable ?book=<id>; mark it handled so the reader doesn't
+                      // redundantly re-fetch the same book we just opened.
+                      if (collectionId) handledBookLink.current = collectionId;
+                      setOpenBookId(collectionId ?? null);
+                      setShowMultiView(true);
+                    }}
+                  />
+                )}
               </div>
             )}
 
@@ -4412,7 +4498,7 @@ export default function LibraryExplorerPage() {
         onClose={() => setSelectedDoc(null)}
         title={selectedDoc?.documentNumber || selectedDoc?.title || "Inspector"}
       >
-        {selectedDoc && (
+        {selectedDoc && activeRole && (
           <InspectorPanel
             selectedDoc={selectedDoc}
             selectedVersion={selectedVersion}
@@ -4619,7 +4705,7 @@ export default function LibraryExplorerPage() {
           currentUserId={uid ?? undefined}
           currentUserEmail={userEmail ?? undefined}
           orgId={activeOrgId ?? undefined}
-          userRole={activeRole}
+          userRole={activeRole ?? undefined}
           customColumns={(library?.customColumns ?? []) as unknown as TagColumnDef[]}
           labelColumns={activeColumns.slice(0, 2).map((k) => ({ key: k, label: columnOptions.find((c) => c.key === k)?.label || k }))}
         />

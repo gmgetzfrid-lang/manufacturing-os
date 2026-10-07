@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Loader2, AlertTriangle, XCircle, ShieldAlert, Lock } from 'lucide-react';
 import { useRole } from '@/components/providers/RoleContext';
-import { logFileView } from '@/lib/audit';
+import { logAuditAction } from '@/lib/audit';
 import { supabase } from '@/lib/supabase';
 import { recordIntent } from '@/lib/intents';
 import { appAlert } from '@/components/providers/DialogProvider';
@@ -76,13 +76,19 @@ export default function SecureDocViewer({
     if (loggedRef.current || !documentId || !orgId || !uid) return;
     loggedRef.current = true;
 
-    logFileView({
+    // The VIEW row logFileView writes, with the role OMITTED when none is
+    // known (SESS-6, DEC-44 (IS-P1) §1: activeRole is null until membership
+    // resolves) — never a placeholder role on an audit row. logFileView
+    // takes the role as a required string, so the row is written here.
+    logAuditAction({
+      action: 'VIEW',
+      resourceId: documentId,
+      resourceType: 'document',
       orgId,
-      fileId: documentId,
-      fileName: title,
       userId: uid,
       userEmail: userEmail || 'unknown',
-      userRole: activeRole
+      userRole: activeRole ?? undefined,
+      details: { fileName: title },
     }).catch(e => console.error("Audit log failed", e));
 
     // View intent (fire-and-forget) — the ambient work-in-progress layer.

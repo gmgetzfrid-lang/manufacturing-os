@@ -38,6 +38,159 @@ const RESOLVE_BUDGET_MS = 15_000;
 const LOADING_WATCHDOG_MS = 6_000;
 const BOOT_SPINNER_MS = 8_000;
 
+// ─── What this browser keeps, and what a sign-out removes (OFF-8) ─────
+// The rule (DEC-44 (IS-P1) §2): a value an account READ from the server —
+// records, titles, ids, threads, files, snapshots — must not outlive the
+// account that fetched it. Every key the app writes to localStorage /
+// sessionStorage, and the one IndexedDB database, is listed here with its
+// class; lib/__tests__/sessSixRoleNull.test.ts refuses a file that touches
+// browser storage without a row here.
+//   - "account": cleared on every SIGNED_OUT. `kind` "cache" (rebuilt from
+//     the server on the next visit) is also cleared when a session
+//     evaporates without a SIGNED_OUT; `kind` "held" (work in flight or
+//     per-identity state the same account may come straight back to) is
+//     kept then, and cleared instead when a DIFFERENT identity signs in on
+//     this tab.
+//   - "workspace": the device workspace pointer — cleared on SIGNED_OUT by
+//     clearStoredOrgId (IDENT-4), kept on evaporation (owner-checked).
+//   - "sign-in": the sign-in flow's own state, which must survive an
+//     expiry-driven SIGNED_OUT (the silent-SSO flags, the post-sign-in
+//     destination, the "keep me signed in" choice, supabase-js's session).
+//   - "uid-scoped": keyed by the account's uid, so never served to another
+//     identity — kept.
+//   - "device": how this device looks and which hints were seen — not
+//     anything an account read — kept.
+export type ClientStorageClass = "account" | "workspace" | "sign-in" | "uid-scoped" | "device";
+export type ClientStorageRule = {
+  store: "local" | "session";
+  /** The exact key, or (match "prefix") every key starting with it. */
+  key: string;
+  match: "exact" | "prefix";
+  class: ClientStorageClass;
+  /** For "account" rows: when a session evaporates, is it dropped too? */
+  kind?: "cache" | "held";
+  /** The files that read or write it. */
+  owners: readonly string[];
+  why: string;
+};
+
+export const CLIENT_STORAGE_INVENTORY: readonly ClientStorageRule[] = [
+  // ── account: what the account read ──
+  { store: "local", key: "intel-status-", match: "prefix", class: "account", kind: "cache", owners: ["lib/hubStatus.ts", "app/(protected)/intelligence/page.tsx"], why: "the hub's status snapshot (HUB-10) — the account's key and index state" },
+  { store: "session", key: "intel-status-", match: "prefix", class: "account", kind: "cache", owners: ["lib/hubStatus.ts", "app/(protected)/intelligence/page.tsx"], why: "the legacy org-only snapshot key, removed on sight" },
+  { store: "local", key: "schema-gaps-", match: "prefix", class: "account", kind: "cache", owners: ["lib/hubStatus.ts", "app/(protected)/intelligence/page.tsx"], why: "the hub's schema-gap snapshot" },
+  { store: "session", key: "schema-gaps-", match: "prefix", class: "account", kind: "cache", owners: ["lib/hubStatus.ts", "app/(protected)/intelligence/page.tsx"], why: "the legacy org-only gap key, removed on sight" },
+  { store: "local", key: "mfg-os.palette.recents", match: "exact", class: "account", kind: "cache", owners: ["components/navigation/GlobalCommandPalette.tsx"], why: "the titles and links of the documents, projects and requests the account last opened" },
+  { store: "local", key: "orgGraph:pos", match: "prefix", class: "account", kind: "cache", owners: ["app/(protected)/graph/page.tsx"], why: "the settled graph layout, keyed by the ids of every node the account's graph returned (re-settles on the next visit)" },
+  { store: "session", key: "org-graph-", match: "prefix", class: "account", kind: "cache", owners: ["app/(protected)/graph/page.tsx"], why: "the assembled graph (node titles included) painted instantly on return" },
+  { store: "session", key: "mfg-os:lib:", match: "prefix", class: "account", kind: "cache", owners: ["app/(protected)/documents/[libraryId]/page.tsx"], why: "the library row (its access lists included) painted instantly on return" },
+  { store: "session", key: "kl-active-thread-", match: "prefix", class: "account", kind: "held", owners: ["app/(protected)/knowledge/[id]/page.tsx"], why: "the account's open ask thread — its questions and the answers drawn from its documents" },
+  { store: "local", key: "dismissed:", match: "prefix", class: "account", kind: "held", owners: ["hooks/useDismissed.ts"], why: "dismissals, keyed <uid>:<org> — useDismissed also sweeps them on SIGNED_OUT" },
+  // ── workspace ──
+  { store: "local", key: "manufacturingos.activeOrgId", match: "exact", class: "workspace", owners: ["lib/workspaceDeviceState.ts"], why: "the device workspace (IDENT-4: cleared on SIGNED_OUT, owner-checked otherwise)" },
+  { store: "local", key: "manufacturingos.activeOrgId.owner", match: "exact", class: "workspace", owners: ["lib/workspaceDeviceState.ts"], why: "the uid that stored the device workspace" },
+  // ── sign-in: must survive an expiry-driven SIGNED_OUT ──
+  { store: "local", key: "manufacturingos.preferMicrosoft", match: "exact", class: "sign-in", owners: ["lib/supabase.ts"], why: "the silent-SSO flag: an expiry keeps it; the explicit sign-out buttons clear it themselves" },
+  { store: "session", key: "manufacturingos.silentSSOAttempted", match: "exact", class: "sign-in", owners: ["app/page.tsx"], why: "the once-per-tab silent-SSO guard — clearing it on an expiry-driven SIGNED_OUT could loop the silent attempt" },
+  { store: "session", key: "manufacturingos.signInNext", match: "exact", class: "sign-in", owners: ["lib/signInNext.ts"], why: "the destination carried across the Microsoft round trip (TTL'd, consumed once)" },
+  { store: "local", key: "manufacturingos.rememberSession", match: "exact", class: "sign-in", owners: ["lib/supabase.ts"], why: "the login screen's \"keep me signed in\" choice, set before sign-in" },
+  { store: "local", key: "sb-", match: "prefix", class: "sign-in", owners: ["lib/supabase.ts"], why: "supabase-js's session and PKCE verifier (hybridAuthStorage) — supabase-js removes them itself" },
+  { store: "session", key: "sb-", match: "prefix", class: "sign-in", owners: ["lib/supabase.ts"], why: "the same, for a session not kept signed in" },
+  // ── uid-scoped ──
+  { store: "local", key: "manufacturingos.dashboard.", match: "prefix", class: "uid-scoped", owners: ["lib/dashboard/config.ts"], why: "the mirror of users.dashboard_config, keyed by uid" },
+  // ── device ──
+  { store: "local", key: "mfgos.theme.mode", match: "exact", class: "device", owners: ["components/providers/ThemeProvider.tsx"], why: "light / dark" },
+  { store: "local", key: "mfgos.theme.palette", match: "exact", class: "device", owners: ["components/providers/ThemeProvider.tsx"], why: "accent colours" },
+  { store: "local", key: "mfgos.theme.accent", match: "exact", class: "device", owners: ["components/providers/ThemeProvider.tsx"], why: "the legacy accent" },
+  { store: "local", key: "mfg-os.density", match: "exact", class: "device", owners: ["components/navigation/DensityToggle.tsx", "app/layout.tsx"], why: "row density" },
+  { store: "local", key: "mfg-os.sidebar.collapsed", match: "exact", class: "device", owners: ["components/navigation/Sidebar.tsx"], why: "the rail's collapsed state" },
+  { store: "local", key: "mfg-os.sidebar.closedSections", match: "exact", class: "device", owners: ["components/navigation/Sidebar.tsx"], why: "which sidebar sections are folded" },
+  { store: "local", key: "requests.viewMode", match: "exact", class: "device", owners: ["app/(protected)/requests/page.tsx"], why: "table / grid / team" },
+  { store: "local", key: "kl-cite-hint-seen", match: "exact", class: "device", owners: ["app/(protected)/knowledge/[id]/page.tsx"], why: "a hint was seen" },
+  { store: "local", key: "knowledge-ask-mode", match: "exact", class: "device", owners: ["app/(protected)/knowledge/[id]/page.tsx"], why: "the ask mode last chosen" },
+  { store: "local", key: "orgGraph:settings:", match: "prefix", class: "device", owners: ["lib/graphSettings.ts"], why: "how the graph is drawn (forces, colours, lens) — DEC-88 keeps it local" },
+  { store: "local", key: "first_run_hint:", match: "prefix", class: "device", owners: ["components/ui/FirstRunHint.tsx"], why: "a hint was seen" },
+  { store: "local", key: "exec.guide.seen.v1", match: "exact", class: "device", owners: ["components/projects/ExecutionGuide.tsx"], why: "a guide was seen" },
+  { store: "local", key: "costGlossarySeen.v1", match: "exact", class: "device", owners: ["components/projects/cost/CostCharts.tsx"], why: "a glossary was seen" },
+  { store: "local", key: "mfg-os.setup-checklist.dismissed", match: "exact", class: "device", owners: ["components/onboarding/SetupChecklist.tsx"], why: "the setup checklist was put away" },
+  { store: "local", key: "mfg-os.staleCheckouts.dismissedUntil", match: "exact", class: "device", owners: ["components/projects/StaleCheckoutBanner.tsx"], why: "a banner snooze time" },
+  { store: "local", key: "mfg.inspector.sec.", match: "prefix", class: "device", owners: ["components/ui/CollapsibleSection.tsx"], why: "which inspector sections are folded" },
+  { store: "local", key: "mfg.revup.", match: "prefix", class: "device", owners: ["components/documents/RevUpModal.tsx"], why: "the issue type last chosen in a library's rev-up" },
+  { store: "local", key: "manufacturingos.customStamps", match: "exact", class: "device", owners: ["components/viewers/FullScreenViewer.tsx"], why: "stamp images the person uploaded on this device — not an account read; not keyed by uid, so the next account on the device is offered them (public-surfaces OFF-15)" },
+  { store: "session", key: "kl-embed-nudge-at", match: "exact", class: "device", owners: ["lib/knowledge.ts"], why: "a throttle timestamp" },
+];
+
+/** The one IndexedDB database the app opens. */
+export const CLIENT_INDEXED_DB_INVENTORY: readonly { name: string; stores: readonly string[]; class: "account"; kind: "held"; owners: readonly string[]; why: string }[] = [
+  { name: "manufacturingos", stores: ["draftHandoff"], class: "account", kind: "held", owners: ["lib/draftHandoff.ts"], why: "marked-up drawings handed from the viewer to the request form, kept until that request is submitted" },
+];
+
+function ruleMatches(rule: ClientStorageRule, key: string): boolean {
+  return rule.match === "exact" ? key === rule.key : key.startsWith(rule.key);
+}
+
+/** Which "account" keys a purge removes: every one when a SIGNED_OUT or an
+ *  identity change ends the account ("all"); only the rebuildable caches
+ *  when a session merely evaporated ("cache"). */
+export type AccountPurgeScope = "all" | "cache";
+
+/** Remove the account keys (CLIENT_STORAGE_INVENTORY, class "account") from
+ *  one browser store. Never throws — storage can be missing or forbidden.
+ *  Returns the keys it removed. */
+export function purgeAccountStorage(storage: Storage | null | undefined, store: "local" | "session", scope: AccountPurgeScope): string[] {
+  const rules = CLIENT_STORAGE_INVENTORY.filter((r) =>
+    r.store === store && r.class === "account" && (scope === "all" || r.kind === "cache"));
+  const doomed: string[] = [];
+  try {
+    if (!storage) return doomed;
+    for (let i = 0; i < storage.length; i++) {
+      const k = storage.key(i);
+      if (k && rules.some((r) => ruleMatches(r, k))) doomed.push(k);
+    }
+    doomed.forEach((k) => storage.removeItem(k));
+  } catch { /* private mode / storage forbidden */ }
+  return doomed;
+}
+
+/** localStorage, or null where reading it throws (a forbidden store). */
+function browserStore(store: "local" | "session"): Storage | null {
+  try {
+    if (typeof window === "undefined") return null;
+    return store === "local" ? window.localStorage : window.sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
+/** Both browser stores, then (scope "all") the account IndexedDB databases —
+ *  awaited but bounded, so a blocked delete can never hold a sign-out (a
+ *  delete still blocked by an open connection completes once it closes). */
+export async function purgeAccountClientStores(scope: AccountPurgeScope, opts?: { idb?: IDBFactory | null; budgetMs?: number }): Promise<void> {
+  purgeAccountStorage(browserStore("local"), "local", scope);
+  purgeAccountStorage(browserStore("session"), "session", scope);
+  if (scope !== "all") return;
+  let idb: IDBFactory | null = null;
+  try { idb = opts?.idb !== undefined ? opts.idb : (typeof indexedDB !== "undefined" ? indexedDB : null); } catch { idb = null; }
+  if (!idb) return;
+  const factory = idb;
+  const deletions = CLIENT_INDEXED_DB_INVENTORY.map((db) => new Promise<void>((done) => {
+    try {
+      const req = factory.deleteDatabase(db.name);
+      req.onsuccess = () => done();
+      req.onerror = () => done();
+      req.onblocked = () => done();
+    } catch { done(); }
+  }));
+  await Promise.race([Promise.all(deletions), new Promise<void>((done) => setTimeout(done, opts?.budgetMs ?? 1500))]);
+}
+
+/** A session user appearing on this tab after a DIFFERENT one was last seen
+ *  here (a switch, or a sign-in after an evaporated session) ends the last
+ *  identity's account data — its "held" keys included. */
+export function identityChangeEndsAccount(lastUid: string | null, nextUid: string): boolean {
+  return !!lastUid && lastUid !== nextUid;
+}
+
 /** A self-heal moved this session to a different workspace than the one the
  *  device/profile pointed at (ORGSEL-4). Non-null until the user
  *  acknowledges it, switches workspace, or signs out. */
@@ -57,17 +210,19 @@ type RoleContextValue = {
    *  without a session) or the boot timeout gave up. Before that, a null
    *  `uid` means "not known yet", not "signed out". */
   booted: boolean;
-  /** ⚠ Placeholder until `membershipState === "member"`. The literal
-   *  "Viewer" here means "not known yet", not "is a Viewer" — the protected
-   *  layout guarantees the app shell never renders during resolution
-   *  (SESS-1), but code that runs OUTSIDE the gated shell (providers, the
-   *  notification center) must check `membershipState` before acting on
-   *  role state. Making this `Role | null` at the type level is tracked as
-   *  SESS-6 in the identity-and-session audit. */
-  activeRole: Role;
+  /** The headline role of an ACTIVE membership, or `null` whenever there
+   *  is none to report: while membership is resolving, after a failed
+   *  lookup, for an account that is not an active member, and after
+   *  sign-out (SESS-6). `null` never means "Viewer" — it means "no role is
+   *  known", and every consumer treats it as the least-privileged state (no
+   *  actions, no read grant from the role). The type makes an unchecked
+   *  read a compile error instead of a confident placeholder: branch on
+   *  `null` (or use `hasRole` / `hasAnyRole`, which answer `false` while it
+   *  is `null`). `membershipState` still says WHY it is `null`. */
+  activeRole: Role | null;
   /** Full additive role collection for the active org. `activeRole` is the
-   *  headline (highest-ranked) of these. Same placeholder caveat: `[]`
-   *  until `membershipState === "member"`. */
+   *  headline (highest-ranked) of these. `[]` whenever `activeRole` is
+   *  `null` (until `membershipState === "member"`). */
   roles: Role[];
   /** True if the member holds `role` among their collection. */
   hasRole: (role: Role) => boolean;
@@ -112,7 +267,7 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
     const v = readStoredOrgId();
     if (v) _setActiveOrgId((cur) => cur ?? v);
   }, []);
-  const [activeRole, setActiveRole] = useState<Role>("Viewer");
+  const [activeRole, setActiveRole] = useState<Role | null>(null);
   const [roles, setRoles] = useState<Role[]>([]);
   const [member, setMember] = useState<OrgMember | null>(null);
   const [membershipState, setMembershipState] = useState<MembershipState>("resolving");
@@ -123,6 +278,17 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
   // captures the initial closure) can detect "this SIGNED_IN is just a
   // re-emit of the same user" without blocking the UI on every tab return.
   const uidRef = useRef<string | null>(null);
+  // OFF-8: the last session user seen on this tab. Unlike uidRef it survives
+  // a session that evaporates without a SIGNED_OUT, so a DIFFERENT identity
+  // signing in afterwards still ends the last one's account data
+  // (identityChangeEndsAccount). Cleared after a SIGNED_OUT purge.
+  const lastIdentityRef = useRef<string | null>(null);
+  const noteIdentity = async (nextUid: string) => {
+    if (identityChangeEndsAccount(lastIdentityRef.current, nextUid)) {
+      await purgeAccountClientStores("all");
+    }
+    lastIdentityRef.current = nextUid;
+  };
 
   // Keep uidRef in sync so the auth-state subscription (which only closes
   // over the initial value) can check identity changes.
@@ -282,7 +448,7 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
       if (!isCurrent()) return;
       setMember(null);
       setRoles([]);
-      setActiveRole("Viewer");
+      setActiveRole(null);
       setMembershipState("error");
       return;
     }
@@ -308,7 +474,7 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
       const active = nextMember.status === "active";
       setMember(nextMember);
       setRoles(active ? collection : []);
-      setActiveRole(active ? headline : "Viewer");
+      setActiveRole(active ? headline : null);
       setMembershipState(active ? "member" : "none");
 
       // Persist the workspace as the new default ONLY when it wasn't a
@@ -340,7 +506,7 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
     } else {
       setMember(null);
       setRoles([]);
-      setActiveRole("Viewer");
+      setActiveRole(null);
       setMembershipState("none");
     }
 
@@ -391,6 +557,7 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (session?.user) {
         const u = session.user;
+        lastIdentityRef.current = u.id;
         setUid(u.id);
         setUserEmail(u.email ?? null);
         // Same budget as the SIGNED_IN path (SESS-2) — the boot resolve used
@@ -413,7 +580,7 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
         setUid(null);
         setUserEmail(null);
         _setActiveOrgId(null);
-        setActiveRole("Viewer");
+        setActiveRole(null);
         setRoles([]);
         setMember(null);
         setMembershipState("resolving");
@@ -428,15 +595,15 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
         // survive those — explicit sign-out buttons clear it themselves.)
         clearStoredOrgId();
         // Status snapshots persist in localStorage for instant paints —
-        // they must not outlive the account that fetched them.
-        try {
-          const doomed: string[] = [];
-          for (let i = 0; i < window.localStorage.length; i++) {
-            const k = window.localStorage.key(i);
-            if (k && (k.startsWith("intel-status-") || k.startsWith("schema-gaps-"))) doomed.push(k);
-          }
-          doomed.forEach((k) => window.localStorage.removeItem(k));
-        } catch { /* private mode */ }
+        // they must not outlive the account that fetched them. OFF-8: the
+        // same for every key the account read (CLIENT_STORAGE_INVENTORY,
+        // class "account" — recents, graph and library snapshots, the ask
+        // thread, dismissals) in localStorage AND sessionStorage, and the
+        // draft-handoff IndexedDB database. The sign-in flow's own keys
+        // (the silent-SSO flags, the post-sign-in destination) survive, as
+        // an expiry-driven SIGNED_OUT needs them; device preferences stay.
+        await purgeAccountClientStores("all");
+        lastIdentityRef.current = null;
         // The same principle for Cache Storage (OFF-8): every cache the
         // service worker filled on this device is deleted BEFORE the
         // redirect, whichever way the session ended — a sign-out button
@@ -463,6 +630,7 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
         if (session?.user) {
           const u = session.user;
           const uidChanged = uidRef.current !== u.id;
+          if (uidChanged) await noteIdentity(u.id);
           setUid(u.id);
           setUserEmail(u.email ?? null);
           // A refresh can be the FIRST event that establishes an identity:
@@ -490,6 +658,10 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
         // (the previous behavior) was the cause of the "stuck on
         // Authenticating…" loop when the tab went background → foreground.
         if (event === "SIGNED_IN") {
+          // OFF-8: a different identity than the last one seen on this tab
+          // ends that identity's account data first (a switch in another
+          // tab, or a sign-in after a session evaporated).
+          await noteIdentity(u.id);
           const isSameUser = uidRef.current === u.id;
           if (!isSameUser) {
             // Actual user switch (rare). Resolve their org/role under the
@@ -518,11 +690,25 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
         setUid(null);
         setUserEmail(null);
         _setActiveOrgId(null);
-        setActiveRole("Viewer");
+        setActiveRole(null);
         setRoles([]);
         setMember(null);
         setWorkspaceRelocation(null);
         setLoading(false);
+        // OFF-8: no account is signed in now, so the rebuildable account
+        // caches go (CLIENT_STORAGE_INVENTORY kind "cache"); work the same
+        // account may come straight back to (an unsubmitted redline
+        // hand-off, an open ask thread — kind "held") stays, and is ended
+        // instead if a DIFFERENT identity signs in here (noteIdentity) or at
+        // the next SIGNED_OUT. Cache Storage is emptied as the SIGNED_OUT
+        // branch does — bounded; there is no redirect to hold.
+        await purgeAccountClientStores("cache");
+        try {
+          if (typeof caches !== "undefined") {
+            const emptied = caches.keys().then((names) => Promise.all(names.map((n) => caches.delete(n))));
+            await Promise.race([emptied, new Promise((done) => window.setTimeout(done, 1500))]);
+          }
+        } catch { /* nothing to purge */ }
       }
     });
 

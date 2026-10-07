@@ -389,7 +389,7 @@ export default function ProjectDetailPage() {
         reason: statusReason || undefined,
         actorUserId: uid,
         actorEmail: userEmail ?? undefined,
-        actorRole: activeRole,
+        actorRole: activeRole ?? undefined,
         // SAF-14: the gates the actor was shown are what the audit row records.
         gateSnapshot: pendingStatus === "completed" ? gates : undefined,
       });

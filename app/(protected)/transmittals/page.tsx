@@ -119,7 +119,8 @@ export default function TransmittalsPage() {
     return () => { alive = false; };
   }, [activeOrgId]);
   const principal = useMemo<Principal>(() => ({ role: activeRole ?? null, roles: (roles ?? []) as string[], uid: uid ?? null }), [activeRole, roles, uid]);
-  const isController = useMemo(() => isControllerPrincipal({ role: (activeRole ?? "Viewer") as Role, roles: (roles ?? []) as Role[] }), [activeRole, roles]);
+  // SESS-6: no role known stays null — never turned back into a "Viewer".
+  const isController = useMemo(() => isControllerPrincipal({ role: activeRole, roles: (roles ?? []) as Role[] }), [activeRole, roles]);
   const canTransmit = useCallback((t: Transmittal) =>
     policy !== null && mayTransmit(policy, principal, t.items.map((i) => libOf.get(i.documentId) ?? null)), [policy, principal, libOf]);
   const canEditDraft = (t: Transmittal) => isController || (!!uid && t.createdBy === uid) || (policy !== null && mayTransmit(policy, principal, []));
