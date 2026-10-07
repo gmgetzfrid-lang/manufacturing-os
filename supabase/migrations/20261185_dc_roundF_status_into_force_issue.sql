@@ -39,6 +39,20 @@
 --           tier (a controller, a library publisher or the effective owner).
 --           No IFC row is moved (DEC-77 §2): Document Control re-issues each
 --           through this guarded path.
+--           THE SAME MOVE OUT OF A RETIREMENT (P16 review fix). A retirement
+--           entered from such a status is stamped with it and its revision,
+--           so its exit into Issued / Locked at that revision was
+--           v_restoring, a put-back: the require limb skipped it, and the
+--           flag put_back_retired_issue sets (the un-archive dialog's
+--           recorded override) passed Document Control over a hold. IFC ->
+--           Archived -> Issued (the un-archive dialog's default for any stamp
+--           naming the current revision), IFC -> Void -> Locked and IFC ->
+--           Superseded -> Issued put the revision in force exactly as the
+--           direct move does. Now such an exit is not v_restoring (the
+--           require limb decides it) and is the new door (refused over an
+--           active hold for everyone, whatever flag is set). A put-back to
+--           the stamped status itself (Archived -> IFC), and an Issued /
+--           Locked stamp put back into Issued or Locked, are unchanged.
 --           DECIDED — status-only, as ratified: a write that ALSO moves the
 --           pointer is not this limb. publish_revision's rev-up and revert
 --           write 'Issued' with the new pointer, so a library publisher's
@@ -47,11 +61,15 @@
 --           it. Such a write keeps the pointer move's rules: the review gate,
 --           RG-7, RG-14, the publisher tier and its hold, and for Document
 --           Control over a hold P17's v_unforced_move (IFC and Issued are
---           both issue statuses) — a recorded force, or refused.
+--           both issue statuses) — a recorded force, or refused. That this
+--           leaves an unreviewed IFC revision's Minor / Correction rev-up
+--           open in a require library (RG-7's hatch assumes a reviewed base
+--           in force) is recorded as document-control REV-28, for the
+--           integrator (or the user) to decide.
 --
 --   RE-CREATED FROM THE NEWEST BODY (found by scanning; lineDiff-pinned —
---   every line of the base is kept, the lines added are exactly the P16
---   block): enforce_document_publish_guard from 20261182 (P21) — REV-25,
+--   every line of the base is kept, the lines added are exactly the two P16
+--   blocks): enforce_document_publish_guard from 20261182 (P21) — REV-25,
 --   REV-24, REV-23, REV-22 limbs 1 and 2, RG-14, REV-20's, REV-17's and
 --   20261144's rules all kept. Nothing else is re-created, and nothing is
 --   created. Grants (DRLS-16): the guard executable by no client role (it
@@ -60,14 +78,18 @@
 -- NOT a widening: the guard refuses writes it admitted (a status-only move
 -- into Issued / Locked out of an issue status outside them, by a member below
 -- the publisher tier; over an active hold, by anyone; under a require policy
--- with no complete roster, by anyone short of Document Control) and admits
--- nothing it refused. DEC-30 inventories (aggregate counts only, captured
--- BEFORE the transaction): the documents with a current revision in a status
--- the guard counts as an issue but no gate reads as in force (their move into
--- force is judged from now on); of those, the ones in status IFC (DEC-77 /
--- VFY-20 — not moved); the ones under an active hold now; and the ones under
--- a policy that requires sign-off whose current revision carries no complete
--- roster.
+-- with no complete roster, by anyone short of Document Control; and the same
+-- move out of a retirement stamped with such a status, under a require policy
+-- short of Document Control or a complete roster, and over an active hold by
+-- anyone, Document Control's recorded override included) and admits nothing
+-- it refused. DEC-30 inventories (aggregate counts only, captured BEFORE the
+-- transaction): the documents with a current revision in a status the guard
+-- counts as an issue but no gate reads as in force (their move into force is
+-- judged from now on); of those, the ones in status IFC (DEC-77 / VFY-20 —
+-- not moved); the ones under an active hold now; the ones under a policy that
+-- requires sign-off whose current revision carries no complete roster; and
+-- the retired documents whose stamp names such a status at a revision (their
+-- put-back into Issued / Locked is judged from now on).
 -- HOW TO APPLY: AFTER 20261182 (required — this re-creates 20261182's guard,
 -- and the first statement refuses to run, changing nothing, without it; so
 -- after 20261174, 20261165, 20261164, 20261159, 20261151, 20261144, 20261130
@@ -79,20 +101,31 @@
 -- 20261144, 20261139, 20261105 or any earlier guard migration after this
 -- one: each would drop this rule (and an earlier one the P21, P20, P19, P18,
 -- REV-22 limb 1, RG-14 and REV-20 rules).
--- DEPLOY ORDER: none — the app works the same before and after this paste.
--- The two editors that can make the move (components/documents/
+-- DEPLOY ORDER: none — no app deploy is needed before or after this paste.
+-- The two editors that can make the direct move (components/documents/
 -- MetadataEditor.tsx, BulkEditModal.tsx) are Document Control's only and
 -- already treat it as an issue (P15, VFY-20): they say so before the save and
 -- refuse it over an active hold themselves (lib/holdGate.ts, fail closed).
 -- Document Control passes the publisher tier and the require limb never binds
 -- it, so every save they make lands exactly as before; a hold placed between
 -- the editor's hold read and its write is now refused by the database too, in
--- the new door's sentence. No other app write makes the move: every other
--- status writer leaves Draft / In Review / a retirement (v_issuing already),
--- moves the pointer, or INSERTs (this trigger fires BEFORE UPDATE only); the
--- intake route and the cron are the service role (untouched). P16 changes no
--- app behaviour (comments in lib/issueStatus.ts and
--- lib/documentStatusOptions.ts).
+-- the new door's sentence. Every other status writer that makes an issue
+-- leaves Draft / In Review / a retirement (v_issuing already), moves the
+-- pointer, or INSERTs (this trigger fires BEFORE UPDATE only); the intake
+-- route and the cron are the service role (untouched). ONE APP RESULT
+-- CHANGES, from the retirement exit: the un-archive (lib/revisions.ts
+-- unarchiveDocument through put_back_retired_issue; its dialog offers Issued
+-- by default for any stamp naming the current revision) of a document
+-- archived from IFC (or another status no gate reads as in force) back to
+-- Issued is now judged as an issue — under a require policy refused short of
+-- Document Control or a complete roster, and over an active hold refused for
+-- everyone, Document Control's confirmed override included. The dialog
+-- answers both sentences (it offers the Draft restore); its own copy for such
+-- a stamp ("puts that issue back") and its missing restore to the stamped
+-- status are document-control REV-27. The rollbacks (a failed supersede,
+-- split / merge or reversal) put back the status read before the retirement
+-- (IFC for an IFC document), which this does not touch. P16 changes no app
+-- code (comments in lib/issueStatus.ts and lib/documentStatusOptions.ts).
 -- Single paste: prerequisite check → temp-table inventory →
 -- BEGIN/DDL/COMMIT → one SELECT (check text, ok boolean, n text).
 -- ⚠ APPLIED BY HAND (DEC-30). Idempotent.
@@ -161,7 +194,14 @@ SELECT 'inventory (before apply): of those, under an active hold now (their move
 UNION ALL
 SELECT 'inventory (before apply): of those, under a policy that requires sign-off whose current revision carries no complete reviewer roster (a move into force by anyone short of Document Control is refused from now on)',
        COUNT(*)::text
-  FROM outside WHERE under_require AND NOT roster_complete;
+  FROM outside WHERE under_require AND NOT roster_complete
+UNION ALL
+SELECT 'inventory (before apply): retired documents (Superseded / Archived / Void) whose retirement stamp names a revision and a status no gate reads as in force (IFC, empty, a variant, a library''s own) — REV-21: putting one back into Issued / Locked is judged as an issue from now on (the require limb; the new door''s hold for everyone); putting it back to its stamped status is unchanged',
+       COUNT(*)::text
+  FROM documents d
+ WHERE d.status IN ('Superseded', 'Archived', 'Void')
+   AND d.retired_issue_version_id IS NOT NULL
+   AND COALESCE(d.retired_issue_status, '') NOT IN ('Issued', 'Locked');
 
 BEGIN;
 
@@ -359,6 +399,39 @@ BEGIN
                  AND OLD.retired_issue_version_id IS NOT NULL
                  AND NEW.current_version_id = OLD.retired_issue_version_id
                  AND NEW.current_version_id = OLD.current_version_id, false);
+  -- REV-21 (document-control Round F wave 3, P16 review fix): the same move
+  -- out of a retirement. A retirement entered from an issue status no gate
+  -- reads as in force (IFC, an empty status, a case or spacing variant, a
+  -- library's own, a NULL status) is stamped below with that status and its
+  -- revision, so its exit into Issued / Locked at that revision was
+  -- v_restoring, a put-back: the require limb did not decide it, and the
+  -- flag put_back_retired_issue (the un-archive dialog's recorded override)
+  -- or restore_reversed_source sets passed Document Control over a hold
+  -- (REV-23's limb just below). But that retirement took away nothing in
+  -- force: IFC -> Archived -> Issued (the un-archive dialog's default for
+  -- any stamp naming the current revision), IFC -> Void -> Locked and IFC ->
+  -- Superseded -> Issued put the revision in force exactly as the direct
+  -- move the REV-21 limb of v_issuing above judges. So a put-back INTO
+  -- Issued / Locked of a stamp outside them is not v_restoring (the require
+  -- limb decides it), and it is the new door: refused over an active hold
+  -- for everyone, Document Control included, whatever flag is set (never a
+  -- recorded pass — a controller's override of a hold is publish_revision's
+  -- force, never a status edit). A put-back to the stamped status itself
+  -- (Archived -> IFC), and an Issued / Locked stamp put back into Issued or
+  -- Locked, keep v_restoring and its rules. A retirement with no stamp at
+  -- all (retired before 20261144, or by the service role) keeps REV-20's and
+  -- REV-22's limbs above; a 'not-issued' stamp's exit is the new door
+  -- already.
+  v_restoring := v_restoring
+                 AND NOT COALESCE(NEW.status IN ('Issued', 'Locked')
+                                  AND COALESCE(OLD.retired_issue_status, '') NOT IN ('Issued', 'Locked'), false);
+  v_new_door := v_new_door
+                OR COALESCE(v_issuing
+                            AND NEW.current_version_id IS NOT DISTINCT FROM OLD.current_version_id
+                            AND OLD.status IN ('Superseded', 'Archived', 'Void')
+                            AND OLD.retired_issue_version_id IS NOT NULL
+                            AND COALESCE(OLD.retired_issue_status, '') NOT IN ('Issued', 'Locked')
+                            AND NEW.status IN ('Issued', 'Locked'), false);
   -- REV-23 (document-control Round F wave 3, P19): the STAMPED put-back
   -- (v_restoring, just above) binds a controller over a hold too. The
   -- comments in this body that say a controller passes the hold there
@@ -816,7 +889,7 @@ REVOKE ALL ON FUNCTION enforce_document_publish_guard() FROM PUBLIC, anon, authe
 COMMIT;
 
 -- ── Verification + inventory (the only result set the SQL editor shows) ──
--- Probes: ok = true × 8. Inventory rows: n = the aggregate count.
+-- Probes: ok = true × 9. Inventory rows: n = the aggregate count.
 -- pg_proc.prosrc is verbatim (an apostrophe inside a body's string literal is
 -- '''' here).
 SELECT 'REV-21 (P16): a status-only move into Issued / Locked out of an issue status outside them (IFC, empty, a case or spacing variant, a library''s own), with a current revision, is v_issuing — before the new door is computed from it' AS check,
@@ -826,6 +899,11 @@ SELECT 'REV-21 (P16): a status-only move into Issued / Locked out of an issue st
 UNION ALL
 SELECT 'REV-21 (P16): the move is judged as every status-only issue is — the new door''s hold for everyone, the require limb short of Document Control, the publisher tier',
        (SELECT prosrc LIKE '%v_advancing := v_advancing OR v_issuing;%IF NOT v_advancing THEN%IF v_issuing THEN%IF v_new_door AND EXISTS (%''Document has an active hold; release the hold before issuing it.''%IF NOT is_org_controller(NEW.org_id)%AND NOT v_restoring%a revision that was not reviewed can''''t be made a controlled issue%IF is_org_controller(NEW.org_id) THEN%You do not have authority to publish revisions in this library.%Document has an active hold; release the hold before publishing a new revision.%'
+          FROM pg_proc WHERE proname = 'enforce_document_publish_guard'),
+       NULL
+UNION ALL
+SELECT 'REV-21 (P16 review fix): the same move out of a retirement stamped with such a status (IFC -> Archived -> Issued) is not the put-back the require limb spares (v_restoring) and is the new door, refused over an active hold for everyone whatever flag is set — decided before REV-23''s limb reads v_restoring',
+       (SELECT prosrc LIKE '%v_restoring := COALESCE(v_issuing%v_restoring := v_restoring%AND NOT COALESCE(NEW.status IN (''Issued'', ''Locked'')%AND COALESCE(OLD.retired_issue_status, '''') NOT IN (''Issued'', ''Locked''), false);%v_new_door := v_new_door%OR COALESCE(v_issuing%AND OLD.retired_issue_version_id IS NOT NULL%AND COALESCE(OLD.retired_issue_status, '''') NOT IN (''Issued'', ''Locked'')%AND NEW.status IN (''Issued'', ''Locked''), false);%v_new_door := v_new_door%OR COALESCE(v_restoring%'
           FROM pg_proc WHERE proname = 'enforce_document_publish_guard'),
        NULL
 UNION ALL

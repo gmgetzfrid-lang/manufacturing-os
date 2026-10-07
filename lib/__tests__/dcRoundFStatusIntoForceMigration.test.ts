@@ -3,17 +3,22 @@
 // the integrator under the user's delegation, 2026-10-07: DEC-90 A3, option 1).
 //
 //   enforce_document_publish_guard re-created from its NEWEST earlier body
-//   (scan — 20261182 today) with EXACTLY the P16 block added: v_issuing also
-//   holds for a status-only move INTO Issued / Locked out of an issue status
-//   outside them (IFC, an empty status, a case or spacing variant, a
-//   library's own), on a document with a current revision. It is then judged
-//   by the rules every status-only issue already meets — the new door's hold
-//   (for everyone), the require limb, the publisher tier — none of which
-//   changes. Nothing else is re-created or created; no data is moved.
+//   (scan — 20261182 today) with EXACTLY the two P16 blocks added:
+//   1. v_issuing also holds for a status-only move INTO Issued / Locked out
+//      of an issue status outside them (IFC, an empty status, a case or
+//      spacing variant, a library's own), on a document with a current
+//      revision. It is then judged by the rules every status-only issue
+//      already meets — the new door's hold (for everyone), the require limb,
+//      the publisher tier — none of which changes.
+//   2. (review fix) the same move out of a retirement stamped with such a
+//      status (IFC -> Archived -> Issued): not v_restoring (the require limb
+//      decides it) and the new door (refused over a hold for everyone,
+//      whatever flag is set). A put-back to the stamped status is unchanged.
+//   Nothing else is re-created or created; no data is moved.
 //
 // Byte fidelity: lineDiff (nothing removed; every new line is an addition)
-// AND an exact cut (the re-created body minus the addition IS the base, byte
-// for byte). The script was run on a throwaway PostgreSQL 16 (REV-21's
+// AND an exact cut (the re-created body minus the two additions IS the base,
+// byte for byte). The script was run on a throwaway PostgreSQL 16 (REV-21's
 // record); the rule is driven against the guard's transcription and the
 // real editors in dcRoundFStatusIntoForce.test.ts.
 
@@ -54,11 +59,32 @@ const G = { live: between(mig(PREV), GUARD_HEAD, "\n$$;"), next: between(M, GUAR
 const ISSUING_BASE = "  v_issuing := NEW.current_version_id IS NOT NULL\n               AND NOT is_controlled_issue_status(OLD.status)\n               AND is_controlled_issue_status(NEW.status);\n";
 /** The new door, computed from v_issuing — the statement the P16 block precedes. */
 const NEW_DOOR_HEAD = "  v_new_door := v_issuing\n                AND (NOT COALESCE(v_advancing, false)\n";
-/** The guard's one addition, as contiguous text. */
+/** The guard's first addition (the direct move), as contiguous text. */
 const G_LIMB = G.next.slice(
   G.next.indexOf("  -- REV-21 (document-control Round F wave 3, P16; DEC-77 §4, ratified by"),
   G.next.indexOf(NEW_DOOR_HEAD),
 );
+/** 20261144's v_restoring (REV-18), the statement the second P16 block follows. */
+const RESTORING_BASE = "  v_restoring := COALESCE(v_issuing\n                 AND OLD.status IN ('Superseded', 'Archived', 'Void')\n                 AND OLD.retired_issue_version_id IS NOT NULL\n                 AND NEW.current_version_id = OLD.retired_issue_version_id\n                 AND NEW.current_version_id = OLD.current_version_id, false);\n";
+/** P19's comment over its v_restoring limb — the text the second P16 block precedes. */
+const REV23_HEAD = "  -- REV-23 (document-control Round F wave 3, P19): the STAMPED put-back\n";
+/** The guard's second addition (the same move out of a retirement), as contiguous text. */
+const G_EXIT = G.next.slice(
+  G.next.indexOf("  -- REV-21 (document-control Round F wave 3, P16 review fix): the same move"),
+  G.next.indexOf(REV23_HEAD),
+);
+const EXIT_CODE = [
+  "  v_restoring := v_restoring",
+  "                 AND NOT COALESCE(NEW.status IN ('Issued', 'Locked')",
+  "                                  AND COALESCE(OLD.retired_issue_status, '') NOT IN ('Issued', 'Locked'), false);",
+  "  v_new_door := v_new_door",
+  "                OR COALESCE(v_issuing",
+  "                            AND NEW.current_version_id IS NOT DISTINCT FROM OLD.current_version_id",
+  "                            AND OLD.status IN ('Superseded', 'Archived', 'Void')",
+  "                            AND OLD.retired_issue_version_id IS NOT NULL",
+  "                            AND COALESCE(OLD.retired_issue_status, '') NOT IN ('Issued', 'Locked')",
+  "                            AND NEW.status IN ('Issued', 'Locked'), false);",
+];
 const LIMB_CODE = [
   "  v_issuing := v_issuing",
   "               OR COALESCE(NEW.current_version_id IS NOT NULL",
@@ -91,14 +117,16 @@ describe("20261185 — the guard re-created from its NEWEST earlier body (found 
     }
   });
 
-  it("nothing removed, every new line is the P16 block, and the body minus it IS the base byte for byte", () => {
+  it("nothing removed, every new line is one of the two P16 blocks, and the body minus them IS the base byte for byte", () => {
     const { onlyInA, onlyInB } = lineDiff(G.live, G.next);
     expect(onlyInA).toEqual([]);
-    const added = G_LIMB.split("\n");
+    const added = [...G_LIMB.split("\n"), ...G_EXIT.split("\n")];
     for (const l of onlyInB) expect(added, l).toContain(l);
     expect(G_LIMB.length).toBeGreaterThan(400);
+    expect(G_EXIT.length).toBeGreaterThan(400);
     expect(G.next.split(G_LIMB).length).toBe(2);
-    expect(G.next.replace(G_LIMB, "")).toBe(G.live);
+    expect(G.next.split(G_EXIT).length).toBe(2);
+    expect(G.next.replace(G_LIMB, "").replace(G_EXIT, "")).toBe(G.live);
   });
 
   it("the added code is exactly the REV-21 limb of v_issuing — right after 20261144's v_issuing and before the new door is computed from it", () => {
@@ -108,10 +136,34 @@ describe("20261185 — the guard re-created from its NEWEST earlier body (found 
     expect(G.next.slice(0, G.next.indexOf("BEGIN\n"))).toBe(G.live.slice(0, G.live.indexOf("BEGIN\n")));
     expect(G_LIMB).not.toMatch(/RAISE/);
     const count = (s: string, w: RegExp) => (stripComments(s).match(w) ?? []).length;
-    expect(count(G.next, /v_issuing/g)).toBe(count(G.live, /v_issuing/g) + 2);
-    for (const v of [/v_new_door/g, /v_advancing/g, /v_unforced_move/g, /v_unforced_issue/g, /v_restoring/g, /RAISE EXCEPTION/g]) {
+    // block 1 adds two v_issuing; block 2 one more, two v_restoring and two v_new_door
+    expect(count(G.next, /v_issuing/g)).toBe(count(G.live, /v_issuing/g) + 3);
+    expect(count(G.next, /v_restoring/g)).toBe(count(G.live, /v_restoring/g) + 2);
+    expect(count(G.next, /v_new_door/g)).toBe(count(G.live, /v_new_door/g) + 2);
+    for (const v of [/v_advancing/g, /v_unforced_move/g, /v_unforced_issue/g, /RAISE EXCEPTION/g]) {
       expect(count(G.next, v), String(v)).toBe(count(G.live, v));
     }
+  });
+
+  it("the second block is exactly the retirement exit — right after 20261144's v_restoring, before P19's limb reads it: v_restoring narrowed, the new door widened, nothing else", () => {
+    expect(code(G_EXIT.split("\n"))).toEqual(EXIT_CODE);
+    expect(G.next).toContain(RESTORING_BASE + G_EXIT + REV23_HEAD);
+    expect(G_EXIT).not.toMatch(/RAISE|current_setting|is_org_controller/);
+    const exit = code(G_EXIT.split("\n")).join("\n");
+    // the in-force pair, read from the SQL, is lib/verifyVerdict.ts IN_FORCE_STATUSES — four times (target and stamp, in each statement)
+    const lists = [...exit.matchAll(/IN \('(?:Issued|Superseded)[^)]*\)/g)].map((m) => m[0]);
+    const pairs = lists.filter((l) => !l.includes("Superseded")).map((l) => l.slice(4, -1).split(",").map((x) => x.trim().replace(/^'|'$/g, "")));
+    expect(pairs).toHaveLength(4);
+    for (const p of pairs) expect(p).toEqual([...IN_FORCE_STATUSES]);
+    // v_restoring only ever narrows (AND NOT …, COALESCEd), and only for a put-back INTO the pair of a stamp outside it (a NULL stamp is outside it)
+    expect(exit).toContain("  v_restoring := v_restoring\n                 AND NOT COALESCE(NEW.status IN ('Issued', 'Locked')\n                                  AND COALESCE(OLD.retired_issue_status, '') NOT IN ('Issued', 'Locked'), false);");
+    // the new door only ever widens (OR …, COALESCEd), status-only, out of a retirement whose stamp names a revision, with no flag and no tier read: it binds everyone
+    expect(exit).toContain("  v_new_door := v_new_door\n                OR COALESCE(v_issuing\n                            AND NEW.current_version_id IS NOT DISTINCT FROM OLD.current_version_id\n                            AND OLD.status IN ('Superseded', 'Archived', 'Void')\n                            AND OLD.retired_issue_version_id IS NOT NULL\n");
+    // an unstamped retirement (no revision in the stamp) keeps REV-20's / REV-22's limbs — the base's, unchanged
+    expect(G.live).toContain("                            AND OLD.status IN ('Archived', 'Void')\n                            AND OLD.retired_issue_status IS NULL\n                            AND is_org_controller(NEW.org_id), false);");
+    // and the require limb still reads v_restoring (now narrowed) — unchanged text
+    expect(G.next).toContain("    IF NOT is_org_controller(NEW.org_id)\n       AND NOT v_restoring\n");
+    expect(G.next.indexOf(G_EXIT)).toBeLessThan(G.next.indexOf("  v_new_door := v_new_door\n                OR COALESCE(v_restoring\n"));
   });
 
   it("the limb is status-only, needs a current revision, and moves an issue status outside the in-force pair INTO it — the pair read from the SQL is lib/verifyVerdict.ts IN_FORCE_STATUSES", () => {
@@ -191,7 +243,7 @@ describe("20261185 — the one-paste shape", () => {
     expect((M.match(/^BEGIN;$/gm) ?? []).length).toBe(1);
     expect((M.match(/^COMMIT;$/gm) ?? []).length).toBe(1);
     const inventory = stripComments(M.slice(M.indexOf("CREATE TEMP TABLE"), M.indexOf("\nBEGIN;")));
-    expect((inventory.match(/COUNT\(\*\)::text/g) ?? []).length).toBe(4);
+    expect((inventory.match(/COUNT\(\*\)::text/g) ?? []).length).toBe(5);
     expect(inventory).not.toMatch(/SELECT \*|document_number|title|d\.id\s+AS|user_email/);
     const c = stripComments(tail).replace(/'(?:[^']|'')*'/g, "''");
     expect((c.match(/;/g) ?? []).length).toBe(1); // one statement: the final SELECT
@@ -204,9 +256,11 @@ describe("20261185 — the one-paste shape", () => {
     expect(inv).toContain("   WHERE d.current_version_id IS NOT NULL\n     AND is_controlled_issue_status(d.status)\n     AND COALESCE(d.status, '') NOT IN ('Issued', 'Locked')\n");
     expect(inv).toContain("  SELECT d.status = 'IFC' AS is_ifc,");
     expect(mig("20261134_ps_roundF_verify_scans.sql")).toContain("WHERE current_version_id IS NOT NULL AND status = 'IFC'");
-    for (const w of ["  FROM outside\n", "  FROM outside WHERE is_ifc\n", "  FROM outside WHERE held\n", "  FROM outside WHERE under_require AND NOT roster_complete;"]) {
+    for (const w of ["  FROM outside\n", "  FROM outside WHERE is_ifc\n", "  FROM outside WHERE held\n", "  FROM outside WHERE under_require AND NOT roster_complete\n"]) {
       expect(inv, w).toContain(w);
     }
+    // row 5 (review fix): the retirements whose put-back into the pair the second block judges — the block's own population
+    expect(inv).toContain("  FROM documents d\n WHERE d.status IN ('Superseded', 'Archived', 'Void')\n   AND d.retired_issue_version_id IS NOT NULL\n   AND COALESCE(d.retired_issue_status, '') NOT IN ('Issued', 'Locked');");
     // the require read is the guard's own (the chain OR the document's own policy — DEC-71)
     expect(inv).toContain("(review_control_mode_for(NULL, d.collection_id, d.library_id) = 'require'\n          OR review_control_mode_for(d.review_control, d.collection_id, d.library_id) = 'require') AS under_require");
     const rosterOf = (sql: string) => stripComments(between(sql, "WITH slot_fill AS (", "HAVING sum(reqs) > 0 AND sum(LEAST(reqs, filled)) >= sum(reqs)"))
@@ -242,8 +296,10 @@ describe("20261185 — the one-paste shape", () => {
     };
     let n = 0;
     const p16: string[] = [];
+    const p16Exit: string[] = [];
     for (const seg of tail.split(/\nUNION ALL\n/)) {
       const isP16 = /(?:^|\n)SELECT 'REV-21 \(P16\)/.test(seg);
+      const isP16Exit = /(?:^|\n)SELECT 'REV-21 \(P16 review fix\)/.test(seg);
       for (const sub of seg.split(/\(SELECT (?=prosrc)/)) {
         const fn = /FROM pg_proc WHERE proname = '(\w+)'/.exec(sub)?.[1];
         for (const m of sub.matchAll(/prosrc (NOT )?LIKE '((?:[^']|'')*)'/g)) {
@@ -254,14 +310,19 @@ describe("20261185 — the one-paste shape", () => {
           expect(body, fn).toBeDefined();
           expect(likeRe(pat).test(prosrcOf(body)), `${fn}: ${pat}`).toBe(m[1] ? false : true);
           if (isP16 && /^%v_issuing := v_issuing%/.test(pat)) p16.push(pat);
+          if (isP16Exit) p16Exit.push(pat);
           n += 1;
         }
       }
     }
-    expect(n).toBe(22);
-    // the limb's probe is false on the base (20261182), so a paste that did not land reads false
+    expect(n).toBe(23);
+    // the limbs' probes are false on the base (20261182), so a paste that did not land reads false
     expect(p16).toHaveLength(1);
-    for (const pat of p16) expect(likeRe(pat).test(prosrcOf(G.live)), pat).toBe(false);
+    expect(p16Exit).toHaveLength(1);
+    for (const pat of [...p16, ...p16Exit]) expect(likeRe(pat).test(prosrcOf(G.live)), pat).toBe(false);
+    // …and the second places its block after v_restoring is computed and before P19's limb reads it
+    expect(p16Exit[0]).toMatch(/^%v_restoring := COALESCE\(v_issuing%v_restoring := v_restoring%/);
+    expect(p16Exit[0]).toMatch(/%v_new_door := v_new_door%OR COALESCE\(v_restoring%$/);
     // …and it places the limb before the new door is computed (the order the probe checks is the order in the body)
     expect(p16[0]).toMatch(/AND NEW\.status IN \('Issued', 'Locked'\), false\);%v_new_door := v_issuing%$/);
   });
@@ -272,20 +333,24 @@ describe("20261185 — the one-paste shape", () => {
     expect(tail).toContain("AND p.prosecdef AND p.proconfig @> ARRAY['search_path=public'])");
     expect(tail).toContain("'is_controlled_issue_status(text)', 'EXECUTE'), false)");
     expect(tail).toContain("AND (t.tgtype & 2) = 2 AND (t.tgtype & 16) = 16 AND (t.tgtype & 4) = 0),");
-    expect(tail).toContain("-- Probes: ok = true × 8. Inventory rows: n = the aggregate count.");
-    expect(tail.split(/\nUNION ALL\n/).filter((s) => /AS ok,|^SELECT '/.test(s) && !/FROM dc_round_f_185_before/.test(s))).toHaveLength(8);
+    expect(tail).toContain("-- Probes: ok = true × 9. Inventory rows: n = the aggregate count.");
+    expect(tail.split(/\nUNION ALL\n/).filter((s) => /AS ok,|^SELECT '/.test(s) && !/FROM dc_round_f_185_before/.test(s))).toHaveLength(9);
   });
 
-  it("the header states the finding, the decision (status-only), the paste order (after 20261182, behind the held 20261159), the never-re-paste list, the deploy order and that it is not a widening", () => {
+  it("the header states the finding, the retirement exit, the decision (status-only) and its remainder, the paste order (after 20261182, behind the held 20261159), the never-re-paste list, the deploy order and the one app result that changes, and that it is not a widening", () => {
     const head = M.slice(0, M.indexOf("DO $$"));
     expect(head).toMatch(/REV-21 {2}20261144's v_issuing decides a status-only issue/);
     expect(head).toMatch(/DEC-77 §4, ratified by the integrator under the user's delegation,\n-- 2026-10-07: DEC-90 A3, option 1; no IFC row is moved/);
     expect(head).toMatch(/DECIDED — status-only, as ratified: a write that ALSO moves the\n-- {11}pointer is not this limb\./);
+    expect(head).toMatch(/THE SAME MOVE OUT OF A RETIREMENT \(P16 review fix\)/);
+    expect(head).toMatch(/REV-28, for the\n-- {11}integrator \(or the user\) to decide\./);
     expect(head).toMatch(/HOW TO APPLY: AFTER 20261182 \(required/);
     expect(head).toMatch(/20261182 follows 20261174 \/ 20261165 \/ 20261164 \/\n-- 20261159, the last HELD \(paste guide row 119\)/);
     expect(head).toMatch(/INTK-18/);
     expect(head).toMatch(/Never\n-- re-paste 20261182, 20261174, 20261165, 20261164, 20261159, 20261151,\n-- 20261144, 20261139, 20261105 or any earlier guard migration after this\n-- one/);
-    expect(head).toMatch(/DEPLOY ORDER: none — the app works the same before and after this paste\./);
+    expect(head).toMatch(/DEPLOY ORDER: none — no app deploy is needed before or after this paste\./);
+    expect(head).toMatch(/ONE APP RESULT\n-- CHANGES, from the retirement exit/);
+    expect(head).toMatch(/document-control REV-27/);
     expect(head).toMatch(/NOT a widening/);
     expect(head).toMatch(/RE-CREATED FROM THE NEWEST BODY/);
   });

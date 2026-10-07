@@ -78,7 +78,17 @@ export const RETIRED_NOT_ISSUED_STAMP = "not-issued";
  *  and whether a move into force out of IFC owes those clocks and that
  *  record is not decided here (document-control REV-26); the two editors
  *  treat the move into force as an issue through the other predicate (said
- *  before the save, the hold checked first). */
+ *  before the save, the hold checked first).
+ *
+ *  The same move out of a retirement (20261185's review fix): this predicate
+ *  already holds for it, but the guard no longer counts a put-back INTO
+ *  Issued / Locked of a retirement stamped with a status outside them (an
+ *  IFC drawing archived, then un-archived to Issued) as the put-back of the
+ *  issue it took away (v_restoring): the require limb decides it, and over
+ *  an active hold it is the new door, for everyone. The app's put-back basis
+ *  (lib/revisions.ts putBackFromRetirementStamp, unarchiveRestoreDefault —
+ *  the un-archive dialog's default and its record) does not follow yet:
+ *  document-control REV-27. */
 export function isIssueTransition(input: {
   fromStatus: string | null | undefined; toStatus: string | null | undefined; hasCurrentRevision: boolean;
 }): boolean {

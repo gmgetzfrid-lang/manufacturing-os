@@ -9,7 +9,13 @@
 //   issue-to-issue to the guard: no publisher tier, no hold, no require
 //   limb — though it is the move that puts the revision in force at the
 //   print gate and on /verify. 20261185 makes that move, status-only, a
-//   v_issuing write, judged as every status-only issue is.
+//   v_issuing write, judged as every status-only issue is. Its review fix
+//   closes the same move out of a retirement: IFC -> Archived -> Issued (the
+//   un-archive dialog's default), IFC -> Void -> Locked, IFC -> Superseded ->
+//   Issued were put-backs (v_restoring: no require limb, and a controller's
+//   recorded pass over a hold); a put-back INTO Issued / Locked of a stamp
+//   outside them is now judged as an issue (the require limb; the new door,
+//   whatever flag is set).
 //
 // Pinned here:
 //   1. the app and the database agree — the SQL limb, transcribed from the
@@ -30,7 +36,13 @@
 //      the guard bound as the in-memory PostgREST's documents BEFORE UPDATE
 //      trigger, with and without the limb; a reviewed revision; Issued <->
 //      Locked; a register row; the rev-up shape (pointer + Issued); the
-//      service role.
+//      service role;
+//   4. the retirement exit (review fix): every put-back pair against the
+//      guard, and the REAL lib/revisions.ts unarchiveDocument (through a
+//      transcription of put_back_retired_issue's un-archive door) before and
+//      after — the IFC-stamped un-archive into Issued now judged, every other
+//      put-back (to the stamped status, of an Issued / Locked stamp, to a
+//      Draft) landing as before.
 //
 // There is no database here; 20261185 was applied twice to a throwaway
 // PostgreSQL 16 with the repository's guard chain and the cases run there
@@ -51,6 +63,13 @@ const state = vi.hoisted(() => ({
   p16: true,
   refusals: [] as string[],
   writes: [] as string[],
+  /** Who the bound guard sees (the session) — Document Control unless a test says otherwise. */
+  as: {} as { actor?: string; controller?: boolean; publisher?: boolean; requireMode?: boolean; rosterComplete?: boolean },
+  /** The transaction-local app.publish_hold_override, as a recording function sets it around its own write. */
+  flag: null as string | null,
+  /** PostgREST's rpc: no function in this database unless a test installs one. */
+  rpc: (async (fn: string) => ({ data: null, error: { code: "PGRST202", message: `Could not find the function public.${fn} in the schema cache` } })) as
+    (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: unknown }>,
 }));
 
 vi.mock("@/lib/supabase", () => ({
@@ -58,6 +77,7 @@ vi.mock("@/lib/supabase", () => ({
     const real = makeFakeSupabase(state.db);
     return {
       ...real,
+      rpc: (fn: string, args: Record<string, unknown>) => state.rpc(fn, args),
       from: (t: string) => {
         const b = real.from(t) as unknown as Record<string, (...a: unknown[]) => unknown>;
         if (t !== "documents") return b;
@@ -110,6 +130,7 @@ import { supabase } from "@/lib/supabase";
 import { isControlledIssueStatus, isIssueTransition, isIssueRefusal } from "@/lib/issueStatus";
 import { isUnguardedEntryIntoForce, BULK_EDIT_STATUS_OPTIONS, METADATA_EDITOR_STATUS_OPTIONS, IMPORT_STATUSES, RETIRED_STATUS_OPTIONS } from "@/lib/documentStatusOptions";
 import { IN_FORCE_STATUSES } from "@/lib/verifyVerdict";
+import { unarchiveDocument, unarchiveRestoreDefault } from "@/lib/revisions";
 import type { DocumentRecord, LibraryConfig } from "@/types/schema";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -125,6 +146,9 @@ const GUARD_HEAD = "CREATE OR REPLACE FUNCTION enforce_document_publish_guard()"
 const G = body(read("20261185_dc_roundF_status_into_force_issue.sql"), GUARD_HEAD);
 const G182 = body(read("20261182_dc_roundF_first_pointer_hold_limb.sql"), GUARD_HEAD);
 const LIMB_SQL = "  v_issuing := v_issuing\n               OR COALESCE(NEW.current_version_id IS NOT NULL\n                           AND NEW.current_version_id IS NOT DISTINCT FROM OLD.current_version_id\n                           AND is_controlled_issue_status(OLD.status)\n                           AND COALESCE(OLD.status, '') NOT IN ('Issued', 'Locked')\n                           AND NEW.status IN ('Issued', 'Locked'), false);";
+/** The review fix's two statements (the retirement exit), right after v_restoring. */
+const EXIT_RESTORING_SQL = "  v_restoring := v_restoring\n                 AND NOT COALESCE(NEW.status IN ('Issued', 'Locked')\n                                  AND COALESCE(OLD.retired_issue_status, '') NOT IN ('Issued', 'Locked'), false);";
+const EXIT_NEW_DOOR_SQL = "  v_new_door := v_new_door\n                OR COALESCE(v_issuing\n                            AND NEW.current_version_id IS NOT DISTINCT FROM OLD.current_version_id\n                            AND OLD.status IN ('Superseded', 'Archived', 'Void')\n                            AND OLD.retired_issue_version_id IS NOT NULL\n                            AND COALESCE(OLD.retired_issue_status, '') NOT IN ('Issued', 'Locked')\n                            AND NEW.status IN ('Issued', 'Locked'), false);";
 /** The limb's in-force pair, read from its two IN lists. */
 const SQL_IN_FORCE = (() => {
   const lists = [...LIMB_SQL.matchAll(/IN \(([^)]*)\)/g)].map((m) => m[1].split(",").map((x) => x.trim().replace(/^'|'$/g, "")));
@@ -168,7 +192,8 @@ const has = (v: unknown) => v !== null && v !== undefined;
 
 /** enforce_document_publish_guard() (20261185), transcribed: P21's
  *  transcription of 20261182 (dcRoundFFirstPointerHoldLimb.test.ts) plus the
- *  REV-21 limb right after v_issuing. A NULL status is outside it (the SQL's
+ *  REV-21 limb right after v_issuing, and the retirement exit right after
+ *  v_restoring (review fix). A NULL status is outside it (the SQL's
  *  three-valued answers for one were run on PostgreSQL 16 — REV-21's
  *  record); the rest of the review gate admits every pointer move here. */
 function publishGuard(NEW: Row, OLD: Row, ctx: GuardCtx): Row {
@@ -193,8 +218,15 @@ function publishGuard(NEW: Row, OLD: Row, ctx: GuardCtx): Row {
   let unforcedMove = has(OLD.current_version_id) && has(NEW.current_version_id) && !sameptr
     && isControlledIssueStatus(os) && isControlledIssueStatus(ns) && !flagNamesIt && ctx.controller;
   advancing = advancing || issuing;
-  const restoring = issuing && RETIRED.includes(os) && has(OLD.retired_issue_version_id)
+  let restoring = issuing && RETIRED.includes(os) && has(OLD.retired_issue_version_id)
     && NEW.current_version_id === OLD.retired_issue_version_id && NEW.current_version_id === OLD.current_version_id;
+  // REV-21 (P16 review fix): a put-back INTO Issued / Locked of a stamp outside them is not v_restoring, and is the new door
+  if (ctx.p16 !== false) {
+    const stampInForce = SQL_IN_FORCE.has(String(OLD.retired_issue_status ?? ""));
+    restoring = restoring && !(SQL_IN_FORCE.has(ns) && !stampInForce);
+    newDoor = newDoor || (issuing && sameptr && RETIRED.includes(os) && has(OLD.retired_issue_version_id)
+      && !stampInForce && SQL_IN_FORCE.has(ns));
+  }
   newDoor = newDoor || (restoring && !flagNamesIt && ctx.controller);
   unforcedMove = unforcedMove || (has(OLD.current_version_id) && !sameptr && RETIRED.includes(os) && !flagNamesIt && ctx.controller);
   newDoor = newDoor || (issuing && sameptr && RETIRED.includes(os) && has(OLD.retired_issue_version_id)
@@ -254,6 +286,8 @@ describe("the transcription is 20261185's guard (every branch it mirrors, in ord
       "  v_unforced_move := COALESCE(OLD.current_version_id IS NOT NULL\n                              AND NEW.current_version_id IS NOT NULL\n                              AND NEW.current_version_id IS DISTINCT FROM OLD.current_version_id\n                              AND is_controlled_issue_status(OLD.status)\n                              AND is_controlled_issue_status(NEW.status)\n",
       "  v_advancing := v_advancing OR v_issuing;",
       "  v_restoring := COALESCE(v_issuing\n                 AND OLD.status IN ('Superseded', 'Archived', 'Void')\n                 AND OLD.retired_issue_version_id IS NOT NULL\n                 AND NEW.current_version_id = OLD.retired_issue_version_id\n                 AND NEW.current_version_id = OLD.current_version_id, false);",
+      EXIT_RESTORING_SQL,
+      EXIT_NEW_DOOR_SQL,
       "  v_new_door := v_new_door\n                OR COALESCE(v_restoring\n",
       "                                 AND NEW.current_version_id IS DISTINCT FROM OLD.current_version_id\n                                 AND OLD.status IN ('Superseded', 'Archived', 'Void')\n",
       "                            AND OLD.retired_issue_version_id IS NOT NULL\n                            AND OLD.retired_issue_version_id IS DISTINCT FROM OLD.current_version_id, false);",
@@ -281,9 +315,10 @@ describe("the transcription is 20261185's guard (every branch it mirrors, in ord
       expect(i, f.slice(0, 80)).toBeGreaterThan(at);
       at = i;
     }
-    // the base (20261182) has every fragment but the limb — the transcription with p16: false is that guard
-    expect(G182).not.toContain(LIMB_SQL);
-    for (const f of fragments.filter((x) => x !== LIMB_SQL)) expect(G182, f.slice(0, 60)).toContain(f);
+    // the base (20261182) has every fragment but the two P16 additions — the transcription with p16: false is that guard
+    const P16_ONLY = [LIMB_SQL, EXIT_RESTORING_SQL, EXIT_NEW_DOOR_SQL];
+    for (const f of P16_ONLY) expect(G182).not.toContain(f);
+    for (const f of fragments.filter((x) => !P16_ONLY.includes(x))) expect(G182, f.slice(0, 60)).toContain(f);
   });
   it("the refusals the move meets are sentences the app already recognises (the status editors and the un-archive dialog answer them)", () => {
     for (const s of [S_NEW_DOOR_HOLD, S_REQUIRE, S_AUTHORITY]) expect(isIssueRefusal(s), s).toBe(true);
@@ -442,12 +477,17 @@ beforeEach(() => {
   state.refusals = [];
   state.writes = [];
   state.p16 = true;
-  // the guard, as the signed-in Document Controller (DocCtrl in the role collection) writes
+  state.as = {};
+  state.flag = null;
+  state.rpc = async (fn: string) => ({ data: null, error: { code: "PGRST202", message: `Could not find the function public.${fn} in the schema cache` } });
+  // the guard, as the signed-in Document Controller (DocCtrl in the role collection) writes — or whoever state.as names
   state.db.beforeUpdate!.documents = (next, old) => {
     try {
       return publishGuard(next, old, {
         actor: ME, controller: true, publisher: false,
         held: (id) => activeHolds(id).length > 0 || state.raceHolds.has(id),
+        ...state.as,
+        flag: state.flag,
         p16: state.p16,
       });
     } catch (e) {
@@ -586,5 +626,207 @@ describe("REGRESSION FIRST — Document Control's move into force in the REAL me
     expect(docRow("m3").status).toBe("IFC");
     expect(state.refusals).toEqual([S_NEW_DOOR_HOLD]);
     expect(host.querySelector('[role="alert"]')!.textContent).toContain(S_NEW_DOOR_HOLD);
+  });
+});
+
+// ─── 4. the retirement exit (review fix) ───────────────────────────────────
+describe("REV-21 (review fix) — the same move out of a retirement: a put-back INTO Issued / Locked of a stamp outside them is judged as an issue; every other put-back answers as before", () => {
+  const RET = (status: string, stamp: string | null, extra: Row = {}): Row => ({
+    id: "d1", org_id: "o1", status, current_version_id: "d1-v3", retired_issue_status: stamp, retired_issue_version_id: "d1-v3", ...extra,
+  });
+  const to = (old: Row, status: string): Row => ({ ...old, status });
+  const none = () => false;
+  const heldAll = () => true;
+  const both = (old: Row, next: Row, ctx: Omit<GuardCtx, "p16">) => ({
+    after: verdict(() => publishGuard(next, old, { ...ctx, p16: true })),
+    before: verdict(() => publishGuard(next, old, { ...ctx, p16: false })),
+  });
+  const OWNER_RQ = { actor: "w1", controller: false, publisher: true, held: none, requireMode: true, rosterComplete: false };
+  const DOCCTRL = { actor: "c1", controller: true, publisher: false, held: none };
+
+  it("the finding's second route: the owner's IFC -> Archived / Void / Superseded -> Issued / Locked of an unreviewed revision in a require library — admitted before (a put-back), refused after (the require sentence)", () => {
+    // the retirement itself, through the guard: the stamp is IFC and the revision
+    const archived = publishGuard({ ...RET("IFC", null, { retired_issue_version_id: null }), status: "Archived" }, RET("IFC", null, { retired_issue_version_id: null }), { ...OWNER_RQ, p16: true });
+    expect([archived.retired_issue_status, archived.retired_issue_version_id]).toEqual(["IFC", "d1-v3"]);
+    for (const [from, target] of [["Archived", "Issued"], ["Void", "Locked"], ["Superseded", "Issued"], ["Archived", "Locked"]] as const) {
+      expect(both(RET(from, "IFC"), to(RET(from, "IFC"), target), OWNER_RQ), `${from} -> ${target}`).toEqual({ after: S_REQUIRE, before: "ADMITTED" });
+    }
+    // a library publisher, and every other stamp outside the pair (a variant, empty, a library's own)
+    for (const stamp of ["IFC", "issued", " Issued", "", "For Construction", "Approved"]) {
+      expect(both(RET("Archived", stamp), to(RET("Archived", stamp), "Issued"), { ...OWNER_RQ, actor: "p1" }), stamp).toEqual({ after: S_REQUIRE, before: "ADMITTED" });
+    }
+  });
+
+  it("Document Control over a hold: the recorded override (the flag put_back_retired_issue sets for the un-archive dialog's forced restore, or a rollback's) no longer passes it — the new door, for everyone", () => {
+    const old = RET("Archived", "IFC");
+    expect(both(old, to(old, "Issued"), { ...DOCCTRL, held: heldAll, flag: "d1" })).toEqual({ after: S_NEW_DOOR_HOLD, before: "ADMITTED" });
+    const sup = RET("Superseded", "IFC");
+    expect(both(sup, to(sup, "Issued"), { ...DOCCTRL, held: heldAll, flag: "d1" })).toEqual({ after: S_NEW_DOOR_HOLD, before: "ADMITTED" });
+    // the bare write was refused already (P19), and stays refused
+    expect(both(old, to(old, "Locked"), { ...DOCCTRL, held: heldAll })).toEqual({ after: S_NEW_DOOR_HOLD, before: S_NEW_DOOR_HOLD });
+    // below Document Control it was refused already (the publisher tier's hold); now in the new door's words, as the direct move is
+    expect(both(old, to(old, "Issued"), { ...OWNER_RQ, requireMode: false, held: heldAll })).toEqual({ after: S_NEW_DOOR_HOLD, before: S_PUBLISHER_HOLD });
+  });
+
+  it("REGRESSION — every other put-back answers exactly as before: to the stamped status itself, an Issued / Locked stamp into Issued / Locked, a reviewed revision, a none library, Document Control unheld, a Draft, an unstamped retirement", () => {
+    // the put-back as it was (Archived -> IFC): the require limb still spares it; Document Control's forced one still passes the hold
+    expect(both(RET("Archived", "IFC"), to(RET("Archived", "IFC"), "IFC"), OWNER_RQ)).toEqual({ after: "ADMITTED", before: "ADMITTED" });
+    expect(both(RET("Archived", "IFC"), to(RET("Archived", "IFC"), "IFC"), { ...DOCCTRL, held: heldAll, flag: "d1" })).toEqual({ after: "ADMITTED", before: "ADMITTED" });
+    expect(both(RET("Archived", "IFC"), to(RET("Archived", "IFC"), "IFC"), { ...DOCCTRL, held: heldAll })).toEqual({ after: S_NEW_DOOR_HOLD, before: S_NEW_DOOR_HOLD });
+    // an issue in force put back in force
+    for (const [stamp, target] of [["Issued", "Issued"], ["Issued", "Locked"], ["Locked", "Issued"], ["Locked", "Locked"]] as const) {
+      expect(both(RET("Archived", stamp), to(RET("Archived", stamp), target), OWNER_RQ), `${stamp} -> ${target}`).toEqual({ after: "ADMITTED", before: "ADMITTED" });
+      expect(both(RET("Superseded", stamp), to(RET("Superseded", stamp), target), { ...DOCCTRL, held: heldAll, flag: "d1" })).toEqual({ after: "ADMITTED", before: "ADMITTED" });
+    }
+    // the IFC stamp into force where nothing binds: a complete roster, a none library, Document Control unheld
+    expect(both(RET("Archived", "IFC"), to(RET("Archived", "IFC"), "Issued"), { ...OWNER_RQ, rosterComplete: true })).toEqual({ after: "ADMITTED", before: "ADMITTED" });
+    expect(both(RET("Archived", "IFC"), to(RET("Archived", "IFC"), "Issued"), { ...OWNER_RQ, requireMode: false })).toEqual({ after: "ADMITTED", before: "ADMITTED" });
+    expect(both(RET("Archived", "IFC"), to(RET("Archived", "IFC"), "Issued"), { ...DOCCTRL, requireMode: true })).toEqual({ after: "ADMITTED", before: "ADMITTED" });
+    // a Draft restore (not an issue), held or not
+    expect(both(RET("Archived", "IFC"), to(RET("Archived", "IFC"), "Draft"), { ...DOCCTRL, held: heldAll })).toEqual({ after: "ADMITTED", before: "ADMITTED" });
+    expect(both(RET("Archived", "IFC"), to(RET("Archived", "IFC"), "Draft"), OWNER_RQ)).toEqual({ after: "ADMITTED", before: "ADMITTED" });
+    // an unstamped retirement keeps REV-20's / REV-22's limbs (the legacy reversal's flagged put-back of a held source passes)
+    const unstamped = (st: string) => RET(st, null, { retired_issue_version_id: null });
+    expect(both(unstamped("Superseded"), to(unstamped("Superseded"), "Issued"), { ...DOCCTRL, held: heldAll, flag: "d1" })).toEqual({ after: "ADMITTED", before: "ADMITTED" });
+    expect(both(unstamped("Archived"), to(unstamped("Archived"), "Issued"), { ...DOCCTRL, held: heldAll, flag: "d1" })).toEqual({ after: S_NEW_DOOR_HOLD, before: S_NEW_DOOR_HOLD });
+    // a viewer is refused either way
+    expect(both(RET("Archived", "IFC"), to(RET("Archived", "IFC"), "Issued"), { ...OWNER_RQ, publisher: false, requireMode: false })).toEqual({ after: S_AUTHORITY, before: S_AUTHORITY });
+  });
+
+  it("over every stamp the guard can write and every target the editors and the import can produce: the paste changes a put-back's answer exactly when it moves INTO Issued / Locked out of a stamp outside them (the owner, require, unreviewed, no hold)", () => {
+    const stamps = UNIVERSE.filter((x) => isControlledIssueStatus(x));
+    const targets = UNIVERSE.filter((x): x is string => x !== null);
+    let changed = 0;
+    for (const stamp of stamps) for (const target of targets) {
+      const old = RET("Archived", stamp);
+      const v = both(old, to(old, target), OWNER_RQ);
+      const judged = IN_FORCE_STATUSES.has(target) && !IN_FORCE_STATUSES.has(stamp ?? "");
+      expect(v.before, `${stamp} -> ${target}`).toBe("ADMITTED");
+      expect(v.after, `${stamp} -> ${target}`).toBe(judged ? S_REQUIRE : "ADMITTED");
+      if (judged) changed += 1;
+    }
+    expect(changed).toBeGreaterThan(20);
+  });
+});
+
+// ─── the app's un-archive door against the guard, before and after ────────
+const M165 = read("20261165_dc_roundF_stamped_put_back.sql");
+/** put_back_retired_issue's recorded door (20261165), the condition this transcription mirrors — read from the SQL. */
+const PUT_BACK_DOOR_SQL = "  IF COALESCE(p_force_hold, false)\n     AND v_status = (CASE WHEN p_via = 'unarchive' THEN 'Archived' ELSE 'Superseded' END)\n     AND (p_via = 'unarchive' OR v_retired_by = v_uid)\n     AND v_stamped IS NOT NULL\n     AND v_stamped = v_version\n     AND btrim(p_status) NOT IN ('Draft', 'In Review', 'Superseded', 'Void', 'Archived')\n     AND is_org_controller(v_org)\n     AND EXISTS (SELECT 1 FROM document_holds h\n                  WHERE h.document_id = p_document_id AND h.released_at IS NULL) THEN";
+
+/** put_back_retired_issue (20261165), its un-archive door only, transcribed
+ *  (P19's full transcription is pinned in dcRoundFStampedPutBack.test.ts):
+ *  the flag names the document around its own write when Document Control
+ *  asks for the force over a hold on a stamped archive, and the pass is
+ *  recorded after the write (a refused write records nothing — the
+ *  transaction rolls back). */
+async function putBackUnarchive(args: Record<string, unknown>): Promise<{ data: unknown; error: unknown }> {
+  const id = String(args.p_document_id);
+  const d = T("documents").find((x) => x.id === id);
+  if (!d || args.p_via !== "unarchive") return { data: "no_match", error: null };
+  const forced = args.p_force_hold === true && d.status === "Archived"
+    && has(d.retired_issue_version_id) && d.retired_issue_version_id === d.current_version_id
+    && !["Draft", "In Review", "Superseded", "Void", "Archived"].includes(String(args.p_status).trim())
+    && (state.as.controller ?? true) && activeHolds(id).length > 0;
+  state.flag = forced ? id : null;
+  let res: { data: unknown; error: unknown };
+  try {
+    // the function's own UPDATE, as the caller (SECURITY INVOKER): the guard, bound as the BEFORE UPDATE trigger, reads the flag
+    const payload: Record<string, unknown> = { status: args.p_status, archived_at: null, archived_by: null, archive_reason: null, updated_by: state.as.actor ?? ME };
+    res = await supabase.from("documents").update(payload).eq("id", id).select("id");
+  } finally {
+    state.flag = null;
+  }
+  if (res.error) return { data: null, error: res.error };
+  if (((res.data as unknown[] | null) ?? []).length === 0) return { data: "no_match", error: null };
+  if (forced) T("audit_logs").push({ id: `ovr-${id}`, action: "REV_HOLD_OVERRIDDEN", resource_id: id, resource_type: "document", org_id: ORG });
+  return { data: forced ? "restored_over_hold" : "restored", error: null };
+}
+
+describe("REV-21 (review fix) — the REAL un-archive (lib/revisions.ts unarchiveDocument, through put_back_retired_issue) against the guard, before and after 20261185", () => {
+  const OWNER_RQ = { actor: "w1", controller: false, publisher: true, requireMode: true, rosterComplete: false };
+  const archivedFrom = (id: string, stamp: string, extra: Row = {}) =>
+    seedDoc(id, { status: "Archived", archived_at: "2026-09-30", retired_issue_status: stamp, retired_issue_version_id: `${id}-v2`, ...extra });
+  const unarchive = (id: string, restoreStatus: string, forceHold?: boolean) =>
+    unarchiveDocument({ doc: asRecord(docRow(id)), reason: "", orgId: ORG, actorUserId: state.as.actor ?? ME, restoreStatus, forceHold });
+  const overrides = (id: string) => T("audit_logs").filter((a) => a.action === "REV_HOLD_OVERRIDDEN" && a.resource_id === id).length;
+  beforeEach(() => {
+    state.rpc = async (fn: string, args: Record<string, unknown>) => fn === "put_back_retired_issue"
+      ? putBackUnarchive(args)
+      : { data: null, error: { code: "PGRST202", message: `Could not find the function public.${fn} in the schema cache` } };
+  });
+
+  it("the transcribed door is 20261165's", () => {
+    expect(M165).toContain(PUT_BACK_DOOR_SQL);
+    expect(M165).toContain("    PERFORM set_config('app.publish_hold_override', p_document_id::text, true);");
+  });
+
+  for (const p16 of [false, true]) {
+    it(`${p16 ? "after" : "before"} the paste: the owner's un-archive of an IFC drawing's unreviewed revision into Issued in a require library is ${p16 ? "REFUSED in the require sentence (the dialog then offers the Draft restore)" : "ADMITTED — the finding's second route"}`, async () => {
+      state.p16 = p16;
+      state.as = OWNER_RQ;
+      archivedFrom("u1", "IFC");
+      if (p16) {
+        await expect(unarchive("u1", "Issued")).rejects.toThrow(`The document was NOT restored (${S_REQUIRE}) — nothing was changed.`);
+        expect([docRow("u1").status, docRow("u1").retired_issue_status]).toEqual(["Archived", "IFC"]);
+        expect(T("audit_logs").filter((a) => a.action === "DOCUMENT_ISSUED")).toEqual([]);
+      } else {
+        await unarchive("u1", "Issued");
+        expect(docRow("u1").status).toBe("Issued");
+      }
+    });
+
+    it(`${p16 ? "after" : "before"} the paste: Document Control's confirmed override (forceHold) of a held IFC-stamped archive into Issued is ${p16 ? "REFUSED in the new door's sentence, nothing recorded" : "ADMITTED and recorded as REV_HOLD_OVERRIDDEN"}`, async () => {
+      state.p16 = p16;
+      archivedFrom("u2", "IFC");
+      seedHold("u2");
+      if (p16) {
+        await expect(unarchive("u2", "Issued", true)).rejects.toThrow(`The document was NOT restored (${S_NEW_DOOR_HOLD}) — nothing was changed.`);
+        expect(docRow("u2").status).toBe("Archived");
+        expect(overrides("u2")).toBe(0);
+      } else {
+        await unarchive("u2", "Issued", true);
+        expect(docRow("u2").status).toBe("Issued");
+        expect(overrides("u2")).toBe(1);
+      }
+      expect(state.flag).toBeNull();
+    });
+
+    it(`REGRESSION ${p16 ? "after" : "before"} the paste: an Issued-stamped archive comes back Issued (the owner, require, unreviewed; Document Control's override over a hold, recorded); an IFC-stamped one comes back a Draft, or Issued where nothing binds`, async () => {
+      state.p16 = p16;
+      state.as = OWNER_RQ;
+      archivedFrom("k1", "Issued");
+      await unarchive("k1", "Issued");
+      expect(docRow("k1").status).toBe("Issued");
+      archivedFrom("k2", "IFC");
+      await unarchive("k2", "Draft");
+      expect(docRow("k2").status).toBe("Draft");
+      archivedFrom("k3", "IFC", { library_id: "lib-none" });
+      state.as = { ...OWNER_RQ, requireMode: false };
+      await unarchive("k3", "Issued");
+      expect(docRow("k3").status).toBe("Issued");
+      state.as = {};
+      archivedFrom("k4", "Issued");
+      seedHold("k4");
+      await unarchive("k4", "Issued", true);
+      expect([docRow("k4").status, overrides("k4")]).toEqual(["Issued", 1]);
+      archivedFrom("k5", "IFC");
+      seedHold("k5");
+      await unarchive("k5", "Draft");
+      expect(docRow("k5").status).toBe("Draft");
+      archivedFrom("k6", "IFC");
+      state.as = { requireMode: true, rosterComplete: false };
+      await unarchive("k6", "Issued"); // Document Control, unheld, require, unreviewed: DEC-63 §2
+      expect(docRow("k6").status).toBe("Issued");
+    });
+  }
+
+  // REV-27 (opened by this fix, DEC-31): the dialog still calls an IFC-stamped archive's restore into Issued
+  // "the put-back of that issue" (basis "issued", Issued pre-selected) and offers no restore to the stamped
+  // status. When REV-27 lands this tripwire fails: flip it to `it`.
+  it.fails("REV-27 tripwire: the un-archive dialog does not offer an IFC-stamped archive's restore into Issued as the put-back of its issue", async () => {
+    archivedFrom("t1", "IFC");
+    const d = await unarchiveRestoreDefault("t1");
+    expect(d).not.toEqual({ status: "Issued", basis: "issued" });
   });
 });
