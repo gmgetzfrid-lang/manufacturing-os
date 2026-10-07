@@ -457,17 +457,24 @@ export async function reserveWithinCap(input: {
 
 /** Replace a reservation with the call's real figures. Never throws:
  *  metering must not mask the call's own outcome. A settle that fails leaves
- *  the reservation's worst case standing — over-counted, never under. */
-export async function settleUsage(id: string, input: { model: string; usage: AiUsage; ok: boolean }): Promise<void> {
+ *  the reservation's worst case standing — over-counted, never under.
+ *  Answers whether the row now carries the figures: a caller folding another
+ *  call's reservation into this row gives that reservation back only after
+ *  the write, and only when it landed (GOV-13), so the call's spend is never
+ *  on the ledger nowhere. */
+export async function settleUsage(id: string, input: { model: string; usage: AiUsage; ok: boolean }): Promise<boolean> {
   try {
-    await supabaseAdmin.from("ai_usage_events").update({
+    const res = await supabaseAdmin.from("ai_usage_events").update({
       model: input.model,
       input_tokens: Math.max(0, input.usage.inputTokens),
       output_tokens: Math.max(0, input.usage.outputTokens),
       est_cost_usd: estimateCostUsd(input.model, input.usage),
       ok: input.ok,
     }).eq("id", id);
-  } catch { /* the reservation stands */ }
+    return !res?.error;
+  } catch {
+    return false; // the reservation stands
+  }
 }
 
 /** Fold a run's real cost so far into its reservation and KEEP it a
@@ -476,14 +483,18 @@ export async function settleUsage(id: string, input: { model: string; usage: AiU
  *  between calls, so the run counts as in flight for maxInFlight until it
  *  finishes — not only while a call is at the provider — while what it has
  *  spent is already on the ledger if it dies part-way. Never throws: a
- *  failed update leaves the figure it had. */
-export async function holdUsage(id: string, input: { model: string; usage: AiUsage }): Promise<void> {
+ *  failed update leaves the figure it had. Answers whether the row now
+ *  carries the new figure, as settleUsage does. */
+export async function holdUsage(id: string, input: { model: string; usage: AiUsage }): Promise<boolean> {
   try {
-    await supabaseAdmin.from("ai_usage_events").update({
+    const res = await supabaseAdmin.from("ai_usage_events").update({
       model: input.model,
       est_cost_usd: estimateCostUsd(input.model, input.usage),
     }).eq("id", id);
-  } catch { /* the figure it had stands */ }
+    return !res?.error;
+  } catch {
+    return false; // the figure it had stands
+  }
 }
 
 /** Drop a reservation for a call that was never made. If the delete fails

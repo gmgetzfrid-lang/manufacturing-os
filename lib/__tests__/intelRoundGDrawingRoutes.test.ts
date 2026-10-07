@@ -53,6 +53,12 @@ const ai = vi.hoisted(() => ({
 const meter = vi.hoisted(() => ({
   seq: 0,
   rows: [] as Array<{ id: string; op: string; model: string; worstUsd: number; usage: { inputTokens: number; outputTokens: number } | null; ok: boolean | null; released: boolean; costUsd: number }>,
+  /** Every settle and release, in order (`settle:<id>`, `release:<id>`). */
+  trail: [] as string[],
+  settles: 0,
+  /** The n-th settle (from 1) writes nothing and answers false, as a
+   *  refused update does; 0 = none. */
+  failSettleAt: 0,
 }));
 
 vi.mock("@/lib/supabaseAdmin", async () => {
@@ -164,11 +170,14 @@ vi.mock("@/lib/ai/usageServer", async (orig) => {
       return { id, reservedUsd: input.worstCaseUsd };
     }),
     settleUsage: vi.fn(async (id: string, input: { model: string; usage: { inputTokens: number; outputTokens: number }; ok: boolean }) => {
+      if (++meter.settles === meter.failSettleAt) { meter.trail.push(`settle-failed:${id}`); return false; }
       const row = meter.rows.find((r) => r.id === id)!;
       Object.assign(row, { usage: { ...input.usage }, ok: input.ok, model: input.model, costUsd: price(input.model, input.usage) });
       ai.log.push("meter");
+      meter.trail.push(`settle:${id}`);
+      return true;
     }),
-    releaseUsage: vi.fn(async (id: string) => { meter.rows.find((r) => r.id === id)!.released = true; }),
+    releaseUsage: vi.fn(async (id: string) => { meter.rows.find((r) => r.id === id)!.released = true; meter.trail.push(`release:${id}`); }),
   };
 });
 /** The request's ONE metering row: what is left of the ledger once the
@@ -218,7 +227,7 @@ function seed(tables: Record<string, Row[]>) {
 beforeEach(() => {
   net.maxRows = 1000; net.rpcMissing = false; net.rpcCalls = [];
   ai.script = []; ai.calls = []; ai.log = [];
-  meter.rows = []; meter.seq = 0;
+  meter.rows = []; meter.seq = 0; meter.trail = []; meter.settles = 0; meter.failSettleAt = 0;
   vi.mocked(getCapUsd).mockResolvedValue(1000);
 });
 afterEach(() => { vi.unstubAllEnvs(); });
@@ -861,6 +870,28 @@ describe("DWG-5 / GOV-8 / GOV-13 — every locate call is reserved first and met
     expect(ai.calls).toHaveLength(2);
     expect(meteredRows()).toEqual([expect.objectContaining({ op: "drawingLocate", ok: true, usage: U })]);
     expect(body.positions.find((p: { tag: string }) => p.tag === "V-3")).toMatchObject({ nx: 0.5, ny: 0.5 });
+  });
+
+  it("I-18 fix pass 3: a call's figures are written into the row BEFORE its reservation is given back, and only once the write landed — at no moment is what it spent on the ledger nowhere", async () => {
+    locateSheet();
+    ai.script = [1, 2, 3].map(() => ({ text: '{"V-3": [0.5, 0.5]}', usage: U }));
+    await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["V-3"] });
+    expect(ai.calls).toHaveLength(3);
+    // was: release:res-2 then settle:res-1 — between the two statements the
+    // close-up's spend was on no row of the ledger (the last settle is the
+    // request's own, once the refining is done)
+    expect(meter.trail).toEqual(["settle:res-1", "settle:res-1", "release:res-2", "settle:res-1", "release:res-3", "settle:res-1"]);
+    expect(meteredRows()).toEqual([expect.objectContaining({ id: "res-1", usage: { inputTokens: 3000, outputTokens: 150 } })]);
+    // a fold whose write fails gives nothing back: that call's reservation
+    // stands at its worst case (over-counted, never under)
+    locateSheet();
+    meter.rows = []; meter.seq = 0; meter.trail = []; meter.settles = 0; ai.calls = []; ai.log = [];
+    meter.failSettleAt = 2;
+    ai.script = [1, 2, 3].map(() => ({ text: '{"V-3": [0.5, 0.5]}', usage: U }));
+    await locate({ orgId: "o1", documentId: "s-1", page: 1, tags: ["V-3"] });
+    expect(meter.trail).toEqual(["settle:res-1", "settle-failed:res-1", "settle:res-1", "release:res-3", "settle:res-1"]);
+    expect(meteredRows().map((r) => r.id)).toEqual(["res-1", "res-2"]);
+    expect(meteredRows()[1]).toMatchObject({ usage: null, costUsd: meteredRows()[1].worstUsd });
   });
 
   it("a user over this month's cap — counting every op, not only asks — sends nothing", async () => {

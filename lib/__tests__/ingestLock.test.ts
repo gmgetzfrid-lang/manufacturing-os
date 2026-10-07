@@ -71,8 +71,10 @@ import {
   ingestKnowledgeDocBatch, drainKnowledgeIngestQueue, claimIngestLease, resetKnowledgeIndex,
   INGEST_LEASE_TTL_MS, VISION_RETRY_BACKOFF_MS, visionRetryMessage, type VisionContext,
   INGEST_FAILURE_MAX_ATTEMPTS, ingestFailureBackoffMs, markIngestFailed, failureBackoffUntil, ingestFailureMessage,
-  IngestBatchError, refuseNonPdf, OWES_EVERY_VISION_PAGE, visionPageWorstCaseUsd, VISION_PAGE_MAX_TOKENS,
+  IngestBatchError, refuseNonPdf, OWES_EVERY_VISION_PAGE, visionPageWorstCaseUsd, VISION_PAGE_MAX_TOKENS, visionCallMeter,
 } from "@/lib/knowledgeIngest";
+import { getMonthUsage } from "@/lib/ai/usageServer";
+import { GovernedCallError } from "@/lib/ai/gateError";
 import { AGREEMENT_VERSION, estimateCostUsd } from "@/lib/ai/pricing";
 import { indexDocumentMentions, withoutCarriedSentence } from "@/lib/mentionIndexer";
 
@@ -1529,9 +1531,10 @@ describe("ING-13 / ING-6 (I-06b) — the drain's fileBehind stamps only a row no
       ai_connections: [], knowledge_chunks: [], knowledge_page_entities: [], entity_mentions: [], knowledge_line_traces: [],
     });
   };
-  /** fileBehind's write: the stamp alone. */
+  /** fileBehind's write: the stamp, and why the row waits (I-18 fix pass 3:
+   *  the reason of this run, whatever the blocker). */
   const isStamp = (op: Op) => op.table === "knowledge_documents" && op.kind === "update" &&
-    Object.keys(op.payload as Row).join() === "vision_retry_after";
+    Object.keys(op.payload as Row).sort().join() === "error,vision_retry_after";
   /** Act as another writer at the instant between the drain's read and its stamp. */
   const beforeStamp = (act: (row: Row) => void) => db.hooks.push((op) => { if (isStamp(op)) act(docRow()); });
   const drain = () => drainKnowledgeIngestQueue({ maxPages: 100, deadlineMs: Date.now() + 30_000 });
@@ -1543,6 +1546,9 @@ describe("ING-13 / ING-6 (I-06b) — the drain's fileBehind stamps only a row no
     expect(out).toMatchObject({ docsTouched: 0, errors: [] });
     expect(Date.parse(String(docRow().vision_retry_after))).toBeGreaterThanOrEqual(t0);
     expect(db.ops.filter(isStamp)).toHaveLength(1);
+    // I-18 fix pass 3: and the row says why it waits
+    expect(docRow().error).toBe("This library reads every page with AI vision, so the document waits in the queue: it has no uploader whose AI key " +
+      "the nightly run could use (a doc-control mirror has none). It is indexed when a controller with budget indexes it.");
   });
 
   it("a row someone claims after the drain read it is left exactly as the claimant holds it (the claim-free filter)", async () => {
@@ -1999,5 +2005,72 @@ describe("GOV-5 / GOV-13 (I-18) — the ingest drain re-checks the uploader's he
     expect(docRow().error).toBe(
       "This library reads every page with AI vision, so the document waits in the queue: the uploader's monthly AI cap is reached ($12.50 of $10.00). " +
       "It is indexed once it resets on the 1st or is raised, or when a controller with budget indexes it.");
+  });
+
+  it("I-18 fix pass 3: a read-every-page document's row always says the blocker of THIS run — the cap sentence goes once the cap resets and the uploader's agreement is what holds it, and so on for every blocker", async () => {
+    // was: only an uploader at the cap wrote a reason; a later run held by
+    // something else left the cap sentence on the row
+    await sponsored([null, prosePage("bolting")], { visionAllPages: true });
+    const WAITS = "This library reads every page with AI vision, so the document waits in the queue: ";
+    const runOnce = async () => {
+      // each run re-reads the row; a back-off would have it skip the write
+      docRow().vision_retry_after = null;
+      const out = await drain();
+      expect(out).toMatchObject({ docsTouched: 0, errors: [] });
+      return String(docRow().error);
+    };
+    meter.cap = 10; meter.spent = 12.5;
+    expect(await runOnce()).toBe(`${WAITS}the uploader's monthly AI cap is reached ($12.50 of $10.00). ` +
+      "It is indexed once it resets on the 1st or is raised, or when a controller with budget indexes it.");
+    // the 1st: the cap resets — and the uploader has not signed the current agreement
+    meter.spent = 0;
+    db.tables.ai_key_agreements = [];
+    expect(await runOnce()).toBe(`${WAITS}the uploader has not accepted the current AI acceptable-use agreement. ` +
+      "It is indexed once the uploader accepts it, or when a controller who has accepted it indexes it.");
+    // the agreement record cannot be read
+    const agreementDown = (op: Op) => (op.table === "ai_key_agreements" && op.kind === "select"
+      ? { error: { code: "57014", message: "canceling statement due to statement timeout" } } : undefined);
+    db.hooks.push(agreementDown);
+    expect(await runOnce()).toBe(`${WAITS}the uploader's AI acceptable-use agreement can't be checked right now. ` +
+      "It is indexed once it can be, or when a controller with budget indexes it.");
+    db.hooks = db.hooks.filter((h) => h !== agreementDown);
+    // signed again, but the ledger cannot be read
+    db.tables.ai_key_agreements = [{ id: "ag-1", org_id: "o1", user_id: "u1", scope: "use", agreement_version: AGREEMENT_VERSION }];
+    vi.mocked(getMonthUsage).mockRejectedValueOnce(new GovernedCallError("AI usage can't be read right now, so AI calls are refused until it can (statement timeout).", 503, { usageUnavailable: true }));
+    expect(await runOnce()).toBe(`${WAITS}AI usage can't be read right now. It is indexed once it can be, or when a controller with budget indexes it.`);
+    // the uploader removes their key
+    const keys = db.tables.ai_connections;
+    db.tables.ai_connections = [];
+    expect(await runOnce()).toBe(`${WAITS}the uploader has no AI key the nightly run can use (none is saved, or its provider is not allowed). ` +
+      "It is indexed once the uploader saves an allowed key, or when a controller with budget indexes it.");
+    // REGRESSION: once nothing holds it, the document is read and indexed, and the row's reason is cleared
+    db.tables.ai_connections = keys;
+    const out = await drain();
+    expect(out).toMatchObject({ completed: 1, errors: [] });
+    expect(vision.calls).toEqual([1, 2]);                // every page, as the library asks
+    expect(docRow()).toMatchObject({ status: "ready", error: null });
+  });
+
+  it("I-18 fix pass 3: each later page's figures are written into the document's row BEFORE its reservation is given back, and only once the write landed", async () => {
+    // was: release:ev-2 then settle:ev-1 — between the two statements the
+    // second page's spend was on no row of the ledger
+    await sponsored([null, null]);
+    meter.cap = 10;
+    await drain();
+    expect(meter.log).toEqual(["reserve:ev-1", "settle:ev-1", "reserve:ev-2", "settle:ev-1", "release:ev-2"]);
+    expect(visionRows()).toEqual([expect.objectContaining({ id: "ev-1", reserved: false, inputTokens: 2 * VISION_OUT.inputTokens })]);
+    // a fold whose write fails gives nothing back: that call's reservation
+    // stands at its worst case (over-counted, never under)
+    resetMeter({ cap: 10 });
+    const m = visionCallMeter({ orgId: "o1", userId: "u1", documentName: DOC_NAME, cause: () => "refused" });
+    const ctx = { ...visionCtx(), model: "m", instructions: "" };
+    await m.beforeCall(ctx, 10);
+    await m.onUsage(VISION_OUT, "vision-tier");
+    await m.beforeCall(ctx, 10);
+    meter.failWrites = true;
+    await m.onUsage(VISION_OUT, "vision-tier");
+    await m.finish(ctx);
+    expect(meter.log).toEqual(["reserve:ev-1", "settle:ev-1", "reserve:ev-2", "settle-failed:ev-1"]);
+    expect(visionRows().map((r) => [r.id, r.reserved, r.costUsd])).toEqual([["ev-1", false, CALL], ["ev-2", true, WORST]]);
   });
 });

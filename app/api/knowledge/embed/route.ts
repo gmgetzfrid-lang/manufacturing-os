@@ -797,11 +797,16 @@ export async function POST(req: NextRequest) {
   let meterRow: UsageReservation | null = null;
   let pending: UsageReservation | null = null;
   const meterTo = async (inputTokens: number, ok: boolean) => {
-    if (pending) {
-      if (!meterRow) meterRow = pending; else await releaseUsage(pending.id);
-      pending = null;
-    }
-    if (meterRow) await settleUsage(meterRow.id, { model: embedding.model, usage: { inputTokens, outputTokens: 0 }, ok });
+    // A later batch folds into the ONE row: the row's new total is written
+    // FIRST and the batch's own reservation given back after, only once
+    // that write landed — so at no moment is what the batch spent on the
+    // ledger nowhere (a failed write leaves its worst case standing).
+    const folded = meterRow ? pending : null;
+    if (!meterRow) meterRow = pending;
+    pending = null;
+    if (!meterRow) return;
+    const written = await settleUsage(meterRow.id, { model: embedding.model, usage: { inputTokens, outputTokens: 0 }, ok });
+    if (folded && written) await releaseUsage(folded.id);
   };
   const slice = await embedLibrarySlice({
     orgId, libraryId,

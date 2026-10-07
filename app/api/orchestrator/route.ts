@@ -22,10 +22,10 @@
 // most ORCHESTRATOR_MAX_IN_FLIGHT assistant runs at once (429 for the
 // next). That row is the only one the limit counts: a later round reserves
 // under ORCHESTRATOR_ROUND_OP — spend every check sees while the round is
-// at the provider, released as soon as it is folded in — so a run past its
-// first round is still one run, never two. A refusal before the first call
-// is answered with its own status; one later stops the run with what it
-// gathered.
+// at the provider, released once folded in (its figures written to the
+// run's row first) — so a run past its first round is still one run, never
+// two. A refusal before the first call is answered with its own status; one
+// later stops the run with what it gathered.
 //
 // A run never executes a write (ORCH-10). Write tools only PROPOSE; each
 // proposal is stored server-side for this person (ORCH-4) and runs, once,
@@ -190,11 +190,17 @@ export async function POST(req: NextRequest) {
       }
       throw e;
     } finally {
+      // A later round folds into the run's row: the row's new figure is
+      // written FIRST and the round's own reservation given back after,
+      // only once that write landed — so at no moment is what the round
+      // spent on the ledger nowhere (over-counted for that moment, never
+      // under; a failed write leaves the round's worst case standing).
+      const round = runRow ? reservation : null;
       if (!runRow) runRow = reservation;
-      else await releaseUsage(reservation.id);
       // What the run has spent so far, on its row — still a reservation, so
       // the run stays counted as in flight until the route settles it.
-      await holdUsage(runRow.id, { model, usage: runUsage });
+      const held = await holdUsage(runRow.id, { model, usage: runUsage });
+      if (round && held) await releaseUsage(round.id);
     }
   };
 

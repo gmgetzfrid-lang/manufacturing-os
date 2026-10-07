@@ -360,10 +360,14 @@ export async function POST(req: NextRequest) {
       } finally {
         if (!reported) {
           await reservation.release();
-        } else {
-          if (!row) row = reservation;
-          else await reservation.release();
+        } else if (!row) {
+          row = reservation;
           await row.settle({ usage: spent, ok: true });
+        } else if (await row.settle({ usage: spent, ok: true })) {
+          // Folded in: the row's new total is written FIRST and this call's
+          // reservation given back after, only once that write landed — so
+          // at no moment is what the call spent on the ledger nowhere.
+          await reservation.release();
         }
       }
     };

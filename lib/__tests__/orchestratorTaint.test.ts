@@ -61,8 +61,8 @@ vi.mock("@/lib/ai/usageServer", () => ({
   recordAskUsage: vi.fn(async () => undefined),
   // GOV-13 / ORCH-7: each round is reserved before it is made and settled after
   reserveWithinCap: vi.fn(async () => ({ id: "reservation-1", reservedUsd: 0.01 })),
-  settleUsage: vi.fn(async () => undefined),
-  holdUsage: vi.fn(async () => undefined),
+  settleUsage: vi.fn(async () => true),
+  holdUsage: vi.fn(async () => true),
   releaseUsage: vi.fn(async () => undefined),
   ORCHESTRATOR_ROUND_OP: "orchestratorRound",
 }));

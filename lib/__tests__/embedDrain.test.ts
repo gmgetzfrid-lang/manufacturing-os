@@ -78,9 +78,10 @@ vi.mock("@/lib/ai/usageServer", async () => {
 vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (v: unknown) => v }));
 
 import { embedLibrarySlice, parseEmbedBuildMarker, loadEmbedDetail } from "@/lib/knowledgeEmbedCore";
-import { drainEmbedBacklog, orderDrainQueue, nextMonthStartIso, errorBackoffMs, MAX_ERROR_RUNS } from "@/lib/knowledgeEmbedDrain";
+import { drainEmbedBacklog, orderDrainQueue, nextMonthStartIso, errorBackoffMs, MAX_ERROR_RUNS, capRefusalKind } from "@/lib/knowledgeEmbedDrain";
 import { EMBED_MAX_ATTEMPTS, EMBEDDING_DIMENSIONS, EMBEDDING_PROVIDERS } from "@/lib/ai/embeddings";
 import { buildFates } from "@/lib/embedKeyOverview";
+import { GovernedCallError } from "@/lib/ai/gateError";
 // The CURRENT agreement version (GOV-6 bumped it; a pinned literal would go stale).
 import { AGREEMENT_VERSION, estimateCostUsd, worstCaseCostUsd } from "@/lib/ai/pricing";
 
@@ -723,6 +724,10 @@ describe("GOV-5 / GOV-13 (I-18) — the drain re-checks the payer's headroom bef
   // batch), and a run killed mid-library recorded nothing. Now every
   // claimed batch's worst case is reserved against the cap before it is
   // sent, and the run's ONE knowledgeEmbed row is settled after every batch.
+  // Fix pass 3: a refused batch holds the library 'cap' until the 1st only
+  // when the cap is really reached; one that only does not fit what is left
+  // ends the run's work on the library with no hold; and a later batch is
+  // written into the run's row before its own reservation is released.
   const BODY = "x".repeat(3_000);
   /** Passages that all read the same length to the provider. */
   const evenChunks = (n: number) => Array.from({ length: n }, (_, i) => chunk(i + 1, { page: 1, content: BODY }));
@@ -757,7 +762,9 @@ describe("GOV-5 / GOV-13 (I-18) — the drain re-checks the payer's headroom bef
     expect(meter.rows).toEqual([]);
   });
 
-  it("a payer UNDER the cap whose headroom fits no batch: zero calls — the claimed batch goes back to the queue untouched, and the library is held 'cap' with the reason", async () => {
+  it("a payer UNDER the cap whose headroom fits no batch: zero calls — the claimed batch goes back to the queue untouched; the cap is not reached, so the library is NOT held until the 1st — the run says why, and the next run looks again", async () => {
+    // was (I-18 fix pass 2): held 'cap' until the 1st with "monthly cap
+    // reached" — for a payer the meter shows under the cap
     seedLibrary(100);
     usage.cap = 10; usage.spent = 9.5;                   // the first check passes
     meter.spent = 10 - BATCH_WORST / 2;                  // the reservation sees the same month
@@ -765,11 +772,71 @@ describe("GOV-5 / GOV-13 (I-18) — the drain re-checks the payer's headroom bef
     expect(providerCalls()).toBe(0);
     expect(meter.asked.map((a) => a.refused)).toEqual(["does not fit"]);
     expect(out.drained[0]).toMatchObject({ outcome: "blocked", embedded: 0 });
-    expect(markerOf()).toMatchObject({ blockedReason: "cap", blockedUntil: nextMonthStartIso(Date.now()) });
-    expect(markerOf().lastError).toMatch(/^monthly cap reached — This call could cost up to \$\d+\.\d\d and \$\d+\.\d\d is left of your \$10\.00 monthly AI cap/);
+    expect(out.drained[0].note).toMatch(/^the next batch did not fit what is left of the payer's monthly AI cap, which is not reached — nothing more was sent this run and the library is not held; the next run looks again: This call could cost up to \$\d+\.\d\d and \$\d+\.\d\d is left of your \$10\.00 monthly AI cap/);
+    // no hold, no reason on the stamp: nothing says "cap reached"
+    const m = markerOf();
+    expect([m.blockedReason, m.blockedUntil, m.lastError]).toEqual([undefined, undefined, undefined]);
+    expect(m.userId).toBe(PAYER);
     // nothing leased, nothing embedded, nothing charged
     expect(chunks().every((c) => c.embedding == null && c.embed_claimed_until == null && Number(c.embed_attempts ?? 0) === 0)).toBe(true);
     expect(meter.rows).toEqual([]);
+  });
+
+  it("the review's case — another call's reservation in flight (a vision page) leaves too little for the batch: no month-long hold; once that call settles below its worst case, the next run embeds exactly as for any payer under the cap", async () => {
+    seedLibrary(100);
+    usage.cap = 10; usage.spent = 9;                     // the first check passes
+    meter.spent = 9;
+    // the payer's own AI vision page at the provider: its worst case reserved
+    meter.rows.push({ id: "vision-1", orgId: ORG, userId: PAYER, op: "knowledgeVision", provider: "anthropic", model: "m",
+      costUsd: 1 - BATCH_WORST / 2, reserved: true, inputTokens: null, outputTokens: null, ok: true });
+    let out = await run();
+    expect(providerCalls()).toBe(0);
+    expect(meter.asked.map((a) => a.refused)).toEqual(["does not fit"]);
+    expect(out.drained[0]).toMatchObject({ outcome: "blocked", embedded: 0 });
+    expect(markerOf().blockedUntil).toBeUndefined();
+    // the vision call settles far below its worst case…
+    Object.assign(meter.rows[0], { costUsd: 0.05, reserved: false, inputTokens: 2_000, outputTokens: 500 });
+    // …and the next run (the next nudge or the nightly run) embeds the library
+    (admin.state.tables.knowledge_libraries[0].ai_features as { embedBuild: Row }).embedBuild.lastDrainAt = "2000-01-01T00:00:00Z";
+    out = await run();
+    expect(out.drained[0]).toMatchObject({ outcome: "complete", embedded: 100, remaining: 0 });
+    expect(provider.inputs).toHaveLength(100);
+    expect(embedRows()).toEqual([expect.objectContaining({ userId: PAYER, reserved: false, ok: true, inputTokens: 1_000, outputTokens: 0 })]);
+  });
+
+  it("a refusal that means the cap IS reached — the month at it when the batch is reserved (spend that landed after the first check) — still holds 'cap' until the 1st", async () => {
+    seedLibrary(100);
+    usage.cap = 10; usage.spent = 9.5;                   // the first check passes
+    meter.spent = 10;                                    // the reservation sees the month at the cap
+    const out = await run();
+    expect(providerCalls()).toBe(0);
+    expect(meter.asked.map((a) => a.refused)).toEqual(["reached"]);
+    expect(out.drained[0]).toMatchObject({ outcome: "blocked", embedded: 0 });
+    expect(markerOf()).toMatchObject({ blockedReason: "cap", blockedUntil: nextMonthStartIso(Date.now()) });
+    expect(markerOf().lastError).toBe("monthly cap reached — Monthly AI budget reached ($10.00 of $10.00).");
+    expect(meter.rows).toEqual([]);
+  });
+
+  it("capRefusalKind: only a cap really reached (locked, or the month at or past it) is 'cap'; a batch that does not fit what is left of a cap not reached is 'no_fit'; an unreadable ledger is 'unreadable'", () => {
+    const refusal = (status: number, details?: Record<string, unknown>) => new GovernedCallError("refused", status, details);
+    expect(capRefusalKind(refusal(402, { spentUsd: 9.95, capUsd: 10, reservedUsd: 0.06, locked: false }))).toBe("no_fit");
+    expect(capRefusalKind(refusal(402, { spentUsd: 10, capUsd: 10, reservedUsd: 0.06, locked: false }))).toBe("cap");
+    expect(capRefusalKind(refusal(402, { spentUsd: 10.05, capUsd: 10, reservedUsd: 0.06, locked: false }))).toBe("cap");
+    expect(capRefusalKind(refusal(402, { locked: true }))).toBe("cap");
+    expect(capRefusalKind(refusal(402))).toBe("cap");               // no figures: read as reached, as before
+    expect(capRefusalKind(refusal(503, { usageUnavailable: true }))).toBe("unreadable");
+    expect(capRefusalKind(new Error("socket hang up"))).toBe("unreadable");
+  });
+
+  it("a cap locked at $0 refuses the reservation as the cap reached: held 'cap' until the 1st, nothing sent", async () => {
+    seedLibrary(100);
+    usage.cap = Number.MIN_VALUE;                        // getCapUsd's answer for a stored 0
+    const out = await run();
+    expect(providerCalls()).toBe(0);
+    expect(meter.asked.map((a) => a.refused)).toEqual(["locked"]);
+    expect(out.drained[0]).toMatchObject({ outcome: "blocked", embedded: 0 });
+    expect(markerOf()).toMatchObject({ blockedReason: "cap", blockedUntil: nextMonthStartIso(Date.now()) });
+    expect(markerOf().lastError).toMatch(/^monthly cap reached — Your monthly AI cap is set to \$0/);
   });
 
   it("crossing the cap mid-run: the drain embeds the batches that fit and stops at the first that does not — re-checked before every batch, in one run", async () => {
@@ -779,8 +846,11 @@ describe("GOV-5 / GOV-13 (I-18) — the drain re-checks the payer's headroom bef
     meter.spent = 10 - (2 * BATCH_COST + BATCH_WORST - BATCH_COST / 2);
     const out = await run();
     expect(provider.inputs).toHaveLength(128);
-    expect(out.drained[0]).toMatchObject({ outcome: "blocked", embedded: 128 });
-    expect(markerOf()).toMatchObject({ blockedReason: "cap" });
+    // the cap is not reached (only batch 3's worst case does not fit what
+    // is left): the run advanced, says why it stopped, and holds nothing
+    expect(out.drained[0]).toMatchObject({ outcome: "advanced", embedded: 128, remaining: -1 });
+    expect(out.drained[0].note).toMatch(/^the next batch did not fit what is left of the payer's monthly AI cap, which is not reached/);
+    expect(markerOf().blockedReason).toBeUndefined();
     expect(chunks().filter((c) => c.embedding != null)).toHaveLength(128);
     expect(chunks().filter((c) => c.embed_claimed_until != null)).toHaveLength(0);
     // what the two batches spent, in the run's ONE row
@@ -803,6 +873,36 @@ describe("GOV-5 / GOV-13 (I-18) — the drain re-checks the payer's headroom bef
       { reserved: true, inputTokens: null },
     ]);
     expect(embedRows()).toEqual([expect.objectContaining({ reserved: false, inputTokens: 1_000 })]);
+  });
+
+  it("I-18 fix pass 3: each later batch's figures are written into the run's row BEFORE its reservation is given back — at no moment is what it spent on the ledger nowhere", async () => {
+    // was: release:ev-2 then settle:ev-1 — between the two statements the
+    // second batch's spend was on no row of the ledger
+    seedLibrary(100);                                    // two batches: 64 and 36
+    usage.cap = 10;
+    await run();
+    expect(meter.log).toEqual([
+      "reserve:ev-1", "settle:ev-1",
+      "reserve:ev-2", "settle:ev-1", "release:ev-2",
+      "settle:ev-1",                                     // the run's own, at the end
+    ]);
+    expect(embedRows()).toEqual([expect.objectContaining({ id: "ev-1", reserved: false, inputTokens: 1_000 })]);
+  });
+
+  it("I-18 fix pass 3: a fold whose write fails gives nothing back — that batch's reservation stands at its worst case, over-counted, never under", async () => {
+    seedLibrary(100);
+    usage.cap = 10;
+    let call = 0;
+    provider.during = () => { if (++call === 2) meter.failWrites = true; };   // the second batch's writes fail
+    await run();
+    expect(meter.log).toEqual([
+      "reserve:ev-1", "settle:ev-1",
+      "reserve:ev-2", "settle-failed:ev-1",              // no release: ev-2 stands
+      "settle-failed:ev-1",
+    ]);
+    expect(embedRows().map((r) => [r.id, r.reserved, r.inputTokens])).toEqual([["ev-1", false, 640], ["ev-2", true, null]]);
+    // what stands is at least what the provider billed (1,000 tokens)
+    expect(embedRows().reduce((n, r) => n + r.costUsd, 0)).toBeGreaterThanOrEqual(estimateCostUsd(CONN.model, { inputTokens: 1_000, outputTokens: 0 }));
   });
 
   it("REGRESSION — a payer under the cap: the same passages embedded, the library completes, and ONE knowledgeEmbed row carries the run's tokens (as recordAskUsage wrote it); nothing left reserved", async () => {

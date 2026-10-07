@@ -24,12 +24,12 @@
 // the first check: once a batch is claimed, its worst case (every passage as
 // the provider sees it, at 3 characters a token) is reserved against the
 // payer's cap with every other reservation in view, before anything is sent.
-// One that does not fit sends nothing — the passages go back to the queue and
-// the library is held "cap" until the 1st (or, when the ledger cannot be
-// read, looked at again within the hour). The run's spend on a library is
-// ONE knowledgeEmbed row, as it always was — the first batch's reservation,
-// settled to the run's tokens after every batch — so a run killed part-way
-// has already recorded what its finished batches spent.
+// One refused sends nothing; its passages go back to the queue. Only a cap
+// really reached holds the library "cap" until the 1st (capRefusalKind: a
+// batch that only does not fit what is left is not held; an unreadable
+// ledger is looked at again within the hour). The run's spend is ONE
+// knowledgeEmbed row, settled to the run's tokens after every batch, so a
+// run killed part-way has already recorded what its finished batches spent.
 //
 // NO LIBRARY STARVES ANOTHER (SEM-11). Every marked library is read (paged —
 // no fixed window), and they are worked least-recently-drained first
@@ -85,7 +85,7 @@ export type DrainOutcome =
   | "advanced"   // embedded passages this run, more remain
   | "complete"   // reached 100%; the stamp cleared
   | "current"    // standing consent, nothing new to embed
-  | "blocked"    // holding off (cap / error backoff / model conflict / agreement) — see note
+  | "blocked"    // holding off (cap / error backoff / model conflict / agreement), or stopped this run — see note
   | "released"   // stamp removed (invalid consent, no key, repeated failure) — see note
   | "busy"       // every remaining passage is claimed by another driver right now
   | "retrying"   // what remains was refused by the provider and waits to be offered again
@@ -294,11 +294,17 @@ export async function drainEmbedBacklog(opts: {
       /** Input tokens of this library's slices already returned this run. */
       let tokensBefore = 0;
       const meterTo = async (inputTokens: number, ok: boolean) => {
-        if (pending) {
-          if (!meterRow) meterRow = pending; else await releaseUsage(pending.id);
-          pending = null;
-        }
-        if (meterRow) await settleUsage(meterRow.id, { model: connection.model, usage: { inputTokens, outputTokens: 0 }, ok });
+        // A later batch folds into the ONE row: the row's new total is
+        // written FIRST and the batch's own reservation given back after,
+        // only once that write landed — so at no moment is what the batch
+        // spent on the ledger nowhere (a failed write leaves its worst case
+        // standing).
+        const folded = meterRow ? pending : null;
+        if (!meterRow) meterRow = pending;
+        pending = null;
+        if (!meterRow) return;
+        const written = await settleUsage(meterRow.id, { model: connection.model, usage: { inputTokens, outputTokens: 0 }, ok });
+        if (folded && written) await releaseUsage(folded.id);
       };
       const beforeEmbed = async (inputChars: number): Promise<string | null> => {
         // A reservation no batch folded in — its call stopped the slice
@@ -369,12 +375,24 @@ export async function drainEmbedBacklog(opts: {
       const ranRow = meterRow as UsageReservation | null;
       if (ranRow && usage.inputTokens <= 0) await releaseUsage(ranRow.id);
 
-      // GOV-5 done-when 3: the next batch did not fit the payer's cap — the
-      // library is held with the reason, its passages left queued.
+      // GOV-5 done-when 3: the next batch's reservation was refused — its
+      // passages are left queued, and why it was refused decides the rest.
       if (capRefusal) {
         const e = capRefusal;
-        if (e instanceof GovernedCallError && e.status !== 503) {
-          await hold("cap", nextMonthStartIso(Date.now()), `monthly cap reached — ${e.message}`, embedded);
+        const kind = capRefusalKind(e);
+        if (kind === "cap") {
+          // The cap is really reached: held until it resets.
+          await hold("cap", nextMonthStartIso(Date.now()), `monthly cap reached — ${(e as Error).message}`, embedded);
+        } else if (kind === "no_fit") {
+          // The cap is not reached; only this batch's worst case does not
+          // fit what is left (a call in flight may settle below its own).
+          // No hold and no reason on the stamp: this run's work on the
+          // library ends here, and the next run looks again.
+          record({
+            embedded, remaining: -1, outcome: embedded > 0 ? "advanced" : "blocked",
+            note: `the next batch did not fit what is left of the payer's monthly AI cap, which is not reached — `
+              + `nothing more was sent this run and the library is not held; the next run looks again: ${(e as Error).message}`,
+          });
         } else {
           await hold("error", new Date(Date.now() + RECHECK_HOLD_MS).toISOString(),
             `the payer's AI usage could not be read, so nothing more was sent: ${(e as Error)?.message ?? "unknown error"}`, embedded);
@@ -435,4 +453,19 @@ export async function drainEmbedBacklog(opts: {
     drained.push({ libraryId: "-", embedded: 0, remaining: -1, outcome: "blocked", note: (e as Error).message });
   }
   return { drained, ranMs: Date.now() - startedAt };
+}
+
+/** GOV-5: why a batch's reservation was refused. "cap" — the payer's cap is
+ *  really reached: locked at $0, or the month (settled spend plus the
+ *  reservations in flight, the reading the drain's first check makes) at or
+ *  past it. "no_fit" — the cap is not reached, only this batch's worst case
+ *  does not fit what is left of it (another call's reservation may be in
+ *  flight and settle below its worst case). "unreadable" — the ledger could
+ *  not be read (503), or the refusal is not the gate's. */
+export function capRefusalKind(e: unknown): "cap" | "no_fit" | "unreadable" {
+  if (!(e instanceof GovernedCallError) || e.status === 503) return "unreadable";
+  const d = (e.details ?? {}) as { spentUsd?: unknown; capUsd?: unknown; locked?: unknown };
+  if (d.locked === true) return "cap";
+  // A refusal that does not carry both figures is read as the cap reached.
+  return typeof d.spentUsd === "number" && typeof d.capUsd === "number" && d.spentUsd < d.capUsd ? "no_fit" : "cap";
 }

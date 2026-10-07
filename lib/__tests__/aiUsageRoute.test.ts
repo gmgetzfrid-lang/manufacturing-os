@@ -1015,8 +1015,31 @@ describe("GOV-15 — app-side, until 20261173 is pasted: the sequential path, wi
       expect(failed.status).toBe(500);
       expect(String(failed.json.error)).toMatch(/Couldn't save the cap: function hashtext/);
       expect(limitsOf(ENG)).toEqual([]);
-      // said in the server log, once per process at most
-      expect(warn.mock.calls.filter((c) => /migration 20261173/.test(String(c[0]))).length).toBeLessThanOrEqual(1);
+      // said in the server log: pinned in a fresh server process by the next test
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("…and SAID: in a fresh server process the first app-side cap change logs the warning exactly once, with its message; the next says nothing more", async () => {
+    // was: "at most once" over a module that earlier tests had already
+    // taken down the app-side path, which held with no warning at all
+    vi.resetModules();
+    const { POST: freshPOST } = await import("@/app/api/ai/usage/route");
+    const postFresh = async (who: string, body: Row) => {
+      const r = await freshPOST(new NextRequest("https://app/api/ai/usage", { method: "POST", headers: { authorization: `Bearer ${who}`, "content-type": "application/json" }, body: JSON.stringify({ orgId: ORG, ...body }) }));
+      return { status: r.status, json: await r.json() as Row };
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      db.tables.ai_usage_limits = [{ org_id: ORG, user_id: null, monthly_cap_usd: 10 }];
+      expect(await postFresh(ADMIN, { capUsd: 25, userId: ENG })).toEqual({ status: 200, json: { ok: true, capUsd: 25, locked: false } });
+      expect(await postFresh(ADMIN, { capUsd: 30, userId: ENG })).toEqual({ status: 200, json: { ok: true, capUsd: 30, locked: false } });
+      // both asked the function first, and both were answered PGRST202
+      expect(db.rpcCalls.map((c) => c.fn)).toEqual(["ai_cap_change", "ai_cap_change"]);
+      expect(warn.mock.calls).toEqual([[
+        "AI cap changes are running app-side: migration 20261173 (ai_cap_change) is not applied, so two cap changes in flight at once are not serialised. Paste it in the Supabase SQL editor.",
+      ]]);
     } finally {
       warn.mockRestore();
     }

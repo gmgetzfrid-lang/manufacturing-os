@@ -23,7 +23,11 @@
 //               reserve under their own op), so two runs at their second
 //               round leave room for a third
 //   GOV-13      a round whose worst case no longer fits stops the run there
-//               (its spend metered, the stop said) — no further call
+//               (its spend metered, the stop said) — no further call; a
+//               later round's figures are written into the run's row
+//               BEFORE its own reservation is given back, and only once
+//               that write landed (fix pass 3): at no write does the
+//               ledger carry less than the provider has billed
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
@@ -41,11 +45,19 @@ const net = vi.hoisted(() => ({
   holdFrom: 0,
   waiting: 0,
   log: [] as string[],
+  /** Every token the provider has answered with so far (what it billed). */
+  billed: { inputTokens: 0, outputTokens: 0 },
 }));
 const ledger = vi.hoisted(() => ({
   tables: { ai_usage_events: [] as Row[], ai_usage_limits: [] as Row[] } as Record<string, Row[]>,
   seq: 0,
   reserved: [] as number[],
+  /** After every write to ai_usage_events: what it was, the sum of every
+   *  row's cost then, and what the provider had billed by then. */
+  trail: [] as Array<{ write: string; op: unknown; sumUsd: number; billed: { inputTokens: number; outputTokens: number } }>,
+  updates: 0,
+  /** The n-th update (from 1) is refused, as a failed write is; 0 = none. */
+  failUpdateAt: 0,
 }));
 
 vi.mock("@/lib/supabaseAdmin", async () => {
@@ -62,7 +74,22 @@ vi.mock("@/lib/supabaseAdmin", async () => {
     let wantCount = false;
     const orders: Array<{ col: string; asc: boolean }> = [];
     const exec = () => {
+      const out = run();
+      if (table === "ai_usage_events" && action !== "select") {
+        const touched = action === "insert" ? ledger.tables[table].at(-1) : null;
+        ledger.trail.push({
+          write: out.error ? `${action}-failed` : action, op: touched?.op ?? payload?.op,
+          sumUsd: ledger.tables[table].reduce((n, r) => n + (Number(r.est_cost_usd) || 0), 0),
+          billed: { ...net.billed },
+        });
+      }
+      return out;
+    };
+    const run = () => {
       const rows = (ledger.tables[table] ??= []);
+      if (action === "update" && table === "ai_usage_events" && ++ledger.updates === ledger.failUpdateAt) {
+        return { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } };
+      }
       if (action === "insert") {
         const row: Row = { id: `ev-${String(++ledger.seq).padStart(4, "0")}`, created_at: new Date(Date.now() + ledger.seq).toISOString(), ...payload };
         rows.push(row);
@@ -115,7 +142,9 @@ vi.mock("@/lib/ai/providerCall", () => ({
     const i = net.calls++;
     net.log.push("call");
     if (net.hold && i >= net.holdFrom) { net.waiting++; await net.hold; net.waiting--; }
-    return { text: net.script[Math.min(i, net.script.length - 1)] ?? "Done.", usage: net.usage[Math.min(i, net.usage.length - 1)] ?? { inputTokens: 1, outputTokens: 1 } };
+    const usage = net.usage[Math.min(i, net.usage.length - 1)] ?? { inputTokens: 1, outputTokens: 1 };
+    net.billed = { inputTokens: net.billed.inputTokens + usage.inputTokens, outputTokens: net.billed.outputTokens + usage.outputTokens };
+    return { text: net.script[Math.min(i, net.script.length - 1)] ?? "Done.", usage };
   }),
   AiCallError: class AiCallError extends Error { status = 502; },
 }));
@@ -151,6 +180,9 @@ function seed(capUsd: number, people = ["u-1"]) {
   });
   ledger.tables = { ai_usage_events: [], ai_usage_limits: [{ id: "cap", org_id: ORG, user_id: null, monthly_cap_usd: capUsd }] };
   ledger.reserved = [];
+  ledger.trail = [];
+  ledger.updates = 0;
+  ledger.failUpdateAt = 0;
 }
 
 beforeEach(() => {
@@ -161,6 +193,7 @@ beforeEach(() => {
   net.holdFrom = 0;
   net.waiting = 0;
   net.log = [];
+  net.billed = { inputTokens: 0, outputTokens: 0 };
   seed(1000);
 });
 
@@ -349,5 +382,47 @@ describe("GOV-13 — the loop re-checks headroom between rounds: a round that no
     expect(String(body.answer)).toMatch(/^I stopped before the next step: This call could cost up to/);
     expect(events()).toHaveLength(1);
     expect(events()[0]).toMatchObject({ op: "orchestrator", ok: false, input_tokens: half.inputTokens, output_tokens: half.outputTokens });
+  });
+});
+
+describe("GOV-13 (I-18 fix pass 3) — a later round is folded into the run's row BEFORE its reservation is given back", () => {
+  const CORRECTION = '{"tool_name": "no_such_tool", "parameters": {}}';
+  const ROUNDS = [{ inputTokens: 1200, outputTokens: 40 }, { inputTokens: 1500, outputTokens: 60 }, { inputTokens: 900, outputTokens: 30 }];
+  /** At this write, the ledger's rows against what the provider had billed by then. */
+  const shortBy = (t: (typeof ledger.trail)[number]) => estimateCostUsd(MODEL, t.billed) - t.sumUsd;
+
+  it("at every write to the ledger its rows carry at least what the provider has billed so far: each later round's figures land on the run's row first, its own reservation released after", async () => {
+    // was: releaseUsage(round) then holdUsage(run row) — between the two
+    // statements the round's spend was on no row of the ledger
+    net.script = [CORRECTION, CORRECTION, "No documents mention pipe supports."];
+    net.usage = ROUNDS;
+    const { status, body } = await ask();
+    expect(status).toBe(200);
+    expect(body.answer).toBe("No documents mention pipe supports.");
+    expect(ledger.trail.map((t) => [t.write, t.op])).toEqual([
+      ["insert", "orchestrator"], ["update", undefined],                               // round 1: the run's row, its figure
+      ["insert", "orchestratorRound"], ["update", undefined], ["delete", undefined],   // round 2: reserve, fold, THEN release
+      ["insert", "orchestratorRound"], ["update", undefined], ["delete", undefined],   // round 3 likewise
+      ["update", undefined],                                                           // the run settled
+    ]);
+    for (const t of ledger.trail) expect(shortBy(t)).toBeLessThanOrEqual(1e-9);
+    const all = ROUNDS.reduce((a, u) => ({ inputTokens: a.inputTokens + u.inputTokens, outputTokens: a.outputTokens + u.outputTokens }));
+    expect(events()).toEqual([expect.objectContaining({ op: "orchestrator", ...{ input_tokens: all.inputTokens, output_tokens: all.outputTokens } })]);
+  });
+
+  it("a fold whose write fails gives nothing back: that round's reservation stands at its worst case — over-counted, never under", async () => {
+    net.script = [CORRECTION, CORRECTION, "No documents mention pipe supports."];
+    net.usage = ROUNDS;
+    ledger.failUpdateAt = 2;                              // round 2's fold into the run's row
+    const { status } = await ask();
+    expect(status).toBe(200);
+    expect(ledger.trail.map((t) => t.write)).toEqual([
+      "insert", "update", "insert", "update-failed", "insert", "update", "delete", "update",
+    ]);
+    for (const t of ledger.trail) expect(shortBy(t)).toBeLessThanOrEqual(1e-9);
+    // the run's row is settled with every round; round 2's reservation was
+    // never released, so its worst case is still counted beside it
+    expect(events().map((e) => [e.op, e.input_tokens])).toEqual([["orchestrator", 3600], ["orchestratorRound", null]]);
+    expect(Number(events()[1].est_cost_usd)).toBe(ledger.reserved[1]);
   });
 });

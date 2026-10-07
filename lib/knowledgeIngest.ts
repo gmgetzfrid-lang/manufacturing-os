@@ -2244,6 +2244,19 @@ export async function ingestKnowledgeDocBatch(
   }
 }
 
+/** GOV-5 / ING-13: what a queued document in a read-every-page library
+ *  says on its row while the nightly run cannot read it (fileBehind): the
+ *  blocker of the moment, written on every run, so a reason that has gone
+ *  away never stays on the row after another takes its place. */
+const everyPageWait = (cause: string, until: string): string =>
+  `This library reads every page with AI vision, so the document waits in the queue: ${cause}. It is indexed ${until}.`;
+
+/** loadSponsorVision's answer: a vision context, or none — and then, for a
+ *  read-every-page library, the sentence its queued row says (`waitReason`). */
+type SponsorVision =
+  | { ctx: VisionContext; forceAllPages: boolean; noVisionReason?: undefined; waitReason?: undefined }
+  | { ctx?: undefined; forceAllPages: boolean; noVisionReason?: string; waitReason: string };
+
 /** Background drain used by the maintenance cron: keep ingesting queued
  *  (pending/stale) documents until the page budget or deadline runs out.
  *  Errors mark the row and continue — one broken PDF must not starve the
@@ -2258,11 +2271,13 @@ export async function ingestKnowledgeDocBatch(
  *  not accepted the current agreement, an acceptance or a ledger that
  *  cannot be read (GOV-11 / GOV-4) — it says so (`noVisionReason`): the
  *  engine then holds the pages that need vision instead of consuming them,
- *  and names that reason on the row, as the interactive route does. */
+ *  and names that reason on the row, as the interactive route does. With
+ *  no context it always says why a read-every-page library's document
+ *  waits (`waitReason`, everyPageWait). */
 async function loadSponsorVision(
   doc: KnowledgeDocRow,
   meter: VisionCallMeter,
-): Promise<{ ctx?: VisionContext; forceAllPages: boolean; noVisionReason?: string; capHeld?: string }> {
+): Promise<SponsorVision> {
   const { data: libRow } = await supabaseAdmin
     .from("knowledge_libraries").select("ai_features")
     .eq("id", doc.library_id).maybeSingle();
@@ -2270,12 +2285,22 @@ async function loadSponsorVision(
     ((libRow?.ai_features ?? {}) as Record<string, unknown>).visionAllPages === true;
 
   const sponsor = doc.created_by ?? null;
-  if (!sponsor) return { forceAllPages };
+  if (!sponsor) {
+    return {
+      forceAllPages,
+      waitReason: everyPageWait("it has no uploader whose AI key the nightly run could use (a doc-control mirror has none)",
+        "when a controller with budget indexes it"),
+    };
+  }
   const { data: conn } = await supabaseAdmin
     .from("ai_connections").select("provider, model, api_key")
     .eq("org_id", doc.org_id).eq("user_id", sponsor).maybeSingle();
   if (!conn || !ALLOWED_PROVIDERS.includes(conn.provider as AiProviderId)) {
-    return { forceAllPages };
+    return {
+      forceAllPages,
+      waitReason: everyPageWait("the uploader has no AI key the nightly run can use (none is saved, or its provider is not allowed)",
+        "once the uploader saves an allowed key, or when a controller with budget indexes it"),
+    };
   }
   {
     const { data: agree, error: agreeError } = await supabaseAdmin
@@ -2284,13 +2309,20 @@ async function loadSponsorVision(
       .eq("scope", "use").eq("agreement_version", AGREEMENT_VERSION).limit(1);
     const tableMissing = !!agreeError && (agreeError.code === "42P01" || /does not exist/i.test(agreeError.message));
     if (agreeError && !tableMissing) {
-      return { forceAllPages, noVisionReason: "The uploader's AI acceptable-use agreement can't be checked right now, so pages without a text layer are held for AI vision." };
+      return {
+        forceAllPages,
+        noVisionReason: "The uploader's AI acceptable-use agreement can't be checked right now, so pages without a text layer are held for AI vision.",
+        waitReason: everyPageWait("the uploader's AI acceptable-use agreement can't be checked right now",
+          "once it can be, or when a controller with budget indexes it"),
+      };
     }
     if (!tableMissing && (agree ?? []).length === 0) {
       return {
         forceAllPages,
         noVisionReason: "The uploader has not accepted the current AI acceptable-use agreement, so pages without a text layer are held for AI vision " +
           "— they are read once the uploader accepts it, or when a controller who has accepted it indexes this document.",
+        waitReason: everyPageWait("the uploader has not accepted the current AI acceptable-use agreement",
+          "once the uploader accepts it, or when a controller who has accepted it indexes it"),
       };
     }
   }
@@ -2303,7 +2335,11 @@ async function loadSponsorVision(
     getCapUsd(doc.org_id, sponsor),
   ]).catch((e: unknown) => { if (isAiUsageUnavailable(e)) return null; throw e; });
   if (!ledger) {
-    return { forceAllPages, noVisionReason: "AI usage can't be read right now, so pages without a text layer are held for AI vision." };
+    return {
+      forceAllPages,
+      noVisionReason: "AI usage can't be read right now, so pages without a text layer are held for AI vision.",
+      waitReason: everyPageWait("AI usage can't be read right now", "once it can be, or when a controller with budget indexes it"),
+    };
   }
   const [spent, cap] = ledger;
   // GOV-5 done-when 3: a sponsor with no headroom left HOLDS the pages that
@@ -2323,8 +2359,7 @@ async function loadSponsorVision(
       forceAllPages,
       noVisionReason: `${capCause[0].toUpperCase()}${capCause.slice(1)}, so pages without a text layer are held for AI vision ` +
         `— they are read ${until}, or when a controller with budget indexes this document.`,
-      capHeld: `This library reads every page with AI vision, so the document waits in the queue: ${capCause}. ` +
-        `It is indexed ${until}, or when a controller with budget indexes it.`,
+      waitReason: everyPageWait(capCause, `${until}, or when a controller with budget indexes it`),
     };
   }
 
@@ -2396,12 +2431,13 @@ export interface VisionCallMeter {
  *  other reservation in view (reserveWithinCap): a refusal sends nothing,
  *  and the page waits for AI vision with `cause(refusal)` on the row. After
  *  the call its real figures fold into ONE knowledgeVision row — the first
- *  reservation, settled with the running total after every call — so a run
- *  killed part-way has already recorded what it spent, and a payer under
- *  the cap is metered exactly the totals, in the one row, that were written
- *  after the batch before. A reservation whose call reported no figures (a
- *  provider failure, a timeout) is released, as such a call was never
- *  metered. */
+ *  reservation, settled with the running total after every call, each
+ *  later call's reservation released only after that write landed — so a
+ *  run killed part-way has already recorded what it spent, and a payer
+ *  under the cap is metered exactly the totals, in the one row, that were
+ *  written after the batch before. A reservation whose call reported no
+ *  figures (a provider failure, a timeout) is released, as such a call was
+ *  never metered. */
 export function visionCallMeter(payer: {
   orgId: string; userId: string; documentName: string;
   /** The sentence a refusal is said in, on the row. */
@@ -2434,11 +2470,16 @@ export function visionCallMeter(payer: {
       usage.inputTokens += u.inputTokens;
       usage.outputTokens += u.outputTokens;
       model = m;
-      if (pending) {
-        if (!row) row = pending; else await releaseUsage(pending.id);
-        pending = null;
-      }
-      if (row) await settleUsage(row.id, { model, usage, ok: true });
+      // A later call folds into the ONE row: the row's new total is written
+      // FIRST and the call's own reservation given back after, only once
+      // that write landed — so at no moment is what the call spent on the
+      // ledger nowhere (a failed write leaves its worst case standing).
+      const folded = row ? pending : null;
+      if (!row) row = pending;
+      pending = null;
+      if (!row) return;
+      const written = await settleUsage(row.id, { model, usage, ok: true });
+      if (folded && written) await releaseUsage(folded.id);
     },
     async finish(ctx) {
       await dropPending();
@@ -2501,16 +2542,18 @@ export async function drainKnowledgeIngestQueue(opts: {
    *  overwrites a writer's — and a back-off still in force already files it
    *  behind now, and is never shortened. Checked: a stamp that cannot be
    *  written is reported. */
-  const fileBehind = async (d: KnowledgeDocRow, reason?: string): Promise<void> => {
+  const fileBehind = async (d: KnowledgeDocRow, reason: string): Promise<void> => {
     if (!hasStamp) return;
     const nowMs = Date.now();
     const at = Date.parse(String(d.vision_retry_after ?? ""));
     if (Number.isFinite(at) && at > nowMs) return;
-    // GOV-5: an uploader at their cap is said on the row (a queued row's
-    // reason shows on the library page), never only in the run's report.
+    // GOV-5: why the document waits is said on the row (a queued row's
+    // reason shows on the library page), never only in the run's report —
+    // and it is the reason of THIS run, whatever the blocker, so a sentence
+    // a later run no longer holds (the cap, once it reset) never stays.
     let q = supabaseAdmin.from("knowledge_documents").update({
       vision_retry_after: new Date(nowMs).toISOString(),
-      ...(reason ? { error: truncateSafe(reason, ERROR_MAX_CHARS) } : {}),
+      error: truncateSafe(reason, ERROR_MAX_CHARS),
     })
       .eq("id", d.id).eq("file_key", d.file_key)
       .or(`ingest_claimed_at.is.null,ingest_claimed_at.lt."${cutoff}"`);
@@ -2535,9 +2578,10 @@ export async function drainKnowledgeIngestQueue(opts: {
       orgId: doc.org_id, userId: doc.created_by ?? "", documentName: doc.name ?? "", cause: sponsorHeadroomCause,
     });
     const sponsor = await loadSponsorVision(doc, meter);
-    // GOV-5 done-when 3: an uploader at their cap — the document waits in
-    // the queue, and the row says why.
-    if (!sponsor.ctx && sponsor.forceAllPages) { await fileBehind(doc, sponsor.capHeld); continue; }
+    // GOV-5 done-when 3: no context for a read-every-page library — the
+    // document waits in the queue, and the row says why, whatever the
+    // blocker (the uploader's cap, agreement, ledger or key, or no uploader).
+    if (!sponsor.ctx && sponsor.forceAllPages) { await fileBehind(doc, sponsor.waitReason); continue; }
 
     out.docsTouched++;
     let row: KnowledgeDocRow = doc;

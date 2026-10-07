@@ -14,7 +14,9 @@
 //               with the request's tokens — nothing left reserved
 //   GOV-13      a batch whose worst case no longer fits is sent nowhere: no
 //               provider call, the passages go back to the queue untouched,
-//               and the refusal is the answer's error (the build loop stops)
+//               and the refusal is the answer's error (the build loop stops);
+//               a later batch's figures are written into the request's row
+//               BEFORE its own reservation is given back (fix pass 3)
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
@@ -94,9 +96,9 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllGlobals(); });
 
-const build = async () => {
+const build = async (over: Row = {}) => {
   const res = await POST(new NextRequest("http://test/api/knowledge/embed", {
-    method: "POST", headers: { authorization: "Bearer tok" }, body: JSON.stringify({ orgId: ORG, libraryId: LIB }),
+    method: "POST", headers: { authorization: "Bearer tok" }, body: JSON.stringify({ orgId: ORG, libraryId: LIB, ...over }),
   }));
   return { status: res.status, body: await res.json() as Row };
 };
@@ -128,6 +130,20 @@ describe("GOV-13 (I-18) — /api/knowledge/embed reserves every batch before it 
     const chunks = admin.state.tables.knowledge_chunks;
     expect(chunks.every((c) => c.embedding == null && c.embed_claimed_until == null && Number(c.embed_attempts) === 0)).toBe(true);
     expect(meter.rows).toEqual([]);
+  });
+
+  it("I-18 fix pass 3: each later batch's figures are written into the request's row BEFORE its reservation is given back, and only once the write landed", async () => {
+    // was: release:ev-2 then settle:ev-1 — between the two statements the
+    // batch's spend was on no row of the ledger
+    const { body } = await build({ batch: 5 });             // 12 passages: batches of 5, 5 and 2
+    expect(body).toMatchObject({ embedded: PASSAGES, done: true, error: null });
+    expect(meter.log).toEqual([
+      "reserve:ev-1", "settle:ev-1",
+      "reserve:ev-2", "settle:ev-1", "release:ev-2",
+      "reserve:ev-3", "settle:ev-1", "release:ev-3",
+      "settle:ev-1",                                          // the request's own, at the end
+    ]);
+    expect(embedRows()).toEqual([expect.objectContaining({ id: "ev-1", reserved: false, inputTokens: PASSAGES * 10 })]);
   });
 
   it("a member AT the cap is refused by the first check, as before (402) — nothing reserved, no provider call", async () => {

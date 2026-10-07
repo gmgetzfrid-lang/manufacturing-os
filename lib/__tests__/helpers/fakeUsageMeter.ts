@@ -6,7 +6,9 @@
 // reaches the cap, or when this call's worst case does not fit what is left;
 // a refused reservation leaves no row. settleUsage prices the call's real
 // figures with the app's own price table; holdUsage prices a run's calls so
-// far and keeps the row a reservation; releaseUsage drops the row.
+// far and keeps the row a reservation; both answer whether the row now
+// carries the figures (`failWrites` makes them fail, as a refused update
+// does); releaseUsage drops the row. `log` is every write in order.
 //
 // `cap` 0 is the stand-in these suites have always used for "no cap" (the
 // real getCapUsd never answers 0 — a $0 cap is LOCKED_CAP_USD): nothing is
@@ -44,6 +46,11 @@ export const meter = {
   asked: [] as Array<{ op: string; worstCaseUsd: number; capUsd: number; refused: string | null }>,
   /** Calls to recordAskUsage (the unreserved path). */
   recorded: [] as Array<Record<string, unknown>>,
+  /** Every ledger write in order: `reserve:<id>`, `settle:<id>`,
+   *  `hold:<id>`, `release:<id>` (a failed settle or hold: `…-failed`). */
+  log: [] as string[],
+  /** Set: settleUsage / holdUsage write nothing and answer false. */
+  failWrites: false,
 };
 
 export function resetMeter(over: Partial<Pick<typeof meter, "spent" | "cap">> = {}): void {
@@ -54,6 +61,8 @@ export function resetMeter(over: Partial<Pick<typeof meter, "spent" | "cap">> = 
   meter.ledgerDown = false;
   meter.asked = [];
   meter.recorded = [];
+  meter.log = [];
+  meter.failWrites = false;
 }
 
 const LOCKED = Number.MIN_VALUE;
@@ -107,23 +116,33 @@ export function fakeUsageServer() {
         costUsd: worst, reserved: true, inputTokens: null, outputTokens: null, ok: true,
       };
       meter.rows.push(row);
+      meter.log.push(`reserve:${row.id}`);
       return { id: row.id, reservedUsd: worst };
     }),
-    settleUsage: vi.fn(async (id: string, input: { model: string; usage: AiUsage; ok: boolean }) => {
+    settleUsage: vi.fn(async (id: string, input: { model: string; usage: AiUsage; ok: boolean }): Promise<boolean> => {
+      if (meter.failWrites) { meter.log.push(`settle-failed:${id}`); return false; }
+      meter.log.push(`settle:${id}`);
       const row = meter.rows.find((r) => r.id === id);
-      if (!row) return;
+      if (!row) return true; // an update that matches no row is no error
       Object.assign(row, {
         model: input.model, reserved: false, ok: input.ok,
         inputTokens: input.usage.inputTokens, outputTokens: input.usage.outputTokens,
         costUsd: estimateCostUsd(input.model, input.usage),
       });
+      return true;
     }),
     // A run's cost so far on its row, which stays a reservation (in flight).
-    holdUsage: vi.fn(async (id: string, input: { model: string; usage: AiUsage }) => {
+    holdUsage: vi.fn(async (id: string, input: { model: string; usage: AiUsage }): Promise<boolean> => {
+      if (meter.failWrites) { meter.log.push(`hold-failed:${id}`); return false; }
+      meter.log.push(`hold:${id}`);
       const row = meter.rows.find((r) => r.id === id);
       if (row) Object.assign(row, { model: input.model, costUsd: estimateCostUsd(input.model, input.usage) });
+      return true;
     }),
-    releaseUsage: vi.fn(async (id: string) => { meter.rows = meter.rows.filter((r) => r.id !== id); }),
+    releaseUsage: vi.fn(async (id: string) => {
+      meter.log.push(`release:${id}`);
+      meter.rows = meter.rows.filter((r) => r.id !== id);
+    }),
     ORCHESTRATOR_ROUND_OP: "orchestratorRound",
   };
 }
