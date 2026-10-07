@@ -68,6 +68,10 @@ export type NotificationKind =
   | "storage_platform_r2"        // (to Admin/DocCtrl) file storage is near the plan ceiling (lib/storageUsage.ts)
   | "storage_platform_db"        // (to Admin/DocCtrl) the database is near the plan ceiling (lib/storageUsage.ts)
   | "ai_cap_changed"             // a monthly AI spend cap was changed, put back or held (app/api/ai/usage/route.ts)
+  | "change_order_status"        // a change order on a project you're on was proposed, approved or rejected (lib/changeOrders.ts — PROD-6)
+  | "milestone_assigned"         // you were made responsible for a schedule task (lib/milestones.ts — PROD-11)
+  | "milestone_slipped"          // (to the project owner) a move pushed baselined tasks past their baseline (lib/milestones.ts — PROD-11)
+  | "access_request_pending"     // (to Admin/DocCtrl) someone asked to join the workspace (app/api/auth/request-access — PROD-2)
   | "transmittal_unstampable";   // (to the issuer) the portal refused to stamp an issued PDF (TRX-15, app/api/transmittal/route.ts)
 
 export interface NotificationInput {
@@ -93,14 +97,28 @@ export async function notify(input: NotificationInput): Promise<void> {
   await notifyChecked(input);
 }
 
+/** A client to write the row with instead of the shared one: a service-role
+ *  route's or the cron's (TAX-11 done-when 2 — a server writer that holds its
+ *  own client takes the typed insert too, rather than a raw one). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type NotifyClient = { from: (table: string) => any };
+
 /**
  * notify(), answering whether the row was written (true) or refused / threw
  * (false — logged, never re-raised). The same typed insert; for a caller that
  * counts deliveries (the storage watchdogs) and must count only real ones.
+ * `client` (optional): write with that client — the shared one otherwise.
  */
-export async function notifyChecked(input: NotificationInput): Promise<boolean> {
+export async function notifyChecked(input: NotificationInput, client?: NotifyClient): Promise<boolean> {
+  return (await notifyWithReason(input, client)).ok;
+}
+
+/** notifyChecked(), answering the refusal's reason as well — for a server
+ *  writer that logs it (the transmittal portal's issuer notice, TRX-15). */
+export async function notifyWithReason(input: NotificationInput, client?: NotifyClient): Promise<{ ok: boolean; error?: string }> {
   try {
-    const { error } = await supabase.from("notifications").insert({
+    const db: NotifyClient = client ?? supabase;
+    const { error } = await db.from("notifications").insert({
       org_id: input.orgId,
       user_id: input.userId,
       kind: input.kind,
@@ -113,11 +131,11 @@ export async function notifyChecked(input: NotificationInput): Promise<boolean> 
       actor_name: input.actorName ?? null,
       metadata: input.metadata ?? null,
     });
-    if (error) { console.warn("[notify] insert failed", error.message); return false; }
-    return true;
+    if (error) { console.warn("[notify] insert failed", error.message); return { ok: false, error: error.message }; }
+    return { ok: true };
   } catch (e) {
     console.warn("[notify] insert threw", e);
-    return false;
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
 }
 

@@ -278,4 +278,14 @@ export const EXPECTED_FUNCTIONS: readonly FunctionExpectation[] = [
     migration: "20261157_prj_roundG_server_remainders.sql",
     feature: "The checklist assessment and sweep in one request (lib/checklists.ts writeItemPatches; PERF-7)",
   },
+  // notifications N8 (PROD-3 dw2): resolving a branch clears every
+  // recipient's branch_open alert through this definer function, and keeps
+  // today's path (the alerts stay unread) while it is missing.
+  {
+    signature: "clear_resolved_branch_alerts(uuid)",
+    fn: "clear_resolved_branch_alerts",
+    probeArgs: { p_branch: "schema-health-probe" },
+    migration: "20261181_notif_roundG_producers_free.sql",
+    feature: "A resolved branch clears its branch_open alerts for the DocCtrl pool (lib/branches.ts clearBranchOpenAlerts; PROD-3)",
+  },
 ];
