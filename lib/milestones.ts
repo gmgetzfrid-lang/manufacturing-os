@@ -19,7 +19,7 @@
 import { supabase } from "@/lib/supabase";
 import { userFacingError, userFacingReadError, userFacingCaughtError, asClause } from "@/lib/userFacingError";
 import { logMilestoneEvent, logAuditAction } from "@/lib/audit";
-import { reflowAllAncestors, startForDuration, linkCyclePath, outlineLoop, type ReflowNode } from "@/lib/scheduleReflow";
+import { reflowAllAncestors, startForDuration, linkCyclePath, outlineLoop, toWallClock, type ReflowNode } from "@/lib/scheduleReflow";
 import { chooseWeightBasis, weightFor, leafPercent, type WeightBasis } from "@/lib/scheduleProgress";
 import { isImportedMilestone } from "@/lib/milestoneLiveness";
 import { shiftForStart, shiftAfterMove } from "@/lib/scheduleFilter";
@@ -155,7 +155,13 @@ function pickResource(m: { projectId?: string | null; documentId?: string | null
 // Document-only milestones (no project) have no project audience; only the
 // assignee notice applies to them. The actor never hears about their own
 // act (the dispatcher drops them). Every notice is best-effort behind the
-// write: a failure is logged, never thrown — the schedule change stands.
+// write: a failure is logged, never thrown — the schedule change stands —
+// and the mutation does not WAIT for it (N8's review fix): the board applies
+// the new lock stamps and refreshes as soon as the write is done, and the
+// notices' reads and inserts run behind it (inBackground).
+// A date a notice or a note carries is schedule time — the stored
+// wall-clock-as-UTC instant (projects-tab SCH-10), as the board shows it —
+// never the writer's zone, in a form no locale misreads (scheduleDateLabel).
 
 const STATUS_WORD: Record<MilestoneStatus, string> = {
   planned: "back to planned", in_progress: "started", completed: "completed",
@@ -171,6 +177,29 @@ export function slippedPastBaseline(beforeFinish: When, afterFinish: When, basel
   if (!Number.isFinite(base) || !Number.isFinite(after) || after <= base) return false;
   const before = whenMs(beforeFinish);
   return !Number.isFinite(before) || after > before;
+}
+
+/** Run a schedule notice behind the write: the caller returns without
+ *  waiting for it. Each notice logs its own failure; anything that escapes is
+ *  logged here — never thrown, never an unhandled rejection. */
+function inBackground(p: Promise<void>): void {
+  p.catch((e) => console.warn(`[milestones] schedule notice not sent: ${(e as Error)?.message ?? String(e)}`));
+}
+
+const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
+
+/** A schedule date for text someone else reads later (a notice, a note):
+ *  the stored instant's SCHEDULE-time day (wall-clock-as-UTC — toWallClock,
+ *  the board's reading; SCH-10), never the writer's zone, written as
+ *  "7 Oct 2026" — never 10/7/2026 vs 7/10/2026. Built by hand, not by Intl,
+ *  so no locale or ICU version changes it. "" when the instant does not read. */
+export function scheduleDateLabel(when: string | number | Date | null | undefined): string {
+  if (when === null || when === undefined || when === "") return "";
+  const ms = typeof when === "string" ? Date.parse(when) : new Date(when).getTime();
+  const wc = Number.isFinite(ms) ? toWallClock(new Date(ms).toISOString()) : null;
+  if (!wc) return "";
+  const [y, m, d] = wc.date.split("-").map(Number);
+  return `${d} ${MONTH_ABBR[m - 1]} ${y}`;
 }
 
 async function notifyScheduleChange(input: {
@@ -217,7 +246,7 @@ async function notifyMilestoneAssigned(m: Milestone, assigneeId: string, actorUs
     await emit({
       orgId: m.orgId, category: "assignment", kind: "milestone_assigned",
       title: `You're responsible for “${m.name}”`,
-      body: `${who || "Someone"} made you responsible for this task${m.plannedAt ? ` (finish ${new Date(m.plannedAt).toLocaleDateString()})` : ""}.`,
+      body: `${who || "Someone"} made you responsible for this task${scheduleDateLabel(m.plannedAt) ? ` (finish ${scheduleDateLabel(m.plannedAt)})` : ""}.`,
       link: m.projectId ? `/projects/${m.projectId}?tab=schedule` : undefined,
       resource: m.projectId ? { type: "project", id: m.projectId } : { type: "document", id: m.documentId ?? "" },
       actorUserId, actorName: who ?? undefined,
@@ -481,10 +510,18 @@ export async function updateMilestone(input: UpdateMilestoneInput): Promise<Mile
   }
 
   // PROD-11: who was responsible before, so a NEW responsible person is told.
+  // A read that fails leaves it unknown (undefined): nobody is told — a
+  // re-save of the same person must never read as a new assignment (N8's
+  // review fix) — and the miss is logged. The edit itself goes ahead.
   let priorResponsible: string | null | undefined;
   if ("responsibleUserId" in input.patch) {
-    const { data: rp } = await supabase.from("milestones").select("responsible_user_id").eq("id", input.id).maybeSingle();
-    priorResponsible = (rp as { responsible_user_id: string | null } | null)?.responsible_user_id ?? null;
+    try {
+      const { data: rp, error: rpErr } = await supabase.from("milestones").select("responsible_user_id").eq("id", input.id).maybeSingle();
+      if (rpErr) console.warn(`[milestones] who was responsible could not be read — no assignment notice: ${rpErr.message}`);
+      else priorResponsible = (rp as { responsible_user_id: string | null } | null)?.responsible_user_id ?? null;
+    } catch (e) {
+      console.warn(`[milestones] who was responsible could not be read — no assignment notice: ${(e as Error).message}`);
+    }
   }
 
   // Snapshot the prior finish so we can log a human reschedule note, and the
@@ -519,7 +556,7 @@ export async function updateMilestone(input: UpdateMilestoneInput): Promise<Mile
     if (days !== 0) {
       await addMilestoneNote({
         orgId: m.orgId, milestoneId: m.id!, kind: "reschedule", statusAt: m.status,
-        body: `Finish ${days > 0 ? `+${days}` : days} day${Math.abs(days) === 1 ? "" : "s"} → ${new Date(input.patch.plannedAt as string).toLocaleDateString()}`,
+        body: `Finish ${days > 0 ? `+${days}` : days} day${Math.abs(days) === 1 ? "" : "s"} → ${scheduleDateLabel(input.patch.plannedAt as string)}`,
         createdBy: input.updatedBy, createdByName: input.updatedByName,
       }).catch(() => { /* best-effort */ });
     }
@@ -541,14 +578,14 @@ export async function updateMilestone(input: UpdateMilestoneInput): Promise<Mile
 
   // PROD-11: a new responsible person (not a clear, not the same one).
   if (priorResponsible !== undefined && m.responsibleUserId && m.responsibleUserId !== priorResponsible) {
-    await notifyMilestoneAssigned(m, m.responsibleUserId, input.updatedBy, input.updatedByName || input.updatedByEmail);
+    inBackground(notifyMilestoneAssigned(m, m.responsibleUserId, input.updatedBy, input.updatedByName || input.updatedByEmail));
   }
   // PROD-11: a finish moved later, past its baseline — the owner hears once.
   if (!input.quietSlip && priorFinish && input.patch.plannedAt && slippedPastBaseline(priorFinish, input.patch.plannedAt, m.baselineFinishAt)) {
-    await notifySlippedPastBaseline({
+    inBackground(notifySlippedPastBaseline({
       orgId: m.orgId, projectId: m.projectId, slipped: [{ id: m.id!, name: m.name }],
       actorUserId: input.updatedBy, actorName: input.updatedByName || input.updatedByEmail,
-    });
+    }));
   }
 
   return m;
@@ -694,7 +731,7 @@ export async function applyMilestoneMoves(input: {
         updatedByEmail: input.actorUserEmail, updatedByRole: input.actorUserRole,
         quietSlip: true,
       })));
-      await notifyMovedBatch(input, ids, before);
+      inBackground(notifyMovedBatch(input, ids, before));
       return { matched: ids, unmatched: [], count: ids.length, via: "rows" };
     }
     throw new Error(userFacingError(error, { context: "milestones" }));
@@ -725,7 +762,7 @@ export async function applyMilestoneMoves(input: {
     if (days === 0) continue;
     notes.push({
       org_id: input.orgId, milestone_id: m.id, kind: "reschedule", status_at: b.status,
-      body: `Finish ${days > 0 ? `+${days}` : days} day${Math.abs(days) === 1 ? "" : "s"} → ${new Date(m.plannedAt).toLocaleDateString()}`,
+      body: `Finish ${days > 0 ? `+${days}` : days} day${Math.abs(days) === 1 ? "" : "s"} → ${scheduleDateLabel(m.plannedAt)}`,
       created_by: input.actorUserId, created_by_name: input.actorUserName ?? null,
     });
   }
@@ -767,7 +804,7 @@ export async function applyMilestoneMoves(input: {
     }
     if (afterOk) result.updatedAt = after;
   }
-  await notifyMovedBatch(input, matched, before);
+  inBackground(notifyMovedBatch(input, matched, before));
   if (unmatched.length > 0 && (input.onUnmatched ?? "throw") === "throw") throw new MoveConflictError(result);
   return result;
 }
@@ -899,15 +936,16 @@ export async function setMilestoneStatus(input: SetMilestoneStatusInput): Promis
     details: { newStatus: input.status, statusReason: input.statusReason, note: input.note, plannedAt: m.plannedAt, actualAt: m.actualAt },
   });
 
-  // PROD-11: the project hears that a task changed state (in-app).
+  // PROD-11: the project hears that a task changed state (in-app) — behind
+  // the write, so the board refreshes without waiting for it.
   const why = input.statusReason?.trim() || input.note?.trim();
-  await notifyScheduleChange({
+  inBackground(notifyScheduleChange({
     orgId: m.orgId, projectId: m.projectId,
     title: `Task ${STATUS_WORD[input.status] ?? input.status}: ${m.name}`,
     body: `${input.actorUserName || "Someone"} marked “${m.name}” ${STATUS_WORD[input.status] ?? input.status}${why ? ` — ${why}` : "."}`,
     actorUserId: input.actorUserId, actorName: input.actorUserName,
     metadata: { milestoneId: m.id, milestoneStatus: input.status },
-  });
+  }));
 
   return m;
 }
@@ -2389,16 +2427,17 @@ export async function rebaseSchedule(input: RebaseScheduleInput): Promise<Rebase
   });
 
   // PROD-11: one rebase → one notice to the project (in-app), and one to the
-  // owner when it pushed baselined tasks past their baseline.
+  // owner when it pushed baselined tasks past their baseline — behind the
+  // write, so the rebase returns without waiting for them.
   if (shifted > 0) {
-    await notifyScheduleChange({
+    inBackground(notifyScheduleChange({
       orgId: input.orgId, projectId: input.projectId,
       title: `Schedule shifted ${shiftDays > 0 ? `+${shiftDays}` : shiftDays} day${Math.abs(shiftDays) === 1 ? "" : "s"}`,
       body: `${input.actorUserName || "Someone"} rebased the schedule: ${shifted} task${shifted === 1 ? "" : "s"} moved ${Math.abs(shiftDays)} day${Math.abs(shiftDays) === 1 ? "" : "s"} ${shiftDays > 0 ? "later" : "earlier"}.`,
       actorUserId: input.actorUserId, actorName: input.actorUserName,
       metadata: { shiftDays, count: shifted },
-    });
-    await notifySlippedPastBaseline({ orgId: input.orgId, projectId: input.projectId, slipped, actorUserId: input.actorUserId, actorName: input.actorUserName });
+    }));
+    inBackground(notifySlippedPastBaseline({ orgId: input.orgId, projectId: input.projectId, slipped, actorUserId: input.actorUserId, actorName: input.actorUserName }));
   }
 
   return {

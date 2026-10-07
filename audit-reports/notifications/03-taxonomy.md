@@ -515,7 +515,47 @@ supabase/migrations/20260621_in_app_notifications.sql:17 -- `  kind TEXT NOT NUL
 - **Not done — partly:** "every insert into `notifications` goes through `notify()` / `notifyMany()`". N8's five sites: three moved, two stay raw for the recorded reasons above. The five sites whose owners were still in flight at N8's launch — `app/api/ai/usage/route.ts` and `lib/orchestrator/tools.ts` (intelligence I-18), `app/api/cron/maintenance/route.ts` (N6), `app/api/tickets/comment/route.ts` and `app/api/tickets/workflow-action/route.ts` ×2 (drafting-flow DF-P1) — are **notifications N14 RAW-INSERT TAIL**'s (the second Assigned line), untouched here.
 - ✓ (unchanged) the census test arm, now with the kept sites' reasons pinned.
 
-**Scope / residual.** Stays OPEN for N14's five files (six calls). For the two kept raw sites, done-when 2 as written is met only if the integrator accepts the recorded reasons (a checked single statement whose error text the caller records); the batch variant those reasons asked for now exists (`notifyBatchChecked` — one statement, `client` given, answers the landed count, but not the refusal's text), so moving them onto it (adding the reason to its answer if their callers must keep recording it) is the follow-up, owner N14.
+**Scope / residual.** Stays OPEN for N14's five files (six calls). For the two kept raw sites, done-when 2 as written is met only if the integrator accepts the recorded reasons (a checked single statement whose error text the caller records); the batch variant those reasons asked for now exists (`notifyBatchChecked` — one statement, `client` given, answers the landed count, but not the refusal's text), so moving them onto it (adding the reason to its answer if their callers must keep recording it) is the follow-up, owner N14. *(Superseded by fix pass 2 below. N8 moved both sites itself; they were N8's by the narrowed assignment, and N14's Assigned line never covered them. The claim that `notifyBatchChecked` "answers the landed count" was also overstated, and is corrected below.)*
+
+**Partial (2026-10-07, notifications Round G — N8 fix pass 2).** The second review raised two findings on this record:
+- **The count was overstated.** `notifyBatchChecked` returned the number of rows SENT. The insert rail (20261160 rule 5) skips a browser's row for a recipient who is not an active member (RETURN NULL; the statement still succeeds), so the checkout sweep's "NOT told" warning never fired for a suspended holder.
+- **N8's two raw sites were handed to N14 with no owner.** The export alert's recorded reason ("per-recipient `notify()` calls land partially") had stopped holding once a one-statement batch sink existed.
+
+**What landed.**
+- `lib/inAppNotifications.ts`:
+  - `notifyBatchWithReason(inputs, client?)` (:173) is ONE typed insert of every row on the given client. It answers `{ landed, error? }`. `landed` is the count the DATABASE gives for the statement (`insert(rows, { count: "exact" })`), so a row the rail skips is not counted. It also answers the refusal's text.
+  - `notifyBatchChecked` (:155) is now its `landed` alone.
+  - The count rides the insert, not a read-back. The reviewer's suggested `.insert(rows).select("id")` is a RETURNING. The own-rows SELECT policy (`notifications_own_select`, 20261161) refuses RETURNING for a row addressed to someone else, which is exactly what the browser sweep writes, so the whole statement would fail. `lib/dataRestore.ts` already counts written rows the same way, with `count: "exact"`.
+  - A client that answers no count is taken at the statement's word. No production client does this: PostgREST counts every insert it is asked to.
+- `lib/projects.ts` `autoReleaseExpiredAdHoc` logs how many holders were not told (":n of :m holder(s) were NOT told", :2083), including holders the rail skipped.
+- **The export alert moved onto the sink.** `lib/exportAlerts.ts` `alertControllers` now writes through `notifyBatchWithReason(…, admin)` (:75), on the service-role client it holds. It stays ONE statement, the kind is now checked by the compiler, `error` keeps the refusal's text for the run's diagnostics (DEC-87), and `notified` is the database's count.
+- **The folded intake digest moved onto the sink.** `lib/intakeRateLimit.ts` `deliverFoldedDigest` now writes through `notifyBatchWithReason(…, client)` (:483). It stays ONE statement on the cron's service-role client. A refusal still throws ("the digest's notices were refused: …"), so the flush writes no marker, and the landed count that gates the marker (INTK-10 / SEC-8) is the database's.
+- **The census.** `lib/__tests__/notificationKinds.test.ts`:
+  - `RAW_SITES` shrinks to six calls in five files, all N14's. The `RAW_RESOLVED` `why` entries are gone, and the "TAX-11 done-when 2 (N8)" test now requires that no raw site is kept for a reason.
+  - It pins both moved call shapes (`notifyBatchWithReason([...recipients].map(…), admin)`, `notifyBatchWithReason(d.involved.map(…), client)`) and their refusal handling.
+  - The census still resolves both kinds through the typed payloads (`security_export`; `doc_superseded` / `review_requested` through `foldedDigestKind`'s literal return type).
+- **The created_at census.** `lib/__tests__/notificationWriteRails.test.ts` now examines six raw calls plus the sink's two inserts (at least 8).
+- **The fake client.** `lib/__tests__/helpers/fakeSupabase.ts` answers an insert's `{ count: "exact" }` with the rows the statement wrote, so a row dropped by a transcribed BEFORE INSERT trigger is not counted. The change is additive.
+- Tests:
+  - `lib/__tests__/producers.test.ts` "TAX-11 … answers the rows that LANDED". The rail is transcribed as a trigger that drops a non-member's row: two rows sent, one counted. There is ONE insert call with `{ count: "exact" }` and no `.select()`. `notifyBatchWithReason` answers `{ landed: 0, error }` on a refusal.
+  - `lib/__tests__/intakeDoorLibs.test.ts` (the digest: one row per recipient in ONE statement, the count, a refusal throws) and `lib/__tests__/dataExportRoutes.test.ts` (the export alerts) are unchanged and green (REGRESSION).
+- Verified: Loop on `fleet/N8-producers-free` for fix pass 2 (all of N8's second-review fixes: `PROD-2`, `PROD-6`, `PROD-11`, this record, projects-tab `MON-11`): `npx tsc --noEmit` exit 0; `npx eslint` on the 13 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exited **1** on all three full runs. The machine's load average was 16–28 on 4 cores. Every failure was a 5-second test timeout in a file this pass does not change, or in a census case that walks the whole source tree:
+  - the `dependencies` fuzz;
+  - `notificationWriteRails`' link census;
+  - `notificationDispatchMembership`'s REASON_IN_TITLE census;
+  - `customSkillRunner`'s 1.5 s stall case;
+  - `dcRoundFOwnerStamp`;
+  - `dcRoundFShareInventory`.
+  The last run used `--maxWorkers=2` and ended with 433 of 436 files passing: 9,503 passed, 3 timed out, 7 expected-fail. Each failing file passes when run alone (dependencies 45/45, notificationWriteRails 79/79, notificationDispatchMembership 24/24, customSkillRunner 18/18, dcRoundFOwnerStamp 16/16, dcRoundFShareInventory 18/18). Every file this pass touches is green, both alone and in the full runs: the producer files, the censuses, intake, data export, checkout, projects and the schedule suites. `next build` is the integrator's.
+
+**Done-when.**
+- ✓ (unchanged) The storage kinds are in the union and the registry.
+- **Not done — partly:** "every insert into `notifications` goes through `notify()` / `notifyMany()`", or through the typed sink they share, which carries the same compile-time `NotificationKind` check.
+  - **N8's share is now met.** All five of N8's sites write through the typed sink: the transmittal portal's two, the checkout sweep's, the export alert's and the folded digest's. No raw site is kept by reason.
+  - **What is left is N14's.** Six raw calls remain, in the five files the second Assigned line gives notifications N14 RAW-INSERT TAIL: `app/api/ai/usage/route.ts`, `lib/orchestrator/tools.ts`, `app/api/cron/maintenance/route.ts`, `app/api/tickets/comment/route.ts`, and `app/api/tickets/workflow-action/route.ts` ×2.
+- ✓ (unchanged) The census test arm.
+
+**Scope / residual.** Stays OPEN only for N14's five files (six calls). For a service-role writer that must report what landed, the batch sink (`notifyBatchWithReason`) is now the way onto the typed path.
 
 ---
 

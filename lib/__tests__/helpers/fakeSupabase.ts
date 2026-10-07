@@ -4,7 +4,7 @@
 // select (incl. head counts), eq / neq / in / is / ilike / or (col.op.value
 // terms), textSearch (substring over string columns), order, limit, range,
 // maybeSingle / single, insert / update / delete / upsert with returning
-// selects, not (is / eq), and(...) inside or, unique keys (23505) and an RLS switch that makes a table's writes
+// selects, not (is / eq), and(...) inside or, an insert's `{ count: "exact" }` (the rows it wrote), unique keys (23505) and an RLS switch that makes a table's writes
 // affect zero rows (PostgREST's silent refusal) or refuse an insert (42501).
 // Not a database — it exists to prove what the app code does with answers.
 
@@ -133,7 +133,9 @@ export function makeFakeSupabase(db: FakeDb) {
           rowsOf().push(row);
           out.push(row);
         }
-        return { data: returning ? out : null, error: null };
+        // count: "exact" on an insert answers the rows the statement WROTE —
+        // a row a BEFORE trigger dropped (null) is not counted, as in Postgres.
+        return { data: returning ? out : null, error: null, count: wantCount ? out.length : undefined };
       }
       if (op === "update") {
         if (db.refuseWrites.has(table)) return { data: returning ? [] : null, error: null };
@@ -193,7 +195,11 @@ export function makeFakeSupabase(db: FakeDb) {
               if (o?.count) wantCount = true;
               return self;
             }
-            case "insert": op = "insert"; payload = Array.isArray(args[0]) ? (args[0] as Row[]) : [args[0] as Row]; return self;
+            case "insert": {
+              op = "insert"; payload = Array.isArray(args[0]) ? (args[0] as Row[]) : [args[0] as Row];
+              if ((args[1] as { count?: string } | undefined)?.count) wantCount = true;
+              return self;
+            }
             case "upsert": {
               op = "upsert"; payload = Array.isArray(args[0]) ? (args[0] as Row[]) : [args[0] as Row];
               upsertOn = String((args[1] as { onConflict?: string } | undefined)?.onConflict ?? "").split(",").map((s) => s.trim()).filter(Boolean);

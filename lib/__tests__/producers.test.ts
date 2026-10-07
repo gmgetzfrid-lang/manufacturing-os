@@ -11,7 +11,7 @@
 // change order is proposed / decided, the turnover item is rejected, the
 // milestone moves), and a notice that cannot be sent never fails the write.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { newFakeDb, makeFakeSupabase, type FakeDb } from "./helpers/fakeSupabase";
 
 const s = vi.hoisted(() => ({
@@ -21,12 +21,36 @@ const s = vi.hoisted(() => ({
   rpc: [] as Array<{ fn: string; args: Record<string, unknown> }>,
   rpcError: null as { code?: string; message: string } | null,
   rpcData: 0 as unknown,
+  /** A read that fails: (table, selected columns) → true for the one to refuse. */
+  failRead: null as ((table: string, cols: string) => boolean) | null,
 }));
+
+/** A select whose answer is an error (the chain ends in maybeSingle / then). */
+function failingRead(): Record<string, unknown> {
+  const chain: Record<string, unknown> = {};
+  for (const m of ["eq", "in", "is", "order", "limit", "range"]) chain[m] = () => chain;
+  const res = { data: null, error: { message: "read failed" } };
+  chain.maybeSingle = () => Promise.resolve(res);
+  chain.single = () => Promise.resolve(res);
+  chain.then = (ok: (v: unknown) => unknown) => Promise.resolve(res).then(ok);
+  return chain;
+}
 
 function fakeClient() {
   const base = makeFakeSupabase(s.db);
   return {
     ...base,
+    from: (t: string) => {
+      const b = base.from(t) as unknown as Record<string, unknown>;
+      if (!s.failRead) return b;
+      return new Proxy(b, {
+        get(target, prop: string) {
+          if (prop !== "select") return target[prop];
+          return (cols: string, o?: unknown) =>
+            (s.failRead!(t, cols) ? failingRead() : (target.select as (c: string, o?: unknown) => unknown)(cols, o));
+        },
+      });
+    },
     rpc: async (fn: string, args: Record<string, unknown>) => {
       s.rpc.push({ fn, args });
       return s.rpcError ? { data: null, error: s.rpcError } : { data: s.rpcData, error: null };
@@ -52,14 +76,14 @@ vi.mock("@/lib/activityThread", () => ({ postMarkupRef: vi.fn(async () => undefi
 import { resolveBranch, clearBranchOpenAlerts } from "@/lib/branches";
 import { createMarkupRequest, resolveMarkupRequest } from "@/lib/markupRequests";
 import { notifyLibraryDocsAdded } from "@/lib/libraryNotify";
-import { proposeChangeOrder, decideChangeOrder, CO_REASON_LABEL, type ChangeOrder } from "@/lib/changeOrders";
+import { proposeChangeOrder, decideChangeOrder, CO_REASON_LABEL, coNoticeMoney, type ChangeOrder } from "@/lib/changeOrders";
 import { reviewTurnoverItem, type TurnoverItem } from "@/lib/turnover";
 import {
-  setMilestoneStatus, applyMilestoneMoves, updateMilestone, rebaseSchedule, slippedPastBaseline,
+  setMilestoneStatus, applyMilestoneMoves, updateMilestone, rebaseSchedule, slippedPastBaseline, scheduleDateLabel,
 } from "@/lib/milestones";
 import { resolveRecipients, type EmitInput } from "@/lib/notify/dispatch";
 import { postMarkupRef } from "@/lib/activityThread";
-import { notifyBatchChecked } from "@/lib/inAppNotifications";
+import { notifyBatchChecked, notifyBatchWithReason } from "@/lib/inAppNotifications";
 import { fmtMoney } from "@/lib/costs";
 
 const ORG = "o1";
@@ -72,6 +96,7 @@ beforeEach(() => {
   s.rpc = [];
   s.rpcError = null;
   s.rpcData = 0;
+  s.failRead = null;
   s.db.tables.org_members = [
     member("brancher", ["Engineer"]),
     member("dc1", ["DocCtrl"]),
@@ -89,6 +114,9 @@ beforeEach(() => {
 });
 
 const emitsOf = (kind: string) => s.emits.filter((e) => e.kind === kind);
+/** The schedule's notices run behind the write (N8's review fix): let them
+ *  finish before reading what they emitted. */
+const flushNotices = async () => { for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0)); };
 
 // ── PROD-3 ───────────────────────────────────────────────────────────────────
 describe("PROD-3 — resolving a branch reaches the DocCtrl pool branch_open alerted, and clears its alerts", () => {
@@ -238,7 +266,7 @@ describe("PROD-6 dw1 — a change order proposed / approved / rejected reaches t
     await decideChangeOrder({ co: asCo(coRow()), decision: "rejected", shownAmount: 500, shownAccountId: "a1", note: "not in scope", actorId: "decider", actorName: "decider" });
     const [e] = emitsOf("change_order_status");
     expect((e.audience as { involved: string[] }).involved.sort()).toEqual(["owner", "pm", "proposer"]);
-    expect(e.body).toBe(`decider rejected the change order for ${fmtMoney(500, "USD")}: "not in scope"`);   // no line currency on file: USD
+    expect(e.body).toBe(`decider rejected the change order for ${coNoticeMoney(500, "USD")}: "not in scope"`);   // no line currency on file: USD
     expect(emitsOf("project_status")).toEqual([]);                       // no approval notice on a rejection
   });
 
@@ -254,17 +282,46 @@ describe("PROD-6 dw1 — a change order proposed / approved / rejected reaches t
     expect((e.audience as { involved: string[] }).involved.sort()).toEqual(["owner", "pm"]);
   });
 
-  it("the amount carries its budget line's currency, as the Costs tab shows it — a CAD line never reads as dollars (N8's review fix); the proposer's own approval notice too", async () => {
-    s.db.tables.change_orders = [coRow({ amount: 12000 })];
+  it("the amount carries its budget line's currency — a CAD line never reads as dollars — and is the EXACT figure posted, never rounded to whole units at 10,000 and over (N8's review fixes); the proposer's own approval notice too", async () => {
+    const AMT = 12345.67;
+    s.db.tables.change_orders = [coRow({ amount: AMT })];
     s.db.tables.cost_accounts = [{ id: "a1", org_id: ORG, project_id: "p1", budget: 100000, currency: "cad" }];
-    await proposeChangeOrder({ orgId: ORG, projectId: "p1", costAccountId: "a1", title: "Extra pipe", amount: 12000, reasonCode: "field_condition", actorId: "proposer", actorName: "proposer" });
+    await proposeChangeOrder({ orgId: ORG, projectId: "p1", costAccountId: "a1", title: "Extra pipe", amount: AMT, reasonCode: "field_condition", actorId: "proposer", actorName: "proposer" });
+    const exact = coNoticeMoney(AMT, "CAD");
+    expect(exact).toBe(new Intl.NumberFormat(undefined, { style: "currency", currency: "CAD" }).format(AMT));
+    expect(exact).toContain("12,345.67");
+    expect(exact).not.toBe(fmtMoney(AMT, "CAD"));                          // the tab's column rounds it to 12,346
+    expect(exact).not.toBe(coNoticeMoney(AMT, "USD"));
     const [proposed] = emitsOf("change_order_status");
-    expect(proposed.body).toBe(`proposer proposed a change order for ${fmtMoney(12000, "CAD")} (${CO_REASON_LABEL.field_condition}). It waits for a decision on the Costs tab.`);
-    expect(fmtMoney(12000, "CAD")).not.toBe(fmtMoney(12000, "USD"));
+    expect(proposed.body).toBe(`proposer proposed a change order for ${exact} (${CO_REASON_LABEL.field_condition}). It waits for a decision on the Costs tab.`);
     s.emits = [];
-    await decideChangeOrder({ co: asCo(coRow({ amount: 12000 })), decision: "approved", shownAmount: 12000, shownAccountId: "a1", actorId: "decider", actorName: "decider" });
-    expect(String(emitsOf("change_order_status")[0].body)).toContain(fmtMoney(12000, "CAD"));
-    expect(emitsOf("project_status")[0].body).toBe(`Your change order for ${fmtMoney(12000, "CAD")} was approved and posted to the budget line.`);
+    await decideChangeOrder({ co: asCo(coRow({ amount: AMT })), decision: "approved", shownAmount: AMT, shownAccountId: "a1", actorId: "decider", actorName: "decider" });
+    expect(String(emitsOf("change_order_status")[0].body)).toContain(exact);
+    expect(emitsOf("project_status")[0].body).toBe(`Your change order for ${exact} was approved and posted to the budget line.`);
+    expect(coNoticeMoney(Number.NaN)).toBe("—");
+  });
+
+  it("the budget line's control account manager (cost_accounts.cam_user_id), when it names one, hears every change-order event too — once; unset, nothing changes (N8's review fix)", async () => {
+    s.db.tables.org_members.push(member("cam", ["Engineer"]), member("cam-gone", ["Engineer"], "suspended"));
+    s.db.tables.cost_accounts = [{ id: "a1", org_id: ORG, project_id: "p1", budget: 1000, currency: "USD", cam_user_id: "cam" }];
+    await proposeChangeOrder({ orgId: ORG, projectId: "p1", costAccountId: "a1", title: "Extra pipe", amount: 500, reasonCode: "field_condition", actorId: "proposer", actorName: "proposer" });
+    const [proposed] = emitsOf("change_order_status");
+    expect((proposed.audience as { involved: string[] }).involved.sort()).toEqual(["cam", "owner", "pm"]);
+    s.emits = [];
+    s.db.tables.change_orders = [coRow()];
+    await decideChangeOrder({ co: asCo(coRow()), decision: "rejected", shownAmount: 500, shownAccountId: "a1", note: "no", actorId: "decider", actorName: "decider" });
+    expect((emitsOf("change_order_status")[0].audience as { involved: string[] }).involved.sort()).toEqual(["cam", "owner", "pm", "proposer"]);
+    // the CAM deciding is not told about their own act; a CAM who is also a member is told once
+    s.emits = [];
+    s.db.tables.change_orders = [coRow()];
+    await decideChangeOrder({ co: asCo(coRow()), decision: "rejected", shownAmount: 500, shownAccountId: "a1", note: "no", actorId: "cam", actorName: "cam" });
+    expect((emitsOf("change_order_status")[0].audience as { involved: string[] }).involved.sort()).toEqual(["owner", "pm", "proposer"]);
+    // a suspended CAM is named in the audience but the dispatcher keeps active members only
+    s.emits = [];
+    s.db.tables.cost_accounts[0].cam_user_id = "cam-gone";
+    s.db.tables.change_orders = [coRow()];
+    await decideChangeOrder({ co: asCo(coRow()), decision: "rejected", shownAmount: 500, shownAccountId: "a1", note: "no", actorId: "decider", actorName: "decider" });
+    expect((await resolveRecipients(emitsOf("change_order_status")[0] as unknown as EmitInput)).sort()).toEqual(["owner", "pm", "proposer"]);
   });
 
   it("voiding stays silent (DEC-44 (N8) item 2)", async () => {
@@ -323,10 +380,13 @@ describe("PROD-11 — the schedule speaks: status and moves to the project, a ne
     expect(slippedPastBaseline("2026-11-01", "2026-11-10", null)).toBe(false);          // no baseline
   });
 
+  afterEach(flushNotices);   // nothing a test started lands in the next one
+
   it("dw1: setMilestoneStatus emits to audience { projectId } — the dispatcher branch nothing took — in-app only", async () => {
     s.db.tables.milestones = [ms()];
     const m = await setMilestoneStatus({ id: "m1", status: "blocked", statusReason: "waiting on parts", actorUserId: "pm", actorUserName: "pm" });
     expect(m.status).toBe("blocked");                                        // REGRESSION
+    await flushNotices();
     const [e] = s.emits;
     expect(e).toMatchObject({
       kind: "project_status", audience: { projectId: "p1" }, channels: ["inapp"], actorUserId: "pm",
@@ -353,6 +413,7 @@ describe("PROD-11 — the schedule speaks: status and moves to the project, a ne
       ],
     });
     expect(s.rpc[0].fn).toBe("apply_milestone_moves");
+    await flushNotices();
     const moved = s.emits.filter((e) => e.kind === "project_status");
     expect(moved).toHaveLength(1);
     expect(moved[0]).toMatchObject({ title: "3 tasks rescheduled", audience: { projectId: "p1" }, channels: ["inapp"] });
@@ -365,41 +426,127 @@ describe("PROD-11 — the schedule speaks: status and moves to the project, a ne
   it("dw2: a NEW responsible person gets milestone_assigned (bell + email); the same person again, or a clear, notifies nobody", async () => {
     s.db.tables.milestones = [ms()];
     await updateMilestone({ id: "m1", patch: { responsibleUserId: "proposer", responsibleUserName: "proposer" }, updatedBy: "pm", updatedByName: "pm" });
+    await flushNotices();
     const [e] = emitsOf("milestone_assigned");
     expect(e).toMatchObject({ category: "assignment", audience: { involved: ["proposer"] }, actorUserId: "pm", link: "/projects/p1?tab=schedule" });
     expect(e.title).toBe("You're responsible for “Mechanical completion”");
     s.emits = [];
     await updateMilestone({ id: "m1", patch: { responsibleUserId: "proposer" }, updatedBy: "pm" });
     await updateMilestone({ id: "m1", patch: { responsibleUserId: null }, updatedBy: "pm" });
+    await flushNotices();
     expect(emitsOf("milestone_assigned")).toEqual([]);
+  });
+
+  it("the assignment's finish date is the BOARD's day (schedule time, wall-clock-as-UTC), in a form no locale misreads — whatever zone the assigner's browser is in (N8's review fix: blocker)", async () => {
+    const tz = process.env.TZ;
+    try {
+      for (const zone of ["America/Los_Angeles", "Asia/Tokyo", "UTC"]) {
+        process.env.TZ = zone;
+        // a date-only finish (fromWallClock(date, null)) and a 17:00 finish — both 7 October on the board
+        for (const finish of ["2026-10-07T00:00:00.000Z", "2026-10-07T17:00:00.000Z"]) {
+          s.emits = [];
+          s.db.tables.milestones = [ms({ planned_at: finish, responsible_user_id: null })];
+          await updateMilestone({ id: "m1", patch: { responsibleUserId: "proposer" }, updatedBy: "pm", updatedByName: "pm" });
+          await flushNotices();
+          const [e] = emitsOf("milestone_assigned");
+          expect(e.body, `${zone} ${finish}`).toBe("pm made you responsible for this task (finish 7 Oct 2026).");
+        }
+      }
+      // the label itself: schedule time, every month, nothing for an instant that does not read
+      process.env.TZ = "America/Los_Angeles";
+      expect(scheduleDateLabel("2026-10-07T00:00:00Z")).toBe("7 Oct 2026");
+      expect(scheduleDateLabel("2026-01-31T23:59:00Z")).toBe("31 Jan 2026");
+      expect(scheduleDateLabel("2026-12-01T00:00:00Z")).toBe("1 Dec 2026");
+      expect(scheduleDateLabel(null)).toBe("");
+      expect(scheduleDateLabel("not a date")).toBe("");
+    } finally {
+      if (tz === undefined) delete process.env.TZ; else process.env.TZ = tz;
+    }
+  });
+
+  it("a reschedule note carries the board's day too, in every zone (the same local-parse mistake, fixed with the same helper)", async () => {
+    const tz = process.env.TZ;
+    try {
+      for (const zone of ["America/Los_Angeles", "Asia/Tokyo"]) {
+        process.env.TZ = zone;
+        s.db.tables.milestones = [ms({ planned_at: "2026-11-01T00:00:00Z" })];
+        s.db.tables.milestone_notes = [];
+        // a single edit
+        await updateMilestone({ id: "m1", patch: { plannedAt: "2026-11-04T00:00:00Z" }, updatedBy: "pm", updatedByName: "pm" });
+        // a batch of moves (the RPC answers which rows moved)
+        s.rpcData = { matched: ["m1"], unmatched: [], count: 1 };
+        s.db.tables.milestones[0].planned_at = "2026-11-04T00:00:00Z";
+        await applyMilestoneMoves({
+          orgId: ORG, projectId: "p1", actorUserId: "pm", actorUserName: "pm",
+          moves: [{ id: "m1", plannedStartAt: "2026-10-30T00:00:00Z", plannedAt: "2026-11-07T00:00:00Z" }],
+        });
+        await flushNotices();
+        expect(s.db.tables.milestone_notes.map((n) => n.body), zone).toEqual(["Finish +3 days → 4 Nov 2026", "Finish +3 days → 7 Nov 2026"]);
+      }
+    } finally {
+      if (tz === undefined) delete process.env.TZ; else process.env.TZ = tz;
+    }
+  });
+
+  it("when who was responsible cannot be read, nobody is told — a re-save of the same person is never a new assignment (N8's review fix); the edit stands", async () => {
+    s.db.tables.milestones = [ms({ responsible_user_id: "proposer" })];
+    s.failRead = (t, cols) => t === "milestones" && cols === "responsible_user_id";
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const m = await updateMilestone({ id: "m1", patch: { responsibleUserId: "proposer" }, updatedBy: "pm", updatedByName: "pm" });
+      expect(m.responsibleUserId).toBe("proposer");                         // REGRESSION: the save went through
+      await flushNotices();
+      expect(emitsOf("milestone_assigned")).toEqual([]);
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/who was responsible could not be read — no assignment notice: read failed/));
+    } finally { warn.mockRestore(); }
+  });
+
+  it("the schedule does not WAIT for its notices (N8's review fix): the mutation returns before the notice's reads and inserts run", async () => {
+    s.db.tables.milestones = [ms()];
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const { emit } = await import("@/lib/notify/dispatch");
+    vi.mocked(emit).mockImplementationOnce(async (p: unknown) => { await gate; s.emits.push(p as Record<string, unknown>); });
+    const m = await setMilestoneStatus({ id: "m1", status: "completed", actorUserId: "pm", actorUserName: "pm" });
+    expect(m.status).toBe("completed");                                      // returned while the notice is still held
+    expect(s.emits).toEqual([]);
+    release();
+    await flushNotices();
+    expect(s.emits.map((e) => e.title)).toEqual(["Task completed: Mechanical completion"]);
   });
 
   it("the assignee learns WHO made them responsible when the caller passes only a uid (the task panel does): the actor's display name, else email, from org_members (N8's review fix)", async () => {
     s.db.tables.milestones = [ms()];
     // TaskDetailPanel.assign's call: updatedBy alone
     await updateMilestone({ id: "m1", patch: { responsibleUserId: "proposer", responsibleUserName: "proposer" }, updatedBy: "pm" });
+    await flushNotices();
     const [byEmail] = emitsOf("milestone_assigned");
     expect(byEmail.body).toMatch(/^pm@acme\.test made you responsible for this task/);
     expect(byEmail.actorName).toBe("pm@acme.test");
     s.emits = [];
     s.db.tables.org_members.find((m) => m.uid === "pm")!.display_name = "Pat Morgan";
     await updateMilestone({ id: "m1", patch: { responsibleUserId: "owner" }, updatedBy: "pm" });
+    await flushNotices();
     expect(emitsOf("milestone_assigned")[0].body).toMatch(/^Pat Morgan made you responsible/);
     s.emits = [];
     // a passed name wins; an actor nobody knows is "Someone", never a failure
     await updateMilestone({ id: "m1", patch: { responsibleUserId: "proposer" }, updatedBy: "pm", updatedByName: "PM (passed)" });
+    await flushNotices();
     expect(emitsOf("milestone_assigned")[0].body).toMatch(/^PM \(passed\) made you responsible/);
     s.emits = [];
     await updateMilestone({ id: "m1", patch: { responsibleUserId: "owner" }, updatedBy: "stranger" });
+    await flushNotices();
     expect(emitsOf("milestone_assigned")[0].body).toMatch(/^Someone made you responsible/);
   });
 
   it("dw3: a single edit that pushes a baselined task past its baseline tells the owner once", async () => {
     s.db.tables.milestones = [ms()];
     await updateMilestone({ id: "m1", patch: { plannedAt: "2026-11-12T00:00:00Z" }, updatedBy: "pm", updatedByName: "pm" });
+    await flushNotices();
     expect(emitsOf("milestone_slipped")).toHaveLength(1);
     s.emits = [];
     await updateMilestone({ id: "m1", patch: { plannedAt: "2026-11-02T00:00:00Z" }, updatedBy: "pm" });   // pulled back in
+    await flushNotices();
     expect(emitsOf("milestone_slipped")).toEqual([]);
   });
 
@@ -409,6 +556,7 @@ describe("PROD-11 — the schedule speaks: status and moves to the project, a ne
     ];
     const res = await rebaseSchedule({ orgId: ORG, projectId: "p1", newStartIso: "2026-11-08T00:00:00Z", actorUserId: "pm", actorUserName: "pm" });
     expect(res.shiftedCount).toBe(3);                                        // REGRESSION
+    await flushNotices();
     expect(s.emits.filter((e) => e.kind === "project_status")).toHaveLength(1);
     const slips = emitsOf("milestone_slipped");
     expect(slips).toHaveLength(1);
@@ -418,11 +566,13 @@ describe("PROD-11 — the schedule speaks: status and moves to the project, a ne
   it("the owner moving their own schedule is not told about it (the dispatcher drops the actor); no owner, no slip notice", async () => {
     s.db.tables.milestones = [ms()];
     await updateMilestone({ id: "m1", patch: { plannedAt: "2026-11-12T00:00:00Z" }, updatedBy: "owner" });
+    await flushNotices();
     const [slip] = emitsOf("milestone_slipped");
     expect(await resolveRecipients(slip as unknown as EmitInput)).toEqual([]);
     s.emits = [];
     s.db.tables.projects = [{ id: "p1", org_id: ORG, owner_user_id: null }];
     await updateMilestone({ id: "m1", patch: { plannedAt: "2026-11-14T00:00:00Z" }, updatedBy: "pm" });
+    await flushNotices();
     expect(emitsOf("milestone_slipped")).toEqual([]);
   });
 
@@ -447,6 +597,25 @@ describe("TAX-11 (N8's review fix) — notifyBatchChecked: many rows, ONE statem
       org_id: ORG, kind: "checkout_released", title: "Released", body: null, link: null, resource_type: "document", resource_id: "d1",
       actor_user_id: null, actor_name: "System", metadata: { autoReleasedSessionId: "s-u1" },
     });
+  });
+
+  it("answers the rows that LANDED, not the rows sent: a row the insert rail skips (a recipient who is no longer an active member — 20261160 rule 5, RETURN NULL) is not counted, and no read-back runs (N8's review fix)", async () => {
+    // the rail, transcribed: a row for a non-member is dropped, the statement succeeds
+    s.db.beforeInsert = { notifications: (r) => (r.user_id === "dc-gone" ? null : r) };
+    const client = makeFakeSupabase(s.db);
+    expect(await notifyBatchChecked([row("dc1"), row("dc-gone")], client)).toBe(1);
+    expect(s.db.tables.notifications.map((n) => n.user_id)).toEqual(["dc1"]);
+    // ONE statement, the count asked of the insert itself — never .select() (a RETURNING the
+    // own-rows read policy refuses for another person's row, failing the whole browser sweep)
+    const calls = s.db.calls.filter((c) => c.table === "notifications");
+    expect(calls.map((c) => c.method)).toEqual(["insert"]);
+    expect(calls[0].args[1]).toEqual({ count: "exact" });
+    // the reason variant answers the refusal's text too
+    s.db.refuseWrites.add("notifications");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(await notifyBatchWithReason([row("dc1")], client)).toEqual({ landed: 0, error: "new row violates row-level security policy" });
+    } finally { warn.mockRestore(); }
   });
 
   it("a refusal lands none and answers 0 (logged, never thrown); nothing to send sends nothing", async () => {

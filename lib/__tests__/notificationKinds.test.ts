@@ -249,22 +249,15 @@ const NOT_NOTIFICATIONS: Record<string, string> = {
   "lib/inAppNotifications.ts": "the typed sink itself (input.kind: NotificationKind) and its row mapper",
 };
 // Non-literal kinds at raw sites, resolved by reading the type that bounds
-// them — and (TAX-11 done-when 2, N8) the raw sites that STAY raw, each with
-// `why` and the proof of it the census checks in the source.
+// them — and (TAX-11 done-when 2) a raw site that STAYS raw would carry
+// `why` and the proof of it the census checks in the source. None does now:
+// N8's review fix moved the export alert and the folded intake digest onto
+// the typed batch sink (notifyBatchWithReason — one statement, the
+// database's count, the refusal's text), which is what their reasons asked.
 const RAW_RESOLVED: Record<string, { kinds: string[]; proof: [string, string]; why?: string }> = {
   "app/api/tickets/workflow-action/route.ts|cls.inAppKind": {
     kinds: ["ticket_assigned", "ticket_status"],
     proof: ["lib/ticketTransitions.ts", 'inAppKind: "ticket_assigned" | "ticket_status";'],
-  },
-  "lib/exportAlerts.ts|\"security_export\"": {
-    kinds: ["security_export"],
-    proof: ["lib/exportAlerts.ts", "if (error) return { ok: false, notified: 0, error: `the alert could not be written"],
-    why: "a service-role writer with no session (a scheduled push names no actor) whose alert is ONE statement, checked: the export run records whether its controllers were told (DEC-87) — per-recipient notify() calls log and swallow each failure and land partially",
-  },
-  "lib/intakeRateLimit.ts|foldedDigestKind(d)": {
-    kinds: ["doc_superseded", "review_requested"],
-    proof: ["lib/intakeRateLimit.ts", "if (error) throw new Error(`the digest's notices were refused"],
-    why: "the cron's folded-digest delivery: ONE all-or-none statement on the service-role client whose landed count gates the flush marker (INTK-10 / SEC-8) — notify() and emit() log and swallow failures, so a marker would be written for a digest nobody got",
   },
 };
 // TAX-11 done-when 2's sites another package still owns (the integrator,
@@ -428,10 +421,10 @@ const RAW_SITES: Record<string, number> = {
   "app/api/cron/maintenance/route.ts": 1,         // checkout_released escalation — N6 / DC (N14)
   "app/api/tickets/comment/route.ts": 1,          // ticket_comment / ticket_mention — drafting-flow, N6 (N14)
   "app/api/tickets/workflow-action/route.ts": 2,  // ticket_comment, ticket_assigned / ticket_status — drafting-flow, N6 (N14)
-  // app/api/transmittal/route.ts (2) and lib/projects.ts (1): moved onto
-  // notifyChecked / notifyWithReason by N8 (TAX-11), on their own clients.
-  "lib/exportAlerts.ts": 1,                       // security_export — admin-and-org; STAYS raw (RAW_RESOLVED says why)
-  "lib/intakeRateLimit.ts": 1,                    // doc_superseded / review_requested digest — projects; STAYS raw (RAW_RESOLVED says why)
+  // app/api/transmittal/route.ts (2), lib/projects.ts (1), lib/exportAlerts.ts
+  // (1) and lib/intakeRateLimit.ts (1): moved onto the typed sink by N8
+  // (TAX-11) — notifyChecked / notifyWithReason / notifyBatchChecked /
+  // notifyBatchWithReason, each on the client its writer holds.
   "lib/orchestrator/tools.ts": 1,                 // orchestrator_message — intelligence (N14)
 };
 
@@ -824,10 +817,17 @@ describe("the producer census — every written kind is declared and classified"
     for (const { proof: [file, text] } of Object.values(RAW_RESOLVED)) expect(src(file), file).toContain(text);
   });
 
-  it("TAX-11 done-when 2 (N8): every raw site left either stays raw for a recorded reason or is another package's (N14)", () => {
+  it("TAX-11 done-when 2 (N8): every raw site left is another package's (N14) — N8's five sites all write through the typed sink", () => {
     const kept = new Set(Object.entries(RAW_RESOLVED).filter(([, v]) => v.why).map(([k]) => k.split("|")[0]));
-    expect([...kept].sort()).toEqual(["lib/exportAlerts.ts", "lib/intakeRateLimit.ts"]);
+    expect([...kept]).toEqual([]);
     for (const file of Object.keys(RAW_SITES)) expect(kept.has(file) || RAW_N14.includes(file), file).toBe(true);
+    // the export alert and the folded digest (N8's review fix): ONE typed
+    // batch statement each, on the service-role client they hold, the
+    // refusal's text and the database's count answered
+    expect(src("lib/exportAlerts.ts")).toMatch(/notifyBatchWithReason\(\n\s+\[\.\.\.recipients\]\.map\(\(\[uid, isAdmin\]\) => \(\{[\s\S]*?kind: "security_export" as const,[\s\S]*?\}\)\),\n\s+admin,\n\s+\)/);
+    expect(src("lib/exportAlerts.ts")).toContain("if (error) return { ok: false, notified: 0, error: `the alert could not be written (${error})` };");
+    expect(src("lib/intakeRateLimit.ts")).toMatch(/notifyBatchWithReason\(d\.involved\.map\(\(uid\) => \(\{[\s\S]*?kind: foldedDigestKind\(d\),[\s\S]*?\}\)\), client\)/);
+    expect(src("lib/intakeRateLimit.ts")).toContain("if (error) throw new Error(`the digest's notices were refused: ${error}`);");
     // the moved sites write through the typed sink, on the client they hold
     expect(src("app/api/transmittal/route.ts")).toMatch(/notifyWithReason\(\{[\s\S]*?kind: UNSTAMPABLE_NOTICE_KIND,[\s\S]*?\}, supabaseAdmin\)/);
     expect(src("app/api/transmittal/route.ts")).toMatch(/notifyChecked\(\{[\s\S]*?kind: "ack_complete",[\s\S]*?\}, supabaseAdmin\)/);
@@ -864,8 +864,9 @@ describe("the producer census — every written kind is declared and classified"
     // raw inserts, through a module constant and a literal
     expect(new Set(kindsAt("app/api/transmittal/route.ts"))).toEqual(new Set(["transmittal_unstampable", "ack_complete"]));
     expect(kindsAt("app/api/ai/usage/route.ts")).toEqual(["ai_cap_changed"]);
-    // raw, through a function's literal return type and a variable the insert is given
+    // through a function's literal return type (typed since N8's review fix)
     expect(new Set(kindsAt("lib/intakeRateLimit.ts"))).toEqual(new Set(["doc_superseded", "review_requested"]));
+    expect(kindsAt("lib/exportAlerts.ts")).toEqual(["security_export"]);
     expect(kindsAt("lib/projects.ts")).toEqual(expect.arrayContaining(["checkout_released"]));
     // the storage watchdogs: typed now (PROD-10)
     expect(kindsAt("lib/storageAlerts.ts")).toEqual(["storage_alert"]);

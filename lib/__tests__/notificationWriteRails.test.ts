@@ -545,8 +545,13 @@ function fnRange(src: string, name: string): [number, number] {
 /** Every server read of notifications that decides whether to send, by file, in
  *  file order: the text that marks it, and the watermark that keeps a browser
  *  from forging the row it matches — a metadata key or a kind 20261160 refuses
- *  from a signed-in writer. `none`: not a dedupe (says why). */
-const DEDUPE_READS: Record<string, Array<{ marks: string; keys?: string[]; kinds?: string[]; none?: string }>> = {
+ *  from a signed-in writer, or (`actorNull`, says why) a read that matches only
+ *  rows with no actor, which 20261160 never lets a signed-in writer leave (it
+ *  stamps the writer as the actor). `none`: not a dedupe (says why). */
+const DEDUPE_READS: Record<string, Array<{ marks: string; keys?: string[]; kinds?: string[]; none?: string; actorNull?: string }>> = {
+  // N8's review fix (PROD-2): past the per-org cap the request door tells each pool member
+  // once that more requests are waiting — the read finds a member's open burst row
+  "app/api/auth/request-access/route.ts": [{ marks: '.eq("resource_type", ACCESS_REQUEST_BURST_RESOURCE_TYPE)', actorNull: "the burst notice's dedupe matches only the server's own rows (actor_user_id IS NULL): a member's browser row is stamped with its writer, so it cannot silence the notice" }],
   "app/api/cron/maintenance/route.ts": [
     { marks: '.contains("metadata", { staleSessionId: row.id })', keys: ["staleSessionId"] },
     // not a dedupe, and not safe from forged rows either (third review fix): the read has no org filter
@@ -629,8 +634,15 @@ describe("20261160 — the server's dedupe watermarks: a browser can neither wri
     const keys = new Set<string>(), kinds = new Set<string>();
     for (const [file, entries] of Object.entries(DEDUPE_READS)) {
       const src = readFileSync(join(ROOT, file), "utf8");
-      for (const e of entries) {
+      for (const [i, e] of entries.entries()) {
         if (e.none) { expect(e.keys ?? e.kinds).toBeUndefined(); continue; }
+        if (e.actorNull) {
+          expect(e.keys ?? e.kinds).toBeUndefined();
+          // the read keys on "no actor", and 20261160 stamps every signed-in writer as the actor
+          expect(reads.get(file)![i], `${file} read #${i + 1}`).toContain('.is("actor_user_id", null)');
+          expect(squash(body)).toContain(squash("IF NEW.actor_user_id IS NULL THEN NEW.actor_user_id := v_uid;"));
+          continue;
+        }
         expect((e.keys?.length ?? 0) + (e.kinds?.length ?? 0), file).toBeGreaterThan(0);
         for (const k of e.keys ?? []) { expect(keysIn, `${file}: ${k}`).toContain(k); keys.add(k); }
         for (const k of e.kinds ?? []) { expect(kindsIn, `${file}: ${k}`).toContain(k); kinds.add(k); expect(src, `${file} writes ${k}`).toContain(`"${k}"`); }
@@ -1789,11 +1801,12 @@ describe("REGRESSION census — every app write to notifications fits the read_a
       };
       visit(sf);
     }
-    // N8 (TAX-11 done-when 2): three raw calls moved onto the typed sink
-    // (the transmittal portal's two, the checkout sweep's), so eight raw
-    // calls and the sink's two inserts (notifyWithReason, and — N8's review
-    // fix — notifyBatchChecked) are examined
-    expect(examined).toBeGreaterThanOrEqual(10);
+    // N8 (TAX-11 done-when 2): five raw calls moved onto the typed sink
+    // (the transmittal portal's two, the checkout sweep's, and — N8's review
+    // fix — the export alert's and the folded intake digest's), so six raw
+    // calls and the sink's two inserts (notifyWithReason, and
+    // notifyBatchWithReason) are examined
+    expect(examined).toBeGreaterThanOrEqual(8);
     expect(offenders).toEqual([]);
   });
 

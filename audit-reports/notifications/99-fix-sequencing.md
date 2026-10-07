@@ -240,13 +240,17 @@ N14, the integrator):*
   `lib/libraryNotify.ts` `notifyLibraryDocsAdded` (in-app only) and pass
   `actorName` to `CsvImportModal` — `PROD-5` done-when 2 and `PROD-7`
   done-when 3 close with it.*
-- *N14: `TAX-11`'s six remaining raw calls; `notifyChecked` now takes an
-  optional client, which is how a service-role writer moves onto the typed
-  sink, and `notifyBatchChecked(rows, client?)` writes many rows in ONE
-  statement and answers the landed count (N8's review fix; the checkout
-  sweep uses it). The export alert and the folded intake digest stay raw by
-  recorded reason (`RAW_RESOLVED`); moving them onto the batch variant is
-  N14's option.*
+- *N14: `TAX-11`'s six remaining raw calls, in your five assigned files;
+  none of N8's is left (fix pass 2 moved the export alert and the folded
+  intake digest itself, so `RAW_RESOLVED` keeps no raw site by reason).
+  `notifyChecked` takes an optional client, which is how a service-role
+  writer moves onto the typed sink. For many rows in ONE statement, use
+  `notifyBatchWithReason(rows, client?)`. It answers `{ landed, error? }`:
+  the count is the database's, from `count: "exact"`, not the rows sent (the
+  insert rail skips a non-member's browser row), plus the refusal's text.
+  `notifyBatchChecked` is its count alone. Do not add a `.select()`
+  read-back: from a browser it is a RETURNING that the own-rows read policy
+  refuses for another person's row.*
 - *Integrator: ratify `DEC-44 (N8)` item 2's reading of `PROD-6` done-when 2
   (punch / checklist items have no person-assignee), and route `PROD-15`
   (assigned: admin-and-org P5 — the pending list and
@@ -255,6 +259,20 @@ N14, the integrator):*
   `notifyExclude` (N8's review fix: a markup share's requester is told by
   `resolveMarkupRequest`, not by the thread's notice). The thread's
   "… requested markup on …" wording for a share is still TAX-3 / TAX-4's.*
+- *projects-tab (FYI, N8 fix pass 2): `lib/milestones.ts`'s two reschedule
+  notes (`updateMilestone`, `applyMilestoneMoves`) wrote the finish date in
+  the writer's local zone and locale. That is the same mistake as `SCH-10`.
+  They now use `scheduleDateLabel`, the board's day written "7 Oct 2026",
+  so no new finding was raised. The schedule's notices now run behind the
+  write (`inBackground`), so the board no longer waits on them. A change
+  order's notice now also reaches its budget line's `cam_user_id` when set.
+  Nothing writes that column yet; a feature that sets it changes who hears.*
+- *admin-and-org P5 (`request-access` rebases on this): the door's per-org
+  cap (`ACCESS_REQUEST_NOTICES_PER_ORG_HOUR`) gates the bell leg as well as
+  the email leg. Past the cap, the pool holds one "more access requests are
+  waiting" row each (`resource_type 'org'`, no actor), which no decision
+  clears. If the pending list moves or becomes DocCtrl-readable
+  (`PROD-15`), keep that row's link pointing at it.*
 
 ---
 

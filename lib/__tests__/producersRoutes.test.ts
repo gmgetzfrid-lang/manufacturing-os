@@ -14,8 +14,9 @@
 // N8's review fix: the door is public, so what a stranger types never reaches
 // a notice as typed — a name loses line breaks, controls and links, an
 // address that is not one well-formed address is shown as invalid and gets
-// no email leg, and past the per-org hourly cap the pool gets the bell only;
-// and a decided request's pool notices are marked read.
+// no email leg, and past the per-org hourly cap a request gets no notice of
+// its own (bell or email) — each pool member holds ONE unread "more are
+// waiting" row instead; and a decided request's pool notices are marked read.
 // REGRESSION FIRST: every response is the one the route gave before — the
 // rate limit, the 404 / 409, the decline's authority, the member grant —
 // and a notice that cannot be sent never changes a response.
@@ -31,6 +32,7 @@ const s = vi.hoisted(() => ({
   emails: [] as Array<Record<string, unknown>>,
   notifyThrows: false,
   countFails: false,
+  openReadFails: false,
 }));
 
 /** access_requests whose head-count read fails (the email cap's read). */
@@ -49,6 +51,21 @@ function failingCount(b: Record<string, unknown>) {
   });
 }
 
+/** notifications whose plain select fails (the burst notice's open-row read). */
+function failingSelect(b: Record<string, unknown>) {
+  return new Proxy(b, {
+    get(target, prop: string) {
+      if (prop !== "select") return target[prop];
+      return () => {
+        const chain: Record<string, unknown> = {};
+        for (const m of ["eq", "is", "in"]) chain[m] = () => chain;
+        chain.then = (ok: (v: unknown) => unknown) => Promise.resolve({ data: null, error: { message: "open read failed" } }).then(ok);
+        return chain;
+      };
+    },
+  });
+}
+
 vi.mock("@/lib/supabaseAdmin", () => ({
   get supabaseAdmin() {
     const base = makeFakeSupabase(s.db);
@@ -56,7 +73,9 @@ vi.mock("@/lib/supabaseAdmin", () => ({
       ...base,
       from: (t: string) => {
         const b = base.from(t) as unknown as Record<string, unknown>;
-        return t === "access_requests" && s.countFails ? failingCount(b) : b;
+        if (t === "access_requests" && s.countFails) return failingCount(b);
+        if (t === "notifications" && s.openReadFails) return failingSelect(b);
+        return b;
       },
       auth: {
         getUser: async () => (s.caller ? { data: { user: s.caller }, error: null } : { data: { user: null }, error: { message: "bad" } }),
@@ -83,7 +102,7 @@ import { POST as requestAccess } from "@/app/api/auth/request-access/route";
 import { POST as decide } from "@/app/api/admin/access-requests/route";
 import { POST as createUser } from "@/app/api/admin/create-user/route";
 import {
-  renderAccessRequestOutcome, ACCESS_REQUEST_AUDIENCE, ACCESS_REQUEST_EMAILS_PER_ORG_HOUR, ADDRESS_MAX,
+  renderAccessRequestOutcome, ACCESS_REQUEST_AUDIENCE, ACCESS_REQUEST_NOTICES_PER_ORG_HOUR, ADDRESS_MAX,
   noticeSafeName, wellFormedAddress,
 } from "@/lib/accessRequestOutcome";
 
@@ -97,6 +116,7 @@ beforeEach(() => {
   s.emails = [];
   s.notifyThrows = false;
   s.countFails = false;
+  s.openReadFails = false;
   s.db.tables.orgs = [{ id: ORG, name: "Acme Refining" }];
   s.db.tables.org_members = [
     member("admin1", ["Admin"]),
@@ -216,24 +236,69 @@ describe("PROD-2 — what a stranger types at the public door never reaches a no
     expect(s.emails).toHaveLength(3);
   });
 
-  it("a burst: past the per-org hourly cap every request still reaches the pool's bell, but only the first ACCESS_REQUEST_EMAILS_PER_ORG_HOUR queue mail", async () => {
-    const burst = ACCESS_REQUEST_EMAILS_PER_ORG_HOUR + 3;
+  /** The pool's "more access requests are waiting" rows (keyed on the org). */
+  const burstRows = () => (s.db.tables.notifications ?? []).filter((n) => n.kind === "access_request_pending" && n.resource_type === "org");
+
+  it("a burst (the reviewer's case: a script, a new address each time, no usable IP): only the first ACCESS_REQUEST_NOTICES_PER_ORG_HOUR requests reach the bell and the mail; after that each pool member holds ONE unread 'more are waiting' row, however many more arrive", async () => {
+    const burst = ACCESS_REQUEST_NOTICES_PER_ORG_HOUR + 3;          // 8 requests
     for (let i = 0; i < burst; i++) {
       // no forwarded IP: the per-IP limiter exempts 'unknown' — the org cap is what holds
       expect((await ask({ displayName: `Person ${i}`, email: `p${i}@corp.com`, orgName: "Acme Refining" })).status).toBe(200);
     }
-    expect(s.db.tables.access_requests).toHaveLength(burst);
-    expect(s.bells).toHaveLength(burst);
-    expect(s.emails).toHaveLength(ACCESS_REQUEST_EMAILS_PER_ORG_HOUR * 3);       // 3 pool members per request
-    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/requests to this org in the last hour — the pool was told by bell only/));
+    expect(s.db.tables.access_requests).toHaveLength(burst);                    // REGRESSION: every request recorded, answered ok
+    expect(s.bells).toHaveLength(ACCESS_REQUEST_NOTICES_PER_ORG_HOUR);           // a row per request for the first 5 only
+    expect(s.bells.map((b) => b.title)).toEqual(Array.from({ length: ACCESS_REQUEST_NOTICES_PER_ORG_HOUR }, (_, i) => `Person ${i} asked to join Acme Refining`));
+    expect(s.emails).toHaveLength(ACCESS_REQUEST_NOTICES_PER_ORG_HOUR * 3);      // 3 pool members per request
+    const burstNow = burstRows();
+    expect(burstNow.map((n) => n.user_id).sort()).toEqual(["admin1", "dc1", "mgr-dc"]);   // ONE each, not three each
+    expect(burstNow[0]).toMatchObject({
+      org_id: ORG, resource_id: ORG, link: "/admin/users", actor_user_id: null,
+      title: "More access requests are waiting for Acme Refining", metadata: { accessRequestBurst: true },
+    });
+    expect(String(burstNow[0].body)).toContain("Every request is listed under Admin → Users");
+    expect(String(burstNow[0].body)).not.toMatch(/Person \d|@corp\.com/);      // nothing a stranger typed
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/requests to this org in the last hour — this request gets no notice of its own; 3 pool member\(s\) newly told/));
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/0 pool member\(s\) newly told that more are waiting, 3 already were/));
+    // a member who READ theirs is told again by the next request — only they
+    burstNow.find((n) => n.user_id === "dc1")!.read_at = "2026-10-07T10:00:00Z";
+    expect((await ask({ displayName: "Person 99", email: "p99@corp.com", orgName: "Acme Refining" })).status).toBe(200);
+    expect(burstRows().filter((n) => n.read_at == null).map((n) => n.user_id).sort()).toEqual(["admin1", "dc1", "mgr-dc"]);
+    expect(burstRows()).toHaveLength(4);
+    expect(s.bells).toHaveLength(ACCESS_REQUEST_NOTICES_PER_ORG_HOUR);
+    expect(s.emails).toHaveLength(ACCESS_REQUEST_NOTICES_PER_ORG_HOUR * 3);
   });
 
-  it("the cap fails closed: when the org's request count cannot be read, the bell goes and the email does not", async () => {
+  it("the cap fails closed: when the org's request count cannot be read, the request gets no bell row or email of its own — the pool gets the one 'more are waiting' row each", async () => {
     s.countFails = true;
     expect((await ask()).status).toBe(200);
-    expect(s.bells).toHaveLength(1);
+    expect((await ask({ displayName: "Ann", email: "ann@corp.com", orgName: "Acme Refining" })).status).toBe(200);
+    expect(s.bells).toEqual([]);
     expect(s.emails).toEqual([]);
-    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/count could not be read — the pool was told by bell only/));
+    expect(burstRows().map((n) => n.user_id).sort()).toEqual(["admin1", "dc1", "mgr-dc"]);   // at most one each
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/count could not be read — this request gets no notice of its own/));
+  });
+
+  it("a member's browser cannot silence the burst notice with a decoy: the open-row check matches only the server's own rows (no actor — 20261160 stamps every signed-in writer)", async () => {
+    s.db.tables.notifications = [{
+      id: "forged", org_id: ORG, user_id: "dc1", kind: "access_request_pending", resource_type: "org", resource_id: ORG,
+      read_at: null, actor_user_id: "eng", title: "nothing to see",
+    }];
+    s.countFails = true;
+    expect((await ask()).status).toBe(200);
+    expect(burstRows().filter((n) => n.actor_user_id == null).map((n) => n.user_id).sort()).toEqual(["admin1", "dc1", "mgr-dc"]);
+    const read = s.db.calls.filter((c) => c.table === "notifications" && c.method === "is").map((c) => c.args);
+    expect(read).toContainEqual(["actor_user_id", null]);
+  });
+
+  it("past the cap, when the pool's open rows cannot be read either, nothing is written — never a row per request", async () => {
+    s.countFails = true;
+    s.openReadFails = true;
+    expect((await ask()).status).toBe(200);
+    expect(s.db.tables.access_requests).toHaveLength(1);
+    expect(s.bells).toEqual([]);
+    expect(s.emails).toEqual([]);
+    expect(s.db.tables.notifications ?? []).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/open notices could not be read \(open read failed\) — no notice was written for this request/));
   });
 
   it("wellFormedAddress: one address, at most 254 characters, no control or invisible character, no scheme or path", () => {

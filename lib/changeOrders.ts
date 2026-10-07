@@ -31,7 +31,7 @@
 
 import { supabase } from "@/lib/supabase";
 import { logAuditAction } from "@/lib/audit";
-import { addEntry, voidEntry, NO_ROW_MATCHED, fmtMoney } from "@/lib/costs";
+import { addEntry, voidEntry, NO_ROW_MATCHED } from "@/lib/costs";
 import { memberHoldsAny } from "@/lib/roleHeld";
 import { emit } from "@/lib/notify/dispatch";
 import { resolveProjectMembers } from "@/lib/notify/recipients";
@@ -452,26 +452,30 @@ async function revertDecision(coId: string): Promise<{ ok: boolean; error?: stri
 }
 
 /** PROD-6 dw1 (notifications N8, DEC-44 (N8) item 2): a change order
- *  proposed, approved or rejected notifies the project's members and its
+ *  proposed, approved or rejected notifies the project's members, its
  *  owner — the money's owner on this project (projects.owner_user_id, the
- *  owner lib/costs.ts and lib/costDocs.ts notify) — through lib/notify, kind
- *  change_order_status. The actor never hears about their own act (the
- *  dispatcher drops them). On an approval the proposer is left out here:
- *  notifyApproval already tells them, in their own words (MON-11), so they
- *  get one notice, not two. A rejection reaches the proposer here. Voids
- *  stay silent (DEC-44 (N8) item 2). Best-effort behind the money: a read
- *  or emit failure is logged and never fails the change order. */
+ *  owner lib/costs.ts and lib/costDocs.ts notify) — and, when its budget
+ *  line names one, the line's control account manager (cost_accounts.
+ *  cam_user_id, the literal owner of the line the CO posts to; N8's review
+ *  fix) — through lib/notify, kind change_order_status. The dispatcher keeps
+ *  only active members and drops the actor. On an approval the proposer is
+ *  left out here: notifyApproval already tells them, in their own words
+ *  (MON-11), so they get one notice, not two. A rejection reaches the
+ *  proposer here. Voids stay silent (DEC-44 (N8) item 2). Best-effort
+ *  behind the money: a read or emit failure is logged and never fails the
+ *  change order. */
 async function notifyChangeOrder(
   co: ChangeOrder, event: "proposed" | "approved" | "rejected", actorId: string, actorName: string | null, note?: string | null,
 ): Promise<void> {
   try {
-    const [membersRes, projectRes, amount] = await Promise.all([
+    const [membersRes, projectRes, line] = await Promise.all([
       resolveProjectMembers(co.projectId),
       supabase.from("projects").select("owner_user_id").eq("id", co.projectId).maybeSingle(),
-      coAmountLabel(co),
+      coLine(co),
     ]);
+    const amount = line.amount;
     const owner = ((projectRes.data as { owner_user_id?: string | null } | null)?.owner_user_id) ?? null;
-    const audience = new Set<string>([...membersRes, ...(owner ? [owner] : [])]);
+    const audience = new Set<string>([...membersRes, ...(owner ? [owner] : []), ...(line.cam ? [line.cam] : [])]);
     if (event === "rejected" && co.createdBy) audience.add(co.createdBy);
     if (event === "approved" && co.createdBy) audience.delete(co.createdBy);
     audience.delete(actorId);
@@ -499,20 +503,39 @@ async function notifyChangeOrder(
   }
 }
 
-/** A change order's amount in its budget line's currency (cost_accounts.
- *  currency, USD when unset or unreadable — the Costs tab's own default),
- *  formatted as the tab formats money (fmtMoney): a CAD line's notice must
- *  not read as dollars (N8's review fix). Never throws. */
-async function coAmountLabel(co: ChangeOrder): Promise<string> {
+/** Money in a change-order notice: the EXACT figure in the line's
+ *  currency, to that currency's minor unit (two decimals for USD / CAD) —
+ *  the amount the ledger posts. Not fmtMoney, which rounds 10,000 and over
+ *  to whole units for the Costs tab's columns: a notice saying an amount
+ *  "was approved and posted" must say the amount posted (N8's review fix).
+ *  Exported for the test. */
+export function coNoticeMoney(n: number, currency = "USD"): string {
+  if (!Number.isFinite(n)) return "—";
+  try {
+    return new Intl.NumberFormat(undefined, { style: "currency", currency }).format(n);
+  } catch {
+    return `${n.toFixed(2)} ${currency}`;
+  }
+}
+
+/** A change order's budget line, as its notices need it: the amount in the
+ *  line's currency (cost_accounts.currency, USD when unset or unreadable —
+ *  the Costs tab's own default; a CAD line's notice must not read as
+ *  dollars) and the line's control account manager (cam_user_id, null when
+ *  unset). One read; never throws. */
+async function coLine(co: ChangeOrder): Promise<{ amount: string; cam: string | null }> {
   let currency = "USD";
+  let cam: string | null = null;
   if (co.costAccountId) {
     try {
-      const { data } = await supabase.from("cost_accounts").select("currency").eq("id", co.costAccountId).maybeSingle();
-      const c = (data as { currency?: string | null } | null)?.currency?.trim();
+      const { data } = await supabase.from("cost_accounts").select("currency, cam_user_id").eq("id", co.costAccountId).maybeSingle();
+      const row = data as { currency?: string | null; cam_user_id?: string | null } | null;
+      const c = row?.currency?.trim();
       if (c) currency = c.toUpperCase();
-    } catch { /* the default stands */ }
+      cam = row?.cam_user_id ?? null;
+    } catch { /* the defaults stand */ }
   }
-  return fmtMoney(co.amount, currency);
+  return { amount: coNoticeMoney(co.amount, currency), cam };
 }
 
 /** MON-11: a change-order approval notifies the proposer, through lib/notify. */
@@ -522,7 +545,7 @@ async function notifyApproval(co: ChangeOrder, actorId: string, actorName: strin
     await emit({
       orgId: co.orgId, category: "status", kind: "project_status",
       title: `${co.coNumber} approved — ${co.title}`,
-      body: `Your change order for ${await coAmountLabel(co)} was approved and posted to the budget line.`,
+      body: `Your change order for ${(await coLine(co)).amount} was approved and posted to the budget line.`,
       link: `/projects/${co.projectId}?tab=costs`,
       resource: { type: "project", id: co.projectId },
       actorUserId: actorId, actorName: actorName ?? undefined,

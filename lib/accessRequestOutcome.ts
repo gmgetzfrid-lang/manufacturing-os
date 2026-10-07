@@ -18,8 +18,9 @@
 // is already recorded. The maintenance cron drains the queue.
 //
 // Also here (N8's review fix): what text from the public door a notice may
-// carry (wellFormedAddress, noticeSafeName, the per-org email cap), and the
-// clearing of the pool's notices once a request is decided
+// carry (wellFormedAddress, noticeSafeName), the per-org notice cap
+// (ACCESS_REQUEST_NOTICES_PER_ORG_HOUR — the bell and the email legs both),
+// and the clearing of the pool's notices once a request is decided
 // (clearAccessRequestNotices).
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -42,8 +43,12 @@ export const ACCESS_REQUEST_AUDIENCE = ["Admin", "DocCtrl"] as const;
 //     anything else is shown as "invalid address" and gets no email leg;
 //   · the name loses control, line-break and invisible formatting characters,
 //     and any token that reads as a link is replaced — `noticeSafeName`;
-//   · the email leg is capped per org (`ACCESS_REQUEST_EMAILS_PER_ORG_HOUR`):
-//     past it, the pool gets the bell row only (the route counts).
+//   · the notice is capped per org (`ACCESS_REQUEST_NOTICES_PER_ORG_HOUR`):
+//     past it — or when the count cannot be read — a request gets neither
+//     its own bell row nor an email; each pool member holds at most ONE
+//     unread "more access requests are waiting" row for the org instead
+//     (the route counts and writes it). The pending list on Admin → Users
+//     still lists every request.
 
 /** The shape every address this module mails or shows must have: one token,
  *  an @, a dotted domain (the decline path's check before N8's review fix). */
@@ -86,9 +91,17 @@ export function noticeSafeName(raw: string | null | undefined, max = 80): string
 }
 
 /** Past this many requests to one org in an hour (the new one included), a
- *  request still reaches the pool's bell but queues no email: one request
- *  must not become an unbounded run of mail from the app's sender. */
-export const ACCESS_REQUEST_EMAILS_PER_ORG_HOUR = 5;
+ *  request gets no bell row and no email of its own: anyone can reach this
+ *  door, and one request must not become an unbounded run of bell rows,
+ *  toasts and mail to every Admin / DocCtrl — burying their compliance
+ *  notices under the bell's 50-row list (TAX-6). The pool is told ONCE that
+ *  more are waiting (ACCESS_REQUEST_BURST_RESOURCE_TYPE). N8's review fix. */
+export const ACCESS_REQUEST_NOTICES_PER_ORG_HOUR = 5;
+
+/** The resource the burst notice is keyed on: the org itself (resource_type
+ *  'org', resource_id = the org id) — never a request id, so deciding one
+ *  request (clearAccessRequestNotices) does not clear it. */
+export const ACCESS_REQUEST_BURST_RESOURCE_TYPE = "org";
 
 export type AccessRequestOutcome = "approved" | "declined";
 

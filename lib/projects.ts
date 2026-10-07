@@ -2062,9 +2062,11 @@ async function sweepSessions(
   // built from the rows the UPDATE actually changed. The typed insert
   // (TAX-11) on THIS sweep's client — the RLS client in the browser, the
   // cron's service-role client — one row per holder, all in ONE statement
-  // per batch of released sessions (notifyBatchChecked: all land or none,
-  // as the raw insert did — never one request per holder at once); a
-  // refusal is logged and never fails the sweep.
+  // per batch of released sessions (notifyBatchChecked — never one request
+  // per holder at once). It answers the rows that LANDED: a refusal lands
+  // none, and the insert rail skips a holder who is no longer an active
+  // member (20261160) — either way the sweep logs how many were not told,
+  // and never fails.
   try {
     const told = await notifyBatchChecked(released.map((r) => ({
       orgId: r.org_id,
@@ -2078,7 +2080,7 @@ async function sweepSessions(
       actorName: "System",
       metadata: { autoReleasedSessionId: r.id },
     })), db);
-    if (told < released.length) console.warn(`[autoReleaseExpiredAdHoc] ${released.length} holder(s) were NOT told their checkout was released (non-blocking)`);
+    if (told < released.length) console.warn(`[autoReleaseExpiredAdHoc] ${released.length - told} of ${released.length} holder(s) were NOT told their checkout was released (non-blocking)`);
   } catch (e) {
     console.warn("[autoReleaseExpiredAdHoc] holder notify failed (non-blocking)", e);
   }

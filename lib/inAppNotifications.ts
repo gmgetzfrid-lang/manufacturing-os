@@ -146,23 +146,41 @@ function notificationRow(input: NotificationInput): Record<string, unknown> {
 
 /**
  * notifyChecked() for many rows in ONE insert statement on the given client
- * (the shared one otherwise): all land or none do. Answers how many landed —
- * every one, or 0 on a refusal (logged, never re-raised). For a server sweep
- * that tells many people at once (the checkout sweep's holders, TAX-11): one
- * statement, never an unbounded burst of single-row requests whose failures
- * would each be swallowed (N8's review fix).
+ * (the shared one otherwise). Answers how many rows LANDED — 0 on a refusal
+ * (logged, never re-raised). For a writer that tells many people at once
+ * (the checkout sweep's holders, the export alert, the folded intake digest
+ * — TAX-11): one statement, never an unbounded burst of single-row requests
+ * whose failures would each be swallowed (N8's review fix).
  */
 export async function notifyBatchChecked(inputs: NotificationInput[], client?: NotifyClient): Promise<number> {
-  if (inputs.length === 0) return 0;
+  return (await notifyBatchWithReason(inputs, client)).landed;
+}
+
+/**
+ * notifyBatchChecked(), answering the refusal's text as well — for a writer
+ * that records it (the export alert's run diagnostics, the folded digest's
+ * error). `landed` is the count the DATABASE answers for the statement
+ * (`count: "exact"`), not the rows sent: a signed-in writer's row for a
+ * recipient who is not an active member is skipped by the insert rail
+ * (20261160 rule 5 — RETURN NULL, the statement still succeeds), and a
+ * skipped row is not counted. The count rides the insert itself, never a
+ * read-back: `.select()` after the insert is a RETURNING, which the own-rows
+ * SELECT policy (20261161) refuses for a row addressed to someone else — the
+ * browser sweep's whole statement would fail. A client that answers no count
+ * (none does in production: PostgREST counts every insert asked to) is taken
+ * at the statement's word — every row sent.
+ */
+export async function notifyBatchWithReason(inputs: NotificationInput[], client?: NotifyClient): Promise<{ landed: number; error?: string }> {
+  if (inputs.length === 0) return { landed: 0 };
   try {
     const db: NotifyClient = client ?? supabase;
     const rows = inputs.map(notificationRow);
-    const { error } = await db.from("notifications").insert(rows);
-    if (error) { console.warn("[notify] batch insert failed", error.message); return 0; }
-    return rows.length;
+    const { error, count } = await db.from("notifications").insert(rows, { count: "exact" });
+    if (error) { console.warn("[notify] batch insert failed", error.message); return { landed: 0, error: error.message }; }
+    return { landed: typeof count === "number" ? count : rows.length };
   } catch (e) {
     console.warn("[notify] batch insert threw", e);
-    return 0;
+    return { landed: 0, error: e instanceof Error ? e.message : String(e) };
   }
 }
 
