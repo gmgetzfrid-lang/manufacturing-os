@@ -226,8 +226,13 @@ async function viaDoor<T>(state: DoorState, call: () => PromiseLike<{ data: unkn
 
 /** What the portal hears when a door function refuses: the link went dead
  *  mid-request (28000 — its HINT says how; the same answers as the checks
- *  before the body), or a write outside the link's scope (42501). Anything
- *  else is the caller's to answer as the write's own failure. */
+ *  before the body), or a write outside the link's scope (42501 with the
+ *  door's HINT 'scope' or 'not_configured'). Anything else — a 42501 the door
+ *  did not raise for the link (a privilege the database lacks, a policy
+ *  refusing what the door's own checks admitted, a guard's 42501) included —
+ *  is the caller's to answer as the write's own failure (500 and a
+ *  reference), never a sentence about the link the contractor's contact
+ *  could not act on (J16 fix pass 3). */
 type DoorScope = { message: string; status: number; code?: string };
 function doorAnswer(e: DoorError, scope: DoorScope): { message: string; status: number; code: string } | null {
   const code = String(e.code ?? "");
@@ -241,10 +246,11 @@ function doorAnswer(e: DoorError, scope: DoorScope): { message: string; status: 
     }
   }
   if (code === "42501") {
-    if (String(e.hint ?? "") === "not_configured") {
+    const hint = String(e.hint ?? "");
+    if (hint === "not_configured") {
       return { message: "This link isn't fully configured yet — ask your contact to set the intake library.", status: 409, code: "not_configured" };
     }
-    return { message: scope.message, status: scope.status, code: scope.code ?? "door_scope" };
+    if (hint === "scope") return { message: scope.message, status: scope.status, code: scope.code ?? "door_scope" };
   }
   return null;
 }

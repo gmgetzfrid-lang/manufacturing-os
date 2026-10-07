@@ -156,6 +156,22 @@ describe("the operator step", () => {
     // it says when the setting starts doing anything (the issuers' adoption)
     expect(doc).toContain("app/api/storage/download-url/route.ts");
   });
+  it("the check step uses what signs for the setting TODAY — the workspace export's JSON — and, until download-url and resolve call signStorageGet, says the Intake tab's links do not change (review fix pass 3)", () => {
+    const check = doc.slice(doc.indexOf("## How to check it worked"), doc.indexOf("## How to undo it"));
+    expect(check).toContain("**Admin → Data export**");
+    expect(check).toContain("**Download JSON**");
+    expect(check).toContain("project-intake/");
+    expect(check).toContain('"presignedUrl"');
+    // the button and the envelope field it names are the app's own
+    expect(readFileSync(join(process.cwd(), "app/(protected)/admin/data-export/page.tsx"), "utf8")).toContain("Download JSON");
+    expect(readFileSync(join(process.cwd(), "lib/dataExport.ts"), "utf8")).toMatch(/presignedUrl = await signStorageGet\(/);
+    const adopted = ["app/api/storage/download-url/route.ts", "app/api/storage/resolve/route.ts"]
+      .every((f) => /signStorageGet\(/.test(readFileSync(join(process.cwd(), f), "utf8")));
+    if (!adopted) {
+      expect(check).toContain("The **Intake** tab's own download links do not change yet");
+      expect(doc).toContain("owner: the integrator at the J16 / P6 merge");
+    }
+  });
   it(".env.example lists the variable, blank by default", () => {
     const env = readFileSync(join(process.cwd(), ".env.example"), "utf8");
     expect(env).toMatch(/^UNTRUSTED_CONTENT_ORIGIN=$/m);

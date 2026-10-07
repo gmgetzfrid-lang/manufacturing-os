@@ -303,6 +303,21 @@ describe("census — every presigned GET issuer under app/api and lib signs a di
     expect(bare).toEqual([]);
     expect(putOnly).toEqual(["app/api/intake/upload/route.ts"]);
   });
+  // GAP-401 owed item 2 (J16 review fix pass 3): the hand-off's done-when, made
+  // mechanical. The workspace export signs through lib/untrustedContent.ts
+  // signStorageGet today; download-url and resolve (admin-and-org P6's files)
+  // adopt it in the two-line change recorded on GAP-401 — owner: the
+  // integrator at the J16 / P6 merge. Until then this case is an EXPECTED
+  // failure. When the change lands it passes, vitest reports the `.fails` case
+  // as failing, and whoever lands it drops `.fails` (and the operator note's
+  // "the Intake tab's own download links do not change yet").
+  it.fails("download-url and resolve sign through signStorageGet, like the export (GAP-401 owed item 2 hand-off — expected to fail until it lands)", () => {
+    expect(read("lib/dataExport.ts")).toMatch(/signStorageGet\(/);
+    for (const f of ["app/api/storage/download-url/route.ts", "app/api/storage/resolve/route.ts"]) {
+      expect(read(f), f).toMatch(/signStorageGet\(/);
+      expect(read(f), f).not.toMatch(/getSignedUrl\(/);
+    }
+  });
 });
 
 describe("source pins — the viewer (SEC-1 egress limb) and the reviewed inline callers", () => {

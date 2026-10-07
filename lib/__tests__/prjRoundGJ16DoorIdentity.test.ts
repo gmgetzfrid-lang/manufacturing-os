@@ -58,11 +58,12 @@ const PREDICATES = ["intake_door_may_create", "intake_door_may_quote"] as const;
 
 const DOOR = ["intake_door_create_document", "intake_door_submit_version", "intake_door_point_pending",
   "intake_door_promote", "intake_door_file_quote", "intake_door_append_redline"] as const;
-const HELPERS = ["intake_door_resolve", "intake_door_bind", "intake_door_unbind", "intake_door_rls_ready"] as const;
+const HELPERS = ["intake_door_resolve", "intake_door_bind", "intake_door_unbind", "intake_door_rls_gaps", "intake_door_rls_ready"] as const;
 const SIG: Record<string, string> = {
   intake_door_resolve: "text",
   intake_door_bind: "uuid, uuid, uuid, uuid",
   intake_door_unbind: "jsonb",
+  intake_door_rls_gaps: "name, boolean",
   intake_door_rls_ready: "boolean",
   intake_door_bound: "",
   intake_door_may_create: "uuid, uuid, uuid, uuid, text",
@@ -129,7 +130,7 @@ describe("DRLS-16 — every function this migration adds", () => {
   });
   it("every function pins search_path; SECURITY DEFINER are exactly the bound-link reader, the two policy predicates and the four door functions that do not switch role — the new document and the quote are SECURITY INVOKER", () => {
     const heads = [...C.matchAll(/CREATE OR REPLACE FUNCTION public\.(\w+)\([^)]*\)[\s\S]*?AS \$\$/g)];
-    expect(heads.map((m) => m[1])).toEqual([...HELPERS.slice(0, 3), "intake_door_rls_ready", "intake_door_bound", ...PREDICATES,
+    expect(heads.map((m) => m[1])).toEqual([...HELPERS, "intake_door_bound", ...PREDICATES,
       "intake_door_create_document", "intake_door_submit_version", "intake_door_point_pending", "intake_door_promote",
       "intake_door_file_quote", "intake_door_append_redline"]);
     const definers = heads.filter((m) => /SECURITY DEFINER/.test(m[0])).map((m) => m[1]);
@@ -164,7 +165,7 @@ describe("DRLS-16 — every function this migration adds", () => {
     const resolve = fn("intake_door_resolve");
     expect(resolve).toMatch(/BEGIN\s*\n\s*IF auth\.uid\(\) IS NOT NULL THEN\s*\n\s*RAISE EXCEPTION 'intake_door: only the intake route, under the service key, opens the contractor door\.'\s*\n\s*USING ERRCODE = '42501';/);
   });
-  it("the four helpers the door functions call are SECURITY INVOKER and the service role's alone (the INVOKER door functions run them as the service role)", () => {
+  it("the five helpers the door functions call are SECURITY INVOKER and the service role's alone (the INVOKER door functions run them as the service role)", () => {
     for (const name of HELPERS) {
       const head = between(M, `CREATE OR REPLACE FUNCTION public.${name}(`, "AS $$");
       expect(head, name).not.toMatch(/SECURITY DEFINER/);
@@ -351,15 +352,30 @@ describe("row-level security for the new document and the quote — the dedicate
     expect(C).not.toMatch(/ALTER ROLE intake_door/);
   });
 
-  it("authenticator's membership and USAGE on schema auth are SOFT: a refusal leaves a notice and the final SELECT reports it, the paste still applies", () => {
+  it("authenticator's membership, USAGE on schema auth and EXECUTE on auth.uid() are SOFT: a refusal leaves a notice and the final SELECT reports it, the paste still applies", () => {
     expect(roleBlock()).toMatch(/BEGIN\s*\n\s*GRANT intake_door TO authenticator;\s*\n\s*EXCEPTION WHEN OTHERS THEN\s*\n\s*RAISE NOTICE/);
     expect(roleBlock()).toMatch(/BEGIN\s*\n\s*GRANT USAGE ON SCHEMA auth TO intake_door;\s*\n\s*EXCEPTION WHEN OTHERS THEN\s*\n\s*RAISE NOTICE/);
-    const tail = C.slice(C.indexOf("\nCOMMIT;"));
-    expect(tail).toContain("to_regrole('authenticator') IS NOT NULL AND pg_has_role('authenticator', 'intake_door', 'MEMBER')");
-    expect(tail).toContain("to_regnamespace('auth') IS NOT NULL AND has_schema_privilege('intake_door', 'auth', 'USAGE')");
+    expect(roleBlock()).toMatch(/BEGIN\s*\n\s*GRANT EXECUTE ON FUNCTION auth\.uid\(\) TO intake_door;\s*\n\s*EXCEPTION WHEN OTHERS THEN\s*\n\s*RAISE NOTICE/);
   });
 
-  it("the role holds exactly: USAGE on public and auth, column INSERT on documents and cost_documents, what the document rails read as the writer, and EXECUTE on its two policy predicates — no UPDATE, nothing on document_versions", () => {
+  it("the paste's three row-level-security rows ask intake_door_rls_gaps — the function the door functions decide by — so the probe can never read true while the door skips the switch (review fix pass 3, minor: the probe tested MEMBER, the door SET)", () => {
+    const tail = C.slice(C.indexOf("\nCOMMIT;"));
+    expect(tail).toContain("AND NOT (intake_door_rls_gaps('authenticator', false) && ARRAY['role', 'switch']),");
+    expect(tail).toContain("NOT (intake_door_rls_gaps('authenticator', true) && ARRAY['role', 'auth usage']),");
+    expect(tail).toContain("FROM unnest(intake_door_rls_gaps('authenticator', true) || intake_door_rls_gaps('authenticator', false)) g");
+    expect(tail).toContain("WHERE g = 'role' OR g LIKE 'execute %' OR g LIKE 'read %'),");
+    // no probe makes a role test of its own, and the version-dependent privilege (SET from PG16, MEMBER before) is written once, in rls_gaps
+    expect(tail).not.toMatch(/pg_has_role\(/);
+    expect(C.match(/CASE WHEN current_setting\('server_version_num'\)::int >= 160000 THEN 'SET' ELSE 'MEMBER' END/g)).toHaveLength(1);
+    expect(fn("intake_door_rls_gaps")).toContain("pg_has_role(p_login, 'intake_door',\n                        CASE WHEN current_setting('server_version_num')::int >= 160000 THEN 'SET' ELSE 'MEMBER' END)");
+    // and the runtime asks it for the session's own login
+    expect(fn("intake_door_rls_ready")).toContain("SELECT cardinality(intake_door_rls_gaps(session_user, p_new_document)) = 0;");
+    // every gap the function can report is read by one of the three rows
+    const reported = [...fn("intake_door_rls_gaps").matchAll(/(?:ARRAY\[|\|\| |SELECT DISTINCT )'(\w+(?: \w+)?)/g)].map((m) => m[1]);
+    expect(reported.sort()).toEqual(["auth usage", "execute ", "read ", "role", "switch"].map((x) => x.trim()).sort());
+  });
+
+  it("the role holds exactly: USAGE on public and auth, column INSERT on documents and cost_documents, what the document rails read as the writer, EXECUTE on its two policy predicates and, by name, on what the policies for all roles call — no UPDATE, nothing on document_versions", () => {
     expect(toDoor().sort()).toEqual([
       "GRANT EXECUTE ON FUNCTION public.intake_door_may_create(uuid, uuid, uuid, uuid, text) TO intake_door;",
       "GRANT EXECUTE ON FUNCTION public.intake_door_may_quote(uuid, uuid, text, uuid, text, uuid, text, text, text, uuid) TO intake_door;",
@@ -370,6 +386,12 @@ describe("row-level security for the new document and the quote — the dedicate
       "GRANT SELECT (id, org_id, acl_index) ON libraries TO intake_door;",
       "GRANT USAGE ON SCHEMA auth TO intake_door;",
       "GRANT USAGE ON SCHEMA public TO intake_door;",
+      // review fix pass 3 (major): what the policies written for all roles call, by name
+      "GRANT EXECUTE ON FUNCTION public.my_org_ids() TO intake_door;",
+      "GRANT EXECUTE ON FUNCTION public.is_org_controller(uuid) TO intake_door;",
+      "GRANT EXECUTE ON FUNCTION public.acl_index_denies(jsonb, uuid, uuid, text) TO intake_door;",
+      "GRANT EXECUTE ON FUNCTION public.user_owns_project(uuid) TO intake_door;",
+      "GRANT EXECUTE ON FUNCTION auth.uid() TO intake_door;",
     ].sort());
     expect(toDoor().join("\n")).not.toMatch(/UPDATE|document_versions|TRUNCATE|REFERENCES|TRIGGER|ALL/);
   });
@@ -382,7 +404,7 @@ describe("row-level security for the new document and the quote — the dedicate
     expect(quoteGrant.sort()).toEqual(insertCols(fn("intake_door_file_quote"), "cost_documents").sort());
   });
 
-  it.each([["intake_door_create_document", "documents", "true"], ["intake_door_file_quote", "cost_documents", "false"]])(
+  it.each([["intake_door_create_document", "documents", "true", "new document"], ["intake_door_file_quote", "cost_documents", "false", "quote"]])(
     "%s switches to intake_door for its one INSERT (no RETURNING; the id chosen first) and back before anything else runs", (name, table, newDoc) => {
       const body = fn(name);
       expect(body).toContain("v_id   uuid  := gen_random_uuid();");
@@ -391,11 +413,38 @@ describe("row-level security for the new document and the quote — the dedicate
       const insert = between(body, `INSERT INTO ${table} (`, ");\n");
       expect(insert).not.toMatch(/RETURNING/);
       expect(insert).toMatch(/VALUES \(v_id, /);
-      expect(body).toContain(`IF v_rls THEN PERFORM set_config('role', 'intake_door', true); END IF;\n  INSERT INTO ${table} (`);
-      expect(body).toContain(`${insert}  IF v_rls THEN PERFORM set_config('role', v_role, true); END IF;\n  PERFORM intake_door_unbind(v_prev);\n  RETURN v_id;`);
+      expect(body).toContain(`IF v_rls THEN PERFORM set_config('role', 'intake_door', true); END IF;\n      INSERT INTO ${table} (`);
+      expect(body).toContain(`${insert}      IF v_rls THEN PERFORM set_config('role', v_role, true); END IF;\n      EXIT;\n`);
+      expect(body).toContain("    END;\n  END LOOP;\n  PERFORM intake_door_unbind(v_prev);\n  RETURN v_id;");
+      // ONE insert statement (the fallback re-runs it, it is not a second copy)
+      expect(body.match(/INSERT INTO/g)).toHaveLength(1);
       // the identity is bound before the switch
       expect(body.indexOf("v_prev := intake_door_bind(v_link, v_link, v_org, v_proj);")).toBeLessThan(body.indexOf("set_config('role', 'intake_door', true)"));
-      expect(body.match(/set_config\('role'/g)).toHaveLength(2);
+      expect(body.match(/set_config\('role'/g)).toHaveLength(3);
+    });
+
+  it.each([["intake_door_create_document", "new document"], ["intake_door_file_quote", "quote"]])(
+    "%s: a privilege the role lacks ('permission denied …') runs the same INSERT once more with the bound identity alone and a WARNING — never a refused upload; a policy's refusal and every other error are raised (review fix pass 3, major)", (name, what) => {
+      const body = fn(name);
+      const handler = between(body, "    EXCEPTION WHEN insufficient_privilege THEN\n", "\n    END;\n  END LOOP;");
+      expect(body).toMatch(/\n  LOOP\n    BEGIN\n      IF v_rls THEN PERFORM set_config\('role', 'intake_door', true\); END IF;\n/);
+      expect(handler).toBe([
+        "    EXCEPTION WHEN insufficient_privilege THEN",
+        "      IF v_rls THEN PERFORM set_config('role', v_role, true); END IF;",
+        "      IF NOT v_rls OR SQLERRM NOT LIKE 'permission denied%' THEN",
+        "        RAISE;",
+        "      END IF;",
+        `      RAISE WARNING '${name}: % — this ${what} is written with the bound identity alone, without row-level security (projects-tab SEC-22).', SQLERRM;`,
+        "      v_rls := false;",
+        "    END;",
+        "  END LOOP;",
+      ].join("\n"));
+      // nothing else is caught: no OTHERS handler, no other condition
+      expect(body.match(/EXCEPTION WHEN/g)).toHaveLength(1);
+      expect(body).not.toMatch(/WHEN OTHERS/);
+      // Postgres's own message for a privilege gap starts "permission denied"; an RLS refusal starts "new row violates", and
+      // no migration's own RAISE starts with "permission denied" (so no guard's refusal is ever mistaken for a gap)
+      for (const f of numbered()) expect(code(mig(f)), f).not.toMatch(/RAISE EXCEPTION\s+'permission denied/i);
     });
 
   it("no other function switches role (the submission, pointer, promote and redline stay SECURITY DEFINER, where Postgres forbids it)", () => {
@@ -405,13 +454,22 @@ describe("row-level security for the new document and the quote — the dedicate
     expect(C.match(/set_config\('role', 'intake_door', true\)/g)).toHaveLength(2);
   });
 
-  it("intake_door_rls_ready: the role exists, this session's login may SET it (MEMBER before PG16), and for a new document intake_door may resolve auth.uid()", () => {
-    const r = fn("intake_door_rls_ready");
-    expect(r).toContain("WHEN to_regrole('intake_door') IS NULL THEN false");
-    expect(r).toContain("WHEN NOT pg_has_role(session_user, 'intake_door',");
-    expect(r).toContain("CASE WHEN current_setting('server_version_num')::int >= 160000 THEN 'SET' ELSE 'MEMBER' END) THEN false");
-    expect(r).toContain("WHEN NOT p_new_document THEN true");
-    expect(r).toContain("ELSE has_schema_privilege('intake_door', 'auth', 'USAGE')");
+  it("intake_door_rls_ready asks intake_door_rls_gaps for the session's login: the role exists, the login may SET it (MEMBER before PG16), a new document may resolve auth.uid(), and the role may EXECUTE and read what the LIVE INSERT policies use (review fix pass 3, major)", () => {
+    expect(fn("intake_door_rls_ready")).toContain("SELECT cardinality(intake_door_rls_gaps(session_user, p_new_document)) = 0;");
+    const g = fn("intake_door_rls_gaps");
+    expect(g).toMatch(/\nLANGUAGE plpgsql\nSTABLE\nSET search_path = public\nAS \$\$/);
+    expect(g).toContain("IF v_door IS NULL THEN\n    RETURN ARRAY['role'];");
+    expect(g).toContain("IF to_regrole(p_login) IS NULL\n     OR NOT pg_has_role(p_login, 'intake_door',");
+    expect(g).toContain("IF p_new_document AND (to_regnamespace('auth') IS NULL OR NOT has_schema_privilege('intake_door', 'auth', 'USAGE')) THEN");
+    // the policies are read from the catalogs at run time: INSERT and ALL policies, for every role or intake_door, of the door's table
+    expect(g).toContain("v_table oid := CASE WHEN p_new_document THEN to_regclass('public.documents') ELSE to_regclass('public.cost_documents') END;");
+    expect(g.match(/JOIN pg_depend d ON d\.classid = 'pg_policy'::regclass AND d\.objid = pol\.oid AND d\.refclassid = 'pg_(proc|operator|class)'::regclass/g)).toHaveLength(3);
+    expect(g.match(/WHERE pol\.polrelid = v_table AND pol\.polcmd IN \('a', '\*'\)\n\s+AND \(0::oid = ANY \(pol\.polroles\) OR v_door = ANY \(pol\.polroles\)\)/g)).toHaveLength(3);
+    expect(g).toContain("SELECT to_regprocedure('auth.uid()')::oid WHERE p_new_document AND to_regnamespace('auth') IS NOT NULL) f");
+    expect(g).toContain("WHERE f.fn IS NOT NULL AND NOT has_function_privilege('intake_door', f.fn, 'EXECUTE')");
+    expect(g).toContain("AND d.refobjid <> pol.polrelid");
+    expect(g).toContain("CASE WHEN d.refobjsubid > 0 THEN NOT has_column_privilege('intake_door', d.refobjid, d.refobjsubid::smallint, 'SELECT')");
+    expect(g).toContain("ELSE NOT has_any_column_privilege('intake_door', d.refobjid, 'SELECT') END");
   });
 
   it("four policies TO intake_door, INSERT only: a permissive and a restrictive pair on documents and on cost_documents, each re-created idempotently and reading the predicate with the row's own columns", () => {
@@ -461,6 +519,69 @@ describe("row-level security for the new document and the quote — the dedicate
     }
     // a predicate that cannot decide answers false, never NULL
     for (const name of PREDICATES) expect(fn(name)).toMatch(/RETURN COALESCE\([\s\S]*,\s*\n\s*false\);/);
+  });
+});
+
+// ── Review fix pass 3 (major): intake_door's EXECUTE on what the policies
+// written for all roles call is held BY NAME, and must stay held. DRLS-16's
+// rule re-creates SECURITY DEFINER helpers with REVOKE … FROM PUBLIC; a later
+// file doing that to one of these without giving it back to intake_door
+// would send the door's new documents and quotes to the bound-identity
+// fallback (never a refused upload, since 20261184 degrades) — this test
+// makes that file fail here instead, so its author re-grants.
+/** The helpers the INSERT policies (and the INVOKER document triggers) call, as 20261184 grants them to intake_door. */
+const HELD: ReadonlyArray<{ schema: string; name: string }> = [
+  { schema: "public", name: "my_org_ids" }, { schema: "public", name: "is_org_controller" },
+  { schema: "public", name: "acl_index_denies" }, { schema: "public", name: "user_owns_project" },
+  { schema: "auth", name: "uid" },
+];
+/** What a migration's SQL takes away from intake_door: a held helper's EXECUTE revoked from PUBLIC (by name or by a
+ *  schema-wide sweep), or the helper dropped (a re-create starts from the default ACL), without the same file granting
+ *  it to intake_door afterwards. */
+function strippedFromDoor(sql: string): string[] {
+  const stmts = code(sql).split(";").map((x) => x.replace(/\s+/g, " ").trim());
+  const out: string[] = [];
+  const regrantedAfter = (i: number, h: { schema: string; name: string }) => stmts.slice(i + 1).some((g) =>
+    new RegExp(`^GRANT (ALL|EXECUTE)\\b[^;]*\\bON (FUNCTION|ROUTINE) [^;]*\\b${h.name}\\s*\\([^;]* TO [^;]*\\bintake_door\\b`, "i").test(g)
+    || new RegExp(`^GRANT (ALL|EXECUTE)\\b[^;]*\\bON ALL (FUNCTIONS|ROUTINES) IN SCHEMA [^;]*\\b${h.schema}\\b[^;]* TO [^;]*\\bintake_door\\b`, "i").test(g));
+  stmts.forEach((st, i) => {
+    for (const h of HELD) {
+      const byName = new RegExp(`^REVOKE\\b[^;]*\\bON (FUNCTION|ROUTINE) [^;]*\\b${h.name}\\s*\\([^;]* FROM [^;]*\\bPUBLIC\\b`, "i").test(st);
+      const sweep = new RegExp(`^REVOKE\\b[^;]*\\bON ALL (FUNCTIONS|ROUTINES) IN SCHEMA [^;]*\\b${h.schema}\\b[^;]* FROM [^;]*\\bPUBLIC\\b`, "i").test(st);
+      const dropped = new RegExp(`^DROP (FUNCTION|ROUTINE) (IF EXISTS )?[^;]*\\b${h.name}\\s*\\(`, "i").test(st);
+      if ((byName || sweep || dropped) && !regrantedAfter(i, h)) out.push(`${h.schema}.${h.name}: ${st.slice(0, 120)}`);
+    }
+  });
+  return out;
+}
+
+describe("intake_door keeps EXECUTE on what the policies for all roles call (review fix pass 3, major)", () => {
+  it("20261184 grants each by name — the four public helpers where they exist, auth.uid() soft", () => {
+    for (const h of HELD.filter((x) => x.schema === "public")) {
+      expect(C).toMatch(new RegExp(`IF to_regprocedure\\('public\\.${h.name}\\([^']*\\)'\\) IS NOT NULL THEN\\s*\\n\\s*GRANT EXECUTE ON FUNCTION public\\.${h.name}\\([^)]*\\) TO intake_door;`));
+    }
+    expect(C).toContain("GRANT EXECUTE ON FUNCTION auth.uid() TO intake_door;");
+    // each is a function a policy of the sequence calls (the scratch run's pg_depend listed exactly these for the
+    // INSERT and ALL policies of documents and cost_documents; intake_door_rls_gaps re-reads the live ones)
+    const sources = [readFileSync(join(root, "supabase", "schema.sql"), "utf8"), ...numbered().filter((x) => x <= FILE).map(mig)].map(code).join("\n");
+    for (const h of HELD) expect(sources, h.name).toMatch(new RegExp(`CREATE POLICY[^;]*\\b${h.name}\\(`));
+  });
+  it("no migration after 20261184 revokes EXECUTE on them from PUBLIC, sweeps a schema's functions from PUBLIC, or drops one, without granting it back to intake_door", () => {
+    const later = numbered().filter((f) => f > FILE);
+    for (const f of later) expect(strippedFromDoor(mig(f)), f).toEqual([]);
+  });
+  it("the detector: a DRLS-16-style REVOKE FROM PUBLIC is caught, the same with a re-grant to intake_door is not, a schema sweep and a DROP are caught", () => {
+    expect(strippedFromDoor("REVOKE ALL ON FUNCTION public.is_org_controller(uuid) FROM PUBLIC, anon;\nGRANT EXECUTE ON FUNCTION public.is_org_controller(uuid) TO authenticated;")).toHaveLength(1);
+    expect(strippedFromDoor("REVOKE EXECUTE ON FUNCTION my_org_ids() FROM public;")).toHaveLength(1);
+    expect(strippedFromDoor("REVOKE ALL ON FUNCTION public.is_org_controller(uuid) FROM PUBLIC, anon;\nGRANT EXECUTE ON FUNCTION public.is_org_controller(uuid) TO authenticated, intake_door;")).toEqual([]);
+    expect(strippedFromDoor("REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC;")).toHaveLength(4);
+    expect(strippedFromDoor("REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC;\nGRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO intake_door;")).toEqual([]);
+    expect(strippedFromDoor("DROP FUNCTION IF EXISTS public.user_owns_project(uuid);\nCREATE FUNCTION public.user_owns_project(p uuid) RETURNS boolean LANGUAGE sql AS $$ select true $$;")).toHaveLength(1);
+    // revoking from another role, or touching another function, is not the door's concern
+    expect(strippedFromDoor("REVOKE ALL ON FUNCTION public.is_org_controller(uuid) FROM anon;")).toEqual([]);
+    expect(strippedFromDoor("REVOKE ALL ON FUNCTION public.is_org_controller_for(uuid, uuid) FROM PUBLIC;")).toEqual([]);
+    // and 20261184 itself would pass it (it only grants)
+    expect(strippedFromDoor(M)).toEqual([]);
   });
 });
 

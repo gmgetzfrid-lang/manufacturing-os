@@ -1648,6 +1648,59 @@ describe("J16 (GAP-401) — after 20261184: the door writes as an identity the g
     expect(db.r2Deletes).toHaveLength(1);
   });
 
+  it("a 42501 the door did NOT raise for the link (no 'scope' / 'not_configured' HINT: a privilege the database lacks, a policy refusing what the door's own checks admitted) is the write's own failure — 500 and a reference, never the configuration or scope sentence, never a service-role retry (review fix pass 3)", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    for (const error of [
+      { code: "42501", message: "permission denied for function my_org_ids", hint: null },
+      { code: "42501", message: "new row violates row-level security policy \"documents_intake_door_scope\" for table \"documents\"" },
+      { code: "42501", message: "intake_door: only the intake route, under the service key, opens the contractor door." },
+    ]) {
+      // a new document: not 409 "isn't fully configured yet"
+      resetDb(); seed({ doc: null }); installDoor();
+      db.rpc.intake_door_create_document = () => ({ data: null, error });
+      let res = await upload({ title: "Skid GA" });
+      let body = await res.json();
+      expect(res.status, error.message).toBe(500);
+      expect(body.error).toBe("Couldn't create the document — try again shortly.");
+      expect(body.code).toBeUndefined();
+      expect(body.ref).toMatch(/^[0-9a-f]{8}$/);
+      expect(db.tables.documents).toEqual([]);
+      expect(db.r2Deletes).toHaveLength(1);
+      expect(serviceContentWrites()).toEqual([]);
+      // a quote: not 403 "This link can't file that quote"
+      resetDb(); seed({ link: { purpose: "quote" } }); installDoor();
+      db.rpc.intake_door_file_quote = () => ({ data: null, error });
+      res = await upload({});
+      body = await res.json();
+      expect(res.status, error.message).toBe(500);
+      expect(body.error).toBe("Couldn't record the quote — try again shortly.");
+      expect(body.code).toBeUndefined();
+      expect(db.tables.cost_documents ?? []).toEqual([]);
+      expect(db.r2Deletes).toHaveLength(1);
+      expect(serviceContentWrites()).toEqual([]);
+      // a submission: not 403 "may only submit revisions to its own or assigned documents"
+      resetDb(); seed({ link: { allow_auto_supersede: false } }); installDoor();
+      db.rpc.intake_door_submit_version = () => ({ data: null, error });
+      res = await upload({ docId: D1, revLabel: "C" });
+      body = await res.json();
+      expect(res.status, error.message).toBe(500);
+      expect(body.error).toBe("Couldn't record the submission — try again shortly.");
+      expect(serviceContentWrites()).toEqual([]);
+    }
+    spy.mockRestore();
+    // while the door's own HINTs keep their sentences
+    resetDb(); seed({ doc: null }); installDoor();
+    db.rpc.intake_door_create_document = () => doorScope("the project's intake library or folder is not set", "not_configured");
+    let res = await upload({ title: "Skid GA" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("not_configured");
+    resetDb(); seed({ link: { purpose: "quote" } }); installDoor();
+    db.rpc.intake_door_file_quote = () => doorScope("a party of the project");
+    res = await upload({});
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe("This link can't file that quote — reopen the portal from the link you were sent.");
+  });
+
   it("'absent' is decided by the CODE: a guard's refusal whose message carries contractor text that reads like 'function not found' is still a refusal — the promote demotes, NO service-role publish_revision follows, and the rest of the request stays on the door", async () => {
     // a document numbered by the contractor so the adoption guard's message (`% (Rev %) is already a live document…`) starts with it
     const crafted = "could not find the function public.intake_door_x (Rev C) is already a live document in this library — retire it first.";

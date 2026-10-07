@@ -22,15 +22,15 @@ before; only the address in the browser's download bar is different.
 
 ## When to do it
 
-**Only after** the app version that reads this setting through the download
-links is live. The setting is read by `lib/untrustedContent.ts`. The workspace
-data export (`lib/dataExport.ts`, the per-file links in an Admin's export)
-already uses it. The two places that hand out everyday download links —
-`app/api/storage/download-url/route.ts` and
-`app/api/storage/resolve/route.ts` — start using it once they call
-`signStorageGet` (handed over on projects-tab `GAP-401`). Until then the
-setting changes only the export's links. Ask whoever deploys the app, or check
-the release notes, before you start.
+Any time after the app version with `lib/untrustedContent.ts` is live. Today
+the setting changes **only the links in the workspace data export** (Admin →
+**Data export** → **Download JSON**). The everyday download links — the
+**Intake** tab, the document viewer — keep coming from the usual address until
+two small code changes land (`app/api/storage/download-url/route.ts` and
+`app/api/storage/resolve/route.ts` start calling `signStorageGet`; recorded on
+projects-tab `GAP-401`, owner: the integrator at the J16 / P6 merge). Setting it
+early is harmless: nothing breaks, and those links switch over on their own the
+day that change is deployed.
 
 ## The steps
 
@@ -68,15 +68,25 @@ one your storage already answers on, with the same keys the app already holds.
 
 ## How to check it worked
 
-1. Sign in to the app as someone who can see a project's **Intake** tab.
-2. Open a project that has a contractor submission, and open or download that
-   file.
-3. It should open or download exactly as before.
-4. Optional: right-click the download and copy its link. It should start with
-   the address from step 2 (your account ID, then `.r2.cloudflarestorage.com/`,
-   then the bucket name). A file your organization uploaded itself (not through
+Check it with the workspace export, the one place that uses the setting today:
+
+1. Sign in to the app as an Admin and open **Admin → Data export**.
+2. Click **Download JSON**. A file downloads.
+3. Open that file in any text editor (Notepad, TextEdit) and search for
+   `project-intake/` — that is how a contractor's file is named.
+4. Next to it is a long link (`"presignedUrl"`). It should start with the
+   address from step 2: your account ID, then `.r2.cloudflarestorage.com/`,
+   then the bucket name. A file your organization uploaded itself (not through
    an intake link) still starts with `https://<bucket name>.<account ID>…` —
    that is expected.
+
+If the contractor file's link still starts with `https://<bucket name>.…`, the
+value was refused: the server log has one line starting with
+`[untrustedContent]` that says why (see the last section).
+
+The **Intake** tab's own download links do not change yet (see "When to do
+it"): a contractor file opened there still comes from the usual address, and
+that is expected, not a sign the setting is broken.
 
 ## How to undo it
 
