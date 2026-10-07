@@ -53,10 +53,10 @@ vi.mock("@/lib/notifications", async (importOriginal) => ({
 }));
 vi.mock("@/lib/serverAuth", () => ({ assertOrgHasAccess: async () => null }));
 
-import { POST as requestAccess, ACCESS_REQUEST_AUDIENCE } from "@/app/api/auth/request-access/route";
+import { POST as requestAccess } from "@/app/api/auth/request-access/route";
 import { POST as decide } from "@/app/api/admin/access-requests/route";
 import { POST as createUser } from "@/app/api/admin/create-user/route";
-import { renderAccessRequestOutcome } from "@/lib/accessRequestOutcome";
+import { renderAccessRequestOutcome, ACCESS_REQUEST_AUDIENCE } from "@/lib/accessRequestOutcome";
 
 const ORG = "org1";
 const member = (uid: string, roles: string[], status = "active") => ({ id: `m-${uid}`, org_id: ORG, uid, role: roles[0], roles, status, email: `${uid}@acme.test` });

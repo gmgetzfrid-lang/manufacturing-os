@@ -5,6 +5,7 @@ import { notifyMany } from "@/lib/inAppNotifications";
 import { queueEmail } from "@/lib/notifications";
 import { resolveRoleRecipients } from "@/lib/notify/recipients";
 import { runWithServerClient } from "@/lib/serverClientScope";
+import { ACCESS_REQUEST_AUDIENCE } from "@/lib/accessRequestOutcome";
 
 // This public, unauthenticated endpoint was the one door in the auth pair with
 // no rate limit — its neighbour /api/auth/signup carries the full
@@ -35,12 +36,6 @@ async function recordAttempt(ip: string, email: string | null, outcome: string):
   await supabaseAdmin.from("signup_attempts").insert({ ip, email, outcome })
     .then(() => undefined, () => undefined);
 }
-
-/** The roles told about a request: the org's Admin / DocCtrl pool (PROD-2,
- *  DEC-44 (N8) item 1 — the pool the holds audience uses; both may grant the
- *  membership at /api/admin/create-user and decline at
- *  /api/admin/access-requests). Exported for the test. */
-export const ACCESS_REQUEST_AUDIENCE = ["Admin", "DocCtrl"] as const;
 
 /** PROD-2: a request nobody hears about is a request nobody answers. After
  *  the row is written, every active member of the org holding Admin or

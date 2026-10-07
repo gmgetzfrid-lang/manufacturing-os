@@ -2,7 +2,8 @@
 //
 // SERVER-ONLY. The answer to an access request, emailed to the address the
 // person gave at the door (notifications PROD-2 done-when 2, N8 PRODUCERS-
-// FREE). Two service-role routes call it after their own write succeeded:
+// FREE), and the pool told about a new request (ACCESS_REQUEST_AUDIENCE).
+// Two service-role routes call the outcome email after their own write succeeded:
 //
 //   · /api/admin/access-requests — a decline (the person has no account:
 //     the row is EXTERNAL mail, queued from the stored request, never from a
@@ -18,6 +19,12 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { configuredPublicOrigin } from "@/lib/publicOrigin";
+
+/** The roles told about a NEW request (the request door, PROD-2 dw1): the
+ *  org's Admin / DocCtrl pool — DEC-44 (N8) item 1, the pool the holds
+ *  audience uses; both may grant the membership at /api/admin/create-user
+ *  and decline at /api/admin/access-requests. */
+export const ACCESS_REQUEST_AUDIENCE = ["Admin", "DocCtrl"] as const;
 
 export type AccessRequestOutcome = "approved" | "declined";
 
