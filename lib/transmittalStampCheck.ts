@@ -31,7 +31,12 @@
 //     portal's call — then the portal's stamp (applyStampToPdfDoc) and its
 //     save (pdfDoc.save(), final review fix: a save that throws fails the
 //     portal's stamp too) on the loaded document; the bytes are discarded
-//     (nothing is kept).
+//     (nothing is kept). TRX-15 (P22 review fix): the stamp is the TEXT the
+//     download stamps (portalStampText — the item's number, the revision
+//     the issue will pin, the transmittal's number, today's date, the verify
+//     link), so a number or revision label the stamp's font cannot print
+//     fails here, warned at issue (`unloadable`, `unprintable` naming the
+//     characters), never only at every download of an armed item.
 // It reads with the caller's (service-role) client, scoped to the
 // transmittal's org; a storage key outside the org is never fetched
 // (portalKeyAllowed, the portal's rule). Nothing is written. A time budget
@@ -42,8 +47,9 @@ import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { PDFDocument } from "pdf-lib";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { applyStampToPdfDoc } from "@/lib/stamping";
+import { publicOrigin } from "@/lib/publicOrigin";
 import type { supabase } from "@/lib/supabase";
-import { PORTAL_STAMP_MAX_BYTES, STAMP_CHECK_TIME_BUDGET_MS, portalKeyAllowed, type ItemStampCheck, type TransmittalItem } from "@/lib/transmittals";
+import { PORTAL_STAMP_MAX_BYTES, STAMP_CHECK_TIME_BUDGET_MS, portalKeyAllowed, portalStampText, stampFooterUnprintable, type ItemStampCheck, type TransmittalItem } from "@/lib/transmittals";
 
 /** The check's total time budget across a transmittal's items (defined in
  *  lib/transmittals.ts, so the issuer's browser bounds its wait by it). */
@@ -102,17 +108,25 @@ function objectLength(obj: { ContentRange?: string; ContentLength?: number }): n
   return null;
 }
 
+/** pdf-lib's refusal of a character its standard font cannot encode
+ *  ('WinAnsi cannot encode "Δ" (0x0394)') — the character, else null. */
+function unencodableCharacter(e: unknown): string | null {
+  const msg = (e as { message?: string } | null)?.message ?? "";
+  const m = /cannot encode "([\s\S]+?)" \(0x[0-9a-f]+\)/i.exec(msg);
+  return m ? m[1] : null;
+}
+
 /** One item: the file the issue will pin, tested as the portal stamps it. */
-async function checkOne(sb: Reader, orgId: string, it: TransmittalItem, outOfTime: () => boolean): Promise<ItemStampCheck> {
+async function checkOne(sb: Reader, orgId: string, it: TransmittalItem, transmittalNumber: string | null, outOfTime: () => boolean): Promise<ItemStampCheck> {
   const base = { documentId: it.documentId, number: it.number || "This document" };
   const unchecked = (detail: string): ItemStampCheck => ({ ...base, verdict: "unchecked", detail });
   const { data: doc, error: docErr } = await sb.from("documents").select("id, current_version_id").eq("id", it.documentId).eq("org_id", orgId).maybeSingle();
   if (docErr) return unchecked("the document could not be read");
   const current = (doc as { current_version_id?: string | null } | null)?.current_version_id ?? null;
   if (!current) return unchecked("no published file to check"); // the issue gate refuses it anyway
-  const { data: ver, error: verErr } = await sb.from("document_versions").select("id, file_url, size").eq("id", current).eq("org_id", orgId).maybeSingle();
+  const { data: ver, error: verErr } = await sb.from("document_versions").select("id, file_url, size, revision_label").eq("id", current).eq("org_id", orgId).maybeSingle();
   if (verErr) return unchecked("the file's record could not be read");
-  const v = ver as { file_url?: string | null; size?: number | null } | null;
+  const v = ver as { file_url?: string | null; size?: number | null; revision_label?: string | null } | null;
   const key = v?.file_url ?? null;
   if (!key) return unchecked("no stored file to check");
   if (!portalKeyAllowed(key, orgId)) return unchecked("the stored file is outside this workspace");
@@ -176,20 +190,41 @@ async function checkOne(sb: Reader, orgId: string, it: TransmittalItem, outOfTim
       detail: isEncryptedRefusal(e) ? "encrypted (permission-restricted) PDF" : "the PDF could not be read (damaged or unsupported)",
     };
   }
+  // TRX-15 (P22 review fix): the text the download stamps on THIS item —
+  // its number, the revision the issue will pin (the item's own, else the
+  // current file's label: the issue trigger's COALESCE in 20261133), the
+  // transmittal's number, the issue date, and the verify link on the
+  // configured origin (app/api/transmittal/route.ts builds the same).
+  const rev = (typeof it.rev === "string" && it.rev.trim()) ? it.rev.trim() : (v?.revision_label ?? "").trim() || null;
+  const origin = publicOrigin();
+  const text = portalStampText({
+    docNumber: (it as { number?: string | null }).number ?? null,
+    rev,
+    transmittalNumber,
+    issuedOn: new Date().toISOString().slice(0, 10),
+    verifyUrl: origin ? `${origin}/verify/${it.documentId}?v=${current}` : undefined,
+  });
   try {
     // The portal's stamp and save, on a document that is then dropped: a PDF
     // that loads but cannot take the marking, or cannot be written back out
     // (the route's `outBytes = await pdfDoc.save()`, inside its stamp try),
     // fails here, as it would at download.
-    await applyStampToPdfDoc(pdfDoc, {
-      userLabel: "transmittal stamp check",
-      timestamp: new Date(),
-      watermarkText: "UNCONTROLLED — TRANSMITTAL COPY",
-      footerNotice: `${base.number} as issued on a transmittal (issue-time stamp check).`,
-      verifyUrl: "https://stamp-check.invalid/verify",
-    });
+    await applyStampToPdfDoc(pdfDoc, { ...text, timestamp: new Date() });
     await pdfDoc.save();
-  } catch {
+  } catch (e) {
+    // A character the stamp's font cannot print can only come from the text
+    // stamped (the PDF's own content is never re-encoded): the item's number,
+    // its revision label, or the transmittal's number.
+    const refused = unencodableCharacter(e);
+    if (refused !== null) {
+      const unprintable = stampFooterUnprintable(`${it.number ?? ""} ${rev ?? ""} ${transmittalNumber ?? ""}`) || refused;
+      return {
+        ...base,
+        verdict: "unloadable",
+        detail: `its number or revision label has a character the portal's stamp cannot print (${unprintable})`,
+        unprintable,
+      };
+    }
     return { ...base, verdict: "unloadable", detail: "the PDF could not be stamped (damaged or unsupported)" };
   }
   return { ...base, verdict: "stampable" };
@@ -200,7 +235,14 @@ async function checkOne(sb: Reader, orgId: string, it: TransmittalItem, outOfTim
  *  budget. Each document is checked once even if it is listed twice. */
 export async function checkItemsStampable(
   sb: Reader,
-  input: { orgId: string; items: TransmittalItem[]; now?: () => number },
+  input: {
+    orgId: string;
+    items: TransmittalItem[];
+    /** The transmittal's number, stamped on every page (TRX-15, P22 review
+     *  fix: the check stamps what the download stamps). */
+    transmittalNumber?: string | null;
+    now?: () => number;
+  },
 ): Promise<ItemStampCheck[]> {
   const now = input.now ?? Date.now;
   const deadline = now() + STAMP_CHECK_TIME_BUDGET_MS;
@@ -210,7 +252,7 @@ export async function checkItemsStampable(
   for (const it of input.items) {
     if (!it?.documentId || seen.has(it.documentId)) continue;
     seen.add(it.documentId);
-    out.push(await checkOne(sb, input.orgId, it, outOfTime));
+    out.push(await checkOne(sb, input.orgId, it, input.transmittalNumber ?? null, outOfTime));
   }
   return out;
 }

@@ -238,8 +238,10 @@ should read amber rather than red at the cover scan (public-surfaces
 in this deploy: it is armed per item only by `TRX-16`'s issue-time mark. The
 `DEC-61` §5 amendment was ratified by the integrator under the user's delegation, 2026-10-07 (DEC-90); document-control P22 arms it.
 *(P22, 2026-10-07: armed — transmittals issued by the app carrying P22 mark
-each PDF the issue-time check found stampable, and the portal refuses such a
-PDF if it then cannot be stamped. Transmittals issued before that deploy
+each PDF the issue-time check found stampable (the check stamps the text the
+download stamps; an item whose number or revision label the stamp cannot
+print is never marked), and the portal refuses such a PDF if it then cannot
+be stamped. Transmittals issued before that deploy
 carry no mark and keep §5's release. No migration. A PDF the check could not
 decide (`unchecked`, or a check that did not run), and any issue made outside
 the app's issue path, still leave unmarked with no recorded yes — `TRX-17`.)*

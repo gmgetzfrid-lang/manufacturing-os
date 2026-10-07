@@ -939,6 +939,71 @@ export interface ItemStampCheck {
   verdict: StampVerdict;
   /** Why, for `unloadable` / `unchecked` (never file content). */
   detail?: string | null;
+  /** TRX-15 (P22 review fix): set on an `unloadable` verdict caused by the
+   *  item's own number or revision label — the characters in it the stamp
+   *  cannot print (the file itself loaded). */
+  unprintable?: string | null;
+}
+
+/** The characters the portal stamp's font prints beyond printable ASCII
+ *  (0x20–0x7E) and Latin-1 (0xA0–0xFF): the rest of WinAnsi (cp1252). The
+ *  stamp draws with pdf-lib's standard Helvetica-Bold, whose WinAnsi
+ *  encoding refuses anything else ("WinAnsi cannot encode …"). */
+const WIN_ANSI_EXTRA = new Set<number>([
+  0x152, 0x153, 0x160, 0x161, 0x178, 0x17d, 0x17e, 0x192, 0x2c6, 0x2dc,
+  0x2013, 0x2014, 0x2018, 0x2019, 0x201a, 0x201c, 0x201d, 0x201e,
+  0x2020, 0x2021, 0x2022, 0x2026, 0x2030, 0x2039, 0x203a, 0x20ac, 0x2122,
+]);
+
+/** TRX-15 (P22 review fix): the characters of `text` the portal's stamp
+ *  cannot print in its footer, each once — "" when it can print them all.
+ *  The footer is word-wrapped on whitespace (lib/stampLayout.ts
+ *  `wrapToWidth`), so whitespace of any kind prints as a space; any other
+ *  character must be in WinAnsi. A Greek delta ("Δ1"), an arrow or a Unicode
+ *  hyphen (U+2010, common in pasted text) is not, and the stamp throws on
+ *  it. A test pins this against pdf-lib itself, code point by code point. */
+export function stampFooterUnprintable(text: string | null | undefined): string {
+  const bad: string[] = [];
+  for (const ch of String(text ?? "")) {
+    const cp = ch.codePointAt(0) ?? 0;
+    const printable = /\s/.test(ch) || (cp >= 0x20 && cp <= 0x7e) || (cp >= 0xa0 && cp <= 0xff) || WIN_ANSI_EXTRA.has(cp);
+    if (!printable && !bad.includes(ch)) bad.push(ch);
+  }
+  return bad.join("");
+}
+
+/** "“Δ” (U+0394)" for each character — a Unicode hyphen looks like "-". */
+function nameCharacters(chars: string): string {
+  return Array.from(chars).map((ch) => `“${ch}” (U+${(ch.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0")})`).join(", ");
+}
+
+/** TRX-15 (P22 review fix): the text the portal stamps on a PDF item it
+ *  serves — the watermark, its label and the as-issued footer — exactly as
+ *  the download route builds them (app/api/transmittal/route.ts, the
+ *  options it passes `applyStampToPdfDoc`, less the timestamp). The
+ *  issue-time check (lib/transmittalStampCheck.ts) stamps with this, so a
+ *  document number or revision label the stamp cannot print fails the CHECK
+ *  — warned at issue — instead of passing it and failing every download. A
+ *  test pins the route's own options equal to it. */
+export function portalStampText(input: {
+  /** The item's number (the route's `item.number ?? "document"`). */
+  docNumber: string | null | undefined;
+  /** The as-issued revision (the route's `item.rev ?? file.label`). */
+  rev: string | null | undefined;
+  transmittalNumber: string | null | undefined;
+  /** The issue date, YYYY-MM-DD, or null. */
+  issuedOn: string | null;
+  /** The verify link — the QR, and the footer's instruction to scan it. */
+  verifyUrl?: string;
+}): { userLabel: string; watermarkText: string; footerNotice: string; verifyUrl?: string } {
+  const label = input.docNumber ?? "document";
+  const number = String(input.transmittalNumber ?? "");
+  return {
+    userLabel: `transmittal ${number}`.trim(),
+    watermarkText: "UNCONTROLLED — TRANSMITTAL COPY",
+    footerNotice: `${label} Rev ${input.rev ?? "?"} as issued on transmittal ${number}${input.issuedOn ? ` (${input.issuedOn})` : ""}. ${input.verifyUrl ? "Scan the QR to confirm it is still current." : "Confirm the current revision with the issuer before use."}`,
+    verifyUrl: input.verifyUrl,
+  };
 }
 
 /** The items the portal would release WITHOUT the UNCONTROLLED marking. */
@@ -954,7 +1019,9 @@ export function describeUnstampable(checks: readonly ItemStampCheck[]): string |
   const mb = Math.round(PORTAL_STAMP_MAX_BYTES / (1024 * 1024));
   const lines = bad.map((c) => c.verdict === "oversize"
     ? `${c.number}: larger than the portal can mark (${mb} MB) — split it into smaller files.`
-    : `${c.number}: a PDF the portal cannot mark — most often one saved with security or permission restrictions (otherwise a damaged file); re-save it without restrictions.`);
+    : c.unprintable
+      ? `${c.number}: its number or revision label contains ${nameCharacters(c.unprintable)}, which the portal's stamp cannot print — change it to plain characters (letters, digits, an ordinary hyphen).`
+      : `${c.number}: a PDF the portal cannot mark — most often one saved with security or permission restrictions (otherwise a damaged file); re-save it without restrictions.`);
   return `The recipient's portal cannot stamp ${bad.length === 1 ? "this file" : "these files"} as an UNCONTROLLED copy, so ${bad.length === 1 ? "it" : "they"} would be released as issued, WITHOUT the marking, the as-issued footer or the verify QR:\n${lines.map((l) => `• ${l}`).join("\n")}\nFix the file${bad.length === 1 ? "" : "s"} and issue again, or issue anyway.`;
 }
 
@@ -990,7 +1057,15 @@ export class UnstampableItemsError extends Error {
  *  did not run (`checks` null) — so it keeps §5's release, as before; a mark
  *  already on a draft item is removed (only this issue's check arms). Items
  *  are otherwise the draft's JSON as stored. `changed` is false when the
- *  result equals the draft's items (the issue then leaves them alone). */
+ *  result equals the draft's items (the issue then leaves them alone).
+ *
+ *  P22 review fix: an item whose own number or revision label has a
+ *  character the portal's stamp cannot print (`stampFooterUnprintable`) is
+ *  never armed, whatever its check said — the download stamps both into the
+ *  footer, so it would fail there on every attempt, and an armed item would
+ *  be refused for good. The check stamps them too (lib/transmittalStampCheck.ts
+ *  → `unloadable`, warned at issue); this guard holds even for a check that
+ *  did not (one answered by an older server). */
 export function armCheckedItems(
   rawItems: unknown,
   checks: readonly ItemStampCheck[] | null,
@@ -998,13 +1073,16 @@ export function armCheckedItems(
   const stampable = new Set<string>();
   const other = new Set<string>();
   for (const c of checks ?? []) (c.verdict === "stampable" ? stampable : other).add(c.documentId);
+  const labelPrintable = (it: Record<string, unknown>) =>
+    !stampFooterUnprintable(it.number == null ? "" : String(it.number)) &&
+    !stampFooterUnprintable(it.rev == null ? "" : String(it.rev));
   let changed = false;
   let armed = 0;
   const items = (Array.isArray(rawItems) ? rawItems : []).map((raw: unknown) => {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
     const it = raw as Record<string, unknown>;
     const id = typeof it.documentId === "string" ? it.documentId : "";
-    if (id && stampable.has(id) && !other.has(id)) {
+    if (id && stampable.has(id) && !other.has(id) && labelPrintable(it)) {
       armed += 1;
       if (it.stampable === true) return it;
       changed = true;

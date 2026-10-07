@@ -57,7 +57,7 @@ vi.mock("@/lib/audit", () => ({
 }));
 
 import {
-  issueTransmittal, describeUnstampable, unstampableItems, UnstampableItemsError, PORTAL_STAMP_MAX_BYTES, armCheckedItems,
+  issueTransmittal, describeUnstampable, unstampableItems, UnstampableItemsError, PORTAL_STAMP_MAX_BYTES, armCheckedItems, stampFooterUnprintable,
   checkTransmittalStampability, STAMP_CHECK_TIME_BUDGET_MS, STAMP_CHECK_CLIENT_TIMEOUT_MS,
   type ItemStampCheck, type IssuePhase,
 } from "@/lib/transmittals";
@@ -373,6 +373,37 @@ describe("TRX-15 (P22, DEC-90 A5) — the issue writes `stampable: true` on each
     expect(db.audits).toEqual([]);
   });
 
+  // P22 review fix: the check stamped a fixed text with no revision, so a
+  // number or revision label the stamp's font cannot print (a Greek delta,
+  // a Unicode hyphen pasted from Word) passed it and the item was armed —
+  // then refused at every download, for good.
+  it("P22 review fix: a check that finds the item's label unprintable stops the issue naming the characters; Issue anyway leaves that item unarmed (released recorded-unstamped, as before P22)", async () => {
+    const LABEL: ItemStampCheck = { documentId: "d2", number: "VDS-7", verdict: "unloadable", detail: "its number or revision label has a character the portal's stamp cannot print (‐)", unprintable: "‐" };
+    stampAnswer = { status: 200, body: { items: [OK, LABEL] } };
+    const err = await issueTransmittal("t1", actor).catch((e) => e) as UnstampableItemsError;
+    expect(err).toBeInstanceOf(UnstampableItemsError);
+    expect(err.message).toContain("VDS-7: its number or revision label contains “‐” (U+2010), which the portal's stamp cannot print — change it to plain characters (letters, digits, an ordinary hyphen).");
+    expect(err.message).not.toMatch(/VDS-7: a PDF the portal cannot mark/);
+    expect(updates()).toEqual([]);
+    await issueTransmittal("t1", actor, { acceptedUnstampable: err.items, checked: err.checked });
+    const items = lastUpdate().patch.items as Array<Record<string, unknown>>;
+    expect(items[0]).toEqual({ ...rawItems[0], stampable: true });
+    expect(items[1]).toEqual(rawItems[1]);
+    expect(db.audits[0]).toMatchObject({ details: expect.objectContaining({ unstampableAccepted: [{ documentId: "d2", number: "VDS-7", verdict: "unloadable" }] }) });
+  });
+
+  it("P22 review fix: an item whose own number or revision the stamp cannot print is never armed, even when its check said stampable (a check that did not stamp the label) — and a mark already on it is stripped", async () => {
+    readRow = { ...stored, items: [{ ...rawItems[0], rev: "Δ1", stampable: true }, { ...rawItems[1], number: "VDS‐7" }, { documentId: "d3", number: "P-103", rev: "Rév B" }] };
+    db.handlers.documents = () => ({ data: ["d1", "d2", "d3"].map((d, i) => ({ id: d, status: "Issued", archived_at: null, current_version_id: `v${i + 1}` })), error: null });
+    stampAnswer = { status: 200, body: { items: [OK, { ...OK, documentId: "d2", number: "VDS‐7" }, { ...OK, documentId: "d3", number: "P-103" }] } };
+    await issueTransmittal("t1", actor);
+    const items = lastUpdate().patch.items as Array<Record<string, unknown>>;
+    expect(items[0]).toEqual({ ...rawItems[0], rev: "Δ1" });
+    expect(items[1]).toEqual({ ...rawItems[1], number: "VDS‐7" });
+    // REGRESSION: Latin-1 (é) prints — armed as before
+    expect(items[2]).toEqual({ documentId: "d3", number: "P-103", rev: "Rév B", stampable: true });
+  });
+
   it("armCheckedItems — the pure rule", () => {
     const raw = [{ documentId: "d1", number: "A" }, { documentId: "d2", number: "B", stampable: true }, "junk", { number: "no id", stampable: false }];
     const none = armCheckedItems(raw, null);
@@ -385,6 +416,15 @@ describe("TRX-15 (P22, DEC-90 A5) — the issue writes `stampable: true` on each
     // a document with a stampable and a non-stampable verdict is not armed
     expect(armCheckedItems([{ documentId: "d1" }], [OK, { ...OK, verdict: "unchecked" }]).armed).toBe(0);
     expect(armCheckedItems("not an array", [OK])).toEqual({ items: [], changed: false, armed: 0 });
+    // P22 review fix: a number or revision the stamp cannot print is never armed
+    for (const bad of [{ rev: "Δ1" }, { rev: "P‐01" }, { rev: "A→B" }, { number: "P‐101" }, { number: "Ω-1" }]) {
+      expect(armCheckedItems([{ documentId: "d1", number: "P-101", ...bad }], [OK]).armed).toBe(0);
+    }
+    for (const ok of [{ rev: "A" }, { rev: "1.2" }, { rev: " C " }, { rev: null }, { rev: "Rév B" }, { number: "P–101" }]) {
+      expect(armCheckedItems([{ documentId: "d1", number: "P-101", ...ok }], [OK]).armed).toBe(1);
+    }
+    expect(stampFooterUnprintable("P‐01 Δ1 Δ2")).toBe("‐Δ");
+    expect(stampFooterUnprintable("Rev A — 1.2 (é, €, “x”)")).toBe("");
     const lib = readFileSync(join(process.cwd(), "lib/transmittals.ts"), "utf8");
     expect(lib).toMatch(/const bound = readAt !== null && \(marked \|\| checks !== null\);/);
     expect(lib).toMatch(/if \(bound && readAt\) write = write\.eq\("updated_at", readAt\);/);
