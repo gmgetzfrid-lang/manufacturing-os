@@ -488,10 +488,17 @@ self-clear that is not a raise is allowed through the function, and
 Resolution).
 
 **Paste and deploy order for `20261173`:** after `20260916`; independent of
-`20261137`; either order with the deploy (the app keeps working unpasted:
-PGRST202 / 42883 take today's path). For the integrator's
-`MIGRATION-PASTE-ORDER.md` row: not a widening; no re-created object; one
-result set of seven probes and six counts.
+`20261137`. Paste it BEFORE the deploy of I-18, or in the same window. The
+app keeps working unpasted (PGRST202 / 42883 take the app-side path, and
+the server log says so), but the unpasted app is weaker than `3015a7f`
+against cap changes in flight. The app-side path has none of `3015a7f`'s
+guards (the guarded writes, the re-reads against the default, the
+put-backs), so interleavings like review 8 (a) are open again until the
+paste: a holder's own $5 insert racing another holder's $0 workspace lock
+ends at $5 with a 200. *(I-18 fix pass, 2026-10-07: this said "either
+order with the deploy".)* For the integrator's `MIGRATION-PASTE-ORDER.md`
+row: not a widening; no re-created object; one result set of seven probes
+and six counts; paste before or with the app deploy.
 
 **MERGE note — I-18's limbs in other packages' files** (intelligence Round G,
 2026-10-02). Whoever next edits each keeps the limb:
@@ -508,7 +515,18 @@ result set of seven probes and six counts.
   the route's.
 - `app/api/knowledge/ingest/route.ts` (I-06's). Its VisionContext carries
   `beforeCall` through `visionCallMeter`, and the meter's `finish` runs in
-  the batch's `finally`.
+  the batch's `finally`. At the requester's cap (or a $0 lock) it sets
+  `noVisionReason` and `heldForVision` (GOV-5, I-18 fix pass): the pages
+  that need vision are held, never indexed text-only, and a read-every-page
+  library answers 409 with nothing indexed.
+- `app/api/knowledge/locate/route.ts` (I-07's). It runs `assertAiGates`
+  and reserves every call (coarse pass, close-ups, relocate), folding them
+  into one `drawingLocate` row. A 428 from the gate is re-read once
+  (`agreementUnsigned`): a record that is there, or that cannot be read, is
+  "Couldn't confirm…", never `agreementRequired`.
+- `app/api/orchestrator/route.ts` (I-04's). Each round is reserved; the
+  run's row stays a reservation (`holdUsage`) until the route settles it
+  when the run ends, so ORCH-7's `maxInFlight` counts runs, not calls.
 - `lib/knowledgeEmbedCore.ts` (I-02's). `embedLibrarySlice`'s
   `beforeEmbed` (after the claim, before any call; a refusal gives the
   batch back and stops the slice) and `afterBatch`.

@@ -62,12 +62,16 @@
 --
 -- PASTE / DEPLOY ORDER: after 20260916 (ai_usage_limits) — it reads nothing
 -- else of the app's but audit_logs. Independent of 20261137 (it never asks
--- the capability evaluator: the app does, and passes the answer). The app
--- works before and after it: until this file is pasted, /api/ai/usage gets
+-- the capability evaluator: the app does, and passes the answer). Paste it
+-- BEFORE the app deploy that ships it, or in the same window. The app works
+-- before and after it: until this file is pasted, /api/ai/usage gets
 -- PGRST202 / 42883 and makes the change app-side — the same sequential
 -- answers, notices and audit rows, without the lock (the server log says so
 -- once; a holder's own self-clear stays refused there while another holder
--- exists). Paste it, then the next cap change runs through the function.
+-- exists). That path has none of the earlier app's in-flight guards, so
+-- until the paste it is weaker against two cap changes in flight than the
+-- app it replaces. Paste it, then the next cap change runs through the
+-- function.
 --
 -- ⚠ APPLIED BY HAND (DEC-30). One script; re-running is safe (CREATE OR
 -- REPLACE; the grants are restated).
