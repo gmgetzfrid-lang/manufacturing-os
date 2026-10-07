@@ -1274,7 +1274,6 @@ const ACTOR_PASS_THROUGHS = [
   "lib/revisions.ts#notifyHolderOfRetirement(opts.actorUserId)",
   "lib/staleCopies.ts#nudgeStaleHolders(input.actorUserId)",
   "lib/staleCopies.ts#recallRetiredDocument(input.actorUserId)",
-  "lib/transitionIn.ts#flagCollisionToDrafting(input.actorId)",
   "lib/workPackages.ts#notifyPackagesOfRevUp(input.actorUserId)",
 ];
 /** A parameter spelled as the signed-in member: `uid`, `currentUserId`, or `currentUser` read at `.uid`.
@@ -1560,7 +1559,9 @@ describe("rule 1's obligation on the producers — a browser row names the signe
     expect(calls).toBeGreaterThan(50);
     expect(offenders).toEqual([]);
     // each traced to RoleContext's uid: directly, or through a prop / parameter every caller fills with it
-    expect(sessions).toBeGreaterThanOrEqual(9);
+    // (drafting-flow DF-P2: 9 → 7 — the request form's and the check-in's new-request notices moved
+    // to /api/tickets/create, which writes them as the service role)
+    expect(sessions).toBeGreaterThanOrEqual(7);
     expect([...pass].sort()).toEqual([...ACTOR_PASS_THROUGHS].sort());
   }, 60_000); // a whole-repo AST census: given room under a loaded full-suite run (integrator, N5 merge)
 
@@ -1608,7 +1609,9 @@ describe("rule 1's obligation on the producers — a browser row names the signe
     }
     expect(judged).toBeGreaterThan(40);
     expect(offenders).toEqual([]);
-    expect(sessions).toBeGreaterThanOrEqual(17);   // each traced to RoleContext's uid
+    // each traced to RoleContext's uid (DF-P2: 17 → 16 — flagCollisionToDrafting no longer writes a
+    // browser row, so IntakePanel's call of it is no longer a pass-through to judge)
+    expect(sessions).toBeGreaterThanOrEqual(16);
     expect([...forwarded].sort()).toEqual([...ACTOR_CALLER_PASS_THROUGHS].sort());
   }, 60_000);
 

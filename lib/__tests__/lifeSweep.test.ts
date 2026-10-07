@@ -24,7 +24,8 @@ describe("LIFE-7 — the PSM undocumented-change alert is a safety message", () 
 
   it("CheckInPanel escalates through emit() on the safety category, and an empty roster is visible + audited", () => {
     const s = src("components/documents/CheckInPanel.tsx");
-    const blk = s.slice(s.indexOf("if (undocumented) {"), s.indexOf("return { id: row.id as string, number: ticketNumber };"));
+    const blk = s.slice(s.indexOf("if (undocumented) {"), s.indexOf("return { id: row.id, number: res.ticketNumber };"));
+    expect(blk.length).toBeGreaterThan(200);
     expect(blk).toMatch(/category: "safety"/);
     expect(blk).toMatch(/resource: \{ type: "ticket", id: row\.id as string \}/);
     expect(blk).not.toMatch(/notifyMany\(/);
@@ -38,9 +39,11 @@ describe("LIFE-4 — the book-viewer hand-off keeps the source-document link", (
   it("the stashed docId reaches metadata.source_document, the history entry and the chip", () => {
     expect(s).toMatch(/const srcDocId = sourceDocId \|\| stashedDoc\?\.id \|\| '';/);
     expect(s).toMatch(/if \(withDoc\?\.docId\) setStashedDoc\(\{ id: withDoc\.docId, number: withDoc\.docNumber \?\? '' \}\);/);
-    expect(s).toMatch(/metadata\.source_document = buildSourceDocumentRef\(\{ id: srcDocId, documentNumber: srcDocNum, title: sourceDocTitle, rev: sourceDocRev \}\);/);
+    // DF-P2: the page names the primary source document in the create
+    // contract; /api/tickets/create writes metadata.source_document from it.
+    expect(s).toMatch(/if \(srcDocId\) \{\s*\n\s*sourceDocuments\.push\(\{ id: srcDocId, documentNumber: srcDocNum \|\| null, title: sourceDocTitle \|\| null, rev: sourceDocRev \|\| null, versionId: null \}\);/);
     expect(s).toMatch(/\{\(srcDocId \|\| sourceFileUrl\) && \(/);
-    expect(s).not.toMatch(/if \(sourceDocId\) \{\s*\n\s*metadata\.source_document/);
+    expect(s).not.toMatch(/if \(sourceDocId\) \{\s*\n\s*sourceDocuments\.push/);
   });
 });
 
@@ -55,7 +58,9 @@ describe("LIFE-3 (refresh slice) — the hand-off stash survives until submit", 
     expect(rd).not.toMatch(/\.delete\(/);
     const s = src("app/(protected)/requests/new/page.tsx");
     expect(s).toMatch(/readDraft\(draftKey\)/);
-    expect(s.indexOf("if (insertError) throw insertError;")).toBeLessThan(s.indexOf("void discardDraft(draftKey)"));
+    // discarded only once the create route answered with the filed request
+    expect(s.indexOf("if (!res.ok) {")).toBeGreaterThan(0);
+    expect(s.indexOf("if (!res.ok) {")).toBeLessThan(s.indexOf("void discardDraft(draftKey)"));
     // Re-running the effect (StrictMode) must not attach the same file twice.
     expect(s).toMatch(/fs\.filter\(\(f\) => !have\.has\(f\.name\)\)/);
   });

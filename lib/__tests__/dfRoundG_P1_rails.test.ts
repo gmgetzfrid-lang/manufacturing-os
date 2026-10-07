@@ -386,7 +386,7 @@ describe("20261166 — DEC-30 one-paste shape", () => {
 });
 
 describe("the client write census the guard was decided against (app/, lib/, components/, hooks/)", () => {
-  it("every browser UPDATE of tickets touches only the four client-shaped columns; inserts are the three creators", () => {
+  it("every browser UPDATE of tickets touches only the four client-shaped columns; no browser file inserts a ticket (DF-P2: the create route does)", () => {
     const walk = (d: string): string[] => readdirSync(join(root, d), { withFileTypes: true }).flatMap((e) =>
       e.isDirectory() ? (e.name === "__tests__" || e.name === "node_modules" ? [] : walk(join(d, e.name))) : [join(d, e.name)]);
     const updates: Array<{ f: string; cols: string[] }> = [];
@@ -401,7 +401,11 @@ describe("the client write census the guard was decided against (app/, lib/, com
     }
     expect(updates.length).toBeGreaterThan(0);
     for (const u of updates) for (const c of u.cols) expect(CLIENT_SHAPED, `${u.f}: ${c}`).toContain(c);
-    expect(inserts.sort()).toEqual(["app/(protected)/requests/new/page.tsx", "components/documents/CheckInPanel.tsx", "lib/transitionIn.ts"]);
+    // drafting-flow DF-P2: the three creators (the request form, a check-in,
+    // an intake collision) post to /api/tickets/create, which inserts under
+    // the service role with 20261038's checks replicated.
+    expect(inserts).toEqual([]);
+    expect(src("app/api/tickets/create/route.ts")).toMatch(/supabaseAdmin\.from\("tickets"\)\.insert\(row\)/);
   });
 });
 

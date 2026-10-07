@@ -6,8 +6,19 @@
 // The sequence comes from an ATOMIC per-(org, year) counter in the database
 // (the next_ticket_number RPC), so two simultaneous submissions can never get
 // the same number, and it resets each year. Prefix / record code / padding are
-// per-org settings on the orgs row. Both request-creation paths (the new-request
-// form and the document check-in "revision request") go through here.
+// per-org settings on the orgs row.
+//
+// drafting-flow Round G, DF-P2 (EDGE-13): every request is numbered by
+// /api/tickets/create, and only AFTER it has validated the request — so a
+// refused submit never spends a number. That route allocates through the
+// same RPC (as the caller: the function admits active members by auth.uid())
+// and formats with formatTicketNumber below; when its insert then fails it
+// gives the number back unless a later one was already handed out. The
+// sequence is therefore gap-free except for an insert that fails after a
+// concurrent submission took the next number — 20260724's header says
+// "gap-free" without that exception (migrations are not edited; the record
+// is drafting-flow EDGE-13). generateTicketNumber is kept for a caller that
+// numbers something outside that route; no request path calls it.
 
 import { supabase } from "@/lib/supabase";
 
