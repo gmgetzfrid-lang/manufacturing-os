@@ -31,14 +31,22 @@
 //                          requester leaves it unknown.
 //   * priority, targetCompletionAt   the request form's fields; the SLA
 //                          default per type when no date is given.
-//   * customCategories     the admin-defined sections; required fields are
-//                          re-checked server-side.
+//   * customCategories     the admin-defined sections; the request form's
+//                          required fields are re-checked server-side for
+//                          the form's own origin ("portal"). The other two
+//                          origins have no form: the route checks each one
+//                          against its own facts instead (a check-in names a
+//                          checkout of the document by this requester; a
+//                          collision names a project in the workspace).
 //   * sourceDocuments      the controlled documents the request is raised
 //                          against, primary first (HAND-7 captures each
 //                          one's version; GAP-8 keeps every one).
 //   * attachments          files the requester staged under their pending
-//                          prefix (never uploaded before the form is valid),
-//                          plus a Source reference to a library file.
+//                          prefix (never uploaded before the form's own
+//                          checks pass — contractLimitRefusal included),
+//                          plus a Source reference to a library file (an
+//                          advisory hand-off: one the route cannot use is
+//                          dropped with a warning, never a refusal).
 //   * origin               which door, with that door's own facts.
 //   * declaration          DEC-34 seam — the like-in-kind declaration
 //                          (DF-P6) is one more field on this contract. Read
@@ -59,7 +67,9 @@ export const BUILTIN_REQUEST_TYPES: readonly string[] = ["Revision", "ASBUILT", 
 export const MAX_TITLE = 500;
 export const MAX_DESCRIPTION = 20_000;
 export const MAX_SOURCE_DOCUMENTS = 25;
-export const MAX_ATTACHMENTS = 50;
+/** Generous: a walkdown can carry dozens of photos (nothing capped them
+ *  before DF-P2). The form and the check-in check it before staging. */
+export const MAX_ATTACHMENTS = 200;
 /** A generous bound on the custom-category blob (JSON text). */
 export const MAX_CUSTOM_JSON = 50_000;
 
@@ -137,6 +147,33 @@ const text = (v: unknown): string | null => {
 };
 const refuse = (field: string, error: string): ContractRefusal => ({ ok: false, field, error });
 
+/** The contract's size limits, in the words every door shows. The request
+ *  form and the check-in run this BEFORE they stage a file (EDGE-13), and
+ *  parseTicketCreateBody runs it again — the same rule, the same message. */
+export function contractLimitRefusal(p: {
+  title?: string | null;
+  description?: string | null;
+  attachmentCount?: number;
+}): ContractRefusal | null {
+  if ((p.title?.trim().length ?? 0) > MAX_TITLE) {
+    return refuse("title", `The title is longer than ${MAX_TITLE} characters — shorten it.`);
+  }
+  if ((p.description?.trim().length ?? 0) > MAX_DESCRIPTION) {
+    return refuse("description", `The description is longer than ${MAX_DESCRIPTION.toLocaleString("en-US")} characters — shorten it.`);
+  }
+  if ((p.attachmentCount ?? 0) > MAX_ATTACHMENTS) {
+    return refuse("attachments", `At most ${MAX_ATTACHMENTS} files can be attached to one request — remove some, and attach the rest once it is filed.`);
+  }
+  return null;
+}
+
+/** A machine-written title or description (a check-in's, an intake
+ *  collision's) is clipped to the contract's limit rather than refused —
+ *  the requester did not type it and could not shorten it. */
+export function clipToLimit(text: string, max: number): string {
+  return text.length <= max ? text : `${text.slice(0, Math.max(0, max - 1))}…`;
+}
+
 /** Parse and shape-check a request body against the contract. Pure: what the
  *  workspace has configured is checked by checkAgainstWorkspace. */
 export function parseTicketCreateBody(raw: unknown): { ok: true; input: TicketCreateInput } | ContractRefusal {
@@ -146,10 +183,10 @@ export function parseTicketCreateBody(raw: unknown): { ok: true; input: TicketCr
 
   const title = text(raw.title);
   if (!title) return refuse("title", "A title is required.");
-  if (title.length > MAX_TITLE) return refuse("title", `The title is longer than ${MAX_TITLE} characters.`);
   const description = text(raw.description);
   if (!description) return refuse("description", "A description of the work is required.");
-  if (description.length > MAX_DESCRIPTION) return refuse("description", `The description is longer than ${MAX_DESCRIPTION} characters.`);
+  const tooLong = contractLimitRefusal({ title, description });
+  if (tooLong) return tooLong;
 
   const requestType = text(raw.requestType);
   if (!requestType) return refuse("requestType", "A request type is required.");
@@ -213,7 +250,8 @@ export function parseTicketCreateBody(raw: unknown): { ok: true; input: TicketCr
   const attachments: TicketCreateAttachment[] = [];
   if (raw.attachments != null) {
     if (!Array.isArray(raw.attachments)) return refuse("attachments", "The attachments are not valid.");
-    if (raw.attachments.length > MAX_ATTACHMENTS) return refuse("attachments", `At most ${MAX_ATTACHMENTS} attachments.`);
+    const tooMany = contractLimitRefusal({ attachmentCount: raw.attachments.length });
+    if (tooMany) return tooMany;
     for (const a of raw.attachments) {
       if (!isObj(a)) return refuse("attachments", "An attachment is not valid.");
       const key = text(a.key);
@@ -297,8 +335,12 @@ function parseOrigin(raw: unknown): TicketCreateOrigin | null {
 
 export interface UnitOption { value: string; label: string }
 
-/** The unit list the request form offers: the workspace's configured units,
- *  else the Site Codebook's (the form's own fallback). Empty: no list. */
+/** THE unit list — the one resolver the request form and the create route
+ *  both call, so the form never offers a unit the route refuses: the
+ *  workspace's saved request-form units (its `drafting` org_configurations
+ *  row), else the Site Codebook's units, else none (free text). `cfg` is the
+ *  SAVED row's data — null when the workspace never saved one; a caller
+ *  never passes a built-in default list here. */
 export function unitOptionsFor(
   cfg: Pick<OrgDraftingSettings, "units"> | null | undefined,
   codebookUnits: ReadonlyArray<{ code: string; label?: string | null }>,
@@ -327,6 +369,40 @@ export function resolveUnit(
   const loose = options.find((o) => fold(o.value) === fold(u) || fold(o.label) === fold(u));
   if (loose) return { kind: "matched", unit: loose.value };
   return { kind: "unmatched", unit: u };
+}
+
+/** A unit derived from a source document: several candidates (the
+ *  document's metadata unit — what the check-in and the collision always
+ *  wrote — then its codebook unit_code), the first that is ON the list wins;
+ *  when none is, the first one given, as resolveUnit classes it (free with
+ *  no list, else unmatched — kept and marked unit_unlisted). */
+export function resolveDerivedUnit(
+  candidates: ReadonlyArray<string | null | undefined>,
+  options: readonly UnitOption[],
+): { kind: "none" | "matched" | "free" | "unmatched"; unit: string | null } {
+  const given = candidates.map((c) => (typeof c === "string" ? c.trim() : "")).filter((c) => c !== "");
+  for (const c of given) {
+    const r = resolveUnit(c, options);
+    if (r.kind === "matched") return r;
+  }
+  return given.length > 0 ? resolveUnit(given[0], options) : { kind: "none", unit: null };
+}
+
+/** EDGE-13: what a failed tickets insert proves about the row.
+ *   duplicate  — 23505: the number is already on a row (never given back;
+ *                the route files under a fresh number once);
+ *   definite   — Postgres refused the statement with its own SQLSTATE: the
+ *                transaction did not commit, nothing was written;
+ *   ambiguous  — no SQLSTATE (supabase-js reports a dropped connection or a
+ *                lost reply with code ""), a PostgREST code, a connection
+ *                exception (class 08) or a terminated backend (57P0x): the
+ *                write may have committed, so the number is never given
+ *                back on this evidence alone. */
+export function insertFailureKind(err: { code?: unknown } | null | undefined): "duplicate" | "definite" | "ambiguous" {
+  const code = typeof err?.code === "string" ? err.code : "";
+  if (code === "23505") return "duplicate";
+  if (/^[0-9A-Z]{5}$/.test(code) && !code.startsWith("08") && !code.startsWith("57P")) return "definite";
+  return "ambiguous";
 }
 
 /** 20261038 ticket_insert_integrity's request-type rule, verbatim: a

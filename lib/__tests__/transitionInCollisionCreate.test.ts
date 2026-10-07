@@ -30,6 +30,7 @@ vi.mock("@/lib/supabase", () => {
 vi.mock("@/lib/ticketCreateClient", () => ({ submitTicketCreate: (...a: unknown[]) => s.submit(...a) }));
 
 import { flagCollisionToDrafting, type TransitionCandidate, type TransitionImpact } from "@/lib/transitionIn";
+import { MAX_DESCRIPTION } from "@/lib/ticketCreate";
 
 const ORG = "11111111-1111-4111-8111-111111111111";
 const PROJECT = "ffffffff-0000-4000-8000-000000000001";
@@ -66,6 +67,16 @@ describe("flagCollisionToDrafting → /api/tickets/create", () => {
       action: "INTAKE_COLLISION_FLAGGED", resource_id: "doc-new", org_id: ORG, user_id: "u-1",
       details: expect.objectContaining({ ticketNumber: "KE-DDRT-26-0009", ticketRef: "t-9", intakeLinkId: "link-1", projectId: PROJECT }),
     });
+  });
+
+  it("a sheet overlapping hundreds of drawings still files: the written description is clipped to the contract's limit, never refused", async () => {
+    s.submit.mockResolvedValue({ ok: true, id: "t-9", ticketNumber: "KE-DDRT-26-0009", resumed: false });
+    const many = Array.from({ length: 400 }, (_, i) => ({ id: `d-${i}`, label: `P-${1000 + i} (a long drawing label for the register)`, rev: "1", sharedTags: ["V-1", "V-2", "P-3"] }));
+    await flagCollisionToDrafting({ orgId: ORG, projectId: PROJECT, candidate, impact: { ...impact, overlapDocs: many } as unknown as TransitionImpact, actorId: "u-1", actorEmail: null, actorRole: null });
+    const body = s.submit.mock.calls[0][0];
+    expect(body.description.length).toBe(MAX_DESCRIPTION);
+    expect(body.description.endsWith("…")).toBe(true);
+    expect(body.origin.overlaps).toHaveLength(400);   // the full list rides in the collision facts
   });
 
   it("a refusal from the route is the flag's answer, and no audit row claims a flag that was not filed", async () => {

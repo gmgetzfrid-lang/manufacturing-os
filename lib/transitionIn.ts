@@ -22,6 +22,7 @@ import { supabase } from "@/lib/supabase";
 import { userFacingReadError, userFacingCaughtError } from "@/lib/userFacingError";
 import { normalizeTag } from "@/lib/assets";
 import { submitTicketCreate } from "@/lib/ticketCreateClient";
+import { clipToLimit, MAX_DESCRIPTION, MAX_TITLE } from "@/lib/ticketCreate";
 import { completeUniquenessKey, numberIsTheKey, uniquenessTuple } from "@/lib/intakeLinks";
 
 /** Global variant of the entity-tag pattern (lib/notes.ts keeps the
@@ -678,10 +679,13 @@ export async function flagCollisionToDrafting(
     // requester from the membership, derives the unit from the intake sheet
     // (LIFE-9), sets the same SLA clock a request-form ticket gets, enrols the
     // flagger as a watcher, and notifies the assignment queue server-side.
+    // The title and description are written here, not typed: clipped to the
+    // contract's limits (a sheet that overlaps hundreds of drawings still
+    // files — the full overlap list rides in metadata.intake_collision).
     const res = await submitTicketCreate({
       orgId,
-      title: `Intake collision: ${candidate.label}`,
-      description: lines.join("\n"),
+      title: clipToLimit(`Intake collision: ${candidate.label}`, MAX_TITLE),
+      description: clipToLimit(lines.join("\n"), MAX_DESCRIPTION),
       requestType: "Revision",
       priority: impact.numberCollision ? 1 : 2,
       unit: null,

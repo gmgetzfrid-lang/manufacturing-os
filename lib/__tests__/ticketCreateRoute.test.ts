@@ -24,6 +24,18 @@
 //   * a check-in resumes its episode's ticket (LEAK-6); the source document
 //     carries the version it was raised against (HAND-7) and several sheets
 //     are all kept (GAP-8); the unit is optional and resolved (FRIC-3, DCW-7).
+//
+// Fix pass (review of DF-P2):
+//   * a failed insert gives its number back ONLY when nothing was written: a
+//     23505 keeps the number and files under a fresh one; a write that
+//     committed but whose reply was lost is found and carried on; an
+//     ambiguous failure keeps the number and the staged files (EDGE-13);
+//   * the form and the route use one unit list (no built-in units); a
+//     derived unit tries each candidate; the opening history line carries
+//     the stamped role; the origin is checked against its own facts; an
+//     unusable hand-off is dropped with a warning; the numbering read is
+//     checked; no branch deletes a staged key a ticket names; the notice is
+//     written before the re-key, which keeps to a time budget.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
@@ -44,10 +56,14 @@ const s = vi.hoisted(() => ({
   emailGate: null as null | ((args: Record<string, unknown>) => { data: unknown; error: Err | null }),
   /** `${table}.${op}` → errors handed out one per call, in order. */
   errors: {} as Record<string, Array<Err | null>>,
+  /** `${table}.${op}` → the statement RUNS (the row is written) and then this
+   *  error is what the caller sees: a write that committed but whose reply
+   *  was lost on the way back. */
+  lostReply: {} as Record<string, Array<Err | null>>,
   /** run before a statement executes: a test acts as a second writer. */
   hooks: [] as Array<(table: string, op: string) => void>,
   r2Fail: {} as Record<string, number>,   // "copy" | "head" | "delete" → how many calls fail
-  r2Ops: [] as Array<{ op: string; key: string; from?: string }>,
+  r2Ops: [] as Array<{ op: string; key: string; from?: string; bellRows?: number }>,
   anonWrites: [] as Array<{ table: string; op: string }>,
   after: [] as Array<() => unknown>,
   seq: 0,
@@ -92,8 +108,17 @@ function chain(table: string, client: "admin" | "anon") {
     if (client === "anon") return { data: single ? null : [], error: null };
     const rows = (s.tables[table] ??= []);
     if (op === "insert") {
-      const list = (Array.isArray(payload) ? payload : [payload!]).map((r) => ({ id: r.id ?? `${table}-${++s.seq}`, created_at: r.created_at ?? new Date().toISOString(), ...r }));
+      const list: Row[] = (Array.isArray(payload) ? payload : [payload!]).map((r) => ({ id: r.id ?? `${table}-${++s.seq}`, created_at: r.created_at ?? new Date().toISOString(), ...r }));
+      // schema.sql tickets: UNIQUE(org_id, ticket_id)
+      if (table === "tickets" && list.some((r) => rows.some((x) => x.org_id === r.org_id && x.ticket_id === r.ticket_id))) {
+        return { data: null, error: { code: "23505", message: 'duplicate key value violates unique constraint "tickets_org_id_ticket_id_key"' } };
+      }
       rows.push(...list.map((r) => JSON.parse(JSON.stringify(r))));
+      const lost = s.lostReply[`${table}.${op}`];
+      if (lost && lost.length > 0) {
+        const e = lost.shift();
+        if (e) return { data: null, error: e };
+      }
       const out = returning ? list : null;
       return { data: single ? (out?.[0] ?? null) : out, error: null };
     }
@@ -225,7 +250,7 @@ vi.mock("@/lib/r2", () => ({
       }
       if (kind === "copy") {
         const from = decodeURIComponent(String(cmd.input.CopySource).replace(/^bucket\//, ""));
-        s.r2Ops.push({ op: "copy", key, from });
+        s.r2Ops.push({ op: "copy", key, from, bellRows: (s.tables.notifications ?? []).length });
         if (!s.objects.has(from)) throw new Error("NoSuchKey");
         s.objects.set(key, s.objects.get(from)!);
         return {};
@@ -246,7 +271,7 @@ import { POST as workflowPOST } from "@/app/api/tickets/workflow-action/route";
 import { queueEmail } from "@/lib/notifications";
 import { runWithServerClient } from "@/lib/serverClientScope";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { BUILTIN_REQUEST_TYPES, stampedRequesterRole, parseTicketCreateBody } from "@/lib/ticketCreate";
+import { BUILTIN_REQUEST_TYPES, stampedRequesterRole, parseTicketCreateBody, insertFailureKind } from "@/lib/ticketCreate";
 
 const ORG = "11111111-1111-4111-8111-111111111111";
 const OTHER_ORG = "22222222-2222-4222-8222-222222222222";
@@ -297,6 +322,15 @@ function seed() {
       { id: V4, record_id: DOC, revision_label: "4" },
     ],
     notification_preferences: [{ user_id: SUP2, email_enabled: true, email_on_assignment: false }],
+    // The check-in's facts: the requester holds a checkout of P-101 in its
+    // episode, and an (untagged, legacy) active checkout of P-102.
+    checkout_episodes: [{ id: EPISODE, org_id: ORG, document_id: DOC, status: "active" }],
+    checkout_sessions: [
+      { id: "sess-1", org_id: ORG, document_id: DOC, user_id: REQ, episode_id: EPISODE, status: "active", started_at: "2026-10-07T08:00:00Z" },
+      { id: "sess-2", org_id: ORG, document_id: DOC2, user_id: REQ, episode_id: null, status: "active", started_at: "2026-10-07T08:00:00Z" },
+    ],
+    // The collision's facts: the project it was flagged in.
+    projects: [{ id: PROJECT, org_id: ORG, name: "Tie-ins" }],
     tickets: [],
     notifications: [],
     email_notifications: [],
@@ -312,6 +346,7 @@ beforeEach(() => {
   s.rpcCalls = [];
   s.emailGate = null;
   s.errors = {};
+  s.lostReply = {};
   s.hooks = [];
   s.r2Fail = {};
   s.r2Ops = [];
@@ -733,11 +768,11 @@ describe("HAND-7 / GAP-8 — the source documents, in this workspace, with the v
     expect((tickets()[0].metadata as Row).source_document).toMatchObject({ id: DOC2, version_id: "eeeeeeee-0000-4000-8000-000000000022" });
   });
 
-  it("a document from another workspace is refused (400) — it is never stored", async () => {
-    const res = await POST(req(portal({ attachments: [], sourceDocuments: [{ id: DOC_FOREIGN, documentNumber: null, title: null, rev: null, versionId: null }] })));
-    expect(res.status).toBe(400);
-    expect(await res.json()).toMatchObject({ field: "sourceDocuments" });
-    expect(nextTicketRpc()).toHaveLength(0);
+  it("a document from another workspace is never stored — the request is filed without it, and says so", async () => {
+    const res = await POST(req(portal({ attachments: [], sourceDocuments: [{ id: DOC_FOREIGN, documentNumber: "X-1", title: null, rev: null, versionId: null }] })));
+    expect(res.status).toBe(201);
+    expect((await res.json()).warnings).toEqual(["The linked document X-1 is not in this workspace (it may have been removed) — the request was filed without that link."]);
+    expect(JSON.stringify(tickets()[0].metadata ?? {})).not.toContain(DOC_FOREIGN);
   });
 
   it("several sheets: the primary is the singular source_document, every sheet is in source_documents", async () => {
@@ -791,6 +826,296 @@ describe("the contract's seams (DEC-34 declaration, DEC-40 projectId) travel and
     await POST(req({ ...portal({ attachments: [] }), declaration: { text: "x" }, projectId: PROJECT }));
     expect(tickets()[0].project_id).toBeUndefined();
     expect(JSON.stringify(tickets()[0].metadata)).not.toContain("declaration");
+  });
+});
+
+describe("EDGE-13 — a failed insert gives its number back only when nothing was written", () => {
+  it("insertFailureKind: 23505 is a duplicate; a Postgres SQLSTATE is definite; no code, a PostgREST code, class 08 or 57P0x is ambiguous", () => {
+    expect(insertFailureKind({ code: "23505" })).toBe("duplicate");
+    for (const code of ["XX000", "23502", "23514", "57014", "40001", "42501"]) expect(insertFailureKind({ code })).toBe("definite");
+    for (const code of ["", "PGRST116", "08006", "08000", "57P01"]) expect(insertFailureKind({ code })).toBe("ambiguous");
+    expect(insertFailureKind(null)).toBe("ambiguous");
+    expect(insertFailureKind({})).toBe("ambiguous");
+  });
+
+  it("23505 — the number is already on a ticket: it is never given back, and the request files once under a fresh number; the next one moves on", async () => {
+    s.tables.tickets.push({ id: "t-legacy", org_id: ORG, ticket_id: `KE-DDRT-${YY}-0001`, requester_id: SUP, status: "DRAFTING", created_at: "2026-10-01" });
+    const res = await POST(req(portal()));
+    expect(res.status).toBe(201);
+    expect((await res.json()).ticketNumber).toBe(`KE-DDRT-${YY}-0002`);
+    expect(tickets()).toHaveLength(2);
+    expect(nextTicketRpc()).toHaveLength(2);
+    expect(s.tables.ticket_number_counters[0].next_seq).toBe(2);
+    expect((tickets()[1].attachments as Row[])[1].url).toBe(`orgs/${ORG}/tickets/KE-DDRT-${YY}-0002/1727000000000_redline.pdf`);
+    const next = await POST(req(portal({ attachments: [] })));
+    expect((await next.json()).ticketNumber).toBe(`KE-DDRT-${YY}-0003`);
+  });
+
+  it("23505 twice: nothing filed, both numbers kept as gaps, the staged file discarded", async () => {
+    s.tables.tickets.push(
+      { id: "t-a", org_id: ORG, ticket_id: `KE-DDRT-${YY}-0001`, requester_id: SUP, status: "DRAFTING" },
+      { id: "t-b", org_id: ORG, ticket_id: `KE-DDRT-${YY}-0002`, requester_id: SUP, status: "DRAFTING" },
+    );
+    const res = await POST(req(portal()));
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toMatch(/nothing was filed/);
+    expect(tickets()).toHaveLength(2);
+    expect(s.tables.ticket_number_counters[0].next_seq).toBe(2);
+    expect(s.objects.has(staged("redline.pdf"))).toBe(false);
+  });
+
+  it("a write that committed but whose reply was lost (code ''): the row is found and the request carries on — filed once, announced, re-keyed; the number is never given back", async () => {
+    s.lostReply["tickets.insert"] = [{ code: "", message: "TypeError: fetch failed" }];
+    const res = await POST(req(portal()));
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body).toMatchObject({ ticketNumber: `KE-DDRT-${YY}-0001`, resumed: false, notified: true });
+    expect(tickets()).toHaveLength(1);
+    expect(body.id).toBe(tickets()[0].id);
+    expect(s.tables.ticket_number_counters[0].next_seq).toBe(1);
+    expect(bell().map((n) => n.user_id).sort()).toEqual([SUP, SUP2].sort());
+    expect((tickets()[0].attachments as Row[])[1].url).toBe(`orgs/${ORG}/tickets/KE-DDRT-${YY}-0001/1727000000000_redline.pdf`);
+    const next = await POST(req(portal({ attachments: [] })));
+    expect(next.status).toBe(201);
+    expect((await next.json()).ticketNumber).toBe(`KE-DDRT-${YY}-0002`);
+  });
+
+  it("an ambiguous failure with no row (yet): 500 'check the queue', the number kept, the staged file kept for the reference sweep", async () => {
+    s.errors["tickets.insert"] = [{ code: "", message: "TypeError: fetch failed" }];
+    const res = await POST(req(portal()));
+    expect(res.status).toBe(500);
+    expect(await res.json()).toMatchObject({ code: "insert_unconfirmed", error: expect.stringMatching(/check the queue/) });
+    expect(s.tables.ticket_number_counters[0].next_seq).toBe(1);
+    expect(s.objects.has(staged("redline.pdf"))).toBe(true);
+    const next = await POST(req(portal({ attachments: [] })));
+    expect((await next.json()).ticketNumber).toBe(`KE-DDRT-${YY}-0002`);
+  });
+
+  it("a connection exception (class 08) is ambiguous too: the number is not given back", async () => {
+    s.errors["tickets.insert"] = [{ code: "08006", message: "connection failure" }];
+    expect((await POST(req(portal({ attachments: [] })))).status).toBe(500);
+    expect(s.tables.ticket_number_counters[0].next_seq).toBe(1);
+  });
+
+  it("a definite failure is released only after the row was looked for — a look-up that fails keeps the number", async () => {
+    s.errors["tickets.insert"] = [{ code: "XX000", message: "disk full" }];
+    s.errors["tickets.select"] = [{ code: "57014", message: "statement timeout" }];
+    const res = await POST(req(portal({ attachments: [] })));
+    expect(res.status).toBe(500);
+    expect((await res.json()).code).toBe("insert_unconfirmed");
+    expect(s.tables.ticket_number_counters[0].next_seq).toBe(1);
+  });
+});
+
+describe("the request number's format is read, and checked, before a number is spent", () => {
+  it("an orgs read that fails is a 503 — never a number without the workspace's prefix; nothing allocated, the staged file gone", async () => {
+    s.errors["orgs.select"] = [{ code: "57014", message: "statement timeout" }];
+    const res = await POST(req(portal()));
+    expect(res.status).toBe(503);
+    expect((await res.json()).error).toMatch(/request numbering/);
+    expect(nextTicketRpc()).toHaveLength(0);
+    expect(tickets()).toHaveLength(0);
+    expect(s.objects.has(staged("redline.pdf"))).toBe(false);
+  });
+
+  it("the route reads the row itself under the service role (getTicketNumberConfig, which swallows its error, is not used)", () => {
+    const route = readFileSync(join(process.cwd(), "app/api/tickets/create/route.ts"), "utf8");
+    expect(route).not.toContain("getTicketNumberConfig");
+    expect(route).toContain('.from("orgs").select("ticket_prefix, ticket_record_code, ticket_number_pad").eq("id", orgId).maybeSingle();');
+    expect(route.indexOf('.from("orgs").select("ticket_prefix')).toBeLessThan(route.indexOf('caller_client.rpc("next_ticket_number"'));
+  });
+});
+
+describe("FRIC-3 / DCW-7 — one unit list for the form and the route; a derived unit tries each candidate", () => {
+  it("a workspace that never saved request settings, with a Site Codebook: the codebook's units are the list (as the form now shows); the old built-in '100' is refused", async () => {
+    s.tables.org_configurations = [];
+    s.tables.codebook_entries = [{ org_id: ORG, kind: "unit", code: "20", label: "Crude" }, { org_id: ORG, kind: "unit", code: "30", label: "Vacuum" }];
+    const ok = await POST(req(portal({ unit: "20", customCategories: null, attachments: [] })));
+    expect(ok.status).toBe(201);
+    expect(tickets()[0].unit).toBe("20");
+    const bad = await POST(req(portal({ unit: "100", customCategories: null, attachments: [] })));
+    expect(bad.status).toBe(400);
+    expect(await bad.json()).toMatchObject({ field: "unit" });
+  });
+
+  const units = () => { (s.tables.org_configurations[0].data as Row).units = { label: "Unit", enabled: true, options: [{ label: "20-CRUDE", value: "20-CRUDE" }, { label: "30-VAC", value: "30-VAC" }] }; };
+
+  it("the metadata unit is on the list and the codebook unit_code is not: the ticket gets the metadata unit, matched", async () => {
+    units();
+    s.tables.documents[0] = { ...s.tables.documents[0], metadata: { Unit: "20-CRUDE" }, unit_code: "20" };
+    expect((await POST(req(checkin()))).status).toBe(201);
+    expect(tickets()[0].unit).toBe("20-CRUDE");
+    expect((tickets()[0].metadata as Row).unit_unlisted).toBeUndefined();
+  });
+
+  it("the unit_code is on the list and the metadata unit is not: the unit_code, matched", async () => {
+    units();
+    s.tables.documents[0] = { ...s.tables.documents[0], metadata: { Unit: "Tank farm" }, unit_code: "30-VAC" };
+    await POST(req(checkin()));
+    expect(tickets()[0].unit).toBe("30-VAC");
+    expect((tickets()[0].metadata as Row).unit_unlisted).toBeUndefined();
+  });
+
+  it("neither is on the list: the metadata unit (what the check-in always wrote), kept and marked unit_unlisted", async () => {
+    units();
+    s.tables.documents[0] = { ...s.tables.documents[0], metadata: { Unit: "Tank farm" }, unit_code: "99" };
+    await POST(req(checkin()));
+    expect(tickets()[0].unit).toBe("Tank farm");
+    expect((tickets()[0].metadata as Row).unit_unlisted).toBe(true);
+  });
+});
+
+describe("the opening history line names the role the requester filed under", () => {
+  it("a multi-role member filing under a role they hold: requester_role and every opening history line agree — the form and a check-in", async () => {
+    s.tables.org_members[0] = { ...s.tables.org_members[0], role: "Operator", roles: ["Operator", "Engineer-2"] };
+    await POST(req(portal({ requesterRole: "Engineer-2", attachments: [] })));
+    expect(tickets()[0].requester_role).toBe("Engineer-2");
+    expect((tickets()[0].history as Row[]).map((h) => h.role)).toEqual(["Engineer-2", "Engineer-2"]);
+    await POST(req(checkin({ requesterRole: "Engineer-2" })));
+    expect(tickets()[1].requester_role).toBe("Engineer-2");
+    expect((tickets()[1].history as Row[])[0].role).toBe("Engineer-2");
+  });
+
+  it("a role they do not hold: the headline, in both", async () => {
+    s.tables.org_members[0] = { ...s.tables.org_members[0], role: "Operator", roles: ["Operator"] };
+    await POST(req(portal({ requesterRole: "Engineer-4", attachments: [] })));
+    expect(tickets()[0].requester_role).toBe("Operator");
+    expect((tickets()[0].history as Row[])[0].role).toBe("Operator");
+  });
+});
+
+describe("FRIC-8 — the origin is checked against its own facts; naming one is not a way around the form", () => {
+  it("a request posted as a check-in by a member with no checkout of the document: 400 (field origin), nothing numbered, no PSM flag written", async () => {
+    s.tables.checkout_sessions = [];
+    const res = await POST(req(checkin()));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ field: "origin" });
+    expect(nextTicketRpc()).toHaveLength(0);
+    expect(tickets()).toHaveLength(0);
+  });
+
+  it("another member's checkout of the document does not count", async () => {
+    s.tables.checkout_sessions = [{ id: "sess-x", document_id: DOC, user_id: SUP, episode_id: EPISODE, status: "active", started_at: "2026-10-07T08:00:00Z" }];
+    expect((await POST(req(checkin()))).status).toBe(400);
+  });
+
+  it("an episode of another document, or of another workspace, is refused", async () => {
+    s.tables.checkout_episodes[0].document_id = DOC2;
+    expect((await POST(req(checkin()))).status).toBe(400);
+    s.tables.checkout_episodes[0] = { id: EPISODE, org_id: OTHER_ORG, document_id: DOC, status: "active" };
+    expect((await POST(req(checkin()))).status).toBe(400);
+    expect(nextTicketRpc()).toHaveLength(0);
+  });
+
+  it("a retry after a failed session close (the session no longer active, still in this episode) files", async () => {
+    s.tables.checkout_sessions[0].status = "completed";
+    expect((await POST(req(checkin()))).status).toBe(201);
+  });
+
+  it("a legacy check-in with no episode files on the requester's active checkout of the document — and not on an ended one", async () => {
+    expect((await POST(req(checkin({}, { episodeId: null })))).status).toBe(201);
+    s.tables.tickets = [];
+    s.tables.checkout_sessions[0].status = "completed";
+    expect((await POST(req(checkin({}, { episodeId: null })))).status).toBe(400);
+  });
+
+  it("a check-in whose document is not in this workspace is refused", async () => {
+    const res = await POST(req(checkin({ sourceDocuments: [{ id: DOC_FOREIGN, documentNumber: null, title: null, rev: null, versionId: null }] })));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ field: "origin" });
+  });
+
+  it("an intake collision naming a project of another workspace is refused", async () => {
+    s.tables.projects = [{ id: PROJECT, org_id: OTHER_ORG, name: "Theirs" }];
+    const res = await POST(req(collision()));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ field: "origin" });
+    expect(nextTicketRpc()).toHaveLength(0);
+  });
+
+  it("facts that cannot be read are a 503 with nothing numbered", async () => {
+    s.errors["checkout_sessions.select"] = [{ code: "57014", message: "statement timeout" }];
+    expect((await POST(req(checkin()))).status).toBe(503);
+    s.errors["projects.select"] = [{ code: "57014", message: "statement timeout" }];
+    expect((await POST(req(collision()))).status).toBe(503);
+    expect(nextTicketRpc()).toHaveLength(0);
+  });
+});
+
+describe("a hand-off the route cannot use never blocks the request", () => {
+  it("a library reference outside this workspace is dropped with a warning; the request is filed", async () => {
+    const res = await POST(req(portal({ attachments: [{ kind: "source_reference", key: `orgs/${OTHER_ORG}/libraries/l9/x.pdf`, name: "x.pdf" }] })));
+    expect(res.status).toBe(201);
+    expect((await res.json()).warnings).toEqual(['"x.pdf" was not attached: it is not a file in this workspace.']);
+    expect(tickets()[0].attachments).toEqual([]);
+  });
+
+  it("a version whose file is an https URL is kept as the Source, as the form always filed it", async () => {
+    const url = "https://files.plant.io/p101.pdf";
+    const res = await POST(req(portal({ attachments: [{ kind: "source_reference", key: url, name: "p101.pdf" }] })));
+    expect(res.status).toBe(201);
+    expect((await res.json()).warnings).toBeUndefined();
+    expect((tickets()[0].attachments as Row[])[0]).toMatchObject({ url, type: "Source", name: "p101.pdf" });
+  });
+
+  it("a source document removed since the hand-off: filed without the link, with a warning", async () => {
+    s.tables.documents = s.tables.documents.filter((d) => d.id !== DOC);
+    const res = await POST(req(portal({ attachments: [] })));
+    expect(res.status).toBe(201);
+    expect((await res.json()).warnings).toEqual(["The linked document P-101 is not in this workspace (it may have been removed) — the request was filed without that link."]);
+    expect((tickets()[0].metadata as Row).source_document).toBeUndefined();
+  });
+});
+
+describe("EDGE-13 — no branch deletes a staged key a ticket names", () => {
+  const named = () => staged("kept.pdf");
+  beforeEach(() => {
+    s.objects.set(named(), 3);
+    // an earlier ticket whose move failed keeps its file at the staged key
+    s.tables.tickets.push({ id: "t-earlier", org_id: ORG, ticket_id: "KE-DDRT-26-0007", requester_id: REQ, status: "DRAFTING", attachments: [{ id: "a1", url: named() }] });
+  });
+
+  it("a body refused before parsing finishes", async () => {
+    expect((await POST(req(portal({ title: " ", attachments: [{ kind: "staged", key: named(), name: "kept.pdf" }] })))).status).toBe(400);
+    expect(s.objects.has(named())).toBe(true);
+  });
+
+  it("a refusal after parsing (a required field)", async () => {
+    expect((await POST(req(portal({ customCategories: null, attachments: [{ kind: "staged", key: named(), name: "kept.pdf" }] })))).status).toBe(400);
+    expect(s.objects.has(named())).toBe(true);
+  });
+
+  it("a resumed check-in", async () => {
+    s.tables.tickets.push({ id: "t-old", org_id: ORG, ticket_id: "KE-DDRT-26-0042", requester_id: REQ, status: "PENDING_ASSIGNMENT", created_at: "2026-10-01", metadata: { checkin: { episodeId: EPISODE } } });
+    const res = await POST(req(checkin({ attachments: [{ kind: "staged", key: named(), name: "kept.pdf" }] })));
+    expect(res.status).toBe(200);
+    expect(s.objects.has(named())).toBe(true);
+  });
+});
+
+describe("EDGE-8 — the notice is written before any file moves, and the re-key keeps to its time", () => {
+  it("the bell rows exist when the first copy starts", async () => {
+    expect((await POST(req(portal()))).status).toBe(201);
+    const copy = s.r2Ops.find((o) => o.op === "copy");
+    expect(copy?.bellRows).toBe(2);
+  });
+
+  it("past the re-key's start-by time no copy starts: the file stays on the row where it was staged; the request is filed and announced", async () => {
+    const real = Date.now.bind(Date);
+    let skew = 0;
+    const spy = vi.spyOn(Date, "now").mockImplementation(() => real() + skew);
+    try {
+      s.hooks.push((table, op) => { if (table === "tickets" && op === "insert") skew = 36_000; });
+      const res = await POST(req(portal()));
+      expect(res.status).toBe(201);
+      expect((await res.json()).unmovedAttachments).toBe(1);
+      expect(s.r2Ops.filter((o) => o.op === "copy")).toEqual([]);
+      expect((tickets()[0].attachments as Row[])[1].url).toBe(staged("redline.pdf"));
+      expect(s.objects.has(staged("redline.pdf"))).toBe(true);
+      expect(bell()).toHaveLength(2);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 

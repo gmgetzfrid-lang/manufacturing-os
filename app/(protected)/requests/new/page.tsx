@@ -9,7 +9,7 @@ import { OrgDraftingSettings } from '@/types/schema';
 import { readDraft, discardDraft } from '@/lib/draftHandoff';
 // DF-P2: the request is filed by /api/tickets/create — it validates, numbers,
 // inserts and notifies server-side. This page stages the files and posts.
-import { missingRequiredCustomField, ticketStagingFolder, UNIT_UNKNOWN_LABEL, type TicketCreateAttachment, type TicketCreateSourceDoc } from '@/lib/ticketCreate';
+import { contractLimitRefusal, missingRequiredCustomField, ticketStagingFolder, unitOptionsFor, UNIT_UNKNOWN_LABEL, type TicketCreateAttachment, type TicketCreateSourceDoc } from '@/lib/ticketCreate';
 import { submitTicketCreate, discardStagedFiles } from '@/lib/ticketCreateClient';
 import { loadCodebook } from '@/lib/codebook';
 import IsoGuidance from '@/components/ui/IsoGuidance';
@@ -39,13 +39,14 @@ const DEFAULT_SETTINGS: OrgDraftingSettings = {
       { label: "Inspection", value: "INSPECTION" }
     ]
   },
+  // No built-in units: the list is the workspace's own — its saved units,
+  // else its Site Codebook's, else none (lib/ticketCreate.ts unitOptionsFor,
+  // the resolver the create route runs too). A built-in list here was offered
+  // to a workspace that never saved its settings, and the route refused it.
   units: {
     label: "Unit / Area",
     enabled: true,
-    options: [
-      { label: "Unit 100", value: "100" },
-      { label: "Unit 200", value: "200" }
-    ]
+    options: []
   },
   priorities: {
     label: "Priority / Urgency",
@@ -83,6 +84,10 @@ export default function NewTicketPage() {
   // Config State
   const [config, setConfig] = useState<OrgDraftingSettings>(DEFAULT_SETTINGS);
   const [loadingConfig, setLoadingConfig] = useState(true);
+  // The workspace's settings could not be read: the form shows the built-in
+  // lists, which the server may refuse — said on the page, with a retry.
+  const [configError, setConfigError] = useState(false);
+  const [configAttempt, setConfigAttempt] = useState(0);
 
   // Form State
   const [title, setTitle] = useState(prefillTitle);
@@ -151,27 +156,32 @@ export default function NewTicketPage() {
     const loadConfig = async () => {
       setLoadingConfig(true);
       try {
-        const { data } = await supabase
+        const { data, error } = await supabase
           .from('org_configurations')
           .select('data')
           .eq('org_id', activeOrgId)
           .eq('key', 'drafting')
-          .single();
-        const cfg: OrgDraftingSettings = (data?.data as OrgDraftingSettings) || DEFAULT_SETTINGS;
-        // No unit options configured on the form? Inherit the Site Codebook's
-        // unit list — taught once in Admin → Site Codebook, spoken here too.
-        if (!(cfg.units?.options?.length > 0)) {
+          .maybeSingle();
+        setConfigError(!!error);
+        // The SAVED settings — null when this workspace never saved any (no
+        // row), which is not an error.
+        const saved = error ? null : ((data?.data as OrgDraftingSettings | null | undefined) ?? null);
+        const cfg: OrgDraftingSettings = { ...DEFAULT_SETTINGS, ...(saved ?? {}) };
+        // DCW-7: the unit list is the one the create route checks against —
+        // unitOptionsFor(saved settings, Site Codebook units): the saved units,
+        // else the codebook's (taught once in Admin → Site Codebook, spoken
+        // here too), else none (free text).
+        let codebookUnits: Array<{ code: string; label: string | null }> = [];
+        if (!((saved?.units?.options?.length ?? 0) > 0)) {
           try {
-            const book = await loadCodebook(activeOrgId);
-            if (book.units.length > 0) {
-              cfg.units = {
-                label: cfg.units?.label ?? 'Unit',
-                enabled: cfg.units?.enabled ?? true,
-                options: book.units.map((u) => ({ label: `${u.code} — ${u.label}`, value: u.code })),
-              };
-            }
+            codebookUnits = (await loadCodebook(activeOrgId)).units.map((u) => ({ code: u.code, label: u.label }));
           } catch { /* codebook optional — free-text unit input remains */ }
         }
+        cfg.units = {
+          label: saved?.units?.label ?? DEFAULT_SETTINGS.units.label,
+          enabled: saved?.units?.enabled ?? true,
+          options: unitOptionsFor(saved, codebookUnits).map((o) => ({ label: o.label, value: o.value })),
+        };
         setConfig(cfg);
         if (cfg.requestTypes?.options?.length > 0) setRequestType(String(cfg.requestTypes.options[0].value));
         // FRIC-3 / DCW-7: unit is optional, and "unknown" is an explicit
@@ -185,12 +195,13 @@ export default function NewTicketPage() {
         }
       } catch (e) {
         console.error("Config Load Failed", e);
+        setConfigError(true);
       } finally {
         setLoadingConfig(false);
       }
     };
     loadConfig();
-  }, [activeOrgId]);
+  }, [activeOrgId, configAttempt]);
 
   // --- HANDLERS ---
 
@@ -258,6 +269,13 @@ export default function NewTicketPage() {
     if (missing) {
       await appAlert(missing.error);
       focusField(missing.field);
+      return;
+    }
+    // The contract's size limits too (the route applies the same rule).
+    const tooBig = contractLimitRefusal({ title, description, attachmentCount: files.length + (sourceFileUrl ? 1 : 0) });
+    if (tooBig) {
+      await appAlert(tooBig.error);
+      focusField(tooBig.field);
       return;
     }
 
@@ -330,6 +348,11 @@ export default function NewTicketPage() {
     }
     // The hand-off stash has done its job (LIFE-3): drop it now, not on read.
     if (draftKey) void discardDraft(draftKey).catch(() => { /* best-effort */ });
+    // A hand-off the route could not use (a source document since removed, a
+    // file outside this workspace) was dropped, not refused — say what.
+    if (res.warnings && res.warnings.length > 0) {
+      await appAlert({ title: `Filed ${res.ticketNumber}`, message: res.warnings.join(' ') });
+    }
 
     // EDGE-8: the route filed AND notified before it answered — nothing is
     // left for this tab to finish, so the redirect waits on nothing.
@@ -370,9 +393,25 @@ export default function NewTicketPage() {
 
         <form onSubmit={handleSubmit} className="space-y-6">
 
+          {configError && (
+            <div role="alert" className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-3 text-xs text-amber-900">
+              <span className="flex-1">
+                Couldn&apos;t load this workspace&apos;s request settings — the lists below are the built-in ones, and the
+                request may be refused for a type or unit this workspace doesn&apos;t use.
+              </span>
+              <button
+                type="button"
+                onClick={() => setConfigAttempt((n) => n + 1)}
+                className="px-3 py-1.5 rounded-lg border border-amber-300 bg-[var(--color-surface)] font-bold hover:bg-amber-100"
+              >
+                Try again
+              </button>
+            </div>
+          )}
+
           {/* Source-document chip when arriving via "Send to Drafting" */}
           {(srcDocId || sourceFileUrl) && (
-            <div className="bg-teal-50 border border-teal-200 rounded-xl p-3 flex items-start gap-3">
+            <div id="request-sourceDocuments" tabIndex={-1} className="bg-teal-50 border border-teal-200 rounded-xl p-3 flex items-start gap-3">
               <FileText className="w-5 h-5 text-teal-700 mt-0.5 shrink-0" />
               <div className="flex-1 min-w-0">
                 <div className="text-[10px] font-black text-teal-800 uppercase tracking-widest">Source document</div>
@@ -531,6 +570,7 @@ export default function NewTicketPage() {
             </h2>
             
             <div
+              id="request-attachments"
               role="button"
               tabIndex={0}
               onClick={() => fileInputRef.current?.click()}

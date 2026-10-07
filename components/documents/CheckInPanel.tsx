@@ -46,7 +46,7 @@ import { postHandoff } from "@/lib/activityThread";
 import type { CheckoutSession, DocumentRecord, DocumentVersion } from "@/types/schema";
 // DF-P2: the drafting request is filed by /api/tickets/create — numbered,
 // inserted and announced to the assignment queue (bell AND email) server-side.
-import { checkinMocLine, ticketStagingFolder, type CheckinMoc } from "@/lib/ticketCreate";
+import { checkinMocLine, clipToLimit, contractLimitRefusal, MAX_TITLE, ticketStagingFolder, type CheckinMoc } from "@/lib/ticketCreate";
 import { submitTicketCreate, discardStagedFiles, resumeCheckinTicket, type ResumeRead } from "@/lib/ticketCreateClient";
 
 /** LIFE-14 / LEAK-6: the open ticket this check-in episode already filed for
@@ -247,6 +247,27 @@ export default function CheckInPanel({
     // under this requester's pending prefix; the route moves them under the
     // request's own number once it exists.
     const filesToAttach = card.allowUploads ? files : [];
+
+    const undocumented = card.moc === "required" && mocStatus === "none";
+    const moc: CheckinMoc | null = card.moc === "required"
+      ? { status: mocStatus, number: mocStatus === "none" ? null : mocNumber.trim() || null }
+      : null;
+    const mocLine = checkinMocLine(moc);
+    const kindTitle = card.ticketKind === "asbuilt"
+      ? "As-Built Discrepancy" : card.ticketKind === "minor" ? "Minor Correction" : "Revision Request";
+    // Request type follows the org's configured vocabulary where a match
+    // exists (ASBUILT is in the default set); free text by design.
+    const requestType = card.ticketKind === "asbuilt" ? "ASBUILT" : "Revision";
+    // The title is written for the requester — clipped to the contract's
+    // limit, never refused; the description carries their note.
+    const title = clipToLimit(`${kindTitle}: ${doc.title || doc.documentNumber || "Document"}`, MAX_TITLE);
+    const description = [note.trim(), mocLine].filter(Boolean).join("\n\n");
+    // EDGE-13: the contract's limits (the note's length, the number of
+    // files) are checked BEFORE a file moves — the route applies the same
+    // rule, and would otherwise refuse after every photo had uploaded.
+    const tooBig = contractLimitRefusal({ title, description, attachmentCount: filesToAttach.length });
+    if (tooBig) throw new Error(tooBig.field === "description" ? `Your note is too long. ${tooBig.error}` : tooBig.error);
+
     const staged: Array<{ key: string; name: string }> = [];
     try {
       const batch = crypto.randomUUID();
@@ -259,21 +280,10 @@ export default function CheckInPanel({
       throw e;
     }
 
-    const undocumented = card.moc === "required" && mocStatus === "none";
-    const moc: CheckinMoc | null = card.moc === "required"
-      ? { status: mocStatus, number: mocStatus === "none" ? null : mocNumber.trim() || null }
-      : null;
-    const mocLine = checkinMocLine(moc);
-    const kindTitle = card.ticketKind === "asbuilt"
-      ? "As-Built Discrepancy" : card.ticketKind === "minor" ? "Minor Correction" : "Revision Request";
-    // Request type follows the org's configured vocabulary where a match
-    // exists (ASBUILT is in the default set); free text by design.
-    const requestType = card.ticketKind === "asbuilt" ? "ASBUILT" : "Revision";
-
     const res = await submitTicketCreate({
       orgId: doc.orgId,
-      title: `${kindTitle}: ${doc.title || doc.documentNumber || "Document"}`,
-      description: [note.trim(), mocLine].filter(Boolean).join("\n\n"),
+      title,
+      description,
       requestType,
       priority: undocumented ? 1 : 2,
       // LIFE-9: the unit is derived server-side from the document's own

@@ -27,7 +27,7 @@ export interface TicketCreateBody {
 }
 
 export type TicketCreateResult =
-  | { ok: true; id: string; ticketNumber: string; resumed: boolean; notified?: boolean; unmovedAttachments?: number }
+  | { ok: true; id: string; ticketNumber: string; resumed: boolean; notified?: boolean; unmovedAttachments?: number; warnings?: string[] }
   | { ok: false; status: number; error: string; field?: string };
 
 async function bearer(): Promise<string | null> {
@@ -72,23 +72,32 @@ export async function submitTicketCreate(body: TicketCreateBody): Promise<Ticket
     resumed: j.resumed === true,
     ...(typeof j.notified === "boolean" ? { notified: j.notified } : {}),
     ...(typeof j.unmovedAttachments === "number" ? { unmovedAttachments: j.unmovedAttachments } : {}),
+    ...(Array.isArray(j.warnings) && j.warnings.length > 0 ? { warnings: j.warnings.filter((w): w is string => typeof w === "string") } : {}),
   };
 }
 
+/** The most keys one DELETE /api/tickets/create takes. */
+export const DISCARD_BATCH = 50;
+
 /** Best-effort: discard files staged for a submit that never reached the
- *  route (an upload that failed part-way). The route refuses any key that is
- *  not the caller's own staged file, or that a ticket names. */
+ *  route (an upload that failed part-way), DISCARD_BATCH keys per call. The
+ *  route refuses any key that is not the caller's own staged file, or that a
+ *  ticket names. Never called after a submit whose answer did not arrive
+ *  (status 0): the route may still be filing those files — the orphan sweep,
+ *  which works by reference, reclaims them if it did not. */
 export async function discardStagedFiles(orgId: string, keys: string[]): Promise<void> {
   if (keys.length === 0) return;
   const token = await bearer();
   if (!token) return;
-  try {
-    await fetch("/api/tickets/create", {
-      method: "DELETE",
-      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-      body: JSON.stringify({ orgId, keys }),
-    });
-  } catch { /* the orphan sweep reclaims them */ }
+  for (let i = 0; i < keys.length; i += DISCARD_BATCH) {
+    try {
+      await fetch("/api/tickets/create", {
+        method: "DELETE",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({ orgId, keys: keys.slice(i, i + DISCARD_BATCH) }),
+      });
+    } catch { /* the orphan sweep reclaims them */ }
+  }
 }
 
 /** LEAK-6: what a check-in's mount-time read of "the ticket this episode

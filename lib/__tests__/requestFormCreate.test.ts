@@ -16,7 +16,13 @@
 //            several units pre-select nothing, one unit is pre-selected, and
 //            a refused submit names its field and puts the cursor there;
 //   DCW-7    with no unit list, the free-text box says it is a setup gap;
+//            the list is the ROUTE's (lib/ticketCreate.ts unitOptionsFor):
+//            a workspace that never saved its settings is offered its Site
+//            Codebook's units, never a built-in list the route refuses;
 //   GAP-8    every marked-up sheet of a hand-off is named, primary first.
+//   Review fix: the contract's size limits are checked before staging; a
+//   settings read that fails is said on the page; a hand-off the route had
+//   to drop is reported after filing.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -26,6 +32,9 @@ const s = vi.hoisted(() => ({
   push: vi.fn(),
   params: "" as string,
   config: null as unknown,
+  configError: null as null | { message: string },
+  configReads: 0,
+  codebook: [] as Array<{ code: string; label: string }>,
   submit: vi.fn(),
   discard: vi.fn(),
   upload: vi.fn(),
@@ -45,10 +54,14 @@ vi.mock("@/lib/supabase", () => {
   const chain: Record<string, unknown> = {};
   chain.select = () => chain;
   chain.eq = () => chain;
-  chain.single = async () => ({ data: s.config ? { data: s.config } : null, error: s.config ? null : { message: "none" } });
+  // No saved row is { data: null, error: null } — not an error.
+  chain.maybeSingle = async () => {
+    s.configReads++;
+    return s.configError ? { data: null, error: s.configError } : { data: s.config ? { data: s.config } : null, error: null };
+  };
   return { supabase: { from: () => chain } };
 });
-vi.mock("@/lib/codebook", () => ({ loadCodebook: async () => ({ units: [] }) }));
+vi.mock("@/lib/codebook", () => ({ loadCodebook: async () => ({ units: s.codebook }) }));
 vi.mock("@/lib/storage", () => ({ uploadTicketAttachment: (...a: unknown[]) => s.upload(...a) }));
 vi.mock("@/lib/draftHandoff", () => ({
   readDraft: async () => s.draft,
@@ -78,6 +91,9 @@ beforeEach(() => {
   for (const f of [s.push, s.submit, s.discard, s.upload, s.alert, s.discardDraft]) f.mockReset();
   s.params = "";
   s.draft = null;
+  s.configError = null;
+  s.configReads = 0;
+  s.codebook = [];
   s.config = CONFIG([{ label: "Unit 100", value: "100" }, { label: "Unit 200", value: "200" }]);
   s.alert.mockResolvedValue(undefined);
   s.discardDraft.mockResolvedValue(undefined);
@@ -217,7 +233,102 @@ describe("FRIC-3 / DCW-7 — the unit is optional and never silently guessed", (
   });
 });
 
+describe("DCW-7 — the form offers the route's unit list, never a built-in one", () => {
+  it("a workspace that never saved its request settings, with a Site Codebook: the codebook's units — no 'Unit 100' — and the picked code is sent", async () => {
+    s.config = null;
+    s.codebook = [{ code: "20", label: "Crude" }, { code: "30", label: "Vacuum" }];
+    await mount();
+    const sel = el<HTMLSelectElement>("#request-unit");
+    expect([...sel.options].map((o) => o.textContent)).toEqual(["Unit unknown — triage assigns", "20 — Crude", "30 — Vacuum"]);
+    expect(host!.textContent).not.toContain("Unit 100");
+    expect(host!.querySelector('[role="alert"]')).toBeNull();     // no row is not an error
+    await fillBasics();
+    await setValue(sel, "20");
+    await submit();
+    expect(s.submit.mock.calls[0][0].unit).toBe("20");
+  });
+
+  it("no saved settings and no codebook: the free-text box (a setup gap), never a built-in list", async () => {
+    s.config = null;
+    await mount();
+    expect(el<HTMLInputElement>("#request-unit").tagName).toBe("INPUT");
+    expect(host!.textContent).toContain("This workspace has no unit list yet");
+  });
+
+  it("the page and the route call the same resolver; the built-in settings carry no units", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const page = readFileSync(join(process.cwd(), "app/(protected)/requests/new/page.tsx"), "utf8");
+    const route = readFileSync(join(process.cwd(), "app/api/tickets/create/route.ts"), "utf8");
+    expect(page).toContain("options: unitOptionsFor(saved, codebookUnits).map((o) => ({ label: o.label, value: o.value })),");
+    expect(route).toContain("const unitOptions = unitOptionsFor(cfg, codebookUnits);");
+    expect(page).not.toMatch(/\{ label: "Unit 100", value: "100" \}/);
+  });
+
+  it("a settings read that FAILS is said on the page, with a retry that reads again", async () => {
+    s.configError = { message: "timeout" };
+    await mount();
+    const alert = host!.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain("Couldn't load this workspace's request settings");
+    s.configError = null;
+    const reads = s.configReads;
+    await act(async () => { [...alert!.querySelectorAll("button")].find((b) => b.textContent === "Try again")!.click(); });
+    await flush();
+    await flush();
+    expect(s.configReads).toBe(reads + 1);
+    expect(host!.querySelector('[role="alert"]')).toBeNull();
+    expect(el<HTMLSelectElement>("#request-unit").options).toHaveLength(3);
+  });
+});
+
+describe("a hand-off the route dropped is reported, and the request is still filed", () => {
+  it("the route's warnings are shown after filing; the redirect follows", async () => {
+    s.params = new URLSearchParams({ sourceDocId: "doc-1", sourceDocNum: "P-101", sourceFileUrl: "orgs/other/x.pdf", sourceFileName: "x.pdf" }).toString();
+    s.submit.mockResolvedValue({ ok: true, id: "t-1", ticketNumber: "KE-DDRT-26-0001", resumed: false, warnings: ['"x.pdf" was not attached: it is not a file in this workspace.'] });
+    await mount();
+    await fillBasics();
+    await submit();
+    expect(s.alert).toHaveBeenCalledWith({ title: "Filed KE-DDRT-26-0001", message: '"x.pdf" was not attached: it is not a file in this workspace.' });
+    expect(s.push).toHaveBeenCalledWith("/requests");
+  });
+
+  it("a staged-file refusal moves the cursor to the attachments box", async () => {
+    s.submit.mockResolvedValue({ ok: false, status: 400, error: '"a.pdf" did not finish uploading — attach it again.', field: "attachments" });
+    await mount();
+    await fillBasics();
+    await submit();
+    expect(document.activeElement?.id).toBe("request-attachments");
+  });
+});
+
 describe("EDGE-13 — the form's own checks run before any upload", () => {
+  it("more files than the contract takes: named, the cursor on the attachments box, no upload and nothing posted", async () => {
+    await mount();
+    await fillBasics();
+    const input = el<HTMLInputElement>('input[type="file"]');
+    const many = Array.from({ length: 201 }, (_, i) => new File(["x"], `p${i}.jpg`));
+    Object.defineProperty(input, "files", { value: many, configurable: true });
+    await act(async () => { input.dispatchEvent(new Event("change", { bubbles: true })); });
+    await submit();
+    expect(s.alert).toHaveBeenCalledWith(expect.stringMatching(/^At most 200 files can be attached to one request/));
+    expect(document.activeElement?.id).toBe("request-attachments");
+    expect(s.upload).not.toHaveBeenCalled();
+    expect(s.submit).not.toHaveBeenCalled();
+  }, 60_000); // renders 201 file rows: room under a loaded full-suite run
+
+  it("a description over the limit: named and focused before any upload", async () => {
+    await mount();
+    await fillBasics();
+    await setValue(el<HTMLTextAreaElement>("#request-description"), "x".repeat(20_001));
+    const input = el<HTMLInputElement>('input[type="file"]');
+    Object.defineProperty(input, "files", { value: [new File(["x"], "a.pdf")], configurable: true });
+    await act(async () => { input.dispatchEvent(new Event("change", { bubbles: true })); });
+    await submit();
+    expect(s.alert).toHaveBeenCalledWith(expect.stringMatching(/^The description is longer than 20,000 characters/));
+    expect(document.activeElement?.id).toBe("request-description");
+    expect(s.upload).not.toHaveBeenCalled();
+  });
+
   it("a required custom field left empty: the message, the cursor on the field, no upload and nothing posted", async () => {
     s.config = CONFIG([{ label: "Unit 100", value: "100" }], true);
     await mount();

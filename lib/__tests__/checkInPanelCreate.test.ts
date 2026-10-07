@@ -120,14 +120,14 @@ const type = async (el: HTMLTextAreaElement, value: string) => {
     el.dispatchEvent(new Event("input", { bubbles: true }));
   });
 };
-async function reportDiscrepancy(withFile = false) {
+async function reportDiscrepancy(withFile: boolean | number = false, note = "Valve moved 2 m east of the drawn position") {
   await act(async () => { button("Field is different — report it").click(); });
-  await type(host!.querySelector("textarea")!, "Valve moved 2 m east of the drawn position");
+  await type(host!.querySelector("textarea")!, note);
   await act(async () => { button("No MOC exists").click(); });
   if (withFile) {
     const input = host!.querySelector('input[type="file"]') as HTMLInputElement;
-    const file = new File(["x"], "redline.pdf", { type: "application/pdf" });
-    Object.defineProperty(input, "files", { value: [file], configurable: true });
+    const files = Array.from({ length: withFile === true ? 1 : withFile }, (_, i) => new File(["x"], i === 0 ? "redline.pdf" : `photo-${i}.jpg`, { type: "application/pdf" }));
+    Object.defineProperty(input, "files", { value: files, configurable: true });
     await act(async () => { input.dispatchEvent(new Event("change", { bubbles: true })); });
   }
   await act(async () => { button("Send request & release").click(); });
@@ -169,6 +169,30 @@ describe("REGRESSION — a reported discrepancy files its drafting request throu
     expect(s.finish).not.toHaveBeenCalled();
     expect(s.push).not.toHaveBeenCalled();
   });
+
+  it("a walkdown with dozens of photos still files (the contract takes 200): 60 staged, one request", async () => {
+    await mount();
+    await reportDiscrepancy(60);
+    expect(s.upload).toHaveBeenCalledTimes(60);
+    expect(s.submit).toHaveBeenCalledTimes(1);
+    expect(s.submit.mock.calls[0][0].attachments).toHaveLength(60);
+  }, 60_000); // renders 60 file rows: room under a loaded full-suite run
+
+  it("EDGE-13: a note over the contract's limit, or too many files, is named BEFORE any file is staged — nothing uploaded, nothing filed", async () => {
+    await mount();
+    await reportDiscrepancy(1, "x".repeat(20_001));
+    expect(s.showToast).toHaveBeenCalledWith(expect.objectContaining({ type: "error", message: expect.stringMatching(/^Your note is too long\. The description is longer than 20,000 characters/) }));
+    expect(s.upload).not.toHaveBeenCalled();
+    expect(s.submit).not.toHaveBeenCalled();
+  });
+
+  it("EDGE-13: more files than the contract takes is named before any upload", async () => {
+    await mount();
+    await reportDiscrepancy(201);
+    expect(s.showToast).toHaveBeenCalledWith(expect.objectContaining({ type: "error", message: expect.stringMatching(/^At most 200 files/) }));
+    expect(s.upload).not.toHaveBeenCalled();
+    expect(s.submit).not.toHaveBeenCalled();
+  }, 60_000); // renders 201 file rows: room under a loaded full-suite run
 
   it("a staging upload that fails is discarded and nothing is filed", async () => {
     s.upload.mockRejectedValue(new Error("network"));

@@ -18,8 +18,11 @@ vi.mock("@/lib/supabase", () => ({
   supabase: { auth: { getSession: async () => ({ data: { session: s.session } }) } },
 }));
 
-import { resumeCheckinTicket, submitTicketCreate, discardStagedFiles, type ResumeRead } from "@/lib/ticketCreateClient";
-import { ticketStagingFolder, ticketStagingPrefix, isStagedKeyOf, finalAttachmentKey, resolveUnit, unitOptionsFor, checkinMocLine, UNIT_UNKNOWN_LABEL } from "@/lib/ticketCreate";
+import { resumeCheckinTicket, submitTicketCreate, discardStagedFiles, DISCARD_BATCH, type ResumeRead } from "@/lib/ticketCreateClient";
+import {
+  ticketStagingFolder, ticketStagingPrefix, isStagedKeyOf, finalAttachmentKey, resolveUnit, resolveDerivedUnit, unitOptionsFor, checkinMocLine,
+  contractLimitRefusal, clipToLimit, parseTicketCreateBody, MAX_ATTACHMENTS, MAX_DESCRIPTION, MAX_TITLE, UNIT_UNKNOWN_LABEL,
+} from "@/lib/ticketCreate";
 
 const T1 = { id: "t1", number: "KE-DDRT-26-0001" };
 const deferred = <T,>() => {
@@ -104,6 +107,24 @@ describe("submitTicketCreate", () => {
     await discardStagedFiles("o", []);
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("discardStagedFiles sends at most DISCARD_BATCH (the DELETE route's cap) keys per call — a 120-file batch is discarded whole", async () => {
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const keys = Array.from({ length: 120 }, (_, i) => `k${i}`);
+    await discardStagedFiles("o", keys);
+    const sent = fetchMock.mock.calls.map((c) => JSON.parse(String((c as unknown as [string, RequestInit])[1].body)).keys as string[]);
+    expect(sent.map((k) => k.length)).toEqual([DISCARD_BATCH, DISCARD_BATCH, 20]);
+    expect(sent.flat()).toEqual(keys);
+    const route = readFileSync(join(process.cwd(), "app/api/tickets/create/route.ts"), "utf8");
+    expect(route).toContain(`keys.length > ${DISCARD_BATCH}`);
+  });
+
+  it("a filed request's warnings (a hand-off the route dropped) are carried back", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ok: true, id: "t1", ticketNumber: "N-1", resumed: false, warnings: ["w1", 7] }), { status: 201 })));
+    expect(await submitTicketCreate({ orgId: "o", title: "t", description: "d", requestType: "ISO", origin: { kind: "portal" } }))
+      .toEqual({ ok: true, id: "t1", ticketNumber: "N-1", resumed: false, warnings: ["w1"] });
+  });
 });
 
 describe("the contract's pure parts", () => {
@@ -132,6 +153,31 @@ describe("the contract's pure parts", () => {
     expect(resolveUnit("20-CRUDE", [])).toEqual({ kind: "free", unit: "20-CRUDE" });
     expect(unitOptionsFor(null, [{ code: "20", label: "Crude" }])).toEqual([{ value: "20", label: "20 — Crude" }]);
     expect(UNIT_UNKNOWN_LABEL).toBe("Unit unknown — triage assigns");
+  });
+
+  it("resolveDerivedUnit: the first candidate ON the list wins; else the first given, as resolveUnit classes it", () => {
+    const opts = unitOptionsFor({ units: { label: "U", enabled: true, options: [{ label: "20-CRUDE", value: "20-CRUDE" }, { label: "30-VAC", value: "30-VAC" }] } }, []);
+    expect(resolveDerivedUnit(["20-CRUDE", "20"], opts)).toEqual({ kind: "matched", unit: "20-CRUDE" });
+    expect(resolveDerivedUnit(["Tank farm", "30-vac"], opts)).toEqual({ kind: "matched", unit: "30-VAC" });
+    expect(resolveDerivedUnit(["Tank farm", "99"], opts)).toEqual({ kind: "unmatched", unit: "Tank farm" });
+    expect(resolveDerivedUnit([null, " ", "99"], opts)).toEqual({ kind: "unmatched", unit: "99" });
+    expect(resolveDerivedUnit([null, undefined], opts)).toEqual({ kind: "none", unit: null });
+    expect(resolveDerivedUnit(["Tank farm", "20"], [])).toEqual({ kind: "free", unit: "Tank farm" });
+  });
+
+  it("the contract's limits: one rule, one message, for the form, the check-in and the route; machine-written text is clipped, not refused", () => {
+    expect(MAX_ATTACHMENTS).toBe(200);
+    expect(contractLimitRefusal({ title: "t", description: "d", attachmentCount: MAX_ATTACHMENTS })).toBeNull();
+    const many = Array.from({ length: MAX_ATTACHMENTS + 1 }, (_, i) => ({ kind: "source_reference", key: `orgs/x/${i}.pdf`, name: `${i}.pdf` }));
+    const body = { orgId: "11111111-1111-4111-8111-111111111111", title: "t", description: "d", requestType: "ISO", origin: { kind: "portal" } };
+    expect(parseTicketCreateBody({ ...body, attachments: many })).toEqual(contractLimitRefusal({ attachmentCount: MAX_ATTACHMENTS + 1 }));
+    expect(parseTicketCreateBody({ ...body, title: "x".repeat(MAX_TITLE + 1) })).toEqual(contractLimitRefusal({ title: "x".repeat(MAX_TITLE + 1) }));
+    expect(contractLimitRefusal({ description: "x".repeat(MAX_DESCRIPTION + 1) })).toMatchObject({ field: "description" });
+    expect(contractLimitRefusal({ title: `  ${"x".repeat(MAX_TITLE)}  ` })).toBeNull();   // measured trimmed, as the route does
+    expect(clipToLimit("short", 10)).toBe("short");
+    const clipped = clipToLimit("x".repeat(MAX_TITLE + 40), MAX_TITLE);
+    expect(clipped).toHaveLength(MAX_TITLE);
+    expect(clipped.endsWith("…")).toBe(true);
   });
 
   it("the check-in MOC line is the one the panel always wrote", () => {

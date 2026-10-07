@@ -7,17 +7,17 @@ import { runWithServerClient } from "@/lib/serverClientScope";
 import { isSafeStorageKey } from "@/lib/storageKey";
 import { publicOrigin } from "@/lib/publicOrigin";
 import { checkedWrite } from "@/lib/checkedWrite";
-import { formatTicketNumber, getTicketNumberConfig } from "@/lib/ticketNumber";
+import { formatTicketNumber, ticketNumberConfigFromRow } from "@/lib/ticketNumber";
 import { defaultSlaTargetDate } from "@/lib/notifications";
 import { resolveTicketRecipients } from "@/lib/ticketRouting";
 import { emit } from "@/lib/notify/dispatch";
 import { escapeHtml } from "@/lib/ticketTransitions";
 import { buildSourceDocumentRef, unitOfDocumentMetadata, type SourceDocumentRefRow } from "@/lib/sourceDocRef";
 import {
-  parseTicketCreateBody, unitOptionsFor, resolveUnit, requestTypeAllowed, missingRequiredCustomField,
-  stampedRequesterRole, stampedRequesterName, openingHistory, creationNotice,
+  parseTicketCreateBody, unitOptionsFor, resolveUnit, resolveDerivedUnit, requestTypeAllowed, missingRequiredCustomField,
+  stampedRequesterRole, stampedRequesterName, openingHistory, creationNotice, insertFailureKind,
   isStagedKeyOf, finalAttachmentKey, attachmentSizeLabel,
-  type CreatorMember, type TicketCreateInput,
+  type CreatorMember, type TicketCreateInput, type TicketCreateAttachment,
 } from "@/lib/ticketCreate";
 import type { OrgDraftingSettings, TicketAttachment } from "@/types/schema";
 
@@ -29,15 +29,21 @@ import type { OrgDraftingSettings, TicketAttachment } from "@/types/schema";
 //   1. authenticates the caller (bearer token) and reads their ACTIVE
 //      membership of the workspace (403 otherwise);
 //   2. validates the contract against the workspace's own rules — the
-//      configured request types, the required custom fields, the unit list
-//      (FRIC-8 / FRIC-3 / DCW-7), the source documents (in this workspace),
-//      the staged attachments (under the caller's own pending prefix, in
-//      storage) — BEFORE anything is allocated or written;
+//      configured request types, the required custom fields (the request
+//      form's origin), the unit list (FRIC-8 / FRIC-3 / DCW-7: the one list
+//      the form offers, lib/ticketCreate.ts unitOptionsFor), the staged
+//      attachments (under the caller's own pending prefix, in storage), and
+//      the origin's own facts (a check-in names a checkout of the document by
+//      this requester; a collision names a project in this workspace) —
+//      BEFORE anything is allocated or written. A hand-off the route cannot
+//      use (a source document since removed, a library reference outside this
+//      workspace) is dropped with a warning, never a refusal;
 //   3. for a check-in, resumes the ticket the same check-in episode already
 //      filed for this requester instead of filing a second (LEAK-6);
 //   4. allocates the request number only now (EDGE-13: a refused submit
-//      never spends one), and releases it if the insert then fails and no
-//      later number was handed out;
+//      never spends one), and gives it back only when the insert definitely
+//      did not commit (lib/ticketCreate.ts insertFailureKind) and no later
+//      number was handed out;
 //   5. inserts the row under the service role, REPLICATING 20261038's
 //      ticket_insert_integrity (which a service-role insert bypasses): the
 //      requester is the caller, the requester_role one they hold (else their
@@ -45,15 +51,18 @@ import type { OrgDraftingSettings, TicketAttachment } from "@/types/schema";
 //      nothing assigned, approved, closed or archived, the request type a
 //      configured one — and the requester's name from the membership too
 //      (AUTHZ-3);
-//   6. re-keys each staged attachment under the ticket's own prefix;
-//   7. fans the new-request notice out from HERE, awaited before the
-//      response (EDGE-8): the bell rows through the typed sink and the
-//      email rows preference-aware (lib/notify/dispatch emit(), run as the
-//      service role, so the recipient's opt-out is read where it is visible —
-//      EDGE-1, EDGE-12), both carrying metadata.action/status so the
-//      workflow route's supersede and the badge's reconcile retire them once
-//      the ticket moves on (ROUTE-11), from one door for all three creators
-//      (ROUTE-4).
+//   6. fans the new-request notice out from HERE, awaited, right after the
+//      insert (EDGE-8) — before any file is moved, so a slow copy can never
+//      cost the queue its notice: the bell rows through the typed sink and
+//      the email rows preference-aware (lib/notify/dispatch emit(), run as
+//      the service role, so the recipient's opt-out is read where it is
+//      visible — EDGE-1, EDGE-12), both carrying metadata.action/status so
+//      the workflow route's supersede and the badge's reconcile retire them
+//      once the ticket moves on (ROUTE-11), from one door for all three
+//      creators (ROUTE-4);
+//   7. re-keys each staged attachment under the ticket's own prefix, a few at
+//      a time and within the time this function has left; a file not moved
+//      stays on the row at its staged key.
 //
 // DELETE /api/tickets/create — discards files a requester staged for a
 // submit that never reached POST (an upload that failed part-way). Only keys
@@ -62,24 +71,65 @@ import type { OrgDraftingSettings, TicketAttachment } from "@/types/schema";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-/** A refusal before anything was allocated: staged files are deleted so a
- *  refused submit leaves nothing behind (EDGE-13). */
-type Fail = { status: number; field?: string; error: string; code?: string };
+/** The re-key starts no copy after this long into the request, and abandons
+ *  a copy still running at REKEY_ABORT_AT_MS — well inside maxDuration, so
+ *  the function answers instead of being killed after the ticket exists. */
+const REKEY_START_BY_MS = 35_000;
+const REKEY_ABORT_AT_MS = 50_000;
+
+/** A refusal or failure. `keepStaged`: the outcome is not known to be
+ *  "nothing filed", so the staged files stay for the reference-based orphan
+ *  sweep instead of being deleted under a row that may name them. */
+type Fail = { status: number; field?: string; error: string; code?: string; keepStaged?: boolean };
 
 const json = (status: number, body: Record<string, unknown>) => NextResponse.json(body, { status });
+
+const UNCONFIRMED = "Couldn't confirm the request was saved — check the queue before you submit it again.";
 
 function copySource(key: string): string {
   return `${R2_BUCKET}/${key.split("/").map(encodeURIComponent).join("/")}`;
 }
 
+/** Run `fn` over `items`, at most `limit` at a time. */
+async function eachLimited<T>(items: readonly T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+}
+
 async function deleteObjects(keys: string[]): Promise<void> {
-  for (const key of keys) {
+  await eachLimited(keys, 8, async (key) => {
     try {
       await r2.send(new DeleteObjectCommand({ Bucket: R2_BUCKET, Key: key }));
     } catch (e) {
       console.warn(`[tickets/create] could not delete ${key} (the orphan sweep reclaims it):`, (e as Error)?.message ?? e);
     }
-  }
+  });
+}
+
+/** EDGE-13: delete staged keys that no ticket names — the one guard every
+ *  discard of staged files goes through (a refusal, a parse failure, a
+ *  resumed check-in, DELETE). A staged key a ticket's attachments name (a
+ *  re-key that did not complete) is that record's file, never a leftover; a
+ *  key whose check cannot be made is left for the orphan sweep, which works
+ *  by reference (lib/storageOrphans). */
+async function discardUnreferencedStaged(orgId: string, keys: string[]): Promise<{ deleted: number; unchecked: boolean }> {
+  const discard: string[] = [];
+  let unchecked = false;
+  await eachLimited(keys, 8, async (key) => {
+    const { data, error } = await supabaseAdmin
+      .from("tickets").select("id").eq("org_id", orgId)
+      .contains("attachments", JSON.stringify([{ url: key }])).limit(1);
+    if (error) { unchecked = true; return; }
+    if (!data || (data as unknown[]).length === 0) discard.push(key);
+  });
+  await deleteObjects(discard);
+  return { deleted: discard.length, unchecked };
 }
 
 async function authenticate(req: NextRequest): Promise<{ id: string; email: string | null; token: string } | null> {
@@ -156,7 +206,18 @@ async function capturedVersion(doc: SourceRow, named: { versionId: string | null
   return null;
 }
 
+/** A library hand-off the route can attach as a Source: a key in this
+ *  workspace, or an http(s) URL (a version whose file_url is a URL — the
+ *  viewers resolve both), kept as it came, as the form always did. */
+function usableSourceReference(key: string, orgId: string): boolean {
+  if (/^https?:\/\//i.test(key)) {
+    try { return /^https?:$/.test(new URL(key).protocol); } catch { return false; }
+  }
+  return isSafeStorageKey(key) && key.startsWith(`orgs/${orgId}/`);
+}
+
 export async function POST(req: NextRequest) {
+  const startedAt = Date.now();
   const caller = await authenticate(req);
   if (!caller) return json(401, { error: "Unauthorized" });
 
@@ -164,30 +225,35 @@ export async function POST(req: NextRequest) {
   try { raw = await req.json(); } catch { return json(400, { error: "Invalid JSON body", field: "body" }); }
   const parsed = parseTicketCreateBody(raw);
   if (!parsed.ok) {
-    await deleteObjects(stagedKeysIn(raw, caller.id));
+    const own = stagedKeysIn(raw, caller.id);
+    if (own) await discardUnreferencedStaged(own.orgId, own.keys);
     return json(400, { error: parsed.error, field: parsed.field });
   }
   const input = parsed.input;
   const stagedKeys = input.attachments.filter((a) => a.kind === "staged").map((a) => a.key);
 
-  const outcome = await create(req, caller, input);
+  const outcome = await create(req, caller, input, startedAt);
   if ("status" in outcome) {
-    // Nothing was allocated or written: the staged files go too (EDGE-13).
-    await deleteObjects(stagedKeys.filter((k) => isStagedKeyOf(k, input.orgId, caller.id)));
+    // Nothing was written (EDGE-13): the caller's staged files go too —
+    // unless the outcome is not known (keepStaged), or a ticket names them.
+    if (!outcome.keepStaged) {
+      await discardUnreferencedStaged(input.orgId, stagedKeys.filter((k) => isStagedKeyOf(k, input.orgId, caller.id)));
+    }
     return json(outcome.status, { error: outcome.error, ...(outcome.field ? { field: outcome.field } : {}), ...(outcome.code ? { code: outcome.code } : {}) });
   }
   return json(outcome.resumed ? 200 : 201, outcome);
 }
 
 /** Staged keys a refused body named, for cleanup — only the caller's own. */
-function stagedKeysIn(raw: unknown, uid: string): string[] {
-  if (!raw || typeof raw !== "object") return [];
+function stagedKeysIn(raw: unknown, uid: string): { orgId: string; keys: string[] } | null {
+  if (!raw || typeof raw !== "object") return null;
   const r = raw as { orgId?: unknown; attachments?: unknown };
-  if (typeof r.orgId !== "string" || !Array.isArray(r.attachments)) return [];
+  if (typeof r.orgId !== "string" || !Array.isArray(r.attachments)) return null;
   const orgId = r.orgId;
-  return r.attachments
+  const keys = r.attachments
     .map((a) => (a && typeof a === "object" ? (a as { key?: unknown }).key : null))
     .filter((k): k is string => typeof k === "string" && isStagedKeyOf(k, orgId, uid));
+  return keys.length > 0 ? { orgId, keys } : null;
 }
 
 type Created = {
@@ -196,17 +262,22 @@ type Created = {
   ticketNumber: string;
   resumed: boolean;
   notified?: boolean;
-  /** Staged attachments still under the pending prefix (their re-key failed;
-   *  the row names them where they are, so nothing is lost). */
+  /** Staged attachments still under the pending prefix (their re-key failed
+   *  or ran out of time; the row names them where they are, so nothing is
+   *  lost). */
   unmovedAttachments?: number;
+  /** What the request was filed WITHOUT (an unusable hand-off), in words. */
+  warnings?: string[];
 };
 
 async function create(
   req: NextRequest,
   caller: { id: string; email: string | null; token: string },
   input: TicketCreateInput,
+  startedAt: number,
 ): Promise<Created | Fail> {
   const orgId = input.orgId;
+  const warnings: string[] = [];
 
   // 1. Membership — 20261038: only an active member files a request.
   const member = await activeMember(orgId, caller.id);
@@ -225,13 +296,15 @@ async function create(
   // The custom categories are the request FORM's sections: the form is the
   // one door that shows them, so it is the one that must fill the required
   // ones. A check-in or an intake collision never could (refusing them here
-  // would stop a hazard report on an admin's form setting).
+  // would stop a hazard report on an admin's form setting) — those origins
+  // are checked against their own facts below instead.
   if (input.origin.kind === "portal") {
     const missing = missingRequiredCustomField(cfg, input.customCategories);
     if (missing) return { status: 400, field: missing.field, error: missing.error };
   }
 
-  // The unit list the form offers: configured units, else the codebook's.
+  // The unit list — the SAME resolver the form calls (unitOptionsFor): the
+  // saved units, else the codebook's, else none.
   let codebookUnits: Array<{ code: string; label: string | null }> = [];
   if (!((cfg?.units?.options?.length ?? 0) > 0)) {
     const { data: cb, error: cbErr } = await supabaseAdmin
@@ -247,39 +320,58 @@ async function create(
   }
 
   // Attachments: a staged file is the caller's own, under their pending
-  // prefix, and is in storage; a Source reference names a key in this
-  // workspace. Checked before a number is spent.
-  const stagedSizes = new Map<string, number | null>();
+  // prefix, and is in storage (checked a few at a time); a Source reference
+  // names a file in this workspace, or a URL — one that does neither is
+  // dropped with a warning (a stale hand-off never blocks the request).
+  // Checked before a number is spent.
+  const kept: TicketCreateAttachment[] = [];
+  const staged: TicketCreateAttachment[] = [];
   for (const a of input.attachments) {
-    if (!isSafeStorageKey(a.key)) return { status: 400, field: "attachments", error: `"${a.name}" is not a valid file reference.` };
     if (a.kind === "staged") {
-      if (!isStagedKeyOf(a.key, orgId, caller.id)) {
+      if (!isSafeStorageKey(a.key) || !isStagedKeyOf(a.key, orgId, caller.id)) {
         return { status: 400, field: "attachments", error: `"${a.name}" was not staged by you for this workspace.` };
       }
-      try {
-        const head = await r2.send(new HeadObjectCommand({ Bucket: R2_BUCKET, Key: a.key }));
-        stagedSizes.set(a.key, typeof head.ContentLength === "number" ? head.ContentLength : null);
-      } catch (e) {
-        const err = e as { name?: string; $metadata?: { httpStatusCode?: number } };
-        if (err?.name === "NotFound" || err?.$metadata?.httpStatusCode === 404) {
-          return { status: 400, field: "attachments", error: `"${a.name}" did not finish uploading — attach it again.` };
-        }
-        return { status: 503, error: "Couldn't check the attached files in storage — try again in a moment." };
-      }
-    } else if (!a.key.startsWith(`orgs/${orgId}/`)) {
-      return { status: 400, field: "attachments", error: `"${a.name}" is not a file in this workspace.` };
+      staged.push(a);
+      kept.push(a);
+    } else if (usableSourceReference(a.key, orgId)) {
+      kept.push(a);
+    } else {
+      warnings.push(`"${a.name}" was not attached: it is not a file in this workspace.`);
     }
   }
+  const stagedSizes = new Map<string, number | null>();
+  const missingFiles: string[] = [];
+  let storageFault = false;
+  await eachLimited(staged, 8, async (a) => {
+    try {
+      const head = await r2.send(new HeadObjectCommand({ Bucket: R2_BUCKET, Key: a.key }));
+      stagedSizes.set(a.key, typeof head.ContentLength === "number" ? head.ContentLength : null);
+    } catch (e) {
+      const err = e as { name?: string; $metadata?: { httpStatusCode?: number } };
+      if (err?.name === "NotFound" || err?.$metadata?.httpStatusCode === 404) missingFiles.push(a.name);
+      else storageFault = true;
+    }
+  });
+  if (missingFiles.length > 0) {
+    return { status: 400, field: "attachments", error: `"${missingFiles[0]}" did not finish uploading — attach it again.` };
+  }
+  if (storageFault) return { status: 503, error: "Couldn't check the attached files in storage — try again in a moment." };
 
-  // Source documents: in THIS workspace (a foreign id is refused, never
-  // stored — SM-14's input), each with the version it was raised against.
+  // Source documents: in THIS workspace (a foreign id is never stored —
+  // SM-14's input), each with the version it was raised against. One that is
+  // not here (removed since the hand-off, or never ours) is dropped with a
+  // warning; the request is still filed.
   const docs = await readSourceDocuments(orgId, input.sourceDocuments.map((d) => d.id));
   if (docs === "error") return { status: 503, error: "Couldn't read the source document — try again in a moment." };
   const byId = new Map(docs.map((d) => [d.id, d]));
   const refs: SourceDocumentRefRow[] = [];
   for (const s of input.sourceDocuments) {
     const doc = byId.get(s.id);
-    if (!doc) return { status: 400, field: "sourceDocuments", error: "A linked source document is not in this workspace (it may have been removed)." };
+    if (!doc) {
+      const label = s.documentNumber || s.title;
+      warnings.push(`${label ? `The linked document ${label} is` : "A linked document is"} not in this workspace (it may have been removed) — the request was filed without that link.`);
+      continue;
+    }
     const versionId = await capturedVersion(doc, { versionId: s.versionId, rev: s.rev });
     if (versionId === "error") return { status: 503, error: "Couldn't read the source document's revisions — try again in a moment." };
     const ref = buildSourceDocumentRef({
@@ -293,13 +385,19 @@ async function create(
   }
   const primary = refs[0] ?? null;
 
+  // The origin's own facts. Required custom fields and the unit-list refusal
+  // bind the request form only; a caller who names another origin is held
+  // to that origin's facts, so choosing one is not a way around the form.
+  const originRefusal = await checkOrigin(input, orgId, caller.id, primary);
+  if (originRefusal) return originRefusal;
+
   // FRIC-3 done-when 2: no unit given → the source document's own, when it
-  // names one (its codebook unit, else its metadata), resolved against the
-  // list like any other.
+  // names one, resolved against the list like any other: its metadata unit
+  // (what the check-in and the collision always wrote), then its codebook
+  // unit_code — the first ON the list wins, else the first given, marked.
   if (unit.kind === "none" && primary) {
     const doc = byId.get(primary.id)!;
-    const derived = (typeof doc.unit_code === "string" && doc.unit_code.trim()) || unitOfDocumentMetadata(doc.metadata);
-    if (derived) unit = resolveUnit(derived, unitOptions);
+    unit = resolveDerivedUnit([unitOfDocumentMetadata(doc.metadata), typeof doc.unit_code === "string" ? doc.unit_code : null], unitOptions);
   }
 
   // 3. LEAK-6: a check-in that already filed its ticket resumes it — keyed on
@@ -314,41 +412,37 @@ async function create(
       .order("created_at", { ascending: false }).limit(1).maybeSingle();
     if (priorErr) return { status: 503, error: "Couldn't check whether this check-in already filed its request — try again in a moment." };
     if (prior) {
-      await deleteObjects(input.attachments.filter((a) => a.kind === "staged").map((a) => a.key));
+      await discardUnreferencedStaged(orgId, staged.map((a) => a.key));
       const p = prior as { id: string; ticket_id: string };
       return { ok: true, id: p.id, ticketNumber: p.ticket_id, resumed: true };
     }
   }
 
   // 4. The request number — allocated only now, as the caller (the counter
-  //    function admits active members only, and reads auth.uid()).
+  //    function admits active members only, and reads auth.uid()). Its
+  //    format is read first, and CHECKED: a failed read never files a number
+  //    without the workspace's prefix.
   const caller_client = callerScopedClient(req);
   if ("error" in caller_client) return { status: caller_client.status, error: caller_client.error };
   const year = new Date().getFullYear();
-  let numberCfg;
-  try {
-    numberCfg = await runWithServerClient(supabaseAdmin, () => getTicketNumberConfig(orgId));
-  } catch {
-    return { status: 503, error: "Couldn't read this workspace's request numbering — try again in a moment." };
-  }
-  const { data: seqRaw, error: seqErr } = await caller_client.rpc("next_ticket_number", { p_org: orgId, p_year: year });
-  if (seqErr || seqRaw == null) {
-    const msg = seqErr?.message ?? "";
+  const { data: orgRow, error: orgErr } = await supabaseAdmin
+    .from("orgs").select("ticket_prefix, ticket_record_code, ticket_number_pad").eq("id", orgId).maybeSingle();
+  if (orgErr) {
+    const code = String((orgErr as { code?: string }).code ?? "");
     return {
       status: 503,
-      error: /function|schema|does not exist/i.test(msg)
+      error: code === "42703"
         ? "Ticket numbering isn't set up yet — apply migration 20260724_ticket_numbering.sql."
-        : `Couldn't generate a request number: ${msg || "unknown error"}`,
+        : "Couldn't read this workspace's request numbering — try again in a moment.",
     };
   }
-  const seq = Number(seqRaw);
-  const ticketNumber = formatTicketNumber(numberCfg, year, seq);
+  const numberCfg = ticketNumberConfigFromRow(orgRow as Record<string, unknown> | null);
 
   // 5. The row — 20261038 ticket_insert_integrity, replicated.
   const now = new Date().toISOString();
   const email = member.email || caller.email;
   const requesterRole = stampedRequesterRole(input.requesterRole, member);
-  const attachments: TicketAttachment[] = input.attachments.map((a) => ({
+  const attachments: TicketAttachment[] = kept.map((a) => ({
     id: crypto.randomUUID(),
     name: a.name,
     url: a.key,
@@ -383,7 +477,7 @@ async function create(
 
   const row: Record<string, unknown> = {
     org_id: orgId,
-    ticket_id: ticketNumber,
+    ticket_id: "",
     title: input.title,
     description: input.description,
     unit: unit.unit,
@@ -395,7 +489,9 @@ async function create(
     requester_email: email,
     requester_role: requesterRole,
     attachments,
-    history: openingHistory({ origin: input.origin, email, role: member.role, now, primary }),
+    // The role the requester FILED under (the stamped one, as requester_role
+    // says) — never their headline when they hold the one they chose.
+    history: openingHistory({ origin: input.origin, email, role: requesterRole, now, primary }),
     comments: [],
     unread_by: [],
     // The requester follows their own request.
@@ -406,24 +502,52 @@ async function create(
   };
   if (Object.keys(metadata).length > 0) row.metadata = metadata;
 
-  const { data: inserted, error: insErr } = await supabaseAdmin.from("tickets").insert(row).select("id").single();
-  if (insErr || !inserted) {
-    // EDGE-13: give the number back when nothing was handed out after it.
-    const released = await checkedWrite(supabaseAdmin.from("ticket_number_counters")
-      .update({ next_seq: seq - 1 })
-      .eq("org_id", orgId).eq("year", year).eq("next_seq", seq)
-      .select("org_id"));
-    console.error(`[tickets/create] insert of ${ticketNumber} failed (${insErr?.message ?? "no row"}); number ${released.ok ? "released" : "not released (a later number was already handed out)"}`);
-    return { status: 500, error: "The request could not be saved — nothing was filed. Try again." };
+  let ticketNumber = "";
+  let ticketId = "";
+  for (let attempt = 0; !ticketId; attempt++) {
+    const { data: seqRaw, error: seqErr } = await caller_client.rpc("next_ticket_number", { p_org: orgId, p_year: year });
+    if (seqErr || seqRaw == null) {
+      const msg = seqErr?.message ?? "";
+      return {
+        status: 503,
+        error: /function|schema|does not exist/i.test(msg)
+          ? "Ticket numbering isn't set up yet — apply migration 20260724_ticket_numbering.sql."
+          : `Couldn't generate a request number: ${msg || "unknown error"}`,
+      };
+    }
+    const seq = Number(seqRaw);
+    ticketNumber = formatTicketNumber(numberCfg, year, seq);
+    row.ticket_id = ticketNumber;
+
+    const { data: inserted, error: insErr } = await supabaseAdmin.from("tickets").insert(row).select("id").single();
+    if (!insErr && inserted) {
+      ticketId = String((inserted as { id: string }).id);
+      break;
+    }
+    const settled = await settleFailedInsert({ orgId, year, seq, ticketNumber, callerId: caller.id, now, err: insErr });
+    if (settled.kind === "filed") {
+      ticketId = settled.id;
+      break;
+    }
+    // The number is on another row: never given back. File under a fresh
+    // number — once; a second clash is a failure, nothing filed.
+    if (settled.kind === "taken" && attempt === 0) continue;
+    return settled.kind === "taken"
+      ? { status: 500, error: "The request could not be saved — nothing was filed. Try again." }
+      : settled.fail;
   }
-  const ticketId = String((inserted as { id: string }).id);
 
-  // 6. Re-key staged attachments under the ticket's own prefix.
-  const stagedIds = new Set(attachments.filter((_, i) => input.attachments[i].kind === "staged").map((a) => a.id));
-  const unmoved = await rekeyAttachments(orgId, ticketId, ticketNumber, attachments, stagedIds, now);
-
-  // 7. The new-request notice, from here (EDGE-8), awaited.
+  // 6. The new-request notice, from here (EDGE-8), awaited — before any file
+  //    is moved, so a slow copy can never cost the queue its notice.
   const notified = await announce({ req, orgId, ticketId, title: input.title, input, unit: unit.unit, callerId: caller.id, email });
+
+  // 7. Re-key staged attachments under the ticket's own prefix, within the
+  //    time this function has left.
+  const stagedIds = new Set(attachments.filter((_, i) => kept[i].kind === "staged").map((a) => a.id));
+  const unmoved = await rekeyAttachments(orgId, ticketId, ticketNumber, attachments, stagedIds, now, {
+    startBy: startedAt + REKEY_START_BY_MS,
+    abortAt: startedAt + REKEY_ABORT_AT_MS,
+  });
 
   // Kick the email drain after the response (the daily cron is the fallback).
   const drainUrl = new URL("/api/notifications/send-queued", req.url);
@@ -434,29 +558,132 @@ async function create(
     } catch { /* the cron drains it */ }
   });
 
-  return { ok: true, id: ticketId, ticketNumber, resumed: false, notified, ...(unmoved > 0 ? { unmovedAttachments: unmoved } : {}) };
+  return {
+    ok: true, id: ticketId, ticketNumber, resumed: false, notified,
+    ...(unmoved > 0 ? { unmovedAttachments: unmoved } : {}),
+    ...(warnings.length > 0 ? { warnings } : {}),
+  };
 }
 
-/** Copy each staged file under orgs/<org>/tickets/<number>/, point the row
- *  at the copies (compare-and-set on the row's last_modified, which it bumps
- *  so a concurrent writer that read the staged keys loses its own
- *  compare-and-set), then delete the staged originals. A file that cannot be
- *  moved keeps its staged key on the row — it is never left unreferenced.
- *  Returns how many stayed where they were staged. */
+/** The origin's own facts (FRIC-8 / EDGE-13): a "checkin" names a checkout of
+ *  its source document by THIS requester (the episode, when it names one, is
+ *  that document's, in this workspace), and an "intake_collision" names a
+ *  project in this workspace. Otherwise the request is refused — the origin
+ *  carries the check-in's PSM flags and skips the form's required fields, so
+ *  it is never the caller's to choose. */
+async function checkOrigin(
+  input: TicketCreateInput, orgId: string, callerId: string, primary: SourceDocumentRefRow | null,
+): Promise<Fail | null> {
+  const o = input.origin;
+  if (o.kind === "checkin") {
+    if (!primary) {
+      return { status: 400, field: "origin", error: "A check-in files its request against the document checked in — that document is not in this workspace." };
+    }
+    if (o.episodeId) {
+      const { data: ep, error: epErr } = await supabaseAdmin
+        .from("checkout_episodes").select("id")
+        .eq("id", o.episodeId).eq("org_id", orgId).eq("document_id", primary.id).maybeSingle();
+      if (epErr) return { status: 503, error: "Couldn't confirm the checkout this check-in closes — try again in a moment." };
+      if (!ep) return { status: 400, field: "origin", error: "This check-in does not match a checkout of that document." };
+    }
+    // The requester's own session on the document: in this episode (any
+    // status — a retry after a failed close), or still active (a legacy
+    // checkout the episode model never tagged).
+    const { data: sessions, error: sErr } = await supabaseAdmin
+      .from("checkout_sessions").select("episode_id, status")
+      .eq("document_id", primary.id).eq("user_id", callerId)
+      .order("started_at", { ascending: false }).limit(20);
+    if (sErr) return { status: 503, error: "Couldn't confirm the checkout this check-in closes — try again in a moment." };
+    const held = ((sessions ?? []) as Array<{ episode_id?: string | null; status?: string | null }>)
+      .some((s) => (o.episodeId != null && s.episode_id === o.episodeId) || s.status === "active");
+    if (!held) return { status: 400, field: "origin", error: "Only the person who checked this document out can file its check-in request." };
+    return null;
+  }
+  if (o.kind === "intake_collision") {
+    const { data: project, error: pErr } = await supabaseAdmin
+      .from("projects").select("id").eq("id", o.projectId).eq("org_id", orgId).maybeSingle();
+    if (pErr) return { status: 503, error: "Couldn't confirm the project this collision belongs to — try again in a moment." };
+    if (!project) return { status: 400, field: "origin", error: "The project this collision was flagged in is not in this workspace." };
+  }
+  return null;
+}
+
+type Settled = { kind: "filed"; id: string } | { kind: "taken" } | { kind: "failed"; fail: Fail };
+
+/** EDGE-13: a failed insert. The number goes back to the counter ONLY when
+ *  the insert definitely did not commit (insertFailureKind "definite"), no
+ *  row carries it, and no later number was issued. A write that MAY have
+ *  committed (a dropped connection, a lost reply) is looked for: found, the
+ *  request is filed and the route carries on; not found, the number is kept
+ *  (the write may still land) and the staged files stay for the
+ *  reference-based sweep. A number already on a row is "taken". */
+async function settleFailedInsert(p: {
+  orgId: string; year: number; seq: number; ticketNumber: string; callerId: string; now: string;
+  err: { code?: string; message?: string } | null;
+}): Promise<Settled> {
+  const kind = insertFailureKind(p.err);
+  const why = p.err?.message ?? "no row returned";
+  if (kind === "duplicate") {
+    console.error(`[tickets/create] ${p.ticketNumber} is already on a ticket (${why}); the number is kept and a fresh one is tried`);
+    return { kind: "taken" };
+  }
+  const { data: rows, error: probeErr } = await supabaseAdmin
+    .from("tickets").select("id, requester_id, created_at")
+    .eq("org_id", p.orgId).eq("ticket_id", p.ticketNumber).limit(1);
+  if (probeErr) {
+    console.error(`[tickets/create] insert of ${p.ticketNumber} failed (${why}) and the row could not be looked for; the number is kept`);
+    return { kind: "failed", fail: { status: 500, error: UNCONFIRMED, code: "insert_unconfirmed", keepStaged: true } };
+  }
+  const found = ((rows ?? []) as Array<{ id: string; requester_id?: string | null; created_at?: string | null }>)[0];
+  if (found) {
+    if (found.requester_id === p.callerId && Date.parse(String(found.created_at ?? "")) === Date.parse(p.now)) {
+      console.warn(`[tickets/create] insert of ${p.ticketNumber} reported a failure (${why}) but the row is there; carrying on`);
+      return { kind: "filed", id: String(found.id) };
+    }
+    return { kind: "taken" };
+  }
+  if (kind === "definite") {
+    const released = await checkedWrite(supabaseAdmin.from("ticket_number_counters")
+      .update({ next_seq: p.seq - 1 })
+      .eq("org_id", p.orgId).eq("year", p.year).eq("next_seq", p.seq)
+      .select("org_id"));
+    console.error(`[tickets/create] insert of ${p.ticketNumber} failed (${why}); number ${released.ok ? "released" : "not released (a later number was already handed out)"}`);
+    return { kind: "failed", fail: { status: 500, error: "The request could not be saved — nothing was filed. Try again." } };
+  }
+  console.error(`[tickets/create] insert of ${p.ticketNumber} failed ambiguously (${why}); no row yet — the number is kept`);
+  return { kind: "failed", fail: { status: 500, error: UNCONFIRMED, code: "insert_unconfirmed", keepStaged: true } };
+}
+
+/** Copy each staged file under orgs/<org>/tickets/<number>/ (a few at a
+ *  time; none started after `deadlines.startBy`, a running one abandoned at
+ *  `deadlines.abortAt`), point the row at the copies (compare-and-set on the
+ *  row's last_modified, which it bumps so a concurrent writer that read the
+ *  staged keys loses its own compare-and-set), then delete the staged
+ *  originals. A file that is not moved keeps its staged key on the row — it
+ *  is never left unreferenced. Returns how many stayed where they were
+ *  staged. */
 async function rekeyAttachments(
   orgId: string, ticketId: string, ticketNumber: string, attachments: TicketAttachment[],
-  stagedIds: Set<string>, insertedAt: string,
+  stagedIds: Set<string>, insertedAt: string, deadlines: { startBy: number; abortAt: number },
 ): Promise<number> {
   const staged = attachments.filter((a) => stagedIds.has(a.id));
+  if (staged.length === 0) return 0;
   const moves = new Map<string, string>();   // attachment id → final key
-  for (const a of staged) {
-    const to = finalAttachmentKey(orgId, ticketNumber, a.url);
-    try {
-      await r2.send(new CopyObjectCommand({ Bucket: R2_BUCKET, Key: to, CopySource: copySource(a.url) }));
-      moves.set(a.id, to);
-    } catch (e) {
-      console.warn(`[tickets/create] could not move ${a.url} under ${ticketNumber} (kept where it was staged):`, (e as Error)?.message ?? e);
-    }
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), Math.max(0, deadlines.abortAt - Date.now()));
+  try {
+    await eachLimited(staged, 4, async (a) => {
+      if (ac.signal.aborted || Date.now() >= deadlines.startBy) return;   // stays where it was staged
+      const to = finalAttachmentKey(orgId, ticketNumber, a.url);
+      try {
+        await r2.send(new CopyObjectCommand({ Bucket: R2_BUCKET, Key: to, CopySource: copySource(a.url) }), { abortSignal: ac.signal });
+        moves.set(a.id, to);
+      } catch (e) {
+        console.warn(`[tickets/create] could not move ${a.url} under ${ticketNumber} (kept where it was staged):`, (e as Error)?.message ?? e);
+      }
+    });
+  } finally {
+    clearTimeout(timer);
   }
   if (moves.size === 0) return staged.length;
 
@@ -545,14 +772,7 @@ export async function DELETE(req: NextRequest) {
   const own = keys.filter((k) => isSafeStorageKey(k) && isStagedKeyOf(k, orgId, caller.id));
   // A staged key a ticket already names (a re-key that did not complete) is
   // a record's file, not a leftover: never deleted here.
-  const discard: string[] = [];
-  for (const key of own) {
-    const { data, error } = await supabaseAdmin
-      .from("tickets").select("id").eq("org_id", orgId)
-      .contains("attachments", JSON.stringify([{ url: key }])).limit(1);
-    if (error) return json(503, { error: "Couldn't check the files against the requests — try again." });
-    if (!data || (data as unknown[]).length === 0) discard.push(key);
-  }
-  await deleteObjects(discard);
-  return json(200, { ok: true, deleted: discard.length, refused: keys.length - discard.length });
+  const done = await discardUnreferencedStaged(orgId, own);
+  if (done.unchecked) return json(503, { error: "Couldn't check the files against the requests — try again.", deleted: done.deleted });
+  return json(200, { ok: true, deleted: done.deleted, refused: keys.length - done.deleted });
 }
