@@ -242,10 +242,19 @@ N14, the integrator):*
   done-when 3 close with it.*
 - *N14: `TAX-11`'s six remaining raw calls; `notifyChecked` now takes an
   optional client, which is how a service-role writer moves onto the typed
-  sink. The export alert and the folded intake digest stay raw by recorded
-  reason (`RAW_RESOLVED`), unless a batch variant is built.*
+  sink, and `notifyBatchChecked(rows, client?)` writes many rows in ONE
+  statement and answers the landed count (N8's review fix; the checkout
+  sweep uses it). The export alert and the folded intake digest stay raw by
+  recorded reason (`RAW_RESOLVED`); moving them onto the batch variant is
+  N14's option.*
 - *Integrator: ratify `DEC-44 (N8)` item 2's reading of `PROD-6` done-when 2
-  (punch / checklist items have no person-assignee), and route `PROD-15`.*
+  (punch / checklist items have no person-assignee), and route `PROD-15`
+  (assigned: admin-and-org P5 — the pending list and
+  `access_requests_admin_select`).*
+- *N3 / N9 (`lib/activityThread.ts`, merged N2 file): `PostInput` gained
+  `notifyExclude` (N8's review fix: a markup share's requester is told by
+  `resolveMarkupRequest`, not by the thread's notice). The thread's
+  "… requested markup on …" wording for a share is still TAX-3 / TAX-4's.*
 
 ---
 

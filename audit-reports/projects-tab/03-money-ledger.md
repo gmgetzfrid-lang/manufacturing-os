@@ -694,7 +694,7 @@ already shows state.
 
 **Done-when.**
 1. ✓ Awarding notifies the project owner (and project followers) — J3 (`lib/costDocs.ts` `notifyAward`); the vendor is external (`MON-10`).
-2. ✓ A change-order approval notifies the proposer — J3 (`lib/changeOrders.ts` `notifyApproval`, unchanged); notifications N8 adds the members' and owner's `change_order_status` notice (PROD-6).
+2. ✓ A change-order approval notifies the proposer — J3 (`lib/changeOrders.ts` `notifyApproval`; its audience and kind unchanged, its amount now shown in the budget line's currency — N8's review fix, `coAmountLabel`); notifications N8 adds the members' and owner's `change_order_status` notice (PROD-6).
 3. ✓ A turnover rejection notifies whoever is responsible for the item — its creator and the project owner (the contractor is external — `MON-10`).
 
 **Scope / residual.** None here. The rest of the controls program's silence (checklists, punch, costs, companies) is notifications `PROD-6`'s, with each silent subsystem's decision recorded there.
@@ -874,6 +874,6 @@ explicit override that captures a reason and writes an audit row. Decide what
 | MON-8 | MEDIUM | RESOLVED |
 | MON-9 | LOW | RESOLVED |
 | MON-10 | MEDIUM | OPEN |
-| MON-11 | MEDIUM | OPEN |
+| MON-11 | MEDIUM | RESOLVED |
 | MON-12 | MEDIUM | OPEN |
 | MON-13 | LOW | RESOLVED |
