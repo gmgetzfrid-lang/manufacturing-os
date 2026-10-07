@@ -4,10 +4,15 @@
 // Returns a Stripe Customer Portal session URL so the admin can update
 // their card, see invoices, cancel, or change plan — all from a
 // Stripe-hosted page. We just create the session; Stripe handles the UI.
+//
+// admin-and-org P4 (BILL-6 Done-when 4): before the session is minted, the
+// customer on file is confirmed as this workspace's — a customer whose
+// metadata names another workspace (or a deleted one) is refused 409. A
+// customer with no org metadata opens as before.
 
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeOrgRole } from "@/lib/serverAuth";
-import { getStripe, isStripeConfigured } from "@/lib/stripe";
+import { getStripe, isStripeConfigured, customerOwnershipRefusal } from "@/lib/stripe";
 
 const ADMIN_ROLES = ["Admin", "Manager"];
 
@@ -27,17 +32,23 @@ export async function POST(req: NextRequest) {
   const auth = await authorizeOrgRole(req, orgId, ADMIN_ROLES);
   if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
-  const { data: org } = await auth.admin
+  const { data: org, error: orgErr } = await auth.admin
     .from("orgs")
     .select("stripe_customer_id")
     .eq("id", orgId)
     .maybeSingle();
+  if (orgErr) return NextResponse.json({ error: `Could not read the workspace (${orgErr.message}).` }, { status: 500 });
   const customerId = (org as { stripe_customer_id?: string } | null)?.stripe_customer_id;
   if (!customerId) {
     return NextResponse.json({ error: "No Stripe customer on file. Subscribe first to create one." }, { status: 400 });
   }
 
   const stripe = getStripe();
+  const refusal = await customerOwnershipRefusal(stripe, customerId, orgId);
+  if (refusal) {
+    console.error(`[stripe/portal] org ${orgId}: portal refused for customer ${customerId}: ${refusal.error}`);
+    return NextResponse.json({ error: refusal.error }, { status: refusal.status });
+  }
   const origin = req.headers.get("origin") || new URL(req.url).origin;
 
   const session = await stripe.billingPortal.sessions.create({
