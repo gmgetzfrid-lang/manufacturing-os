@@ -71,7 +71,7 @@ import {
 import {
   computeBidEconomics, scoreBids, effectiveWeights, MANPOWER_MAX_COMPOSITE_SWING, MIN_CORROBORATING_STATEMENTS, HOURS_PLAUSIBILITY_RATIO,
   withHumanTotal, priceOnlyQuote, mergeQuoteGroups, snapRfqGroup, matchCompanyByName, alignGroupSpelling, normalizeCompanyName,
-  companyCandidatesByName, barredCompanyFor,
+  companyCandidatesByName, barredCompanyFor, UNKNOWN_VENDOR,
   quoteExpired, readExtent, fieldCurrency, bidCurrency, isoCurrency, parseTypedAmount,
   type ParsedQuote, type BidEconomics,
 } from "@/lib/bidTab";
@@ -139,11 +139,12 @@ export interface AwardFlag { id: string; name: string; status: string }
  *  own flag), so a flagged contractor hides the stored name's look-alike
  *  from it, and no gate in the lib or the database reads the letterhead at
  *  all. So it is no override: the bid tab stops on it for a typed
- *  acknowledgement recorded under its own action
- *  (`COST_DOC_AWARD_LETTERHEAD_ACK`, its name kept from fix pass 8, when only
- *  the letterhead was asked about; `details.matchedOn` says which name) —
- *  never the override intent, never `award_quote`'s override reason (J12
- *  review fix passes 8 and 9). */
+ *  acknowledgement recorded under its own action,
+ *  `COST_DOC_AWARD_LETTERHEAD_ACK`, for the stored name, the letterhead or
+ *  both (`details.matchedOn` says which; the action's name is kept from fix
+ *  pass 8, which asked about the letterhead only) — never the override
+ *  intent, never `award_quote`'s override reason (J12 review fix passes 8
+ *  and 9). */
 export interface NameFlag {
   company: AwardFlag;
   /** The stored vendor name — the name the database's question reads. */
@@ -243,8 +244,11 @@ export async function companyAwardAnswersFor(
  * - `acks`: when the row has no link to a company of its org (a person's link
  *   decides — DEC-48), the do-not-use row each NAME of the bid could be —
  *   the STORED vendor name, and the re-read row's PARSED vendor name (the
- *   letterhead the AI read — the name the bid table shows and the field the
- *   bid tab's gate read through J12 review fix pass 6) — unless the override
+ *   letterhead the AI read — the field the bid tab's gate read through J12
+ *   review fix pass 6; the parse's OWN name, never `parsedQuoteFrom`'s
+ *   display fallback to the stored name, so a parse that read no vendor
+ *   name, `UNKNOWN_VENDOR`, has no letterhead: J12 review fix pass 10) —
+ *   unless the override
  *   already answers for that name: it is a do-not-use row with the name's
  *   key, or (the stored name only) there is no override, so the database's
  *   question over that name found no look-alike. A flagged contractor
@@ -264,7 +268,11 @@ export async function awardGateFor(doc: CostDocument): Promise<AwardGate> {
   const companyId = text(raw?.company_id);          // absent before 20261096: no link can exist
   const partyId = raw ? text(raw.party_id) : doc.partyId;
   const vendorName = raw ? text(raw.vendor_name) : doc.vendorName;
-  const letterhead = (raw ? parsedQuoteFrom({ ...doc, parsed: raw.parsed ?? null, vendorName }) : parsedQuoteFrom(doc))?.vendorName ?? null;
+  // The letterhead is the name the AI READ: parsed with no stored name to
+  // fall back on (parsedQuoteFrom shows the stored name where the parse read
+  // none), and the placeholder for "read none" is no letterhead.
+  const read = parsedQuoteFrom({ ...doc, parsed: raw ? raw.parsed ?? null : doc.parsed, vendorName: null })?.vendorName ?? null;
+  const letterhead = read !== UNKNOWN_VENDOR ? read : null;
 
   // One read of the linked company and one of the org's barred rows, shared by both questions.
   let linked: Promise<AwardFlag | null> | null = null;
@@ -280,12 +288,12 @@ export async function awardGateFor(doc: CostDocument): Promise<AwardGate> {
   const overrideKey = override?.status === "do_not_use" ? normalizeCompanyName(override.name) : null;
   const storedKey = vendorName ? normalizeCompanyName(vendorName) : "";
   const letterKey = letterhead ? normalizeCompanyName(letterhead) : "";
-  const asks: Array<{ name: string; key: string; onFile: boolean; letterhead: string | null }> = [];
-  if (storedKey && override && storedKey !== overrideKey) {
-    asks.push({ name: vendorName!, key: storedKey, onFile: true, letterhead: letterKey === storedKey ? letterhead : null });
+  const asks: Array<{ name: string; onFile: boolean; letterhead: string | null }> = [];
+  if (vendorName && storedKey && override && storedKey !== overrideKey) {
+    asks.push({ name: vendorName, onFile: true, letterhead: letterKey === storedKey ? letterhead : null });
   }
-  if (letterKey && letterKey !== storedKey && letterKey !== overrideKey) {
-    asks.push({ name: letterhead!, key: letterKey, onFile: false, letterhead });
+  if (letterhead && letterKey && letterKey !== storedKey && letterKey !== overrideKey) {
+    asks.push({ name: letterhead, onFile: false, letterhead });
   }
   if (!asks.length) return { override, acks: [] };
   if (companyId && (await linkedCompany())) return { override, acks: [] };
@@ -306,16 +314,20 @@ const ackMatchedOn = (ack: NameFlag): string[] =>
 const ackKind = (ack: NameFlag) => (ack.onFile ? "vendor-name" : "letterhead");
 const ackSubject = (ack: NameFlag) => (ack.onFile ? `the vendor on file "${ack.vendorOnFile}"` : `the letterhead "${ack.letterhead}"`);
 const ackTitle = (ack: NameFlag) => `The ${ack.onFile ? "vendor on file" : "letterhead"} could be ${ack.company.name} — flagged DO NOT USE`;
+/** The vendor on file as a letterhead prompt names it: quoted, or "not set"
+ *  when the stored name is empty or blank. */
+const onFileShown = (ack: NameFlag) => (ack.vendorOnFile?.trim() ? `"${ack.vendorOnFile.trim()}"` : "not set");
 /** The acknowledgement prompt's text: which name could be the company, why
  *  no override for it is recorded, and what to do instead. */
 function ackMessage(ack: NameFlag, override: AwardFlag | null): string {
   const c = ack.company.name;
   const what = "To award it as it stands, state why — the acknowledgement is recorded against this award.";
   if (!ack.onFile) {
-    const onFile = ack.vendorOnFile ? `"${ack.vendorOnFile}"` : "not set";
-    return `The AI read the letterhead as "${ack.letterhead}", which could be ${c}, flagged DO NOT USE in the registry. The vendor on file is ${onFile}; the award is checked against that name and this bid's links, so no override for ${c} is recorded. If ${c} sent this bid, cancel and link the bidder to it; if the vendor on file did, cancel and link the bidder to that company. ${what}`;
+    return `The AI read the letterhead as "${ack.letterhead}", which could be ${c}, flagged DO NOT USE in the registry. The vendor on file is ${onFileShown(ack)}; the award is checked against that name and this bid's links, so no override for ${c} is recorded. If ${c} sent this bid, cancel and link the bidder to it; if the vendor on file did, cancel and link the bidder to that company. ${what}`;
   }
-  const names = `The vendor on file, "${ack.vendorOnFile}"${ack.letterhead ? `, and the letterhead the AI read, "${ack.letterhead}",` : ""}`;
+  const names = ack.letterhead
+    ? `The vendor on file, "${ack.vendorOnFile}", and the letterhead the AI read, "${ack.letterhead}",`
+    : `The vendor on file "${ack.vendorOnFile}"`;
   const why = override
     ? `The award's override names one company — the first flagged one it reaches through this bid's company link, its contractor and then its vendor name — and here that is ${override.name}, ${override.status === "inactive" ? "marked inactive" : "flagged do-not-use"}`
     : "The award's override does not name it";
@@ -325,7 +337,7 @@ function ackMessage(ack: NameFlag, override: AwardFlag | null): string {
 function ackWarning(ack: NameFlag, override: AwardFlag | null): string {
   const c = ack.company.name;
   if (!ack.onFile) {
-    return `The letterhead the AI read ("${ack.letterhead}") could be ${c}, flagged DO NOT USE — the vendor on file is ${ack.vendorOnFile ? `"${ack.vendorOnFile}"` : "not set"}, and your acknowledgement is recorded with this award.`;
+    return `The letterhead the AI read ("${ack.letterhead}") could be ${c}, flagged DO NOT USE — the vendor on file is ${onFileShown(ack)}, and your acknowledgement is recorded with this award.`;
   }
   return `The vendor on file ("${ack.vendorOnFile}")${ack.letterhead ? ` and the letterhead the AI read ("${ack.letterhead}")` : ""} could be ${c}, flagged DO NOT USE — the award's override ${override ? `names ${override.name}` : "does not name it"}, and your acknowledgement is recorded with this award.`;
 }
@@ -972,6 +984,8 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
         details: {
           matchedOn: ackMatchedOn(ack), letterhead: ack.letterhead, vendorOnFile: ack.vendorOnFile,
           companyId: ack.company.id, company: ack.company.name, companyStatus: ack.company.status,
+          // The click gate's override — null when it asked none, even if the lib's
+          // needsOverride asks one later (that intent row names its own company).
           overrideCompanyId: held.override?.id ?? null, overrideCompany: held.override?.name ?? null,
           reason, total, currency: cur, rfqGroup: group, costAccountId: accountId,
         },

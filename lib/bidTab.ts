@@ -706,6 +706,10 @@ export function readExtent(pagesRead: number | null | undefined, pagesTotal: num
   return { truncated: false, known: true, label: `all ${pagesTotal} page${pagesTotal === 1 ? "" : "s"} read` };
 }
 
+/** The vendor name a ParsedQuote carries when the AI read none — a
+ *  placeholder, never a letterhead. */
+export const UNKNOWN_VENDOR = "Unknown vendor";
+
 /** Validate an AI-extracted quote payload into a safe ParsedQuote. Throws a
  *  plain message on a shape the review screen can't render. */
 export function validateParsedQuote(raw: unknown, id: string): ParsedQuote {
@@ -718,7 +722,7 @@ export function validateParsedQuote(raw: unknown, id: string): ParsedQuote {
   const items = Array.isArray(r.lineItems) ? r.lineItems : [];
   const quote: ParsedQuote = {
     id,
-    vendorName: str(r.vendorName) ?? "Unknown vendor",
+    vendorName: str(r.vendorName) ?? UNKNOWN_VENDOR,
     total,
     currency: str(r.currency),
     validUntil: str(r.validUntil),

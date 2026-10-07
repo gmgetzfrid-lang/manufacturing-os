@@ -32,7 +32,7 @@
 import { supabase } from "@/lib/supabase";
 import { uploadToPath, deleteFile } from "@/lib/storage";
 import { addEntry, type Actor } from "@/lib/costs";
-import { validateParsedQuote, normalizeCompanyName, type ParsedQuote } from "@/lib/bidTab";
+import { validateParsedQuote, normalizeCompanyName, UNKNOWN_VENDOR, type ParsedQuote } from "@/lib/bidTab";
 import { emit } from "@/lib/notify/dispatch";
 import { userFacingError, userFacingReadError, userFacingCaughtError, asClause } from "@/lib/userFacingError";
 
@@ -192,7 +192,7 @@ export function parsedQuoteFrom(doc: CostDocument): ParsedQuote | null {
   if (!doc.parsed) return null;
   try {
     const q = validateParsedQuote(doc.parsed, doc.id);
-    if (q.vendorName === "Unknown vendor" && doc.vendorName) q.vendorName = doc.vendorName;
+    if (q.vendorName === UNKNOWN_VENDOR && doc.vendorName) q.vendorName = doc.vendorName;
     return q;
   } catch {
     return null;
