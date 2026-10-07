@@ -676,8 +676,8 @@ app/api/stripe/webhook/route.ts:56 `const plan = (sub.metadata?.plan as string) 
 
 **Scope / residual.** The map is env configuration the deployment must supply (`STRIPE_PRICE_*` for every sold price — checkout already requires it). A workspace whose plan was nulled by the old code stays null until its next subscription event.
 
-*Cross-note (2026-10-02, admin-and-org Round G, P4 — `BILL-1` / `BILL-3`):* built on, not undone. `planFromSubscription` and `PRICE_ID_ENV_TO_PLAN` are unchanged, and so are this finding's three tests (`lib/__tests__/dcRoundFExportContract.test.ts`, green). The `...(plan ? { subscribed_plan: plan } : {})` line its source pin reads is kept. Three things change around it:
-- the resolved plan is written only on a status that pays for it: `active`, `trialing` or `past_due` (`app/api/stripe/webhook/route.ts:233`);
+*Cross-note (2026-10-02, admin-and-org Round G, P4 — `BILL-1` / `BILL-3`):* built on, not undone. `planFromSubscription` and `PRICE_ID_ENV_TO_PLAN` are unchanged, and so are this finding's three tests (`lib/__tests__/dcRoundFExportContract.test.ts`, green). The `...(plan ? { subscribed_plan: plan } : {})` line its source pin reads is kept. Four things change around it:
+- the resolved plan is written only on a status that pays for it: `active`, `trialing` or `past_due` (`app/api/stripe/webhook/route.ts:267`);
 - `customer.subscription.deleted` now clears the plan (`BILL-3` Done-when 2), and so does any update whose status ends the subscription (P4 review fix pass);
 - the audit row's `plan` is what was written; a plan resolved but withheld is recorded as `plan_withheld`;
 - *P4 review fix pass:* a subscription event handled after a newer invoice event for its subscription still writes its price-derived plan and period end. Only its status is held back. The first P4 ordering guard had recorded it `stale` and dropped the plan, which undid this finding in that delivery order (`BILL-4`'s review block). Pinned by "portal upgrade: invoice.payment_succeeded (T+2) applied first…" in `lib/__tests__/stripeWebhook.test.ts`.
