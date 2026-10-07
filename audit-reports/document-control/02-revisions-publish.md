@@ -1176,6 +1176,12 @@ Not touched here:
 - **The app's side** (the editors' "the database does not check this change" sentence, the metadata editor's refusal suffix, and whether the move owes `REV-19`'s clocks and record) is **`REV-26`**, opened here (DEC-31), for the integrator to assign.
 - **The paste guide.** The paste row is in the package's report; `MIGRATION-PASTE-ORDER.md` is the integrator's to update.
 
+**Ship loop (DEC-29 rule 4), the package's branch.**
+- `npx tsc --noEmit`: 0.
+- `npx eslint <changed files> --max-warnings=0`: 0.
+- `npx vitest run` (full suite): exit 1 in each of three runs, every failure a 5000 ms timeout or a cascade from one, with the machine at load ~20 on 4 cores (fifteen packages in parallel). The first run had 1 failure; the second, 23 in 10 files; the third, with two workers, 2. None of the failing files is touched by P16, and all pass when rerun: the 10 files serially, 491 / 491; every `dcRoundF*` guard test file, 73 files, 1329 / 1329. Of the 9623 tests, 9614 passed in the third run, plus 7 expected fails.
+- `next build` was not run by the package: **next build is the integrator's gate before merge; the status stands on it.**
+
 ---
 
 ## REV-23 · A controller's bare put-back of a held stamped retirement passes an active hold unrecorded
