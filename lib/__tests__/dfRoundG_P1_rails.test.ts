@@ -281,7 +281,24 @@ describe("20261166 — the policies (PERS-1 done-when 3, AUTHZ-13 / DEC-44 (DF-P
     ].join("\n"));
     const orgs = between(M, "CREATE OR REPLACE FUNCTION contractor_only_org_ids()", "\n$$;");
     expect(orgs).toContain("LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$");
-    expect(orgs).toContain("(CASE WHEN cardinality(m.roles) > 0 THEN m.roles ELSE ARRAY[m.role] END) <@ ARRAY['Contractor']::text[]");
+    // Contractor-only is decided on the headline role UNION the collection
+    // (heldRoles), never on `roles` alone: a Manager whose roles drifted to
+    // {Contractor} keeps the org read. The paste's inventory CTE spells the
+    // SAME expression, byte for byte, and nothing reads `roles` alone any more.
+    const CONTRACTOR_ONLY = [
+      "     AND COALESCE((SELECT bool_and(btrim(h.r) = 'Contractor')",
+      "                     FROM unnest(ARRAY[m.role] || COALESCE(m.roles, '{}'::text[])) AS h(r)",
+      "                    WHERE btrim(h.r) <> ''), false)",
+    ].join("\n");
+    expect(orgs).toContain(CONTRACTOR_ONLY + ";");
+    const cte = between(M, "WITH contractor_only AS (", "\n)\n");
+    expect(cte).toContain("WHERE m.status = 'active'\n" + CONTRACTOR_ONLY + "\n)");
+    expect(M.split(CONTRACTOR_ONLY)).toHaveLength(3); // the function and the inventory, nowhere else
+    expect(stripComments(M.slice(0, M.indexOf("\nCOMMIT;\n")))).not.toContain("cardinality(m.roles)"); // (the probe after COMMIT names it only to refuse it)
+    // the probe pins the union body in the database too
+    expect(M).toContain(
+      "AND (SELECT prosrc LIKE '%bool_and(btrim(h.r) = ''Contractor'')%unnest(ARRAY[m.role] || COALESCE(m.roles, ''{}''::text[]))%WHERE btrim(h.r) <> ''''), false)%'\n" +
+      "                   AND prosrc NOT LIKE '%cardinality(m.roles)%'");
     expect(orgs).toContain("WHERE auth.uid() IS NOT NULL");
     const mentions = between(M, "CREATE OR REPLACE FUNCTION ticket_mentions_me(p_ticket uuid)", "\n$$;");
     expect(mentions).toContain("LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$");
@@ -331,7 +348,7 @@ describe("20261166 — DEC-30 one-paste shape", () => {
     // inventory is aggregate-only
     const inv = M.slice(temp, begin);
     expect(inv).not.toMatch(/SELECT\s+\*/);
-    expect((inv.match(/COUNT\(\*\)::text/g) ?? []).length).toBe(8);
+    expect((inv.match(/COUNT\(\*\)::text/g) ?? []).length).toBe(9);
   });
 
   it("DCW-4 / HAND-3's inventory row counts exactly what a close rewrites: a source document present, and no register version of THAT document backing the recorded id", () => {
@@ -344,11 +361,20 @@ describe("20261166 — DEC-30 one-paste shape", () => {
     expect(src("app/api/tickets/workflow-action/route.ts")).toContain('.eq("id", recordedState.version_id).eq("org_id", ticket.orgId)\n          .eq("record_id", closeSrc.id).eq("related_ticket_id", body.ticketId)');
   });
 
-  it("LEAK-10's read-only inventory is the record's query, counts only", () => {
+  it("LEAK-10's read-only inventory is the record's query, counts only, and reads both stored policy shapes the engine honours", () => {
     const inv = M.slice(M.indexOf("CREATE TEMP TABLE df_round_g_166_before AS"), M.indexOf("\nBEGIN;\n"));
-    expect(inv).toContain("FROM org_configurations\n WHERE key = 'capability_policy'\n   AND (COALESCE(data -> 'caps' ->> 'ticket.engineer_gate_exempt', '') ~ '\"(requestType|unit)\"'\n     OR COALESCE(data -> 'caps' ->> 'ticket.direct_approve', '') ~ '\"(requestType|unit)\"')");
+    // {caps, grants} and the legacy flat shape: the app parser reads
+    // `raw.caps ?? raw` and the SQL evaluator COALESCE(v_val->'caps'->p_cap,
+    // v_val->p_cap), so a top-level rule is enforced and must be counted.
+    const legs = (indent: string) => [
+      "WHERE key = 'capability_policy'",
+      `${indent}AND (COALESCE(data -> 'caps' ->> 'ticket.engineer_gate_exempt', data ->> 'ticket.engineer_gate_exempt', '') ~ '"(requestType|unit)"'`,
+      `${indent}  OR COALESCE(data -> 'caps' ->> 'ticket.direct_approve', data ->> 'ticket.direct_approve', '') ~ '"(requestType|unit)"')`,
+    ];
+    expect(inv).toContain("FROM org_configurations\n " + legs("  ").join("\n "));
     const rec = src("audit-reports/drafting-flow/04-flow-leaks.md");
-    expect(rec).toContain("WHERE key = 'capability_policy'\n  AND (COALESCE(data -> 'caps' ->> 'ticket.engineer_gate_exempt', '') ~ '\"(requestType|unit)\"'\n    OR COALESCE(data -> 'caps' ->> 'ticket.direct_approve', '') ~ '\"(requestType|unit)\"');");
+    expect(rec).toContain(legs("  ").join("\n") + ";");
+    expect(src("lib/capabilityPolicy.ts")).toContain("const rawCaps = (raw.caps as Record<string, unknown> | undefined) ?? raw;");
   });
 
   it("probes: deparsed policy text is matched loosely (never a bare cast), prosrc apostrophes are doubled", () => {
@@ -666,22 +692,83 @@ describe("EVID-12 / SM-7 — the audit row is written FIRST: a row that cannot b
     expect(insertsOf("audit_logs").filter((a) => a.action === "TICKET_REQUEST_REVISION")).toHaveLength(1);
   });
 
-  it("the row is written before the hold release and before the compare-and-set; an unwritable row releases no hold", async () => {
+  const closingWithHold = () => {
     state.user = { id: "req-1" };
     state.rows.org_members = [member("req-1", "Requester"), member("d-1", "Drafter")];
     state.rows.tickets = [ticketRow({ status: "FINAL_DRAFT", attachments: [FINAL] })];
     state.rows.document_holds = [{ id: "h-1", document_id: "doc-1", reason: "rev in progress", notes: null, origin_ticket_id: "t1", released_at: null }];
-    expect((await post({ ticketId: "t1", actionType: "close_ticket", holdResolution: { action: "release", reason: "done" } })).status).toBe(200);
+  };
+  it("the row is written before the compare-and-set, and the hold release only after the compare-and-set lands; an unwritable row releases no hold", async () => {
+    closingWithHold();
+    const res = await post({ ticketId: "t1", actionType: "close_ticket", holdResolution: { action: "release", reason: "done" } });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, status: "CLOSED" }); // no warning on the healthy path
     const audit = firstIndex("audit_logs", "insert", (a) => (a[0] as { action?: string }).action === "TICKET_CLOSE_TICKET");
     expect(audit).toBeGreaterThanOrEqual(0);
-    expect(audit).toBeLessThan(firstIndex("document_holds", "update"));
     expect(audit).toBeLessThan(firstIndex("tickets", "update"));
+    expect(firstIndex("tickets", "update")).toBeLessThan(firstIndex("document_holds", "update"));
+    expect(updatesOf("document_holds")[0]).toMatchObject({ released_by: "req-1", released_reason: "done" });
+    expect(insertsOf("audit_logs").find((a) => a.action === "HOLD_RELEASED")?.details).toMatchObject({ holdId: "h-1", viaTicketClose: "t1", released: 1 });
     state.calls = [];
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     state.errors["audit_logs.insert"] = [{ message: "permission denied" }, { message: "permission denied" }];
     expect((await post({ ticketId: "t1", actionType: "close_ticket", holdResolution: { action: "release", reason: "done" } })).status).toBe(500);
     expect(updatesOf("document_holds")).toHaveLength(0);
     expect(ticketWrites()).toHaveLength(0);
+  });
+
+  it("a close (or cancel) that LOSES its compare-and-set releases no hold and writes no hold row: the attempt row and its _NOT_APPLIED row are the whole truth", async () => {
+    closingWithHold();
+    state.onCall = (table, method) => { if (table === "tickets" && method === "update") state.rows.tickets[0].last_modified = "2026-10-02T00:00:09.000Z"; };
+    const lost = await post({ ticketId: "t1", actionType: "close_ticket", holdResolution: { action: "release", reason: "done" } });
+    expect(lost.status).toBe(409);
+    expect(updatesOf("document_holds")).toHaveLength(0);
+    expect(state.rows.document_holds[0].released_at).toBeNull();
+    const rows = insertsOf("audit_logs");
+    expect(rows.map((a) => a.action)).toEqual(["TICKET_CLOSE_TICKET", "TICKET_CLOSE_TICKET_NOT_APPLIED"]);
+    expect(rows[1].details).toMatchObject({ attempt: rows[0].id, reason: "conflict", to: "CLOSED" });
+    // "keep" is the same: no HOLD_KEPT_ON_CLOSE row for a close that did not happen
+    state.calls = [];
+    state.rows.tickets = [ticketRow({ status: "FINAL_DRAFT", attachments: [FINAL] })];
+    const lostKeep = await post({ ticketId: "t1", actionType: "close_ticket", holdResolution: { action: "keep", reason: "owned by the area owner" } });
+    expect(lostKeep.status).toBe(409);
+    expect(insertsOf("audit_logs").map((a) => a.action)).toEqual(["TICKET_CLOSE_TICKET", "TICKET_CLOSE_TICKET_NOT_APPLIED"]);
+    // a refused ticket write is the same
+    state.calls = []; state.onCall = null;
+    state.rows.tickets = [ticketRow({ status: "FINAL_DRAFT", attachments: [FINAL] })];
+    state.errors["tickets.update"] = [{ code: "P0001", message: "refused" }];
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect((await post({ ticketId: "t1", actionType: "close_ticket", holdResolution: { action: "release", reason: "done" } })).status).toBe(500);
+    expect(updatesOf("document_holds")).toHaveLength(0);
+    expect(insertsOf("audit_logs").map((a) => a.action)).toEqual(["TICKET_CLOSE_TICKET", "TICKET_CLOSE_TICKET_NOT_APPLIED"]);
+  });
+
+  it("a hold release that fails AFTER the close landed is retried once; a second failure keeps the hold active, records TICKET_<ACTION>_HOLDS_NOT_RELEASED naming the attempt and the holds, logs it, and says so in the 200", async () => {
+    closingWithHold();
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    state.errors["document_holds.update"] = [{ message: "deadlock detected" }, { message: "deadlock detected" }];
+    const res = await post({ ticketId: "t1", actionType: "close_ticket", holdResolution: { action: "release", reason: "done" } });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({ ok: true, status: "CLOSED", holdsNotReleased: ["h-1"] });
+    expect(body.warning).toMatch(/closed, but its hold could not be released/);
+    expect(updatesOf("tickets")[0].status).toBe("CLOSED");
+    expect(updatesOf("document_holds")).toHaveLength(2); // tried, retried
+    const rows = insertsOf("audit_logs");
+    const attempt = rows.find((a) => a.action === "TICKET_CLOSE_TICKET")!;
+    expect(rows.find((a) => a.action === "TICKET_CLOSE_TICKET_HOLDS_NOT_RELEASED")).toMatchObject({
+      resource_id: "t1", user_id: "req-1", details: { attempt: attempt.id, to: "CLOSED", holdIds: ["h-1"], error: "deadlock detected" },
+    });
+    expect(rows.some((a) => a.action === "HOLD_RELEASED")).toBe(false);
+    expect(rows.some((a) => String(a.action).endsWith("_NOT_APPLIED"))).toBe(false); // the close DID apply
+    expect(spy.mock.calls.some((c) => String(c[0]).includes(`audit row ${attempt.id}`) && String(c[0]).includes("could not be released; they stay active"))).toBe(true);
+    // one transient failure: the retry releases it, no warning
+    state.calls = [];
+    state.rows.tickets = [ticketRow({ status: "FINAL_DRAFT", attachments: [FINAL] })];
+    state.errors["document_holds.update"] = [{ message: "connection reset" }];
+    const ok = await post({ ticketId: "t1", actionType: "close_ticket", holdResolution: { action: "release", reason: "done" } });
+    expect(await ok.json()).toEqual({ ok: true, status: "CLOSED" });
+    expect(insertsOf("audit_logs").some((a) => a.action === "HOLD_RELEASED")).toBe(true);
   });
 
   it("a transition that does not land after its row did (a lost compare-and-set, a refused write) leaves a TICKET_<ACTION>_NOT_APPLIED row naming the attempt; nothing is ever updated in audit_logs", async () => {
@@ -937,16 +1024,36 @@ describe("AUTHZ-13 — the service-role routes that write watchers honour the Co
   const watch = (watching: boolean) => watchPost(req("/api/tickets/watch", { ticketId: "t1", watching }));
   const comment = (text = "hi") => commentPost(req("/api/tickets/comment", { ticketId: "t1", text }));
 
-  it("isContractorOnly mirrors 20261166: the collection when non-empty, else the headline; every entry Contractor", () => {
+  it("isContractorOnly mirrors 20261166: every held role (headline ∪ collection, heldRoles) is Contractor, and at least one is held", () => {
     expect(isContractorOnly({ role: "Contractor", roles: ["Contractor"] })).toBe(true);
     expect(isContractorOnly({ role: "Contractor", roles: [] })).toBe(true);
     expect(isContractorOnly({ role: "Contractor", roles: null })).toBe(true);
-    // the SQL reads `roles` when it is non-empty, so a stale headline does not widen it
-    expect(isContractorOnly({ role: "Admin", roles: ["Contractor"] })).toBe(true);
+    expect(isContractorOnly({ role: " Contractor ", roles: ["Contractor", ""] })).toBe(true); // trimmed, blanks dropped (heldRoles)
+    // a drifted row: headline Manager, roles {Contractor}. The member holds
+    // Manager (heldRoles, is_org_controller), so the org read stands — the
+    // review's PG16 case R8 read ZERO tickets under the roles-only rule.
+    expect(isContractorOnly({ role: "Manager", roles: ["Contractor"] })).toBe(false);
+    expect(isContractorOnly({ role: "Admin", roles: ["Contractor"] })).toBe(false);
     expect(isContractorOnly({ role: "Contractor", roles: ["Contractor", "Drafter"] })).toBe(false);
+    expect(isContractorOnly({ role: "Contractor", roles: ["Drafter"] })).toBe(false);
     expect(isContractorOnly({ role: "Drafter", roles: [] })).toBe(false);
+    expect(isContractorOnly({ role: "Drafter", roles: ["Drafter"] })).toBe(false);
+    // holding nothing is not Contractor-only (the SQL's bool_and over no rows is NULL → false)
     expect(isContractorOnly({ role: null, roles: [] })).toBe(false);
+    expect(isContractorOnly({ role: "", roles: [""] })).toBe(false);
     expect(isContractorOnly(null)).toBe(false);
+    // the TS reads the module's one helper, not a private copy of the rule
+    const mod = src("lib/ticketReadScope.ts");
+    expect(mod).toContain('import { heldRoles } from "@/lib/roleHeld";');
+    expect(mod).toContain("const held = heldRoles(member);\n  return held.length > 0 && held.every((r) => r === CONTRACTOR);");
+  });
+
+  it("a drifted Manager (roles {Contractor}) keeps acting through the service-role routes: follow and comment on a ticket outside any Contractor leg land", async () => {
+    setup({}, member("m-1", "Manager", ["Contractor"]));
+    expect((await watch(true)).status).toBe(200);
+    expect(state.calls.filter((c) => c.table === "ticket_comments" && c.method === "select")).toHaveLength(0); // no scope lookup: not Contractor-only
+    state.calls = [];
+    expect((await comment("on it")).status).toBe(200);
   });
 
   it("a Contractor-only member cannot FOLLOW a ticket outside its scope: 404, nothing written; unfollowing is always allowed", async () => {

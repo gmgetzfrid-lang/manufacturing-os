@@ -77,7 +77,10 @@ describe("LIFE-6 — the hold knows its ticket; a close cannot be silent over it
     const r = src("app/api/tickets/workflow-action/route.ts");
     // Round E (WF-17): the gate keys on the TERMINAL TRANSITION, so a
     // cancel_request meets it exactly as a close does.
-    const gate = r.slice(r.indexOf('if (TERMINAL_STATUSES.includes(String(newStatus))) {'), r.indexOf("let baseQuery = supabaseAdmin"));
+    // drafting-flow DF-P1 (EVID-12 / SM-7): the gate (the hold read and its
+    // 409) stays before the compare-and-set; the release / keep writes run
+    // after it lands, so the slice runs to the comment mirror that follows them.
+    const gate = r.slice(r.indexOf('if (TERMINAL_STATUSES.includes(String(newStatus))) {'), r.indexOf("// Mirror the action's comment into the ticket_comments table"));
     expect(r).toContain('const TERMINAL_STATUSES: readonly string[] = ["CLOSED", "CANCELED"];');
     expect(r).not.toContain('if (body.actionType === "close_ticket" || body.actionType === "close_rfi") {');
     expect(gate).toMatch(/\.eq\("origin_ticket_id", body\.ticketId\)\s*\n\s*\.is\("released_at", null\)/);
@@ -89,6 +92,10 @@ describe("LIFE-6 — the hold knows its ticket; a close cannot be silent over it
     expect(gate).toMatch(/if \(resolution\.action === "release"\) \{/);
     // The gate sits inside the enforcement frame, before the CAS update.
     expect(r.indexOf("code: \"holds_open\"")).toBeGreaterThan(r.indexOf("computeTransition(ticket, input)"));
+    expect(r.indexOf("code: \"holds_open\"")).toBeLessThan(r.indexOf("let baseQuery = supabaseAdmin"));
+    // The release write waits for the CAS to land (a lost race releases nothing).
+    expect(r.indexOf(".update({ released_at: nowIso")).toBeGreaterThan(r.indexOf("if (!updated) {"));
+    expect(r.split(".update({ released_at: nowIso")).toHaveLength(2);
   });
   it("the ticket page handles 409 holds_open with release-or-keep and re-sends with the resolution", () => {
     const p = src("app/(protected)/requests/[id]/page.tsx");

@@ -583,7 +583,8 @@ export async function POST(req: NextRequest) {
   // `cancel_request` (DEC-14) ends the ticket exactly as a close does, so it
   // meets the same 409 holds_open and the same release-or-keep resolution.
   // EVID-12 / SM-7 (DF-P1): the hold read and its 409 come first; the release
-  // or keep WRITES wait until the audit row has landed (below).
+  // or keep WRITES wait until the transition itself has landed (after the
+  // compare-and-set, below), so a close that loses its race touches no hold.
   const TERMINAL_STATUSES: readonly string[] = ["CLOSED", "CANCELED"];
   let holdPlan: {
     holds: Array<{ id: string; document_id: string; reason: string; notes: string | null }>;
@@ -616,8 +617,9 @@ export async function POST(req: NextRequest) {
 
   // Audit — server-written, cannot be skipped by the client.
   // EVID-12 / SM-7 (DF-P1, the fleet plan's default): the row is written
-  // BEFORE anything is applied — before the hold release and the ticket's
-  // compare-and-set. A transition whose audit row cannot be written is
+  // BEFORE anything is applied — before the ticket's compare-and-set, the
+  // first write (the hold release waits for the compare-and-set to land). A
+  // transition whose audit row cannot be written is
   // refused: a 500 with nothing applied, so a retry is safe. It is never
   // "ok" with a missing row. The row carries a fixed id: a retry after a lost
   // reply finds it there (23505) instead of writing it twice. If the
@@ -668,7 +670,7 @@ export async function POST(req: NextRequest) {
   // The attempt row above stands for a transition that did not land: say so,
   // naming it. Retried once (fixed id, 23505 = landed); a failure is LOGGED
   // with both ids so the trail can be reconciled against the ticket's history.
-  const recordNotApplied = async (reason: "conflict" | "write_failed" | "hold_release_failed", error?: string) => {
+  const recordNotApplied = async (reason: "conflict" | "write_failed", error?: string) => {
     const notApplied = {
       id: crypto.randomUUID(),
       action: `${auditRow.action}_NOT_APPLIED`,
@@ -685,37 +687,6 @@ export async function POST(req: NextRequest) {
       console.error(`[workflow-action] could not record that ${auditRow.action} (audit row ${auditRow.id}) on ticket ${body.ticketId} was NOT applied (${reason}) — reconcile from the ticket's history: ${err}`);
     }
   };
-
-  if (holdPlan) {
-    const { holds, resolution, reason } = holdPlan;
-    const nowIso = new Date().toISOString();
-    if (resolution.action === "release") {
-      const { data: released, error: relErr } = await supabaseAdmin
-        .from("document_holds")
-        .update({ released_at: nowIso, released_by: caller.id, released_by_name: callerEmail ?? null,
-                  released_reason: reason || `Released on ${newStatus === "CANCELED" ? "cancellation" : "close"} of ticket ${ticket.ticketId ?? body.ticketId}` })
-        .in("id", holds.map((h) => h.id)).is("released_at", null).select("id");
-      if (relErr) {
-        await recordNotApplied("hold_release_failed", relErr.message);
-        return NextResponse.json({ error: `Couldn't release the hold: ${relErr.message}` }, { status: 500 });
-      }
-      for (const h of holds) {
-        await supabaseAdmin.from("audit_logs").insert({
-          action: "HOLD_RELEASED", resource_type: "document", resource_id: h.document_id, org_id: ticket.orgId,
-          user_id: caller.id, user_email: callerEmail ?? null,
-          details: { holdId: h.id, reason: h.reason, releasedReason: reason || null, viaTicketClose: body.ticketId, released: (released ?? []).length },
-        }).then(() => undefined, () => undefined);
-      }
-    } else {
-      for (const h of holds) {
-        await supabaseAdmin.from("audit_logs").insert({
-          action: "HOLD_KEPT_ON_CLOSE", resource_type: "document", resource_id: h.document_id, org_id: ticket.orgId,
-          user_id: caller.id, user_email: callerEmail ?? null,
-          details: { holdId: h.id, reason: h.reason, keptBecause: reason, ticketId: body.ticketId, ticketOutcome: newStatus },
-        }).then(() => undefined, () => undefined);
-      }
-    }
-  }
 
   // Compare-and-set on the status we validated against. If another reviewer
   // moved the ticket since, refuse to clobber their transition.
@@ -811,6 +782,79 @@ export async function POST(req: NextRequest) {
       { error: "The ticket changed while you were acting — refresh and try again", conflict: true },
       { status: 409 },
     );
+  }
+
+  // LIFE-6 / DEC-25: the closer's hold resolution, applied only now that the
+  // ticket has actually closed or been canceled. EVID-12 / SM-7 (DF-P1): a
+  // close or cancel that loses its compare-and-set (above) has released no
+  // hold and written no hold row, so its TICKET_<ACTION>_NOT_APPLIED row is
+  // the whole truth. A release that fails here cannot un-close the ticket.
+  // The hold stays active, the conservative state: the document stays
+  // blocked and can be released from its hold panel. The release is retried
+  // once. A second failure is recorded as a TICKET_<ACTION>_HOLDS_NOT_RELEASED
+  // row naming the attempt row and the holds, logged, and returned to the
+  // caller as `warning` / `holdsNotReleased` with the 200 (the transition
+  // stands). It is never silent.
+  let holdOutcome: { warning: string; holdsNotReleased: string[] } | null = null;
+  if (holdPlan) {
+    const { holds, resolution, reason } = holdPlan;
+    if (resolution.action === "release") {
+      const nowIso = new Date().toISOString();
+      // A throw is a failure like a refused update: the transition has landed,
+      // so nothing here may turn it into a 500.
+      const releaseHolds = async (): Promise<{ data: unknown[] | null; error: { message: string } | null }> => {
+        try {
+          const { data, error } = await supabaseAdmin
+            .from("document_holds")
+            .update({ released_at: nowIso, released_by: caller.id, released_by_name: callerEmail ?? null,
+                      released_reason: reason || `Released on ${newStatus === "CANCELED" ? "cancellation" : "close"} of ticket ${ticket.ticketId ?? body.ticketId}` })
+            .in("id", holds.map((h) => h.id)).is("released_at", null).select("id");
+          return { data: (data as unknown[] | null) ?? null, error: error ? { message: error.message || "update refused" } : null };
+        } catch (e) {
+          return { data: null, error: { message: (e as Error)?.message ?? String(e) } };
+        }
+      };
+      let { data: released, error: relErr } = await releaseHolds();
+      if (relErr) ({ data: released, error: relErr } = await releaseHolds());
+      if (relErr) {
+        const holdIds = holds.map((h) => h.id);
+        console.error(`[workflow-action] ${auditRow.action} (audit row ${auditRow.id}) on ticket ${body.ticketId} landed (${newStatus}) but its hold(s) ${holdIds.join(", ")} could not be released; they stay active: ${relErr.message}`);
+        const followErr = await insertAuditRowOnce({
+          id: crypto.randomUUID(),
+          action: `${auditRow.action}_HOLDS_NOT_RELEASED`,
+          resource_id: body.ticketId,
+          resource_type: "ticket",
+          org_id: ticket.orgId,
+          user_id: caller.id,
+          user_email: callerEmail,
+          user_role: callerRole,
+          details: { attempt: auditRow.id, to: newStatus, holdIds, error: relErr.message },
+        });
+        if (followErr) {
+          console.error(`[workflow-action] could not record that the holds of ${auditRow.action} (audit row ${auditRow.id}) on ticket ${body.ticketId} were NOT released: ${followErr}`);
+        }
+        holdOutcome = {
+          warning: `The request was ${newStatus === "CANCELED" ? "canceled" : "closed"}, but its hold could not be released, so the document is still blocked. Release the hold from the document.`,
+          holdsNotReleased: holdIds,
+        };
+      } else {
+        for (const h of holds) {
+          await supabaseAdmin.from("audit_logs").insert({
+            action: "HOLD_RELEASED", resource_type: "document", resource_id: h.document_id, org_id: ticket.orgId,
+            user_id: caller.id, user_email: callerEmail ?? null,
+            details: { holdId: h.id, reason: h.reason, releasedReason: reason || null, viaTicketClose: body.ticketId, released: (released ?? []).length },
+          }).then(() => undefined, () => undefined);
+        }
+      }
+    } else {
+      for (const h of holds) {
+        await supabaseAdmin.from("audit_logs").insert({
+          action: "HOLD_KEPT_ON_CLOSE", resource_type: "document", resource_id: h.document_id, org_id: ticket.orgId,
+          user_id: caller.id, user_email: callerEmail ?? null,
+          details: { holdId: h.id, reason: h.reason, keptBecause: reason, ticketId: body.ticketId, ticketOutcome: newStatus },
+        }).then(() => undefined, () => undefined);
+      }
+    }
   }
 
   // Mirror the action's comment into the ticket_comments table so the two comment
@@ -965,7 +1009,7 @@ export async function POST(req: NextRequest) {
     console.error("[workflow-action] fan-out failed (transition committed):", e);
   }
 
-  return NextResponse.json({ ok: true, status: newStatus });
+  return NextResponse.json({ ok: true, status: newStatus, ...(holdOutcome ?? {}) });
 }
 
 async function fanOut(params: {

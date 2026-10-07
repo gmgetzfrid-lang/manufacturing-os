@@ -81,6 +81,8 @@ which are currently masked. Read those three before shipping this.
 
 *Landed 2026-10-02 (drafting-flow Round G, DF-P1 RAILS): the workflow-action route now reads the policy through `loadCapabilityPolicyStrict` and refuses with 503 `policy_unreadable`, writing nothing, when the read fails. It never acts on the defaults. This is drafting-flow [`AUTHZ-7`](../drafting-flow/09-authority-surfaces.md) as the fleet plan set it. This record's rule (defaults for that call, uncached) still governs every other caller of the cached loader. The conflict this note flags for the workflow-action route is recorded as [`DEC-44 (DF-P1)`](../DECISIONS.md#dec-44-df-p1) **item 3, awaiting the user's ratification**. If the user ratifies this record's rule for the route, the revert is the route's one loader call.*
 
+*Updated 2026-10-07 (drafting-flow Round G, DF-P1's third fix pass): drafting-flow `AUTHZ-7` is OPEN again. Its done-when 3 asks the cached loader to serve the last good entry on a failed refresh, and this record's done-when 2 has it answer the defaults for that call. That conflict for the cached loader, not only for the route, is now part of `DEC-44 (DF-P1)` item 3, awaiting the user's ratification. DF-P1 does not change the loader, so this record's rule stands until then. Admin-and-org P9 (`ALOG-1`) implements whichever is ratified.*
+
 ---
 
 ## WF-2 · `tickets` RLS is `FOR ALL USING (org membership)` — any member can PATCH any ticket's status

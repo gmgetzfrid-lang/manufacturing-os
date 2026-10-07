@@ -534,9 +534,9 @@ export function publicOrigin(): string {
 - [ ] NEXT_PUBLIC_SITE_URL is documented as required for email delivery in .env.example, not only for QR printing
 
 **Resolution (2026-10-02, drafting-flow Round G).** DF-P1 RAILS (fleet plan: "fix once here, DELIV-5 closes by pointer"). Both ticket routes build email links on an absolute origin — `publicOrigin()` (`lib/publicOrigin.ts`: the configured `NEXT_PUBLIC_SITE_URL`, else Vercel's production domain on the server), else the origin the request arrived on — and keep the in-app bell link relative:
-- `app/api/tickets/workflow-action/route.ts:940-944` (`emailOrigin`), `:991-993` (`emailLink`), `:1102-1107` — the status email's `body_text` and both `href`s (HTML-escaped).
+- `app/api/tickets/workflow-action/route.ts:984-988` (`emailOrigin`), `:1035-1037` (`emailLink`), `:1146-1151` — the status email's `body_text` and both `href`s (HTML-escaped).
 - `app/api/tickets/comment/route.ts:153-157`, `:334-336`, `:382-386` — the mention / watcher email, the same way.
-- Tests: `lib/__tests__/dfRoundG_P1_rails.test.ts:764` (workflow route: on the configured origin when set, else the request's; no `href` starts with `/`), `:782` (comment route: the same) — both fail on the base code.
+- Tests: `lib/__tests__/dfRoundG_P1_rails.test.ts:851` (workflow route: on the configured origin when set, else the request's; no `href` starts with `/`), `:869` (comment route: the same) — both fail on the base code.
 
 **Done-when.**
 - ✓ Both ticket routes build their email link from `publicOrigin()` or the request origin, and the `href` is absolute (`https://` on any deployed origin).
@@ -845,10 +845,10 @@ export async function notify(input: NotificationInput): Promise<void> {
 - The guard refuses a client write that nulls `last_modified` (or the column is `NOT NULL`).
 - A route test: two concurrent writes on a null-token row give one 409.
 
-**Resolution (2026-10-02, drafting-flow Round G).** DF-P1 RAILS; **Pending migration:** `supabase/migrations/20261166_df_roundG_ticket_rails.sql` (`DEC-30`: one paste, not a widening, after `20261038` / `20261039`, before or after the app deploy) — the database half is not closed in any database until it is pasted.
-- `app/api/tickets/workflow-action/route.ts:771-814` — a row with no token compare-and-sets on the null itself: `baseQuery.is("last_modified", null)` (and the same in the tolerant retry), so the first writer stamps it and a concurrent second matches no row → 409.
-- `supabase/migrations/20261166_df_roundG_ticket_rails.sql:308-313` — the guard refuses a client write that nulls `last_modified` ("tickets: last_modified cannot be cleared"); a client may still stamp it (the queue's mark-urgent).
-- Tests: `lib/__tests__/dfRoundG_P1_rails.test.ts:800` — the leg is `.is("last_modified", null)`; two concurrent writes on a null-token row give one 200 and one 409 (fails on the base code). The loser's audit attempt, written before its compare-and-set (`EVID-12`), is followed by a `TICKET_SAVE_PROGRESS_NOT_APPLIED` row naming it (DF-P1 fix pass 2; this line first said the loser wrote no audit row). Exercised on a throwaway PostgreSQL 16 built from the real function bodies, in both foreign-key worlds (orphan intents present / absent), the script applied four times in each (idempotent; 13 of 13 probes true every time): a member's `{ last_modified: null }` is refused (C10); a mark-read on a null-token row passes (C05). Paste-time inventory: tickets whose `last_modified` is NULL today (the first route write stamps each).
+**Resolution (2026-10-02, drafting-flow Round G).** DF-P1 RAILS; **Pending migration:** `supabase/migrations/20261166_df_roundG_ticket_rails.sql` (`DEC-30`: one paste, not a widening, after `20261038` / `20261039`, and after the DF-P1 app deploy, never before it: `AUTHZ-13`, "Paste order") — the database half is not closed in any database until it is pasted.
+- `app/api/tickets/workflow-action/route.ts:742-785` — a row with no token compare-and-sets on the null itself: `baseQuery.is("last_modified", null)` (and the same in the tolerant retry), so the first writer stamps it and a concurrent second matches no row → 409.
+- `supabase/migrations/20261166_df_roundG_ticket_rails.sql:333-338` — the guard refuses a client write that nulls `last_modified` ("tickets: last_modified cannot be cleared"); a client may still stamp it (the queue's mark-urgent).
+- Tests: `lib/__tests__/dfRoundG_P1_rails.test.ts:887` — the leg is `.is("last_modified", null)`; two concurrent writes on a null-token row give one 200 and one 409 (fails on the base code). The loser's audit attempt, written before its compare-and-set (`EVID-12`), is followed by a `TICKET_SAVE_PROGRESS_NOT_APPLIED` row naming it (DF-P1 fix pass 2; this line first said the loser wrote no audit row). Exercised on a throwaway PostgreSQL 16 built from the real function bodies, in both foreign-key worlds (orphan intents present / absent), the script applied four times in each (idempotent; 13 of 13 probes true every time): a member's `{ last_modified: null }` is refused (C10); a mark-read on a null-token row passes (C05). Paste-time inventory: tickets whose `last_modified` is NULL today (the first route write stamps each).
 
 **Done-when.**
 - ✓ The route treats a null token as its own leg.

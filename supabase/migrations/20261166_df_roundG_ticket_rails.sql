@@ -30,8 +30,10 @@
 --       contract ticket_insert_integrity already enforces (the requester is
 --       the caller). tickets_delete_controllers (RESTRICTIVE) is unchanged.
 --   (3) AUTHZ-13 (DEC-44 (DF-P1)): who sees which tickets. Every member role
---       keeps the org-wide read (the product model); ONLY a member whose
---       whole collection is Contractor is narrowed — to tickets they
+--       keeps the org-wide read (the product model); ONLY a member every
+--       one of whose held roles (the headline role UNION the roles
+--       collection, as heldRoles() reads it) is Contractor is narrowed — to
+--       tickets they
 --       requested, are assigned to (drafter or engineer), follow, or were
 --       mentioned on in a comment not deleted — by a RESTRICTIVE SELECT
 --       policy on tickets and the same
@@ -55,22 +57,34 @@
 -- the same USING). DEC-30 inventory (aggregate counts only, captured BEFORE
 -- the transaction): LEAK-10's count of orgs whose stored policy scopes
 -- ticket.engineer_gate_exempt / ticket.direct_approve by request type or
--- unit (n > 0 raises LEAK-10 to CRITICAL — report it); tickets whose
+-- unit, in the {caps, grants} shape or the legacy flat one the engine also
+-- honours (n > 0 raises LEAK-10 to CRITICAL — report it); tickets whose
 -- request_type is outside their org's configured list today; tickets with a
 -- NULL last_modified (EDGE-15); tickets recording a "published" deliverable
--- the register does not back (DCW-4 / HAND-3); the Contractor-only members
--- and the (member, ticket) reads the new scope removes (AUTHZ-13);
+-- the register does not back (DCW-4 / HAND-3); the Contractor-only members,
+-- the (member, ticket) reads the new scope removes, and the tickets a
+-- Contractor-only member follows without having requested or been assigned
+-- them (they keep reading those — AUTHZ-13);
 -- post_ticket_comment overloads a signed-in member could execute (AUTHZ-8);
 -- document_intents rows naming a ticket that no longer exists (PERS-4).
 --
 -- HOW TO APPLY: after 20261038 and 20261039 (both LIVE) — the first statement
--- refuses to run, changing nothing, without 20261038's guard. Paste in either
--- order relative to the DF-P1 app deploy: the app keeps working with or
--- without it (no browser path writes a column this refuses — census in
--- lib/__tests__/dfRoundG_P1_rails.test.ts — and every route writes as the
--- service role). ⚠ DF-P3 / P4 / P6 / P7 / P8 each re-create
--- ticket_update_guard FROM THIS BODY; never re-paste 20261038 after this —
--- it would drop every rail added here.
+-- refuses to run, changing nothing, without 20261038's guard. DEPLOY THE
+-- DF-P1 APP FIRST, THEN PASTE THIS. Either app keeps working with or without
+-- the paste (no browser path writes a column this refuses — census in
+-- lib/__tests__/dfRoundG_P1_rails.test.ts — every route writes as the service
+-- role, and the DF-P1 routes fall back when append_ticket_redline is
+-- absent). But the order matters for AUTHZ-13: the routes before DF-P1
+-- (/api/tickets/watch, /api/tickets/comment, /api/tickets/workflow-action)
+-- add a Contractor-only member to watchers of any ticket in their org, and
+-- following is one of the scope's own legs. Pasted before the deploy, a
+-- self-follow made in that window would survive it and keep the ticket
+-- readable. The DF-P1 routes refuse that write, so they must be live before
+-- the policy. The inventory row counting followed-but-unassigned tickets
+-- shows what earlier follows the scope will keep.
+-- ⚠ DF-P3 / P4 / P6 / P7 / P8 each re-create ticket_update_guard FROM THIS
+-- BODY; never re-paste 20261038 after this — it would drop every rail added
+-- here.
 -- Single paste: prerequisite check → temp-table inventory →
 -- BEGIN/DDL/COMMIT → one SELECT (check text, ok boolean, n text).
 -- ⚠ APPLIED BY HAND (DEC-30). Idempotent.
@@ -93,14 +107,16 @@ WITH contractor_only AS (
   SELECT m.org_id, m.uid
     FROM org_members m
    WHERE m.status = 'active'
-     AND (CASE WHEN cardinality(m.roles) > 0 THEN m.roles ELSE ARRAY[m.role] END) <@ ARRAY['Contractor']::text[]
+     AND COALESCE((SELECT bool_and(btrim(h.r) = 'Contractor')
+                     FROM unnest(ARRAY[m.role] || COALESCE(m.roles, '{}'::text[])) AS h(r)
+                    WHERE btrim(h.r) <> ''), false)
 )
-SELECT 'inventory (before apply): LEAK-10 — orgs with a type- or unit-scoped ticket.engineer_gate_exempt / ticket.direct_approve rule (n > 0 raises LEAK-10 to CRITICAL; over-counts, never under-counts)' AS inventory,
+SELECT 'inventory (before apply): LEAK-10 — orgs with a type- or unit-scoped ticket.engineer_gate_exempt / ticket.direct_approve rule, in the {caps, grants} shape or the legacy flat shape the engine also reads (n > 0 raises LEAK-10 to CRITICAL; over-counts, never under-counts)' AS inventory,
        COUNT(*)::text AS n
   FROM org_configurations
  WHERE key = 'capability_policy'
-   AND (COALESCE(data -> 'caps' ->> 'ticket.engineer_gate_exempt', '') ~ '"(requestType|unit)"'
-     OR COALESCE(data -> 'caps' ->> 'ticket.direct_approve', '') ~ '"(requestType|unit)"')
+   AND (COALESCE(data -> 'caps' ->> 'ticket.engineer_gate_exempt', data ->> 'ticket.engineer_gate_exempt', '') ~ '"(requestType|unit)"'
+     OR COALESCE(data -> 'caps' ->> 'ticket.direct_approve', data ->> 'ticket.direct_approve', '') ~ '"(requestType|unit)"')
 UNION ALL
 SELECT 'inventory (before apply): LEAK-3 — tickets whose request_type is outside their org''s configured list and the built-in Revision / ASBUILT / RFI (re-typed after filing, or a type the org has since removed; kept, never rewritten)',
        COUNT(*)::text
@@ -130,7 +146,7 @@ SELECT 'inventory (before apply): DCW-4 / HAND-3 — tickets with a source docum
                       AND v.org_id = t.org_id AND v.related_ticket_id = t.id
                       AND v.record_id::text = t.metadata -> 'source_document' ->> 'id')
 UNION ALL
-SELECT 'inventory (before apply): AUTHZ-13 — active members whose whole role collection is Contractor (narrowed to the tickets they requested, are assigned to, follow or were mentioned on)',
+SELECT 'inventory (before apply): AUTHZ-13 — active members every one of whose held roles (headline and collection) is Contractor (narrowed to the tickets they requested, are assigned to, follow or were mentioned on)',
        COUNT(*)::text
   FROM contractor_only
 UNION ALL
@@ -142,6 +158,15 @@ SELECT 'inventory (before apply): AUTHZ-13 — (Contractor-only member, ticket) 
    AND t.assigned_drafter_id IS DISTINCT FROM c.uid
    AND t.assigned_engineer_id IS DISTINCT FROM c.uid
    AND NOT (c.uid = ANY (COALESCE(t.watchers, '{}'::uuid[])))
+UNION ALL
+SELECT 'inventory (before apply): AUTHZ-13 — (Contractor-only member, ticket) follows the scope KEEPS readable although the member did not request it and is not assigned to it (follows made before the DF-P1 deploy included; the member keeps reading each until they unfollow it)',
+       COUNT(*)::text
+  FROM contractor_only c
+  JOIN tickets t ON t.org_id = c.org_id
+ WHERE t.requester_id IS DISTINCT FROM c.uid
+   AND t.assigned_drafter_id IS DISTINCT FROM c.uid
+   AND t.assigned_engineer_id IS DISTINCT FROM c.uid
+   AND c.uid = ANY (COALESCE(t.watchers, '{}'::uuid[]))
 UNION ALL
 SELECT 'inventory (before apply): AUTHZ-8 — post_ticket_comment overloads a signed-in member could execute (0 after this paste)',
        COUNT(*)::text
@@ -352,12 +377,23 @@ CREATE POLICY tickets_org_delete ON tickets FOR DELETE
   USING (org_id IN (SELECT my_org_ids()));
 
 -- ── 3. AUTHZ-13 (DEC-44 (DF-P1)): the Contractor collection's read scope ────
--- A member whose WHOLE collection is Contractor (headline Contractor with no
--- additive role, or every additive role Contractor) reads a ticket only when
--- they requested it, are its drafter or engineer, follow it, or were
+-- A member every one of whose held roles is Contractor reads a ticket only
+-- when they requested it, are its drafter or engineer, follow it, or were
 -- mentioned on it in a comment that is not deleted (deleting the comment
 -- withdraws the mention). Everyone else keeps the org-wide read (the product
 -- model).
+--
+-- "Held roles" is heldRoles() (lib/roleHeld.ts), the way the rest of the
+-- codebase reads authority (is_org_controller does the same): the headline
+-- role UNION the roles collection, NULL and blank entries dropped, the rest
+-- trimmed. A member holds at least one role to be Contractor-only (bool_and
+-- over nothing is NULL, which COALESCE turns into false). So a Manager whose
+-- roles drifted to {Contractor} still holds Manager and keeps the org read;
+-- Contractor + Drafter keeps it; a headline Contractor with an empty roles is
+-- narrowed. lib/ticketReadScope.ts isContractorOnly() is the same rule. Its
+-- JavaScript trim() strips every whitespace character, and btrim() strips
+-- spaces only. On a hand-written entry padded with a tab or similar, the
+-- route can only be stricter than the database, never looser.
 --
 -- Cost: the row-independent part is one call per STATEMENT, not per row.
 -- contractor_only_org_ids() returns the caller's Contractor-only orgs, and the
@@ -383,7 +419,9 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
     FROM org_members m
    WHERE auth.uid() IS NOT NULL
      AND m.uid = auth.uid() AND m.status = 'active'
-     AND (CASE WHEN cardinality(m.roles) > 0 THEN m.roles ELSE ARRAY[m.role] END) <@ ARRAY['Contractor']::text[];
+     AND COALESCE((SELECT bool_and(btrim(h.r) = 'Contractor')
+                     FROM unnest(ARRAY[m.role] || COALESCE(m.roles, '{}'::text[])) AS h(r)
+                    WHERE btrim(h.r) <> ''), false);
 $$;
 REVOKE ALL ON FUNCTION contractor_only_org_ids() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION contractor_only_org_ids() TO authenticated, service_role;
@@ -651,7 +689,7 @@ SELECT 'PERS-1 done-when 3: tickets_org_access (FOR ALL) is gone; one permissive
        AND NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'tickets' AND cmd = 'ALL'),
        NULL
 UNION ALL
-SELECT 'AUTHZ-13 (DEC-44 (DF-P1)): a RESTRICTIVE read scope on tickets and on ticket_comments (authenticated) whose row-independent leg is a per-statement sub-select; the mention leg counts only comments not deleted; both scope functions are SECURITY DEFINER with search_path pinned, executable by authenticated, not by anon or PUBLIC',
+SELECT 'AUTHZ-13 (DEC-44 (DF-P1)): a RESTRICTIVE read scope on tickets and on ticket_comments (authenticated) whose row-independent leg is a per-statement sub-select; Contractor-only is decided on the headline role and the roles collection together (every held role Contractor); the mention leg counts only comments not deleted; both scope functions are SECURITY DEFINER with search_path pinned, executable by authenticated, not by anon or PUBLIC',
        EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'tickets' AND policyname = 'tickets_read_scope'
                 AND cmd = 'SELECT' AND permissive = 'RESTRICTIVE' AND roles = ARRAY['authenticated']::name[]
                 AND qual LIKE '%SELECT contractor_only_org_ids()%' AND qual LIKE '%ticket_mentions_me(id)%'
@@ -662,7 +700,9 @@ SELECT 'AUTHZ-13 (DEC-44 (DF-P1)): a RESTRICTIVE read scope on tickets and on ti
        AND (SELECT COUNT(*) = 2 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
              WHERE n.nspname = 'public' AND p.proname IN ('contractor_only_org_ids', 'ticket_mentions_me')
                AND p.prosecdef AND p.proconfig @> ARRAY['search_path=public'])
-       AND (SELECT prosrc LIKE '%<@ ARRAY[''Contractor'']::text[]%' FROM pg_proc WHERE proname = 'contractor_only_org_ids')
+       AND (SELECT prosrc LIKE '%bool_and(btrim(h.r) = ''Contractor'')%unnest(ARRAY[m.role] || COALESCE(m.roles, ''{}''::text[]))%WHERE btrim(h.r) <> ''''), false)%'
+                   AND prosrc NOT LIKE '%cardinality(m.roles)%'
+              FROM pg_proc WHERE proname = 'contractor_only_org_ids')
        AND (SELECT prosrc LIKE '%c.deleted_at IS NULL%' FROM pg_proc WHERE proname = 'ticket_mentions_me')
        AND has_function_privilege('authenticated', 'contractor_only_org_ids()', 'EXECUTE')
        AND NOT has_function_privilege('anon', 'contractor_only_org_ids()', 'EXECUTE')

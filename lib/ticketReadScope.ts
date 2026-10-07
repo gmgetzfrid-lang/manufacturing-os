@@ -4,7 +4,7 @@
 // scope, asked by the service-role routes that write a ticket on the caller's
 // behalf.
 //
-// Migration 20261166 narrows what a member whose WHOLE role collection is
+// Migration 20261166 narrows what a member every one of whose held roles is
 // Contractor can read: the tickets they requested, are the drafter or engineer
 // on, follow (`watchers`), or were mentioned on (`ticket_comments`). The
 // database decides that for the caller's own session. A route running under
@@ -18,12 +18,19 @@
 // gives.
 //
 // The predicate mirrors the SQL exactly:
-//   * Contractor-only = `roles` when it is non-empty, else the headline, and
-//     every entry is Contractor (the SQL's
-//     `(CASE WHEN cardinality(m.roles) > 0 THEN m.roles ELSE ARRAY[m.role] END)
-//      <@ ARRAY['Contractor']`). It is deliberately not `heldRoles()` (which
-//     adds the headline to the collection): a looser test here than in the
-//     database would re-open the bypass for a member the database narrows.
+//   * Contractor-only = every role the member holds is Contractor, where
+//     "holds" is `heldRoles()` — the headline UNION the `roles` collection,
+//     trimmed, blanks dropped — and at least one role is held. That is how
+//     the rest of the codebase reads a member's authority (`heldRoles()`,
+//     `is_org_controller`), so a Manager whose `roles` drifted to
+//     `{Contractor}` still holds Manager and keeps the org read. The SQL
+//     (`contractor_only_org_ids()` and the paste's inventory, 20261166) spells
+//     the same rule over `ARRAY[m.role] || COALESCE(m.roles, '{}')`: drop
+//     NULL and blank entries, compare the trimmed rest to 'Contractor', and
+//     answer false when nothing is left. The two must stay identical: a
+//     looser test here than in the database would re-open the bypass for a
+//     member the database narrows, and a stricter one would refuse a member
+//     the database lets read the ticket.
 //   * the legs: requester, drafter, engineer, watcher, mentioned on a comment
 //     row that is not deleted (the `ticket_comments` copy, as the SQL's
 //     ticket_mentions_me reads it: deleting the comment withdraws the
@@ -31,15 +38,16 @@
 //     the comment PATCH does not rewrite `mentioned_uids` in either copy.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { heldRoles } from "@/lib/roleHeld";
 
 const CONTRACTOR = "Contractor";
 
-/** True when the member's whole collection is Contractor, decided as
- *  20261166 decides it in the database. */
+/** True when every role the member holds (headline ∪ collection) is
+ *  Contractor and they hold at least one, decided as 20261166 decides it in
+ *  the database. */
 export function isContractorOnly(member: { role?: unknown; roles?: unknown } | null | undefined): boolean {
-  if (!member) return false;
-  const collection: unknown[] = Array.isArray(member.roles) && member.roles.length > 0 ? member.roles : [member.role];
-  return collection.every((r) => r === CONTRACTOR);
+  const held = heldRoles(member);
+  return held.length > 0 && held.every((r) => r === CONTRACTOR);
 }
 
 export interface ScopedTicket {
