@@ -1626,7 +1626,7 @@ describe("MON-12 / COST-3 (J14) — every flagged company the award answers for,
     expect(auditRows("COST_DOC_AWARD_OVERRIDE").map((r) => (r.details as Row).also ?? false)).toEqual([false, false]);
   });
 
-  it("J12 fix pass 8's residual — a reason typed for one company is never recorded against another: overrideCompanyId names it, and a moved answer is refused, writing nothing", async () => {
+  it("J12 fix pass 8's residual — a reason typed for one company is never recorded against another: overrideCompanyId names it, and a moved answer is refused on the client sequence, writing nothing and naming the company it now answers for (moved)", async () => {
     seedS1();
     const moved = await awardQuote({
       doc: s1(), siblings: [], costAccountId: "a1", actor, overrideReason: "Typed for Apex", overrideCompanyId: "c-apex",
@@ -1634,9 +1634,17 @@ describe("MON-12 / COST-3 (J14) — every flagged company the award answers for,
     });
     expect(moved.ok).toBe(false);
     expect(moved.error).toMatch(/changed after the reason was typed — the award now answers for Coastal Fabricators \(marked inactive\)\. Nothing was changed/);
-    expect(moved.needsOverride).toBeUndefined();
+    // (J14 last review) the refusal can be answered: it names this read's company, the one the client sequence records
+    expect(moved.needsOverride).toEqual({ companyId: "c-coastal", companyName: "Coastal Fabricators", status: "inactive", moved: true });
     expect(db.tables.cost_documents[0].status).toBe("parsed");
     expect(db.tables.audit_logs).toHaveLength(0);
+    // answered: the reason for Coastal, named — the award completes, each override under its own company
+    const ok = await awardQuote({
+      doc: s1(), siblings: [], costAccountId: "a1", actor, overrideReason: "Coastal reactivated", overrideCompanyId: "c-coastal",
+      alsoOverrides: [{ companyId: "c-apex", reason: "Not Apex" }],
+    });
+    expect(ok.ok).toBe(true);
+    expect(auditRows("COST_DOC_AWARD_OVERRIDE").map((r) => [(r.details as Row).companyId, (r.details as Row).reason])).toEqual([["c-coastal", "Coastal reactivated"], ["c-apex", "Not Apex"]]);
   });
 
   describe("through award_quote (one transaction)", () => {
@@ -1678,10 +1686,36 @@ describe("MON-12 / COST-3 (J14) — every flagged company the award answers for,
       rpc.handler = () => ({ data: { ok: false, code: "company_moved", company: { id: "c-x", name: "Xeno Piping", status: "do_not_use" }, expected: "c-coastal" }, error: null });
       const moved = await awardQuote(args);
       expect(moved.error).toMatch(/the award now answers for Xeno Piping \(flagged DO NOT USE\)/);
+      // (J14 last review) the server's answer under its lock is the one asked for next
+      expect(moved.needsOverride).toEqual({ companyId: "c-x", companyName: "Xeno Piping", status: "do_not_use", moved: true });
       rpc.handler = () => ({ data: { ok: false, code: "company_flagged", also: true, company: { id: "c-y", name: "Yarrow Weld", status: "inactive" } }, error: null });
       const also = await awardQuote(args);
       expect(also.needsOverride).toEqual({ companyId: "c-y", companyName: "Yarrow Weld", status: "inactive", also: true });
       expect(also.error).toMatch(/^Yarrow Weld is marked inactive in the company registry and this award answers for it too \(besides Coastal Fabricators\)/);
+    });
+    it("(J14 last review) the server decides a moved answer: when this lib's read (Coastal) differs from the server's first answer the bid tab asked (Xeno), the reason typed for Xeno goes to award_quote and the award completes — no lib refusal on any retry", async () => {
+      db.tables.companies.push({ id: "c-coastal", org_id: "o1", name: "Coastal Fabricators", status: "inactive" });
+      db.tables.project_parties.push({ id: "pp-coastal", company_id: "c-coastal" });
+      db.tables.cost_documents.push(docRow({ id: "d-div", party_id: "pp-coastal", vendor_name: "Coastal Fab" }));
+      // the server's own answer under its lock (the same SQL the bid tab asked): Xeno
+      rpc.handler = (_fn: string, a: Record<string, unknown>) => (a.p_override_company === "c-x"
+        ? { data: { ok: true, entryId: "e1", total: 1000, rivals: 0, declined: 0, ungroupedOpen: [] }, error: null }
+        : { data: { ok: false, code: "company_moved", company: { id: "c-x", name: "Xeno Piping", status: "do_not_use" }, expected: a.p_override_company }, error: null });
+      const award = () => awardQuote({ doc: doc({ id: "d-div", partyId: "pp-coastal", vendorName: "Coastal Fab" }), siblings: [], costAccountId: "a1", actor, overrideReason: "Typed for Xeno", overrideCompanyId: "c-x" });
+      for (let i = 0; i < 2; i++) {
+        const res = await award();
+        expect(res.ok, res.error).toBe(true);
+      }
+      expect(rpc.calls.map((c) => c.args.p_override_company)).toEqual(["c-x", "c-x"]);
+    });
+    it("(J14 last review) p_override_company is the caller's company or nothing — never this lib's own read: a caller that names none sends 20261157's five arguments", async () => {
+      db.tables.companies.push({ id: "c-apex", org_id: "o1", name: "Apex Industrial", status: "do_not_use" });
+      db.tables.project_parties.push({ id: "pp-apex", company_id: "c-apex" });
+      db.tables.cost_documents.push(docRow({ id: "d-one", party_id: "pp-apex", vendor_name: "Apex Industrial" }));
+      rpc.handler = () => ({ data: { ok: true, entryId: "e1", total: 1000, rivals: 0, declined: 0, ungroupedOpen: [] }, error: null });
+      const ok = await awardQuote({ doc: doc({ id: "d-one", partyId: "pp-apex", vendorName: "Apex Industrial" }), siblings: [], costAccountId: "a1", actor, overrideReason: "Client-nominated" });
+      expect(ok.ok).toBe(true);
+      expect(rpc.calls).toEqual([{ fn: "award_quote", args: { p_doc: "d-one", p_cost_account: "a1", p_expected_total: 1000, p_override_reason: "Client-nominated", p_confirmed_total: null } }]);
     });
     it("(J14 fix pass) a company only the SERVER's list names: its refusal (also) is answered, and the retry carries that reason as p_also_overrides beside the lib's own — the award completes", async () => {
       seedS1();

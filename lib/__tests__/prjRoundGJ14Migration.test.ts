@@ -213,7 +213,7 @@ describe("section 1 — cost_doc_companies_barred, beside an UNCHANGED cost_doc_
   });
 });
 
-describe("section 3 — the move rail: an open quote is not moved off a flagged company without a reason", () => {
+describe("section 3 — the move rail: a quote is not moved off a flagged company without a reason", () => {
   const f = () => fn("enforce_cost_document_company_move");
   it("SECURITY DEFINER with search_path pinned, EXECUTE revoked from PUBLIC, anon and authenticated (DRLS-16); BEFORE UPDATE with no column list (company_id is 20261096's, read through to_jsonb)", () => {
     expect(f()).toMatch(/SECURITY DEFINER\s*\nSET search_path = public/);
@@ -223,12 +223,12 @@ describe("section 3 — the move rail: an open quote is not moved off a flagged 
     expect(f()).not.toMatch(/\b(OLD|NEW)\.company_id\b/);
   });
 
-  it("passes, in order: the service role; a decided quote or another kind; a write that changes none of the three; an FK SET NULL one level down; the relink override for this one document — then judges the list before against the list after", () => {
+  it("passes, in order: the service role; another kind; a write that changes none of the three; an FK SET NULL one level down; the relink override for this one document — then judges the list before against the list after", () => {
     const body = f();
     const at = (s: string) => { const i = body.indexOf(s); expect(i, s).toBeGreaterThan(0); return i; };
     const order = [
       "IF auth.uid() IS NULL THEN RETURN NEW; END IF;",
-      "IF OLD.kind IS DISTINCT FROM 'quote' OR OLD.status NOT IN ('draft', 'parsed') THEN RETURN NEW; END IF;",
+      "IF OLD.kind IS DISTINCT FROM 'quote' THEN RETURN NEW; END IF;",
       "AND v_new_company IS NOT DISTINCT FROM v_old_company THEN",
       "IF pg_trigger_depth() > 1",
       "IF COALESCE(current_setting('app.cost_doc_relink_override', true), '') = NEW.id::text THEN RETURN NEW; END IF;",
@@ -239,6 +239,24 @@ describe("section 3 — the move rail: an open quote is not moved off a flagged 
     ].map(at);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     expect(body).toContain("((v_new_company IS NULL AND v_old_company IS NOT NULL) OR (NEW.party_id IS NULL AND OLD.party_id IS NOT NULL))");
+  });
+
+  it("(J14 last review) a DECIDED quote is judged too — no status exemption: nothing refuses a signed-in reopen, so a decline, a move off the flag, a reopen and an award would otherwise skip the gate with no reason recorded; the paste probe pins it", () => {
+    const body = f();
+    expect(body).not.toMatch(/OLD\.status|NEW\.status/);
+    expect(body).not.toMatch(/'draft'|'parsed'|'declined'|'void'|'awarded'/);
+    expect(C).toContain("AND prosrc LIKE '%IF OLD.kind IS DISTINCT FROM ''quote'' THEN RETURN NEW; END IF;%'");
+    expect(C).toContain("AND prosrc NOT LIKE '%OLD.status%'");
+    // the picker's RPC still moves an OPEN quote only — a decided quote's link has no reasoned move (refused outright)
+    expect(fn("relink_cost_document")).toContain("IF v_doc.status NOT IN ('draft', 'parsed') THEN\n    RETURN jsonb_build_object('ok', false, 'code', 'decided', 'status', v_doc.status);");
+    // and the header no longer leans on rules the database does not have
+    expect(M).not.toMatch(/decided-bid rules/);
+  });
+
+  it("(J14 last review) the second inventory label states the rule as built: the link moves with a typed reason through the picker; the contractor or vendor name cannot be moved away; a decided quote's move is refused too", () => {
+    const inv = between(C, "CREATE TEMP TABLE prj_g_j14_inventory AS", "\nBEGIN;");
+    expect(inv).toContain("'inventory (MON-12): open quotes that answer for at least one flagged company (moving their company link away from it needs a typed reason through the bid row''s picker; their contractor or vendor name cannot be moved away from it — section 3, which refuses any such move on a decided quote too)'");
+    expect(inv).not.toContain("contractor or vendor name away from it now needs a typed reason");
   });
 
   it("20261157's award rail is untouched by this file (it still judges the first company, and the override GUC is still award_quote's)", () => {
@@ -292,7 +310,13 @@ describe("section 4 — relink_cost_document: the picker's move, its reason and 
 describe("the app halves (J14)", () => {
   it("lib/costDocs.ts sends the new arguments only when it has them, and retries 20261157's five-argument call on PGRST202, recording the other companies' overrides itself", () => {
     const lib = src("lib/costDocs.ts");
-    expect(lib).toContain("if (override && verdict.barred) extra.p_override_company = answers.overrideCompanyId ?? verdict.barred.id;");
+    // (J14 last review) the caller's company only — never defaulted to the lib's own read
+    expect(lib).toContain("if (override && answers.overrideCompanyId) extra.p_override_company = answers.overrideCompanyId;");
+    expect(lib).not.toContain("answers.overrideCompanyId ?? verdict.barred.id");
+    // the lib judges a moved answer on its client sequence only (the server judges it under its lock)
+    expect(lib).toContain("if (judgeMoved && barred && answers.overrideCompanyId && answers.overrideCompanyId !== barred.id) {");
+    expect(lib).toContain("const verdict = await awardGuard(fresh, raw, input.costAccountId, override, input.confirmedTotal, answers);");
+    expect(lib).toContain("const verdict = await awardGuard(f, raw, input.costAccountId, override, input.confirmedTotal, answers, true);");
     expect(lib).toContain("if (alsoGiven.length) extra.p_also_overrides = alsoGiven;");
     // (J14 fix pass) every reason held goes, merged with the lib's own list — a company only the server names is answerable
     expect(lib).toContain("for (const g of answers.alsoOverrides ?? []) {");

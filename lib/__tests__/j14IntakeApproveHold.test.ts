@@ -35,6 +35,8 @@ const s = vi.hoisted(() => ({
   pending: "v2" as string | null,
   current: "v1",
   writes: [] as Array<{ table: string; method: string; args: unknown[] }>,
+  /** Every read, by table (the list's refresh reads project_intake_links). */
+  reads: [] as string[],
 }));
 
 vi.mock("@/lib/supabase", () => {
@@ -45,6 +47,7 @@ vi.mock("@/lib/supabase", () => {
       s.writes.push({ table, method: methods[0], args: args[0] });
       return { data: table === "document_versions" ? [{ id: "v2" }] : null, error: null };
     }
+    s.reads.push(table);
     if (table === "project_intake_links") return { data: [{ id: "l1", company_name: "Gulf Mechanical", contact_email: "pm@gulf.example", token_prefix: "abc123", allow_auto_supersede: false, expires_at: null, revoked_at: null, submission_count: 1, last_used_at: null, assigned_doc_ids: [] }], error: null };
     if (table === "projects") return { data: { intake_library_id: "lib1", intake_collection_id: null }, error: null };
     if (table === "libraries") return { data: [{ id: "lib1", name: "Intake" }], error: null };
@@ -101,7 +104,7 @@ let host: HTMLDivElement;
 let root: Root;
 beforeEach(() => {
   s.roles = ["Engineer", "DocCtrl"];
-  s.pending = "v2"; s.current = "v1"; s.writes = [];
+  s.pending = "v2"; s.current = "v1"; s.writes = []; s.reads = [];
   s.finalize.mockReset().mockImplementation(async () => { s.current = "v2"; return { published: true }; });
   s.notify.mockReset().mockResolvedValue({ sent: true });
   s.appPrompt.mockReset(); s.appConfirm.mockReset();
@@ -232,6 +235,50 @@ describe("SAF-9 (J14) — the Intake tab tells the contractor how their submissi
     await click(button("Approve"));
     expect(notice()).toContain("the approval went through, but the current revision is not the submission you approved");
     expect(s.notify).not.toHaveBeenCalled();
+  });
+
+  it("(J14 last review) the decision shows and the list refreshes as soon as the write lands — the notice (the route's send can take up to its 15 s abort) never holds them; its sentence is appended when it answers", async () => {
+    const pending: Array<(v: { sent: true } | { sent: false; reason: string }) => void> = [];
+    s.notify.mockReset().mockImplementation(() => new Promise((resolve) => { pending.push(resolve); }));
+    const refreshes = () => s.reads.filter((t) => t === "project_intake_links").length;
+    await render();
+    // approve: the decision's message, the refresh and the cleared busy state all come before the notice answers
+    let before = refreshes();
+    await click(button("Approve"));
+    expect(s.notify).toHaveBeenCalledWith("o1", "v2");
+    expect(pending).toHaveLength(1);
+    expect(notice()).toBe("P-101 Rev B approved — it is now the current revision.");
+    expect(host.querySelector("[data-tone]")?.getAttribute("data-tone")).toBe("success");
+    expect(refreshes()).toBeGreaterThan(before);
+    expect(button("Approve").disabled).toBe(false);
+    await act(async () => { pending[0]({ sent: true }); });
+    await settle();
+    expect(notice()).toBe("P-101 Rev B approved — it is now the current revision. The company's contact was emailed the outcome.");
+    // reject: the same — and a failed send is still said when it answers
+    s.appPrompt.mockResolvedValue("The weld map is missing from sheet 2");
+    before = refreshes();
+    await click(button("Reject"));
+    expect(pending).toHaveLength(2);
+    expect(notice()).toBe("P-101 Rev B rejected — the company sees it as not accepted, with your reason, on their portal.");
+    expect(refreshes()).toBeGreaterThan(before);
+    expect(button("Reject").disabled).toBe(false);
+    await act(async () => { pending[1]({ sent: false, reason: "send_failed" }); });
+    await settle();
+    expect(notice()).toBe("P-101 Rev B rejected — the company sees it as not accepted, with your reason, on their portal. The email to the company's contact could not be sent (send_failed) — they still see the outcome on their portal.");
+  });
+
+  it("(J14 last review) a notice that answers after another message took the screen is not written over it", async () => {
+    let answer: (v: { sent: true }) => void = () => undefined;
+    s.notify.mockReset().mockImplementation(() => new Promise((resolve) => { answer = resolve; }));
+    await render();
+    await click(button("Approve"));
+    expect(notice()).toBe("P-101 Rev B approved — it is now the current revision.");
+    s.appPrompt.mockResolvedValue("no");   // too short: the reject says why and writes nothing
+    await click(button("Reject"));
+    expect(notice()).toBe("Give the company a reason (at least a few words) so they know what to fix.");
+    await act(async () => { answer({ sent: true }); });
+    await settle();
+    expect(notice()).toBe("Give the company a reason (at least a few words) so they know what to fix.");
   });
 
   it("outcomeNoticeSentence words every answer the route gives", () => {

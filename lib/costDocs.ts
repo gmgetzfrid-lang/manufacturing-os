@@ -589,11 +589,12 @@ async function notifyAward(fresh: CostDocument, total: number, actor: Actor, cos
 /** The refusals an award runs against the row as read, before anything
  *  moves (MON-12 / COST-8 / COST-13): the budget line's currency, the
  *  company registry (fail-closed — a failed read refuses), and the read
- *  extent. Shared by the one-transaction award and the client sequence. */
+ *  extent. Shared by the one-transaction award and the client sequence.
+ *  `judgeMoved` — only the client sequence passes it (see the check). */
 async function awardGuard(
   f: CostDocument, raw: Record<string, unknown>, costAccountId: string,
   override: string | null, confirmedTotal: number | null | undefined,
-  answers: AwardAnswers = {},
+  answers: AwardAnswers = {}, judgeMoved = false,
 ): Promise<{ refusal: string | null; company: CompanyRow | null; barred: CompanyRow | null; also: CompanyRow[]; needsOverride?: NeedsOverride }> {
   const mismatch = await currencyMismatch(f, costAccountId);
   if (mismatch) return { refusal: mismatch, company: null, barred: null, also: [] };
@@ -603,9 +604,17 @@ async function awardGuard(
   }
   const { company, barred, also } = behind;
   if (barred && !override) return { refusal: flaggedMessage(barred), company, barred, also, needsOverride: needsOverrideOf(barred) };
-  // J14 (MON-12): the reason was typed for one company — never recorded against another.
-  if (barred && answers.overrideCompanyId && answers.overrideCompanyId !== barred.id) {
-    return { refusal: movedMessage(barred), company, barred, also };
+  // J14 (MON-12): the reason was typed for one company — never recorded
+  // against another. Judged HERE only on the client sequence, where this
+  // read is the one the override row records. Through award_quote the
+  // server judges it under its lock (`company_moved`, 20261179) against
+  // the same SQL the bid tab asked; this TypeScript read can differ from
+  // that SQL (trim against btrim, ilike against lower() =), and a refusal
+  // from it would come back on every retry, so the award could never
+  // complete (J14 last review). The refusal names this read's company
+  // (`moved`), so the caller asks the reason for it and tries again.
+  if (judgeMoved && barred && answers.overrideCompanyId && answers.overrideCompanyId !== barred.id) {
+    return { refusal: movedMessage(barred), company, barred, also, needsOverride: { ...needsOverrideOf(barred), moved: true } };
   }
   // J14 (MON-12 / COST-3): every other flagged company needs its own reason.
   const missing = also.find((c) => !alsoReasonFor(answers.alsoOverrides, c.id));
@@ -620,7 +629,10 @@ export interface AwardAnswers {
   overrideCompanyId?: string | null;
   alsoOverrides?: Array<{ companyId: string; reason: string }> | null;
 }
-export type NeedsOverride = { companyId: string; companyName: string; status: string; also?: boolean };
+/** `also`: another company after the first. `moved`: the first company, but
+ *  not the one the caller's reason was typed for (`overrideCompanyId`) —
+ *  the answer moved, so that reason does not go with it. */
+export type NeedsOverride = { companyId: string; companyName: string; status: string; also?: boolean; moved?: boolean };
 const needsOverrideOf = (c: CompanyRow): NeedsOverride => ({ companyId: c.id, companyName: c.name, status: c.status });
 /** The trimmed reason given for `companyId`, or null. */
 function alsoReasonFor(given: AwardAnswers["alsoOverrides"], companyId: string): string | null {
@@ -703,7 +715,11 @@ async function awardInOneTransaction(
     if (reason && !alsoGiven.some((x) => x.companyId === g.companyId)) alsoGiven.push({ companyId: g.companyId, reason });
   }
   const extra: Record<string, unknown> = {};
-  if (override && verdict.barred) extra.p_override_company = answers.overrideCompanyId ?? verdict.barred.id;
+  // (J14 last review) The company the caller's reason was typed for, only
+  // when the caller named it — never this read's own answer, which can
+  // differ from the server's and would then refuse an award the server
+  // would make.
+  if (override && answers.overrideCompanyId) extra.p_override_company = answers.overrideCompanyId;
   if (alsoGiven.length) extra.p_also_overrides = alsoGiven;
   const base = {
     p_doc: fresh.id, p_cost_account: input.costAccountId, p_expected_total: total,
@@ -745,7 +761,10 @@ async function awardInOneTransaction(
         if (c) return { ok: false, error: flaggedMessage(c), needsOverride: needsOverrideOf(c) };
         return { ok: false, error: "The company behind this quote is flagged in the registry — awarding it needs an explicit override with a reason." };
       case "company_moved":
-        return { ok: false, error: c ? movedMessage(c) : "This bid's company link, contractor or vendor name changed after the reason was typed — nothing was changed; award it again." };
+        // The server's answer under its lock: the caller asks the reason for it and tries again.
+        return c
+          ? { ok: false, error: movedMessage(c), needsOverride: { ...needsOverrideOf(c), moved: true } }
+          : { ok: false, error: "This bid's company link, contractor or vendor name changed after the reason was typed — nothing was changed; award it again." };
       case "status":
         return { ok: false, error: `This document is already ${costDocStatusLabel(out.status ?? "decided").toLowerCase()} — refresh to see the latest.` };
       case "currency":
@@ -811,9 +830,11 @@ export async function awardQuote(input: {
    *  caller does not write its own override row). */
   overrideReason?: string | null;
   /** J14 (MON-12): the company `overrideReason` was typed for. When given,
-   *  an award that now answers for another company is refused — here and
-   *  under award_quote's lock (20261179) — instead of recording the reason
-   *  against it. */
+   *  an award that now answers for another company is refused instead of
+   *  recording the reason against it — under award_quote's lock (20261179;
+   *  this lib does not pre-judge it there), or by this lib on the client
+   *  sequence — with `needsOverride.moved` naming the company it now
+   *  answers for. */
   overrideCompanyId?: string | null;
   /** J14 (MON-12 / COST-3): a typed reason for each OTHER flagged company
    *  the award answers for (`needsOverride.also`), each recorded under its
@@ -832,8 +853,10 @@ export async function awardQuote(input: {
   /** Set when the award was refused ONLY because a company it answers for
    *  is flagged (do-not-use or inactive) and no reason was given for it —
    *  the first company when no override reason was given; another one
-   *  (`also: true`) when `alsoOverrides` has none for it. The caller may ask
-   *  for that reason and call again with it. */
+   *  (`also: true`) when `alsoOverrides` has none for it; the first company
+   *  (`moved: true`) when the reason was typed for another one
+   *  (`overrideCompanyId`). The caller may ask for that reason and call
+   *  again with it. */
   needsOverride?: NeedsOverride;
 }> {
   const { doc } = input;
@@ -854,7 +877,7 @@ export async function awardQuote(input: {
   let needs: NeedsOverride | undefined;
   const answers: AwardAnswers = { overrideCompanyId: input.overrideCompanyId ?? null, alsoOverrides: input.alsoOverrides ?? null };
   const claim = await claimDocTransition(doc.id, ["draft", "parsed"], "awarded", input.actor.uid, true, async (f, raw) => {
-    const verdict = await awardGuard(f, raw, input.costAccountId, override, input.confirmedTotal, answers);
+    const verdict = await awardGuard(f, raw, input.costAccountId, override, input.confirmedTotal, answers, true);
     company = verdict.company;
     barred = verdict.barred;
     alsoFlagged = verdict.also;

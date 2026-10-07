@@ -162,7 +162,38 @@ describe("PERF-5 remediation 4 (J14) — a searchable dependency picker that nev
     await act(async () => { await Promise.resolve(); });
     expect(upd.updateMilestone).toHaveBeenCalledWith({ id: "t0", patch: { dependsOn: ["t391"] }, updatedBy: "u" });
   });
-  it("Enter takes the first match; a word that matches nothing says so", async () => {
+  it("(J14 last review) tabbing in and pressing Enter writes nothing: with no active option Enter picks nothing (an empty query, a typed one, even a single match) — only an option ArrowDown highlighted is accepted", async () => {
+    upd.updateMilestone.mockClear();
+    await act(async () => { root.render(panel(many[0], many)); });
+    await act(async () => { await Promise.resolve(); });
+    const search = host.querySelector('input[aria-label^="Add a predecessor"]') as HTMLInputElement;
+    const enter = async () => {
+      const ev = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+      await act(async () => { search.dispatchEvent(ev); });
+      await act(async () => { await Promise.resolve(); });
+      return ev;
+    };
+    // just focused: the list opens on focus, nothing is active — Enter writes nothing
+    await act(async () => { search.focus(); });
+    expect(host.querySelectorAll('[role="listbox"] > [role="option"]').length).toBe(PREDECESSOR_PICKER_LIMIT);
+    expect(search.getAttribute("aria-activedescendant")).toBeNull();
+    await enter();
+    expect(upd.updateMilestone).not.toHaveBeenCalled();
+    // closed by Escape, Enter re-opens the list and still writes nothing
+    await act(async () => { search.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+    expect(search.getAttribute("aria-expanded")).toBe("false");
+    await enter();
+    expect(search.getAttribute("aria-expanded")).toBe("true");
+    expect(upd.updateMilestone).not.toHaveBeenCalled();
+    // a typed query, many matches or exactly one: no active option, nothing written
+    await type(search, "Task 7");
+    await enter();
+    await type(search, "Task 399");
+    expect(host.querySelectorAll('[role="listbox"] > [role="option"]').length).toBe(1);
+    await enter();
+    expect(upd.updateMilestone).not.toHaveBeenCalled();
+  });
+  it("ArrowDown then Enter takes the first match; a word that matches nothing says so", async () => {
     upd.updateMilestone.mockClear();
     await act(async () => { root.render(panel(many[0], many)); });
     await act(async () => { await Promise.resolve(); });
@@ -170,7 +201,10 @@ describe("PERF-5 remediation 4 (J14) — a searchable dependency picker that nev
     await act(async () => { search.focus(); });
     await type(search, "zzz");
     expect(host.textContent).toContain("No task matches — try another word.");
+    await act(async () => { search.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
+    expect(upd.updateMilestone).not.toHaveBeenCalled();
     await type(search, "Task 7");
+    await act(async () => { search.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true })); });
     await act(async () => { search.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
     await act(async () => { await Promise.resolve(); });
     expect(upd.updateMilestone).toHaveBeenCalledTimes(1);

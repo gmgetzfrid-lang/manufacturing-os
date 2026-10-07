@@ -1497,6 +1497,41 @@ describe("MON-12 / COST-3 (J14) — the bid tab answers for every flagged compan
     expect(cd.awardQuote.mock.calls[1][0]).toMatchObject({ overrideReason: "Not the barred Spar Rigging Ltd", overrideCompanyId: "s-dnu", alsoOverrides: [{ companyId: "s-inact", reason: "Reactivation paperwork pending" }] });
   });
 
+  it("(J14 last review) a moved answer (needsOverride.moved — award_quote's company_moved, or the lib's client sequence) is asked for by name, its intent recorded, the earlier intent closed, and the award retried naming the new company", async () => {
+    const d = spar();
+    db.single.cost_documents = storedRow(d);
+    listed(SPAR_DNU);
+    dlg.appPrompt.mockResolvedValueOnce("Not the barred Spar Rigging Ltd").mockResolvedValueOnce("Spar Rigging's reactivation is signed");
+    cd.awardQuote
+      .mockResolvedValueOnce({ ok: false, error: "moved", needsOverride: { companyId: "s-inact", companyName: "Spar Rigging", status: "inactive", moved: true } })
+      .mockResolvedValueOnce({ ok: true });
+    await render(fieldOf(d));
+    await awardOn(/Spar Rigging/);
+    expect(promptTitles()).toEqual(["Spar Rigging Ltd is flagged DO NOT USE", "Spar Rigging is marked INACTIVE"]);
+    expect(promptText(1)).toMatch(/changed after the reason was typed for Spar Rigging Ltd — the award now answers for Spar Rigging, so that reason does not go with it\. To award anyway, state the reason for Spar Rigging/);
+    expect(auditActions()).toEqual(["COST_DOC_AWARD_OVERRIDE_DO_NOT_USE", "COST_DOC_AWARD_OVERRIDE_DO_NOT_USE", "COST_DOC_AWARD_OVERRIDE_ABANDONED"]);
+    expect(intents().map((i) => [i.companyId, i.also ?? false])).toEqual([["s-dnu", false], ["s-inact", false]]);
+    expect(db.inserts.filter((i) => i.row.action === "COST_DOC_AWARD_OVERRIDE_ABANDONED").map((i) => i.row.details)).toEqual([
+      { companyId: "s-dnu", company: "Spar Rigging Ltd", why: "the award's answer moved to Spar Rigging before it posted" },
+    ]);
+    expect(cd.awardQuote).toHaveBeenCalledTimes(2);
+    expect(cd.awardQuote.mock.calls[1][0]).toMatchObject({ overrideReason: "Spar Rigging's reactivation is signed", overrideCompanyId: "s-inact", alsoOverrides: [] });
+    expect(errors.filter((e) => e)).toEqual([]);
+  });
+
+  it("(J14 last review) a moved answer whose new reason is not given stops the award and closes the intent it had", async () => {
+    const d = spar();
+    db.single.cost_documents = storedRow(d);
+    listed(SPAR_DNU);
+    dlg.appPrompt.mockResolvedValueOnce("Not the barred Spar Rigging Ltd").mockResolvedValueOnce(null);
+    cd.awardQuote.mockResolvedValueOnce({ ok: false, error: "moved", needsOverride: { companyId: "s-inact", companyName: "Spar Rigging", status: "inactive", moved: true } });
+    await render(fieldOf(d));
+    await awardOn(/Spar Rigging/);
+    expect(cd.awardQuote).toHaveBeenCalledTimes(1);
+    expect(errors.at(-1)).toMatch(/Award stopped — Spar Rigging is flagged and no override reason was given/);
+    expect(auditActions()).toEqual(["COST_DOC_AWARD_OVERRIDE_DO_NOT_USE", "COST_DOC_AWARD_OVERRIDE_ABANDONED"]);
+  });
+
   it("review 9's S1 after 20261179: the list names Apex after Coastal — the stored name's acknowledgement is its reason, no third prompt", async () => {
     const COASTAL_INACT = company("c-coastal", "Coastal Fabricators", "inactive");
     reg.listCompanies.mockResolvedValue([APEX]);

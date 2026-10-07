@@ -824,8 +824,8 @@ export function matchPredecessors(candidates: readonly Milestone[], query: strin
  *  `combobox` (aria-expanded, aria-controls, aria-autocomplete="list",
  *  aria-activedescendant); the matches are a `listbox` of `option`s, the
  *  active one aria-selected; ArrowDown / ArrowUp (Home / End) move the
- *  active option, Enter picks it (the first match when none is active),
- *  Escape closes. Focus stays in the input throughout; the count is said in
+ *  active option, Enter picks it (with none active, Enter picks nothing —
+ *  J14 last review), Escape closes. Focus stays in the input throughout; the count is said in
  *  the status line. */
 function PredecessorPicker({ candidates, hiddenIds, disabled, onPick }: {
   candidates: Milestone[];
@@ -876,8 +876,15 @@ function PredecessorPicker({ candidates, hiddenIds, disabled, onPick }: {
           if (expanded && e.key === "Home" && activeIndex >= 0) { e.preventDefault(); move(0); return; }
           if (expanded && e.key === "End" && activeIndex >= 0) { e.preventDefault(); move(shown.length - 1); return; }
           if (e.key === "Enter") {
-            const t = activeIndex >= 0 ? shown[activeIndex] : shown[0];
-            if (t?.id) { e.preventDefault(); pick(t.id); }
+            // (J14 last review) Enter accepts only the ACTIVE option — the one
+            // ArrowDown / ArrowUp highlighted (ARIA APG, list autocomplete with
+            // manual selection). With none active it writes nothing: it only
+            // opens the list, so tabbing in and pressing Enter never links
+            // the earliest task (the native <select> never wrote without a choice).
+            e.preventDefault();
+            const t = activeIndex >= 0 ? shown[activeIndex] : null;
+            if (t?.id) pick(t.id);
+            else setOpen(true);
           }
         }}
         placeholder="+ Add a predecessor — type to search…"

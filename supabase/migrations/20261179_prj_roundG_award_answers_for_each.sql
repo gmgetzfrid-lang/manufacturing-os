@@ -57,7 +57,7 @@
 --      `enforce_cost_document_company_move` (BEFORE UPDATE ON
 --      cost_documents, SECURITY DEFINER, search_path pinned, EXECUTE
 --      revoked from PUBLIC, anon and authenticated): a signed-in write to
---      an OPEN quote (draft / parsed) that changes its company link
+--      a quote — in ANY status — that changes its company link
 --      (`company_id`, read through to_jsonb — a database without
 --      20261096's column is not broken, which is also why the trigger has
 --      no column list), its contractor (`party_id`) or its vendor name is
@@ -65,14 +65,22 @@
 --      list, read as the definer) is not on the list the moved row answers
 --      for — unless the write runs inside `relink_cost_document` (below),
 --      which sets the transaction-local `app.cost_doc_relink_override` to
---      that one document's id after a typed reason. Passes: the service
---      role (auth.uid() NULL — the AI read route fills a missing vendor
---      name as the service role; restores; the SQL editor); a decided
---      quote (the award rail and the decided-bid rules judge those); a
---      move that leaves no flagged company behind (linking a bid to the
+--      that one document's id after a typed reason (open quotes only: it
+--      refuses a decided one). A decided quote is judged too (J14 last
+--      review): nothing in the database refuses a signed-in reopen
+--      (declined / void / awarded → parsed — the client sequence's revert
+--      is one), so a decided quote moved off a flagged company, reopened
+--      and awarded would otherwise clear the award gate with no reason
+--      recorded. No app write moves a decided quote's link, contractor or
+--      name (the picker refuses a decided bid; the panel keeps its link as
+--      evidence), so the rail refuses such a move outright. Passes: the
+--      service role (auth.uid() NULL — the AI read route fills a missing
+--      vendor name as the service role; restores; the SQL editor); a move
+--      that leaves no flagged company behind (linking a bid to the
 --      flagged company itself, or between unflagged ones); the company's
 --      or the contractor's own delete (FK ON DELETE SET NULL, one trigger
---      level down — 20261157 §5's pattern).
+--      level down — 20261157 §5's pattern; the contractor's delete is
+--      projects-tab MON-14's).
 --   4. `relink_cost_document(p_doc, p_company, p_reason)` (SECURITY
 --      INVOKER — the caller's own RLS; search_path pinned; NULL auth.uid()
 --      refused; EXECUTE revoked from PUBLIC and anon): the bid row's
@@ -190,7 +198,7 @@ prj_g_j14_counted AS MATERIALIZED (
 SELECT 'inventory (MON-12 / COST-3): open quotes (draft / parsed) that answer for MORE than one flagged company (an award now needs a typed reason for each, each recorded under its own override row, section 2)' AS inventory, COUNT(*)::text AS n
   FROM prj_g_j14_counted WHERE flagged > 1
 UNION ALL
-SELECT 'inventory (MON-12): open quotes that answer for at least one flagged company (moving their company link, contractor or vendor name away from it now needs a typed reason, through the bid row''s picker — section 3)', COUNT(*)::text
+SELECT 'inventory (MON-12): open quotes that answer for at least one flagged company (moving their company link away from it needs a typed reason through the bid row''s picker; their contractor or vendor name cannot be moved away from it — section 3, which refuses any such move on a decided quote too)', COUNT(*)::text
   FROM prj_g_j14_counted WHERE flagged > 0
 UNION ALL
 SELECT 'inventory: other BEFORE UPDATE row triggers on cost_documents (they run beside section 3''s; 20261157''s award rail is one)', COUNT(*)::text
@@ -502,7 +510,7 @@ REVOKE ALL ON FUNCTION public.award_quote(uuid, uuid, numeric, text, numeric, uu
 REVOKE ALL ON FUNCTION public.award_quote(uuid, uuid, numeric, text, numeric, uuid, jsonb) FROM anon;
 GRANT EXECUTE ON FUNCTION public.award_quote(uuid, uuid, numeric, text, numeric, uuid, jsonb) TO authenticated;
 
--- ── 3. MON-12: an open quote is not moved off a flagged company without a reason ──
+-- ── 3. MON-12: a quote is not moved off a flagged company without a reason ──
 -- No column list on the trigger: `company_id` is 20261096's, read through
 -- to_jsonb so a database without it is not broken; every other update
 -- leaves at the first test that finds none of the three changed.
@@ -520,7 +528,10 @@ DECLARE
   v_left jsonb;
 BEGIN
   IF auth.uid() IS NULL THEN RETURN NEW; END IF;              -- the service pass: the AI read route, restores, the SQL editor
-  IF OLD.kind IS DISTINCT FROM 'quote' OR OLD.status NOT IN ('draft', 'parsed') THEN RETURN NEW; END IF;   -- open quotes only
+  -- Quotes, in ANY status: a decided quote can be reopened (nothing in the
+  -- database refuses declined / void / awarded → parsed), so a move made
+  -- while it is decided is judged as an open one's would be.
+  IF OLD.kind IS DISTINCT FROM 'quote' THEN RETURN NEW; END IF;
   IF NEW.party_id IS NOT DISTINCT FROM OLD.party_id
      AND NEW.vendor_name IS NOT DISTINCT FROM OLD.vendor_name
      AND v_new_company IS NOT DISTINCT FROM v_old_company THEN
@@ -550,7 +561,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION public.enforce_cost_document_company_move() IS
-  'MON-12 (20261179): a signed-in write to an open quote that moves its company link, contractor or vendor name so that a flagged company it answered for (cost_doc_companies_barred, read as the definer) no longer answers is refused, unless relink_cost_document set app.cost_doc_relink_override to the document id after a typed reason. The service role, a decided quote and the company''s or contractor''s own delete (FK SET NULL one level down) pass.';
+  'MON-12 (20261179): a signed-in write to a quote, in any status, that moves its company link, contractor or vendor name so that a flagged company it answered for (cost_doc_companies_barred, read as the definer) no longer answers is refused, unless relink_cost_document (open quotes only) set app.cost_doc_relink_override to the document id after a typed reason. A decided quote is judged too: a signed-in reopen is not refused, so a move made while decided would otherwise reach the award with no reason. The service role and the company''s or contractor''s own delete (FK SET NULL one level down) pass.';
 
 REVOKE ALL ON FUNCTION public.enforce_cost_document_company_move() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.enforce_cost_document_company_move() FROM anon;
@@ -692,10 +703,11 @@ SELECT 'GAP-406: anon cannot execute award_quote; authenticated can (DRLS-16)',
        AND has_function_privilege('authenticated', 'public.award_quote(uuid,uuid,numeric,text,numeric,uuid,jsonb)', 'EXECUTE'),
        NULL::text
 UNION ALL
-SELECT 'MON-12: the move rail is a SECURITY DEFINER trigger function with search_path pinned, revoked from anon and authenticated; it judges open quotes by cost_doc_companies_barred before and after, reads the relink override for the one document, and lets the service role and an FK SET NULL one level down through',
+SELECT 'MON-12: the move rail is a SECURITY DEFINER trigger function with search_path pinned, revoked from anon and authenticated; it judges every quote, a decided one included (no status exemption), by cost_doc_companies_barred before and after, reads the relink override for the one document, and lets the service role and an FK SET NULL one level down through',
        (SELECT prosecdef AND proconfig::text LIKE '%search_path=public%'
                AND prosrc LIKE '%IF auth.uid() IS NULL THEN RETURN NEW; END IF;%'
-               AND prosrc LIKE '%OLD.status NOT IN (''draft'', ''parsed'')%'
+               AND prosrc LIKE '%IF OLD.kind IS DISTINCT FROM ''quote'' THEN RETURN NEW; END IF;%'
+               AND prosrc NOT LIKE '%OLD.status%'
                AND prosrc LIKE '%app.cost_doc_relink_override%'
                AND prosrc LIKE '%v_before := cost_doc_companies_barred(OLD.org_id, v_old_company, OLD.party_id, OLD.vendor_name);%'
                AND prosrc LIKE '%v_after := cost_doc_companies_barred(NEW.org_id, v_new_company, NEW.party_id, NEW.vendor_name);%'

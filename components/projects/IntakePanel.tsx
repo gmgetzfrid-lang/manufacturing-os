@@ -116,6 +116,18 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
   const setMsg = useCallback((text: string | null, tone: "error" | "success" | "info" = "error") => {
     setNotice(text == null ? null : { tone, text });
   }, []);
+  /** SAF-9 (J14 last review): the contractor's notice never holds up the
+   *  decision. The decision's message shows and the list refreshes as soon
+   *  as its write lands; the notice (the route's send can take up to its
+   *  15 s abort) is sent without being awaited, and its outcome sentence is
+   *  appended when it answers — only while the decision's message is still
+   *  the one on screen (a later action's message is never written over). */
+  const tellOutcome = useCallback((shown: string, versionId: string) => {
+    void notifyIntakeOutcome(orgId, versionId).then((res) => {
+      const told = outcomeNoticeSentence(res);
+      if (told) setNotice((cur) => (cur && cur.text === shown ? { tone: cur.tone, text: shown + told } : cur));
+    });
+  }, [orgId]);
   /** SEC-19: link id → the address minted or re-issued in THIS session — the
    *  only time it is known (the database keeps its SHA-256, 20261141). */
   const [freshUrls, setFreshUrls] = useState<Map<string, string>>(new Map());
@@ -477,14 +489,15 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
     // UX-16: the approval swept the project's open checklists — say what it did.
     const swept = res.evidenceSweep ? describeProjectSweep(res.evidenceSweep) : null;
     const landed = String(after?.current_version_id ?? "") === p.pendingVersionId;
-    // SAF-9: the decision landed — the server emails the link's contact
-    // (the outcome read from the database; one notice per submission).
-    const told = landed ? outcomeNoticeSentence(await notifyIntakeOutcome(orgId, p.pendingVersionId)) : "";
-    setMsg((landed
+    const shown = (landed
       ? `${p.label} Rev ${String(after?.rev ?? p.revLabel ?? "")} approved — it is now the current revision.`
       : `${p.label}: the approval went through, but the current revision is not the submission you approved — refresh and check the document.`)
-      + (swept ? ` ${swept.text}` : "") + told,
-    landed && (!swept || swept.ok) ? "success" : "error");
+      + (swept ? ` ${swept.text}` : "");
+    setMsg(shown, landed && (!swept || swept.ok) ? "success" : "error");
+    // SAF-9: the decision landed — the server emails the link's contact
+    // (the outcome read from the database; one notice per submission),
+    // without holding up the message or the refresh.
+    if (landed) tellOutcome(shown, p.pendingVersionId);
     await refresh();
   };
 
@@ -561,13 +574,14 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
         org_id: orgId, user_id: uid, user_email: userEmail ?? null,
         details: { projectId, versionId: p.pendingVersionId, revLabel: p.revLabel, company: p.company, reason: reason.trim() },
       });
-      // SAF-9: the rejection landed — the server emails the link's contact
-      // the outcome and the reason it reads from the version.
-      const told = outcomeNoticeSentence(await notifyIntakeOutcome(orgId, p.pendingVersionId));
-      setMsg((auditErr
+      const shown = auditErr
         ? `${p.label} Rev ${p.revLabel ?? ""} rejected, but its audit record failed: ${userFacingError(auditErr, { embed: true })}`
-        : `${p.label} Rev ${p.revLabel ?? ""} rejected — the company sees it as not accepted, with your reason, on their portal.`) + told,
-      auditErr ? "error" : "success");
+        : `${p.label} Rev ${p.revLabel ?? ""} rejected — the company sees it as not accepted, with your reason, on their portal.`;
+      setMsg(shown, auditErr ? "error" : "success");
+      // SAF-9: the rejection landed — the server emails the link's contact
+      // the outcome and the reason it reads from the version, without
+      // holding up the message or the refresh.
+      tellOutcome(shown, p.pendingVersionId);
       await refresh();
     } catch (e) { setMsg(userFacingCaughtError(e, { context: "IntakePanel" })); }
     finally { setBusy(null); }

@@ -167,10 +167,25 @@ describe("MON-10 (J14) — the contractor is told how the quote was decided", ()
     await render([GULF, APEX]);
     await award("Gulf Mechanical");
     expect(lastErr()).toBe("Awarded, but 1 of 1 competing bid(s) could not be marked not-selected — refresh and decline them by hand. The email telling the bidder the outcome could not be sent: Gulf Mechanical (send_failed) — their portal still shows it.");
-    for (const reason of ["already", "undecided", "in_progress", "not_configured"]) {
+    for (const reason of ["already", "undecided", "in_progress"]) {
       nq.notifyQuoteOutcome.mockReset().mockResolvedValue({ sent: false, reason });
       expect(await noticeQuoteOutcomes("o1", [GULF, APEX])).toBeNull();
     }
+  });
+
+  it("(J14 last review) email not configured is NOT quiet: the decider is told those bidders were not emailed and see the outcome on their portal only (the Intake tab says the same)", async () => {
+    nq.notifyQuoteOutcome.mockReset().mockResolvedValue({ sent: false, reason: "not_configured" });
+    expect(await noticeQuoteOutcomes("o1", [GULF])).toBe("Email is not configured here, so Gulf Mechanical was not emailed the outcome — they see it on their portal only.");
+    expect(await noticeQuoteOutcomes("o1", [GULF, APEX])).toBe("Email is not configured here, so Gulf Mechanical, Apex Industrial were not emailed the outcome — they see it on their portals only.");
+    // a hand-filed quote is never asked, so it is never named
+    expect(await noticeQuoteOutcomes("o1", [HAND])).toBeNull();
+    // rendered: the award says it, after the table re-reads
+    dlg.appConfirm.mockResolvedValue(true);
+    cd.awardQuote.mockResolvedValue({ ok: true });
+    await render([GULF, APEX]);
+    await award("Gulf Mechanical");
+    expect(lastErr()).toBe("Email is not configured here, so Gulf Mechanical, Apex Industrial were not emailed the outcome — they see it on their portals only.");
+    expect(events.indexOf("changed")).toBeLessThan(events.findIndex((e) => e.startsWith("err:Email is not configured")));
   });
 
   it("(J14 fix pass) a quote link with no contact email is NOT quiet: the user is told those bidders were not emailed and see the outcome on their portal only", async () => {

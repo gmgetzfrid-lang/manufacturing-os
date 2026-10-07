@@ -383,12 +383,14 @@ function ackWarning(ack: NameFlag, override: AwardFlag | null): string {
 }
 
 /** MON-10 (projects Round G J14): the outcomes of a quote's notice that say
- *  nothing went wrong — told before, email not set up here, a send already
- *  under way, or (a rival the award did not decline) not decided. The portal
- *  shows the outcome in every case. A link with no contact email is NOT
- *  quiet (J14 fix pass): that bidder is never emailed, and the user is told
- *  so (`no_contact` has its own sentence below). */
-const QUIET_NOTICE_REASONS: readonly string[] = ["already", "not_configured", "in_progress", "undecided"];
+ *  nothing went wrong — told before, a send already under way, or (a rival
+ *  the award did not decline) not decided. The portal shows the outcome in
+ *  every case. Two answers mean nobody was emailed, and the person who
+ *  decided is told so, each in its own sentence below: a link with no
+ *  contact email (`no_contact`, J14 fix pass) and email not configured
+ *  here (`not_configured`, J14 last review — the Intake tab's
+ *  `outcomeNoticeSentence` says the same). */
+const QUIET_NOTICE_REASONS: readonly string[] = ["already", "in_progress", "undecided"];
 
 /**
  * MON-10: tell each quote's contractor how it was decided — J12's notice
@@ -396,9 +398,9 @@ const QUIET_NOTICE_REASONS: readonly string[] = ["already", "not_configured", "i
  * the outcome from the quote's stored status and emails only the contact
  * the org entered on the quote link it came through (DEC-56; the Costs
  * tab's quote-link form takes it), once. Only quotes that came through a
- * link are asked. Returns the sentences naming the notices that failed and
- * the bidders whose link carries no contact email (not emailed — their
- * portal shows the outcome), or null.
+ * link are asked. Returns the sentences naming the notices that failed, and
+ * the bidders not emailed because email is not configured here or their
+ * link carries no contact email (their portal shows the outcome), or null.
  */
 export async function noticeQuoteOutcomes(orgId: string, docs: CostDocument[]): Promise<string | null> {
   const linked = docs.filter((d) => d.kind === "quote" && !!d.intakeLinkId);
@@ -406,14 +408,21 @@ export async function noticeQuoteOutcomes(orgId: string, docs: CostDocument[]): 
   const reasonOf = (res: { sent: true } | { sent: false; reason: string }) => (res.sent ? null : res.reason);
   const nameOf = (d: CostDocument) => d.vendorName ?? d.fileName ?? "a bidder";
   const noContact = answers.filter(({ res }) => reasonOf(res) === "no_contact");
+  const notConfigured = answers.filter(({ res }) => reasonOf(res) === "not_configured");
   const failed = answers.filter(({ res }) => {
     const r = reasonOf(res);
-    return r != null && r !== "no_contact" && !QUIET_NOTICE_REASONS.includes(r);
+    return r != null && r !== "no_contact" && r !== "not_configured" && !QUIET_NOTICE_REASONS.includes(r);
   });
   const said: string[] = [];
   if (failed.length) {
     const names = failed.map(({ d, res }) => `${nameOf(d)} (${reasonOf(res)})`);
     said.push(`The email telling ${failed.length === 1 ? "the bidder" : `${failed.length} bidders`} the outcome could not be sent: ${names.join(", ")} — their portal still shows it.`);
+  }
+  if (notConfigured.length) {
+    const names = notConfigured.map(({ d }) => nameOf(d)).join(", ");
+    said.push(notConfigured.length === 1
+      ? `Email is not configured here, so ${names} was not emailed the outcome — they see it on their portal only.`
+      : `Email is not configured here, so ${names} were not emailed the outcome — they see it on their portals only.`);
   }
   if (noContact.length) {
     const names = noContact.map(({ d }) => nameOf(d)).join(", ");
@@ -1139,15 +1148,20 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
     // Every override intent recorded (the first company's, then each other
     // one's — J14); an award that then fails closes each.
     const overridden: Array<{ id: string; name: string }> = [];
+    /** Close one recorded intent; the sentence to add when it could not be. */
+    const closeOverride = async (o: { id: string; name: string }, why: string): Promise<string | null> => {
+      const { error } = await supabase.from("audit_logs").insert({
+        action: "COST_DOC_AWARD_OVERRIDE_ABANDONED", resource_type: "cost", resource_id: doc.id,
+        org_id: orgId, user_id: actor.uid, user_email: actor.email,
+        details: { companyId: o.id, company: o.name, why },
+      });
+      return error ? `The override for ${o.name} was recorded but could not be closed: ${userFacingError(error, { embed: true })}` : null;
+    };
     const closeOverrides = async (why: string): Promise<string | null> => {
       const unclosed: string[] = [];
       for (const o of overridden) {
-        const { error } = await supabase.from("audit_logs").insert({
-          action: "COST_DOC_AWARD_OVERRIDE_ABANDONED", resource_type: "cost", resource_id: doc.id,
-          org_id: orgId, user_id: actor.uid, user_email: actor.email,
-          details: { companyId: o.id, company: o.name, why },
-        });
-        if (error) unclosed.push(`The override for ${o.name} was recorded but could not be closed: ${userFacingError(error, { embed: true })}`);
+        const failed = await closeOverride(o, why);
+        if (failed) unclosed.push(failed);
       }
       return unclosed.length ? unclosed.join("; ") : null;
     };
@@ -1191,24 +1205,42 @@ function BidGroup({ group, docs: groupDocs, allDocs, accounts, companies, barred
       let res = await awardQuote({ doc, siblings, costAccountId: accountId, actor, overrideReason, overrideCompanyId, alsoOverrides: [...alsoOverrides], confirmedTotal });
       // The lib found a flag this table did not (an inactive company, a
       // registry link read differently, or — `also` — another company the
-      // award answers for): ask for the reason, record the intent, and try
+      // award answers for), or — `moved` — the award now answers for
+      // another company than the one the reason was typed for (award_quote
+      // under its lock; the lib on its client sequence, whose own read is
+      // what it records): ask for the reason, record the intent, and try
       // again with it, at most twice. A refusal here stops the award as a
       // failed result, so a recorded acknowledgement is closed.
-      for (let tries = 0; tries < 2 && !res.ok && res.needsOverride && (!overrideReason || res.needsOverride.also); tries++) {
+      for (let tries = 0; tries < 2 && !res.ok && res.needsOverride && (!overrideReason || res.needsOverride.also || res.needsOverride.moved); tries++) {
         const flag = res.needsOverride;
         const also: boolean = !!flag.also && !!overrideReason;
+        const moved: boolean = !also && !!flag.moved && !!overrideReason;
+        const typedFor: { id: string; name: string } | null = moved ? overridden.find((o) => o.id === overrideCompanyId) ?? null : null;
         setBusy(null);
         const reason: string | null = also
           ? await askAlso({ id: flag.companyId, name: flag.companyName, status: flag.status }, held.override, false)
           : (await appPrompt({
               title: `${flag.companyName} is ${flag.status === "inactive" ? "marked INACTIVE" : "flagged DO NOT USE"}`,
-              message: "The company registry flags the company behind this quote. To award anyway, state the reason — it is recorded against this award and the company's record.",
+              message: moved
+                ? `This bid's company link, contractor or vendor name changed after the reason was typed${typedFor ? ` for ${typedFor.name}` : ""} — the award now answers for ${flag.companyName}, so that reason does not go with it. To award anyway, state the reason for ${flag.companyName} — it is recorded against this award and the company's record.`
+                : "The company registry flags the company behind this quote. To award anyway, state the reason — it is recorded against this award and the company's record.",
               placeholder: "Override reason (required)",
             }))?.trim() || null;
         const failed = reason ? await recordIntent({ id: flag.companyId, name: flag.companyName }, reason, flag.status, also) : null;
         if (!reason) { res = { ok: false, error: `Award stopped — ${flag.companyName} is flagged and no override reason was given.` }; break; }
         if (failed) { res = { ok: false, error: failed }; break; }
         overridden.push({ id: flag.companyId, name: flag.companyName });
+        // The intent recorded for the company the earlier reason was typed
+        // for is closed: the award no longer answers for it with that reason.
+        // When it cannot be closed the award stops (and the failure path
+        // tries again to close every intent, this one included).
+        if (typedFor && typedFor.id !== flag.companyId) {
+          if (await closeOverride(typedFor, `the award's answer moved to ${flag.companyName} before it posted`)) {
+            res = { ok: false, error: `Award stopped — the override recorded for ${typedFor.name} could not be closed after the award's answer moved to ${flag.companyName}.` };
+            break;
+          }
+          overridden.splice(overridden.indexOf(typedFor), 1);
+        }
         if (also) alsoOverrides.push({ companyId: flag.companyId, reason });
         else { overrideReason = reason; overrideCompanyId = flag.companyId; }
         setBusy(doc.id);
