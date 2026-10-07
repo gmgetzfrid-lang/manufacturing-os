@@ -507,9 +507,15 @@ and six counts; paste before or with the app deploy.
   asked before every page's AI vision call; a refusal holds the page
   (`vision_failed_pages`) with the reason and the batch's later vision pages
   wait with it. `visionCallMeter` reserves each page and settles every call
-  into one row. `loadSponsorVision` holds an uploader at the cap with the
-  reason (`noVisionReason`; `capHeld` for a read-every-page library, which
-  `fileBehind` writes on the row). I-06b's MERGE note items are untouched:
+  into one row, writing each later call's figures into it before that
+  call's reservation is released, and only once the write landed (I-18
+  fix pass 3). `loadSponsorVision` holds an uploader at the cap with the
+  reason (`noVisionReason`); for a read-every-page library it returns the
+  sentence `fileBehind` writes on the row for EVERY blocker of that run
+  (`waitReason`: the cap, the agreement, the ledger, no key, no uploader;
+  I-18 fix pass 3 — it was the cap alone, as `capHeld`). I-06b's
+  `fileBehind` tests in `ingestLock.test.ts` match the stamp and the
+  reason since then. I-06b's MERGE note items are untouched:
   the reset reads the owed pages before any delete, the drain passes
   `visionAllPages: sponsor.forceAllPages`, and `reindex()`'s JSON 500 is
   the route's.
@@ -536,8 +542,11 @@ and six counts; paste before or with the app deploy.
   batch back and stops the slice) and `afterBatch`.
 - `lib/knowledgeEmbedDrain.ts` (I-02's; I-18 owned it here). Each batch
   reserved against the payer's cap; one row per library run settled after
-  every batch; a refusal holds the library `cap` until the 1st (or `error`
-  for an hour on an unreadable ledger). `beforeEmbed` releases a
+  every batch, each later batch written in before its reservation is
+  released; a refusal holds the library `cap` until the 1st only when the
+  cap is reached (`capRefusalKind`; a batch that only does not fit what is
+  left ends the run's work on it with no hold; `error` for an hour on an
+  unreadable ledger; I-18 fix pass 3). `beforeEmbed` releases a
   reservation no batch folded in (a legacy-queue 429) before it reserves
   the next (I-18 fix pass 2; the embed route does the same).
 - `app/api/knowledge/embed/route.ts` (I-02's). Each batch reserved; the
@@ -548,6 +557,15 @@ and six counts; paste before or with the app deploy.
   after.
 - Test mocks of `lib/ai/usageServer` that drive these paths take the
   reservation stand-in `lib/__tests__/helpers/fakeUsageMeter.ts`.
+- Every fold (I-18 fix pass 3): `settleUsage` and `holdUsage`
+  (`lib/ai/usageServer.ts`) and `AiReservation.settle` (`lib/ai/aiGates.ts`,
+  I-05's) answer whether the row now carries the figures (a boolean, where
+  they answered nothing). The orchestrator, locate, `visionCallMeter`, the
+  embed drain and the embed route write the row first and release the
+  folded reservation only when that answer is true. A caller that ignores
+  the answer is unchanged (the ask route, which already settles before it
+  releases). A test mock of either that answers nothing makes a fold keep
+  the folded reservation: answer `true`, as the stand-in does.
 
 ---
 
