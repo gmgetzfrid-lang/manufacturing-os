@@ -644,7 +644,7 @@ group. Send the notification promised at `upload/route.ts:127`.
 ## MON-11 · Only one event in the entire controls program notifies anyone
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** notifications N8 PRODUCERS-FREE (the turnover-rejection emit in lib/turnover.ts) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Blast radius:** process
@@ -685,6 +685,19 @@ already shows state.
 3. ✗ NOT DONE HERE — the turnover-rejection emit is P2/J2 QUALITY's limb (`lib/turnover.ts`).
 
 **Scope / residual.** Open until J2 lands the turnover emit. notifications `PROD-6` should point at these two call sites for the cost/CO half.
+
+**Resolution (2026-10-07, notifications Round G).** Done-when 3, the remainder re-owned to notifications N8 PRODUCERS-FREE (orphan sweep, 2026-10-01; J2 merged without it). **Reproduced first** on `f8d5eb5`: `lib/turnover.ts` imported no notification helper and `reviewTurnoverItem` wrote the rejection, its database-written nonconformance event and the audit row, and told nobody.
+
+**What landed.** `lib/turnover.ts` `notifyTurnoverRejected` (:463), called from `reviewTurnoverItem` after a checked, successful rejection (:444) — an `emit()` only; the mutator, its reason bar (SAF-4), its signature rule (QUAL-4) and its write are unchanged. Audience: whoever is responsible for the item on OUR side — the person who added it (`created_by`; the seeder for a seeded item) and the project owner (`projects.owner_user_id`, who chases the resubmission); the reviewer is dropped by the dispatcher. Kind: the existing `project_status` (as J3's award notice; no new kind), bell + email, linking to the Quality tab; the body carries the rejection reason. Best-effort: a failed notice is logged and never returned — the rejection stands. The contractor is external (no account): its signal stays the portal (`MON-10`'s pointer). Recorded in notifications `DEC-44 (N8)` item 2.
+- Tests: `lib/__tests__/producers.test.ts` "MON-11 dw3" (2 — a rejection: one `project_status` notice to the item's creator and the owner, with the reason, the decision still standing; a receipt (no decision) notifies nobody, and a failed notice never fails the rejection); `lib/__tests__/turnover.test.ts` unchanged and green (REGRESSION).
+- Verified: Loop on `fleet/N8-producers-free` at `3dd10b8`: `npx tsc --noEmit` exit 0; `npx eslint` on the 27 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 435 files, 9480 passed, 7 expected-fail. `next build` is the integrator's.
+
+**Done-when.**
+1. ✓ Awarding notifies the project owner (and project followers) — J3 (`lib/costDocs.ts` `notifyAward`); the vendor is external (`MON-10`).
+2. ✓ A change-order approval notifies the proposer — J3 (`lib/changeOrders.ts` `notifyApproval`, unchanged); notifications N8 adds the members' and owner's `change_order_status` notice (PROD-6).
+3. ✓ A turnover rejection notifies whoever is responsible for the item — its creator and the project owner (the contractor is external — `MON-10`).
+
+**Scope / residual.** None here. The rest of the controls program's silence (checklists, punch, costs, companies) is notifications `PROD-6`'s, with each silent subsystem's decision recorded there.
 
 ---
 

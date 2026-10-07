@@ -226,6 +226,27 @@ this phase. They are the largest and the least urgent: nobody is currently
 relying on a notification that does not exist. Do not start here because the
 list is long.
 
+*Hand-off (2026-10-07, notifications Round G, N8 PRODUCERS-FREE → N3, N9,
+N14, the integrator):*
+- *Paste `20261181` (four kinds on `notification_kinds()`, and
+  `clear_resolved_branch_alerts`) after `20261160` / `20261161` and BEFORE
+  the deploy: `change_order_status`, `milestone_assigned` and
+  `milestone_slipped` are written from the browser. A later re-create of
+  `notification_kinds()` (N9, N12) starts from `20261181`'s body.*
+- *N3: the four kinds are in `BELL_ICON_GAPS` (the bell has no entry);
+  deriving the bell's icons from `KIND_META` needs a component for the new
+  `KindIcon` name `Flag` (the feed's milestone icon), and empties that list.*
+- *N9: swap the library page's `notifyLibrarySubscribers` closure onto
+  `lib/libraryNotify.ts` `notifyLibraryDocsAdded` (in-app only) and pass
+  `actorName` to `CsvImportModal` — `PROD-5` done-when 2 and `PROD-7`
+  done-when 3 close with it.*
+- *N14: `TAX-11`'s six remaining raw calls; `notifyChecked` now takes an
+  optional client, which is how a service-role writer moves onto the typed
+  sink. The export alert and the folded intake digest stay raw by recorded
+  reason (`RAW_RESOLVED`), unless a batch variant is built.*
+- *Integrator: ratify `DEC-44 (N8)` item 2's reading of `PROD-6` done-when 2
+  (punch / checklist items have no person-assignee), and route `PROD-15`.*
+
 ---
 
 ## Phase 3 — The trail

@@ -499,6 +499,23 @@ supabase/migrations/20260621_in_app_notifications.sql:17 -- `  kind TEXT NOT NUL
 
 **Scope / residual.** Stays OPEN for done-when 2's eleven sites; record RESOLVED when they route through `notify()` (or the integrator accepts the census + N5's allowlist as closing it).
 
+**Partial (2026-10-07, notifications Round G).** Done-when 2, N8 PRODUCERS-FREE's share as narrowed by the integrator at N8's launch (the sites whose owning package had merged: `app/api/transmittal/route.ts` ×2, `lib/exportAlerts.ts`, `lib/intakeRateLimit.ts`, `lib/projects.ts`). **Reproduced first** on `f8d5eb5`: the census pinned eleven raw `.from("notifications").insert(` calls in nine files (`lib/__tests__/notificationKinds.test.ts` `RAW_SITES`).
+
+**What landed.**
+- `lib/inAppNotifications.ts` — `notifyChecked(input, client?)`: the typed insert takes an optional client (`NotifyClient`), so a server writer that holds its own (a service-role route, the cron's) writes through the typed sink instead of a raw insert; `notifyWithReason` answers the refusal's text too. Additive: `notify()` and every existing call are unchanged.
+- **Moved onto the typed sink (3 calls):** the transmittal portal's issuer notice of an unstampable PDF (`notifyWithReason(…, supabaseAdmin)`; the refusal is still logged with its reason — TRX-15's pin) and its acknowledgment receipt (`notifyChecked(…, supabaseAdmin)`), both in `app/api/transmittal/route.ts`; the checkout sweep's holder notices in `lib/projects.ts` `autoReleaseExpiredAdHoc` (`notifyChecked(…, db)` per holder, on the sweep's own client — the RLS client in the browser, the cron's service-role client — the same row as the one-statement insert wrote).
+- **Stay raw (2 calls), each with its reason and a proof the census checks** (`RAW_RESOLVED` `why`): `lib/exportAlerts.ts` — a service-role writer with no session (a scheduled push names no actor) whose alert is ONE checked statement the export run records the outcome of (DEC-87); per-recipient `notify()` calls log and swallow each failure and land partially. `lib/intakeRateLimit.ts` `deliverFoldedDigest` — the cron's folded digest: ONE all-or-none statement whose landed count gates the flush marker (INTK-10 / SEC-8); `notify()` / `emit()` swallow failures, so a marker would be written for a digest nobody got.
+- `RAW_SITES` shrinks from eleven calls in nine files to eight in seven; a new census test pins every remaining file as either kept-for-a-reason or N14's.
+- Tests: `lib/__tests__/notificationKinds.test.ts` ("the insert CALLS left are pinned", "TAX-11 done-when 2 (N8)…"); `lib/__tests__/notificationWriteRails.test.ts` (the created_at census now examines 9 insert sites); `lib/__tests__/transmittalPortalRoute.test.ts`, `checkoutRoundF.test.ts`, `projects.test.ts` — the sweep tests read the per-holder rows instead of one array; every assertion on the row's content is kept (REGRESSION).
+- Verified: Loop on `fleet/N8-producers-free` at `3dd10b8`: `npx tsc --noEmit` exit 0; `npx eslint` on the 27 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 435 files, 9480 passed, 7 expected-fail. `next build` is the integrator's.
+
+**Done-when.**
+- ✓ (unchanged) the storage kinds are in the union and the registry.
+- **Not done — partly:** "every insert into `notifications` goes through `notify()` / `notifyMany()`". N8's five sites: three moved, two stay raw for the recorded reasons above. The five sites whose owners were still in flight at N8's launch — `app/api/ai/usage/route.ts` and `lib/orchestrator/tools.ts` (intelligence I-18), `app/api/cron/maintenance/route.ts` (N6), `app/api/tickets/comment/route.ts` and `app/api/tickets/workflow-action/route.ts` ×2 (drafting-flow DF-P1) — are **notifications N14 RAW-INSERT TAIL**'s (the second Assigned line), untouched here.
+- ✓ (unchanged) the census test arm, now with the kept sites' reasons pinned.
+
+**Scope / residual.** Stays OPEN for N14's five files (six calls). For the two kept raw sites, done-when 2 as written is met only if the integrator accepts the recorded reasons (a checked single statement the typed sink cannot give); otherwise a batch variant of `notifyChecked` (one statement, `client` given, answers the landed count) is the follow-up, owner N14.
+
 ---
 
 <a id="tax-12"></a>
