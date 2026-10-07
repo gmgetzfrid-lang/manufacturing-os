@@ -1139,6 +1139,36 @@ Tests — `lib/__tests__/prjRoundGJ11Migrations.test.ts`: "no other migration re
 
 ---
 
+## SEC-22 · The contractor door's writes run under a definer-bound identity, not row-level security, and its housekeeping writes still run as the service role
+
+*Numbered SEC-22 on this branch (opened by projects-joint J16 INTAKE DOOR IDENTITY on 2026-10-07 as `GAP-401`'s remainder, under `DEC-31`). If the number collides at merge, the integrator renumbers it.*
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** none yet. Opened by projects-joint J16 (2026-10-07) for the integrator to assign. Limb (a) waits on an operator step (below).
+- **Verification:** CONFIRMED (by reading; the definer path was exercised on a scratch PostgreSQL 16 cluster, recorded on `GAP-401`)
+- **Blast radius:** document-control integrity
+- **Locations:**
+  - `supabase/migrations/20261184_prj_roundG_intake_door_identity.sql`: the six `intake_door_*` functions are SECURITY DEFINER, so the link scope is their own checks, not RLS policies.
+  - `app/api/intake/upload/route.ts`: `retireDisplacedFirst`, `restoreDisplaced`, `withdraw`, `discard`, `ensureIntakeFolder` and the `project_documents` upsert are still `supabaseAdmin` writes.
+- **Related:** `GAP-401` (its owed item 1), `SEC-4`, `DEC-56` item 2, `DEC-44 (J16)`
+- **Independently verified:** none (`author`: opened by J16 from its own remainder, per `DEC-31`; not yet challenged)
+
+**Mechanism.** J16 put the door's content writes (new document, submission, pending pointer, trusted promote, quote, redline) behind service-role-only SECURITY DEFINER functions. Each resolves the link from its token hash and binds a transaction-local identity, so that every trigger guard judges the write. Two things are still not what `GAP-401`'s Scope asks for ("the door stops using the service role"):
+- **(a) No RLS.** A definer function writes as its owner, which bypasses row-level security, so "a door can never write outside its link's project / library" is enforced by the functions' own checks rather than by insert policies. A per-request identity that PostgREST would put under RLS needs a JWT the database trusts. Minting one needs the project's JWT signing secret, which this app does not hold. Granting policies to `anon` instead would expose the writes to anyone holding the public key (`GAP-401` Partial, 2026-10-07).
+- **(b) Housekeeping as the service role.** The door's writes on its own rows still run as the service role, so a guard does not judge them: retiring a displaced submission (`review_state = 'superseded'`), withdrawing a lost race, restoring, discarding the document the request created, the intake folder and its project pointer, and the project reference.
+
+**Failure scenario.** (a) A future edit of a door function that drops a scope check is not backstopped by a policy, so the door could write outside its link's library until a test catches it. (b) A future guard on `document_versions` UPDATE (for example, a rail on `review_state` transitions) would not apply to the door's retire or withdraw, because those writes carry no identity.
+
+**Remediation.** (a) The operator puts the JWT signing secret in the server environment. The route then mints a short-lived JWT per request: role `authenticated` (or a dedicated NOLOGIN role granted to `authenticator`), `sub` the link, claims naming the link, project and library. Insert and update policies keyed on those claims are added, and the route calls PostgREST with that token instead of through definer functions. (b) Until then, move the housekeeping writes into door functions of the same shape: resolve, scope check, bind, write, unbind.
+
+**Done when.**
+- The door's content writes run under RLS policies scoped to the link (a JWT the route mints per request), with the guards still judging them, and no service-role write remains on the content path.
+- The door's housekeeping writes run under the same identity, or are each pinned with the reason they cannot.
+- Every flow that works for a contractor today still works: the multipart and direct uploads, the redline, the portal, and the intake review.
+
+---
+
 ## Report progress
 
 | ID | Severity | Status |
@@ -1164,3 +1194,4 @@ Tests — `lib/__tests__/prjRoundGJ11Migrations.test.ts`: "no other migration re
 | SEC-19 | LOW | RESOLVED |
 | SEC-20 | MEDIUM | RESOLVED |
 | SEC-21 | LOW | OPEN |
+| SEC-22 | LOW | OPEN |
