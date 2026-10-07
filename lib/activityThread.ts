@@ -52,6 +52,10 @@ interface PostInput {
   kind?: ActivityKind;
   metadata?: Record<string, unknown> | null;
   parentMessageId?: string | null;
+  /** People the CALLER tells about this post itself, left out of the
+   *  thread's notice so they are not told twice (a markup share's requester
+   *  gets resolveMarkupRequest's own notice — notifications N8). */
+  notifyExclude?: string[];
 }
 
 export async function postActivity(input: PostInput): Promise<ActivityMessage | null> {
@@ -135,6 +139,7 @@ async function notifyCheckoutActivity(input: PostInput): Promise<void> {
 
     recipients.delete(actor);
     recipients.delete("system");
+    for (const u of input.notifyExclude ?? []) recipients.delete(u);
     const userIds = Array.from(recipients).filter((u): u is string => !!u);
     if (userIds.length === 0) return;
 

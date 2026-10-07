@@ -109,3 +109,47 @@ export async function resolveProjectMembers(projectId: string): Promise<string[]
     .eq("project_id", projectId);
   return ((data as Array<{ user_id: string }> | null) ?? []).map((r) => r.user_id);
 }
+
+/** The project row projectVisibleAmong judges by: its visibility and owner. */
+export interface ProjectVisibilityRow {
+  visibility?: string | null;
+  owner_user_id?: string | null;
+}
+
+/** SEC-2 (notifications N8, final review fix): the subset of `uids` who can
+ *  see project `projectId`, in input order. This is the rule the database's
+ *  project_visible_to_me holds for change orders, cost accounts and turnover
+ *  items (20260913:40, 20261102). A project that is not private
+ *  (`visibility IS DISTINCT FROM 'private'`) keeps everyone; the dispatcher
+ *  then keeps active org members only. A PRIVATE project keeps only its
+ *  owner, its roster (project_members — resolveProjectMembers, the
+ *  dispatcher's { projectId } audience) and the org's controllers (an
+ *  active Admin or DocCtrl, headline or additive — resolveRoleRecipients,
+ *  never wider than is_org_controller). For a recipient a producer names by
+ *  hand (a budget line's CAM, a change order's proposer, a turnover item's
+ *  creator, a task's new assignee): it only ever removes. `project` is the
+ *  row when the caller has read it already (null: it could not be read);
+ *  otherwise it is read here. A project that cannot be read keeps nobody
+ *  (fail closed). Never throws. */
+export async function projectVisibleAmong(
+  orgId: string, projectId: string, uids: Array<string | null | undefined>, project?: ProjectVisibilityRow | null,
+): Promise<string[]> {
+  const want = Array.from(new Set(uids.filter((u): u is string => !!u)));
+  if (!projectId || want.length === 0) return [];
+  try {
+    let row = project;
+    if (row === undefined) {
+      const { data, error } = await supabase.from("projects").select("visibility, owner_user_id").eq("id", projectId).maybeSingle();
+      row = error ? null : ((data as ProjectVisibilityRow | null) ?? null);
+    }
+    if (!row) return [];
+    if (row.visibility !== "private") return want;
+    const seeing = new Set<string>(row.owner_user_id ? [row.owner_user_id] : []);
+    if (want.some((u) => !seeing.has(u))) (await resolveProjectMembers(projectId)).forEach((u) => seeing.add(u));
+    if (want.some((u) => !seeing.has(u))) (await resolveRoleRecipients(orgId, ["Admin", "DocCtrl"])).forEach((u) => seeing.add(u));
+    return want.filter((u) => seeing.has(u));
+  } catch (e) {
+    console.warn("[notify] project visibility could not be read — the hand-named recipients are left out", (e as Error)?.message ?? e);
+    return [];
+  }
+}

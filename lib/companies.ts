@@ -6,6 +6,14 @@
 // already writes in the normal course of work (awards, change orders,
 // turnover reviews, milestones, portal submissions, safety events). The
 // scorecard can always show its work because its inputs are these rows.
+//
+// Notifications (notifications PROD-6 dw3, N8 — DEC-92 item 2): this
+// registry is deliberately SILENT. It is reference data — a company's
+// details, its status, its logged events — read where work is awarded (the
+// award path refuses or warns on a do-not-use company, MON-12) and on the
+// scorecard, so a change here has nobody who must act at the moment it is
+// made. The events it gathers are notified at their source (an award, a
+// change order, a turnover rejection).
 
 import { supabase } from "@/lib/supabase";
 import { logAuditAction } from "@/lib/audit";

@@ -25,10 +25,17 @@
 // silent success. A failed alert never blocks the export or the destination
 // write it announces: it is detection, not prevention, and the act it
 // reports has already happened when it is sent.
+//
+// It is the typed sink's batch insert (notifications TAX-11, N8's review
+// fix): `notifyBatchWithReason` on the service-role client — ONE statement
+// for every controller, the kind checked by the compiler, the refusal's text
+// answered for the caller to record, and `notified` the rows the database
+// says it wrote.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { roleFilter, memberHoldsAny } from "@/lib/roleHeld";
 import { adminSurface } from "@/lib/adminSurfaces";
+import { notifyBatchWithReason } from "@/lib/inAppNotifications";
 
 export interface ExportAlertResult {
   ok: boolean;
@@ -65,22 +72,23 @@ async function alertControllers(
     recipients.set(m.uid, (recipients.get(m.uid) ?? false) || memberHoldsAny(m, ["Admin"]));
   }
   if (recipients.size === 0) return { ok: true, notified: 0 };
-  const { error } = await admin.from("notifications").insert(
+  const { landed, error } = await notifyBatchWithReason(
     [...recipients].map(([uid, isAdmin]) => ({
-      org_id: orgId,
-      user_id: uid,
-      kind: "security_export",
+      orgId,
+      userId: uid,
+      kind: "security_export" as const,
       title: row.title,
       body: row.body(isAdmin),
       link: isAdmin ? ALERT_LINKS.admin : ALERT_LINKS.other,
-      resource_type: "export",
-      actor_user_id: row.actorUserId,
-      actor_name: row.actorName,
+      resourceType: "export",
+      actorUserId: row.actorUserId ?? undefined,
+      actorName: row.actorName,
       metadata: row.metadata,
     })),
+    admin,
   );
-  if (error) return { ok: false, notified: 0, error: `the alert could not be written (${error.message})` };
-  return { ok: true, notified: recipients.size };
+  if (error) return { ok: false, notified: 0, error: `the alert could not be written (${error})` };
+  return { ok: true, notified: landed };
 }
 
 /** A full workspace export ran. A person's export tells every OTHER

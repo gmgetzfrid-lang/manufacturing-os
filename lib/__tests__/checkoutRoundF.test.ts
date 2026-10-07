@@ -427,9 +427,12 @@ describe("DCK-7 — the browser sweep is the caller's own, select-driven, and lo
     expect(sweep.payload).toMatchObject({ status: "checked_in", outcome: "auto_released" });
     expect(sweep.filters).toContainEqual(["in:id", ["s1", "s2"]]);
     expect(sweep.filters).toContainEqual(["is:outcome", null]);
-    const notes = writesTo("notifications", "insert")[0].payload as Array<Record<string, unknown>>;
+    // TAX-11 (N8): the typed insert, ONE statement (notifyBatchChecked) on
+    // the sweep's client — the same row the raw insert wrote
+    expect(writesTo("notifications", "insert")).toHaveLength(1);
+    const notes = writesTo("notifications", "insert").flatMap((w) => [w.payload].flat()) as Array<Record<string, unknown>>;
     expect(notes).toHaveLength(1);
-    expect(notes[0]).toMatchObject({ user_id: "u1", resource_id: "d1", metadata: { autoReleasedSessionId: "s1" } });
+    expect(notes[0]).toMatchObject({ user_id: "u1", resource_id: "d1", kind: "checkout_released", actor_name: "System", metadata: { autoReleasedSessionId: "s1" } });
     const audits = writesTo("audit_logs", "insert")[0].payload as Array<Record<string, unknown>>;
     expect(audits).toHaveLength(1);
     expect(audits[0]).toMatchObject({ action: "CHECK_IN", resource_id: "d1", org_id: "o1", user_id: "u1" });
@@ -467,7 +470,10 @@ describe("DCK-7 — the browser sweep is the caller's own, select-driven, and lo
     expect(audits.map((a) => a.user_id)).toEqual([null, null]);
     expect(audits.map((a) => (a.details as { releasedUserId: string }).releasedUserId)).toEqual(["u1", "u1"]);
     expect(audits.map((a) => (a.details as { via: string }).via)).toEqual(["cron", "cron"]);
-    expect((writesTo("notifications", "insert")[0].payload as unknown[]).length).toBe(2);
+    // two holders, ONE statement — all land or none (N8's review fix: never
+    // one request per holder at once)
+    expect(writesTo("notifications", "insert")).toHaveLength(1);
+    expect(writesTo("notifications", "insert").flatMap((w) => [w.payload].flat())).toHaveLength(2);
   });
 });
 

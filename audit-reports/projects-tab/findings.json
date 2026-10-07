@@ -23,9 +23,9 @@
       "LOW": 7
     },
     "by_status": {
-      "RESOLVED": 129,
+      "RESOLVED": 130,
       "REFUTED": 2,
-      "OPEN": 13
+      "OPEN": 12
     }
   },
   "status_vocabulary": [
@@ -2531,7 +2531,7 @@
       "id": "MON-11",
       "title": "Only one event in the entire controls program notifies anyone",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": "process",

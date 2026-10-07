@@ -29,13 +29,13 @@ stacking, and what a real OS notification would attach to.
 
 ## Findings
 
-**114 findings** — 2 CRITICAL, 17 HIGH, 76 MEDIUM, 19 LOW — plus **7 gap specs**, all buildable.
+**116 findings** — 2 CRITICAL, 17 HIGH, 76 MEDIUM, 21 LOW — plus **7 gap specs**, all buildable.
 
 > **One finding here carries `Status: REFUTED`** — `NEDGE-1`. An independent pass disproved it; the reason is on the finding. Kept rather than deleted (`DEC-41`). **Do not queue it as work.**
 
 | # | Report | Findings | Focus |
 |---|---|---|---|
-| 01 | [Producer census](./01-producer-census.md) | 14 | Which subsystems notify, which are silent, which vocabulary is dead |
+| 01 | [Producer census](./01-producer-census.md) | 16 | Which subsystems notify, which are silent, which vocabulary is dead; `PROD-15`, `PROD-16` (LOW) opened at N8, 2026-10-07 |
 | 02 | [Delivery integrity](./02-delivery-integrity.md) | 15 | What gets dropped between an event and a person, and whether anything notices — `DELIV-15` opened by the integrator at the N1 merge, 2026-10-01 |
 | 03 | [Taxonomy](./03-taxonomy.md) | 16 | Alerts vs notifications — every signalling surface, and where they contradict — `TAX-15` and `TAX-16` opened by N7 CORNER, 2026-10-01 |
 | 04 | [**The cold trail**](./04-cold-trail.md) | 13 | Badge propagation. The central complaint |

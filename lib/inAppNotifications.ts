@@ -68,6 +68,10 @@ export type NotificationKind =
   | "storage_platform_r2"        // (to Admin/DocCtrl) file storage is near the plan ceiling (lib/storageUsage.ts)
   | "storage_platform_db"        // (to Admin/DocCtrl) the database is near the plan ceiling (lib/storageUsage.ts)
   | "ai_cap_changed"             // a monthly AI spend cap was changed, put back or held (app/api/ai/usage/route.ts)
+  | "change_order_status"        // a change order on a project you're on was proposed, approved or rejected (lib/changeOrders.ts — PROD-6)
+  | "milestone_assigned"         // you were made responsible for a schedule task (lib/milestones.ts — PROD-11)
+  | "milestone_slipped"          // (to the project owner) a move pushed baselined tasks past their baseline (lib/milestones.ts — PROD-11)
+  | "access_request_pending"     // (to Admin/DocCtrl) someone asked to join the workspace (app/api/auth/request-access — PROD-2)
   | "transmittal_unstampable";   // (to the issuer) the portal refused to stamp an issued PDF (TRX-15, app/api/transmittal/route.ts)
 
 export interface NotificationInput {
@@ -93,31 +97,90 @@ export async function notify(input: NotificationInput): Promise<void> {
   await notifyChecked(input);
 }
 
+/** A client to write the row with instead of the shared one: a service-role
+ *  route's or the cron's (TAX-11 done-when 2 — a server writer that holds its
+ *  own client takes the typed insert too, rather than a raw one). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type NotifyClient = { from: (table: string) => any };
+
 /**
  * notify(), answering whether the row was written (true) or refused / threw
  * (false — logged, never re-raised). The same typed insert; for a caller that
  * counts deliveries (the storage watchdogs) and must count only real ones.
+ * `client` (optional): write with that client — the shared one otherwise.
  */
-export async function notifyChecked(input: NotificationInput): Promise<boolean> {
+export async function notifyChecked(input: NotificationInput, client?: NotifyClient): Promise<boolean> {
+  return (await notifyWithReason(input, client)).ok;
+}
+
+/** notifyChecked(), answering the refusal's reason as well — for a server
+ *  writer that logs it (the transmittal portal's issuer notice, TRX-15). */
+export async function notifyWithReason(input: NotificationInput, client?: NotifyClient): Promise<{ ok: boolean; error?: string }> {
   try {
-    const { error } = await supabase.from("notifications").insert({
-      org_id: input.orgId,
-      user_id: input.userId,
-      kind: input.kind,
-      title: input.title,
-      body: input.body ?? null,
-      link: input.link ?? null,
-      resource_type: input.resourceType ?? null,
-      resource_id: input.resourceId ?? null,
-      actor_user_id: input.actorUserId ?? null,
-      actor_name: input.actorName ?? null,
-      metadata: input.metadata ?? null,
-    });
-    if (error) { console.warn("[notify] insert failed", error.message); return false; }
-    return true;
+    const db: NotifyClient = client ?? supabase;
+    const { error } = await db.from("notifications").insert(notificationRow(input));
+    if (error) { console.warn("[notify] insert failed", error.message); return { ok: false, error: error.message }; }
+    return { ok: true };
   } catch (e) {
     console.warn("[notify] insert threw", e);
-    return false;
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** The typed insert's row: one place maps a NotificationInput to the table. */
+function notificationRow(input: NotificationInput): Record<string, unknown> {
+  return {
+    org_id: input.orgId,
+    user_id: input.userId,
+    kind: input.kind,
+    title: input.title,
+    body: input.body ?? null,
+    link: input.link ?? null,
+    resource_type: input.resourceType ?? null,
+    resource_id: input.resourceId ?? null,
+    actor_user_id: input.actorUserId ?? null,
+    actor_name: input.actorName ?? null,
+    metadata: input.metadata ?? null,
+  };
+}
+
+/**
+ * notifyChecked() for many rows in ONE insert statement on the given client
+ * (the shared one otherwise). Answers how many rows LANDED — 0 on a refusal
+ * (logged, never re-raised). For a writer that tells many people at once
+ * (the checkout sweep's holders, the export alert, the folded intake digest
+ * — TAX-11): one statement, never an unbounded burst of single-row requests
+ * whose failures would each be swallowed (N8's review fix).
+ */
+export async function notifyBatchChecked(inputs: NotificationInput[], client?: NotifyClient): Promise<number> {
+  return (await notifyBatchWithReason(inputs, client)).landed;
+}
+
+/**
+ * notifyBatchChecked(), answering the refusal's text as well — for a writer
+ * that records it (the export alert's run diagnostics, the folded digest's
+ * error). `landed` is the count the DATABASE answers for the statement
+ * (`count: "exact"`), not the rows sent: a signed-in writer's row for a
+ * recipient who is not an active member is skipped by the insert rail
+ * (20261160 rule 5 — RETURN NULL, the statement still succeeds), and a
+ * skipped row is not counted. The count rides the insert itself, never a
+ * read-back: `.select()` after the insert is a RETURNING, which the own-rows
+ * SELECT policy (20261161) refuses for a row addressed to someone else — the
+ * browser sweep's whole statement would fail. A client that answers no count
+ * (none does in production: PostgREST counts every insert asked to) is taken
+ * at the statement's word — every row sent.
+ */
+export async function notifyBatchWithReason(inputs: NotificationInput[], client?: NotifyClient): Promise<{ landed: number; error?: string }> {
+  if (inputs.length === 0) return { landed: 0 };
+  try {
+    const db: NotifyClient = client ?? supabase;
+    const rows = inputs.map(notificationRow);
+    const { error, count } = await db.from("notifications").insert(rows, { count: "exact" });
+    if (error) { console.warn("[notify] batch insert failed", error.message); return { landed: 0, error: error.message }; }
+    return { landed: typeof count === "number" ? count : rows.length };
+  } catch (e) {
+    console.warn("[notify] batch insert threw", e);
+    return { landed: 0, error: e instanceof Error ? e.message : String(e) };
   }
 }
 

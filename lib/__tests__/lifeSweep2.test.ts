@@ -54,7 +54,9 @@ describe("LIFE-9 — in-app tickets carry the request form's required fields", (
 describe("LIFE-8 — sharing markups claims only what the system can back", () => {
   it("resolveMarkupRequest is a checked write and posts the markup_ref the thread renders on share", () => {
     const m = src("lib/markupRequests.ts");
-    expect(m).toMatch(/\.select\("document_id"\)\s*\n\s*\.maybeSingle\(\);/);
+    // notifications N8 (PROD-14) widened the returned columns to the request's
+    // two parties, whom the answer notifies; the write is still checked
+    expect(m).toMatch(/\.select\("document_id(?:, requested_by_user_id, requested_from_user_id)?"\)\s*\n\s*\.maybeSingle\(\);/);
     expect(m).toMatch(/if \(!updated\) throw new Error\(/);
     expect(m).toMatch(/if \(input\.status === "shared" && [\s\S]*?postMarkupRef\(\{/);
     expect(src("app/(protected)/inbox/page.tsx")).not.toMatch(/The requester can see your markups are available\./);

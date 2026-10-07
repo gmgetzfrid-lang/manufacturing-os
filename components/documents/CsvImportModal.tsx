@@ -27,6 +27,7 @@ import { supabase } from "@/lib/supabase";
 import { computeUniquenessKey } from "@/lib/uniqueness";
 import { importStatusFor } from "@/lib/documentStatusOptions";
 import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
+import { notifyLibraryDocsAdded } from "@/lib/libraryNotify";
 import type { LibraryConfig } from "@/types/schema";
 
 interface Props {
@@ -36,6 +37,11 @@ interface Props {
   orgId: string;
   collectionId?: string | null;
   actorUserId: string;
+  /** The signed-in member's email, for the library followers' notice
+   *  (PROD-5). Optional: without it notifyLibraryDocsAdded names the actor
+   *  by their email in the org (org_members), as the staged-upload path
+   *  does, and says "Someone" only when that is unknown. */
+  actorName?: string | null;
   onImported?: (count: number) => void;
 }
 
@@ -60,7 +66,7 @@ interface ImportResult {
 }
 
 export default function CsvImportModal({
-  isOpen, onClose, library, orgId, collectionId, actorUserId, onImported,
+  isOpen, onClose, library, orgId, collectionId, actorUserId, actorName, onImported,
 }: Props) {
   const [step, setStep] = useState<Step>("paste");
   const [raw, setRaw] = useState("");
@@ -147,6 +153,8 @@ export default function CsvImportModal({
     const failed: Array<{ row: number; reason: string }> = [];
     const statusNotes: Array<{ row: number; note: string }> = [];
     let ok = 0;
+    // PROD-5: the first imported row's number, for the followers' notice.
+    let firstLabel = "";
     // GAP-314 (P13 third review fix): the ids the inserts returned; a number
     // only for a row whose insert returned no id (the read-back fallback).
     const importedIds: string[] = [];
@@ -202,6 +210,7 @@ export default function CsvImportModal({
         }).select("id");
         if (insertErr) throw insertErr;
         ok += 1;
+        if (!firstLabel) firstLabel = documentNumber;
         if (statusNote) statusNotes.push({ row: rIdx + 2, note: statusNote });
         const insertedId = ((inserted ?? []) as Array<{ id?: unknown }>)[0]?.id;
         if (insertedId) importedIds.push(String(insertedId));
@@ -243,6 +252,11 @@ export default function CsvImportModal({
       // Imported rows are new doc-control content — AI libraries watching
       // this library mirror them now rather than at the next cron pass.
       nudgeKnowledgeSources(orgId, library.id!);
+      // PROD-5: the library's followers hear about a bulk import exactly as
+      // they do about a staged upload (one notice per batch, in-app only).
+      void notifyLibraryDocsAdded({
+        orgId, libraryId: library.id, count: ok, firstLabel: firstLabel || "document", actorUserId, actorName,
+      });
     }
   };
 

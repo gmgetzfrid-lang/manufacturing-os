@@ -12,7 +12,7 @@ import { isControllerPrincipal } from "@/lib/permissions";
 import { SNAPSHOT_READS, type ProjectStateSnapshot } from "@/lib/projectHealth";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { logAuditAction } from "@/lib/audit";
-import { notify, notifyMany } from "@/lib/inAppNotifications";
+import { notify, notifyMany, notifyBatchChecked } from "@/lib/inAppNotifications";
 import { listFollowerIds } from "@/lib/subscriptions";
 import {
   ensureActiveEpisode,
@@ -2059,23 +2059,28 @@ async function sweepSessions(
   }
 
   // Personal interrupt: tell each former holder their checkout evaporated —
-  // built from the rows the UPDATE actually changed. Direct notification-row
-  // inserts (works under both the RLS client and the cron's service-role
-  // client); never fails the sweep.
+  // built from the rows the UPDATE actually changed. The typed insert
+  // (TAX-11) on THIS sweep's client — the RLS client in the browser, the
+  // cron's service-role client — one row per holder, all in ONE statement
+  // per batch of released sessions (notifyBatchChecked — never one request
+  // per holder at once). It answers the rows that LANDED: a refusal lands
+  // none, and the insert rail skips a holder who is no longer an active
+  // member (20261160) — either way the sweep logs how many were not told,
+  // and never fails.
   try {
-    const inserts = released.map((r) => ({
-      org_id: r.org_id,
-      user_id: r.user_id,
-      kind: "checkout_released",
+    const told = await notifyBatchChecked(released.map((r) => ({
+      orgId: r.org_id,
+      userId: r.user_id,
+      kind: "checkout_released" as const,
       title: o.title,
       body: o.body,
       link: r.library_id ? `/documents/${r.library_id}?doc=${r.document_id}` : "/checkouts",
-      resource_type: "document",
-      resource_id: r.document_id,
-      actor_name: "System",
+      resourceType: "document",
+      resourceId: r.document_id,
+      actorName: "System",
       metadata: { autoReleasedSessionId: r.id },
-    }));
-    if (inserts.length > 0) await db.from("notifications").insert(inserts);
+    })), db);
+    if (told < released.length) console.warn(`[autoReleaseExpiredAdHoc] ${released.length - told} of ${released.length} holder(s) were NOT told their checkout was released (non-blocking)`);
   } catch (e) {
     console.warn("[autoReleaseExpiredAdHoc] holder notify failed (non-blocking)", e);
   }

@@ -408,7 +408,8 @@
   {
    "name": "N14 RAW-INSERT TAIL — the raw notifications inserts whose files were owned by in-flight packages when N8 launched move onto notify() / notifyMany() (TAX-11 done-when 2's remainder)",
    "findings": [
-    "TAX-11 (done-when 2 remainder split off by the integrator 2026-10-07 at N8's launch: the raw `.from(\"notifications\").insert(` calls in app/api/ai/usage/route.ts (ai_cap_changed), lib/orchestrator/tools.ts (orchestrator_message), app/api/cron/maintenance/route.ts (checkout_released escalation), app/api/tickets/comment/route.ts and app/api/tickets/workflow-action/route.ts (ticket_comment / ticket_mention / ticket_assigned / ticket_status) move onto notify() / notifyMany(), the RAW_SITES census in lib/__tests__/notificationKinds.test.ts shrinking with each; a site that must stay raw (a service-role writer with no actor) records why in RAW_RESOLVED)"
+    "TAX-11 (done-when 2 remainder split off by the integrator 2026-10-07 at N8's launch: the raw `.from(\"notifications\").insert(` calls in app/api/ai/usage/route.ts (ai_cap_changed), lib/orchestrator/tools.ts (orchestrator_message), app/api/cron/maintenance/route.ts (checkout_released escalation), app/api/tickets/comment/route.ts and app/api/tickets/workflow-action/route.ts (ticket_comment / ticket_mention / ticket_assigned / ticket_status) move onto notify() / notifyMany(), the RAW_SITES census in lib/__tests__/notificationKinds.test.ts shrinking with each; a site that must stay raw (a service-role writer with no actor) records why in RAW_RESOLVED)",
+    "PROD-16 (opened 2026-10-07 by notifications N8 as the DEC-31 remainder of PROD-2; confirmed by the integrator at the N8 merge: two concurrent access requests past the per-org burst limit can each write a burst notice — closing it needs a SECURITY DEFINER function that claims the org-hour burst slot atomically (one migration, DEC-30 / DRLS-16); the census forbids an upsert on notifications)"
    ],
    "files": [
     "app/api/ai/usage/route.ts, lib/orchestrator/tools.ts (after intelligence I-18 merges; I-21 also edits tools.ts — expect a merge)",
@@ -416,7 +417,7 @@
     "app/api/tickets/comment/route.ts, app/api/tickets/workflow-action/route.ts (after drafting-flow DF-P1 merges)",
     "lib/__tests__/notificationKinds.test.ts (RAW_SITES shrinks; RAW_RESOLVED proofs)"
    ],
-   "migrationsLikely": 0,
+   "migrationsLikely": 1,
    "dependsOn": ["N8 merged", "intelligence I-18 merged", "drafting-flow DF-P1 merged", "N6 merged"],
    "sequencingNotes": "Added by the integrator 2026-10-07 at N8's launch (DEC-31): TAX-11 done-when 2 says each file moves only once its own package has merged; these five were still in flight. REGRESSION: every recipient that gets a bell row from these producers today gets the same row afterwards, and the write rails (DEC-86) admit it."
   },

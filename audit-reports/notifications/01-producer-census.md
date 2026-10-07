@@ -1,6 +1,6 @@
 # 01 · The producer census
 
-**14 findings** — 3 HIGH · 11 MEDIUM.
+**16 findings** — 3 HIGH · 11 MEDIUM · 2 LOW. `PROD-15` and `PROD-16` opened by notifications Round G N8 PRODUCERS-FREE, 2026-10-07 (DEC-31 remainders of `PROD-2`).
 
 Which parts of the app notify, which are silent, and which vocabulary is dead. The completeness question, answered kind by kind.
 
@@ -98,7 +98,8 @@ components/navigation/Sidebar.tsx:229 —
 ## PROD-2 · Access requests notify nobody — a locked-out user's request lands in a table with no producer
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+- **Ratified (integrator at the N8 merge, 2026-10-07, under the user's delegation):** done-when 1 is met **as narrowed by `DEC-92` item 1** (the per-org burst limit), now ratified — the text below records what held before ratification. As written ("emits … on insert") done-when 1 holds for the first five requests to an org in an hour, not past them. If the integrator does not ratify the narrowing, this finding is OPEN on done-when 1 (DEC-29). Recorded 2026-10-07 by N8's final review fix.
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/auth/request-access/route.ts:44-57`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Repo-wide grep for `access_requests` returns only this route plus lib/schemaExpectations.ts:31, lib/dataRestore.ts:315, lib/exportTables.ts:91 and the migration — no producer and no reader. The finding's own summary is actually too charitable: it says an admin can find it by 'navigating to the members/access screen', but no such screen exists, so the row is unreachable from the UI entirely.
@@ -132,6 +133,55 @@ app/api/auth/request-access/route.ts:44-57 —
 - [ ] The route emits to resolveRoleRecipients(orgId, ['Admin','DocCtrl']) on insert
 - [ ] The approve/deny action notifies the requester by email at the address they supplied
 
+**Resolution (2026-10-07, notifications Round G).** **Reproduced first** on `f8d5eb5`: `app/api/auth/request-access/route.ts` inserted the `access_requests` row and returned `{ ok: true }` (:103-116) with no producer of any kind in the file (`grep -cE 'notify|emit\(|queueEmail|from\("notifications"\)'` → 0); the decline route (`app/api/admin/access-requests/route.ts:58-69`) and the approval (`app/api/admin/create-user/route.ts` `resolvePendingAccessRequests`) wrote the status and told nobody.
+
+**What landed (package N8 PRODUCERS-FREE, `DEC-92` item 1 — the plan's default).**
+- `app/api/auth/request-access/route.ts` — `notifyAccessRequest` (:77) runs after the insert (called at :217): under `runWithServerClient(supabaseAdmin)` it resolves `ACCESS_REQUEST_AUDIENCE` (`lib/accessRequestOutcome.ts:32`, `["Admin", "DocCtrl"]`) through `resolveRoleRecipients` (active members, headline or additive role), writes one `access_request_pending` bell row each through `notifyMany` (no actor — the person at the door has no account; `link: "/admin/users"`, `resource_type: "access_request"`, the request id) and queues one email each through `queueEmail` (event `assignment`; subject "Access request waiting for review", no name in it — NEDGE-6; the requester's name and address in the body, made safe first — see the review fix below). Best-effort: a failure is logged, the response is unchanged. The insert now returns its id (`.select("id").maybeSingle()`), nothing else about the route moved (the rate limit, IDENT-3's duplicate check, the 404 / 409 / 400 / 500 answers).
+- `lib/accessRequestOutcome.ts` (new) — `queueAccessRequestOutcome` queues the answer, server-side, rendered from the stored request (`renderAccessRequestOutcome`): the decline route (:76) after a decline THIS call made (the update now returns its rows), as external mail owned by the deciding controller (`metadata.external`, the transmittal route's shape); the create-user route (:54) when the membership resolved a pending request, to the new member at that address. A row already decided, or an "Add member" that answered no request, emails nobody.
+- `lib/notificationKinds.ts` / `lib/inAppNotifications.ts` — `access_request_pending` (bell-only, FYI, `Briefcase` / orange / group `other` — the feed's predicates on the name). The row is written by the service role, so it lands before or after `20261181` is pasted (that paste adds it to `notification_kinds()` for parity — `DEC-86`).
+- Tests: `lib/__tests__/producersRoutes.test.ts` (10 — the pool exactly the active Admin / DocCtrl holders incl. an additive DocCtrl, never the Engineer or the suspended Admin; no actor; one email each with the name only in the body; the 80-character bound; 404 / 409 / 429 / 400 notify nobody; a bell failure never changes the 200; a decline queues one external email to the request's address, a second decline none, a refused caller none; an approval emails the new member; an Add member with no request emails nobody; the message text with and without a public origin); `lib/__tests__/requestAccessRoute.test.ts`, `accessRequestDecline.test.ts`, `createUserRoute.test.ts` unchanged and green (REGRESSION).
+- Verified: Loop on `fleet/N8-producers-free` at `3dd10b8`: `npx tsc --noEmit` exit 0; `npx eslint` on the 27 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 435 files, 9480 passed, 7 expected-fail. `next build` is the integrator's.
+
+**Done-when.**
+- ✓ The route emits to `resolveRoleRecipients(orgId, ['Admin','DocCtrl'])` on insert — bell + email (`notifyMany` + `queueEmail`, the two legs `emit()` composes; `emit()` itself takes a document / project / ticket / asset / library resource, and an access request is none of them).
+- ✓ The approve / deny action notifies the requester by email at the address they supplied — a decline from `/api/admin/access-requests`, an approval from `/api/admin/create-user`, both queued server-side from the stored row.
+
+**Scope / residual.** The notice links to Admin → Users, where the pending list is shown to Admins only (`isAdmin && pendingRequests.length > 0`, `app/(protected)/admin/users/page.tsx:374`; `access_requests_admin_select`, `20261023`), while both deciding routes admit a DocCtrl — a DocCtrl in the pool can add the member or decline, but cannot open the list the notice points at. Opened as **`PROD-15`** (below), not narrowed here (the plan's default stands, `DEC-92` item 1). admin-and-org P5 (ORG-8) and P8 (ALOG-4) edit `request-access` and `create-user` later and rebase on this.
+
+**Review fix (2026-10-07, notifications Round G, N8 fix pass).** The review found that the notice as first landed let anyone at this public, unauthenticated door put their own text — a phishing line, a line break, a link — into a bell row and an email sent from the app's own sender to every Admin and DocCtrl: the address was only trimmed and lowercased, the name only cut to 80 characters, and the per-IP limiter (which fails open and exempts an unknown IP) was the only throttle, so rotating the "address" repeated it without limit. Before N8 that text was visible only on the Admin card. Closed at the door, with no response change:
+- `lib/accessRequestOutcome.ts` — `wellFormedAddress` (:66): ONE address, at most 254 characters, no control or invisible character, the shape the decline path already checked (`^[^\s@]+@[^\s@]+\.[^\s@]+$`), and no `/` or `:` (a path or a scheme — text a mail client could turn into a web link); the decline and approval emails use the same check. `noticeSafeName` (:83): control and line-break characters become spaces, invisible formatting characters (zero-width, bidi) are dropped, every token that reads as a link (a scheme, `www.`, a dotted host) becomes "[link removed]", cut to 80. `ACCESS_REQUEST_EMAILS_PER_ORG_HOUR` (:92) = 5.
+- `app/api/auth/request-access/route.ts` `notifyAccessRequest` (:77) — the bell row and the email carry only the safe name; an address that fails is shown as "invalid address" and gets **no email leg** (the bell still goes); and when more than 5 requests reached the org in the last hour (`requestsToOrgLastHour`, :46, a head count on `access_requests`) the pool gets the bell row only — a count that cannot be read also means bell only (fail closed). The request row, the per-IP limiter and every response are unchanged. *(Superseded by the second review fix below: past the cap the bell leg stops too, and `ACCESS_REQUEST_EMAILS_PER_ORG_HOUR` is now `ACCESS_REQUEST_NOTICES_PER_ORG_HOUR`.)*
+- The stale-notice half: once a request is decided its pool notices are marked read for everyone — `clearAccessRequestNotices` (:175; `read_at` only, on the service role, keyed on `resource_type = 'access_request'` + `resource_id` = the request id, the `(org_id, resource_type, resource_id)` index; best-effort) — called by the decline route (:86) after a decline THIS call made, and by `create-user`'s `resolvePendingAccessRequests` (:65) for each request the membership resolved (the PROD-3 rule, applied to this kind).
+- Tests: `lib/__tests__/producersRoutes.test.ts` (10 added — the reviewer's case: a name and an address carrying a newline, a phishing line and a URL — answered 200 as before, the bell with no line break and no link, the address shown invalid, no email; a scheme-and-path address and a 5 KB address — no email, never in the bell; control / zero-width / bidi characters dropped from the name; a burst of 8 requests — 8 bell rows, mail for the first 5 only; a count that cannot be read — bell only; `wellFormedAddress` and `noticeSafeName` case tables; a decline clears exactly that request's unread pool rows — not another request's, kind's or org's, not an already-read row; an approval clears them, an Add member with no request clears nothing; a refused caller clears nothing, and a clearing that fails never changes the decline's answer).
+- Verified: Loop on `fleet/N8-producers-free` after the fix pass (code at `4896093`): `npx tsc --noEmit` exit 0; `npx eslint` on the 18 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 436 files, 9498 passed, 7 expected-fail. Two earlier full runs, made while the machine's load average was 20-26 on 4 cores, failed only on 5-second test timeouts and timing-dependent DOM tests (`cornerDock`, the `dependencies` and `rfqDocx` fuzzes, `dcRoundFOwnerStamp`, `customSkillRunner`, `j10bLabelsFormattersLinks`, `dcRoundFShareInventory`, and one census case in `notificationWriteRails` that timed out); each passes alone, and the final full run is clean. `next build` is the integrator's.
+
+**Second review fix (2026-10-07, notifications Round G, N8 fix pass 2).** The second review found the per-org cap limited only the email leg: `notifyMany` ran for every inserted request before the cap was read, so a script at this public door — a new address each time, rotating or forged IPs (the per-IP limiter fails open, exempts an unknown IP and trusts the first `x-forwarded-for` entry, which can be forged off-Vercel — SHR-11) — wrote a bell row and a realtime toast per request into every Admin's and DocCtrl's bell, pushing their compliance notices (`ack_overdue`, `review_overdue`, `hold_opened`) out of the bell's 50-row list (TAX-6), with nothing telling them why. Fixed at the door; no response changed:
+- `app/api/auth/request-access/route.ts` `notifyAccessRequest` (:128) reads the org's hourly request count FIRST (:137; `requestsToOrgLastHour` :47), and the cap gates BOTH legs. Past `ACCESS_REQUEST_NOTICES_PER_ORG_HOUR` (5 — `lib/accessRequestOutcome.ts:99`, renamed from `ACCESS_REQUEST_EMAILS_PER_ORG_HOUR` because it no longer caps only the email), or when the count cannot be read, a request gets no bell row and no email of its own.
+- The pool is told ONCE instead: `notifyAccessRequestBurst` (:69) gives each pool member at most one UNREAD "More access requests are waiting for <org>" row. The row is `access_request_pending`, `resource_type` `'org'` (`ACCESS_REQUEST_BURST_RESOURCE_TYPE`, `lib/accessRequestOutcome.ts:104`), `resource_id` the org id, `metadata.accessRequestBurst`, no actor, linking to Admin → Users. Its words are the app's own and the org's stored name; nothing a stranger typed is in it. A member who already holds an unread one gets nothing more (no row, no toast) until they read it. It is one typed statement on the service role (`notifyBatchWithReason` — see `TAX-11`).
+- The open-row check matches only rows with no actor (`.is("actor_user_id", null)`, :79). 20261160 stamps every signed-in writer as the actor, so no member's browser can forge the decoy row that would silence the notice. If that read fails, nothing is written: at most one row per member, never one per request. The row is keyed on the org, never on a request id, so deciding one request (`clearAccessRequestNotices`) does not clear it; it stays until read. Every request is still recorded and listed on Admin → Users.
+- Known gap: two requests that land in the same instant past the cap can each see no open row and both write one. That member then holds two rows, bounded by concurrency rather than by the request rate. *(Fix pass 3: opened as `PROD-16`, owner notifications N14.)*
+- Tests (`lib/__tests__/producersRoutes.test.ts`):
+  - The burst is rewritten to the reviewer's case. Of 8 requests, only the first 5 get bell rows and mail. For the other 3, each pool member holds ONE burst row, and nothing typed at the door is in it. A member who read theirs is told again by the next request; the others are not.
+  - A failed count: no bell row or email of the request's own, and one burst row each.
+  - A forged member row (one with an actor) does not silence the burst notice.
+  - A failed open-row read writes nothing.
+  - The dedupe-read ratchet (`lib/__tests__/notificationWriteRails.test.ts`) lists the route's read with its actor-null watermark and checks both the read and 20261160's actor stamp.
+- Verified: see `TAX-11`'s fix-pass-2 block (`03-taxonomy.md`) — one loop for the whole second fix pass.
+
+**Done-when (after fix pass 2).** *(Corrected by the final review fix below: the first line ticked a narrower criterion than the one written.)*
+- ✓ The route emits to `resolveRoleRecipients(orgId, ['Admin','DocCtrl'])` on insert, bell + email, for the first five requests to an org in an hour. Past that, the pool holds one standing notice that more are waiting, and the pending list names every request. A stranger can no longer turn the door into an unbounded run of bell rows.
+- ✓ (unchanged) The approve / deny action notifies the requester by email at the address they supplied.
+
+**Final review fix (2026-10-07, notifications Round G, N8 fix pass 3).** The final review raised two points on this record:
+- **The burst notice stated a count nobody had read.** `notifyAccessRequestBurst` runs when the org's hourly count is over the cap AND when the count cannot be read (`recent === null`). Both used one body: "More than 5 people asked to join <org> within an hour…". On the second path that is untrue: a transient error on the head count turned an org's first and only request of the day into "more than five within an hour" in every Admin's and DocCtrl's bell. `app/api/auth/request-access/route.ts` `burstNotice` (:62) now words the row from the count: with a count over the cap, as before; with no count, "Access requests are waiting for <org>" as the title and "Access requests are waiting for <org>. Every request is listed under Admin → Users: review them there." as the body, with no number and no "more". The burst row's key, its dedupe, its link and every response are unchanged (:108).
+- **The record ticked done-when 1 as narrowed, not as written.** Corrected below and in the Status block. The narrowing is `DEC-92` item 1. The concurrent double-burst row had no owner; it is now `PROD-16` (LOW), owner notifications N14.
+- Tests: `lib/__tests__/producersRoutes.test.ts` "a count that could not be read is never stated as a number…" (new): with the count read failing, each pool member's burst row reads "Access requests are waiting for Acme Refining", with no digit, "More than" or "within an hour". REGRESSION: a count that was read and is over the cap keeps the "More than 5 … within an hour" title and body word for word. The case fails without the fix; every other `producersRoutes` case is unchanged and green.
+- Verified: see `PROD-6`'s final-review block — one loop for the whole of fix pass 3.
+
+**Done-when (after fix pass 3).**
+- ✓ **as narrowed by `DEC-92` item 1 (pending the integrator's ratification).** The route emits to `resolveRoleRecipients(orgId, ['Admin','DocCtrl'])` on insert, bell + email, for the first five requests to an org in an hour (`ACCESS_REQUEST_NOTICES_PER_ORG_HOUR`). **As written it is not met past that.** A request past the cap, or any request while the org's count cannot be read, gets no bell row and no email of its own. Each pool member then holds at most one unread burst row: "More access requests are waiting…" when the count was read, "Access requests are waiting…" when it was not. A member who already holds an unread one gets nothing for that request. The pending list on Admin → Users names every request. Two requests that land at once past the cap can give a member two burst rows (`PROD-16`, owner N14).
+- ✓ (unchanged) The approve / deny action notifies the requester by email at the address they supplied.
+
 ---
 
 <a id="prod-3"></a>
@@ -139,7 +189,8 @@ app/api/auth/request-access/route.ts:44-57 —
 ## PROD-3 · branch_resolved goes only to the brancher, never to the DocCtrl pool that was alerted to branch_open
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
+- **Pending migration:** `supabase/migrations/20261181_notif_roundG_producers_free.sql` (DEC-30). RESOLVED is the code half. Done-when 2's database half — the pool's `branch_open` rows marked read — holds only once `20261181` is applied, and whether it is applied cannot be checked from here. Paste it after `20261160` / `20261161` and BEFORE the deploy: the same paste declares the three kinds N8 writes from the browser (`change_order_status`, `milestone_assigned`, `milestone_slipped`), whose rows are refused (and only logged) once `20261160` is live without it. Recorded 2026-10-07 by N8's final review fix.
 - **Verification:** CONFIRMED
 - **Locations:** `lib/branches.ts:148`, `lib/branches.ts:204-215`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed asymmetry, and it is worse than stated: resolveBranch passes `actorUserId: input.actorUserId`, which dispatch.ts:77 (`ids.delete(input.actorUserId)`) strips — so when the brancher resolves their own branch the recipient set is empty and emit() returns at dispatch.ts:84 before writing anything. The stale branch_open row is also not auto-reconciled: the cleanup at useTicketNotifications.ts:188-209 only touches rows carrying `metadata.status` + `metadata.action`, and announceBranchOpened's metadata is `{ branchId }` only.
@@ -175,6 +226,21 @@ lib/branches.ts:204-215 —
 
 - [ ] resolveBranch's audience mirrors announceBranch's: { involved: [branch.createdBy], roles: ['DocCtrl'] }
 - [ ] Resolving a branch marks the matching unread branch_open rows read (match on metadata.branchId), so the queue self-clears
+
+**Resolution (2026-10-07, notifications Round G).** **Reproduced first** on `f8d5eb5`: `resolveBranch` emitted `branch_resolved` to `audience: { involved: [branch.createdBy] }` (`lib/branches.ts:232`) while `announceBranchOpened` alerted `{ involved, roles: ["DocCtrl"] }` (:148), and nothing marked a `branch_open` row read — the hook reconciles ticket workflow rows only, and since `20261161` a browser may change only its OWN rows, so no client-side clear could ever reach the pool's rows.
+
+**What landed (package N8, `DEC-92` item 5).**
+- `lib/branches.ts:237` — `branch_resolved`'s audience is `{ involved: [branch.createdBy], roles: ["DocCtrl"] }`; the dispatcher drops only the actor, so a brancher resolving their own branch still tells the pool (active DocCtrls only, NEDGE-3).
+- `lib/branches.ts:242` / `clearBranchOpenAlerts` (:253) — after the resolution, `supabase.rpc("clear_resolved_branch_alerts", { p_branch })`. **`20261181`** adds `clear_resolved_branch_alerts(uuid)`: SECURITY DEFINER, `search_path` pinned, REVOKEd from PUBLIC and anon, EXECUTE to authenticated only (DRLS-16); it acts only on a RESOLVED branch of an org the caller is an ACTIVE member of (any other id, or no `auth.uid()`, answers 0 — one answer, no cross-tenant oracle) and sets `read_at` on that org's unread `branch_open` rows whose `metadata @> {"branchId": …}` — `read_at` only, which 20261161's read_at-only trigger passes for a definer path on another member's rows. The same paste marks read, once, the backlog of unread alerts about branches already resolved (the inventory counts them before; a probe says none are left after). Before the paste (PGRST202 / 42883) the resolution succeeds and the alerts stay unread, as they always did — logged, never thrown.
+- `lib/schemaExpectations.ts` — the schema-health panel probes the function (`p_branch: "schema-health-probe"`, refused as a uuid — the body never runs).
+- Tests: `lib/__tests__/producers.test.ts` "PROD-3" (5 — the audience; the pool resolved by the real `resolveRecipients` when the brancher resolves, actor and suspended DocCtrl out; the RPC with the branch id; PGRST202 / 42883 keep today's path; an emit failure never fails the resolution); `lib/__tests__/notifProducersFree.test.ts` (the function's shape, the one-answer rule, the `read_at`-only write, the key matching `announceBranchOpened`'s metadata, the backlog, DRLS-16); `lib/__tests__/dcRoundFBranchMergeRefusal.test.ts` unchanged and green (REGRESSION).
+- Verified: Loop on `fleet/N8-producers-free` at `3dd10b8`: `npx tsc --noEmit` exit 0; `npx eslint` on the 27 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 435 files, 9480 passed, 7 expected-fail. `next build` is the integrator's.
+
+**Done-when.**
+- ✓ `resolveBranch`'s audience mirrors `announceBranchOpened`'s role pool: `{ involved: [branch.createdBy], roles: ['DocCtrl'] }` (`lib/branches.ts:237`).
+- ✓ Resolving a branch marks the matching unread `branch_open` rows read (matched on `metadata.branchId`) — once `20261181` is pasted (DEC-30: the database half is unobservable from here; the paste's probes report it). Before the paste the app keeps today's behaviour.
+
+**Scope / residual.** The general class — any row whose condition has ended (holds, acks, reviews) — stays `TRAIL-9` (N4); this clears only the branch alerts, at the producer. PASTE / DEPLOY: `20261160` → `20261161` → `20261181`, then the deploy (either order is safe for this finding; the new kinds in the same paste are why it goes first).
 
 ---
 
@@ -268,6 +334,26 @@ components/documents/CsvImportModal.tsx:166 (the path that does not) —
 - [ ] CsvImportModal emits library_doc_added with audience { followers: true } after a successful batch
 - [ ] The notify call is extracted to a shared helper both insert paths use, so a third insert path cannot silently skip it
 
+**Partial (2026-10-07, notifications Round G).** **Reproduced first** on `f8d5eb5`: `components/documents/CsvImportModal.tsx` inserted documents (:187) with no producer in the file (0 matches), while the staged-upload path's closure (`app/(protected)/documents/[libraryId]/page.tsx:2394-2408`) emitted `library_doc_added` to the library's followers.
+
+**What landed (package N8, `DEC-92` item 6).**
+- `lib/libraryNotify.ts` (new) — `notifyLibraryDocsAdded({ orgId, libraryId, count, firstLabel, actorUserId, actorName })`, extracted verbatim from the page's closure (kind `library_doc_added`, category `watched`, the same title / body / link / resource, `audience: { followers: true }`, the actor dropped by the dispatcher) with one change, PROD-7 done-when 3: `channels: ["inapp"]`. Never throws; nobody is told for a zero count or a missing org / library / actor.
+- `components/documents/CsvImportModal.tsx:255` — after a batch that inserted at least one row, `void notifyLibraryDocsAdded(...)` with the count, the first imported number and the signed-in actor; an optional `actorName` prop (absent, the notice says "Someone", as the page's closure does without an email).
+- Tests: `lib/__tests__/producersCsvImport.test.ts` (3, rendered — a two-row import calls the helper once with count 2, "P-101" and the actor; a batch the database refused calls nothing; the modal imports the helper and never `emit()` itself); `lib/__tests__/producers.test.ts` "PROD-5" (2 — the verbatim notice with `channels: ["inapp"]`; the guards; a dispatch failure swallowed); the CSV import's own tests (`dcRoundFCsvImportUnitDecode`, `dcRoundFP15CsvImportStatus`) unchanged and green (REGRESSION).
+- Verified: Loop on `fleet/N8-producers-free` at `3dd10b8`: `npx tsc --noEmit` exit 0; `npx eslint` on the 27 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 435 files, 9480 passed, 7 expected-fail. `next build` is the integrator's.
+
+**Done-when.**
+- ✓ `CsvImportModal` emits `library_doc_added` with `audience { followers: true }` after a successful batch (through the helper; in-app only).
+- **Not done — partly:** "the notify call is extracted to a shared helper both insert paths use". The helper exists and the CSV path uses it; the staged-upload page still calls its own closure (dual channel) — that file is not N8's (document-control P6 / intake IS-P1 edit it), and the swap is **notifications N9**'s by plan (after DC P6 / IS-P1). Until then the two paths' channels differ (staged: in-app + email; CSV: in-app).
+
+**Scope / residual.** Stays OPEN for done-when 2's page half — owner notifications N9 (swap `notifyLibrarySubscribers` at `page.tsx:2394` onto `notifyLibraryDocsAdded`, and pass `actorName` to `CsvImportModal`). PROD-7 done-when 3's `library_doc_added` arm closes with that swap. *(Fix pass 3: passing `actorName` is no longer needed for the notice to name the actor; see below.)*
+
+**Final review fix (2026-10-07, notifications Round G, N8 fix pass 3).** The final review found every CSV-import notice read "Someone added …". The library page (`app/(protected)/documents/[libraryId]/page.tsx:3341-3352`, not N8's file) passes the modal `actorUserId` and no `actorName`, and the helper fell back to "Someone". The staged-upload closure names the uploader by the session's email (`userEmail`). The modal cannot read that email itself: `useRole()` throws outside `RoleProvider`, and the modal's own tests render it without one.
+- `lib/libraryNotify.ts` `notifyLibraryDocsAdded` (:61) now looks the actor up when no name is passed (`actorEmailInOrg`, :47). It reads the actor's email in this org from `org_members` (the address the staged-upload path names), then their display name. It says "Someone" only when neither is known, and a failed read never throws. A name that IS passed is used verbatim, with no read, so the staged-upload path's words stay identical when N9 moves it onto the helper.
+- `components/documents/CsvImportModal.tsx` — the `actorName` prop's comment says what happens without it. The call (:257) is unchanged.
+- Tests: `lib/__tests__/producers.test.ts` "PROD-5" "a caller that passes no name (the CSV import…)" (new). The CSV import's uid-only call reads "dc1@acme.test added 200 documents…", the same words as the staged-upload path's call with that email. A passed name is verbatim, with no `org_members` read. A member with no email on file is named by display name. A failed read gives "Someone". The guard case now uses an actor nobody knows to pin "Someone". The new case fails without the fix.
+- Verified: see `PROD-6`'s final-review block — one loop for the whole of fix pass 3.
+
 ---
 
 <a id="prod-6"></a>
@@ -275,7 +361,7 @@ components/documents/CsvImportModal.tsx:166 (the path that does not) —
 ## PROD-6 · Cost control, change orders, checklists, turnover, punch, equipment registry and companies are all completely silent
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/changeOrders.ts`, `lib/costs.ts`, `lib/checklists.ts`, `lib/turnover.ts`, `lib/companies.ts`, `lib/equipmentBridgeServer.ts`, `lib/documentShares.ts`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Claim of absence verified repo-wide, including the punch-item code (which lives in lib/turnover.ts and lib/companies.ts, both zero) and the checklist API route. No caller-side compensating notification was found.
@@ -304,6 +390,64 @@ Producer sweep result (each subsystem's full file set grepped for any notificati
 - [ ] Punch/checklist assignment emits to the assignee
 - [ ] A decision is recorded (in the union's comments or a doc) for each subsystem deliberately left silent, so 'silent' is a choice rather than an omission
 
+**Partial (2026-10-07, notifications Round G).** **Reproduced first** on `f8d5eb5`: `lib/changeOrders.ts` notified only an approval's proposer (`notifyApproval`, :424 / :449, projects J3's MON-11 limb); `lib/turnover.ts`, `lib/checklists.ts` had no producer (0 matches each); `lib/costs.ts` and `lib/companies.ts` none either.
+
+**What landed (package N8, `DEC-92` item 2).**
+- `lib/changeOrders.ts` — `notifyChangeOrder` (:464): a change order proposed (:250), approved or rejected (:429) notifies the project's members (`resolveProjectMembers`) and its owner (`projects.owner_user_id`), kind `change_order_status` (new, section `projects`), bell + email, the actor never. On an approval the proposer is left out because `notifyApproval` (unchanged — kind `project_status`, "Your change order…") already tells them: one notice each. A rejection reaches the proposer here. A void is silent. Best-effort behind the money.
+- `lib/turnover.ts` — `notifyTurnoverRejected` (:463, called at :444): projects-tab MON-11 done-when 3 (see that record).
+- `lib/costs.ts`, `lib/companies.ts` — a header paragraph each recording that the module is deliberately silent and why (dw3).
+- `lib/notificationKinds.ts` / `lib/inAppNotifications.ts` — `change_order_status`; `20261181` adds it to `notification_kinds()` (written from the browser: paste BEFORE the deploy, or its rows are refused once `20261160` is live — only logged).
+- Tests: `lib/__tests__/producers.test.ts` "PROD-6 dw1" (5 — proposing reaches members + owner, never the proposer; rejecting includes the proposer, not the decider; approving keeps the proposer's own `project_status` notice and sends `change_order_status` to the others only; a void is silent; a failed notice never fails the proposal); `lib/__tests__/costDocs.test.ts` "MON-11: an approval notifies the proposer (and not the decider)" unchanged and green (REGRESSION).
+- Verified: Loop on `fleet/N8-producers-free` at `3dd10b8`: `npx tsc --noEmit` exit 0; `npx eslint` on the 27 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 435 files, 9480 passed, 7 expected-fail. `next build` is the integrator's.
+
+**Done-when.**
+- ✓ Change-order submit / approve / reject emits to the project's members and the cost owner. "Cost owner" is read as the project owner (`projects.owner_user_id`, the money's owner on the project) and, since fix pass 2, also the budget line's control account manager (`cost_accounts.cam_user_id`) when the line names one. Nothing writes that column yet; see the second review fix.
+- **Not done:** "punch / checklist assignment emits to the assignee". There is no person-assignee to emit to: a punch item and a turnover item are assigned to a contractor PARTY (`party_id` → `project_parties`, an external company with no account — `lib/turnover.ts` `assignContractor`), and a checklist has no assignee field at all (read 2026-10-07). The plan's default assumed one. Notifying someone else instead would claim more than the code does (DEC-29). Recorded in `DEC-92` item 2 for ratification: either the integrator accepts "silent — no person is assigned" (then this closes by record), or a person-assignee is built — a projects-area schema feature, not a notification.
+- ✓ A decision is recorded for each subsystem deliberately left silent — `DEC-92` item 2 (cost control, companies, the equipment registry, checklist status changes and punch close-outs, document shares), and in the header of each such file N8 owns (`lib/costs.ts`, `lib/companies.ts`). `lib/equipmentBridgeServer.ts` is intelligence I-11's file (fleet rule): its record is the DEC entry; `lib/documentShares.ts` is document-control P1 SHARE's.
+
+**Review fix (2026-10-07, notifications Round G, N8 fix pass).** The change-order notices showed a bare number ("for 12,000") while the award notice beside them names its currency. `lib/changeOrders.ts` `coAmountLabel` (:506) formats the amount in its budget line's currency (`cost_accounts.currency`, USD when unset or unreadable — the Costs tab's own default) with `fmtMoney` (`lib/costs.ts`), for `notifyChangeOrder` and for MON-11's `notifyApproval` alike. Test: `lib/__tests__/producers.test.ts` "the amount carries its budget line's currency…" (a CAD line: the proposal, the members' approval notice and the proposer's own approval notice all show `fmtMoney(12000, "CAD")`). Verified: the fix pass's loop (code at `4896093`), recorded in `PROD-2`'s review fix. *(Corrected by fix pass 2 below: `fmtMoney` rounds 10,000 and over to whole units, so the notices now use `coNoticeMoney`.)*
+
+**Second review fix (2026-10-07, notifications Round G, N8 fix pass 2).** Two findings:
+- **The exact amount.** `fmtMoney` rounds amounts of 10,000 and over to whole units, which is right for the Costs tab's columns. In a notice it is wrong: the notice says the amount "was approved and posted to the budget line", and the entry posted keeps the exact figure. The notices now use `lib/changeOrders.ts` `coNoticeMoney` (:512): the exact figure in the line's currency, to that currency's minor unit (two decimals for USD and CAD; "—" for a non-number). It is read once per notice with the CAM, below, by `coLine` (:526), which replaces `coAmountLabel`. This covers `notifyChangeOrder` and MON-11's `notifyApproval`. The currency fix stands, and `lib/costs.ts` is not touched.
+- **The cost owner.** Done-when 1's "cost owner" was read in the first pass as the project owner, and the record did not say that the schema has a cost-account manager: `cost_accounts.cam_user_id` (`20260819`), the control account manager and the literal owner of the budget line a CO posts to. `notifyChangeOrder` (:467) now adds the line's `cam_user_id`, when set, to the members and the project owner for every event: proposed, approved and rejected. The dispatcher keeps active members only and drops the actor. One read of the line answers both the currency and the CAM. No app code writes `cam_user_id` today, so in practice the project owner is still who hears, until an admin feature or an import sets it. That person is then told without being a project member. *(Fix pass 3: on a private project, only while they can still see it — see below.)*
+- Tests (`lib/__tests__/producers.test.ts`):
+  - The CAD case now uses 12,345.67. The proposal, the members' approval notice and the proposer's own approval notice show `coNoticeMoney(12345.67, "CAD")` (contains "12,345.67"; not the tab's rounded `fmtMoney` figure; not USD).
+  - A new case: a line naming a CAM adds them to the proposal's and the rejection's audience. A CAM who decides is not told of their own act, and a suspended CAM is dropped by the dispatcher.
+  - The rejection test now expects `coNoticeMoney(500, "USD")`.
+- Verified: see `TAX-11`'s fix-pass-2 block (`03-taxonomy.md`) — one loop for the whole second fix pass.
+
+**Scope / residual.** Stays OPEN on done-when 2 — owner: the integrator (ratify `DEC-92` item 2's reading), else projects-tab (a person-assignee on punch / checklist items, then one emit at the assignment). The turnover rejection now notifies (MON-11).
+
+**Final review fix (2026-10-07, notifications Round G, N8 fix pass 3).** Three findings on the change-order notices:
+- **A failed line read was written as dollars.** `coLine` read only `data` from `cost_accounts`. A failed read, or a row the decider's RLS hides (no error, no row), left the currency at USD, so a 12,345.67 CO on a CAD line reached the proposer, every member, the owner and the CAM as US dollars, by bell and email. The CAM was also dropped without a word. `lib/changeOrders.ts` `coLine` (:550) now reads `{ data, error }`. If the line names a currency the notice cannot learn — a failed read, or no row — the amount is written with **no currency at all** (`coNoticeMoney(n, null)` → "12,345.67"), no CAM is told, and the miss is logged. USD stays only where the app itself means USD: a line whose `currency` column is empty (the Costs tab's default), and a CO with no budget line (the Change Orders panel shows it in USD).
+- **Stored money took the writer's locale.** `coNoticeMoney` used `Intl.NumberFormat(undefined, …)`. The title and body are stored and read by other people, so a de-DE approver of a 1,500.00 USD CO wrote "1.500,00 $" into every member's bell. The test only held on an `en` runner. `coNoticeMoney` (:529) is now built by hand, like the schedule's `scheduleDateLabel`: digits grouped by ",", "." before the minor unit, and the ISO code in front ("CAD 12,345.67", "USD 1,500.00"). The minor unit comes from ISO 4217 (`CURRENCY_DIGITS`, :512: zero digits for JPY and others, three for BHD and others, otherwise two). A currency that is not a three-letter code makes no currency claim. No locale or ICU data changes it. This covers `notifyChangeOrder` and MON-11's `notifyApproval`.
+- **People named by hand ignored private-project visibility (SEC-2).** `notifyChangeOrder` added the line's CAM, and a rejection's proposer, after checking only that each was an active org member. `change_orders`, `cost_accounts` and `turnover_items` are readable only where `project_visible_to_me` holds (`20260913:40`, `20261102`). So on a private project, a proposer since removed from the roster, or a CAM who was never on it, was told the CO's title, its exact amount and the decider's note. `lib/notify/recipients.ts` `projectVisibleAmong` (:134, new, beside `resolveProjectMembers`) applies the database's rule in the app:
+  - a project that is not private keeps everyone;
+  - a private one keeps its owner, its roster (`project_members`, the dispatcher's `{ projectId }` audience) and the org's controllers (an active Admin or DocCtrl, headline or additive — `resolveRoleRecipients`, never wider than `is_org_controller`);
+  - a project that cannot be read keeps nobody named by hand.
+  It only ever removes. `notifyChangeOrder` (:483) passes the CAM and a rejection's proposer through it, using the project row it already reads. MON-11's `notifyApproval` (:573) passes the proposer through it too: the approval notice carries the same amount. The members and the owner see the project by definition and are unchanged. The turnover creator is `MON-11`'s (projects-tab); the schedule's assignee is `PROD-11`'s.
+- Tests (`lib/__tests__/producers.test.ts`, "PROD-6 dw1"):
+  - "money is written the same for every reader…" (new): with `Intl.NumberFormat` forced to de-DE, the notice text is "USD 1,500.00", "USD 500.00", "CAD 12,345.67", "EUR 1,234,567.89", "USD -2,500.00", "JPY 1,500" and "BHD 12.346". A null or non-ISO currency gives the bare "12,345.67".
+  - "when the budget line cannot be read…" (new): with the line read failing, the members' approval notice and the proposer's own notice say "12,345.67" with no currency, the CAM is not told, and the miss is logged. A row the decider cannot see gives the same result. REGRESSION: a line with an empty currency, and a CO with no line, still read "USD …".
+  - "SEC-2: on a PRIVATE project the people named by hand…" (new): on a private project, a rejection reaches the owner and the roster but not the removed proposer or the off-roster CAM. The approval sends the removed proposer no notice of their own. A CAM on the roster, or a DocCtrl held additively, is kept. A project that cannot be read keeps none of the people named by hand. REGRESSION: the same people on a project that is not private are told as before.
+  - The CAD case now expects "CAD 12,345.67". The rejection case's fixture now carries its budget line (currency empty, so USD): it had named a line that did not exist.
+  - Each new case, and the changed CAD case, fails without the fix.
+  - `lib/__tests__/costDocs.test.ts` "MON-11: an approval notifies the proposer" is unchanged and green (REGRESSION).
+- Verified: one loop for the whole of fix pass 3 (`PROD-2`, `PROD-5`, `PROD-6`, `PROD-11`, `PROD-14`, projects-tab `MON-11`), code at `bbe3338`:
+  - `npx tsc --noEmit`: exit 0.
+  - `npx eslint --max-warnings=0` on the 11 changed code and test files: exit 0.
+  - **Before the fix:** with the code changes stashed and the new tests kept, `producers.test.ts` and `producersRoutes.test.ts` failed exactly the 11 new or changed cases (56 passed).
+  - **After the fix:** 28 related files pass, 665 tests: the five producer files, the censuses (`notificationKinds`, `notificationWriteRails`, `checkedWrite`, `checkedWrites`), `checkoutRoundF`, `projects`, `lifeSweep2`, `notificationDispatchMembership`, `costDocs`, `turnover`, the schedule suites and the access-request routes. 44 more files that import a changed module pass too: 964 tests, 4 expected-fail.
+  - **The full suite:** `npx vitest run` exited **1**, with 424 of 436 files passing (9,491 tests passed, 24 failed, 7 expected-fail). The machine's load average was 30–40 on 4 cores. All 24 failures were in files this pass does not change: 10 were 5-second test timeouts, 13 were timing-dependent DOM cases in `cornerDock`, and 1 was a 1-second performance bound in `drawingText`. Run alone with `--testTimeout=60000`, each of the 12 files passes: `cornerDock` 63/63, `customSkillRunner` 18/18, `dcRoundFOwnerStamp` 16/16, `dcRoundFShareInventory` 18/18, `dependencies` 45/45, `drawingText` 119/119, `j10bLabelsFormattersLinks` 9/9, `notificationDispatchMembership` 24/24, `notificationWriteRails` 79/79, `restoreArchiveRoundTrip` 13/13, `rfqDocx` 9/9, `signInNext` 92/92. A full-suite exit 0 is not shown for this pass.
+  - `next build` is the integrator's.
+  - No migration changed: `20261181` is untouched.
+
+**Done-when (after fix pass 3).**
+- ✓ Change-order submit / approve / reject emits to the project's members and the cost owner: the project owner, and the line's CAM when set. On a private project the CAM is told only while they can see the project. A CAM who cannot see it cannot read the line either (`cost_accounts` is read under `project_visible_to_me`), so telling them would leak it.
+- **Not done** (unchanged): punch / checklist assignment emits to the assignee.
+- ✓ (unchanged) A decision is recorded for each subsystem deliberately left silent.
+
+**Integrator at the N8 merge (2026-10-07) — ratified under the user's delegation (DEC-92 item 2).** The second limb ("punch / checklist assignment emits to the assignee") is **superseded by the ratified `DEC-92` item 2**, not met: punch and turnover items are assigned to a contractor PARTY (`party_id`, `20261013`) and checklist items have no assignee column, so there is no person to notify; the external party is told through the outcome channel (`MON-10`, DEC-56). Done-when 1 and 3 hold as written (above). RESOLVED on that basis; if a person-assignee is ever added to punch or checklist items, one emit at the assignment is the follow-up (projects-tab).
 ---
 
 <a id="prod-7"></a>
@@ -500,7 +644,8 @@ supabase/migrations/20260621_in_app_notifications.sql:17 —
 ## PROD-11 · The entire milestones/schedule subsystem is silent — 20+ mutators, zero notifications
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+- **Pending migration:** `supabase/migrations/20261181_notif_roundG_producers_free.sql` (DEC-30). Done-when 2's `milestone_assigned` and done-when 3's `milestone_slipped` are written from the browser. Once `20261160` is live, their rows are refused (22023) and only logged until `20261181` is applied, so paste it BEFORE the deploy. Whether it is applied cannot be checked from here. Done-when 1's `project_status` notice is an existing kind and lands either way. Recorded 2026-10-07 by N8's final review fix.
 - **Verification:** CONFIRMED
 - **Locations:** `lib/milestones.ts:155`, `lib/milestones.ts:233`, `lib/milestones.ts:293`, `lib/milestones.ts:346`, `lib/milestones.ts:456`, `lib/milestones.ts:565`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Absence verified for the whole module, not just the cited lines. lib/inbox.ts:154-158 does pull open/overdue milestones into the /inbox cockpit, so a slip is discoverable there as well as on the Schedule tab — but that is a pull surface, not a notification, so the claim stands.
@@ -529,6 +674,58 @@ lib/nudges.ts:53-62 (the only 'milestone alerting' that exists — a pure deriva
 - [ ] setMilestoneStatus and applyMilestoneMoves emit to audience { projectId } (the dispatcher branch that already exists and is unused)
 - [ ] Milestone assignment notifies the assignee with a distinct kind
 - [ ] A schedule slip past a baseline notifies the project owner
+
+**Resolution (2026-10-07, notifications Round G).** **Reproduced first** on `f8d5eb5`: `lib/milestones.ts` had no producer of any kind (`grep -cE 'notify|emit\(|queueEmail|from\("notifications"\)'` → 0), and `audience.projectId` had no caller anywhere (PROD-4).
+
+**What landed (package N8, `DEC-92` item 3 — the plan's default, applied per operation).**
+- `lib/milestones.ts` — `notifyScheduleChange` (:176): `audience: { projectId }` (the dispatcher branch nothing took), kind `project_status`, **in-app only**, the actor dropped; called by `setMilestoneStatus` (:885) and, once per batch, by `applyMilestoneMoves` (`notifyMovedBatch` :758, from the RPC path :751 and the pre-migration row-by-row path :678) and `rebaseSchedule` (:2375).
+- `notifyMilestoneAssigned` (:197): `updateMilestone` reads the prior `responsible_user_id` when the patch carries one and, when the stored value changed to a NEW person (not a clear, not the same one), emits `milestone_assigned` (new kind, section `projects`) to that person, bell + email (:525).
+- `notifySlippedPastBaseline` (:214) + `slippedPastBaseline` (:169 — later than the baseline finish AND later than before): one `milestone_slipped` (new kind) to the project owner, bell + email, per operation — a drag cascade (:777), a rebase (:2382), a single edit (:529; the batch's row-by-row fallback passes `quietSlip` so it is told once) — naming how many tasks slipped.
+- `lib/notificationKinds.ts` / `lib/inAppNotifications.ts` — `milestone_assigned`, `milestone_slipped` (`Flag` / emerald, the feed's milestone predicate; `KindIcon` gains `Flag`); `20261181` adds both to `notification_kinds()`.
+- Tests: `lib/__tests__/producers.test.ts` "PROD-11" (8 — the slip rule; `setMilestoneStatus` → `{ projectId }`, in-app, resolved by the real dispatcher to the members minus the actor; a three-task batch → ONE members' notice and ONE owner's slip notice naming the one task past its baseline; a new assignee told, the same one and a clear not; a single edit past baseline told once and a pull-in not; a rebase → one + one; the owner moving their own schedule hears nothing, no owner no notice; a failed notice never fails the change); the schedule's own suites (`milestones`, `scheduleEngineWriters`, `scheduleImportWriters`, `milestoneRpcMigration`) unchanged and green (REGRESSION).
+- Verified: Loop on `fleet/N8-producers-free` at `3dd10b8`: `npx tsc --noEmit` exit 0; `npx eslint` on the 27 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 435 files, 9480 passed, 7 expected-fail. `next build` is the integrator's.
+
+**Done-when.**
+- ✓ `setMilestoneStatus` and `applyMilestoneMoves` emit to `audience { projectId }` (and `rebaseSchedule`, the failure scenario's "push eight milestones two weeks right").
+- ✓ Milestone assignment notifies the assignee with a distinct kind (`milestone_assigned`).
+- ✓ A schedule slip past a baseline notifies the project owner (`milestone_slipped`, once per operation).
+
+**Review fix (2026-10-07, notifications Round G, N8 fix pass).** The review found every `milestone_assigned` notice read "Someone made you responsible…": the assignment's only caller (`components/projects/TaskDetailPanel.tsx` `assign`, projects' file) passes `updatedBy` alone. `lib/milestones.ts` `actorLabel` (:202) now resolves the actor for the notice's words — the name the caller passed, else `updatedByEmail`, else the actor's `display_name` or email in this org (`org_members`); "Someone" only when none is known, and a failed read is never thrown. `notifyMilestoneAssigned` (:214) and `notifySlippedPastBaseline` (:243) use it. Test: `lib/__tests__/producers.test.ts` "the assignee learns WHO made them responsible…" (the task panel's uid-only call names the actor by email, then by display name; a passed name wins; an unknown actor is "Someone"). Verified: the fix pass's loop (code at `4896093`), recorded in `PROD-2`'s review fix.
+
+**Second review fix (2026-10-07, notifications Round G, N8 fix pass 2).** Four findings:
+- **The assignee was told the wrong finish date (blocker).** `notifyMilestoneAssigned` wrote `new Date(m.plannedAt).toLocaleDateString()` in the ASSIGNER's browser, and the stored text was read by someone else. A planned date is stored as wall-clock-as-UTC (projects-tab SCH-10; the board renders it in UTC), so a Los Angeles assigner of a date-only finish of 2026-10-07T00:00Z told the assignee "10/6/2026". A Tokyo assigner of a 17:00 finish wrote 10/8/2026. Either way the text was in the assigner's locale order (10/7 vs 7/10).
+  - The fix is `lib/milestones.ts` `scheduleDateLabel` (:196). It takes the stored instant's schedule-time day (`toWallClock`, `lib/scheduleReflow.ts`, the board's reading) and writes it by hand as "7 Oct 2026", so no zone, locale or ICU version changes it. It returns "" for an instant that does not read.
+  - `notifyMilestoneAssigned` (:249) uses it. So do the two reschedule notes that had the same mistake: `updateMilestone`'s (:559) and `applyMilestoneMoves`'s (:765). Those are older projects code, fixed here with the same helper rather than raised as a new projects-tab finding. The assignee and the activity trail now read the day the board shows.
+- **A failed pre-read re-announced the same assignee.** The prior-responsible read ignored its error, so a failed read (RLS, network) looked like "nobody". Re-saving the same person then sent `milestone_assigned`, bell and email. Now a read error, or a throw, leaves the prior holder unknown (:516). No notice is sent, the miss is logged, and the edit itself goes ahead.
+- **The board waited for the notices.** `applyMilestoneMoves`, `setMilestoneStatus` and `rebaseSchedule` awaited their notices before returning. That added the members, active-member, insert, projects, actor and email round trips to every drag, resize and status flip before the board could apply its new lock stamps and refresh. Every schedule notice now runs behind the write (`inBackground`, :185), and `updateMilestone`'s assignment and slip notices do too. Each notice still logs its own failure; anything that escapes is logged by `inBackground`, never thrown and never left as an unhandled rejection. `lib/milestones.ts` is browser code (no route imports it), so nothing cuts a background notice short except the tab closing.
+- Tests (`lib/__tests__/producers.test.ts`):
+  - **Board date in every zone.** Under `America/Los_Angeles`, `Asia/Tokyo` and `UTC`, a date-only finish and a 17:00 finish both read "(finish 7 Oct 2026)". The label is pinned for other months and for an unreadable instant. Without the fix the body reads 10/6/2026 in Los Angeles; that was reproduced on Node.
+  - **Reschedule notes.** In Los Angeles and in Tokyo, a single edit and a batch move both note "Finish +3 days → 4 Nov 2026" / "→ 7 Nov 2026".
+  - **Failed pre-read.** When the pre-read fails, the save stands, nothing is emitted and the miss is logged.
+  - **No waiting.** The mutation returns while the notice's `emit` is still held, and the notice lands once released.
+  - **Existing schedule cases.** These now flush the background notices before reading them (`flushNotices`, plus an `afterEach` so nothing leaks into the next test).
+- Verified: see `TAX-11`'s fix-pass-2 block (`03-taxonomy.md`) — one loop for the whole second fix pass.
+
+**Scope / residual.** The two new kinds are written from the browser: paste `20261181` BEFORE the deploy, or once `20261160` is live their rows are refused and only logged (the members' `project_status` notices land either way). Left silent by `DEC-92` item 3: imports (a reviewed merge, DEC-51), progress logging, notes, grouping, duration (it moves a start, never a finish) and deletion. The milestone owner-vs-assignee audience follows `projects.owner_user_id`; no effective-owner resolver exists for projects.
+
+**Final review fix (2026-10-07, notifications Round G, N8 fix pass 3).** Two findings:
+- **A burst of schedule notices queued on the writer's lock, one pooled connection per member.** `notifyScheduleChange` sent `project_status` to every member through `emit()` → `notifyMany`: one single-row insert per member, all at once. 20261160's insert rail counts a row again under `pg_advisory_xact_lock` on the writer when the same kind about the same verified resource already reached that person from that writer in the last minute (`v_same > 0`). So from the second drag, status flip or rebase on a project within a minute, all N inserts of each fan-out queued on one lock, one after another. Each held an API pool connection while it waited: the pool pressure 20261160's third review fix had set out to avoid.
+  - `lib/notify/dispatch.ts` `EmitInput.inappOneStatement` (:62, new, optional) makes `emit()` write the in-app rows as ONE statement (`notifyBatchWithReason`, :198) instead of `notifyMany`. One statement holds one connection however the lock is taken.
+  - `lib/milestones.ts` `notifyScheduleChange` (:228) passes it. The audience (`{ projectId }`, resolved by the dispatcher), the kind, the in-app-only channel, the words and `inBackground` are unchanged.
+  - A row the rail skips (not an active member) does not sink the statement. A cap refusal (P0001: 60 of the same notice to one person in a minute) now refuses the whole statement, and is logged. The members receive the same schedule notices, so they near that cap together. A member who also got other `project_status` rows about the project from this writer in that minute can reach it first, and then nobody gets that notice. Before, only that member missed it.
+  - Every other `emit()` caller is unchanged: one request per recipient, as before.
+- **A new assignee was told about a private project they cannot see (SEC-2).** `notifyMilestoneAssigned` (:253) now passes the assignee of a project task through `projectVisibleAmong` (`lib/notify/recipients.ts:134`; the rule is described in `PROD-6`'s final-review block). On a private project, someone off the roster who is not the owner and not an Admin or DocCtrl is not told; the assignment itself still saves. A document-only task has no project to hide and is unchanged.
+- Tests (`lib/__tests__/producers.test.ts`, "PROD-11"):
+  - "the members' schedule notice is ONE insert statement…" (new) runs the real dispatcher over the in-memory PostgREST on a project with seven members besides the actor. Two status notices in a row write exactly two `notifications` inserts, each carrying all seven rows with the actor left out (14 rows). REGRESSION: an `emit()` without the flag still writes seven single-row inserts.
+  - "dw1: setMilestoneStatus emits to audience { projectId }…" now also pins `inappOneStatement: true`.
+  - "SEC-2: a new responsible person on a PRIVATE project…" (new): an outsider is not told, though the assignment saves. A roster member is told, and so is a DocCtrl off the roster. REGRESSION: on a project that is not private the outsider is told, as before.
+  - Each new case fails without the fix. The schedule's own suites (`milestones`, `milestoneRpcMigration`, `scheduleEngineWriters`, `scheduleImportWriters`) are unchanged and green, and so is `notificationDispatchMembership` (the dispatcher).
+- Verified: see `PROD-6`'s final-review block — one loop for the whole of fix pass 3.
+
+**Done-when (after fix pass 3).** All three still hold as written:
+- ✓ `setMilestoneStatus` and `applyMilestoneMoves` (and `rebaseSchedule`) emit to `audience { projectId }`. The in-app rows are now written as one statement.
+- ✓ Milestone assignment notifies the assignee with a distinct kind. On a private project this holds only for an assignee who can see the project. Telling one who cannot would leak a project the database hides from them (SEC-2).
+- ✓ A schedule slip past a baseline notifies the project owner (unchanged).
 
 ---
 
@@ -625,7 +822,7 @@ hooks/useTicketNotifications.ts:279 —
 ## PROD-14 · markup_request is fully-wired dead vocabulary — createMarkupRequest never notifies the person being asked
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/markupRequests.ts:46-95`, `components/notifications/NotificationBell.tsx:34`, `hooks/useTicketNotifications.ts:85`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Claim verified including the project-feed conditional. One mitigation the finding omits: lib/inbox.ts:149-152 loads `markup_requests` where `requested_from_user_id = userId AND status = 'open'` into the /inbox cockpit, and the page can answer them (respondToMarkup), so the request is not entirely invisible — but only to someone who opens /inbox unprompted.
@@ -664,5 +861,75 @@ lib/inAppNotifications.ts:26 —
 - [ ] createMarkupRequest emits kind 'markup_request' to input.requestedFromUserId (via emit with category 'assignment')
 - [ ] The notification fires regardless of whether projectId is set
 - [ ] Resolving/sharing the markup (updateMarkupRequest at lib/markupRequests.ts:119-148) notifies the original requester
+
+**Resolution (2026-10-07, notifications Round G).** **Reproduced first** on `f8d5eb5`: `lib/markupRequests.ts` had no producer (0 matches); `createMarkupRequest` wrote a project-feed entry only `if (input.projectId)` and `resolveMarkupRequest` (the function done-when 3 calls `updateMarkupRequest`) told nobody — while `/inbox` told the person asked "The requester has been told you declined" (`app/(protected)/inbox/page.tsx`), which nothing backed.
+
+**What landed (package N8, `DEC-92` item 4).**
+- `lib/markupRequests.ts` `createMarkupRequest` (:49) — after the row (and the feed entry when there is a project), `emit()` kind `markup_request`, category `assignment` (:95), to `requestedFromUserId`, project or not, linking to `/inbox` where it is answered; metadata `{ markupRequestId, requestStatus }` (never `status` + `action`, which the hook's ticket reconcile would read).
+- `resolveMarkupRequest` (:139) — the update now returns the request's two parties; `emit()` kind `markup_request`, category `status` (:188), to `[requested_by, requested_from]` — the dispatcher drops the actor, so a share or decline reaches the requester and a cancel the person asked — linking to the document (`/documents/<library>?doc=<id>`, read from the document; no link without one). The kind stays FYI (DEC-81 §2; PROD-8's note: the thread's markup_ref share keeps the same kind, so the ask is not made an action here).
+- Both best-effort: a failed notice never fails the request or its answer. `markup_request` was already declared, so these rows land before or after `20261181`.
+- Tests: `lib/__tests__/producers.test.ts` "PROD-14" (3 — a request without a project notifies the person asked with category `assignment`; a dispatch failure never fails the request; a decline notifies the other side with the document link); `lib/__tests__/notificationKinds.test.ts` (the census still sees `markup_request` written).
+- Verified: Loop on `fleet/N8-producers-free` at `3dd10b8`: `npx tsc --noEmit` exit 0; `npx eslint` on the 27 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 435 files, 9480 passed, 7 expected-fail. `next build` is the integrator's.
+
+**Done-when.**
+- ✓ `createMarkupRequest` emits kind `markup_request` to `input.requestedFromUserId` via `emit` with category `assignment`.
+- ✓ The notification fires regardless of whether `projectId` is set.
+- ✓ Resolving / sharing the markup (`resolveMarkupRequest`) notifies the original requester (and a cancel, the person asked).
+
+**Scope / residual.** None in this finding. The thread's markup_ref title wording ("… requested markup on …" for a share) stays with TAX-3 / TAX-4 (N3 / N9), as PROD-8 recorded.
+
+**Review fix (2026-10-07, notifications Round G, N8 fix pass).** The review found a share sent the requester TWO `markup_request` rows for one event: the thread's own notice for the `markup_ref` post (`lib/activityThread.ts` `notifyCheckoutActivity`, "… requested markup on …" — wrong for a share) whenever the requester was a participant or subscriber of the document's thread (the usual case), and the resolution notice ("… shared their markups"). Fixed by leaving the requester out of the thread's notice: `PostInput` gains `notifyExclude` (`lib/activityThread.ts:58`, dropped from the recipients at :142 — additive; no other caller passes it), and `resolveMarkupRequest` passes the requester (`lib/markupRequests.ts:173`). The requester gets exactly one row, the resolution notice; the thread's other watchers still get the thread's notice, wording unchanged (TAX-3 / TAX-4's). Tests: `lib/__tests__/producersMarkupShare.test.ts` (new, 2 — the real thread code and the real dispatcher over the in-memory PostgREST: a requester who is both a participant and a subscriber gets ONE row, "holder@acme.test shared their markups", while another watcher still gets the thread's row and the actor none; a decline posts no markup_ref and gives the requester one row; the first test fails without the fix); `lib/__tests__/producers.test.ts` "PROD-14" (the share passes `notifyExclude: [requester]`). Verified: the fix pass's loop (code at `4896093`), recorded in `PROD-2`'s review fix.
+
+**Final review fix (2026-10-07, notifications Round G, N8 fix pass 3).** The final review found the notices had been placed BEFORE the durable writes. `createMarkupRequest` awaited `emit()` (recipients, the active-member read, the bell insert, the email lookup, `email_gate`, the email insert) before `logAuditAction`. `resolveMarkupRequest` awaited a documents read plus `emit()` before `writeActivity` and `logAuditAction`. Before N8 the audit row followed the write directly, and elsewhere in this package the notices run after the durable writes. A slow fan-out delayed the `MARKUP_*` audit row and the project-feed entry, and a tab closed during the email leg lost both: the request row said declined, and the audit trail did not say who answered.
+- `lib/markupRequests.ts`: both notice blocks now run last, still best-effort (logged, never thrown).
+  - `createMarkupRequest`: the row, then the feed entry when there is a project (:71), then `MARKUP_REQUESTED` (:87), then the notice (:112).
+  - `resolveMarkupRequest`: the update, then the share's `markup_ref` post (unchanged), then the feed entry (:182), then `MARKUP_*` (:197), then the documents read and the notice (:224).
+  - Who is told, with what words and link, is unchanged.
+- Tests: `lib/__tests__/producers.test.ts` "PROD-14" "the notices run AFTER the durable writes…" (new). With a notice that never completes, the request's feed entry and `MARKUP_REQUESTED`, and the decline's feed entry and `MARKUP_DECLINED`, are all written. On the ordinary path, the call order is feed, then audit, then notice. The case fails without the fix. The other PROD-14 cases and `producersMarkupShare.test.ts` are unchanged and green.
+- Verified: see `PROD-6`'s final-review block — one loop for the whole of fix pass 3.
+
+---
+
+<a id="prod-15"></a>
+
+## PROD-15 · A DocCtrl told of an access request cannot open the list the notice links to
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** the integrator → admin-and-org P5 (`app/(protected)/admin/users/page.tsx` + `access_requests_admin_select`) — opened 2026-10-07 by notifications Round G N8 PRODUCERS-FREE as the DEC-31 remainder of `PROD-2`; the files are admin-and-org's, and P5 edits `app/api/auth/request-access/route.ts` next (ORG-8). If the integrator instead narrows the notice's audience to Admins (a change to `DEC-92` item 1), the change is `ACCESS_REQUEST_AUDIENCE` in `lib/accessRequestOutcome.ts`.
+- **Verification:** CONFIRMED (read on `f8d5eb5` + N8)
+- **Locations:** `app/(protected)/admin/users/page.tsx:84,137,374` (`isAdmin = hasAnyRole(['Admin'])` gates the pending read and the card); `supabase/migrations/20261023_access_requests_scope_and_limit.sql` §2 (`access_requests_admin_select`: Admin only); `app/api/admin/access-requests/route.ts:44-57` and `app/api/admin/create-user/route.ts:122-137` (both admit Admin OR DocCtrl); `lib/accessRequestOutcome.ts:32` `ACCESS_REQUEST_AUDIENCE` (imported by `app/api/auth/request-access/route.ts`; N8: the Admin / DocCtrl pool is told).
+- **Independently verified:** — opened by N8 from the code above; not yet challenged by a second party.
+
+**Mechanism.** PROD-2's notice (the plan's default, `DEC-92` item 1) reaches every active Admin and DocCtrl and links to Admin → Users. The pending-requests card there, and the RLS that feeds it, admit Admins only — but the two routes that act on a request (decline, and the membership grant that approves it) admit a DocCtrl too. The authority to act and the authority to see disagree; before PROD-2 nobody was told, so it never showed.
+
+**Failure scenario.** A DocCtrl gets "Greg asked to join Acme Refining", clicks it, and lands on Admin → Users with no pending card. They can still add Greg as a member (the notice body carries his name and address) — which approves the request — but they cannot decline it from the UI, and they cannot see the other pending requests.
+
+**Done when.**
+
+- [ ] The people told about a request and the people who can see the pending list are the same set — either the list (card + `access_requests_admin_select`) admits the DocCtrl the routes already admit, or the notice's audience narrows to Admins (a change to `DEC-92` item 1, for the integrator to ratify).
+- [ ] A test pins the two sets equal.
+
+---
+
+<a id="prod-16"></a>
+
+## PROD-16 · Two access requests past the per-org cap that land at once can give a pool member two "more are waiting" rows
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** notifications N14 RAW-INSERT TAIL — named by notifications Round G N8 PRODUCERS-FREE (final review fix, 2026-10-07) as the DEC-31 remainder of `PROD-2`; the integrator confirms it in `audit-reports/fleet-plans/notifications.json` (N8 does not edit the plan). N14 already moves service-role writers onto the typed sink, which is where the fix lands.
+- **Verification:** CONFIRMED by reading (`fleet/N8-producers-free`); not reproduced against a live database, where it needs two requests in flight at once.
+- **Locations:** `app/api/auth/request-access/route.ts:85` `notifyAccessRequestBurst` (the open-row read, then the insert of the rows for members with none).
+- **Independently verified:** — opened by N8 from the code above and from N8's final review; not yet challenged by a second party.
+
+**Mechanism.** Past `ACCESS_REQUEST_NOTICES_PER_ORG_HOUR` requests to an org in an hour, `notifyAccessRequestBurst` gives each Admin / DocCtrl in the pool at most one unread `access_request_pending` row keyed on the org (`resource_type 'org'`). It does this in two steps on the service role: it reads which members already hold one (actor NULL, unread), and then inserts one for each member who does not. Nothing serialises the two steps. Two requests in flight together each see no open row, and each inserts one. The app cannot close the window: `notifications` takes no upsert from any app path (`lib/__tests__/notificationWriteRails.test.ts` "no app path deletes or upserts notification rows"), and nothing in the schema makes a second unread burst row for the same member and org impossible.
+
+**Failure scenario.** A script at the public door fires requests in parallel past the cap. Each pool member can get one burst row and one toast per request that lands in the same instant, not one in all. The count is bounded by how many requests overlap, not by the request rate. Every request is still recorded and listed on Admin → Users, and the per-IP limiter still applies.
+
+**Done when.**
+
+- [ ] Two over-cap requests that land at once give a pool member at most one unread burst row for the org. For example, take the check and the insert in one SECURITY DEFINER function under a transaction advisory lock keyed on the org, granted to the service role only (DRLS-16). A partial unique index on its own is not enough: a conflict would fail the whole batch insert, and PostgREST cannot name a partial index in `ON CONFLICT`. So an index also needs such a function. Either way it is a migration in the DEC-30 one-paste shape.
+- [ ] A test pins it with a concurrent pair, or a source pin on the serialising statement.
 
 ---

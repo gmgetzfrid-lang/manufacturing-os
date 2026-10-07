@@ -175,6 +175,17 @@ const RETIRED = ["task_overdue_digest", "morning_digest", "task_nudge", "task_re
 // union (PROD-10 / TAX-11 for the storage three; the census below found the
 // other two).
 const ADDED = TODAY_OFF_UNION;
+// Kinds declared later, with their producers (notifications N8 PRODUCERS-FREE:
+// PROD-2 / PROD-6 / PROD-11) — new vocabulary, not a re-classification of
+// anything that existed on b9cdfdc. Each one's section, as decided next to
+// it in lib/notificationKinds.ts; icon / tone / group are the feed's
+// predicates on the name, as for every other kind (no departure).
+const N8_ADDED: Record<string, "projects" | null> = {
+  change_order_status: "projects",
+  milestone_assigned: "projects",
+  milestone_slipped: "projects",
+  access_request_pending: null,
+};
 // Section: TODAY's 'other' becomes bell-only (null) — the same thing to a user
 // (no rail row counted it; the header bell did) — except the kinds the records
 // name as misfiled, which now badge a row.
@@ -194,6 +205,7 @@ const SECTION_DEPARTURES: Record<string, { to: "documents" | "projects"; why: st
 const BELL_ONLY = [
   "orchestrator_message", "security_export", "member_revoked", "library_unowned",
   "storage_alert", "storage_platform_r2", "storage_platform_db", "ai_cap_changed", "transmittal_unstampable",
+  "access_request_pending", // N8 (PROD-2): admin housekeeping, as member_revoked / library_unowned
 ];
 // actionRequired: exactly TODAY_ACTION — no departure (DEC-81 §2). The
 // plan's default would add the PSM obligations, but an action row stays red,
@@ -217,6 +229,7 @@ const GROUP_DEPARTURES: Record<string, string> = { member_revoked: "other" };
 /** What a kind's section must be now: TODAY, with the departures applied. */
 const expectedSection = (k: string): string | null => {
   if (RETIRED.includes(k)) return null; // a legacy row: bell-only, as its unrendered bucket was
+  if (k in N8_ADDED) return N8_ADDED[k];
   if (SECTION_DEPARTURES[k]) return SECTION_DEPARTURES[k].to;
   const today = TODAY_SECTION[k] ?? "other";
   return today === "other" ? null : today;
@@ -235,13 +248,24 @@ const NOT_NOTIFICATIONS: Record<string, string> = {
   "components/projects/QualityTab.tsx": "a checklist's kind",
   "lib/inAppNotifications.ts": "the typed sink itself (input.kind: NotificationKind) and its row mapper",
 };
-// Non-literal kinds at raw sites, resolved by reading the type that bounds them.
-const RAW_RESOLVED: Record<string, { kinds: string[]; proof: [string, string] }> = {
+// Non-literal kinds at raw sites, resolved by reading the type that bounds
+// them — and (TAX-11 done-when 2) a raw site that STAYS raw would carry
+// `why` and the proof of it the census checks in the source. None does now:
+// N8's review fix moved the export alert and the folded intake digest onto
+// the typed batch sink (notifyBatchWithReason — one statement, the
+// database's count, the refusal's text), which is what their reasons asked.
+const RAW_RESOLVED: Record<string, { kinds: string[]; proof: [string, string]; why?: string }> = {
   "app/api/tickets/workflow-action/route.ts|cls.inAppKind": {
     kinds: ["ticket_assigned", "ticket_status"],
     proof: ["lib/ticketTransitions.ts", 'inAppKind: "ticket_assigned" | "ticket_status";'],
   },
 };
+// TAX-11 done-when 2's sites another package still owns (the integrator,
+// 2026-10-07: N14 RAW-INSERT TAIL moves each once its owner has merged).
+const RAW_N14 = [
+  "app/api/ai/usage/route.ts", "lib/orchestrator/tools.ts", "app/api/cron/maintenance/route.ts",
+  "app/api/tickets/comment/route.ts", "app/api/tickets/workflow-action/route.ts",
+];
 function sourceFiles(): string[] {
   const out: string[] = [];
   const walk = (d: string) => {
@@ -393,15 +417,15 @@ const census = (): Payload[] => scan().payloads;
 // with their owners (TAX-11). N5's notification_kinds allowlist backs the
 // kind check up in the database.
 const RAW_SITES: Record<string, number> = {
-  "app/api/ai/usage/route.ts": 1,                 // ai_cap_changed — intelligence
-  "app/api/cron/maintenance/route.ts": 1,         // checkout_released escalation — N6 / DC
-  "app/api/tickets/comment/route.ts": 1,          // ticket_comment / ticket_mention — drafting-flow, N6
-  "app/api/tickets/workflow-action/route.ts": 2,  // ticket_comment, ticket_assigned / ticket_status — drafting-flow, N6
-  "app/api/transmittal/route.ts": 2,              // transmittal_unstampable, ack_complete — document-control, N9
-  "lib/exportAlerts.ts": 1,                       // security_export — admin-and-org (moved here from app/api/data-export/run/route.ts by A&O P3; the service role)
-  "lib/intakeRateLimit.ts": 1,                    // doc_superseded / review_requested digest — projects
-  "lib/orchestrator/tools.ts": 1,                 // orchestrator_message — intelligence
-  "lib/projects.ts": 1,                           // checkout_released auto-release — document-control, N9
+  "app/api/ai/usage/route.ts": 1,                 // ai_cap_changed — intelligence (N14)
+  "app/api/cron/maintenance/route.ts": 1,         // checkout_released escalation — N6 / DC (N14)
+  "app/api/tickets/comment/route.ts": 1,          // ticket_comment / ticket_mention — drafting-flow, N6 (N14)
+  "app/api/tickets/workflow-action/route.ts": 2,  // ticket_comment, ticket_assigned / ticket_status — drafting-flow, N6 (N14)
+  // app/api/transmittal/route.ts (2), lib/projects.ts (1), lib/exportAlerts.ts
+  // (1) and lib/intakeRateLimit.ts (1): moved onto the typed sink by N8
+  // (TAX-11) — notifyChecked / notifyWithReason / notifyBatchChecked /
+  // notifyBatchWithReason, each on the client its writer holds.
+  "lib/orchestrator/tools.ts": 1,                 // orchestrator_message — intelligence (N14)
 };
 
 // ── GAP-201 acceptance 1: an unclassified kind is a BUILD error ─────────────
@@ -463,9 +487,9 @@ afterEach(() => {
 });
 
 describe("the union (PROD-8 / OS-7 / NEDGE-13 retired; PROD-10 / TAX-11 added)", () => {
-  it("is TODAY's union, minus the four retired kinds, plus the five that were written outside it", () => {
+  it("is TODAY's union, minus the four retired kinds, plus the five that were written outside it (and N8's four, with their producers)", () => {
     const today = Object.keys(TODAY_SECTION);
-    expect(unionKinds().sort()).toEqual([...today.filter((k) => !RETIRED.includes(k)), ...ADDED].sort());
+    expect(unionKinds().sort()).toEqual([...today.filter((k) => !RETIRED.includes(k)), ...ADDED, ...Object.keys(N8_ADDED)].sort());
   });
 
   it("KIND_META classifies exactly the union — no kind missing, none extra", () => {
@@ -615,6 +639,9 @@ describe("action, compliance, icon, tone, group — the other classifiers, in on
       "review_invalidated", "review_complete", "review_overdue", "review_alternate_activated", "effective_now",
       "retention_eligible", "legal_hold_placed", "legal_hold_released", "access_recert_due", "security_export",
       "member_revoked", "library_unowned", "ai_cap_changed", "transmittal_unstampable",
+      // N8 (PROD-2 / PROD-6 / PROD-11): the bell (N3's file) has no entry
+      // for them yet; N3's derivation from KIND_META empties this list
+      "change_order_status", "milestone_assigned", "milestone_slipped", "access_request_pending",
     ];
     const bell = bellIconMap();
     const missing: string[] = [];
@@ -790,6 +817,25 @@ describe("the producer census — every written kind is declared and classified"
     for (const { proof: [file, text] } of Object.values(RAW_RESOLVED)) expect(src(file), file).toContain(text);
   });
 
+  it("TAX-11 done-when 2 (N8): every raw site left is another package's (N14) — N8's five sites all write through the typed sink", () => {
+    const kept = new Set(Object.entries(RAW_RESOLVED).filter(([, v]) => v.why).map(([k]) => k.split("|")[0]));
+    expect([...kept]).toEqual([]);
+    for (const file of Object.keys(RAW_SITES)) expect(kept.has(file) || RAW_N14.includes(file), file).toBe(true);
+    // the export alert and the folded digest (N8's review fix): ONE typed
+    // batch statement each, on the service-role client they hold, the
+    // refusal's text and the database's count answered
+    expect(src("lib/exportAlerts.ts")).toMatch(/notifyBatchWithReason\(\n\s+\[\.\.\.recipients\]\.map\(\(\[uid, isAdmin\]\) => \(\{[\s\S]*?kind: "security_export" as const,[\s\S]*?\}\)\),\n\s+admin,\n\s+\)/);
+    expect(src("lib/exportAlerts.ts")).toContain("if (error) return { ok: false, notified: 0, error: `the alert could not be written (${error})` };");
+    expect(src("lib/intakeRateLimit.ts")).toMatch(/notifyBatchWithReason\(d\.involved\.map\(\(uid\) => \(\{[\s\S]*?kind: foldedDigestKind\(d\),[\s\S]*?\}\)\), client\)/);
+    expect(src("lib/intakeRateLimit.ts")).toContain("if (error) throw new Error(`the digest's notices were refused: ${error}`);");
+    // the moved sites write through the typed sink, on the client they hold
+    expect(src("app/api/transmittal/route.ts")).toMatch(/notifyWithReason\(\{[\s\S]*?kind: UNSTAMPABLE_NOTICE_KIND,[\s\S]*?\}, supabaseAdmin\)/);
+    expect(src("app/api/transmittal/route.ts")).toMatch(/notifyChecked\(\{[\s\S]*?kind: "ack_complete",[\s\S]*?\}, supabaseAdmin\)/);
+    // the sweep's holder notices: ONE typed batch statement per batch of
+    // released sessions, on the sweep's own client (N8's review fix)
+    expect(src("lib/projects.ts")).toMatch(/notifyBatchChecked\(released\.map\(\(r\) => \(\{[\s\S]*?kind: "checkout_released" as const,[\s\S]*?\}\)\), db\)/);
+  });
+
   it("the census counts an insert call whose rows it cannot see — the drift it exists to stop (probe)", () => {
     // the reviewer's case: rows built in another file and handed to a helper
     const probe = ts.createSourceFile("probe.ts", [
@@ -818,8 +864,9 @@ describe("the producer census — every written kind is declared and classified"
     // raw inserts, through a module constant and a literal
     expect(new Set(kindsAt("app/api/transmittal/route.ts"))).toEqual(new Set(["transmittal_unstampable", "ack_complete"]));
     expect(kindsAt("app/api/ai/usage/route.ts")).toEqual(["ai_cap_changed"]);
-    // raw, through a function's literal return type and a variable the insert is given
+    // through a function's literal return type (typed since N8's review fix)
     expect(new Set(kindsAt("lib/intakeRateLimit.ts"))).toEqual(new Set(["doc_superseded", "review_requested"]));
+    expect(kindsAt("lib/exportAlerts.ts")).toEqual(["security_export"]);
     expect(kindsAt("lib/projects.ts")).toEqual(expect.arrayContaining(["checkout_released"]));
     // the storage watchdogs: typed now (PROD-10)
     expect(kindsAt("lib/storageAlerts.ts")).toEqual(["storage_alert"]);

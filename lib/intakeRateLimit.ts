@@ -40,6 +40,7 @@
 
 import { createHash } from "node:crypto";
 import { roleFilter } from "@/lib/roleHeld";
+import { notifyBatchWithReason } from "@/lib/inAppNotifications";
 
 export interface IntakeLimits {
   perTokenPerHour: number;
@@ -461,7 +462,7 @@ export async function flushFoldedIntakeNotices(client: AttemptClient, input: {
   return out;
 }
 
-/** Any client with `.from()` whose inserts can be read back. */
+/** Any client with `.from()` — the cron's service-role client. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type NoticeClient = { from: (table: string) => any };
 
@@ -469,21 +470,23 @@ type NoticeClient = { from: (table: string) => any };
  *  emit() cannot: notify() and queueEmail() log and swallow every failure.
  *  So the bell rows — the delivery the flush's marker relies on — are
  *  inserted here, on the service-role client, in ONE statement, and
- *  checked: the answer is how many landed (all or none; a refusal throws).
+ *  checked: the answer is how many landed (the database's count of the
+ *  rows the statement wrote; a refusal throws). The insert is the typed
+ *  sink's batch (notifyBatchWithReason — notifications TAX-11, N8's review
+ *  fix), which answers both the count and the refusal's text.
  *  The email leg (`email` — the cron passes emit() on the email channel)
  *  runs only after the bell rows landed and is best-effort: a failure is
  *  logged, never counted. */
 export async function deliverFoldedDigest(client: NoticeClient, d: FoldedDigest, email?: (d: FoldedDigest) => Promise<void>): Promise<number> {
   if (d.involved.length === 0) return 0;
   const metadata = foldedDigestMetadata(d);
-  const { data, error } = await client.from("notifications").insert(d.involved.map((uid) => ({
-    org_id: d.orgId, user_id: uid, kind: foldedDigestKind(d),
+  const { landed, error } = await notifyBatchWithReason(d.involved.map((uid) => ({
+    orgId: d.orgId, userId: uid, kind: foldedDigestKind(d),
     title: d.title, body: d.body, link: d.link,
-    resource_type: "project", resource_id: d.projectId,
-    actor_name: d.actorName, metadata,
-  }))).select("id");
-  if (error) throw new Error(`the digest's notices were refused: ${error.message}`);
-  const landed = Array.isArray(data) ? data.length : 0;
+    resourceType: "project", resourceId: d.projectId,
+    actorName: d.actorName, metadata,
+  })), client);
+  if (error) throw new Error(`the digest's notices were refused: ${error}`);
   if (landed > 0 && email) {
     try { await email(d); } catch (e) { console.error("[intakeRateLimit] digest email leg failed (the bell rows landed):", (e as Error).message); }
   }

@@ -244,8 +244,11 @@ describe("20261160 — notification_kinds(): the database's copy of the registry
     for (const [k, c] of values) expect(c, k).toBe(KIND_META[k as keyof typeof KIND_META].compliance);
     const compliance = Object.values(KIND_META).filter((m) => m.compliance).length;
     expect(values.filter(([, c]) => c)).toHaveLength(compliance);
-    // the paste's own probe states the same two numbers
-    expect(A).toContain(`COUNT(*) = ${values.length} AND COUNT(DISTINCT kind) = ${values.length} AND COUNT(*) FILTER (WHERE compliance) = ${compliance}`);
+    // the paste that holds the newest definition states the same two numbers
+    // in its own probe (20261160 for its 51; 20261181, N8, for 55 — each
+    // re-create restates them)
+    expect(read(newest[0])).toContain(`COUNT(*) = ${values.length} AND COUNT(DISTINCT kind) = ${values.length} AND COUNT(*) FILTER (WHERE compliance) = ${compliance}`);
+    expect(A).toContain("COUNT(*) = 51 AND COUNT(DISTINCT kind) = 51 AND COUNT(*) FILTER (WHERE compliance) = 15");
   });
 
   it("is executable by authenticated and service_role only — never PUBLIC or anon", () => {
@@ -542,8 +545,13 @@ function fnRange(src: string, name: string): [number, number] {
 /** Every server read of notifications that decides whether to send, by file, in
  *  file order: the text that marks it, and the watermark that keeps a browser
  *  from forging the row it matches — a metadata key or a kind 20261160 refuses
- *  from a signed-in writer. `none`: not a dedupe (says why). */
-const DEDUPE_READS: Record<string, Array<{ marks: string; keys?: string[]; kinds?: string[]; none?: string }>> = {
+ *  from a signed-in writer, or (`actorNull`, says why) a read that matches only
+ *  rows with no actor, which 20261160 never lets a signed-in writer leave (it
+ *  stamps the writer as the actor). `none`: not a dedupe (says why). */
+const DEDUPE_READS: Record<string, Array<{ marks: string; keys?: string[]; kinds?: string[]; none?: string; actorNull?: string }>> = {
+  // N8's review fix (PROD-2): past the per-org cap the request door tells each pool member
+  // once that more requests are waiting — the read finds a member's open burst row
+  "app/api/auth/request-access/route.ts": [{ marks: '.eq("resource_type", ACCESS_REQUEST_BURST_RESOURCE_TYPE)', actorNull: "the burst notice's dedupe matches only the server's own rows (actor_user_id IS NULL): a member's browser row is stamped with its writer, so it cannot silence the notice" }],
   "app/api/cron/maintenance/route.ts": [
     { marks: '.contains("metadata", { staleSessionId: row.id })', keys: ["staleSessionId"] },
     // not a dedupe, and not safe from forged rows either (third review fix): the read has no org filter
@@ -629,8 +637,15 @@ describe("20261160 — the server's dedupe watermarks: a browser can neither wri
     const keys = new Set<string>(), kinds = new Set<string>();
     for (const [file, entries] of Object.entries(DEDUPE_READS)) {
       const src = readFileSync(join(ROOT, file), "utf8");
-      for (const e of entries) {
+      for (const [i, e] of entries.entries()) {
         if (e.none) { expect(e.keys ?? e.kinds).toBeUndefined(); continue; }
+        if (e.actorNull) {
+          expect(e.keys ?? e.kinds).toBeUndefined();
+          // the read keys on "no actor", and 20261160 stamps every signed-in writer as the actor
+          expect(reads.get(file)![i], `${file} read #${i + 1}`).toContain('.is("actor_user_id", null)');
+          expect(squash(body)).toContain(squash("IF NEW.actor_user_id IS NULL THEN NEW.actor_user_id := v_uid;"));
+          continue;
+        }
         expect((e.keys?.length ?? 0) + (e.kinds?.length ?? 0), file).toBeGreaterThan(0);
         for (const k of e.keys ?? []) { expect(keysIn, `${file}: ${k}`).toContain(k); keys.add(k); }
         for (const k of e.kinds ?? []) { expect(kindsIn, `${file}: ${k}`).toContain(k); kinds.add(k); expect(src, `${file} writes ${k}`).toContain(`"${k}"`); }
@@ -1250,13 +1265,20 @@ const ACTOR_PASS_THROUGHS = [
   "lib/activityThread.ts#notifyCheckoutActivity(input.userId)",
   "lib/branches.ts#resolveBranch(input.actorUserId)",
   "lib/changeOrders.ts#notifyApproval(actorId)",
+  "lib/changeOrders.ts#notifyChangeOrder(actorId)",               // N8 (PROD-6)
   "lib/checkoutEpisodes.ts#forceReleaseDocument(input.actorUserId)",
   "lib/costDocs.ts#notifyAward(actor.uid)",
   "lib/distributionAcks.ts#renudgeUnacked(input.actorUserId)",
   "lib/distributionAcks.ts#requestAcks(input.actorUserId)",
   "lib/holds.ts#notifyHoldChange(input.actorUserId)",
   "lib/libraryCollections.ts#createLibrary(input.createdBy)",
+  "lib/libraryNotify.ts#notifyLibraryDocsAdded(input.actorUserId)", // N8 (PROD-5)
+  "lib/markupRequests.ts#createMarkupRequest(input.actorUserId)",   // N8 (PROD-14)
+  "lib/markupRequests.ts#resolveMarkupRequest(input.actorUserId)",  // N8 (PROD-14)
   "lib/members.ts#revokeMember(input.actorUserId)",
+  "lib/milestones.ts#notifyMilestoneAssigned(actorUserId)",         // N8 (PROD-11)
+  "lib/milestones.ts#notifyScheduleChange(input.actorUserId)",      // N8 (PROD-11)
+  "lib/milestones.ts#notifySlippedPastBaseline(input.actorUserId)", // N8 (PROD-11)
   "lib/ownership.ts#requestDeletion(input.requesterId)",
   "lib/ownership.ts#setOwner(input.actorId)",
   "lib/postPublish.ts#notifyPackagesOfRetirement(input.actorUserId)",
@@ -1275,6 +1297,7 @@ const ACTOR_PASS_THROUGHS = [
   "lib/staleCopies.ts#nudgeStaleHolders(input.actorUserId)",
   "lib/staleCopies.ts#recallRetiredDocument(input.actorUserId)",
   "lib/transitionIn.ts#flagCollisionToDrafting(input.actorId)",
+  "lib/turnover.ts#notifyTurnoverRejected(actor.uid)",              // N8 (MON-11)
   "lib/workPackages.ts#notifyPackagesOfRevUp(input.actorUserId)",
 ];
 /** A parameter spelled as the signed-in member: `uid`, `currentUserId`, or `currentUser` read at `.uid`.
@@ -1486,19 +1509,26 @@ function actorAnalyzer(src: string, file: string, census?: ActorCensus) {
  *  pass-through a row's field (`{ selectedDoc }.ownerUserId`) fails until someone reads it. */
 const ACTOR_CALLER_PASS_THROUGHS = [
   "app/(protected)/projects/[id]/page.tsx#MembersTab({ actorUserId })",
+  "components/documents/CsvImportModal.tsx#CsvImportModal({ actorUserId })",          // N8 (PROD-5): the library page passes RoleContext's uid
   "components/documents/DocumentLinkPicker.tsx#DocumentLinkPicker({ userId })",
+  "components/documents/MarkupRequestModal.tsx#MarkupRequestModal({ actorUserId })",  // N8 (PROD-14)
   "lib/acknowledgments.ts#onDocumentIssuedAck(input.actorId)",
   "lib/acknowledgments.ts#recordAcknowledgment(input.signerUserId)",
   "lib/acknowledgments.ts#setAckPolicy(input.actorId)",
   "lib/acknowledgments.ts#waiveAcknowledgment(input.actorId)",
   "lib/activityThread.ts#postActivity(input.userId)",
   "lib/changeOrders.ts#decideChangeOrder(input.actorId)",
+  "lib/changeOrders.ts#proposeChangeOrder(input.actorId)",            // N8 (PROD-6)
   "lib/costDocs.ts#awardInOneTransaction(input.actor.uid)",   // J12: awardQuote forwards its own input (integrator, J12 merge)
   "lib/costDocs.ts#awardQuote(input.actor.uid)",
   "lib/documentLifecycle/merge.ts#finishMerge(input.actorUserId)",
   "lib/documentLifecycle/split.ts#splitDocument(input.actorUserId)",
   "lib/holds.ts#openHold(input.openedBy)",
   "lib/holds.ts#releaseHold(input.releasedBy)",
+  "lib/milestones.ts#notifyMovedBatch(input.actorUserId)",            // N8 (PROD-11): applyMilestoneMoves' own input
+  "lib/milestones.ts#rebaseSchedule(input.actorUserId)",              // N8 (PROD-11)
+  "lib/milestones.ts#setMilestoneStatus(input.actorUserId)",          // N8 (PROD-11)
+  "lib/milestones.ts#updateMilestone(input.updatedBy)",               // N8 (PROD-11)
   "lib/postPublish.ts#runPostPublishSideEffects(input.actorUserId)",
   "lib/projects.ts#convertTicketToProject(input.actorUserId)",
   "lib/projects.ts#postComment(input.actorUserId)",
@@ -1510,6 +1540,7 @@ const ACTOR_CALLER_PASS_THROUGHS = [
   "lib/revisions.ts#revertToVersion(input.actorUserId)",
   "lib/revisions.ts#submitForReview(input.actorUserId)",
   "lib/revisions.ts#supersedeDocument(input.actorUserId)",
+  "lib/turnover.ts#reviewTurnoverItem(input.actor.uid)",              // N8 (MON-11)
 ];
 function actorSources(file: string, census: ActorCensus): { calls: number; sessions: number; passThroughs: string[]; offenders: string[] } {
   const { sf, line, supplied } = census.analyzer(file);
@@ -1788,7 +1819,12 @@ describe("REGRESSION census — every app write to notifications fits the read_a
       };
       visit(sf);
     }
-    expect(examined).toBeGreaterThanOrEqual(10);
+    // N8 (TAX-11 done-when 2): five raw calls moved onto the typed sink
+    // (the transmittal portal's two, the checkout sweep's, and — N8's review
+    // fix — the export alert's and the folded intake digest's), so six raw
+    // calls and the sink's two inserts (notifyWithReason, and
+    // notifyBatchWithReason) are examined
+    expect(examined).toBeGreaterThanOrEqual(8);
     expect(offenders).toEqual([]);
   });
 

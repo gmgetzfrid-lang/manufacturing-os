@@ -19,11 +19,13 @@
 import { supabase } from "@/lib/supabase";
 import { userFacingError, userFacingReadError, userFacingCaughtError, asClause } from "@/lib/userFacingError";
 import { logMilestoneEvent, logAuditAction } from "@/lib/audit";
-import { reflowAllAncestors, startForDuration, linkCyclePath, outlineLoop, type ReflowNode } from "@/lib/scheduleReflow";
+import { reflowAllAncestors, startForDuration, linkCyclePath, outlineLoop, toWallClock, type ReflowNode } from "@/lib/scheduleReflow";
 import { chooseWeightBasis, weightFor, leafPercent, type WeightBasis } from "@/lib/scheduleProgress";
 import { isImportedMilestone } from "@/lib/milestoneLiveness";
 import { shiftForStart, shiftAfterMove } from "@/lib/scheduleFilter";
 import { SCHEDULE_IMPORT_LIMITS } from "@/lib/scheduleParsers";
+import { emit } from "@/lib/notify/dispatch";
+import { projectVisibleAmong } from "@/lib/notify/recipients";
 import type {
   Milestone, MilestoneStatus, MilestoneSource, MilestoneNote, MilestoneAttributes,
 } from "@/types/schema";
@@ -136,6 +138,168 @@ function pickResource(m: { projectId?: string | null; documentId?: string | null
   return { resourceType: "milestone" as const, resourceId: m.id ?? "" };
 }
 
+// ─── Notifications (notifications PROD-11, N8 PRODUCERS-FREE) ───
+//
+// The schedule used to change in silence. DEC-92 item 3:
+//   · a status change (setMilestoneStatus) and a batch of date moves
+//     (applyMilestoneMoves, rebaseSchedule) reach the PROJECT's members —
+//     audience { projectId }, kind project_status, in-app only (a busy
+//     schedule moves all day; the bell carries it, nobody's inbox does —
+//     PROD-7 dw3's rule for chatty kinds), written as ONE statement for all
+//     the members (emit's inappOneStatement), so a burst of moves holds one
+//     pooled connection per notice, not one per member;
+//   · a task's new responsible person hears it (milestone_assigned, bell +
+//     email) — they are the one who has to act — while they can see the
+//     project (SEC-2: a private project's owner, roster or controllers);
+//   · a move that pushes baselined tasks past their baseline (later than
+//     the baseline finish, and later than before) tells the project OWNER —
+//     milestone_slipped, bell + email — ONCE per operation (a drag cascade,
+//     a rebase, a single edit), listing how many tasks slipped, never once
+//     per task.
+// Document-only milestones (no project) have no project audience; only the
+// assignee notice applies to them. The actor never hears about their own
+// act (the dispatcher drops them). Every notice is best-effort behind the
+// write: a failure is logged, never thrown — the schedule change stands —
+// and the mutation does not WAIT for it (N8's review fix): the board applies
+// the new lock stamps and refreshes as soon as the write is done, and the
+// notices' reads and inserts run behind it (inBackground).
+// A date a notice or a note carries is schedule time — the stored
+// wall-clock-as-UTC instant (projects-tab SCH-10), as the board shows it —
+// never the writer's zone, in a form no locale misreads (scheduleDateLabel).
+
+const STATUS_WORD: Record<MilestoneStatus, string> = {
+  planned: "back to planned", in_progress: "started", completed: "completed",
+  missed: "marked missed", blocked: "blocked", on_hold: "put on hold",
+};
+
+/** A baselined task whose finish moved later and now lands past its
+ *  baseline finish — the slip DEC-92 item 3 tells the owner about. */
+type When = string | number | Date | null | undefined;
+const whenMs = (w: When): number => (w === null || w === undefined || w === "" ? NaN : new Date(w).getTime());
+export function slippedPastBaseline(beforeFinish: When, afterFinish: When, baselineFinish: When): boolean {
+  const base = whenMs(baselineFinish), after = whenMs(afterFinish);
+  if (!Number.isFinite(base) || !Number.isFinite(after) || after <= base) return false;
+  const before = whenMs(beforeFinish);
+  return !Number.isFinite(before) || after > before;
+}
+
+/** Run a schedule notice behind the write: the caller returns without
+ *  waiting for it. Each notice logs its own failure; anything that escapes is
+ *  logged here — never thrown, never an unhandled rejection. */
+function inBackground(p: Promise<void>): void {
+  p.catch((e) => console.warn(`[milestones] schedule notice not sent: ${(e as Error)?.message ?? String(e)}`));
+}
+
+const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
+
+/** A schedule date for text someone else reads later (a notice, a note):
+ *  the stored instant's SCHEDULE-time day (wall-clock-as-UTC — toWallClock,
+ *  the board's reading; SCH-10), never the writer's zone, written as
+ *  "7 Oct 2026" — never 10/7/2026 vs 7/10/2026. Built by hand, not by Intl,
+ *  so no locale or ICU version changes it. "" when the instant does not read. */
+export function scheduleDateLabel(when: string | number | Date | null | undefined): string {
+  if (when === null || when === undefined || when === "") return "";
+  const ms = typeof when === "string" ? Date.parse(when) : new Date(when).getTime();
+  const wc = Number.isFinite(ms) ? toWallClock(new Date(ms).toISOString()) : null;
+  if (!wc) return "";
+  const [y, m, d] = wc.date.split("-").map(Number);
+  return `${d} ${MONTH_ABBR[m - 1]} ${y}`;
+}
+
+async function notifyScheduleChange(input: {
+  orgId: string; projectId: string | null | undefined; title: string; body: string;
+  actorUserId: string; actorName?: string | null; metadata?: Record<string, unknown>;
+}): Promise<void> {
+  if (!input.projectId) return;
+  try {
+    await emit({
+      orgId: input.orgId, category: "status", kind: "project_status",
+      title: input.title, body: input.body,
+      link: `/projects/${input.projectId}?tab=schedule`,
+      resource: { type: "project", id: input.projectId },
+      actorUserId: input.actorUserId, actorName: input.actorName ?? undefined,
+      audience: { projectId: input.projectId },
+      channels: ["inapp"],
+      // ONE statement for every member (N8's final review fix): from the
+      // second schedule notice about a project in a minute, 20261160 counts
+      // each member's row again under the writer's advisory lock; one
+      // request per member would each hold a pooled connection while they
+      // queue on it.
+      inappOneStatement: true,
+      metadata: input.metadata,
+    });
+  } catch (e) {
+    console.warn(`[milestones] schedule notice not sent: ${(e as Error).message}`);
+  }
+}
+
+/** Who acted, for a notice's words: the name the caller passed, else the
+ *  actor's display name or email in this org (org_members) — the
+ *  assignment's only caller (the task panel) passes a uid alone, and the
+ *  person told should learn who made them responsible (N8's review fix).
+ *  null when neither is known; a failed read is never thrown. */
+async function actorLabel(orgId: string, uid: string, name?: string | null): Promise<string | null> {
+  if (name?.trim()) return name.trim();
+  if (!orgId || !uid) return null;
+  try {
+    const { data } = await supabase.from("org_members").select("display_name, email").eq("org_id", orgId).eq("uid", uid).maybeSingle();
+    const row = data as { display_name?: string | null; email?: string | null } | null;
+    return row?.display_name?.trim() || row?.email?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+async function notifyMilestoneAssigned(m: Milestone, assigneeId: string, actorUserId: string, actorName?: string | null): Promise<void> {
+  try {
+    // The assignee is named by hand: on a project, they are told only while
+    // they can see it (SEC-2 — a private project's owner, roster or
+    // controllers; N8's final review fix). A document-only task has no
+    // project to hide.
+    if (m.projectId && (await projectVisibleAmong(m.orgId, m.projectId, [assigneeId])).length === 0) return;
+    const who = await actorLabel(m.orgId, actorUserId, actorName);
+    await emit({
+      orgId: m.orgId, category: "assignment", kind: "milestone_assigned",
+      title: `You're responsible for “${m.name}”`,
+      body: `${who || "Someone"} made you responsible for this task${scheduleDateLabel(m.plannedAt) ? ` (finish ${scheduleDateLabel(m.plannedAt)})` : ""}.`,
+      link: m.projectId ? `/projects/${m.projectId}?tab=schedule` : undefined,
+      resource: m.projectId ? { type: "project", id: m.projectId } : { type: "document", id: m.documentId ?? "" },
+      actorUserId, actorName: who ?? undefined,
+      audience: { involved: [assigneeId] },
+      metadata: { milestoneId: m.id },
+    });
+  } catch (e) {
+    console.warn(`[milestones] assignment notice not sent: ${(e as Error).message}`);
+  }
+}
+
+async function notifySlippedPastBaseline(input: {
+  orgId: string; projectId: string | null | undefined; slipped: Array<{ id: string; name: string }>;
+  actorUserId: string; actorName?: string | null;
+}): Promise<void> {
+  if (!input.projectId || input.slipped.length === 0) return;
+  try {
+    const { data } = await supabase.from("projects").select("owner_user_id").eq("id", input.projectId).maybeSingle();
+    const owner = ((data as { owner_user_id?: string | null } | null)?.owner_user_id) ?? null;
+    if (!owner) return;
+    const n = input.slipped.length;
+    const named = input.slipped.slice(0, 3).map((t) => `“${t.name}”`).join(", ");
+    const who = await actorLabel(input.orgId, input.actorUserId, input.actorName);
+    await emit({
+      orgId: input.orgId, category: "status", kind: "milestone_slipped",
+      title: n === 1 ? `A task slipped past its baseline: ${input.slipped[0].name}` : `${n} tasks slipped past their baseline`,
+      body: `${who || "Someone"} moved ${n === 1 ? "a task" : `${n} tasks`} later than the approved baseline: ${named}${n > 3 ? ", …" : ""}.`,
+      link: `/projects/${input.projectId}?tab=schedule`,
+      resource: { type: "project", id: input.projectId },
+      actorUserId: input.actorUserId, actorName: who ?? undefined,
+      audience: { involved: [owner] },
+      metadata: { milestoneIds: input.slipped.slice(0, 50).map((t) => t.id), count: n },
+    });
+  } catch (e) {
+    console.warn(`[milestones] slip notice not sent: ${(e as Error).message}`);
+  }
+}
+
 // ─── Mutations ──────────────────────────────────────────────────
 
 export interface CreateMilestoneInput {
@@ -217,6 +381,9 @@ export interface UpdateMilestoneInput {
   updatedByName?: string;
   updatedByEmail?: string;
   updatedByRole?: string;
+  /** The caller tells the project about a batch once (applyMilestoneMoves'
+   *  pre-migration path): no per-row slip notice here (PROD-11). */
+  quietSlip?: boolean;
 }
 
 // Map a camelCase patch key to its DB column. Only keys present here
@@ -357,6 +524,21 @@ export async function updateMilestone(input: UpdateMilestoneInput): Promise<Mile
     }
   }
 
+  // PROD-11: who was responsible before, so a NEW responsible person is told.
+  // A read that fails leaves it unknown (undefined): nobody is told — a
+  // re-save of the same person must never read as a new assignment (N8's
+  // review fix) — and the miss is logged. The edit itself goes ahead.
+  let priorResponsible: string | null | undefined;
+  if ("responsibleUserId" in input.patch) {
+    try {
+      const { data: rp, error: rpErr } = await supabase.from("milestones").select("responsible_user_id").eq("id", input.id).maybeSingle();
+      if (rpErr) console.warn(`[milestones] who was responsible could not be read — no assignment notice: ${rpErr.message}`);
+      else priorResponsible = (rp as { responsible_user_id: string | null } | null)?.responsible_user_id ?? null;
+    } catch (e) {
+      console.warn(`[milestones] who was responsible could not be read — no assignment notice: ${(e as Error).message}`);
+    }
+  }
+
   // Snapshot the prior finish so we can log a human reschedule note, and the
   // stored shift + start so a date move can re-label it.
   let priorFinish: string | null = null;
@@ -389,7 +571,7 @@ export async function updateMilestone(input: UpdateMilestoneInput): Promise<Mile
     if (days !== 0) {
       await addMilestoneNote({
         orgId: m.orgId, milestoneId: m.id!, kind: "reschedule", statusAt: m.status,
-        body: `Finish ${days > 0 ? `+${days}` : days} day${Math.abs(days) === 1 ? "" : "s"} → ${new Date(input.patch.plannedAt as string).toLocaleDateString()}`,
+        body: `Finish ${days > 0 ? `+${days}` : days} day${Math.abs(days) === 1 ? "" : "s"} → ${scheduleDateLabel(input.patch.plannedAt as string)}`,
         createdBy: input.updatedBy, createdByName: input.updatedByName,
       }).catch(() => { /* best-effort */ });
     }
@@ -408,6 +590,18 @@ export async function updateMilestone(input: UpdateMilestoneInput): Promise<Mile
     name: m.name,
     details: { patch: input.patch },
   });
+
+  // PROD-11: a new responsible person (not a clear, not the same one).
+  if (priorResponsible !== undefined && m.responsibleUserId && m.responsibleUserId !== priorResponsible) {
+    inBackground(notifyMilestoneAssigned(m, m.responsibleUserId, input.updatedBy, input.updatedByName || input.updatedByEmail));
+  }
+  // PROD-11: a finish moved later, past its baseline — the owner hears once.
+  if (!input.quietSlip && priorFinish && input.patch.plannedAt && slippedPastBaseline(priorFinish, input.patch.plannedAt, m.baselineFinishAt)) {
+    inBackground(notifySlippedPastBaseline({
+      orgId: m.orgId, projectId: m.projectId, slipped: [{ id: m.id!, name: m.name }],
+      actorUserId: input.updatedBy, actorName: input.updatedByName || input.updatedByEmail,
+    }));
+  }
 
   return m;
 }
@@ -492,13 +686,13 @@ export async function applyMilestoneMoves(input: {
 
   // The rows as they stand: before/after for the trail, and the lock value
   // for any move whose caller did not supply one.
-  type BeforeRow = { id: string; name?: string; planned_at: string; planned_start_at: string | null; updated_at: string | null; status: MilestoneStatus; source?: string | null };
+  type BeforeRow = { id: string; name?: string; planned_at: string; planned_start_at: string | null; updated_at: string | null; status: MilestoneStatus; source?: string | null; baseline_finish_at?: string | null };
   const before = new Map<string, BeforeRow>();
   let readError: string | null = null;
   for (let i = 0; i < ids.length && !readError; i += 200) {
     const { data, error: readErr } = await supabase
       .from("milestones")
-      .select("id, name, planned_at, planned_start_at, updated_at, status, source")
+      .select("id, name, planned_at, planned_start_at, updated_at, status, source, baseline_finish_at")
       .in("id", ids.slice(i, i + 200));
     if (readErr) { readError = userFacingReadError(readErr, "milestones"); break; }
     for (const r of (data ?? []) as BeforeRow[]) before.set(r.id, r);
@@ -550,7 +744,9 @@ export async function applyMilestoneMoves(input: {
         patch: { plannedStartAt: m.plannedStartAt, plannedAt: m.plannedAt },
         updatedBy: input.actorUserId, updatedByName: input.actorUserName,
         updatedByEmail: input.actorUserEmail, updatedByRole: input.actorUserRole,
+        quietSlip: true,
       })));
+      inBackground(notifyMovedBatch(input, ids, before));
       return { matched: ids, unmatched: [], count: ids.length, via: "rows" };
     }
     throw new Error(userFacingError(error, { context: "milestones" }));
@@ -581,7 +777,7 @@ export async function applyMilestoneMoves(input: {
     if (days === 0) continue;
     notes.push({
       org_id: input.orgId, milestone_id: m.id, kind: "reschedule", status_at: b.status,
-      body: `Finish ${days > 0 ? `+${days}` : days} day${Math.abs(days) === 1 ? "" : "s"} → ${new Date(m.plannedAt).toLocaleDateString()}`,
+      body: `Finish ${days > 0 ? `+${days}` : days} day${Math.abs(days) === 1 ? "" : "s"} → ${scheduleDateLabel(m.plannedAt)}`,
       created_by: input.actorUserId, created_by_name: input.actorUserName ?? null,
     });
   }
@@ -623,8 +819,33 @@ export async function applyMilestoneMoves(input: {
     }
     if (afterOk) result.updatedAt = after;
   }
+  inBackground(notifyMovedBatch(input, matched, before));
   if (unmatched.length > 0 && (input.onUnmatched ?? "throw") === "throw") throw new MoveConflictError(result);
   return result;
+}
+
+/** PROD-11: one batch of moves → one notice to the project's members (in-app)
+ *  and, when it pushed baselined tasks past their baseline, one to the owner. */
+async function notifyMovedBatch(
+  input: { orgId: string; projectId: string; moves: Array<{ id: string; plannedAt: string }>; actorUserId: string; actorUserName?: string },
+  matched: string[],
+  before: Map<string, { id: string; name?: string; planned_at: string; baseline_finish_at?: string | null }>,
+): Promise<void> {
+  const moved = new Set(matched);
+  const changed = input.moves.filter((m) => moved.has(m.id) && before.get(m.id)?.planned_at !== m.plannedAt);
+  if (changed.length === 0) return;
+  const n = changed.length;
+  await notifyScheduleChange({
+    orgId: input.orgId, projectId: input.projectId,
+    title: n === 1 ? `Task rescheduled: ${before.get(changed[0].id)?.name ?? "a task"}` : `${n} tasks rescheduled`,
+    body: `${input.actorUserName || "Someone"} moved ${n === 1 ? "a task" : `${n} tasks`} on the schedule.`,
+    actorUserId: input.actorUserId, actorName: input.actorUserName,
+    metadata: { milestoneIds: changed.slice(0, 50).map((m) => m.id), count: n },
+  });
+  const slipped = changed
+    .filter((m) => { const b = before.get(m.id); return !!b && slippedPastBaseline(b.planned_at, m.plannedAt, b.baseline_finish_at); })
+    .map((m) => ({ id: m.id, name: before.get(m.id)?.name ?? m.id.slice(0, 8) }));
+  await notifySlippedPastBaseline({ orgId: input.orgId, projectId: input.projectId, slipped, actorUserId: input.actorUserId, actorName: input.actorUserName });
 }
 
 export interface SetMilestoneStatusInput {
@@ -729,6 +950,17 @@ export async function setMilestoneStatus(input: SetMilestoneStatusInput): Promis
     name: m.name,
     details: { newStatus: input.status, statusReason: input.statusReason, note: input.note, plannedAt: m.plannedAt, actualAt: m.actualAt },
   });
+
+  // PROD-11: the project hears that a task changed state (in-app) — behind
+  // the write, so the board refreshes without waiting for it.
+  const why = input.statusReason?.trim() || input.note?.trim();
+  inBackground(notifyScheduleChange({
+    orgId: m.orgId, projectId: m.projectId,
+    title: `Task ${STATUS_WORD[input.status] ?? input.status}: ${m.name}`,
+    body: `${input.actorUserName || "Someone"} marked “${m.name}” ${STATUS_WORD[input.status] ?? input.status}${why ? ` — ${why}` : "."}`,
+    actorUserId: input.actorUserId, actorName: input.actorUserName,
+    metadata: { milestoneId: m.id, milestoneStatus: input.status },
+  }));
 
   return m;
 }
@@ -2115,7 +2347,7 @@ export async function rebaseSchedule(input: RebaseScheduleInput): Promise<Rebase
   // 1. Load the current schedule so we can find the earliest anchor.
   const { data: rows, error: loadErr } = await supabase
     .from("milestones")
-    .select("id, planned_at, planned_start_at, actual_at, actual_start_at, updated_at")
+    .select("id, name, planned_at, planned_start_at, actual_at, actual_start_at, updated_at, baseline_finish_at")
     .eq("org_id", input.orgId)
     .eq("project_id", input.projectId);
   if (loadErr) {
@@ -2164,7 +2396,9 @@ export async function rebaseSchedule(input: RebaseScheduleInput): Promise<Rebase
   //    user can't write, so this respects org-scoping naturally.
   let shifted = 0;
   let skipped = 0;
-  for (const raw of rows as Array<{ id: string; planned_at: string; planned_start_at: string | null; actual_at: string | null; actual_start_at: string | null; updated_at: string | null }>) {
+  const slipped: Array<{ id: string; name: string }> = [];
+  for (const raw of rows as Array<{ id: string; name?: string | null; planned_at: string; planned_start_at: string | null; actual_at: string | null; actual_start_at: string | null; updated_at: string | null; baseline_finish_at?: string | null }>) {
+    const beforeFinish = raw.planned_at;
     const patch: Record<string, unknown> = {
       updated_at: new Date().toISOString(),
       updated_by: input.actorUserId,
@@ -2180,7 +2414,12 @@ export async function rebaseSchedule(input: RebaseScheduleInput): Promise<Rebase
     const { data: updatedRow, error } = await q.select("id").maybeSingle();
     if (error) errors.push(`${raw.id.slice(0, 8)}: ${userFacingError(error, { context: "milestones" })}`);
     else if (!updatedRow) skipped++;
-    else shifted++;
+    else {
+      shifted++;
+      if (slippedPastBaseline(beforeFinish, patch.planned_at as string | undefined, raw.baseline_finish_at)) {
+        slipped.push({ id: raw.id, name: raw.name ?? raw.id.slice(0, 8) });
+      }
+    }
   }
   if (skipped > 0) {
     errors.push(`${skipped} task${skipped === 1 ? "" : "s"} were edited by someone else during the rebase and were left unchanged — re-check those dates.`);
@@ -2201,6 +2440,20 @@ export async function rebaseSchedule(input: RebaseScheduleInput): Promise<Rebase
       newAnchor: input.newStartIso,
     },
   });
+
+  // PROD-11: one rebase → one notice to the project (in-app), and one to the
+  // owner when it pushed baselined tasks past their baseline — behind the
+  // write, so the rebase returns without waiting for them.
+  if (shifted > 0) {
+    inBackground(notifyScheduleChange({
+      orgId: input.orgId, projectId: input.projectId,
+      title: `Schedule shifted ${shiftDays > 0 ? `+${shiftDays}` : shiftDays} day${Math.abs(shiftDays) === 1 ? "" : "s"}`,
+      body: `${input.actorUserName || "Someone"} rebased the schedule: ${shifted} task${shifted === 1 ? "" : "s"} moved ${Math.abs(shiftDays)} day${Math.abs(shiftDays) === 1 ? "" : "s"} ${shiftDays > 0 ? "later" : "earlier"}.`,
+      actorUserId: input.actorUserId, actorName: input.actorUserName,
+      metadata: { shiftDays, count: shifted },
+    }));
+    inBackground(notifySlippedPastBaseline({ orgId: input.orgId, projectId: input.projectId, slipped, actorUserId: input.actorUserId, actorName: input.actorUserName }));
+  }
 
   return {
     shiftedCount: shifted,

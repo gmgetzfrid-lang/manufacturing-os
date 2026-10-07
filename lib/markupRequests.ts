@@ -11,6 +11,7 @@ import { writeActivity } from "@/lib/projects";
 import { logAuditAction } from "@/lib/audit";
 import type { MarkupRequest, MarkupRequestStatus, Timestamp } from "@/types/schema";
 import { postMarkupRef } from "@/lib/activityThread";
+import { emit } from "@/lib/notify/dispatch";
 
 export function rowToMarkupRequest(r: Record<string, unknown>): MarkupRequest {
   return {
@@ -99,6 +100,30 @@ export async function createMarkupRequest(input: CreateMarkupRequestInput): Prom
     },
   });
 
+  // PROD-14: the person asked hears about it — a bell row and an email,
+  // whether or not the document is on a project (the feed entry above is
+  // project-only). They answer it from /inbox ("Markup requests for you").
+  // Best-effort, and AFTER the durable writes — the request row, the feed
+  // entry and the MARKUP_REQUESTED audit row — so a slow fan-out, or a tab
+  // closed while its email leg runs, never delays or loses them (N8's final
+  // review fix).
+  try {
+    const who = input.actorEmail || "A colleague";
+    await emit({
+      orgId: input.orgId,
+      category: "assignment",
+      kind: "markup_request",
+      title: `${who} asked for your markups`,
+      body: input.message.trim(),
+      link: "/inbox",
+      resource: { type: "document", id: input.documentId },
+      actorUserId: input.actorUserId,
+      actorName: input.actorEmail || undefined,
+      audience: { involved: [input.requestedFromUserId] },
+      metadata: { markupRequestId: data.id, requestStatus: "open" },
+    });
+  } catch (e) { console.warn("[markupRequests] request notice failed (non-blocking)", e); }
+
   return rowToMarkupRequest(data as Record<string, unknown>);
 }
 
@@ -125,7 +150,7 @@ export async function resolveMarkupRequest(input: ResolveMarkupRequestInput): Pr
       resolved_at: now,
     })
     .eq("id", input.markupRequestId)
-    .select("document_id")
+    .select("document_id, requested_by_user_id, requested_from_user_id")
     .maybeSingle();
   if (error) throw new Error(error.message);
   // A refused update (RLS) returns no row — never report "shared" for it.
@@ -134,8 +159,12 @@ export async function resolveMarkupRequest(input: ResolveMarkupRequestInput): Pr
   // LIFE-8: sharing leaves the `markup_ref` row ActivityThread already
   // renders, on the document the request was about — the artifact pointer
   // the UI can back. Best-effort: the resolution itself is already recorded.
+  // The requester is left out of the thread's own notice: the resolution
+  // notice below tells them, in the right words — one row for one share,
+  // not two (N8's review fix).
   if (input.status === "shared" && (updated as { document_id?: string | null }).document_id) {
     try {
+      const requester = (updated as { requested_by_user_id?: string | null }).requested_by_user_id ?? null;
       await postMarkupRef({
         orgId: input.orgId,
         documentId: (updated as { document_id: string }).document_id,
@@ -144,6 +173,7 @@ export async function resolveMarkupRequest(input: ResolveMarkupRequestInput): Pr
         markupRequestId: input.markupRequestId,
         summary: `Markups shared${input.response?.trim() ? `: ${input.response.trim()}` : ""}${input.sharedMarkupUrl ? ` — ${input.sharedMarkupUrl}` : ""}`,
         metadata: input.sharedMarkupUrl ? { shared_markup_url: input.sharedMarkupUrl } : null,
+        notifyExclude: requester ? [requester] : undefined,
       });
     } catch (e) { console.warn("[markupRequests] markup_ref post failed (non-blocking)", e); }
   }
@@ -174,6 +204,38 @@ export async function resolveMarkupRequest(input: ResolveMarkupRequestInput): Pr
     userRole: input.actorRole,
     details: { response: input.response, sharedMarkupUrl: input.sharedMarkupUrl },
   });
+
+  // PROD-14 dw3: the other side of the request hears the answer — the
+  // requester when the person asked shares or declines, the person asked
+  // when the requester cancels (the actor is dropped by the dispatcher).
+  // Best-effort, and AFTER the durable writes — the resolution, the feed
+  // entry and the MARKUP_* audit row — so a slow fan-out, or a tab closed
+  // while its email leg runs, never delays or loses them (N8's final review
+  // fix).
+  try {
+    const row = updated as { document_id?: string | null; requested_by_user_id?: string | null; requested_from_user_id?: string | null };
+    const who = input.actorEmail || "A colleague";
+    const verb = input.status === "shared" ? "shared their markups" : input.status === "declined" ? "declined your markup request" : "cancelled their markup request";
+    if (row.document_id) {
+      // The answer opens the document (a share is noted on its activity
+      // thread); without a readable library the row carries no link.
+      const { data: doc } = await supabase.from("documents").select("library_id").eq("id", row.document_id).maybeSingle();
+      const libraryId = (doc as { library_id?: string | null } | null)?.library_id ?? null;
+      await emit({
+        orgId: input.orgId,
+        category: "status",
+        kind: "markup_request",
+        title: `${who} ${verb}`,
+        body: input.response?.trim() || undefined,
+        link: libraryId ? `/documents/${libraryId}?doc=${row.document_id}` : undefined,
+        resource: { type: "document", id: row.document_id },
+        actorUserId: input.actorUserId,
+        actorName: input.actorEmail || undefined,
+        audience: { involved: [row.requested_by_user_id, row.requested_from_user_id].filter((u): u is string => !!u) },
+        metadata: { markupRequestId: input.markupRequestId, requestStatus: input.status },
+      });
+    }
+  } catch (e) { console.warn("[markupRequests] resolution notice failed (non-blocking)", e); }
 }
 
 /** Requests currently waiting on the given user to respond. */

@@ -12,18 +12,18 @@
     "audit-reports/notifications/08-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 114,
+    "findings": 116,
     "gaps": 7,
     "by_severity": {
       "CRITICAL": 2,
       "HIGH": 17,
       "MEDIUM": 76,
-      "LOW": 19
+      "LOW": 21
     },
     "by_status": {
       "REFUTED": 3,
-      "RESOLVED": 28,
-      "OPEN": 83
+      "RESOLVED": 33,
+      "OPEN": 80
     }
   },
   "status_vocabulary": [
@@ -359,7 +359,7 @@
       "id": "PROD-2",
       "title": "Access requests notify nobody — a locked-out user's request lands in a table with no producer",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -382,7 +382,7 @@
       "id": "PROD-3",
       "title": "branch_resolved goes only to the brancher, never to the DocCtrl pool that was alerted to branch_open",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1327,7 +1327,7 @@
       "id": "PROD-6",
       "title": "Cost control, change orders, checklists, turnover, punch, equipment registry and companies are all completely silent",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1457,7 +1457,7 @@
       "id": "PROD-11",
       "title": "The entire milestones/schedule subsystem is silent — 20+ mutators, zero notifications",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1540,7 +1540,7 @@
       "id": "PROD-14",
       "title": "markup_request is fully-wired dead vocabulary — createMarkupRequest never notifies the person being asked",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2712,6 +2712,55 @@
       "summary": "An admin opens the schema verification surface, sees 'pushsubscriptions missing — apply 20260804pushsubscriptions.sql', applies the migration, and gets exactly nothing: no new capability, no setting, no UI. The verification check has trained them that a reported gap may be meaningless, which is corrosive for every other (real) gap the check reports.",
       "area": "notifications",
       "report": "audit-reports/notifications/07-os-notifications-and-nudges.md"
+    },
+    {
+      "id": "PROD-15",
+      "title": "A DocCtrl told of an access request cannot open the list the notice links to",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (read on `f8d5eb5` + N8)",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/(protected)/admin/users/page.tsx:84,137,374",
+        "supabase/migrations/20261023_access_requests_scope_and_limit.sql",
+        "app/api/admin/access-requests/route.ts:44-57",
+        "app/api/admin/create-user/route.ts:122-137",
+        "lib/accessRequestOutcome.ts:32",
+        "app/api/auth/request-access/route.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A DocCtrl gets \"Greg asked to join Acme Refining\", clicks it, and lands on Admin → Users with no pending card. They can still add Greg as a member (the notice body carries his name and address) — which approves the request — but they cannot decline it from the UI, and they cannot see the other pending requests.",
+      "area": "notifications",
+      "report": "audit-reports/notifications/01-producer-census.md"
+    },
+    {
+      "id": "PROD-16",
+      "title": "Two access requests past the per-org cap that land at once can give a pool member two \"more are waiting\" rows",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED by reading (`fleet/N8-producers-free`); not reproduced against a live database, where it needs two requests in flight at once.",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/api/auth/request-access/route.ts:85"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A script at the public door fires requests in parallel past the cap. Each pool member can get one burst row and one toast per request that lands in the same instant, not one in all. The count is bounded by how many requests overlap, not by the request rate. Every request is still recorded and listed on Admin → Users, and the per-IP limiter still applies.",
+      "area": "notifications",
+      "report": "audit-reports/notifications/01-producer-census.md"
     },
     {
       "id": "RT-5",

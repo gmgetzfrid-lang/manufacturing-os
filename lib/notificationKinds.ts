@@ -62,7 +62,7 @@ export type NotificationSection = (typeof NOTIFICATION_SECTIONS)[number];
 /** lucide-react component names; the surfaces map a name to its component. */
 export type KindIcon =
   | "MessageSquare" | "FileText" | "UserPlus" | "MailPlus" | "AlertOctagon" | "Lock" | "GitBranch"
-  | "FileSignature" | "Check" | "Briefcase" | "Bell" | "Send" | "HardDrive" | "Database";
+  | "FileSignature" | "Check" | "Briefcase" | "Bell" | "Send" | "HardDrive" | "Database" | "Flag";
 
 /** The feed's tile tones (components/cockpit/AttentionFeed.tsx FEED_TONES). */
 export type KindTone = "orange" | "blue" | "indigo" | "violet" | "rose" | "amber" | "emerald" | "slate";
@@ -181,6 +181,21 @@ export const KIND_META = {
   project_status:           { section: "projects", actionRequired: false, compliance: false, icon: "Briefcase", tone: "slate", group: "other" },
   // Moved from 'other': a comment on a project you are on (TRAIL-2 dw1).
   project_comment:          { section: "projects", actionRequired: false, compliance: false, icon: "Briefcase", tone: "blue", group: "mentions" },
+  // Added by notifications N8 PRODUCERS-FREE (PROD-6 / PROD-11) — the
+  // controls program and the schedule were silent. Each badges Projects (it
+  // is about a project and links into it) and is FYI (DEC-81 §2: nothing
+  // clears a row when its condition ends). icon / tone / group are what the
+  // feed's predicates give the name today (AttentionFeed: 'milestone' →
+  // Flag / emerald; 'assign' → the Requests chip), so the feed draws them as
+  // it would have.
+  //   change_order_status: a change order was proposed, approved or rejected
+  //     — to the project's members and its owner (lib/changeOrders.ts).
+  //   milestone_assigned: you were made responsible for a task.
+  //   milestone_slipped: a move pushed baselined tasks past their baseline —
+  //     to the project owner, once per move (lib/milestones.ts).
+  change_order_status:      { section: "projects", actionRequired: false, compliance: false, icon: "Bell", tone: "slate", group: "other" },
+  milestone_assigned:       { section: "projects", actionRequired: false, compliance: false, icon: "Flag", tone: "emerald", group: "requests" },
+  milestone_slipped:        { section: "projects", actionRequired: false, compliance: false, icon: "Flag", tone: "emerald", group: "other" },
 
   // ── Bell-only (section null) ──────────────────────────────────────────────
   // Were 'other' (tallied, rendered by no row) on b9cdfdc; the header bell
@@ -197,6 +212,11 @@ export const KIND_META = {
   // Admin housekeeping: a Save-As library was born unowned — links to Admin →
   // Permissions & ownership.
   library_unowned:          { section: null, actionRequired: false, compliance: false, icon: "Bell", tone: "slate", group: "other" },
+  // Admin housekeeping (PROD-2, N8): someone asked to join the workspace —
+  // to the Admin / DocCtrl pool, links to Admin → Users, where the pending
+  // requests are listed. Bell-only like the other admin notices; FYI until a
+  // decision clears it (DEC-81 §2).
+  access_request_pending:   { section: null, actionRequired: false, compliance: false, icon: "Briefcase", tone: "orange", group: "other" },
   // Infrastructure (PROD-10 / TAX-11 — raw inserts before N2; lib/storageAlerts.ts,
   // lib/storageUsage.ts now go through notify()). The set is finite: the quota
   // watermark, and the two platform ceilings (storageUsage.ts hot[] keys).

@@ -34,6 +34,7 @@ import { logAuditAction } from "@/lib/audit";
 import { addEntry, voidEntry, NO_ROW_MATCHED } from "@/lib/costs";
 import { memberHoldsAny } from "@/lib/roleHeld";
 import { emit } from "@/lib/notify/dispatch";
+import { resolveProjectMembers, projectVisibleAmong, type ProjectVisibilityRow } from "@/lib/notify/recipients";
 import { userFacingError, userFacingReadError, userFacingCaughtError, asClause } from "@/lib/userFacingError";
 
 /** org_configurations key: `{ "amount": <number> }`. */
@@ -245,7 +246,9 @@ export async function proposeChangeOrder(input: {
     orgId: input.orgId, userId: input.actorId,
     details: { coNumber, amount: input.amount, reasonCode: input.reasonCode, title: input.title.trim() },
   });
-  return rowToCo(data);
+  const proposed = rowToCo(data);
+  await notifyChangeOrder(proposed, "proposed", input.actorId, input.actorName ?? null);
+  return proposed;
 }
 
 /** COST-6: who else could decide this CO — the org's active controllers and
@@ -422,6 +425,9 @@ export async function decideChangeOrder(input: {
     details: { coNumber: co.coNumber, amount: co.amount, reasonCode: co.reasonCode, selfDecided, proposerId: co.createdBy },
   });
   if (input.decision === "approved") await notifyApproval(co, input.actorId, input.actorName ?? null);
+  if (input.decision === "approved" || input.decision === "rejected") {
+    await notifyChangeOrder(co, input.decision, input.actorId, input.actorName ?? null, input.note ?? null);
+  }
   return { warning };
 }
 
@@ -445,18 +451,135 @@ async function revertDecision(coId: string): Promise<{ ok: boolean; error?: stri
   }
 }
 
-/** MON-11: a change-order approval notifies the proposer, through lib/notify. */
-async function notifyApproval(co: ChangeOrder, actorId: string, actorName: string | null): Promise<void> {
-  if (!co.createdBy || co.createdBy === actorId) return;
+/** PROD-6 dw1 (notifications N8, DEC-92 item 2): a change order
+ *  proposed, approved or rejected notifies the project's members, its
+ *  owner — the money's owner on this project (projects.owner_user_id, the
+ *  owner lib/costs.ts and lib/costDocs.ts notify) — and, when its budget
+ *  line names one, the line's control account manager (cost_accounts.
+ *  cam_user_id, the literal owner of the line the CO posts to; N8's review
+ *  fix) — through lib/notify, kind change_order_status. The dispatcher keeps
+ *  only active members and drops the actor. On an approval the proposer is
+ *  left out here: notifyApproval already tells them, in their own words
+ *  (MON-11), so they get one notice, not two. A rejection reaches the
+ *  proposer here. Voids stay silent (DEC-92 item 2). The two people
+ *  named by hand — the CAM and a rejection's proposer — are kept only while
+ *  they can see the project (projectVisibleAmong: a private project's
+ *  owner, roster or controllers — SEC-2, N8's final review fix); the
+ *  members and the owner see it by definition. Best-effort behind the
+ *  money: a read or emit failure is logged and never fails the change
+ *  order. */
+async function notifyChangeOrder(
+  co: ChangeOrder, event: "proposed" | "approved" | "rejected", actorId: string, actorName: string | null, note?: string | null,
+): Promise<void> {
   try {
+    const [membersRes, projectRes, line] = await Promise.all([
+      resolveProjectMembers(co.projectId),
+      supabase.from("projects").select("owner_user_id, visibility").eq("id", co.projectId).maybeSingle(),
+      coLine(co),
+    ]);
+    const amount = line.amount;
+    const project = projectRes.error ? null : ((projectRes.data as ProjectVisibilityRow | null) ?? null);
+    const owner = project?.owner_user_id ?? null;
+    const named = await projectVisibleAmong(co.orgId, co.projectId, [line.cam, event === "rejected" ? co.createdBy : null], project);
+    const audience = new Set<string>([...membersRes, ...(owner ? [owner] : []), ...named]);
+    if (event === "approved" && co.createdBy) audience.delete(co.createdBy);
+    audience.delete(actorId);
+    if (audience.size === 0) return;
+    const who = actorName || "Someone";
+    const title = event === "proposed" ? `${co.coNumber} proposed — ${co.title}`
+      : event === "approved" ? `${co.coNumber} approved — ${co.title}`
+      : `${co.coNumber} rejected — ${co.title}`;
+    const body = event === "proposed"
+      ? `${who} proposed a change order for ${amount} (${CO_REASON_LABEL[co.reasonCode] ?? co.reasonCode}). It waits for a decision on the Costs tab.`
+      : event === "approved"
+        ? `${who} approved the change order for ${amount}; it is posted to its budget line.`
+        : `${who} rejected the change order for ${amount}${note?.trim() ? `: "${note.trim()}"` : "."}`;
     await emit({
-      orgId: co.orgId, category: "status", kind: "project_status",
-      title: `${co.coNumber} approved — ${co.title}`,
-      body: `Your change order for ${co.amount.toLocaleString()} was approved and posted to the budget line.`,
+      orgId: co.orgId, category: "status", kind: "change_order_status",
+      title, body,
       link: `/projects/${co.projectId}?tab=costs`,
       resource: { type: "project", id: co.projectId },
       actorUserId: actorId, actorName: actorName ?? undefined,
-      audience: { involved: [co.createdBy] },
+      audience: { involved: [...audience] },
+      metadata: { changeOrderId: co.id, coNumber: co.coNumber, event },
+    });
+  } catch (e) {
+    console.warn(`[changeOrders] change-order notice not sent: ${(e as Error).message}`);
+  }
+}
+
+/** ISO 4217 currencies whose minor unit is not two digits. */
+const CURRENCY_DIGITS: Record<string, 0 | 3> = {
+  BIF: 0, CLP: 0, DJF: 0, GNF: 0, ISK: 0, JPY: 0, KMF: 0, KRW: 0, PYG: 0, RWF: 0, UGX: 0, VND: 0, VUV: 0, XAF: 0, XOF: 0, XPF: 0,
+  BHD: 3, IQD: 3, JOD: 3, KWD: 3, LYD: 3, OMR: 3, TND: 3,
+};
+
+/** Money in a change-order notice: the EXACT figure, to its currency's
+ *  minor unit (two decimals unless ISO 4217 says otherwise) — the amount
+ *  the ledger posts. Not fmtMoney, which rounds 10,000 and over to whole
+ *  units for the Costs tab's columns: a notice saying an amount "was
+ *  approved and posted" must say the amount posted (N8's review fix).
+ *  The text is stored and read by other people, so it is built by hand,
+ *  like the schedule's scheduleDateLabel: digits grouped by "," with a "."
+ *  before the minor unit, and the ISO code in front — "CAD 12,345.67" —
+ *  never the writer's locale (a de-DE approver would have written
+ *  "1.500,00 $"; N8's final review fix). `currency` null: the currency is
+ *  not known (the budget line could not be read), so the figure carries NO
+ *  currency claim — "12,345.67". Exported for the test. */
+export function coNoticeMoney(n: number, currency: string | null = "USD"): string {
+  if (!Number.isFinite(n)) return "—";
+  const code = currency?.trim().toUpperCase() ?? "";
+  const known = /^[A-Z]{3}$/.test(code);
+  const digits = known ? (CURRENCY_DIGITS[code] ?? 2) : 2;
+  const [whole, minor] = Math.abs(n).toFixed(digits).split(".");
+  const sign = n < 0 && /[1-9]/.test(whole + (minor ?? "")) ? "-" : "";
+  const figure = `${sign}${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}${minor ? `.${minor}` : ""}`;
+  return known ? `${code} ${figure}` : figure;
+}
+
+/** A change order's budget line, as its notices need it: the amount in the
+ *  line's currency and the line's control account manager (cam_user_id,
+ *  null when unset). The currency is cost_accounts.currency; USD when the
+ *  column is empty (the Costs tab's own default) or the CO names no line
+ *  (the Change Orders panel shows it in USD). When the line names a
+ *  currency the notice must not claim another: if the read FAILS, or
+ *  answers no row (refused by RLS, or gone), the currency is unknown — the
+ *  amount is written with no currency at all (coNoticeMoney(n, null)),
+ *  never as dollars, and no CAM is known; the miss is logged (N8's final
+ *  review fix). One read; never throws. */
+async function coLine(co: ChangeOrder): Promise<{ amount: string; cam: string | null }> {
+  if (!co.costAccountId) return { amount: coNoticeMoney(co.amount, "USD"), cam: null };
+  try {
+    const { data, error } = await supabase.from("cost_accounts").select("currency, cam_user_id").eq("id", co.costAccountId).maybeSingle();
+    const row = data as { currency?: string | null; cam_user_id?: string | null } | null;
+    if (error || !row) {
+      console.warn(`[changeOrders] ${co.coNumber}'s budget line could not be read${error ? ` (${error.message})` : ""} — its notice states the amount with no currency, and no line manager is told`);
+      return { amount: coNoticeMoney(co.amount, null), cam: null };
+    }
+    return { amount: coNoticeMoney(co.amount, row.currency?.trim() || "USD"), cam: row.cam_user_id ?? null };
+  } catch (e) {
+    console.warn(`[changeOrders] ${co.coNumber}'s budget line could not be read (${(e as Error)?.message ?? e}) — its notice states the amount with no currency`);
+    return { amount: coNoticeMoney(co.amount, null), cam: null };
+  }
+}
+
+/** MON-11: a change-order approval notifies the proposer, through lib/notify
+ *  — while they can still see the project (SEC-2: a proposer since removed
+ *  from a private project's roster is not told its amount; N8's final
+ *  review fix). */
+async function notifyApproval(co: ChangeOrder, actorId: string, actorName: string | null): Promise<void> {
+  if (!co.createdBy || co.createdBy === actorId) return;
+  try {
+    const [proposer] = await projectVisibleAmong(co.orgId, co.projectId, [co.createdBy]);
+    if (!proposer) return;
+    await emit({
+      orgId: co.orgId, category: "status", kind: "project_status",
+      title: `${co.coNumber} approved — ${co.title}`,
+      body: `Your change order for ${(await coLine(co)).amount} was approved and posted to the budget line.`,
+      link: `/projects/${co.projectId}?tab=costs`,
+      resource: { type: "project", id: co.projectId },
+      actorUserId: actorId, actorName: actorName ?? undefined,
+      audience: { involved: [proposer] },
       metadata: { changeOrderId: co.id, coNumber: co.coNumber },
     });
   } catch (e) {

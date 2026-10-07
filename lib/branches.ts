@@ -11,8 +11,9 @@
 //
 // Open branches surface on the document (badge), in version history, and in
 // the DocCtrl review queue. Both authors (the brancher and the author of the
-// revision that was current at divergence) are notified when a branch opens
-// and when it resolves.
+// revision that was current at divergence) and the DocCtrl pool are notified
+// when a branch opens; the brancher and the DocCtrl pool when it resolves,
+// and the pool's branch_open alerts are then marked read (PROD-3).
 
 import { supabase } from "@/lib/supabase";
 import { emit } from "@/lib/notify/dispatch";
@@ -219,6 +220,10 @@ export async function resolveBranch(input: {
     },
   });
 
+  // PROD-3: the closing half reaches the audience the opening half did — the
+  // brancher and the DocCtrl pool announceBranchOpened alerted (the actor is
+  // dropped by the dispatcher, so a brancher resolving their own branch still
+  // tells the pool).
   try {
     await emit({
       orgId: input.orgId,
@@ -229,8 +234,35 @@ export async function resolveBranch(input: {
       resource: { type: "document", id: branch.documentId },
       actorUserId: input.actorUserId,
       actorName: input.actorName,
-      audience: { involved: [branch.createdBy] },
+      audience: { involved: [branch.createdBy], roles: ["DocCtrl"] },
       metadata: { branchId: branch.id },
     });
   } catch { /* non-blocking */ }
+
+  await clearBranchOpenAlerts(branch.id);
+}
+
+/** PROD-3 dw2: the branch_open alerts about a resolved branch are marked
+ *  read for every recipient, so the DocCtrl queue clears itself — a browser
+ *  may mark only its own rows read (20261161), so the database does it:
+ *  clear_resolved_branch_alerts (20261181, SECURITY DEFINER; a resolved
+ *  branch of an org the caller is active in, read_at only). Before that
+ *  paste (42883 / PGRST202) the alerts stay unread, as they always did, and
+ *  the miss is logged. Never thrown: the branch is already resolved.
+ *  Answers how many alerts were cleared (null when it could not run). */
+export async function clearBranchOpenAlerts(branchId: string): Promise<number | null> {
+  try {
+    const { data, error } = await supabase.rpc("clear_resolved_branch_alerts", { p_branch: branchId });
+    if (error) {
+      const missing = error.code === "42883" || error.code === "PGRST202";
+      console.warn(missing
+        ? "[branches] clear_resolved_branch_alerts is not deployed (paste 20261181) — the branch_open alerts stay unread"
+        : `[branches] couldn't clear the branch_open alerts: ${error.message}`);
+      return null;
+    }
+    return typeof data === "number" ? data : 0;
+  } catch (e) {
+    console.warn("[branches] couldn't clear the branch_open alerts", e);
+    return null;
+  }
 }

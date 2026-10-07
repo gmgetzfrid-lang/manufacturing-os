@@ -190,7 +190,8 @@
     "BILL-14",
     "ORG-12",
     "ORG-8 residual",
-    "roles-and-permissions SURF-19 (stripe limb only, assigned by the integrator 2026-10-02 at the A&O P4/P6 launch: app/api/stripe/{checkout,portal}/route.ts call authorizeAdminSurface on the billing surface's writes set instead of their own ADMIN_ROLES constant)"
+    "roles-and-permissions SURF-19 (stripe limb only, assigned by the integrator 2026-10-02 at the A&O P4/P6 launch: app/api/stripe/{checkout,portal}/route.ts call authorizeAdminSurface on the billing surface's writes set instead of their own ADMIN_ROLES constant)",
+    "notifications PROD-15 (opened 2026-10-07 by notifications N8 as the DEC-31 remainder of PROD-2; assigned by the integrator at the N8 merge: the access-request notice reaches the Admin AND DocCtrl pool, but the pending list is Admin-only \u2014 the card in app/(protected)/admin/users/page.tsx and access_requests_admin_select \u2014 so a DocCtrl who is told cannot open what they are told about; either show the pending list to DocCtrl (read-only or with decide rights, per the authority model) or narrow the notice to Admins \u2014 decide from who may grant a membership, and keep the two in step)"
    ],
    "files": [
     "components/subscription/SubscriptionGate.tsx",
