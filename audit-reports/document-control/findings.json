@@ -24,8 +24,8 @@
       "LOW": 21
     },
     "by_status": {
-      "RESOLVED": 150,
-      "OPEN": 15
+      "RESOLVED": 151,
+      "OPEN": 14
     }
   },
   "status_vocabulary": [
@@ -4219,7 +4219,7 @@
       "id": "REV-25",
       "title": "Document Control can still put a never-issued revision in force over an active hold, unrecorded, through a first pointer write: after a clear on a held issued document, after the Draft route, or once a held document has no current revision",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (reproduced by P20 fix pass 2 on a throwaway PostgreSQL 16.13 against `20261174`: P-21, P-23 and P-25 in `REV-24`'s Resolution — each ADMITTED with 0 `REV_HOLD_OVERRIDDEN` rows)",
       "blast_radius": null,
