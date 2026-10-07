@@ -1189,7 +1189,11 @@ function TurnoverSection({ orgId, projectId, canManage, actor, signoff, items, e
     if (status === "rejected") {
       note = await promptReason(
         `Reject "${item.name}"`,
-        "Why is it not acceptable? The contractor sees this reason, it lands on their record, and it is kept as a nonconformance.",
+        // SAF-9 (J14): say only the channels that exist — the reason is kept on
+        // the item as a nonconformance and the rejection counts on its
+        // contractor's company scorecard (lib/companies.ts); nothing sends it
+        // to the contractor.
+        "Why is it not acceptable? The reason is kept on this item as a nonconformance, and the rejection counts on its contractor's company record when the contractor is linked to a Known Company. The contractor is not sent this reason — tell them yourself.",
         "Reason (at least 10 characters)",
       );
       if (note === null) return null;
