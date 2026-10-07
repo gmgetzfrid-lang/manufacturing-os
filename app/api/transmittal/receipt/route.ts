@@ -15,6 +15,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { evaluateTransmitAuthority, rowToTransmittal } from "@/lib/transmittals";
+import { tellIssuerOfReceipt } from "@/lib/transmittalReceiptNotice";
 
 export const runtime = "nodejs";
 
@@ -76,6 +77,19 @@ export async function POST(req: NextRequest) {
     details: { number: t.number, acknowledgedBy: name, via: "manual", note },
   });
   if (auditError) console.error("[transmittal/receipt] audit row refused — the receipt stands", { transmittal: t.id, message: auditError.message });
+
+  // PROD-12 dw1 (notifications N9): the issuer hears of a receipt recorded on
+  // the register as they do of one the recipient made through the portal —
+  // the same ack_complete row and the same preference-gated email (one
+  // helper, lib/transmittalReceiptNotice.ts), unless they recorded it
+  // themselves. Best-effort: the receipt stands either way.
+  await tellIssuerOfReceipt(supabaseAdmin, {
+    orgId: t.orgId, transmittalId: t.id, number: t.number, subject: t.subject ?? null,
+    issuerUid: t.createdBy ?? null,
+    acknowledgedByName: name, via: "manual",
+    recordedByUid: user.id, recordedByLabel: meta.recordedByEmail,
+    note, at: now,
+  });
 
   return NextResponse.json({ ok: true, acknowledgedAt: now, auditRecorded: !auditError });
 }

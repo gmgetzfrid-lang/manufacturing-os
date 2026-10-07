@@ -464,11 +464,84 @@ async function resolveHoldAudience(orgId: string, policy: CapabilityPolicy): Pro
   return holdPoolFromMembers(policy, ((data as Array<{ uid: string; role?: unknown; roles?: unknown }> | null) ?? []));
 }
 
+/** PROD-9 (notifications Round G, N9): who hears a hold besides the follow
+ *  list, the release pool and the people a caller names — the document's
+ *  accountable OWNER and the PROJECT team working from it. The union's own
+ *  contract (lib/inAppNotifications.ts: "a hold was opened on a doc the user
+ *  owns / is on the project for").
+ *    · owner: lib/ownership.ts effectiveOwnerForDocument — the one chain
+ *      (document > folder > library > the owning team's supervisor; active
+ *      members only, OWN-16 / GAP-5). No explicit owner (null) means the
+ *      org's controllers, who are in the release pool already.
+ *    · project: the document's LIVE projects (project_documents; a closed
+ *      project — CLOSED_PROJECT_STATUSES — is not working from it). The one
+ *      it was seen on most recently rides `audience.projectId` (the
+ *      dispatcher resolves its members); the members of any other live
+ *      project are named here.
+ *  Best-effort: a read that fails leaves that part out (logged) and the
+ *  notice goes to the audience it always had. Never throws. */
+export async function holdOwnerAndProjects(
+  orgId: string,
+  documentId: string,
+  doc: { owner_user_id?: unknown; owner_name?: unknown; collection_id?: unknown; library_id?: unknown } | null | undefined,
+): Promise<{ owner: string | null; projectId?: string; projectMembers: string[] }> {
+  const out: { owner: string | null; projectId?: string; projectMembers: string[] } = { owner: null, projectMembers: [] };
+  try {
+    if (doc?.library_id) {
+      const { effectiveOwnerForDocument } = await import("@/lib/ownership");
+      const eff = await effectiveOwnerForDocument({
+        ownerUserId: (doc.owner_user_id as string | null) ?? null,
+        ownerName: (doc.owner_name as string | null) ?? null,
+        collectionId: (doc.collection_id as string | null) ?? null,
+        libraryId: doc.library_id as string,
+        orgId,
+      });
+      out.owner = eff.userId ?? null;
+    }
+  } catch (e) {
+    console.warn("[holds] the document's owner could not be resolved for the hold notice (non-blocking)", e);
+  }
+  try {
+    const { data: links, error } = await supabase
+      .from("project_documents")
+      .select("project_id, last_seen_at")
+      .eq("document_id", documentId)
+      .order("last_seen_at", { ascending: false })
+      .limit(20);
+    if (error) throw new Error(error.message);
+    const ids = [...new Set(((links as Array<{ project_id: string }> | null) ?? []).map((l) => l.project_id).filter(Boolean))];
+    if (ids.length > 0) {
+      const [{ data: projects, error: pErr }, { CLOSED_PROJECT_STATUSES }] = await Promise.all([
+        supabase.from("projects").select("id, status").eq("org_id", orgId).in("id", ids),
+        import("@/lib/projects"),
+      ]);
+      if (pErr) throw new Error(pErr.message);
+      const live = new Set(((projects as Array<{ id: string; status: string | null }> | null) ?? [])
+        .filter((p) => !p.status || !CLOSED_PROJECT_STATUSES.has(p.status as never))
+        .map((p) => p.id));
+      const ordered = ids.filter((id) => live.has(id));
+      if (ordered.length > 0) {
+        out.projectId = ordered[0];
+        if (ordered.length > 1) {
+          const { resolveProjectMembers } = await import("@/lib/notify/recipients");
+          const lists = await Promise.all(ordered.slice(1).map((p) => resolveProjectMembers(p)));
+          out.projectMembers = [...new Set(lists.flat())];
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("[holds] the document's projects could not be read for the hold notice (non-blocking)", e);
+  }
+  return out;
+}
+
 /** A hold is a stop-work signal — the people working the document must hear
  *  it, not discover it. Followers of the document + the policy-derived
- *  release pool + anyone named in `involved` (the opener, on release), bell
- *  and email, best-effort (a hold never fails because a notify did — but a
- *  failed announcement is logged, never silently swallowed). */
+ *  release pool + anyone named in `involved` (the opener, on release) + the
+ *  document's effective owner and its live project's team (PROD-9 —
+ *  holdOwnerAndProjects), bell and email, best-effort (a hold never fails
+ *  because a notify did — but a failed announcement is logged, never
+ *  silently swallowed). */
 async function notifyHoldChange(input: {
   orgId: string;
   documentId: string;
@@ -481,11 +554,14 @@ async function notifyHoldChange(input: {
   try {
     const [{ emit }, { data: doc }, policy] = await Promise.all([
       import("@/lib/notify/dispatch"),
-      supabase.from("documents").select("document_number, title, name, library_id")
+      supabase.from("documents").select("document_number, title, name, library_id, collection_id, owner_user_id, owner_name")
         .eq("id", input.documentId).maybeSingle(),
       loadCapabilityPolicy(input.orgId),
     ]);
-    const pool = await resolveHoldAudience(input.orgId, policy);
+    const [pool, team] = await Promise.all([
+      resolveHoldAudience(input.orgId, policy),
+      holdOwnerAndProjects(input.orgId, input.documentId, doc as Record<string, unknown> | null),
+    ]);
     const label = (doc?.document_number as string) || (doc?.title as string) || (doc?.name as string) || "a document";
     await emit({
       orgId: input.orgId,
@@ -501,7 +577,11 @@ async function notifyHoldChange(input: {
       resource: { type: "document", id: input.documentId },
       actorUserId: input.actorUserId,
       actorName: input.actorName ?? undefined,
-      audience: { involved: [...(input.involved ?? []), ...pool], followers: true },
+      audience: {
+        involved: [...(input.involved ?? []), ...pool, ...(team.owner ? [team.owner] : []), ...team.projectMembers],
+        followers: true,
+        ...(team.projectId ? { projectId: team.projectId } : {}),
+      },
     });
   } catch (e) {
     // HLD-10: the hold itself is already written; a failed stop-work

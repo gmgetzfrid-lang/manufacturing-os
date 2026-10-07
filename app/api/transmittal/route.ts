@@ -70,7 +70,8 @@ import { publicOrigin } from "@/lib/publicOrigin";
 import { portalKeyAllowed, portalRowRefusal } from "@/lib/transmittals";
 import { effectiveStatusFor } from "@/lib/effectiveDate";
 import { isPdfFile } from "@/lib/verifyVerdict";
-import { notifyChecked, notifyWithReason } from "@/lib/inAppNotifications";
+import { notifyWithReason } from "@/lib/inAppNotifications";
+import { tellIssuerOfReceipt } from "@/lib/transmittalReceiptNotice";
 
 export const runtime = "nodejs";
 // The download is streamed through the function, so the function lives while
@@ -782,43 +783,25 @@ export async function POST(req: NextRequest) {
   }).then(() => undefined, () => undefined);
 
   // Tell the issuer their receipt landed — bell now, email via the queue.
+  // PROD-12 / DELIV-15 (notifications N9): the one helper the register's
+  // receipt route uses too; the email is gated by the issuer's preferences
+  // (queueEmail as the service role → email_gate), the bell row always
+  // written. Best-effort, as before.
   if (t.created_by) {
-    // The typed insert (TAX-11), on the service-role client; best-effort, as before.
-    await notifyChecked({
-      orgId: String(t.org_id), userId: String(t.created_by),
-      kind: "ack_complete",
-      title: `Transmittal ${t.number} acknowledged`,
-      body: `${name} confirmed receipt through the portal.`,
-      link: "/transmittals",
-      resourceType: "transmittal", resourceId: String(t.id),
-      actorName: name,
-    }, supabaseAdmin);
-
-    const { data: issuer } = await supabaseAdmin
-      .from("org_members").select("email")
-      .eq("org_id", t.org_id as string).eq("uid", t.created_by as string)
-      .maybeSingle();
-    if (issuer?.email) {
-      await supabaseAdmin.from("email_notifications").insert({
-        org_id: t.org_id,
-        to_user_id: t.created_by,
-        to_email: issuer.email,
-        subject: `Transmittal ${t.number} acknowledged by ${name}`,
-        body_text: `${name} confirmed receipt of transmittal ${t.number}${t.subject ? ` (${t.subject})` : ""} through the recipient portal on ${new Date(now).toLocaleString()}.${meta.note ? `\n\nTheir note: ${meta.note}` : ""}`,
-        resource_id: String(t.id),
-        event_type: "watcher_activity",
-        status: "queued",
-      }).then(() => undefined, () => undefined);
-
-      // The maintenance cron only drains daily — kick the sender now so the
-      // issuer hears about the receipt in seconds. Best-effort.
-      const cronSecret = process.env.CRON_SECRET;
-      if (cronSecret) {
-        void fetch(`${req.nextUrl.origin}/api/notifications/send-queued`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${cronSecret}` },
-        }).catch(() => undefined);
-      }
+    const { emailQueued } = await tellIssuerOfReceipt(supabaseAdmin, {
+      orgId: String(t.org_id), transmittalId: String(t.id), number: String(t.number ?? ""),
+      subject: (t.subject as string | null) ?? null,
+      issuerUid: String(t.created_by),
+      acknowledgedByName: name, via: "portal", note: meta.note, at: now,
+    });
+    // The maintenance cron only drains daily — kick the sender now so the
+    // issuer hears about the receipt in seconds. Best-effort.
+    const cronSecret = process.env.CRON_SECRET;
+    if (emailQueued && cronSecret) {
+      void fetch(`${req.nextUrl.origin}/api/notifications/send-queued`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${cronSecret}` },
+      }).catch(() => undefined);
     }
   }
 
