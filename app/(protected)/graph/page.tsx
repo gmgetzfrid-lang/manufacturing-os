@@ -699,11 +699,24 @@ function GraphPageInner() {
   // A bridge the view hides (either end): show both ends' types by the same
   // path, then light the pair up — the spotlight an in-view bridge gets
   // (GM-1, fix pass 3: a click used to spotlight ids the map did not draw).
+  const [pendingSpotlight, setPendingSpotlight] = React.useState<string[] | null>(null);
   const revealBridge = React.useCallback((a: GraphNode, b: GraphNode) => {
     showTypesOf([a, b]);
     setSelected(null);
-    setHighlight((prev) => ({ ids: [a.id, b.id], nonce: (prev?.nonce ?? 0) + 1 }));
+    setPendingSpotlight([a.id, b.id]);
   }, [showTypesOf]);
+  // …one commit later (fix pass 4). Lit up in the same commit as the filter
+  // change, the renderer's fly — a child effect, so it runs before the
+  // page's — framed the pair before the simulation had the revealed end, and
+  // the camera went to the end already drawn. This effect is declared after
+  // the simulation-feed effect, so by the time it lights the pair up both
+  // ends are in the simulation, and the fly the new spotlight starts frames
+  // them both — the way a URL's node waits in `pendingSelect`.
+  React.useEffect(() => {
+    if (!pendingSpotlight) return;
+    setPendingSpotlight(null);
+    spotlight(pendingSpotlight);
+  }, [pendingSpotlight, spotlight]);
 
   // ── Escape closes the top overlay (GPV-13) ────────────────────────────
   React.useEffect(() => {
@@ -1205,7 +1218,7 @@ function GraphPageInner() {
               )}
               {settings.showProposals && proposalRead?.capped && (
                 <div className="inline-flex items-center gap-1 text-[10px] text-amber-700 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900 rounded-full px-2 py-0.5" data-testid="proposals-capped">
-                  <Info className="w-3 h-3" /> {proposals.length.toLocaleString("en-US")} read (the newest) of {pendingTotal !== null ? pendingTotal.toLocaleString("en-US") : `more than ${PENDING_PAIRS_CAP.toLocaleString("en-US")}`} proposed connections.
+                  <Info className="w-3 h-3" /> {proposals.length.toLocaleString("en-US")} read (the newest) of {pendingTotal !== null ? pendingTotal.toLocaleString("en-US") : `at least ${PENDING_PAIRS_CAP.toLocaleString("en-US")}`} proposed connections.
                 </div>
               )}
               {/* IRLS-14: no mention links, and which case it is. */}

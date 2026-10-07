@@ -43,6 +43,13 @@
 //   GM-11   the peek's two "in this view" numbers say what each counts
 //   GM-1    a bridge the view hides is faded; a click shows it, then lights it
 //   GPV-13  the keyboard's walk is memoised on what changes it
+//
+// Fix pass 4 (re-review of fix pass 3):
+//   GM-1    on the REAL 2D renderer, a hidden bridge's reveal flies the camera
+//           to the pair's midpoint, not to the end that was already drawn
+//   GPV-11  the route-change and Back / Forward cancels drop a pending write
+//           even when the browser is back on /graph before it comes due
+//   GM-7    a capped read whose count failed says "at least" the cap
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -60,6 +67,8 @@ const g = vi.hoisted(() => ({
   flows: [] as unknown[],
   fetches: [] as Array<{ url: string; body: unknown }>,
   askBody: null as unknown,
+  // Render the REAL 2D renderer under the recording stand-in (fix pass 4).
+  real2D: false,
 }));
 
 vi.mock("next/navigation", () => ({
@@ -80,9 +89,18 @@ vi.mock("@/components/navigation/ViewTabs", () => ({
   default: ({ title }: { title?: string }) => React.createElement("div", { "data-testid": "viewtabs", "data-title": title ?? "" }),
   INTELLIGENCE_VIEWS: [],
 }));
-vi.mock("@/components/graph/OrgGraph2D", () => ({
-  default: (props: Record<string, unknown>) => { g.renders.push(props); return React.createElement("div", { "data-testid": "map2d" }); },
-}));
+vi.mock("@/components/graph/OrgGraph2D", async (orig) => {
+  const actual = await orig<typeof import("@/components/graph/OrgGraph2D")>();
+  return {
+    ...actual,
+    default: (props: Record<string, unknown>) => {
+      g.renders.push(props);
+      return g.real2D
+        ? React.createElement(actual.default, props as unknown as React.ComponentProps<typeof actual.default>)
+        : React.createElement("div", { "data-testid": "map2d" });
+    },
+  };
+});
 vi.mock("@/components/graph/OrgGraph3D", () => ({
   default: (props: Record<string, unknown>) => { g.renders.push(props); return React.createElement("div", { "data-testid": "map3d" }); },
 }));
@@ -200,6 +218,7 @@ beforeEach(() => {
   g.graph = baseGraph();
   g.scopedGraph = null;
   g.build = []; g.renders = []; g.flows = []; g.fetches = [];
+  g.real2D = false;
   g.proposals = { pairs: [], total: 0, capped: false, error: null };
   role.roles = ["Admin"];
   nav.params = new URLSearchParams("");
@@ -403,6 +422,18 @@ describe("GM-7 — proposals: failed, capped, counted", () => {
     await render(page());
     expect(host.querySelector('[data-testid="proposals-capped"]')?.textContent).toContain("1 read (the newest) of 9,000 proposed connections");
     expect(host.querySelector('[data-testid="proposals-chip"]')?.textContent).toBe("9,000 connections awaiting review · 1 drawn here");
+  });
+
+  it("the count failing at the cap says 'at least' the cap — exactly 4,000 pending is not 'more than' (fix pass 4)", async () => {
+    const pairs = Array.from({ length: 4000 }, (_, i) => (i === 0
+      ? { documentId: "d1", targetDocumentId: "d2", proposer: "tag", nodeA: "doc:d1", nodeB: "doc:d2" }
+      : { documentId: `x${i}`, targetDocumentId: `y${i}`, proposer: "tag", nodeA: `doc:x${i}`, nodeB: `doc:y${i}` }));
+    g.proposals = { pairs, total: null, capped: true, error: null };
+    window.localStorage.setItem(settingsKey("o1"), JSON.stringify({ version: 2, showLibraryEdges: true }));
+    await render(page());
+    const note = host.querySelector('[data-testid="proposals-capped"]')?.textContent ?? "";
+    expect(note).toContain("4,000 read (the newest) of at least 4,000 proposed connections.");
+    expect(note).not.toContain("more than");
   });
 });
 
@@ -745,7 +776,7 @@ describe("GPV-11 — a deferred URL write never lands on another page (fix pass 
     } finally { vi.useRealTimers(); }
   }, 20_000);
 
-  it("a route change the page renders before it unmounts drops the pending write and pushes none for the new path", async () => {
+  it("a route change the page renders before it unmounts: nothing is written over the new path, and nothing is pushed for it", async () => {
     try {
       await deferAWrite();
       const spy = vi.spyOn(window.history, "replaceState");
@@ -755,6 +786,37 @@ describe("GPV-11 — a deferred URL write never lands on another page (fix pass 
       await comeDue();
       expect(`${window.location.pathname}${window.location.search}`).toBe("/documents/L1?doc=d1");
       expect(spy).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  }, 20_000);
+
+  // The two cases above pass on the location guard alone. These two put the
+  // browser back on /graph before the write comes due, so the guard lets a
+  // surviving write through: only the cancel stops it (fix pass 4).
+  it("a route change away cancels the pending write: back on /graph before it comes due, nothing is written (fix pass 4)", async () => {
+    try {
+      await deferAWrite();
+      const spy = vi.spyOn(window.history, "replaceState");
+      window.history.pushState(null, "", "/documents/L1?doc=d1");
+      nav.pathname = "/documents/L1";
+      await render(page());
+      // Back on a /graph entry before the budget refills.
+      window.history.pushState(null, "", "/graph");
+      await comeDue();
+      expect(spy).not.toHaveBeenCalled();
+      expect(`${window.location.pathname}${window.location.search}`).toBe("/graph");
+    } finally { vi.useRealTimers(); }
+  }, 20_000);
+
+  it("Back / Forward on /graph (popstate) cancels the pending write: the entry the browser moved to is never overwritten (fix pass 4)", async () => {
+    try {
+      await deferAWrite();
+      const spy = vi.spyOn(window.history, "replaceState");
+      // The browser moves to another /graph entry, then fires popstate.
+      window.history.pushState(null, "", "/graph?lens=plant");
+      await act(async () => { window.dispatchEvent(new PopStateEvent("popstate")); });
+      await comeDue();
+      expect(spy).not.toHaveBeenCalled();
+      expect(`${window.location.pathname}${window.location.search}`).toBe("/graph?lens=plant");
     } finally { vi.useRealTimers(); }
   }, 20_000);
 });
@@ -880,6 +942,75 @@ describe("GM-1 — a bridge the view hides (fix pass 3)", () => {
     await click(host.querySelector('[data-testid="bridge-row"]'));
     expect(text()).not.toContain("Focused: P-101");
     expect(last().nodes.map((n) => n.id)).toEqual(expect.arrayContaining(["doc:b1", "asset:x1"]));
+  });
+
+  // The page's renderer stand-in records props; the camera lives in the REAL
+  // OrgGraph2D. Its fly is a child effect — it runs before the page's own
+  // effects — so a spotlight set in the same commit as the reveal framed the
+  // pair before the page fed the simulation the revealed end: the camera
+  // went to the end already drawn, or nowhere when both were hidden.
+  describe("on the REAL 2D renderer, the reveal frames both ends (fix pass 4)", () => {
+    let frames: FrameRequestCallback[] = [];
+    let translates: number[][] = [];
+    beforeEach(() => {
+      g.real2D = true;
+      frames = []; translates = [];
+      vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => { frames.push(cb); return frames.length; });
+      vi.stubGlobal("cancelAnimationFrame", () => undefined);
+      vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} unobserve() {} });
+      // A canvas context that accepts every call and keeps translate's
+      // arguments: the frame's last translate is (-camera.x, -camera.y).
+      vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(() => new Proxy({}, {
+        get(_t, prop: string) {
+          return (...args: unknown[]) => {
+            if (prop === "translate") translates.push(args as number[]);
+            if (prop === "measureText") return { width: 10 };
+            if (prop === "createRadialGradient") return { addColorStop: () => undefined };
+            return undefined;
+          };
+        },
+        set() { return true; },
+      }) as unknown as CanvasRenderingContext2D);
+      // The two ends' saved 2D positions, far apart: the midpoint, either
+      // end and the camera's start (0, 0) are four different places.
+      window.localStorage.setItem("orgGraph:pos:o1", JSON.stringify({ "asset:x1": [-600, 200, 0], "doc:b1": [600, 400, 0] }));
+    });
+    /** Run the frame loop until the eased camera has arrived; where it is. */
+    const camera = async () => {
+      for (let i = 0; i < 400 && frames.length > 0; i++) {
+        const f = frames.shift()!;
+        await act(async () => { f(performance.now()); });
+      }
+      const t = translates[translates.length - 1];
+      return { x: -t[0], y: -t[1] };
+    };
+
+    it("one end hidden by the lens: the camera ends at the pair's midpoint, not at the drawn end", async () => {
+      g.graph = withBridge();
+      nav.params = new URLSearchParams("lens=plant");
+      await render(page());
+      expect(host.querySelector("canvas")).toBeTruthy();
+      expect(last().nodes.map((n) => n.id)).toContain("asset:x1");
+      expect(last().nodes.map((n) => n.id)).not.toContain("doc:b1");
+      await openBridges();
+      await click(host.querySelector('[data-testid="bridge-row"]'));
+      const cam = await camera();
+      expect(Math.abs(cam.x - 0)).toBeLessThanOrEqual(0.5);
+      expect(Math.abs(cam.y - 300)).toBeLessThanOrEqual(0.5);
+    });
+
+    it("both ends hidden by focus: the camera still flies, to the pair's midpoint", async () => {
+      g.graph = withBridge();
+      nav.params = new URLSearchParams("local=asset%3Aa1&depth=1");
+      await render(page());
+      expect(last().nodes.map((n) => n.id)).not.toContain("asset:x1");
+      expect(last().nodes.map((n) => n.id)).not.toContain("doc:b1");
+      await openBridges();
+      await click(host.querySelector('[data-testid="bridge-row"]'));
+      const cam = await camera();
+      expect(Math.abs(cam.x - 0)).toBeLessThanOrEqual(0.5);
+      expect(Math.abs(cam.y - 300)).toBeLessThanOrEqual(0.5);
+    });
   });
 });
 

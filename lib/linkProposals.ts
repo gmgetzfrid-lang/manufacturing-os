@@ -279,7 +279,9 @@ export interface PendingPairsRead {
   /** Pending proposals this reader can see (proposed_links RLS: both
    *  documents readable — LNK-4). null when it could not be counted. */
   total: number | null;
-  /** More are pending than were read (the cap). */
+  /** The read stopped at the cap with more pending (`total` above the rows
+   *  read), or at the cap with the count failed (`total` null: at least the
+   *  cap are pending, perhaps no more). */
   capped: boolean;
   /** The read failed — never the same as "none pending". */
   error: string | null;
@@ -295,12 +297,25 @@ const orValue = (v: string) => `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
  *  isMissingRelation) has none pending, which is not an error; any other
  *  failure, a missing column included, is.
  *
- *  The read is cheap (I-14 fix pass 3): newest first, in KEYSET windows on
- *  (created_at desc, id desc) — the order of proposed_links_org_status_idx
- *  (org_id, status, created_at DESC), so each window is an index range with
- *  a LIMIT, never a sort of the whole queue, and every row the RESTRICTIVE
- *  proposed_links_read_endpoints policy is evaluated on is a row the read
- *  returns. It stops at an EMPTY window, never a short one (a project whose
+ *  The read (I-14 fix pass 3, fix pass 4): newest first, in KEYSET windows
+ *  on (created_at desc, id desc). proposed_links_org_status_idx is
+ *  (org_id, status, created_at DESC) — it holds no id. Each later window
+ *  also says `created_at <= c` (c: the last row's created_at), which the
+ *  `or` tree alone does not give the planner as an index bound: that
+ *  condition is the index range, the `or` picks the rows after the last one
+ *  inside it. Where created_at values are spread, a window reads about the
+ *  rows it returns, and the RESTRICTIVE proposed_links_read_endpoints policy
+ *  is evaluated on about those rows (measured on PG16 with 9,000 pending:
+ *  window 2 read 1,001 rows instead of 8,000). The rows one
+ *  Find-connections run inserts share one created_at (lib/linkProposerServer.ts
+ *  writes a run in one upsert). Inside such a tied group the index cannot
+ *  order by id, so each window reads — and runs the policy on — every
+ *  remaining row of the group, and "the newest" inside one run means uuid
+ *  order (id desc), not the order the rows were written. An index on
+ *  (org_id, status, created_at DESC, id DESC) would bound those reads too;
+ *  it needs a migration and is GM-7's recorded residual.
+ *
+ *  It stops at an EMPTY window, never a short one (a project whose
  *  db-max-rows is below the window returns short windows that are not the
  *  end; the keyset makes the extra request safe), or at the cap. The queue
  *  is counted only when the cap is reached — one head count; below the cap
@@ -314,8 +329,12 @@ export async function readPendingProposalPairs(orgId: string, cap = PENDING_PAIR
     let q = supabase.from("proposed_links")
       .select("id, document_id, target_document_id, proposer, created_at")
       .eq("org_id", orgId).eq("status", "pending");
-    // "After" the last row in (created_at desc, id desc) order.
-    if (last) q = q.or(`created_at.lt.${orValue(last.created_at)},and(created_at.eq.${orValue(last.created_at)},id.lt.${last.id})`);
+    // "After" the last row in (created_at desc, id desc) order. The `lte` is
+    // implied by the `or` and changes no row; it is the index's range bound.
+    if (last) {
+      q = q.lte("created_at", last.created_at)
+        .or(`created_at.lt.${orValue(last.created_at)},and(created_at.eq.${orValue(last.created_at)},id.lt.${last.id})`);
+    }
     const { data, error } = await q
       .order("created_at", { ascending: false }).order("id", { ascending: false })
       .limit(want);

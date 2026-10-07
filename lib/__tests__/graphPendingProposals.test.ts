@@ -11,9 +11,14 @@
 // pending queue by `confidence` (no index) and paged it by OFFSET with an
 // exact count, so every window re-sorted the queue and re-evaluated the
 // RESTRICTIVE proposed_links_read_endpoints policy over all of it. Now it
-// reads KEYSET windows in the order of proposed_links_org_status_idx
-// (created_at desc, then id desc), and counts the queue once — only when the
-// cap is reached.
+// reads KEYSET windows on (created_at desc, then id desc) — the order of
+// proposed_links_org_status_idx for created_at; the index holds no id — and
+// counts the queue once, only when the cap is reached.
+//
+// Fix pass 4: each later window also carries `created_at <= c`, which the
+// `or` tree alone does not hand the planner as an index bound. Inside one
+// Find-connections run (one created_at) each window still reads the run's
+// remaining rows, as the index cannot order the tie by id (GM-7's residual).
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -37,6 +42,11 @@ vi.mock("@/lib/supabase", () => {
     const window = db.requests.filter((r) => !isHead(r.calls)).indexOf(req);
     if (db.error && (db.errorOnWindow < 0 || db.errorOnWindow === window)) return { data: null, error: db.error, count: null };
     let rows = [...db.rows].sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+    for (const c of req.calls.filter((x) => x.method === "lte")) {
+      const [col, v] = c.args as ["created_at", string];
+      if (col !== "created_at") throw new Error(`unexpected range filter on ${col}`);
+      rows = rows.filter((r) => r.created_at <= v);
+    }
     const or = req.calls.find((c) => c.method === "or")?.args[0] as string | undefined;
     if (or) {
       const m = /^created_at\.lt\."([^"]+)",and\(created_at\.eq\."([^"]+)",id\.lt\.([^)]+)\)$/.exec(or);
@@ -147,7 +157,7 @@ describe("GM-7 — error, capped and empty are three different answers", () => {
     expect(r).toMatchObject({ total: 1200, capped: false, error: null });
   });
 
-  it("the count failing at the cap says 'more than the cap', never a wrong total", async () => {
+  it("the count failing at the cap says 'at least the cap', never a wrong total", async () => {
     db.rows = Array.from({ length: 4001 }, (_, i) => mk(i));
     db.countError = { message: "timeout" };
     const r = await readPendingProposalPairs("o1");
@@ -163,8 +173,8 @@ describe("GM-7 — error, capped and empty are three different answers", () => {
   });
 });
 
-describe("GM-7 — the read is cheap: indexed order, keyset windows (fix pass 3)", () => {
-  it("orders by the index's columns (created_at desc, id desc) — never by confidence, never by offset", async () => {
+describe("GM-7 — keyset windows on (created_at desc, id desc), never a confidence sort or an offset (fix pass 3)", () => {
+  it("orders by created_at desc (the index's column), then id desc — never by confidence, never by offset", async () => {
     db.rows = Array.from({ length: 2500 }, (_, i) => mk(i));
     await readPendingProposalPairs("o1");
     for (const q of dataRequests()) {
@@ -187,6 +197,24 @@ describe("GM-7 — the read is cheap: indexed order, keyset windows (fix pass 3)
     const or = second.calls.find((c) => c.method === "or")?.args[0];
     const lastRead = mk(999);
     expect(or).toBe(`created_at.lt."${lastRead.created_at}",and(created_at.eq."${lastRead.created_at}",id.lt.${lastRead.id})`);
+  });
+
+  it("each later window also bounds the index range: created_at <= the last row's, beside the or (fix pass 4)", async () => {
+    // Without it the planner reads the or tree as two bitmap scans and sorts
+    // every remaining row (PG16, 9,000 pending: 8,000 rows and policy checks
+    // for window 2); with it window 2 is one index range of 1,001 rows.
+    db.rows = Array.from({ length: 2500 }, (_, i) => mk(i));
+    const r = await readPendingProposalPairs("o1");
+    const windows = dataRequests();
+    expect(windows).toHaveLength(4);
+    expect(methods(windows[0])).not.toContain("lte");
+    const lastOf = [mk(999), mk(1999), mk(2499)];
+    windows.slice(1).forEach((q, k) => {
+      expect(q.calls.filter((c) => c.method === "lte").map((c) => c.args)).toEqual([["created_at", lastOf[k].created_at]]);
+      expect(methods(q)).toContain("or");
+    });
+    // The bound changes no row and no order.
+    expect(r.pairs.map((p) => p.documentId)).toEqual(Array.from({ length: 2500 }, (_, i) => `d${i}`));
   });
 
   it("rows sharing one created_at across a window edge are neither skipped nor read twice", async () => {
