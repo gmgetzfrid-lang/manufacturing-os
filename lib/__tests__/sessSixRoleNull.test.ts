@@ -10,13 +10,19 @@
 //           never a placeholder "Viewer".
 //   OFF-8   done-when 3 (public-surfaces): the client-storage inventory in
 //           RoleContext — every localStorage / sessionStorage key and the
-//           IndexedDB database classified; what the account READ is cleared
-//           on SIGNED_OUT (the sign-in flow's own keys survive an expiry-
-//           driven SIGNED_OUT); an INITIAL_SESSION with no session clears
-//           nothing unless this tab had an identity and supabase-js keeps no
-//           session (then only the rebuildable caches, never Cache Storage);
-//           a different identity booting in this browser — after a reload,
-//           in a new tab — ends the last one's data. The census is per KEY:
+//           IndexedDB database classified; the caches and held state the
+//           account READ are cleared on SIGNED_OUT, while the person's own
+//           work and arrangement (kind "identity": the arranged graph
+//           layout, the recents, the ask thread, the redline hand-off) stay
+//           for the same person's next sign-in, as before IS-P1 (the
+//           sign-in flow's own keys survive an expiry-driven SIGNED_OUT
+//           too); an INITIAL_SESSION with no session clears nothing unless
+//           this tab had an identity and supabase-js keeps no session (then
+//           only the rebuildable caches, never Cache Storage); a different
+//           identity running the app in this browser or this tab — after a
+//           sign-out, a reload, in a new tab, by SIGNED_IN — ends ALL the
+//           last one's data before it reads anything, and resolves its own
+//           membership. The census is per KEY:
 //           every literal, constant or template head a file hands to
 //           getItem / setItem / removeItem matches a row that file owns.
 //
@@ -44,15 +50,26 @@ const s = vi.hoisted(() => ({
   membersFail: false,
   activeMembers: [] as Array<Record<string, unknown>>,
   profileOrg: "o1" as string | null,
+  /** Per-uid answers (the user-switch tests): the member row by uid, the
+   *  profile's default org by uid, and every org_members read's uid. */
+  membersByUid: null as null | Record<string, Record<string, unknown>>,
+  profileOrgByUid: {} as Record<string, string>,
+  memberReads: [] as string[],
 }));
 
 vi.mock("@/lib/supabase", () => {
   const from = (table: string) => {
     const filters: Record<string, unknown> = {};
     const answer = () => {
-      if (table === "users") return { data: { default_org_id: s.profileOrg }, error: null };
+      if (table === "users") return { data: { default_org_id: s.profileOrgByUid[String(filters.id)] ?? s.profileOrg }, error: null };
       if (table === "org_members") {
         if (s.membersFail) return { data: null, error: { message: "connection reset" } };
+        if (s.membersByUid) {
+          s.memberReads.push(String(filters.uid));
+          const m = s.membersByUid[String(filters.uid)] ?? null;
+          if (filters.status === "active") return { data: m ? [m] : [], error: null };
+          return { data: m && m.org_id === filters.org_id ? m : null, error: null };
+        }
         if (filters.status === "active") return { data: s.activeMembers, error: null };
         return { data: s.member, error: null };
       }
@@ -87,7 +104,7 @@ vi.mock("@/lib/audit", () => ({ logWorkspaceRelocation: vi.fn(async () => ({ err
 import {
   RoleProvider, useRole,
   CLIENT_STORAGE_INVENTORY, CLIENT_INDEXED_DB_INVENTORY,
-  purgeAccountStorage, purgeAccountClientStores, identityChangeEndsAccount,
+  purgeAccountStorage, purgeAccountClientStores, identityChangeEndsAccount, purgeTakes,
   LAST_IDENTITY_KEY, supabaseSessionPersisted, type ClientStorageRule,
 } from "@/components/providers/RoleContext";
 
@@ -101,6 +118,7 @@ let root: Root;
 const replaceCalls: string[] = [];
 beforeEach(() => {
   s.session = null; s.authCb = null; s.member = null; s.membersFail = false; s.activeMembers = []; s.profileOrg = "o1";
+  s.membersByUid = null; s.profileOrgByUid = {}; s.memberReads = [];
   window.localStorage.clear();
   window.sessionStorage.clear();
   replaceCalls.length = 0;
@@ -535,7 +553,7 @@ describe("OFF-8 — every key the app keeps in this browser is in RoleContext's 
     expect(seen("app/(protected)/intelligence/page.tsx")).toEqual(expect.arrayContaining(["local:intel-status-…", "local:schema-gaps-…"])); // an imported key builder
     expect(seen("components/ui/FirstRunHint.tsx")).toContain("local:first_run_hint:…");                              // a constant + a prop
     expect(seen("app/layout.tsx")).toContain("local:mfg-os.density");                                                 // an inline script
-    expect(seen(ROLE_CONTEXT)).toContain("local:manufacturingos.lastIdentity");
+    expect(seen(ROLE_CONTEXT)).toEqual(expect.arrayContaining(["local:manufacturingos.lastIdentity", "session:manufacturingos.lastIdentity"]));
   });
 
   it("per KEY, negative controls: a new key in a file that already owns rows fails until it has its own row", () => {
@@ -558,7 +576,7 @@ describe("OFF-8 — every key the app keeps in this browser is in RoleContext's 
   it("every row names a key its owners really use, says why, and every account row says whether an evaporated session drops it", () => {
     for (const r of CLIENT_STORAGE_INVENTORY) {
       expect(r.why.length, r.key).toBeGreaterThan(5);
-      if (r.class === "account") expect(["cache", "held"]).toContain(r.kind);
+      if (r.class === "account") expect(["cache", "held", "identity"]).toContain(r.kind);
       if (r.key === "sb-") { expect(src("lib/supabase.ts")).toMatch(/storage: hybridAuthStorage/); continue; }
       const head = r.key.replace(/[:.-]$/, "");
       expect(r.owners.some((o) => src(o).includes(head)), `${r.key} in ${r.owners.join(", ")}`).toBe(true);
@@ -579,6 +597,20 @@ describe("OFF-8 — every key the app keeps in this browser is in RoleContext's 
     for (const k of ["org-graph-", "mfg-os:lib:", "kl-active-thread-"]) expect(cls("session", k), k).toBe("account");
     expect(CLIENT_INDEXED_DB_INVENTORY.map((d) => d.class)).toEqual(["account"]);
   });
+
+  it("review fix: the person's own work and arrangement is kind \"identity\" — kept across SIGNED_OUT for the same person, as before IS-P1; the caches and held state are not", () => {
+    const kind = (store: string, key: string) => CLIENT_STORAGE_INVENTORY.find((r) => r.store === store && r.key === key)?.kind;
+    for (const k of ["orgGraph:pos", "mfg-os.palette.recents", LAST_IDENTITY_KEY]) expect(kind("local", k), k).toBe("identity");
+    for (const k of ["kl-active-thread-", LAST_IDENTITY_KEY]) expect(kind("session", k), k).toBe("identity");
+    expect(CLIENT_INDEXED_DB_INVENTORY.map((d) => [d.name, d.kind])).toEqual([["manufacturingos", "identity"]]);
+    for (const k of ["intel-status-", "schema-gaps-"]) { expect(kind("local", k), k).toBe("cache"); expect(kind("session", k), k).toBe("cache"); }
+    for (const k of ["org-graph-", "mfg-os:lib:"]) expect(kind("session", k), k).toBe("cache");
+    expect(kind("local", "dismissed:")).toBe("held");
+    // which end takes which kind
+    expect(["cache", "held", "identity"].map((k) => purgeTakes("all", k as "cache"))).toEqual([true, true, true]);
+    expect(["cache", "held", "identity"].map((k) => purgeTakes("signout", k as "cache"))).toEqual([true, true, false]);
+    expect(["cache", "held", "identity"].map((k) => purgeTakes("cache", k as "cache"))).toEqual([true, false, false]);
+  });
 });
 
 describe("OFF-8 — the purge", () => {
@@ -587,7 +619,7 @@ describe("OFF-8 — the purge", () => {
     L.setItem("intel-status-u1-o1", "{}"); L.setItem("schema-gaps-u1-o1", "{}");
     L.setItem("mfg-os.palette.recents", JSON.stringify([{ label: "P-101 Overhead P&ID", href: "/d/P-101" }]));
     L.setItem("orgGraph:pos:o1", "{}"); L.setItem("orgGraph:pos3d:o1", "{}");
-    L.setItem("dismissed:u1:o1:hint", "1"); L.setItem(LAST_IDENTITY_KEY, "u1");
+    L.setItem("dismissed:u1:o1:hint", "1"); L.setItem(LAST_IDENTITY_KEY, "u1"); S.setItem(LAST_IDENTITY_KEY, "u1");
     L.setItem("manufacturingos.activeOrgId", "o1"); L.setItem("manufacturingos.activeOrgId.owner", "u1");
     L.setItem("manufacturingos.preferMicrosoft", "true"); L.setItem("manufacturingos.rememberSession", "true");
     L.setItem("sb-ref-auth-token", "tok");
@@ -598,7 +630,7 @@ describe("OFF-8 — the purge", () => {
   };
   const keys = (st: Storage) => Array.from({ length: st.length }, (_, i) => st.key(i)!).sort();
 
-  it("scope \"all\" (SIGNED_OUT): every account key goes from both stores; the workspace pointer is left to clearStoredOrgId; sign-in and device keys stay", () => {
+  it("scope \"all\" (a different identity): every account key goes from both stores; the workspace pointer is left to clearStoredOrgId; sign-in and device keys stay", () => {
     seed();
     purgeAccountStorage(window.localStorage, "local", "all");
     purgeAccountStorage(window.sessionStorage, "session", "all");
@@ -609,15 +641,28 @@ describe("OFF-8 — the purge", () => {
     expect(keys(window.sessionStorage)).toEqual(["kl-embed-nudge-at", "manufacturingos.signInNext", "manufacturingos.silentSSOAttempted"]);
   });
 
-  it("scope \"cache\" (a session evaporated): only the rebuildable caches — the ask thread and the dismissals are held", () => {
+  it("scope \"signout\" (SIGNED_OUT, by a button or an expiry): the caches and the held state go; the person's own work — the arranged graph layout, the recents, the ask thread — and the remembered identity stay (review fix)", () => {
+    seed();
+    purgeAccountStorage(window.localStorage, "local", "signout");
+    purgeAccountStorage(window.sessionStorage, "session", "signout");
+    expect(keys(window.localStorage)).toEqual([
+      "manufacturingos.activeOrgId", "manufacturingos.activeOrgId.owner", "manufacturingos.customStamps", "manufacturingos.dashboard.u1",
+      LAST_IDENTITY_KEY, "manufacturingos.preferMicrosoft", "manufacturingos.rememberSession", "mfg-os.palette.recents", "mfgos.theme.mode",
+      "orgGraph:pos3d:o1", "orgGraph:pos:o1", "orgGraph:settings:o1", "sb-ref-auth-token",
+    ].sort());
+    expect(keys(window.sessionStorage)).toEqual(["kl-active-thread-l1", "kl-embed-nudge-at", LAST_IDENTITY_KEY, "manufacturingos.signInNext", "manufacturingos.silentSSOAttempted"].sort());
+  });
+
+  it("scope \"cache\" (a session evaporated): only the rebuildable caches — the held state and the person's own work stay", () => {
     seed();
     purgeAccountStorage(window.localStorage, "local", "cache");
     purgeAccountStorage(window.sessionStorage, "session", "cache");
-    expect(window.localStorage.getItem("mfg-os.palette.recents")).toBeNull();
     expect(window.localStorage.getItem("intel-status-u1-o1")).toBeNull();
-    expect(window.localStorage.getItem("orgGraph:pos3d:o1")).toBeNull();
+    expect(window.localStorage.getItem("schema-gaps-u1-o1")).toBeNull();
     expect(window.sessionStorage.getItem("org-graph-o1")).toBeNull();
     expect(window.sessionStorage.getItem("mfg-os:lib:l1:o1")).toBeNull();
+    expect(window.localStorage.getItem("mfg-os.palette.recents")).not.toBeNull();
+    expect(window.localStorage.getItem("orgGraph:pos3d:o1")).toBe("{}");
     expect(window.sessionStorage.getItem("kl-active-thread-l1")).toBe("[]");
     expect(window.localStorage.getItem("dismissed:u1:o1:hint")).toBe("1");
     expect(window.localStorage.getItem(LAST_IDENTITY_KEY)).toBe("u1"); // so a different identity later still ends the held data
@@ -630,7 +675,7 @@ describe("OFF-8 — the purge", () => {
     expect(purgeAccountStorage(forbidden, "local", "all")).toEqual([]);
   });
 
-  it("scope \"all\" deletes the draft-handoff IndexedDB database, bounded — a blocked delete never holds the sign-out", async () => {
+  it("scope \"all\" deletes the draft-handoff IndexedDB database, bounded — a blocked delete never holds an identity change; a SIGNED_OUT or an evaporation keeps it", async () => {
     const asked: string[] = [];
     const idb = { deleteDatabase: (name: string) => { asked.push(name); const req: Record<string, () => void> = {}; queueMicrotask(() => req.onblocked?.()); return req; } } as unknown as IDBFactory;
     await purgeAccountClientStores("all", { idb, budgetMs: 50 });
@@ -642,6 +687,8 @@ describe("OFF-8 — the purge", () => {
     asked.length = 0;
     await purgeAccountClientStores("cache", { idb, budgetMs: 50 });
     expect(asked).toEqual([]); // an evaporated session keeps the unsubmitted hand-off
+    await purgeAccountClientStores("signout", { idb, budgetMs: 50 });
+    expect(asked).toEqual([]); // so does a SIGNED_OUT: the same person's next sign-in finds it (LIFE-3)
   });
 
   it("identityChangeEndsAccount: only a DIFFERENT identity after a known one", () => {
@@ -703,28 +750,84 @@ describe("OFF-8 — the provider's branches, rendered", () => {
     await mount();
   };
 
-  it("SIGNED_OUT clears every account key, the draft hand-off, the remembered identity and the device workspace, keeps the silent-SSO flags — and PKG-1's Cache Storage purge still runs", async () => {
+  it("SIGNED_OUT clears the caches, the held state and the device workspace, keeps the person's own work (graph layout, recents, ask thread, hand-off), the remembered identity and the silent-SSO flags — and PKG-1's Cache Storage purge still runs", async () => {
     s.session = { user: { id: "u1", email: "a@x.io" } };
     s.member = ADMIN;
     await mount();
     seedAccount();
     expect(window.localStorage.getItem(LAST_IDENTITY_KEY)).toBe("u1");
     await act(async () => { await s.authCb!("SIGNED_OUT", null); });
-    expect(window.localStorage.getItem("mfg-os.palette.recents")).toBeNull();
-    expect(window.localStorage.getItem("orgGraph:pos:o1")).toBeNull();
     expect(window.localStorage.getItem("dismissed:u1:o1:x")).toBeNull();
-    expect(window.sessionStorage.getItem("kl-active-thread-l1")).toBeNull();
     expect(window.sessionStorage.getItem("org-graph-o1")).toBeNull();
-    expect(window.localStorage.getItem(LAST_IDENTITY_KEY)).toBeNull();
     expect(window.localStorage.getItem("manufacturingos.activeOrgId")).toBeNull();
+    // review fix: what survived every sign-out before IS-P1 still does
+    expect(window.localStorage.getItem("orgGraph:pos:o1")).toBe("{\"doc:d1\":[1,2,0]}");
+    expect(window.localStorage.getItem("mfg-os.palette.recents")).toBe("[]");
+    expect(window.sessionStorage.getItem("kl-active-thread-l1")).toBe("[]");
+    expect(idbDeleted).toEqual([]);
+    expect(window.localStorage.getItem(LAST_IDENTITY_KEY)).toBe("u1"); // so the next DIFFERENT identity still ends them
     expect(window.localStorage.getItem("manufacturingos.preferMicrosoft")).toBe("true");
     expect(window.sessionStorage.getItem("manufacturingos.silentSSOAttempted")).toBe("1");
-    expect(idbDeleted).toEqual(["manufacturingos"]);
     expect(cachesApi.delete).toHaveBeenCalledTimes(3);
     expect([...cacheNames]).toEqual([]);
   });
 
-  it("this tab's session evaporates and supabase-js keeps none: the caches go; held work, the remembered identity, the workspace and Cache Storage stay", async () => {
+  it("review fix (regression): the SAME person signing back in after a SIGNED_OUT — an expired token the next morning — finds the graph layout they arranged, their recents, their open ask thread and the redline hand-off", async () => {
+    s.session = { user: { id: "u1", email: "a@x.io" } };
+    s.member = ADMIN;
+    await mount();
+    seedAccount();
+    window.localStorage.setItem("orgGraph:pos3d:o1", "{\"doc:d1\":[1,2,3]}");
+    await act(async () => { await s.authCb!("SIGNED_OUT", null); });
+    await reload({ user: { id: "u1", email: "a@x.io" } }); // "/" → the same person signs in → a fresh provider
+    expect(probe()).toBe("Admin|Admin|member|any");
+    expect(window.localStorage.getItem("orgGraph:pos:o1")).toBe("{\"doc:d1\":[1,2,0]}");
+    expect(window.localStorage.getItem("orgGraph:pos3d:o1")).toBe("{\"doc:d1\":[1,2,3]}");
+    expect(window.localStorage.getItem("mfg-os.palette.recents")).toBe("[]");
+    expect(window.sessionStorage.getItem("kl-active-thread-l1")).toBe("[]");
+    expect(idbDeleted).toEqual([]);
+  });
+
+  it("review fix: a DIFFERENT person signing in after a SIGNED_OUT ends all of it — layout, recents, ask thread, hand-off — before anything of theirs is read", async () => {
+    s.session = { user: { id: "u1", email: "a@x.io" } };
+    s.member = ADMIN;
+    await mount();
+    seedAccount();
+    await act(async () => { await s.authCb!("SIGNED_OUT", null); });
+    s.member = { ...ADMIN, uid: "u2", email: "b@x.io" };
+    await reload({ user: { id: "u2", email: "b@x.io" } });
+    expect(probe()).toBe("Admin|Admin|member|any");
+    expect(window.localStorage.getItem("orgGraph:pos:o1")).toBeNull();
+    expect(window.localStorage.getItem("mfg-os.palette.recents")).toBeNull();
+    expect(window.sessionStorage.getItem("kl-active-thread-l1")).toBeNull();
+    expect(idbDeleted).toEqual(["manufacturingos"]);
+    expect(window.localStorage.getItem(LAST_IDENTITY_KEY)).toBe("u2");
+    expect(window.sessionStorage.getItem(LAST_IDENTITY_KEY)).toBe("u2");
+    expect(window.localStorage.getItem("manufacturingos.preferMicrosoft")).toBe("true");
+  });
+
+  it("review fix: a tab whose own last identity differs ends ITS sessionStorage copy even when another tab already moved the browser to the new identity (a tab's sessionStorage is its own)", async () => {
+    // tab 1 ran as u1 (its ask thread in its sessionStorage); u2 has since
+    // booted in another tab, which ended u1's localStorage data and the
+    // hand-off and remembered u2 for the browser.
+    window.sessionStorage.setItem(LAST_IDENTITY_KEY, "u1");
+    window.sessionStorage.setItem("kl-active-thread-l1", "[\"u1's question\"]");
+    window.sessionStorage.setItem("org-graph-o1", "{}");
+    window.sessionStorage.setItem("manufacturingos.silentSSOAttempted", "1");
+    window.localStorage.setItem(LAST_IDENTITY_KEY, "u2");
+    window.localStorage.setItem("mfg-os.palette.recents", "[\"u2's recent\"]");
+    s.session = { user: { id: "u2", email: "b@x.io" } };
+    s.member = { ...ADMIN, uid: "u2", email: "b@x.io" };
+    await mount(); // tab 1 now boots as u2
+    expect(window.sessionStorage.getItem("kl-active-thread-l1")).toBeNull();
+    expect(window.sessionStorage.getItem("org-graph-o1")).toBeNull();
+    expect(window.sessionStorage.getItem("manufacturingos.silentSSOAttempted")).toBe("1");
+    expect(window.sessionStorage.getItem(LAST_IDENTITY_KEY)).toBe("u2");
+    expect(window.localStorage.getItem("mfg-os.palette.recents")).toBe("[\"u2's recent\"]"); // u2's own, kept
+    expect(idbDeleted).toEqual([]);
+  });
+
+  it("this tab's session evaporates and supabase-js keeps none: the caches go; held state, the person's own work, the remembered identity, the workspace and Cache Storage stay", async () => {
     s.session = { user: { id: "u1", email: "a@x.io" } };
     s.member = ADMIN;
     await mount();
@@ -732,8 +835,9 @@ describe("OFF-8 — the provider's branches, rendered", () => {
     expect(window.localStorage.getItem("manufacturingos.activeOrgId")).toBe("o1");
     await act(async () => { await s.authCb!("INITIAL_SESSION", null); });
     expect(probe()).toMatch(/^NULL\|\|/);
-    expect(window.localStorage.getItem("mfg-os.palette.recents")).toBeNull();
     expect(window.sessionStorage.getItem("org-graph-o1")).toBeNull();
+    expect(window.localStorage.getItem("mfg-os.palette.recents")).toBe("[]");
+    expect(window.localStorage.getItem("orgGraph:pos:o1")).not.toBeNull();
     expect(window.sessionStorage.getItem("kl-active-thread-l1")).toBe("[]");
     expect(window.localStorage.getItem("dismissed:u1:o1:x")).toBe("1");
     expect(window.localStorage.getItem(LAST_IDENTITY_KEY)).toBe("u1");
@@ -816,6 +920,7 @@ describe("OFF-8 — the provider's branches, rendered", () => {
     expect(window.localStorage.getItem(LAST_IDENTITY_KEY)).toBe("u1");
     const after = everything();
     delete (after.local as Record<string, unknown>)[LAST_IDENTITY_KEY];
+    delete (after.session as Record<string, unknown>)[LAST_IDENTITY_KEY];
     delete (after.local as Record<string, unknown>)["manufacturingos.activeOrgId"];
     delete (after.local as Record<string, unknown>)["manufacturingos.activeOrgId.owner"];
     expect(after).toEqual(before);
@@ -828,21 +933,29 @@ describe("OFF-8 — the provider's branches, rendered", () => {
     expect(cachesApi.delete).not.toHaveBeenCalled();
   });
 
-  it("a DIFFERENT identity signing in on the tab ends the last one's held data too; the same identity keeps it", async () => {
+  it("a DIFFERENT identity signing in on the tab ends the last one's data and resolves ITS membership; the same identity keeps everything", async () => {
+    s.membersByUid = {
+      u1: { org_id: "o1", uid: "u1", role: "Admin", roles: ["Admin"], status: "active" },
+      u2: { org_id: "o2", uid: "u2", role: "Viewer", roles: ["Viewer"], status: "active" },
+    };
+    s.profileOrgByUid = { u1: "o1", u2: "o2" };
     s.session = { user: { id: "u1", email: "a@x.io" } };
-    s.member = ADMIN;
     await mount();
+    expect(probe()).toBe("Admin|Admin|member|any");
     seedAccount();
     await act(async () => { await s.authCb!("SIGNED_IN", { user: { id: "u1", email: "a@x.io" } }); });
     expect(window.sessionStorage.getItem("kl-active-thread-l1")).toBe("[]");
     expect(window.localStorage.getItem("mfg-os.palette.recents")).toBe("[]");
-    s.member = { ...ADMIN, uid: "u2" };
+    s.memberReads.length = 0;
     await act(async () => { await s.authCb!("SIGNED_IN", { user: { id: "u2", email: "b@x.io" } }); });
     await tick();
     expect(window.sessionStorage.getItem("kl-active-thread-l1")).toBeNull();
     expect(window.localStorage.getItem("mfg-os.palette.recents")).toBeNull();
+    expect(idbDeleted).toEqual(["manufacturingos"]);
     expect(window.localStorage.getItem("manufacturingos.preferMicrosoft")).toBe("true");
     expect(window.localStorage.getItem(LAST_IDENTITY_KEY)).toBe("u2");
+    expect(s.memberReads).toContain("u2");
+    expect(probe()).toBe("Viewer|Viewer|member|any");
   });
 
   it("source: SIGNED_OUT purges every account store before the Cache Storage purge and the redirect; the evaporated branch purges caches only, only when gated, and never the workspace or Cache Storage; boot notes the identity before reading anything", () => {
@@ -850,12 +963,94 @@ describe("OFF-8 — the provider's branches, rendered", () => {
     const start = rc.indexOf('if (event === "SIGNED_OUT") {');
     const block = rc.slice(start, rc.indexOf('window.location.replace("/");', start));
     expect(block.indexOf("clearStoredOrgId();")).toBeGreaterThan(0);
-    expect(block.indexOf('await purgeAccountClientStores("all");')).toBeGreaterThan(block.indexOf("clearStoredOrgId();"));
-    expect(block.indexOf("caches.keys()")).toBeGreaterThan(block.indexOf('await purgeAccountClientStores("all");'));
+    expect(block.indexOf('await purgeAccountClientStores("signout");')).toBeGreaterThan(block.indexOf("clearStoredOrgId();"));
+    expect(block.indexOf("caches.keys()")).toBeGreaterThan(block.indexOf('await purgeAccountClientStores("signout");'));
+    expect(block).not.toMatch(/purgeAccountClientStores\("all"\)|lastIdentityRef\.current = null/);
     const evap = rc.slice(rc.indexOf("// Session evaporated without a SIGNED_OUT"), rc.indexOf("// When tab becomes visible again"));
     expect(evap).toMatch(/if \(lastIdentityRef\.current !== null && !supabaseSessionPersisted\(\[browserStore\("local"\), browserStore\("session"\)\]\)\) \{\n\s*await purgeAccountClientStores\("cache"\);\n\s*\}/);
     expect(evap).not.toMatch(/caches\.|clearStoredOrgId|purgeAccountClientStores\("all"\)|location\.replace/);
     const boot = rc.slice(rc.indexOf("supabase.auth.getSession().then("), rc.indexOf("// Listen for auth changes"));
     expect(boot).toMatch(/const u = session\.user;\n(?:\s*\/\/.*\n)*\s*await noteIdentity\(u\.id\);\n\s*setUid\(u\.id\);/);
+    // review blocker: the SIGNED_IN path reads the identity BEFORE it awaits the purge, and purges before setUid
+    const signedIn = rc.slice(rc.indexOf("// Read the identity BEFORE anything awaits"), rc.indexOf("// Session evaporated without a SIGNED_OUT"));
+    expect(signedIn.indexOf("const isSameUser = uidRef.current === u.id;")).toBeGreaterThan(0);
+    expect(signedIn.indexOf("await noteIdentity(u.id);")).toBeGreaterThan(signedIn.indexOf("const isSameUser = uidRef.current === u.id;"));
+    expect(signedIn.indexOf("setUid(u.id);")).toBeGreaterThan(signedIn.indexOf("await noteIdentity(u.id);"));
+    expect(signedIn.match(/uidRef\.current/g)).toHaveLength(1);
+  });
+});
+
+// ── IS-P1 review blocker: a user switch by SIGNED_IN, as a browser runs it ──
+// Outside act(), with real timers and an IndexedDB delete that answers in a
+// LATER TASK (a timer), as every browser's does: while the identity-change
+// purge waits on it, React commits the switch's setUid and the uidRef effect
+// runs. The SIGNED_IN path must still see a DIFFERENT user and resolve the
+// new one's membership — before the fix it read uidRef after the await,
+// skipped the resolve, and left the previous identity's role, org and member
+// row on screen for the new one.
+describe("IS-P1 review blocker — a SIGNED_IN for a different user resolves that user's membership (rendered outside act, IndexedDB answering on a timer)", () => {
+  function SwitchProbe() {
+    const { uid, activeRole, activeOrgId, membershipState } = useRole();
+    return React.createElement("div", { id: "switch" }, `${uid}|${activeRole}|${activeOrgId}|${membershipState}`);
+  }
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const until = async (pred: () => boolean, ms = 3000) => {
+    const t0 = Date.now();
+    while (!pred() && Date.now() - t0 < ms) await sleep(10);
+  };
+  let deleted: string[];
+  beforeEach(() => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+    deleted = [];
+    vi.stubGlobal("indexedDB", {
+      deleteDatabase: (name: string) => {
+        const req: Record<string, () => void> = {};
+        setTimeout(() => { deleted.push(name); req.onsuccess?.(); }, 25);
+        return req;
+      },
+    });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  });
+
+  it("u1 (Admin of o1) → SIGNED_IN u2 (Viewer of o2): ends u1's data, reads u2's membership, and shows u2|Viewer|o2|member — never u2 with u1's Admin", async () => {
+    s.membersByUid = {
+      u1: { org_id: "o1", uid: "u1", role: "Admin", roles: ["Admin"], status: "active" },
+      u2: { org_id: "o2", uid: "u2", role: "Viewer", roles: ["Viewer"], status: "active" },
+    };
+    s.profileOrgByUid = { u1: "o1", u2: "o2" };
+    s.session = { user: { id: "u1", email: "a@x.io" } };
+    root.render(React.createElement(RoleProvider, null, React.createElement(SwitchProbe)));
+    const view = () => host.querySelector("#switch")?.textContent ?? "";
+    await until(() => view() === "u1|Admin|o1|member");
+    expect(view()).toBe("u1|Admin|o1|member");
+    window.localStorage.setItem("mfg-os.palette.recents", "[\"u1's recent\"]");
+    s.memberReads.length = 0;
+    void s.authCb!("SIGNED_IN", { user: { id: "u2", email: "b@x.io" } }); // e.g. a sign-in in another tab, broadcast here
+    await until(() => view() === "u2|Viewer|o2|member");
+    await sleep(50);
+    expect(view()).toBe("u2|Viewer|o2|member");
+    expect(s.memberReads).toContain("u2");
+    expect(deleted).toEqual(["manufacturingos"]);
+    expect(window.localStorage.getItem("mfg-os.palette.recents")).toBeNull();
+    expect(window.localStorage.getItem(LAST_IDENTITY_KEY)).toBe("u2");
+  });
+
+  it("regression: a SIGNED_IN re-emit for the SAME user (a tab return) purges nothing and reads no membership", async () => {
+    s.membersByUid = { u1: { org_id: "o1", uid: "u1", role: "Admin", roles: ["Admin"], status: "active" } };
+    s.session = { user: { id: "u1", email: "a@x.io" } };
+    root.render(React.createElement(RoleProvider, null, React.createElement(SwitchProbe)));
+    const view = () => host.querySelector("#switch")?.textContent ?? "";
+    await until(() => view() === "u1|Admin|o1|member");
+    window.localStorage.setItem("mfg-os.palette.recents", "[]");
+    s.memberReads.length = 0;
+    void s.authCb!("SIGNED_IN", { user: { id: "u1", email: "a@x.io" } });
+    await sleep(100);
+    expect(view()).toBe("u1|Admin|o1|member");
+    expect(s.memberReads).toEqual([]);
+    expect(deleted).toEqual([]);
+    expect(window.localStorage.getItem("mfg-os.palette.recents")).toBe("[]");
   });
 });

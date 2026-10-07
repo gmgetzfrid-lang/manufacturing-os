@@ -68,7 +68,7 @@ import type { TagColumnDef } from "@/lib/documentTags";
 import RevUpModal from "@/components/documents/RevUpModal";
 import { loadMyMarkup, saveMyMarkup, myActiveSessionId, type DocumentMarkup } from "@/lib/markups";
 import { listVersions, changeDocumentStatus } from "@/lib/revisions";
-import { isIssueTransition } from "@/lib/issueStatus";
+import { isIssueTransition, isControlledIssueStatus } from "@/lib/issueStatus";
 import { publicOrigin } from "@/lib/publicOrigin";
 import SupersedeModal from "@/components/documents/SupersedeModal";
 import ArchiveConfirmModal from "@/components/documents/ArchiveConfirmModal";
@@ -2779,18 +2779,26 @@ export default function LibraryExplorerPage() {
       status: next.core?.status ?? selectedDoc.status,
       customFields: next.metadata as Record<string, unknown>,
     }, library?.uniquenessKeys);
-    // REV-19: a save whose status change makes the document a controlled
-    // issue (isIssueTransition — the same test the editor shows its
-    // "issuing" note on) goes through lib/revisions.ts changeDocumentStatus,
-    // as the bulk editor and the un-archive do: the SAME one checked UPDATE
-    // (every column below rides in it as the patch), then the compliance
-    // clocks (review clock, read-&-understood roster) and the DOCUMENT_ISSUED
-    // record. Every other save is the bare checked write below, unchanged.
+    // REV-19: a save that writes a controlled-issue status
+    // (isControlledIssueStatus — Issued, IFC, a library's own status) goes
+    // through lib/revisions.ts changeDocumentStatus, as the bulk editor and
+    // the un-archive do: the SAME one checked UPDATE (every column below
+    // rides in it as the patch), and whether it ISSUES the document is
+    // decided from the database row it reads first, never from this page's
+    // copy — the editor always sends the status, so a typo fix on a document
+    // this page still shows as Issued, which another change has moved back
+    // to Draft, writes Issued again: that is an issue, and it gets the
+    // compliance clocks (review clock, read-&-understood roster) and the
+    // DOCUMENT_ISSUED record like any other. Every save to a status that
+    // issues nothing (Draft, In Review, the retired ones) is the bare checked
+    // write below, unchanged. `pageSawIssue` is only what the editor told the
+    // person (its "issuing" note) — it picks the sentence, not the route.
     const toStatus = next.core?.status;
-    if (toStatus !== undefined && isIssueTransition({ fromStatus: selectedDoc.status, toStatus, hasCurrentRevision: !!selectedDoc.currentVersionId })) {
+    const pageSawIssue = toStatus !== undefined && isIssueTransition({ fromStatus: selectedDoc.status, toStatus, hasCurrentRevision: !!selectedDoc.currentVersionId });
+    if (toStatus !== undefined && isControlledIssueStatus(toStatus)) {
       const orgId = selectedDoc.orgId || activeOrgId || library?.orgId || null;
       if (!uid || !orgId) {
-        throw new Error("Save refused — nothing was saved: this status change issues the document, and who is issuing it (your sign-in and workspace) is not known yet. Try again in a moment.");
+        throw new Error(`Save refused — nothing was saved: this save writes the status ${toStatus}, which can issue the document, and who is saving it (your sign-in and workspace) is not known yet. Try again in a moment.`);
       }
       let outcome: Awaited<ReturnType<typeof changeDocumentStatus>>;
       try {
@@ -2806,20 +2814,33 @@ export default function LibraryExplorerPage() {
       // save is not repeated — the status change stands (REV-19, as the bulk
       // editor and the un-archive dialog say it).
       const label = selectedDoc.documentNumber || selectedDoc.title || selectedDoc.name || "The document";
+      // The database row was issuable although this page saw nothing to
+      // issue (it showed the document issued, or with no revision): this
+      // save issued it — recorded, clocks handled — and the person is told.
+      const reissued = outcome.issued && !pageSawIssue
+        ? `${label} was issued by this save: another change after this page loaded had moved it out of issue (or given it its first revision), and this save carries its status as ${toStatus} — the issue is recorded on its history like any other.`
+        : null;
       const problems = outcome.issued
         ? [
             ...outcome.complianceClockErrors,
             ...(outcome.recordError ? [`The issue record could not be written (${outcome.recordError}), so this issue is not on the document's history.`] : []),
           ]
-        : outcome.notRecordedBecause === "read_failed"
+        : outcome.notRecordedBecause === "read_failed" && pageSawIssue
           ? ["The status was changed, but it was not recorded as an issue — its status before the change could not be read, so no review clock or acknowledgment roster was started and no issue record was written. Check its history and start its clocks from the document."]
           : [];
       if (problems.length > 0) {
-        const head = `${label} was saved as ${toStatus}, but ${problems.length} follow-up step${problems.length === 1 ? "" : "s"} did not complete. The status change stands and is not rolled back — do not save it again.`;
+        const head = `${reissued ? `${reissued} ` : ""}${label} was saved as ${toStatus}, but ${problems.length} follow-up step${problems.length === 1 ? "" : "s"} did not complete. The status change stands and is not rolled back — do not save it again.`;
         setError(`${head} ${problems.join(" ")}`);
         void appAlert({ title: "Saved — follow-up steps did not complete", message: `${head}\n\n${problems.join("\n")}`, tone: "danger" });
-      } else if (!outcome.issued && outcome.notRecordedBecause === "already_issued") {
+      } else if (reissued) {
+        setError(reissued);
+      } else if (!outcome.issued && outcome.notRecordedBecause === "already_issued" && pageSawIssue) {
         setError(`${label} was already issued when this save reached it (issued by another change after this page loaded), so this save issued nothing: no clock was started and no issue record written for it, and nothing more is owed.`);
+      } else if (!outcome.issued && outcome.notRecordedBecause === "read_failed") {
+        // This page saw nothing to issue (already issued, or no revision),
+        // but the row before the save could not be read: whether the save
+        // issued it is unknown — say so rather than guess.
+        setError(`${label} was saved, but its state just before the save could not be read, so whether this save issued it is unknown: if another change after this page loaded had moved it out of issue (or given it its first revision), it is now issued with no review clock, acknowledgment roster or issue record — check its history.`);
       }
       return;
     }

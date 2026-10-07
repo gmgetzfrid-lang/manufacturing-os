@@ -6,11 +6,15 @@
 //   XEDGE-5 / PHYS-13  the two /d/ copy actions build on the configured
 //                      public origin (publicOrigin()), as RelatedPanel and the
 //                      projects' /submit links do — never the page's host.
-//   REV-19             saveMetadata routes a status change that ISSUES the
-//                      document through lib/revisions.ts changeDocumentStatus
-//                      (the same one checked write, then the compliance clocks
-//                      and DOCUMENT_ISSUED), as the bulk editor and the
-//                      un-archive do; every other save is unchanged.
+//   REV-19             saveMetadata routes every save that WRITES a
+//                      controlled-issue status through lib/revisions.ts
+//                      changeDocumentStatus (the same one checked write; then,
+//                      when the database row it read says the write issued
+//                      the document, the compliance clocks and
+//                      DOCUMENT_ISSUED), as the bulk editor and the un-archive
+//                      do — the route never trusts the page's copy of the
+//                      status; a save to a status that issues nothing is
+//                      unchanged.
 //   DRLS-14            the deploy prerequisite of 20261149: handleBulkDelete
 //                      reads each delete's { error } and row count, keeps a
 //                      refused document on screen and says why in the
@@ -32,6 +36,8 @@ const state = vi.hoisted(() => ({
   db: null as unknown as FakeDb,
   clockErrors: [] as string[],
   refuse: null as null | { code: string; message: string },
+  /** The status-issue basis read (documents select("*")) fails. */
+  failBasisRead: false,
 }));
 
 vi.mock("@/lib/supabase", () => ({
@@ -39,6 +45,14 @@ vi.mock("@/lib/supabase", () => ({
     const real = makeFakeSupabase(state.db);
     return {
       ...real,
+      from: (t: string) => {
+        const b = real.from(t) as unknown as Record<string, (...a: unknown[]) => unknown>;
+        if (t !== "documents" || !state.failBasisRead) return b;
+        const failing: Record<string, unknown> = {};
+        failing.eq = () => failing;
+        failing.maybeSingle = async () => ({ data: null, error: { message: "connection reset" } });
+        return new Proxy(b, { get: (target, prop: string) => (prop === "select" ? (cols: string) => (cols === "*" ? failing : target.select(cols)) : target[prop]) });
+      },
       rpc: async (fn: string) => ({ data: null, error: { code: "PGRST202", message: `Could not find the function public.${fn}` } }),
     };
   },
@@ -65,7 +79,7 @@ vi.mock("@/lib/reviewControl", async (importOriginal) => {
 
 import { supabase } from "@/lib/supabase";
 import { changeDocumentStatus } from "@/lib/revisions";
-import { isIssueTransition, isIssueRefusal } from "@/lib/issueStatus";
+import { isIssueTransition, isIssueRefusal, isControlledIssueStatus } from "@/lib/issueStatus";
 import { computeUniquenessKey } from "@/lib/uniqueness";
 import { publicOrigin } from "@/lib/publicOrigin";
 import { onDocumentIssued } from "@/lib/reviewCycles";
@@ -96,6 +110,7 @@ beforeEach(() => {
   state.db = newFakeDb();
   state.clockErrors = [];
   state.refuse = null;
+  state.failBasisRead = false;
   state.db.beforeUpdate!.documents = (next) => { if (state.refuse) throw state.refuse; return next; };
 });
 
@@ -207,7 +222,7 @@ describe("DRLS-14 — the bulk delete checks every delete and keeps a refused do
 });
 
 // ── REV-19: the metadata editor's limb ───────────────────────────────────
-describe("REV-19 — saveMetadata routes an issuing status change through changeDocumentStatus", () => {
+describe("REV-19 — saveMetadata routes every save that writes an issue status through changeDocumentStatus", () => {
   function seed(id: string, extra: Row = {}) {
     const d: Row = {
       id, org_id: ORG, library_id: "lib1", collection_id: null, document_number: id.toUpperCase(), title: id, rev: "2",
@@ -220,18 +235,19 @@ describe("REV-19 — saveMetadata routes an issuing status change through change
   }
   const asDoc = (d: Row) => ({ id: d.id, orgId: ORG, libraryId: "lib1", documentNumber: d.document_number, title: d.title, rev: d.rev, status: d.status, currentVersionId: d.current_version_id ?? undefined, metadata: d.metadata });
   const issued = () => T("audit_logs").filter((a) => a.action === "DOCUMENT_ISSUED");
-  function save(d: Row, opts: { activeRole?: string | null; uid?: string | null } = {}) {
+  function save(d: Row, opts: { activeRole?: string | null; uid?: string | null; pageSees?: Row } = {}) {
     const st = { error: null as string | null, alerts: [] as Array<{ title: string; message: string }> };
-    const fn = lift<(next: unknown) => Promise<void>>("saveMetadata", ["selectedDoc", "uid", "userEmail", "activeRole", "activeOrgId", "library", "supabase", "changeDocumentStatus", "isIssueTransition", "computeUniquenessKey", "setError", "appAlert"])({
-      selectedDoc: asDoc(d), uid: opts.uid === undefined ? "ctl1" : opts.uid, userEmail: "ctl@example.com",
+    const fn = lift<(next: unknown) => Promise<void>>("saveMetadata", ["selectedDoc", "uid", "userEmail", "activeRole", "activeOrgId", "library", "supabase", "changeDocumentStatus", "isIssueTransition", "isControlledIssueStatus", "computeUniquenessKey", "setError", "appAlert"])({
+      selectedDoc: asDoc({ ...d, ...(opts.pageSees ?? {}) }), uid: opts.uid === undefined ? "ctl1" : opts.uid, userEmail: "ctl@example.com",
       activeRole: opts.activeRole === undefined ? "DocCtrl" : opts.activeRole, activeOrgId: ORG,
-      library: { orgId: ORG, uniquenessKeys: ["documentNumber"] }, supabase, changeDocumentStatus, isIssueTransition, computeUniquenessKey,
+      library: { orgId: ORG, uniquenessKeys: ["documentNumber"] }, supabase, changeDocumentStatus, isIssueTransition, isControlledIssueStatus, computeUniquenessKey,
       setError: (v: string | null) => { st.error = v; },
       appAlert: async (a: { title: string; message: string }) => { st.alerts.push(a); },
     });
     return { st, fn };
   }
   const updates = () => state.db.calls.filter((c) => c.table === "documents" && c.method === "update");
+  const basisReads = () => state.db.calls.filter((c) => c.table === "documents" && c.method === "select" && c.args[0] === "*");
 
   it("Draft → Issued: ONE checked UPDATE carrying every edited column, then both clocks and DOCUMENT_ISSUED (door metadata, the signed-in role)", async () => {
     const d = seed("d1");
@@ -284,29 +300,88 @@ describe("REV-19 — saveMetadata routes an issuing status change through change
     expect(updates()).toEqual([]);
   });
 
-  it("regression — a save that issues nothing is the bare checked write, with exactly the old columns; no clock, no record", async () => {
+  it("regression — a metadata save of an Issued document (the editor always sends the status) is ONE checked UPDATE with exactly the old columns; nothing to issue, no clock, no record, no note", async () => {
     const d = seed("d6", { status: "Issued" });
     const { st, fn } = save(d);
     await fn({ metadata: { unit: "VDU" }, core: { title: "Renamed", documentNumber: "D6", status: "Issued" } });
     expect(updates()).toHaveLength(1);
     expect(Object.keys(updates()[0].args[0] as Row).sort()).toEqual(["document_number", "metadata", "status", "title", "uniqueness_key", "updated_at", "updated_by"]);
-    expect(state.db.calls.filter((c) => c.table === "documents" && c.method === "select" && c.args[0] === "*")).toEqual([]); // no status-issue basis read
+    expect(T("documents")[0]).toMatchObject({ status: "Issued", title: "Renamed", metadata: { unit: "VDU" }, updated_by: "ctl1" });
+    expect(basisReads()).toHaveLength(1); // the route reads the row: the page's copy decides nothing
     expect(issued()).toEqual([]);
     expect(onDocumentIssued).not.toHaveBeenCalled();
-    expect(st.error).toBeNull();
-    // and Issued → Draft (not an issue) is the bare write too
-    const d7 = seed("d7", { status: "Issued" });
-    await save(d7).fn({ metadata: {}, core: { title: "d7", documentNumber: "D7", status: "Draft" } });
-    expect(T("documents").find((r) => r.id === "d7")!.status).toBe("Draft");
-    expect(issued()).toEqual([]);
+    expect(onDocumentIssuedAck).not.toHaveBeenCalled();
+    expect(st.error).toBeNull(); // "already issued" is what this page showed — nothing to say
+    expect(st.alerts).toEqual([]);
   });
 
-  it("regression — a register row with no revision (rev editable) keeps its bare write, rev in the payload (DRLS-15)", async () => {
+  it("regression — a save to a status that issues nothing (Issued → Draft) is the bare checked write, no basis read", async () => {
+    const d7 = seed("d7", { status: "Issued" });
+    const { st, fn } = save(d7);
+    await fn({ metadata: {}, core: { title: "d7", documentNumber: "D7", status: "Draft" } });
+    expect(T("documents").find((r) => r.id === "d7")!.status).toBe("Draft");
+    expect(updates()).toHaveLength(1);
+    expect(basisReads()).toEqual([]);
+    expect(issued()).toEqual([]);
+    expect(st.error).toBeNull();
+  });
+
+  it("review fix — the page's copy is stale: it shows Issued, another change moved the row back to Draft; a typo fix that carries Issued ISSUES it, so it is recorded with its clocks, and the person is told", async () => {
+    const d = seed("d9", { status: "Draft" });
+    const { st, fn } = save(d, { pageSees: { status: "Issued" } });
+    await fn({ metadata: {}, core: { title: "Overhead P&ID (typo fixed)", documentNumber: "D9", status: "Issued" } });
+    expect(updates()).toHaveLength(1);
+    expect(T("documents")[0]).toMatchObject({ status: "Issued", title: "Overhead P&ID (typo fixed)" });
+    expect(issued()).toHaveLength(1);
+    expect(issued()[0].details).toMatchObject({ door: "metadata", fromStatus: "Draft", toStatus: "Issued", versionId: "d9-v2", putBack: false });
+    expect(onDocumentIssued).toHaveBeenCalledTimes(1);
+    expect(onDocumentIssuedAck).toHaveBeenCalledTimes(1);
+    expect(st.error).toMatch(/^D9 was issued by this save: another change after this page loaded had moved it out of issue/);
+    expect(st.alerts).toEqual([]);
+  });
+
+  it("review fix — the stale-copy issue whose clocks did not fully start says both: issued by this save, and the follow-up that did not complete", async () => {
+    state.clockErrors = ["the review cycle row was refused"];
+    const d = seed("d10", { status: "In Review" });
+    const { st, fn } = save(d, { pageSees: { status: "Issued" } });
+    await fn({ metadata: {}, core: { title: "d10", documentNumber: "D10", status: "Issued" } });
+    expect(issued()).toHaveLength(1);
+    expect(st.error).toMatch(/^D10 was issued by this save: .* D10 was saved as Issued, but 1 follow-up step did not complete\./);
+    expect(st.alerts[0]?.title).toBe("Saved — follow-up steps did not complete");
+  });
+
+  it("the opposite stale copy: the page shows Draft → Issued, the row was already issued by another change — the save issues nothing and says so (unchanged)", async () => {
+    const d = seed("d11", { status: "Issued" });
+    const { st, fn } = save(d, { pageSees: { status: "Draft" } });
+    await fn({ metadata: {}, core: { title: "d11", documentNumber: "D11", status: "Issued" } });
+    expect(issued()).toEqual([]);
+    expect(onDocumentIssued).not.toHaveBeenCalled();
+    expect(st.error).toMatch(/^D11 was already issued when this save reached it/);
+  });
+
+  it("the row before the save cannot be read: an issuing save says what was not recorded; a save of a document the page showed issued says it cannot tell whether it issued it", async () => {
+    state.failBasisRead = true;
+    const a = seed("d12", { status: "Draft" });
+    const ra = save(a);
+    await ra.fn({ metadata: {}, core: { title: "d12", documentNumber: "D12", status: "Issued" } });
+    expect(issued()).toEqual([]);
+    expect(ra.st.error).toMatch(/^D12 was saved as Issued, but 1 follow-up step did not complete\..*its status before the change could not be read/);
+    const b = seed("d13", { status: "Issued" });
+    const rb = save(b);
+    await rb.fn({ metadata: {}, core: { title: "d13", documentNumber: "D13", status: "Issued" } });
+    expect(issued()).toEqual([]);
+    expect(rb.st.error).toMatch(/^D13 was saved, but its state just before the save could not be read, so whether this save issued it is unknown/);
+    expect(rb.st.alerts).toEqual([]);
+  });
+
+  it("regression — a register row with no revision (rev editable): ONE UPDATE with rev in the payload (DRLS-15); nothing to issue, nothing recorded", async () => {
     const d = seed("d8", { current_version_id: null, status: "Draft" });
-    await save(d).fn({ metadata: {}, core: { title: "d8", documentNumber: "D8", rev: "B", status: "Issued" } });
+    const { st, fn } = save(d);
+    await fn({ metadata: {}, core: { title: "d8", documentNumber: "D8", rev: "B", status: "Issued" } });
     expect(updates()).toHaveLength(1);
     expect((updates()[0].args[0] as Row).rev).toBe("B");
     expect(issued()).toEqual([]);
+    expect(st.error).toBeNull();
   });
 
   it("source: the bare write and its checks are byte-for-byte the DRLS-15 ones; the issue route is the one changeDocumentStatus call", () => {
@@ -315,6 +390,10 @@ describe("REV-19 — saveMetadata routes an issuing status change through change
     expect(body).toContain('orgId, documentId: selectedDoc.id, toStatus, door: "metadata",');
     expect(body).toContain("actorUserId: uid, actorEmail: userEmail ?? null, actorRole: activeRole ?? null,");
     expect(body).toContain("patch: payload,");
-    expect(body).toMatch(/if \(toStatus !== undefined && isIssueTransition\(\{ fromStatus: selectedDoc\.status, toStatus, hasCurrentRevision: !!selectedDoc\.currentVersionId \}\)\) \{/);
+    // the route is chosen by the status WRITTEN, never by the page's copy of the status
+    expect(body).toContain("if (toStatus !== undefined && isControlledIssueStatus(toStatus)) {");
+    expect(body).toContain("const pageSawIssue = toStatus !== undefined && isIssueTransition({ fromStatus: selectedDoc.status, toStatus, hasCurrentRevision: !!selectedDoc.currentVersionId });");
+    expect(body.match(/pageSawIssue/g)!.length).toBeGreaterThan(1);
+    expect(body).not.toMatch(/if \(toStatus !== undefined && isIssueTransition\(/);
   });
 });

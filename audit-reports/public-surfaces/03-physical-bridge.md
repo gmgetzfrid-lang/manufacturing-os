@@ -684,7 +684,7 @@ FullScreenViewer.tsx:1268 `value={\`${window.location.origin}/documents/${docRec
 
 **Scope / residual.** OPEN for those two files' owners.
 
-**Partial (2026-10-07, identity-and-session Round G).** Package **IS-P1** removed the library page's two readers (document-control `XEDGE-5`, now RESOLVED): `app/(protected)/documents/[libraryId]/page.tsx` builds both `/d/` copies on `publicOrigin()` (`:760`, `:3242`), and `window.location.origin` no longer appears in the page. Test: `lib/__tests__/isP1LibraryPage.test.ts` "XEDGE-5 / PHYS-13 —" (the Ctrl+C copy lifted and run with a configured site and a different page host).
+**Partial (2026-10-07, identity-and-session Round G).** Package **IS-P1** removed the library page's two readers (document-control `XEDGE-5`, now RESOLVED): `app/(protected)/documents/[libraryId]/page.tsx` builds both `/d/` copies on `publicOrigin()` (`:760`, `:3263`), and `window.location.origin` no longer appears in the page. Test: `lib/__tests__/isP1LibraryPage.test.ts` "XEDGE-5 / PHYS-13 —" (the Ctrl+C copy lifted and run with a configured site and a different page host).
 
 **Done-when (this pass).**
 1. ✓ Unchanged.

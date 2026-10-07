@@ -46,15 +46,27 @@ const BOOT_SPINNER_MS = 8_000;
 // class; lib/__tests__/sessSixRoleNull.test.ts refuses a key — a literal, a
 // constant or a template's fixed head at any getItem / setItem / removeItem
 // — that matches no row here (or a row its file does not own).
-//   - "account": cleared on every SIGNED_OUT, and when a DIFFERENT identity
-//     next runs the app in this browser (LAST_IDENTITY_KEY — across a reload
-//     and across tabs). `kind` "cache" (rebuilt from the server on the next
-//     visit) is also cleared when THIS tab had an identity, its session
-//     evaporates without a SIGNED_OUT, and supabase-js keeps no session in
-//     localStorage or in this tab's sessionStorage (an expired token it is
-//     still retrying keeps them); `kind` "held" (work in flight or
-//     per-identity state the same account may come straight back to) is
-//     kept then.
+//   - "account": what the account read. Its `kind` says when it goes:
+//       "cache"    — rebuilt from the server on the next visit. Cleared on
+//                    every SIGNED_OUT, when a DIFFERENT identity next runs
+//                    the app in this browser or this tab (LAST_IDENTITY_KEY
+//                    — across a reload and across tabs), and when THIS tab
+//                    had an identity, its session evaporates without a
+//                    SIGNED_OUT, and supabase-js keeps no session in
+//                    localStorage or in this tab's sessionStorage (an
+//                    expired token it is still retrying keeps them).
+//       "held"     — per-identity state: cleared on SIGNED_OUT and when a
+//                    different identity runs the app; kept when a session
+//                    evaporates.
+//       "identity" — the person's own work or arrangement, which an
+//                    expiry-driven SIGNED_OUT (indistinguishable here from
+//                    a sign-out button) must not cost them — it survived
+//                    every sign-out before IS-P1. Kept on SIGNED_OUT and
+//                    when a session evaporates; ended only when a DIFFERENT
+//                    identity next runs the app in this browser or this
+//                    tab, before anything of that identity is read
+//                    (noteIdentity). The remembered identity is itself of
+//                    this kind, so it outlives the sign-out it must answer.
 //   - "workspace": the device workspace pointer — cleared on SIGNED_OUT by
 //     clearStoredOrgId (IDENT-4), kept on evaporation (owner-checked).
 //   - "sign-in": the sign-in flow's own state, which must survive an
@@ -65,14 +77,15 @@ const BOOT_SPINNER_MS = 8_000;
 //   - "device": how this device looks and which hints were seen — not
 //     anything an account read — kept.
 export type ClientStorageClass = "account" | "workspace" | "sign-in" | "uid-scoped" | "device";
+export type AccountKind = "cache" | "held" | "identity";
 export type ClientStorageRule = {
   store: "local" | "session";
   /** The exact key, or (match "prefix") every key starting with it. */
   key: string;
   match: "exact" | "prefix";
   class: ClientStorageClass;
-  /** For "account" rows: when a session evaporates, is it dropped too? */
-  kind?: "cache" | "held";
+  /** For "account" rows: which ends drop it (see the class notes above). */
+  kind?: AccountKind;
   /** The files that read or write it. */
   owners: readonly string[];
   why: string;
@@ -84,13 +97,14 @@ export const CLIENT_STORAGE_INVENTORY: readonly ClientStorageRule[] = [
   { store: "session", key: "intel-status-", match: "prefix", class: "account", kind: "cache", owners: ["lib/hubStatus.ts", "app/(protected)/intelligence/page.tsx"], why: "the legacy org-only snapshot key, removed on sight" },
   { store: "local", key: "schema-gaps-", match: "prefix", class: "account", kind: "cache", owners: ["lib/hubStatus.ts", "app/(protected)/intelligence/page.tsx"], why: "the hub's schema-gap snapshot" },
   { store: "session", key: "schema-gaps-", match: "prefix", class: "account", kind: "cache", owners: ["lib/hubStatus.ts", "app/(protected)/intelligence/page.tsx"], why: "the legacy org-only gap key, removed on sight" },
-  { store: "local", key: "mfg-os.palette.recents", match: "exact", class: "account", kind: "cache", owners: ["components/navigation/GlobalCommandPalette.tsx"], why: "the titles and links of the documents, projects and requests the account last opened" },
-  { store: "local", key: "orgGraph:pos", match: "prefix", class: "account", kind: "cache", owners: ["app/(protected)/graph/page.tsx"], why: "the settled graph layout, keyed by the ids of every node the account's graph returned (re-settles on the next visit)" },
+  { store: "local", key: "mfg-os.palette.recents", match: "exact", class: "account", kind: "identity", owners: ["components/navigation/GlobalCommandPalette.tsx"], why: "the titles and links of the documents, projects and requests the account last opened — the person's own list, kept across a sign-out for their next sign-in, ended before another identity sees it" },
+  { store: "local", key: "orgGraph:pos", match: "prefix", class: "account", kind: "identity", owners: ["app/(protected)/graph/page.tsx"], why: "the graph layout the person arranged (every settle and drag), keyed by org and by the ids of the nodes the account's graph returned — kept across a sign-out, as before IS-P1, ended before another identity sees it" },
   { store: "session", key: "org-graph-", match: "prefix", class: "account", kind: "cache", owners: ["app/(protected)/graph/page.tsx"], why: "the assembled graph (node titles included) painted instantly on return" },
   { store: "session", key: "mfg-os:lib:", match: "prefix", class: "account", kind: "cache", owners: ["app/(protected)/documents/[libraryId]/page.tsx"], why: "the library row (its access lists included) painted instantly on return" },
-  { store: "session", key: "kl-active-thread-", match: "prefix", class: "account", kind: "held", owners: ["app/(protected)/knowledge/[id]/page.tsx"], why: "the account's open ask thread — its questions and the answers drawn from its documents" },
+  { store: "session", key: "kl-active-thread-", match: "prefix", class: "account", kind: "identity", owners: ["app/(protected)/knowledge/[id]/page.tsx"], why: "the account's open ask thread — its questions and the answers drawn from its documents; kept across a sign-out in this tab for the same person, ended when another identity runs the app in this tab" },
   { store: "local", key: "dismissed:", match: "prefix", class: "account", kind: "held", owners: ["hooks/useDismissed.ts"], why: "dismissals, keyed <uid>:<org> — useDismissed also sweeps them on SIGNED_OUT" },
-  { store: "local", key: "manufacturingos.lastIdentity", match: "exact", class: "account", kind: "held", owners: ["components/providers/RoleContext.tsx"], why: "the uid the app last ran as in this browser, so a DIFFERENT identity booting here after a reload or in a new tab ends the last one's account data (removed by the SIGNED_OUT purge itself; kept when a session evaporates)" },
+  { store: "local", key: "manufacturingos.lastIdentity", match: "exact", class: "account", kind: "identity", owners: ["components/providers/RoleContext.tsx"], why: "the uid the app last ran as in this browser, so a DIFFERENT identity booting here — after a sign-out, a reload or in a new tab — ends the last one's account data first (kept across SIGNED_OUT and evaporation; it is what lets the person's own work outlive a sign-out)" },
+  { store: "session", key: "manufacturingos.lastIdentity", match: "exact", class: "account", kind: "identity", owners: ["components/providers/RoleContext.tsx"], why: "the uid THIS tab last ran as, so a different identity booting in this tab ends this tab's sessionStorage account data even when another tab already moved the browser's memory to that identity" },
   // ── workspace ──
   { store: "local", key: "manufacturingos.activeOrgId", match: "exact", class: "workspace", owners: ["lib/workspaceDeviceState.ts"], why: "the device workspace (IDENT-4: cleared on SIGNED_OUT, owner-checked otherwise)" },
   { store: "local", key: "manufacturingos.activeOrgId.owner", match: "exact", class: "workspace", owners: ["lib/workspaceDeviceState.ts"], why: "the uid that stored the device workspace" },
@@ -126,25 +140,32 @@ export const CLIENT_STORAGE_INVENTORY: readonly ClientStorageRule[] = [
 ];
 
 /** The one IndexedDB database the app opens. */
-export const CLIENT_INDEXED_DB_INVENTORY: readonly { name: string; stores: readonly string[]; class: "account"; kind: "held"; owners: readonly string[]; why: string }[] = [
-  { name: "manufacturingos", stores: ["draftHandoff"], class: "account", kind: "held", owners: ["lib/draftHandoff.ts"], why: "marked-up drawings handed from the viewer to the request form, kept until that request is submitted" },
+export const CLIENT_INDEXED_DB_INVENTORY: readonly { name: string; stores: readonly string[]; class: "account"; kind: AccountKind; owners: readonly string[]; why: string }[] = [
+  { name: "manufacturingos", stores: ["draftHandoff"], class: "account", kind: "identity", owners: ["lib/draftHandoff.ts"], why: "marked-up drawings handed from the viewer to the request form, kept until that request is submitted (LIFE-3) — across an expiry-driven sign-out too, as before IS-P1; deleted when a different identity runs the app here" },
 ];
 
 function ruleMatches(rule: ClientStorageRule, key: string): boolean {
   return rule.match === "exact" ? key === rule.key : key.startsWith(rule.key);
 }
 
-/** Which "account" keys a purge removes: every one when a SIGNED_OUT or an
- *  identity change ends the account ("all"); only the rebuildable caches
- *  when a session merely evaporated ("cache"). */
-export type AccountPurgeScope = "all" | "cache";
+/** Which "account" keys a purge removes: every one when a DIFFERENT identity
+ *  ends the last one ("all"); the caches and the held state when a
+ *  SIGNED_OUT ends the session ("signout" — the person's own work, kind
+ *  "identity", stays for the same person's next sign-in); only the
+ *  rebuildable caches when a session merely evaporated ("cache"). */
+export type AccountPurgeScope = "all" | "signout" | "cache";
+
+/** Does a purge of this scope remove an account row of this kind? */
+export function purgeTakes(scope: AccountPurgeScope, kind: AccountKind | undefined): boolean {
+  return scope === "all" || kind === "cache" || (scope === "signout" && kind === "held");
+}
 
 /** Remove the account keys (CLIENT_STORAGE_INVENTORY, class "account") from
  *  one browser store. Never throws — storage can be missing or forbidden.
  *  Returns the keys it removed. */
 export function purgeAccountStorage(storage: Storage | null | undefined, store: "local" | "session", scope: AccountPurgeScope): string[] {
   const rules = CLIENT_STORAGE_INVENTORY.filter((r) =>
-    r.store === store && r.class === "account" && (scope === "all" || r.kind === "cache"));
+    r.store === store && r.class === "account" && purgeTakes(scope, r.kind));
   const doomed: string[] = [];
   try {
     if (!storage) return doomed;
@@ -167,18 +188,20 @@ function browserStore(store: "local" | "session"): Storage | null {
   }
 }
 
-/** Both browser stores, then (scope "all") the account IndexedDB databases —
- *  awaited but bounded, so a blocked delete can never hold a sign-out (a
- *  delete still blocked by an open connection completes once it closes). */
+/** Both browser stores, then the account IndexedDB databases the scope takes
+ *  (only "all" today: the draft hand-off is kind "identity") — awaited but
+ *  bounded, so a blocked delete can never hold an identity change (a delete
+ *  still blocked by an open connection completes once it closes). */
 export async function purgeAccountClientStores(scope: AccountPurgeScope, opts?: { idb?: IDBFactory | null; budgetMs?: number }): Promise<void> {
   purgeAccountStorage(browserStore("local"), "local", scope);
   purgeAccountStorage(browserStore("session"), "session", scope);
-  if (scope !== "all") return;
+  const doomedDbs = CLIENT_INDEXED_DB_INVENTORY.filter((db) => purgeTakes(scope, db.kind));
+  if (doomedDbs.length === 0) return;
   let idb: IDBFactory | null = null;
   try { idb = opts?.idb !== undefined ? opts.idb : (typeof indexedDB !== "undefined" ? indexedDB : null); } catch { idb = null; }
   if (!idb) return;
   const factory = idb;
-  const deletions = CLIENT_INDEXED_DB_INVENTORY.map((db) => new Promise<void>((done) => {
+  const deletions = doomedDbs.map((db) => new Promise<void>((done) => {
     try {
       const req = factory.deleteDatabase(db.name);
       req.onsuccess = () => done();
@@ -189,27 +212,33 @@ export async function purgeAccountClientStores(scope: AccountPurgeScope, opts?: 
   await Promise.race([Promise.all(deletions), new Promise<void>((done) => setTimeout(done, opts?.budgetMs ?? 1500))]);
 }
 
-/** A session user appearing on this tab after a DIFFERENT one was last seen
- *  here (a switch, or a sign-in after an evaporated session) ends the last
- *  identity's account data — its "held" keys included. */
+/** A session user appearing after a DIFFERENT one was last seen here (a
+ *  switch, a sign-in after a sign-out or an evaporated session) ends the
+ *  last identity's account data — its "held" and "identity" keys included. */
 export function identityChangeEndsAccount(lastUid: string | null, nextUid: string): boolean {
   return !!lastUid && lastUid !== nextUid;
 }
 
-/** OFF-8: where the last identity is remembered between page loads. The
- *  protected app never sees a sign-in (every sign-in happens on "/", outside
- *  this provider, and lands with a fresh page load), so an identity held
- *  only in memory could never be compared with the next one. Class
- *  "account" / kind "held" in the inventory: the SIGNED_OUT purge removes
- *  it, an evaporated session keeps it. */
+/** OFF-8: where the last identity is remembered between page loads — in
+ *  localStorage for the browser, and in sessionStorage for this tab (a
+ *  tab's sessionStorage is its own: another tab's purge cannot reach it).
+ *  The protected app never sees a sign-in (every sign-in happens on "/",
+ *  outside this provider, and lands with a fresh page load), so an identity
+ *  held only in memory could never be compared with the next one. Class
+ *  "account" / kind "identity" in the inventory: kept across SIGNED_OUT and
+ *  an evaporated session, so the next DIFFERENT identity still ends the
+ *  person's kept work before it reads anything. */
 export const LAST_IDENTITY_KEY = "manufacturingos.lastIdentity";
 
-function readLastIdentity(): string | null {
-  try { return browserStore("local")?.getItem(LAST_IDENTITY_KEY) || null; } catch { return null; }
+function readLastIdentity(store: "local" | "session"): string | null {
+  try {
+    return (store === "local" ? browserStore("local")?.getItem(LAST_IDENTITY_KEY) : browserStore("session")?.getItem(LAST_IDENTITY_KEY)) || null;
+  } catch { return null; }
 }
 
 function writeLastIdentity(uid: string): void {
   try { browserStore("local")?.setItem(LAST_IDENTITY_KEY, uid); } catch { /* storage forbidden — this tab still remembers */ }
+  try { browserStore("session")?.setItem(LAST_IDENTITY_KEY, uid); } catch { /* storage forbidden */ }
 }
 
 /** supabase-js's persisted session key (`sb-<project ref>-auth-token`; the
@@ -327,16 +356,23 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
   // re-emit of the same user" without blocking the UI on every tab return.
   const uidRef = useRef<string | null>(null);
   // OFF-8: the last session user seen on this tab. Unlike uidRef it survives
-  // a session that evaporates without a SIGNED_OUT. Cleared after a
-  // SIGNED_OUT purge. Before this tab has seen anyone it falls back to the
-  // identity the app last ran as in this browser (LAST_IDENTITY_KEY), so a
-  // DIFFERENT identity booting here — after a reload, or in a new tab —
-  // still ends the last one's account data (identityChangeEndsAccount).
+  // a session that evaporates without a SIGNED_OUT. A DIFFERENT identity is
+  // compared against the identity the app last ran as in this browser and
+  // in this tab (LAST_IDENTITY_KEY, which outlives a SIGNED_OUT; this ref
+  // stands in where storage cannot be read), so one booting here — after a
+  // sign-out, a reload, or in a new tab — ends the last one's account data
+  // before it reads anything (identityChangeEndsAccount): all of it when the
+  // browser last ran as someone else; this tab's sessionStorage copy when
+  // only this tab did (another tab already ended the rest).
   const lastIdentityRef = useRef<string | null>(null);
   const noteIdentity = async (nextUid: string) => {
     if (lastIdentityRef.current === nextUid) return;
-    if (identityChangeEndsAccount(lastIdentityRef.current ?? readLastIdentity(), nextUid)) {
+    const browserLast = readLastIdentity("local") ?? lastIdentityRef.current;
+    const tabLast = readLastIdentity("session") ?? lastIdentityRef.current;
+    if (identityChangeEndsAccount(browserLast, nextUid)) {
       await purgeAccountClientStores("all");
+    } else if (identityChangeEndsAccount(tabLast, nextUid)) {
+      purgeAccountStorage(browserStore("session"), "session", "all");
     }
     lastIdentityRef.current = nextUid;
     writeLastIdentity(nextUid);
@@ -651,16 +687,20 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
         clearStoredOrgId();
         // Status snapshots persist in localStorage for instant paints —
         // they must not outlive the account that fetched them. OFF-8: the
-        // same for every key the account read (CLIENT_STORAGE_INVENTORY,
-        // class "account" — recents, graph and library snapshots, the ask
-        // thread, dismissals, the remembered last identity) in localStorage
-        // AND sessionStorage, and the draft-handoff IndexedDB database. The
-        // graph's arranged layout goes with them (keyed by org, not by
-        // account — DEC-44 (IS-P1) Risk). The sign-in flow's own keys
+        // same for every rebuildable cache the account read and its held
+        // state (CLIENT_STORAGE_INVENTORY, class "account", kinds "cache"
+        // and "held" — the hub, graph and library snapshots, dismissals) in
+        // localStorage AND sessionStorage. The person's own work and
+        // arrangement (kind "identity" — the arranged graph layout, the
+        // palette's recents, the open ask thread, the redline hand-off
+        // waiting for its request, and the remembered identity) survive, as
+        // they did before IS-P1: an expiry-driven SIGNED_OUT looks exactly
+        // like this one, and the same person signing back in comes back to
+        // them. A DIFFERENT identity ends them before it reads anything
+        // (noteIdentity, LAST_IDENTITY_KEY). The sign-in flow's own keys
         // (the silent-SSO flags, the post-sign-in destination) survive, as
         // an expiry-driven SIGNED_OUT needs them; device preferences stay.
-        await purgeAccountClientStores("all");
-        lastIdentityRef.current = null;
+        await purgeAccountClientStores("signout");
         // The same principle for Cache Storage (OFF-8): every cache the
         // service worker filled on this device is deleted BEFORE the
         // redirect, whichever way the session ended — a sign-out button
@@ -706,6 +746,21 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
 
       if (session?.user) {
         const u = session.user;
+        // Read the identity BEFORE anything awaits: uidRef follows `uid`
+        // through an effect, so once an await yields, React may commit a
+        // setUid and run that effect — a user switch would then read as a
+        // re-emit of the same user and never resolve the new one's
+        // membership (the previous identity's role, org and member row
+        // would stay on screen for the new one — IS-P1 review blocker).
+        const isSameUser = uidRef.current === u.id;
+        if (event === "SIGNED_IN") {
+          // OFF-8: a different identity than the last one seen in this
+          // browser or this tab ends that identity's account data first —
+          // before anything of this one's is set, as the boot path does (a
+          // switch in another tab, or a sign-in after a session
+          // evaporated).
+          await noteIdentity(u.id);
+        }
         setUid(u.id);
         setUserEmail(u.email ?? null);
         // SIGNED_IN re-fires on tab return, on token refresh, and any time
@@ -715,11 +770,6 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
         // (the previous behavior) was the cause of the "stuck on
         // Authenticating…" loop when the tab went background → foreground.
         if (event === "SIGNED_IN") {
-          // OFF-8: a different identity than the last one seen on this tab
-          // ends that identity's account data first (a switch in another
-          // tab, or a sign-in after a session evaporated).
-          await noteIdentity(u.id);
-          const isSameUser = uidRef.current === u.id;
           if (!isSameUser) {
             // Actual user switch (rare). Resolve their org/role under the
             // shared budget (SESS-2) so a slow query can't lock the UI. On
@@ -759,11 +809,11 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
         // expired token it still keeps — so nothing is cleared unless THIS
         // tab had an identity AND supabase-js keeps no session in
         // localStorage or in this tab's sessionStorage. Then only the
-        // rebuildable account caches go (kind "cache"); work the same
-        // account may come straight back to (an unsubmitted redline
-        // hand-off, an open ask thread — kind "held") stays, and is ended at
-        // the next SIGNED_OUT or when a DIFFERENT identity next runs the app
-        // here (noteIdentity, LAST_IDENTITY_KEY).
+        // rebuildable account caches go (kind "cache"); held state (the
+        // dismissals) goes at the next SIGNED_OUT, and the person's own work
+        // (kind "identity" — an unsubmitted redline hand-off, an open ask
+        // thread, the arranged graph layout, the recents) when a DIFFERENT
+        // identity next runs the app here (noteIdentity, LAST_IDENTITY_KEY).
         // Cache Storage is left alone: the service worker's identity check
         // purges it when a different identity's SESSION is announced
         // (XEDGE-6), and emptying it here would take the offline shell from
