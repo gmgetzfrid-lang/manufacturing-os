@@ -17,14 +17,19 @@ storage service, where the app never puts its sign-in, its pages or its
 scripts. Even a file that somehow slipped past the checks could then never run
 next to the app or next to your controlled drawings.
 
-Nothing else changes: people open and download contractor files exactly as
-before; only the address in the browser's download bar is different.
+People open and download contractor files as before; only the address in the
+browser's download bar is different. One thing has to be confirmed once, after
+you set it, because nothing in the app can check it ahead of time: the
+**Full ZIP** backup is built inside your browser, which fetches every file from
+storage itself, and storage must let it do that from the new address too. Step
+5 of "How to check it worked" covers it, and says what to do if it fails.
 
 ## When to do it
 
 Any time after the app version with `lib/untrustedContent.ts` is live. Today
 the setting changes **only the links in the workspace data export** (Admin →
-**Data export** → **Download JSON**). The everyday download links — the
+**Data export** → **Download JSON**, and the **Full ZIP**, which is built from
+the same links). The everyday download links — the
 **Intake** tab, the document viewer — keep coming from the usual address until
 two small code changes land (`app/api/storage/download-url/route.ts` and
 `app/api/storage/resolve/route.ts` start calling `signStorageGet`; recorded on
@@ -63,8 +68,11 @@ day that change is deployed.
    **Redeploy**. (Docker: restart the app with the new `.env`.) The setting is
    read when the app starts.
 
-You do **not** need to change anything in Cloudflare: the address in step 2 is
+You should not need to change anything in Cloudflare: the address in step 2 is
 one your storage already answers on, with the same keys the app already holds.
+The one thing that is not known in advance is whether storage lets a browser
+fetch files from that address for the **Full ZIP** backup — step 5 below
+checks it.
 
 ## How to check it worked
 
@@ -83,6 +91,23 @@ Check it with the workspace export, the one place that uses the setting today:
 If the contractor file's link still starts with `https://<bucket name>.…`, the
 value was refused: the server log has one line starting with
 `[untrustedContent]` that says why (see the last section).
+
+5. **Check that the Full ZIP backup still gets contractor files.** Back on
+   **Admin → Data export**, click **Download Full ZIP** and let it finish
+   (allow several downloads if the browser asks). While it runs, the card
+   shows how many files failed. When it is done, open the last zip part and
+   then `backup-report.json` inside it: under `errors`, there should be **no**
+   file whose name contains `project-intake/` or `project-costs/` followed by
+   `quote-`. (Or open `files/orgs/…/project-intake/…` in the zip and see the
+   contractor drawings there.)
+
+   If those files are listed under `errors` (usually with a network error
+   such as "Failed to fetch") while your organization's own files are in the
+   zip, storage is not letting the browser read files from the new address.
+   Undo the setting (next section) so the Full ZIP gets every file again, and
+   pass the result on to whoever looks after the app (`GAP-401` records this
+   check). Opening a link from the JSON file, and the everyday download links,
+   do not depend on this check.
 
 The **Intake** tab's own download links do not change yet (see "When to do
 it"): a contractor file opened there still comes from the usual address, and

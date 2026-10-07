@@ -585,6 +585,156 @@ describe("intake_door keeps EXECUTE on what the policies for all roles call (rev
   });
 });
 
+// ── Review fix pass 4 (major): a RESTRICTIVE INSERT / ALL policy written for
+// every role judges the door's INSERT as intake_door exactly as it judges a
+// member's. One the link's identity cannot satisfy (a membership test, say)
+// REFUSES that write — the route answers 500 — and is never stepped around:
+// the door is judged by every guard. The handler above catches only a
+// privilege gap, so nothing else would notice. Two detectors: the paste's
+// fourth row-level-security row reads the live pg_policy, and this test fails
+// a later migration that adds such a policy without saying how intake_door is
+// treated (a TO clause that leaves it out, a predicate naming it, or a comment
+// `-- intake_door: <policy> …` in the same file).
+const DOOR_TABLE = String.raw`(?:public\.)?"?(documents|cost_documents)"?`;
+const CREATE_ON_DOOR_TABLE = new RegExp(String.raw`\bCREATE POLICY "?(\w+)"? ON ${DOOR_TABLE} (.*)$`, "i");
+const ALTER_ON_DOOR_TABLE = new RegExp(String.raw`\bALTER POLICY "?(\w+)"? ON ${DOOR_TABLE} (.*)$`, "i");
+/** CREATE POLICY's optional clauses, in the grammar's order, after "ON <table> ". */
+const POLICY_TAIL = /^(?:AS (PERMISSIVE|RESTRICTIVE)\s*)?(?:FOR (ALL|SELECT|INSERT|UPDATE|DELETE)\s*)?(?:TO ((?:(?!\bUSING\b|\bWITH CHECK\b).)+?)\s*)?((?:USING|WITH CHECK)\b.*)?$/i;
+/** ALTER POLICY's optional clauses after "ON <table> ". */
+const ALTER_TAIL = /^(?:TO ((?:(?!\bUSING\b|\bWITH CHECK\b).)+?)\s*)?((?:USING|WITH CHECK)\b.*)?$/i;
+const appliesToDoor = (to: string | undefined) => !to
+  || to.split(",").map((r) => r.trim().replace(/"/g, "").toLowerCase()).some((r) => r === "public" || r === "intake_door");
+/** The restrictive INSERT / ALL policies on documents or cost_documents that schema.sql and every migration create. */
+let restrictiveKnown: Set<string> | null = null;
+function restrictiveDoorPolicies(): Set<string> {
+  if (restrictiveKnown) return restrictiveKnown;
+  const out = new Set<string>();
+  const sources = [readFileSync(join(root, "supabase", "schema.sql"), "utf8"), ...numbered().map(mig)];
+  for (const sql of sources) {
+    for (const st of code(sql).split(";").map((x) => x.replace(/\s+/g, " ").trim())) {
+      const c = /POLICY/i.test(st) ? st.match(CREATE_ON_DOOR_TABLE) : null;
+      const t = c?.[3].match(POLICY_TAIL);
+      if (c && t && /RESTRICTIVE/i.test(t[1] ?? "") && /^(ALL|INSERT)$/i.test(t[2] ?? "ALL")) out.add(`${c[2]}.${c[1]}`);
+    }
+  }
+  restrictiveKnown = out;
+  return out;
+}
+/** What a migration's SQL adds that may refuse the door's INSERT as intake_door: a RESTRICTIVE policy FOR INSERT or
+ *  ALL (or no FOR: ALL) on documents or cost_documents, with no TO clause or one naming PUBLIC or intake_door — made
+ *  directly, inside a DO block, or by format() in a file that names either table — or an ALTER POLICY re-writing one
+ *  already restrictive, unless the file says how intake_door is treated. */
+function restrictsDoor(sql: string, known: ReadonlySet<string> = restrictiveDoorPolicies()): string[] {
+  const stated = (name: string) => new RegExp(String.raw`--\s*intake_door:\s*"?${name}"?\b`, "i").test(sql);
+  const out: string[] = [];
+  const body = code(sql);
+  const namesDoorTable = /'(?:public\.)?(?:cost_)?documents'/i.test(body);
+  for (const st of body.split(";").map((x) => x.replace(/\s+/g, " ").trim())) {
+    if (!/POLICY/i.test(st)) continue;
+    const c = st.match(CREATE_ON_DOOR_TABLE);
+    if (c) {
+      const t = c[3].match(POLICY_TAIL);
+      const [kind, cmd, to, predicate] = t ? [t[1], t[2], t[3], t[4] ?? ""] : ["RESTRICTIVE", undefined, undefined, c[3]];
+      if (!/RESTRICTIVE/i.test(kind ?? "") || !/^(ALL|INSERT)$/i.test(cmd ?? "ALL") || !appliesToDoor(to)) continue;
+      if (/\bintake_door/i.test(predicate) || stated(c[1])) continue;
+      out.push(`${c[2]}.${c[1]}: ${st.slice(0, 140)}`);
+      continue;
+    }
+    const a = st.match(ALTER_ON_DOOR_TABLE);
+    if (a) {
+      if (!known.has(`${a[2]}.${a[1]}`) || /^RENAME\b/i.test(a[3])) continue;
+      const t = a[3].match(ALTER_TAIL);
+      const [to, predicate] = t ? [t[1], t[2] ?? ""] : [undefined, a[3]];
+      if (!appliesToDoor(to) || /\bintake_door/i.test(predicate) || stated(a[1])) continue;
+      out.push(`${a[2]}.${a[1]} (altered): ${st.slice(0, 140)}`);
+      continue;
+    }
+    const f = st.match(/\bCREATE POLICY %I\w* ON %I (.*)$/i);
+    if (f && namesDoorTable && !/--\s*intake_door:/i.test(sql)) {
+      const t = f[1].match(POLICY_TAIL);
+      if (t && /RESTRICTIVE/i.test(t[1] ?? "") && /^(ALL|INSERT)$/i.test(t[2] ?? "ALL") && appliesToDoor(t[3])) {
+        out.push(`format(): ${st.slice(0, 140)}`);
+      }
+    }
+  }
+  return out;
+}
+
+describe("a restrictive policy for every role refuses the door's write — detected at the paste and in later migrations (review fix pass 4, major)", () => {
+  const tail = () => C.slice(C.indexOf("\nCOMMIT;"));
+  it("the paste's fourth row-level-security row reads pg_policy: restrictive INSERT / ALL policies for PUBLIC or intake_door on documents and cost_documents, beyond documents_deny_upload_guard (only in the repository's shape) and the two scope policies", () => {
+    const row = between(tail(), "SELECT 'row-level security for both: no restrictive INSERT or ALL policy", "       NULL\nUNION ALL");
+    expect(row).toContain("REFUSES the door''s writes it fails (the route answers 500); send this row back at once (SEC-22)");
+    for (const limb of [
+      "NOT EXISTS (SELECT 1 FROM pg_policy pol",
+      "WHERE pol.polrelid IN (to_regclass('public.documents'), to_regclass('public.cost_documents'))",
+      "AND NOT pol.polpermissive AND pol.polcmd IN ('a', '*')",
+      "AND (0::oid = ANY (pol.polroles) OR to_regrole('intake_door') = ANY (pol.polroles))",
+      "AND NOT ((pol.polrelid, pol.polname) IN ((to_regclass('public.documents'), 'documents_intake_door_scope'),",
+      "(to_regclass('public.cost_documents'), 'cost_documents_intake_door_scope'))",
+      "AND pol.polroles = ARRAY[to_regrole('intake_door')::oid])",
+      "AND NOT (pol.polrelid = to_regclass('public.documents') AND pol.polname = 'documents_deny_upload_guard'",
+      "AND NOT EXISTS (SELECT 1 FROM pg_depend d",
+      "WHERE d.classid = 'pg_policy'::regclass AND d.objid = pol.oid",
+      "AND d.refobjid IN (pol.polrelid, to_regclass('public.libraries')))",
+      "AND d.refobjid IN (to_regprocedure('auth.uid()'), to_regprocedure('public.is_org_controller(uuid)'),",
+      "to_regprocedure('public.acl_index_denies(jsonb, uuid, uuid, text)'))))))),",
+    ]) expect(row, limb).toContain(limb);
+    // it is a probe (ok, n NULL), placed with the other three row-level-security rows, and reads no deparsed text
+    expect(row).not.toMatch(/pg_policies|with_check|qual/);
+    const rls = [...tail().matchAll(/SELECT 'row-level security for /g)].map((m) => m.index!);
+    expect(rls).toHaveLength(4);
+    expect(tail().indexOf("SELECT 'row-level security for both: no restrictive INSERT")).toBe(rls[3]);
+    // the header says a policy's refusal is not a gap, and the operator sends the fourth row back at once
+    const head = prose(M.slice(0, M.indexOf("-- ── Prerequisite")));
+    expect(head).toContain("A POLICY'S REFUSAL IS NOT A GAP.");
+    expect(head).toContain("refuses that write — the route answers 500 — instead of being stepped around");
+    expect(head).toContain("if one of the four \"row-level security\" rows reads false, the paste still applied");
+  });
+  it("its exclusions are exactly what the sequence holds: up to 20261184 the one restrictive INSERT / ALL policy for every role on these tables is documents_deny_upload_guard, which reads only libraries, auth.uid, is_org_controller and acl_index_denies", () => {
+    const upTo = [readFileSync(join(root, "supabase", "schema.sql"), "utf8"), ...numbered().filter((f) => f <= FILE).map(mig)];
+    const found = upTo.flatMap((sql) => restrictsDoor(sql)).map((x) => x.slice(0, x.indexOf(":")));
+    expect([...new Set(found)]).toEqual(["documents.documents_deny_upload_guard"]);
+    // its newest definition: the predicate the paste's pg_depend limb admits
+    const defs = upTo.map(code).flatMap((sql) => sql.split(";")).filter((st) => /CREATE POLICY documents_deny_upload_guard ON documents/.test(st));
+    const newest = defs[defs.length - 1].replace(/\s+/g, " ");
+    expect(newest).toContain("AS RESTRICTIVE FOR INSERT WITH CHECK (");
+    expect([...newest.matchAll(/([\w.]+)\(/g)].map((m) => m[1]).filter((n) => !/^(CHECK|EXISTS)$/i.test(n)).sort())
+      .toEqual(["acl_index_denies", "auth.uid", "auth.uid", "is_org_controller"]);
+    expect([...newest.matchAll(/\bFROM (\w+)/g)].map((m) => m[1])).toEqual(["libraries"]);
+    // and the scope policies the row also excludes are this file's own, TO intake_door
+    expect(C).toContain("CREATE POLICY documents_intake_door_scope ON documents\n  AS RESTRICTIVE FOR INSERT TO intake_door");
+    expect(C).toContain("CREATE POLICY cost_documents_intake_door_scope ON cost_documents\n  AS RESTRICTIVE FOR INSERT TO intake_door");
+  });
+  it("no migration after 20261184 adds or re-writes a restrictive INSERT / ALL policy on documents or cost_documents that applies to intake_door without saying how intake_door is treated", () => {
+    for (const f of numbered().filter((x) => x > FILE)) expect(restrictsDoor(mig(f)), f).toEqual([]);
+  });
+  it("the detector: the reviewer's hardening policy is caught, as are ALL / no FOR, TO public / intake_door, one in a DO block, a format() one in a file naming the table, a re-created upload guard and an ALTER of it; a TO clause leaving intake_door out, a predicate or a comment naming it, a permissive or an UPDATE policy are not", () => {
+    const hardening = "CREATE POLICY cost_documents_member_insert ON cost_documents AS RESTRICTIVE FOR INSERT WITH CHECK (org_id IN (SELECT my_org_ids()));";
+    expect(restrictsDoor(hardening)).toHaveLength(1);
+    expect(restrictsDoor(hardening.replace("FOR INSERT", "FOR ALL"))).toHaveLength(1);
+    expect(restrictsDoor(hardening.replace(" FOR INSERT", ""))).toHaveLength(1);
+    expect(restrictsDoor(hardening.replace("FOR INSERT", "FOR INSERT TO public"))).toHaveLength(1);
+    expect(restrictsDoor(hardening.replace("FOR INSERT", "FOR INSERT TO authenticated, intake_door"))).toHaveLength(1);
+    expect(restrictsDoor(hardening.replace("ON cost_documents", "ON public.documents"))).toHaveLength(1);
+    expect(restrictsDoor(`DO $$\nBEGIN\n  ${hardening}\nEND $$;`)).toHaveLength(1);
+    expect(restrictsDoor("DO $$ DECLARE t text; BEGIN FOREACH t IN ARRAY ARRAY['documents'] LOOP\n  EXECUTE format('CREATE POLICY %I ON %I AS RESTRICTIVE FOR INSERT WITH CHECK (%s)', t || '_x', t, 'is_org_controller(org_id)');\nEND LOOP; END $$;")).toHaveLength(1);
+    const guard = between(mig("20260901_db_hard_enforcement.sql"), "CREATE POLICY documents_deny_upload_guard ON documents", ");\n");
+    expect(restrictsDoor(guard)).toHaveLength(1);
+    expect(restrictsDoor("ALTER POLICY documents_deny_upload_guard ON documents WITH CHECK (org_id IN (SELECT my_org_ids()));")).toHaveLength(1);
+    // not caught
+    expect(restrictsDoor(hardening.replace("FOR INSERT", "FOR INSERT TO authenticated"))).toEqual([]);
+    expect(restrictsDoor(hardening.replace("(org_id IN", "(current_user = 'intake_door' OR org_id IN"))).toEqual([]);
+    expect(restrictsDoor(`-- intake_door: cost_documents_member_insert — the door's quote is admitted by its own scope policy\n${hardening}`)).toEqual([]);
+    expect(restrictsDoor(hardening.replace("AS RESTRICTIVE ", ""))).toEqual([]);
+    expect(restrictsDoor(hardening.replace("FOR INSERT WITH CHECK", "FOR UPDATE USING"))).toEqual([]);
+    expect(restrictsDoor(hardening.replace("ON cost_documents", "ON document_versions"))).toEqual([]);
+    expect(restrictsDoor("ALTER POLICY documents_org_access ON documents USING (org_id IN (SELECT my_org_ids()));")).toEqual([]);
+    expect(restrictsDoor("ALTER POLICY documents_deny_upload_guard ON documents RENAME TO documents_upload_guard;")).toEqual([]);
+    expect(restrictsDoor(mig("20261045_rp_phase6_admin_gates_team_fk_reviewer_independence.sql"))).toEqual([]);
+  });
+});
+
 describe("the promote publishes an ALLOW-LISTED version (review fix pass 2, minor)", () => {
   const ALLOW = ["revision_label", "file_url", "file_type", "size", "change_log", "created_by_name", "file_hash"];
   it("publish_revision's p_version is a jsonb_build_object of exactly the route's seven fields and provenance 'external' — nothing from the caller passes through", () => {

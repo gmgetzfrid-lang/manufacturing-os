@@ -172,6 +172,24 @@ describe("the operator step", () => {
       expect(doc).toContain("owner: the integrator at the J16 / P6 merge");
     }
   });
+  it("it does not promise that nothing else changes: the browser-built Full ZIP fetches each signed URL itself, cross-origin, so the check step ends with a Full ZIP whose report lists no contractor file under errors, and says what to do if it does (review fix pass 4)", () => {
+    expect(doc).not.toContain("Nothing else changes");
+    expect(doc).toContain("the **Full ZIP** backup is built inside your browser, which fetches every file from storage itself");
+    expect(doc).not.toContain("You do **not** need to change anything in Cloudflare");
+    const check = doc.slice(doc.indexOf("## How to check it worked"), doc.indexOf("## How to undo it"));
+    expect(check).toContain("**Download Full ZIP**");
+    expect(check).toContain("`backup-report.json`");
+    expect(check).toContain("under `errors`, there should be **no** file whose name contains `project-intake/` or `project-costs/` followed by `quote-`");
+    expect(check).toContain("Undo the setting (next section)");
+    // the button, the report, the files/ folder and the cross-origin fetch it describes are the app's own
+    expect(readFileSync(join(process.cwd(), "app/(protected)/admin/data-export/page.tsx"), "utf8")).toContain('"Download Full ZIP"');
+    const backup = readFileSync(join(process.cwd(), "lib/clientBackup.ts"), "utf8");
+    expect(backup).toContain('report: "backup-report.json",');
+    expect(backup).toContain("zip.file(`files/${f.path}`, buf);");
+    expect(backup).toContain("const r = await fetch(f.presignedUrl);");
+    expect(backup).toContain("errors: progress.errors,");
+    expect(readFileSync(join(process.cwd(), "app/api/data-export/structured/route.ts"), "utf8")).toContain('import { runOrgExport, recordExportUndelivered } from "@/lib/dataExport";');
+  });
   it(".env.example lists the variable, blank by default", () => {
     const env = readFileSync(join(process.cwd(), ".env.example"), "utf8");
     expect(env).toMatch(/^UNTRUSTED_CONTENT_ORIGIN=$/m);

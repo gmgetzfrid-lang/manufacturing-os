@@ -51,6 +51,18 @@
 --     ("permission denied …" from the INSERT as intake_door) does the same
 --     for that one write, with a WARNING in the database log; the upload is
 --     never refused for it.
+--     A POLICY'S REFUSAL IS NOT A GAP. Every policy written for all roles
+--     judges the INSERT as intake_door as it judges a member's, and a
+--     RESTRICTIVE one the link's identity cannot satisfy (one that asks for
+--     membership, say) refuses that write — the route answers 500 — instead
+--     of being stepped around: the door is judged by every guard, so it
+--     waits until such a policy says how it treats intake_door (a TO clause,
+--     or a limb for the role). On the repository's sequence there is one,
+--     documents_deny_upload_guard, which a link passes (it reads only
+--     libraries rows, and row-level security shows a link none). A fourth
+--     "row-level security" row of the final SELECT says whether this
+--     database holds any other; a shape test fails a later migration that
+--     adds one without saying how intake_door is treated.
 --   * A BOUND IDENTITY for every content write. Before its write, each door
 --     function binds — for the transaction, restored before it returns —
 --     request.jwt.claims (and the legacy request.jwt.claim.sub / .role) to
@@ -135,10 +147,11 @@
 --
 -- HOW TO APPLY: paste the whole file into the Supabase SQL editor and run it
 -- once (a re-run is safe: every step is idempotent). The final SELECT is the
--- only result set shown — probe rows must read ok = true (if one of the three
+-- only result set shown — probe rows must read ok = true (if one of the four
 -- "row-level security" rows reads false, the paste still applied: send that
--- row back, it is SEC-22's next step); inventory rows carry ok NULL and a
--- count in n.
+-- row back, it is SEC-22's next step — the fourth at once, because until it
+-- is settled the door's new documents or quotes that policy refuses answer
+-- 500); inventory rows carry ok NULL and a count in n.
 -- PASTE ORDER: after 20261141 (required — this file re-creates its
 -- documents_authorship_fixed and reads token_hash; the first statement
 -- refuses to run, changing nothing, without it; 20261141 itself follows
@@ -1021,10 +1034,14 @@ COMMIT;
 
 -- ── Verification + inventory — ONE result set (the editor shows only the last)
 --    Expect ok = true on every probe row; inventory rows carry n only. If one
---    of the three "row-level security" rows reads false the paste still
+--    of the first three "row-level security" rows reads false the paste still
 --    applied and the door keeps the bound identity for those inserts — send
---    the row back (projects-tab SEC-22). The three rows ask
---    intake_door_rls_gaps, the function the door functions decide by.
+--    the row back (projects-tab SEC-22). Those three rows ask
+--    intake_door_rls_gaps, the function the door functions decide by. The
+--    fourth reads pg_policy: false means a restrictive INSERT or ALL policy
+--    for every role (or for intake_door) that the link's identity may fail is
+--    live on documents or cost_documents — it refuses the door's writes it
+--    fails (500), so send that row back at once (SEC-22).
 --    pg_proc.prosrc is verbatim (an apostrophe in a literal is written '''');
 --    pg_policies.with_check is deparsed, so it is matched on names only.
 SELECT 'the six door functions exist with search_path pinned, and only the service role may EXECUTE them; the new document and the quote are SECURITY INVOKER (they switch to intake_door), the submission, the pointer, the promote and the redline SECURITY DEFINER' AS check,
@@ -1122,6 +1139,24 @@ SELECT 'row-level security for both: intake_door may EXECUTE every function, and
        NOT EXISTS (SELECT 1
                      FROM unnest(intake_door_rls_gaps('authenticator', true) || intake_door_rls_gaps('authenticator', false)) g
                     WHERE g = 'role' OR g LIKE 'execute %' OR g LIKE 'read %'),
+       NULL
+UNION ALL
+SELECT 'row-level security for both: no restrictive INSERT or ALL policy for every role (or for intake_door) on documents or cost_documents besides documents_deny_upload_guard as the repository writes it (it reads only libraries, auth.uid, is_org_controller and acl_index_denies) and the two intake_door scope policies — false: one the link''s identity may fail is live, and it REFUSES the door''s writes it fails (the route answers 500); send this row back at once (SEC-22)',
+       NOT EXISTS (SELECT 1 FROM pg_policy pol
+                    WHERE pol.polrelid IN (to_regclass('public.documents'), to_regclass('public.cost_documents'))
+                      AND NOT pol.polpermissive AND pol.polcmd IN ('a', '*')
+                      AND (0::oid = ANY (pol.polroles) OR to_regrole('intake_door') = ANY (pol.polroles))
+                      AND NOT ((pol.polrelid, pol.polname) IN ((to_regclass('public.documents'), 'documents_intake_door_scope'),
+                                                               (to_regclass('public.cost_documents'), 'cost_documents_intake_door_scope'))
+                               AND pol.polroles = ARRAY[to_regrole('intake_door')::oid])
+                      AND NOT (pol.polrelid = to_regclass('public.documents') AND pol.polname = 'documents_deny_upload_guard'
+                               AND NOT EXISTS (SELECT 1 FROM pg_depend d
+                                                WHERE d.classid = 'pg_policy'::regclass AND d.objid = pol.oid
+                                                  AND NOT ((d.refclassid = 'pg_class'::regclass
+                                                            AND d.refobjid IN (pol.polrelid, to_regclass('public.libraries')))
+                                                        OR (d.refclassid = 'pg_proc'::regclass
+                                                            AND d.refobjid IN (to_regprocedure('auth.uid()'), to_regprocedure('public.is_org_controller(uuid)'),
+                                                                               to_regprocedure('public.acl_index_denies(jsonb, uuid, uuid, text)'))))))),
        NULL
 UNION ALL
 SELECT 'every door function resolves the link from its hash; the five that write as the door bind and then restore the identity; the new document and the quote switch to intake_door and back, and a privilege the role lacks runs the INSERT again with the bound identity alone',
