@@ -699,6 +699,113 @@ one-paste migration:
   document under require (RG-7's hatch, a pointer move, so outside the
   status-only rule): for the integrator or the user to decide.
 
+⚠ **Paste order — P25 STATUS-SURFACE FOLLOW-UPS (2026-10-07).** Two
+one-paste migrations and an app deploy, in this order (the integrator's
+order at the P16 merge):
+1. **Deploy the app carrying P25 first.** It works on every database below
+   (each missing piece takes today's path, said in a comment where it is
+   decided): with `put_back_retired_issue` / `restore_reversed_source` at
+   their `20261165` / `20261164` bodies, a NULL-status rollback or reversal
+   meets their blank-status refusal (raised before any write) and puts the
+   document back as 'Issued', exactly as before P25; a reversal of a source
+   recorded with an EMPTY status is refused with a sentence naming
+   `20261192`, nothing changed; with no function at all, the direct write
+   puts back the NULL. With `20261193` missing, the rev-up of an IFC
+   document under require is routed to review by the app anyway. The
+   status editors record a move into force out of IFC (`REV-26`), and the
+   un-archive dialog offers an IFC-stamped archive back as IFC (`REV-27`),
+   whatever is pasted.
+2. **`20261192_dc_roundF_null_prior_status_put_back.sql`** (`REV-29`) —
+   after `20261165` and `20261164` (required; its first statement refuses,
+   changing nothing, without them), so it waits with them behind
+   `20261159` (paste guide row 119); **before `20261185`**. It re-creates
+   `put_back_retired_issue` (from `20261165`) and `restore_reversed_source`
+   (from `20261164`) so a rollback door / a reversal naming its event takes
+   a NULL or blank status; nothing else. After it a NULL-status rollback
+   lands as NULL wherever the put-back of the stamped status lands.
+   **Never re-paste `20261165` or `20261164` after it** — each brings back
+   the blank-status refusal on every door.
+3. **`20261185`** (P16, `REV-21`) — after `20261182`, as P16's paragraph
+   above says. With P25 deployed and `20261192` pasted, its deploy
+   condition is met.
+4. **`20261193_dc_roundF_ifc_rev_up_first_issue.sql`** (`REV-28` (a)) —
+   **after `20261185` (required**; its first statement refuses without
+   `20261185`'s REV-21 limb). It re-creates `enforce_document_publish_guard`
+   from `20261185`'s body with one block: a non-controller's rev-up (or
+   revert) of a document whose status no gate reads as in force (IFC,
+   empty, a variant, a library's own, NULL) into Issued / Locked, with no
+   reviewer roster, under require, is refused as a first issue. Every
+   rev-up of an Issued / Locked document is unchanged. **Never re-paste
+   `20261185`, `20261182`, `20261174`, `20261165`, `20261164`, `20261159`,
+   `20261151`, `20261144`, `20261139`, `20261105` or any earlier guard
+   migration after it.** One app result changes: a non-controller's revert
+   of such a document under require is refused in the database's sentence
+   (no up-front check, as for a Draft's revert since `20261144`).
+- **What the app gets wrong if a step is skipped:** none of it admits a
+  write the guard refuses. With `20261185` pasted before `20261192`
+  (against this order), the P25 app's NULL rollback falls back to 'Issued',
+  which `20261185` refuses where its rule binds — the document stays
+  Superseded and the saga names it for manual attention, as on HEAD before
+  P25. Before `20261185`, an IFC-stamped archive is offered back as IFC
+  (not Issued) and Document Control is not offered an override into Issued
+  over a hold — the fail-closed direction.
+- **Probes for `lib/schemaExpectations.ts`** (not edited here; for the
+  integrator at merge): `put_back_retired_issue` prosrc LIKE
+  `%IF p_via = 'unarchive' THEN%IF btrim(COALESCE(p_status, '')) = '' THEN%`
+  (REV-29, `20261192`); `restore_reversed_source` prosrc LIKE
+  `%IF p_reversal_of IS NULL THEN%IF btrim(COALESCE(p_status, '')) = '' THEN%`
+  (REV-29, `20261192`); `enforce_document_publish_guard` prosrc LIKE
+  `%IF OLD.current_version_id IS NOT NULL AND v_intake_link IS NULL%AND COALESCE(is_controlled_issue_status(OLD.status)%AND COALESCE(OLD.status, '') NOT IN ('Issued', 'Locked')%AND NEW.status IN ('Issued', 'Locked'), false)%`
+  (REV-28 (a), `20261193`).
+
+**MERGE note — for document-control P23 DIRECT-WRITE ISSUE RECORD (runs
+after P25 and rebases on `lib/revisions.ts` and the status editors).** P25
+added these limbs; keep each when rebasing (each is pinned by a test):
+- `lib/revisions.ts`:
+  - `isEntryIntoForce` (new, exported) and the `entryIntoForce` field of
+    `StatusIssueBasis` / `StatusIssueOutcome`;
+  - `putBackFromRetirementStamp(row, toStatus?)` — the new `toStatus`
+    argument (answers `v_restoring` for the target);
+  - `readStatusIssueBasis(documentId, held?, toStatus?)` — the new
+    `toStatus` argument, `entryIntoForce`, and `putBack: false` for an
+    entry into force;
+  - `recordStatusIssue`'s `entryIntoForce` input (the roster opened, the
+    review clock NOT reset, `STATUS_ISSUE_CLOCKS_NOTE.entryIntoForce`,
+    `details.entryIntoForce`);
+  - `changeDocumentStatus` — records `isIssueTransition ||
+    isUnguardedEntryIntoForce` (the `change` object), and passes `toStatus`
+    to `readStatusIssueBasis`;
+  - `unarchiveStampedRestoreStatus` (new), `readArchiveStampedRestore`
+    (new), `unarchiveRestoreDefault`'s `not-in-force` basis
+    (`stampedStatus` / `stampedRestore`), and `unarchiveDocument`'s
+    admission of the stamped status and its `entryIntoForce` pass-through;
+  - `putBackRetiredIssue` — `status: string | null`, `olderBodyStatus`,
+    the single `putBack` closure and `putBackAs` (the P19 lines it pins are
+    kept byte for byte); `PUT_BACK_BLANK_STATUS_REFUSAL` and
+    `describePutBackStatus` (new);
+  - `undoFailedSupersede` — the NULL prior status, `olderBodyStatus`,
+    `putBackAs` and `describePutBackStatus` in both sentences;
+  - `firstIssueGateForRevUp` — the in-force test (`IN_FORCE_STATUSES`) on
+    the "revision through the gate" return; `describeFirstIssue`'s
+    not-in-force sentence.
+- `components/documents/BulkEditModal.tsx`: entering-force rows written
+  through `changeDocumentStatus` (`issuingIds.has(doc.id) ||
+  enteringForceIds.has(doc.id)`), their refusal marked "not issued:", and
+  the note's new text.
+- `components/documents/MetadataEditor.tsx`: the entry-into-force note's
+  new text and the refusal suffix's `isIssueRefusal(message)` for an
+  entry into force.
+- `app/(protected)/documents/[libraryId]/page.tsx` (two call-site edits):
+  `pageSawIssue` also counts `isUnguardedEntryIntoForce`; the un-archive
+  `onSuccess(restoredStatus)` shows the restored status.
+- Also: `lib/documentLifecycle/common.ts` (`markSupersededAndLink`'s NULL
+  prior status, `restoreSupersededSource`'s `string | null` and
+  `olderBodyStatus`), `merge.ts` (`priorStatuses` keeps NULL), `reverse.ts`
+  (`recordsPriorStatus`, `statusToRestore`'s `present`, `restoreStatus`'s
+  older-body fallback and return value, `RESTORE_BLANK_STATUS_REFUSAL`),
+  `components/documents/ArchiveConfirmModal.tsx` and
+  `components/documents/lifecycle/ReverseConfirmModal.tsx`.
+
 ⚠ **Deploy note — P12 (operators, public-surfaces `SHR-11`).** Before
 deploying the app carrying P12, a self-hosted deployment (the Docker image,
 `next start`) must set `NEXT_PUBLIC_SITE_URL` to its public address — a
