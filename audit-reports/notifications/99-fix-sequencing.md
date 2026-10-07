@@ -132,6 +132,28 @@ pending reviews, due recertifications) instead of user-writable notification
 rows. The integrator adds `NEDGE-17` to N6's `findings` in
 `audit-reports/fleet-plans/notifications.json`.*
 
+*Hand-off (2026-10-07, notifications Round G, N6 EMAIL-PIPELINE-AND-CRON →
+N9, N14 and the integrator):*
+- *Email goes through one render layer, `lib/emailRender.ts` (`DEC-44 (N6)`):
+  a producer that composes an email body calls `renderNotificationEmail` or
+  `wrapEmailBody` and marks the row `metadata.rendered`; a link is joined to
+  the public origin or left out, never a bare path. A row left unrendered gets
+  the footer and the mention rule from the drain at send time. The two emails
+  `app/api/transmittal/route.ts` composes (N9's file) are covered by that
+  backstop; N9 also changes that file's `new Date(now).toLocaleString()` to
+  `lib/recordTime.ts` `formatRecordTime` (`NEDGE-12` done-when 1).*
+- *`notify()` now answers whether its row landed (`Promise<boolean>`),
+  `notifyMany` returns `{ sent, failed }`, and `emit()` returns
+  `{ recipients, inapp? }` (warning on an empty audience). N14 RAW-INSERT TAIL
+  owns `DELIV-7`'s remainder: the raw inserts in `app/api/transmittal/route.ts`
+  (`ack_complete`), `lib/projects.ts` and `app/api/ai/usage/route.ts`, and the
+  regulatory `notify()` callers that should surface the answer.*
+- *New, unassigned: `DELIV-16` (a compliance bell row has no retry or outbox)
+  and `NEDGE-19` (an org-level timezone setting; `lib/recordTime.ts`
+  `orgTimeZone` already reads `org_configurations` key `timezone`).*
+- *Paste `20261183` (`email_notifications.queued_by`) any time; no code
+  depends on it.*
+
 *Opened by N5's second review fix (2026-10-02), not this area's to sequence
 alone: **`NEDGE-15`** — `app/api/tickets/handback/route.ts`'s `emit()` runs
 on the unbound shared client and has never delivered (drafting-flow's route);

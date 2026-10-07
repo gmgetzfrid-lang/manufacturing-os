@@ -1,6 +1,6 @@
 # 08 · Edges, egress & load-bearing invariants
 
-**17 findings** — 2 CRITICAL · 9 HIGH · 6 MEDIUM. `NEDGE-14`, `NEDGE-15` and `NEDGE-16` opened by notifications Round G (N5's second review fix), `NEDGE-17` by its third review fix, 2026-10-02.
+**19 findings** — 2 CRITICAL · 9 HIGH · 6 MEDIUM · 2 LOW. `NEDGE-14`, `NEDGE-15` and `NEDGE-16` opened by notifications Round G (N5's second review fix), `NEDGE-17` by its third review fix, 2026-10-02; `NEDGE-18` (LOW) at the drafting-flow DF-P1 merge and `NEDGE-19` (LOW) by notifications Round G (N6), 2026-10-07.
 
 What the seven lenses did not look at — notification content as an egress surface, lifecycle edges, accessibility — plus what is sound and must not break.
 
@@ -223,7 +223,7 @@ admin/restore/begin/route.ts:68  `      status: "inactive", display_name: u.disp
 ## NEDGE-4 · Every internal notification email carries a relative href, so the one call-to-action link in the message is dead in every mail client; emails sent through emit() carry no link at all
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/tickets/comment/route.ts:263`, `app/api/tickets/comment/route.ts:309-313`, `app/api/tickets/workflow-action/route.ts:313`, `app/api/tickets/workflow-action/route.ts:389-394`, `lib/notify/dispatch.ts:116-127`, `lib/notifications.ts:16-27`, `app/api/cron/maintenance/route.ts:425-431`
 - **Re-verified:** hardening pass — **SURVIVES**. `const link = `/requests/${ticketId}?c=${comment.id}`` (`:263`) is a bare path, embedded directly as `<a href="${link}">` in `body_html` and appended to `body_text` (`:309-313`). Nothing resolves a relative href in a mail client.
@@ -250,6 +250,19 @@ maintenance/route.ts:430  `        "\\n\\nOpen your Inbox to act on them.",`
 - [ ] QueueEmailInput gains a `link` field, dispatch.ts forwards input.link, and every email body renders it as an absolute URL built from publicOrigin()
 - [ ] The two HTML templates build `const link = \`${publicOrigin()}/requests/${ticketId}\`` and a test asserts every queued body_html contains no href beginning with a bare '/'
 - [ ] The compliance digest body carries an absolute /inbox URL
+
+**Resolution (2026-10-07, notifications Round G).** Package N6 EMAIL-PIPELINE-AND-CRON. Reproduced on `2de62f1` first (DEC-29): (b) `lib/notify/dispatch.ts` passed no link to `queueEmail` (`dispatch.ts:216-227` on the base), so every `emit()` email was a bare sentence with no URL; (c) no `emit()` caller passes an email override; (d) the digest ended "Open your Inbox to act on them." with no URL (`maintenance/route.ts:630` on the base); `lib/__tests__/maintenanceDrain.test.ts` "every href is absolute…" fails on the base route. Limb (a) — the two ticket templates' relative href — had already been fixed by drafting-flow `EDGE-9` (DF-P1: `publicOrigin() || new URL(req.url).origin`, `comment/route.ts`, `workflow-action/route.ts`), which this package keeps.
+- `lib/emailRender.ts` (new): the render layer. `renderNotificationEmail({ subject, body, link, linkLabel, orgName, origin })` and `wrapEmailBody(...)`. A link leaves the app absolute: an app-relative path is joined to the public origin (`lib/publicOrigin.ts`), an absolute http(s) link is kept, anything else is dropped (`absoluteEmailLink`). With no origin the renderer THROWS `EmailOriginMissingError` (the XEDGE-5 lesson) instead of mailing a bare path; its callers catch it, log it and queue the email in its pre-render form, so no notice is dropped.
+- `lib/notify/dispatch.ts` `emit()` (:240-262): every recipient's email is rendered (the event's `link`, absolute, plus the footer) unless the producer passed its own HTML; the absolute link rides `queueEmail`'s `link` (N1's field → `metadata.link`). `lib/notifications.ts` `queueEmail`: a new optional `rendered` body is what is gated (email_gate()'s repeat check compares the stored body), stored and sent, and the row is marked `metadata.rendered`.
+- `app/api/cron/maintenance/route.ts` `queueComplianceDigests` (:782): the digest links `${origin}/inbox` (origin: `publicOrigin()`, else the cron request's own origin), absolute; `metadata.link` carries it.
+- Tests: `lib/__tests__/emailRender.test.ts` ("no href in any rendered body starts with a bare '/'", the refusal with no origin, `queueEmail` with a rendered body); `lib/__tests__/n6TicketFanout.test.ts` (the handback's `emit()` email carries `${origin}/requests/t1`, through the REAL dispatcher); `lib/__tests__/maintenanceDrain.test.ts` (the digest's hrefs); `lib/__tests__/dfRoundG_P1_rails.test.ts` EDGE-9 (the ticket links, plus the footer's settings link).
+
+**Done-when.**
+1. ✓ `QueueEmailInput` has `link` (N1), `dispatch.ts` forwards the event's link and every `emit()` email body renders it absolute on `publicOrigin()`. Where no public origin exists (a server with neither `NEXT_PUBLIC_SITE_URL` nor Vercel's production domain), the renderer refuses and the email is queued as before, with no link — never a bare path.
+2. ✓ The two HTML templates build `${origin}/requests/<id>` (EDGE-9, kept) and tests assert no queued `body_html` href begins with '/' (`dfRoundG_P1_rails.test.ts` EDGE-9, `emailRender.test.ts`, `n6TicketFanout.test.ts`).
+3. ✓ The compliance digest body carries an absolute `/inbox` URL.
+
+**Scope / residual.** Two internal emails are composed outside the render layer, in `app/api/transmittal/route.ts` (document-control P7 / notifications N9): neither carries a link; the drain's backstop adds the footer (`NEDGE-10`).
 
 ---
 
@@ -450,7 +463,7 @@ dispatch.ts:84  `  if (recipients.length === 0) return;`
 ## NEDGE-9 · The compliance digest ignores digest_frequency='never' and every per-category toggle, and re-lists items the recipient has already read
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/cron/maintenance/route.ts:376-381`, `app/api/cron/maintenance/route.ts:399-403`, `app/api/cron/maintenance/route.ts:408`, `app/api/cron/maintenance/route.ts:421-436`, `lib/notifications.ts:59-61`
 - **Re-verified:** hardening pass — **SURVIVES**. The digest reads exactly one preference — `.select("user_id, email_enabled")` (`maintenance/route.ts:400-401`). `digest_frequency` is never consulted, so `'never'` has no effect, and no per-category preference is read at all.
@@ -477,6 +490,20 @@ lib/notifications.ts:59-61  `    if (prefs?.email_enabled === false) return;\n  
 - [ ] The row scan adds `.is("read_at", null)` so an item the recipient has already cleared in the bell is not re-mailed
 - [ ] The 2000-row scan is ordered (created_at DESC) and paginated, or the cap is enforced per-user, so which items get dropped is deterministic
 
+**Resolution (2026-10-07, notifications Round G).** Package N6 EMAIL-PIPELINE-AND-CRON, together with `NEDGE-17` (the same read). Reproduced on `2de62f1`: the digest selected `user_id, email_enabled` only (`maintenance/route.ts:598-601` on the base), had no `read_at` filter and read `.limit(2000)` with no order; `lib/__tests__/maintenanceDrain.test.ts` "digest_frequency 'never' and the master switch silence it…" fails on the base route.
+- `queueComplianceDigests` (`app/api/cron/maintenance/route.ts` :688): each ACTIVE member with an address is gated by the app's one email rule, `lib/notificationPrefs.ts` `emailAllowedByPrefs(row, "compliance_digest")` (:741) — the master switch, then `'never'`; the digest has no per-event toggle (DEC-74 §3). The preference rows are read as the service role (chunked `.in()`), so a missing row really is the defaults; a read that fails sends the digest stamped `metadata.pref_gate = 'unverified'` with an error line (DEC-74 §4).
+- The row read adds `.is("read_at", null)` (:748): an item already read in the bell is not re-mailed.
+- The read is per (org, recipient), ordered `created_at DESC, id DESC`, at most 200 rows per recipient; the subject's count is exact (`count: "exact"`), the body lists 12 distinct titles and "…and N more" (`NEDGE-17`).
+- The per-(org, user, day) dedupe is unchanged; a check that fails sends anyway (a duplicate beats none) and says so.
+- Tests: `lib/__tests__/maintenanceDrain.test.ts` — 'never' and the master switch silence it, a read item is not listed, a suspended member gets none; REGRESSION: no preferences row = the defaults, the digest as before; the unverified stamp; the dedupe preserved.
+
+**Done-when.**
+1. ✓ The digest calls the same preference rule as `queueEmail` (`emailAllowedByPrefs`, N1's exported helper) and honours `digest_frequency = 'never'`.
+2. ✓ The scan filters `read_at IS NULL`.
+3. ✓ The scan is ordered (`created_at DESC`, `id DESC`) and the cap is enforced per user (200 rows read per recipient), so which items are dropped is deterministic.
+
+**Scope / residual.** A member who reads their own rows can still receive a digest listing items written in the last 25 hours that they have not opened — the intended behaviour. Cost: one read per active member with an address per day (members with nothing pending cost one indexed read); the step has a 90 s budget, reports a cut-short run, and rotates its starting member daily.
+
 ---
 
 <a id="nedge-10"></a>
@@ -484,7 +511,7 @@ lib/notifications.ts:59-61  `    if (prefs?.email_enabled === false) return;\n  
 ## NEDGE-10 · No email the system sends carries an unsubscribe affordance, and mention markup leaks raw into email bodies
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/notifications/send-queued/route.ts:145-153`, `lib/notify/dispatch.ts:116-127`, `app/api/tickets/comment/route.ts:308-311`, `lib/notifications.ts:168-183`
 - **Re-verified:** hardening pass — **SURVIVES**, by census. `grep -c 'unsubscribe\|List-Unsubscribe'` returns **0** in both `lib/notify/dispatch.ts` and `app/api/notifications/send-queued/route.ts`.
@@ -509,6 +536,21 @@ notifications.ts:169-170  `// Mentions are stored in comment text as @[Display N
 - [ ] A single render layer wraps every queued email (org branding, absolute action link, footer linking /settings/notifications) and send-queued attaches a List-Unsubscribe header pointing at a one-click opt-out
 - [ ] tokenizeMentions is applied to comment text before it enters body_text/body_html so mentions render as plain names and internal UUIDs never leave the system
 - [ ] The unsubscribe target actually works — i.e. it depends on the digest_frequency CHECK fix from finding #1
+
+**Resolution (2026-10-07, notifications Round G).** Package N6 EMAIL-PIPELINE-AND-CRON. Reproduced on `2de62f1`: `grep -ci "unsubscribe"` over `app/api/notifications/send-queued/route.ts` and `lib/notify/dispatch.ts` returned 0; the Resend payload had no `headers`; the comment route copied `comment.text` verbatim into both bodies (`comment/route.ts:382-385` on the base). `lib/__tests__/n6TicketFanout.test.ts` "a mention renders as the name…" fails on the base route.
+- One render layer, `lib/emailRender.ts`: `renderNotificationEmail` (every `emit()` email and the compliance digest) and `wrapEmailBody` (the two ticket templates). Each email carries the workspace's name (org branding) and a footer linking `${origin}/settings/notifications`; mention markup renders as `@Name` (`plainMentions`, built on `tokenizeMentions`, a fresh scan per call). The drain wraps any member row nothing rendered at queue time (no `metadata.rendered` — a row queued before this layer, or by `app/api/transmittal/route.ts`) with the same footer and mention rule at send time, without rewriting the stored row (`send-queued/route.ts` `outgoing`).
+- `app/api/notifications/send-queued/route.ts` (`outgoing`, :59-75): every MEMBER email (not `metadata.external` — external mail is the transmittal's own template and its `to_user_id` is the sender) gets `List-Unsubscribe: <origin/api/notifications/unsubscribe?u=<to_user_id>&t=<hmac>>` and `List-Unsubscribe-Post: List-Unsubscribe=One-Click` (RFC 8058). External mail is sent exactly as stored, as before.
+- `lib/unsubscribeToken.ts` (new, server-only): the token is an HMAC-SHA256 of the uid under a fixed label, keyed by `EMAIL_UNSUBSCRIBE_SECRET` or else the service-role key; no key, no header (never an unsigned link).
+- `app/api/notifications/unsubscribe/route.ts` (new): GET shows the choice and changes nothing (mail scanners fetch GET); POST — the mail client's one-click or the page's button — upserts `notification_preferences { user_id, email_enabled: false }` for the signed uid only. The plan's default scope: the master switch. The page says drawing recalls and safety alerts are still emailed (DEC-74 §9).
+- `app/api/tickets/comment/route.ts` / `workflow-action/route.ts` fan-out email region only: `plainMentions` on the comment / note before it enters `body_text` / `body_html`; the composed bodies go through `wrapEmailBody`; `metadata.rendered`. Every interpolation still passes `escapeHtml` (report 08's invariant).
+- Tests: `lib/__tests__/emailRender.test.ts` (mentions as names in text and HTML, the footer, escaping, the token), `lib/__tests__/maintenanceDrain.test.ts` ("member mail carries List-Unsubscribe…", the unsubscribe route's GET / POST / forged / refused cases), `lib/__tests__/n6TicketFanout.test.ts` (the comment email names the mentioned member, never the uuid).
+
+**Done-when.**
+1. ✓ A single render layer wraps every queued member email (queue-time for `emit()`, the digest and the ticket routes; the drain's backstop for every other member row), with the workspace's name, an absolute action link where the event has one, and a footer linking `/settings/notifications`; the drain attaches a List-Unsubscribe header pointing at a one-click opt-out.
+2. ✓ Mention markup renders as plain names in `body_text` and `body_html`; internal uuids never leave the system (also at the drain, for rows queued before this layer).
+3. ✓ The unsubscribe target works: it saves a row the `digest_frequency` CHECK accepts (N1's `NEDGE-2` fix; the upsert writes `email_enabled` and `updated_at` only, every other column at its default).
+
+**Scope / residual.** The key: a deployment may set `EMAIL_UNSUBSCRIBE_SECRET`; until then the service-role key signs (rotating it voids old links, which then answer "not valid" and change nothing). Mail clients show the one-click control only for authenticated senders; that is the deployment's DKIM/SPF, not code.
 
 ---
 
@@ -577,6 +619,18 @@ vercel.json:9-10  `      "path": "/api/cron/maintenance",\n      "schedule": "0 
 - [ ] The digest dedupe key and the cron schedule are anchored to a configured org timezone rather than the server's UTC day, or the digest is explicitly named for when it actually arrives
 - [ ] An org-level timezone setting exists and the digest fires against it (this is a prerequisite for the owner's login-nudge and morning-digest ambitions)
 
+**Partial (2026-10-07, notifications Round G).** Package N6 EMAIL-PIPELINE-AND-CRON. Reproduced on `2de62f1`: `new Date(row.started_at).toLocaleDateString()` in the stale-checkout escalation (`maintenance/route.ts:546` on the base); `lib/__tests__/maintenanceDrain.test.ts` "the notice's body names the day with its zone" fails on the base route.
+- `lib/recordTime.ts` (new): the one helper. `formatRecordTime(iso, tz?)` → ISO-8601 with its offset and the zone named (`2026-03-20T23:15:15+00:00 (UTC)`, or `…-05:00 (America/Chicago)`); `formatRecordDate` → `2026-03-20 (UTC)`; an unparseable input is returned as given, never "Invalid Date". `orgTimeZone(client, orgId)` reads `org_configurations` key `timezone` (`data.timeZone`, a valid IANA name) and is null otherwise — nothing writes that key yet, so every body reads UTC, labelled.
+- `app/api/cron/maintenance/route.ts`: the escalation body is "…checked out since 2026-03-20 (UTC)…" (`formatRecordDate`, :622); the digest names itself for when it was composed — "This digest lists your unread compliance notices from the 25 hours to `<time>` (`<zone>`)." The per-(org, user, day) dedupe on `metadata.day` (the UTC day) is kept exactly — the plan's default: keep the 03:00 UTC cron, no new `vercel.json` entry.
+- Tests: `lib/__tests__/emailRender.test.ts` (the formats, a bad zone, `orgTimeZone`, and a pin that the cron calls no bare `toLocale*String()`), `lib/__tests__/maintenanceDrain.test.ts` (the escalation's body; the digest's UTC name; an org with a configured zone named in it).
+
+**Done-when.**
+1. ◐ The shared helper exists and the maintenance cron's two server-composed bodies use it. Not done: `app/api/transmittal/route.ts`'s acknowledgment email still prints `new Date(now).toLocaleString()` — document-control P7's file; the plan gives that one line to notifications N9 after P7 merges (fleet plan, N6 `dependsOn`).
+2. ✓ The digest is explicitly named for when it arrives (the window's end, zone-labelled); its dedupe key stays the UTC day, unchanged, so a re-run never mails twice.
+3. ✗ No org-level timezone setting exists. Opened as `NEDGE-19` (the plan's decision: recorded as a new finding, not built here). `orgTimeZone` already reads the key such a setting would write.
+
+**Scope / residual.** Owners: done-when 1's transmittal line → notifications N9; done-when 3 → `NEDGE-19` (unassigned; the integrator assigns it).
+
 ---
 
 <a id="nedge-13"></a>
@@ -635,7 +689,7 @@ storageAlerts.ts:60-61  `      await sb.from("notifications").insert({\n        
 ## NEDGE-14 · The ticket comment and workflow-action routes still mail and bell suspended and inactive watchers: their own service-role fan-out has no membership filter
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** unassigned. Opened 2026-10-02 by notifications Round G (N5 DISPATCH-AND-WRITE-HOLES, second review fix) from the package review. It is the remainder of `NEDGE-3` done-when 3 on a path N5 does not own (DEC-31). The plan's natural owner is N6 EMAIL-PIPELINE-AND-CRON, which edits both routes' `fanOut` builders by plan; the integrator assigns it and mirrors the N6 dependency in `audit-reports/fleet-plans/notifications.json`.
 - **Assigned:** notifications N6 EMAIL-PIPELINE-AND-CRON (after drafting-flow DF-P1 merges, which edits both ticket routes) — by the integrator, 2026-10-02, at the N5 merge (DEC-31; fleet plan `audit-reports/fleet-plans/notifications.json`).
 - **Verification:** CONFIRMED (read from the two routes at `f1ac550` / `b97e17c`: neither `fanOut` filters its recipients by membership, and neither email lookup has a status predicate)
@@ -661,6 +715,17 @@ There is no status predicate and no membership filter on `recipients`. `20261160
 
 **Closer:** unassigned (the integrator; plan owner N6, `99-fix-sequencing.md` Phase 1 hand-off).
 
+**Resolution (2026-10-07, notifications Round G).** Package N6 EMAIL-PIPELINE-AND-CRON, after drafting-flow DF-P1 merged. Reproduced on `2de62f1`: neither route's `fanOut` filtered its recipients, and both email lookups lacked a status predicate (`comment/route.ts:357`, `workflow-action/route.ts:1110` on the base); the three NEDGE-14 cases in `lib/__tests__/n6TicketFanout.test.ts` fail on the base routes.
+- `app/api/tickets/comment/route.ts` (:342-356) and `app/api/tickets/workflow-action/route.ts` (:1041-1053), fan-out region only: one service-role read, `org_members.select("uid, email").eq("org_id", ticket.orgId).eq("status", "active").in("uid", recipients)` — the predicate `lib/notify/recipients.ts` `activeMembersOf` applies for `emit()` ("the same predicate on the service role"; the routes do not bind the shared client) — gives both the active audience and the addresses. Bell rows go to the active audience only; emails only to active members with an address. A read that FAILS keeps today's bell audience (as `activeMembersOf` fails open) and mails no one (no address was read), logged. In the workflow route the stale-alert supersede still runs before the audience is checked, so an all-suspended audience still retires old alerts. DF-P1's audit-first order, read scope and hold release after the compare-and-set are untouched (their tests in `dfRoundG_P1_rails.test.ts` pass unchanged; its `EDGE-11` pin on the preference read still holds).
+- Tests: `lib/__tests__/n6TicketFanout.test.ts` — comment: a suspended and an inactive watcher get neither, the active watcher and the drafter get both, the lookup asks for active members; workflow `submit_draft`: the requester and the active watcher get both, the suspended and inactive watchers neither; REGRESSION: the fail-open read; the supersede with an all-suspended audience.
+
+**Done-when.**
+1. ✓ Both email lookups filter `status = 'active'`.
+2. ✓ The recipients are filtered to ACTIVE members of the ticket's org before the bell insert (the service-role predicate of `activeMembersOf`).
+3. ✓ A route test covers both routes: a suspended watcher gets neither a bell row nor an email; an active watcher gets both.
+
+**Scope / residual.** None.
+
 ---
 
 <a id="nedge-15"></a>
@@ -668,7 +733,7 @@ There is no status predicate and no membership filter on `recipients`. `20261160
 ## NEDGE-15 · The drafting handback route's "deliverable submitted / published" notice has never been delivered: it calls emit() on the unbound shared client
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** unassigned. Opened 2026-10-02 by notifications Round G (N5's second review fix), from a defect spotted while closing `NEDGE-3` (README Rules: a new defect gets a new ID). The route is drafting-flow's file (`GAP-6` / `DEC-22`), so the integrator assigns it there.
 - **Assigned:** notifications N6 EMAIL-PIPELINE-AND-CRON (after drafting-flow DF-P1 merges) — by the integrator, 2026-10-02, at the N5 merge (DEC-31; fleet plan `audit-reports/fleet-plans/notifications.json`).
 - **Verification:** CONFIRMED by reading `app/api/tickets/handback/route.ts`. The route imports only `supabaseAdmin` and never wraps the `emit()` call in `runWithServerClient`. The same unbound-client path is driven for another `emit()` caller in `lib/__tests__/orchestratorExecute.test.ts`, which shows the dispatcher stopping at its membership read before any insert.
@@ -685,6 +750,16 @@ There is no status predicate and no membership filter on `recipients`. `20261160
 - [ ] A route test asserts that the requester gets the bell row and the email after a successful handback, and that a suspended watcher gets neither.
 
 **Closer:** unassigned (drafting-flow owns the route; the integrator assigns it).
+
+**Resolution (2026-10-07, notifications Round G).** Package N6 EMAIL-PIPELINE-AND-CRON, after drafting-flow DF-P1 merged. Reproduced on `2de62f1`: `app/api/tickets/handback/route.ts:103-117` called `emit()` with no binding and swallowed everything; `lib/__tests__/n6TicketFanout.test.ts` "the requester … get the bell row and the email…" fails on the base route, and "the reproduction: the same emit() on the UNBOUND shared client reaches nobody" shows why.
+- `app/api/tickets/handback/route.ts` (:104-127): the notice runs as `runWithServerClient(supabaseAdmin, () => emit(...))` (`lib/serverClientScope.ts`, imported dynamically like the dispatcher, as the cron and the intake door do), so the dispatcher's membership read, bell rows and email gate run as the service role for this request only. A failure is logged and never fails the recorded handback.
+- Tests: `lib/__tests__/n6TicketFanout.test.ts` — through the REAL dispatcher: the requester, the drafter and the active watcher get the bell row and the email row (with the absolute link and the footer); the suspended watcher gets neither; nothing went through the unbound client; the unbound `emit()` reaches nobody and now says so (`{ recipients: 0 }` and the warning), bound it delivers. `lib/__tests__/sweepRoundC2.test.ts`'s handback cases pass unchanged.
+
+**Done-when.**
+1. ✓ The route's `emit()` runs under `runWithServerClient(supabaseAdmin, …)`.
+2. ✓ A route test asserts the requester gets the bell row and the email after a successful handback, and a suspended watcher gets neither.
+
+**Scope / residual.** The route does not kick the email drain (the comment and workflow routes do): the email row is sent by the next drain — any member's browser kick in the org, or the daily cron. Not changed here (DEC-31).
 
 ---
 
@@ -718,7 +793,7 @@ There is no status predicate and no membership filter on `recipients`. `20261160
 ## NEDGE-17 · The compliance digest reads one 2,000-row window across every org, unordered: a member's browser-legal compliance rows can push other tenants' overdue items out of their digest
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** unassigned. Opened 2026-10-02 by notifications Round G (N5 DISPATCH-AND-WRITE-HOLES, third review fix), from the package review, which found that `DELIV-13`'s record claimed the opposite. The plan's natural owner is N6 EMAIL-PIPELINE-AND-CRON, which owns `app/api/cron/maintenance/route.ts` and already plans to order and page this scan for `NEDGE-9` done-when 3. The integrator assigns it and mirrors it in N6's `findings` in `audit-reports/fleet-plans/notifications.json`.
 - **Assigned:** notifications N6 EMAIL-PIPELINE-AND-CRON (the compliance digest is its cron's) — by the integrator, 2026-10-02, at the N5 merge (DEC-31; fleet plan `audit-reports/fleet-plans/notifications.json`).
 - **Verification:** CONFIRMED. Reproduced on PostgreSQL 16 against `20261160` as it stands on `fleet/N5-dispatch-rails` (below).
@@ -745,6 +820,18 @@ There is no status predicate and no membership filter on `recipients`. `20261160
 
 **Closer:** unassigned (the integrator; plan owner N6, `99-fix-sequencing.md` Phase 1 hand-off).
 
+**Resolution (2026-10-07, notifications Round G).** Package N6 EMAIL-PIPELINE-AND-CRON. Reproduced on `2de62f1` through the real route: `lib/__tests__/maintenanceDrain.test.ts` "2,400 browser-legal ack_requested rows in org A…" fails on the base route (the shared, unordered 2,000-row read returns org B's earlier `review_due` and none of tonight's two lines).
+- `queueComplianceDigests` (`app/api/cron/maintenance/route.ts` :688): the digest no longer shares one capped read. It pages the ACTIVE members (ordered `org_id, uid`, 1,000 a page) and composes each (org, recipient) list from a read scoped to that pair — `.in("kind", COMPLIANCE_KINDS).eq("org_id", …).eq("user_id", …).is("read_at", null).gt("created_at", since)`, ordered `created_at DESC, id DESC`, at most 200 rows, with an exact count. One member's rows reach only the people they were written to.
+- `COMPLIANCE_KINDS` derives from `lib/notificationKinds.ts` `KIND_META`'s `compliance` column (:654) — the same set as the hand list it replaces (pinned by `notificationKinds.test.ts`).
+- A failed per-recipient read, a failed insert and a cut-short run are each a line in `errors` (also logged).
+- Tests: `lib/__tests__/maintenanceDrain.test.ts` — the flood (2,400 `ack_requested` rows to four org-A colleagues within the window, org B's Document Controller's three lines all present, the flooded colleagues' own counts exact); the read is scoped by org and uid. `lib/__tests__/notificationWriteRails.test.ts`'s census entry for this read now records it as per-recipient.
+
+**Done-when.**
+1. ✓ Each (org, recipient) list is composed from a read scoped to that pair (the first of the three options).
+2. ✓ A test floods the window with one org's browser-legal compliance rows and shows another org's recipient still gets every one of their lines.
+
+**Scope / residual.** A member can still ADD lines to a colleague's digest by writing browser-legal compliance rows to them, within DEC-86's caps — the done-when does not ask otherwise. Composing the digest from the obligation tables (the finding's "preferably") would remove that too; it is not built here (DEC-31) and `DELIV-13`'s residual keeps pointing at it.
+
 ---
 
 <a id="nedge-18"></a>
@@ -767,3 +854,28 @@ There is no status predicate and no membership filter on `recipients`. `20261160
 - [ ] The same holds for any other browser-side retirement N4 adds (TRAIL-9's `hold_released` → `hold_opened`, `branch_resolved` → `branch_open`).
 - [ ] The census in `lib/__tests__/notificationWriteRails.test.ts` drops the hook from its `METADATA_UPDATES` list, and every browser UPDATE of notifications writes `read_at` only.
 - [ ] Regression: an alert the route supersedes is unchanged, and the feed shows exactly what it shows today.
+
+---
+
+<a id="nedge-19"></a>
+
+## NEDGE-19 · No org-level timezone exists: every server-composed time and the compliance digest are in UTC, labelled, never the plant's own zone
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** unassigned. Opened 2026-10-07 by notifications Round G (N6 EMAIL-PIPELINE-AND-CRON) as `NEDGE-12` done-when 3, per the fleet plan's decision ("an org-level timezone setting is recorded as a new finding, not built here", DEC-31); the integrator assigns it.
+- **Verification:** CONFIRMED by search at `2de62f1` + N6: no `timezone` / `time_zone` column or `org_configurations` key is written anywhere in `app/`, `lib/`, `components/` or `supabase/`.
+- **Locations:** `lib/recordTime.ts` (`orgTimeZone` reads `org_configurations` key `timezone`, `data.timeZone`; nothing writes it), `app/api/cron/maintenance/route.ts` (the digest's name and the escalation's date use it), `vercel.json` (`0 3 * * *`)
+- **Independently verified:** opened 2026-10-07 by N6; not yet challenged by a second party.
+
+**Mechanism.** Since N6, server-composed notification bodies render through `lib/recordTime.ts`: ISO-8601 with the offset and the zone named. The zone is the org's when `org_configurations` key `timezone` carries a valid IANA name, else UTC — and no surface writes that key, so every body reads UTC. The compliance digest runs at 03:00 UTC (evening in the Americas) and is named for the window it covers ("the 25 hours to `<time>` (UTC)"); its per-day dedupe key is the UTC day.
+
+**Failure scenario.** A plant in Houston receives its "compliance items need you" digest at 22:00 the evening before, labelled in UTC. Correct and unambiguous, but not the plant's morning and not its clock.
+
+**Done when.**
+
+- [ ] An Admin can set the workspace's IANA timezone (a validated `org_configurations` row, key `timezone`, `data.timeZone` — the shape `orgTimeZone` already reads).
+- [ ] Server-composed bodies then show that zone (no code change in `lib/recordTime.ts` callers).
+- [ ] Whether the digest's send time follows the zone is decided: it cannot without a cron entry per zone (`99-fix-sequencing.md`: no new cron entry), so either the daily run composes per-zone windows, or the digest stays one daily run named for its window.
+
+**Closer:** unassigned (the integrator; notifications or admin-and-org).

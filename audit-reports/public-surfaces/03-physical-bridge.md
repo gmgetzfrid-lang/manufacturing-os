@@ -684,6 +684,15 @@ FullScreenViewer.tsx:1268 `value={\`${window.location.origin}/documents/${docRec
 
 **Scope / residual.** OPEN for those two files' owners.
 
+**Partial (2026-10-07, notifications Round G).** Package N6 EMAIL-PIPELINE-AND-CRON closed the `lib/notifications.ts` `ticketUrl` site (notifications `DELIV-5` done-when 2): it is now `${publicOrigin()}/requests/<id>` (`lib/notifications.ts:296`) and reads `window.location.origin` nowhere. Test: `lib/__tests__/emailRender.test.ts` "ticketUrl() is built on publicOrigin() (DELIV-5 dw2 / PHYS-13)".
+
+**Done-when (this pass).**
+1. ✓ Unchanged.
+2. ✓ Unchanged.
+3. ◐ The `ticketUrl` site ✓. Left, by grep at this commit: `app/(protected)/documents/[libraryId]/page.tsx:755, 3159` (the `/d/` copies — identity-and-session IS-P1). Not assessed here, no outbound share link: `app/page.tsx:139` (the sign-in `redirectTo`), `components/viewers/SecureDocViewer.tsx:27` (a same-origin comparison), and `app/(protected)/graph/page.tsx:675` (the graph view's "copy link" — an in-app URL for a signed-in colleague; listed for the integrator).
+
+**Scope / residual.** OPEN for IS-P1's library-page sites.
+
 ---
 
 <a id="phys-14"></a>

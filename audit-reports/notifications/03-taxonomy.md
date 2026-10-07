@@ -241,6 +241,8 @@ components/cockpit/AttentionFeed.tsx:44 -- `if (k.includes("rev") || k.includes(
 
 **Scope / residual.** Per the fleet plan, record RESOLVED when N6 merges (acceptance 1 needs all seven maps). N5 seeds its `notification_kinds` table from `NOTIFICATION_KINDS` / `KIND_META`; N8 and N9 add their kinds here.
 
+**Partial (2026-10-07, notifications Round G).** Package N6 EMAIL-PIPELINE-AND-CRON landed the cron's limb: `app/api/cron/maintenance/route.ts` `COMPLIANCE_KINDS` is derived from `KIND_META`'s `compliance` column (`(Object.keys(KIND_META)).filter((k) => KIND_META[k].compliance)`, :654) — the hand list is gone; the set is unchanged (`lib/__tests__/notificationKinds.test.ts` "compliance is the cron's COMPLIANCE_KINDS, unchanged" now pins the derivation and the set; `lib/__tests__/maintenanceDrain.test.ts` pins that no hand list remains). Done-when 2's remaining maps (`KIND_ICON`, `attentionVisual`, `KIND_GROUPS`, `isError`) and done-when 4 are N3's; the finding stays OPEN for them.
+
 ---
 
 <a id="tax-6"></a>

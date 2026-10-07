@@ -4751,6 +4751,8 @@ against.
 
 *Corrected 2026-10-01 (notifications Round G, N1 PREFS-GATE second fix pass, commit `17a2a75`): §6's key was still the subject alone, which merged different messages that share it and differ only in the body. The worst case was a publish-time recall for Rev C merged into the one for Rev B, leaving the holder's last recall email naming Rev B as current. `email_gate()` now also takes `p_body`, and a repeat means the same subject and the same body. §9 is reversed to the plan's default: recall and PSM email passes the master switch and `'never'` as well as every toggle. GAP-203 acceptance 2's stricter reading is now the item for the integrator to ratify.*
 
+*Landed 2026-10-07 (notifications Round G, N6): §3's import — the compliance digest (`app/api/cron/maintenance/route.ts` `queueComplianceDigests`) gates each recipient with `emailAllowedByPrefs(row, "compliance_digest")` on the service role's read of their row (the master switch, then `'never'`; no toggle of its own), and a row it cannot read sends the digest stamped `pref_gate = 'unverified'` (§4). §9 is untouched: the one-click unsubscribe (`DEC-44 (N6)` §3) sets the master switch, which a recall or PSM alert still passes, and the opt-out page says so. See `NEDGE-9`.*
+
 <a id="dec-75"></a>
 ## DEC-75 · The restore boundary: what a restore may write, into which workspace, and what it never does to an existing row
 
@@ -5135,6 +5137,8 @@ dialog to close on one Escape closes its own stack in its handler.
 
 *Landed 2026-10-02 (notifications Round G, N5): §1's database copy exists — `notification_kinds()` (`20261160`), an IMMUTABLE function listing every `KIND_META` kind with its `compliance` flag, not a seeded table (a table would need a backup decision in `lib/exportTables.ts`; a list of kinds is schema, not org data). A browser's row of an undeclared kind is refused, and a compliance kind is dismiss-only (`20261161`). `lib/__tests__/notificationWriteRails.test.ts` pins the newest definition in the sequence to the registry, kind for kind and flag for flag, so a kind added here needs that migration too. See `DEC-86`.*
 
+*Landed 2026-10-07 (notifications Round G, N6): §1's cron row — `COMPLIANCE_KINDS` (`app/api/cron/maintenance/route.ts`) is derived from `KIND_META`'s `compliance` column; the hand list is gone and the set is unchanged (`lib/__tests__/notificationKinds.test.ts` pins the derivation and the set). See `TAX-5`, `NEDGE-17`.*
+
 <a id="dec-82"></a>
 ## DEC-82 · The owner-must-approve rule at the database: a roster carries the rule it was opened under
 
@@ -5324,6 +5328,8 @@ Before such a modal starts an upload, once the run's cards clear, and whenever n
 - *§5: corrected. The compliance digest can lose lines to forged rows (`NEDGE-17`), and the `ackRequest` deferral repeats indefinitely.*
 - *Risk: the lock's pool cost is restated.*
 
+*Landed 2026-10-07 (notifications Round G, N6): §5's compliance-digest caveat is closed — the digest's read is now scoped to one (org, recipient), unread only, newest first, at most 200 rows with an exact count (`NEDGE-17`), so a member's browser-legal compliance rows can add lines to a colleague's digest within §3's caps but never push another person's or another tenant's lines out. The ticket routes' own service-role fan-out now reaches active members only (`NEDGE-14`), closing the Risk paragraph's last sentence.*
+
 <a id="dec-87"></a>
 ## DEC-87 · Who may take the whole workspace out, what the record of it names, and how a machine signs its audit row
 
@@ -5471,3 +5477,27 @@ Before such a modal starts an upload, once the run's cards clear, and whenever n
 3. If the user ratifies `WF-1`'s rule for the route, swap the route's loader call back to the cached loader. The route test for the 503 flips. Whatever is ratified for the cached loader lands in `loadCapabilityPolicyEntry` with a test that a healthy org's answers do not change.
 
 **Risk:** low. Item 1 narrows only a Contractor-only seat. The database read scope applies once `20261166` is pasted, which comes **after** the DF-P1 app deploy, never before it. A paste before the deploy would let the routes before DF-P1 add a Contractor-only member to `watchers` of any ticket, and that follow would survive. The refusals at the three routes apply from the deploy: before the paste, a Contractor-only member can still read every ticket but cannot follow, comment on or act on one outside the scope. Item 2 adds one audit write before each transition, can refuse a transition during an audit-table fault that would previously have been applied with its row silently missing, and leaves an extra `_NOT_APPLIED` row on the rare transition that loses its race after its row landed. Item 3 can refuse a workflow action during a database fault that would previously have been decided on the defaults.
+
+<a id="dec-44-n6"></a>
+## DEC-44 (N6) · Notification email: one render layer with absolute links or none, a signed one-click opt-out, a digest read per recipient, and a drain that says what it did
+
+*Minted by notifications Round G, package N6 EMAIL-PIPELINE-AND-CRON (2026-10-07), under the provisional label "DEC-44 (N6)", anchor `dec-44-n6` — the corpus's branch convention; the integrator renumbers at merge. References: `NEDGE-4`, `DELIV-5`, `NEDGE-10`, `NEDGE-9`, `NEDGE-17`, `NEDGE-12`, `DELIV-11`, `DELIV-8`, `DELIV-1`; `DEC-74`, `DEC-81`, `DEC-86`. It takes the fleet plan's three stated defaults (N6 `decisionsNeeded`) and records the render layer's shape.*
+
+**Decision.**
+1. **One render layer; a link is absolute or absent.** `lib/emailRender.ts` composes every member email: `renderNotificationEmail` for `emit()` and the compliance digest, `wrapEmailBody` for a body a producer composed (the ticket templates), and the drain's backstop for any member row nothing rendered at queue time (`metadata.rendered` absent). A link leaves the app joined to the public origin (`lib/publicOrigin.ts`); with no origin the renderer THROWS and the caller queues the email in its pre-render form — never a bare path, never a dropped notice. Every email names the workspace and links `/settings/notifications`; mention markup renders as names.
+2. **The body is rendered at queue time, and the gate sees what is stored.** `emit()` passes the rendered body to `queueEmail` (`rendered`), which gates, stores and sends it, so `email_gate()`'s repeat check (`DEC-74` §6) compares like with like. The drain never rewrites a stored row.
+3. **One-click unsubscribe = the master switch** (the plan's default). The drain adds `List-Unsubscribe` / `List-Unsubscribe-Post` (RFC 8058) to every member email (never to external mail, whose `to_user_id` is the sender), pointing at `/api/notifications/unsubscribe` with an HMAC of the recipient's uid (`EMAIL_UNSUBSCRIBE_SECRET`, else the service-role key; no key, no header). GET shows the choice and changes nothing; POST sets `email_enabled = false` for that uid only. A recall or PSM alert still passes it (`DEC-74` §9).
+4. **The digest keeps the 03:00 UTC cron and is named for its window** (the plan's default): "the 25 hours to `<time>` (`<zone>`)" — the org's zone when `org_configurations` key `timezone` holds one, else UTC, labelled. The per-day dedupe key stays the UTC day. An org-level timezone setting is `NEDGE-19`, not built here. Each (org, recipient) list is its own read (`NEDGE-17`), gated by `DEC-74`'s rule (`NEDGE-9`).
+5. **The drain reports.** `processed` decides an empty queue; unconfigured email, failed sends and the second pass are result fields and error lines (`DELIV-11`); a batch that sends nothing stops the loop rather than burn the same rows' attempts.
+6. **Abandoned mail is reported, then purged** (the plan's default): `suppressed` rows are their own line in the purge plan, with count, kinds and dates, and the `DATA_PURGE` row records them; no separate "abandon" action. Read rows carrying a server dedupe watermark (`DEC-86` §5's list) are never purged.
+7. **Who queued an email is the database's word** (`DELIV-1`): `email_notifications.queued_by`, stamped by a BEFORE INSERT trigger for a signed-in caller (`20261183`); server rows leave it NULL.
+
+**Rationale.** A link in an email resolves against nothing; a footer and an unsubscribe header protect the sending domain whose reputation every safety notice depends on; and an outage that the cron reports as a clean run is worse than one it never saw. Rendering at queue time keeps the dedupe exact; the drain's backstop covers the rows queued before the layer and by routes outside it, so "every member email" holds without editing other packages' files.
+
+**Implementation.** `lib/emailRender.ts`, `lib/recordTime.ts`, `lib/unsubscribeToken.ts` (new); `lib/notify/dispatch.ts`, `lib/notifications.ts`, `lib/inAppNotifications.ts`; `app/api/notifications/send-queued/route.ts`, `app/api/notifications/unsubscribe/route.ts` (new); `app/api/cron/maintenance/route.ts`; the ticket routes' fan-out email region; `app/api/admin/purge/route.ts`; `app/(protected)/admin/settings/page.tsx`; `supabase/migrations/20261183_notif_roundG_email_attribution.sql`.
+
+**Acceptance.** `lib/__tests__/emailRender.test.ts`, `lib/__tests__/maintenanceDrain.test.ts`, `lib/__tests__/n6TicketFanout.test.ts`, `lib/__tests__/adminSettingsDeadLetters.test.ts`.
+
+**Reversal.** §1: a producer that wants its own HTML passes `email.bodyHtml` and is sent as given (the footer is then the drain's only if it leaves `metadata.rendered` unset). §3: a narrower opt-out (per category) is a different upsert in the unsubscribe route. §4: anchoring the dedupe to an org zone needs `NEDGE-19` first. §6: excluding suppressed rows from the purge entirely is one filter in `floorOf`. §7: drop the trigger; the column is inert.
+
+**Risk:** low. Every member email gains a footer and an unsubscribe header; a member who clicks one-click unsubscribe stops event email (not recall / PSM). The digest costs one indexed read per active member with an address per day, within a 90 s budget that reports a cut-short run. The purge keeps a few more read rows (the watermarks) and drops abandoned mail only after listing it.
