@@ -610,21 +610,47 @@ one-paste migration:
   **Never re-paste `20261182`, `20261174`, `20261165`, `20261164`,
   `20261159`, `20261151`, `20261144`, `20261139`, `20261105` or any earlier
   guard migration after it** — each drops the P16 rule.
-- **Deploy order: none** (no app deploy is needed before or after the
-  paste). The two editors that can make the direct move are Document
-  Control's only and already treat it as an issue (P15: said before the
-  save, the hold checked first); Document Control passes the publisher
-  tier and the require limb never binds it, so their saves land as before.
-  P16 changes no app code (comments in `lib/issueStatus.ts` and
-  `lib/documentStatusOptions.ts`). **One app result changes** (review fix;
-  *corrected: this paragraph first said the app works the same before and
-  after*): the un-archive of a document archived from IFC (or another
-  status no gate reads as in force) back to Issued is judged as an issue —
-  refused under a require policy short of Document Control or a complete
-  roster, and over an active hold for everyone, Document Control's
-  confirmed override included. The dialog answers both refusals (it offers
-  the Draft restore). The rollbacks put back the prior status (IFC), which
-  this does not touch.
+- **Deploy order: the app change of `REV-26`, `REV-27` and `REV-29`
+  first** (second review fix; *corrected: this paragraph said "none"*).
+  Those three are proposed as one package, document-control **P23
+  STATUS-SURFACE FOLLOW-UPS** (DEC-31); the integrator adds it to the
+  fleet plan and may renumber it. Its app change is deployed BEFORE
+  `20261185` is pasted. Pasting first needs the integrator's recorded
+  acceptance, on the paste guide row, of what the app gets wrong until
+  P23 lands; each fails closed (no write the guard refuses is admitted):
+  - the status editors' note "The database does not check this change"
+    is false;
+  - the un-archive dialog offers an IFC-stamped archive's restore into
+    Issued as "puts that issue back", and asks Document Control to confirm
+    a hold override that the database then refuses;
+  - NULL-status rollbacks are refused, not put back (inventory rows 6 and
+    7 count the documents).
+  The two editors that can make the direct move are Document Control's
+  only and already treat it as an issue (P15: said before the save, the
+  hold checked first); Document Control passes the publisher tier and the
+  require limb never binds it, so their saves land as before. P16 changes
+  no app code (comments in `lib/issueStatus.ts` and
+  `lib/documentStatusOptions.ts`). **Two app results change** (*corrected
+  twice: this paragraph first said the app works the same before and
+  after, then that one result changes*):
+  - the un-archive of a document archived from IFC (or another status no
+    gate reads as in force, a NULL status included) back to Issued is
+    judged as an issue — refused under a require policy short of Document
+    Control or a complete roster, and over an active hold for everyone,
+    Document Control's confirmed override included. The dialog answers
+    both refusals (it offers the Draft restore);
+  - the rollback of a NULL-status document's retirement. The app puts a
+    NULL prior status back as 'Issued' (`?? "Issued"` in
+    `lib/revisions.ts` `undoFailedSupersede`,
+    `lib/documentLifecycle/common.ts` and `merge.ts`; a reversal restores
+    the 'Issued' its event recorded). That is judged as an issue: a failed
+    supersede's or split / merge's rollback is refused under a require
+    policy short of Document Control or a complete roster (the document
+    stays Superseded, its added lineage pairs left), and over an active
+    hold for everyone, Document Control's forced rollback and a reversal
+    over a carried hold included (`REV-29`).
+  Every other rollback puts back the prior status (IFC for an IFC
+  document), which this does not touch.
 - **After the paste:** a status-only move into Issued / Locked out of an
   issue status outside them (IFC, an empty status, a case or spacing
   variant, a library's own), on a document with a current revision, is
@@ -638,7 +664,11 @@ one-paste migration:
   pointer (a rev-up or revert of an IFC document) keeps the pointer move's
   rules. The inventory counts the documents concerned, the IFC ones among
   them (`VFY-20`'s count), the held ones, the unreviewed ones under
-  require, and the retired documents whose stamp names such a status.
+  require, the retired documents whose stamp names their current revision
+  with such a status (second review fix: not one naming another revision,
+  which P20 judged already), and the NULL-status population whose
+  rollback changes (rows 6 and 7: of the first row, a NULL status; of the
+  retired row, a NULL stamp status).
 - **Not closed by P16 (DEC-31):** `REV-26` — the editors' "The database
   does not check this change" sentence (overstated once pasted), the
   metadata editor's refusal suffix for the database's refusal of the move,
@@ -646,8 +676,12 @@ one-paste migration:
   `REV-27` — the un-archive dialog for an IFC-stamped archive (its "puts
   that issue back" copy and Issued default, the hold-override confirmation
   the database now refuses, no restore to the stamped status, and the issue
-  record calling the restore a put-back); `REV-26` and `REV-27` should be
-  assigned, to one status-surface package, before `20261185` is pasted.
+  record calling the restore a put-back); `REV-29` — a NULL prior status
+  put back as 'Issued' by the rollbacks and the split / merge events, with
+  no door for a NULL (`put_back_retired_issue` and
+  `restore_reversed_source` refuse a blank status). All three are proposed
+  as document-control P23 STATUS-SURFACE FOLLOW-UPS, whose app change
+  deploys before `20261185` is pasted (the deploy order above).
   `REV-28` — a publisher's Minor / Correction rev-up of an unreviewed IFC
   document under require (RG-7's hatch, a pointer move, so outside the
   status-only rule): for the integrator or the user to decide.
