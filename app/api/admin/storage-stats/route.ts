@@ -23,8 +23,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { authorizeAdminSurface } from "@/lib/adminGate";
 import { classifyTable, type DataClass } from "@/lib/storageClassify";
 import {
-  measureR2Usage, loadPlatformLimits, storageScopeFor, readPlatformOperators, orgStoragePrefix, platformOperatorSql,
-  STORAGE_LIMITS_KEY, PLATFORM_OPERATORS_MIGRATION,
+  measureR2Usage, loadPlatformLimits, resolvePlatformLimits, storageScopeFor, readPlatformOperators, orgStoragePrefix,
+  platformOperatorSql, STORAGE_LIMITS_KEY, PLATFORM_OPERATORS_MIGRATION,
 } from "@/lib/storageUsage";
 import { alertBand } from "@/lib/storageAlerts";
 
@@ -45,7 +45,7 @@ export async function GET(req: NextRequest) {
   const actor = await authorizeAdminSurface(req, orgId, "storage");
   if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
   const sb = actor.admin;
-  const { scope, operator } = await storageScopeFor(sb, orgId, actor.userId);
+  const { scope, operator, soleTenant } = await storageScopeFor(sb, orgId, actor.userId);
   const deadlineMs = Date.now() + WALK_BUDGET_MS;
 
   if (scope === "workspace") {
@@ -72,6 +72,7 @@ export async function GET(req: NextRequest) {
       generatedAt: new Date().toISOString(),
       scope,
       platformOperator: operator,
+      soleTenant,
       operatorSql: operator ? null : platformOperatorSql(actor.userId),
       workspace: { files, filesError },
       db: null, r2Estimate: null, r2Real: null, r2Error: null, freeTier: null, dedup: null,
@@ -191,6 +192,10 @@ export async function GET(req: NextRequest) {
     generatedAt: new Date().toISOString(),
     scope,
     platformOperator: operator,
+    // Who the platform watchdog tells (lib/storageUsage.ts
+    // platformAlertRecipients): the sole workspace's Admin / DocCtrl, or the
+    // platform operators — the page names the right one.
+    soleTenant,
     operatorSql: operator ? null : platformOperatorSql(actor.userId),
     workspace: { files: workspaceFiles, filesError: r2Error },
     db: { totalBytes: dbBytes, tables, byCategory },
@@ -227,7 +232,9 @@ export async function GET(req: NextRequest) {
  *  write). The storage surface's writes set still gates the route first
  *  (SURF-19: who reaches it is unchanged); the operator rule is the second
  *  rail. BILL-7: the change writes an audit row with the old and new values,
- *  checked. */
+ *  checked. The old values are read from the row itself, checked: a failed
+ *  read refuses the change (nothing saved) rather than recording the
+ *  free-tier fallback as what the ceilings were. */
 export async function POST(req: NextRequest) {
   let body: { orgId?: string; r2LimitBytes?: number; dbLimitBytes?: number };
   try { body = await req.json(); } catch {
@@ -258,7 +265,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "r2LimitBytes and dbLimitBytes must be positive numbers." }, { status: 400 });
   }
 
-  const before = await loadPlatformLimits(actor.admin);
+  // BILL-7: what the ceilings were, for the audit row — read and CHECKED, as
+  // archive-settings reads its prior row. loadPlatformLimits would fall back
+  // to env / free-tier figures on a failed read and record them as the old
+  // value; here a failed read saves nothing. No row is not a failure: the
+  // ceilings then were the env override or the free tier, and `source` says so.
+  const { data: priorRow, error: priorErr } = await actor.admin
+    .from("platform_settings").select("value").eq("key", STORAGE_LIMITS_KEY).maybeSingle();
+  if (priorErr) {
+    const missing = priorErr.code === "42P01" || /does not exist/i.test(priorErr.message);
+    return NextResponse.json({
+      error: missing
+        ? "The platform_settings table doesn't exist yet — run migration 20260920 in Supabase first."
+        : `Couldn't read the current ceilings, so the change could not be recorded against them — nothing was saved. (${priorErr.message})`,
+    }, { status: missing ? 424 : 503 });
+  }
+  const before = resolvePlatformLimits((priorRow as { value?: unknown } | null)?.value ?? null);
   const after = { r2Bytes: Math.round(r2LimitBytes), dbBytes: Math.round(dbLimitBytes) };
   const { error } = await actor.admin.from("platform_settings").upsert({
     key: STORAGE_LIMITS_KEY,

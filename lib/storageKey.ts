@@ -99,6 +99,35 @@ export function logoUploadProblem(contentType: unknown, size: unknown): { status
   return null;
 }
 
+/** The extension a new logo's key is minted with, from its allow-listed type
+ *  — never from the file's name, which can be anything (Windows names a JPEG
+ *  "….jfif"; a name may have no extension at all). A key named by its type
+ *  is one a backup restore can read the type back from. Null for a type the
+ *  allow-list refuses. */
+export function logoExtensionForType(contentType: unknown): "png" | "jpg" | "webp" | null {
+  switch (contentType) {
+    case "image/png": return "png";
+    case "image/jpeg": return "jpg";
+    case "image/webp": return "webp";
+    default: return null;
+  }
+}
+
+/** An image's type read from its first bytes (12 are enough), or null when
+ *  they are none of these: PNG (89 50 4E 47), JPEG (FF D8 FF), WebP
+ *  ("RIFF" … "WEBP"), GIF ("GIF8"). The restore uses it for a logo whose key's
+ *  extension does not say what the bytes are. */
+export function sniffImageType(head: Uint8Array | null | undefined): string | null {
+  if (!head || head.length < 3) return null;
+  const at = (i: number) => (i < head.length ? head[i] : -1);
+  if (at(0) === 0x89 && at(1) === 0x50 && at(2) === 0x4e && at(3) === 0x47) return "image/png";
+  if (at(0) === 0xff && at(1) === 0xd8 && at(2) === 0xff) return "image/jpeg";
+  if (at(0) === 0x52 && at(1) === 0x49 && at(2) === 0x46 && at(3) === 0x46 &&
+      at(8) === 0x57 && at(9) === 0x45 && at(10) === 0x42 && at(11) === 0x50) return "image/webp";
+  if (at(0) === 0x47 && at(1) === 0x49 && at(2) === 0x46 && at(3) === 0x38) return "image/gif";
+  return null;
+}
+
 // ── Putting a backup's files back (ORG-5, fix pass) ──────────────────────────
 // The restore page (app/(protected)/admin/restore/page.tsx, "Put the files
 // back") re-uploads every file a Full ZIP carries through
@@ -128,13 +157,20 @@ export function contentTypeForKey(key: string): string {
  *  at `key`: the presign request's body and the PUT's Content-Type (the same
  *  type). `logoProblem` is set only for a workspace logo upload-url will not
  *  sign — an SVG or GIF logo uploaded before ORG-5, or one over 5 MB. The
- *  page does not ask for it, and says the logo must be uploaded again. */
-export function restoreUploadRequest(key: string, size: number): {
+ *  page does not ask for it, and says the logo must be uploaded again.
+ *
+ *  `head` (a logo's first bytes) decides a logo's type when they are a known
+ *  image: logo keys used to be minted from the file's NAME, so a real JPEG
+ *  can sit at "….jfif" or under no extension at all, and upload-url signed
+ *  it by its declared type. Without the bytes, the key's extension decides,
+ *  as for every other file. */
+export function restoreUploadRequest(key: string, size: number, head?: Uint8Array | null): {
   contentType: string;
   body: { path: string; contentType: string; size: number };
   logoProblem: string | null;
 } {
-  const contentType = contentTypeForKey(key);
+  const sniffed = isWorkspaceLogoKey(key) ? sniffImageType(head) : null;
+  const contentType = sniffed ?? contentTypeForKey(key);
   const problem = isWorkspaceLogoKey(key) ? logoUploadProblem(contentType, size) : null;
   return { contentType, body: { path: key, contentType, size }, logoProblem: problem?.error ?? null };
 }

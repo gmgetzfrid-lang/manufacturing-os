@@ -92,7 +92,7 @@ describe("runStorageAlerts — the quota watermark (lib/storageAlerts.ts)", () =
         title: "Storage critical — 95% full",
         body: "This workspace's files are at 95% of the storage limit an admin set (0 MB of 0 MB, measured under this workspace only). " +
           "The limit is advisory: uploads are not blocked when it is reached. " +
-          "Take a full backup and free up space (archive superseded revisions, purge disposable rows).",
+          "Take a full backup and free up space from Admin → Storage (archive superseded revisions or closed tickets, delete orphaned files).",
         link: "/admin/storage", resource_type: null, resource_id: null, actor_user_id: null, actor_name: null, metadata: null,
       });
     }

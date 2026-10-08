@@ -12,6 +12,10 @@
 //     location alike);
 //   * fix pass: a partial walk under 70% is "Partial", never "Healthy"; an
 //     unmeasured workspace is neutral, never green;
+//   * fix pass 2: the watermark's "reclaim now" counts only what lowers the
+//     workspace's FILES figure (purge is database space, said apart); the plan
+//     ceilings' copy says what the providers do past a ceiling and names who
+//     the platform alert goes to by the route, not by who is looking;
 //   * P3 handoff (DEC-87 §1, BKP-8): the Full ZIP / JSON buttons show only to
 //     a member holding the data-export surface's entry (Admin), by the full
 //     collection; anyone else reads a line pointing them to an Admin.
@@ -42,7 +46,7 @@ const GB = 1024 ** 3;
 const MB = 1024 ** 2;
 const workspace = { files: { bytes: 1.5 * GB, objects: 40, newest: null, truncated: false, stoppedBy: null }, filesError: null };
 const DEPLOYMENT = {
-  generatedAt: "2026-10-02T10:00:00.000Z", scope: "deployment", platformOperator: false,
+  generatedAt: "2026-10-02T10:00:00.000Z", scope: "deployment", platformOperator: false, soleTenant: true,
   operatorSql: "INSERT INTO platform_settings (key, value) VALUES ('platform_operators', ...) ...; UPDATE platform_settings ...;",
   workspace,
   db: { totalBytes: 100 * MB, tables: [{ name: "tickets", rows: 10, bytes: 50 * MB, category: "archive", reason: "records", grower: false }], byCategory: { purge: 0, archive: 50 * MB, reference: 0 } },
@@ -62,6 +66,11 @@ const SHARED = {
 let stats: unknown = DEPLOYMENT;
 let quota: number | null = null;
 let archivePut: Record<string, unknown> = { ok: true };
+const EMPTY_PURGE = { cutoffDays: 90, targets: [], totalRows: 0, totalEstBytes: 0, note: "" };
+const EMPTY_SHED = { selectedCount: 0, reclaimableBytes: 0, eligibleCount: 0 };
+let purgeBody: Record<string, unknown> = EMPTY_PURGE;
+let shedBody: Record<string, unknown> = EMPTY_SHED;
+let ticketBody: Record<string, unknown> = EMPTY_SHED;
 const puts: Array<{ url: string; body: unknown }> = [];
 let container: HTMLDivElement;
 let root: Root;
@@ -71,6 +80,7 @@ beforeEach(() => {
   stats = DEPLOYMENT;
   quota = null;
   archivePut = { ok: true };
+  purgeBody = EMPTY_PURGE; shedBody = EMPTY_SHED; ticketBody = EMPTY_SHED;
   puts.length = 0;
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
     const u = String(url);
@@ -81,9 +91,9 @@ beforeEach(() => {
       return json(archivePut);
     }
     if (u.startsWith("/api/admin/archive-settings")) return json({ settings: { location_hint: null, naming: null, quota_bytes: quota } });
-    if (u.startsWith("/api/admin/purge")) return json({ cutoffDays: 90, targets: [], totalRows: 0, totalEstBytes: 0, note: "" });
-    if (u.startsWith("/api/admin/shed")) return json({ selectedCount: 0, reclaimableBytes: 0, eligibleCount: 0 });
-    if (u.startsWith("/api/admin/ticket-shed")) return json({ selectedCount: 0, reclaimableBytes: 0, eligibleCount: 0 });
+    if (u.startsWith("/api/admin/purge")) return json(purgeBody);
+    if (u.startsWith("/api/admin/shed")) return json(shedBody);
+    if (u.startsWith("/api/admin/ticket-shed")) return json(ticketBody);
     if (u.startsWith("/api/admin/archives")) return json({ archives: [] });
     return new Response("not found", { status: 404 });
   }));
@@ -185,6 +195,68 @@ describe("fix pass — a partial walk is never 'Healthy'; an unmeasured one is n
     expect(card.textContent).toContain("Healthy");
     expect(card.textContent).toContain("Plenty of headroom");
     expect(greenIn(card)).toBe(2);
+  });
+});
+
+describe("fix pass 2 — the watermark's reclaim hint counts only what lowers this workspace's files", () => {
+  const purge590 = { cutoffDays: 90, targets: [{ table: "ai_usage_events", label: "AI usage", reason: "disposable", rows: 9000, estBytes: 590 * MB }], totalRows: 9000, totalEstBytes: 590 * MB, note: "" };
+
+  it("REPRODUCED: 590 MB of disposable database rows is no longer offered as freeing this workspace's files (it said ≈600 MB, purge + dedup)", async () => {
+    purgeBody = purge590;
+    shedBody = { selectedCount: 3, reclaimableBytes: 10 * MB, eligibleCount: 3 };
+    stats = { ...DEPLOYMENT, dedup: { totalVersions: 10, totalBytes: 100 * MB, distinctHashes: 9, dupGroups: 1, reclaimableBytes: 50 * MB } };
+    await render();
+    const text = watermark().textContent ?? "";
+    expect(text).not.toContain("purge + dedup");
+    expect(text).not.toMatch(/reclaim ≈6\d\d MB/);
+    expect(text).toContain("You can free ≈10 MB of this workspace's files now (archive superseded revisions).");
+    expect(text).toContain("Purging disposable rows would free ≈590 MB of database space, which this figure does not count.");
+  });
+
+  it("archived tickets count too, each source named; dedup (no action here, the server's figure) never does", async () => {
+    shedBody = { selectedCount: 3, reclaimableBytes: 10 * MB, eligibleCount: 3 };
+    ticketBody = { selectedCount: 2, reclaimableBytes: 20 * MB, eligibleCount: 2 };
+    stats = { ...DEPLOYMENT, dedup: { totalVersions: 10, totalBytes: 100 * MB, distinctHashes: 9, dupGroups: 1, reclaimableBytes: 50 * MB } };
+    await render();
+    const text = watermark().textContent ?? "";
+    expect(text).toContain("You can free ≈30 MB of this workspace's files now (archive superseded revisions, archive closed tickets).");
+    expect(text).not.toContain("database space");
+  });
+
+  it("only a purge to offer: no files figure is claimed; the database space is said as such", async () => {
+    purgeBody = purge590;
+    await render();
+    const text = watermark().textContent ?? "";
+    expect(text).not.toContain("You can free");
+    expect(text).toContain("Purging disposable rows would free ≈590 MB of database space, which this figure does not count.");
+  });
+});
+
+describe("fix pass 2 — the plan ceilings' copy is true for the providers, and names who is alerted by the route", () => {
+  const PROVIDERS =
+    "This app never refuses an upload at a ceiling. Past the R2 plan, Cloudflare bills the overage or refuses writes on an " +
+    "account without billing; past the Supabase plan's database size, the database can go read-only.";
+
+  it("REPRODUCED: no longer says 'uploads are never blocked at a ceiling' — it says what the app and the providers do", async () => {
+    const text = await render();
+    expect(text).not.toContain("uploads are never blocked at a ceiling");
+    expect(text).toContain(PROVIDERS);
+  });
+  it("REPRODUCED: an operator viewing the ONLY workspace reads that its Admin / DocCtrl are alerted (it said platform operators)", async () => {
+    stats = { ...DEPLOYMENT, platformOperator: true, soleTenant: true, operatorSql: null };
+    const text = await render();
+    expect(text).toContain("This workspace's Admin / DocCtrl get an in-app notification at 70% and 90%.");
+    expect(text).not.toContain("Platform operators get an in-app notification");
+  });
+  it("the only workspace's own Admin reads the same", async () => {
+    const text = await render();
+    expect(text).toContain("This workspace's Admin / DocCtrl get an in-app notification at 70% and 90%.");
+  });
+  it("an operator viewing a shared server reads that platform operators are alerted", async () => {
+    stats = { ...DEPLOYMENT, platformOperator: true, soleTenant: false, operatorSql: null };
+    const text = await render();
+    expect(text).toContain("Platform operators get an in-app notification at 70% and 90%.");
+    expect(text).not.toContain("This workspace's Admin / DocCtrl get");
   });
 });
 

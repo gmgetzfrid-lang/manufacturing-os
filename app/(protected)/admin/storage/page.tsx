@@ -46,6 +46,10 @@ interface Stats {
   scope?: "deployment" | "workspace";
   /** May change the plan ceilings (BILL-5). */
   platformOperator?: boolean;
+  /** This is the server's only workspace — then its Admin / DocCtrl, not the
+   *  platform operators, get the plan-ceiling alert (lib/storageUsage.ts
+   *  platformAlertRecipients). */
+  soleTenant?: boolean;
   /** The SQL that would make this member an operator (deployment scope, not
    *  an operator). */
   operatorSql?: string | null;
@@ -839,7 +843,22 @@ export default function StorageBackupPage() {
   // The segment list: the whole bucket's when the server's figures are shown,
   // else this workspace's own walk.
   const segWalk: { bytes: number; segments?: Segment[] } | null = db ? (stats?.r2Real ?? null) : wsFiles;
-  const reclaimNow = (preview?.totalEstBytes ?? 0) + (stats?.dedup?.reclaimableBytes ?? 0);
+  // BILL-12 fix pass: the watermark counts this workspace's FILES, so its
+  // "reclaim now" counts only what lowers that figure — superseded revisions
+  // and closed tickets archived off live storage, and orphans deleted (each
+  // under this workspace's prefix, once its preview or scan has loaded). The
+  // purge estimate is DATABASE rows: said apart, as database space. Dedup is
+  // not counted: no action here performs it (the Duplication card measures
+  // what content-addressed storage would save), and in the server's view its
+  // figure covers every workspace.
+  const filesReclaimParts: Array<[string, number]> = [
+    ["archive superseded revisions", shedPreview?.reclaimableBytes ?? 0],
+    ["archive closed tickets", ticketPreview?.reclaimableBytes ?? 0],
+    ["delete orphaned files", orphanScan?.orphanBytes ?? 0],
+  ];
+  const filesReclaim = filesReclaimParts.reduce((a, [, b]) => a + b, 0);
+  const filesReclaimHow = filesReclaimParts.filter(([, b]) => b > 0).map(([how]) => how).join(", ");
+  const dbReclaim = preview?.totalEstBytes ?? 0;
   const ticketRow = tables.find((t) => t.name === "tickets");
 
   return (
@@ -924,7 +943,8 @@ export default function StorageBackupPage() {
                   ? "Plenty of headroom. Still recommended: take a full backup quarterly so you can restore from scratch."
                   : `At ${usedFloor ? "least " : ""}${pct}% it's time to take a full backup and free up space below.`}
                 {usedFloor && health !== "partial" && " The measurement stopped early, so the real figure is higher."}
-                {reclaimNow > 0 && <> You can reclaim ≈<b>{fmtBytes(reclaimNow)}</b> now (purge + dedup).</>}
+                {filesReclaim > 0 && <> You can free ≈<b>{fmtBytes(filesReclaim)}</b> of this workspace&apos;s files now ({filesReclaimHow}).</>}
+                {dbReclaim > 0 && <> Purging disposable rows would free ≈{fmtBytes(dbReclaim)} of database space, which this figure does not count.</>}
                 {!isRealQuota && " The limit shown is a guideline until you set your plan's real quota."}
                 {" "}Measured from this workspace&apos;s own files in storage, not the whole server; the database is shared
                 {shared ? " with the other workspaces on this server." : " and shown under Plan headroom."}
@@ -1130,7 +1150,10 @@ export default function StorageBackupPage() {
                   {stats.freeTier.source === "settings"
                     ? " (set by an admin here)"
                     : " (defaulting to the FREE tiers — R2 10 GB, Supabase 500 MB)"}.
-                  Advisory: uploads are never blocked at a ceiling. {stats.platformOperator ? "Platform operators" : "The workspace's Admin / DocCtrl"} get an in-app notification at 70% and 90%.{" "}
+                  This app never refuses an upload at a ceiling. Past the R2 plan, Cloudflare bills the overage or refuses
+                  writes on an account without billing; past the Supabase plan&apos;s database size, the database can go
+                  read-only.{" "}
+                  {stats.soleTenant ? "This workspace's Admin / DocCtrl" : "Platform operators"} get an in-app notification at 70% and 90%.{" "}
                   {stats.platformOperator ? (
                     <button onClick={() => {
                       setR2LimitDraft(String(Math.round((stats.freeTier!.r2LimitBytes / 1024 ** 3) * 10) / 10));

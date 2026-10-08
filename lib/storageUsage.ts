@@ -21,7 +21,10 @@
 // 70% (high) / 90% (critical) of its ceiling, the people who may see the
 // deployment's figures get an in-app notification, deduped to one per week
 // per person per resource — every Admin/DocCtrl of the workspace on a
-// single-workspace deployment, the platform operators on a shared one.
+// single-workspace deployment, the platform operators on a shared one. A
+// shared deployment with no operator to tell is never silent: each
+// workspace's Admins get a notice that carries no figures, and the cron
+// reports it in its errors (BILL-5 fix pass).
 //
 // admin-and-org BILL-5 / BILL-12 (Round G, P6; DEC-44 (A&O P6)): the plan
 // ceilings and the bucket walk are DEPLOYMENT facts — one bucket, one
@@ -36,6 +39,7 @@ import { ListObjectsV2Command, type ListObjectsV2CommandOutput } from "@aws-sdk/
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { alertBand, notifyAsServiceRole, type AlertBand } from "@/lib/storageAlerts";
 import type { NotificationKind } from "@/lib/inAppNotifications";
+import { memberHoldsAny, roleFilter } from "@/lib/roleHeld";
 
 const GiB = 1024 * 1024 * 1024;
 const MiB = 1024 * 1024;
@@ -128,18 +132,17 @@ export async function storageScopeFor(sb: SupabaseClient, orgId: string, uid: st
   return { scope: operator || sole ? "deployment" : "workspace", operator, soleTenant: sole, operatorsError: ops.error };
 }
 
-/** Resolve the plan ceilings: admin-set value → env override → free tier. */
-export async function loadPlatformLimits(sb: SupabaseClient): Promise<PlatformLimits> {
-  try {
-    const { data } = await sb
-      .from("platform_settings").select("value").eq("key", STORAGE_LIMITS_KEY).maybeSingle();
-    const v = data?.value as { r2Bytes?: number; dbBytes?: number } | null;
-    const r2 = Number(v?.r2Bytes);
-    const db = Number(v?.dbBytes);
-    if (Number.isFinite(r2) && r2 > 0 && Number.isFinite(db) && db > 0) {
-      return { r2Bytes: r2, dbBytes: db, source: "settings" };
-    }
-  } catch { /* pre-migration DB — fall through */ }
+/** The plan ceilings a `storage_limits` row's value (null: no row) resolves
+ *  to: the operator-set value → env override → free tier. Pure — the
+ *  ceiling POST resolves the row it read (checked) for its audit row's old
+ *  values with this, never with a fallback that hides a failed read (BILL-7). */
+export function resolvePlatformLimits(value: unknown): PlatformLimits {
+  const v = value as { r2Bytes?: number; dbBytes?: number } | null | undefined;
+  const r2 = Number(v?.r2Bytes);
+  const db = Number(v?.dbBytes);
+  if (Number.isFinite(r2) && r2 > 0 && Number.isFinite(db) && db > 0) {
+    return { r2Bytes: r2, dbBytes: db, source: "settings" };
+  }
   const envR2 = envBytes("STORAGE_LIMIT_R2_BYTES", 0);
   const envDb = envBytes("STORAGE_LIMIT_DB_BYTES", 0);
   if (envR2 > 0 || envDb > 0) {
@@ -150,6 +153,19 @@ export async function loadPlatformLimits(sb: SupabaseClient): Promise<PlatformLi
     };
   }
   return { ...DEFAULT_LIMITS, source: "default" };
+}
+
+/** Resolve the plan ceilings for display and banding: admin-set value → env
+ *  override → free tier. A failed read falls back (the page and the cron
+ *  still band against something); a writer that must know the stored value
+ *  reads the row itself and checks the error. */
+export async function loadPlatformLimits(sb: SupabaseClient): Promise<PlatformLimits> {
+  try {
+    const { data, error } = await sb
+      .from("platform_settings").select("value").eq("key", STORAGE_LIMITS_KEY).maybeSingle();
+    if (!error) return resolvePlatformLimits(data?.value ?? null);
+  } catch { /* pre-migration DB — fall through */ }
+  return resolvePlatformLimits(null);
 }
 
 export interface R2Segment {
@@ -340,48 +356,102 @@ export async function measurePlatformStorage(sb: SupabaseClient, opts: { deadlin
 const fmtGb = (bytes: number) => (bytes / GiB).toFixed(bytes >= GiB ? 1 : 2);
 const fmtMb = (bytes: number) => Math.round(bytes / MiB);
 
+/** Where the platform watchdog's alert went (BILL-5 / BILL-12):
+ *  "sole-workspace" — the only workspace's Admin / DocCtrl, with the figures
+ *  (they are its own); "operators" — the platform operators, with the
+ *  figures; "no-operator" — a shared deployment with no operator to tell (none
+ *  registered, an unreadable list, or none an active member of a workspace):
+ *  each workspace's Admins get a notice WITHOUT figures, and the cron reports
+ *  it; "none" — a deployment with no workspace at all. */
+export type PlatformAlertRoute = "sole-workspace" | "operators" | "no-operator" | "none";
+
 /** Who hears about the deployment's plan ceilings (BILL-5 / BILL-12): the
  *  deployment's figures go only to people who may see them. On a
  *  single-workspace deployment that is the workspace's Admin / DocCtrl (its
- *  own figures, as before); on a shared one, the platform operators, in each
- *  workspace they are an active member of — never every tenant's admins.
- *  `route` says which, for the cron log: "none" means a shared deployment
- *  with no operator registered (or an unreadable list), so nobody was told. */
+ *  own figures, as before); on a shared one, the platform operators, each
+ *  ONCE, in the first workspace (by id) they are an active member of —
+ *  never every tenant's admins. With no operator to tell, every workspace's
+ *  Admins (by the full role collection) are the "no-operator" fallback:
+ *  told that the server runs hot, never by how much. */
 async function platformAlertRecipients(sb: SupabaseClient): Promise<{
-  route: "sole-workspace" | "operators" | "none"; targets: Array<{ orgId: string; uid: string }>;
+  route: PlatformAlertRoute; targets: Array<{ orgId: string; uid: string }>; operatorsError: string | null;
 }> {
   const { data: orgs } = await sb.from("orgs").select("id");
   const orgIds = ((orgs as Array<{ id: string }> | null) ?? []).map((o) => o.id);
-  if (orgIds.length === 0) return { route: "none", targets: [] };
+  if (orgIds.length === 0) return { route: "none", targets: [], operatorsError: null };
   if (orgIds.length === 1) {
     const { data: admins } = await sb
       .from("org_members").select("uid")
       .eq("org_id", orgIds[0]).eq("status", "active").or("role.in.(Admin,DocCtrl),roles.ov.{Admin,DocCtrl}");
-    return { route: "sole-workspace", targets: ((admins as Array<{ uid: string }> | null) ?? []).map((a) => ({ orgId: orgIds[0], uid: a.uid })) };
+    return {
+      route: "sole-workspace", operatorsError: null,
+      targets: ((admins as Array<{ uid: string }> | null) ?? []).map((a) => ({ orgId: orgIds[0], uid: a.uid })),
+    };
   }
   const ops = await readPlatformOperators(sb);
-  if (ops.error || ops.uids.length === 0) return { route: "none", targets: [] };
-  const { data: memberships } = await sb
-    .from("org_members").select("org_id, uid")
-    .in("uid", ops.uids).eq("status", "active");
-  const targets = ((memberships as Array<{ org_id: string; uid: string }> | null) ?? [])
+  if (!ops.error && ops.uids.length > 0) {
+    const { data: memberships } = await sb
+      .from("org_members").select("org_id, uid")
+      .in("uid", ops.uids).eq("status", "active");
+    // One bell per operator, not one per workspace they belong to.
+    const byUid = new Map<string, string>();
+    for (const m of (memberships as Array<{ org_id: string; uid: string }> | null) ?? []) {
+      const prev = byUid.get(m.uid);
+      if (prev === undefined || m.org_id < prev) byUid.set(m.uid, m.org_id);
+    }
+    if (byUid.size > 0) {
+      return { route: "operators", operatorsError: null, targets: [...byUid].map(([uid, orgId]) => ({ orgId, uid })) };
+    }
+  }
+  // Nobody may see the figures — tell each workspace's Admins that the server
+  // runs hot, without them.
+  const { data: admins } = await sb
+    .from("org_members").select("org_id, uid, role, roles")
+    .in("org_id", orgIds).eq("status", "active").or(roleFilter(["Admin"]));
+  const targets = ((admins as Array<{ org_id: string; uid: string; role?: unknown; roles?: unknown }> | null) ?? [])
+    .filter((m) => memberHoldsAny(m, ["Admin"]))
     .map((m) => ({ orgId: m.org_id, uid: m.uid }));
-  return { route: targets.length > 0 ? "operators" : "none", targets };
+  return { route: "no-operator", targets, operatorsError: ops.error };
+}
+
+/** The cron's error line when the watchdog found a hot ceiling but no
+ *  platform operator to give the figures to (null otherwise). It is said in
+ *  the cron's result, where whoever runs the server reads it, not only in a
+ *  log line (BILL-5 fix pass). */
+export function platformAlertUnroutedError(run: {
+  status: PlatformStorageStatus; route?: PlatformAlertRoute; operatorsError?: string | null;
+}): string | null {
+  if (run.route !== "no-operator") return null;
+  const hot: string[] = [];
+  if (run.status.r2.band !== "ok") hot.push(`file storage at ${run.status.r2.truncated ? "at least " : ""}${run.status.r2.pct}%`);
+  if (run.status.db.band !== "ok" && run.status.db.bytes !== null) hot.push(`the database at ${run.status.db.pct}%`);
+  const why = run.operatorsError
+    ? `the operator list could not be read (${run.operatorsError})`
+    : "no platform operator is registered, or none is an active member of a workspace";
+  return `platform-storage: ${hot.join(" and ")} of the plan ceiling, but ${why} — register one (${PLATFORM_OPERATORS_MIGRATION}); ` +
+    "each workspace's Admins were told without figures";
 }
 
 /** Daily watchdog: notify the people who may see the deployment's figures
  *  (platformAlertRecipients) when a platform resource runs hot against its
  *  plan ceiling. Deduped per person per resource per week. Returns the
- *  measured status for the cron log. */
+ *  measured status, and (when something ran hot) where the alert went. */
 export async function runPlatformStorageAlerts(sb: SupabaseClient): Promise<{
-  status: PlatformStorageStatus; alerts: number; route?: "sole-workspace" | "operators" | "none";
+  status: PlatformStorageStatus; alerts: number; route?: PlatformAlertRoute; operatorsError?: string | null;
 }> {
   const status = await measurePlatformStorage(sb);
   let alerts = 0;
 
   // Each alert's kind is a NotificationKind (PROD-10 / TAX-11): the finite
   // set storage_platform_r2 / storage_platform_db, never a template string.
-  const hot: Array<{ kind: NotificationKind; title: string; body: string }> = [];
+  // `title` / `body` carry the figures; `blindTitle` / `blindBody` are the
+  // no-operator fallback, which carries none (BILL-5: a tenant's admin may
+  // not read the deployment's totals).
+  const hot: Array<{ kind: NotificationKind; title: string; body: string; blindTitle: string; blindBody: string }> = [];
+  const blindTail =
+    "These figures cover every workspace on the server, so they go to a platform operator, and this server has none " +
+    "to tell. Let whoever runs the server know. If that is you, register as its platform operator from Admin → Storage " +
+    "to see the figures and set the plan ceilings.";
   if (status.r2.band !== "ok") {
     hot.push({
       kind: "storage_platform_r2",
@@ -395,6 +465,10 @@ export async function runPlatformStorageAlerts(sb: SupabaseClient): Promise<{
         `(${status.r2.objects.toLocaleString()} files, the whole deployment). This app does not stop uploads at the ceiling: ` +
         "past it, Cloudflare bills the overage, or refuses writes on an account without billing. Upgrade the R2 plan " +
         "or archive old revisions from Admin → Storage.",
+      blindTitle: "This server's file storage is running hot",
+      blindBody:
+        "The file storage plan this server runs on is nearing its ceiling. This app does not stop uploads at the ceiling: " +
+        "past it, Cloudflare bills the overage, or refuses writes on an account without billing. " + blindTail,
     });
   }
   if (status.db.band !== "ok" && status.db.bytes !== null) {
@@ -406,14 +480,20 @@ export async function runPlatformStorageAlerts(sb: SupabaseClient): Promise<{
       body:
         `The Supabase database holds ${fmtMb(status.db.bytes)} MB of the ${fmtMb(status.db.limitBytes)} MB plan ceiling (the whole deployment). ` +
         "Approaching the plan ceiling — upgrade the Supabase plan or purge disposable rows from Admin → Storage.",
+      blindTitle: "This server's database is running hot",
+      blindBody:
+        "The database plan this server runs on is nearing its size ceiling. On Supabase's free plan, past it the database " +
+        "goes read-only and every save fails. " + blindTail,
     });
   }
   if (hot.length === 0) return { status, alerts };
 
-  const { route, targets } = await platformAlertRecipients(sb);
-  if (route === "none") {
-    console.warn("[platform-storage] a plan ceiling is running hot, but this shared deployment has no platform operator to tell — register one (" + PLATFORM_OPERATORS_MIGRATION + ")");
+  const { route, targets, operatorsError } = await platformAlertRecipients(sb);
+  if (route === "no-operator") {
+    console.warn("[platform-storage] a plan ceiling is running hot, but this shared deployment has no platform operator to tell — " +
+      "each workspace's Admins get a notice without figures; register one (" + PLATFORM_OPERATORS_MIGRATION + ")");
   }
+  const blind = route === "no-operator";
   const sevenDaysAgo = new Date(Date.now() - 7 * 86400 * 1000).toISOString();
   for (const t of targets) {
     for (const alert of hot) {
@@ -424,10 +504,12 @@ export async function runPlatformStorageAlerts(sb: SupabaseClient): Promise<{
       if ((count ?? 0) > 0) continue;
       const sent = await notifyAsServiceRole(sb, {
         orgId: t.orgId, userId: t.uid, kind: alert.kind,
-        title: alert.title, body: alert.body, link: "/admin/storage",
+        title: blind ? alert.blindTitle : alert.title,
+        body: blind ? alert.blindBody : alert.body,
+        link: "/admin/storage",
       });
       if (sent) alerts++;
     }
   }
-  return { status, alerts, route };
+  return { status, alerts, route, operatorsError };
 }

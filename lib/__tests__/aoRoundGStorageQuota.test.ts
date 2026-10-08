@@ -23,7 +23,8 @@ type Row = Record<string, unknown>;
 const state = vi.hoisted(() => ({
   actor: null as null | { userId: string; roles: string[] } | { error: string; status: number },
   rows: {} as Record<string, Row[]>,
-  /** `${table}.${op}` (op: select | insert | upsert) → the error that op answers */
+  /** `${table}.${op}` (op: select | insert | upsert) → the error that op answers;
+   *  `${table}.${op}@${value}` → only when the query has `.eq(<col>, value)` */
   errors: {} as Record<string, { message: string; code?: string }>,
   calls: [] as Array<{ table: string; method: string; args: unknown[] }>,
   rpcs: [] as string[],
@@ -34,15 +35,18 @@ const state = vi.hoisted(() => ({
   hangPrefix: null as string | null,
   pagesServed: 0,
   r2Calls: [] as Array<{ name: string; input: Row; hadSignal: boolean }>,
+  /** When > 0, mfg_table_stats answers one table of this size. */
+  tableBytes: 0,
 }));
 
 function chain(table: string) {
   const filters: Array<(r: Row) => boolean> = [];
+  const eqValues: unknown[] = [];
   let op = "select";
   let head = false;
   const rows = () => (state.rows[table] ?? []).filter((r) => filters.every((f) => f(r)));
   const result = () => {
-    const err = state.errors[`${table}.${op}`] ?? null;
+    const err = state.errors[`${table}.${op}`] ?? eqValues.map((v) => state.errors[`${table}.${op}@${String(v)}`]).find(Boolean) ?? null;
     if (err) return { data: null, error: err, count: null };
     if (op !== "select") return { data: null, error: null, count: null };
     return head ? { data: null, error: null, count: rows().length } : { data: rows(), error: null, count: rows().length };
@@ -55,7 +59,7 @@ function chain(table: string) {
         state.calls.push({ table, method: prop, args });
         if (["insert", "upsert", "update", "delete"].includes(prop)) op = prop;
         if (prop === "select" && (args[1] as { head?: boolean } | undefined)?.head) head = true;
-        if (prop === "eq") filters.push((r) => r[String(args[0])] === args[1]);
+        if (prop === "eq") { filters.push((r) => r[String(args[0])] === args[1]); eqValues.push(args[1]); }
         if (prop === "in") filters.push((r) => (args[1] as unknown[]).includes(r[String(args[0])]));
         if (prop === "maybeSingle" || prop === "single") {
           const r = result();
@@ -69,7 +73,11 @@ function chain(table: string) {
 }
 const adminClient = {
   from: (t: string) => chain(t),
-  rpc: async (fn: string) => { state.rpcs.push(fn); return { data: [], error: null }; },
+  rpc: async (fn: string) => {
+    state.rpcs.push(fn);
+    if (fn === "mfg_table_stats" && state.tableBytes > 0) return { data: [{ table_name: "t", row_estimate: 1, total_bytes: state.tableBytes }], error: null };
+    return { data: [] as Row[], error: null };
+  },
 };
 
 async function r2Send(cmd: { constructor?: { name?: string }; input?: Row }, opts?: { abortSignal?: AbortSignal }) {
@@ -104,7 +112,9 @@ vi.mock("@/lib/r2", () => ({ R2_BUCKET: "test-bucket", r2: { send: (cmd: never, 
 
 import { adminSurface } from "@/lib/adminSurfaces";
 import { authorizeAdminSurface, adminSurfaceWriteAllows, writesDeniedMessage } from "@/lib/adminGate";
-import { measureR2Usage, runPlatformStorageAlerts, PLATFORM_OPERATORS_KEY, platformOperatorSql, storageScopeFor } from "@/lib/storageUsage";
+import {
+  measureR2Usage, runPlatformStorageAlerts, platformAlertUnroutedError, PLATFORM_OPERATORS_KEY, platformOperatorSql, storageScopeFor,
+} from "@/lib/storageUsage";
 import { runStorageAlerts, quotaWalkOrder, fairShareDeadline } from "@/lib/storageAlerts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -132,7 +142,7 @@ const postJson = (path: string, body: Row, method = "POST") => new NextRequest(`
 
 beforeEach(() => {
   state.actor = null; state.rows = {}; state.errors = {}; state.calls = []; state.rpcs = [];
-  state.objects = []; state.pageSize = 1000; state.hangAfterPages = Number.POSITIVE_INFINITY; state.hangPrefix = null; state.pagesServed = 0; state.r2Calls = [];
+  state.objects = []; state.pageSize = 1000; state.hangAfterPages = Number.POSITIVE_INFINITY; state.hangPrefix = null; state.pagesServed = 0; state.r2Calls = []; state.tableBytes = 0;
 });
 
 // ── SURF-19: the gate's write intent ────────────────────────────────────────
@@ -296,6 +306,35 @@ describe("BILL-5 — no org role writes the deployment-wide ceiling; a platform 
     expect((await ceilingPost()).status).toBe(503);
     expect(upserts()).toEqual([]);
   });
+  it("fix pass, REPRODUCED: an unreadable ceilings row is a 503 with nothing saved — never the free tier recorded as the old value", async () => {
+    // 100 GB / 8 GB stored; the read of that row fails (the operator list reads fine)
+    state.rows.platform_settings = [
+      { key: PLATFORM_OPERATORS_KEY, value: { uids: [OP] } },
+      { key: "storage_limits", value: { r2Bytes: 100 * 1024 ** 3, dbBytes: 8 * 1024 ** 3 } },
+    ];
+    state.errors["platform_settings.select@storage_limits"] = { message: "statement timeout" };
+    state.actor = { userId: OP, roles: ["Admin"] };
+    const res = await ceilingPost({ r2LimitBytes: 200 * 1024 ** 3, dbLimitBytes: 8 * 1024 ** 3 });
+    expect(res.status).toBe(503);
+    expect((await res.json()).error).toBe(
+      "Couldn't read the current ceilings, so the change could not be recorded against them — nothing was saved. (statement timeout)");
+    expect(upserts()).toEqual([]);
+    expect(state.calls.some((c) => c.table === "audit_logs")).toBe(false);
+  });
+  it("a missing platform_settings table on that read is the 424 the upsert would give, nothing saved", async () => {
+    state.rows.platform_settings = [{ key: PLATFORM_OPERATORS_KEY, value: { uids: [OP] } }];
+    state.errors["platform_settings.select@storage_limits"] = { message: 'relation "platform_settings" does not exist', code: "42P01" };
+    state.actor = { userId: OP, roles: ["Admin"] };
+    expect((await ceilingPost()).status).toBe(424);
+    expect(upserts()).toEqual([]);
+  });
+  it("no ceilings row yet is not a failure: the old value is the one that applied (the free tier, or the env override), said by `source`", async () => {
+    state.rows.platform_settings = [{ key: PLATFORM_OPERATORS_KEY, value: { uids: [OP] } }];
+    state.actor = { userId: OP, roles: ["Admin"] };
+    expect((await ceilingPost({ r2LimitBytes: 30, dbLimitBytes: 40 })).status).toBe(200);
+    const audit = state.calls.find((c) => c.table === "audit_logs" && c.method === "insert")!.args[0] as Row;
+    expect((audit.details as Row).before).toEqual({ r2Bytes: 10 * 1024 ** 3, dbBytes: 500 * 1024 ** 2, source: "default" });
+  });
   it("a refused audit row is said on the answer (the change itself landed)", async () => {
     state.rows.platform_settings = [{ key: PLATFORM_OPERATORS_KEY, value: { uids: [OP] } }];
     state.errors["audit_logs.insert"] = { message: "rls" };
@@ -344,6 +383,7 @@ describe("BILL-5 Done-when 2 / BILL-12 — what the stats GET returns depends on
     state.actor = { userId: "m", roles: ["Manager"] };
     const body = await stats();
     expect(body.scope).toBe("deployment");
+    expect(body.soleTenant).toBe(true); // the page names this workspace's Admin / DocCtrl as the platform alert's recipients
     expect(body.db).not.toBeNull();
     expect(body.r2Real.bytes).toBe(10_157);
     expect(body.r2Real.org).toBeUndefined(); // the per-org total never rides on the deployment figure
@@ -356,7 +396,7 @@ describe("BILL-5 Done-when 2 / BILL-12 — what the stats GET returns depends on
     state.rows.platform_settings = [{ key: PLATFORM_OPERATORS_KEY, value: { uids: [OP] } }];
     state.actor = { userId: OP, roles: ["DocCtrl"] };
     const body = await stats();
-    expect(body).toMatchObject({ scope: "deployment", platformOperator: true, operatorSql: null });
+    expect(body).toMatchObject({ scope: "deployment", platformOperator: true, soleTenant: false, operatorSql: null });
   });
   it("storageScopeFor fails closed: an unreadable operator list or orgs table is the workspace scope", async () => {
     state.rows.orgs = [{ id: O1 }];
@@ -522,16 +562,99 @@ describe("BILL-12 — each workspace is measured under its own prefix; BILL-11 �
     expect(body).not.toMatch(/before uploads start failing/);
     expect(body).toMatch(/the whole deployment\)\. This app does not stop uploads at the ceiling/);
   });
-  it("a shared server with no operator tells nobody (route none, said in the log) — never every tenant's admins", async () => {
+  it("fix pass, REPRODUCED: a shared server with no operator is never silent — each workspace's Admins get a notice WITHOUT figures, and the cron says so", async () => {
+    // 2 workspaces (a trial signup), nobody registered as operator; the bucket at 96% of the 10 GB default
     state.rows.orgs = [{ id: O1 }, { id: O2 }];
-    state.rows.org_members = [{ org_id: O1, uid: "tenant-admin", status: "active" }];
+    state.rows.org_members = [
+      { org_id: O1, uid: "tenant-admin", role: "Admin", roles: ["Admin"], status: "active" },
+      { org_id: O2, uid: "other-admin", role: "Viewer", roles: ["Viewer", "Admin"], status: "active" }, // Admin by the collection
+      { org_id: O1, uid: "drafter", role: "Drafter", roles: ["Drafter"], status: "active" },
+      { org_id: O2, uid: "gone-admin", role: "Admin", roles: ["Admin"], status: "removed" },
+    ];
     state.objects = [{ Key: `orgs/${O2}/big`, Size: Math.round(9.6 * 1024 ** 3) }];
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const { alerts, route } = await runPlatformStorageAlerts(adminClient as never);
-    expect([alerts, route]).toEqual([0, "none"]);
-    expect(inserts()).toEqual([]);
+    const run = await runPlatformStorageAlerts(adminClient as never);
     expect(warn.mock.calls.some((c) => String(c[0]).includes("no platform operator"))).toBe(true);
     warn.mockRestore();
+    expect([run.alerts, run.route, run.operatorsError]).toEqual([2, "no-operator", null]);
+    expect(inserts().map((r) => [r.org_id, r.user_id, r.kind])).toEqual([
+      [O1, "tenant-admin", "storage_platform_r2"], [O2, "other-admin", "storage_platform_r2"],
+    ]);
+    for (const r of inserts()) {
+      // BILL-5: the deployment's figures stay the operator's — no percentage, no size, no file count
+      expect(r.title).toBe("This server's file storage is running hot");
+      expect(String(r.body)).not.toMatch(/\d/);
+      expect(String(r.body)).toContain("register as its platform operator from Admin → Storage");
+      expect(String(r.body)).toContain("past it, Cloudflare bills the overage, or refuses writes on an account without billing");
+      expect(r.link).toBe("/admin/storage");
+    }
+    // …and the cron's result says it, where whoever runs the server reads
+    expect(platformAlertUnroutedError(run)).toBe(
+      "platform-storage: file storage at 96% of the plan ceiling, but no platform operator is registered, or none is an active " +
+      "member of a workspace — register one (20261177_ao_roundG_platform_operators.sql); each workspace's Admins were told without figures");
+  });
+  it("an unreadable operator list takes the same no-figures path, and the cron line names the read failure", async () => {
+    state.rows.orgs = [{ id: O1 }, { id: O2 }];
+    state.rows.org_members = [{ org_id: O1, uid: "tenant-admin", role: "Admin", status: "active" }];
+    state.errors["platform_settings.select@platform_operators"] = { message: "permission denied" };
+    state.objects = [{ Key: `orgs/${O2}/big`, Size: Math.round(9.6 * 1024 ** 3) }];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const run = await runPlatformStorageAlerts(adminClient as never);
+    warn.mockRestore();
+    expect([run.route, run.operatorsError]).toEqual(["no-operator", "permission denied"]);
+    expect(inserts().map((r) => [r.user_id, r.title])).toEqual([["tenant-admin", "This server's file storage is running hot"]]);
+    expect(platformAlertUnroutedError(run)).toMatch(/but the operator list could not be read \(permission denied\)/);
+  });
+  it("a registered operator who is a member of no workspace cannot be told: the no-figures path again", async () => {
+    state.rows.orgs = [{ id: O1 }, { id: O2 }];
+    state.rows.platform_settings = [{ key: PLATFORM_OPERATORS_KEY, value: { uids: [OP] } }];
+    state.rows.org_members = [{ org_id: O1, uid: "tenant-admin", role: "Admin", status: "active" }];
+    state.objects = [{ Key: `orgs/${O2}/big`, Size: Math.round(9.6 * 1024 ** 3) }];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const run = await runPlatformStorageAlerts(adminClient as never);
+    warn.mockRestore();
+    expect(run.route).toBe("no-operator");
+    expect(inserts().map((r) => r.user_id)).toEqual(["tenant-admin"]);
+  });
+  it("an operator in three workspaces gets ONE bell (in the first by id), with the figures; the cron line is not raised", async () => {
+    const O3 = "33333333-3333-4333-8333-333333333333";
+    state.rows.orgs = [{ id: O1 }, { id: O2 }, { id: O3 }];
+    state.rows.platform_settings = [{ key: PLATFORM_OPERATORS_KEY, value: { uids: [OP] } }];
+    state.rows.org_members = [
+      { org_id: O3, uid: OP, status: "active" }, { org_id: O2, uid: OP, status: "active" }, { org_id: O1, uid: OP, status: "active" },
+    ];
+    state.objects = [{ Key: `orgs/${O2}/big`, Size: Math.round(9.6 * 1024 ** 3) }];
+    const run = await runPlatformStorageAlerts(adminClient as never);
+    expect([run.route, run.alerts]).toEqual(["operators", 1]);
+    expect(inserts().map((r) => [r.org_id, r.user_id, r.title])).toEqual([[O1, OP, "File storage critical — 96% of plan"]]);
+    expect(platformAlertUnroutedError(run)).toBeNull();
+  });
+  it("the database running hot with no operator: a no-figures notice that says what the database does past its size", async () => {
+    state.rows.orgs = [{ id: O1 }, { id: O2 }];
+    state.rows.org_members = [{ org_id: O2, uid: "other-admin", role: "Admin", status: "active" }];
+    state.tableBytes = 480 * 1024 ** 2; // 96% of the 500 MB default
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const run = await runPlatformStorageAlerts(adminClient as never);
+    warn.mockRestore();
+    expect(inserts().map((r) => [r.kind, r.title])).toEqual([["storage_platform_db", "This server's database is running hot"]]);
+    expect(String(inserts()[0].body)).toContain("On Supabase's free plan, past it the database goes read-only and every save fails.");
+    expect(String(inserts()[0].body)).not.toMatch(/\d/);
+    expect(platformAlertUnroutedError(run)).toMatch(/^platform-storage: the database at 96% of the plan ceiling, but /);
+  });
+  it("the maintenance cron puts that line in its errors (step 9)", () => {
+    const cron = readFileSync(join(process.cwd(), "app/api/cron/maintenance/route.ts"), "utf8");
+    expect(cron).toContain('import { runPlatformStorageAlerts, platformAlertUnroutedError } from "@/lib/storageUsage";');
+    expect(cron).toContain("const platform = await runPlatformStorageAlerts(sb);");
+    expect(cron).toContain("const unrouted = platformAlertUnroutedError(platform);\n    if (unrouted) result.errors.push(unrouted);");
+  });
+  it("the sole workspace's Admin / DocCtrl get the figures, as before; the cron line is not raised", async () => {
+    state.rows.orgs = [{ id: O1 }];
+    state.rows.org_members = [{ org_id: O1, uid: "a1", role: "Admin", status: "active" }];
+    state.objects = [{ Key: `orgs/${O1}/big`, Size: Math.round(9.6 * 1024 ** 3) }];
+    const run = await runPlatformStorageAlerts(adminClient as never);
+    expect(run.route).toBe("sole-workspace");
+    expect(inserts().map((r) => r.title)).toEqual(["File storage critical — 96% of plan"]);
+    expect(platformAlertUnroutedError(run)).toBeNull();
   });
   it("the cron's platform walk carries a deadline (BILL-13)", async () => {
     state.rows.orgs = [{ id: O1 }];

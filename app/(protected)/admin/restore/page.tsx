@@ -36,7 +36,7 @@ import {
   type RestorePlan, type RestoreEnvelopeLike, type RestorePost, type ChunkedRestoreResult, type ChunkedRestorePreview,
   type BackupArchiveRead,
 } from "@/lib/dataRestore";
-import { restoreUploadRequest } from "@/lib/storageKey";
+import { restoreUploadRequest, isWorkspaceLogoKey } from "@/lib/storageKey";
 
 type ZipLike = {
   files: Record<string, { dir: boolean }>;
@@ -276,8 +276,11 @@ export default function RestorePage() {
         // size (both signed into the PUT), so the request carries the blob's
         // size and the PUT sends the type the request named. A logo it will
         // not sign (an SVG or GIF from before ORG-5, or over 5 MB) is not
-        // asked for: the panel says to upload it again under Branding.
-        const req = restoreUploadRequest(key, blob.size);
+        // asked for: the panel says to upload it again under Branding. A
+        // logo's type is read from its first bytes — its key was once named
+        // after the file (".jfif", or no extension), not after its type.
+        const head = isWorkspaceLogoKey(key) ? new Uint8Array(await blob.slice(0, 12).arrayBuffer()) : null;
+        const req = restoreUploadRequest(key, blob.size, head);
         if (req.logoProblem) {
           logoNotRestored = `${key.split("/").pop()}: ${req.logoProblem}`;
           return;

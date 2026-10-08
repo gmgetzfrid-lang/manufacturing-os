@@ -62,7 +62,7 @@ import { syncAllKnowledgeSources } from "@/lib/knowledgeSourceSync";
 import { drainKnowledgeIngestQueue } from "@/lib/knowledgeIngest";
 import { drainEmbedBacklog } from "@/lib/knowledgeEmbedDrain";
 import { pruneOrchestratorProposals } from "@/lib/orchestrator/proposals";
-import { runPlatformStorageAlerts } from "@/lib/storageUsage";
+import { runPlatformStorageAlerts, platformAlertUnroutedError } from "@/lib/storageUsage";
 import { rebuildAclIndexes, type RebuildCounts } from "@/lib/aclIndexRebuild";
 import { roleFilter } from "@/lib/roleHeld";
 import {
@@ -476,10 +476,13 @@ async function handler(req: NextRequest) {
   //    exact DB relation sizes) against the plan ceilings (free tiers by
   //    default). Admins get an in-app notification at 70%/90%, deduped to
   //    one per person per resource per week — "upgrade before it breaks",
-  //    not "why did uploads stop".
+  //    not "why did uploads stop". A hot ceiling with no platform operator to
+  //    give the figures to is said here too (admin-and-org BILL-5 fix pass).
   try {
-    const { status, alerts } = await runPlatformStorageAlerts(sb);
-    result.platformStorage = { r2Pct: status.r2.pct, dbPct: status.db.pct, alerts };
+    const platform = await runPlatformStorageAlerts(sb);
+    result.platformStorage = { r2Pct: platform.status.r2.pct, dbPct: platform.status.db.pct, alerts: platform.alerts };
+    const unrouted = platformAlertUnroutedError(platform);
+    if (unrouted) result.errors.push(unrouted);
   } catch (e) {
     result.errors.push(`platform-storage: ${(e as Error).message}`);
   }

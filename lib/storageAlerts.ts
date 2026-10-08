@@ -144,7 +144,9 @@ export async function runStorageAlerts(sb: SupabaseClient, opts: { budgetMs?: nu
           `This workspace's files are at ${atLeast}${pct}% of the storage limit an admin set ` +
           `(${atLeast}${fmtSize(usage.bytes)} of ${fmtSize(quota)}, measured under this workspace only). ` +
           "The limit is advisory: uploads are not blocked when it is reached. " +
-          "Take a full backup and free up space (archive superseded revisions, purge disposable rows).",
+          // Only what lowers THIS figure (the workspace's files): purging
+          // database rows frees database space, which the quota does not count.
+          "Take a full backup and free up space from Admin → Storage (archive superseded revisions or closed tickets, delete orphaned files).",
         link: "/admin/storage",
       });
       // Counted only when the row landed (notify() logs a refusal) — the

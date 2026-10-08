@@ -14,6 +14,13 @@
 // logo in a backup is put back with its size, and a legacy SVG / GIF logo the
 // route will not sign is named instead of failing silently.
 //
+// Fix pass 2: a logo key used to be minted from the file's NAME, so a real
+// JPEG could sit at "….jfif" (or under no extension) and be signed by its
+// declared type, then fail to restore because the restore read the type from
+// the extension. New keys take the extension of the signed type
+// (logoExtensionForType); the restore reads a logo's type from its first
+// bytes (sniffImageType) before falling back to the extension.
+//
 // The route signs with the REAL presigner (an S3 client with inert
 // credentials — presigning is local), so the assertions read the URL's own
 // X-Amz-SignedHeaders: what storage will hold the PUT to.
@@ -83,7 +90,7 @@ vi.mock("@/lib/r2", async () => {
 });
 
 import { POST as uploadUrl } from "@/app/api/storage/upload-url/route";
-import { restoreUploadRequest, contentTypeForKey } from "@/lib/storageKey";
+import { restoreUploadRequest, contentTypeForKey, logoExtensionForType, sniffImageType, LOGO_CONTENT_TYPES } from "@/lib/storageKey";
 import { POST as multipart } from "@/app/api/storage/multipart/route";
 
 const ORG = "12345678-1234-1234-1234-123456789abc";
@@ -292,8 +299,9 @@ describe("ORG-5 fix pass — a backup restore puts the workspace logo back (app/
   });
 
   it("the page builds its request with the helper, sends its body, PUTs the same type, and says why a file failed", () => {
-    expect(restorePage).toMatch(/import \{ restoreUploadRequest \} from "@\/lib\/storageKey";/);
-    expect(restorePage).toMatch(/const req = restoreUploadRequest\(key, blob\.size\);/);
+    expect(restorePage).toMatch(/import \{ restoreUploadRequest, isWorkspaceLogoKey \} from "@\/lib\/storageKey";/);
+    expect(restorePage).toContain("const head = isWorkspaceLogoKey(key) ? new Uint8Array(await blob.slice(0, 12).arrayBuffer()) : null;");
+    expect(restorePage).toMatch(/const req = restoreUploadRequest\(key, blob\.size, head\);/);
     expect(restorePage).toMatch(/body: JSON\.stringify\(req\.body\),/);
     expect(restorePage).toMatch(/method: "PUT", body: blob, headers: \{ "Content-Type": req\.contentType \}/);
     expect(restorePage).not.toMatch(/contentTypeFor\(/);
@@ -305,5 +313,66 @@ describe("ORG-5 fix pass — a backup restore puts the workspace logo back (app/
     expect(restorePage).toMatch(/if \(req\.logoProblem\) \{\n\s+logoNotRestored = /);
     expect(restorePage).toContain("The workspace logo in this backup was not put back");
     expect(restorePage).toMatch(/href="\/admin\/branding"/);
+  });
+});
+
+describe("ORG-5 fix pass 2 — a logo's type is its bytes' and its signed type's, never its file name's", () => {
+  const ADMIN = { uid: "u1", role: "Admin", roles: ["Admin"] };
+  const key = (ext: string) => `orgs/${ORG}/branding/logo-0d0d0d0d-0d0d-4d0d-8d0d-0d0d0d0d0d0d.${ext}`;
+  const bytes = (...b: number[]) => new Uint8Array([...b, ...new Array(Math.max(0, 12 - b.length)).fill(0)]);
+  const JPEG = bytes(0xff, 0xd8, 0xff, 0xe0);
+  const PNG = bytes(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a);
+  const WEBP = new Uint8Array([0x52, 0x49, 0x46, 0x46, 1, 2, 3, 4, 0x57, 0x45, 0x42, 0x50]);
+  const GIF = bytes(0x47, 0x49, 0x46, 0x38, 0x39, 0x61);
+
+  it("REPRODUCED: a real JPEG uploaded as 'Company Logo.jfif' (signed as image/jpeg) did not restore — by its extension it is octet-stream, 415", async () => {
+    state.member = ADMIN;
+    // how it got there: the modal's old key took the NAME's extension, and upload-url signed the declared type
+    expect((await post({ path: key("jfif"), contentType: "image/jpeg", size: 4096 })).status).toBe(200);
+    const byName = restoreUploadRequest(key("jfif"), 4096);
+    expect(byName.contentType).toBe("application/octet-stream");
+    expect(byName.logoProblem).toBe("A workspace logo must be a PNG, JPEG or WebP image (SVG is not accepted).");
+  });
+
+  it("with its first bytes, that logo — and one with no real extension ('CompanyLogo') — restores as what it is, signed and audited", async () => {
+    state.member = ADMIN;
+    for (const [ext, head, type] of [["jfif", JPEG, "image/jpeg"], ["companylogo", PNG, "image/png"], ["companylogo", WEBP, "image/webp"]] as const) {
+      const req = restoreUploadRequest(key(ext), 4096, head);
+      expect(req.logoProblem, ext).toBeNull();
+      expect(req.contentType, ext).toBe(type);
+      expect(req.body, ext).toEqual({ path: key(ext), contentType: type, size: 4096 });
+      const res = await post(req.body);
+      expect(res.status, ext).toBe(200);
+      expect(signedHeaders((await res.json()).url), ext).toEqual(expect.arrayContaining(["content-type", "content-length"]));
+    }
+    expect(state.inserts.filter((i) => i.table === "audit_logs").map((i) => (i.row.details as { contentType: string }).contentType))
+      .toEqual(["image/jpeg", "image/png", "image/webp"]);
+  });
+
+  it("the bytes win over a wrong extension: a GIF stored at '.png' is named as not restorable, never signed as a PNG", () => {
+    const req = restoreUploadRequest(key("png"), 2048, GIF);
+    expect(req.contentType).toBe("image/gif");
+    expect(req.logoProblem).toBe("A workspace logo must be a PNG, JPEG or WebP image (SVG is not accepted).");
+  });
+
+  it("bytes that are no known image fall back to the extension; a non-logo key never reads its bytes' type", () => {
+    expect(restoreUploadRequest(key("png"), 10, bytes(0x3c, 0x73, 0x76, 0x67)).contentType).toBe("image/png");
+    expect(restoreUploadRequest(key("svg"), 10, bytes(0x3c, 0x73, 0x76, 0x67)).logoProblem).not.toBeNull();
+    expect(restoreUploadRequest(`orgs/${ORG}/libraries/l/a.pdf`, 10, JPEG).contentType).toBe("application/pdf");
+    expect(restoreUploadRequest(`orgs/${ORG}/branding/covers/c.bin`, 10, PNG).contentType).toBe("application/octet-stream");
+  });
+
+  it("sniffImageType reads the four magic numbers and nothing else", () => {
+    expect([sniffImageType(PNG), sniffImageType(JPEG), sniffImageType(WEBP), sniffImageType(GIF)])
+      .toEqual(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+    expect(sniffImageType(new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x41, 0x56, 0x45]))).toBeNull(); // RIFF…WAVE
+    expect(sniffImageType(new Uint8Array([0xff, 0xd8]))).toBeNull();
+    expect(sniffImageType(null)).toBeNull();
+  });
+
+  it("a new logo key takes the signed type's extension, and the restore reads the same type back from it", () => {
+    expect(LOGO_CONTENT_TYPES.map((t) => logoExtensionForType(t))).toEqual(["png", "jpg", "webp"]);
+    for (const t of LOGO_CONTENT_TYPES) expect(contentTypeForKey(key(logoExtensionForType(t)!)), t).toBe(t);
+    for (const t of ["image/svg+xml", "image/gif", "text/html", undefined]) expect(logoExtensionForType(t), String(t)).toBeNull();
   });
 });

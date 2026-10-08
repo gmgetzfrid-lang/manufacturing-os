@@ -11,7 +11,7 @@ import { X, Upload, Trash2, Loader2, Image as ImageIcon } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { useOrgBranding } from "@/components/providers/OrgBrandingProvider";
 import { uploadToPath } from "@/lib/storage";
-import { LOGO_CONTENT_TYPES, logoUploadProblem } from "@/lib/storageKey";
+import { LOGO_CONTENT_TYPES, logoUploadProblem, logoExtensionForType } from "@/lib/storageKey";
 
 export default function LogoUploadModal({ onClose }: { onClose: () => void }) {
   const { activeOrgId } = useRole();
@@ -35,7 +35,9 @@ export default function LogoUploadModal({ onClose }: { onClose: () => void }) {
     if (problem) { setError(problem.error); return; }
     setBusy(true); setError(null);
     try {
-      const ext = (file.name.split(".").pop() || "png").toLowerCase().replace(/[^a-z0-9]/g, "");
+      // The key's extension is the signed type's, never the file's name
+      // (".jfif", or none): a backup restore reads the type back from it.
+      const ext = logoExtensionForType(file.type) ?? "png";
       const rand = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}`;
       const path = `orgs/${activeOrgId}/branding/logo-${rand}.${ext}`;
       await uploadToPath(file, path, { contentType: file.type });
