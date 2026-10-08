@@ -223,24 +223,56 @@ describe("MON-12 (J12 review fix 7) — a contractor linked to one of its own do
   });
 });
 
-describe("COST-3 residual 2 (J17; DEC-90 A21) — the contractor link's check reads the same gate: a do-not-use name that LEADS the contractor's", () => {
-  // lib/costs.ts partyLinkCheck reads lib/bidTab barredCompanyFor and companyCandidatesByName (unchanged
-  // file): a contractor "Apex Industrial Services, LLC" could be the do-not-use "Apex Industrial".
+describe("COST-3 residual 2 (J17; DEC-90 A21, extended to the contractor link 2026-10-08) — the contractor link's check reads the same gate: a do-not-use name that LEADS the contractor's is a PARTIAL MATCH, flagged for the typed reason", () => {
+  // lib/costs.ts partyLinkCheck reads lib/bidTab barredCompanyFor and companyCandidatesByName: a
+  // contractor "Apex Industrial Services, LLC" could be the do-not-use "Apex Industrial". The ruling
+  // (DEC-48's J17 line): the link is FLAGGED for an explicit acknowledgement — the Costs tab's typed,
+  // recorded reason, in the bid gate's partial-match words — never bound, never stopped without it.
   const APEX_DNU = company("c-apex-dnu", "Apex Industrial", { status: "do_not_use" });
   const REAL = company("c-real", "Apex Industrial Services");
   beforeEach(() => { db.rows.companies = [APEX_DNU, REAL].map(companyRow); });
 
-  it("a link to the real company asks the typed reason naming the leading do-not-use row (it carried no question before J17); the reason is recorded", async () => {
+  it("a link to the real company asks the typed reason naming the leading do-not-use row as a partial match (it carried no question before J17); the reason is recorded with partialMatch", async () => {
     const refused = await saveParty({ orgId: "o1", projectId: "p1", patch: { name: "Apex Industrial Services, LLC", companyId: "c-real" }, actor });
     expect(refused.ok).toBe(false);
-    expect(refused.needsOverride).toEqual({ companyId: "c-apex-dnu", company: "Apex Industrial" });
-    expect(refused.error).toMatch(/"Apex Industrial Services, LLC" could be Apex Industrial, flagged DO NOT USE in the registry\. Linking it to another company needs a reason/);
+    expect(refused.needsOverride).toEqual({ companyId: "c-apex-dnu", company: "Apex Industrial", partialMatch: true });
+    expect(refused.error).toBe('"Apex Industrial Services, LLC" could be Apex Industrial, flagged DO NOT USE in the registry (a partial match — the registry name "Apex Industrial" leads "Apex Industrial Services, LLC"). Linking it to another company needs a reason, which goes on the record.');
     expect(db.rows.project_parties ?? []).toHaveLength(0);
     const ok = await saveParty({ orgId: "o1", projectId: "p1", patch: { name: "Apex Industrial Services, LLC", companyId: "c-real" }, linkOverrideReason: "Apex Industrial Services is a separate firm", actor });
     expect(ok).toEqual({ ok: true });
-    expect((audits("COST_PARTY_CREATED")[0].details as Record<string, unknown>).overrideDoNotUse).toMatchObject({ companyId: "c-apex-dnu", reason: "Apex Industrial Services is a separate firm" });
-    // the wizard's name-bound link is not written, with the note pointing at the Costs tab
-    expect((await checkPartyCompanyLink("o1", "Apex Industrial Services, LLC", "c-real")).ok).toBe(false);
+    expect((audits("COST_PARTY_CREATED")[0].details as Record<string, unknown>).overrideDoNotUse).toEqual({ companyId: "c-apex-dnu", company: "Apex Industrial", partialMatch: true, reason: "Apex Industrial Services is a separate firm" });
+    // the wizard's name-bound link is not written; its note (the wizard's acknowledgement path) says
+    // partial match and points at the Costs tab, where the reason is typed and recorded
+    expect(await checkPartyCompanyLink("o1", "Apex Industrial Services, LLC", "c-real")).toEqual({
+      ok: false,
+      note: '"Apex Industrial Services, LLC" was added without a company link: the name could be Apex Industrial, flagged DO NOT USE in the registry (a partial match — the registry name "Apex Industrial" leads "Apex Industrial Services, LLC"). Link it on the project\'s Costs tab, where the link records a reason.',
+    });
+  });
+
+  it("the later link (linkPartyToCompany) is flagged the same way, and its audit row records partialMatch", async () => {
+    db.rows.project_parties = [{ id: "pp1", org_id: "o1", project_id: "p1", name: "Apex Industrial Services, LLC", company_id: null }];
+    const refused = await linkPartyToCompany({ orgId: "o1", partyId: "pp1", companyId: "c-real", actor });
+    expect(refused.ok).toBe(false);
+    expect(refused.needsOverride).toEqual({ companyId: "c-apex-dnu", company: "Apex Industrial", partialMatch: true });
+    expect(refused.error).toContain('(a partial match — the registry name "Apex Industrial" leads "Apex Industrial Services, LLC")');
+    expect(db.rows.project_parties[0].company_id).toBeNull();
+    expect(await linkPartyToCompany({ orgId: "o1", partyId: "pp1", companyId: "c-real", overrideReason: "a separate firm", actor })).toEqual({ ok: true });
+    expect(db.rows.project_parties[0].company_id).toBe("c-real");
+    expect((audits("COST_PARTY_LINKED")[0].details as Record<string, unknown>).overrideDoNotUse).toEqual({ companyId: "c-apex-dnu", company: "Apex Industrial", partialMatch: true, reason: "a separate firm" });
+  });
+
+  it("an EQUAL name is refused with the words it had before J17 — no partial-match note, no partialMatch key (the top rule: an exact match behaves exactly as before)", async () => {
+    db.rows.companies = [APEX_DNU, company("c-apex-llc", "Apex Industrial LLC")].map(companyRow);
+    const refused = await saveParty({ orgId: "o1", projectId: "p1", patch: { name: "Apex Industrial LLC", companyId: "c-apex-llc" }, actor });
+    expect(refused.ok).toBe(false);
+    expect(refused.needsOverride).toEqual({ companyId: "c-apex-dnu", company: "Apex Industrial" });
+    expect(refused.error).toBe('"Apex Industrial LLC" could be Apex Industrial, flagged DO NOT USE in the registry. Linking it to another company needs a reason, which goes on the record.');
+    await saveParty({ orgId: "o1", projectId: "p1", patch: { name: "Apex Industrial LLC", companyId: "c-apex-llc" }, linkOverrideReason: "checked", actor });
+    expect((audits("COST_PARTY_CREATED")[0].details as Record<string, unknown>).overrideDoNotUse).toEqual({ companyId: "c-apex-dnu", company: "Apex Industrial", reason: "checked" });
+    expect(await checkPartyCompanyLink("o1", "Apex Industrial LLC", "c-apex-llc")).toEqual({
+      ok: false,
+      note: '"Apex Industrial LLC" was added without a company link: the name could be Apex Industrial, flagged DO NOT USE in the registry. Link it on the project\'s Costs tab, where the link records a reason.',
+    });
   });
 
   it("a link to the leading do-not-use row ITSELF needs no reason (it answers for itself at the award); a name it does not lead word for word is not its", async () => {
