@@ -1006,6 +1006,8 @@ describe("REV-21 (second review fix) — the REAL rollbacks of a NULL-status doc
         expect(lineage("n3")).toEqual(["n3a"]);
       } else {
         await expect(run).rejects.toThrow("a later step failed (the operation was rolled back — no partial changes were kept).");
+        // P25 review fix: the older body's path is SAID, never silently
+        await expect(run).rejects.toThrow(/\. Rollback note: N3 was put back as Issued, not as no status \(the status it had\) — this database's put_back_retired_issue predates 20261192 and cannot put back no status\.$/);
         expect(docRow("n3").status).toBe("Issued");
         expect(lineage("n3")).toEqual([]);
       }

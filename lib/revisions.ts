@@ -1016,8 +1016,10 @@ export async function createDocumentWithFile(input: {
  *  compared exactly as the gates compare), so it does not open such a
  *  rev-up: RevUpModal, setLevelRevUp and the merge rev-up route it to review
  *  for a non-controller under a policy that requires sign-off, exactly as a
- *  Draft's. The database refuses the same write (20261193). Every rev-up of
- *  a document in force (Issued / Locked) answers exactly as before. */
+ *  Draft's, and revertToVersion (the same write, as a Correction) refuses it
+ *  up front naming the route (P25 review fix). The database refuses the same
+ *  write (20261193). Every rev-up of a document in force (Issued / Locked)
+ *  answers exactly as before. */
 export async function firstIssueGateForRevUp(opts: {
   doc: Pick<DocumentRecord, "id" | "collectionId" | "currentVersionId" | "status" | "reviewControl">;
   libraryId: string;
@@ -1874,6 +1876,36 @@ export async function revertToVersion(input: RevertInput): Promise<DocumentVersi
   const baseRev = (doc.rev ?? targetVersion.revisionLabel ?? "0").replace(/-revert-\d+$/, "");
   const revertedLabel = suggestNextRevisionLabel(baseRev);
 
+  // REV-28 (a) (document-control P25 review fix): a revert is the write a
+  // rev-up makes — publish_revision moves the pointer and writes 'Issued'
+  // (as a Correction) — so the first-issue rule binds it the same way: a
+  // document whose status no gate reads as in force (IFC, an empty status,
+  // a variant, a library's own, NULL) has no revision in force, and the
+  // revert would put the earlier file in force for the first time,
+  // unreviewed. 20261193 refuses that write for a non-controller under a
+  // policy that requires sign-off; this door says so up front, in its own
+  // words — a revert cannot be "submitted for review", so the route it names
+  // is a Major revision of the earlier file through review, or Document
+  // Control. Nothing is written before it. A document in force (Issued /
+  // Locked) is asked nothing (RG-7's hatch, no policy read), and a retired
+  // document is not refused here (the revert's own rules decide it, as
+  // before). A controller's revert of such a document is recorded on the
+  // REVERT event as a first issue made without the sign-off (DEC-63 §2).
+  const label = doc.documentNumber || doc.title || "this document";
+  let firstIssue: Awaited<ReturnType<typeof firstIssueGateForRevUp>>;
+  try {
+    firstIssue = await firstIssueGateForRevUp({ doc, libraryId, actor: { orgId, actorUserId, actorRole } });
+  } catch (e) {
+    throw new Error(`Couldn't verify the review policy for ${label} — nothing was reverted: ${(e as Error).message}`);
+  }
+  if (firstIssue.controllerOnly) throw new Error(`${describeControllerOnlyFirstIssue(label)} Nothing was reverted.`);
+  if (firstIssue.mustReview) {
+    throw new Error(
+      `This library requires reviewer sign-off, and ${describeFirstIssue(label, firstIssue, revertedLabel)} — a first issue is not a revision through the review gate, so a revert (a Correction) doesn't exempt it. ` +
+      "Nothing was reverted. Publish the earlier file as a Major revision through review, or ask Document Control, who may issue it.",
+    );
+  }
+
   const revertPayload = {
     revision_label: revertedLabel,
     issue_type: targetVersion.issueType ?? null,
@@ -1974,6 +2006,15 @@ export async function revertToVersion(input: RevertInput): Promise<DocumentVersi
       pendingDraftVoided: draftVoid.voidedVersionId,
       pendingDraftVoidProblem: draftVoid.problem,
       effectiveDateReconcileError: effectiveDateError,
+      // REV-28 (a) / DEC-63 §2 (P25 review fix): a controller's revert that
+      // puts the document in force for the first time under a policy that
+      // requires sign-off is recorded as such, as a rev-up's is.
+      ...(firstIssue.firstIssue && firstIssue.requiresSignOff && !firstIssue.mustReview
+        ? {
+          reviewPolicy: `require — Rev ${revertedLabel} is ${doc.documentNumber || doc.title || "the document"}'s FIRST controlled issue, published WITHOUT the sign-off the policy requires, by controller ${actorUserId} (DEC-63 §2)`,
+          firstIssueWithoutSignOff: true,
+        }
+        : {}),
     },
   });
 

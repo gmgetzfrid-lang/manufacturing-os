@@ -351,6 +351,20 @@ describe("REV-19 — saveMetadata routes every save that writes an issue status 
     expect(st.alerts[0]?.title).toBe("Saved — follow-up steps did not complete");
   });
 
+  it("REV-26 (P25 review fix) — the stale copy's entry INTO FORCE: the page shows Issued, another change had moved the row to IFC; the save puts it in force (recorded as entryIntoForce, the roster opened, the review clock left as it was) and the page says THAT — never 'moved it out of issue'", async () => {
+    const d = seed("d14", { status: "IFC" });
+    const { st, fn } = save(d, { pageSees: { status: "Issued" } });
+    await fn({ metadata: {}, core: { title: "d14 (title fixed)", documentNumber: "D14", status: "Issued" } });
+    expect(T("documents")[0]).toMatchObject({ status: "Issued", title: "d14 (title fixed)" });
+    expect(issued()).toHaveLength(1);
+    expect(issued()[0].details).toMatchObject({ door: "metadata", fromStatus: "IFC", toStatus: "Issued", versionId: "d14-v2", putBack: false, entryIntoForce: true });
+    expect(onDocumentIssued).not.toHaveBeenCalled();
+    expect(onDocumentIssuedAck).toHaveBeenCalledTimes(1);
+    expect(st.error).toBe("D14 was put in force by this save: another change after this page loaded had moved it to a status no gate reads as in force (or given it its first revision), and this save carries its status as Issued — the entry into force is recorded on its history, the acknowledgment roster opened and the review clock left as it was.");
+    expect(st.error).not.toMatch(/out of issue/);
+    expect(st.alerts).toEqual([]);
+  });
+
   it("the opposite stale copy: the page shows Draft → Issued, the row was already issued by another change — the save issues nothing and says so (unchanged)", async () => {
     const d = seed("d11", { status: "Issued" });
     const { st, fn } = save(d, { pageSees: { status: "Draft" } });

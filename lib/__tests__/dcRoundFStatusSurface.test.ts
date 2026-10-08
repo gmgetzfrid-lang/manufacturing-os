@@ -109,7 +109,7 @@ vi.mock("@/lib/distributionAcks", () => ({ closeStaleAcksForDocument: vi.fn(asyn
 vi.mock("@/lib/docClass", () => ({ effectiveDocClassForDocument: vi.fn(async () => null) }));
 
 import {
-  revUpDocument, firstIssueGateForRevUp, describeFirstIssue, isEntryIntoForce, putBackFromRetirementStamp,
+  revUpDocument, revertToVersion, firstIssueGateForRevUp, describeFirstIssue, isEntryIntoForce, putBackFromRetirementStamp,
   unarchiveDocument, unarchiveRestoreDefault, unarchiveStampedRestoreStatus, putBackRetiredIssue, describePutBackStatus,
   supersedeDocument, PUT_BACK_BLANK_STATUS_REFUSAL,
 } from "@/lib/revisions";
@@ -124,7 +124,7 @@ import { setLevelRevUp } from "@/lib/documentLifecycle/setRevUp";
 import { markSupersededAndLink, withCompensation, restoreSupersededSource } from "@/lib/documentLifecycle/common";
 import { reverseSplit, reverseMerge, reversalNeedsLegacyStatus, recordsPriorStatus, RESTORE_BLANK_STATUS_REFUSAL } from "@/lib/documentLifecycle/reverse";
 import { uploadToPath } from "@/lib/storage";
-import type { DocumentRecord } from "@/types/schema";
+import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 
 const ORG = "o1";
 const LIB = "lib1";
@@ -320,6 +320,35 @@ describe("REV-28 (a) — every rev-up door routes the IFC document's rev-up as a
     expect(docRow("ms1").status).toBe("Issued");
     expect(state.publish).not.toHaveBeenCalled();
   });
+
+  it("revertToVersion (P25 review fix): a non-controller's revert of an IFC document in a require library is refused UP FRONT with the app's own route (a Major revision through review, or Document Control) — nothing published; Document Control's proceeds and is recorded on REVERT as a first issue without sign-off; an Issued document's revert is unchanged (no policy read)", async () => {
+    state.reviewMode = "require";
+    published();
+    const revert = (d: Row) => revertToVersion({
+      doc: asRecord(d), libraryId: LIB, orgId: ORG, actorUserId: ME, reason: "wrong file",
+      targetVersion: { id: `${d.id}-old`, revisionLabel: "A", fileUrl: "k", reviewState: null } as unknown as DocumentVersion,
+    });
+    const ifc = seedDoc("rv1");
+    await expect(revert(ifc)).rejects.toThrow(/^This library requires reviewer sign-off, and RV1 is "IFC" — not a status any gate reads as in force — so publishing Rev 1 puts it in force for the first time — a first issue is not a revision through the review gate, so a revert \(a Correction\) doesn't exempt it\. Nothing was reverted\. Publish the earlier file as a Major revision through review, or ask Document Control, who may issue it\.$/);
+    expect(state.publish).not.toHaveBeenCalled();
+    expect(docRow("rv1").status).toBe("IFC");
+    expect(T("audit_logs").filter((r) => r.action === "REVERT")).toEqual([]);
+    // Document Control's revert proceeds — recorded (DEC-63 §2), as its rev-up is
+    state.roles = ["Manager", "DocCtrl"];
+    await expect(revert(seedDoc("rv2"))).resolves.toBeTruthy();
+    expect(state.publish).toHaveBeenCalledTimes(1);
+    expect(T("audit_logs").filter((r) => r.action === "REVERT").pop()?.details).toMatchObject({
+      firstIssueWithoutSignOff: true,
+      reviewPolicy: "require — Rev 1 is RV2's FIRST controlled issue, published WITHOUT the sign-off the policy requires, by controller u1 (DEC-63 §2)",
+    });
+    // REGRESSION — a document in force: the revert is an ordinary Correction through the gate, no policy read, nothing recorded about a first issue
+    state.roles = ["Engineer"];
+    vi.mocked(effectiveReviewControlForDocument).mockClear();
+    await expect(revert(seedDoc("rv3", { status: "Issued" }))).resolves.toBeTruthy();
+    expect(state.publish).toHaveBeenCalledTimes(2);
+    expect(effectiveReviewControlForDocument).not.toHaveBeenCalled();
+    expect(T("audit_logs").filter((r) => r.action === "REVERT").pop()?.details).not.toHaveProperty("firstIssueWithoutSignOff");
+  });
 });
 
 // ─── REV-26 / REV-27: the predicate, the put-back's target, the un-archive ───
@@ -468,7 +497,46 @@ describe("REV-29 — the real rollbacks put a NULL-status document back as NULL 
       expect(recorded).toBeNull();
       expect(docRow("n2").status).toBe(expected);
     });
+
+    it(`the saga's sentence (doors: ${doors}) — ${doors === "old" ? "the older body's path is SAID in a rollback note (P25 review fix), never silently" : "no note: put back as asked"}`, async () => {
+      state.doors = doors;
+      seedDoc("n2b", { status: null }); seedDoc("n2c");
+      const e = await withCompensation(async (register) => {
+        await markSupersededAndLink({ sourceDocId: "n2b", replacementDocIds: ["n2c"], reason: "split", actor: { orgId: ORG, actorUserId: ME }, register, label: "N2B" });
+        throw new Error("a later step failed");
+      }).catch((x) => x as Error);
+      expect(e.message).toBe(
+        "a later step failed (the operation was rolled back — no partial changes were kept)."
+        + (doors === "old" ? " Rollback note: N2B was put back as Issued, not as no status (the status it had) — this database's put_back_retired_issue predates 20261192 and cannot put back no status." : ""),
+      );
+      expect(docRow("n2b").status).toBe(expected);
+    });
   }
+
+  it("restoreSupersededSource answers the status it put back only when it is not the one asked for (the older body's 'Issued' for a NULL); withCompensation says a compensation's note after the rollback sentence, and after the cleanup failures too", async () => {
+    seedDoc("n4", { status: "Superseded" });
+    expect(await restoreSupersededSource("n4", null, [], actor)).toBeUndefined();
+    expect(docRow("n4").status).toBeNull();
+    state.doors = "old";
+    seedDoc("n5", { status: "Superseded" });
+    expect(await restoreSupersededSource("n5", null, [], actor)).toBe("Issued");
+    expect(docRow("n5").status).toBe("Issued");
+    seedDoc("n6", { status: "Superseded" });
+    expect(await restoreSupersededSource("n6", "IFC", [], actor)).toBeUndefined();
+    expect(docRow("n6").status).toBe("IFC");
+    const clean = await withCompensation(async (register) => {
+      register({ describe: "a", run: async () => "note one." });
+      register({ describe: "b", run: async () => {} });
+      throw new Error("boom");
+    }).catch((x) => x as Error);
+    expect(clean.message).toBe("boom (the operation was rolled back — no partial changes were kept). Rollback note: note one.");
+    const failed = await withCompensation(async (register) => {
+      register({ describe: "a", run: async () => "note one." });
+      register({ describe: "b", run: async () => { throw new Error("stuck"); } });
+      throw new Error("boom");
+    }).catch((x) => x as Error);
+    expect(failed.message).toBe("boom\n\nThe operation was rolled back, but some cleanup steps failed and may need manual attention:\n- b: stuck Rollback note: note one.");
+  });
 
   it("restoreSupersededSource's refusal names what the source had", async () => {
     state.doors = "192";

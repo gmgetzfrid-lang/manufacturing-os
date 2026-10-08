@@ -739,8 +739,11 @@ order at the P16 merge):
    `20261185`, `20261182`, `20261174`, `20261165`, `20261164`, `20261159`,
    `20261151`, `20261144`, `20261139`, `20261105` or any earlier guard
    migration after it.** One app result changes: a non-controller's revert
-   of such a document under require is refused in the database's sentence
-   (no up-front check, as for a Draft's revert since `20261144`).
+   of such a document under require is refused — by the app up front
+   (`revertToVersion` asks `firstIssueGateForRevUp` and names the revert's
+   route: a Major revision of the earlier file through review, or Document
+   Control; P25 review fix), and by this file's block should the app's
+   gate be bypassed.
 - **What the app gets wrong if a step is skipped:** none of it admits a
   write the guard refuses. With `20261185` pasted before `20261192`
   (against this order), the P25 app's NULL rollback falls back to 'Issued',
@@ -787,7 +790,10 @@ added these limbs; keep each when rebasing (each is pinned by a test):
     `putBackAs` and `describePutBackStatus` in both sentences;
   - `firstIssueGateForRevUp` — the in-force test (`IN_FORCE_STATUSES`) on
     the "revision through the gate" return; `describeFirstIssue`'s
-    not-in-force sentence.
+    not-in-force sentence;
+  - `revertToVersion` — the first-issue gate before `publish_revision`
+    (its refusal names the revert's route) and the `REVERT` event's
+    `firstIssueWithoutSignOff` / `reviewPolicy` (P25 review fix).
 - `components/documents/BulkEditModal.tsx`: entering-force rows written
   through `changeDocumentStatus` (`issuingIds.has(doc.id) ||
   enteringForceIds.has(doc.id)`), their refusal marked "not issued:", and
@@ -796,11 +802,14 @@ added these limbs; keep each when rebasing (each is pinned by a test):
   new text and the refusal suffix's `isIssueRefusal(message)` for an
   entry into force.
 - `app/(protected)/documents/[libraryId]/page.tsx` (two call-site edits):
-  `pageSawIssue` also counts `isUnguardedEntryIntoForce`; the un-archive
-  `onSuccess(restoredStatus)` shows the restored status.
+  `pageSawIssue` also counts `isUnguardedEntryIntoForce`; the `reissued`
+  sentence branches on `outcome.entryIntoForce` (P25 review fix); the
+  un-archive `onSuccess(restoredStatus)` shows the restored status.
 - Also: `lib/documentLifecycle/common.ts` (`markSupersededAndLink`'s NULL
-  prior status, `restoreSupersededSource`'s `string | null` and
-  `olderBodyStatus`), `merge.ts` (`priorStatuses` keeps NULL), `reverse.ts`
+  prior status and its compensation's rollback note, `Compensation.run`'s
+  optional note and `withCompensation`'s "Rollback note:" suffix,
+  `restoreSupersededSource`'s `string | null`, `olderBodyStatus` and its
+  `putBackAs` answer), `merge.ts` (`priorStatuses` keeps NULL), `reverse.ts`
   (`recordsPriorStatus`, `statusToRestore`'s `present`, `restoreStatus`'s
   older-body fallback and return value, `RESTORE_BLANK_STATUS_REFUSAL`),
   `components/documents/ArchiveConfirmModal.tsx` and

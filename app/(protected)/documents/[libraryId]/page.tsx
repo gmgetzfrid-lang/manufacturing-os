@@ -2820,8 +2820,14 @@ export default function LibraryExplorerPage() {
       // The database row was issuable although this page saw nothing to
       // issue (it showed the document issued, or with no revision): this
       // save issued it — recorded, clocks handled — and the person is told.
+      // REV-26 (P25 review fix): an entry INTO FORCE is said as what it is —
+      // the row had been moved to a status no gate reads as in force (IFC),
+      // not out of issue; the roster opened and the review clock left as it
+      // was (changeDocumentStatus's entryIntoForce).
       const reissued = outcome.issued && !pageSawIssue
-        ? `${label} was issued by this save: another change after this page loaded had moved it out of issue (or given it its first revision), and this save carries its status as ${toStatus} — the issue is recorded on its history like any other.`
+        ? outcome.entryIntoForce
+          ? `${label} was put in force by this save: another change after this page loaded had moved it to a status no gate reads as in force (or given it its first revision), and this save carries its status as ${toStatus} — the entry into force is recorded on its history, the acknowledgment roster opened and the review clock left as it was.`
+          : `${label} was issued by this save: another change after this page loaded had moved it out of issue (or given it its first revision), and this save carries its status as ${toStatus} — the issue is recorded on its history like any other.`
         : null;
       const problems = outcome.issued
         ? [
