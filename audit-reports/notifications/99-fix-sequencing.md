@@ -328,9 +328,10 @@ N9, N10, N14, the integrator):*
   On N9's branch the cron's hand-kept list (N6's file this round, so N9
   does not edit it) lacks the six split compliance kinds, and `20261191`'s
   re-files move the already-written recall / package / intake rows OUT of
-  that hand list — so between the paste and a deploy carrying the derived
-  list the daily compliance digest drops every recall, package, upstream
-  and intake line. Enforced on N9's branch by `notificationKinds.test.ts`:
+  that hand list — so a daily compliance digest that fires between the
+  paste and the N9 deploy omits the rows the paste re-filed: every recall,
+  package, upstream and intake line written in its 25 h window. Enforced
+  on N9's branch by `notificationKinds.test.ts`:
   an `it.fails` TRIPWIRE ("the cron's COMPLIANCE_KINDS equals KIND_META's
   compliance set") that starts failing the moment the derivation is in the
   cron file (proved by swapping N6's line in), and a gap pin naming the
@@ -338,9 +339,15 @@ N9, N10, N14, the integrator):*
   resolve N6's own compliance case ("compliance is the cron's
   COMPLIANCE_KINDS, unchanged", which pins the flagged set to TODAY's) to
   TODAY ∪ `N9_COMPLIANCE_ADDED`; N9's `cronComplianceKinds` helper reads
-  both the literal and the derived form, N6's only the derived. `20261191`
-  must not be pasted before the deploy that carries the derived list
-  (`DEC-44 (N9)` Risk; the migration's header says so).*
+  both the literal and the derived form, N6's only the derived. Paste
+  `20261191` IMMEDIATELY BEFORE the N9 deploy — the one whose `KIND_META`
+  carries the nine kinds and whose cron derives `COMPLIANCE_KINDS` from it
+  (N6 merged first). An N6-only deploy does not close the gap: its
+  derivation reads a `KIND_META` without the six, so the derived list
+  equals today's hand list. A digest that fires between the paste and that
+  deploy omits the rows the paste re-filed (25 h window) — schedule the
+  paste outside the digest hour (`DEC-44 (N9)` Risk; the migration's
+  header says the same; integrator fix pass, 2026-10-08).*
 - *N3: the nine new kinds are in `BELL_ICON_GAPS` (the bell has no entry);
   `transmittal_unstampable` badges Documents now. `lib/notificationPrefs.ts`
   (yours): N9 changed one list, `PREFERENCE_EXEMPT_EVENT_TYPES`, to add
@@ -353,7 +360,7 @@ N9, N10, N14, the integrator):*
   `NEDGE-6` — wire `lib/documentDiscoverers.ts` (server) /
   `POST /api/documents/discoverers` (browser) into `lib/notify/dispatch.ts`
   to drop the non-discovering, non-controller followers of a
-  document-scoped event; `NEDGE-20` (rename `lib/subscription.ts` /
+  document-scoped event; `NEDGE-21` (rename `lib/subscription.ts` /
   `lib/subscriptions.ts` apart); `PROD-17` (a follower's notice for a
   force-release and a retirement) — the integrator adds the four to N14's
   `findings`, or routes them.*

@@ -281,6 +281,12 @@ export default function CheckoutsPage() {
                 overlapKey: overlapIdentity(overlap),
                 what, names, targets,
               });
+              if (out.refused && out.refusedBecause === "check_failed") {
+                // The sent-notices read failed: not "never sent", not "already
+                // nudged" — nothing was written; the button stays, a retry is the remedy.
+                showToast({ type: "warning", title: "Couldn't check earlier nudges", message: out.refused });
+                return false;
+              }
               if (out.refused) {
                 showToast({ type: "info", title: "Already nudged", message: out.refused });
               } else {

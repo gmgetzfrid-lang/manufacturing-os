@@ -84,13 +84,17 @@
 --      transmittal_issued are written from the browser. intake_quote and
 --      intake_submission are written by the intake door and the cron on the
 --      service role, which 20261160 passes untouched.
---      And NOT BEFORE the deploy whose daily compliance digest derives
---      COMPLIANCE_KINDS from KIND_META (notifications N6): the cron's
---      hand-kept list does not name the six split compliance kinds, and
---      this file's re-files move the already-written doc_superseded /
---      review_requested rows out of it, so a digest window between this
---      paste and that deploy would drop every recall, package, upstream and
---      intake line (DEC-44 (N9) Risk; 99-fix-sequencing).
+--      And IMMEDIATELY BEFORE the N9 deploy — the one whose KIND_META
+--      carries the nine kinds and whose cron derives COMPLIANCE_KINDS from
+--      it (N6 merged first). An N6-only deploy is NOT enough: its derivation
+--      reads a KIND_META without the six split compliance kinds, so the
+--      derived list equals today's hand list. This file's re-files move the
+--      already-written doc_superseded / review_requested rows out of that
+--      list, so a digest that fires between this paste and that deploy
+--      omits the rows the paste re-filed (its 25 h window) — every recall,
+--      package, upstream and intake line written in the preceding day.
+--      Schedule the paste outside the digest hour (DEC-44 (N9) Risk;
+--      99-fix-sequencing).
 --   3. the deploy. Before this paste the app keeps today's paths: the
 --      receipt email's gate falls back to a service-role read of the issuer's
 --      preferences when email_gate is unavailable (42883 / PGRST202 —

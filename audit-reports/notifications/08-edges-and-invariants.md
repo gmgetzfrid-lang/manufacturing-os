@@ -1,6 +1,6 @@
 # 08 · Edges, egress & load-bearing invariants
 
-**17 findings** — 2 CRITICAL · 9 HIGH · 6 MEDIUM. `NEDGE-14`, `NEDGE-15` and `NEDGE-16` opened by notifications Round G (N5's second review fix), `NEDGE-17` by its third review fix, 2026-10-02.
+**19 findings** — 2 CRITICAL · 9 HIGH · 6 MEDIUM · 2 LOW. `NEDGE-14`, `NEDGE-15` and `NEDGE-16` opened by notifications Round G (N5's second review fix), `NEDGE-17` by its third review fix, 2026-10-02; `NEDGE-18` at the drafting-flow DF-P1 merge and `NEDGE-21` by N9 (renumbered at the integrator's fix pass — its first number was already taken on the integration branch), 2026-10-07/08.
 
 What the seven lenses did not look at — notification content as an egress surface, lifecycle edges, accessibility — plus what is sound and must not break.
 
@@ -464,10 +464,10 @@ dispatch.ts:84  `  if (recipients.length === 0) return;`
 
 **Done-when.**
 - ✓ The `SKIP_TABLES` entry for `subscriptions` is removed and the table joins the restore order with uid remapping applied.
-- **Not done — deferred by the integrator (2026-10-07):** renaming `lib/subscription.ts` / `lib/subscriptions.ts` apart. Opened as `NEDGE-20`.
+- **Not done — deferred by the integrator (2026-10-07):** renaming `lib/subscription.ts` / `lib/subscriptions.ts` apart. Opened as `NEDGE-21`.
 - ✓ A restore test asserts a non-zero subscriptions row count in the target org afterwards.
 
-**Scope / residual.** Stays OPEN for done-when 2 only (`NEDGE-20`, owner notifications N14). `push_subscriptions` (device registrations) stays skipped — a different table.
+**Scope / residual.** Stays OPEN for done-when 2 only (`NEDGE-21`, owner notifications N14). `push_subscriptions` (device registrations) stays skipped — a different table.
 
 ---
 
@@ -812,9 +812,9 @@ There is no status predicate and no membership filter on `recipients`. `20261160
 
 ---
 
-<a id="nedge-20"></a>
+<a id="nedge-21"></a>
 
-## NEDGE-20 · `lib/subscription.ts` (billing) and `lib/subscriptions.ts` (watch / follow) differ by one letter — the collision that hid `NEDGE-8`
+## NEDGE-21 · `lib/subscription.ts` (billing) and `lib/subscriptions.ts` (watch / follow) differ by one letter — the collision that hid `NEDGE-8`
 
 - **Severity:** LOW
 - **Status:** OPEN

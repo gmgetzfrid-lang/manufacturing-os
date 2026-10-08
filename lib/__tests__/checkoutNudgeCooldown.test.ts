@@ -7,7 +7,9 @@
 //   · lib/checkoutNudge.ts — one nudge per (sender, recipient, document) per
 //     24 h: the card's "Heads-up sent" from that read (nudgeState), the
 //     writer's refusal with a sentence that names who and when
-//     (sendCheckoutNudge), today's write when the read is unavailable;
+//     (sendCheckoutNudge), today's write when the read is not deployed yet,
+//     a refusal — nothing written — when the read FAILED (a failure is never
+//     "never sent"; integrator fix pass, 2026-10-08);
 //   · the page reads it (source pins): the overlap card's state is derived
 //     from the server's answer as well as its own.
 
@@ -35,7 +37,7 @@ vi.mock("@/lib/inAppNotifications", () => ({
 
 import { readNoticesISent, isMissingSentNotices } from "@/lib/sentNotices";
 import {
-  CHECKOUT_NUDGE_COOLDOWN_HOURS, nudgeKey, nudgeState, nudgeTargets, recentNudges, sendCheckoutNudge,
+  CHECKOUT_NUDGE_COOLDOWN_HOURS, NUDGE_CHECK_FAILED, nudgeKey, nudgeState, nudgeTargets, recentNudges, sendCheckoutNudge,
 } from "@/lib/checkoutNudge";
 
 const NOW = Date.parse("2026-10-07T12:00:00.000Z");
@@ -100,7 +102,15 @@ describe("the nudge targets and the card's state", () => {
       p_kind: "checkout_conflict", p_since: new Date(NOW - 24 * HOUR).toISOString(), p_resource_type: "document", p_metadata: { nudge: true },
     });
     expect(r.known).toBe(true);
+    expect(r.reason).toBeUndefined();
     expect([...r.sentAt.entries()]).toEqual([["bob:d2", NOW - 2 * HOUR]]); // the 30-hour-old one is outside the window
+  });
+
+  it("recentNudges says WHY it does not know: not deployed yet, or a failed read", async () => {
+    state.rpc = { data: null, error: { code: "PGRST202", message: "not found" } };
+    expect(await recentNudges("o1", NOW)).toEqual({ known: false, reason: "not_deployed", sentAt: new Map() });
+    state.rpc = { data: null, error: { code: "57014", message: "timeout" } };
+    expect(await recentNudges("o1", NOW)).toEqual({ known: false, reason: "error", sentAt: new Map() });
   });
 });
 
@@ -122,6 +132,7 @@ describe("sendCheckoutNudge — the writer refuses a repeat inside the cooldown,
     state.rpc = { data: [row("bob", "d2", 3), row("dee", "d3", 1)], error: null };
     const out = await sendCheckoutNudge({ ...base, targets: [{ userId: "bob", documentId: "d2", name: "Bob" }, { userId: "dee", documentId: "d3", name: "Dee" }] });
     expect(out.sent).toBe(0);
+    expect(out.refusedBecause).toBe("cooldown");
     expect(out.refused).toMatch(/^You already nudged Bob, Dee about this in the last 24 hours — you can nudge again after .+\.$/);
     expect(out.refused).toContain(new Date(NOW - 3 * HOUR + 24 * HOUR).toLocaleString());
     expect(state.notifyMany).toEqual([]);
@@ -139,6 +150,14 @@ describe("sendCheckoutNudge — the writer refuses a repeat inside the cooldown,
     expect(out).toEqual({ sent: 1, skipped: [] });
     expect(state.notifyMany).toHaveLength(1);
   });
+
+  it("a read that FAILS is not 'never sent': the nudge is refused with a legible sentence and nothing is written", async () => {
+    state.rpc = { data: null, error: { code: "57014", message: "timeout" } };
+    const out = await sendCheckoutNudge({ ...base, targets: [{ userId: "bob", documentId: "d2", name: "Bob" }, { userId: "dee", documentId: "d3", name: "Dee" }] });
+    expect(out).toEqual({ sent: 0, skipped: [], refused: "Couldn't check whether you already nudged them — try again in a moment.", refusedBecause: "check_failed" });
+    expect(out.refused).toBe(NUDGE_CHECK_FAILED);
+    expect(state.notifyMany).toEqual([]);
+  });
 });
 
 describe("the /checkouts page reads the cooldown (source pins)", () => {
@@ -148,6 +167,9 @@ describe("the /checkouts page reads the cooldown (source pins)", () => {
     expect(page).toContain("recentNudges(");
     expect(page).toContain("nudgeState(");
     expect(page).toMatch(/refused/);
+    // a failed check is not "Already nudged": its own toast, and the card keeps the button (onNudge answers false)
+    expect(page).toMatch(/refusedBecause === "check_failed"/);
+    expect(page).toContain("Couldn't check");
     expect(page).not.toMatch(/\bnotifyMany\(/); // the page writes through the module only
   });
 });
