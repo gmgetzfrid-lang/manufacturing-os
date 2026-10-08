@@ -35,10 +35,15 @@ export function bellLabel(attention: number): string {
   return attention > 0 ? `Notifications, ${attention} need${attention === 1 ? "s" : ""} attention` : "Notifications";
 }
 
-/** What the live region says: the count, as the bell shows it. */
+/** What the live region says: the count, in the drawer header's two words
+ *  (RT-9) — "need attention" is everything in the feed, "need action" the
+ *  part only doing the work clears. The things counted are "items", as the
+ *  sidebar badge and the center say: a request in the feed is not a
+ *  notification, and "Mark notifications read" never clears it (integrator
+ *  fix — the region used to call every item a "notification"). */
 export function bellAnnouncement(attention: number, action: number): string {
-  if (attention <= 0) return "No notifications need attention";
-  return `${attention} notification${attention === 1 ? "" : "s"} need${attention === 1 ? "s" : ""} attention${action > 0 ? `, ${action} need${action === 1 ? "s" : ""} action` : ""}`;
+  if (attention <= 0) return "Nothing needs attention";
+  return `${attention} item${attention === 1 ? "" : "s"} need${attention === 1 ? "s" : ""} attention${action > 0 ? `, ${action} need${action === 1 ? "s" : ""} action` : ""}`;
 }
 
 export default function NotificationBell(_props: NotificationBellProps) {

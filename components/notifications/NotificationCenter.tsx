@@ -23,7 +23,13 @@
 // doorway while the dock is raised over a modal that started an upload — so
 // when it is opened while the dock is raised, it opens at `Z.dialog`, above
 // that modal (and under the raised dock, which then moves left of the panel),
-// and keeps that layer until it closes. Opened there, every row and the inbox
+// and keeps that layer until it closes — deliberately, even when the raise
+// ends first (the upload's card clears, or the modal closes): the modal that
+// started the upload may still be up, and dropping to 241 would put an open,
+// focused dialog under it. While the panel is open above a raise the dock
+// stays at `Z.dockRaised` too (its `aboveRaiseRailSnapshot`), so its cards —
+// the upload's result, the toasts — never sink under the center's backdrop
+// (N3 integrator fix). Opened there, every row and the inbox
 // link lead away from the page that owns the running upload, and a client-side
 // navigation meets no leave-page prompt — so while an upload is in flight such
 // a link asks first (`confirmLeaveDuringUploads`) and is followed only on yes.
@@ -326,8 +332,11 @@ function CenterPanel({
       ? scoped.filter((i) => !i.actionRequired)
       : scoped;
   const shown = filter === "action" ? viewCounts.action : filter === "activity" ? viewCounts.activity : viewCounts.all;
-  // Above a raising modal, both layers take the dialog band (RT-11); the
-  // classes keep the resting 240 / 241.
+  // Above a raising modal, both layers take the dialog band (RT-11) until
+  // the center closes — `aboveModal` is read once, on open, on purpose: the
+  // raise can end while the modal it was over is still up, and under it a
+  // resting 241 would hide a dialog that holds focus. The classes keep the
+  // resting 240 / 241.
   const layer = aboveModal ? { zIndex: Z.dialog } : undefined;
 
   return createPortal(

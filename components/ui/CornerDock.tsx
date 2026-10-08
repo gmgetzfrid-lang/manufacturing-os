@@ -467,6 +467,17 @@ export function useDockRaise(active: boolean) {
 
 function raisedSnapshot(): boolean { return isRaised(entries.values()); }
 
+/** A drawer opened ABOVE the raise is still open (the notification center
+ *  from the raised doorway, RT-11 — `useOccupyRightRail`'s `aboveRaise`).
+ *  It keeps `Z.dialog` until it closes, even after the raise ends (the
+ *  modal it was opened over may still be up, and under it the center would
+ *  be hidden while holding focus). The dock keeps `Z.dockRaised` for as
+ *  long, so its cards — the upload's result, the toasts — stay above that
+ *  center's full-screen backdrop, readable and clickable, as the order in
+ *  `lib/zLayers.ts` says (the dock sits above the notification center);
+ *  only the layer, never the raised allocation (N3 integrator fix). */
+function aboveRaiseRailSnapshot(): boolean { return raisedRails.size > 0; }
+
 /** Whether the dock is raised right now — over a modal that started the
  *  upload it reports. Read once by the notification center when it opens
  *  (RT-11): opened while raised, it opens above that modal. */
@@ -687,6 +698,9 @@ export function CornerDock({ onOpenCenter, occupiedRightPx = 0 }: CornerDockProp
   // Raised over a modal that started the upload it reports; at rest under
   // every overlay.
   const raised = useSyncExternalStore(subscribe, raisedSnapshot, () => false);
+  // The center is open above a raise that may have ended: the layer stays
+  // raised over it until it closes (the allocation is the resting one).
+  const aboveRaiseRail = useSyncExternalStore(subscribe, aboveRaiseRailSnapshot, () => false);
   const wouldHide = useSyncExternalStore(subscribe, cappedHidden, () => 0);
   // Raised: above a declared modal action row when the cards would cover it.
   const avoidOffset = useSyncExternalStore(subscribe, avoidSnapshot, () => 0);
@@ -781,8 +795,10 @@ export function CornerDock({ onOpenCenter, occupiedRightPx = 0 }: CornerDockProp
         // Lifted above a modal's action row, the offset takes the place of
         // the page bottom bar's (it is never lower than it). The layer:
         // under every overlay at rest; above every modal while one that
-        // started an upload is open and the dock reports an upload.
-        zIndex: raised ? Z.dockRaised : Z.dock,
+        // started an upload is open and the dock reports an upload — and
+        // while the center opened above that raise is still open at
+        // Z.dialog (RT-11), so the cards never end up under its backdrop.
+        zIndex: raised || aboveRaiseRail ? Z.dockRaised : Z.dock,
         right: `calc(${rail}px - 1.5rem)`,
         bottom: lifted ? `calc(${avoidOffset}px - 1.5rem)` : "calc(var(--dock-bottom, 0px) - 1.5rem)",
         maxHeight: lifted ? `calc(100dvh - ${avoidOffset}px + 3rem)` : "calc(100dvh - var(--dock-bottom, 0px) + 3rem)",

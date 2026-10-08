@@ -360,10 +360,16 @@ describe("NEDGE-5 / RT-9 — the bell", () => {
     const live = document.querySelector("[data-bell-live]")!;
     expect(live.getAttribute("aria-live")).toBe("polite");
     expect(live.getAttribute("aria-atomic")).toBe("true");
-    expect(live.textContent).toBe("7 notifications need attention, 1 needs action");
+    // the drawer header's two words, counting "items" as the sidebar badge
+    // does — never "notifications", which a request in the feed is not
+    // (RT-9 dw3, integrator fix)
+    expect(live.textContent).toBe("7 items need attention, 1 needs action");
     expect(bellLabel(1)).toBe("Notifications, 1 needs attention");
     expect(bellLabel(0)).toBe("Notifications");
-    expect(bellAnnouncement(0, 0)).toBe("No notifications need attention");
+    expect(bellAnnouncement(0, 0)).toBe("Nothing needs attention");
+    expect(bellAnnouncement(1, 0)).toBe("1 item needs attention");
+    expect(bellAnnouncement(1, 1)).toBe("1 item needs attention, 1 needs action");
+    expect(bellAnnouncement(7, 1)).not.toContain("notification");
   });
 
   it("opens a labelled dialog that takes focus; Escape (as before) closes it and focus returns to the bell", async () => {
@@ -402,6 +408,10 @@ describe("NEDGE-5 / RT-9 — the bell", () => {
     expect(dialog.querySelector("[data-bell-remaining]")!.textContent)
       .toBe("1 request in this list clears when the work is done or the request is opened — marking notifications read leaves it.");
     expect(dialog.textContent).not.toContain("Mark all read");
+    // RT-9's failure scenario in the accessible channel (integrator fix): the
+    // live region counts the request as an item, not as a notification the
+    // button could clear.
+    expect(document.querySelector("[data-bell-live]")!.textContent).toBe("8 items need attention, 2 need action");
   });
 
   it("TAX-5: a row draws its registry icon — a review request is a GitBranch in the bell, as in the feed (it was a bare Bell)", async () => {
@@ -485,6 +495,92 @@ describe("RT-11 dw1 — raised over an upload modal, '+N more' opens the center 
     expect(panel().style.zIndex).toBe("");
     expect(panel().className).toContain("z-[241]");
     expect((document.querySelector("[data-center-backdrop]") as HTMLElement).className).toContain("z-[240]");
+    // and a center at rest never lifts the dock: it stays at Z.dock, above
+    // the resting center as lib/zLayers.ts says
+    expect(Number(document.getElementById("corner-dock")!.style.zIndex)).toBe(Z.dock);
+  });
+});
+
+// ── RT-11 (integrator fix): the raise ends while the center is open above it ─
+
+/** The raise and the upload card, ended from the test: the modal that
+ *  started the upload closes, or its card clears while the modal stays up. */
+const raiseHandle: { closeModal: () => void; clearUpload: () => void } = { closeModal: () => {}, clearUpload: () => {} };
+function ShellWhoseRaiseEnds() {
+  const { open, isOpen } = useNotificationCenter();
+  const [modal, setModal] = React.useState(true);
+  const [card, setCard] = React.useState(true);
+  React.useEffect(() => {
+    raiseHandle.closeModal = () => setModal(false);
+    raiseHandle.clearUpload = () => setCard(false);
+  }, []);
+  return React.createElement(React.Fragment, null,
+    React.createElement(CornerDock, { onOpenCenter: open, occupiedRightPx: isOpen ? NOTIFICATION_CENTER_RAIL_PX : 0 }),
+    React.createElement(GrabToast),
+    card ? React.createElement(RaisableUploadCard) : null,
+    modal ? React.createElement(RaisedUpload) : null);
+}
+
+describe("RT-11 (integrator fix) — the raise ends while the center is still open above the modal", () => {
+  const dock = () => document.getElementById("corner-dock")!;
+  const openAboveRaise = async () => {
+    Object.defineProperty(window, "innerWidth", { value: 1280, configurable: true });
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ width: 480, height: 800, top: 0, left: 800, right: 1280, bottom: 800, x: 800, y: 0, toJSON() { return {}; } } as DOMRect);
+    await mount(React.createElement(ToastProvider, null, React.createElement(NotificationCenterProvider, null, React.createElement(ShellWhoseRaiseEnds))));
+    await act(async () => { for (let i = 0; i < 6; i++) toastHandle.show({ type: "info", title: `Doc ${i} revised`, duration: 0 }); });
+    await flush();
+    expect(dock().getAttribute("data-dock-raised")).toBe("1");
+    expect(Number(dock().style.zIndex)).toBe(Z.dockRaised);
+    // raised, the toasts wait behind "+N more"
+    expect(dock().textContent).not.toContain("Doc 5 revised");
+    await act(async () => { [...dock().querySelectorAll("button")].find((b) => /Notifications/.test(b.textContent ?? ""))!.click(); });
+    await flush();
+    expect(Number(panel().style.zIndex)).toBe(Z.dialog);
+    expect(dock().style.right).toBe("calc(480px - 1.5rem)");
+  };
+  const closeCenter = async () => {
+    await act(async () => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+    await flush();
+    expect(panel().hasAttribute("inert")).toBe(true);
+  };
+
+  it("the modal closes first: the center keeps Z.dialog, and the dock — at its resting allocation, the toasts showing — stays at Z.dockRaised above the center's backdrop until the center closes, then drops to Z.dock", async () => {
+    await openAboveRaise();
+    await act(async () => { raiseHandle.closeModal(); });
+    await flush();
+    // the raise is over: the allocation is the resting one (the toasts show)…
+    expect(dock().getAttribute("data-dock-raised")).toBeNull();
+    expect(dock().textContent).toContain("Doc 5 revised");
+    // …but the layer is not: the cards are above the center's backdrop
+    // (the review's failure: a 6 s toast expiring unread, dimmed under it,
+    // and a click on a card closing the center instead of acting on it)
+    expect(Number(dock().style.zIndex)).toBe(Z.dockRaised);
+    expect(Number(dock().style.zIndex)).toBeGreaterThan(Number(panel().style.zIndex));
+    expect(Number(panel().style.zIndex)).toBe(Z.dialog);
+    // and still left of the panel — the layout's rail now
+    expect(dock().style.right).toBe("calc(480px - 1.5rem)");
+    await closeCenter();
+    expect(Number(dock().style.zIndex)).toBe(Z.dock);
+    expect(dock().style.right).toBe("calc(0px - 1.5rem)");
+  });
+
+  it("the upload's card clears while the modal stays up: the center keeps Z.dialog — under the modal (300) it would be an open, focused dialog nobody can see — and the dock stays above it until it closes", async () => {
+    await openAboveRaise();
+    expect(document.activeElement).toBe(panel());
+    await act(async () => { raiseHandle.clearUpload(); });
+    await flush();
+    expect(dock().getAttribute("data-dock-raised")).toBeNull();
+    expect(Number(panel().style.zIndex)).toBe(Z.dialog);
+    expect(Z.dialog).toBeGreaterThan(Z.metadataStagingModal);
+    expect(document.activeElement).toBe(panel());
+    expect(Number(dock().style.zIndex)).toBe(Z.dockRaised);
+    await closeCenter();
+    expect(Number(dock().style.zIndex)).toBe(Z.dock);
+    // reopened now, with the raise over, the center opens at rest as always
+    await act(async () => { [...dock().querySelectorAll("button")].find((b) => /Notifications/.test(b.textContent ?? ""))!.click(); });
+    await flush();
+    expect(panel().style.zIndex).toBe("");
+    expect(Number(dock().style.zIndex)).toBe(Z.dock);
   });
 });
 
