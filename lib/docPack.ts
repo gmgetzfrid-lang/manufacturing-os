@@ -23,7 +23,7 @@
 
 import { PDFDocument } from "pdf-lib";
 import { supabase } from "@/lib/supabase";
-import { applyStampToPdfDoc } from "@/lib/stamping";
+import { applyStampToPdfDoc, type StampTextMapping } from "@/lib/stamping";
 import { recordIntent } from "@/lib/intents";
 import { publicOrigin } from "@/lib/publicOrigin";
 import { documentStanding, isUndefinedColumnError } from "@/lib/verifyVerdict";
@@ -61,6 +61,10 @@ export interface PackSheetRef {
   /** PKG-12: how many pages this sheet occupies in the merged pack, in pack
    *  order — so a cover can give each entry its page number. */
   pageCount: number;
+  /** PHYS-15: what this sheet's stamp drew in another form (a character its
+   *  font cannot print), so the print snapshot can record it beside the
+   *  number and revision it stamped. Absent when nothing was replaced. */
+  stampMapped?: StampTextMapping[];
 }
 
 /** PKG-12: a field pack's budget. The builder merges in browser memory
@@ -739,7 +743,7 @@ export async function buildAndDownloadDocPack(input: {
       const holderWarning = d.checked_out_by && (
         ` ACTIVE CHANGE IN PROGRESS: checked out by ${(d.checked_out_by_name as string) || "another user"} at time of issue.`
       );
-      await applyStampToPdfDoc(single, {
+      const stamp = await applyStampToPdfDoc(single, {
         sourceBytes: bytes,
         userLabel: input.userEmail?.split("@")[0] ?? undefined,
         email: input.userEmail ?? undefined,
@@ -758,7 +762,9 @@ export async function buildAndDownloadDocPack(input: {
       included += 1;
       pageTotal += pageCount;
       byteTotal += bytes.byteLength;
-      includedSheets.push({ documentId, versionId, label, pageCount: pages.length });
+      // PHYS-15: the replacements ride with the sheet only when there were any.
+      const stampMapped = stamp?.mapped ?? [];
+      includedSheets.push({ documentId, versionId, label, pageCount: pages.length, ...(stampMapped.length > 0 ? { stampMapped } : {}) });
       includedRows.push(d);
     } catch (e) {
       if (e instanceof PackTooLargeError || e instanceof PackSheetTooLargeError) throw e;

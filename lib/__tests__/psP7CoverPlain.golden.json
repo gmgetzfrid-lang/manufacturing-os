@@ -1,0 +1,4804 @@
+{
+ "one page, every field, the print snapshot's QR; en dash, curly quotes and Latin-1 in the text": {
+  "calls": [
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "height": 66,
+      "width": 540,
+      "x": 36,
+      "y": 690
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "WORK PACKAGE",
+     {
+      "color": {
+       "blue": 0.86,
+       "green": 0.78,
+       "red": 0.7,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 14,
+      "x": 52,
+      "y": 726
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Unit 3 tie-ins",
+     {
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 22,
+      "x": 52,
+      "y": 700
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Hot-tap and spool tie-ins — west header, TA “GA” scope",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 11,
+      "x": 52,
+      "y": 662
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Owner: José Núñez   ·   Printed 10/7/2026 by jane",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 52,
+      "y": 640
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "CONTENTS — revisions as printed",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 52,
+      "y": 600
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "1.  P-100 · p. 2",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 580
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev B",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 580
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "2.  P–101 “GA” · pp. 3–4",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 564
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 1A",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 564
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "3.  Rév B datasheet · p. 5",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 548
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev —",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 548
+     }
+    ]
+   },
+   {
+    "op": "drawImage",
+    "args": [
+     "<image>",
+     {
+      "height": 130,
+      "width": 130,
+      "x": 440,
+      "y": 80
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "SCAN BEFORE STARTING WORK",
+     {
+      "color": {
+       "blue": 0.02,
+       "green": 0.35,
+       "red": 0.7,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 9,
+      "x": 428,
+      "y": 66
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "No login needed.",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 8,
+      "x": 428,
+      "y": 54
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "GREEN = every sheet is current — work from this pack.",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 52,
+      "y": 102
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "AMBER = do only what the screen says — a sheet is not yet in effect or not in this pack.",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 52,
+      "y": 90
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "GREY = the scan cannot confirm this pack — check with Document Control before work.",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 52,
+      "y": 78
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "RED = stop — a sheet changed, was withdrawn, is held, is not issued or is missing.",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 52,
+      "y": 66
+     }
+    ]
+   }
+  ],
+  "pages": 1,
+  "sha256": "d9141b8d317a491f7b96eea9fe2bec786445af8fd86f99517bfeb0d2a6bad623"
+ },
+ "30 sheets: a continuation page; no description, owner or printer; the legacy package QR": {
+  "calls": [
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "height": 66,
+      "width": 540,
+      "x": 36,
+      "y": 690
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "WORK PACKAGE",
+     {
+      "color": {
+       "blue": 0.86,
+       "green": 0.78,
+       "red": 0.7,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 14,
+      "x": 52,
+      "y": 726
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "TA-2026",
+     {
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 22,
+      "x": 52,
+      "y": 700
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Owner: —   ·   Printed 10/7/2026",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 52,
+      "y": 640
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "CONTENTS — revisions as printed (30 sheets; continued on 1 more page)",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 52,
+      "y": 600
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "1.  P-100 · p. 3",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 580
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev A",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 580
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "2.  P-101 · p. 4",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 564
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev B1",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 564
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "3.  P-102 · p. 5",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 548
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev —",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 548
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "4.  P-103 · p. 6",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 532
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev D1",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 532
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "5.  P-104 · p. 7",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 516
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev E",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 516
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "6.  P-105 · p. 8",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 500
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev —",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 500
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "7.  P-106 · p. 9",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 484
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev G",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 484
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "8.  P-107 · p. 10",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 468
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev H1",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 468
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "9.  P-108 · p. 11",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 452
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev —",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 452
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "10.  P-109 · p. 12",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 436
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev J1",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 436
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "11.  P-110 · p. 13",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 420
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev K",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 420
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "12.  P-111 · p. 14",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 404
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev —",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 404
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "13.  P-112 · p. 15",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 388
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev M",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 388
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "14.  P-113 · p. 16",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 372
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev N1",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 372
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "15.  P-114 · p. 17",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 356
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev —",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 356
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "16.  P-115 · p. 18",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 340
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev P1",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 340
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "17.  P-116 · p. 19",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 324
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev Q",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 324
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "18.  P-117 · p. 20",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 308
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev —",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 308
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "19.  P-118 · p. 21",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 292
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev S",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 292
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "20.  P-119 · p. 22",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 276
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev T1",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 276
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "21.  P-120 · p. 23",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 260
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev —",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 260
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "22.  P-121 · p. 24",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 244
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev V1",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 244
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "23.  P-122 · p. 25",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 228
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev W",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 228
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "24.  P-123 · p. 26",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 212
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev —",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 212
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "WORK PACKAGE — TA-2026",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 12,
+      "x": 52,
+      "y": 750
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "CONTENTS (continued) — revisions as printed · page 2 of 2",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 52,
+      "y": 730
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "25.  P-124 · p. 27",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 706
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev Y",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 706
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "26.  P-125 · p. 28",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 690
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev Z1",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 690
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "27.  P-126 · p. 29",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 674
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev —",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 674
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "28.  P-127 · p. 30",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 658
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev B1",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 658
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "29.  P-128 · p. 31",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 642
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev C",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 642
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "30.  P-129 · p. 32",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 626
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev —",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 626
+     }
+    ]
+   },
+   {
+    "op": "drawImage",
+    "args": [
+     "<image>",
+     {
+      "height": 130,
+      "width": 130,
+      "x": 440,
+      "y": 80
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "SCAN BEFORE STARTING WORK",
+     {
+      "color": {
+       "blue": 0.02,
+       "green": 0.35,
+       "red": 0.7,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 9,
+      "x": 428,
+      "y": 66
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "No login needed.",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 8,
+      "x": 428,
+      "y": 54
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "GREEN = every sheet is current — work from this pack.",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 52,
+      "y": 102
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "AMBER = do only what the screen says — a sheet is not yet in effect or not in this pack.",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 52,
+      "y": 90
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "GREY = the scan cannot confirm this pack — check with Document Control before work.",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 52,
+      "y": 78
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "RED = stop — a sheet changed, was withdrawn, is held, is not issued or is missing.",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 52,
+      "y": 66
+     }
+    ]
+   }
+  ],
+  "pages": 2,
+  "sha256": "2c39e439673b6904804252dc6fc8b50b3b77480bc44a40f16709f5161ffc1af0"
+ },
+ "70 sheets (three cover pages), a long name, description and labels cut with an ellipsis": {
+  "calls": [
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "height": 66,
+      "width": 540,
+      "x": 36,
+      "y": 690
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "WORK PACKAGE",
+     {
+      "color": {
+       "blue": 0.86,
+       "green": 0.78,
+       "red": 0.7,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 14,
+      "x": 52,
+      "y": 726
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Turnaround 2026 — crude unit west header ti…",
+     {
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 22,
+      "x": 52,
+      "y": 700
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Scope covers every tie-in on the west header including the hot taps and the spool replacements; Scope …",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 11,
+      "x": 52,
+      "y": 662
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Owner: Zoë O’Brien   ·   Printed 10/7/2026 by a.very.long.user.name",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 52,
+      "y": 640
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "CONTENTS — revisions as printed (70 sheets; continued on 2 more pages)",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 52,
+      "y": 600
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "1.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 4",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 580
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 12B-IFC-REISSUE-FOR-CONSTRUCTION-AFTER-HAZOP",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 580
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "2.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 5",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 564
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 1",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 564
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "3.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 6",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 548
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 2",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 548
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "4.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 7",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 532
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 3",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 532
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "5.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 8",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 516
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 12B-IFC-REISSUE-FOR-CONSTRUCTION-AFTER-HAZOP",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 516
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "6.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 9",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 500
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 5",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 500
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "7.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 10",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 484
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 6",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 484
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "8.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 11",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 468
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 7",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 468
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "9.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 12",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 452
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 12B-IFC-REISSUE-FOR-CONSTRUCTION-AFTER-HAZOP",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 452
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "10.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 13",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 436
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 9",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 436
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "11.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 14",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 420
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 10",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 420
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "12.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 15",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 404
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 11",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 404
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "13.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 16",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 388
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 12B-IFC-REISSUE-FOR-CONSTRUCTION-AFTER-HAZOP",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 388
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "14.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 17",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 372
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 13",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 372
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "15.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 18",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 356
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 14",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 356
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "16.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 19",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 340
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 15",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 340
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "17.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 20",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 324
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 12B-IFC-REISSUE-FOR-CONSTRUCTION-AFTER-HAZOP",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 324
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "18.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 21",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 308
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 17",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 308
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "19.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 22",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 292
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 18",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 292
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "20.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 23",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 276
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 19",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 276
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "21.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 24",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 260
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 12B-IFC-REISSUE-FOR-CONSTRUCTION-AFTER-HAZOP",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 260
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "22.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 25",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 244
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 21",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 244
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "23.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 26",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 228
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 22",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 228
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "24.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 27",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 212
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 23",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 212
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "WORK PACKAGE — Turnaround 2026 — crude unit west header tie-ins, hot taps and s…",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 12,
+      "x": 52,
+      "y": 750
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "CONTENTS (continued) — revisions as printed · page 2 of 3",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 52,
+      "y": 730
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "25.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 28",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 706
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 12B-IFC-REISSUE-FOR-CONSTRUCTION-AFTER-HAZOP",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 706
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "26.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 29",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 690
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 25",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 690
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "27.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 30",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 674
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 26",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 674
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "28.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 31",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 658
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 27",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 658
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "29.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 32",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 642
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 12B-IFC-REISSUE-FOR-CONSTRUCTION-AFTER-HAZOP",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 642
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "30.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 33",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 626
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 29",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 626
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "31.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 34",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 610
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 30",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 610
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "32.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 35",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 594
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 31",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 594
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "33.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 36",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 578
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 12B-IFC-REISSUE-FOR-CONSTRUCTION-AFTER-HAZOP",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 578
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "34.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 37",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 562
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 33",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 562
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "35.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 38",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 546
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 34",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 546
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "36.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 39",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 530
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 35",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 530
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "37.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 40",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 514
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 12B-IFC-REISSUE-FOR-CONSTRUCTION-AFTER-HAZOP",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 514
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "38.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 41",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 498
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 37",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 498
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "39.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 42",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 482
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 38",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 482
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "40.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 43",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 466
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 39",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 466
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "41.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 44",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 450
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 12B-IFC-REISSUE-FOR-CONSTRUCTION-AFTER-HAZOP",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 450
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "42.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 45",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 434
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 41",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 434
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "43.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 46",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 418
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 42",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 418
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "44.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 47",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 402
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 43",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 402
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "45.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 48",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 386
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 12B-IFC-REISSUE-FOR-CONSTRUCTION-AFTER-HAZOP",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 386
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "46.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 49",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 370
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 45",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 370
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "47.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 50",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 354
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 46",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 354
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "48.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 51",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 338
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 47",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 338
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "49.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 52",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 322
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 12B-IFC-REISSUE-FOR-CONSTRUCTION-AFTER-HAZOP",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 322
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "50.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 53",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 306
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 49",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 306
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "51.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 54",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 290
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 50",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 290
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "52.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 55",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 274
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 51",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 274
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "53.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 56",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 258
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 12B-IFC-REISSUE-FOR-CONSTRUCTION-AFTER-HAZOP",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 258
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "54.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 57",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 242
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 53",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 242
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "55.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 58",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 226
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 54",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 226
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "56.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 59",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 210
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 55",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 210
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "57.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 60",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 194
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 12B-IFC-REISSUE-FOR-CONSTRUCTION-AFTER-HAZOP",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 194
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "58.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 61",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 178
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 57",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 178
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "59.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 62",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 162
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 58",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 162
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "60.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 63",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 146
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 59",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 146
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "61.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 64",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 130
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 12B-IFC-REISSUE-FOR-CONSTRUCTION-AFTER-HAZOP",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 130
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "62.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 65",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 114
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 61",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 114
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "63.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 66",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 98
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 62",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 98
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "64.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 67",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 82
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 63",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 82
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "WORK PACKAGE — Turnaround 2026 — crude unit west header tie-ins, hot taps and s…",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 12,
+      "x": 52,
+      "y": 750
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "CONTENTS (continued) — revisions as printed · page 3 of 3",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 52,
+      "y": 730
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "65.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 68",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 706
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 12B-IFC-REISSUE-FOR-CONSTRUCTION-AFTER-HAZOP",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 706
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "66.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 69",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 690
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 65",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 690
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "67.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 70",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 674
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 66",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 674
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "68.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 71",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 658
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 67",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 658
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "69.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 72",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 642
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 12B-IFC-REISSUE-FOR-CONSTRUCTION-AFTER-HAZOP",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 642
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "70.  PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEM… · p. 73",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 626
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 69",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 626
+     }
+    ]
+   },
+   {
+    "op": "drawImage",
+    "args": [
+     "<image>",
+     {
+      "height": 130,
+      "width": 130,
+      "x": 440,
+      "y": 80
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "SCAN BEFORE STARTING WORK",
+     {
+      "color": {
+       "blue": 0.02,
+       "green": 0.35,
+       "red": 0.7,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 9,
+      "x": 428,
+      "y": 66
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "No login needed.",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 8,
+      "x": 428,
+      "y": 54
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "GREEN = every sheet is current — work from this pack.",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 52,
+      "y": 102
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "AMBER = do only what the screen says — a sheet is not yet in effect or not in this pack.",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 52,
+      "y": 90
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "GREY = the scan cannot confirm this pack — check with Document Control before work.",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 52,
+      "y": 78
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "RED = stop — a sheet changed, was withdrawn, is held, is not issued or is missing.",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 52,
+      "y": 66
+     }
+    ]
+   }
+  ],
+  "pages": 3,
+  "sha256": "3e846a5f639a77813c024320aa7df8c16e89f575decf5cfc79282066be963af2"
+ },
+ "cp1252 extras and Latin-1 the fonts print: NBSP, €, •, …, ™, ‰, Å, Ø": {
+  "calls": [
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "height": 66,
+      "width": 540,
+      "x": 36,
+      "y": 690
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "WORK PACKAGE",
+     {
+      "color": {
+       "blue": 0.86,
+       "green": 0.78,
+       "red": 0.7,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 14,
+      "x": 52,
+      "y": 726
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Pump P-101 A/B • € 12,000 ™",
+     {
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 22,
+      "x": 52,
+      "y": 700
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Scope: 50 ‰ of the strainers … see ‘notes’",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 11,
+      "x": 52,
+      "y": 662
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Owner: Ånne Ørsted   ·   Printed 10/7/2026 by anne",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 52,
+      "y": 640
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "CONTENTS — revisions as printed",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 52,
+      "y": 600
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "1.  P-1 · p. 2",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 580
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev Ä",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 580
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "2.  Spec • rev’d · p. 3",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 564
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 2",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 460,
+      "y": 564
+     }
+    ]
+   },
+   {
+    "op": "drawImage",
+    "args": [
+     "<image>",
+     {
+      "height": 130,
+      "width": 130,
+      "x": 440,
+      "y": 80
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "SCAN BEFORE STARTING WORK",
+     {
+      "color": {
+       "blue": 0.02,
+       "green": 0.35,
+       "red": 0.7,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 9,
+      "x": 428,
+      "y": 66
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "No login needed.",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 8,
+      "x": 428,
+      "y": 54
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "GREEN = every sheet is current — work from this pack.",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 52,
+      "y": 102
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "AMBER = do only what the screen says — a sheet is not yet in effect or not in this pack.",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 52,
+      "y": 90
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "GREY = the scan cannot confirm this pack — check with Document Control before work.",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 52,
+      "y": 78
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "RED = stop — a sheet changed, was withdrawn, is held, is not issued or is missing.",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 52,
+      "y": 66
+     }
+    ]
+   }
+  ],
+  "pages": 1,
+  "sha256": "f677f4bdf4b3beb3e2f55c0169c6c4c10e90377f08df43ca5241a87cad65d4db"
+ }
+}

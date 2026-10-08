@@ -220,6 +220,9 @@ export default function PackagesPage() {
               versionId: s.versionId,
               revLabel: packableById.get(s.documentId)?.rev ?? null,
               label: s.label,
+              // PHYS-15: what the sheet's stamp printed in another form, beside
+              // the number and revision this snapshot records (only when any).
+              ...(s.stampMapped ? { stampMapped: s.stampMapped } : {}),
             })),
             leftOut: mergeLeftOut(assessment.skipped, builderSkipped).flatMap((s) =>
               s.documentId && s.code
