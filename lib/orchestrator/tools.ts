@@ -23,7 +23,7 @@ import { readableControlledDocIds, type KnowledgePrincipal } from "@/lib/knowled
 import { TAG_ENTITY_KINDS } from "@/lib/knowledgeEntityKinds";
 import { orIlikeContains, type ParamSpec } from "@/lib/orchestrator/protocol";
 import { tracePath, traceNeighbourhood, normalizeTag, type LineEdge, type TraceStep } from "@/lib/pidTrace";
-import { flowsToLineEdges, FLOW_EDGE_CEILING } from "@/lib/processFlows";
+import { flowsToLineEdges, FLOW_EDGE_CEILING, FLOW_READ_OUT_OF_TIME } from "@/lib/processFlows";
 import { READ_PAGE, type PgErr } from "@/lib/knowledgeAskGuards";
 import { isControllerPrincipal } from "@/lib/permissions";
 import { holdsReadOnlyRole } from "@/lib/roleHeld";
@@ -761,8 +761,8 @@ const NEIGHBOURHOOD_BASIS_WITH_FLOWS =
   + "Intermediate components are only listed once line geometry is captured.";
 
 /** ING-10 residual: the most tag-occurrence rows one trace reads. The read is
- *  paged to the end or to here (readTagIndex, by key); past it the document
- *  the ceiling cut is dropped whole and the trace says it is partial. */
+ *  paged to the end or to here (readTagIndex, by key); past it the page (of
+ *  a document) the ceiling cut is dropped and the trace says it is partial. */
 export const LINE_GRAPH_ROW_CEILING = 50_000;
 
 /** ING-10 residual (I-21 fix pass): the wall clock one trace may spend
@@ -772,7 +772,10 @@ export const LINE_GRAPH_ROW_CEILING = 50_000;
  *  there and the trace says it is partial, exactly as at the row ceiling.
  *  The one exception (fix pass 2): when the page before came back short,
  *  the read is most likely over, and the page that would close it is still
- *  asked for — once — so a read that is whole is never called partial.
+ *  asked for — once — so a read whose last data page is short is whole
+ *  though it ends past the budget. A full page gives no such hint: a read
+ *  whose last data page is full (an index an exact multiple of READ_PAGE)
+ *  and ends past the budget is called partial, and its last page dropped.
  *  The confirmed-flow read runs beside it on the same clock (fix pass 3:
  *  flowsToLineEdges' `deadline`); past it, that read fails and is said. */
 export const LINE_GRAPH_READ_BUDGET_MS = 10_000;
@@ -895,8 +898,9 @@ function tagRowsAfter(r: TagRow): string {
  * pages, as an OFFSET page would (lib/knowledgeAskGuards `readAllByKey` says
  * the same of offsets), and no page re-reads the rows before it. The order
  * keeps a sheet's rows together and in page order, so a read stopped part
- * way cuts one sheet, which loadLineGraph drops whole; and edge order (which
- * breaks a tie between equal-length routes) follows the tags.
+ * way cuts one page of one sheet, which loadLineGraph drops (every page
+ * before it was read whole and is walked); and edge order (which breaks a
+ * tie between equal-length routes) follows the tags.
  *
  * A short page is not taken as the last (a project max-rows may sit below
  * READ_PAGE): the read ends on an empty page, past LINE_GRAPH_ROW_CEILING
@@ -963,8 +967,8 @@ async function loadLineGraph(ctx: ToolContext): Promise<LineGraph> {
     flowsToLineEdges(ctx.orgId, supabaseAdmin, { deadline: startedAt + LINE_GRAPH_READ_BUDGET_MS }),
   ]);
   // A page that fails after earlier pages read is a stop, like the ceiling
-  // or the time budget (fix pass 4): the rows read are kept, the sheet the
-  // last of them is in is dropped whole, and the answer says PARTIAL, naming
+  // or the time budget (fix pass 4): the rows read are kept, the sheet page
+  // the last of them is on is dropped, and the answer says PARTIAL, naming
   // the failure. A failure on the first page leaves no row: the graph is the
   // confirmed flows alone, and the answer says the index could not be read.
   const readFailure = read.error ? (read.error.message || "the read failed") : null;
@@ -972,13 +976,18 @@ async function loadLineGraph(ctx: ToolContext): Promise<LineGraph> {
   let rowsAll: TagRow[] = read.rows;
   const partial: LineGraph["partial"] = readFailure !== null ? (firstPageFailed ? null : "failed") : read.stop;
   if (partial) {
-    // Past the ceiling the first row beyond it names the document the
-    // ceiling cut; stopped on time or by a failed page, the last row read
-    // names the document that may go on. Its rows inside are dropped, so
-    // every sheet walked is walked whole.
+    // Edges are built per sheet page (`document#page`, below), and the read
+    // is in (document, page, tag, id) order, so only the page the stop fell
+    // in can be incomplete: every page before it was read whole, the other
+    // pages of the same document included (fix pass 5; until then the whole
+    // document was dropped, every sheet of a multi-sheet PDF). Past the
+    // ceiling the first row beyond it names that page; stopped on time or
+    // by a failed page, the last row read names the page that may go on.
+    // Its rows inside are dropped, so every page walked is walked whole.
     const kept = rowsAll.slice(0, LINE_GRAPH_ROW_CEILING);
-    const cut = rowsAll[LINE_GRAPH_ROW_CEILING]?.document_id ?? kept[kept.length - 1]?.document_id ?? null;
-    rowsAll = kept.filter((r) => r.document_id !== cut);
+    const at = rowsAll[LINE_GRAPH_ROW_CEILING] ?? kept[kept.length - 1];
+    const cutKey = at ? `${at.document_id}#${at.page}` : null;
+    rowsAll = kept.filter((r) => `${r.document_id}#${r.page}` !== cutKey);
   }
 
   // SURF-7 / IEDGE-2: the graph is built only from sheets the caller may read
@@ -1034,21 +1043,39 @@ async function loadLineGraph(ctx: ToolContext): Promise<LineGraph> {
   };
 }
 
+/** I-21 fix pass 5: whether a graph is worth answering the rest of the run
+ *  from. A whole graph is; so is one stopped by the row ceiling or by a
+ *  time budget (its own, or the flow read's on the same clock), which a
+ *  second read of the same index would most likely hit again at the same
+ *  cost. One that a failed read degraded is not: a first page that failed
+ *  (no sheet at all), a later page that failed (the sheets past it), a flow
+ *  read that failed (no flow), or readability checks that ran out of time
+ *  (sheets hidden unchecked). Each is one transient failure, and the base
+ *  read the index again on every trace, so a later pair still got its
+ *  route; kept, that one failure would answer every trace of the run. */
+function worthKeeping(g: LineGraph): boolean {
+  return !g.indexUnavailable && g.partial !== "failed" && !g.checksOutOfTime
+    && (!g.flowsUnavailable || g.flowsUnavailable === FLOW_READ_OUT_OF_TIME);
+}
+
 /** I-21 fix pass 4: the graph, read once per run. A run's ToolContext is one
  *  object for all its steps (app/api/orchestrator/route.ts builds it once
  *  and lib/orchestrator/loop.ts passes it to every call), and the graph
  *  depends on nothing else: the org, and the caller's principal through the
  *  readability checks. So a run that traces several pairs reads the tag
  *  index, the flows and the checks once, and each later trace answers from
- *  that graph, its PARTIAL or unavailable notes included. A load that throws
- *  is not kept, so the next trace reads again. */
+ *  that graph, its ceiling or time-budget PARTIAL note included. A load that
+ *  throws, or one a failed read degraded (worthKeeping, fix pass 5), is not
+ *  kept: that trace answers from it, saying so, and the next trace reads
+ *  again. Traces in flight together still share the one load. */
 const lineGraphs = new WeakMap<ToolContext, Promise<LineGraph>>();
 function lineGraphFor(ctx: ToolContext): Promise<LineGraph> {
   const kept = lineGraphs.get(ctx);
   if (kept) return kept;
   const load = loadLineGraph(ctx);
   lineGraphs.set(ctx, load);
-  load.catch(() => { if (lineGraphs.get(ctx) === load) lineGraphs.delete(ctx); });
+  const forget = () => { if (lineGraphs.get(ctx) === load) lineGraphs.delete(ctx); };
+  load.then((g) => { if (!worthKeeping(g)) forget(); }, forget);
   return load;
 }
 

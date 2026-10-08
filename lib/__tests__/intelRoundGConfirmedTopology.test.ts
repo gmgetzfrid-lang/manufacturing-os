@@ -1100,33 +1100,51 @@ describe("ING-10 residual — the tag index is paged, never one capped read that
     await expectToday();
   });
 
-  /** A sheet `k-g` whose first two rows (P-101 and E-204, together on page
-   *  1) are the rows at `at` and `at + 1`, and whose other rows run on past
-   *  `at + 2` — the sheet a stop at `at + 2` rows cuts. */
+  /** A multi-sheet document `k-g`: page 1 (T-150 and V-9) is read whole,
+   *  its rows at `at - 2` and `at - 1`; page 2's first two rows (P-101 and
+   *  E-204, together) are the rows at `at` and `at + 1`, and its other rows
+   *  run on past `at + 2` — the page a stop at `at + 2` rows cuts. */
   const cutSheet = (at: number) => [
     ent("k-a", 1, "equipment", "P-101"), ent("k-a", 1, "equipment", "T-150"),
-    ...filler(at - 2),
-    ent("k-g", 1, "equipment", "P-101"), ent("k-g", 1, "equipment", "E-204"),
-    ...Array.from({ length: 600 }, (_, i) => ent("k-g", 2 + i, "self", `SELF-G-${i}`)),
+    ...filler(at - 4),
+    ent("k-g", 1, "equipment", "T-150"), ent("k-g", 1, "equipment", "V-9"),
+    ent("k-g", 2, "equipment", "P-101"), ent("k-g", 2, "equipment", "E-204"),
+    ...Array.from({ length: 600 }, (_, i) => ent("k-g", 2, "self", `SELF-G-${i}`)),
     ent("k-z", 1, "equipment", "T-150"), ent("k-z", 1, "equipment", "E-204"),
   ];
 
-  it(`past ${LINE_GRAPH_ROW_CEILING.toLocaleString("en-US")} rows the cut sheet is dropped whole — its rows inside the ceiling too — and the trace says it is PARTIAL`, async () => {
-    // P-101 and E-204 share k-g page 1, both rows inside the ceiling; the
-    // ceiling cuts k-g's later rows.
+  it(`past ${LINE_GRAPH_ROW_CEILING.toLocaleString("en-US")} rows the page the ceiling cuts is dropped — its rows inside the ceiling too — the pages before it are walked, and the trace says it is PARTIAL`, async () => {
+    // P-101 and E-204 share k-g page 2, both rows inside the ceiling; the
+    // ceiling cuts that page's later rows. k-g page 1 is read whole.
     seedBase({ knowledge_page_entities: cutSheet(LINE_GRAPH_ROW_CEILING - 2) });
     const inside = await trace({ start_tag: "P-101", end_tag: "T-150" });
     expect(inside.found).toBe(true);
     expect(String(inside.graph_partial)).toMatch(/^PARTIAL: the drawing tag index holds more rows than one trace reads \(50,000\)/);
-    // A half-read sheet is never walked: the pair on k-g is not a route.
+    // A half-read page is never walked: the pair on k-g page 2 is not a route.
     const cut = await trace({ start_tag: "P-101", end_tag: "E-204" });
     expect(cut).toMatchObject({ found: false, reason: "E-204 doesn't appear on any traced line." });
     expect(String(cut.graph_partial)).toMatch(/is NOT proof the equipment is unconnected/);
+    // A page of the same document read whole before the cut is walked (fix
+    // pass 5; until then the whole document was dropped).
+    const before = await trace({ start_tag: "T-150", end_tag: "V-9" });
+    expect(before).toMatchObject({ found: true, path: ["T150", "V9"], drawings: ["k-g"] });
+    expect(String(before.graph_partial)).toMatch(/^PARTIAL: the drawing tag index holds more rows/);
+    // The cut is the first row past the ceiling, not the last inside it:
+    // with k-g page 2 ending exactly at the ceiling, the pair on it is a route.
+    seedBase({ knowledge_page_entities: [
+      ent("k-a", 1, "equipment", "P-101"), ent("k-a", 1, "equipment", "T-150"),
+      ...filler(LINE_GRAPH_ROW_CEILING - 4),
+      ent("k-g", 2, "equipment", "P-101"), ent("k-g", 2, "equipment", "E-204"),
+      ent("k-z", 1, "equipment", "T-150"), ent("k-z", 1, "equipment", "E-204"),
+    ] });
+    const exact = await trace({ start_tag: "P-101", end_tag: "E-204" });
+    expect(exact).toMatchObject({ found: true, path: ["P101", "E204"], drawings: ["k-g"] });
+    expect(String(exact.graph_partial)).toMatch(/^PARTIAL: the drawing tag index holds more rows/);
   }, 60_000);
 
-  it(`the read is bounded in time: no page starts past ${LINE_GRAPH_READ_BUDGET_MS / 1000} s, the sheet it was reading is dropped whole, and the trace says PARTIAL`, async () => {
+  it(`the read is bounded in time: no page starts past ${LINE_GRAPH_READ_BUDGET_MS / 1000} s, the page it was reading is dropped, the pages before it are walked, and the trace says PARTIAL`, async () => {
     // Each page costs 1.5 s: pages start at 0, 1.5 … 9 s; the eighth (at
-    // 10.5 s) never does. 7,000 rows read; k-g straddles row 7,000.
+    // 10.5 s) never does. 7,000 rows read; k-g page 2 straddles row 7,000.
     db.pageCostMs = 1_500;
     seedBase({ knowledge_page_entities: cutSheet(6_998) });
     const cut = await trace({ start_tag: "P-101", end_tag: "E-204" });
@@ -1136,6 +1154,10 @@ describe("ING-10 residual — the tag index is paged, never one capped read that
     expect(String(cut.graph_partial)).toMatch(/is NOT proof the equipment is unconnected/);
     expect(cut).not.toHaveProperty("graph_unavailable");
     expect((await trace({ start_tag: "P-101", end_tag: "T-150" })).found).toBe(true);
+    // k-g page 1, read whole before the stop, is walked (fix pass 5).
+    const before = await trace({ start_tag: "T-150", end_tag: "V-9" });
+    expect(before).toMatchObject({ found: true, path: ["T150", "V9"], drawings: ["k-g"] });
+    expect(String(before.graph_partial)).toMatch(/^PARTIAL: reading the drawing tag index took longer/);
     // Fast pages: the whole index is read, nothing partial.
     db.pageCostMs = 0;
     const whole = await trace({ start_tag: "P-101", end_tag: "E-204" });
@@ -1200,12 +1222,16 @@ describe("ING-10 residual — a tag-index read that fails is said, never passed 
   });
 
   it("…the sheet the failed page cut is not walked, the flows still answer, and the answer says PARTIAL, never 'unavailable'", async () => {
-    // T-150 and E-204 share k-f-0000 page 1, whose rows run on past the first
-    // page; a confirmed flow P-101 → T-150. The index fails on its second page.
+    // T-150 and E-204 share k-f-0000 page 997, whose rows (E204, T150, then
+    // Z997) straddle the first page's end; a confirmed flow P-101 → T-150.
+    // The index fails on its second page. (Until fix pass 5 the pair sat on
+    // page 1 of that document, read whole, which is now walked.)
     seedBase({
       knowledge_page_entities: [
         ent("k-a", 1, "equipment", "P-101"), ent("k-a", 1, "equipment", "V-9"),
-        ent("k-f-0000", 1, "equipment", "T-150"), ent("k-f-0000", 1, "equipment", "E-204"), ...filler(1_500),
+        ...Array.from({ length: 996 }, (_, i) => ent("k-f-0000", i + 1, "self", `SELF-${i}`)),
+        ent("k-f-0000", 997, "equipment", "T-150"), ent("k-f-0000", 997, "equipment", "E-204"), ent("k-f-0000", 997, "self", "Z-997"),
+        ...Array.from({ length: 500 }, (_, i) => ent("k-f-0001", i + 1, "self", `SELF-B-${i}`)),
       ],
       process_flows: [flow(["asset", A_P101], ["asset", A_T150], "confirmed")],
     });
@@ -1218,6 +1244,27 @@ describe("ING-10 residual — a tag-index read that fails is said, never passed 
     expect((await trace({ start_tag: "P-101", end_tag: "V-9" })).found).toBe(true);
     expect((await trace({ start_tag: "P-101", end_tag: "T-150" })).route)
       .toEqual([{ from: "P101", to: "T150", basis: "confirmed flow", flow: "P101 feeds T150" }]);
+  });
+
+  it("a pair on a page of the cut document read whole before the stop is found (fix pass 5): only the page the stop fell in is dropped", async () => {
+    // The reviewer's scenario: 900 filler rows, then k-m (a multi-sheet PDF)
+    // whose page 1 holds P-101 and E-204, inside the first page of the
+    // read, and whose pages 2..301 run past row 1,000. The second page
+    // fails. The base's single read (rows 0..999) found the pair; until fix
+    // pass 5 the branch dropped k-m whole, every sheet of it.
+    seedBase({
+      knowledge_page_entities: [
+        ...filler(900),
+        ent("k-m", 1, "equipment", "P-101"), ent("k-m", 1, "equipment", "E-204"),
+        ...Array.from({ length: 300 }, (_, i) => ent("k-m", 2 + i, "self", `SELF-M-${i}`)),
+      ],
+    });
+    db.pageErrors.knowledge_page_entities = { from: 1_000, error: timeout };
+    const out = await trace({ start_tag: "P-101", end_tag: "E-204" });
+    expect(tagPages()).toHaveLength(2);
+    expect(out).toMatchObject({ found: true, path: ["P101", "E204"], drawings: ["k-m"], crosses_sheets: false });
+    expect(String(out.graph_partial)).toMatch(/^PARTIAL: a page of the drawing tag index could not be read \(canceling statement due to statement timeout\)/);
+    expect(out).not.toHaveProperty("graph_unavailable");
   });
 
   it("with no flows: today's answer plus the one sentence — path and neighbourhood", async () => {
@@ -1274,6 +1321,131 @@ describe("I-21 fix pass 4 — one graph a run; the graph's readability checks ru
     db.failQuery = null;
     expect((await tool().run({ start_tag: "P-101", end_tag: "E-204" }, ctx)).data).toEqual(GOLDEN_PATH);
   });
+
+  const timeout = { code: "57014", message: "canceling statement due to statement timeout" };
+  /** The tag index's ordered pages fail once (the first one asked for after
+   *  this is set), and the database then recovers. */
+  const failOnePage = () => {
+    let failed = false;
+    db.failQuery = (table, calls) => {
+      if (failed || table !== "knowledge_page_entities" || !calls.some(([m]) => m === "order")) return null;
+      failed = true;
+      return timeout;
+    };
+  };
+
+  it("REGRESSION (fix pass 5): a first page that fails once answers that trace alone — the next trace on the same context reads again and finds its route", async () => {
+    // The reviewer's scenario: the first page fails once (57014), then the
+    // database recovers. Trace 1 says the index could not be read. Trace 2,
+    // another pair on the same run, must read again and answer as the base
+    // (which read the index on every call) and as a fresh context do. Until
+    // fix pass 5 the degraded graph answered the whole run: trace 2 said
+    // "P-101 doesn't appear" with graph_unavailable, reading nothing.
+    seedBase({ knowledge_page_entities: sheetSeed() });
+    const ctx = ctxFor(["Viewer"]);
+    failOnePage();
+    const first = (await tool().run({ start_tag: "P-101", end_tag: "T-150" }, ctx)).data as Record<string, unknown>;
+    expect(first).toMatchObject({ found: false, reason: "P-101 doesn't appear on any traced line." });
+    expect(String(first.graph_unavailable)).toMatch(/^The drawing tag index could not be read \(canceling statement due to statement timeout\)/);
+    expect(tagPages()).toHaveLength(1);
+    const second = (await tool().run({ start_tag: "P-101", end_tag: "E-204" }, ctx)).data;
+    expect(second).toEqual(GOLDEN_PATH);
+    expect(second).not.toHaveProperty("graph_unavailable");
+    // One page failed, then the whole read: its data page and its closing page.
+    expect(tagPages()).toHaveLength(3);
+    // The whole graph is then kept: a third trace reads nothing.
+    expect((await tool().run({ start_tag: "P-101", end_tag: "T-150" }, ctx)).data).toEqual(GOLDEN_SAME_SHEET);
+    expect(tagPages()).toHaveLength(3);
+  });
+
+  it("a later page that fails once is not kept either: the next trace on the same context reads the whole index", async () => {
+    const filler = Array.from({ length: 1_500 }, (_, i) => ent(`k-f-${String(Math.floor(i / 1000)).padStart(4, "0")}`, (i % 1000) + 1, "self", `SELF-${i}`));
+    seedBase({ knowledge_page_entities: [...sheetSeed(), ...filler] });
+    const ctx = ctxFor(["Viewer"]);
+    db.pageErrors.knowledge_page_entities = { from: 1_000, error: timeout };
+    const first = (await tool().run({ start_tag: "P-101", end_tag: "E-204" }, ctx)).data as Record<string, unknown>;
+    expect(first).toMatchObject({ found: true, path: ["P101", "T150", "E204"] });
+    expect(String(first.graph_partial)).toMatch(/^PARTIAL: a page of the drawing tag index could not be read/);
+    expect(tagPages()).toHaveLength(2);
+    db.pageErrors = {};
+    const second = (await tool().run({ start_tag: "P-101", end_tag: "E-204" }, ctx)).data;
+    expect(second).toEqual(GOLDEN_PATH);
+    // The failed read's two pages, then the whole read's three.
+    expect(tagPages()).toHaveLength(5);
+  });
+
+  it("a flow read that fails once is not kept; one that ran out of time (a cost, not a failure) is", async () => {
+    seedBase({ knowledge_page_entities: sheetSeed(), process_flows: [flow(["asset", A_P101], ["asset", A_K500], "confirmed")] });
+    db.tables.assets.push(...moreAssets());
+    const ctx = ctxFor(["Viewer"]);
+    db.errors.process_flows = timeout;
+    const first = (await tool().run({ start_tag: "P-101", end_tag: "E-204" }, ctx)).data as Record<string, unknown>;
+    expect(String(first.confirmed_flows_unavailable)).toMatch(/could not be read \(canceling statement due to statement timeout\)/);
+    db.errors = {};
+    const flowReads = queriesOf("process_flows").length;
+    const second = (await tool().run({ start_tag: "P-101", end_tag: "E-204" }, ctx)).data;
+    expect(second).toEqual(GOLDEN_PATH);
+    expect(second).not.toHaveProperty("confirmed_flows_unavailable");
+    expect(queriesOf("process_flows").length).toBeGreaterThan(flowReads);
+    expect(tagPages()).toHaveLength(4);
+    // Out of time: the one flow page costs 11 s, so the read fails on the
+    // trace's clock. A second read would cost the same; the graph is kept.
+    const slow = ctxFor(["Viewer"]);
+    db.costMs.process_flows = 11_000;
+    const late = (await tool().run({ start_tag: "P-101", end_tag: "E-204" }, slow)).data as Record<string, unknown>;
+    expect(String(late.confirmed_flows_unavailable)).toMatch(/\(reading them took longer than one trace may spend on it\)/);
+    const pages = tagPages().length;
+    const lateReads = queriesOf("process_flows").length;
+    const again = (await tool().run({ start_tag: "P-101", end_tag: "E-204" }, slow)).data;
+    expect(again).toEqual(late);
+    expect(tagPages()).toHaveLength(pages);
+    expect(queriesOf("process_flows")).toHaveLength(lateReads);
+  });
+
+  it("checks that ran out of time are not kept: the next trace on the same context checks again", async () => {
+    const many = Array.from({ length: 448 }, (_, i) => ent(`k-m-${String(i).padStart(4, "0")}`, 1, "self", `M-${i}`));
+    seedBase({
+      knowledge_page_entities: [
+        ent("k-a", 1, "equipment", "P-101"), ent("k-a", 1, "equipment", "T-150"),
+        ...many,
+        ent("k-z", 1, "equipment", "T-150"), ent("k-z", 1, "equipment", "E-204"),
+      ],
+    });
+    const ctx = ctxFor(["Viewer"]);
+    db.costMs.knowledge_documents = 3_000;
+    const first = (await tool().run({ start_tag: "T-150", hops: 1 }, ctx)).data as Record<string, unknown>;
+    expect(first).toMatchObject({ connected: [{ tag: "P101", hops: 1 }] });
+    expect(String(first.graph_partial)).toMatch(/^PARTIAL: checking which of the drawings you may open took longer/);
+    const pages = tagPages().length;
+    db.costMs = {};
+    const second = (await tool().run({ start_tag: "T-150", hops: 1 }, ctx)).data;
+    expect(second).toEqual({ start: "T-150", connected: [{ tag: "E204", hops: 1 }, { tag: "P101", hops: 1 }], basis: SHEET_BASIS });
+    expect(tagPages().length).toBeGreaterThan(pages);
+  });
+
+  it("a read stopped by the time budget or the row ceiling is kept: the next trace on the same context reads nothing", async () => {
+    const filler = (n: number) => Array.from({ length: n }, (_, i) => ent(`k-f-${String(Math.floor(i / 1000)).padStart(4, "0")}`, (i % 1000) + 1, "self", `SELF-${i}`));
+    // Time: 1.5 s a page, seven pages read, the eighth never starts.
+    seedBase({ knowledge_page_entities: [...sheetSeed(), ...filler(7_500)] });
+    db.pageCostMs = 1_500;
+    const ctx = ctxFor(["Viewer"]);
+    const first = (await tool().run({ start_tag: "P-101", end_tag: "E-204" }, ctx)).data as Record<string, unknown>;
+    expect(first).toMatchObject({ found: true, path: ["P101", "T150", "E204"] });
+    expect(String(first.graph_partial)).toMatch(/^PARTIAL: reading the drawing tag index took longer/);
+    expect(tagPages()).toHaveLength(7);
+    expect((await tool().run({ start_tag: "P-101", end_tag: "T-150" }, ctx)).data).toMatchObject({ found: true });
+    expect(tagPages()).toHaveLength(7);
+    // The ceiling: 51 pages read, the 50,001st row past it.
+    seedBase({ knowledge_page_entities: [...sheetSeed(), ...filler(50_010)] });
+    db.pageCostMs = 0;
+    const big = ctxFor(["Viewer"]);
+    const atCeiling = (await tool().run({ start_tag: "P-101", end_tag: "E-204" }, big)).data as Record<string, unknown>;
+    expect(atCeiling).toMatchObject({ found: true, path: ["P101", "T150", "E204"] });
+    expect(String(atCeiling.graph_partial)).toMatch(/^PARTIAL: the drawing tag index holds more rows/);
+    const pages = tagPages().length;
+    expect((await tool().run({ start_tag: "P-101", end_tag: "T-150" }, big)).data).toMatchObject({ found: true });
+    expect(tagPages()).toHaveLength(pages);
+  }, 60_000);
 
   it(`no mirror lookup starts ${LINE_GRAPH_CHECK_BUDGET_MS / 1000} s past the reads: a sheet not checked by then is not walked, and the answer says PARTIAL`, async () => {
     // 450 sheets, so the mirror lookup is three chunks of 200. The reads cost
