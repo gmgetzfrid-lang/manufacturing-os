@@ -5,17 +5,24 @@
 //           device-wide list the next person on a shared tablet is offered.
 //           CLIENT_STORAGE_INVENTORY (components/providers/RoleContext.tsx)
 //           classes it "uid-scoped", as the finding's done-whens 1 and 3
-//           say: keyed by the uid, so never served to another identity, and
-//           taken by no purge — the person's own work outlives their
-//           sign-out, an expiry AND another identity's run of the app on
-//           the device, as it did before OFF-15 (the fifth review: under
-//           the brief's kind "identity" a colleague's shift ended it, a
-//           loss against c537602). What ends it instead is this device's
-//           ring of the identities that last signed in here
+//           say — the integrator's ruling of 2026-10-08 (DEC-90 form, in
+//           OFF-15), which reversed the package brief's "account", kind
+//           "identity": keyed by the uid, so never served to another
+//           identity, and taken by no purge — the person's own work
+//           outlives their sign-out, an expiry AND another identity's run
+//           of the app on the device, as it did before OFF-15 (the fifth
+//           review: under the brief's kind "identity" a colleague's shift
+//           ended it, a loss against c537602). It is removed only by the
+//           person (the viewer's Remove) or by an explicit departed-identity
+//           end that never refuses a write: here, this device's ring of the
+//           identities that last signed in
 //           (manufacturingos.customStamps.recentUids, class "device", at
-//           most STAMP_LISTS_KEPT_PER_DEVICE uids): when an identity falls
+//           most STAMP_LISTS_KEPT_PER_DEVICE uids) — when an identity falls
 //           off its end, its list is removed (keepRecentStampLists, run by
-//           noteIdentity at every sign-in). Nothing here refuses a write.
+//           noteIdentity at every sign-in). The end for uid-scoped rows as
+//           such is identity-and-session's follow-up (OFF-15 Scope); this
+//           file builds nothing beyond the ring. Nothing here refuses a
+//           write.
 //           The device-wide list of before OFF-15 (whose it is is unknown)
 //           goes, once, to the first identity that signs in here after this
 //           code arrives — claimLegacyStampsAtSignIn, which noteIdentity runs
