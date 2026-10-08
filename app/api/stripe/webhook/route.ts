@@ -113,6 +113,9 @@ type DbError = { code?: string; message: string } | null;
 /** What happened to an event, as the ledger records it ("duplicate" is not recorded). */
 type Outcome = "applied" | "duplicate" | "stale" | "unresolved" | "superseded" | "ignored";
 type Handled = { ok: true; outcome: Outcome } | { ok: false; status: number; error: string };
+/** The row guard on an orgs write: the subscription the row must be on (or
+ *  none, when allowNone), and the statuses it must be in, when given. */
+type OrgGuard = { subscription: string; allowNone: boolean; fromStatuses?: readonly string[] };
 
 export async function POST(req: NextRequest) {
   if (!isStripeConfigured() || !webhookSecret) {
@@ -167,6 +170,24 @@ function idOf(ref: unknown): string | null {
 function invoiceSubscriptionId(inv: Record<string, unknown>): string | null {
   const parent = inv.parent as { subscription_details?: { subscription?: unknown } | null } | null | undefined;
   return idOf(inv.subscription) ?? idOf(parent?.subscription_details?.subscription);
+}
+
+/** Minimal structural view of a subscription's period end — what the webhook
+ *  reads, in either payload shape (as lib/stripe.ts SubscriptionPlanSource). */
+interface SubscriptionPeriodSource {
+  current_period_end?: number | null;
+  items?: { data?: Array<{ current_period_end?: number | null } | null> | null } | null;
+}
+
+/** The end of the subscription's current period, as an ISO string. Webhook
+ *  payloads are rendered in the endpoint's API version, not this SDK's: up to
+ *  2025-02 it is `subscription.current_period_end`; from 2025-03 ("basil") it
+ *  moved to each item, `items.data[].current_period_end`. Both are read; null
+ *  when neither carries one, and null means "leave the stored value
+ *  untouched", never "write NULL" (third review fix pass). */
+function subscriptionPeriodEnd(sub: SubscriptionPeriodSource): string | null {
+  const unix = sub.current_period_end ?? sub.items?.data?.[0]?.current_period_end;
+  return typeof unix === "number" && unix > 0 ? new Date(unix * 1000).toISOString() : null;
 }
 
 async function handleEvent(sb: Db, event: Stripe.Event): Promise<Handled> {
@@ -265,9 +286,9 @@ async function applyEvent(
       // BILL-1 Done-when 2: and it is written only on a status that pays for
       // it — an incomplete subscription (no payment taken) writes no plan.
       const plan = PLAN_HOLDING_STRIPE_STATUSES.has(sub.status) ? resolved.plan : null;
-      const periodEnd = sub.current_period_end
-        ? new Date(sub.current_period_end * 1000).toISOString()
-        : null;
+      // The period end in either payload shape; absent in both (null), the
+      // stored one is kept, as a null plan keeps the stored plan.
+      const periodEnd = subscriptionPeriodEnd(sub as SubscriptionPeriodSource);
       // The subscription id is the workspace's current subscription only
       // while Stripe keeps the subscription (BILL-8's checkout refusal reads it).
       const live = LIVE_STRIPE_STATUSES.has(sub.status);
@@ -297,7 +318,7 @@ async function applyEvent(
         ...(plan ? { subscribed_plan: plan } : {}),
         ...(ended ? { subscribed_plan: null } : {}),
         ...(live ? { stripe_subscription_id: sub.id } : {}),
-        current_period_end: periodEnd,
+        ...(periodEnd ? { current_period_end: periodEnd } : {}),
       }, guard);
       if (!write.ok) return write;
       if (!write.applied && !guard) {
@@ -313,7 +334,7 @@ async function applyEvent(
         ...(statusHeld ? { status_held: "a newer invoice event set the status" } : {}),
         plan, plan_source: plan ? resolved.source : null, ...(resolved.plan && !plan ? { plan_withheld: resolved.plan } : {}),
         ...(ended ? { plan_cleared: true } : {}),
-        period_end: periodEnd, ...ledgerNote,
+        period_end: periodEnd, ...(periodEnd ? {} : { period_end_kept: "no period end in the payload" }), ...ledgerNote,
       });
       if (auditErr) return auditRefused(auditErr);
       return settle("applied", orgId);
@@ -501,18 +522,30 @@ const pgrstQuote = (v: string) => `"${v.replace(/["\\]/g, "\\$&")}"`;
  *  guard, none means the workspace does not exist (second review fix pass). */
 async function writeOrg(
   sb: Db, orgId: string, patch: Record<string, unknown>,
-  guard: { subscription: string; allowNone: boolean; fromStatuses?: readonly string[] } | null,
+  guard: OrgGuard | null,
 ): Promise<{ ok: true; applied: boolean } | { ok: false; status: number; error: string }> {
-  let q = sb.from("orgs").update(patch).eq("id", orgId);
-  if (guard) {
-    q = guard.allowNone
-      ? q.or(`stripe_subscription_id.is.null,stripe_subscription_id.eq.${pgrstQuote(guard.subscription)}`)
-      : q.eq("stripe_subscription_id", guard.subscription);
-    if (guard.fromStatuses) q = q.in("subscription_status", guard.fromStatuses);
+  // A snapshot with nothing left to write (its status held by a newer invoice
+  // event, and no plan, subscription id or period end in it) is not sent to
+  // PostgREST as an empty update: the row is read through the same guard, so
+  // the outcome is the one the write would have had (third review fix pass).
+  if (Object.keys(patch).length === 0) {
+    const { data, error } = await withGuard(sb.from("orgs").select("id").eq("id", orgId), guard);
+    if (error) return { ok: false, status: 500, error: `The workspace's billing state was not read (${error.message}); Stripe will retry.` };
+    return { ok: true, applied: Array.isArray(data) && data.length > 0 };
   }
-  const { data, error } = await q.select("id");
+  const { data, error } = await withGuard(sb.from("orgs").update(patch).eq("id", orgId), guard).select("id");
   if (error) return { ok: false, status: 500, error: `The workspace's billing state was not written (${error.message}); Stripe will retry.` };
   return { ok: true, applied: Array.isArray(data) && data.length > 0 };
+}
+
+/** The row guard, as PostgREST filters on the orgs query. */
+function withGuard(q: Db, guard: OrgGuard | null): Db {
+  if (!guard) return q;
+  q = guard.allowNone
+    ? q.or(`stripe_subscription_id.is.null,stripe_subscription_id.eq.${pgrstQuote(guard.subscription)}`)
+    : q.eq("stripe_subscription_id", guard.subscription);
+  if (guard.fromStatuses) q = q.in("subscription_status", guard.fromStatuses);
+  return q;
 }
 
 /** DEC-87 §2: a machine audit row, CHECKED by the caller. */

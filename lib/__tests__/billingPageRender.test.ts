@@ -59,6 +59,7 @@ async function render(info: SubscriptionInfo | null) {
 }
 
 const future = new Date(Date.now() + 20 * 86400_000).toISOString();
+const past = new Date(Date.now() - 20 * 86400_000).toISOString();
 
 describe("BILL-8 — a workspace with a live subscription is sent to the portal, not the plans grid", () => {
   it("past due on a Stripe subscription: the portal, no plans", async () => {
@@ -81,6 +82,14 @@ describe("BILL-8 — a workspace with a live subscription is sent to the portal,
     expect(r.plans).toBe(false);
   });
 
+  it("a Stripe trial after the app's own trial clock lapsed (trialing, past trialEndsAt, a subscription id): the portal, no plans, and the red card points at the portal, not at a plans grid that is not there (third review fix pass)", async () => {
+    const r = await render({ status: "trialing", trialEndsAt: past, stripeSubscriptionId: "sub_1", stripeCustomerId: "cus_1" });
+    expect(r.portal).toBe(true);
+    expect(r.plans).toBe(false);
+    expect(r.text).toMatch(/Manage your subscription in the billing portal\./);
+    expect(r.text).not.toMatch(/Pick a plan below/);
+  });
+
   it("active: the portal and no plans, as before", async () => {
     const r = await render({ status: "active", plan: "growth", stripeSubscriptionId: "sub_1", stripeCustomerId: "cus_1" });
     expect(r.portal).toBe(true);
@@ -93,6 +102,14 @@ describe("regression — a workspace with no live subscription still sees the pl
     const r = await render({ status: "trialing", trialEndsAt: future, stripeSubscriptionId: null });
     expect(r.plans).toBe(true);
     expect(r.portal).toBe(false);
+  });
+
+  it("the app's own trial, expired (no subscription id): 'Trial Expired', the plans and the 'Pick a plan below' line, as before", async () => {
+    const r = await render({ status: "trialing", trialEndsAt: past, stripeSubscriptionId: null });
+    expect(r.plans).toBe(true);
+    expect(r.portal).toBe(false);
+    expect(r.text).toMatch(/Trial Expired/);
+    expect(r.text).toMatch(/Your free trial has ended\. Pick a plan below to continue\./);
   });
 
   it("canceled (the subscription id cleared by the deleted event): plans", async () => {

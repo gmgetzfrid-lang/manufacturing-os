@@ -189,12 +189,17 @@ export default function BillingPage() {
                    expired ? "Trial Expired" : "Action Required"}
                 </div>
                 <div className="text-xs text-[var(--color-text-muted)] mt-0.5">
-                  {expired
-                    ? "Your free trial has ended. Pick a plan below to continue."
-                    : info.status === "paused"
+                  {/* A live subscription wins over the app's own trial clock: the
+                      plans grid is hidden for it, so the sentence points at the
+                      portal, never at a grid that is not there. */}
+                  {liveSubscription
+                    ? expired
+                      ? "Manage your subscription in the billing portal."
+                      : "Update your payment method in the billing portal to restore access."
+                    : expired
+                      ? "Your free trial has ended. Pick a plan below to continue."
+                      : info.status === "paused"
                       ? "Stripe raises no invoice on a paused subscription, and the billing portal cannot resume it. Pick a plan below to subscribe again, or ask support to resume it."
-                      : liveSubscription
-                      ? "Update your payment method in the billing portal to restore access."
                       : "Update your payment method to restore access."}
                 </div>
                 {liveSubscription && isAuthorized && (

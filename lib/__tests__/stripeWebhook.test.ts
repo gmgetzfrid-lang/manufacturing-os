@@ -291,6 +291,28 @@ describe("regression — every legitimate webhook event for the workspace's own 
     });
   });
 
+  it("subscription.updated in the 2025-03+ (\"basil\") shape — current_period_end on the item, not the subscription — still writes the period end (third review fix pass)", async () => {
+    seed({ subscription_status: "active", subscribed_plan: "growth", stripe_subscription_id: "sub_1", current_period_end: PERIOD(T0 - 30 * 86400) });
+    const e = subEvent("customer.subscription.updated");
+    const sub = e.data.object as Row;
+    delete sub.current_period_end;
+    sub.items = { data: [{ price: { id: "price_g" }, current_period_end: T0 + 30 * 86400 }] };
+    state.event = e;
+    expect((await deliver()).status).toBe(200);
+    expect(org()).toMatchObject({ subscription_status: "active", subscribed_plan: "growth", stripe_subscription_id: "sub_1", current_period_end: PERIOD(T0) });
+    expect(audits("STRIPE_CUSTOMER_SUBSCRIPTION_UPDATED")[0].details).toMatchObject({ period_end: PERIOD(T0) });
+  });
+
+  it("a subscription event carrying no period end in either shape leaves the stored one untouched, never NULL, and says so in its audit row", async () => {
+    seed({ subscription_status: "active", subscribed_plan: "growth", stripe_subscription_id: "sub_1", current_period_end: PERIOD(T0) });
+    const e = subEvent("customer.subscription.updated", { status: "past_due" });
+    delete (e.data.object as Row).current_period_end;
+    state.event = e;
+    expect((await deliver()).status).toBe(200);
+    expect(org()).toMatchObject({ subscription_status: "past_due", subscribed_plan: "growth", current_period_end: PERIOD(T0) });
+    expect(audits("STRIPE_CUSTOMER_SUBSCRIPTION_UPDATED")[0].details).toMatchObject({ period_end: null, period_end_kept: "no period end in the payload" });
+  });
+
   it("subscription.updated (past_due) → past_due, plan and subscription id kept current", async () => {
     seed({ subscription_status: "active", subscribed_plan: "growth", stripe_subscription_id: "sub_1" });
     state.event = subEvent("customer.subscription.updated", { status: "past_due" });
@@ -1285,6 +1307,28 @@ describe("BILL-4 (second review minor) — an update that writes no row is never
 // columns; the one made with a member's session (the browser client) must
 // not — so it still succeeds after the paste (exercised on PostgreSQL 16:
 // the numbering save updates 1 row with the guard installed).
+
+describe("third review fix pass — a snapshot with nothing left to write is never sent as an empty update", () => {
+  it("status held by a newer invoice event, an unknown status (no plan, not live), no period end in either shape: the row is read through the guard, applied, and orgs is untouched", async () => {
+    seed({ subscription_status: "past_due", subscribed_plan: "growth", stripe_subscription_id: "sub_1", current_period_end: PERIOD(T0) });
+    state.event = invEvent("invoice.payment_succeeded", { created: T0 + 5 });
+    expect((await deliver()).status).toBe(200);
+    expect(org()).toMatchObject({ subscription_status: "active" });
+    const updatesBefore = state.log.filter((l) => l.table === "orgs" && l.op === "update").length;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const e = subEvent("customer.subscription.updated", { status: "some_future_status", price: null, metadata: {}, created: T0 });
+      delete (e.data.object as Row).current_period_end;
+      state.event = e;
+      const res = await deliver();
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ outcome: "applied" });
+    } finally { warn.mockRestore(); }
+    expect(org()).toMatchObject({ subscription_status: "active", subscribed_plan: "growth", stripe_subscription_id: "sub_1", current_period_end: PERIOD(T0) });
+    expect(state.log.filter((l) => l.table === "orgs" && l.op === "update")).toHaveLength(updatesBefore);
+    expect(audits("STRIPE_CUSTOMER_SUBSCRIPTION_UPDATED")[0].details).toMatchObject({ status_held: "a newer invoice event set the status", plan: null, period_end: null, period_end_kept: "no period end in the payload" });
+  });
+});
 
 describe("every orgs write in the app — after 20261176 a member's own write still succeeds", () => {
   const BILLING = ["subscription_status", "subscribed_plan", "trial_ends_at", "current_period_end", "stripe_customer_id", "stripe_subscription_id"];

@@ -43,7 +43,11 @@ const load = (f: string) => {
 const A = load(A_FILE);
 const B = load(B_FILE);
 const BILLING = ["subscription_status", "subscribed_plan", "trial_ends_at", "current_period_end", "stripe_customer_id", "stripe_subscription_id"];
-const others = numbered.filter((f) => f !== A_FILE && f !== B_FILE).map((f) => ({ f, sql: readFileSync(join(MIGRATIONS, f), "utf8").replace(/--[^\n]*/g, "") }));
+// The migrations A and B rely on at paste time are the EARLIER ones: a later
+// package may add a trigger on orgs or read stripe_events on its own account,
+// and that is its own test's business, never this file's (third review fix
+// pass). Only the reserved-number check below scans every file.
+const earlier = numbered.filter((f) => f < A_FILE).map((f) => ({ f, sql: readFileSync(join(MIGRATIONS, f), "utf8").replace(/--[^\n]*/g, "") }));
 
 describe("20261175 / 20261176 — numbering and the one-paste shape (DEC-30)", () => {
   it("each is the only file at its reserved number", () => {
@@ -136,7 +140,9 @@ describe("20261175 — the Stripe event ledger and one workspace per customer", 
   });
 
   it("no earlier migration defines stripe_events, stripe_event_locks or the unique index", () => {
-    for (const { f, sql } of others) {
+    expect(earlier.length).toBeGreaterThan(0);
+    for (const { f } of earlier) expect(f < A_FILE, f).toBe(true);
+    for (const { f, sql } of earlier) {
       expect(sql, f).not.toMatch(/\bstripe_events\b/);
       expect(sql, f).not.toMatch(/\bstripe_event_locks\b/);
       expect(sql, f).not.toMatch(/orgs_stripe_customer_unique/);
@@ -173,14 +179,14 @@ describe("20261176 — the orgs billing-columns guard", () => {
     expect(B.sql).not.toMatch(/(CREATE|DROP|ALTER)\s+POLICY/i);
     expect(B.sql).not.toMatch(/^\s*GRANT\s/m);
     expect(B.sql).not.toMatch(/ALTER TABLE\s+orgs/i);
-    const definers = others.filter(({ sql }) => /CREATE POLICY\s+"?orgs_admin_write"?/i.test(sql)).map(({ f }) => f);
+    const definers = earlier.filter(({ sql }) => /CREATE POLICY\s+"?orgs_admin_write"?/i.test(sql)).map(({ f }) => f);
     expect(definers).toEqual(["20261046_rp_phase6_sweep_authority_by_collection.sql"]);
     expect(B.tail).toMatch(/policyname = 'orgs_admin_write'\s+AND cmd = 'UPDATE' AND qual LIKE '%caller_holds_any_role\(%'/);
   });
 
   it("it is the first trigger on orgs: no earlier migration (or schema.sql) defines one, or the guard function", () => {
     const schema = readFileSync(join(root, "supabase", "schema.sql"), "utf8").replace(/--[^\n]*/g, "");
-    for (const { f, sql } of [...others, { f: "schema.sql", sql: schema }]) {
+    for (const { f, sql } of [...earlier, { f: "schema.sql", sql: schema }]) {
       expect(sql, f).not.toMatch(/CREATE\s+(OR\s+REPLACE\s+)?TRIGGER[^;]*\bON\s+(public\.)?orgs\b/i);
       expect(sql, f).not.toMatch(/orgs_billing_columns_guard/);
     }
