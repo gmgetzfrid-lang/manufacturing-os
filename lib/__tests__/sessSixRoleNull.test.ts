@@ -379,11 +379,6 @@ const INDIRECT_KEYS: Record<string, { calls: string[]; carries: string[]; why: s
     carries: ["intel-status-", "schema-gaps-"],
     why: "legacyHubKeys(org): the org-only snapshot keys of before (HUB-10), removed on sight",
   },
-  "lib/customStamps.ts": {
-    calls: ["localStorage.getItem(k)"],
-    carries: ["manufacturingos.customStamps:"],
-    why: "stampUploadOverDeviceBudget sizes every account's stamp list on the device (public-surfaces OFF-16) — the keys it found under the uid-keyed stamp prefix",
-  },
   [ROLE_CONTEXT]: {
     calls: ["storage.removeItem(k)"],
     carries: CLIENT_STORAGE_INVENTORY.filter((r) => r.class === "account").map((r) => r.key),
@@ -617,14 +612,14 @@ describe("OFF-8 — every key the app keeps in this browser is in RoleContext's 
     for (const k of ["intel-status-", "schema-gaps-"]) { expect(kind("local", k), k).toBe("cache"); expect(kind("session", k), k).toBe("cache"); }
     for (const k of ["org-graph-", "mfg-os:lib:"]) expect(kind("session", k), k).toBe("cache");
     expect(kind("local", "dismissed:")).toBe("held");
-    // OFF-15 (PS-P6): a person's uploaded stamp images are their own work, keyed by uid — "uid-scoped" (no kind: no purge takes it, and no
-    // other identity is offered it), so they outlive another person's run of the app as before; the legacy device-wide list (whose is unknown)
-    // is account / identity, ended at the next identity change, so only the identity running the app when the code arrives can take it; the
-    // moved marker is a device flag
-    expect(kind("local", "manufacturingos.customStamps:")).toBeUndefined();
-    expect(kind("local", "manufacturingos.customStamps")).toBe("identity");
+    // OFF-15 (PS-P6): a person's uploaded stamp images are their own work, keyed by uid — account / identity, as the package brief directs:
+    // kept across their sign-out, ended before a different identity reads anything (so a device keeps at most one identity's list); the
+    // legacy device-wide list (whose is unknown) is a device row, so no purge drops it before the first sign-in's claim takes it; the moved
+    // marker is a device flag
+    expect(kind("local", "manufacturingos.customStamps:")).toBe("identity");
+    expect(kind("local", "manufacturingos.customStamps")).toBeUndefined();
     const stampCls = (key: string) => CLIENT_STORAGE_INVENTORY.find((r) => r.store === "local" && r.key === key)?.class;
-    expect(["manufacturingos.customStamps:", "manufacturingos.customStamps", "manufacturingos.customStamps.moved"].map(stampCls)).toEqual(["uid-scoped", "account", "device"]);
+    expect(["manufacturingos.customStamps:", "manufacturingos.customStamps", "manufacturingos.customStamps.moved"].map(stampCls)).toEqual(["account", "device", "device"]);
     // which end takes which kind
     expect(["cache", "held", "identity"].map((k) => purgeTakes("all", k as "cache"))).toEqual([true, true, true]);
     expect(["cache", "held", "identity"].map((k) => purgeTakes("signout", k as "cache"))).toEqual([true, true, false]);
@@ -654,7 +649,7 @@ describe("OFF-8 — the purge", () => {
     purgeAccountStorage(window.localStorage, "local", "all");
     purgeAccountStorage(window.sessionStorage, "session", "all");
     expect(keys(window.localStorage)).toEqual([
-      "manufacturingos.activeOrgId", "manufacturingos.activeOrgId.owner", "manufacturingos.customStamps.moved", "manufacturingos.customStamps:u1", "manufacturingos.dashboard.u1",
+      "manufacturingos.activeOrgId", "manufacturingos.activeOrgId.owner", "manufacturingos.customStamps", "manufacturingos.customStamps.moved", "manufacturingos.dashboard.u1",
       "manufacturingos.preferMicrosoft", "manufacturingos.rememberSession", "mfgos.theme.mode", "orgGraph:settings:o1", "sb-ref-auth-token",
     ]);
     expect(keys(window.sessionStorage)).toEqual(["kl-embed-nudge-at", "manufacturingos.signInNext", "manufacturingos.silentSSOAttempted"]);
@@ -813,7 +808,7 @@ describe("OFF-8 — the provider's branches, rendered", () => {
     expect(idbDeleted).toEqual([]);
   });
 
-  it("review fix: a DIFFERENT person signing in after a SIGNED_OUT ends all of it — layout, recents, ask thread, hand-off — before anything of theirs is read (the uid-scoped stamp list stays, never offered to them)", async () => {
+  it("review fix: a DIFFERENT person signing in after a SIGNED_OUT ends all of it — layout, recents, ask thread, hand-off, uploaded stamps — before anything of theirs is read", async () => {
     s.session = { user: { id: "u1", email: "a@x.io" } };
     s.member = ADMIN;
     await mount();
@@ -822,12 +817,13 @@ describe("OFF-8 — the provider's branches, rendered", () => {
     expect(window.localStorage.getItem("manufacturingos.customStamps.moved")).toBe("1"); // OFF-15: u1's sign-in ran the one-time stamp transition
     window.localStorage.setItem("manufacturingos.customStamps", "[{\"id\":\"cs-0\",\"name\":\"legacy.png\",\"src\":\"data:\"}]"); // only an old-code tab can write it now
     await act(async () => { await s.authCb!("SIGNED_OUT", null); });
-    expect(window.localStorage.getItem("manufacturingos.customStamps")).toContain("legacy.png"); // OFF-15: kept across the sign-out
+    expect(window.localStorage.getItem("manufacturingos.customStamps")).toContain("legacy.png"); // OFF-15: kept across the sign-out (a device row)
+    expect(window.localStorage.getItem("manufacturingos.customStamps:u1")).toContain("initials.png"); // OFF-15: and the person's stamps (kind "identity")
     s.member = { ...ADMIN, uid: "u2", email: "b@x.io" };
     await reload({ user: { id: "u2", email: "b@x.io" } });
     expect(probe()).toBe("Admin|Admin|member|any");
-    expect(window.localStorage.getItem("manufacturingos.customStamps:u1")).toContain("initials.png"); // OFF-15 (uid-scoped): kept for u1's next sign-in; the viewer reads u2's key only (psP6StampImages)
-    expect(window.localStorage.getItem("manufacturingos.customStamps")).toBeNull();   // OFF-15: written after the device was marked, so taken by no one — ended with u1's kept work
+    expect(window.localStorage.getItem("manufacturingos.customStamps:u1")).toBeNull(); // OFF-15 (kind "identity", the package brief): ended before u2 reads anything
+    expect(window.localStorage.getItem("manufacturingos.customStamps")).toBeNull();   // OFF-15: written after the device was marked, so taken by no one — removed, unread, at u2's sign-in
     expect(window.localStorage.getItem("manufacturingos.customStamps:u2")).toBeNull();
     expect(window.localStorage.getItem("orgGraph:pos:o1")).toBeNull();
     expect(window.localStorage.getItem("mfg-os.palette.recents")).toBeNull();
@@ -976,7 +972,7 @@ describe("OFF-8 — the provider's branches, rendered", () => {
     expect(cachesApi.delete).not.toHaveBeenCalled();
   });
 
-  it("OFF-15 (PS-P6 review fix 3, the reviewer's path): a device that remembers B, with the legacy stamp list A uploaded under the old code — A, signing in first, takes it at the sign-in, BEFORE B's data is ended; B later is offered none of it (was: noteIdentity's \"all\" purge ended the list before A opened a drawing, and A lost their stamps without being told)", async () => {
+  it("OFF-15 (PS-P6 review fixes 3 and 4, the reviewer's path): a device that remembers B, with the legacy stamp list A uploaded under the old code — A, signing in first, takes it at the sign-in (the purge for B leaves it: a device row); B, signing in next, ends A's list, the moved stamps with it, and is offered none of it (was: the purge ended the list before A opened a drawing; then, at review fix 3, A kept it for good)", async () => {
     seedAccount(); // B's (u2's) account data, remembered for the browser
     window.localStorage.setItem(LAST_IDENTITY_KEY, "u2");
     window.localStorage.setItem("manufacturingos.customStamps", "[{\"id\":\"cs-0\",\"name\":\"initials-A.png\",\"src\":\"data:\"}]");
@@ -992,10 +988,11 @@ describe("OFF-8 — the provider's branches, rendered", () => {
     s.member = { ...ADMIN, uid: "u2", email: "b@x.io" };
     await reload({ user: { id: "u2", email: "b@x.io" } }); // B signs in next
     expect(window.localStorage.getItem("manufacturingos.customStamps:u2")).toBeNull(); // never offered A's list
-    expect(window.localStorage.getItem("manufacturingos.customStamps:u1")).toContain("initials-A.png"); // uid-scoped: kept for A
+    expect(window.localStorage.getItem("manufacturingos.customStamps:u1")).toBeNull(); // review fix 4: the one-time transition ends at the next identity change
+    expect(window.localStorage.getItem("manufacturingos.customStamps")).toBeNull();
   });
 
-  it("OFF-15 (PS-P6 review fix 3): the one-time transition runs once — a device marked at its first sign-in (nothing to move) never reads the legacy key again: what a tab still running the old code writes there later is taken by no one and ended at the next identity change", async () => {
+  it("OFF-15 (PS-P6 review fixes 3 and 4): the one-time transition runs once — a device marked at its first sign-in (nothing to move) never reads the legacy key again: what a tab still running the old code writes there later is taken by no one and removed, unread, at the next sign-in", async () => {
     s.session = { user: { id: "u1", email: "a@x.io" } };
     s.member = ADMIN;
     await mount();
@@ -1005,7 +1002,7 @@ describe("OFF-8 — the provider's branches, rendered", () => {
     s.member = { ...ADMIN, uid: "u2", email: "b@x.io" };
     await reload({ user: { id: "u2", email: "b@x.io" } });
     expect(window.localStorage.getItem("manufacturingos.customStamps:u2")).toBeNull(); // u2 takes nothing
-    expect(window.localStorage.getItem("manufacturingos.customStamps")).toBeNull();    // ended with u1's other kept work
+    expect(window.localStorage.getItem("manufacturingos.customStamps")).toBeNull();    // removed, unread, at u2's sign-in
   });
 
   it("OFF-15 (PS-P6 review fix 3): the same person's next sign-in on a device that remembers them takes the legacy list too (a personal device: the uploader keeps their stamps), and a reload does not move anything twice", async () => {
@@ -1048,11 +1045,17 @@ describe("OFF-8 — the provider's branches, rendered", () => {
 
   it("source: SIGNED_OUT purges every account store before the Cache Storage purge and the redirect; the evaporated branch purges caches only, only when gated, and never the workspace or Cache Storage; boot notes the identity before reading anything", () => {
     const rc = src(ROLE_CONTEXT);
-    // OFF-15 (PS-P6 review fix 3): noteIdentity offers the legacy stamp list to the arriving identity BEFORE any purge it runs
-    const note = rc.slice(rc.indexOf("const noteIdentity = async (nextUid: string) => {"), rc.indexOf("lastIdentityRef.current = nextUid;"));
-    expect(note.indexOf("claimLegacyStampsAtSignIn(nextUid);")).toBeGreaterThan(note.indexOf("if (lastIdentityRef.current === nextUid) return;"));
-    expect(note.indexOf("claimLegacyStampsAtSignIn(nextUid);")).toBeLessThan(note.indexOf("purgeAccountClientStores("));
-    expect(note.indexOf("claimLegacyStampsAtSignIn(nextUid);")).toBeLessThan(note.indexOf("purgeAccountStorage("));
+    // OFF-15 (PS-P6 review fix 4): noteIdentity offers the legacy stamp list to the arriving identity AFTER every purge it runs (the list
+    // it moves is that identity's, kind "identity", which the purge for a different identity would end), with no await between the move
+    // and the remembered identity's write
+    const noteStart = rc.indexOf("const noteIdentity = async (nextUid: string) => {");
+    const note = rc.slice(noteStart, rc.indexOf("writeLastIdentity(nextUid);", noteStart));
+    const claimAt = note.indexOf("claimLegacyStampsAtSignIn(nextUid);");
+    expect(claimAt).toBeGreaterThan(note.indexOf("if (lastIdentityRef.current === nextUid) return;"));
+    expect(claimAt).toBeGreaterThan(note.lastIndexOf("purgeAccountClientStores("));
+    expect(claimAt).toBeGreaterThan(note.lastIndexOf("purgeAccountStorage("));
+    expect(note.slice(claimAt)).not.toMatch(/await /);
+    expect(note.match(/claimLegacyStampsAtSignIn\(/g)).toHaveLength(1);
     const start = rc.indexOf('if (event === "SIGNED_OUT") {');
     const block = rc.slice(start, rc.indexOf('window.location.replace("/");', start));
     expect(block.indexOf("clearStoredOrgId();")).toBeGreaterThan(0);

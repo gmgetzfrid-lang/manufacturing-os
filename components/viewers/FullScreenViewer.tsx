@@ -46,7 +46,7 @@ import CompareRevisionsModal from "@/components/documents/CompareRevisionsModal"
 import BackupViewer from "@/components/archive/BackupViewer";
 import { listVersions } from "@/lib/revisions";
 import { recordIntent } from "@/lib/intents";
-import { loadStampShelf, moveLegacyStamps, stampUploadOverDeviceBudget, writeStampList, type CustomStamp, type StampShelf } from "@/lib/customStamps";
+import { loadStampShelf, moveLegacyStamps, writeStampList, type CustomStamp, type StampShelf } from "@/lib/customStamps";
 import QrBadge from "@/components/ui/QrBadge";
 import type { DocumentRecord, DocumentVersion } from "@/types/schema";
 import { supabase } from "@/lib/supabase";
@@ -123,15 +123,14 @@ const STAMPS: { label: string; tone: ColorKey }[] = [
   { label: "FOR INFO ONLY", tone: "black" },
 ];
 
-// ─── Custom stamp images, per account (public-surfaces OFF-15 / OFF-16) ──
+// ─── Custom stamp images, per account (public-surfaces OFF-15) ──────────
 // The stamp images a person uploads are theirs: kept in localStorage under
 // THEIR uid (lib/customStamps.ts), never one device-wide list the next
-// person on a shared tablet is offered. The legacy device-wide list goes,
-// once, to the first identity that signs in here after OFF-15 (RoleContext's
-// noteIdentity); this viewer's first read applies the same rule when that
-// move was refused. Once a second account keeps a list on the device, an
-// upload that would take them all past the device's stamp budget is refused
-// and the menu says so (OFF-16).
+// person on a shared tablet is offered. Kept across the person's sign-out;
+// ended when a different identity runs the app here (RoleContext's
+// noteIdentity, kind "identity"). The legacy device-wide list goes, once, to
+// the first identity that signs in here after OFF-15 (noteIdentity); this
+// viewer's first read applies the same rule when that move was refused.
 
 interface FullScreenViewerProps {
   isOpen: boolean;
@@ -356,9 +355,6 @@ export default function FullScreenViewer({
   const [stampShelf, setStampShelf] = useState<StampShelf>(() => loadStampShelf(stampUid));
   if (stampShelf.uid !== stampUid) setStampShelf(loadStampShelf(stampUid));
   const customStamps = stampShelf.uid === stampUid ? stampShelf.stamps : [];
-  // OFF-16: the uid an upload was last refused for because the device's
-  // stamp lists would pass their budget — said in the menu, to that person.
-  const [stampRefusedFor, setStampRefusedFor] = useState<string | null>(null);
   const stampFileInputRef = useRef<HTMLInputElement>(null);
 
   const persistCustomStamps = (next: CustomStamp[]) => {
@@ -383,18 +379,12 @@ export default function FullScreenViewer({
       const src = String(reader.result || "");
       if (!src) return;
       const next = [{ id: `cs-${Date.now()}`, name: file.name, src }, ...customStamps].slice(0, 12);
-      // OFF-16: another account keeps stamps on this device and this upload
-      // would take them all past the device's budget — refused, and said;
-      // nobody's list is touched.
-      if (stampUploadOverDeviceBudget(stampUid, next)) { setStampRefusedFor(stampUid); return; }
-      setStampRefusedFor(null);
       persistCustomStamps(next);
     };
     reader.readAsDataURL(file);
   };
 
   const removeCustomStamp = (id: string) => {
-    setStampRefusedFor(null);
     persistCustomStamps(customStamps.filter((s) => s.id !== id));
   };
 
@@ -1437,9 +1427,6 @@ export default function FullScreenViewer({
                     }}
                   />
                 </div>
-                {stampUid && stampRefusedFor === stampUid && (
-                  <div role="alert" className="text-[10px] text-amber-300 px-2 pb-2">Stamp storage on this device is full, so this image was not added. Remove one of your stamps, or upload a smaller image.</div>
-                )}
                 {customStamps.length === 0 ? (
                   <div className="text-[10px] text-slate-500 px-2 pb-2">{stampUid ? "Upload PNG/JPG/SVG stamps — saved on this device for your account." : "Sign in to upload and use your stamps."}</div>
                 ) : (

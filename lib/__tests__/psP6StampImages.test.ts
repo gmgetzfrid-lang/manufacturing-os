@@ -8,30 +8,33 @@
 //           field tablet was offered the last person's uploaded initials.
 //           Now the list is the signed-in person's own
 //           (manufacturingos.customStamps:<uid>, lib/customStamps.ts;
-//           CLIENT_STORAGE_INVENTORY class "uid-scoped" — never offered to
-//           another identity, kept across the person's own sign-out AND
-//           across another person's run of the app here, as their stamps
-//           were before); with no uid no stamps are offered or written; the
-//           legacy device-wide list is MOVED, once, to the first identity
-//           that signs in here after the change (claimLegacyStampsAtSignIn,
-//           which RoleContext's noteIdentity runs BEFORE any purge — review
-//           fix 3: it was ended by a different identity's arrival before
-//           anyone had read it), and the device is marked so no later
-//           identity is offered it; the viewer's first read applies the same
-//           rule when that move was refused.
-//   OFF-16  Review fix 3: once a SECOND account keeps a list on the device,
-//           an upload that would take every account's lists together past
-//           DEVICE_STAMP_BUDGET is refused and the menu says so — the lists
-//           of many people on a shared tablet no longer fill the quota and
-//           starve the app's other keys (a person alone on their device is
-//           never refused by it, as before).
+//           CLIENT_STORAGE_INVENTORY class "account", kind "identity", as the
+//           package brief directs — kept across the person's own sign-out and
+//           an expiry, ended when a DIFFERENT identity runs the app here,
+//           before it reads anything, so a device keeps at most one
+//           identity's list, as it kept one list before); with no uid no
+//           stamps are offered or written; the legacy device-wide list
+//           (class "device") is MOVED, once, to the first identity that signs
+//           in here after the change (claimLegacyStampsAtSignIn, which
+//           RoleContext's noteIdentity runs AFTER its purge), the device is
+//           marked so no later identity is offered it, and the moved list
+//           ends at that identity's next identity change, like the rest of
+//           its list (OFF-8's one-time transition); the viewer's first read
+//           applies the same rule when that move was refused.
+//   Review fix 4: the per-device stamp budget of review fix 3 is gone. It
+//           refused uploads that land at c537602 (another account's list on
+//           the device was enough); with kind "identity" the many lists it
+//           bounded are never there together. Upload, use, removal and the
+//           12-stamp cap are the code of before.
 //
 // Driven AS RENDERED: the real FullScreenViewer (jsdom; react-pdf and fabric
 // stubbed — the harness of dcRoundFP15MarkupExportRendered.test.ts), its
 // stamp menu opened, a file chosen through the real hidden input, a stamp
 // placed and removed through the real buttons. The sign-out / different
 // identity ends are RoleContext's own purge (purgeAccountStorage, the scope
-// noteIdentity and SIGNED_OUT use), driven by the real inventory row.
+// noteIdentity and SIGNED_OUT use), driven by the real inventory rows; the
+// provider's own order (purge, then the stamp claim) is pinned rendered in
+// sessSixRoleNull.test.ts.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -104,7 +107,7 @@ vi.mock("@/components/ui/QrBadge", () => ({ default: () => null }));
 
 import FullScreenViewer from "@/components/viewers/FullScreenViewer";
 import { CLIENT_STORAGE_INVENTORY, purgeAccountStorage, purgeTakes } from "@/components/providers/RoleContext";
-import { DEVICE_STAMP_BUDGET, claimLegacyStampsAtSignIn, stampUploadOverDeviceBudget } from "@/lib/customStamps";
+import { claimLegacyStampsAtSignIn, writeStampList } from "@/lib/customStamps";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 // Every case mounts the real viewer (react-pdf and fabric stubbed); under a loaded full run a mount alone can pass the 5 s default,
@@ -167,16 +170,31 @@ async function upload(name: string, bytes = name) {
   const file = new File([bytes], name, { type: "image/png" });
   Object.defineProperty(input, "files", { value: [file], configurable: true });
   await act(async () => { input.dispatchEvent(new Event("change", { bubbles: true })); });
-  for (let i = 0; i < 10 && !offered().includes(name); i++) await settle();
+  for (let i = 0; i < 200 && !offered().includes(name); i++) await settle(); // a file read can take a few turns
 }
 const stored = (key: string) => {
   const raw = window.localStorage.getItem(key);
   return raw === null ? null : (JSON.parse(raw) as Array<{ id: string; name: string; src: string }>).map((x) => x.name);
 };
 const stamp = (n: number) => ({ id: `cs-${n}`, name: `legacy-${n}.png`, src: `data:image/png;base64,${btoa(`legacy-${n}`)}` });
+/** RoleContext's noteIdentity for `uid` signing in on a browser that last ran as `last`: the "all" purge when the identity differs,
+ *  THEN the stamp claim (the order the provider runs them in — pinned rendered in sessSixRoleNull). */
+function signIn(uid: string, last: string | null) {
+  if (last && last !== uid) {
+    purgeAccountStorage(window.localStorage, "local", "all");
+    purgeAccountStorage(window.sessionStorage, "session", "all");
+  }
+  claimLegacyStampsAtSignIn(uid);
+}
+/** SIGNED_OUT: RoleContext's "signout" purge (the person's own work, kind "identity", stays). */
+function signOut() {
+  purgeAccountStorage(window.localStorage, "local", "signout");
+  purgeAccountStorage(window.sessionStorage, "session", "signout");
+}
+const localKeys = () => Array.from({ length: window.localStorage.length }, (_, i) => window.localStorage.key(i)!);
 
 describe("OFF-15 — a stamp uploaded by one person is never offered to another", () => {
-  it("u1 uploads; u2 on the same device is offered nothing; u1 still has it (was: one device-wide list u2 was offered)", async () => {
+  it("u1 uploads; u2 opening the viewer on the same device is offered nothing, and u2's upload lands on u2's key, not u1's (was: one device-wide list u2 was offered) — the viewer alone; the end of u1's list at u2's sign-in is driven below", async () => {
     await openAs("u1");
     await upload("initials-u1.png");
     expect(offered()).toEqual(["initials-u1.png"]);
@@ -222,26 +240,27 @@ describe("OFF-15 — a stamp uploaded by one person is never offered to another"
     // untouched: u1's list, and the legacy list (left for a signed-in person to take)
     expect(stored(keyOf("u1"))).toEqual(["legacy-1.png"]);
     expect(stored(LEGACY)).toEqual(["legacy-2.png"]);
-    expect(Array.from({ length: window.localStorage.length }, (_, i) => window.localStorage.key(i)).sort()).toEqual([LEGACY, keyOf("u1")].sort());
+    expect(localKeys().sort()).toEqual([LEGACY, keyOf("u1")].sort());
   });
 });
 
-describe("OFF-15 — the same person's stamps survive their sign-out and another person's run of the app, never offered to that person (DEC-91 §2, \"uid-scoped\")", () => {
-  it("the inventory classes the uid key uid-scoped (no purge takes it), the legacy key account / identity and the moved marker device; the purge keeps a person's list across SIGNED_OUT and an evaporated session", async () => {
+describe("OFF-15 — the same person's stamps survive their sign-out; a DIFFERENT identity's run of the app ends them before it reads anything (DEC-91 §2, kind \"identity\", as the package brief directs)", () => {
+  it("the inventory classes the uid key account / identity, the legacy key device and the moved marker device; the purge keeps a person's list across SIGNED_OUT and an evaporated session", async () => {
     const row = (key: string) => CLIENT_STORAGE_INVENTORY.find((r) => r.store === "local" && r.key === key);
-    expect(row("manufacturingos.customStamps:")).toMatchObject({ match: "prefix", class: "uid-scoped", owners: ["lib/customStamps.ts", "components/viewers/FullScreenViewer.tsx"] });
-    expect(row("manufacturingos.customStamps:")?.kind).toBeUndefined();
-    expect(row(LEGACY)).toMatchObject({ match: "exact", class: "account", kind: "identity", owners: ["lib/customStamps.ts"] });
+    expect(row("manufacturingos.customStamps:")).toMatchObject({ match: "prefix", class: "account", kind: "identity", owners: ["lib/customStamps.ts", "components/viewers/FullScreenViewer.tsx"] });
+    expect(row(LEGACY)).toMatchObject({ match: "exact", class: "device", owners: ["lib/customStamps.ts"] });
+    expect(row(LEGACY)?.kind).toBeUndefined();
     expect(row(MOVED)).toMatchObject({ match: "exact", class: "device", owners: ["lib/customStamps.ts"] });
     expect([purgeTakes("signout", "identity"), purgeTakes("cache", "identity"), purgeTakes("all", "identity")]).toEqual([false, false, true]);
+    // no "uid-scoped" stamp row is left (review fix 4: the brief's class)
+    expect(CLIENT_STORAGE_INVENTORY.filter((r) => r.key.startsWith(LEGACY)).map((r) => r.class).sort()).toEqual(["account", "device", "device"]);
 
     await openAs("u1");
     await upload("initials-u1.png");
-    // SIGNED_OUT (a sign-out button or an expired token): RoleContext's "signout" purge
-    purgeAccountStorage(window.localStorage, "local", "signout");
-    purgeAccountStorage(window.sessionStorage, "session", "signout");
+    signOut(); // a sign-out button or an expired token
     expect(stored(keyOf("u1"))).toEqual(["initials-u1.png"]);
     // the same person signs back in and opens a drawing: their stamp is there
+    signIn("u1", "u1");
     await reopenAs("u1");
     expect(offered()).toEqual(["initials-u1.png"]);
     // a session that merely evaporated keeps it too
@@ -250,37 +269,44 @@ describe("OFF-15 — the same person's stamps survive their sign-out and another
     expect(offered()).toEqual(["initials-u1.png"]);
   });
 
-  it("a DIFFERENT identity running the app here (noteIdentity's \"all\" purge) leaves the person's list — uid-scoped — and ends a legacy list not yet moved; the device marker stays", async () => {
+  it("a DIFFERENT identity running the app here (noteIdentity's \"all\" purge) ends every uid's stamp list — so a device holds at most one identity's — and leaves the legacy list (class \"device\", for the next sign-in's claim) and the marker", async () => {
     await openAs("u1");
     await upload("initials-u1.png");
+    window.localStorage.setItem(keyOf("u9"), JSON.stringify([stamp(9)])); // say, another tab's identity
     window.localStorage.setItem(LEGACY, JSON.stringify([stamp(1)]));
     window.localStorage.setItem(MOVED, "1");
-    purgeAccountStorage(window.localStorage, "local", "signout");
+    signOut();
     purgeAccountStorage(window.localStorage, "local", "cache");
-    expect(stored(LEGACY)).toEqual(["legacy-1.png"]); // kept across a sign-out and an evaporation
+    expect(stored(keyOf("u1"))).toEqual(["initials-u1.png"]); // kept across a sign-out and an evaporation
+    expect(stored(LEGACY)).toEqual(["legacy-1.png"]);
     purgeAccountStorage(window.localStorage, "local", "all");
-    expect(stored(keyOf("u1"))).toEqual(["initials-u1.png"]);
-    expect(window.localStorage.getItem(LEGACY)).toBeNull();
+    expect(window.localStorage.getItem(keyOf("u1"))).toBeNull();
+    expect(window.localStorage.getItem(keyOf("u9"))).toBeNull();
+    expect(stored(LEGACY)).toEqual(["legacy-1.png"]);
     expect(window.localStorage.getItem(MOVED)).toBe("1");
   });
 
-  it("second review fix (done-when 1 on a shared device): a person's stamps outlive ANOTHER person's run of the app, as before OFF-15 — and that person is never offered them (was: kind \"identity\" ended them at the other person's boot, so they were uploaded again after every other shift)", async () => {
+  it("review fix 4 (the brief's kind \"identity\", done-when 1 on a shared device): u1's stamps end when u2 runs the app — u2 is offered none of them, and u1 uploads again after u2's shift (the cost the brief accepts, stated in OFF-15)", async () => {
+    signIn("u1", null);
     await openAs("u1");
     await upload("initials-u1.png");
-    purgeAccountStorage(window.localStorage, "local", "signout"); // u1 signs out
-    purgeAccountStorage(window.localStorage, "local", "all");     // u2 boots on the same tablet
-    await reopenAs("u2");                                          // u2 opens a drawing
+    signOut();
+    signIn("u2", "u1");                                            // u2 boots on the same tablet
+    expect(window.localStorage.getItem(keyOf("u1"))).toBeNull();   // ended before u2 reads anything
+    await reopenAs("u2");
     expect(offered()).toEqual([]);
+    await upload("initials-u2.png");
+    signOut();
+    signIn("u1", "u2");                                            // u1 signs back in
     expect(window.localStorage.getItem(keyOf("u2"))).toBeNull();
-    purgeAccountStorage(window.localStorage, "local", "signout"); // u2 signs out
-    purgeAccountStorage(window.localStorage, "local", "all");     // u1 boots again: the "all" purge for u2's data
-    await reopenAs("u1");                                          // u1 signs back in
-    expect(offered()).toEqual(["initials-u1.png"]);
+    await reopenAs("u1");
+    expect(offered()).toEqual([]);
+    expect(localKeys().filter((k) => k.startsWith("manufacturingos.customStamps:"))).toEqual([]);
   });
 });
 
-describe("OFF-15 — the legacy device-wide list moves once, to the first identity, and is never read again after the move", () => {
-  it("u1's first open takes the legacy list (moved to u1's key, the legacy key removed, the device marked); u2 later gets nothing; u1 keeps it", async () => {
+describe("OFF-15 — the legacy device-wide list moves once, to the first identity, ends at that identity's next identity change, and is never read again after the move", () => {
+  it("u1's first open takes the legacy list (the viewer's fallback: moved to u1's key, the legacy key removed, the device marked); u2's viewer never reads it; u2's sign-in ends it with the rest of u1's list", async () => {
     window.localStorage.setItem(LEGACY, JSON.stringify([stamp(1), stamp(2)]));
     await openAs("u1");
     expect(offered()).toEqual(["legacy-1.png", "legacy-2.png"]);
@@ -292,48 +318,63 @@ describe("OFF-15 — the legacy device-wide list moves once, to the first identi
     expect(offered()).toEqual([]);
     expect(window.localStorage.getItem(keyOf("u2"))).toBeNull();
 
-    await reopenAs("u1");
-    expect(offered()).toEqual(["legacy-1.png", "legacy-2.png"]);
+    signIn("u2", "u1");
+    expect(window.localStorage.getItem(keyOf("u1"))).toBeNull();
+    await reopenAs("u2");
+    expect(offered()).toEqual([]);
   });
 
-  it("review fix 3 (the first reviewer's path, the move now at the sign-in): u1 signs in and never opens a drawing — the list is u1's already; u2 signs in next and is offered nothing; u1 opens a drawing later and has it (was: u2's boot ended it, or, as \"device\", handed it to u2)", async () => {
-    window.localStorage.setItem(LEGACY, JSON.stringify([stamp(1)]));
-    claimLegacyStampsAtSignIn("u1");                               // u1's sign-in (noteIdentity)
-    expect(stored(keyOf("u1"))).toEqual(["legacy-1.png"]);
+  it("review fix 4 (the fourth reviewer's major): the list the first identity takes at its sign-in ends at the NEXT identity change — kept across that identity's own sign-out, then ended, with its own uploads, before anyone else reads anything; nobody is offered it again (was: moved into a uid-scoped list A kept for good, so B's initials stayed in A's menu every later day)", async () => {
+    window.localStorage.setItem(LEGACY, JSON.stringify([{ id: "cs-b", name: "BJ-verified-in-field.png", src: "data:image/png;base64,Qko=" }])); // B's, uploaded under the old code
+    signIn("uA", null);                                            // A is the first to sign in after the deploy
+    expect(stored(keyOf("uA"))).toEqual(["BJ-verified-in-field.png"]);
     expect(window.localStorage.getItem(LEGACY)).toBeNull();
     expect(window.localStorage.getItem(MOVED)).toBe("1");
-    purgeAccountStorage(window.localStorage, "local", "signout"); // u1 signs out without opening the viewer
-    claimLegacyStampsAtSignIn("u2");                               // u2's sign-in: the device is marked — nothing for u2
-    purgeAccountStorage(window.localStorage, "local", "all");     // then noteIdentity's "all" purge
-    await openAs("u2");
+    await openAs("uA");
+    await upload("AA-own.png");
+    expect(offered()).toEqual(["AA-own.png", "BJ-verified-in-field.png"]);
+    signOut();
+    signIn("uA", "uA");                                            // A's own next sign-in: kept (the one-time transition, as OFF-8's)
+    await reopenAs("uA");
+    expect(offered()).toEqual(["AA-own.png", "BJ-verified-in-field.png"]);
+    signOut();
+    signIn("uB", "uA");                                            // B runs the app: A's list ends, the inherited stamps with it
+    expect(window.localStorage.getItem(keyOf("uA"))).toBeNull();
+    await reopenAs("uB");
     expect(offered()).toEqual([]);
-    expect(window.localStorage.getItem(keyOf("u2"))).toBeNull();
-    await reopenAs("u1");
-    expect(offered()).toEqual(["legacy-1.png"]);
+    signOut();
+    signIn("uA", "uB");                                            // A signs back in: B's initials are gone for good
+    await reopenAs("uA");
+    expect(offered()).toEqual([]);
+    expect(JSON.stringify(Object.fromEntries(localKeys().map((k) => [k, window.localStorage.getItem(k)])))).not.toContain("BJ-verified-in-field.png");
   });
 
-  it("review fix 3 (the second reviewer's path): the device remembers B; A, who uploaded the list under the old code, signs in first — A's sign-in takes it before the purge for B runs, so A has their stamps (was: the purge ended it before A opened a drawing, without a word)", async () => {
+  it("the second reviewer's path: the device remembers B; A, who uploaded the list under the old code, signs in first — the purge for B leaves the legacy list (class \"device\") and A's claim, after it, takes it, so A has their stamps (was: the purge ended it before A opened a drawing, without a word)", async () => {
     window.localStorage.setItem(LEGACY, JSON.stringify([stamp(1), stamp(2)]));
-    claimLegacyStampsAtSignIn("uA");                               // noteIdentity, BEFORE its purge (sessSixRoleNull pins the order, rendered)
-    purgeAccountStorage(window.localStorage, "local", "all");     // the purge for the remembered B
+    window.localStorage.setItem(keyOf("uB"), JSON.stringify([stamp(7)]));
+    signIn("uA", "uB");
+    expect(window.localStorage.getItem(keyOf("uB"))).toBeNull();
     await openAs("uA");
     expect(offered()).toEqual(["legacy-1.png", "legacy-2.png"]);
+    signOut();
+    signIn("uB", "uA");
     await reopenAs("uB");
     expect(offered()).toEqual([]);
   });
 
-  it("review fix 3: the sign-in move runs once per device — marked at the first sign-in even with nothing to move, so a value a tab still running the old code writes later is never read by any sign-in or viewer; a uid that has a list of its own marks the device and leaves the legacy value unread", async () => {
+  it("the sign-in move runs once per device — marked at the first sign-in even with nothing to move, so a value a tab still running the old code writes later is read by no sign-in and no viewer, and the next sign-in removes it; a uid that has a list of its own marks the device and leaves the legacy value unread", async () => {
     claimLegacyStampsAtSignIn("u1");
     expect(window.localStorage.getItem(MOVED)).toBe("1");
     window.localStorage.setItem(LEGACY, JSON.stringify([stamp(1)])); // an old-code tab
     const getItem = vi.spyOn(Storage.prototype, "getItem");
     claimLegacyStampsAtSignIn("u2");
+    expect(localKeys()).not.toContain(LEGACY);                       // removed, unread (read here by key, not getItem)
     await openAs("u2");
     expect(offered()).toEqual([]);
     expect(getItem.mock.calls.map((c) => c[0])).toEqual(expect.arrayContaining([MOVED, keyOf("u2")])); // not vacuous
     expect(getItem.mock.calls.map((c) => c[0])).not.toContain(LEGACY);
     getItem.mockRestore();
-    // a fresh device where the arriving uid somehow already keeps a list: marked, the legacy value left unread (the next identity change ends it)
+    // a fresh device where the arriving uid somehow already keeps a list: marked, the legacy value left unread, then removed at the next sign-in
     window.localStorage.clear();
     window.localStorage.setItem(keyOf("u3"), JSON.stringify([stamp(3)]));
     window.localStorage.setItem(LEGACY, JSON.stringify([stamp(1)]));
@@ -341,9 +382,12 @@ describe("OFF-15 — the legacy device-wide list moves once, to the first identi
     expect(stored(keyOf("u3"))).toEqual(["legacy-3.png"]);
     expect(window.localStorage.getItem(MOVED)).toBe("1");
     expect(stored(LEGACY)).toEqual(["legacy-1.png"]);
+    claimLegacyStampsAtSignIn("u3");
+    expect(window.localStorage.getItem(LEGACY)).toBeNull();
+    expect(stored(keyOf("u3"))).toEqual(["legacy-3.png"]);
   });
 
-  it("review fix 3: a sign-in move the store refuses leaves the list where it was and the device unmarked — the person's first viewer open offers it to them, pending, and their next write lands it", async () => {
+  it("a sign-in move the store refuses leaves the list where it was and the device unmarked — the person's first viewer open offers it to them, pending, and their next write lands it", async () => {
     window.localStorage.setItem(LEGACY, JSON.stringify([stamp(1), stamp(2)]));
     const real = Storage.prototype.setItem;
     let refuse = true;
@@ -353,7 +397,7 @@ describe("OFF-15 — the legacy device-wide list moves once, to the first identi
     });
     claimLegacyStampsAtSignIn("u1");
     expect(stored(LEGACY)).toEqual(["legacy-1.png", "legacy-2.png"]); // put back
-    expect(window.localStorage.getItem(MOVED)).toBeNull();
+    expect(window.localStorage.getItem(MOVED)).toBeNull();            // the marker the move wrote is removed again
     await openAs("u1");
     expect(offered()).toEqual(["legacy-1.png", "legacy-2.png"]);
     refuse = false;
@@ -361,6 +405,38 @@ describe("OFF-15 — the legacy device-wide list moves once, to the first identi
     expect(stored(keyOf("u1"))).toEqual(["legacy-2.png"]);
     expect(window.localStorage.getItem(LEGACY)).toBeNull();
     expect(window.localStorage.getItem(MOVED)).toBe("1");
+  });
+
+  it("review fix 4 (minor): a move never lands with the device unmarked — a store that refuses ONLY the marker write refuses the move: the legacy list is put back as it was, nothing is written under the uid, the device stays unmarked; the person's open offers it pending, and the first write that lands with its marker finishes it (was: the move landed, the marker failure was swallowed, and an old-code tab's later write went to the NEXT identity)", async () => {
+    const legacyValue = JSON.stringify([stamp(1), stamp(2)]);
+    window.localStorage.setItem(LEGACY, legacyValue);
+    const real = Storage.prototype.setItem;
+    let refuseMarker = true;
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, k: string, v: string) {
+      if (refuseMarker && k === MOVED) throw new DOMException("quota", "QuotaExceededError");
+      return real.call(this, k, v);
+    });
+    signIn("u1", null);
+    expect(setItem.mock.calls.map((c) => c[0])).toContain(MOVED);       // the marker write was tried (and refused)
+    expect(window.localStorage.getItem(LEGACY)).toBe(legacyValue);      // put back, byte for byte
+    expect(window.localStorage.getItem(keyOf("u1"))).toBeNull();        // the move did not land
+    expect(window.localStorage.getItem(MOVED)).toBeNull();
+    await openAs("u1");
+    expect(offered()).toEqual(["legacy-1.png", "legacy-2.png"]);        // offered to u1, pending
+    expect(window.localStorage.getItem(keyOf("u1"))).toBeNull();
+    refuseMarker = false;
+    await click(Array.from(host.querySelectorAll("button[title='Remove']"))[0]);
+    expect(stored(keyOf("u1"))).toEqual(["legacy-2.png"]);
+    expect(window.localStorage.getItem(LEGACY)).toBeNull();
+    expect(window.localStorage.getItem(MOVED)).toBe("1");
+    // the reviewer's sequence after it: an old-code tab writes the legacy key, B signs in — B takes nothing
+    window.localStorage.setItem(LEGACY, JSON.stringify([stamp(1), stamp(2), stamp(3)]));
+    signOut();
+    signIn("u2", "u1");
+    expect(window.localStorage.getItem(keyOf("u2"))).toBeNull();
+    expect(window.localStorage.getItem(LEGACY)).toBeNull();
+    await reopenAs("u2");
+    expect(offered()).toEqual([]);
   });
 
   it("a person who already has a list of their own never reads the legacy list (it waits for a person with none)", async () => {
@@ -374,7 +450,7 @@ describe("OFF-15 — the legacy device-wide list moves once, to the first identi
     expect(stored(LEGACY)).toEqual(["legacy-1.png"]);
   });
 
-  it("review fix: after the move the legacy key is never read again — a value a tab still running the old code writes there later is offered to no one, and the next identity change ends it", async () => {
+  it("after the move the legacy key is never read again — a value a tab still running the old code writes there later is offered to no one, and the next sign-in removes it unread", async () => {
     window.localStorage.setItem(LEGACY, JSON.stringify([stamp(1)]));
     await openAs("u1");
     expect(stored(keyOf("u1"))).toEqual(["legacy-1.png"]);
@@ -385,11 +461,12 @@ describe("OFF-15 — the legacy device-wide list moves once, to the first identi
     expect(getItem.mock.calls.map((c) => c[0])).toEqual(expect.arrayContaining([keyOf("u2"), MOVED])); // not vacuous
     expect(getItem.mock.calls.map((c) => c[0])).not.toContain(LEGACY);
     expect(window.localStorage.getItem(keyOf("u2"))).toBeNull();
-    purgeAccountStorage(window.localStorage, "local", "all");
+    signIn("u2", "u1");
+    expect(getItem.mock.calls.map((c) => c[0])).not.toContain(LEGACY);
     expect(window.localStorage.getItem(LEGACY)).toBeNull();
   });
 
-  it("review fix: the move removes the legacy list FIRST, so a list that fills most of the quota still moves (copying it beside the original would not fit)", async () => {
+  it("the move removes the legacy list FIRST, so a list that fills most of the quota still moves (copying it beside the original would not fit)", async () => {
     // jsdom's localStorage quota is 5,000,000 code units; this list is ~3,000,000
     const big = { id: "cs-1", name: "legacy-big.png", src: `data:image/png;base64,${"A".repeat(3_000_000)}` };
     window.localStorage.setItem(LEGACY, JSON.stringify([big]));
@@ -401,7 +478,7 @@ describe("OFF-15 — the legacy device-wide list moves once, to the first identi
     expect(window.localStorage.getItem(MOVED)).toBe("1");
   });
 
-  it("review fix: a store that refuses the move puts the legacy list back and offers it to this person; their first write that lands finishes the move, so the next person is offered nothing (was: the legacy key stayed and went to the next person, a removed stamp included)", async () => {
+  it("a store that refuses the move puts the legacy list back and offers it to this person; their first write that lands finishes the move, so the next person is offered nothing (was: the legacy key stayed and went to the next person, a removed stamp included)", async () => {
     window.localStorage.setItem(LEGACY, JSON.stringify([stamp(1), stamp(2)]));
     const real = Storage.prototype.setItem;
     let refuse = true;
@@ -429,23 +506,25 @@ describe("OFF-15 — the legacy device-wide list moves once, to the first identi
     expect(offered()).toEqual(["legacy-2.png"]);
   });
 
-  it("second review fix: in a near-full store, a removal while the move is pending lands and stays removed — the pending write removes the legacy copy first, as the move does (was: written beside the legacy copy, refused, and the removed stamp offered again on the next open)", async () => {
-    // jsdom's quota is 5,000,000 code units (keys and values). A real uid makes the uid key 37 units longer than the legacy key, and the
-    // store leaves 10 free: the list cannot be written under the uid in the room the legacy list frees, so the move at the first open is
-    // refused; one stamp removed fits in it.
+  it("in a near-full store, a removal while the move is pending lands and stays removed — the pending write removes the legacy copy first, as the move does (was: written beside the legacy copy, refused, and the removed stamp offered again on the next open)", async () => {
+    // jsdom's quota is 5,000,000 code units (keys and values). A real uid makes the uid key 37 units longer than the legacy key, the
+    // marker takes 35, and the store leaves 10 free: the list cannot be written under the uid in the room the legacy list frees, so the
+    // move at the first open is refused; one stamp removed fits in it.
     const U = "11111111-2222-3333-4444-555555555555";
     const big = (n: number) => ({ id: `cs-${n}`, name: `big-${n}.png`, src: `data:image/png;base64,${"A".repeat(1_000_000)}` });
     window.localStorage.setItem(LEGACY, JSON.stringify([big(1), big(2)]));
-    const used = () => Array.from({ length: window.localStorage.length }, (_, i) => window.localStorage.key(i)!).reduce((t, k) => t + k.length + window.localStorage.getItem(k)!.length, 0);
+    const used = () => localKeys().reduce((t, k) => t + k.length + window.localStorage.getItem(k)!.length, 0);
     window.localStorage.setItem("filler", "x".repeat(5_000_000 - used() - 10 - "filler".length));
     expect(5_000_000 - used()).toBe(10);
     expect(keyOf(U).length - LEGACY.length).toBe(37);
+    expect(MOVED.length + 1).toBe(35);
 
     await openAs(U);
     expect(offered()).toEqual(["big-1.png", "big-2.png"]);
     expect(window.localStorage.getItem(keyOf(U))).toBeNull(); // refused: pending
     expect(stored(LEGACY)).toEqual(["big-1.png", "big-2.png"]);
     expect(window.localStorage.getItem(MOVED)).toBeNull();
+    expect(5_000_000 - used()).toBe(10);                      // put back exactly: nothing lost, nothing left over
 
     await click(Array.from(host.querySelectorAll("button[title='Remove']"))[0]);
     expect(offered()).toEqual(["big-2.png"]);
@@ -513,7 +592,7 @@ describe("OFF-15 REGRESSION — upload, use, removal and the 12-stamp cap behave
     expect(offered()).toEqual([]); // the menu closed
   });
 
-  it("removal: × takes the stamp out of the menu and out of the person's stored list", async () => {
+  it("removal: × takes the stamp out of the menu and out of the person's stored list; the last one removed leaves an empty list, as before", async () => {
     await openAs("u1");
     await upload("a.png");
     await upload("b.png");
@@ -521,6 +600,9 @@ describe("OFF-15 REGRESSION — upload, use, removal and the 12-stamp cap behave
     await click(removeA);
     expect(offered()).toEqual(["b.png"]);
     expect(stored(keyOf("u1"))).toEqual(["b.png"]);
+    await click(Array.from(host.querySelectorAll("button[title='Remove']"))[0]);
+    expect(offered()).toEqual([]);
+    expect(window.localStorage.getItem(keyOf("u1"))).toBe("[]");
   });
 
   it("the cap: the 13th upload keeps the newest 12", async () => {
@@ -534,20 +616,68 @@ describe("OFF-15 REGRESSION — upload, use, removal and the 12-stamp cap behave
     expect(stored(keyOf("u1"))).toEqual(["newest.png", ...Array.from({ length: 11 }, (_, i) => `legacy-${i + 1}.png`)]);
   });
 
-  it("source: every stamp read and write is keyed by the uid (lib/customStamps.ts — the viewer touches storage only through it); the device-wide key is read only before the device is marked (after the marker check, at a sign-in or a first read, or while the move is pending), removed before the uid list is written, and written only to put back the value it held", () => {
+  it("review fix 4 (the blocker): an upload is never refused for room another account's list holds — the reviewer's reproduction, A's 1.6M-unit list on the device and B's 4.5 KB upload, lands with no message (was: refused by a per-device stamp budget, with advice B could not follow)", async () => {
+    window.localStorage.setItem(keyOf("uA"), JSON.stringify([{ id: "cs-1", name: "phone-photo.jpg", src: `data:image/jpeg;base64,${"A".repeat(1_600_000)}` }]));
+    await openAs("uB");
+    await upload("initials-B.png", "b".repeat(4_500));
+    expect(offered()).toEqual(["initials-B.png"]);
+    expect(stored(keyOf("uB"))).toEqual(["initials-B.png"]);
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    // and a person whose own list is larger than any bound uploads more, as before
+    await upload("more.png", "m".repeat(30_000));
+    expect(offered()).toEqual(["more.png", "initials-B.png"]);
+  });
+
+  it("review fix 4: the many-people reproduction, as the brief's design runs it — 40 people sign in one after another on one tablet and each keeps 3 stamps of 10–80 KB: every list is written, the device never holds more than one person's list, the last two people, driven through the viewer, upload and are offered only their own, and a 20,000-unit graph-layout write and a session write still land (was: 34 people's kept lists filled the 5,000,000-unit store; then a budget refused more than 60 of these uploads)", async () => {
+    const sizes = [10_000, 45_000, 80_000];
+    // the list the viewer would build from three uploads (newest first), as data URLs
+    const listOf = (p: number) => sizes.map((n, j) => ({ id: `cs-${p}-${j}`, name: `p${p}-s${j}.png`, src: `data:image/png;base64,${String.fromCharCode(65 + j).repeat(Math.ceil((n * 4) / 3))}` })).reverse();
+    let last: string | null = null;
+    for (let p = 1; p <= 40; p++) {
+      const uid = `person-${p}`;
+      if (last) signOut();
+      signIn(uid, last);
+      if (p <= 38) {
+        expect(writeStampList(uid, listOf(p))).toBe(true); // the viewer's own write (persistCustomStamps → writeStampList)
+      } else {
+        await reopenAs(uid);
+        expect(offered()).toEqual([]);                     // nothing of the 38 people before
+        for (let j = 0; j < 3; j++) await upload(`p${p}-s${j}.png`, String.fromCharCode(65 + j).repeat(sizes[j]));
+        expect(offered()).toEqual([`p${p}-s2.png`, `p${p}-s1.png`, `p${p}-s0.png`]);
+      }
+      expect(localKeys().filter((k) => k.startsWith("manufacturingos.customStamps:"))).toEqual([keyOf(uid)]);
+      last = uid;
+    }
+    expect(() => window.localStorage.setItem("orgGraph:pos:o1", "x".repeat(20_000))).not.toThrow();
+    expect(() => window.localStorage.setItem("sb-ref-auth-token", "t".repeat(4_000))).not.toThrow();
+  }, 60_000);
+
+  it("source: every stamp read and write is keyed by the uid (lib/customStamps.ts — the viewer touches storage only through it, and refuses nothing an upload of before would land); the device-wide key is read only before the device is marked (after the marker check, at a sign-in or a first read, or while the move is pending), removed before the marker and the uid list are written, and written only to put back the value it held", () => {
     const v = src("components/viewers/FullScreenViewer.tsx");
     const lib = src("lib/customStamps.ts");
     expect(v).not.toMatch(/localStorage\.(get|set|remove)Item/);
-    expect(v).toMatch(/import \{ loadStampShelf, moveLegacyStamps, stampUploadOverDeviceBudget, writeStampList, type CustomStamp, type StampShelf \} from "@\/lib\/customStamps";/);
+    expect(v).toMatch(/import \{ loadStampShelf, moveLegacyStamps, writeStampList, type CustomStamp, type StampShelf \} from "@\/lib\/customStamps";/);
+    // review fix 4: no per-device budget, no refusal
+    expect(lib).not.toMatch(/BUDGET|OverDeviceBudget/);
+    expect(v).not.toMatch(/stampRefusedFor|OverDeviceBudget|Stamp storage on this device is full/);
+    // upload and removal are the code of before (only the uid guard is new)
+    expect(v).toMatch(/const next = \[\{ id: `cs-\$\{Date\.now\(\)\}`, name: file\.name, src \}, \.\.\.customStamps\]\.slice\(0, 12\);\n\s*persistCustomStamps\(next\);/);
+    expect(v).toMatch(/const removeCustomStamp = \(id: string\) => \{\n\s*persistCustomStamps\(customStamps\.filter\(\(s\) => s\.id !== id\)\);\n\s*\};/);
     expect(lib).toMatch(/export const customStampsKey = \(uid: string\) => `manufacturingos\.customStamps:\$\{uid\}`;/);
     expect(lib.match(/\.setItem\(LEGACY_CUSTOM_STAMPS_KEY/g)).toEqual([".setItem(LEGACY_CUSTOM_STAMPS_KEY"]);
-    expect(lib).toMatch(/catch \{\n\s*if \(legacy !== null\) \{ try \{ window\.localStorage\.setItem\(LEGACY_CUSTOM_STAMPS_KEY, legacy\); \}/);
+    expect(lib).toMatch(/if \(legacy !== null\) \{ try \{ window\.localStorage\.setItem\(LEGACY_CUSTOM_STAMPS_KEY, legacy\); \}/);
     expect(lib.match(/\.getItem\(LEGACY_CUSTOM_STAMPS_KEY\)/g)).toHaveLength(3); // the sign-in's read; loadStampShelf's; moveLegacyStamps' (the value it puts back)
-    expect(lib.match(/\.removeItem\(LEGACY_CUSTOM_STAMPS_KEY\)/g)).toHaveLength(1); // the move, only
+    expect(lib.match(/\.removeItem\(LEGACY_CUSTOM_STAMPS_KEY\)/g)).toHaveLength(2); // the move; a marked device's sign-in (unread)
     const move = lib.slice(lib.indexOf("export function moveLegacyStamps("), lib.indexOf("export function claimLegacyStampsAtSignIn("));
-    expect(move.indexOf("removeItem(LEGACY_CUSTOM_STAMPS_KEY)")).toBeGreaterThan(0);
-    expect(move.indexOf("removeItem(LEGACY_CUSTOM_STAMPS_KEY)")).toBeLessThan(move.indexOf("setItem(customStampsKey(uid)"));
-    expect(move.indexOf("setItem(LEGACY_CUSTOM_STAMPS_MOVED_KEY")).toBeGreaterThan(move.indexOf("setItem(customStampsKey(uid)"));
+    const at = (needle: string) => move.indexOf(needle);
+    expect(at("removeItem(LEGACY_CUSTOM_STAMPS_KEY)")).toBeGreaterThan(0);
+    // review fix 4: legacy removed (room) → marker → uid list, so a move that lands has always marked the device
+    expect(at("removeItem(LEGACY_CUSTOM_STAMPS_KEY)")).toBeLessThan(at("setItem(LEGACY_CUSTOM_STAMPS_MOVED_KEY"));
+    expect(at("setItem(LEGACY_CUSTOM_STAMPS_MOVED_KEY")).toBeLessThan(at("setItem(customStampsKey(uid)"));
+    expect(at("removeItem(LEGACY_CUSTOM_STAMPS_MOVED_KEY)")).toBeGreaterThan(at("catch {"));
+    const claim = lib.slice(lib.indexOf("export function claimLegacyStampsAtSignIn("), lib.indexOf("export function loadStampShelf("));
+    expect(claim.indexOf("removeItem(LEGACY_CUSTOM_STAMPS_KEY)")).toBeGreaterThan(claim.indexOf("getItem(LEGACY_CUSTOM_STAMPS_MOVED_KEY)"));
+    expect(claim.indexOf("removeItem(LEGACY_CUSTOM_STAMPS_KEY)")).toBeLessThan(claim.indexOf("getItem(LEGACY_CUSTOM_STAMPS_KEY)"));
     for (const [from, to] of [["export function claimLegacyStampsAtSignIn(", "export function loadStampShelf("], ["export function loadStampShelf(", "export function writeStampList("]]) {
       const fn = lib.slice(lib.indexOf(from), lib.indexOf(to));
       expect(fn.indexOf("getItem(LEGACY_CUSTOM_STAMPS_MOVED_KEY)"), from).toBeGreaterThan(0);
@@ -559,128 +689,5 @@ describe("OFF-15 REGRESSION — upload, use, removal and the 12-stamp cap behave
     expect(v.match(/moveLegacyStamps\(/g)).toHaveLength(1);
     expect(v).toMatch(/if \(legacyPending\) saved = moveLegacyStamps\(stampUid, next\);/);
     expect(v).not.toMatch(/"manufacturingos\.customStamps/);
-  });
-});
-
-describe("OFF-16 (review fix 3) — every account's stamp lists on a device together stay within its stamp budget, so they cannot starve the app's other keys", () => {
-  const alertText = () => host.querySelector('[role="alert"]')?.textContent ?? null;
-  const REFUSED = "Stamp storage on this device is full, so this image was not added. Remove one of your stamps, or upload a smaller image.";
-  // count the viewer's finished file reads, so each upload is awaited to its end (accepted or refused)
-  let reads = 0;
-  beforeEach(() => {
-    reads = 0;
-    const realRead = FileReader.prototype.readAsDataURL;
-    vi.spyOn(FileReader.prototype, "readAsDataURL").mockImplementation(function (this: FileReader, blob: Blob) {
-      this.addEventListener("loadend", () => { reads++; });
-      return realRead.call(this, blob);
-    });
-  });
-  /** Choose a file and wait until the viewer has read it and either kept or refused it. */
-  async function tryUpload(name: string, bytes: string) {
-    const input = host.querySelector('input[type="file"]') as HTMLInputElement;
-    Object.defineProperty(input, "files", { value: [new File([bytes], name, { type: "image/png" })], configurable: true });
-    const before = reads;
-    await act(async () => { input.dispatchEvent(new Event("change", { bubbles: true })); });
-    for (let i = 0; i < 200 && reads === before; i++) await settle();
-    expect(reads).toBe(before + 1);
-    await settle();
-  }
-  const used = () => Array.from({ length: window.localStorage.length }, (_, i) => window.localStorage.key(i)!).reduce((t, k) => t + k.length + window.localStorage.getItem(k)!.length, 0);
-  const stampRoom = () => Array.from({ length: window.localStorage.length }, (_, i) => window.localStorage.key(i)!)
-    .filter((k) => k.startsWith("manufacturingos.customStamps:")).reduce((t, k) => t + k.length + window.localStorage.getItem(k)!.length, 0);
-  /** Another account's list of `units` code units (key + value). */
-  const seedOther = (uid: string, units: number) => {
-    const pad = units - keyOf(uid).length - JSON.stringify([{ id: "cs-1", name: "o.png", src: "" }]).length;
-    window.localStorage.setItem(keyOf(uid), JSON.stringify([{ id: "cs-1", name: "o.png", src: "A".repeat(pad) }]));
-  };
-
-  it("the reviewer's reproduction, driven through the viewer: 40 people on one tablet each upload 3 stamps of 10–80 KB — the stamp lists never pass the budget, the uploads past it are refused and said, and a 20,000-unit graph-layout write and a session write still land (was: 34 people filled the 5,000,000-unit store and those writes were refused)", async () => {
-    const sizes = [10_000, 45_000, 80_000];
-    let accepted = 0, refused = 0;
-    for (let p = 1; p <= 40; p++) {
-      await reopenAs(`person-${p}`);
-      for (let j = 0; j < 3; j++) {
-        await tryUpload(`p${p}-s${j}.png`, String.fromCharCode(65 + j).repeat(sizes[j]));
-        if (offered().includes(`p${p}-s${j}.png`)) accepted++;
-        else { expect(alertText()).toBe(REFUSED); refused++; }
-      }
-      expect(stampRoom()).toBeLessThanOrEqual(DEVICE_STAMP_BUDGET);
-    }
-    expect(accepted).toBeGreaterThan(10);
-    expect(refused).toBeGreaterThan(60);
-    expect(5_000_000 - used()).toBeGreaterThan(3_400_000);
-    expect(() => window.localStorage.setItem("orgGraph:pos:o1", "x".repeat(20_000))).not.toThrow();
-    expect(() => window.localStorage.setItem("sb-ref-auth-token", "t".repeat(4_000))).not.toThrow();
-  }, 60_000);
-
-  it("seeded to the budget by other accounts: the upload is refused with a visible message, nothing is written, nobody's list is touched; a smaller image that fits lands and clears the message", async () => {
-    seedOther("u2", 900_000);
-    seedOther("u3", DEVICE_STAMP_BUDGET - 900_000 - 20_000);
-    const before = { u2: window.localStorage.getItem(keyOf("u2")), u3: window.localStorage.getItem(keyOf("u3")) };
-    await openAs("u1");
-    expect(alertText()).toBeNull();
-    await tryUpload("big.png", "B".repeat(30_000)); // ~40,000 units as a data URL
-    expect(alertText()).toBe(REFUSED);
-    expect(offered()).toEqual([]);
-    expect(window.localStorage.getItem(keyOf("u1"))).toBeNull();
-    expect({ u2: window.localStorage.getItem(keyOf("u2")), u3: window.localStorage.getItem(keyOf("u3")) }).toEqual(before);
-    await tryUpload("small.png", "s".repeat(3_000));
-    expect(offered()).toEqual(["small.png"]);
-    expect(alertText()).toBeNull();
-    expect(stored(keyOf("u1"))).toEqual(["small.png"]);
-    expect(stampRoom()).toBeLessThanOrEqual(DEVICE_STAMP_BUDGET);
-  });
-
-  it("the message is the refused person's only: another person signing in on the open viewer does not see it", async () => {
-    seedOther("u2", DEVICE_STAMP_BUDGET);
-    await openAs("u1");
-    await tryUpload("big.png", "B".repeat(30_000));
-    expect(alertText()).toBe(REFUSED);
-    await act(async () => {
-      root.render(React.createElement(FullScreenViewer, {
-        isOpen: true, onClose: () => {}, url: "https://files.example/p101.pdf", title: "Overhead P&ID", docNumber: "P-101", rev: "C",
-        currentUserId: "u3", currentUserEmail: "u3@x.io",
-      }));
-    });
-    await settle();
-    expect(alertText()).toBeNull();
-  });
-
-  it("REGRESSION: a person alone on their device is never refused by the budget — their one list is bounded by the store only, as the device-wide list was before", async () => {
-    window.localStorage.setItem(keyOf("u1"), JSON.stringify([{ id: "cs-1", name: "huge.png", src: "A".repeat(DEVICE_STAMP_BUDGET) }]));
-    await openAs("u1");
-    await tryUpload("more.png", "m".repeat(30_000));
-    expect(alertText()).toBeNull();
-    expect(offered()).toEqual(["more.png", "huge.png"]);
-    expect(stored(keyOf("u1"))).toEqual(["more.png", "huge.png"]);
-  });
-
-  it("a write that does not grow the person's list is never refused: a removal lands over the budget, and so does the 13th upload that drops a larger oldest stamp", async () => {
-    // u1's list built while u1 was alone here, then u2 kept a small list: together past the budget
-    const twelve = Array.from({ length: 12 }, (_, i) => ({ id: `cs-${i + 1}`, name: `mine-${i + 1}.png`, src: "A".repeat(i === 11 ? 400_000 : 100_000) }));
-    window.localStorage.setItem(keyOf("u1"), JSON.stringify(twelve));
-    seedOther("u2", 50_000);
-    expect(stampUploadOverDeviceBudget("u1", [{ id: "x", name: "x", src: "x" }, ...twelve])).toBe(true);
-    await openAs("u1");
-    await tryUpload("grow.png", "g".repeat(30_000)); // the cap drops mine-12 (400,000) for ~40,000: the list shrinks
-    expect(alertText()).toBeNull();
-    expect(offered()[0]).toBe("grow.png");
-    expect(offered()).not.toContain("mine-12.png");
-    await click(Array.from(host.querySelectorAll("button[title='Remove']"))[1]);
-    expect(stored(keyOf("u1"))).not.toContain("mine-1.png");
-    expect(stored(keyOf("u1"))).toHaveLength(11);
-  });
-
-  it("the budget counts only the uid-keyed lists of OTHER accounts, by the units a browser counts (key + value)", () => {
-    expect(stampUploadOverDeviceBudget("u1", [stamp(1)])).toBe(false); // nobody else
-    window.localStorage.setItem(LEGACY, "x".repeat(2_000_000));          // the legacy list is not counted
-    window.localStorage.setItem("orgGraph:pos:o1", "x".repeat(2_000_000)); // nor any other key
-    expect(stampUploadOverDeviceBudget("u1", [stamp(1)])).toBe(false);
-    window.localStorage.clear();
-    seedOther("u2", DEVICE_STAMP_BUDGET - 100);
-    const fits = [{ id: "a", name: "a", src: "" }];
-    const room = DEVICE_STAMP_BUDGET - (DEVICE_STAMP_BUDGET - 100) - keyOf("u1").length - JSON.stringify(fits).length;
-    expect(stampUploadOverDeviceBudget("u1", [{ id: "a", name: "a", src: "x".repeat(room) }])).toBe(false);
-    expect(stampUploadOverDeviceBudget("u1", [{ id: "a", name: "a", src: "x".repeat(room + 1) }])).toBe(true);
   });
 });
