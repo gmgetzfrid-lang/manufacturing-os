@@ -17,6 +17,12 @@
 //   * DACL-5 (criterion 3, simulator half) — the picker shows each member's
 //     whole role collection, and the content rules list names the held role
 //     or team a role / team rule matches.
+//   * Integrator fix pass (2026-10-08): the 20261136 probe runs on mount, so
+//     with no project picked a policy grant of quality.sign_off is not drawn
+//     as held where the database does not read it yet; a member who owns
+//     projects is drawn as able to sign off THERE (user_owns_project) with no
+//     project picked; a member whose headline role is not known is said so
+//     (DEC-91: null, never a placeholder role).
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { UserSearch, Check, Minus, Eye, EyeOff, UploadCloud, KeyRound, Loader2, X, AlertTriangle } from "lucide-react";
@@ -29,11 +35,14 @@ import {
   type CapabilityPolicy, type CapabilityId, type CapabilityResource, type LoadedCapabilityPolicy,
 } from "@/lib/capabilityPolicy";
 import { loadRequestTypeOptions, type RequestTypeOption } from "@/lib/requestTypes";
-import { composedAllows } from "@/components/permissions/PermissionsExplorer";
-import { canDiscover, canPublishOnLibrary, canPublishViaIndex, isControllerPrincipal, heldRoles } from "@/lib/permissions";
+import { composedAllows, probeQualitySignOffDecided, QUALITY_SIGNOFF_PRE_PASTE } from "@/components/permissions/PermissionsExplorer";
+import { canDiscover, canPublishOnLibrary, canPublishViaIndex, isControllerPrincipal } from "@/lib/permissions";
+import { heldRoles } from "@/lib/roleHeld";
 import type { AccessControl, AclIndex, NodeVisibility, Role } from "@/types/schema";
 
-interface Member { uid: string; name: string; role: string; roles: string[] }
+/** `role` is the stored headline, or null when the row carries none — never
+ *  a placeholder (DEC-91): a member with no role known holds no role here. */
+interface Member { uid: string; name: string; role: string | null; roles: string[] }
 interface LibRow { id: string; name: string; acl: AccessControl | null; aclIndex: AclIndex | null; visibility: NodeVisibility; ownerUserId: string | null }
 interface ProjectRow { id: string; name: string; ownerUserId: string | null; visibility: string | null }
 
@@ -43,8 +52,10 @@ const issueOf = (e: LoadedCapabilityPolicy): PolicyIssue =>
   e.unreadable ? { kind: "unreadable", error: e.unreadable }
     : e.stale ? { kind: "stale", error: e.staleError ?? "the refresh failed" } : null;
 
-/** DACL-5: every role the member holds — the headline and the collection. */
-const heldOf = (m: Pick<Member, "role" | "roles">): string[] => heldRoles({ role: m.role as Role, roles: m.roles as Role[] });
+/** DACL-5: every role the member holds — the headline and the collection
+ *  (a null headline adds nothing; blanks are dropped). */
+const heldOf = (m: Pick<Member, "role" | "roles">): string[] => heldRoles(m);
+const NO_ROLE_KNOWN = "no role known";
 
 export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean }) {
   const { activeOrgId, uid: actorUid, userEmail: actorEmail } = useRole();
@@ -63,11 +74,12 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
   const [simProject, setSimProject] = useState("");
   const [projectMembers, setProjectMembers] = useState<string[]>([]);
   const [projectErr, setProjectErr] = useState<string | null>(null);
-  // ORG-14 (fix pass 2): does the live database decide quality sign-off per
-  // project yet? quality_signoff_status exists only once 20261136 is pasted;
-  // before that the database admits the controllers and the project's owner
-  // only, whatever a project rule says. null = not known (not asked yet, or
-  // the probe failed for another reason — nothing is claimed either way).
+  // ORG-14 (fix pass 2 / integrator fix pass): does the live database decide
+  // quality sign-off per project yet? quality_signoff_status exists only once
+  // 20261136 is pasted; before that the database admits the controllers and
+  // the project's owner only, whatever the policy says. Asked once on mount
+  // (probeQualitySignOffDecided). null = not known (not answered yet, or the
+  // probe failed for another reason — nothing is claimed either way).
   const [signoffLive, setSignoffLive] = useState<boolean | null>(null);
   // DEC-13 stage 2: the simulator evaluates against a RESOURCE too — pick a
   // request type and the list below answers "for a ticket of this type",
@@ -103,7 +115,9 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
       setRequestTypes(rt);
       setMembers((((m.data ?? []) as Array<Record<string, unknown>>)).map((r) => ({
         uid: String(r.uid), name: String(r.display_name || r.email || r.uid),
-        role: String(r.role ?? "Viewer"), roles: (r.roles as string[] | null) ?? [],
+        // DEC-91: a row with no headline role is null here, never "Viewer".
+        role: typeof r.role === "string" && r.role.trim() ? r.role : null,
+        roles: (r.roles as string[] | null) ?? [],
       })));
       setLibs((((l.data ?? []) as Array<Record<string, unknown>>)).map((r) => ({
         id: String(r.id), name: String(r.name),
@@ -155,21 +169,14 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
     return () => { alive = false; };
   }, [simProject]);
 
-  // ORG-14 (fix pass 2): asked once, when a project is first picked.
+  // ORG-14 (integrator fix pass): asked once, on mount — the answer qualifies
+  // the no-project row too, not only a picked project.
   useEffect(() => {
-    if (!simProject || signoffLive !== null) return;
+    if (!activeOrgId) return;
     let alive = true;
-    void (async () => {
-      try {
-        const { error } = await supabase.rpc("quality_signoff_status", { p_project: simProject });
-        if (!alive) return;
-        if (!error) { setSignoffLive(true); return; }
-        const code = error.code ?? "";
-        if (code === "42883" || code === "PGRST202" || /could not find the function|function .* does not exist/i.test(error.message ?? "")) setSignoffLive(false);
-      } catch { /* not known: nothing is claimed */ }
-    })();
+    void probeQualitySignOffDecided().then((v) => { if (alive) setSignoffLive(v); });
     return () => { alive = false; };
-  }, [simProject, signoffLive]);
+  }, [activeOrgId]);
 
   const who = useMemo(() => members.find((m) => m.uid === pick) ?? null, [members, pick]);
 
@@ -286,11 +293,16 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
         // the controllers and the project's owner always can; anyone else by
         // the capability FOR THAT PROJECT, if they can see it.
         const held = heldOf(who);
-        if (!project && isControllerPrincipal({ role: who.role as Role, roles: who.roles as Role[] })) {
+        if (!project && isControllerPrincipal({ role: who.role as Role | null, roles: who.roles as Role[] })) {
           return { ...row, ok: true, why: "Admin / Document Control: on every project, whatever the policy says" };
         }
         if (project) {
           const v = qualitySignOffEligible({ policy, uid: who.uid, roles: held, project: { ...project, memberIds: projectMembers } });
+          // Integrator fix pass: a capability grant is not what the database
+          // decides until 20261136 is pasted — not drawn as held before it.
+          if (v.via === "capability" && signoffLive === false) {
+            return { ...row, ok: false, why: `on ${project.name}: granted by the policy for this project, but ${QUALITY_SIGNOFF_PRE_PASTE}` };
+          }
           return {
             ...row, ok: v.eligible,
             why: v.via === "controller" ? `on ${project.name}: Admin / Document Control always can`
@@ -314,6 +326,20 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
           .filter((pid) => policyAllows(policy, d.id, who.role, who.roles, who.uid, { projectId: pid }) !== row.ok)
           .map(nameOf);
         const rules = `${ruled.length} project rule${ruled.length === 1 ? "" : "s"}`;
+        // Integrator fix pass: the projects this member OWNS — the owner
+        // disjunct (user_owns_project) holds there whatever the policy says,
+        // before and after 20261136, so with no project picked an owner is
+        // drawn as able to sign off on those, named.
+        const owned = projects.filter((p) => p.ownerUserId === who.uid).map((p) => p.name);
+        const ownsNote = owned.length > 0 ? `owns ${owned.join(", ")} — a project's owner always can sign off there` : null;
+        if (signoffLive === false) {
+          // Integrator fix pass: the policy's grant is not what the database
+          // decides yet — never drawn as held before the paste.
+          return {
+            ...row, ok: owned.length > 0,
+            why: `${ownsNote ? `${ownsNote}; ` : ""}${row.ok ? "the policy grants it, but " : ""}${QUALITY_SIGNOFF_PRE_PASTE}`,
+          };
+        }
         if (row.ok) {
           return {
             ...row,
@@ -322,16 +348,20 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
               : `granted where no project rule applies — not on ${differs.join(", ")}, whose project rule replaces the base list (pick a project)`,
           };
         }
+        const elsewhere = differs.length > 0
+          ? `not by the base list — granted on ${differs.join(", ")} by a project rule`
+          : "not by the base list";
+        if (ownsNote) return { ...row, ok: true, why: `${ownsNote}; elsewhere ${elsewhere} (pick a project)` };
         return {
           ...row,
           why: differs.length > 0
-            ? `not by the base list — granted on ${differs.join(", ")} by a project rule; a project's owner always can (pick a project)`
+            ? `${elsewhere}; a project's owner always can (pick a project)`
             : "per project — a project's owner always can; pick a project to see project-scoped rules",
         };
       }
       return row;
     });
-  }, [who, policy, simType, simProject, project, projectMembers, projects]);
+  }, [who, policy, simType, simProject, project, projectMembers, projects, signoffLive]);
 
   return (
     <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] mb-5 overflow-hidden">
@@ -341,7 +371,7 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
         <span className="text-xs text-[var(--color-text-muted)]">simulate any member — computed with the SAME evaluators the app enforces with</span>
         <select value={pick} onChange={(e) => setPick(e.target.value)} className="ml-auto h-8 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 text-xs min-w-[180px]">
           <option value="">Pick a member…</option>
-          {members.map((m) => <option key={m.uid} value={m.uid}>{m.name} — {heldOf(m).join(", ")}</option>)}
+          {members.map((m) => <option key={m.uid} value={m.uid}>{m.name} — {heldOf(m).join(", ") || NO_ROLE_KNOWN}</option>)}
         </select>
       </div>
       {listErrors.length > 0 && (
@@ -385,7 +415,7 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
             {projectErr && <div className="mb-1 text-[10px] font-bold text-rose-700 dark:text-rose-300">The project&apos;s members could not be read ({projectErr}) — a private project&apos;s quality sign-off below may under-report.</div>}
             {signoffLive === false && (
               <div data-signoff-pending="" className="mb-1 text-[10px] font-bold text-amber-800 dark:text-amber-300">
-                This database does not decide quality sign-off per project yet (migration 20261136 is not applied): today it admits Admin / Document Control and the project&apos;s owner only. &ldquo;Sign off quality records&rdquo; below is the rule it will apply once 20261136 is pasted.
+                This database does not decide quality sign-off per project yet (migration 20261136 is not applied): today it admits Admin / Document Control and the project&apos;s owner only, and reads no policy grant of &ldquo;Sign off quality records&rdquo;. The row below says what holds today; a grant the policy makes is named but not ticked until 20261136 is pasted.
               </div>
             )}
             <ul className="space-y-0.5">
@@ -398,6 +428,9 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
                 </li>
               ))}
             </ul>
+            {who && heldOf(who).length === 0 && (
+              <div data-no-role="" className="mb-1 text-[10px] font-bold text-amber-800 dark:text-amber-300">No role is known for {who.name}: their membership row carries no headline role and no collection. The actions below are what a member with no role gets — nothing a role grants.</div>
+            )}
             <div className="mt-2 text-[10px] text-[var(--color-text-faint)]">Plus identity rights on their own tickets (requester / assigned drafter / assigned engineer), and on their own projects (a project&apos;s owner signs off its quality records).</div>
           </div>
           <div>
@@ -411,7 +444,9 @@ export default function ViewAsSimulator({ canEdit = false }: { canEdit?: boolean
               {libs.map((l) => {
                 // The SAME principal shape the mutators now build (roles collection +
                 // teams), evaluated by the SAME functions — so this reports what the
-                // app will actually allow, not a re-implementation.
+                // app will actually allow, not a re-implementation. A null headline
+                // (no role known) reaches them as null: heldRoles drops it and the
+                // ACL role match (lib/acl.ts) guards `ctx.role &&` — it grants nothing.
                 const principal = { uid: who.uid, role: who.role as Role, roles: who.roles as Role[], orgId: activeOrgId ?? undefined, teamIds, isActiveMember: true };
                 const isLibOwner = !!l.ownerUserId && l.ownerUserId === who.uid;
                 const sees = canDiscover({ principal, aclChain: [l.acl ?? undefined], visibility: l.visibility, effectiveOwnerUserId: l.ownerUserId });

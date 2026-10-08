@@ -1414,6 +1414,8 @@ facility with no configuration must keep working exactly as it does today.
 
 *`ALOG-9` stays OPEN on done-when 3 until the ruling, with the integrator as its owner.*
 
+*Landed 2026-10-08 (admin-and-org Round G, A&O P9 merge): ruled (b) by the integrator under the user's delegation at the A&O P9 merge, 2026-10-07 — one source of truth. `app/(protected)/admin/permissions/page.tsx` reads its action set from the registry (`const ADMIN_ROLES = new Set(adminSurface("permissions")?.writes ?? []);`) instead of spelling it, and the SURF-9 census (`roundE_D_rolesAdmin.test.ts`, "each ENTRY / WRITES set is spelled identically in the page's own source, or the WRITES set is read from the registry") accepts a `writes` set a page reads from `adminSurface("<key>")…writes`. Who may edit the console is unchanged: the derived set is pinned equal to the old literal `["Admin", "DocCtrl"]` (`aoRoundGP9PermissionsConsole.test.ts`). Every other admin page still spells its set and is held equal to the registry as before; a page may follow the same derivation when its package next touches it. `ALOG-9` is RESOLVED. See `ALOG-9`, `SURF-9`.*
+
 <a id="dec-36"></a>
 ## DEC-36 · Where the routing table lives, and how it resolves
 

@@ -29,6 +29,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { Search, ShieldCheck, AlertTriangle } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 import { useRole } from "@/components/providers/RoleContext";
 import {
   CAPABILITY_DEFS, policyAllows, grantActive, isRuleArray, ruleIsConditional, describeWhen, loadCapabilityPolicyEntry,
@@ -37,6 +38,36 @@ import {
 } from "@/lib/capabilityPolicy";
 import { adminSurface } from "@/lib/adminSurfaces";
 import { DORMANT_ROLES, ENGINEER_TIER_ROLES } from "@/lib/roleCapabilities";
+
+/** ORG-14 (integrator fix pass): does the live database decide quality
+ *  sign-off per project yet? `quality_signoff_status` exists only once
+ *  20261136 is pasted; before that the four quality write policies are
+ *  20261091's `is_org_controller OR user_owns_project`, which never read the
+ *  capability — so a policy grant of quality.sign_off is NOT yet what the
+ *  database decides. Asked once per mount with the nil uuid (a project
+ *  nobody can see answers no row, no error). `false` = not live (42883 /
+ *  PGRST202); `true` = live; `null` = not known (the probe failed for another
+ *  reason — nothing is claimed either way). */
+export const QUALITY_SIGNOFF_PROBE_PROJECT = "00000000-0000-0000-0000-000000000000";
+export async function probeQualitySignOffDecided(): Promise<boolean | null> {
+  try {
+    const { error } = await supabase.rpc("quality_signoff_status", { p_project: QUALITY_SIGNOFF_PROBE_PROJECT });
+    if (!error) return true;
+    const code = error.code ?? "";
+    if (code === "42883" || code === "PGRST202" || /could not find the function|function .* does not exist/i.test(error.message ?? "")) return false;
+    return null;
+  } catch { return null; }
+}
+/** What holds for quality.sign_off until 20261136 is pasted — said on the
+ *  explorer row and in View-as, never a ✓ the database would not give. */
+export const QUALITY_SIGNOFF_PRE_PASTE =
+  "the database admits only Admin / Document Control and the project's owner until migration 20261136 is pasted — a policy grant of this capability is not read yet";
+
+/** How a row is drawn beyond the policy: what the live database decides. */
+export interface ExplorerContext {
+  /** probeQualitySignOffDecided()'s answer; undefined / null = not known. */
+  qualitySignOffDecided?: boolean | null;
+}
 
 /** The matrix's columns: every role in ALL_ROLES exactly once (pinned by test). */
 export const EXPLORER_COLUMNS: ReadonlyArray<{ label: string; roles: readonly string[] }> = [
@@ -137,14 +168,22 @@ export function composedAllows(
 const upperFirst = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** One capability row, from the stored policy, as the evaluator answers it. */
-export function capabilityRow(def: CapabilityDef, policy: CapabilityPolicy): ExplorerRow {
+export function capabilityRow(def: CapabilityDef, policy: CapabilityPolicy, ctx: ExplorerContext = {}): ExplorerRow {
   const standing = STANDING[def.id];
+  // ORG-14 (integrator fix pass): before 20261136 is pasted the database does
+  // not read a quality.sign_off grant, so a column the POLICY grants is not
+  // drawn ✓ — it is ◐ with what holds today. The controllers' ✓ stands.
+  const prePaste = def.id === "quality.sign_off" && ctx.qualitySignOffDecided === false;
   const cells = EXPLORER_COLUMNS.map(({ roles }): Cell => {
     const answers = roles.map((r) => ({ r, ...composedAllows(policy, def.id, r, [r]) }));
     const held = answers.filter((a) => a.ok);
     const via = [...new Set(held.map((a) => a.via).filter((w): w is string => !!w))];
     const viaNote = via.length ? ` (${via.join("; ")})` : "";
     if (standing?.controllers && roles.every((r) => CONTROLLER_ROLES.has(r))) return { v: "y", why: standing.controllers };
+    if (prePaste) {
+      if (held.length > 0) return { v: "c", why: `Granted by the policy${held.length < roles.length ? ` to ${held.map((a) => a.r).join(", ")} only` : ""}, but ${QUALITY_SIGNOFF_PRE_PASTE}. ${standing?.anyone ?? ""}`.trim() };
+      return { v: "c", why: `${standing?.anyone ?? ""} ${upperFirst(QUALITY_SIGNOFF_PRE_PASTE)}.`.trim() };
+    }
     if (held.length === roles.length) return via.length ? { v: "y", why: upperFirst(via.join("; ")) } : { v: "y" };
     if (held.length > 0) return { v: "c", why: `Only ${held.map((a) => a.r).join(", ")} in this column${viaNote}` };
     const conditional = answers.find((a) => a.conditional)?.conditional ?? null;
@@ -156,11 +195,13 @@ export function capabilityRow(def: CapabilityDef, policy: CapabilityPolicy): Exp
   const scoped = isRuleArray(entry) ? entry.filter(ruleIsConditional) : [];
   const grants = (policy.grants ?? []).filter((g) => g.cap === def.id && grantActive(g)).length;
   const notes: string[] = [];
+  if (prePaste) notes.push(`Not decided by the database yet: ${QUALITY_SIGNOFF_PRE_PASTE}`);
   if (scoped.length) notes.push(`${scoped.length} scoped rule${scoped.length > 1 ? "s" : ""} replace this row where they match (${scoped.map((r) => describeWhen(r.when)).join("; ")})`);
   if (grants) notes.push(`${grants} live personal grant${grants > 1 ? "s" : ""}`);
   return {
     key: `cap:${def.id}`, source: "policy", area: def.area, cap: def.label, cells,
     note: notes.length ? notes.join(" · ") : undefined,
+    ...(prePaste ? { warn: `Migration 20261136 is not applied: ${QUALITY_SIGNOFF_PRE_PASTE}` } : {}),
     dormant: def.dormant,
   };
 }
@@ -311,9 +352,9 @@ export function snapshotRow(r: SnapshotRow): ExplorerRow {
   };
 }
 
-export function explorerRows(policy: CapabilityPolicy): ExplorerRow[] {
+export function explorerRows(policy: CapabilityPolicy, ctx: ExplorerContext = {}): ExplorerRow[] {
   return [
-    ...CAPABILITY_DEFS.map((d) => capabilityRow(d, policy)),
+    ...CAPABILITY_DEFS.map((d) => capabilityRow(d, policy, ctx)),
     ...SURFACE_ROWS.map(surfaceRow),
     ...SNAPSHOT_ROWS.map(snapshotRow),
   ];
@@ -346,6 +387,15 @@ export default function PermissionsExplorer() {
     if (!activeOrgId) return;
     return onCapabilityPolicyChanged(activeOrgId, () => setReread((n) => n + 1));
   }, [activeOrgId]);
+  // ORG-14 (integrator fix pass): asked once on mount — the quality.sign_off
+  // row must not show a ✓ the database would not give before 20261136.
+  const [signoffDecided, setSignoffDecided] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!activeOrgId) return;
+    let alive = true;
+    void probeQualitySignOffDecided().then((v) => { if (alive) setSignoffDecided(v); });
+    return () => { alive = false; };
+  }, [activeOrgId]);
 
   useEffect(() => {
     if (!activeOrgId) return;
@@ -364,7 +414,7 @@ export default function PermissionsExplorer() {
     return () => { alive = false; };
   }, [activeOrgId, reread]);
 
-  const all = useMemo(() => explorerRows(policy), [policy]);
+  const all = useMemo(() => explorerRows(policy, { qualitySignOffDecided: signoffDecided }), [policy, signoffDecided]);
   const areas = useMemo(() => [...new Set(all.map((r) => r.area))], [all]);
 
   const rows = useMemo(() => {

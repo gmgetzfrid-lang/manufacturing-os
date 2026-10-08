@@ -118,7 +118,10 @@ import { POST as policyRoute } from "@/app/api/admin/capability-policy/route";
 import { openHold, releaseHold, updateHoldExpectedRelease } from "@/lib/holds";
 import { POLICY_TOKENS, DORMANT_ROLES } from "@/lib/roleCapabilities";
 import { POLICY_TOKENS as EDITOR_TOKENS, tokensOutsideGrid, splitPolicyForEditor, joinPolicyFromEditor } from "@/components/permissions/CapabilityPolicyEditor";
-import { EXPLORER_COLUMNS, SURFACE_ROWS, SNAPSHOT_ROWS, explorerRows, capabilityRow, COMPOSED, composedAllows, STANDING } from "@/components/permissions/PermissionsExplorer";
+import {
+  EXPLORER_COLUMNS, SURFACE_ROWS, SNAPSHOT_ROWS, explorerRows, capabilityRow, COMPOSED, composedAllows, STANDING,
+  QUALITY_SIGNOFF_PRE_PASTE, QUALITY_SIGNOFF_PROBE_PROJECT,
+} from "@/components/permissions/PermissionsExplorer";
 import { WorkflowEngine } from "@/lib/workflow";
 import type { Ticket, Role } from "@/types/schema";
 import { adminSurface } from "@/lib/adminSurfaces";
@@ -483,14 +486,18 @@ describe("ALOG-9 — the console's role literals resolve to one declaration, and
     expect(decls).toEqual(["lib/roleCapabilities.ts"]);
     for (const r of DORMANT_ROLES) expect(POLICY_TOKENS).toContain(r);
   });
-  it("MGMT derives from MANAGEMENT_ROLES; the page's ADMIN_ROLES is the registry's permissions.writes (pinned equal by SURF-9); the route derives the tier", () => {
+  it("done-when 3 (DEC-35 ruled (b)): MGMT derives from MANAGEMENT_ROLES; the page's ADMIN_ROLES is READ from the registry's permissions.writes, which is the old literal; the route derives the tier", () => {
     expect(src("lib/capabilityPolicy.ts")).toContain("const MGMT = [...MANAGEMENT_ROLES];");
     expect(MANAGEMENT_ROLES).toEqual(["Admin", "Manager", "Supervisor"]);
-    // The admin pages spell their own action set and roundE_D_rolesAdmin's
-    // SURF-9 test holds each one equal to ADMIN_SURFACES — the declaration.
+    // Integrator fix pass (DEC-35 (b)): the page no longer spells the set — it
+    // reads the ONE declaration, lib/adminSurfaces.ts permissions.writes.
     const page = src("app/(protected)/admin/permissions/page.tsx");
-    const m = /const ADMIN_ROLES = new Set\((\[[^\]]*\])\);/.exec(page)!;
-    expect(new Set(JSON.parse(m[1]) as string[])).toEqual(new Set(adminSurface("permissions")!.writes));
+    expect(page).toContain('const ADMIN_ROLES = new Set(adminSurface("permissions")?.writes ?? []);');
+    expect(page).not.toMatch(/const ADMIN_ROLES = new Set\(\[/);
+    expect(page).toContain("const canEdit = roles.some((r) => ADMIN_ROLES.has(r));");
+    // …and the derived set IS the literal the page spelled before (who may
+    // edit the console does not change): Admin and DocCtrl, nobody else.
+    expect(new Set(adminSurface("permissions")!.writes)).toEqual(new Set(["Admin", "DocCtrl"]));
     expect(src("app/api/admin/capability-policy/route.ts")).toContain("const CONTROLLER_ROLES = ALL_ROLES.filter((r) => isControllerRole(r));");
   });
   it("a stored token with no grid column is reported (it stays live in the evaluator)", () => {
@@ -769,5 +776,73 @@ describe("QUAL-14 — split/join carry project-scoped rules on a project-scoped 
     const legacy: CapabilityPolicy = { caps: { "ticket.assign": ["Admin", "DocCtrl"] } };
     const s = splitPolicyForEditor(legacy);
     expect(joinPolicyFromEditor(s.base, s.overrides, s.opaque)).toEqual(joinPolicyFromEditor(s.base, s.overrides, s.opaque, s.projectOverrides));
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Integrator fix pass (2026-10-08) — what the console says before 20261136 is
+// pasted, the owner path, no placeholder role, no stale gap text
+// ═══════════════════════════════════════════════════════════════════════════
+describe("integrator fix pass — pre-paste truth on the explorer, no placeholder role, no stale gap", () => {
+  const q = CAPABILITY_DEFS.find((d) => d.id === "quality.sign_off")!;
+  const col = (label: string) => EXPLORER_COLUMNS.findIndex((c) => c.label === label);
+  const granted: CapabilityPolicy = { caps: { "quality.sign_off": ["Manager"] } };
+
+  it("ORG-14: while the database does not decide quality sign-off yet, a policy grant is ◐ saying what holds today — never ✓; the controllers' ✓ stands", () => {
+    const row = capabilityRow(q, granted, { qualitySignOffDecided: false });
+    expect(row.cells[col("Manager")].v).toBe("c");
+    expect(row.cells[col("Manager")].why).toContain(`Granted by the policy, but ${QUALITY_SIGNOFF_PRE_PASTE}`);
+    expect(row.cells[col("Admin")]).toEqual({ v: "y", why: STANDING["quality.sign_off"]!.controllers });
+    expect(row.cells[col("DocCtrl")].v).toBe("y");
+    expect(row.cells[col("Drafter")].v).toBe("c");
+    expect(row.cells[col("Drafter")].why).toContain("until migration 20261136 is pasted");
+    // no column outside the controllers is ✓
+    EXPLORER_COLUMNS.forEach((c, i) => { if (!["Admin", "DocCtrl"].includes(c.label)) expect(row.cells[i].v, c.label).toBe("c"); });
+    expect(row.warn).toContain("Migration 20261136 is not applied");
+    expect(row.note).toContain("Not decided by the database yet");
+    expect(QUALITY_SIGNOFF_PRE_PASTE).toBe("the database admits only Admin / Document Control and the project's owner until migration 20261136 is pasted — a policy grant of this capability is not read yet");
+  });
+  it("regression: with the database deciding (true), or not known (null / absent), the row is the policy's answer as before, and no other row reads the probe", () => {
+    const live = capabilityRow(q, granted, { qualitySignOffDecided: true });
+    expect(live.cells[col("Manager")].v).toBe("y");
+    expect(live.warn).toBeUndefined();
+    expect(live).toEqual(capabilityRow(q, granted));
+    expect(capabilityRow(q, granted, { qualitySignOffDecided: null })).toEqual(capabilityRow(q, granted));
+    expect(explorerRows(granted)).toEqual(explorerRows(granted, { qualitySignOffDecided: true }));
+    const before = explorerRows(granted).filter((r) => r.key !== "cap:quality.sign_off");
+    const after = explorerRows(granted, { qualitySignOffDecided: false }).filter((r) => r.key !== "cap:quality.sign_off");
+    expect(after).toEqual(before);
+  });
+  it("the probe asks quality_signoff_status with the nil project, reads only a missing function as 'not live', and both panels ask once on mount", () => {
+    const e = src("components/permissions/PermissionsExplorer.tsx");
+    expect(QUALITY_SIGNOFF_PROBE_PROJECT).toBe("00000000-0000-0000-0000-000000000000");
+    expect(e).toContain('supabase.rpc("quality_signoff_status", { p_project: QUALITY_SIGNOFF_PROBE_PROJECT })');
+    expect(e).toContain('if (code === "42883" || code === "PGRST202" || /could not find the function|function .* does not exist/i.test(error.message ?? "")) return false;');
+    expect(e).toContain("void probeQualitySignOffDecided().then((v) => { if (alive) setSignoffDecided(v); });");
+    const v = src("components/permissions/ViewAsSimulator.tsx");
+    expect(v).toContain("void probeQualitySignOffDecided().then((v) => { if (alive) setSignoffLive(v); });");
+    expect(v).not.toContain('supabase.rpc("quality_signoff_status"'); // one probe, shared
+  });
+  it("DEC-91: View-as maps a row with no headline role to null — never the 'Viewer' placeholder — and says 'no role known'", () => {
+    const v = src("components/permissions/ViewAsSimulator.tsx");
+    expect(v).not.toMatch(/\?\? "Viewer"/);
+    // no CODE line names the placeholder (comments may say what is not done)
+    expect(v.split("\n").filter((l) => !/^\s*\/\//.test(l)).some((l) => l.includes('"Viewer"'))).toBe(false);
+    expect(v).toContain('role: typeof r.role === "string" && r.role.trim() ? r.role : null,');
+    expect(v).toContain("interface Member { uid: string; name: string; role: string | null; roles: string[] }");
+    expect(v).toContain('const NO_ROLE_KNOWN = "no role known";');
+    expect(v).toContain('import { heldRoles } from "@/lib/roleHeld";');
+  });
+  it("ORG-14 done-when 1: with no project picked, View-as names the projects the member OWNS and draws them as able to sign off there", () => {
+    const v = src("components/permissions/ViewAsSimulator.tsx");
+    expect(v).toContain("const owned = projects.filter((p) => p.ownerUserId === who.uid).map((p) => p.name);");
+    expect(v).toContain("a project's owner always can sign off there");
+    expect(v).toContain("if (ownsNote) return { ...row, ok: true, why: `${ownsNote}; elsewhere ${elsewhere} (pick a project)` };");
+  });
+  it("the role model fold no longer calls the owner recertification path a known gap (DEL-6; the event record, 20261188)", () => {
+    const t = src("components/permissions/RoleModelTree.tsx");
+    expect(t).not.toMatch(/the owner path is a known gap/);
+    expect(t).not.toMatch(/only Admin\/DocCtrl can open the recertification flow/);
+    expect(src("components/permissions/PermissionsExplorer.tsx")).toMatch(/cap: "Access recertification reviews", m: "yycccccccccc", cond: "If library owner", checked: true/);
   });
 });

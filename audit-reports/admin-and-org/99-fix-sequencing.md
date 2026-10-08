@@ -125,6 +125,7 @@ narrowed too.
      - The criterion needs the grant op's scope and both evaluators' grant loops, plus the admin-and-org files the record names. It stays OPEN.
      - Until then a project is granted by role, through the editor's new project-scoped rules.
      - *(Review fix: this read "Proposed owner", which left the criterion with no accepted owner once P9 is done. `QUAL-14`'s Assigned line now asks for the same.)*
+     - *Ruled 2026-10-08 (the integrator's fix pass on P9's branch): done-when 2 is an explicit Partial owned by DF-P11, not built here; the integrator adds it to DF-P11's plan entry at the merge. See the entry below.*
   4. **For the integrator — drafting-flow `AUTHZ-15` (LOW), opened at P9's second review fix**: during a database fault, the affordance surfaces that draw controls from the cached policy show the defaults unlabelled (no authority widens).
      - Confirm the owners its Assigned line proposes per surface:
        - drafting-flow DF-P9 for the requests pages and the ticket-notification hook;
@@ -136,6 +137,12 @@ narrowed too.
      - Ruling (a): the census-held literal counts as one declaration. `ALOG-9` then resolves with no code.
      - Ruling (b): the census accepts a set derived from the registry, and the page derives it. One line in `app/(protected)/admin/permissions/page.tsx` plus `lib/__tests__/roundE_D_rolesAdmin.test.ts`; name the package.
      - `ALOG-9` stays OPEN until then.
+     - *Ruled (b), 2026-10-08 (the integrator's fix pass on P9's branch): the page derives the set and the census accepts it; `ALOG-9` is RESOLVED and DEC-35 carries the Landed line. See the entry below.*
   6. **Second review fix (2026-10-07), for the next reviewer of the permissions explorer's snapshot.**
      - Only eight snapshot rows were checked against the code on 2026-10-07. The other 23 are tagged NOT RE-CHECKED on screen and named in `ALOG-14`'s *Scope / residual*.
-     - Re-checking them is documentation work for whichever package next edits `components/permissions/PermissionsExplorer.tsx`. Mark each row `checked: true` with a pinning test.
+     - *Ruled 2026-10-08 (the integrator's fix pass): the 23 rows are an explicit Partial on `ALOG-14`, owner **admin-and-org P7** (the ACL / `PermissionDrawer` package); the integrator adds it to P7's plan entry at the merge. P7 checks each row against the code and marks it `checked: true` with a pinning test, or removes it. (This read "whichever package next edits" the file — no owner, which DEC-31 does not allow.)*
+- *2026-10-08 (integrator, at the A&O P9 merge — the fix pass on P9's branch, under the user's delegation) — three rulings, six review fixes, no new paste.*
+  1. **`ALOG-9` done-when 3 — DEC-35 ruled (b).** `app/(protected)/admin/permissions/page.tsx` reads `ADMIN_ROLES` from `adminSurface("permissions")?.writes`; the SURF-9 census (`lib/__tests__/roundE_D_rolesAdmin.test.ts`) accepts a registry-derived `writes` set; the derived set is pinned equal to the old literal, so who may edit the console is unchanged. `ALOG-9` RESOLVED; DEC-35 carries the Landed line.
+  2. **projects-and-cost `QUAL-14` done-when 2 — explicit Partial, owner drafting-flow DF-P11.** Not built here. The integrator adds it to DF-P11's plan entry in `audit-reports/fleet-plans/drafting-flow.json` at the merge (with the `dependsOn` line item 3 of the P9 entry asks for). The plan file is not edited on P9's branch.
+  3. **The 23 NOT RE-CHECKED snapshot rows — explicit Partial on `ALOG-14`, owner admin-and-org P7.** The integrator adds it to P7's plan entry in `audit-reports/fleet-plans/admin-and-org.json` at the merge.
+  4. **Also in the fix pass** (the final review's six minor issues): before `20261136` is pasted, View-as and the explorer no longer draw a policy grant of `quality.sign_off` as held — the probe runs once on mount and both panels say what holds today (`ORG-14`, `ALOG-14`); with no project picked an owner is drawn as able to sign off on the projects they own (`ORG-14` done-when 1 as written); the role model fold no longer calls the owner recertification path a known gap (DEL-6; `20261188`, pending its paste); the `"Viewer"` placeholder left in View-as's member mapping is gone — no role known is null and said so (DEC-91); `ALOG-14` row 6 and `QUAL-14` done-when 1 say "pending the paste of <file>".

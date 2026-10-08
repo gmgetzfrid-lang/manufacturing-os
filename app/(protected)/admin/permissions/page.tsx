@@ -32,8 +32,15 @@ import PermissionsExplorer from "@/components/permissions/PermissionsExplorer";
 import PermissionsDrawer, { type NodeType } from "@/components/permissions/PermissionDrawer";
 import CapabilityPolicyEditor from "@/components/permissions/CapabilityPolicyEditor";
 import ViewAsSimulator from "@/components/permissions/ViewAsSimulator";
+import { adminSurface } from "@/lib/adminSurfaces";
 
-const ADMIN_ROLES = new Set(["Admin", "DocCtrl"]);
+// ALOG-9 done-when 3 / DEC-35, ruled (b) by the integrator at the A&O P9
+// merge: the page's action set is READ from the one declaration — the
+// admin-surface registry's `permissions.writes` (Admin, DocCtrl) — not spelled
+// again here. The set is the same literal the registry holds, so who may edit
+// does not change (pinned by aoRoundGP9PermissionsConsole.test.ts); a missing
+// registry entry admits nobody.
+const ADMIN_ROLES = new Set(adminSurface("permissions")?.writes ?? []);
 
 interface NodeRow {
   id: string;

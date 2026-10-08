@@ -176,10 +176,16 @@ describe("ViewAsSimulator", () => {
     await pickMember("dc");
     expect(qualityOk()).toBe("yes"); // headline Manager, DocCtrl in the collection
     await pickMember("own");
-    expect(qualityOk()).toBe("no");
+    // integrator fix pass (ORG-14 done-when 1): with no project picked, the
+    // owner of PSSR Unit 200 is drawn as able to sign off THERE, named
+    expect(qualityOk()).toBe("yes");
+    expect(host.querySelector('[data-cap="quality.sign_off"]')!.textContent).toContain("owns PSSR Unit 200 — a project's owner always can sign off there; elsewhere not by the base list (pick a project)");
     await pickProject("p1");
     expect(qualityOk()).toBe("yes");
     expect(text()).toContain("on PSSR Unit 200: they own the project");
+    await pickProject("p2");
+    expect(qualityOk()).toBe("no"); // they do not own Turnaround
+    await pickProject("p1");
     await pickMember("saf");
     expect(qualityOk()).toBe("yes");
     expect(text()).toContain("granted by the policy for this project");
@@ -218,14 +224,31 @@ describe("ViewAsSimulator", () => {
     expect(li()).toContain("granted on every project they can see");
   });
 
-  it("ORG-14 (fix pass 2): before 20261136 is pasted, a picked project says the database admits only the controllers and the owner today", async () => {
+  it("ORG-14 (fix pass 2 / integrator fix pass): before 20261136 is pasted — asked once on mount — a policy grant is NOT drawn as held with no project picked nor on a picked project; an owner and a controller are", async () => {
     seed();
+    // Engineers by the base list, Safety by p1's rule: neither is read by the database before the paste
+    h.db.tables.org_configurations = [policyRow({ "quality.sign_off": [{ tokens: ["Engineer"] }, { tokens: ["Safety"], when: { projectId: ["p1"] } }] })];
     h.rpc = { data: null, error: { message: "Could not find the function public.quality_signoff_status(p_project) in the schema cache", code: "PGRST202" } };
-    await mount(); await pickMember("saf");
-    expect(host.querySelector("[data-signoff-pending]")).toBeNull(); // not asked until a project is picked
-    await pickProject("p1");
-    expect(h.rpcCalls).toEqual(["quality_signoff_status"]);
+    await mount();
+    expect(h.rpcCalls).toEqual(["quality_signoff_status"]); // asked on mount, before any pick
+    const li = () => host.querySelector('[data-cap="quality.sign_off"]')!.textContent ?? "";
+    await pickMember("eng"); // a base-list holder by the policy
     expect(host.querySelector("[data-signoff-pending]")!.textContent).toContain("migration 20261136 is not applied");
+    expect(qualityOk()).toBe("no");
+    expect(li()).toContain("the policy grants it, but the database admits only Admin / Document Control and the project's owner until migration 20261136 is pasted");
+    expect(li()).not.toContain("granted on every project they can see");
+    await pickMember("own"); // owns PSSR Unit 200: the owner disjunct holds before the paste
+    expect(qualityOk()).toBe("yes");
+    expect(li()).toContain("owns PSSR Unit 200 — a project's owner always can sign off there; the database admits only Admin / Document Control");
+    await pickMember("dc"); // a controller (by the collection): always
+    expect(qualityOk()).toBe("yes");
+    await pickMember("saf"); await pickProject("p1"); // p1's rule names Safety — not read yet
+    expect(qualityOk()).toBe("no");
+    expect(li()).toContain("on PSSR Unit 200: granted by the policy for this project, but the database admits only Admin / Document Control");
+    await pickMember("own"); // the owner, on their project
+    expect(qualityOk()).toBe("yes");
+    expect(li()).toContain("on PSSR Unit 200: they own the project");
+    expect(h.rpcCalls).toEqual(["quality_signoff_status"]); // still once
   });
   it("ORG-14 (fix pass 2) regression: with 20261136 live (the probe answers), no such note", async () => {
     seed();
@@ -237,6 +260,23 @@ describe("ViewAsSimulator", () => {
     h.rpc = { data: null, error: { message: "timeout" } };
     await mount(); await pickMember("saf"); await pickProject("p1");
     expect(host.querySelector("[data-signoff-pending]")).toBeNull();
+  });
+
+  it("DEC-91: a member whose row carries no headline role is listed as 'no role known' — never simulated as a Viewer", async () => {
+    seed();
+    h.db.tables.org_members = [...members, { org_id: "o1", uid: "nr", display_name: "Nia Norole", role: null, roles: [], status: "active" }];
+    await mount();
+    const opts = [...select((s) => [...s.options].some((o) => o.value === "nr")).options].map((o) => o.textContent ?? "");
+    expect(opts).toContain("Nia Norole — no role known");
+    expect(opts.find((o) => o.startsWith("Nia"))).not.toContain("Viewer");
+    await pickMember("nr");
+    expect(host.querySelector("[data-no-role]")!.textContent).toContain("No role is known for Nia Norole");
+    expect(host.querySelector('[data-cap="ticket.manage"]')!.getAttribute("data-ok")).toBe("no");
+    expect(qualityOk()).toBe("no");
+    // a real member is untouched
+    await pickMember("dc");
+    expect(host.querySelector("[data-no-role]")).toBeNull();
+    expect(qualityOk()).toBe("yes");
   });
 
   it("ALOG-1 done-when 2: an unreadable policy is SAID, and no grant is offered", async () => {
@@ -376,6 +416,26 @@ describe("PermissionsExplorer", () => {
     // the composed rows (blocker): a Manager approves drawings
     const marks = [...rowOf("Direct engineering approval").querySelectorAll("td")].slice(1).map((td) => td.textContent);
     expect(marks[2]).toBe("✓"); // Manager
+  });
+  it("integrator fix pass / ORG-14: before 20261136 is pasted the quality sign-off row shows a policy grant as ◐ saying what holds today, never ✓; the controllers stay ✓; once live, ✓", async () => {
+    h.db.tables.org_configurations = [policyRow({ "quality.sign_off": ["Manager"] })];
+    h.rpc = { data: null, error: { message: "Could not find the function public.quality_signoff_status(p_project) in the schema cache", code: "PGRST202" } };
+    await mount();
+    const rowOf = () => [...host.querySelectorAll("tr")].find((r) => r.querySelector("td")?.textContent?.startsWith("Sign off quality records"))!;
+    const marks = () => [...rowOf().querySelectorAll("td")].slice(1).map((td) => td.textContent);
+    expect(h.rpcCalls).toEqual(["quality_signoff_status"]);
+    expect(marks()[0]).toBe("✓"); // Admin
+    expect(marks()[1]).toBe("✓"); // DocCtrl
+    expect(marks()[2]).toBe("◐"); // Manager: granted by the policy, not read by the database yet
+    expect(rowOf().textContent).toContain("Not decided by the database yet: the database admits only Admin / Document Control and the project's owner until migration 20261136 is pasted");
+    expect(rowOf().querySelector('[title^="Migration 20261136 is not applied"]')).not.toBeNull();
+    // live: the same policy, the grant is ✓ and no warning
+    act(() => root.unmount()); root = createRoot(host);
+    __resetCapabilityPolicyCache();
+    h.rpc = { data: null, error: null }; h.rpcCalls = [];
+    await mount();
+    expect(marks()[2]).toBe("✓");
+    expect(rowOf().textContent).not.toContain("Not decided by the database yet");
   });
   it("ALOG-1 / DEC-89: an unreadable policy shows the shipped defaults LABELLED, never as the org's", async () => {
     h.db.readError.org_configurations = { message: "boom" };
