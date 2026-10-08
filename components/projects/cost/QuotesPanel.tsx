@@ -175,8 +175,9 @@ export interface NameFlag {
 export interface AwardGate {
   override: AwardFlag | null; also: AwardFlag[]; acks: NameFlag[];
   /** DEC-90 A21: the vendor name on file when the override is a do-not-use
-   *  row whose name only LEADS it (no person's link of the org decides) —
-   *  the prompt says it is a partial match; else null or absent. */
+   *  row reached by that NAME, which only LEADS it (no person's link of the
+   *  org decides — neither the document's own nor its contractor's) — the
+   *  prompt says it is a partial match; else null or absent. */
   overridePartialOf?: string | null;
 }
 
@@ -320,6 +321,16 @@ export async function awardGateFor(doc: CostDocument): Promise<AwardGate> {
   const linkedCompany = () => (linked ??= companyId ? orgCompany(companyId, orgId) : Promise.resolve(null));
   let barred: Promise<Company[]> | null = null;
   const barredRows = () => (barred ??= listBarredCompanies(orgId));
+  // The contractor's company id (a person's link on the party), read once and
+  // only when the partial-match question needs it; the read
+  // `companyAwardAnswersFor`'s fallback makes. A failed read throws.
+  let party: Promise<string | null> | null = null;
+  const partyCompanyId = () => (party ??= (async () => {
+    if (!partyId) return null;
+    const { data: p, error: partyErr } = await supabase.from("project_parties").select("company_id").eq("id", partyId).maybeSingle();
+    if (partyErr) throw new Error(userFacingReadError(partyErr));
+    return text((p as { company_id?: unknown } | null)?.company_id);
+  })());
 
   const bid = { orgId, companyId, partyId, vendorName };
   // J14: the database's whole list once 20261179 is applied (the override
@@ -348,10 +359,16 @@ export async function awardGateFor(doc: CostDocument): Promise<AwardGate> {
   const alsoOf = (acks: NameFlag[]) => listedAlso.filter((c) => !acks.some((a) => a.onFile && a.company.id === c.id));
   // COST-3 residual 2 (DEC-90 A21): a do-not-use override whose name only
   // LEADS the vendor name on file is a partial match, flagged for a person to
-  // rule on — the prompt says so. A person's link of the org decides, and is
-  // none (read only in that case).
+  // rule on — the prompt says so — ONLY when the override was reached by
+  // that NAME: no person's link of the org decides (the document's own, or
+  // its contractor's — a contractor linked to the override's company is a
+  // person's link, not a name match: J17 review fix 1), and the name's own
+  // do-not-use look-alike (the same order the database answers in) is the
+  // override. Each read happens only in that case.
   const overridePartialOf = override?.status === "do_not_use" && vendorName && leadsOnly(vendorName, override.name)
-    && !(companyId && (await linkedCompany())) ? vendorName : null;
+    && !(companyId && (await linkedCompany()))
+    && override.id !== (await partyCompanyId())
+    && barredCompanyFor(vendorName, null, await barredRows())?.id === override.id ? vendorName : null;
   if (!asks.length) return { override, also: alsoOf([]), acks: [], overridePartialOf };
   if (companyId && (await linkedCompany())) return { override, also: alsoOf([]), acks: [], overridePartialOf };
   const acks: NameFlag[] = [];
