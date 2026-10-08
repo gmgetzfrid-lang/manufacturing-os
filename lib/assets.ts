@@ -725,3 +725,33 @@ export function invalidateAssetFileCache(): void {
   fileCountCache.clear();
   notifyAllKeys();
 }
+
+// ─── Unlinking a document from an asset (the registry drawer) ────────────
+// AREA-2 (20261170): a link the equipment sweep read off the drawing
+// (source 'drawing') is not a person's to delete — the database's policy
+// matches no row. But 0 rows also comes back when the link is already gone,
+// when the caller no longer holds the registry writer role, or when they can
+// no longer read the document. The row is read FIRST, so what is said names
+// what was found — never the sweep for a link that is not its.
+
+export type UnlinkDocumentOutcome =
+  | { found: "removed"; message: null }
+  /** Already gone (another person unlinked it): the caller refreshes. */
+  | { found: "gone"; message: null }
+  | { found: "drawing" | "refused" | "unreadable"; message: string };
+
+export const UNLINK_DRAWING_MESSAGE = "This link was not removed. A link the equipment sweep read off the drawing is removed by dismissing the tag in that library's Equipment sweep, so the decision is recorded.";
+export const UNLINK_REFUSED_MESSAGE = "This link could not be removed (you may no longer have the registry writer role or access to this document).";
+
+export async function unlinkDocumentFromAsset(documentId: string, assetId: string): Promise<UnlinkDocumentOutcome> {
+  const { data: row, error: readErr } = await supabase.from("document_assets").select("id, source")
+    .eq("document_id", documentId).eq("asset_id", assetId).maybeSingle();
+  if (readErr) return { found: "unreadable", message: `This link could not be read (${readErr.message}). Try again.` };
+  if (!row) return { found: "gone", message: null };
+  if ((row as { source?: string | null }).source === "drawing") return { found: "drawing", message: UNLINK_DRAWING_MESSAGE };
+  const { data: gone, error } = await supabase.from("document_assets").delete()
+    .eq("document_id", documentId).eq("asset_id", assetId).select("id");
+  if (error) return { found: "refused", message: error.message };
+  if (Array.isArray(gone) && gone.length === 0) return { found: "refused", message: UNLINK_REFUSED_MESSAGE };
+  return { found: "removed", message: null };
+}

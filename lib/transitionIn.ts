@@ -119,6 +119,8 @@ export function sameNumber(a: string | null | undefined, b: string | null | unde
 }
 
 const RETIRED = "(Archived,Superseded)";
+/** Ids per `.in()` request (the request line carries every id; lib/projects.ts IN_FILTER_CHUNK). */
+const IN_CHUNK = 100;
 
 /** Documents still sitting in the project's intake folder — the un-adopted
  *  set. Company comes from the latest external version. INTK-3 / SAF-11: a
@@ -624,14 +626,19 @@ async function linkAdoptedEquipment(
   if (error) {
     return `The sheet was adopted, but its equipment links were not recorded (${userFacingError(error, { clause: true, context: "transitionIn" })}) — link ${assets.map((a) => a.tag).join(", ")} from the equipment registry.`;
   }
-  // The pairs the sweep's reading holds (written before this adoption).
-  const { data: held, error: readErr } = await supabase.from("document_assets").select("asset_id")
-    .eq("org_id", orgId).eq("document_id", docId).eq("source", "drawing")
-    .in("asset_id", assets.map((a) => a.id));
-  if (readErr) {
-    return `The sheet was adopted and its equipment linked, but whether the equipment sweep already holds any of those links could not be checked — open each tag in the equipment registry and Link it so the link is yours.`;
+  // The pairs the sweep's reading holds (written before this adoption) — in
+  // batches of 100 ids: the request line carries every id, and a unit
+  // overview sheet matches more than the gateway's URL limit takes.
+  const drawingHeld = new Set<string>();
+  for (let i = 0; i < assets.length; i += IN_CHUNK) {
+    const { data: held, error: readErr } = await supabase.from("document_assets").select("asset_id")
+      .eq("org_id", orgId).eq("document_id", docId).eq("source", "drawing")
+      .in("asset_id", assets.slice(i, i + IN_CHUNK).map((a) => a.id));
+    if (readErr) {
+      return `The sheet was adopted and its equipment linked, but whether the equipment sweep already holds any of those links could not be checked — open each tag in the equipment registry and Link it so the link is yours.`;
+    }
+    for (const r of (held ?? []) as Array<{ asset_id: string }>) drawingHeld.add(String(r.asset_id));
   }
-  const drawingHeld = new Set(((held ?? []) as Array<{ asset_id: string }>).map((r) => String(r.asset_id)));
   if (drawingHeld.size === 0) return null;
   const notMine: string[] = [];
   let token = "";

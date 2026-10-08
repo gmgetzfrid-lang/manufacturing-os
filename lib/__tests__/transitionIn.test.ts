@@ -12,6 +12,8 @@ const db = vi.hoisted(() => ({
   rpcCalls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
   /** INTK-16: an error for one read, by table and selected columns. */
   failSelect: null as null | ((table: string, columns: string) => { message: string; code?: string } | null),
+  /** I-11: the most ids one `.in()` takes — a longer list is the gateway's 414. */
+  maxInList: null as number | null,
 }));
 vi.mock("@/lib/supabase", () => {
   const chain = (table: string) => {
@@ -38,6 +40,9 @@ vi.mock("@/lib/supabase", () => {
     const run = () => {
       const hooked = !write ? db.failSelect?.(table, selected) ?? null : null;
       if (hooked) return { data: null, error: hooked };
+      if (db.maxInList != null && ops.some(([o, a]) => o === "in" && (a[1] as unknown[]).length > db.maxInList!)) {
+        return { data: null, error: { code: "", message: "414 Request-URI Too Large" } };
+      }
       const errs = db.errors[`${table}.${write ? write.method : "select"}`];
       const err = errs?.shift() ?? null;
       if (err) return { data: null, error: err };
@@ -646,6 +651,31 @@ describe("adoption's equipment links: a pair the equipment sweep holds becomes t
     seed();
     db.tables.document_assets = [];
     expect(await adoptWith()).toEqual({ ok: true });
+    expect(posts).toEqual([]);
+  });
+  it("a unit overview sheet matching 250 assets: the drawing-held read goes in batches of 100 ids, under the URL limit, and every held pair is adopted (integrator fix pass)", async () => {
+    seed();
+    db.maxInList = 200;
+    const many = Array.from({ length: 250 }, (_, i) => ({ id: `a${i + 1}`, tag: `P-${i + 1}` }));
+    // The sweep holds three of them, one in each batch of 100.
+    db.tables.document_assets = ["a1", "a150", "a250"].map((id) => ({ id: `r-${id}`, org_id: "o1", document_id: "sheet1", asset_id: id, tag_text: id, source: "drawing" }));
+    try {
+      const res = await adoptDocument({
+        orgId: "o1", projectId: "p1", docId: "sheet1", libraryId: "lib-dest", collectionId: null, newNumber: null,
+        linkAssets: many, actorId: "u1", actorEmail: "u1@x",
+      });
+      // Reproduction: fix pass 3 sent all 250 ids in one `.in()` — 414 — and said the check could not be made, adopting nothing.
+      expect(res).toEqual({ ok: true });
+      expect(posts.map((p) => p.assetId)).toEqual(["a1", "a150", "a250"]);
+      const reads = db.queries.filter((q) => q.table === "document_assets" && q.ops.some(([o]) => o === "in"));
+      expect(reads.map((q) => (q.ops.find(([o]) => o === "in")![1][1] as unknown[]).length)).toEqual([100, 100, 50]);
+    } finally { db.maxInList = null; }
+  });
+  it("a batch of the drawing-held read that fails is said as 'could not be checked' (unchanged)", async () => {
+    seed();
+    db.errors["document_assets.select"] = [{ message: "canceling statement due to statement timeout", code: "57014" }];
+    const res = await adoptWith();
+    expect(res.equipmentNote).toMatch(/could not be checked/);
     expect(posts).toEqual([]);
   });
 });

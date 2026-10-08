@@ -497,13 +497,14 @@ const parseDismissals = (v: unknown): BridgeDismissal[] =>
 
 // ─── Reads ──────────────────────────────────────────────────────────────────
 
-type Builder = PromiseLike<{ data: unknown; error: PgErr }> & { range: (a: number, b: number) => Builder };
+export type Builder = PromiseLike<{ data: unknown; error: PgErr }> & { range: (a: number, b: number) => Builder };
 
 /** Read one ordered query window by window until an empty window or the
  *  ceiling (BR-11: never one capped slab presented as whole). Each window
  *  starts where the rows read so far end — a window PostgREST cut at its
- *  max-rows (no error) skips nothing. */
-async function readWindows<T>(make: () => Builder, ceiling: number): Promise<{ rows: T[]; error: PgErr; truncated: boolean }> {
+ *  max-rows (no error) skips nothing. Exported for the sheets route, whose
+ *  'extracted' read follows the same rule. */
+export async function readWindows<T>(make: () => Builder, ceiling: number): Promise<{ rows: T[]; error: PgErr; truncated: boolean }> {
   const rows: T[] = [];
   for (;;) {
     const from = rows.length;

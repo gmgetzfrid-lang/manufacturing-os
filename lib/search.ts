@@ -160,12 +160,16 @@ export async function lookupTag(orgId: string, query: string, opts: { documentsP
     const ids = live.map((f) => f.row.id);
     // GAP-311: the sheet each link names (20261170's sheet_label) and, GOV-9,
     // the model that transcribed the page it was read off (20261171); a
-    // database without a column answers the links as before.
+    // database without a column answers the links as before. The narrower
+    // read is tried only when a COLUMN is missing: any other failure (a
+    // timeout, a refused read) is carried up — a retry without `model` would
+    // drop the "(AI-read, unconfirmed)" mark and read as a plain link.
     const linkRead = (cols: string) => supabase.from("document_assets").select(cols)
       .in("asset_id", ids).limit(perAsset * ids.length * 4);
     let linkRes: { data: unknown; error: { code?: string; message?: string } | null } = await linkRead("asset_id, document_id, sheet_label, source, model");
-    if (linkRes.error) linkRes = await linkRead("asset_id, document_id, sheet_label, source");
-    if (linkRes.error) linkRes = await linkRead("asset_id, document_id");
+    if (linkRes.error && missingColumn(linkRes.error)) linkRes = await linkRead("asset_id, document_id, sheet_label, source");
+    if (linkRes.error && missingColumn(linkRes.error)) linkRes = await linkRead("asset_id, document_id");
+    if (linkRes.error) throw new TagLookupReadError(`The drawings ${live.map((f) => f.row.tag).join(", ")} ${live.length === 1 ? "is" : "are"} on could not be read: ${linkRes.error.message ?? "read failed"}`);
     const links = linkRes.data;
     const docIdsByAsset = new Map<string, string[]>();
     const linkMeta = new Map<string, { sheetLabel: string | null; fromDrawing: boolean; aiRead: boolean }>(); // `${asset}:${doc}`
@@ -204,9 +208,21 @@ export async function lookupTag(orgId: string, query: string, opts: { documentsP
           }];
         }),
     }));
-  } catch {
+  } catch (e) {
+    // A failed link read is said (globalSearch settles it as no exact answer
+    // — the fuzzy asset hit still lists the asset); anything else as before.
+    if (e instanceof TagLookupReadError) throw e;
     return [];
   }
+}
+
+/** lookupTag found the asset but could not read the drawings it is on. */
+export class TagLookupReadError extends Error {}
+
+/** A column the database does not have yet (before 20261170 / 20261171) —
+ *  the one error a narrower read answers. */
+function missingColumn(e: { code?: string; message?: string }): boolean {
+  return e.code === "42703" || e.code === "PGRST204" || /column .* does not exist|could not find the .* column/i.test(e.message ?? "");
 }
 
 /** Apply full-text search with refinery synonym expansion, falling back to

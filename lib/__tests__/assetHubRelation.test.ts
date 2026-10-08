@@ -226,4 +226,12 @@ describe("I-11 fix pass 3 — the hold indicator is never a silent 0 (the field-
     await render();
     expect(container.querySelector('[data-testid="list-cut"]')?.textContent).toContain("the first 500 documents whose equipment tags name Q-1");
   });
+
+  it("the sheets route's 'extracted' read at its ceiling (extractedCut) is said in the same banner (integrator fix pass)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ extracted: s.extracted, extractedCut: true, extractedCap: 5000, notes: ["The extracted sheets stopped at 5000 indexed pages — the list may be incomplete."] }) })));
+    await render();
+    const note = container.querySelector('[data-testid="list-cut"]');
+    expect(note?.textContent).toContain("Only the first 5000 indexed pages naming E-22 were read");
+    expect(note?.textContent).toContain("some documents may not be listed here");
+  });
 });

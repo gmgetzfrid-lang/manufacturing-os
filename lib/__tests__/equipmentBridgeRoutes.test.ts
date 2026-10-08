@@ -397,6 +397,40 @@ describe("GM-14 — /api/equipment/sheets serves an equipment tag's sheets per c
     expect(json.extracted.find((x: Row) => x.knowledgeDocumentId === "k-open2").sheets).toEqual(["2002-D-10002 SHT 2 (AI-read, unconfirmed)"]);
     expect(json.extracted.find((x: Row) => x.knowledgeDocumentId === "k-up")).toMatchObject({ documentId: null, pages: [7], sheets: ["page 7 (no title block read)"] });
   });
+  it("the 'extracted' read is paged (BR-11): a project whose PostgREST max-rows is 100 and a tag read on 250 pages lists every page, and says nothing", async () => {
+    sheets();
+    st.db.tables.knowledge_page_entities = Array.from({ length: 250 }, (_, i) => ({
+      id: `e-${String(i).padStart(5, "0")}`, org_id: "o1", document_id: "k-up", page: i + 1, kind: "equipment", tag: "E-22",
+    }));
+    st.db.maxRows = 100;
+    const json = await (await sheetsGET(getReq("http://x/api/equipment/sheets?orgId=o1&tag=E-22"))).json();
+    // Reproduction: fix pass 3 read one `.limit(2000)` slab — 100 rows came back with no error and pages 101–250 were never listed.
+    expect(json.extracted.map((x: Row) => x.knowledgeDocumentId)).toEqual(["k-up"]);
+    expect(json.extracted[0].pages).toHaveLength(250);
+    expect(json.extracted[0].pages[249]).toBe(250);
+    expect(json.extractedCut).toBe(false);
+    expect(json.notes).toEqual([]);
+  });
+  it("a read that reaches the ceiling says so: extractedCut and a note, never a silent cut", async () => {
+    sheets();
+    st.db.tables.knowledge_page_entities = Array.from({ length: 5100 }, (_, i) => ({
+      id: `e-${String(i).padStart(5, "0")}`, org_id: "o1", document_id: "k-up", page: i + 1, kind: "equipment", tag: "E-22",
+    }));
+    const json = await (await sheetsGET(getReq("http://x/api/equipment/sheets?orgId=o1&tag=E-22"))).json();
+    expect(json.extractedCut).toBe(true);
+    expect(json.extractedCap).toBe(5000);
+    expect(json.notes).toEqual(["The extracted sheets stopped at 5000 indexed pages — the list may be incomplete."]);
+    expect(json.extracted[0].pages).toHaveLength(5000);
+  });
+  it("a failed 'extracted' read is said, and lists nothing (unchanged)", async () => {
+    sheets();
+    st.db.selectErrors = { knowledge_page_entities: { code: "57014", message: "canceling statement due to statement timeout" } };
+    const json = await (await sheetsGET(getReq("http://x/api/equipment/sheets?orgId=o1&tag=E-22"))).json();
+    expect(json.extracted).toEqual([]);
+    expect(json.extractedCut).toBe(false);
+    expect(json.notes).toEqual(["The extracted sheets could not be read."]);
+    expect(json.relations).toHaveLength(1);
+  });
   it("refuses an anonymous caller and a non-member", async () => {
     sheets();
     expect((await sheetsGET(getReq("http://x/api/equipment/sheets?orgId=o1&tag=E-22", "nope"))).status).toBe(401);

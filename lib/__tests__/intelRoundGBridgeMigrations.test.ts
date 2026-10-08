@@ -197,13 +197,19 @@ describe("20261170 — AREA-2 / DACL-11: the documentAssetsPolicy census", () =>
     expect(tail).toMatch(/NOT has_function_privilege\('anon', 'documents_resync_assets\(\)', 'EXECUTE'\)/);
     expect(tail).toMatch(/prosrc LIKE '%WHERE document_id = NEW\.id AND source = ''jsonb_sync'';%'/);
   });
-  it("the registry drawer's Unlink reads back what it deleted and says so when a drawing link was not removed (the policy matches no row)", () => {
+  it("the registry drawer's Unlink reads the link first and says what it found: a drawing link is the sweep's to dismiss; a refused delete names the role or access (lib/assets.ts unlinkDocumentFromAsset; cases in registryUnlink.test.ts)", () => {
     const page = readFileSync(join(process.cwd(), "app", "(protected)", "admin", "assets", "page.tsx"), "utf8");
     const at = page.indexOf("const unlinkDocument = async");
     const body = page.slice(at, page.indexOf("refreshDocs();", at));
-    expect(body).toMatch(/\.delete\(\)\s*\.eq\("document_id", documentId\)\.eq\("asset_id", asset\.id\)\.select\("id"\)/);
-    expect(body).toMatch(/gone\.length === 0/);
-    expect(body).toMatch(/dismissing the tag in that library's Equipment sweep/);
+    expect(body).toMatch(/const res = await unlinkDocumentFromAsset\(documentId, asset\.id\);/);
+    const lib = readFileSync(join(process.cwd(), "lib", "assets.ts"), "utf8");
+    const fn = lib.slice(lib.indexOf("export async function unlinkDocumentFromAsset("));
+    expect(fn.indexOf('.select("id, source")')).toBeLessThan(fn.indexOf(".delete()"));
+    expect(fn).toMatch(/source === "drawing"\) return \{ found: "drawing", message: UNLINK_DRAWING_MESSAGE \}/);
+    expect(fn).toMatch(/\.delete\(\)\s*\.eq\("document_id", documentId\)\.eq\("asset_id", assetId\)\.select\("id"\)/);
+    expect(fn).toMatch(/gone\.length === 0\) return \{ found: "refused", message: UNLINK_REFUSED_MESSAGE \}/);
+    expect(lib).toMatch(/UNLINK_DRAWING_MESSAGE = ".*dismissing the tag in that library's Equipment sweep/);
+    expect(lib).toMatch(/UNLINK_REFUSED_MESSAGE = ".*registry writer role or access to this document/);
   });
 });
 

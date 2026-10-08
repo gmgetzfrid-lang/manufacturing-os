@@ -285,6 +285,12 @@ export default function AssetHubPage() {
         });
         const json = await res.json().catch(() => ({}));
         setExtracted(res.ok ? ((json.extracted as ExtractedSheet[]) ?? []) : []);
+        // The route's read reached its ceiling: the "Also read on" list may
+        // be incomplete, said with the other cuts (never silently).
+        if (res.ok && json.extractedCut === true) {
+          cut.push(`the first ${typeof json.extractedCap === "number" ? `${json.extractedCap} ` : ""}indexed pages naming ${tag}`);
+          setListCut([...cut]);
+        }
       } catch { setExtracted([]); }
 
       // Open holds on those documents — in batches of IN_CHUNK ids (the list

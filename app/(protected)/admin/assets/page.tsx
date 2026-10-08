@@ -24,7 +24,7 @@ import { supabase } from "@/lib/supabase";
 import {
   listAssets, listAssetTypes, getPhotoCounts, getCoverPhotoUrls, createAsset, createAssetType,
   updateAsset, deleteAsset, archiveAsset, restoreAsset, listAssetPhotos, deletePhoto, updatePhoto,
-  invalidateAssetCache, photoAgeCategory, listAssetIdentities, getAsset,
+  invalidateAssetCache, photoAgeCategory, listAssetIdentities, getAsset, unlinkDocumentFromAsset,
   type Asset, type AssetType, type AssetPhoto, type PhotoStatus, type AssetIdentity,
 } from "@/lib/assets";
 import {
@@ -1903,15 +1903,12 @@ function AssetEditDrawer({
       confirmLabel: "Unlink",
     });
     if (!ok) return;
-    // AREA-2 (20261170): a link the equipment sweep read off the drawing
-    // (source 'drawing') is not deleted from here — the database refuses it
-    // and the delete matches no row. Say so instead of looking done.
-    const { data: gone, error: e } = await supabase.from("document_assets").delete()
-      .eq("document_id", documentId).eq("asset_id", asset.id).select("id");
-    if (e) setError(e.message);
-    else if (Array.isArray(gone) && gone.length === 0) {
-      setError("This link was not removed. A link the equipment sweep read off the drawing is removed by dismissing the tag in that library's Equipment sweep, so the decision is recorded.");
-    }
+    // AREA-2 (20261170): the link is read first and what was found is said —
+    // a drawing link (the sweep's, not deletable from here) sends the person
+    // to the sweep; a refused delete names the role or document access; a
+    // link already gone just refreshes (lib/assets.ts unlinkDocumentFromAsset).
+    const res = await unlinkDocumentFromAsset(documentId, asset.id);
+    if (res.message) setError(res.message);
     refreshDocs();
   };
 

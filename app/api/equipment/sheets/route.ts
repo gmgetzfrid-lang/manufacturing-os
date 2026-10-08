@@ -15,7 +15,8 @@
 //                 lib/knowledgeAccess (a copy of a controlled document only
 //                 when the caller can read that document; fails closed). A
 //                 copy at an earlier revision than its document never counts
-//                 (GAP-309).
+//                 (GAP-309). The read is paged; `extractedCut` says when it
+//                 reached its ceiling (the hub shows it).
 //
 // Any active member may ask (the asset hub is every member's page); what
 // comes back is what they could open anyway. No AI call.
@@ -25,9 +26,14 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { callerScopedClient } from "@/lib/serverAuth";
 import { loadPrincipal, readableControlledDocIds } from "@/lib/knowledgeAccess";
 import { normalizeTag, tagKey } from "@/lib/codebook";
-import { sheetAddressForPage, sheetText } from "@/lib/equipmentBridgeServer";
+import { sheetAddressForPage, sheetText, readWindows, type Builder } from "@/lib/equipmentBridgeServer";
 
 export const runtime = "nodejs";
+
+/** The most indexed-page rows the 'extracted' read takes for one tag. A
+ *  read that reaches it is said (`extractedCut`, and a note), never a
+ *  silent cut (BR-11). */
+const EXTRACTED_ROWS_CAP = 5000;
 
 function bad(msg: string, status = 400) {
   return NextResponse.json({ error: msg }, { status });
@@ -110,13 +116,21 @@ export async function GET(req: NextRequest) {
 
   // ── extracted, filtered per caller.
   const extracted: SheetExtracted[] = [];
+  let extractedCut = false;
   {
-    const { data: ents, error } = await supabaseAdmin.from("knowledge_page_entities")
-      .select("document_id, page, tag")
-      .eq("org_id", orgId).in("kind", ["equipment"]).in("tag", [display]).limit(2000);
-    if (error) notes.push("The extracted sheets could not be read.");
+    // Paged window by window (BR-11): a response PostgREST cut at its
+    // max-rows is not the end, and a read that reaches the ceiling says so.
+    const ents = await readWindows<{ document_id: string; page: number }>(() => supabaseAdmin.from("knowledge_page_entities")
+      .select("id, document_id, page")
+      .eq("org_id", orgId).in("kind", ["equipment"]).in("tag", [display])
+      .order("id", { ascending: true }) as unknown as Builder, EXTRACTED_ROWS_CAP);
+    if (ents.error) notes.push("The extracted sheets could not be read.");
+    if (ents.truncated) {
+      extractedCut = true;
+      notes.push(`The extracted sheets stopped at ${EXTRACTED_ROWS_CAP} indexed pages — the list may be incomplete.`);
+    }
     const pagesByCopy = new Map<string, Set<number>>();
-    for (const e of (ents ?? []) as Array<{ document_id: string; page: number }>) {
+    for (const e of (ents.error ? [] : ents.rows)) {
       (pagesByCopy.get(e.document_id) ?? pagesByCopy.set(e.document_id, new Set()).get(e.document_id)!).add(Number(e.page));
     }
     const copyIds = [...pagesByCopy.keys()];
@@ -177,5 +191,5 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ asset: assetRow, relations, extracted, notes });
+  return NextResponse.json({ asset: assetRow, relations, extracted, extractedCut, extractedCap: EXTRACTED_ROWS_CAP, notes });
 }
