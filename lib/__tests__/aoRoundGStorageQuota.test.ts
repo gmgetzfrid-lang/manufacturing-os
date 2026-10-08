@@ -60,6 +60,7 @@ function chain(table: string) {
         if (["insert", "upsert", "update", "delete"].includes(prop)) op = prop;
         if (prop === "select" && (args[1] as { head?: boolean } | undefined)?.head) head = true;
         if (prop === "eq") { filters.push((r) => r[String(args[0])] === args[1]); eqValues.push(args[1]); }
+        if (prop === "neq") filters.push((r) => r[String(args[0])] !== args[1]);
         if (prop === "in") filters.push((r) => (args[1] as unknown[]).includes(r[String(args[0])]));
         if (prop === "maybeSingle" || prop === "single") {
           const r = result();
@@ -404,6 +405,32 @@ describe("BILL-5 Done-when 2 / BILL-12 — what the stats GET returns depends on
     state.errors["platform_settings.select"] = { message: "boom" };
     expect(await storageScopeFor(adminClient as never, O1, OP)).toMatchObject({ scope: "workspace", operator: false, soleTenant: false });
   });
+  it("fix pass 3, REPRODUCED: on a shared server an unreadable operator list is SAID on the answer (operatorsError) — the body no longer reads as 'not an operator'", async () => {
+    state.rows.orgs = [{ id: O1 }, { id: O2 }];
+    state.rows.platform_settings = [{ key: PLATFORM_OPERATORS_KEY, value: { uids: [OP] } }]; // OP is registered…
+    state.errors["platform_settings.select@platform_operators"] = { message: "permission denied" }; // …but the list cannot be read
+    state.actor = { userId: OP, roles: ["Admin"] };
+    const body = await stats();
+    // fails closed as before (workspace scope, no deployment figures), and says why
+    expect(body).toMatchObject({ scope: "workspace", platformOperator: false, operatorsError: "permission denied" });
+    expect(typeof body.operatorSql).toBe("string");
+    expect([body.db, body.r2Real, body.freeTier]).toEqual([null, null, null]);
+  });
+  it("the sole workspace's answer carries it too (deployment scope by the org count; the ceilings editor is still withheld)", async () => {
+    state.rows.orgs = [{ id: O1 }];
+    state.errors["platform_settings.select@platform_operators"] = { message: "permission denied" };
+    state.actor = { userId: OP, roles: ["Admin"] };
+    const body = await stats();
+    expect(body).toMatchObject({ scope: "deployment", soleTenant: true, platformOperator: false, operatorsError: "permission denied" });
+    expect(body.db).not.toBeNull();
+  });
+  it("a readable list answers operatorsError null, both branches", async () => {
+    state.rows.orgs = [{ id: O1 }, { id: O2 }];
+    state.actor = { userId: "m", roles: ["Admin"] };
+    expect((await stats()).operatorsError).toBeNull();
+    state.rows.orgs = [{ id: O1 }];
+    expect((await stats()).operatorsError).toBeNull();
+  });
 });
 
 // ── BILL-7: the quota change is audited ─────────────────────────────────────
@@ -660,6 +687,56 @@ describe("BILL-12 — each workspace is measured under its own prefix; BILL-11 �
     state.rows.orgs = [{ id: O1 }];
     await runPlatformStorageAlerts(adminClient as never);
     expect(state.r2Calls.filter((c) => c.name === "ListObjectsV2Command").every((c) => c.hadSignal)).toBe(true);
+  });
+
+  // ── fix pass 3: the week's dedup never lets a blind bell stand in for the figures ──
+  const BLIND_R2 = "This server's file storage is running hot";
+  const yesterday = () => new Date(Date.now() - 86400 * 1000).toISOString();
+  it("fix pass 3, REPRODUCED: an Admin belled WITHOUT figures on day 1 and registered as operator on day 2 gets the figures on day 2, not day 8", async () => {
+    state.rows.orgs = [{ id: O1 }, { id: O2 }];
+    state.rows.org_members = [{ org_id: O1, uid: OP, role: "Admin", roles: ["Admin"], status: "active" }];
+    // day 1's blind bell, as the no-operator path wrote it
+    state.rows.notifications = [{ org_id: O1, user_id: OP, kind: "storage_platform_r2", title: BLIND_R2, created_at: yesterday() }];
+    // day 2: the owner registered that Admin (the integrator's deploy step 2)
+    state.rows.platform_settings = [{ key: PLATFORM_OPERATORS_KEY, value: { uids: [OP] } }];
+    state.objects = [{ Key: `orgs/${O2}/big`, Size: Math.round(9.6 * 1024 ** 3) }];
+    const run = await runPlatformStorageAlerts(adminClient as never);
+    expect([run.route, run.alerts]).toEqual(["operators", 1]);
+    expect(inserts().map((r) => [r.org_id, r.user_id, r.title])).toEqual([[O1, OP, "File storage critical — 96% of plan"]]);
+    expect(inserts()[0].metadata).toBeNull(); // the figures row carries no tag
+  });
+  it("a figures bell from this week still dedups the next figures bell (as before)", async () => {
+    state.rows.orgs = [{ id: O1 }, { id: O2 }];
+    state.rows.org_members = [{ org_id: O1, uid: OP, role: "Admin", roles: ["Admin"], status: "active" }];
+    state.rows.platform_settings = [{ key: PLATFORM_OPERATORS_KEY, value: { uids: [OP] } }];
+    state.rows.notifications = [{ org_id: O1, user_id: OP, kind: "storage_platform_r2", title: "File storage high — 72% of plan", created_at: yesterday() }];
+    state.objects = [{ Key: `orgs/${O2}/big`, Size: Math.round(9.6 * 1024 ** 3) }];
+    const run = await runPlatformStorageAlerts(adminClient as never);
+    expect([run.route, run.alerts, inserts()]).toEqual(["operators", 0, []]);
+  });
+  it("a blind bell from this week still dedups another blind one, and the blind row is tagged for the record", async () => {
+    state.rows.orgs = [{ id: O1 }, { id: O2 }];
+    state.rows.org_members = [
+      { org_id: O1, uid: "tenant-admin", role: "Admin", roles: ["Admin"], status: "active" },
+      { org_id: O2, uid: "other-admin", role: "Admin", roles: ["Admin"], status: "active" },
+    ];
+    state.rows.notifications = [{ org_id: O1, user_id: "tenant-admin", kind: "storage_platform_r2", title: BLIND_R2, created_at: yesterday() }];
+    state.objects = [{ Key: `orgs/${O2}/big`, Size: Math.round(9.6 * 1024 ** 3) }];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const run = await runPlatformStorageAlerts(adminClient as never);
+    warn.mockRestore();
+    expect([run.route, run.alerts]).toEqual(["no-operator", 1]);
+    expect(inserts().map((r) => [r.user_id, r.title, r.metadata])).toEqual([["other-admin", BLIND_R2, { withoutFigures: true }]]);
+  });
+  it("the other way round, a figures bell from this week still covers a blind one (they already know more): operator unregistered on day 2", async () => {
+    state.rows.orgs = [{ id: O1 }, { id: O2 }];
+    state.rows.org_members = [{ org_id: O1, uid: "tenant-admin", role: "Admin", roles: ["Admin"], status: "active" }];
+    state.rows.notifications = [{ org_id: O1, user_id: "tenant-admin", kind: "storage_platform_r2", title: "File storage critical — 96% of plan", created_at: yesterday() }];
+    state.objects = [{ Key: `orgs/${O2}/big`, Size: Math.round(9.6 * 1024 ** 3) }];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const run = await runPlatformStorageAlerts(adminClient as never);
+    warn.mockRestore();
+    expect([run.route, run.alerts, inserts()]).toEqual(["no-operator", 0, []]);
   });
 });
 

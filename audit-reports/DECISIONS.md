@@ -5460,7 +5460,7 @@ Before such a modal starts an upload, once the run's cards clear, and whenever n
 
 **Risk:** low.
 - A single-workspace owner loses the in-app ceiling editor until they register as operator (one SQL line, shown on the page).
-- A shared server with no operator gets no deployment alert; the cron logs it.
+- A shared server with no operator gets a notice without figures to each workspace's Admins and a line in the cron's errors; the figures reach someone only once an operator is registered (20261177 header).
 - The quota's meaning narrows to files.
 - The page load still lists up to 40 s of bucket.
 - A refused caller of a converted route reads the surface's sentence instead of "Insufficient role".

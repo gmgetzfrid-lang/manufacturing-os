@@ -53,6 +53,10 @@ interface Stats {
   /** The SQL that would make this member an operator (deployment scope, not
    *  an operator). */
   operatorSql?: string | null;
+  /** Set when the operator list could not be read: the server fails closed
+   *  (not an operator), so the page says "could not be read — refresh" in
+   *  place of the registration line, never "register" to someone who is. */
+  operatorsError?: string | null;
   /** This workspace's own files, measured under its storage prefix — what
    *  the storage limit is compared to. Null when the walk failed. */
   workspace?: {
@@ -987,11 +991,13 @@ export default function StorageBackupPage() {
                 database&apos;s tables, the whole bucket and the hosting-plan ceilings — are shown to a platform
                 operator only. Everything on this page about <b>your workspace</b> (its files, purge, archives,
                 backups) is unaffected.
-                {canPurge && stats.operatorSql && (
+                {canPurge && stats.operatorsError ? (
+                  <> The platform operator list could not be read ({stats.operatorsError}) — refresh to try again.</>
+                ) : canPurge && stats.operatorSql ? (
                   <> If you run this server, make yourself its operator in the Supabase SQL editor:{" "}
                     <code className="font-mono break-all text-[var(--color-text)]">{stats.operatorSql}</code>
                   </>
-                )}
+                ) : null}
               </span>
             </div>
           )}
@@ -1165,11 +1171,13 @@ export default function StorageBackupPage() {
                   ) : (
                     <>
                       The ceilings are one setting for the whole server, so only a platform operator can change them.
-                      {canPurge && stats.operatorSql && (
+                      {canPurge && stats.operatorsError ? (
+                        <> The platform operator list could not be read ({stats.operatorsError}) — refresh to try again.</>
+                      ) : canPurge && stats.operatorSql ? (
                         <> To make yourself one, the deployment&apos;s owner runs this in the Supabase SQL editor:{" "}
                           <code className="font-mono break-all text-[var(--color-text)]">{stats.operatorSql}</code>
                         </>
-                      )}
+                      ) : null}
                     </>
                   )}
                 </p>

@@ -290,6 +290,27 @@ describe("BILL-5 — a shared server shows a member only their workspace; the ce
     expect(buttons()).toContain("Upgraded your plan? Set the real ceilings");
     expect(text).toContain("The whole server — every workspace on it (you are a platform operator)");
   });
+  it("fix pass 3, REPRODUCED: an unreadable operator list says so and 'refresh' — never the registration SQL to someone who may already be one (shared server)", async () => {
+    stats = { ...SHARED, operatorsError: "permission denied" };
+    const text = await render();
+    expect(text).toContain("The platform operator list could not be read (permission denied) — refresh to try again.");
+    expect(text).not.toContain("make yourself its operator");
+    expect(text).not.toContain("INSERT INTO platform_settings");
+  });
+  it("…and in the plan-ceilings copy on the only workspace (deployment scope): the editor is still withheld", async () => {
+    stats = { ...DEPLOYMENT, operatorsError: "permission denied" };
+    const text = await render();
+    expect(text).toContain("only a platform operator can change them. The platform operator list could not be read (permission denied) — refresh to try again.");
+    expect(text).not.toContain("INSERT INTO platform_settings");
+    expect(buttons().some((b) => /plan ceilings|real ceilings/.test(b))).toBe(false);
+  });
+  it("a Manager is told neither (as with the SQL)", async () => {
+    role.held = ["Manager"];
+    stats = { ...SHARED, operatorsError: "permission denied" };
+    const text = await render();
+    expect(text).not.toContain("could not be read");
+    expect(text).not.toContain("INSERT INTO platform_settings");
+  });
 });
 
 describe("BILL-11 / BILL-7 — the quota copy", () => {

@@ -61,7 +61,7 @@ function fakeServiceClient(): SupabaseClient {
       if (table === "orgs") return { data: [{ id: "o1" }], error: null };
       return { data: null, error: null };
     };
-    for (const m of ["select", "not", "or", "gte", "order", "limit"]) q[m] = (...args: unknown[]) => { world.calls.push({ table, op: m, args }); return q; };
+    for (const m of ["select", "not", "neq", "or", "gte", "order", "limit"]) q[m] = (...args: unknown[]) => { world.calls.push({ table, op: m, args }); return q; };
     q.eq = (c: string, v: unknown) => { filters.push([c, v]); world.calls.push({ table, op: "eq", args: [c, v] }); return q; };
     q.insert = (row: Record<string, unknown>) => { op = "insert"; world.inserts.push({ table, ...row }); return q; };
     q.maybeSingle = async () => ({ data: null, error: null });

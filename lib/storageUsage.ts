@@ -497,16 +497,25 @@ export async function runPlatformStorageAlerts(sb: SupabaseClient): Promise<{
   const sevenDaysAgo = new Date(Date.now() - 7 * 86400 * 1000).toISOString();
   for (const t of targets) {
     for (const alert of hot) {
-      const { count } = await sb
+      // Deduped per person per resource per week — but a blind (no-figures)
+      // bell never stands in for the figures: an Admin belled blind on day 1
+      // and registered as operator on day 2 gets the percentage on day 2,
+      // not on day 8. The blind row is told apart by its title (NOT NULL, a
+      // constant here) and tagged in metadata for the record; a figures row
+      // still dedups a later blind one (they already know more).
+      let dedup = sb
         .from("notifications").select("id", { count: "exact", head: true })
         .eq("org_id", t.orgId).eq("user_id", t.uid)
         .eq("kind", alert.kind).gte("created_at", sevenDaysAgo);
+      if (!blind) dedup = dedup.neq("title", alert.blindTitle);
+      const { count } = await dedup;
       if ((count ?? 0) > 0) continue;
       const sent = await notifyAsServiceRole(sb, {
         orgId: t.orgId, userId: t.uid, kind: alert.kind,
         title: blind ? alert.blindTitle : alert.title,
         body: blind ? alert.blindBody : alert.body,
         link: "/admin/storage",
+        ...(blind ? { metadata: { withoutFigures: true } } : {}),
       });
       if (sent) alerts++;
     }

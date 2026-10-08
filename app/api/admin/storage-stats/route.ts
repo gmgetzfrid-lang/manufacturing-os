@@ -45,7 +45,11 @@ export async function GET(req: NextRequest) {
   const actor = await authorizeAdminSurface(req, orgId, "storage");
   if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
   const sb = actor.admin;
-  const { scope, operator, soleTenant } = await storageScopeFor(sb, orgId, actor.userId);
+  // `operatorsError` rides on the answer: readPlatformOperators fails closed
+  // (operator = false), so without it a registered operator whose list could
+  // not be read would be shown the registration SQL as if they were not one.
+  // The page says "could not be read — refresh" instead.
+  const { scope, operator, soleTenant, operatorsError } = await storageScopeFor(sb, orgId, actor.userId);
   const deadlineMs = Date.now() + WALK_BUDGET_MS;
 
   if (scope === "workspace") {
@@ -74,6 +78,7 @@ export async function GET(req: NextRequest) {
       platformOperator: operator,
       soleTenant,
       operatorSql: operator ? null : platformOperatorSql(actor.userId),
+      operatorsError,
       workspace: { files, filesError },
       db: null, r2Estimate: null, r2Real: null, r2Error: null, freeTier: null, dedup: null,
       ai,
@@ -197,6 +202,7 @@ export async function GET(req: NextRequest) {
     // platform operators — the page names the right one.
     soleTenant,
     operatorSql: operator ? null : platformOperatorSql(actor.userId),
+    operatorsError,
     workspace: { files: workspaceFiles, filesError: r2Error },
     db: { totalBytes: dbBytes, tables, byCategory },
     r2Estimate: r2,
