@@ -206,7 +206,7 @@ const isFirstRun = useRef(true);
 ## RT-6 · Roughly half of all notification kinds map to sidebar sections that no nav item renders — the bell counts them, nothing badges them, and the trail never starts
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** the user (ratify `DEC-81` §3, as `OS-12`) — by the integrator, 2026-10-01 (N2 merge; fleet plan `userHeld`). *Ratified by the integrator under the user's delegation, 2026-10-07 (DEC-90), with one change: `transmittal_unstampable` badges Documents, because it reports a controlled copy released without its UNCONTROLLED marking, a document-control integrity event the issuer may need to act on (ISO 9001 §7.5.3); the other eight kinds stay bell-only, and notifications N9 makes the one-line move.*
 - **Assigned:** notifications N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT — by the integrator, 2026-10-07 (DEC-90; fleet plan `audit-reports/fleet-plans/notifications.json`, N9).
 - **Verification:** CONFIRMED
@@ -256,6 +256,18 @@ default:
 **Scope / residual.** Stays OPEN for done-when 4's bell-only arm until the user ratifies `DEC-81` §3 (or `ai_cap_changed` and `transmittal_unstampable` are placed on a badged row); then record RESOLVED. Nothing else remains in this finding.
 
 **Integrator note (2026-10-07, DEC-90 A12).** *Ratified by the integrator under the user's delegation, 2026-10-07 (DEC-90), with one change: `transmittal_unstampable` badges Documents, because it reports a controlled copy released without its UNCONTROLLED marking, a document-control integrity event the issuer may need to act on (ISO 9001 §7.5.3); the other eight kinds stay bell-only, and notifications N9 makes the one-line move.* Status stays OPEN. This record names its close as the ratification of `DEC-81` §3 ("The finding closes — record it RESOLVED — when the user ratifies §3, or when those two kinds are placed on a badged row"), and §3 is ratified with a change: the bell-only list is ratified for eight kinds, and `transmittal_unstampable` is to badge Documents — a move not yet made. So ratification is not the only open item: until notifications N9 makes the one-line move, one kind sits bell-only without a ratified place, and done-when 4 ("a test asserts: for each `NotificationKind`, `sectionForKind(kind)` returns a section that Sidebar badges") holds neither as written nor under the ratified list. When N9 lands it, record done-when 4 as superseded by the ratified DEC-81 §3, not met (a bell-only kind returns null, which no Sidebar row badges), and RESOLVE. Owner: notifications N9, with `OS-12`. `userHeld.RT-6` is removed.
+
+
+**Resolution (2026-10-07, notifications Round G).** Package N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT, branch `fleet/N9-dc-producers-kind-split`, commit `d48617c` — the one-line move the integrator's note names. `lib/notificationKinds.ts` gives `transmittal_unstampable` `section: "documents"` (kept the registry's last entry, so `notification_kinds()`'s list changes by no line), and the bell-only list in `lib/__tests__/notificationKinds.test.ts` drops it: the bell-only kinds are now exactly the ratified eight (`DEC-90` A12). The rendered hook's Documents count gains the one row (12 + 22 + 1).
+- Verified: ⟪LOOP⟫
+
+**Done-when.**
+- ✓ Every kind maps to a section a surface renders; the default is unreachable (N2).
+- ✓ `'scratchpad'` is deleted (N2).
+- ✓ The type no longer permits an unrendered bucket (N2).
+- **Superseded by the ratified `DEC-81` §3 (`DEC-90` A12), not met as written:** "for each `NotificationKind`, `sectionForKind(kind)` returns a section that Sidebar badges" — the eight ratified bell-only kinds return null, which no Sidebar row badges; the header bell owns them. The test asserts each kind returns a badged section or is on the ratified bell-only list.
+
+**Scope / residual.** None in this finding.
 
 ---
 

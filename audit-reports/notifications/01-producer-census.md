@@ -294,6 +294,22 @@ lib/ticketTransitions.ts:130-132 —
 - [ ] computeTransition's newUnreadBy includes ticket.assignedEngineerId, matching the comment route
 - [ ] A test asserts that a subscriptions row on a document causes that user to appear in resolveRecipients for every document-scoped kind
 
+
+**Partial (2026-10-07, notifications Round G).** Package N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT, branch `fleet/N9-dc-producers-kind-split`. **Reproduced first** on `b154823`: `lib/projects.ts` `notifyProjectAudience` read `project_members` and `listFollowerIds("project", …)` by hand (:1446-1453) and passed the union as `audience: { involved: ids }` (:1467); no caller anywhere passed `audience.projectId`.
+
+**What landed.**
+- Done-when 2 — `lib/projects.ts` `notifyProjectAudience` (:1451) passes `audience: { projectId, followers: true }` (:1468): the dispatcher resolves the members (`resolveProjectMembers`) and the watchers (`resolveFollowers` on the project — the store `listFollowerIds` read), minus the actor, active members only — the same set, resolved once. The email is pinned to what it was when everyone was named: `email: { subject: title, bodyText: body ?? title }` (without it a follower would get the category subject — NEDGE-6). The `@/lib/subscriptions` import is gone from the file. `PROD-9`'s hold notice passes `audience.projectId` too (`lib/holds.ts`).
+- Tests: `lib/__tests__/projects.test.ts` "PROD-4 dw2 (notifications N9) — a project notice's audience is the dispatcher's, not hand-resolved" (the audience and the pinned email; no `project_members` read and no `listFollowerIds` left in the function).
+- Verified: ⟪LOOP⟫
+
+**Done-when.**
+- **Not met — narrowed for ratification (`DEC-44 (N9)` item 2):** "Every document-scoped emit adds followers: true". The producers without it write a notice addressed to the person in their own words, false for a follower: "Your downloaded copy … is out of date" (`lib/staleCopies.ts`, now `doc_recalled`), an acknowledgment request (`lib/distributionAcks.ts`, an obligation a follower does not hold), "Checkout force-released by …" to the holder (`lib/checkoutEpisodes.ts`), "a document pinned in your work package" (`lib/workPackages.ts`, `lib/postPublish.ts`), "a document connected to work you have checked out" (`lib/revisionImpact.ts`). A follower's own notice for the two events a watcher plausibly wants — a force-release on a watched document and its retirement — is opened as `PROD-17`.
+- ✓ Project-scoped emits pass `audience.projectId` instead of pre-resolving members by hand.
+- **Not met as written — another area's file:** `computeTransition`'s default `newUnreadBy` (`lib/ticketTransitions.ts:159`) still omits `assignedEngineerId`; the verifier's correction above records that the default is overridden per action and the comment / attachment action carries the engineer and the watchers (`:215`). `lib/ticketTransitions.ts` is drafting-flow's; owner drafting-flow.
+- **Not met as written:** "a subscriptions row … in resolveRecipients for every document-scoped kind" — by `DEC-44 (N9)` item 2 the personal kinds do not reach followers; the follow path itself is pinned by `lib/__tests__/notificationDispatchMembership.test.ts` (N5) and, for restores, `lib/__tests__/restoreSubscriptions.test.ts` (`NEDGE-8`).
+
+**Scope / residual.** Stays OPEN on done-whens 1 and 4 until the integrator rules on `DEC-44 (N9)` item 2 (ratified: both are superseded for the personal kinds and `PROD-17` carries the follower notice), and on done-when 3 (drafting-flow).
+
 ---
 
 <a id="prod-5"></a>
@@ -301,7 +317,7 @@ lib/ticketTransitions.ts:130-132 —
 ## PROD-5 · CSV document import creates library documents without notifying subscribers, while the staged-upload path does
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/documents/CsvImportModal.tsx:166`, `app/(protected)/documents/[libraryId]/page.tsx:2300-2314`, `app/(protected)/documents/[libraryId]/page.tsx:2508`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: notifyLibrarySubscribers is a closure declared inside handleStagedUpload (page.tsx:2299-2315), so it is not even in scope for the CSV path, and the onImported handler does no notification of any kind. Library watchers get nothing from a CSV import.
@@ -353,6 +369,20 @@ components/documents/CsvImportModal.tsx:166 (the path that does not) —
 - `components/documents/CsvImportModal.tsx` — the `actorName` prop's comment says what happens without it. The call (:257) is unchanged.
 - Tests: `lib/__tests__/producers.test.ts` "PROD-5" "a caller that passes no name (the CSV import…)" (new). The CSV import's uid-only call reads "dc1@acme.test added 200 documents…", the same words as the staged-upload path's call with that email. A passed name is verbatim, with no `org_members` read. A member with no email on file is named by display name. A failed read gives "Someone". The guard case now uses an actor nobody knows to pin "Someone". The new case fails without the fix.
 - Verified: see `PROD-6`'s final-review block — one loop for the whole of fix pass 3.
+
+
+**Resolution (2026-10-07, notifications Round G).** Package N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT, branch `fleet/N9-dc-producers-kind-split`, commit `2ef1a4f` — done-when 2's page half, the remainder N8 left. **Reproduced first** on `b154823`: `app/(protected)/documents/[libraryId]/page.tsx` `notifyLibrarySubscribers` still called `emit()` itself (:2439, `kind: "library_doc_added"`, default channels in-app + email) while the CSV path called `lib/libraryNotify.ts`.
+
+**What landed.**
+- The staged-upload closure (`page.tsx:2453`) calls `notifyLibraryDocsAdded({ orgId, libraryId, count, firstLabel, actorUserId: uid, actorName: userEmail ?? null })` — the same words (the uploader named by their email), in-app only (`PROD-7` done-when 3). `CsvImportModal` gets `actorName={userEmail ?? undefined}` from the page. `lib/libraryNotify.ts` header updated (both insert paths are callers).
+- Tests: `lib/__tests__/kindSplitProducers.test.ts` "PROD-5 dw2 — the library page's staged upload tells followers through the one helper" (the call and its arguments, no `emit()` / `library_doc_added` in the closure, the modal's `actorName`, the helper's `channels: ["inapp"]`); `producersCsvImport.test.ts` / `producers.test.ts` "PROD-5" unchanged and green.
+- Verified: ⟪LOOP⟫
+
+**Done-when.**
+- ✓ `CsvImportModal` emits `library_doc_added` with `audience { followers: true }` after a successful batch (N8).
+- ✓ The notify call is one shared helper both insert paths use.
+
+**Scope / residual.** The staged-upload notice no longer emails followers (it did, in-app + email): the PROD-7 done-when 3 rule for a chatty kind, recorded in `DEC-92` item 6. A follower's bell still carries it.
 
 ---
 
@@ -489,6 +519,9 @@ hooks/useTicketNotifications.ts:176 —
 
 **Partial / Scope note (2026-10-01, notifications Round G — N2 final review).** No fix for this finding lands here; this corrects done-when 3's premise. `checkout_message` — and, since N2 (`PROD-8`), `checkout_handoff` and `markup_request` for a thread's handoff and markup_ref posts — is written by the checkout thread through `notifyMany` (`lib/activityThread.ts:163-174`), which calls `notify` once per recipient (`lib/inAppNotifications.ts:128-162`); `notify` is the typed insert into `notifications` (`notifyChecked`, `lib/inAppNotifications.ts:92-122`) and nothing more. It is in-app only and never emails — it never reaches the dispatcher or `queueEmail` — and the thread has called `notifyMany` since the file was added (`a4ea830`), so the Failure scenario's "sends an email for each one" never held for `checkout_message`. Done-when 3's chatty-kind arm therefore reduces to `library_doc_added`, which `app/(protected)/documents/[libraryId]/page.tsx:2394-2408` writes through `emit()` with the default channels (`lib/notify/dispatch.ts:95`, in-app and email): notifications N8's `lib/libraryNotify.ts` (`channels: ['inapp']`) and N9's swap of that call site. Done-when 1, 2 and 3's doc-comment arm are untouched (N4).
 
+
+**Partial (2026-10-07, notifications Round G).** Package N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT, branch `fleet/N9-dc-producers-kind-split`, commit `2ef1a4f`. Done-when 3's chatty-kind arm is met: `library_doc_added` — the one chatty kind left by the N2 scope note above — is written by both insert paths through `lib/libraryNotify.ts` `notifyLibraryDocsAdded` with `channels: ["inapp"]` (the library page's staged upload moved onto it, `PROD-5`). Done-whens 1, 2 and 3's doc-comment arm are untouched (N4). Stays OPEN.
+
 ---
 
 <a id="prod-8"></a>
@@ -556,7 +589,7 @@ lib/inAppNotifications.ts:33-36 —
 ## PROD-9 · Holds never notify the document owner, contradicting the union's own contract comment
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/holds.ts:238-253`, `lib/inAppNotifications.ts:24`, `lib/ownership.ts:79`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Verified there is no back door putting an owner in the follower set — no ownership code path inserts into `subscriptions`, so resolveFollowers (recipients.ts:23-45) cannot pick the owner up. Ironically setOwner's own body text promises 'You'll receive its notifications and review reminders.'
@@ -584,6 +617,20 @@ lib/ownership.ts:79 (the unused-here resolver) —
 
 - [ ] holds.ts resolves effectiveOwnerForDocument and adds the owner uid to the hold_opened/hold_released audience
 - [ ] If the document is linked to a project, audience.projectId is passed so project members hear it too
+
+
+**Resolution (2026-10-07, notifications Round G).** Package N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT, branch `fleet/N9-dc-producers-kind-split`, commit `d05b368`. **Reproduced first** on `b154823`: `lib/holds.ts` `notifyHoldChange` emitted `audience: { involved: [...input.involved, ...pool], followers: true }` (:504) — the release pool and the follow list; nothing in the file read the document's owner or a project, while the union promises "a hold was opened on a doc the user owns / is on the project for" (`lib/inAppNotifications.ts:29`).
+
+**What landed.**
+- `lib/holds.ts` `holdOwnerAndProjects(orgId, documentId, doc)` (:483, new, exported): the document's effective owner through `lib/ownership.ts` `effectiveOwnerForDocument` (document > folder > library > the owning team's supervisor; active members only — OWN-16 / GAP-5), and the document's LIVE projects (`project_documents`, newest `last_seen_at` first, at most 20; a project in `CLOSED_PROJECT_STATUSES` is not working from it). `notifyHoldChange` (:545) reads the owner columns with the label and resolves this beside the release pool: the owner and the members of every live project but the first join `involved`; the first (most recently seen) rides `audience.projectId` — the dispatcher branch nothing took (`PROD-4`). Best-effort: a read that fails leaves that part out (logged), and the notice goes to the audience it always had. Only the notify audience changed in this file (admin-and-org P9 edits `assertHoldCapability`).
+- Tests: `lib/__tests__/holds.test.ts` "PROD-9 (notifications N9) — the hold notice also reaches the document's effective owner and its LIVE projects' teams" (owner, `projectId` = the live project seen last, the other live project's member in `involved`, never a closed project's member) and "PROD-9: an unreadable project link leaves the notice to the audience it always had" (logged, never thrown); the hold suite unchanged and green.
+- Verified: ⟪LOOP⟫
+
+**Done-when.**
+- ✓ holds.ts resolves `effectiveOwnerForDocument` and adds the owner uid to the `hold_opened` / `hold_released` audience.
+- ✓ A document linked to a project passes `audience.projectId` (its most recently seen live project; any other live project's members are named).
+
+**Scope / residual.** A document with no owner at any rung falls back to the controllers, who are in the release pool already. The dispatcher drops the actor and inactive members, as for every audience. When `NEDGE-6`'s discover check is wired into the dispatcher it applies to these recipients too.
 
 ---
 
@@ -734,7 +781,7 @@ lib/nudges.ts:53-62 (the only 'milestone alerting' that exists — a pure deriva
 ## PROD-12 · Transmittal issue writes no internal notification; manual acknowledgment is silent while the portal path emits ack_complete
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/transmittals.ts:558-590`, `lib/transmittals.ts:593-620`, `app/api/transmittal/route.ts:148-158`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The asymmetry is exactly as described. issueTransmittal (:557-590) calls sendTransmittalEmail, but that is the outbound message to the external recipient, not an internal bell/email row — so 'issue writes no internal notification' holds too.
@@ -770,6 +817,21 @@ app/api/transmittal/route.ts:148-157 (the path that DOES notify) —
 
 - [ ] acknowledgeTransmittal emits the same ack_complete row the portal route does, so both paths converge
 - [ ] issueTransmittal emits an internal notification to the document owner / library followers that a controlled copy was distributed externally
+
+
+**Resolution (2026-10-07, notifications Round G).** Package N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT, branch `fleet/N9-dc-producers-kind-split`, commit `d05b368`. **Reproduced first** on `b154823`: the portal route wrote the issuer's `ack_complete` row and a raw `email_notifications` insert (`app/api/transmittal/route.ts:789`, `:802-811`), while the register's receipt route (`app/api/transmittal/receipt/route.ts`, the server half of `acknowledgeTransmittal`) wrote the receipt and its audit row and told nobody (0 notify / emit calls in the file); `issueTransmittal` (`lib/transmittals.ts:1184`) sent the recipient's email and wrote no internal notice.
+
+**What landed.**
+- `lib/transmittalReceiptNotice.ts` (new, server-only) `tellIssuerOfReceipt(admin, input)` (:90): the ONE helper both doors call — the portal (`route.ts:791`, `via: "portal"`) and the register (`receipt/route.ts:86`, `via: "manual"`, after the audit row). It writes the same `ack_complete` bell row ("Transmittal <n> acknowledged", the body naming the portal or the recorder) and queues the same receipt email (`receiptEmailText` — the portal's subject and sentence word for word; the register's names who recorded it). Nobody is told of their own act: an issuer who records the receipt themselves gets neither. Best-effort; the route's answer never changes.
+- `lib/transmittals.ts` `notifyTransmittalIssued(t, actor)` (:1277): one `transmittal_issued` notice per library the transmittal draws from — "Transmittal <n> issued: <doc or N documents> to <recipient>", the documents' effective owners named, the library's followers on, linking to /transmittals. Started without awaiting from `issueTransmittal` (:1264): a notice never fails or delays an issue. New kind `transmittal_issued` (Documents, FYI, not a compliance kind; `20261191` adds it to `notification_kinds()`).
+- Tests: `lib/__tests__/transmittalNoticesN9.test.ts` (12 — both doors' bell row and email, the self-recorded and no-issuer skips, a refused bell row logged while the email still goes, the source pins on both routes; one notice per library with its owners and followers, an unreadable document list sending nothing; the email links absolute — `NEDGE-11`); `lib/__tests__/transmittalReceiptGate.test.ts` (4, real modules — `DELIV-15`); `transmittalPortalRoute.test.ts` and `dcRoundFTransmittals.test.ts` unchanged and green.
+- Verified: ⟪LOOP⟫
+
+**Done-when.**
+- ✓ A receipt recorded through `acknowledgeTransmittal` (the register's route) writes the same `ack_complete` row the portal does — both paths converge on one helper.
+- ✓ `issueTransmittal` notifies the documents' owners and the libraries' followers that a controlled copy was distributed externally.
+
+**Scope / residual.** The issue notice goes to a library's followers and its documents' owners, not to each document's own followers (a transmittal of thirty sheets would otherwise be thirty notices to one person). `transmittal_issued` has no bell icon of its own until N3 derives the bell's map from `KIND_META` (it draws the fallback there; its feed icon is `Send`).
 
 ---
 
@@ -814,6 +876,20 @@ hooks/useTicketNotifications.ts:279 —
 - [ ] distributionAcks uses ack_requested / ack_overdue (kinds that already exist) instead of doc_superseded
 - [ ] staleCopies uses a distinct recall kind; revisionImpact and workPackages use distinct advisory kinds
 - [ ] actionKinds includes every kind that demands a user action, so 'Action needed' is truthful
+
+
+**Partial (2026-10-07, notifications Round G).** Package N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT, branch `fleet/N9-dc-producers-kind-split`, commit `d48617c`. **Reproduced first** on `b154823`: `doc_superseded` was written for a published revision (`lib/postPublish.ts:66`), a stale-copy recall (`lib/staleCopies.ts:306`, `:392`), an upstream-change advisory (`lib/revisionImpact.ts:138`), a work-package pin gone stale (`lib/workPackages.ts:684`), a package document retired (`lib/postPublish.ts:279`), and three distribution-ack requests (`lib/distributionAcks.ts:180`, `:195`, `:443`), whose read-back filtered on `["ack_requested", "ack_overdue", "doc_superseded"]` (:347).
+
+**What landed.** One name per meaning (`TAX-13`; names from the plan): `doc_recalled` (`lib/staleCopies.ts:307`, `:394`), `doc_upstream_changed` (`lib/revisionImpact.ts:139`), `package_doc_stale` (`lib/workPackages.ts:685`), `package_doc_retired` (`lib/postPublish.ts:280`); the distribution-ack requests write `ack_requested` (`lib/distributionAcks.ts`, read back as `["ack_requested", "ack_overdue"]`, :355). `doc_superseded` keeps one meaning — a revision was published (the post-publish signal, the intake door's trusted publish, its folded digest). Each split kind keeps `doc_superseded`'s badge (Documents), action flag (FYI) and compliance flag, so no badge, count, digest line or dismiss rule moves. `20261191` adds them to `notification_kinds()` and re-files the rows already written by the discriminators the producers wrote (`recall`, `workPackageId`, `packageId` + `retirement`, `ackRequest`); a census test pins who may still write `doc_superseded`.
+- Tests: `lib/__tests__/kindSplitProducers.test.ts`, `lib/__tests__/notificationKinds.test.ts` (N9's nine kinds in the union, sections, flags, the producer census), `lib/__tests__/notifKindSplitMigration.test.ts` (the re-create's lineDiff, the re-files), the write-rails census.
+- Verified: ⟪LOOP⟫
+
+**Done-when.**
+- ✓ distributionAcks uses `ack_requested` / `ack_overdue` instead of `doc_superseded`.
+- ✓ staleCopies uses a distinct recall kind (`doc_recalled`); revisionImpact and workPackages use distinct advisory kinds (`doc_upstream_changed`, `package_doc_stale`; a retired pinned document `package_doc_retired`).
+- **Not met — deferred by ratification:** "actionKinds includes every kind that demands a user action". `DEC-90` A11 ratified `DEC-81` §2's deferral: the PSM obligations stay FYI until their rows clear on discharge (notifications N4's per-kind flip). The split kinds follow their parents (FYI).
+
+**Scope / residual.** Stays OPEN for done-when 3, owner notifications N4. Rows written before N9 with no discriminator keep `doc_superseded` (an upstream advisory carried none); `20261191`'s inventory counts them.
 
 ---
 
@@ -931,5 +1007,28 @@ lib/inAppNotifications.ts:26 —
 
 - [ ] Two over-cap requests that land at once give a pool member at most one unread burst row for the org. For example, take the check and the insert in one SECURITY DEFINER function under a transaction advisory lock keyed on the org, granted to the service role only (DRLS-16). A partial unique index on its own is not enough: a conflict would fail the whole batch insert, and PostgREST cannot name a partial index in `ON CONFLICT`. So an index also needs such a function. Either way it is a migration in the DEC-30 one-paste shape.
 - [ ] A test pins it with a concurrent pair, or a source pin on the serialising statement.
+
+---
+
+<a id="prod-17"></a>
+
+## PROD-17 · A document's followers are not told when a checkout on it is force-released or when it is retired
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Locations:** `lib/checkoutEpisodes.ts:775-790`, `lib/staleCopies.ts:300-320`, `lib/postPublish.ts:270-290`
+- **Opened:** 2026-10-07, notifications Round G, package N9 — the follower half `PROD-4` done-when 1 asked for, which `DEC-44 (N9)` item 2 keeps off the personal notices.
+
+**Mechanism.** The force-release notice (`checkout_force_released`) goes to the holders whose checkout was released, in their own words ("Checkout force-released by …"); the retirement recall (`doc_recalled`) goes to the people holding downloaded copies ("Your copy … is out of date"); the package notice (`package_doc_retired`) to the package's owner. A member who WATCHES the document (WatchButton → `subscriptions`) hears none of the three: the words are false for them, so `followers: true` cannot be added to those emits.
+
+**Failure scenario.** A DocCtrl watches a critical P&ID. A Supervisor force-releases a stale checkout on it, or it is voided; the watcher's bell says nothing.
+
+**Done when.**
+
+- [ ] A follower FYI notice, worded for a watcher ("<doc> was force-released by <actor>"; "<doc> was retired (<status>)"), reaches the document's followers for a force-release and for a retirement, minus the people the personal notice already told.
+- [ ] A test asserts a subscriptions row on the document puts the watcher in that notice's recipients.
+
+**Closer:** notifications N14 (or as the integrator routes it).
 
 ---

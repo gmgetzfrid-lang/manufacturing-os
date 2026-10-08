@@ -337,6 +337,17 @@ types/schema.ts:81  `export type NodeVisibility = "normal" | "hidden" | "private
 - Tests: `lib/__tests__/notificationDispatchMembership.test.ts` "NEDGE-6 (egress)" (4 cases at the first pass; 8 since the second review fix, which adds a mixed audience — named stakeholder vs follower; a role pool beside named people; a reason-bearing kind for every recipient, with the aging nudge's shape and an explicit subject; and the `REASON_IN_TITLE` producer census). Second review fix verified: `npx tsc --noEmit` exit 0; `npx eslint` `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 388 files, 7940 passed, 4 expected-fail.
 - Verified: loop on `fleet/N5-dispatch-rails` at `018caac`: `npx tsc --noEmit` exit 0; `npx eslint` on the six changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 388 files, 7914 passed, 4 expected-fail. `next build` is the integrator's.
 
+
+**Partial (2026-10-07, notifications Round G).** Package N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT, branch `fleet/N9-dc-producers-kind-split`, commit `2ef1a4f` — done-when 3's check, as assigned ("a server-side discover check for a document and a list of uids").
+
+**What landed.**
+- `lib/documentDiscoverers.ts` (new, server-only) `discoverersOfDocument({ orgId, documentId, uids })` (:122): who among the people may DISCOVER the document — `lib/permissions` `canDiscover` over the FULL library → folders → document chain (`lib/docFileServer.ts` `loadContainerAclChain`), with the effective owner (`effectiveOwnerForDocument`, GAP-15 / DEC-7) and the controller tier (`DEC-43`); the principals are read in batches (`loadPrincipals`, the shape `loadReaderPrincipal` builds); a non-member is withheld. A read that fails answers no list (fail closed toward the caller); a broken chain answers only the controllers and the owner. At most 500 people per call.
+- `POST /api/documents/discoverers` (new): the same answer for a notifier in the browser. The caller must be an active member, and the document must be one their OWN session can read (the documents RLS, through `callerScopedClient`); otherwise 404 — the route never confirms a hidden document or names who can see it to someone who cannot. It answers only the subset of the people sent.
+- Tests: `lib/__tests__/documentDiscoverers.test.ts` (9 — a hidden document: only the granted person, the controller and the owner; a normal one with no ACL: every active member; a library allow-list binds; a broken chain; another org 404; unreadable membership / chain 503; the route's 200 / 404 / 401 / 403 / 400s).
+- Verified: ⟪LOOP⟫
+
+**Not done — the wiring.** Dropping the non-discovering, non-controller recipients of a document-scoped event is the dispatcher's (`lib/notify/dispatch.ts` `emit` / `resolveRecipients`, notifications N6's file in this round): call `discoverersOfDocument` on the server and the route from the browser, for followers (and, by the plan's narrowing, never for controllers). Owner: notifications N14 (after N6). Stays OPEN.
+
 ---
 
 <a id="nedge-7"></a>
@@ -443,6 +454,21 @@ dispatch.ts:84  `  if (recipients.length === 0) return;`
 - [ ] lib/subscription.ts and lib/subscriptions.ts are renamed apart (e.g. billing.ts vs watches.ts) so the collision cannot recur
 - [ ] A restore integration test asserts a non-zero subscriptions row count in the target org afterwards
 
+
+**Partial (2026-10-07, notifications Round G).** Package N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT, branch `fleet/N9-dc-producers-kind-split`, commit `2ef1a4f`. **Reproduced first** on `b154823`: `lib/dataRestore.ts` `SKIP_TABLES.subscriptions` = "billing state is owned by the payment provider — re-subscribe, never copy" (:150), so `planRestore` reported the watch/follow table `willImport: false` and no restore wrote it.
+
+**What landed.**
+- `lib/dataRestore.ts`: `subscriptions` leaves `SKIP_TABLES` (a comment records what the table is) and joins `RESTORE_TABLE_ORDER` after every resource a follow can name (:942); it upserts on its real unique key `user_id,resource_type,resource_id` (:984 — the key `lib/subscriptions.ts` `watch()` upserts on), so a follow the person already holds is kept, never refused 23505, and a re-run writes nothing. Its people are remapped like every uid (`remapRow`); a backup member the reconciliation could not map is refused (`person_not_mapped`). Its resource has no foreign key, so `RESTORE_POLYMORPHIC_PARENTS` (:359, new) bounds the `(resource_type, resource_id)` pair like one: the resource must be a row of the TARGET workspace (`documents` / `projects` / `assets` / `libraries` / `tickets`, read before the write), else the row is refused `parent_outside_workspace` — a restored follow never points into another tenant; an unreadable resource table fails the chunk closed.
+- Tests: `lib/__tests__/restoreSubscriptions.test.ts` (10 — restorable, ordered after its resources, keyed on its real key (and the schema census has it); the plan imports it; five follows land under the reconciled people — a non-zero count in the target workspace; a held follow kept and a re-run idempotent; a foreign, missing or unknown-type resource refused; an unmapped member refused; an unreadable resource table fails closed); `dataRestore.test.ts`, `restoreApplyRoute.test.ts`, `exportCoverage.test.ts` and `restoreArchiveRoundTrip.test.ts` unchanged and green.
+- Verified: ⟪LOOP⟫
+
+**Done-when.**
+- ✓ The `SKIP_TABLES` entry for `subscriptions` is removed and the table joins the restore order with uid remapping applied.
+- **Not done — deferred by the integrator (2026-10-07):** renaming `lib/subscription.ts` / `lib/subscriptions.ts` apart. Opened as `NEDGE-20`.
+- ✓ A restore test asserts a non-zero subscriptions row count in the target org afterwards.
+
+**Scope / residual.** Stays OPEN for done-when 2 only (`NEDGE-20`, owner notifications N14). `push_subscriptions` (device registrations) stays skipped — a different table.
+
 ---
 
 <a id="nedge-9"></a>
@@ -517,7 +543,7 @@ notifications.ts:169-170  `// Mentions are stored in comment text as @[Display N
 ## NEDGE-11 · The transmittal portal link mailed to external recipients is built from window.location.origin, the exact anti-pattern lib/publicOrigin.ts exists to prevent
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/transmittals.ts:389-392`, `lib/transmittals.ts:278`, `lib/transmittals.ts:316`, `lib/transmittals.ts:495`, `lib/transmittals.ts:579`, `lib/publicOrigin.ts:5-15`
 - **Re-verified:** hardening pass — **SURVIVES**. `transmittalPortalUrl` is `const origin = typeof window !== "undefined" ? window.location.origin : ""` (`transmittals.ts:390`) — on the server that is the empty string, so the external recipient is mailed `/transmittal/<token>`. Same root as `document-control/XEDGE-5`; the fix must fail loudly rather than default to `""`.
@@ -542,6 +568,22 @@ transmittals.ts:278  `  const portalUrl = transmittalPortalUrl(t.portalToken);`
 - [ ] transmittalPortalUrl calls publicOrigin() instead of reading window.location.origin directly
 - [ ] sendTransmittalEmail refuses to queue (or loudly warns) when publicOrigin() returns an empty string, rather than mailing a relative link
 - [ ] A test asserts the rendered email HTML contains an absolute https:// href
+
+
+**Resolution (2026-10-07, notifications Round G).** Package N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT, branch `fleet/N9-dc-producers-kind-split`, commit `d05b368` — done-when 3's test; done-whens 1 and 2 hold on `b154823` as other packages left them, re-read here.
+
+**What holds.**
+- Done-when 1, on the ratified reading: `transmittalPortalUrl` (`lib/transmittals.ts:705`) builds the link on `recipientOrigin()` (`lib/publicOrigin.ts:102`) — the CONFIGURED public origin only (`NEXT_PUBLIC_SITE_URL`, else Vercel's production domain), never `window.location.origin`; with nothing configured it builds no link (`DEC-64` §1 as reversed by `DEC-90` A6 — fail closed). That is stricter than "calls `publicOrigin()`", which falls back to the page's own address.
+- Done-when 2: `app/api/transmittal/send-email/route.ts` refuses to queue when no link can be built ("NEXT_PUBLIC_SITE_URL is not set — refusing to email a hostless portal link", :71-75).
+- Done-when 3 (new here): `lib/__tests__/transmittalNoticesN9.test.ts` "NEDGE-11 dw3" — with a configured origin the portal link is `https://app.example.com/transmittal/tok123`, the rendered HTML carries it as an `href`, every `href` in it is absolute `https://`, none is a bare `/…`, and the plain text carries the same link; with nothing configured no link is built and the send route's refusal is pinned.
+- Verified: ⟪LOOP⟫
+
+**Done-when.**
+- ✓ `transmittalPortalUrl` uses the configured public origin, never `window.location.origin` (stricter than `publicOrigin()`, on the ratified reading).
+- ✓ The send route refuses to queue a relative link.
+- ✓ A test asserts the rendered email HTML contains an absolute `https://` href.
+
+**Scope / residual.** None in this finding.
 
 ---
 
@@ -767,3 +809,24 @@ There is no status predicate and no membership filter on `recipients`. `20261160
 - [ ] The same holds for any other browser-side retirement N4 adds (TRAIL-9's `hold_released` → `hold_opened`, `branch_resolved` → `branch_open`).
 - [ ] The census in `lib/__tests__/notificationWriteRails.test.ts` drops the hook from its `METADATA_UPDATES` list, and every browser UPDATE of notifications writes `read_at` only.
 - [ ] Regression: an alert the route supersedes is unchanged, and the feed shows exactly what it shows today.
+
+---
+
+<a id="nedge-20"></a>
+
+## NEDGE-20 · `lib/subscription.ts` (billing) and `lib/subscriptions.ts` (watch / follow) differ by one letter — the collision that hid `NEDGE-8`
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Locations:** `lib/subscription.ts`, `lib/subscriptions.ts`, their importers
+- **Opened:** 2026-10-07, notifications Round G, package N9 — `NEDGE-8` done-when 2, deferred by the integrator (2026-10-07) and opened here with an owner.
+
+**Mechanism.** Two modules a letter apart name two unrelated things — the org's billing state (on the `orgs` row) and the watch / follow table. `NEDGE-8`'s restore skip reasoned about the first and landed on the second; nothing prevents the next reader from doing the same.
+
+**Done when.**
+
+- [ ] The two modules are renamed apart (e.g. `lib/billing.ts` and `lib/watches.ts`), every importer moved, no file keeps the old name.
+- [ ] Each module's header names the table it is about.
+
+**Closer:** notifications N14 (or as the integrator routes it — the billing module's owner, admin-and-org, edits the importers too).

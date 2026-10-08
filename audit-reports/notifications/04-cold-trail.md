@@ -200,7 +200,7 @@ Contrast with the file's own docstring, NotificationCenter.tsx:3-9: "Notificatio
 ## TRAIL-4 · Nothing marks a document or project notification read when you visit the thing — only /requests/[id] does, so the Documents badge never decays
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/requests/[id]/page.tsx:919-930`, `app/(protected)/documents/[libraryId]/page.tsx:1284-1319`, `lib/inAppNotifications.ts:187-189`, `components/notifications/NotificationBell.tsx:91`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The narrow claim is true — only /requests/[id] clears notifications by visiting the resource — but 'the Documents badge never decays' and 'User opens each of the four documents via the bell ... the badge still says 4 because reading was never recorded' are false: clicking through from the bell, the Notification Center, the Needs-You widget or /inbox marks that row read before navigating. The real residue is the asymmetry — arriving at a document by any route other than the notification row leaves it unread — which is a MEDIUM inconsistency, not a badge that can only be cleared by 'mark all read'.
@@ -239,6 +239,24 @@ Grep for `markRead|read_at` across components/, app/, hooks/, lib/ (excluding in
 - [ ] opening a document via ?doc= marks that document's unread notifications read for the current user
 - [ ] opening a project detail page does the same for project_* rows
 - [ ] the badge count drops without requiring 'mark all read'
+
+
+**Resolution (2026-10-07, notifications Round G).** Package N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT, branch `fleet/N9-dc-producers-kind-split`, commit `2ef1a4f`. **Reproduced first** on `b154823`: the only `read_at` write on a visit was the ticket page's; `app/(protected)/documents/[libraryId]/page.tsx` and `app/(protected)/projects/[id]/page.tsx` read no notification row and wrote none.
+
+**What landed.**
+- `lib/notificationTrail.ts` (new) `markResourceNotificationsRead({ uid, resourceType, resourceId })`: `read_at` on the member's OWN unread rows about that one resource (`user_id`, `resource_type`, `resource_id`, `read_at IS NULL`) — the column `20261161`'s read_at-only rule lets a recipient change — answering how many; never throws.
+- The library page (`page.tsx:1364`): when a `?doc=` link opens a document, its rows are marked read once per document per visit. Every document selection writes `?doc=` into the address (the URL-sync effect), so this covers a row clicked in the bell, a search hit and a click in the list alike.
+- The project page (`projects/[id]/page.tsx:280`): once the project has loaded (a project you cannot read marks nothing), its rows are marked read once per visit.
+- The bell, the Documents / Projects badges and the Center drop on the UPDATE: `hooks/useTicketNotifications.ts` subscribes to the member's notification rows (:298). An obligation is not discharged by it — the acknowledgment, sign-off and review stay on /inbox and the document's panel, exactly as when the row is clicked in the bell.
+- Tests: `lib/__tests__/kindSplitProducers.test.ts` "TRAIL-4" (the update's filters and payload, the count, the no-op and refusal answers, both pages' calls).
+- Verified: ⟪LOOP⟫
+
+**Done-when.**
+- ✓ Opening a document via `?doc=` marks that document's unread notifications read for the current user.
+- ✓ Opening a project detail page does the same for its rows.
+- ✓ The badge count drops without "Mark all read".
+
+**Scope / residual.** A row is matched by the resource it names: an intake submission names its document, so visiting the project does not clear it (visiting the document does); a notice about a library (`library_doc_added`, `transmittal_issued`) is not cleared by a visit.
 
 ---
 

@@ -153,6 +153,9 @@ hooks/useTicketNotifications.ts:279 -- `const actionKinds = new Set(['checkout_c
 - [ ] An action-required toast does not auto-dismiss, or leaves a persistent trace the user can reach after it vanishes
 - [ ] No org-wide toast is emitted for an event that already has targeted recipients
 
+
+**Partial (2026-10-07, notifications Round G).** Package N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT, branch `fleet/N9-dc-producers-kind-split`, commit `d48617c`. Done-when 2 is met: the checkout thread's line and the holder's notice use one wording — "Checkout force-released by <actor>. All sessions ended." (`lib/checkoutEpisodes.ts:762`, was "SYSTEM ALERT: checkout force-released by …") and the title "Checkout force-released by <actor>" (:780, was "Your checkout was force-released"), under its own kind `checkout_force_released` (`TAX-13`). Pinned by `lib/__tests__/kindSplitProducers.test.ts` and `checkoutRoundF.test.ts`. Done-whens 1, 3 and 4 (toast tone, persistence, the org-wide toast) are the toast's (`components/providers/NotificationListener.tsx`, N3). Stays OPEN.
+
 ---
 
 <a id="tax-4"></a>
@@ -333,7 +336,7 @@ components/notifications/NotificationCenter.tsx:76-80 -- `const counts = { all: 
 ## TAX-8 · Dismissals are not remembered, and one indicator actively un-dismisses itself when new work arrives - contradicting its own comment
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** notifications N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT (done-when 3's re-formed overlap: `lib/intents.ts` `recordIntent` resets `created_at` when it re-declares an expired row) — by the integrator, 2026-10-02, at the N7 merge (DEC-31; the sender-on-another-device half is `TAX-16`, same owner).
 - **Verification:** CONFIRMED
 - **Locations:** `components/providers/KnowledgeIndexIndicator.tsx:50-55`, `components/providers/KnowledgeIndexIndicator.tsx:91`, `components/documents/EditOverlapBanner.tsx:41-42`, `components/documents/EditOverlapBanner.tsx:133-137`, `components/ui/FirstRunHint.tsx:26-50`
@@ -375,6 +378,22 @@ The `notifyMany` write is unchanged. Tests: `lib/__tests__/cornerJobs.test.ts` "
 - Partial — NOT met as written. "Heads-up sent" survives a remount: derived from the notification rows wherever the viewer can read them, and counted only if sent after the overlap formed (after its newest person joined). That is correct for a first overlap and for one re-formed after the daily prune. It is not correct for the same people overlapping again before the prune: the re-declared intents keep their old `created_at`, the overlap keeps its old formed time, and an advisory from the earlier episode (inside the 14-day window) shows "Heads-up sent ✓" and hides the button although nobody was told about this one; an old dismissal hides the warning the same way. On `b9cdfdc` "sent" was never remembered, so it could never be false. The viewer's own send is per-browser, because RLS keeps sent rows from the sender — the cross-device remainder is opened as `TAX-16`.
 
 **Scope / residual.** `TAX-16` (a sender's own heads-up from another device; it needs a server read of rows one sent, after N5's server-side notification route). A re-formed overlap between the same people counts as new only after the daily prune of lapsed intent rows: until then it keeps its old formed time, and an old dismissal or "Heads-up sent ✓" still covers it, the latter for an episode nobody was told about. Hand-off to `lib/intents.ts`'s owner (not this package's file): reset `created_at` when `recordIntent` re-declares an expired row, for example by deleting the expired row before the upsert; the test above then needs its pin updated. That is the remaining step: with it, done-when 3 is met and this finding can close. The banner's 14-day advisory window was not cut to the edit intent's 24-hour lifetime as a stopgap: a re-formation inside a day would still read "sent", and an overlap kept alive by renewed intents for longer than a day would lose a true "sent". No migration.
+
+
+**Resolution (2026-10-07, notifications Round G).** Package N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT, branch `fleet/N9-dc-producers-kind-split`, commits `9f9443d` and `bb0bb1c` (the delete through `checkedWrite`) — done-when 3's remainder, the hand-off above. **Reproduced first** on `b154823`: `lib/intents.ts` `recordIntent` upserted on `(document_id, user_id, kind, source)` (:167) and never sent `created_at`, so a lapsed row kept until the daily prune was revived with its old start; `lib/__tests__/cornerJobs.test.ts` pinned exactly that ("a re-formed overlap is new only once its lapsed intent rows are pruned").
+
+**What landed.**
+- `lib/intents.ts` `recordIntent` (:150): before the upsert, the caller's own row for the key whose `expires_at` has passed is deleted (`document_intents_self_delete` allows it); the upsert then inserts a fresh row with a fresh `created_at`. A live intent is untouched by the delete and renewed in place, its start kept. The delete goes through `checkedWrite` (`lib/checkedWrite.ts`, so the census at `lib/__tests__/checkedWrite.test.ts` holds `lib/intents.ts` at its one unchecked site): zero rows — nothing had lapsed — is the usual answer and not a failure; a database error is logged and the intent still recorded (best-effort, as before); a missing table is the existing `intentSchemaMissing` path.
+- `components/documents/EditOverlapBanner.tsx` header: the re-formed-overlap paragraph now says what holds (a re-declared expired intent gets a fresh row, so the overlap re-forms with a new formed time). "Heads-up sent" for the viewer's own send is read from the server too (`TAX-16`).
+- Tests: `lib/__tests__/overlapReformedAndSent.test.ts` "TAX-8 dw3" (the delete precedes the upsert, filtered to the caller's own key and `expires_at <= now`; the upsert never sends `created_at`; a refused delete still records the intent; a re-formed overlap's formed time is later); `lib/__tests__/cornerJobs.test.ts` "TAX-8 (N7 third review; N9 done-when 3)" re-pinned to the new behaviour (N7's pin of the old one replaced, as the hand-off said).
+- Verified: ⟪LOOP⟫
+
+**Done-when.**
+- ✓ Every dismissible signalling surface persists its dismissal on the shared `useDismissed` substrate (N7).
+- ✓ `setHidden(false)` is removed from the drain loop (N7).
+- ✓ "Heads-up sent" survives a remount, derived from the notification rows — received rows (N7), and the viewer's own sends from the server (`TAX-16`) — and counted only after the overlap formed, which a re-declared expired intent now moves forward.
+
+**Scope / residual.** An intent renewed BEFORE it lapses keeps its start, by design (the same overlap continues). `TAX-16`'s server read waits on `20261191`; until the paste the viewer's own send is remembered per browser, as before.
 
 ---
 
@@ -601,7 +620,7 @@ lib/notify/dispatch.ts:20 -- `export type NotifChannel = "inapp" | "email";`
 ## TAX-13 · Single kinds carry contradictory meanings: `checkout_released` means both "yours was taken" and "someone else's is stale"; `doc_superseded` means three different things
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/checkoutEpisodes.ts:670-672`, `app/api/cron/maintenance/route.ts:344-353`, `lib/staleCopies.ts:195-207`, `app/api/intake/upload/route.ts:349-351`, `app/api/cron/maintenance/route.ts:370-373`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and understated if anything: doc_superseded has eight distinct producers carrying at least four unrelated meanings, and checkout_released has three (checkoutEpisodes force-release, the cron stale-checkout escalation, and lib/projects.ts:1107). Nothing downstream can tell them apart — kind is the only discriminator any icon, tone, section or future mute/push filter has.
@@ -629,6 +648,20 @@ app/api/cron/maintenance/route.ts:370-372 -- `// Manual distribution-ack request
 - [ ] Each distinct human meaning has its own kind (e.g. `checkout_force_released` vs `checkout_stale_escalation`; `doc_recalled` vs `doc_superseded`)
 - [ ] No kind's meaning depends on inspecting `metadata` to disambiguate
 - [ ] Each new kind is classified in the shared registry with its own icon, section and severity
+
+
+**Resolution (2026-10-07, notifications Round G).** Package N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT, branch `fleet/N9-dc-producers-kind-split`, commit `d48617c`. **Reproduced first** on `b154823`: `checkout_released` was written for a force-release to the holder (`lib/checkoutEpisodes.ts:775`), an ad-hoc expiry release (`lib/projects.ts:2074`, told apart only by `metadata.autoReleasedSessionId`) and the cron's stale-checkout escalation to the controllers (`app/api/cron/maintenance/route.ts`); `doc_superseded` carried the eight meanings `PROD-13` lists, told apart by `metadata.recall` / `workPackageId` / `retirement` / `ackRequest`; `review_requested` also carried the contractor-intake quote and submission notices (`app/api/intake/upload/route.ts:900`, `:1593`; `lib/intakeRateLimit.ts:320` — `DEC-81` §3, `DEC-90` A13).
+
+**What landed.** One kind per human meaning, each in `KIND_META` with its own section, action flag, compliance flag, icon, tone and group (`lib/notificationKinds.ts`), and in the union: `checkout_force_released` (`lib/checkoutEpisodes.ts:779`), `checkout_auto_released` (`lib/projects.ts:2077`), `doc_recalled`, `doc_upstream_changed`, `package_doc_stale`, `package_doc_retired` (`PROD-13`), `intake_quote` / `intake_submission` (section Projects — the intake door's kind strings only, coordinated with projects-joint J16; the folded digest's `foldedDigestKind`). The split kinds keep their parents' flags (the two checkout kinds stay actions, as `checkout_released` was; the others keep `doc_superseded`'s / `review_requested`'s compliance flag), so nothing moves but the name. `checkout_released` now means one thing — the stale-checkout escalation; `review_requested` one thing — a document's sign-off request. `20261191` re-creates `notification_kinds()` from its newest body plus the nine rows (lineDiff: none removed) and re-files the backlog by the discriminators, inside the transaction; a probe reports none left. It was exercised twice on a throwaway PostgreSQL 16 over 20261148 / 20261160 / 20261161 / 20261181 with one seeded row per meaning: every discriminated row re-filed, the rest kept, the second paste re-filed nothing; a browser row of `doc_recalled` / `transmittal_issued` was refused before the paste (unknown kind) and accepted after; the dismiss-only rule followed the split (a read `doc_recalled` row could not be deleted, a read `checkout_auto_released` row could).
+- Tests: `lib/__tests__/notificationKinds.test.ts`, `lib/__tests__/kindSplitProducers.test.ts` (a census of who may still write `doc_superseded`, `checkout_released`, `review_requested`), `lib/__tests__/notifKindSplitMigration.test.ts`, `lib/__tests__/notificationWriteRails.test.ts` (the allow-list pinned to `KIND_META`), `checkoutRoundF.test.ts`, `projects.test.ts`, `intakeUploadRoute.test.ts`, `intakeDoorLibs.test.ts`.
+- Verified: ⟪LOOP⟫
+
+**Done-when.**
+- ✓ Each distinct human meaning has its own kind. The escalation keeps the name `checkout_released` (its one meaning now); the rename to `checkout_stale_escalation` is cosmetic and needs the cron's file — opened as `TAX-17`.
+- ✓ No kind's meaning depends on inspecting `metadata` (the distribution-ack read-back still keys its dedupe on `metadata.ackRequest` / `ackEscalation` — which nudge, not what the row means).
+- ✓ Each new kind is classified in the shared registry with its own icon, section and severity.
+
+**Scope / residual.** `TAX-17` (the escalation's name, notifications N14). Rows written before N9 that carry no discriminator keep their old kind: force-release notices (none carried one) stay `checkout_released`, upstream advisories stay `doc_superseded`; `20261191`'s inventory counts them. The bell has no icon entry for the nine kinds until N3 derives it from `KIND_META` (the feed's is right). Until notifications N6 lands (its cron derives `COMPLIANCE_KINDS` from `KIND_META`), the daily digest's hand-kept list does not carry the six split compliance kinds — merge N6 with or before N9 (`99-fix-sequencing.md`).
 
 ---
 
@@ -720,7 +753,7 @@ Bottom-right now holds the corner dock alone, bottom-left ServiceWorkerManager's
 ## TAX-16 · A heads-up's sender sees "Heads-up sent" only in the browser they sent it from
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** notifications, after N5 DISPATCH-AND-WRITE-HOLES moves notification writes to a server route. Opened 2026-10-01 by notifications Round G N7 CORNER: the DEC-31 remainder of `TAX-8` done-when 3.
 - **Assigned:** notifications N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT, after N5 DISPATCH-AND-WRITE-HOLES merges — by the integrator, 2026-10-02, at the N7 merge.
 - **Verification:** CONFIRMED (read on the N7 branch)
@@ -737,5 +770,41 @@ Bottom-right now holds the corner dock alone, bottom-left ServiceWorkerManager's
 - [ ] The banner derives "Heads-up sent" from that answer on every device; the per-browser marker becomes a cache at most.
 
 **Closer:** notifications, after N5's server-side notification route exists.
+
+
+**Resolution (2026-10-07, notifications Round G).** Package N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT, branch `fleet/N9-dc-producers-kind-split`, commits `d48617c` (the read) and `9f9443d` (the banner). **Reproduced first** on `b154823`: `components/documents/EditOverlapBanner.tsx` derived the viewer's own "Heads-up sent" from a per-browser mark only, because `notifications_own_select` shows a member only the rows addressed to them.
+
+**What landed.**
+- `notifications_i_sent(p_org, p_kind, p_since, p_resource_type, p_resource_id, p_metadata)` (`20261191`, SECURITY DEFINER, `search_path` pinned, EXECUTE to authenticated only — `DRLS-16`): for an ACTIVE member of the org, the rows THEY wrote (`actor_user_id = auth.uid()`) of two kinds only — `overlap_advisory` and `checkout_conflict` (`OS-6`) — inside 30 days at most: recipient, resource and time, never a title, body or metadata. Another kind, another org or no signed-in caller answers no rows. An RPC rather than a route: the read needs the caller's own uid and nothing a service role adds. `lib/sentNotices.ts` `readNoticesISent` (new) reads it; before the paste (42883 / PGRST202) it answers "unavailable", never "never sent". The schema-health panel probes it (`lib/schemaExpectations.ts`).
+- The banner (`EditOverlapBanner.tsx:207`) reads the viewer's own heads-ups about each overlapped document and shows "Heads-up sent" (:271) when one reached EVERY other person in the overlap after it formed (`sentToEveryoneSince`, :105, pure); the per-browser mark stays as a cache and is the whole answer before the paste.
+- Tests: `lib/__tests__/overlapReformedAndSent.test.ts` "TAX-16" (every other person, after the overlap formed, about this document; the banner's reads); `lib/__tests__/checkoutNudgeCooldown.test.ts` (the read's arguments and its "unavailable" answers); `lib/__tests__/notifKindSplitMigration.test.ts` (the function's predicate, grants and health probe). On PostgreSQL 16: an active member read back their one nudge and one heads-up, never another sender's row, a 40-day-old row, another kind or another org; a suspended member read nothing; `anon` was refused.
+- Verified: ⟪LOOP⟫
+
+**Done-when.**
+- ✓ The sender's own heads-up is read from the server: whether the caller sent an `overlap_advisory` about the document to the current set of people within the window, filtered by `actor_user_id = caller` (a definer read rather than a service-role route).
+- ✓ The banner derives "Heads-up sent" from that answer on every device; the per-browser marker is a cache.
+
+**Scope / residual.** Takes effect once `20261191` is pasted; until then the banner keeps today's per-browser path.
+
+---
+
+<a id="tax-17"></a>
+
+## TAX-17 · The stale-checkout escalation still carries the old overloaded name `checkout_released`
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Locations:** `app/api/cron/maintenance/route.ts` (the stale-checkout escalation's insert and its dedupe read), `lib/notificationKinds.ts` (`checkout_released`)
+- **Opened:** 2026-10-07, notifications Round G, package N9 — the rename `TAX-13` done-when 1 names (`checkout_stale_escalation`), left because the writer is the maintenance cron, notifications N6's file.
+
+**Mechanism.** After N9, `checkout_released` has one meaning — "a checkout has been held for weeks, review it" to Admin / DocCtrl — but its name says the opposite (nothing was released). The holder's force-release and expiry notices have their own kinds.
+
+**Done when.**
+
+- [ ] The cron writes `checkout_stale_escalation` (and its dedupe reads it, and `checkout_released` for rows written before), `KIND_META` and the union carry it, a migration re-creates `notification_kinds()` from its newest body with the row added and re-files the old escalation rows (none of them a release).
+- [ ] `checkout_released` leaves the vocabulary (`PROD-8`'s rule) or stays declared for legacy rows only.
+
+**Closer:** notifications N14 (after N6).
 
 ---
