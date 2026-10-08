@@ -725,6 +725,21 @@ describe("a restrictive policy for every role that the link may fail is a gap �
     expect(head).toContain("A POLICY THE LINK MAY FAIL IS A GAP TOO.");
     expect(head).toContain("would refuse that write — an upload that works today would answer 500. So intake_door_rls_gaps names each RESTRICTIVE INSERT or ALL policy");
     expect(head).toContain("After the switch only the door's own policies refuse its write (the route answers 500): they are the link's boundary.");
+    // integrator fix pass: the header says exactly what the code does — the readiness limb, the service-key INSERT it
+    // falls back to, the named-policy fallback after the switch, and the one refusal that is raised
+    expect(head).toContain("a RESTRICTIVE INSERT or ALL policy for every role (or for intake_door) on the table that is not the door's own scope policy nor documents_deny_upload_guard in the repository's shape — the final SELECT says so in four rows (from the same function), and that write keeps the bound identity below without the role switch — exactly the shape before this decision: the INSERT runs under the service key, every trigger guard still judging it, and the upload is filed.");
+    expect(head).toContain("the refusal of a NAMED policy that is not the door's own (one made after the check ran, or written TO a role intake_door inherits), does the same for that one write, with a WARNING in the database log; the upload is never refused for either.");
+    expect(head).toContain("an unnamed refusal, which Postgres gives only when no PERMISSIVE policy admits the row — is raised: the door's permissive policy is the one a link passes, so that refusal is the link's boundary.");
+    expect(head).not.toContain("a policy that differs here");
+    // and the two handlers do exactly that: re-raise the door's own refusal (unnamed, or the named scope policy) and
+    // anything that is neither a privilege gap nor a named policy; fall back for the rest
+    for (const [name, table] of [["intake_door_create_document", "documents"], ["intake_door_file_quote", "cost_documents"]]) {
+      const body = fn(name);
+      expect(body, name).toContain(`'new row violates row-level security policy for table "${table}"'`);
+      expect(body, name).toContain(`'new row violates row-level security policy "${table}_intake_door_scope" for table "${table}"'`);
+      expect(body, name).toContain("OR NOT (SQLERRM LIKE 'permission denied%' OR SQLERRM LIKE 'new row violates row-level security policy \"%') THEN\n        RAISE;");
+      expect(body, name).toContain("v_rls := false;");
+    }
     expect(head).toContain("if one of the four \"row-level security\" rows reads false, the paste still applied and the door's uploads are filed as before");
     expect(head).not.toContain("A POLICY'S REFUSAL IS NOT A GAP");
     expect(head).not.toMatch(/the fourth at once|instead of being stepped around/);

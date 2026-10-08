@@ -24,10 +24,10 @@ before and after.
 | Severity | Count |
 |---|---|
 | CRITICAL | 17 |
-| HIGH | 52 |
+| HIGH | 53 |
 | MEDIUM | 68 |
-| LOW | 6 |
-| **Total** | **143** |
+| LOW | 7 |
+| **Total** | **145** |
 
 Two findings here (`BID-5`, `UX-2`) carry `Status: REFUTED` — an independent pass
 disproved them. They are kept with the reason rather than deleted (`DEC-41`);
@@ -53,6 +53,13 @@ milestone anchored to a document, stay readable by every org member) was
 opened by package J11's review on 2026-10-01.
 `A11Y-15` (write buttons outside `A11Y-14`'s surfaces still carry no decision
 floor) was opened by the integrator at the J10b merge on 2026-10-02.
+`SEC-22` (only the contractor door's new documents and quotes run under
+row-level security; its submission, pointer and promote run under a bound
+identity, its housekeeping writes as the service role) was opened by package
+J16 on 2026-10-07, as `GAP-401`'s remainder.
+`SEC-23` (on the repository's migration sequence no role under row-level
+security can insert a `document_versions` row: the rewrite fails with 42P17)
+was opened by package J16's review on 2026-10-07.
 
 Counts are generated from the reports by
 [`../build-index.mjs`](../build-index.mjs) — see

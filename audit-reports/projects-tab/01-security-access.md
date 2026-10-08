@@ -1187,7 +1187,8 @@ Tests — `lib/__tests__/prjRoundGJ11Migrations.test.ts`: "no other migration re
 
 *Numbered SEC-23 on this branch (opened by projects-joint J16 INTAKE DOOR IDENTITY's review fix pass 3 on 2026-10-07, under `DEC-31`, from a defect J16 found and did not fix). If the number collides at merge, the integrator renumbers it. It is recorded here because J16 found it; the policy, and the fix, are roles-and-permissions'.*
 
-- **Severity:** HIGH (if the live database matches the repository; see Verification)
+- **Severity:** HIGH
+- **Severity qualifier:** holds if the live database matches the repository's sequence; see Verification
 - **Status:** OPEN
 - **Assigned:** roles-and-permissions, owner of `20261037_rp_phase3b_read_ownership_and_version_integrity.sql`'s `document_versions_insert_integrity` (`DEC-31`; named by J16's review fix pass 3, 2026-10-07; the integrator may re-own it at merge). First step: the live verification below, which needs one paste-back from the user.
 - **Verification:** CONFIRMED on the repository's sequence (scratch PostgreSQL 16 carrying `schema.sql` and every numbered migration through base `2de62f1`, applied as a non-superuser `postgres`); **NOT verified against the live database**, which may hold different policy text.

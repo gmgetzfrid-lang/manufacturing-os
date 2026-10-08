@@ -45,14 +45,23 @@
 --     policies use, and no restrictive policy the link may fail stands in
 --     the way (below). If anything is missing — authenticator could not be
 --     made a member, the paster holds no grant option on schema auth or
---     auth.uid() (Postgres then only WARNS), a policy that differs here —
---     the final SELECT says so in four rows (from the same function), and
---     that write keeps the bound identity below without the role switch —
---     exactly the shape before this decision. A privilege the check could
---     not see ("permission denied …" from the INSERT as intake_door), or the
---     refusal of a policy that is not the door's own, does the same for that
---     one write, with a WARNING in the database log; the upload is never
---     refused for either.
+--     auth.uid() (Postgres then only WARNS), a RESTRICTIVE INSERT or ALL
+--     policy for every role (or for intake_door) on the table that is not
+--     the door's own scope policy nor documents_deny_upload_guard in the
+--     repository's shape — the final SELECT says so in four rows (from the
+--     same function), and that write keeps the bound identity below without
+--     the role switch — exactly the shape before this decision: the INSERT
+--     runs under the service key, every trigger guard still judging it, and
+--     the upload is filed. A privilege the check could not see ("permission
+--     denied …" from the INSERT as intake_door), or the refusal of a NAMED
+--     policy that is not the door's own (one made after the check ran, or
+--     written TO a role intake_door inherits), does the same for that one
+--     write, with a WARNING in the database log; the upload is never refused
+--     for either. What the check cannot see and the handler cannot tell from
+--     the door's own refusal — an unnamed refusal, which Postgres gives only
+--     when no PERMISSIVE policy admits the row — is raised: the door's
+--     permissive policy is the one a link passes, so that refusal is the
+--     link's boundary.
 --     A POLICY THE LINK MAY FAIL IS A GAP TOO. Every policy written for all
 --     roles judges the INSERT as intake_door as it judges a member's, and a
 --     RESTRICTIVE one the link's identity cannot satisfy (one that asks for

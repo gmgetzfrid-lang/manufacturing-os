@@ -83,6 +83,13 @@ const db = vi.hoisted(() => ({
   /** J16: the calls a door function made inside the database (publish_revision,
    *  append_ticket_redline) — never the route's own. */
   doorInner: [] as Array<{ fn: string; args: Record<string, unknown> }>,
+  /** J16 (integrator fix pass): the RESTRICTIVE INSERT / ALL policies for every role (or for intake_door) live on a
+   *  door table that intake_door_rls_gaps names ('policy <name>' — the predicate is pinned by prjRoundGJ16DoorIdentity
+   *  and the scratch PostgreSQL 16 runs on GAP-401). The emulated door switches to intake_door only when its table
+   *  has none (intake_door_rls_ready); otherwise the INSERT keeps the bound identity under the service key. */
+  doorRestrictive: [] as Array<{ table: "documents" | "cost_documents"; policy: string }>,
+  /** J16 (integrator fix pass): the role each new-document / quote INSERT ran as inside the door, and the gaps it saw. */
+  doorWroteAs: [] as Array<{ fn: string; role: "intake_door" | "service_role"; gaps: string[] }>,
 }));
 const scopedToAdmin = () => (db.scopeRead?.() as { __admin?: boolean } | undefined)?.__admin === true;
 
@@ -321,7 +328,7 @@ const docWrites = () => db.writes.filter((w) => w.table === "documents" || w.tab
 beforeEach(() => resetDb());
 function resetDb() {
   db.tables = {}; db.writes = []; db.errors = {}; db.rpcCalls = []; db.r2Puts = []; db.r2Deletes = []; db.emits = []; db.pipeline = [];
-  db.doorSeen = []; db.doorInner = [];
+  db.doorSeen = []; db.doorInner = []; db.doorRestrictive = []; db.doorWroteAs = [];
   db.r2Objects = new Map(); db.r2Reads = []; db.presigns = []; db.afterGet = null; db.ignoreIfMatch = false;
   db.seq = 0; db.user = null;
   db.rpc = {
@@ -1338,6 +1345,11 @@ const doorScope = (what: string, hint = "scope"): DoorRes => ({ data: null, erro
 const isResolved = (r: { link: Row; project: Row } | DoorRes): r is { link: Row; project: Row } => "link" in r;
 function installDoor() {
   const seen = (fn: string, sub: unknown) => db.doorSeen.push({ fn, sub: sub == null ? null : String(sub) });
+  /** intake_door_rls_gaps(session_user, …) as the door function asks it before the switch, and the role the INSERT then ran as. */
+  const wroteAs = (fn: string, table: "documents" | "cost_documents") => {
+    const gaps = db.doorRestrictive.filter((p) => p.table === table).map((p) => `policy ${p.policy}`);
+    db.doorWroteAs.push({ fn, role: gaps.length === 0 ? "intake_door" : "service_role", gaps });
+  };
   const assignedTo = (l: Row, id: unknown) => ((l.assigned_doc_ids as string[] | null) ?? []).includes(String(id));
   db.rpc.intake_door_create_document = (a) => {
     const r = doorResolve(a.p_token_hash); if (!isResolved(r)) return r;
@@ -1351,6 +1363,7 @@ function installDoor() {
       updated_at: d.updated_at, uniqueness_key: d.uniqueness_key, authored_by_link_id: r.link.id, current_version_id: null, pending_version_id: null,
     });
     seen("intake_door_create_document", r.link.id);
+    wroteAs("intake_door_create_document", "documents");
     return { data: id, error: null };
   };
   db.rpc.intake_door_submit_version = (a) => {
@@ -1414,6 +1427,7 @@ function installDoor() {
       vendor_name: r.link.company_name, rfq_group: r.link.rfq_group ?? null, intake_link_id: r.link.id, party_id: q.party_id ?? null, status: "draft", created_by: null, file_hash: q.file_hash,
     });
     seen("intake_door_file_quote", r.link.id);
+    wroteAs("intake_door_file_quote", "cost_documents");
     return { data: id, error: null };
   };
   db.rpc.intake_door_append_redline = (a) => {
@@ -1800,6 +1814,83 @@ describe("J16 (GAP-401) — after 20261184: the door writes as an identity the g
     expect(a.tables.cost_documents[0]).toMatchObject({ vendor_name: "Vendor Co", rfq_group: "RFQ-7", intake_link_id: LINK, party_id: "party-1", status: "draft", created_by: null });
     expect(serviceContentWrites()).toEqual([]);
     expect(db.doorSeen).toEqual([{ fn: "intake_door_file_quote", sub: LINK }]);
+  });
+
+  // Integrator fix pass (review 5, major): a RESTRICTIVE INSERT / ALL policy for every role that the link's identity
+  // may fail is a GAP found inside the door function before its role switch (intake_door_rls_gaps names it, so
+  // intake_door_rls_ready is false): that table's INSERT keeps the bound identity under the service key — today's
+  // shape, every trigger guard still judging it — and the upload is filed. The route sees one answer either way: the
+  // id. These cases pin that the route files such an upload exactly as today and exactly as the door-identity path,
+  // and that readiness is the database's decision, never the route's.
+  describe("a RESTRICTIVE INSERT policy for every role that the link may fail: readiness false, the upload filed exactly as today", () => {
+    const docRow = (t: typeof db.tables, id: unknown) => without(t.documents.find((d) => d.id === id), "id", "created_at", "updated_at");
+    const verRow = (t: typeof db.tables, id: unknown) => without(t.document_versions.find((v) => v.id === id), "id", "record_id", "created_at", "file_url");
+
+    it("NEW document (the reviewer's G3 shape on documents): the same answer and rows as before the paste, filed through the door with the bound identity under the service key, no service-role retry, no readiness call from the route", async () => {
+      const arrange = () => { seed({ doc: null }); db.doorRestrictive.push({ table: "documents", policy: "documents_deny_upload_guard" }); };
+      const { b, a } = await bothWorlds(arrange, () => upload({ title: "Skid GA", number: "V-300", changeNote: "first issue" }));
+      expect(answer(a)).toEqual(answer(b));
+      expect(a.status).toBe(200);
+      expect(a.body.status).toBe("in_review");
+      expect(docRow(a.tables, a.body.documentId)).toEqual({ ...docRow(b.tables, b.body.documentId), current_version_id: null, pending_version_id: a.body.versionId });
+      expect(verRow(a.tables, a.body.versionId)).toEqual(verRow(b.tables, b.body.versionId));
+      expect(a.emits).toBe(b.emits);
+      // the door decided: readiness false for documents, the INSERT with the bound identity (sub = the link) under the service key
+      expect(db.doorWroteAs).toEqual([{ fn: "intake_door_create_document", role: "service_role", gaps: ["policy documents_deny_upload_guard"] }]);
+      expect(db.doorSeen.every((s) => s.sub === LINK)).toBe(true);
+      expect(doorCalls()).toEqual(["intake_door_create_document", "intake_door_submit_version", "intake_door_point_pending"]);
+      expect(serviceContentWrites()).toEqual([]);
+      expect(db.rpcCalls.map((c) => c.fn)).not.toContain("intake_door_rls_ready");
+      expect(db.rpcCalls.map((c) => c.fn)).not.toContain("intake_door_rls_gaps");
+      expect(db.r2Deletes).toEqual([]);
+    });
+
+    it("REGRESSION: without such a policy the same request takes the door-identity path (the INSERT as intake_door) and writes the same rows — field for field — as with it", async () => {
+      resetDb(); seed({ doc: null }); db.doorRestrictive.push({ table: "documents", policy: "documents_member_insert" }); installDoor();
+      const gapped = await upload({ title: "Skid GA", number: "V-300", changeNote: "first issue" });
+      const g = { status: gapped.status, body: await gapped.json() as Row, tables: structuredClone(db.tables), wroteAs: [...db.doorWroteAs] };
+      resetDb(); seed({ doc: null }); installDoor();
+      const clean = await upload({ title: "Skid GA", number: "V-300", changeNote: "first issue" });
+      const c = { status: clean.status, body: await clean.json() as Row, tables: structuredClone(db.tables), wroteAs: [...db.doorWroteAs] };
+      expect(answer(c)).toEqual(answer(g));
+      expect(c.status).toBe(200);
+      expect(docRow(c.tables, c.body.documentId)).toEqual({ ...docRow(g.tables, g.body.documentId), pending_version_id: c.body.versionId });
+      expect(verRow(c.tables, c.body.versionId)).toEqual(verRow(g.tables, g.body.versionId));
+      expect(c.wroteAs).toEqual([{ fn: "intake_door_create_document", role: "intake_door", gaps: [] }]);
+      expect(g.wroteAs).toEqual([{ fn: "intake_door_create_document", role: "service_role", gaps: ["policy documents_member_insert"] }]);
+    });
+
+    it("QUOTE (the reviewer's G2 shape on cost_documents): the same answer and row as before the paste, filed with the bound identity; a policy on cost_documents leaves a NEW document under row-level security, and one on documents leaves the quote there", async () => {
+      const arrange = () => {
+        seed({ link: { purpose: "quote", rfq_group: "RFQ-7" } });
+        db.tables.project_parties = [{ id: "party-1", org_id: ORG, project_id: "p1", name: "Vendor Co, Inc." }];
+        db.doorRestrictive.push({ table: "cost_documents", policy: "cost_documents_member_insert" });
+      };
+      const { b, a } = await bothWorlds(arrange, () => upload({}));
+      expect(answer(a)).toEqual(answer(b));
+      expect(a.status).toBe(200);
+      expect(a.body.status).toBe("quote_received");
+      expect(without(a.tables.cost_documents[0], "id", "created_at", "file_url")).toEqual(without(b.tables.cost_documents[0], "id", "created_at", "file_url"));
+      expect(a.tables.cost_documents[0]).toMatchObject({ vendor_name: "Vendor Co", rfq_group: "RFQ-7", intake_link_id: LINK, party_id: "party-1", status: "draft", created_by: null });
+      expect(db.doorWroteAs).toEqual([{ fn: "intake_door_file_quote", role: "service_role", gaps: ["policy cost_documents_member_insert"] }]);
+      expect(db.doorSeen).toEqual([{ fn: "intake_door_file_quote", sub: LINK }]);
+      expect(serviceContentWrites()).toEqual([]);
+      // the other table is untouched by it: the readiness is per table
+      resetDb(); seed({ doc: null }); db.doorRestrictive.push({ table: "cost_documents", policy: "cost_documents_member_insert" }); installDoor();
+      expect((await upload({ title: "Skid GA" })).status).toBe(200);
+      expect(db.doorWroteAs).toEqual([{ fn: "intake_door_create_document", role: "intake_door", gaps: [] }]);
+      resetDb(); arrange(); db.doorRestrictive.splice(0); db.doorRestrictive.push({ table: "documents", policy: "documents_member_insert" }); installDoor();
+      expect((await upload({})).status).toBe(200);
+      expect(db.doorWroteAs).toEqual([{ fn: "intake_door_file_quote", role: "intake_door", gaps: [] }]);
+    });
+
+    it("the route holds no readiness logic of its own: it never names intake_door_rls_ready or intake_door_rls_gaps, never switches roles and never sends a second write — the database decides inside the door function, and the route files the id it answers", () => {
+      const r = readFileSync(join(process.cwd(), "app/api/intake/upload/route.ts"), "utf8");
+      expect(r).not.toMatch(/intake_door_rls_(ready|gaps)/);
+      expect(r).not.toMatch(/set_config|SET ROLE|intake_door'/);
+      expect(r.match(/supabaseAdmin\.rpc\("intake_door_create_document"/g)).toHaveLength(1);
+      expect(r.match(/supabaseAdmin\.rpc\("intake_door_file_quote"/g)).toHaveLength(1);
+    });
   });
 
   it("REGRESSION: a redline answers exactly as before — the ticket rails' append, made by the door only for a ticket naming the link, bound to no identity; before 20261166 the door answers 42883 and the route takes its own path", async () => {

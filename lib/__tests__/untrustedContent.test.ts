@@ -214,6 +214,19 @@ describe("the operator step", () => {
     expect(full).toContain("file={resolvedUrl}");
     expect(full).toContain("const res = await fetch(resolvedUrl);");
   });
+  it("GAP-401's hand-off done-when checks viewing, not only the export: with the setting on, a contractor PDF opened from the Intake tab in the in-app viewer (SecureDocViewer) renders, and a curl Origin check against a download-url-signed door URL answers Access-Control-Allow-Origin (integrator fix pass)", () => {
+    const gap = readFileSync(join(process.cwd(), "audit-reports/projects-tab/90-gap-register.md"), "utf8");
+    const start = gap.indexOf("\n## GAP-401");
+    expect(start).toBeGreaterThan(0);
+    const next = gap.indexOf("\n## ", start + 1);
+    const block = gap.slice(start, next > 0 ? next : undefined);
+    expect(block).toContain("a contractor PDF opened from the **Intake** tab in the in-app viewer (`SecureDocViewer`), and in its full-screen view, renders");
+    expect(block).toContain('`curl -s -D - -o /dev/null -H "Origin: <app origin>" "<a door upload URL signed by /api/storage/download-url>"` answers with `Access-Control-Allow-Origin` for the app origin');
+    expect(block).toContain("If either fails, the setting is undone and the result recorded here before the hand-off is called done.");
+    // the doc and the record say the same about what fetches cross-origin
+    expect(block).toContain("components/viewers/SecureDocViewer.tsx:170");
+    expect(doc).not.toContain("do not depend on this check");
+  });
   it(".env.example lists the variable, blank by default", () => {
     const env = readFileSync(join(process.cwd(), ".env.example"), "utf8");
     expect(env).toMatch(/^UNTRUSTED_CONTENT_ORIGIN=$/m);
