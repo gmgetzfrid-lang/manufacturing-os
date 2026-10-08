@@ -185,6 +185,18 @@ describe("rename_codebook_code — DRLS-16, the controller tier, one transaction
     expect(r).toContain("would read, once renamed, both as %s %s and as another unit and type");
     expect(r.indexOf("IF v_ambiguous_new > 0 THEN")).toBeLessThan(r.indexOf("IF p_dry_run THEN RETURN v_counts; END IF;"));
   });
+  it("the new code's mapping held by another operational unit is a blocker whether or not the old code is mapped (the filing would move into that unit)", () => {
+    expect(r).toContain("SELECT COUNT(*) INTO v_unit_clash FROM units u WHERE u.org_id = p_org_id AND u.codebook_code = v_new_code;");
+    expect(r).toContain("IF v_unit_clash > 0 THEN");
+    expect(r).not.toContain("IF v_units > 0 AND v_unit_clash > 0 THEN");
+    expect(r).toContain("is already mapped to another operational unit, and everything filed under %s would move into it");
+    expect(r.indexOf("IF v_unit_clash > 0 THEN")).toBeLessThan(r.indexOf("IF p_dry_run THEN RETURN v_counts; END IF;"));
+  });
+  it("a flow that would start and end at the new code is a blocker: one between the two codes, or a legacy row already looping at the old one", () => {
+    expect(r).toContain("AND ((f.from_ref = v_old_code AND f.to_ref = v_new_code) OR (f.from_ref = v_new_code AND f.to_ref = v_old_code)\n            OR (f.from_ref = v_old_code AND f.to_ref = v_old_code));");
+    expect(r).toContain("would start and end at the same unit once %s becomes %s");
+    expect(r.indexOf("IF v_flow_loop > 0 THEN")).toBeLessThan(r.indexOf("IF p_dry_run THEN RETURN v_counts; END IF;"));
+  });
   it("the dry run, the blockers and the preview = apply check all come before the first write", () => {
     const firstWrite = r.indexOf("INSERT INTO codebook_entries");
     expect(r.indexOf("IF p_dry_run THEN RETURN v_counts; END IF;")).toBeLessThan(firstWrite);
@@ -248,10 +260,11 @@ describe("CB-6 version triggers and ASK-8's rule", () => {
     // a label / link / binding edit is no new version
     expect(e).toContain("AND (NEW.meta -> 'tagPrefixes') IS NOT DISTINCT FROM (OLD.meta -> 'tagPrefixes') THEN");
   });
-  it("a person cannot set an asset's stamp or lower the codebook version; a restore carries its own", () => {
+  it("a person cannot set an asset's stamp or lower the codebook version; a restore carries its own; a service-role insert with no stamp (the Bridge; a pre-20261178 backup) takes the version in force", () => {
     const a = body("assets_codebook_version_stamp");
     expect(a).toContain("IF auth.uid() IS NOT NULL THEN NEW.codebook_version := OLD.codebook_version; END IF;");
     expect(a).toContain("IF TG_OP = 'INSERT' AND auth.uid() IS NULL AND NEW.codebook_version IS NOT NULL THEN RETURN NEW; END IF;");
+    expect(a).toContain("NEW.codebook_version := COALESCE((SELECT c.codebook_version FROM codebook_config c WHERE c.org_id = NEW.org_id), 1);");
     const c = body("codebook_config_version_guard");
     expect(c).toContain("IF NEW.codebook_version IS NULL OR NEW.codebook_version < OLD.codebook_version THEN");
   });

@@ -21,7 +21,12 @@
 --        page, an import, the Bridge, the server re-decode, a rename):
 --        assets_codebook_version_stamp. NULL: no code, or a code written
 --        before this file. A person cannot set it; an org restore (the
---        service role) carries the one its backup recorded.
+--        service role) carries the one its backup recorded. A service-role
+--        insert that carries none takes the version in force: the Bridge's
+--        new codes, and a code restored from a backup taken before this
+--        file — the stamp cannot tell those two apart, so such a code reads
+--        as written at the restore (re-derivation, not the stamp, decides
+--        whether it still derives).
 --      The service role never creates a codebook_config row here (an org
 --      restore inserts the backup's own row afterwards and must not find one
 --      waiting); it bumps an existing row only.
@@ -56,8 +61,10 @@
 --      what it would touch changed since the preview: preview = apply.
 --      A rename that would collide (a rewritten site code another asset
 --      carries, a head that already reads — or once renamed would read — as
---      another unit and type, a flow that would duplicate or loop, a mapping
---      held elsewhere) is refused whole; the dry run names it first.
+--      another unit and type, a flow that would duplicate or loop — between
+--      the two codes, or a legacy row already looping at the old one — the
+--      new code's mapping held by another operational unit, whether or not
+--      the old code is mapped) is refused whole; the dry run names it first.
 --      drawing_type codes are referenced by nothing stored and are not
 --      renamed here.
 --   3. process_flows_guard re-created from its only (newest) definition,
@@ -326,7 +333,8 @@ BEGIN
     NEW.codebook_version := NULL;
     RETURN NEW;
   END IF;
-  -- An org restore (the service role) carries the version its backup recorded.
+  -- An org restore (the service role) carries the version its backup recorded;
+  -- one with no stamp (the Bridge; a pre-20261178 backup) takes the version in force.
   IF TG_OP = 'INSERT' AND auth.uid() IS NULL AND NEW.codebook_version IS NOT NULL THEN RETURN NEW; END IF;
   NEW.codebook_version := COALESCE((SELECT c.codebook_version FROM codebook_config c WHERE c.org_id = NEW.org_id), 1);
   RETURN NEW;
@@ -590,9 +598,12 @@ BEGIN
     SELECT COUNT(*) INTO v_flows FROM process_flows f
      WHERE f.org_id = p_org_id
        AND ((f.from_kind = 'unit' AND f.from_ref = v_old_code) OR (f.to_kind = 'unit' AND f.to_ref = v_old_code));
+    -- A flow that would start and end at the new code: one between the two
+    -- codes, or a legacy row (before 20261155's endpoint check) looping at the old one.
     SELECT COUNT(*) INTO v_flow_loop FROM process_flows f
      WHERE f.org_id = p_org_id AND f.from_kind = 'unit' AND f.to_kind = 'unit'
-       AND ((f.from_ref = v_old_code AND f.to_ref = v_new_code) OR (f.from_ref = v_new_code AND f.to_ref = v_old_code));
+       AND ((f.from_ref = v_old_code AND f.to_ref = v_new_code) OR (f.from_ref = v_new_code AND f.to_ref = v_old_code)
+            OR (f.from_ref = v_old_code AND f.to_ref = v_old_code));
     SELECT COUNT(*) INTO v_flow_clash FROM process_flows f
      WHERE f.org_id = p_org_id
        AND ((f.from_kind = 'unit' AND f.from_ref = v_old_code) OR (f.to_kind = 'unit' AND f.to_ref = v_old_code))
@@ -602,6 +613,9 @@ BEGIN
                       AND g.from_ref = CASE WHEN f.from_kind = 'unit' AND f.from_ref = v_old_code THEN v_new_code ELSE f.from_ref END
                       AND g.to_ref = CASE WHEN f.to_kind = 'unit' AND f.to_ref = v_old_code THEN v_new_code ELSE f.to_ref END);
     SELECT COUNT(*) INTO v_units FROM units u WHERE u.org_id = p_org_id AND u.codebook_code = v_old_code;
+    -- The new code's mapping held by another operational unit: 20261138's
+    -- projection would move everything filed under the old code into it,
+    -- whether or not the old code is mapped itself.
     SELECT COUNT(*) INTO v_unit_clash FROM units u WHERE u.org_id = p_org_id AND u.codebook_code = v_new_code;
     SELECT COUNT(*) INTO v_adopted FROM assets a WHERE a.org_id = p_org_id AND a.unit_code = v_new_code;
     SELECT COUNT(*) INTO v_adopted_flows FROM process_flows f
@@ -648,13 +662,13 @@ BEGIN
     v_blockers := v_blockers || format('%s renamed site code(s) are already carried by another asset — one site code is one asset; resolve them first', v_taken);
   END IF;
   IF v_flow_loop > 0 THEN
-    v_blockers := v_blockers || format('%s process flow(s) run between %s and %s and would start and end at the same unit — remove them first', v_flow_loop, v_old_code, v_new_code);
+    v_blockers := v_blockers || format('%s process flow(s) would start and end at the same unit once %s becomes %s — remove them first', v_flow_loop, v_old_code, v_new_code);
   END IF;
   IF v_flow_clash > 0 THEN
     v_blockers := v_blockers || format('%s process flow(s) would duplicate a flow already ending at %s — remove the duplicate first', v_flow_clash, v_new_code);
   END IF;
-  IF v_units > 0 AND v_unit_clash > 0 THEN
-    v_blockers := v_blockers || format('%s is already mapped to another operational unit — clear that mapping first (Operational scope)', v_new_code);
+  IF v_unit_clash > 0 THEN
+    v_blockers := v_blockers || format('%s is already mapped to another operational unit, and everything filed under %s would move into it — clear that mapping first (Operational scope)', v_new_code, v_old_code);
   END IF;
 
   v_counts := jsonb_build_object(
@@ -840,6 +854,8 @@ SELECT 'rename_codebook_code: SECURITY DEFINER, search_path pinned, refuses a NU
                AND prosrc LIKE '%PERFORM set_config(''app.codebook_rename'', '''', true);%'
                AND prosrc LIKE '%DELETE FROM codebook_entries WHERE id = v_old.id;%'
                AND prosrc LIKE '%would read, once renamed, both as%'
+               AND prosrc LIKE '%IF v_unit_clash > 0 THEN%'
+               AND prosrc LIKE '%OR (f.from_ref = v_old_code AND f.to_ref = v_old_code));%'
           FROM pg_proc WHERE proname = 'rename_codebook_code'),
        NULL
 UNION ALL

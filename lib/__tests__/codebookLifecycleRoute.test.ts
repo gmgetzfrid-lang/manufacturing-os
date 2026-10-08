@@ -114,7 +114,8 @@ vi.mock("@/lib/serverAuth", () => ({
   },
 }));
 
-import { POST, REDECODE_WRITE_BUDGET, RENAME_NOT_APPLIED } from "@/app/api/admin/codebook/route";
+import { POST } from "@/app/api/admin/codebook/route";
+import { REDECODE_WRITE_BUDGET, RENAME_NOT_APPLIED } from "@/lib/codebook";
 import { authorizeAdminSurface } from "@/lib/adminGate";
 import { redecodeDigest } from "@/lib/assetCategorize";
 

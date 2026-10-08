@@ -772,6 +772,12 @@ export async function applyImport(orgId: string, accepted: ProposedEntry[], user
 // 20261178 is pasted the route answers `needsMigration` and the page keeps
 // today's way: add the new code, refile, remove the old one.
 
+/** Re-decode writes per call; the page previews and applies again for the rest. */
+export const REDECODE_WRITE_BUDGET = 400;
+/** The route's answer while the database has no 20261178 (409, `needsMigration`). */
+export const RENAME_NOT_APPLIED =
+  "Renaming a code in place needs migration 20261178, which is not applied yet. Until it is: add the new code, refile its equipment under Operating areas, then remove the old code.";
+
 /** The counts a rename preview shows and its apply re-checks. */
 export const RENAME_COUNT_KEYS = ["assetsFiled", "assetsCoded", "flows", "unitMappings", "adopted", "adoptedFlows"] as const;
 export type RenameCountKey = typeof RENAME_COUNT_KEYS[number];

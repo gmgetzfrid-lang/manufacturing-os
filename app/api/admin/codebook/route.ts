@@ -46,7 +46,7 @@ import { callerScopedClient } from "@/lib/serverAuth";
 import { readAll } from "@/lib/unitCodeDecode";
 import { isMissingColumn } from "@/lib/orgGraph";
 import {
-  EMPTY_CODEBOOK, renameExpectedCounts,
+  EMPTY_CODEBOOK, renameExpectedCounts, REDECODE_WRITE_BUDGET, RENAME_NOT_APPLIED,
   type Codebook, type CodebookEntry, type DrawingNumberConfig, type IterableRule,
 } from "@/lib/codebook";
 import { planRedecode, redecodeDigest, type RedecodeRow } from "@/lib/assetCategorize";
@@ -54,13 +54,9 @@ import { planRedecode, redecodeDigest, type RedecodeRow } from "@/lib/assetCateg
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-/** Re-decode writes per call; the page previews and applies again for the rest. */
-export const REDECODE_WRITE_BUDGET = 400;
 /** Writes in flight at once. */
 const WRITE_WAVE = 8;
 
-export const RENAME_NOT_APPLIED =
-  "Renaming a code in place needs migration 20261178, which is not applied yet. Until it is: add the new code, refile its equipment under Operating areas, then remove the old code.";
 const REFUSED = "Only the roles that edit the Site Codebook can re-decode site codes or rename a code.";
 
 const bad = (error: string, status = 400, extra: Record<string, unknown> = {}) =>
