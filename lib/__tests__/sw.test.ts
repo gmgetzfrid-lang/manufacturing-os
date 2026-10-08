@@ -1172,9 +1172,16 @@ describe("OFF-3 / OFF-4 — the page side: honest offline copy, an update button
 
   it("UpdatePill's button goes through loadLatestBuild, never a bare reload", () => {
     const src = readFileSync(resolve(process.cwd(), "components/system/UpdatePill.tsx"), "utf8");
-    expect(src).toMatch(/import \{ loadLatestBuild \} from "@\/components\/pwa\/ServiceWorkerManager";/);
-    expect(src).toMatch(/void loadLatestBuild\(\{/);
-    expect(src).toMatch(/getRegistration: sw \? \(\) => sw\.getRegistration\(\) : null/);
-    expect(src).not.toMatch(/onClick=\{\(\) => window\.location\.reload\(\)\}/);
+    // TAX-15 (notifications Round G N3): the reload path lives in the leaf
+    // module components/pwa/swUpdate.ts, which UpdatePill and the service
+    // worker's fallback button both call.
+    expect(src).toMatch(/loadLatestBuildInThisTab,[\s\S]*?\} from "@\/components\/pwa\/swUpdate";/);
+    expect(src).toMatch(/void loadLatestBuildInThisTab\(\);/);
+    const leaf = readFileSync(resolve(process.cwd(), "components/pwa/swUpdate.ts"), "utf8");
+    expect(leaf).toMatch(/return loadLatestBuild\(\{/);
+    expect(leaf).toMatch(/getRegistration: sw \? \(\) => sw\.getRegistration\(\) : null/);
+    for (const f of ["components/system/UpdatePill.tsx", "components/pwa/ServiceWorkerManager.tsx"]) {
+      expect(readFileSync(resolve(process.cwd(), f), "utf8"), f).not.toMatch(/window\.location\.reload\(\)/);
+    }
   });
 });

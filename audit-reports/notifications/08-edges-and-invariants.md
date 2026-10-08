@@ -271,7 +271,7 @@ maintenance/route.ts:430  `        "\\n\\nOpen your Inbox to act on them.",`
 ## NEDGE-5 · Every notification surface is invisible to assistive technology: no aria-live region, no accessible name on the bell, no role on toasts, unnamed dismiss controls
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/notifications/NotificationBell.tsx:99-112`, `components/notifications/NotificationBell.tsx:114-127`, `components/notifications/NotificationBell.tsx:129-130`, `components/providers/ToastProvider.tsx:57-58`, `components/providers/ToastProvider.tsx:90-95`, `components/ui/CornerDock.tsx:23-27`
 - **Re-verified:** hardening pass — **SURVIVES**, by census. `grep -c 'aria-live\|role="status"\|aria-label'` on `NotificationBell.tsx` returns **0**.
@@ -298,6 +298,26 @@ CornerDock.tsx:23-26  `    <div\n      id={DOCK_ID}\n      className="fixed bott
 - [ ] A single polite live region (aria-live="polite" aria-atomic="true") announces unread-count changes, and the CornerDock gets role="region" aria-live="polite" so toasts and job cards announce on insert; errors use role="alert"
 - [ ] The dropdown becomes a labelled dialog with focus moved in on open and restored on close (Escape handling at line 76 is already correct and must be preserved)
 - [ ] Every icon-only control on these surfaces has an aria-label — starting with the toast dismiss at ToastProvider.tsx:90
+
+**Resolution (2026-10-02, notifications Round G).** Package N3 SURFACES (the bell and the center); the toast and dock limbs landed with N7 CORNER and are verified here, not re-implemented. **Reproduced first** on `7c27b0c`: the header bell's button carried only `title=` (`components/notifications/NotificationBell.tsx:106`) with the count as its text content, no `aria-haspopup` / `aria-expanded`; the drawer was a plain `<div>` (`:135`) with no role, and focus never moved; the bell had no live region; the center's close button was icon-only with a `title` (`NotificationCenter.tsx:115-121`) and the closed panel stayed focusable off-screen.
+
+What landed:
+- **The bell's name** (`NotificationBell.tsx`): `aria-label={bellLabel(n)}` — "Notifications, 7 need attention" (`bellLabel`, :34) — `aria-haspopup="dialog"`, `aria-expanded`, `aria-controls` (:120); the count span and the icon are `aria-hidden`.
+- **One polite live region** for the count (:137): `role="status" aria-live="polite" aria-atomic="true"`, saying "7 items need attention, 1 needs action" (`bellAnnouncement`, :44 — "items", the sidebar badge's word, since the N3 integrator fix pass of 2026-10-02: it said "7 notifications need attention" before, which called a request in the feed a notification — `RT-9` done-when 3), silent while loading.
+- **The drawer is a labelled dialog** (`role="dialog" aria-label="Notifications"`, :145) that takes focus when it opens (:91) and hands it back to the bell when it closes with focus nowhere better to be; Escape closes it as before (the `document` keydown handler is unchanged).
+- **The center** (`NotificationCenter.tsx`): already `role="dialog" aria-modal="true"`; now named by its scope, focused on open and handing focus back to its opener on close (:251-265), `inert` while closed (:361), its close button `aria-label="Close the notification center"` (:394), and its slide `motion-reduce:transition-none` (reduced motion; `app/globals.css`'s `prefers-reduced-motion` block still covers the `animate-*` utilities).
+- **Icon-only controls** in the feed (`AttentionFeed.tsx`): "Mark read: <title>" on each row's check (:233), and the mark-all button keeps its name when its label is hidden on a phone (:136). The toast's X is `aria-label="Dismiss"` (N7).
+- **Verified, N7's limb** (dw2): `components/ui/CornerDock.tsx` renders the dock `role="region" aria-label="Background activity and messages" aria-live="polite" aria-relevant="additions"`; `components/providers/ToastProvider.tsx` renders the toast list `role="status"`, an error toast `role="alert"`, and the X `aria-label="Dismiss"` (pinned by `lib/__tests__/cornerDock.test.ts` "the dock is a labelled live region…" and "a single toast appears, is announced, dismissible with an accessible X…").
+
+Tests: `lib/__tests__/notificationCenterScope.test.ts` — "is named with its count, says it opens a dialog, hides the decorative count, and announces the count politely", "opens a labelled dialog that takes focus; Escape (as before) closes it and focus returns to the bell", "opening focuses the panel; Escape closes it and focus returns to the badge that opened it; closed, the panel is inert"; `lib/__tests__/notificationListenerToasts.test.ts` (a notification's toast is in the polite dock region and dismissible). Verified: loop on `fleet/N3-surfaces` at `bac49dc`: `npx tsc --noEmit` exit 0; `npx eslint` on the 16 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 406 files, 8496 passed, 7 expected-fail. `next build` is the integrator's.
+
+**Done-when.**
+- ✓ The bell button has an explicit aria-label ("Notifications, 7 need attention"), aria-haspopup + aria-expanded, and the count span is aria-hidden with the number carried in the label.
+- ✓ A single polite live region (aria-live="polite" aria-atomic="true") announces count changes (the bell's); the CornerDock is role="region" aria-live="polite" so toasts and job cards announce on insert; errors use role="alert" (N7, verified).
+- ✓ The dropdown is a labelled dialog with focus moved in on open and restored on close; Escape still closes it.
+- ✓ Every icon-only control on these surfaces has an aria-label: the toast dismiss (N7), the center's close, the feed's per-row mark-read and its mark-all on a phone, the sidebar badge (a count, now named "Documents: 3 items need attention…").
+
+**Scope / residual.** The bell animation (`OS-5`, GAP-204) is N12's and builds on this. The center declares `aria-modal` but does not trap Tab (as on `7c27b0c`), so Tab can leave it for a drawer underneath; since the N3 fourth review fix an Escape there closes the center, as on base (`RT-11`'s note). Observed in jsdom with the real components; no screen reader was run. No migration.
 
 ---
 
@@ -329,6 +349,8 @@ types/schema.ts:81  `export type NodeVisibility = "normal" | "hidden" | "private
 ```
 
 **Chain reaction.** Because there is no DELETE path on the notifications table anywhere in the app (a full census of `from("notifications")` returns only insert/select/update, and a second case-insensitive delete-shaped search returns nothing), the leaked title is permanent. The only removal is /api/admin/purge, which is manual, Admin-gated and restricted to `read_at IS NOT NULL` — an unread leaked title is unreachable by any cleanup.
+
+*Cross-note (2026-10-02, notifications Round G, N3 SURFACES review fix): one more producer on the notify path checks no ACL — `lib/activityThread.ts` `notifyCheckoutActivity` (:113-176). It addresses every checkout-thread post to the episode's participants, the active session holders and the document's watchers (`subscriptions`), and puts the post's text in the body (a 140-character snippet). Since `TAX-4` / `RT-2` removed the org-wide toast channel, that row is the toast too. A watcher later removed from the document's ACL is still notified and toasted "Alice posted to P-4412 — <snippet>". `TAX-4` done-when 3 ("no toast is shown for a resource the viewer lacks ACL on") is therefore **not met**, and `TAX-4` stays OPEN (Partial) on it with this finding's owner (notifications N5) — corrected at the N3 second review fix; the first note said it was "met for the toast surface only". It is named so the check has an owner: this finding's third done-when, applied to that producer as well.*
 
 **Done when.**
 

@@ -8,16 +8,21 @@
 //
 // Extracted verbatim from /inbox so it can be reused both on the cockpit page
 // and as the dashboard's "Needs You" widget. Behavior is identical in both.
+//
+// A row's icon, tone and group chip come from ONE table — lib/notificationKinds.ts
+// KIND_META (notifications Round G, N3; TAX-5 / DEC-81 §1) — instead of the
+// substring predicates that used to live here: the icon is the bell's
+// (components/notifications/kindIcon.ts), so a row looks the same in both.
+// The words (RT-9): "Action" is what needs you to do something, "Activity"
+// everything else (the vocabulary note in hooks/useTicketNotifications.ts).
 
 import React from "react";
 import Link from "next/link";
-import {
-  Bell, Loader2, AlertTriangle, MessageSquare, Flag, ChevronRight,
-  Send, Zap, ClipboardList, AtSign, GitBranch, Layers, Lock, AlertOctagon,
-  FileSignature, CheckCheck, Briefcase,
-} from "lucide-react";
+import { Loader2, ChevronRight, ClipboardList, CheckCheck } from "lucide-react";
 import type { AttentionItem, AttentionCounts } from "@/hooks/useTicketNotifications";
 import { formatAgo } from "@/components/cockpit/CommandDeck";
+import { kindMeta, type KindGroup, type KindTone } from "@/lib/notificationKinds";
+import { iconForKind, type IconComponent } from "@/components/notifications/kindIcon";
 
 // The key matches its label (TAX-7): "activity" is the feed's non-action
 // items — not DB-unread; see the vocabulary note in useTicketNotifications.
@@ -34,22 +39,14 @@ const FEED_TONES: Record<string, string> = {
   slate: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]",
 };
 
-function attentionVisual(item: AttentionItem): { Icon: React.ComponentType<{ className?: string }>; tone: string } {
-  if (item.actionRequired) return { Icon: Zap, tone: "orange" };
-  const k = String(item.kind).toLowerCase();
-  if (k.includes("reminder")) return { Icon: Bell, tone: "amber" };
-  if (k.includes("mention")) return { Icon: AtSign, tone: "violet" };
-  if (k.includes("comment") || k.includes("message")) return { Icon: MessageSquare, tone: "blue" };
-  if (k.includes("conflict")) return { Icon: AlertTriangle, tone: "amber" };
-  if (k.includes("checkout") || k.includes("lock")) return { Icon: Lock, tone: "indigo" };
-  if (k.includes("markup")) return { Icon: FileSignature, tone: "violet" };
-  if (k.includes("hold")) return { Icon: AlertOctagon, tone: "rose" };
-  if (k.includes("milestone")) return { Icon: Flag, tone: "emerald" };
-  if (k.includes("rev") || k.includes("revision") || k.includes("version")) return { Icon: GitBranch, tone: "blue" };
-  if (k.includes("transmittal")) return { Icon: Send, tone: "blue" };
-  if (k.includes("approval") || k.includes("request") || k.includes("assign")) return { Icon: Briefcase, tone: "orange" };
-  if (k.includes("equipment") || k.includes("asset")) return { Icon: Layers, tone: "amber" };
-  return { Icon: Bell, tone: "slate" };
+/** A row's icon and tile tone. The icon is the kind's (KIND_META.icon — the
+ *  bell draws the same one); the tone is the kind's (KIND_META.tone), except
+ *  that an action item is always orange — it is pulled to the eye. A ticket
+ *  row and a legacy kind no union declares are slate. */
+export function attentionVisual(item: Pick<AttentionItem, "kind" | "actionRequired">): { Icon: IconComponent; tone: KindTone } {
+  const Icon = iconForKind(String(item.kind));
+  if (item.actionRequired) return { Icon, tone: "orange" };
+  return { Icon, tone: kindMeta(String(item.kind))?.tone ?? "slate" };
 }
 
 export interface AttentionFeedProps {
@@ -61,22 +58,29 @@ export interface AttentionFeedProps {
   onMarkRead: (id: string) => void;
   onMarkAll: () => void;
   markingAll: boolean;
+  /** The sidebar section the list is scoped to (the Notification Center
+   *  opened from a section badge): the empty state names it, and "mark
+   *  read" says it clears this list's rows only. */
+  scopeLabel?: string;
 }
 
-const KIND_GROUPS: Array<{ key: string; label: string; match: (k: string) => boolean }> = [
-  { key: "mentions", label: "Mentions & comments", match: (k) => k.includes("mention") || k.includes("comment") || k.includes("message") },
-  { key: "documents", label: "Documents & revisions", match: (k) => k.includes("rev") || k.includes("version") || k.includes("doc") || k.includes("review") || k.includes("ack") || k.includes("effective") || k.includes("retention") || k.includes("transmittal") },
-  { key: "requests", label: "Requests", match: (k) => k.includes("ticket") || k.includes("assign") || k.includes("approval") || k.includes("engineer") || k.includes("markup") },
-  { key: "locks", label: "Checkouts & holds", match: (k) => k.includes("checkout") || k.includes("lock") || k.includes("hold") || k.includes("conflict") },
+/** The group chips, in order — KIND_META.group's keys ('other' has no chip
+ *  and shows under "Everything"). */
+const KIND_GROUPS: Array<{ key: Exclude<KindGroup, "other">; label: string }> = [
+  { key: "mentions", label: "Mentions & comments" },
+  { key: "documents", label: "Documents & revisions" },
+  { key: "requests", label: "Requests" },
+  { key: "locks", label: "Checkouts & holds" },
 ];
 
-function groupOf(kind: string): string {
-  const k = kind.toLowerCase();
-  for (const g of KIND_GROUPS) if (g.match(k)) return g.key;
-  return "other";
+/** A row's group: the kind's (KIND_META.group); a ticket row is a request; a
+ *  legacy kind no union declares has no chip. */
+export function groupOf(kind: string): KindGroup {
+  if (kind === "ticket") return "requests";
+  return kindMeta(kind)?.group ?? "other";
 }
 
-export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onMarkAll, markingAll }: AttentionFeedProps) {
+export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onMarkAll, markingAll, scopeLabel }: AttentionFeedProps) {
   const [visibleCount, setVisibleCount] = React.useState(30);
   // Second axis: filter by WHAT the notification is about. A DocCtrl drowning
   // in publish fan-out can isolate their mentions in one tap.
@@ -125,13 +129,15 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
               showing: the header bell's rule. */}
           {counts.notifications > 0 && (
             <button
+              type="button"
               onClick={onMarkAll}
               disabled={markingAll}
-              title="Mark all notifications read"
+              title={scopeLabel ? `Mark the notifications in ${scopeLabel} read` : "Mark all notifications read"}
+              aria-label={scopeLabel ? `Mark the notifications in ${scopeLabel} read` : "Mark all notifications read"}
               className="inline-flex items-center gap-1 px-2 h-8 sm:h-7 rounded-lg text-[11px] font-bold text-[var(--color-text-faint)] hover:bg-[var(--color-surface-2)] disabled:opacity-50"
             >
-              {markingAll ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCheck className="w-3.5 h-3.5" />}
-              <span className="hidden sm:inline">Mark all read</span>
+              {markingAll ? <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden /> : <CheckCheck className="w-3.5 h-3.5" aria-hidden />}
+              <span className="hidden sm:inline">{scopeLabel ? "Mark these read" : "Mark all read"}</span>
             </button>
           )}
         </div>
@@ -170,8 +176,10 @@ export function AttentionFeed({ items, counts, filter, onFilter, onMarkRead, onM
           <div className="w-12 h-12 mx-auto rounded-2xl bg-emerald-50 border border-emerald-100 flex items-center justify-center mb-3">
             <CheckCheck className="w-6 h-6 text-emerald-600 dark:text-emerald-500" />
           </div>
-          <div className="text-sm font-bold text-[var(--color-text)]">You&apos;re all caught up</div>
-          <div className="text-xs text-[var(--color-text-muted)] mt-1">Nothing needs your attention right now.</div>
+          <div className="text-sm font-bold text-[var(--color-text)]">You&apos;re all caught up{scopeLabel ? ` in ${scopeLabel}` : ""}</div>
+          <div className="text-xs text-[var(--color-text-muted)] mt-1">
+            {scopeLabel ? `Nothing in ${scopeLabel} needs your attention right now.` : "Nothing needs your attention right now."}
+          </div>
         </div>
       ) : grouped.length === 0 ? (
         <div className="px-4 py-10 text-center text-xs text-[var(--color-text-muted)] italic">Nothing in this filter.</div>
@@ -219,16 +227,18 @@ function AttentionRow({ item, onMarkRead }: { item: AttentionItem; onMarkRead: (
         <span className="text-[10px] text-[var(--color-text-muted)] shrink-0 tabular-nums">{formatAgo(item.when || undefined)}</span>
         {item.notificationId ? (
           <button
+            type="button"
             onClick={(e) => { e.preventDefault(); e.stopPropagation(); onMarkRead(item.notificationId!); }}
             title="Mark read"
+            aria-label={`Mark read: ${item.title}`}
             // p-2 -m-1: ~32px touch target without growing the visual — a
             // near-miss used to hit the surrounding Link and navigate away.
             className="p-2 -m-1 rounded-md text-[var(--color-text)] hover:text-emerald-600 hover:bg-emerald-50 shrink-0"
           >
-            <CheckCheck className="w-4 h-4" />
+            <CheckCheck className="w-4 h-4" aria-hidden />
           </button>
         ) : (
-          <ChevronRight className="w-4 h-4 text-[var(--color-text)] shrink-0" />
+          <ChevronRight className="w-4 h-4 text-[var(--color-text)] shrink-0" aria-hidden />
         )}
       </Link>
     </li>

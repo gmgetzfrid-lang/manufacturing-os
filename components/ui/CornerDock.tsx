@@ -17,7 +17,8 @@
 //   - A visible cap. At most DOCK_VISIBLE_CAP cards show at once, jobs first
 //     (one place is kept for messages while any are waiting); the rest
 //     collapse into one "+N more" card that expands the dock in place, and —
-//     when messages are among them, at rest — opens the notification center. A widget
+//     when messages are among them — opens the notification center (raised
+//     too: the center then opens above the raising modal, RT-11). A widget
 //     asks how many of its cards it may show with `useDockAllowance` (RT-11,
 //     OS-4, STACK-9). The column is height-bounded and scrolls, so nothing
 //     can ever render above the viewport.
@@ -36,7 +37,9 @@
 //     `--dock-bottom` and the dock sits above it; a full-height right-edge
 //     drawer declares its width with `useOccupyRightRail` and the dock moves
 //     left of it when there is room (STACK-7, STACK-11) — at rest; raised,
-//     it stays at the edge, over the modal that hides the drawer. While raised, the
+//     it stays at the edge, over the modal that hides the drawer (a drawer
+//     opened ABOVE that modal — the notification center from the raised
+//     doorway, RT-11 — it moves left of, as at rest). While raised, the
 //     dock's cards take clicks over modals, so a raising modal declares its
 //     action row with `useDockAvoid` (as does the shared `ModalFooter`, for
 //     a dialog opened over it), and while the dock's cards would cover that
@@ -167,6 +170,10 @@ const targets: Record<DockSlot, HTMLElement | null> = { jobs: null, transient: n
 const centreTargets: Record<CentreSlot, HTMLElement | null> = { chip: null, toasts: null };
 const centreCounts = new Map<string, { slot: CentreSlot; count: number }>();
 const rails = new Map<string, number>();
+/** Right rails that sit ABOVE a raising modal (the notification center
+ *  opened while the dock is raised, RT-11): the raised dock moves left of
+ *  these, as the resting dock moves left of `rails`. */
+const raisedRails = new Map<string, number>();
 const listeners = new Set<() => void>();
 let seq = 0;
 let touch = 0;
@@ -290,7 +297,7 @@ const setCentreToastsTarget = (el: HTMLElement | null) => { if (centreTargets.to
 
 /** Test seam: forget every registration (jsdom tests share the module). */
 export function __resetDockForTests() {
-  entries.clear(); rails.clear(); centreCounts.clear(); avoids.clear(); raises.clear();
+  entries.clear(); rails.clear(); raisedRails.clear(); centreCounts.clear(); avoids.clear(); raises.clear();
   targets.jobs = targets.transient = null;
   centreTargets.chip = centreTargets.toasts = null;
   docks = 0; expanded = false; expandedFloor = 0; mobileOpen = false; cache = null; ownCache = null;
@@ -460,6 +467,22 @@ export function useDockRaise(active: boolean) {
 
 function raisedSnapshot(): boolean { return isRaised(entries.values()); }
 
+/** A drawer opened ABOVE the raise is still open (the notification center
+ *  from the raised doorway, RT-11 — `useOccupyRightRail`'s `aboveRaise`).
+ *  It keeps `Z.dialog` until it closes, even after the raise ends (the
+ *  modal it was opened over may still be up, and under it the center would
+ *  be hidden while holding focus). The dock keeps `Z.dockRaised` for as
+ *  long, so its cards — the upload's result, the toasts — stay above that
+ *  center's full-screen backdrop, readable and clickable, as the order in
+ *  `lib/zLayers.ts` says (the dock sits above the notification center);
+ *  only the layer, never the raised allocation (N3 integrator fix). */
+function aboveRaiseRailSnapshot(): boolean { return raisedRails.size > 0; }
+
+/** Whether the dock is raised right now — over a modal that started the
+ *  upload it reports. Read once by the notification center when it opens
+ *  (RT-11): opened while raised, it opens above that modal. */
+export function isDockRaised(): boolean { return raisedSnapshot(); }
+
 /** A declared row, in viewport px. */
 export interface DockAvoidRect { top: number; bottom: number; left: number; right: number }
 /** What the dock's position depends on, in px. */
@@ -587,15 +610,20 @@ function measureDockContent(box: HTMLElement) {
  * A full-height right-edge drawer declares the width it occupies while open;
  * the dock moves to its left when the viewport leaves room for a card.
  */
-export function useOccupyRightRail(ref: React.RefObject<HTMLElement | null>, open: boolean) {
+export function useOccupyRightRail(ref: React.RefObject<HTMLElement | null>, open: boolean, aboveRaise = false) {
   const id = useId();
   useLayoutEffect(() => {
     if (!open) return;
     const el = ref.current;
     if (!el) return;
+    // `aboveRaise`: this drawer is open ABOVE the modal the dock is raised
+    // over (the notification center opened from the raised doorway, RT-11),
+    // so the raised dock moves left of it too — over the drawer's own
+    // backdrop, never onto the drawer.
+    const map = aboveRaise ? raisedRails : rails;
     const measure = () => {
       const w = Math.round(el.getBoundingClientRect().width);
-      if (rails.get(id) !== w) { rails.set(id, w); emit(); }
+      if (map.get(id) !== w) { map.set(id, w); emit(); }
     };
     measure();
     const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
@@ -604,10 +632,10 @@ export function useOccupyRightRail(ref: React.RefObject<HTMLElement | null>, ope
     return () => {
       ro?.disconnect();
       window.removeEventListener("resize", measure);
-      rails.delete(id);
+      map.delete(id);
       emit();
     };
-  }, [id, open, ref]);
+  }, [id, open, ref, aboveRaise]);
 }
 
 /** The notification center's panel width — `w-[480px]` at
@@ -628,8 +656,10 @@ function railSnapshot(): number {
   // drawer (the inspector 60, history 70, the notification center 241 — all
   // under the 300 band): it stays at the viewport's edge rather than moving
   // left, onto that modal's body, for a drawer the modal hides (N7 fourth
-  // review).
-  if (raisedSnapshot()) return 0;
+  // review). A drawer opened ABOVE that modal (`useOccupyRightRail`'s
+  // `aboveRaise` — the notification center opened from the raised doorway,
+  // RT-11) is not hidden, so the raised dock moves left of that one.
+  if (raisedSnapshot()) return rightRailOffset(typeof window === "undefined" ? 0 : window.innerWidth, [...raisedRails.values()]);
   return rightRailOffset(typeof window === "undefined" ? 0 : window.innerWidth, [...rails.values()]);
 }
 
@@ -668,6 +698,9 @@ export function CornerDock({ onOpenCenter, occupiedRightPx = 0 }: CornerDockProp
   // Raised over a modal that started the upload it reports; at rest under
   // every overlay.
   const raised = useSyncExternalStore(subscribe, raisedSnapshot, () => false);
+  // The center is open above a raise that may have ended: the layer stays
+  // raised over it until it closes (the allocation is the resting one).
+  const aboveRaiseRail = useSyncExternalStore(subscribe, aboveRaiseRailSnapshot, () => false);
   const wouldHide = useSyncExternalStore(subscribe, cappedHidden, () => 0);
   // Raised: above a declared modal action row when the cards would cover it.
   const avoidOffset = useSyncExternalStore(subscribe, avoidSnapshot, () => 0);
@@ -762,8 +795,10 @@ export function CornerDock({ onOpenCenter, occupiedRightPx = 0 }: CornerDockProp
         // Lifted above a modal's action row, the offset takes the place of
         // the page bottom bar's (it is never lower than it). The layer:
         // under every overlay at rest; above every modal while one that
-        // started an upload is open and the dock reports an upload.
-        zIndex: raised ? Z.dockRaised : Z.dock,
+        // started an upload is open and the dock reports an upload — and
+        // while the center opened above that raise is still open at
+        // Z.dialog (RT-11), so the cards never end up under its backdrop.
+        zIndex: raised || aboveRaiseRail ? Z.dockRaised : Z.dock,
         right: `calc(${rail}px - 1.5rem)`,
         bottom: lifted ? `calc(${avoidOffset}px - 1.5rem)` : "calc(var(--dock-bottom, 0px) - 1.5rem)",
         maxHeight: lifted ? `calc(100dvh - ${avoidOffset}px + 3rem)` : "calc(100dvh - var(--dock-bottom, 0px) + 3rem)",
@@ -798,11 +833,12 @@ export function CornerDock({ onOpenCenter, occupiedRightPx = 0 }: CornerDockProp
               ? <><ChevronDown className="w-3 h-3" /> Show fewer</>
               : <><ChevronUp className="w-3 h-3" /> +{alloc.hidden} more</>}
           </button>
-          {/* Raised, no doorway: the center would open under the modal
-              the dock is raised over — invisible — and the person would
-              see only the cards jump (N7 fourth review). Its toasts wait
-              behind "+N more" until the dock is back at rest. */}
-          {!expanded && !raised && alloc.hiddenTransient > 0 && onOpenCenter && (
+          {/* Raised too (RT-11): the center, opened while the dock is
+              raised, opens above the modal the dock is raised over
+              (NotificationCenter reads isDockRaised() when it opens) and
+              declares its panel as a rail above the raise, so the cards
+              move left of it. At rest it opens where it always did. */}
+          {!expanded && alloc.hiddenTransient > 0 && onOpenCenter && (
             <button
               type="button"
               // No argument: the center's open(filter?) must never receive
