@@ -973,7 +973,11 @@ const WIN_ANSI_EXTRA = new Set<number>([
  *  character — lib/stamping.ts `stampText` draws it in a form the font
  *  prints ("-", "Delta", or a visible "?") and the copy says so. So these
  *  are the characters the stamp REPLACES; none of them makes an item
- *  unstampable, and none keeps an item from being armed (armCheckedItems). */
+ *  unstampable, and none keeps an item from being armed (armCheckedItems).
+ *  One format character, the byte-order mark U+FEFF, is in `\s` and so is
+ *  "printable" here (the wrap draws it as a space), while the stamp removes
+ *  it and names it, as it does every format character; the pin states that
+ *  one difference. */
 export function stampFooterUnprintable(text: string | null | undefined): string {
   const bad: string[] = [];
   for (const ch of String(text ?? "")) {

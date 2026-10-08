@@ -39,8 +39,10 @@
 // before is drawn byte for byte as before), and any other is drawn in a form
 // the font prints — a Unicode hyphen or minus as "-", a Greek delta as
 // "Delta", a prime as a straight quote, other whitespace as a space, else a
-// visible "?" — never dropped. What was replaced is printed on the copy
-// itself (stampTextNote) and returned to the caller.
+// visible "?" — never dropped. A format character (General_Category Cf: a
+// zero-width space or joiner, a word joiner, a byte-order mark), which has
+// no glyph, is removed and named instead. What was replaced or removed is
+// printed on the copy itself (stampTextNote) and returned to the caller.
 
 import { PDFDocument, rgb, StandardFonts, degrees, PDFFont, PDFPage, type Rotation } from "pdf-lib";
 import {
@@ -183,8 +185,20 @@ const PLAIN_FORM: Readonly<Record<number, string>> = {
  *  dropped. */
 export const STAMP_PLACEHOLDER = "?";
 
+/** A format character (General_Category Cf): a zero-width space (U+200B),
+ *  the zero-width non-joiner and joiner, a word joiner (U+2060), a
+ *  byte-order mark (U+FEFF), a directional mark. It has no glyph, so a "?"
+ *  in its place would put a mark on paper the record does not visibly
+ *  carry, and a space (U+FEFF is in JavaScript's `\s`) would split a
+ *  number. It is removed from the drawn text and named in `mapped` with
+ *  `printedAs: ""`, so the copy's note reads "U+200B removed" — never a
+ *  silent drop. The soft hyphen (U+00AD) is Cf too, but WinAnsi prints it,
+ *  so like every printed character it is drawn as typed. */
+const FORMAT_CHARACTER = /^\p{Cf}$/u;
+
 /** One character the stamp could not print as typed, and what it printed
- *  instead. `codePoint` reads "U+2010". */
+ *  instead. `codePoint` reads "U+2010". `printedAs` is "" for a format
+ *  character, which is removed (FORMAT_CHARACTER). */
 export interface StampTextMapping {
   char: string;
   codePoint: string;
@@ -206,12 +220,13 @@ function codePointLabel(cp: number): string {
  *  whose characters the font all prints comes back as the same string, so
  *  the stamp is drawn exactly as before. Otherwise, character by character
  *  (after composing a letter with its accent, NFC): a character the font
- *  prints is kept; whitespace becomes a space (as the footer's word wrap
- *  already draws it); a dash, prime or delta takes its plain form
- *  (PLAIN_FORM); a compatibility form (a fullwidth digit, a ligature) its
- *  plain decomposition (NFKC) when the font prints every character of it;
- *  anything else the visible placeholder "?". Every replacement but
- *  whitespace is returned in `mapped`. */
+ *  prints is kept; a format character (FORMAT_CHARACTER) is removed and
+ *  named; whitespace becomes a space (as the footer's word wrap already
+ *  draws it); a dash, prime or delta takes its plain form (PLAIN_FORM); a
+ *  compatibility form (a fullwidth digit, a ligature) its plain
+ *  decomposition (NFKC) when the font prints every character of it;
+ *  anything else the visible placeholder "?". Every replacement and
+ *  removal but whitespace is returned in `mapped`. */
 export function stampText(text: string): { text: string; mapped: StampTextMapping[] } {
   let asTyped = true;
   for (const ch of text) {
@@ -223,6 +238,10 @@ export function stampText(text: string): { text: string; mapped: StampTextMappin
   for (const ch of text.normalize("NFC")) {
     const cp = ch.codePointAt(0) ?? 0;
     if (stampFontPrints(cp)) { out += ch; continue; }
+    if (FORMAT_CHARACTER.test(ch)) {
+      if (!mapped.some((m) => m.char === ch)) mapped.push({ char: ch, codePoint: codePointLabel(cp), printedAs: "" });
+      continue;
+    }
     if (/\s/.test(ch)) { out += " "; continue; }
     let printedAs = PLAIN_FORM[cp];
     if (printedAs === undefined) {
@@ -240,13 +259,14 @@ export function stampText(text: string): { text: string; mapped: StampTextMappin
 /** How many replacements the copy's note names before it says "and N more". */
 const NOTE_MAX = 12;
 
-/** PHYS-15: the line a copy carries when its stamp replaced a character —
- *  "Printed in plain characters: U+2010 as "-", U+0394 as "Delta"." (only
- *  characters the font prints), so the paper says its number or label is not
- *  exactly the one on record. Null when nothing was replaced. */
+/** PHYS-15: the line a copy carries when its stamp replaced or removed a
+ *  character — "Printed in plain characters: U+2010 as "-", U+0394 as
+ *  "Delta", U+200B removed." (only characters the font prints), so the paper
+ *  says its number or label is not exactly the one on record. Null when
+ *  nothing was replaced or removed. */
 export function stampTextNote(mapped: readonly StampTextMapping[]): string | null {
   if (mapped.length === 0) return null;
-  const named = mapped.slice(0, NOTE_MAX).map((m) => `${m.codePoint} as "${m.printedAs}"`);
+  const named = mapped.slice(0, NOTE_MAX).map((m) => (m.printedAs === "" ? `${m.codePoint} removed` : `${m.codePoint} as "${m.printedAs}"`));
   const more = mapped.length > NOTE_MAX ? ` and ${mapped.length - NOTE_MAX} more` : "";
   return `Printed in plain characters: ${named.join(", ")}${more}.`;
 }

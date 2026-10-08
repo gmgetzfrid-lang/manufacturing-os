@@ -13,7 +13,10 @@
 //     through: a character the font prints is drawn as typed (the en and em
 //     dash and the curly quotes among them), any other in a form the font
 //     prints ("-", "Delta", a straight quote, a space, a compatibility
-//     decomposition), else a visible "?" — never dropped.
+//     decomposition), else a visible "?" — never dropped. A format
+//     character (General_Category Cf — a zero-width space, a word joiner, a
+//     byte-order mark), which has no glyph, is removed and named
+//     (integrator fix pass, 2026-10-08).
 //   * the copy says what was replaced (stampTextNote, its footer's last
 //     line) and applyStampToPdfDoc returns it (the transmittal portal records
 //     it on the delivery's trail — transmittalPortalRoute.test.ts).
@@ -104,6 +107,23 @@ describe("PHYS-15 — stampText: what the font cannot print is drawn in a form i
     expect(stampText("A\tB\nC")).toEqual({ text: "A B C", mapped: [] });
   });
 
+  it("a format character (Cf: a zero-width space pasted into a number, a joiner, a word joiner, a byte-order mark, a directional mark) is removed, not drawn as '?' or a space, and named in `mapped` — the note says 'removed'", () => {
+    expect(stampText("P\u200B101")).toEqual({ text: "P101", mapped: [{ char: "\u200B", codePoint: "U+200B", printedAs: "" }] });
+    expect(stampText("P\uFEFF101")).toEqual({ text: "P101", mapped: [{ char: "\uFEFF", codePoint: "U+FEFF", printedAs: "" }] });
+    expect(stampText("P\u200C\u200D\u2060\u200E\u202A101\u200B\u200B")).toEqual({
+      text: "P101",
+      mapped: [
+        { char: "\u200C", codePoint: "U+200C", printedAs: "" }, { char: "\u200D", codePoint: "U+200D", printedAs: "" },
+        { char: "\u2060", codePoint: "U+2060", printedAs: "" }, { char: "\u200E", codePoint: "U+200E", printedAs: "" },
+        { char: "\u202A", codePoint: "U+202A", printedAs: "" }, { char: "\u200B", codePoint: "U+200B", printedAs: "" },
+      ],
+    });
+    expect(stampTextNote(stampText("P\u200B101").mapped)).toBe("Printed in plain characters: U+200B removed.");
+    expect(stampTextNote(stampText("P\u200B‐101 Δ1").mapped)).toBe('Printed in plain characters: U+200B removed, U+2010 as "-", U+0394 as "Delta".');
+    // the soft hyphen is Cf too, but WinAnsi prints it: drawn as typed, like every printed character
+    expect(stampText("P\u00AD101")).toEqual({ text: "P\u00AD101", mapped: [] });
+  });
+
   it("anything else → a visible '?', once per character in `mapped`, in the order met — a letter's accent composed first, a compatibility form decomposed", () => {
     expect(stampText("Łukasz ЖЖ")).toEqual({
       text: "?ukasz ??",
@@ -115,15 +135,22 @@ describe("PHYS-15 — stampText: what the font cannot print is drawn in a form i
     expect(STAMP_PLACEHOLDER).toBe("?");
   });
 
-  it("every code point (the BMP and three astral ones) comes out in characters pdf-lib's Helvetica-Bold encodes, and none is dropped", async () => {
+  it("every code point (the BMP and three astral ones) comes out in characters pdf-lib's Helvetica-Bold encodes, and none is dropped silently — a format character is removed and named, every other takes up a place", async () => {
     const doc = await PDFDocument.create();
     const font = await doc.embedFont(StandardFonts.HelveticaBold);
     const encodes = (s: string) => { try { font.encodeText(s); return true; } catch { return false; } };
     const failures: string[] = [];
+    let removed = 0;
     const codePoints = [...Array.from({ length: 0x10000 }, (_, i) => i).filter((cp) => cp < 0xd800 || cp > 0xdfff), 0x1f600, 0x1d400, 0x20000];
     for (const cp of codePoints) {
       const ch = String.fromCodePoint(cp);
-      const { text } = stampText(`A${ch}B`);
+      const { text, mapped } = stampText(`A${ch}B`);
+      if (/\p{Cf}/u.test(ch) && !stampFontPrints(cp)) {
+        // removed, and named with printedAs "" — the only way a character leaves the text
+        removed++;
+        if (text !== "AB" || mapped.length !== 1 || mapped[0].printedAs !== "" || mapped[0].char !== ch) failures.push(cp.toString(16));
+        continue;
+      }
       // drawable, A and B kept, and the character took up at least one place
       // (a combining mark composes onto the A — "A" + U+030A is "Å")
       if (!encodes(text) || !text.endsWith("B") || text.length < 2 || (text.length === 2 && `A${ch}`.normalize("NFC").length !== 1)) {
@@ -131,21 +158,25 @@ describe("PHYS-15 — stampText: what the font cannot print is drawn in a form i
       }
     }
     expect(failures).toEqual([]);
+    expect(removed).toBeGreaterThan(30); // the BMP's Cf characters less the soft hyphen (printed): U+200B–U+200F, U+202A–U+202E, U+2060–U+2064, U+2066–U+206F, U+FEFF, U+FFF9–U+FFFB, the Arabic and Mongolian ones
   }, 60_000);
 
-  it("stampFontPrints is exactly pdf-lib's WinAnsi, and lib/transmittals.ts stampFooterUnprintable names exactly the characters the stamp replaces (whitespace aside)", async () => {
+  it("stampFontPrints is exactly pdf-lib's WinAnsi, and lib/transmittals.ts stampFooterUnprintable names exactly the characters the stamp replaces (whitespace aside — of the format characters the stamp removes, only U+FEFF is in `\\s`, and the guard counts it as whitespace)", async () => {
     const doc = await PDFDocument.create();
     const font = await doc.embedFont(StandardFonts.HelveticaBold);
     const encodes = (s: string) => { try { font.encodeText(s); return true; } catch { return false; } };
     const mismatches: string[] = [];
+    const removedWhitespace: string[] = [];
     for (let cp = 0; cp < 0x10000; cp++) {
       if (cp >= 0xd800 && cp <= 0xdfff) continue;
       const ch = String.fromCodePoint(cp);
       if (stampFontPrints(cp) !== encodes(ch)) mismatches.push(`font ${cp.toString(16)}`);
       const replaced = !stampFontPrints(cp) && !/\s/.test(ch);
       if ((stampFooterUnprintable(ch) !== "") !== replaced) mismatches.push(`transmittals ${cp.toString(16)}`);
+      if (!stampFontPrints(cp) && /\s/.test(ch) && /\p{Cf}/u.test(ch)) removedWhitespace.push(`U+${cp.toString(16).toUpperCase()}`);
     }
     expect(mismatches).toEqual([]);
+    expect(removedWhitespace).toEqual(["U+FEFF"]);
   }, 60_000);
 
   it("the note names what was replaced, in characters the font prints; nothing replaced → no note; past twelve it counts the rest", () => {
@@ -214,6 +245,17 @@ describe("PHYS-15 — applyStampToPdfDoc draws every text through stampText, not
     expect(all).toContain("VDS-7 Rev 2 as issued. Confirm the current revision before use.");
     expect(all).toContain("Downloaded: 10/7/2026, 9:15:00 AM");
     expect(all).not.toMatch(/Scan the QR/);
+  });
+
+  it("a zero-width space pasted into a number (\"P\u200B101\") is removed from every mark, never drawn as '?' or a space, and the copy's note names it", async () => {
+    const { result, texts, all } = await stampDrawn({
+      timestamp: new Date(0), watermarkText: "UNCONTROLLED — P\u200B101", footerNotice: "P\u200B101 Rev B at time of issue — verify current revision before use.",
+    });
+    expect(result.mapped).toEqual([{ char: "\u200B", codePoint: "U+200B", printedAs: "" }]);
+    expect(texts.find((x) => x.o.opacity === 0.15)!.t.startsWith("UNCONTROLLED — P101")).toBe(true);
+    expect(all).toContain("P101 Rev B at time of issue");
+    expect(all).toContain("Printed in plain characters: U+200B removed.");
+    expect(all).not.toMatch(/\u200B|P\?101|P 101/);
   });
 
   it("stampPdf (the browser paths) stamps the same text: fetch → stamp → a PDF blob", async () => {
