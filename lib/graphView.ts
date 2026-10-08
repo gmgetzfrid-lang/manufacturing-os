@@ -290,7 +290,10 @@ export function mentionNotice(
   if (!cov || !cov.installed || equipmentOnMap === 0) return base;
   const notes = mentionRunNotes(run, readAt ?? Date.now());
   if (!notes) return base;
-  const canRebuild = (base?.canRebuild ?? false) || notes.canRebuild;
+  // While a rebuild from this map runs, the running reading wins: no button
+  // is offered, not even the coverage's own — a press would continue the
+  // running press's place in parallel with it.
+  const canRebuild = notes.running ? false : (base?.canRebuild ?? false) || notes.canRebuild;
   const extra = notes.canContinue ? { canContinue: true } : {};
   if (!base) {
     return { text: `Some “mentioned in the text” links may be missing from this map. ${notes.text}`, canRebuild, ...extra };
@@ -341,10 +344,11 @@ const RUN_WHERE: Record<MentionRunSource, string> = {
  *  old to continue (lib/mentionRunState.ts readBackfillPlace).
  *  `canRebuild` offers the rebuild for what it says (a failure, a cut-off
  *  build, an unfinished rebuild) — never while a rebuild from this map is
- *  running; `canContinue` only for a rebuild the next press continues. */
+ *  running, which `running` says so that mentionNotice offers no button at
+ *  all then; `canContinue` only for a rebuild the next press continues. */
 export function mentionRunNotes(
   state: MentionRunState | null | undefined, now: number,
-): { text: string; canContinue: boolean; canRebuild: boolean } | null {
+): { text: string; canContinue: boolean; canRebuild: boolean; running?: true } | null {
   if (!state) return null;
   const lines: string[] = [];
   let offer = false;
@@ -368,7 +372,7 @@ export function mentionRunNotes(
     const from = place?.kind === "running" && b?.startedAt ? b.startedAt : r?.startedAt ?? null;
     const read = place?.kind === "running" && b && b.documents > 0 ? `, ${docs(b.documents)} read so far` : "";
     lines.push(`A rebuild of the whole index from this map is running now${from ? ` (started ${formatRunTime(from)}${read})` : ""}.`);
-    return { text: lines.join(" "), canContinue: false, canRebuild: false };
+    return { text: lines.join(" "), canContinue: false, canRebuild: false, running: true };
   }
   if (place?.kind === "continue" && b) {
     const n = docs(b.documents);

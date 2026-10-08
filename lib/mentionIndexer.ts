@@ -264,7 +264,8 @@ export interface BackfillResult extends IndexResult {
  * than BACKFILL_RESUME_MAX_MS ago; otherwise it reads from the first
  * document, overwrites the place and says why (`startedOver`). A rebuild
  * that reads to the end clears the place, and the failure that stood when
- * it began. With the run state not installed (20261194 not pasted) nothing
+ * it began (a continued one also a map failure naming no document that
+ * stood when this press began). With the run state not installed (20261194 not pasted) nothing
  * is recorded and every press starts at the first document, as before.
  */
 export async function backfillOrgMentions(
@@ -361,10 +362,17 @@ export async function backfillOrgMentions(
     if (saved && lastDone) total.resumable = true;
   } else {
     // The whole corpus is read: nothing is left to continue, and a failure
-    // that stood before this rebuild began is superseded by it.
+    // that stood before this rebuild began is superseded by it. So is a
+    // failure that names no document and stood before THIS press began: only
+    // the map path writes one (a window's listing refused — the ingest pass
+    // always names its document), and a press that continued past it has
+    // now read every document that listing was to answer.
     await clearBackfillCursor(supabaseAdmin, run);
     const stood = run.standingFailure;
-    if (stood && Date.parse(stood.at) <= Date.parse(passStartedAt)) await clearStandingFailure(supabaseAdmin, run);
+    const since = stood ? Date.parse(stood.at) : NaN;
+    if (stood && (since <= Date.parse(passStartedAt) || (stood.documentId === null && since <= Date.parse(run.startedAt)))) {
+      await clearStandingFailure(supabaseAdmin, run);
+    }
     await finishMentionRun(supabaseAdmin, run, { outcome: "succeeded" });
   }
   if (run.recorded && resume) { total.continued = true; total.passDocuments = passDocuments; }

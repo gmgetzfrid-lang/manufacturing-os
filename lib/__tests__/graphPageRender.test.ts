@@ -920,6 +920,21 @@ describe("IRLS-14 (I-23) — the mention index's run state on the map", () => {
     expect(btn("Rebuild the mention index")).toBeUndefined();
   });
 
+  it("integrator fix pass: on the 'cannot tell' map too, a running rebuild is said as running with NO button — the coverage's own offer yields to it", async () => {
+    // The default coverage: installed, no row visible, equipment on the map.
+    const began = new Date(Date.now() - 30_000).toISOString();
+    g.runState = { data: {
+      org_id: "o1", last_run_source: "map", last_run_started_at: began, last_run_outcome: "running",
+      backfill_state: "running", backfill_started_at: began, backfill_saved_at: new Date(Date.now() - 20_000).toISOString(), backfill_documents: 2,
+    }, error: null };
+    await render(page());
+    expect(notice()).toContain(cannotTell);
+    expect(notice()).toContain("A rebuild of the whole index from this map is running now");
+    expect(btn("Rebuild the mention index")).toBeUndefined();
+    expect(btn("Continue the rebuild")).toBeUndefined();
+    expect(g.fetches.find((f) => f.url === "/api/graph/mentions")).toBeUndefined();
+  });
+
   it("review blocker: a rebuild that failed with its place saved says it stopped on a failure, and offers to continue it", async () => {
     const at = new Date(Date.now() - 10 * 60_000).toISOString();
     g.runState = { data: {

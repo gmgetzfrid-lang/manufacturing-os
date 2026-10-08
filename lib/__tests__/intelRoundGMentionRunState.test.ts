@@ -298,6 +298,44 @@ describe("IRLS-14 (I-23) — a rebuild from the map", () => {
     await backfillOrgMentions(ORG);
     expect(runRow()).toMatchObject({ last_failed_document_id: "k9", last_run_outcome: "succeeded" });
   });
+
+  it("integrator fix pass: a press whose document listing is refused records a failure naming no document; the next press continues to the end and clears it", async () => {
+    const clock = documentClock();
+    // Press 1 reads k1–k2 and stops at its time limit.
+    const first = await backfillOrgMentions(ORG, undefined, clock.deadlineAfter(2));
+    expect(first).toMatchObject({ documents: 2, incomplete: true, resumable: true });
+    expect(runRow()).toMatchObject({ backfill_cursor: "k2", backfill_state: "time_limit" });
+    // Press 2's window listing is refused (a transient outage): the failure
+    // names no document, and is recorded AFTER press 1 began.
+    db.hooks.push((op) => op.table === "knowledge_documents" && op.kind === "select"
+      ? { error: { code: "PGRST001", message: "Could not connect to the database" } } : undefined);
+    await expect(backfillOrgMentions(ORG)).rejects.toThrow("Could not connect to the database");
+    expect(runRow()).toMatchObject({
+      last_run_outcome: "failed", last_failed_source: "map", last_failed_document_id: null,
+      last_failed_error: "The build failed: the database could not be reached.",
+      backfill_cursor: "k2", backfill_documents: 2, backfill_state: "failed",
+    });
+    expect(Date.parse(runRow().last_failed_at as string)).toBeGreaterThan(Date.parse(runRow().backfill_started_at as string));
+    // Press 3 continues from k2 and reads to the end: the listing failure is superseded.
+    db.hooks = [];
+    db.ops = [];
+    const third = await backfillOrgMentions(ORG);
+    expect(chunkReads()).toEqual(["k3", "k4", "k5"]);
+    expect(third).toMatchObject({ documents: 3, incomplete: false, continued: true, passDocuments: 5 });
+    expect(runRow()).toMatchObject({ last_run_outcome: "succeeded", last_failed_at: null, last_failed_document_id: null, backfill_cursor: null });
+
+    // A failure naming no document that is recorded AFTER this press began stands.
+    db.hooks.push((op, filters) => {
+      if (op.table === "knowledge_chunks" && op.kind === "select" && filters.some((f) => f.col === "document_id" && f.value === "k5")) {
+        db.tables[RUNS][0].last_failed_at = new Date(Date.now() + 60_000).toISOString();
+        db.tables[RUNS][0].last_failed_source = "map";
+        db.tables[RUNS][0].last_failed_document_id = null;
+      }
+    });
+    await backfillOrgMentions(ORG);
+    expect(runRow()).toMatchObject({ last_failed_source: "map", last_failed_document_id: null, last_run_outcome: "succeeded" });
+    expect(runRow().last_failed_at).not.toBeNull();
+  });
 });
 
 describe("IRLS-14 (I-23) — lib/mentionRunState.ts", () => {
@@ -590,16 +628,26 @@ describe("I-23 fix pass — the map says what the rebuild's place is: running, s
     expect(drawn.text).toBe(`Some “mentioned in the text” links may be missing from this map. A rebuild of the whole index from this map is running now (started ${formatRunTime(BEGAN)}, 2 documents read so far).`);
     expect(drawn.canRebuild).toBe(false);
     expect("canContinue" in drawn).toBe(false);
-    // Where the coverage offers the rebuild anyway, the offer stays — labelled as a rebuild, not a continue.
+    // Where the coverage offers the rebuild itself (the "cannot tell" case), the
+    // running reading wins: no button beside "is running now" (integrator fix
+    // pass — a press then would continue the running press's place in parallel).
     const none = mentionNotice(cov(), 10, run, NOW)!;
-    expect(none.canRebuild).toBe(true);
+    expect(none.text).toBe(`No “mentioned in the text” links on this map. Either the mention index has not been built for these documents, or it found none of this registry's equipment named in the documents you can see — the map cannot tell which. Each document is indexed when it finishes reading; an admin, document controller, manager or supervisor can rebuild the whole index from this map. A rebuild of the whole index from this map is running now (started ${formatRunTime(BEGAN)}, 2 documents read so far).`);
+    expect(none.canRebuild).toBe(false);
     expect("canContinue" in none).toBe(false);
     expect(none.text).not.toMatch(/time limit|continue it/);
     // The first seconds of a press, before its place: the last build says it.
     const early = state(null, { lastRun: { source: "map", startedAt: ago(5_000), finishedAt: null, outcome: "running", documentId: null } });
     expect(mentionRunNotes(early, NOW)).toEqual({
-      text: `A rebuild of the whole index from this map is running now (started ${formatRunTime(ago(5_000))}).`, canContinue: false, canRebuild: false,
+      text: `A rebuild of the whole index from this map is running now (started ${formatRunTime(ago(5_000))}).`, canContinue: false, canRebuild: false, running: true,
     });
+    expect(mentionNotice(cov(), 10, early, NOW)!.canRebuild).toBe(false);
+    // Once the place is older than REBUILD_ALIVE_MS the press was cut off, and the offer is back.
+    const cut = state(place({ state: "running", savedAt: ago(REBUILD_ALIVE_MS + 1_000) }), {
+      lastRun: { source: "map", startedAt: ago(20 * 60_000), finishedAt: null, outcome: "running", documentId: null },
+    });
+    expect(mentionNotice(cov(), 10, cut, NOW)).toMatchObject({ canRebuild: true, canContinue: true });
+    expect(mentionRunNotes(cut, NOW)).not.toHaveProperty("running");
   });
 
   it("review blocker, case 2: a rebuild that failed on k3 says it stopped on a failure after 2 documents — never at its time limit", () => {
