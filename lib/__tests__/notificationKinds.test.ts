@@ -161,11 +161,21 @@ const bellIconMap = (): Record<string, string> => {
   return Object.fromEntries([...m[1].matchAll(/^\s+(\w+):\s*(\w+),/gm)].map((x) => [x[1], x[2]]));
 };
 /** The cron's COMPLIANCE_KINDS, parsed from the route. */
+// The cron's COMPLIANCE_KINDS in either form it takes: the hand-kept literal
+// (this branch) or notifications N6's derivation from KIND_META
+// (`(Object.keys(KIND_META) as …).filter((k) => KIND_META[k].compliance)`),
+// so the tripwire below sees the derivation the moment it lands.
 const cronComplianceKinds = (): string[] => {
   const s = src("app/api/cron/maintenance/route.ts").replace(/\/\/[^\n]*/g, "");
-  const m = s.match(/const COMPLIANCE_KINDS = \[([\s\S]*?)\];/);
-  if (!m) throw new Error("COMPLIANCE_KINDS not found");
-  return [...m[1].matchAll(/"([a-z_]+)"/g)].map((x) => x[1]);
+  const decl = s.match(/const COMPLIANCE_KINDS(?::\s*string\[\])?\s*=\s*([\s\S]*?);/);
+  if (!decl) throw new Error("COMPLIANCE_KINDS not found");
+  const rhs = decl[1];
+  if (/KIND_META/.test(rhs) && /\.compliance/.test(rhs)) {
+    return (Object.keys(KIND_META) as Array<keyof typeof KIND_META>).filter((k) => KIND_META[k].compliance);
+  }
+  const lit = rhs.match(/^\[([\s\S]*)\]$/);
+  if (!lit) throw new Error("COMPLIANCE_KINDS is neither a literal list nor derived from KIND_META");
+  return [...lit[1].matchAll(/"([a-z_]+)"/g)].map((x) => x[1]);
 };
 
 // ── THE DEPARTURES — every change from TODAY, each with its reason ───────────
@@ -622,15 +632,39 @@ describe("action, compliance, icon, tone, group — the other classifiers, in on
     }
   });
 
-  it("compliance: today's set plus the N9 kinds that inherit it — and the cron's hand list misses exactly those until N6 derives it", () => {
+  it("compliance: today's set plus the N9 kinds that inherit it", () => {
     const flagged = unionKinds().filter((k) => KIND_META[k as keyof typeof KIND_META].compliance);
     expect(flagged.sort()).toEqual([...TODAY_COMPLIANCE, ...N9_COMPLIANCE_ADDED].sort());
-    // On this branch the cron (N6's file) still carries its hand-kept list;
-    // N6 derives COMPLIANCE_KINDS from KIND_META, which closes the gap — the
-    // integrator merges N6 with or before N9 (records: 99-fix-sequencing).
+  });
+
+  // The daily compliance digest (app/api/cron/maintenance/route.ts
+  // queueComplianceDigests) composes a line for every row whose kind is in
+  // the cron's COMPLIANCE_KINDS. On this branch that list is still hand-kept
+  // (the cron is notifications N6's file this round), so it lacks the six
+  // split compliance kinds: a recall, a package pin, an upstream advisory or
+  // an intake notice would be absent from every digest, and 20261191's
+  // backlog re-files move the already-written rows out of the hand list the
+  // moment it is pasted. N6 derives the list from KIND_META, which closes
+  // the gap. The parity assertion below is the enduring test, held as an
+  // `it.fails` tripwire (the repo's convention for a claim that does not
+  // hold at HEAD): it starts FAILING the moment the cron's list equals the
+  // registry's compliance set — at the N6 merge, or when the integrator
+  // applies the one-line derivation in N6's file at the N9 merge
+  // (`Object.entries(KIND_META).filter(([, m]) => m.compliance).map(([k]) => k)`).
+  // Then flip it to `it` and delete the gap pin after it. 20261191 must not
+  // be pasted before the deploy that carries the derived list (DEC-44 (N9)
+  // Risk; 99-fix-sequencing).
+  it.fails("TRIPWIRE (flip to `it` when N6's derivation lands): the cron's COMPLIANCE_KINDS equals KIND_META's compliance set", () => {
+    const flagged = unionKinds().filter((k) => KIND_META[k as keyof typeof KIND_META].compliance);
+    expect([...cronComplianceKinds()].sort()).toEqual([...flagged].sort());
+  });
+
+  it("gap pin (delete when the tripwire flips): the cron's hand list misses exactly the six N9 compliance kinds", () => {
+    const flagged = unionKinds().filter((k) => KIND_META[k as keyof typeof KIND_META].compliance);
     const cron = cronComplianceKinds();
     expect(cron).toEqual(TODAY_COMPLIANCE);
     expect(flagged.filter((k) => !cron.includes(k)).sort()).toEqual([...N9_COMPLIANCE_ADDED].sort());
+    expect(N9_COMPLIANCE_ADDED).toHaveLength(6);
   });
 
   it("icon: every kind has one — the bell's where it had one, else the feed's, except the named departures", () => {

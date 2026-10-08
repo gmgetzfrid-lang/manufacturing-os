@@ -354,14 +354,14 @@ app/(protected)/checkouts/page.tsx:256 (the write, client-side, no server route)
 - `lib/checkoutNudge.ts` (new): a nudge is a `checkout_conflict` row carrying `metadata.nudge`, about the document the person holds in the overlap (it named the bare "checkout" type before). `recentNudges` (:62) reads the sender's own nudge rows of the window through `notifications_i_sent` (`20261191`, `lib/sentNotices.ts` — the read `OS-6`'s cited distributionAcks pattern cannot do from a browser, because `notifications_own_select` hides sent rows); `nudgeState` (:79) says whether every person in the overlap was nudged and when the next nudge is possible; `sendCheckoutNudge` (:104) nudges only the people not nudged about their document in the window and REFUSES when nobody is left, with the sentence "You already nudged <names> about this in the last 24 hours — you can nudge again after <time>." Before the paste the read is unavailable and today's path holds (the card's own state; the write goes out). `20261160`'s caps stay the backstop for a writer that skips the module.
 - The page loads the member's nudges once overlaps are found, shows "Heads-up sent" from them on every device (`nudgeState`), toasts the writer's refusal ("Already nudged …"), and keys each card by its overlap's identity.
 - Tests: `lib/__tests__/checkoutNudgeCooldown.test.ts` (10 — the read's arguments and its unavailable answers; targets, state and the next-nudge time; a partial nudge naming each recipient's document; the refusal's sentence with no write; an expired nudge not holding; the pre-paste path; the page's wiring). On PostgreSQL 16 the read answered the sender's one nudge in the window and nothing else.
-- Verified: ⟪LOOP⟫
+- Verified (loop on `fleet/N9-dc-producers-kind-split` after the review fix, 2026-10-08): `npx tsc --noEmit` exit 0; `npx eslint` on the changed `.ts` files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 460 files, 10039 passed, 8 expected fail (10047; the eighth is the compliance-digest tripwire). `next build` is the integrator's.
 
 **Done-when.**
 - ✓ The cooldown is derived from persisted state — the notification rows the sender wrote, read back through `notifications_i_sent`.
 - ✓ The button's "already sent" state survives a refresh, computed from that read.
 - ✓ A second nudge inside the window is refused by the writer (`sendCheckoutNudge`), with the reason, not merely hidden by the UI.
 
-**Scope / residual.** Takes effect once `20261191` is pasted (the page keeps today's per-card state until then). The writer is the browser module; a client that bypasses it is bounded by `20261160`'s per-recipient caps, not by the 24-hour rule.
+**Scope / residual.** Takes effect once `20261191` is pasted (the page keeps today's per-card state until then). The writer is the browser module; a client that bypasses it (a tab loaded before the N9 deploy, a script calling `notifyMany`) is bounded by `20261160`'s per-recipient caps, not by the 24-hour rule — raised to a finding with an owner, `OS-13` (a rule in `enforce_notification_insert`, notifications N12 / N14).
 
 ---
 
@@ -662,7 +662,7 @@ hooks/useTicketNotifications.ts:302 —
 
 
 **Resolution (2026-10-07, notifications Round G).** Package N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT, branch `fleet/N9-dc-producers-kind-split`, commit `d48617c` — the move the integrator's note names: `transmittal_unstampable` badges Documents (`lib/notificationKinds.ts`, `section: "documents"`), and the bell-only list in `lib/__tests__/notificationKinds.test.ts` is the ratified eight (`DEC-90` A12). The `review_requested` overload is split as `DEC-90` A13 ordered: the contractor quote, the intake submission and the folded digest write `intake_quote` / `intake_submission`, section Projects (`TAX-13`).
-- Verified: ⟪LOOP⟫
+- Verified (loop on `fleet/N9-dc-producers-kind-split` after the review fix, 2026-10-08): `npx tsc --noEmit` exit 0; `npx eslint` on the changed `.ts` files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 460 files, 10039 passed, 8 expected fail (10047; the eighth is the compliance-digest tripwire). `next build` is the integrator's.
 
 **Done-when.**
 - ✓ Every `NotificationKind` maps to a section whose sidebar row badges it, or to the ratified bell-only list owned by the header bell.
@@ -670,5 +670,28 @@ hooks/useTicketNotifications.ts:302 —
 - ✓ The compliance kinds badge Documents (N2); the intake notices that rode `review_requested` badge Projects.
 
 **Scope / residual.** None in this finding.
+
+---
+
+<a id="os-13"></a>
+
+## OS-13 · The /checkouts nudge cooldown is enforced only by the browser module; the database still accepts a repeat nudge from any client that calls notifyMany directly
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Verification:** CONFIRMED
+- **Locations:** `lib/checkoutNudge.ts:104-160`, `supabase/migrations/20261160_notif_roundG_write_rails.sql` (`enforce_notification_insert`), `supabase/migrations/20261191_notif_roundG_kind_split.sql` (`notifications_i_sent`)
+- **Opened:** 2026-10-08, notifications Round G, package N9's review fix — the residual `OS-6`'s Scope line recorded, raised to a finding with an owner.
+
+**Mechanism.** `sendCheckoutNudge` refuses a repeat per (sender, recipient, document) inside 24 hours by reading the sender's own `checkout_conflict` rows through `notifications_i_sent`; the write it guards is an ordinary `notifyMany` insert. `20261160`'s insert rail (`enforce_notification_insert`) knows nothing of `metadata.nudge` or the window: it checks the actor, the recipient's membership, the kind, the link and the generic per-actor rate cap. So a script, a tab built before N9, or any caller of `notifyMany` can re-nudge the same person every minute up to the generic caps (60 same-notice rows a minute).
+
+**Failure scenario.** A member opens /checkouts in a tab loaded before the N9 deploy and clicks Nudge repeatedly after a refresh: each click writes a fresh `checkout_conflict` row to the same colleague; the N9 tab's "Already nudged" refusal never applies.
+
+**Done when.**
+
+- [ ] `enforce_notification_insert`, re-created from its NEWEST body (`20261160`; lineDiff-pinned by a shape test), refuses (22023, a legible message) a browser-written `checkout_conflict` row carrying `metadata ? 'nudge'` when the same `actor_user_id` wrote one to the same `user_id` and `resource_id` within 24 hours; service-role writes pass as before.
+- [ ] The browser module's refusal sentence and the rail's message agree, and a test drives a second insert inside the window against the rail's text.
+
+**Closer:** notifications N12 NUDGES or N14 (the integrator names one).
 
 ---

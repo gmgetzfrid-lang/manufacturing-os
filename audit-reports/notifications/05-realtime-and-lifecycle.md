@@ -259,7 +259,7 @@ default:
 
 
 **Resolution (2026-10-07, notifications Round G).** Package N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT, branch `fleet/N9-dc-producers-kind-split`, commit `d48617c` — the one-line move the integrator's note names. `lib/notificationKinds.ts` gives `transmittal_unstampable` `section: "documents"` (kept the registry's last entry, so `notification_kinds()`'s list changes by no line), and the bell-only list in `lib/__tests__/notificationKinds.test.ts` drops it: the bell-only kinds are now exactly the ratified eight (`DEC-90` A12). The rendered hook's Documents count gains the one row (12 + 22 + 1).
-- Verified: ⟪LOOP⟫
+- Verified (loop on `fleet/N9-dc-producers-kind-split` after the review fix, 2026-10-08): `npx tsc --noEmit` exit 0; `npx eslint` on the changed `.ts` files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 460 files, 10039 passed, 8 expected fail (10047; the eighth is the compliance-digest tripwire). `next build` is the integrator's.
 
 **Done-when.**
 - ✓ Every kind maps to a section a surface renders; the default is unreachable (N2).

@@ -249,7 +249,7 @@ Grep for `markRead|read_at` across components/, app/, hooks/, lib/ (excluding in
 - The project page (`projects/[id]/page.tsx:280`): once the project has loaded (a project you cannot read marks nothing), its rows are marked read once per visit.
 - The bell, the Documents / Projects badges and the Center drop on the UPDATE: `hooks/useTicketNotifications.ts` subscribes to the member's notification rows (:298). An obligation is not discharged by it — the acknowledgment, sign-off and review stay on /inbox and the document's panel, exactly as when the row is clicked in the bell.
 - Tests: `lib/__tests__/kindSplitProducers.test.ts` "TRAIL-4" (the update's filters and payload, the count, the no-op and refusal answers, both pages' calls).
-- Verified: ⟪LOOP⟫
+- Verified (loop on `fleet/N9-dc-producers-kind-split` after the review fix, 2026-10-08): `npx tsc --noEmit` exit 0; `npx eslint` on the changed `.ts` files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 460 files, 10039 passed, 8 expected fail (10047; the eighth is the compliance-digest tripwire). `next build` is the integrator's.
 
 **Done-when.**
 - ✓ Opening a document via `?doc=` marks that document's unread notifications read for the current user.

@@ -321,12 +321,26 @@ N9, N10, N14, the integrator):*
   later re-create of `notification_kinds()` (N12, N14's `TAX-17`) starts
   from `20261191`'s body; a later re-create of `email_gate()` from
   `20261191`'s (four exempt event types).*
-- *Merge N6 with or before N9: N6's cron derives `COMPLIANCE_KINDS` from
-  `KIND_META`. On N9's branch the cron's hand-kept list still lacks the six
-  split compliance kinds, so the daily digest would miss recall, package,
-  upstream and intake lines until N6 lands (`notificationKinds.test.ts`
-  pins the gap). N6's own copy of that test's compliance case conflicts
-  with N9's — keep N6's derivation and N9's `N9_COMPLIANCE_ADDED`.*
+- *BINDING ORDER (N9 review fix, 2026-10-08) — merge N6 BEFORE N9, or
+  apply N6's one line in its file at the N9 merge: N6's cron derives
+  `COMPLIANCE_KINDS` from `KIND_META`
+  (`(Object.keys(KIND_META) as Array<keyof typeof KIND_META>).filter((k) => KIND_META[k].compliance)`).
+  On N9's branch the cron's hand-kept list (N6's file this round, so N9
+  does not edit it) lacks the six split compliance kinds, and `20261191`'s
+  re-files move the already-written recall / package / intake rows OUT of
+  that hand list — so between the paste and a deploy carrying the derived
+  list the daily compliance digest drops every recall, package, upstream
+  and intake line. Enforced on N9's branch by `notificationKinds.test.ts`:
+  an `it.fails` TRIPWIRE ("the cron's COMPLIANCE_KINDS equals KIND_META's
+  compliance set") that starts failing the moment the derivation is in the
+  cron file (proved by swapping N6's line in), and a gap pin naming the
+  six. At the merge: flip the tripwire to `it`, delete the gap pin, and
+  resolve N6's own compliance case ("compliance is the cron's
+  COMPLIANCE_KINDS, unchanged", which pins the flagged set to TODAY's) to
+  TODAY ∪ `N9_COMPLIANCE_ADDED`; N9's `cronComplianceKinds` helper reads
+  both the literal and the derived form, N6's only the derived. `20261191`
+  must not be pasted before the deploy that carries the derived list
+  (`DEC-44 (N9)` Risk; the migration's header says so).*
 - *N3: the nine new kinds are in `BELL_ICON_GAPS` (the bell has no entry);
   `transmittal_unstampable` badges Documents now. `lib/notificationPrefs.ts`
   (yours): N9 changed one list, `PREFERENCE_EXEMPT_EVENT_TYPES`, to add
@@ -343,6 +357,17 @@ N9, N10, N14, the integrator):*
   `lib/subscriptions.ts` apart); `PROD-17` (a follower's notice for a
   force-release and a retirement) — the integrator adds the four to N14's
   `findings`, or routes them.*
+- *N12 NUDGES or N14 (the integrator names one) — `OS-13` (opened by the
+  N9 review fix, 2026-10-08): the `OS-6` 24-hour cooldown is enforced only
+  by the browser module (`lib/checkoutNudge.ts`); the database accepts a
+  repeat `checkout_conflict` nudge from any client that calls `notifyMany`
+  directly (a tab loaded before the N9 deploy, a script), bounded only by
+  `20261160`'s generic per-recipient caps. Extend
+  `enforce_notification_insert` — re-created from its NEWEST body
+  (`20261160`, lineDiff-pinned) — with one rule: a browser-written
+  `checkout_conflict` row carrying `metadata ? 'nudge'` is refused (22023,
+  a legible message) when the same actor wrote one to the same `user_id`
+  and `resource_id` within 24 h.*
 - *projects-joint J16 (`app/api/intake/upload/route.ts`): N9 changed only
   the kind strings of `notifyTeam` (`intake_quote` / `intake_submission`)
   and its parameter type; `lib/intakeRateLimit.ts` `foldedDigestKind`

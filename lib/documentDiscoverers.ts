@@ -39,6 +39,12 @@ import type { AccessControl, NodeVisibility, Role } from "@/types/schema";
 /** The most people one check answers for (one emit's audience is far below it). */
 export const DISCOVERERS_MAX_UIDS = 500;
 
+/** The headline of a member who holds no role at all — the sentinel
+ *  lib/docFileServer.ts and lib/permissions.ts use, never 'Viewer': an ACL
+ *  naming role:Viewer must not be satisfied by a role the member does not
+ *  hold. */
+const NO_ROLE = "__no_role__" as Role;
+
 export type DiscoverersAnswer =
   | {
       ok: true;
@@ -105,10 +111,15 @@ export async function loadPrincipals(orgId: string, uids: readonly string[]): Pr
     }
     for (const m of ((mems ?? []) as Array<{ uid: string; role?: string | null; roles?: unknown }>)) {
       const uid = String(m.uid);
+      // The headline is the first role the member HOLDS (headline + additive
+      // roles normalized together). A member who holds none holds none — never
+      // an invented 'Viewer' (IS-P1 / DEC-91), which an ACL naming role:Viewer
+      // would otherwise satisfy and count a role-less member as a discoverer.
+      const roles = normalizeRoles(m.roles, m.role);
       out.set(uid, {
         uid,
-        role: (m.role as Role) ?? "Viewer",
-        roles: normalizeRoles(m.roles, m.role),
+        role: roles[0] ?? NO_ROLE,
+        roles,
         orgId,
         teamIds: teamIds.get(uid) ?? [],
         isActiveMember: true,

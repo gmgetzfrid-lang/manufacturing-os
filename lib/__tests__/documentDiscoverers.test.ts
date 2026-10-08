@@ -48,6 +48,8 @@ import { POST } from "@/app/api/documents/discoverers/route";
 const ORG = "org-1";
 const allow = (uid: string, actions: string[]): AccessControl =>
   ({ rules: [{ effect: "allow", subject: { type: "user", id: uid }, actions }] } as unknown as AccessControl);
+const allowRole = (role: string, actions: string[]): AccessControl =>
+  ({ rules: [{ effect: "allow", subject: { type: "role", id: role }, actions }] } as unknown as AccessControl);
 
 beforeEach(() => {
   state.user = { id: "caller" };
@@ -61,6 +63,8 @@ beforeEach(() => {
       { org_id: ORG, uid: "docctrl", role: "DocCtrl", roles: ["DocCtrl"], status: "active" },
       { org_id: ORG, uid: "folder-owner", role: "Viewer", roles: ["Viewer"], status: "active" },
       { org_id: ORG, uid: "gone", role: "Engineer-1", roles: ["Engineer-1"], status: "removed" },
+      // an active member whose headline was cleared and who holds no role
+      { org_id: ORG, uid: "roleless", role: null, roles: [], status: "active" },
     ],
     team_members: [],
     libraries: [{ id: "lib-1", org_id: ORG, acl: null }],
@@ -95,6 +99,14 @@ describe("NEDGE-6 dw3 — discoverersOfDocument", () => {
     db.rows.libraries = [{ id: "lib-1", org_id: ORG, acl: allow("granted", ["read"]) }];
     const r = await discoverersOfDocument({ orgId: ORG, documentId: "doc-normal", uids: ["granted", "plain", "docctrl"] });
     expect(r).toMatchObject({ ok: true, discover: ["granted", "docctrl"], withheld: ["plain"] });
+  });
+
+  it("a member who holds no role is never an invented Viewer: a hidden document whose chain allows role:Viewer is withheld from them (IS-P1 / DEC-91)", async () => {
+    // the library's ACL admits every Viewer to the hidden document below it
+    db.rows.libraries = [{ id: "lib-1", org_id: ORG, acl: allowRole("Viewer", ["discover", "read"]) }];
+    const r = await discoverersOfDocument({ orgId: ORG, documentId: "doc-hidden", uids: ["folder-owner", "roleless", "plain", "granted"] });
+    // folder-owner HOLDS Viewer and discovers; the role-less member and the Engineer do not; the granted person does by name
+    expect(r).toMatchObject({ ok: true, discover: ["folder-owner", "granted"], withheld: ["roleless", "plain"], visibility: "hidden" });
   });
 
   it("a broken chain cannot be evaluated: only the controller tier and the owner are answered", async () => {
