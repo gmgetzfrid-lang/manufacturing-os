@@ -8,6 +8,10 @@
 //   * submitTicketCreate never throws and carries the refused field back.
 //   * EDGE-8 / EDGE-13 census: no browser file inserts a ticket, emits the
 //     new-request notice, or allocates a request number any more.
+//   * Second review: the requester's calendar year rides with every post;
+//     the PSM escalation outcome is carried back; a found ticket whose PSM
+//     escalation is still pending is marked so the panel hands it to the
+//     route; no browser file sends the PSM escalation.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
@@ -18,7 +22,7 @@ vi.mock("@/lib/supabase", () => ({
   supabase: { auth: { getSession: async () => ({ data: { session: s.session } }) } },
 }));
 
-import { resumeCheckinTicket, submitTicketCreate, discardStagedFiles, DISCARD_BATCH, type ResumeRead } from "@/lib/ticketCreateClient";
+import { resumeCheckinTicket, submitTicketCreate, discardStagedFiles, psmEscalationPending, DISCARD_BATCH, type ResumeRead } from "@/lib/ticketCreateClient";
 import {
   ticketStagingFolder, ticketStagingPrefix, isStagedKeyOf, finalAttachmentKey, resolveUnit, resolveDerivedUnit, unitOptionsFor, checkinMocLine,
   contractLimitRefusal, clipToLimit, parseTicketCreateBody, MAX_ATTACHMENTS, MAX_DESCRIPTION, MAX_TITLE, UNIT_UNKNOWN_LABEL,
@@ -58,17 +62,29 @@ describe("LEAK-6 — resumeCheckinTicket: never a second ticket from a failed or
     expect(await resumeCheckinTicket(null, reread)).toBeNull();
   });
 
+  it("a found ticket's pending PSM escalation travels with it", async () => {
+    const pending = { ...T1, escalationPending: true };
+    expect(await resumeCheckinTicket(Promise.resolve({ ticket: pending, error: null }), vi.fn())).toEqual(pending);
+    expect(psmEscalationPending({ undocumented_change: true })).toBe(true);
+    expect(psmEscalationPending({ undocumented_change: true, psm_escalated_at: "2026-10-07T08:00:00Z" })).toBe(false);
+    expect(psmEscalationPending({ checkin: { episodeId: "e" } })).toBe(false);
+    expect(psmEscalationPending(null)).toBe(false);
+  });
+
   it("the panel awaits it before creating, and the route resumes by episode for this requester", () => {
     const c = readFileSync(join(process.cwd(), "components/documents/CheckInPanel.tsx"), "utf8");
-    expect(c).toContain("const ticket = done.ticket ?? (await resumedTicket()) ?? await createDraftingTicket(selected);");
+    expect(c).toContain("const found = done.ticket ? null : await resumedTicket();");
+    expect(c).toContain("?? (found && !found.escalationPending ? { id: found.id, number: found.number } : null)");
+    expect(c).toContain("?? await createDraftingTicket(selected, { resuming: !!found });");
     // the lookup reads its own error
     expect(c).toMatch(/if \(error\) return \{ ticket: null, error: error\.message \|\| "the lookup failed" \};/);
     // and is never fire-and-forget into a ref the commit trusts
     expect(c).not.toContain("resumedTicketRef");
     const r = readFileSync(join(process.cwd(), "app/api/tickets/create/route.ts"), "utf8");
-    const look = r.slice(r.indexOf("if (input.origin.kind === \"checkin\" && input.origin.episodeId)"), r.indexOf("// 4. The request number"));
+    const look = r.slice(r.indexOf("if (origin.kind === \"checkin\" && origin.episodeId)"), r.indexOf("// 4. The request number"));
+    expect(look.length).toBeGreaterThan(200);
     expect(look).toContain('.eq("requester_id", caller.id)');
-    expect(look).toContain('.eq("metadata->checkin->>episodeId", input.origin.episodeId)');
+    expect(look).toContain('.eq("metadata->checkin->>episodeId", origin.episodeId)');
     expect(look).toContain("if (priorErr) return { status: 503");
   });
 });
@@ -84,6 +100,17 @@ describe("submitTicketCreate", () => {
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("/api/tickets/create");
     expect((init.headers as Record<string, string>).authorization).toBe("Bearer tok");
+    // the requester's own calendar year rides along (requestNumberYear decides)
+    expect(JSON.parse(String(init.body))).toMatchObject({ orgId: "o", localYear: new Date().getFullYear() });
+  });
+
+  it("the PSM escalation's outcome is carried back; anything else is not", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ok: true, id: "t1", ticketNumber: "N-1", resumed: true, psmAlert: "unrouted" }), { status: 200 })));
+    expect(await submitTicketCreate({ orgId: "o", title: "t", description: "d", requestType: "ISO", origin: { kind: "portal" } }))
+      .toEqual({ ok: true, id: "t1", ticketNumber: "N-1", resumed: true, psmAlert: "unrouted" });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ok: true, id: "t1", ticketNumber: "N-1", resumed: false, psmAlert: "maybe", unmovedAttachments: 3 }), { status: 201 })));
+    expect(await submitTicketCreate({ orgId: "o", title: "t", description: "d", requestType: "ISO", origin: { kind: "portal" } }))
+      .toEqual({ ok: true, id: "t1", ticketNumber: "N-1", resumed: false });
   });
 
   it("a refusal carries its message and field; a network failure and a signed-out session are said in words — never thrown", async () => {
@@ -209,6 +236,16 @@ describe("census — creation lives in one place (EDGE-8, EDGE-13, FRIC-8)", () 
     expect(page).toContain("submitTicketCreate({");
     // the redirect follows the route's answer, not a 500 ms timer
     expect(page.indexOf("if (!res.ok) {")).toBeLessThan(page.indexOf("router.push('/requests');"));
+  });
+
+  it("the PSM escalation is sent only by the route (LIFE-7, DF-P2 second review): no browser file escalates on the safety category for a ticket", () => {
+    const psmWriters = files.filter((f) => /PSM alert: undocumented field change/.test(src(f)));
+    expect(psmWriters.sort()).toEqual(["lib/ticketCreate.ts"]);
+    const route = src("app/api/tickets/create/route.ts");
+    expect(route).toContain('orgId: p.orgId, category: "safety", kind: "request_pending_approval",');
+    expect(route).toContain('action: "PSM_ALERT_UNROUTED"');
+    expect(route).toContain("{ psm_escalated_at: new Date().toISOString() }");
+    expect(src("components/documents/CheckInPanel.tsx")).not.toMatch(/category: "safety"/);
   });
 
   it("the creation notice is written only by the route (one channel set for every door — ROUTE-4)", () => {

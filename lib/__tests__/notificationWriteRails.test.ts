@@ -1560,8 +1560,9 @@ describe("rule 1's obligation on the producers — a browser row names the signe
     expect(offenders).toEqual([]);
     // each traced to RoleContext's uid: directly, or through a prop / parameter every caller fills with it
     // (drafting-flow DF-P2: 9 → 7 — the request form's and the check-in's new-request notices moved
-    // to /api/tickets/create, which writes them as the service role)
-    expect(sessions).toBeGreaterThanOrEqual(7);
+    // to /api/tickets/create, which writes them as the service role; 7 → 6 at DF-P2's second review —
+    // the check-in's PSM escalation moved there too, sent once and stamped on the ticket)
+    expect(sessions).toBeGreaterThanOrEqual(6);
     expect([...pass].sort()).toEqual([...ACTOR_PASS_THROUGHS].sort());
   }, 60_000); // a whole-repo AST census: given room under a loaded full-suite run (integrator, N5 merge)
 

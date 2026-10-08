@@ -9,7 +9,7 @@ import { OrgDraftingSettings } from '@/types/schema';
 import { readDraft, discardDraft } from '@/lib/draftHandoff';
 // DF-P2: the request is filed by /api/tickets/create — it validates, numbers,
 // inserts and notifies server-side. This page stages the files and posts.
-import { contractLimitRefusal, missingRequiredCustomField, ticketStagingFolder, unitOptionsFor, UNIT_UNKNOWN_LABEL, type TicketCreateAttachment, type TicketCreateSourceDoc } from '@/lib/ticketCreate';
+import { capSourceDocuments, contractLimitRefusal, droppedSourceDocumentsWarning, missingRequiredCustomField, ticketStagingFolder, unitOptionsFor, UNIT_UNKNOWN_LABEL, type TicketCreateAttachment, type TicketCreateSourceDoc } from '@/lib/ticketCreate';
 import { submitTicketCreate, discardStagedFiles } from '@/lib/ticketCreateClient';
 import { loadCodebook } from '@/lib/codebook';
 import IsoGuidance from '@/components/ui/IsoGuidance';
@@ -167,6 +167,13 @@ export default function NewTicketPage() {
         // row), which is not an error.
         const saved = error ? null : ((data?.data as OrgDraftingSettings | null | undefined) ?? null);
         const cfg: OrgDraftingSettings = { ...DEFAULT_SETTINGS, ...(saved ?? {}) };
+        // A saved request-type list an admin emptied (Admin → Requests allows
+        // it) would leave nothing to pick, and the route needs a type: the
+        // built-in list stands in — the route takes any type when the
+        // workspace configures none (20261038's rule, requestTypeAllowed).
+        if (!((cfg.requestTypes?.options?.length ?? 0) > 0)) {
+          cfg.requestTypes = { ...DEFAULT_SETTINGS.requestTypes, label: cfg.requestTypes?.label || DEFAULT_SETTINGS.requestTypes.label };
+        }
         // DCW-7: the unit list is the one the create route checks against —
         // unitOptionsFor(saved settings, Site Codebook units): the saved units,
         // else the codebook's (taught once in Admin → Site Codebook, spoken
@@ -321,6 +328,11 @@ export default function NewTicketPage() {
     for (const d of stashedDocs) {
       if (d.id !== srcDocId) sourceDocuments.push({ id: d.id, documentNumber: d.number || null, title: null, rev: null, versionId: null });
     }
+    // GAP-8 / DEC-44 (DF-P2) item 5: the sheet list is advisory — the same
+    // cap the route keeps, applied here; the sheets past it are named after
+    // filing, never a refusal.
+    const cappedDocs = capSourceDocuments(sourceDocuments);
+    const formWarnings = cappedDocs.dropped > 0 ? [droppedSourceDocumentsWarning(cappedDocs.dropped)] : [];
 
     const res = await submitTicketCreate({
       orgId: activeOrgId,
@@ -334,7 +346,7 @@ export default function NewTicketPage() {
       // route), not by the headline's rank — and kept only if held.
       requesterRole: relevantRequesterRole(roles, activeRole),
       customCategories: Object.keys(customValues).length > 0 ? customValues : null,
-      sourceDocuments,
+      sourceDocuments: cappedDocs.kept,
       attachments,
       origin: { kind: 'portal' },
     });
@@ -348,10 +360,12 @@ export default function NewTicketPage() {
     }
     // The hand-off stash has done its job (LIFE-3): drop it now, not on read.
     if (draftKey) void discardDraft(draftKey).catch(() => { /* best-effort */ });
-    // A hand-off the route could not use (a source document since removed, a
-    // file outside this workspace) was dropped, not refused — say what.
-    if (res.warnings && res.warnings.length > 0) {
-      await appAlert({ title: `Filed ${res.ticketNumber}`, message: res.warnings.join(' ') });
+    // A hand-off the route could not use (a source document since removed or
+    // not visible to you, a file outside this workspace, sheets past the
+    // cap) was dropped, not refused — say what.
+    const warnings = [...formWarnings, ...(res.warnings ?? [])];
+    if (warnings.length > 0) {
+      await appAlert({ title: `Filed ${res.ticketNumber}`, message: warnings.join(' ') });
     }
 
     // EDGE-8: the route filed AND notified before it answered — nothing is

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { CopyObjectCommand, DeleteObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { callerScopedClient } from "@/lib/serverAuth";
@@ -12,13 +13,16 @@ import { defaultSlaTargetDate } from "@/lib/notifications";
 import { resolveTicketRecipients } from "@/lib/ticketRouting";
 import { emit } from "@/lib/notify/dispatch";
 import { escapeHtml } from "@/lib/ticketTransitions";
+import { memberHoldsAny } from "@/lib/roleHeld";
+import { logAuditAction } from "@/lib/audit";
 import { buildSourceDocumentRef, unitOfDocumentMetadata, type SourceDocumentRefRow } from "@/lib/sourceDocRef";
 import {
   parseTicketCreateBody, unitOptionsFor, resolveUnit, resolveDerivedUnit, requestTypeAllowed, missingRequiredCustomField,
   stampedRequesterRole, stampedRequesterName, openingHistory, creationNotice, insertFailureKind,
-  isStagedKeyOf, finalAttachmentKey, attachmentSizeLabel,
-  type CreatorMember, type TicketCreateInput, type TicketCreateAttachment,
+  isStagedKeyOf, finalAttachmentKey, attachmentSizeLabel, requestNumberYear, checkinNoteOf, psmAlertNotice,
+  type CreatorMember, type TicketCreateInput, type TicketCreateAttachment, type TicketCreateOrigin, type CheckinMoc,
 } from "@/lib/ticketCreate";
+import type { PsmAlertOutcome } from "@/lib/ticketCreateClient";
 import type { OrgDraftingSettings, TicketAttachment } from "@/types/schema";
 
 // POST /api/tickets/create — the ONE way a drafting request is filed
@@ -34,16 +38,23 @@ import type { OrgDraftingSettings, TicketAttachment } from "@/types/schema";
 //      the form offers, lib/ticketCreate.ts unitOptionsFor), the staged
 //      attachments (under the caller's own pending prefix, in storage), and
 //      the origin's own facts (a check-in names a checkout of the document by
-//      this requester; a collision names a project in this workspace) —
-//      BEFORE anything is allocated or written. A hand-off the route cannot
-//      use (a source document since removed, a library reference outside this
-//      workspace) is dropped with a warning, never a refusal;
+//      this requester; a collision names an intake sheet in the project's
+//      intake folder, and that project's intake link) — BEFORE anything is
+//      allocated or written. Source documents are read AS THE CALLER, so the
+//      document ACL (documents_acl_select) applies: one they cannot see is
+//      treated exactly like one that is not in the workspace. A hand-off the
+//      route cannot use (a source document since removed or not visible, a
+//      library reference outside this workspace, sheets past
+//      MAX_SOURCE_DOCUMENTS) is dropped with a warning, never a refusal;
 //   3. for a check-in, resumes the ticket the same check-in episode already
-//      filed for this requester instead of filing a second (LEAK-6);
+//      filed for this requester instead of filing a second (LEAK-6) — and
+//      sends that ticket's PSM escalation if it never went out (no
+//      metadata.psm_escalated_at stamp);
 //   4. allocates the request number only now (EDGE-13: a refused submit
-//      never spends one), and gives it back only when the insert definitely
-//      did not commit (lib/ticketCreate.ts insertFailureKind) and no later
-//      number was handed out;
+//      never spends one), in the requester's calendar year when it is a year
+//      in force somewhere right now (requestNumberYear), and gives it back
+//      only when the insert definitely did not commit (lib/ticketCreate.ts
+//      insertFailureKind) and no later number was handed out;
 //   5. inserts the row under the service role, REPLICATING 20261038's
 //      ticket_insert_integrity (which a service-role insert bypasses): the
 //      requester is the caller, the requester_role one they hold (else their
@@ -59,10 +70,14 @@ import type { OrgDraftingSettings, TicketAttachment } from "@/types/schema";
 //      visible — EDGE-1, EDGE-12), both carrying metadata.action/status so
 //      the workflow route's supersede and the badge's reconcile retire them
 //      once the ticket moves on (ROUTE-11), from one door for all three
-//      creators (ROUTE-4);
-//   7. re-keys each staged attachment under the ticket's own prefix, a few at
-//      a time and within the time this function has left; a file not moved
-//      stays on the row at its staged key.
+//      creators (ROUTE-4); then, for a check-in that reports an undocumented
+//      field change, the PSM escalation to the controllers (LIFE-7, safety
+//      category), stamped metadata.psm_escalated_at once sent — so a retry
+//      that resumes the ticket sends it only if it never went out;
+//   7. answers, and AFTER the answer (next/server after()) re-keys each
+//      staged attachment under the ticket's own prefix, a few at a time and
+//      within the time this function has left; a file not moved stays on the
+//      row at its staged key, which the row already names.
 //
 // DELETE /api/tickets/create — discards files a requester staged for a
 // submit that never reached POST (an upload that failed part-way). Only keys
@@ -85,6 +100,14 @@ type Fail = { status: number; field?: string; error: string; code?: string; keep
 const json = (status: number, body: Record<string, unknown>) => NextResponse.json(body, { status });
 
 const UNCONFIRMED = "Couldn't confirm the request was saved — check the queue before you submit it again.";
+
+/** Who receives a PSM escalation: the workspace's controllers (Admin or
+ *  DocCtrl, headline or additive — is_org_controller's set). */
+const PSM_CONTROLLER_ROLES = ["Admin", "DocCtrl"] as const;
+
+/** Source documents are read in chunks this size (a PostgREST `in` list
+ *  travels in the URL). */
+const SOURCE_READ_CHUNK = 100;
 
 function copySource(key: string): string {
   return `${R2_BUCKET}/${key.split("/").map(encodeURIComponent).join("/")}`;
@@ -168,23 +191,40 @@ interface SourceRow {
   name: string | null;
   rev: string | null;
   current_version_id: string | null;
+  collection_id?: string | null;
   metadata: Record<string, unknown> | null;
   unit_code?: string | null;
 }
 
-/** The source documents, read in THIS workspace. documents.unit_code is
- *  intelligence 20261138's (pending paste): without it the read is retried
- *  without the column and the unit comes from the document's metadata. */
-async function readSourceDocuments(orgId: string, ids: string[]): Promise<SourceRow[] | "error"> {
-  if (ids.length === 0) return [];
-  const base = "id, document_number, title, name, rev, current_version_id, metadata";
-  const first = await supabaseAdmin.from("documents").select(`${base}, unit_code`).eq("org_id", orgId).in("id", ids);
-  if (!first.error) return (first.data ?? []) as SourceRow[];
-  const code = String((first.error as { code?: string }).code ?? "");
-  const msg = String(first.error.message ?? "");
-  if (!(code === "42703" || code === "PGRST204" || /unit_code/.test(msg))) return "error";
-  const again = await supabaseAdmin.from("documents").select(base).eq("org_id", orgId).in("id", ids);
-  return again.error ? "error" : ((again.data ?? []) as SourceRow[]);
+/** The source documents, read in THIS workspace AS THE CALLER (`client` is
+ *  callerScopedClient's): documents_acl_select / node_visible apply, so a
+ *  document in a library the caller cannot open never lends its number,
+ *  title, revision, version or unit to a ticket the whole workspace reads —
+ *  it is simply not returned, exactly like one that is not here.
+ *  documents.unit_code is intelligence 20261138's (pending paste): without it
+ *  the read is retried without the column and the unit comes from the
+ *  document's metadata. */
+async function readSourceDocuments(client: SupabaseClient, orgId: string, ids: string[]): Promise<SourceRow[] | "error"> {
+  const out: SourceRow[] = [];
+  const base = "id, document_number, title, name, rev, current_version_id, collection_id, metadata";
+  for (let i = 0; i < ids.length; i += SOURCE_READ_CHUNK) {
+    const chunk = ids.slice(i, i + SOURCE_READ_CHUNK);
+    const first = await client.from("documents").select(`${base}, unit_code`).eq("org_id", orgId).in("id", chunk);
+    if (!first.error) { out.push(...((first.data ?? []) as SourceRow[])); continue; }
+    const code = String((first.error as { code?: string }).code ?? "");
+    const msg = String(first.error.message ?? "");
+    if (!(code === "42703" || code === "PGRST204" || /unit_code/.test(msg))) return "error";
+    const again = await client.from("documents").select(base).eq("org_id", orgId).in("id", chunk);
+    if (again.error) return "error";
+    out.push(...((again.data ?? []) as SourceRow[]));
+  }
+  return out;
+}
+
+/** A source document's own label — what the intake panel and the check-in
+ *  panel show for it — from the row, never from the client. */
+function documentLabel(doc: SourceRow): string {
+  return String(doc.document_number || doc.title || doc.name || "Document");
 }
 
 /** HAND-7: the version a request is raised against. The version the
@@ -232,7 +272,7 @@ export async function POST(req: NextRequest) {
   const input = parsed.input;
   const stagedKeys = input.attachments.filter((a) => a.kind === "staged").map((a) => a.key);
 
-  const outcome = await create(req, caller, input, startedAt);
+  const outcome = await create(req, caller, input, startedAt, parsed.warnings);
   if ("status" in outcome) {
     // Nothing was written (EDGE-13): the caller's staged files go too —
     // unless the outcome is not known (keepStaged), or a ticket names them.
@@ -262,10 +302,9 @@ type Created = {
   ticketNumber: string;
   resumed: boolean;
   notified?: boolean;
-  /** Staged attachments still under the pending prefix (their re-key failed
-   *  or ran out of time; the row names them where they are, so nothing is
-   *  lost). */
-  unmovedAttachments?: number;
+  /** A check-in's PSM escalation, when this request sent (or tried to send)
+   *  one — absent when there was none to send or it had already gone. */
+  psmAlert?: PsmAlertOutcome;
   /** What the request was filed WITHOUT (an unusable hand-off), in words. */
   warnings?: string[];
 };
@@ -275,9 +314,10 @@ async function create(
   caller: { id: string; email: string | null; token: string },
   input: TicketCreateInput,
   startedAt: number,
+  parseWarnings: string[] = [],
 ): Promise<Created | Fail> {
   const orgId = input.orgId;
-  const warnings: string[] = [];
+  const warnings: string[] = [...parseWarnings];
 
   // 1. Membership — 20261038: only an active member files a request.
   const member = await activeMember(orgId, caller.id);
@@ -357,11 +397,18 @@ async function create(
   }
   if (storageFault) return { status: 503, error: "Couldn't check the attached files in storage — try again in a moment." };
 
-  // Source documents: in THIS workspace (a foreign id is never stored —
-  // SM-14's input), each with the version it was raised against. One that is
-  // not here (removed since the hand-off, or never ours) is dropped with a
-  // warning; the request is still filed.
-  const docs = await readSourceDocuments(orgId, input.sourceDocuments.map((d) => d.id));
+  // The caller's own client: the source documents are read with it (the
+  // document ACL applies), and the request number is allocated with it.
+  const caller_client = callerScopedClient(req);
+  if ("error" in caller_client) return { status: caller_client.status, error: caller_client.error };
+
+  // Source documents: in THIS workspace and visible to the caller (a foreign
+  // id is never stored — SM-14's input; a restricted one never lends its
+  // fields), each with the version it was raised against. One that is not
+  // here or not visible (removed since the hand-off, never ours, or in a
+  // library the caller cannot open) is dropped with a warning; the request
+  // is still filed.
+  const docs = await readSourceDocuments(caller_client, orgId, input.sourceDocuments.map((d) => d.id));
   if (docs === "error") return { status: 503, error: "Couldn't read the source document — try again in a moment." };
   const byId = new Map(docs.map((d) => [d.id, d]));
   const refs: SourceDocumentRefRow[] = [];
@@ -387,9 +434,11 @@ async function create(
 
   // The origin's own facts. Required custom fields and the unit-list refusal
   // bind the request form only; a caller who names another origin is held
-  // to that origin's facts, so choosing one is not a way around the form.
-  const originRefusal = await checkOrigin(input, orgId, caller.id, primary);
-  if (originRefusal) return originRefusal;
+  // to that origin's facts (what is checked, per origin: checkOrigin).
+  const checked = await checkOrigin(input, orgId, caller.id, primary, byId, caller_client);
+  if ("status" in checked) return checked;
+  const origin = checked.origin;
+  warnings.push(...checked.warnings);
 
   // FRIC-3 done-when 2: no unit given → the source document's own, when it
   // names one, resolved against the list like any other: its metadata unit
@@ -400,31 +449,53 @@ async function create(
     unit = resolveDerivedUnit([unitOfDocumentMetadata(doc.metadata), typeof doc.unit_code === "string" ? doc.unit_code : null], unitOptions);
   }
 
+  const reporter = stampedRequesterName(member, caller.email);
+  const email = member.email || caller.email;
+
   // 3. LEAK-6: a check-in that already filed its ticket resumes it — keyed on
   //    the check-in episode, for this requester, while the ticket is open.
-  if (input.origin.kind === "checkin" && input.origin.episodeId) {
+  //    LIFE-7: if that ticket records an undocumented field change whose PSM
+  //    escalation never went out (no psm_escalated_at stamp — the first
+  //    attempt's answer said it failed, or the attempt ended before it was
+  //    sent), it is sent now; a ticket already escalated is never escalated
+  //    twice. The escalation follows the TICKET's record, as first filed.
+  if (origin.kind === "checkin" && origin.episodeId) {
     const { data: prior, error: priorErr } = await supabaseAdmin
-      .from("tickets").select("id, ticket_id")
+      .from("tickets").select("id, ticket_id, description, metadata, last_modified")
       .eq("org_id", orgId)
       .eq("requester_id", caller.id)
-      .eq("metadata->checkin->>episodeId", input.origin.episodeId)
+      .eq("metadata->checkin->>episodeId", origin.episodeId)
       .not("status", "in", '("CLOSED","CANCELED")')
       .order("created_at", { ascending: false }).limit(1).maybeSingle();
     if (priorErr) return { status: 503, error: "Couldn't check whether this check-in already filed its request — try again in a moment." };
     if (prior) {
       await discardUnreferencedStaged(orgId, staged.map((a) => a.key));
-      const p = prior as { id: string; ticket_id: string };
-      return { ok: true, id: p.id, ticketNumber: p.ticket_id, resumed: true };
+      const p = prior as { id: string; ticket_id: string; description?: string | null; metadata?: Record<string, unknown> | null; last_modified?: string | null };
+      const meta = p.metadata ?? {};
+      let psmAlert: PsmAlertOutcome | undefined;
+      if (meta.undocumented_change === true && !meta.psm_escalated_at) {
+        const m = (meta.moc && typeof meta.moc === "object" ? meta.moc : null) as { status?: unknown; number?: unknown } | null;
+        const priorMoc: CheckinMoc | null = m
+          ? { status: (m.status ?? null) as CheckinMoc["status"], number: typeof m.number === "string" ? m.number : null }
+          : null;
+        psmAlert = await escalatePsm({
+          req, orgId, ticketId: p.id, callerId: caller.id, reporter, email,
+          docLabel: primary ? documentLabel(byId.get(primary.id)!) : "Document",
+          note: checkinNoteOf(String(p.description ?? ""), priorMoc),
+          known: p.last_modified ? { metadata: meta, lastModified: String(p.last_modified) } : null,
+        });
+      }
+      return { ok: true, id: p.id, ticketNumber: p.ticket_id, resumed: true, ...(psmAlert ? { psmAlert } : {}) };
     }
   }
 
   // 4. The request number — allocated only now, as the caller (the counter
   //    function admits active members only, and reads auth.uid()). Its
   //    format is read first, and CHECKED: a failed read never files a number
-  //    without the workspace's prefix.
-  const caller_client = callerScopedClient(req);
-  if ("error" in caller_client) return { status: caller_client.status, error: caller_client.error };
-  const year = new Date().getFullYear();
+  //    without the workspace's prefix. The year is the requester's own
+  //    (their clock) when it is a calendar year in force somewhere right
+  //    now, else the server's UTC year — never another year's counter.
+  const year = requestNumberYear(Date.now(), input.localYear);
   const { data: orgRow, error: orgErr } = await supabaseAdmin
     .from("orgs").select("ticket_prefix, ticket_record_code, ticket_number_pad").eq("id", orgId).maybeSingle();
   if (orgErr) {
@@ -440,7 +511,6 @@ async function create(
 
   // 5. The row — 20261038 ticket_insert_integrity, replicated.
   const now = new Date().toISOString();
-  const email = member.email || caller.email;
   const requesterRole = stampedRequesterRole(input.requesterRole, member);
   const attachments: TicketAttachment[] = kept.map((a) => ({
     id: crypto.randomUUID(),
@@ -458,19 +528,22 @@ async function create(
   if (refs.length > 1) metadata.source_documents = refs;           // GAP-8
   if (unit.unit == null) metadata.unit_unknown = true;              // FRIC-3: the explicit answer
   else if (unit.kind === "unmatched") metadata.unit_unlisted = true; // DCW-7: kept as derived, not on the list
-  if (input.origin.kind === "checkin") {
-    const o = input.origin;
+  if (origin.kind === "checkin") {
+    const o = origin;
     metadata.checkin = { episodeId: o.episodeId, checkoutNumber: o.checkoutNumber, purpose: o.purpose, outcome: o.outcome };
     if (o.moc) metadata.moc = { status: o.moc.status, number: o.moc.status === "none" ? null : o.moc.number };
     if (o.minorCorrection) metadata.minor_correction = true;
     if (o.undocumentedChange) metadata.undocumented_change = true;
-  } else if (input.origin.kind === "intake_collision") {
-    const o = input.origin;
+  } else if (origin.kind === "intake_collision") {
+    const o = origin;
     metadata.intake_collision = {
       projectId: o.projectId,
       intakeLinkId: o.intakeLinkId,
       numberCollisionDocId: o.numberCollisionDocId,
       overlaps: o.overlaps,
+      // Every overlap the scan reported is stored up to
+      // MAX_COLLISION_OVERLAPS; past it, the full count and a flag say so.
+      ...(o.overlapsTruncated ? { overlapsTotal: o.overlapsTotal, overlapsTruncated: true } : {}),
       flaggedAt: now,
     };
   }
@@ -485,13 +558,13 @@ async function create(
     priority: input.priority,
     status: "PENDING_ASSIGNMENT",
     requester_id: caller.id,
-    requester_name: stampedRequesterName(member, caller.email),
+    requester_name: reporter,
     requester_email: email,
     requester_role: requesterRole,
     attachments,
     // The role the requester FILED under (the stamped one, as requester_role
     // says) — never their headline when they hold the one they chose.
-    history: openingHistory({ origin: input.origin, email, role: requesterRole, now, primary }),
+    history: openingHistory({ origin, email, role: requesterRole, now, primary }),
     comments: [],
     unread_by: [],
     // The requester follows their own request.
@@ -539,15 +612,45 @@ async function create(
 
   // 6. The new-request notice, from here (EDGE-8), awaited — before any file
   //    is moved, so a slow copy can never cost the queue its notice.
-  const notified = await announce({ req, orgId, ticketId, title: input.title, input, unit: unit.unit, callerId: caller.id, email });
+  const notified = await announce({ req, orgId, ticketId, title: input.title, input, origin, unit: unit.unit, callerId: caller.id, email });
 
-  // 7. Re-key staged attachments under the ticket's own prefix, within the
-  //    time this function has left.
+  //    LIFE-7: a check-in reporting an undocumented field change escalates
+  //    to the controllers from here too — durable (it does not depend on the
+  //    browser getting this answer) and stamped once sent, so a retry that
+  //    resumes this ticket never sends it twice.
+  let psmAlert: PsmAlertOutcome | undefined;
+  let rowToken = now;
+  if (origin.kind === "checkin" && origin.undocumentedChange) {
+    const known = { metadata, lastModified: now };
+    psmAlert = await escalatePsm({
+      req, orgId, ticketId, callerId: caller.id, reporter, email,
+      docLabel: primary ? documentLabel(byId.get(primary.id)!) : "Document",
+      note: checkinNoteOf(input.description, origin.moc),
+      known,
+      onStamped: (token) => { rowToken = token; },
+    });
+  }
+
+  // 7. Re-key staged attachments under the ticket's own prefix — AFTER the
+  //    answer (the requester does not wait on the copies), within the time
+  //    this function has left. The row already names the staged keys, so a
+  //    move that never happens (or a function stopped part-way) leaves a
+  //    correct row.
   const stagedIds = new Set(attachments.filter((_, i) => kept[i].kind === "staged").map((a) => a.id));
-  const unmoved = await rekeyAttachments(orgId, ticketId, ticketNumber, attachments, stagedIds, now, {
-    startBy: startedAt + REKEY_START_BY_MS,
-    abortAt: startedAt + REKEY_ABORT_AT_MS,
-  });
+  if (stagedIds.size > 0) {
+    const token = rowToken;
+    after(async () => {
+      try {
+        const unmoved = await rekeyAttachments(orgId, ticketId, ticketNumber, attachments, stagedIds, token, {
+          startBy: startedAt + REKEY_START_BY_MS,
+          abortAt: startedAt + REKEY_ABORT_AT_MS,
+        });
+        if (unmoved > 0) console.warn(`[tickets/create] ${unmoved} attachment(s) of ${ticketNumber} stay at their staged keys (the row names them there)`);
+      } catch (e) {
+        console.error(`[tickets/create] re-key of ${ticketNumber} failed (the row names the staged keys):`, e);
+      }
+    });
+  }
 
   // Kick the email drain after the response (the daily cron is the fallback).
   const drainUrl = new URL("/api/notifications/send-queued", req.url);
@@ -560,20 +663,37 @@ async function create(
 
   return {
     ok: true, id: ticketId, ticketNumber, resumed: false, notified,
-    ...(unmoved > 0 ? { unmovedAttachments: unmoved } : {}),
+    ...(psmAlert ? { psmAlert } : {}),
     ...(warnings.length > 0 ? { warnings } : {}),
   };
 }
 
-/** The origin's own facts (FRIC-8 / EDGE-13): a "checkin" names a checkout of
- *  its source document by THIS requester (the episode, when it names one, is
- *  that document's, in this workspace), and an "intake_collision" names a
- *  project in this workspace. Otherwise the request is refused — the origin
- *  carries the check-in's PSM flags and skips the form's required fields, so
- *  it is never the caller's to choose. */
+/** The origin's own facts (FRIC-8 / EDGE-13). Required custom fields and
+ *  the unit-list refusal bind the request FORM; an origin that skips them is
+ *  held to what binds it instead:
+ *   checkin           — a checkout of the source document by THIS requester
+ *                       (the episode, when it names one, is that document's,
+ *                       in this workspace; the session is in that episode at
+ *                       any status, or still active) and a document the
+ *                       caller can see;
+ *   intake_collision  — a project in this workspace; the source document is
+ *                       an intake sheet in THAT project's intake folder,
+ *                       visible to the caller; the intake link, when named,
+ *                       is that project's; the document the number collides
+ *                       with, when named, is one the caller can see in this
+ *                       workspace (otherwise it is dropped with a warning,
+ *                       never stored). The notice title is the sheet's own
+ *                       label, read from the row — never the client's text.
+ *                       The overlap list is the scan's description and is
+ *                       stored as reported (not re-checked document by
+ *                       document).
+ *  Otherwise the request is refused (field "origin"): the origin carries the
+ *  check-in's PSM flags, a collision notice, and skips the form's required
+ *  fields, so it is never the caller's to choose freely. */
 async function checkOrigin(
   input: TicketCreateInput, orgId: string, callerId: string, primary: SourceDocumentRefRow | null,
-): Promise<Fail | null> {
+  byId: Map<string, SourceRow>, callerClient: SupabaseClient,
+): Promise<Fail | { origin: TicketCreateOrigin; warnings: string[] }> {
   const o = input.origin;
   if (o.kind === "checkin") {
     if (!primary) {
@@ -597,15 +717,39 @@ async function checkOrigin(
     const held = ((sessions ?? []) as Array<{ episode_id?: string | null; status?: string | null }>)
       .some((s) => (o.episodeId != null && s.episode_id === o.episodeId) || s.status === "active");
     if (!held) return { status: 400, field: "origin", error: "Only the person who checked this document out can file its check-in request." };
-    return null;
+    return { origin: o, warnings: [] };
   }
   if (o.kind === "intake_collision") {
     const { data: project, error: pErr } = await supabaseAdmin
-      .from("projects").select("id").eq("id", o.projectId).eq("org_id", orgId).maybeSingle();
+      .from("projects").select("id, intake_collection_id").eq("id", o.projectId).eq("org_id", orgId).maybeSingle();
     if (pErr) return { status: 503, error: "Couldn't confirm the project this collision belongs to — try again in a moment." };
     if (!project) return { status: 400, field: "origin", error: "The project this collision was flagged in is not in this workspace." };
+    const sheet = primary ? byId.get(primary.id) ?? null : null;
+    const intakeFolder = (project as { intake_collection_id?: string | null }).intake_collection_id ?? null;
+    if (!sheet || !intakeFolder || sheet.collection_id !== intakeFolder) {
+      return { status: 400, field: "origin", error: "A collision files its request against an intake sheet of the project — that sheet is not in this project's intake folder." };
+    }
+    if (o.intakeLinkId) {
+      const { data: link, error: lErr } = await supabaseAdmin
+        .from("project_intake_links").select("id")
+        .eq("id", o.intakeLinkId).eq("org_id", orgId).eq("project_id", o.projectId).maybeSingle();
+      if (lErr) return { status: 503, error: "Couldn't confirm the intake link this sheet came through — try again in a moment." };
+      if (!link) return { status: 400, field: "origin", error: "The intake link named is not one of this project's." };
+    }
+    const warnings: string[] = [];
+    let numberCollisionDocId = o.numberCollisionDocId;
+    if (numberCollisionDocId) {
+      const { data: other, error: cErr } = await callerClient
+        .from("documents").select("id").eq("id", numberCollisionDocId).eq("org_id", orgId).maybeSingle();
+      if (cErr) return { status: 503, error: "Couldn't read the document this sheet's number collides with — try again in a moment." };
+      if (!other) {
+        numberCollisionDocId = null;
+        warnings.push("The document this sheet's number collides with is not one you can see in this workspace — the request was filed without naming it.");
+      }
+    }
+    return { origin: { ...o, numberCollisionDocId, sheetLabel: documentLabel(sheet) }, warnings };
   }
-  return null;
+  return { origin: o, warnings: [] };
 }
 
 type Settled = { kind: "filed"; id: string } | { kind: "taken" } | { kind: "failed"; fail: Fail };
@@ -717,19 +861,22 @@ async function rekeyAttachments(
 /** The new-request notice to the assignment queue: bell + preference-aware
  *  email through emit(), as the service role (lib/serverClientScope), with
  *  metadata.action / status (ROUTE-11). Returns whether it ran. */
+/** EDGE-9's convention: a link in an EMAIL is absolute — the configured
+ *  public origin, else the origin this request arrived on. */
+function emailLinkFor(req: NextRequest, link: string): string {
+  return `${(publicOrigin() || new URL(req.url).origin).replace(/\/+$/, "")}${link}`;
+}
+
 async function announce(p: {
-  req: NextRequest; orgId: string; ticketId: string; title: string; input: TicketCreateInput;
+  req: NextRequest; orgId: string; ticketId: string; title: string; input: TicketCreateInput; origin: TicketCreateOrigin;
   unit: string | null; callerId: string; email: string | null;
 }): Promise<boolean> {
   try {
     const recipients = await resolveTicketRecipients(p.orgId, "PENDING_ASSIGNMENT", p.callerId, supabaseAdmin);
     if (recipients.length === 0) return true;
-    const notice = creationNotice(p.input.origin, p.title);
+    const notice = creationNotice(p.origin, p.title);
     const link = `/requests/${p.ticketId}`;
-    // EDGE-9's convention: a link in an EMAIL is absolute — the configured
-    // public origin, else the origin this request arrived on.
-    const origin = (publicOrigin() || new URL(p.req.url).origin).replace(/\/+$/, "");
-    const emailLink = `${origin}${link}`;
+    const emailLink = emailLinkFor(p.req, link);
     await runWithServerClient(supabaseAdmin, () => emit({
       orgId: p.orgId,
       category: "assignment",
@@ -758,6 +905,96 @@ async function announce(p: {
     console.error(`[tickets/create] new-request notice for ${p.ticketId} failed (the request is filed):`, e);
     return false;
   }
+}
+
+/** Merge `patch` into a ticket's metadata — compare-and-set on
+ *  last_modified (which it bumps, so a writer that read the old metadata
+ *  loses its own compare-and-set instead of erasing the stamp). `known` is
+ *  the row as the caller already holds it; a lost race re-reads once.
+ *  Returns the new last_modified, or null when the stamp was not written. */
+async function stampTicketMetadata(
+  ticketId: string, patch: Record<string, unknown>,
+  known: { metadata: Record<string, unknown> | null; lastModified: string } | null,
+): Promise<string | null> {
+  let cur = known;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (!cur) {
+      const { data, error } = await supabaseAdmin.from("tickets").select("metadata, last_modified").eq("id", ticketId).maybeSingle();
+      if (error || !data) return null;
+      const row = data as { metadata?: Record<string, unknown> | null; last_modified?: string | null };
+      cur = { metadata: row.metadata ?? null, lastModified: String(row.last_modified ?? "") };
+    }
+    const token = new Date().toISOString();
+    const w = await checkedWrite(supabaseAdmin.from("tickets")
+      .update({ metadata: { ...(cur.metadata ?? {}), ...patch }, last_modified: token })
+      .eq("id", ticketId).eq("last_modified", cur.lastModified)
+      .select("id"));
+    if (w.ok) return token;
+    cur = null;
+  }
+  return null;
+}
+
+/** LIFE-7: the PSM escalation for a check-in that reports an undocumented
+ *  field change — sent by the route (DF-P2 review fix), not the browser, so
+ *  it does not depend on the reporter's tab getting the answer. Bell AND
+ *  email on the "safety" category (the one no preference toggle mutes) to
+ *  the workspace's controllers other than the reporter, then
+ *  metadata.psm_escalated_at is stamped: a check-in that resumes this
+ *  ticket sends it only while that stamp is missing. With no controller to
+ *  tell, the gap is audited (PSM_ALERT_UNROUTED) and the reporter's panel
+ *  says so; nothing is stamped, so a later attempt routes it if a
+ *  controller exists by then. A failure is "failed" (not stamped — the next
+ *  attempt sends it). A stamp that cannot be written after a send means a
+ *  later resume may send it once more: a second alert, never a lost one. */
+async function escalatePsm(p: {
+  req: NextRequest; orgId: string; ticketId: string; callerId: string; reporter: string; email: string | null;
+  docLabel: string; note: string;
+  known: { metadata: Record<string, unknown> | null; lastModified: string } | null;
+  onStamped?: (token: string) => void;
+}): Promise<PsmAlertOutcome> {
+  const notice = psmAlertNotice({ reporter: p.reporter, docLabel: p.docLabel, note: p.note });
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("org_members").select("uid, role, roles").eq("org_id", p.orgId).eq("status", "active");
+    if (error) {
+      console.error(`[tickets/create] PSM escalation for ${p.ticketId}: the controllers could not be read (${error.message}); not sent — the next attempt sends it`);
+      return "failed";
+    }
+    const controllers = ((data ?? []) as Array<{ uid: string; role?: unknown; roles?: unknown }>)
+      .filter((m) => m.uid && m.uid !== p.callerId && memberHoldsAny(m, PSM_CONTROLLER_ROLES))
+      .map((m) => m.uid);
+    if (controllers.length === 0) {
+      // Nowhere to go: a record, and the reporter is told (psmAlert
+      // "unrouted") — a hazard report must never look routed when it was not.
+      await runWithServerClient(supabaseAdmin, () => logAuditAction({
+        orgId: p.orgId, userId: p.callerId, userEmail: p.email || undefined,
+        action: "PSM_ALERT_UNROUTED", resourceType: "ticket", resourceId: p.ticketId,
+        details: { reason: "no_active_controllers", title: notice.title },
+      }));
+      return "unrouted";
+    }
+    const link = `/requests/${p.ticketId}`;
+    const emailLink = emailLinkFor(p.req, link);
+    await runWithServerClient(supabaseAdmin, () => emit({
+      orgId: p.orgId, category: "safety", kind: "request_pending_approval",
+      title: notice.title, body: notice.body, link,
+      resource: { type: "ticket", id: p.ticketId },
+      actorUserId: p.callerId, actorName: p.reporter,
+      audience: { involved: controllers },
+      email: {
+        bodyText: `${notice.title}\n\n${notice.body}\n\n${emailLink}`,
+        bodyHtml: `<p><b>${escapeHtml(notice.title)}</b></p><p>${escapeHtml(notice.body)}</p><p><a href="${escapeHtml(emailLink)}">Open the request</a></p>`,
+      },
+    }));
+  } catch (e) {
+    console.error(`[tickets/create] PSM escalation for ${p.ticketId} failed; not stamped — the next attempt sends it:`, e);
+    return "failed";
+  }
+  const token = await stampTicketMetadata(p.ticketId, { psm_escalated_at: new Date().toISOString() }, p.known);
+  if (token) p.onStamped?.(token);
+  else console.error(`[tickets/create] PSM escalation for ${p.ticketId} was sent but not stamped; a resumed check-in may send it again`);
+  return "sent";
 }
 
 export async function DELETE(req: NextRequest) {

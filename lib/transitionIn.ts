@@ -681,7 +681,12 @@ export async function flagCollisionToDrafting(
     // flagger as a watcher, and notifies the assignment queue server-side.
     // The title and description are written here, not typed: clipped to the
     // contract's limits (a sheet that overlaps hundreds of drawings still
-    // files — the full overlap list rides in metadata.intake_collision).
+    // files). The overlap list rides in metadata.intake_collision: every
+    // overlap the scan reported (it reads at most 50 overlapping documents),
+    // stored up to MAX_COLLISION_OVERLAPS — past that the route records the
+    // full count and overlapsTruncated, never a silent cut. The route checks
+    // the sheet, the project and the intake link, and titles the queue's
+    // notice with the sheet's own number.
     const res = await submitTicketCreate({
       orgId,
       title: clipToLimit(`Intake collision: ${candidate.label}`, MAX_TITLE),

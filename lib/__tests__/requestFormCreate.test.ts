@@ -23,6 +23,10 @@
 //   Review fix: the contract's size limits are checked before staging; a
 //   settings read that fails is said on the page; a hand-off the route had
 //   to drop is reported after filing.
+//   Second review: a hand-off of many sheets files (the sheet list is
+//   advisory — past MAX_SOURCE_DOCUMENTS the rest are named after filing,
+//   never a refusal); a saved request-type list an admin emptied falls back
+//   to the built-in types, which the route takes when none are configured.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -179,6 +183,54 @@ describe("REGRESSION — the form files its request through the create route", (
     expect(s.submit.mock.calls[0][0].sourceDocuments.map((d: { id: string }) => d.id)).toEqual(["doc-a", "doc-b"]);
     expect(s.upload).toHaveBeenCalledTimes(3);
     expect(s.discardDraft).toHaveBeenCalledWith("k1");
+  });
+});
+
+describe("GAP-8 — a book-viewer hand-off of many sheets files; the sheet list is advisory", () => {
+  const stash = (n: number) => ({ files: Array.from({ length: n }, (_, i) => ({
+    name: `iso-${i}.pdf`, blob: new Blob(["x"], { type: "application/pdf" }), docId: `doc-${i}`, docNumber: `ISO-${i}`,
+  })) });
+
+  it("30 marked-up sheets: every file staged, every sheet named, filed — no refusal, no warning", async () => {
+    s.params = "draft=k30";
+    s.draft = stash(30);
+    await mount();
+    await fillBasics();
+    await submit();
+    expect(s.upload).toHaveBeenCalledTimes(30);
+    expect(s.submit).toHaveBeenCalledTimes(1);
+    expect(s.submit.mock.calls[0][0].sourceDocuments).toHaveLength(30);
+    expect(s.alert).not.toHaveBeenCalled();
+    expect(s.push).toHaveBeenCalledWith("/requests");
+  }, 60_000); // renders 30 file rows: room under a loaded full-suite run
+
+  it("more sheets than one request links: the form keeps the first ones and names the rest after filing", async () => {
+    // a viewer document by URL plus a 200-sheet stash: 201 sheets, 200 files
+    s.params = new URLSearchParams({ draft: "k200", sourceDocId: "doc-url", sourceDocNum: "P-1" }).toString();
+    s.draft = stash(200);
+    await mount();
+    await fillBasics();
+    await submit();
+    expect(s.submit).toHaveBeenCalledTimes(1);
+    const docs = s.submit.mock.calls[0][0].sourceDocuments as Array<{ id: string }>;
+    expect(docs).toHaveLength(200);
+    expect(docs[0].id).toBe("doc-url");
+    expect(s.alert).toHaveBeenCalledWith({ title: "Filed KE-DDRT-26-0001", message: "1 more linked document was not kept — one request links at most 200 (the first 200 are linked)." });
+    expect(s.push).toHaveBeenCalledWith("/requests");
+  }, 120_000); // renders 200 file rows: room under a loaded full-suite run
+});
+
+describe("a saved request-type list an admin emptied", () => {
+  it("falls back to the built-in types: there is something to pick, and the first is sent", async () => {
+    s.config = { ...CONFIG([{ label: "Unit 100", value: "100" }]), requestTypes: { label: "Kind of work", enabled: true, options: [] } };
+    await mount();
+    const sel = el<HTMLSelectElement>("#request-requestType");
+    expect(sel.options.length).toBeGreaterThan(0);
+    expect(sel.value).toBe("ISO");
+    expect(host!.textContent).toContain("Kind of work");
+    await fillBasics();
+    await submit();
+    expect(s.submit.mock.calls[0][0].requestType).toBe("ISO");
   });
 });
 

@@ -120,8 +120,11 @@ describe("LIFE-14 — resume, never re-create; the sweep never clobbers a verdic
     // route resumes by the same key server-side.
     const c = src("components/documents/CheckInPanel.tsx");
     expect(c).toMatch(/\.eq\("metadata->checkin->>episodeId", episodeId\)/);
-    expect(c).toMatch(/const ticket = done\.ticket \?\? \(await resumedTicket\(\)\) \?\? await createDraftingTicket\(selected\);/);
-    expect(src("app/api/tickets/create/route.ts")).toMatch(/\.eq\("metadata->checkin->>episodeId", input\.origin\.episodeId\)/);
+    // DF-P2 second review: a found ticket is reused unless its PSM
+    // escalation never went out — then the route resumes it and sends it.
+    expect(c).toMatch(/const found = done\.ticket \? null : await resumedTicket\(\);/);
+    expect(c).toMatch(/\?\? await createDraftingTicket\(selected, \{ resuming: !!found \}\);/);
+    expect(src("app/api/tickets/create/route.ts")).toMatch(/\.eq\("metadata->checkin->>episodeId", origin\.episodeId\)/);
   });
   it("the 24h sweep only writes auto_released over a NULL outcome", () => {
     const p = src("lib/projects.ts");

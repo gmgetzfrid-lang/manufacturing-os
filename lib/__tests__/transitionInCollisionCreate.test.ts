@@ -76,7 +76,10 @@ describe("flagCollisionToDrafting → /api/tickets/create", () => {
     const body = s.submit.mock.calls[0][0];
     expect(body.description.length).toBe(MAX_DESCRIPTION);
     expect(body.description.endsWith("…")).toBe(true);
-    expect(body.origin.overlaps).toHaveLength(400);   // the full list rides in the collision facts
+    // the posted body carries every overlap the scan reported; the route
+    // stores them whole (ticketCreateRoute.test.ts, "an intake collision's
+    // overlap list is stored whole (or counted and flagged)")
+    expect(body.origin.overlaps).toHaveLength(400);
   });
 
   it("a refusal from the route is the flag's answer, and no audit row claims a flag that was not filed", async () => {

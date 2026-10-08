@@ -26,8 +26,16 @@ export interface TicketCreateBody {
   origin: TicketCreateOrigin;
 }
 
+/** LIFE-7: what became of a check-in's PSM escalation, which the route sends
+ *  (DF-P2 review fix) — "sent" to the controllers; "unrouted": no other
+ *  controller exists (the route audited it; the reporter must escalate by
+ *  hand); "failed": not sent this time (the ticket is not stamped, so the
+ *  check-in's next attempt sends it). Absent when there was nothing to send
+ *  or it had already gone. */
+export type PsmAlertOutcome = "sent" | "unrouted" | "failed";
+
 export type TicketCreateResult =
-  | { ok: true; id: string; ticketNumber: string; resumed: boolean; notified?: boolean; unmovedAttachments?: number; warnings?: string[] }
+  | { ok: true; id: string; ticketNumber: string; resumed: boolean; notified?: boolean; psmAlert?: PsmAlertOutcome; warnings?: string[] }
   | { ok: false; status: number; error: string; field?: string };
 
 async function bearer(): Promise<string | null> {
@@ -39,7 +47,10 @@ async function bearer(): Promise<string | null> {
   }
 }
 
-/** File a request. Never throws: a refusal names its field when it has one. */
+/** File a request. Never throws: a refusal names its field when it has one.
+ *  The requester's calendar year rides along (`localYear`, this browser's
+ *  clock): the request number carries it when it is a year in force
+ *  somewhere right now (lib/ticketCreate.ts requestNumberYear). */
 export async function submitTicketCreate(body: TicketCreateBody): Promise<TicketCreateResult> {
   const token = await bearer();
   if (!token) return { ok: false, status: 401, error: "You're signed out — sign in again and resubmit." };
@@ -48,7 +59,7 @@ export async function submitTicketCreate(body: TicketCreateBody): Promise<Ticket
     res = await fetch("/api/tickets/create", {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...body, localYear: new Date().getFullYear() }),
     });
   } catch {
     return { ok: false, status: 0, error: "Couldn't reach the server — check your connection and try again." };
@@ -71,7 +82,7 @@ export async function submitTicketCreate(body: TicketCreateBody): Promise<Ticket
     ticketNumber: j.ticketNumber,
     resumed: j.resumed === true,
     ...(typeof j.notified === "boolean" ? { notified: j.notified } : {}),
-    ...(typeof j.unmovedAttachments === "number" ? { unmovedAttachments: j.unmovedAttachments } : {}),
+    ...(j.psmAlert === "sent" || j.psmAlert === "unrouted" || j.psmAlert === "failed" ? { psmAlert: j.psmAlert } : {}),
     ...(Array.isArray(j.warnings) && j.warnings.length > 0 ? { warnings: j.warnings.filter((w): w is string => typeof w === "string") } : {}),
   };
 }
@@ -101,10 +112,21 @@ export async function discardStagedFiles(orgId: string, keys: string[]): Promise
 }
 
 /** LEAK-6: what a check-in's mount-time read of "the ticket this episode
- *  already filed" answered. */
+ *  already filed" answered. `escalationPending`: the ticket records an
+ *  undocumented field change and carries no psm_escalated_at stamp — the
+ *  PSM escalation never went out, so the panel hands the check-in to the
+ *  route (which resumes the ticket and sends it) instead of reusing the
+ *  ticket silently. */
 export interface ResumeRead {
-  ticket: { id: string; number: string } | null;
+  ticket: { id: string; number: string; escalationPending?: boolean } | null;
   error: string | null;
+}
+
+/** True when a ticket's metadata records an undocumented field change whose
+ *  PSM escalation was never stamped as sent. */
+export function psmEscalationPending(metadata: unknown): boolean {
+  const m = (metadata && typeof metadata === "object" ? metadata : {}) as Record<string, unknown>;
+  return m.undocumented_change === true && !m.psm_escalated_at;
 }
 
 /** LEAK-6: the ticket a check-in resumes, decided BEFORE anything is filed.
@@ -116,7 +138,7 @@ export interface ResumeRead {
 export async function resumeCheckinTicket(
   pending: Promise<ResumeRead> | null,
   reread: () => Promise<ResumeRead>,
-): Promise<{ id: string; number: string } | null> {
+): Promise<{ id: string; number: string; escalationPending?: boolean } | null> {
   if (!pending) return null;
   const first = await pending;
   if (!first.error) return first.ticket;

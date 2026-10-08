@@ -46,8 +46,11 @@ import { postHandoff } from "@/lib/activityThread";
 import type { CheckoutSession, DocumentRecord, DocumentVersion } from "@/types/schema";
 // DF-P2: the drafting request is filed by /api/tickets/create — numbered,
 // inserted and announced to the assignment queue (bell AND email) server-side.
+// The PSM escalation of an undocumented field change is the route's too
+// (LIFE-7, DF-P2 review fix): sent once, stamped on the ticket, and sent by a
+// resumed check-in only if it never went out.
 import { checkinMocLine, clipToLimit, contractLimitRefusal, MAX_TITLE, ticketStagingFolder, type CheckinMoc } from "@/lib/ticketCreate";
-import { submitTicketCreate, discardStagedFiles, resumeCheckinTicket, type ResumeRead } from "@/lib/ticketCreateClient";
+import { submitTicketCreate, discardStagedFiles, resumeCheckinTicket, psmEscalationPending, type ResumeRead, type PsmAlertOutcome } from "@/lib/ticketCreateClient";
 
 /** LIFE-14 / LEAK-6: the open ticket this check-in episode already filed for
  *  this requester, if any. The read's error is part of the answer — "could
@@ -55,12 +58,15 @@ import { submitTicketCreate, discardStagedFiles, resumeCheckinTicket, type Resum
 async function lookupResumeTicket(orgId: string, episodeId: string, uid: string): Promise<ResumeRead> {
   try {
     const { data, error } = await supabase
-      .from("tickets").select("id, ticket_id")
+      .from("tickets").select("id, ticket_id, metadata")
       .eq("org_id", orgId).eq("requester_id", uid).eq("metadata->checkin->>episodeId", episodeId)
       .not("status", "in", '("CLOSED","CANCELED")').order("created_at", { ascending: false }).limit(1).maybeSingle();
     if (error) return { ticket: null, error: error.message || "the lookup failed" };
-    const row = data as { id: string; ticket_id: string } | null;
-    return { ticket: row ? { id: row.id, number: row.ticket_id } : null, error: null };
+    const row = data as { id: string; ticket_id: string; metadata?: unknown } | null;
+    return {
+      ticket: row ? { id: row.id, number: row.ticket_id, escalationPending: psmEscalationPending(row.metadata) } : null,
+      error: null,
+    };
   } catch (e) {
     return { ticket: null, error: (e as Error)?.message || "the lookup failed" };
   }
@@ -238,15 +244,39 @@ export default function CheckInPanel({
     void endMyIntents({ documentId: doc.id!, userId: currentUser.uid, sources: ["checkout"] });
   };
 
+  // LIFE-7: what the route said about the PSM escalation. Only "unrouted"
+  // and "failed" need the reporter's attention — the escalation itself is
+  // sent (and stamped) server-side.
+  const sayPsmOutcome = (outcome: PsmAlertOutcome | undefined) => {
+    if (outcome === "unrouted") {
+      // Nowhere to go. Say so where the reporter can see it (the route left
+      // the PSM_ALERT_UNROUTED record) — a hazard report must never look
+      // routed when it was not.
+      showToast({
+        type: "warning", title: "PSM alert has no recipient",
+        message: "No other active Admin or Document Controller exists in this workspace, so nobody was notified. Escalate this by hand.",
+      });
+    } else if (outcome === "failed") {
+      showToast({
+        type: "warning", title: "PSM alert not confirmed",
+        message: "The request is filed, but the alert to Document Control could not be sent just now. Escalate this by hand — it is sent again the next time this check-in is submitted.",
+      });
+    }
+  };
+
   // ── Drafting ticket for discrepancy / revision / minor correction ─────────
-  const createDraftingTicket = async (card: CheckInCard): Promise<{ id: string; number: string }> => {
+  // `resuming`: the panel's own read found the ticket this check-in filed,
+  // but its PSM escalation never went out — the request goes to the route
+  // again WITHOUT files (they went with the first attempt), the route
+  // resumes that ticket and sends the escalation.
+  const createDraftingTicket = async (card: CheckInCard, opts: { resuming?: boolean } = {}): Promise<{ id: string; number: string }> => {
     if (!doc.orgId) throw new Error("This document has no workspace set.");
 
     // Only cards that SHOW the upload UI attach files — anything picked under
     // a previous card must not ride along invisibly. EDGE-13: they are staged
     // under this requester's pending prefix; the route moves them under the
     // request's own number once it exists.
-    const filesToAttach = card.allowUploads ? files : [];
+    const filesToAttach = card.allowUploads && !opts.resuming ? files : [];
 
     const undocumented = card.moc === "required" && mocStatus === "none";
     const moc: CheckinMoc | null = card.moc === "required"
@@ -310,50 +340,13 @@ export default function CheckInPanel({
       },
     });
     if (!res.ok) throw new Error(res.error || "Couldn't create the drafting request.");
-    const row = { id: res.id };
-    // LEAK-6: the route found the ticket this episode already filed — its
-    // PSM escalation went out with it; never a second one.
-    if (res.resumed) return { id: res.id, number: res.ticketNumber };
-
-    // PSM escalation: an undocumented field change goes straight to the
-    // controllers, loudly — reporting it must be frictionless, burying it
-    // impossible.
-    if (undocumented) {
-      void (async () => {
-        const title = `PSM alert: undocumented field change — ${docLabel}`;
-        const body = `${userName} reported the field differs from ${docLabel} with no MOC on record: "${note.trim()}"`;
-        try {
-          const controllers = (await getOrgControllers(doc.orgId!)).filter((u) => u !== currentUser.uid);
-          if (controllers.length > 0) {
-            // LIFE-7: bell AND email, on the "safety" category — the one
-            // preference toggle cannot mute (like a drawing recall). The
-            // owner-review path a few lines down already goes this way.
-            const { emit } = await import("@/lib/notify/dispatch");
-            await emit({
-              orgId: doc.orgId!, category: "safety", kind: "request_pending_approval",
-              title, body, link: `/requests/${row.id}`,
-              resource: { type: "ticket", id: row.id as string },
-              actorUserId: currentUser.uid, actorName: userName,
-              audience: { involved: controllers },
-            });
-          } else {
-            // Nowhere to go. Say so where the reporter can see it and leave a
-            // record — a hazard report must never look routed when it was not.
-            showToast({
-              type: "warning", title: "PSM alert has no recipient",
-              message: "No other active Admin or Document Controller exists in this workspace, so nobody was notified. Escalate this by hand.",
-            });
-            await logAuditAction({
-              orgId: doc.orgId!, userId: currentUser.uid, userEmail: currentUser.email || undefined,
-              action: "PSM_ALERT_UNROUTED", resourceType: "ticket", resourceId: row.id as string,
-              details: { reason: "no_active_controllers", title },
-            });
-          }
-        } catch (e) { console.warn("[checkin] PSM escalation notify failed (non-blocking)", e); }
-      })();
-    }
-
-    return { id: row.id, number: res.ticketNumber };
+    // LIFE-7: the PSM escalation is the route's — for a new ticket, and for a
+    // resumed one whose escalation never went out (LEAK-6: a lost first
+    // answer, a first attempt that ended before sending it). Exactly once:
+    // the route stamps the ticket when it is sent. The panel only says what
+    // needs the reporter's hand.
+    sayPsmOutcome(res.psmAlert);
+    return { id: res.id, number: res.ticketNumber };
   };
 
   // The card that launched the publish flow — captured at open time so a
@@ -406,7 +399,13 @@ export default function CheckInPanel({
         case "draft_ticket": {
           // Idempotent: a retry after a failed session-close reuses the ticket
           // already created — never a second ticket, upload set, or PSM alert.
-          const ticket = done.ticket ?? (await resumedTicket()) ?? await createDraftingTicket(selected);
+          // A ticket the panel's own read found is reused as it is — unless
+          // its PSM escalation never went out: then the route is asked (no
+          // files), which resumes it and sends the escalation once.
+          const found = done.ticket ? null : await resumedTicket();
+          const ticket = done.ticket
+            ?? (found && !found.escalationPending ? { id: found.id, number: found.number } : null)
+            ?? await createDraftingTicket(selected, { resuming: !!found });
           done.ticket = ticket;
           if (alsoHold && selected.allowHoldOffer && !done.hold) {
             try {

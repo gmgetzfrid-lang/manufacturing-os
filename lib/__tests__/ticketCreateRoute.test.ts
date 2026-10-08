@@ -36,6 +36,19 @@
 //     unusable hand-off is dropped with a warning; the numbering read is
 //     checked; no branch deletes a staged key a ticket names; the notice is
 //     written before the re-key, which keeps to a time budget.
+//
+// Fix pass 2 (second review of DF-P2):
+//   * the PSM escalation of an undocumented field change is the ROUTE's:
+//     sent once, stamped metadata.psm_escalated_at, and sent by a resumed
+//     check-in only when the stamp is missing (a lost first reply, a first
+//     attempt that answered insert_unconfirmed) — LIFE-7 / LEAK-6;
+//   * source documents are read AS THE CALLER (documents_acl_select): one
+//     they cannot see is treated exactly like one that is not here;
+//   * a sheet list past MAX_SOURCE_DOCUMENTS files with a warning;
+//   * the stored overlap list is complete (or counted and flagged);
+//   * the number's year is the requester's own when it is in force
+//     somewhere; the collision origin is checked against the project's
+//     intake folder and links; the re-key runs after the answer.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
@@ -69,6 +82,9 @@ const s = vi.hoisted(() => ({
   seq: 0,
 }));
 
+/** The caller as the caller-scoped client sees them (RLS: auth.uid()). */
+const callerUid = () => s.users[s.callerToken]?.id ?? null;
+
 // ── the in-memory PostgREST stand-in ──────────────────────────────────────
 function readPath(row: Row, col: string): unknown {
   // "metadata->checkin->>episodeId", "metadata->>action", "metadata->source_documents"
@@ -86,8 +102,13 @@ function containsJson(have: unknown, want: unknown): boolean {
   return have === want;
 }
 type F = (r: Row) => boolean;
-function chain(table: string, client: "admin" | "anon") {
+function chain(table: string, client: "admin" | "anon" | "caller") {
   const filters: F[] = [];
+  // documents_acl_select (node_visible) as the caller-scoped client meets
+  // it: a row with `visible_to` is returned only to the uids it names.
+  if (client === "caller" && table === "documents") {
+    filters.push((r) => !Array.isArray(r.visible_to) || (r.visible_to as string[]).includes(String(callerUid())));
+  }
   let op: "select" | "insert" | "update" | "delete" = "select";
   let payload: Row | Row[] | null = null;
   let order: { col: string; asc: boolean } | null = null;
@@ -218,6 +239,7 @@ vi.mock("@/lib/serverAuth", () => ({
     const token = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
     s.callerToken = token;
     return {
+      from: (t: string) => chain(t, "caller"),
       rpc: async (fn: string, args: { p_org: string; p_year: number }) => {
         s.rpcCalls.push({ client: "caller", fn, args });
         const errs = s.errors[`rpc.${fn}`];
@@ -271,7 +293,10 @@ import { POST as workflowPOST } from "@/app/api/tickets/workflow-action/route";
 import { queueEmail } from "@/lib/notifications";
 import { runWithServerClient } from "@/lib/serverClientScope";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { BUILTIN_REQUEST_TYPES, stampedRequesterRole, parseTicketCreateBody, insertFailureKind } from "@/lib/ticketCreate";
+import {
+  BUILTIN_REQUEST_TYPES, stampedRequesterRole, parseTicketCreateBody, insertFailureKind, requestNumberYear, checkinNoteOf,
+  psmAlertNotice, capSourceDocuments, MAX_SOURCE_DOCUMENTS, MAX_COLLISION_OVERLAPS,
+} from "@/lib/ticketCreate";
 
 const ORG = "11111111-1111-4111-8111-111111111111";
 const OTHER_ORG = "22222222-2222-4222-8222-222222222222";
@@ -287,6 +312,9 @@ const V4 = "eeeeeeee-0000-4000-8000-000000000004";
 const EPISODE = "cccccccc-0000-4000-8000-000000000001";
 const BATCH = "bbbbbbbb-0000-4000-8000-000000000001";
 const PROJECT = "ffffffff-0000-4000-8000-000000000001";
+const PROJECT2 = "ffffffff-0000-4000-8000-000000000002";
+const LINK = "99999999-0000-4000-8000-000000000001";
+const INTAKE_FOLDER = "c0000000-0000-4000-8000-000000000001";
 const YEAR = new Date().getFullYear();
 const YY = String(YEAR).slice(-2);
 
@@ -314,7 +342,8 @@ function seed() {
     }],
     documents: [
       { id: DOC, org_id: ORG, document_number: "P-101", title: "Flare header", name: "p101.pdf", rev: "4", current_version_id: V4, metadata: { Unit: "Unit 200" } },
-      { id: DOC2, org_id: ORG, document_number: "P-102", title: "Knockout drum", name: "p102.pdf", rev: "2", current_version_id: "eeeeeeee-0000-4000-8000-000000000022", metadata: {} },
+      // P-102 is an intake sheet: it sits in the project's intake folder.
+      { id: DOC2, org_id: ORG, document_number: "P-102", title: "Knockout drum", name: "p102.pdf", rev: "2", current_version_id: "eeeeeeee-0000-4000-8000-000000000022", collection_id: INTAKE_FOLDER, metadata: {} },
       { id: DOC_FOREIGN, org_id: OTHER_ORG, document_number: "X-1", title: "Not ours", name: "x.pdf", rev: "1", current_version_id: null, metadata: {} },
     ],
     document_versions: [
@@ -329,8 +358,14 @@ function seed() {
       { id: "sess-1", org_id: ORG, document_id: DOC, user_id: REQ, episode_id: EPISODE, status: "active", started_at: "2026-10-07T08:00:00Z" },
       { id: "sess-2", org_id: ORG, document_id: DOC2, user_id: REQ, episode_id: null, status: "active", started_at: "2026-10-07T08:00:00Z" },
     ],
-    // The collision's facts: the project it was flagged in.
-    projects: [{ id: PROJECT, org_id: ORG, name: "Tie-ins" }],
+    // The collision's facts: the project it was flagged in, its intake
+    // folder (where P-102 sits) and the intake link the sheet came through.
+    projects: [
+      { id: PROJECT, org_id: ORG, name: "Tie-ins", intake_collection_id: INTAKE_FOLDER },
+      { id: PROJECT2, org_id: ORG, name: "Other", intake_collection_id: "c0000000-0000-4000-8000-000000000002" },
+    ],
+    project_intake_links: [{ id: LINK, org_id: ORG, project_id: PROJECT }],
+    audit_logs: [],
     tickets: [],
     notifications: [],
     email_notifications: [],
@@ -383,22 +418,42 @@ const checkin = (over: Row = {}, origin: Row = {}) => ({
   origin: { kind: "checkin", episodeId: EPISODE, checkoutNumber: 7, purpose: "As-Built Verification", outcome: "discrepancy", moc: { status: "none", number: null }, minorCorrection: false, undocumentedChange: true, ...origin },
   ...over,
 });
-const collision = () => ({
-  orgId: ORG, title: "Intake collision: P-101 (contractor)", description: "conflicts", requestType: "Revision", priority: 1, unit: null, requesterRole: null,
+const collision = (origin: Row = {}) => ({
+  orgId: ORG, title: "Intake collision: P-102", description: "conflicts", requestType: "Revision", priority: 1, unit: null, requesterRole: null,
   sourceDocuments: [{ id: DOC2, documentNumber: "P-102", title: "Knockout drum", rev: "2", versionId: null }],
-  origin: { kind: "intake_collision", projectId: PROJECT, intakeLinkId: "link-1", numberCollisionDocId: DOC, overlaps: [{ id: DOC, label: "P-101", sharedTags: ["V-1"] }], sheetLabel: "P-101 (contractor)" },
+  origin: { kind: "intake_collision", projectId: PROJECT, intakeLinkId: LINK, numberCollisionDocId: DOC, overlaps: [{ id: DOC, label: "P-101", sharedTags: ["V-1"] }], sheetLabel: "P-102", ...origin },
 });
 const tickets = () => s.tables.tickets ?? [];
 const bell = () => s.tables.notifications ?? [];
 const mail = () => s.tables.email_notifications ?? [];
 const nextTicketRpc = () => s.rpcCalls.filter((c) => c.fn === "next_ticket_number");
+/** The creation notice's rows (the PSM escalation is a second, separate notice). */
+const creationBell = () => bell().filter((n) => (n.metadata as Row | null)?.action === "created");
+const creationMail = () => mail().filter((m) => m.event_type === "assignment");
+const psmBell = () => bell().filter((n) => String(n.title).startsWith("PSM alert"));
+const psmMail = () => mail().filter((m) => m.event_type === "safety_alert");
+/** Run what the route left for after its answer (the re-key, the drain
+ *  kick — whose fetch is answered here, never sent). */
+async function settle() {
+  const pending = s.after.splice(0);
+  const real = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(null, { status: 204 })) as typeof fetch;
+  try {
+    for (const fn of pending) await fn();
+  } finally {
+    globalThis.fetch = real;
+  }
+}
 
 describe("REGRESSION — each door's legitimate flow files the same ticket, now server-side", () => {
-  it("the request form: numbered, stamped from the membership, attachments re-keyed, the queue told by bell and email before the response", async () => {
+  it("the request form: numbered, stamped from the membership, attachments re-keyed after the answer, the queue told by bell and email before the response", async () => {
     const res = await POST(req(portal()));
     expect(res.status).toBe(201);
     const body = await res.json();
     expect(body).toMatchObject({ ok: true, ticketNumber: `KE-DDRT-${YY}-0001`, resumed: false, notified: true });
+    // the re-key and the drain kick run after the answer
+    expect(s.after).toHaveLength(2);
+    await settle();
     expect(tickets()).toHaveLength(1);
     const t = tickets()[0];
     expect(t).toMatchObject({
@@ -445,8 +500,6 @@ describe("REGRESSION — each door's legitimate flow files the same ticket, now 
     expect(mail()[0].metadata).toMatchObject({ action: "created", status: "PENDING_ASSIGNMENT" });
     // the number was allocated as the caller, never the service role
     expect(nextTicketRpc().map((c) => c.client)).toEqual(["caller"]);
-    // the email drain is kicked after the response
-    expect(s.after).toHaveLength(1);
   });
 
   it("a check-in: the as-built ticket keeps its check-in facts, MOC line and source version; unit derived from the document", async () => {
@@ -468,7 +521,9 @@ describe("REGRESSION — each door's legitimate flow files the same ticket, now 
     expect((t.metadata as Row).unit_unknown).toBeUndefined();
     expect(bell()[0]).toMatchObject({ body: "Created from a document check-in. Ready for a drafter to be assigned.", title: "New drafting request: As-Built Discrepancy: Flare header" });
     // ROUTE-4: the check-in door now emails too (it was bell-only)
-    expect(mail().map((m) => m.to_user_id)).toEqual([SUP]);
+    expect(creationMail().map((m) => m.to_user_id)).toEqual([SUP]);
+    // LIFE-7: the undocumented field change went to the controllers too
+    expect(psmBell().map((n) => n.user_id)).toEqual([ADMIN]);
   });
 
   it("a minor-correction check-in keeps metadata.minor_correction (DEC-11 provenance)", async () => {
@@ -481,13 +536,13 @@ describe("REGRESSION — each door's legitimate flow files the same ticket, now 
     const res = await POST(req(collision()));
     expect(res.status).toBe(201);
     const t = tickets()[0];
-    expect(t).toMatchObject({ title: "Intake collision: P-101 (contractor)", request_type: "Revision", priority: 1, watchers: [REQ], requester_role: "Requester" });
+    expect(t).toMatchObject({ title: "Intake collision: P-102", request_type: "Revision", priority: 1, watchers: [REQ], requester_role: "Requester" });
     expect(typeof t.target_completion_at).toBe("string");
-    expect(t.history).toEqual([expect.objectContaining({ action: "Created from transition-in impact scan", user: "rita@plant.io", details: "Project intake sheet: P-101 (contractor)" })]);
-    expect((t.metadata as Row).intake_collision).toMatchObject({ projectId: PROJECT, intakeLinkId: "link-1", numberCollisionDocId: DOC, overlaps: [{ id: DOC, label: "P-101", sharedTags: ["V-1"] }] });
+    expect(t.history).toEqual([expect.objectContaining({ action: "Created from transition-in impact scan", user: "rita@plant.io", details: "Project intake sheet: P-102" })]);
+    expect((t.metadata as Row).intake_collision).toMatchObject({ projectId: PROJECT, intakeLinkId: LINK, numberCollisionDocId: DOC, overlaps: [{ id: DOC, label: "P-101", sharedTags: ["V-1"] }] });
     expect(typeof ((t.metadata as Row).intake_collision as Row).flaggedAt).toBe("string");
     expect(bell()[0]).toMatchObject({
-      title: "Intake collision flagged: P-101 (contractor)",
+      title: "Intake collision flagged: P-102",
       body: "A submitted sheet collides with an existing document number — needs a drafter and a source-of-truth decision.",
     });
   });
@@ -634,7 +689,7 @@ describe("EDGE-13 — validate, THEN number; staged files never outlive a refusa
     s.r2Fail.copy = 1;
     const res = await POST(req(portal()));
     expect(res.status).toBe(201);
-    expect((await res.json()).unmovedAttachments).toBe(1);
+    await settle();
     const att = (tickets()[0].attachments as Row[])[1];
     expect(att.url).toBe(staged("redline.pdf"));
     expect(s.objects.has(staged("redline.pdf"))).toBe(true);
@@ -651,6 +706,7 @@ describe("EDGE-13 — validate, THEN number; staged files never outlive a refusa
       }
     });
     expect((await POST(req(portal()))).status).toBe(201);
+    await settle();
     const urls = (tickets()[0].attachments as Row[]).map((a) => a.url);
     expect(urls).toEqual([
       `orgs/${ORG}/libraries/l1/p101-r4.pdf`,
@@ -846,6 +902,7 @@ describe("EDGE-13 — a failed insert gives its number back only when nothing wa
     expect(tickets()).toHaveLength(2);
     expect(nextTicketRpc()).toHaveLength(2);
     expect(s.tables.ticket_number_counters[0].next_seq).toBe(2);
+    await settle();
     expect((tickets()[1].attachments as Row[])[1].url).toBe(`orgs/${ORG}/tickets/KE-DDRT-${YY}-0002/1727000000000_redline.pdf`);
     const next = await POST(req(portal({ attachments: [] })));
     expect((await next.json()).ticketNumber).toBe(`KE-DDRT-${YY}-0003`);
@@ -874,6 +931,7 @@ describe("EDGE-13 — a failed insert gives its number back only when nothing wa
     expect(body.id).toBe(tickets()[0].id);
     expect(s.tables.ticket_number_counters[0].next_seq).toBe(1);
     expect(bell().map((n) => n.user_id).sort()).toEqual([SUP, SUP2].sort());
+    await settle();
     expect((tickets()[0].attachments as Row[])[1].url).toBe(`orgs/${ORG}/tickets/KE-DDRT-${YY}-0001/1727000000000_redline.pdf`);
     const next = await POST(req(portal({ attachments: [] })));
     expect(next.status).toBe(201);
@@ -1026,7 +1084,7 @@ describe("FRIC-8 — the origin is checked against its own facts; naming one is 
   });
 
   it("an intake collision naming a project of another workspace is refused", async () => {
-    s.tables.projects = [{ id: PROJECT, org_id: OTHER_ORG, name: "Theirs" }];
+    s.tables.projects = [{ id: PROJECT, org_id: OTHER_ORG, name: "Theirs", intake_collection_id: INTAKE_FOLDER }];
     const res = await POST(req(collision()));
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ field: "origin" });
@@ -1096,6 +1154,7 @@ describe("EDGE-13 — no branch deletes a staged key a ticket names", () => {
 describe("EDGE-8 — the notice is written before any file moves, and the re-key keeps to its time", () => {
   it("the bell rows exist when the first copy starts", async () => {
     expect((await POST(req(portal()))).status).toBe(201);
+    await settle();
     const copy = s.r2Ops.find((o) => o.op === "copy");
     expect(copy?.bellRows).toBe(2);
   });
@@ -1108,7 +1167,7 @@ describe("EDGE-8 — the notice is written before any file moves, and the re-key
       s.hooks.push((table, op) => { if (table === "tickets" && op === "insert") skew = 36_000; });
       const res = await POST(req(portal()));
       expect(res.status).toBe(201);
-      expect((await res.json()).unmovedAttachments).toBe(1);
+      await settle();
       expect(s.r2Ops.filter((o) => o.op === "copy")).toEqual([]);
       expect((tickets()[0].attachments as Row[])[1].url).toBe(staged("redline.pdf"));
       expect(s.objects.has(staged("redline.pdf"))).toBe(true);
@@ -1116,6 +1175,323 @@ describe("EDGE-8 — the notice is written before any file moves, and the re-key
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe("LIFE-7 / LEAK-6 — the PSM escalation is the route's: sent once, stamped, and resumed only when it never went out", () => {
+  const psmStamp = (i = 0) => (tickets()[i].metadata as Row).psm_escalated_at;
+
+  it("a check-in reporting an undocumented field change: the controllers (not the reporter) get it on the safety category, bell and email; the ticket is stamped", async () => {
+    const res = await POST(req(checkin()));
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.psmAlert).toBe("sent");
+    expect(psmBell()).toHaveLength(1);
+    expect(psmBell()[0]).toMatchObject({
+      user_id: ADMIN, kind: "request_pending_approval", resource_type: "ticket", resource_id: body.id, link: `/requests/${body.id}`,
+      title: "PSM alert: undocumented field change — P-101",
+      body: 'Rita Requester reported the field differs from P-101 with no MOC on record: "Valve moved."',
+    });
+    // the safety category: an event type no preference toggle gates; an absolute link
+    expect(psmMail().map((m) => m.to_user_id)).toEqual([ADMIN]);
+    expect(String(psmMail()[0].body_text)).toContain(`https://app.plant.io/requests/${body.id}`);
+    expect(typeof psmStamp()).toBe("string");
+    // not a creation notice: never retired when the ticket is assigned
+    expect((psmBell()[0].metadata as Row | null)?.action).toBeUndefined();
+  });
+
+  it("a lost first reply, then the retry that resumes: exactly one escalation", async () => {
+    // the first POST filed and escalated; its 201 never reached the tablet
+    expect((await POST(req(checkin()))).status).toBe(201);
+    const retry = await POST(req(checkin()));
+    expect(retry.status).toBe(200);
+    const body = await retry.json();
+    expect(body).toMatchObject({ resumed: true });
+    expect(body.psmAlert).toBeUndefined();
+    expect(tickets()).toHaveLength(1);
+    expect(psmBell()).toHaveLength(1);
+    expect(psmMail()).toHaveLength(1);
+  });
+
+  it("a first attempt answered 'check the queue' (insert_unconfirmed) whose row committed: the retry resumes it and sends the escalation the first never did — once", async () => {
+    s.lostReply["tickets.insert"] = [{ code: "", message: "TypeError: fetch failed" }];
+    // the resume look-up (first tickets read) answers; the insert's probe (second) cannot
+    s.errors["tickets.select"] = [null, { code: "57014", message: "statement timeout" }];
+    const first = await POST(req(checkin()));
+    expect(first.status).toBe(500);
+    expect((await first.json()).code).toBe("insert_unconfirmed");
+    expect(tickets()).toHaveLength(1);             // the row DID commit
+    expect(psmBell()).toHaveLength(0);              // and nothing was escalated
+    expect(psmStamp()).toBeUndefined();
+    const retry = await POST(req(checkin()));
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toMatchObject({ resumed: true, psmAlert: "sent", id: tickets()[0].id });
+    expect(psmBell().map((n) => n.user_id)).toEqual([ADMIN]);
+    expect(String(psmBell()[0].body)).toContain('"Valve moved."');
+    expect(typeof psmStamp()).toBe("string");
+    const third = await POST(req(checkin()));
+    expect(third.status).toBe(200);
+    expect((await third.json()).psmAlert).toBeUndefined();
+    expect(psmBell()).toHaveLength(1);
+    expect(tickets()).toHaveLength(1);
+  });
+
+  it("a ticket filed before this fix (flagged, never stamped) is escalated when its check-in resumes it — a second alert, never a lost one", async () => {
+    s.tables.tickets.push({
+      id: "t-old", org_id: ORG, ticket_id: "KE-DDRT-26-0042", requester_id: REQ, status: "PENDING_ASSIGNMENT", created_at: "2026-10-01", last_modified: "2026-10-01T00:00:00.000Z",
+      description: "Old note.\n\nMOC: NONE ON RECORD — flagged as an undocumented field change.",
+      metadata: { checkin: { episodeId: EPISODE }, undocumented_change: true, moc: { status: "none", number: null } },
+    });
+    const res = await POST(req(checkin()));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ id: "t-old", resumed: true, psmAlert: "sent" });
+    expect(psmBell()[0]).toMatchObject({ resource_id: "t-old", body: 'Rita Requester reported the field differs from P-101 with no MOC on record: "Old note."' });
+    expect(typeof psmStamp()).toBe("string");
+    expect(nextTicketRpc()).toHaveLength(0);
+  });
+
+  it("no controller but the reporter: nothing sent, PSM_ALERT_UNROUTED audited, the answer says 'unrouted', nothing stamped", async () => {
+    s.tables.org_members = s.tables.org_members.filter((m) => m.uid !== ADMIN);
+    const res = await POST(req(checkin()));
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.psmAlert).toBe("unrouted");
+    expect(psmBell()).toHaveLength(0);
+    expect(s.tables.audit_logs).toEqual([expect.objectContaining({
+      action: "PSM_ALERT_UNROUTED", resource_type: "ticket", resource_id: body.id, user_id: REQ,
+      details: { reason: "no_active_controllers", title: "PSM alert: undocumented field change — P-101" },
+    })]);
+    expect(psmStamp()).toBeUndefined();
+  });
+
+  it("a controller read that fails: 'failed', not stamped — the check-in's next attempt resumes the ticket and sends it", async () => {
+    s.tables.tickets.push({
+      id: "t-old", org_id: ORG, ticket_id: "KE-DDRT-26-0042", requester_id: REQ, status: "PENDING_ASSIGNMENT", created_at: "2026-10-01", last_modified: "2026-10-01T00:00:00.000Z",
+      description: "Old note.", metadata: { checkin: { episodeId: EPISODE }, undocumented_change: true },
+    });
+    // the membership read answers; the controller read does not
+    s.errors["org_members.select"] = [null, { code: "57014", message: "statement timeout" }];
+    const first = await POST(req(checkin()));
+    expect(await first.json()).toMatchObject({ resumed: true, psmAlert: "failed" });
+    expect(psmBell()).toHaveLength(0);
+    expect(psmStamp()).toBeUndefined();
+    const again = await POST(req(checkin()));
+    expect(await again.json()).toMatchObject({ resumed: true, psmAlert: "sent" });
+    expect(psmBell()).toHaveLength(1);
+  });
+
+  it("a check-in that reports no undocumented change sends no PSM alert", async () => {
+    const res = await POST(req(checkin({ requestType: "Revision", priority: 2 }, { outcome: "correction", moc: null, minorCorrection: true, undocumentedChange: false })));
+    expect((await res.json()).psmAlert).toBeUndefined();
+    expect(psmBell()).toHaveLength(0);
+  });
+
+  it("the stamp loses no concurrent write: a writer that lands first keeps its change and the stamp still lands", async () => {
+    let done = false;
+    s.hooks.push((table, op) => {
+      if (!done && table === "tickets" && op === "update") {
+        done = true;
+        const t = tickets()[0];
+        t.metadata = { ...(t.metadata as Row), triage_note: "seen" };
+        t.last_modified = "2099-01-01T00:00:00.000Z";
+      }
+    });
+    expect((await POST(req(checkin()))).status).toBe(201);
+    const m = tickets()[0].metadata as Row;
+    expect(m.triage_note).toBe("seen");
+    expect(typeof m.psm_escalated_at).toBe("string");
+  });
+
+  it("checkinNoteOf / psmAlertNotice: the reporter's words without the MOC line, in the panel's sentence", () => {
+    expect(checkinNoteOf("Valve moved.\n\nMOC: NONE ON RECORD — flagged as an undocumented field change.", { status: "none", number: null })).toBe("Valve moved.");
+    expect(checkinNoteOf("Just a note", null)).toBe("Just a note");
+    expect(psmAlertNotice({ reporter: "rita", docLabel: "P-101", note: " Valve moved. " })).toEqual({
+      title: "PSM alert: undocumented field change — P-101",
+      body: 'rita reported the field differs from P-101 with no MOC on record: "Valve moved."',
+    });
+  });
+});
+
+describe("source documents are read AS THE CALLER — the document ACL applies", () => {
+  it("a document the caller cannot open is treated exactly like one that is not here: dropped with the same warning, none of its fields stored, no unit derived from it", async () => {
+    s.tables.documents[0].visible_to = [SUP];       // P-101 sits in a library only SUP can open
+    const res = await POST(req(portal({ unit: null, attachments: [], sourceDocuments: [{ id: DOC, documentNumber: null, title: null, rev: null, versionId: null }] })));
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    // the same words a missing document gets — nothing tells the caller the id exists
+    expect(body.warnings).toEqual(["A linked document is not in this workspace (it may have been removed) — the request was filed without that link."]);
+    const t = tickets()[0];
+    expect(JSON.stringify(t)).not.toContain("P-101");
+    expect(JSON.stringify(t)).not.toContain("Flare header");
+    expect(JSON.stringify(t)).not.toContain(V4);
+    expect(t.unit).toBeNull();
+    expect((t.metadata as Row).unit_unknown).toBe(true);
+    // a removed document answers the same
+    s.tables.documents = s.tables.documents.filter((d) => d.id !== DOC);
+    const gone = await POST(req(portal({ unit: null, attachments: [], sourceDocuments: [{ id: DOC, documentNumber: null, title: null, rev: null, versionId: null }] })));
+    expect((await gone.json()).warnings).toEqual(body.warnings);
+  });
+
+  it("the member who can open it files with its fields filled in from the row", async () => {
+    s.tables.documents[0].visible_to = [REQ];
+    await POST(req(portal({ unit: null, attachments: [], sourceDocuments: [{ id: DOC, documentNumber: null, title: null, rev: null, versionId: null }] })));
+    expect((tickets()[0].metadata as Row).source_document).toEqual({ id: DOC, document_number: "P-101", title: "Flare header", rev: "4", version_id: V4 });
+    expect(tickets()[0].unit).toBe("200");
+  });
+
+  it("a check-in on a document the caller cannot see is refused (field origin), nothing numbered", async () => {
+    s.tables.documents[0].visible_to = [SUP];
+    const res = await POST(req(checkin()));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ field: "origin" });
+    expect(nextTicketRpc()).toHaveLength(0);
+  });
+
+  it("the read is the caller-scoped client's, never the service role's", () => {
+    const route = readFileSync(join(process.cwd(), "app/api/tickets/create/route.ts"), "utf8");
+    expect(route).toContain("const docs = await readSourceDocuments(caller_client, orgId, input.sourceDocuments.map((d) => d.id));");
+    expect(route).not.toMatch(/supabaseAdmin\.from\("documents"\)/);
+  });
+});
+
+describe("GAP-8 — a hand-off of many sheets files; the list is advisory", () => {
+  const sheet = (i: number) => `dddddddd-1111-4000-8000-${String(i).padStart(12, "0")}`;
+  const seedSheets = (n: number) => {
+    for (let i = 0; i < n; i++) s.tables.documents.push({ id: sheet(i), org_id: ORG, document_number: `ISO-${i}`, title: null, name: `iso-${i}.pdf`, rev: "1", current_version_id: null, metadata: {} });
+  };
+  const sheets = (n: number) => Array.from({ length: n }, (_, i) => ({ id: sheet(i), documentNumber: `ISO-${i}`, title: null, rev: null, versionId: null }));
+
+  it("30 marked-up sheets file, every one linked (the old 25-sheet refusal is gone)", async () => {
+    seedSheets(30);
+    const res = await POST(req(portal({ unit: null, attachments: [], sourceDocuments: sheets(30) })));
+    expect(res.status).toBe(201);
+    expect((await res.json()).warnings).toBeUndefined();
+    expect(((tickets()[0].metadata as Row).source_documents as Row[])).toHaveLength(30);
+  });
+
+  it("more than MAX_SOURCE_DOCUMENTS: filed with the first ones linked and a warning naming the rest — never a refusal", async () => {
+    seedSheets(MAX_SOURCE_DOCUMENTS + 30);
+    const res = await POST(req(portal({ unit: null, attachments: [], sourceDocuments: sheets(MAX_SOURCE_DOCUMENTS + 30) })));
+    expect(res.status).toBe(201);
+    expect((await res.json()).warnings).toEqual([`30 more linked documents were not kept — one request links at most ${MAX_SOURCE_DOCUMENTS} (the first ${MAX_SOURCE_DOCUMENTS} are linked).`]);
+    const refs = (tickets()[0].metadata as Row).source_documents as Row[];
+    expect(refs).toHaveLength(MAX_SOURCE_DOCUMENTS);
+    expect(refs[0].id).toBe(sheet(0));
+  });
+
+  it("capSourceDocuments: the form and the route cut the same way", () => {
+    expect(capSourceDocuments([1, 2, 3])).toEqual({ kept: [1, 2, 3], dropped: 0 });
+    const big = Array.from({ length: MAX_SOURCE_DOCUMENTS + 2 }, (_, i) => i);
+    expect(capSourceDocuments(big)).toEqual({ kept: big.slice(0, MAX_SOURCE_DOCUMENTS), dropped: 2 });
+  });
+});
+
+describe("an intake collision's overlap list is stored whole (or counted and flagged), never silently cut", () => {
+  const overlaps = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `o-${i}`, label: `P-${1000 + i}`, sharedTags: ["V-1"] }));
+
+  it("400 overlaps: all 400 on the stored row", async () => {
+    expect((await POST(req(collision({ overlaps: overlaps(400) })))).status).toBe(201);
+    const ic = (tickets()[0].metadata as Row).intake_collision as Row;
+    expect((ic.overlaps as Row[])).toHaveLength(400);
+    expect(ic.overlapsTruncated).toBeUndefined();
+  });
+
+  it("past MAX_COLLISION_OVERLAPS: the first ones stored, with the full count and a truncated flag", async () => {
+    expect((await POST(req(collision({ overlaps: overlaps(MAX_COLLISION_OVERLAPS + 200) })))).status).toBe(201);
+    const ic = (tickets()[0].metadata as Row).intake_collision as Row;
+    expect((ic.overlaps as Row[])).toHaveLength(MAX_COLLISION_OVERLAPS);
+    expect(ic).toMatchObject({ overlapsTotal: MAX_COLLISION_OVERLAPS + 200, overlapsTruncated: true });
+  });
+});
+
+describe("FRIC-8 — an intake collision is held to the project's own intake facts", () => {
+  it("a sheet that is not in the project's intake folder is refused (field origin), nothing numbered", async () => {
+    const res = await POST(req({ ...collision(), sourceDocuments: [{ id: DOC, documentNumber: "P-101", title: null, rev: null, versionId: null }] }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ field: "origin" });
+    expect(nextTicketRpc()).toHaveLength(0);
+  });
+
+  it("another project of this workspace (its intake folder is elsewhere) is refused", async () => {
+    expect((await POST(req(collision({ projectId: PROJECT2, intakeLinkId: null })))).status).toBe(400);
+  });
+
+  it("an intake link that is not this project's is refused", async () => {
+    s.tables.project_intake_links = [{ id: LINK, org_id: ORG, project_id: PROJECT2 }];
+    const res = await POST(req(collision()));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ field: "origin" });
+  });
+
+  it("the notice and the history line carry the sheet's own number — never the client's label", async () => {
+    await POST(req(collision({ sheetLabel: "URGENT – call me" })));
+    expect(creationBell()[0].title).toBe("Intake collision flagged: P-102");
+    expect(JSON.stringify(tickets()[0].history)).not.toContain("URGENT");
+  });
+
+  it("a colliding document the caller cannot see is not stored: filed without it, with a warning, and the notice says overlap", async () => {
+    s.tables.documents[0].visible_to = [SUP];
+    const res = await POST(req(collision()));
+    expect(res.status).toBe(201);
+    expect((await res.json()).warnings).toEqual(["The document this sheet's number collides with is not one you can see in this workspace — the request was filed without naming it."]);
+    expect(((tickets()[0].metadata as Row).intake_collision as Row).numberCollisionDocId).toBeNull();
+    expect(creationBell()[0].body).toBe("A submitted sheet overlaps existing drawings — tie-in revision work to assign.");
+  });
+
+  it("a malformed intake link or colliding-document id is refused as a body that is not valid", async () => {
+    expect((await POST(req(collision({ intakeLinkId: "link-1" })))).status).toBe(400);
+    expect((await POST(req(collision({ numberCollisionDocId: "doc-old" })))).status).toBe(400);
+  });
+});
+
+describe("the request number's year is the requester's own when it is in force somewhere", () => {
+  it("requestNumberYear: the local year one side of New Year is kept; any other year is the server's UTC year", () => {
+    const nyUtc = Date.parse("2027-01-01T01:00:00Z");       // 19:00 on 31 Dec in US Central
+    expect(requestNumberYear(nyUtc, 2026)).toBe(2026);
+    expect(requestNumberYear(nyUtc, 2027)).toBe(2027);
+    expect(requestNumberYear(nyUtc, 2025)).toBe(2027);
+    expect(requestNumberYear(nyUtc, 2030)).toBe(2027);
+    expect(requestNumberYear(nyUtc, null)).toBe(2027);
+    const kiritimati = Date.parse("2026-12-31T10:30:00Z");  // already 1 Jan 2027 at UTC+14
+    expect(requestNumberYear(kiritimati, 2027)).toBe(2027);
+    expect(requestNumberYear(Date.parse("2026-12-31T09:00:00Z"), 2027)).toBe(2026);   // not yet anywhere
+    expect(requestNumberYear(Date.parse("2026-07-01T00:00:00Z"), 2027)).toBe(2026);
+  });
+
+  it("a request filed at 19:00 on 31 December in Texas is numbered in that year and spends that year's counter", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2027-01-01T01:00:00Z"));
+    try {
+      const res = await POST(req({ ...portal({ attachments: [] }), localYear: 2026 }));
+      expect((await res.json()).ticketNumber).toBe("KE-DDRT-26-0001");
+      expect(nextTicketRpc()[0].args.p_year).toBe(2026);
+      const forged = await POST(req({ ...portal({ attachments: [] }), localYear: 2031 }));
+      expect((await forged.json()).ticketNumber).toBe("KE-DDRT-27-0001");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("a saved settings row whose request-type list was emptied takes any type (20261038)", () => {
+  it("the form's built-in 'ISO' files", async () => {
+    (s.tables.org_configurations[0].data as Row).requestTypes = { label: "Type", enabled: true, options: [] };
+    expect((await POST(req(portal({ attachments: [] })))).status).toBe(201);
+    expect(tickets()[0].request_type).toBe("ISO");
+  });
+});
+
+describe("EDGE-8 — the answer does not wait on the re-key", () => {
+  it("the answer comes back with the request filed and announced, the row naming the staged key; the move happens after the answer", async () => {
+    const res = await POST(req(portal()));
+    expect(res.status).toBe(201);
+    expect(s.r2Ops.filter((o) => o.op === "copy")).toEqual([]);
+    expect((tickets()[0].attachments as Row[])[1].url).toBe(staged("redline.pdf"));
+    expect(creationBell()).toHaveLength(2);
+    await settle();
+    expect((tickets()[0].attachments as Row[])[1].url).toBe(`orgs/${ORG}/tickets/KE-DDRT-${YY}-0001/1727000000000_redline.pdf`);
+    const route = readFileSync(join(process.cwd(), "app/api/tickets/create/route.ts"), "utf8");
+    expect(route).toMatch(/after\(async \(\) => \{\s*\n\s*try \{\s*\n\s*const unmoved = await rekeyAttachments\(/);
   });
 });
 

@@ -15,6 +15,14 @@
 // and if it still fails the route is asked — which resumes by the episode
 // server-side (lib/__tests__/ticketCreateRoute.test.ts, "LEAK-6"), so a failed
 // or slow read never files a second ticket.
+//
+// LIFE-7 (second review of DF-P2): the PSM escalation is the ROUTE's — sent
+// once, stamped on the ticket, and sent by a resumed check-in only when it
+// never went out (ticketCreateRoute.test.ts, "LIFE-7 / LEAK-6"). The panel
+// never emits it; it carries the report to the route on every attempt, says
+// what needs the reporter's hand ("unrouted", "failed"), and hands a ticket
+// its own read found to the route (no files) when that ticket's escalation
+// is still pending.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -153,8 +161,10 @@ describe("REGRESSION — a reported discrepancy files its drafting request throu
     // EDGE-13: the redline was staged under the requester's pending prefix
     expect(s.upload.mock.calls[0][0].ticketId).toMatch(/^pending\/u-1\/[0-9a-f-]{36}$/);
     expect(body.attachments).toEqual([{ kind: "staged", key: expect.stringMatching(/^orgs\/.*\/tickets\/pending\/u-1\/.+\/1_redline\.pdf$/), name: "redline.pdf" }]);
-    // the PSM escalation still goes to the controllers on the safety category
-    expect(s.emit).toHaveBeenCalledWith(expect.objectContaining({ category: "safety", resource: { type: "ticket", id: "t-new" }, audience: { involved: ["ctrl-1"] } }));
+    // the PSM escalation is the route's (it reads origin.undocumentedChange) —
+    // the panel sends none of its own
+    expect(s.emit).not.toHaveBeenCalled();
+    expect(s.showToast).not.toHaveBeenCalled();
     // the register entry names the ticket; the requester lands on it
     expect(s.finish).toHaveBeenCalledWith(expect.objectContaining({ outcome: expect.objectContaining({ outcome: "discrepancy", ref: expect.objectContaining({ ticketId: "t-new", ticketNumber: "KE-DDRT-26-0009" }) }) }));
     expect(s.push).toHaveBeenCalledWith("/requests/t-new");
@@ -200,6 +210,69 @@ describe("REGRESSION — a reported discrepancy files its drafting request throu
     await reportDiscrepancy(true);
     expect(s.submit).not.toHaveBeenCalled();
     expect(s.discard).toHaveBeenCalledWith(ORG, []);
+  });
+});
+
+describe("LIFE-7 — the PSM escalation is the route's; the panel says what needs the reporter's hand", () => {
+  it("a lost first reply (status 0), then the retry that resumes: the panel never emits, and the retry carries the report so the route can send what is missing", async () => {
+    s.submit
+      .mockResolvedValueOnce({ ok: false, status: 0, error: "Couldn't reach the server — check your connection and try again." })
+      .mockResolvedValueOnce({ ok: true, id: "t-new", ticketNumber: "KE-DDRT-26-0009", resumed: true, psmAlert: "sent" });
+    await mount();
+    await reportDiscrepancy();
+    expect(s.showToast).toHaveBeenCalledWith(expect.objectContaining({ type: "error", title: "Check-in failed" }));
+    await act(async () => { button("Send request & release").click(); });
+    await flush();
+    await flush();
+    expect(s.submit).toHaveBeenCalledTimes(2);
+    expect(s.submit.mock.calls[1][0].origin).toMatchObject({ kind: "checkin", episodeId: EPISODE, undocumentedChange: true, moc: { status: "none", number: null } });
+    expect(s.emit).not.toHaveBeenCalled();
+    expect(s.showToast).toHaveBeenCalledTimes(1);              // only the first failure
+    expect(s.push).toHaveBeenCalledWith("/requests/t-new");
+  });
+
+  it("'unrouted': no other controller exists — the reporter is told to escalate by hand", async () => {
+    s.submit.mockResolvedValue({ ok: true, id: "t-new", ticketNumber: "KE-DDRT-26-0009", resumed: false, psmAlert: "unrouted" });
+    await mount();
+    await reportDiscrepancy();
+    expect(s.showToast).toHaveBeenCalledWith(expect.objectContaining({ type: "warning", title: "PSM alert has no recipient" }));
+    expect(s.push).toHaveBeenCalledWith("/requests/t-new");
+  });
+
+  it("'failed': the request is filed, the alert not confirmed — said, with what happens next", async () => {
+    s.submit.mockResolvedValue({ ok: true, id: "t-new", ticketNumber: "KE-DDRT-26-0009", resumed: false, psmAlert: "failed" });
+    await mount();
+    await reportDiscrepancy();
+    expect(s.showToast).toHaveBeenCalledWith(expect.objectContaining({ type: "warning", title: "PSM alert not confirmed" }));
+  });
+
+  it("a ticket the panel's own read finds, whose escalation never went out, is handed to the route — no file staged — which resumes it", async () => {
+    s.lookups.push(async () => ({ data: { id: "t-old", ticket_id: "KE-DDRT-26-0042", metadata: { undocumented_change: true } }, error: null }));
+    s.submit.mockResolvedValue({ ok: true, id: "t-old", ticketNumber: "KE-DDRT-26-0042", resumed: true, psmAlert: "sent" });
+    await mount();
+    await reportDiscrepancy(true);
+    expect(s.upload).not.toHaveBeenCalled();
+    expect(s.submit).toHaveBeenCalledTimes(1);
+    expect(s.submit.mock.calls[0][0]).toMatchObject({ attachments: [], origin: { episodeId: EPISODE } });
+    expect(s.emit).not.toHaveBeenCalled();
+    expect(s.push).toHaveBeenCalledWith("/requests/t-old");
+  });
+
+  it("a found ticket whose escalation is stamped is reused as it is — nothing posted, nothing sent", async () => {
+    s.lookups.push(async () => ({ data: { id: "t-old", ticket_id: "KE-DDRT-26-0042", metadata: { undocumented_change: true, psm_escalated_at: "2026-10-07T08:00:00Z" } }, error: null }));
+    await mount();
+    await reportDiscrepancy();
+    expect(s.submit).not.toHaveBeenCalled();
+    expect(s.emit).not.toHaveBeenCalled();
+    expect(s.push).toHaveBeenCalledWith("/requests/t-old");
+  });
+
+  it("the panel holds no escalation of its own (source)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const panel = readFileSync(join(process.cwd(), "components/documents/CheckInPanel.tsx"), "utf8");
+    expect(panel).not.toMatch(/category: "safety"/);
+    expect(panel).not.toMatch(/PSM_ALERT_UNROUTED"/);
   });
 });
 

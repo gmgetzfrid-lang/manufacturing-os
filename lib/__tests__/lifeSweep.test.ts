@@ -22,15 +22,21 @@ describe("LIFE-7 — the PSM undocumented-change alert is a safety message", () 
     expect(categoryToEventType("assignment")).toBe("assignment");
   });
 
-  it("CheckInPanel escalates through emit() on the safety category, and an empty roster is visible + audited", () => {
-    const s = src("components/documents/CheckInPanel.tsx");
-    const blk = s.slice(s.indexOf("if (undocumented) {"), s.indexOf("return { id: row.id, number: res.ticketNumber };"));
+  it("the escalation goes through emit() on the safety category, and an empty roster is visible + audited", () => {
+    // drafting-flow DF-P2 (second review): the create route sends it — once,
+    // stamped metadata.psm_escalated_at — so it never depends on the
+    // reporter's tab getting the answer; the panel says what the route
+    // could not route (lib/__tests__/ticketCreateRoute.test.ts, "LIFE-7 / LEAK-6").
+    const r = src("app/api/tickets/create/route.ts");
+    const blk = r.slice(r.indexOf("async function escalatePsm("), r.indexOf("export async function DELETE("));
     expect(blk.length).toBeGreaterThan(200);
     expect(blk).toMatch(/category: "safety"/);
-    expect(blk).toMatch(/resource: \{ type: "ticket", id: row\.id as string \}/);
+    expect(blk).toMatch(/resource: \{ type: "ticket", id: p\.ticketId \}/);
     expect(blk).not.toMatch(/notifyMany\(/);
-    expect(blk).toMatch(/PSM alert has no recipient/);
     expect(blk).toMatch(/action: "PSM_ALERT_UNROUTED"/);
+    const panel = src("components/documents/CheckInPanel.tsx");
+    expect(panel).toMatch(/PSM alert has no recipient/);
+    expect(panel).not.toMatch(/category: "safety"/);
   });
 });
 

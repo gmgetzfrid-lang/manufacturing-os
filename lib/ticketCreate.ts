@@ -37,10 +37,16 @@
 //                          origins have no form: the route checks each one
 //                          against its own facts instead (a check-in names a
 //                          checkout of the document by this requester; a
-//                          collision names a project in the workspace).
+//                          collision names an intake sheet in a project's
+//                          intake folder, and that project's intake link).
 //   * sourceDocuments      the controlled documents the request is raised
 //                          against, primary first (HAND-7 captures each
-//                          one's version; GAP-8 keeps every one).
+//                          one's version; GAP-8 keeps every one, up to
+//                          MAX_SOURCE_DOCUMENTS — an advisory hand-off: the
+//                          sheets past it are dropped with a warning, never a
+//                          refusal). Each is read AS THE CALLER: a document
+//                          they cannot see is treated like one that is not
+//                          in the workspace.
 //   * attachments          files the requester staged under their pending
 //                          prefix (never uploaded before the form's own
 //                          checks pass — contractLimitRefusal included),
@@ -48,6 +54,11 @@
 //                          advisory hand-off: one the route cannot use is
 //                          dropped with a warning, never a refusal).
 //   * origin               which door, with that door's own facts.
+//   * localYear            the requester's own calendar year (the browser's
+//                          clock — lib/ticketCreateClient.ts adds it): the
+//                          year the request number carries, when it is the
+//                          year somewhere on Earth right now; else the
+//                          server's UTC year (requestNumberYear).
 //   * declaration          DEC-34 seam — the like-in-kind declaration
 //                          (DF-P6) is one more field on this contract. Read
 //                          and IGNORED until DF-P6 lands.
@@ -66,7 +77,16 @@ export const BUILTIN_REQUEST_TYPES: readonly string[] = ["Revision", "ASBUILT", 
 
 export const MAX_TITLE = 500;
 export const MAX_DESCRIPTION = 20_000;
-export const MAX_SOURCE_DOCUMENTS = 25;
+/** The most source documents one request keeps (GAP-8) — one per attachable
+ *  file. A hand-off naming more keeps the first ones and says so; the list
+ *  is advisory and never refuses the request (DEC-44 (DF-P2) item 5). */
+export const MAX_SOURCE_DOCUMENTS = 200;
+/** An intake collision's overlap list as stored in metadata.intake_collision
+ *  — far past what the impact scan reads (it reads at most 50 overlapping
+ *  documents). A longer list is stored up to here with its full count and a
+ *  truncated flag, never silently cut. */
+export const MAX_COLLISION_OVERLAPS = 1000;
+export const MAX_OVERLAP_TAGS = 500;
 /** Generous: a walkdown can carry dozens of photos (nothing capped them
  *  before DF-P2). The form and the check-in check it before staging. */
 export const MAX_ATTACHMENTS = 200;
@@ -95,6 +115,17 @@ export type TicketCreateOrigin =
       intakeLinkId: string | null;
       numberCollisionDocId: string | null;
       overlaps: Array<{ id: string; label: string; sharedTags: string[] }>;
+      /** Set by parseTicketCreateBody (a producer never sends it): how many
+       *  overlaps the producer reported — `overlaps` holds at most
+       *  MAX_COLLISION_OVERLAPS of them. */
+      overlapsTotal?: number;
+      /** Set by parseTicketCreateBody: true when the stored list is shorter
+       *  than the reported one (too many overlaps, or an overlap with too
+       *  many shared tags). */
+      overlapsTruncated?: boolean;
+      /** The producer's label. The route replaces it with the intake sheet's
+       *  own number once it has checked the sheet (the notice title is never
+       *  the client's text). */
       sheetLabel: string;
     };
 
@@ -134,6 +165,9 @@ export interface TicketCreateInput {
   declaration?: unknown;
   /** DEC-40 seam (DF-P8): ignored by this package. */
   projectId?: string | null;
+  /** The requester's calendar year, from their own clock (null when the
+   *  body did not carry a usable one) — see requestNumberYear. */
+  localYear: number | null;
 }
 
 /** A refusal names the field it is about, so the form can move focus to it. */
@@ -174,9 +208,36 @@ export function clipToLimit(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, Math.max(0, max - 1))}…`;
 }
 
+/** GAP-8: a source-document list cut to MAX_SOURCE_DOCUMENTS, primary
+ *  first — the form applies it before staging, the route when it parses. */
+export function capSourceDocuments<T>(list: readonly T[]): { kept: T[]; dropped: number } {
+  return { kept: list.slice(0, MAX_SOURCE_DOCUMENTS), dropped: Math.max(0, list.length - MAX_SOURCE_DOCUMENTS) };
+}
+
+/** The words for sheets a request could not keep (advisory, never a refusal). */
+export function droppedSourceDocumentsWarning(dropped: number): string {
+  return `${dropped} more linked document${dropped === 1 ? " was" : "s were"} not kept — one request links at most ${MAX_SOURCE_DOCUMENTS} (the first ${MAX_SOURCE_DOCUMENTS} are linked).`;
+}
+
+/** The year a request number carries. The requester's own calendar year
+ *  (`localYear`, from their clock) when it is the calendar year somewhere on
+ *  Earth right now — UTC−12 to UTC+14 — so a request filed at 19:00 on
+ *  31 December in Texas is numbered in the year it was filed, not in the
+ *  next one (the server's clock is UTC). Anything else (no year, a forged
+ *  one) gets the server's UTC year: a body can never spend another year's
+ *  counter. */
+export function requestNumberYear(nowMs: number, localYear: number | null | undefined): number {
+  const utc = new Date(nowMs).getUTCFullYear();
+  if (typeof localYear !== "number" || !Number.isInteger(localYear)) return utc;
+  const earliest = new Date(nowMs - 12 * 3_600_000).getUTCFullYear();
+  const latest = new Date(nowMs + 14 * 3_600_000).getUTCFullYear();
+  return localYear === earliest || localYear === latest ? localYear : utc;
+}
+
 /** Parse and shape-check a request body against the contract. Pure: what the
- *  workspace has configured is checked by checkAgainstWorkspace. */
-export function parseTicketCreateBody(raw: unknown): { ok: true; input: TicketCreateInput } | ContractRefusal {
+ *  workspace has configured is checked by the route. `warnings` names what an
+ *  advisory part of the body lost (sheets past MAX_SOURCE_DOCUMENTS). */
+export function parseTicketCreateBody(raw: unknown): { ok: true; input: TicketCreateInput; warnings: string[] } | ContractRefusal {
   if (!isObj(raw)) return refuse("body", "The request body must be a JSON object.");
   const orgId = text(raw.orgId);
   if (!orgId || !UUID_RE.test(orgId)) return refuse("orgId", "No workspace selected.");
@@ -225,10 +286,10 @@ export function parseTicketCreateBody(raw: unknown): { ok: true; input: TicketCr
     customCategories = Object.keys(out).length > 0 ? out : null;
   }
 
-  const sourceDocuments: TicketCreateSourceDoc[] = [];
+  const warnings: string[] = [];
+  let sourceDocuments: TicketCreateSourceDoc[] = [];
   if (raw.sourceDocuments != null) {
     if (!Array.isArray(raw.sourceDocuments)) return refuse("sourceDocuments", "The source documents are not valid.");
-    if (raw.sourceDocuments.length > MAX_SOURCE_DOCUMENTS) return refuse("sourceDocuments", `At most ${MAX_SOURCE_DOCUMENTS} source documents.`);
     const seen = new Set<string>();
     for (const d of raw.sourceDocuments) {
       if (!isObj(d)) return refuse("sourceDocuments", "The source documents are not valid.");
@@ -245,6 +306,11 @@ export function parseTicketCreateBody(raw: unknown): { ok: true; input: TicketCr
         versionId: versionId && UUID_RE.test(versionId) ? versionId : null,
       });
     }
+    // GAP-8 / DEC-44 (DF-P2) item 5: the sheet list is advisory — the first
+    // MAX_SOURCE_DOCUMENTS are kept, the rest dropped with a warning.
+    const capped = capSourceDocuments(sourceDocuments);
+    sourceDocuments = capped.kept;
+    if (capped.dropped > 0) warnings.push(droppedSourceDocumentsWarning(capped.dropped));
   }
 
   const attachments: TicketCreateAttachment[] = [];
@@ -266,14 +332,16 @@ export function parseTicketCreateBody(raw: unknown): { ok: true; input: TicketCr
   const origin = parseOrigin(raw.origin);
   if (!origin) return refuse("origin", "Where the request comes from is not valid.");
 
+  const localYear = typeof raw.localYear === "number" && Number.isInteger(raw.localYear) ? raw.localYear : null;
+
   const input: TicketCreateInput = {
     orgId, title, description, requestType, priority, unit, targetCompletionAt, requesterRole,
-    customCategories, sourceDocuments, attachments, origin,
+    customCategories, sourceDocuments, attachments, origin, localYear,
   };
   // The DEC-34 / DEC-40 seams travel with the input and are not acted on here.
   if ("declaration" in raw) input.declaration = raw.declaration;
   if ("projectId" in raw) input.projectId = text(raw.projectId);
-  return { ok: true, input };
+  return { ok: true, input, warnings };
 }
 
 function parseOrigin(raw: unknown): TicketCreateOrigin | null {
@@ -307,24 +375,36 @@ function parseOrigin(raw: unknown): TicketCreateOrigin | null {
     const projectId = text(raw.projectId);
     const sheetLabel = text(raw.sheetLabel);
     if (!projectId || !UUID_RE.test(projectId) || !sheetLabel) return null;
+    // The ids the route checks against the project and the workspace.
+    const intakeLinkId = text(raw.intakeLinkId);
+    const numberCollisionDocId = text(raw.numberCollisionDocId);
+    if ((intakeLinkId && !UUID_RE.test(intakeLinkId)) || (numberCollisionDocId && !UUID_RE.test(numberCollisionDocId))) return null;
     const overlaps: Array<{ id: string; label: string; sharedTags: string[] }> = [];
+    let overlapsTotal = 0;
+    let overlapsTruncated = false;
     if (raw.overlaps != null) {
       if (!Array.isArray(raw.overlaps)) return null;
-      for (const o of raw.overlaps.slice(0, 200)) {
+      overlapsTotal = raw.overlaps.length;
+      if (overlapsTotal > MAX_COLLISION_OVERLAPS) overlapsTruncated = true;
+      for (const o of raw.overlaps.slice(0, MAX_COLLISION_OVERLAPS)) {
         if (!isObj(o)) return null;
+        const tags = Array.isArray(o.sharedTags) ? o.sharedTags.map((t) => String(t)) : [];
+        if (tags.length > MAX_OVERLAP_TAGS) overlapsTruncated = true;
         overlaps.push({
           id: String(o.id ?? ""),
           label: String(o.label ?? ""),
-          sharedTags: Array.isArray(o.sharedTags) ? o.sharedTags.map((t) => String(t)).slice(0, 200) : [],
+          sharedTags: tags.slice(0, MAX_OVERLAP_TAGS),
         });
       }
     }
     return {
       kind: "intake_collision",
       projectId,
-      intakeLinkId: text(raw.intakeLinkId),
-      numberCollisionDocId: text(raw.numberCollisionDocId),
+      intakeLinkId,
+      numberCollisionDocId,
       overlaps,
+      overlapsTotal,
+      overlapsTruncated,
       sheetLabel,
     };
   }
@@ -467,6 +547,25 @@ export function checkinMocLine(moc: CheckinMoc | null): string | null {
   if (!moc) return null;
   if (moc.status === "none") return "MOC: NONE ON RECORD — flagged as an undocumented field change.";
   return `MOC ${moc.status === "completed" ? "completed" : "in progress"}: ${(moc.number ?? "").trim()}`;
+}
+
+/** The reporter's own words in a check-in's description: the note, without
+ *  the MOC line the panel appends (CheckInPanel joins them with a blank
+ *  line). */
+export function checkinNoteOf(description: string, moc: CheckinMoc | null): string {
+  const line = checkinMocLine(moc);
+  const d = description ?? "";
+  if (line && d.endsWith(line)) return d.slice(0, d.length - line.length).replace(/\s+$/, "");
+  return d.trim();
+}
+
+/** LIFE-7: the PSM escalation for an undocumented field change — the words
+ *  the check-in panel sent, now sent by the create route (DF-P2 review fix). */
+export function psmAlertNotice(p: { reporter: string; docLabel: string; note: string }): { title: string; body: string } {
+  return {
+    title: `PSM alert: undocumented field change — ${p.docLabel}`,
+    body: `${p.reporter} reported the field differs from ${p.docLabel} with no MOC on record: "${p.note.trim()}"`,
+  };
 }
 
 /** The ticket's opening history, per door — the lines each door wrote before. */
