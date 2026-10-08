@@ -23,29 +23,45 @@
 --     the server log). It stands until the same document's next build
 --     succeeds, or a rebuild from the map that began after it reads the
 --     whole corpus;
---   * a stopped rebuild: backfill_cursor (the last knowledge document, by
---     id, it finished), backfill_started_at, backfill_documents — the next
---     press continues after the cursor; a rebuild that reads to the end
---     clears it.
+--   * a rebuild's place, written by a rebuild from the map from its start
+--     to its end: backfill_state ('running' while a press reads — re-saved
+--     every 10 s; 'time_limit' or 'failed' when the press stopped),
+--     backfill_cursor (the last knowledge document, by id, it finished),
+--     backfill_started_at (when the rebuild began), backfill_documents (how
+--     many it has read), backfill_saved_at (when the place was saved) and
+--     backfill_dictionary (a fingerprint of the equipment dictionary it reads
+--     with). The next press continues after the cursor only when the
+--     dictionary is the same and the rebuild began less than 24 h ago;
+--     otherwise it starts at the first document and overwrites the place. A
+--     rebuild that reads to the end clears it.
 -- The document ids are plain uuids, not foreign keys: a run's record
 -- outlives the document it names (a failure is still a fact after the
 -- document is deleted), and nothing here is ever joined for access.
 --
 -- WHO READS: an active member of the org reads their own org's row, and no
 -- other (policy mention_index_runs_member_read, SELECT only — the map's
--- notice reads it as the member). WHO WRITES: the service role only — both
--- builders run server-side through it. There is no INSERT / UPDATE / DELETE
--- policy, and every write privilege is revoked from anon and authenticated,
--- so RLS is not the only wall; anon holds nothing. No function is created,
--- so there is no SECURITY DEFINER body for DRLS-16's revoke and grant.
+-- notice reads it as the member), and only the twelve member columns the
+-- column-level GRANT below names (lib/mentionRunState.ts
+-- MENTION_RUN_MEMBER_COLUMNS). The knowledge-document ids
+-- (last_run_document_id, last_failed_document_id, backfill_cursor), the
+-- build's run id and the dictionary's fingerprint are NOT granted: a
+-- mirror's id may name a document KACL-7 hides from that member
+-- (knowledge_documents_select, 20261120).
+-- WHO WRITES: the service role only — both builders run server-side through
+-- it. There is no INSERT / UPDATE / DELETE policy, and every write privilege
+-- is revoked from anon and authenticated, so RLS is not the only wall; anon
+-- holds nothing. No function is created, so there is
+-- no SECURITY DEFINER body for DRLS-16's revoke and grant.
 --
 -- WIDENING? Yes, narrowly: a new table whose one row per org every active
--- member may now read (when the org's last mention build ran, from where,
--- how it ended, the last failure's plain-words error and a stopped
--- rebuild's place — no document name, no text, no person). Nothing existing
--- is re-created or altered. The inventory below (aggregate counts only,
--- captured BEFORE the transaction) says whether this paste is a first apply
--- or a re-run and how many members gain the read.
+-- member may now read, column by column — when the org's last mention build
+-- ran, from where and how it ended; when and where the last failure was and
+-- its plain-words error; and a rebuild's state, when it began and was last
+-- saved, and how many documents it has read. No document id, name or text,
+-- no person. Nothing existing is re-created or altered. The inventory below
+-- (aggregate counts only, captured BEFORE the transaction) says whether
+-- this paste is a first apply or a re-run and how many members gain the
+-- read.
 --
 -- PASTE AND DEPLOY ORDER. Apply AFTER 20260929_mention_engine.sql (the
 -- inventory counts its entity_mentions; the run state describes its builds).
@@ -98,6 +114,9 @@ CREATE TABLE IF NOT EXISTS mention_index_runs (
   backfill_cursor         UUID,
   backfill_started_at     TIMESTAMPTZ,
   backfill_documents      INTEGER NOT NULL DEFAULT 0,
+  backfill_state          TEXT,
+  backfill_saved_at       TIMESTAMPTZ,
+  backfill_dictionary     TEXT,
   updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -115,6 +134,9 @@ ALTER TABLE mention_index_runs ADD COLUMN IF NOT EXISTS last_failed_error TEXT;
 ALTER TABLE mention_index_runs ADD COLUMN IF NOT EXISTS backfill_cursor UUID;
 ALTER TABLE mention_index_runs ADD COLUMN IF NOT EXISTS backfill_started_at TIMESTAMPTZ;
 ALTER TABLE mention_index_runs ADD COLUMN IF NOT EXISTS backfill_documents INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE mention_index_runs ADD COLUMN IF NOT EXISTS backfill_state TEXT;
+ALTER TABLE mention_index_runs ADD COLUMN IF NOT EXISTS backfill_saved_at TIMESTAMPTZ;
+ALTER TABLE mention_index_runs ADD COLUMN IF NOT EXISTS backfill_dictionary TEXT;
 ALTER TABLE mention_index_runs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
 -- The vocabulary the code writes (lib/mentionRunState.ts). A NULL passes.
@@ -133,6 +155,12 @@ ALTER TABLE mention_index_runs ADD CONSTRAINT mention_index_runs_backfill_docume
 ALTER TABLE mention_index_runs DROP CONSTRAINT IF EXISTS mention_index_runs_error_len_chk;
 ALTER TABLE mention_index_runs ADD CONSTRAINT mention_index_runs_error_len_chk
   CHECK (last_failed_error IS NULL OR char_length(last_failed_error) <= 2000);
+ALTER TABLE mention_index_runs DROP CONSTRAINT IF EXISTS mention_index_runs_backfill_state_chk;
+ALTER TABLE mention_index_runs ADD CONSTRAINT mention_index_runs_backfill_state_chk
+  CHECK (backfill_state IN ('running', 'time_limit', 'failed'));
+ALTER TABLE mention_index_runs DROP CONSTRAINT IF EXISTS mention_index_runs_backfill_dictionary_chk;
+ALTER TABLE mention_index_runs ADD CONSTRAINT mention_index_runs_backfill_dictionary_chk
+  CHECK (backfill_dictionary IS NULL OR char_length(backfill_dictionary) <= 128);
 
 ALTER TABLE mention_index_runs ENABLE ROW LEVEL SECURITY;
 
@@ -145,14 +173,20 @@ CREATE POLICY mention_index_runs_member_read ON mention_index_runs FOR SELECT TO
                     AND m.status = 'active'));
 
 -- Writes are the builders' (service role). The default grants Supabase gives
--- a new table are withdrawn, so RLS is not the only wall; a signed-in
--- session keeps SELECT, which the policy above narrows to its own org.
+-- a new table are withdrawn, so RLS is not the only wall (a table-level
+-- REVOKE also revokes every column privilege, so a re-paste starts clean); a
+-- signed-in session gets SELECT on the member columns only, which the policy
+-- above narrows to its own org — never a document id, the cursor, the run id
+-- or the fingerprint.
 REVOKE ALL ON TABLE mention_index_runs FROM anon, authenticated;
-GRANT SELECT ON TABLE mention_index_runs TO authenticated;
+GRANT SELECT (org_id, last_run_source, last_run_started_at, last_run_finished_at, last_run_outcome,
+              last_failed_at, last_failed_source, last_failed_error,
+              backfill_started_at, backfill_documents, backfill_state, backfill_saved_at)
+  ON TABLE mention_index_runs TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE mention_index_runs TO service_role;
 
 COMMENT ON TABLE mention_index_runs IS
-  'IRLS-14 (intelligence Round G I-23): the mention index''s run state, one row per org — the last build (ingest-time pass or a rebuild from the map: started, finished, outcome), the last failed build (where, when, which knowledge document, its error in plain words) and a stopped rebuild''s place (backfill_cursor, the last knowledge document by id it finished). Written by the service role only (lib/mentionRunState.ts, from lib/knowledgeIngest.ts and lib/mentionIndexer.ts); an active member reads their own org''s row. Re-derived by the next build; never restored.';
+  'IRLS-14 (intelligence Round G I-23): the mention index''s run state, one row per org — the last build (ingest-time pass or a rebuild from the map: started, finished, outcome), the last failed build (where, when, which knowledge document, its error in plain words) and a rebuild''s place (backfill_state running / time_limit / failed; backfill_cursor, the last knowledge document by id it finished; the equipment dictionary''s fingerprint). Written by the service role only (lib/mentionRunState.ts, from lib/knowledgeIngest.ts and lib/mentionIndexer.ts); an active member reads their own org''s row, member columns only (no document id, cursor or fingerprint). Re-derived by the next build; never restored.';
 
 COMMIT;
 
@@ -161,13 +195,14 @@ SELECT 'mention_index_runs exists with row level security on' AS check,
        EXISTS (SELECT 1 FROM pg_class WHERE oid = to_regclass('public.mention_index_runs') AND relrowsecurity) AS ok,
        NULL::text AS n
 UNION ALL
-SELECT 'mention_index_runs carries the 15 columns the code reads and writes, keyed by org_id',
+SELECT 'mention_index_runs carries the 18 columns the code reads and writes, keyed by org_id',
        (SELECT COUNT(*) FROM information_schema.columns
          WHERE table_schema = 'public' AND table_name = 'mention_index_runs'
            AND column_name IN ('org_id', 'last_run_id', 'last_run_source', 'last_run_document_id', 'last_run_started_at',
                                'last_run_finished_at', 'last_run_outcome', 'last_failed_at', 'last_failed_source',
                                'last_failed_document_id', 'last_failed_error', 'backfill_cursor', 'backfill_started_at',
-                               'backfill_documents', 'updated_at')) = 15
+                               'backfill_documents', 'backfill_state', 'backfill_saved_at', 'backfill_dictionary',
+                               'updated_at')) = 18
        AND EXISTS (SELECT 1 FROM pg_constraint
                     WHERE conrelid = to_regclass('public.mention_index_runs') AND contype = 'p'),
        NULL
@@ -182,10 +217,21 @@ SELECT 'mention_index_runs has exactly one policy: SELECT for authenticated, its
                       AND qual LIKE '%mention_index_runs.org_id%' AND qual LIKE '%active%'),
        NULL
 UNION ALL
-SELECT 'mention_index_runs: anon holds no privilege, and authenticated holds SELECT and no INSERT / UPDATE / DELETE',
+SELECT 'mention_index_runs: anon holds no privilege, and authenticated holds no INSERT / UPDATE / DELETE and no table-wide SELECT',
        NOT has_table_privilege('anon', 'public.mention_index_runs', 'SELECT, INSERT, UPDATE, DELETE')
-       AND has_table_privilege('authenticated', 'public.mention_index_runs', 'SELECT')
-       AND NOT has_table_privilege('authenticated', 'public.mention_index_runs', 'INSERT, UPDATE, DELETE'),
+       AND NOT has_any_column_privilege('anon', 'public.mention_index_runs', 'SELECT, INSERT, UPDATE')
+       AND NOT has_table_privilege('authenticated', 'public.mention_index_runs', 'SELECT, INSERT, UPDATE, DELETE')
+       AND NOT has_any_column_privilege('authenticated', 'public.mention_index_runs', 'INSERT, UPDATE'),
+       NULL
+UNION ALL
+SELECT 'mention_index_runs: authenticated may SELECT exactly the 12 member columns — no document id, cursor, run id or fingerprint',
+       (SELECT COUNT(*) FROM information_schema.columns c
+         WHERE c.table_schema = 'public' AND c.table_name = 'mention_index_runs'
+           AND has_column_privilege('authenticated', 'public.mention_index_runs', c.column_name, 'SELECT')) = 12
+       AND (SELECT bool_and(has_column_privilege('authenticated', 'public.mention_index_runs', x, 'SELECT'))
+              FROM unnest(ARRAY['org_id', 'last_run_source', 'last_run_started_at', 'last_run_finished_at', 'last_run_outcome',
+                                'last_failed_at', 'last_failed_source', 'last_failed_error', 'backfill_started_at',
+                                'backfill_documents', 'backfill_state', 'backfill_saved_at']) AS x),
        NULL
 UNION ALL
 SELECT 'mention_index_runs: the service role may read and write it (the builders)',
@@ -195,12 +241,13 @@ SELECT 'mention_index_runs: the service role may read and write it (the builders
        AND has_table_privilege('service_role', 'public.mention_index_runs', 'DELETE'),
        NULL
 UNION ALL
-SELECT 'mention_index_runs: the five CHECKs (sources, outcome, documents, error length) are present',
+SELECT 'mention_index_runs: the seven CHECKs (sources, outcome, documents, error length, place state, fingerprint length) are present',
        (SELECT COUNT(*) FROM pg_constraint
          WHERE conrelid = to_regclass('public.mention_index_runs') AND contype = 'c'
            AND conname IN ('mention_index_runs_run_source_chk', 'mention_index_runs_failed_source_chk',
                            'mention_index_runs_outcome_chk', 'mention_index_runs_backfill_documents_chk',
-                           'mention_index_runs_error_len_chk')) = 5,
+                           'mention_index_runs_error_len_chk', 'mention_index_runs_backfill_state_chk',
+                           'mention_index_runs_backfill_dictionary_chk')) = 7,
        NULL
 UNION ALL
 SELECT 'mention_index_runs: no trigger on it (nothing runs as anyone else on its writes)',

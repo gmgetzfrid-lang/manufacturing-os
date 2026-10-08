@@ -12,7 +12,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { MENTION_RUN_COLUMNS, MENTION_RUNS_TABLE } from "@/lib/mentionRunState";
+import { MENTION_RUN_COLUMNS, MENTION_RUN_MEMBER_COLUMNS, MENTION_RUNS_TABLE } from "@/lib/mentionRunState";
 
 const MIG = join(process.cwd(), "supabase", "migrations");
 const FILE = "20261194_intel_roundG_mention_run_state.sql";
@@ -86,9 +86,14 @@ describe("20261194 — the table the code reads and writes", () => {
     expect(tx).toMatch(/CHECK \(last_run_source IN \('ingest', 'map'\)\)/);
     expect(tx).toMatch(/CHECK \(last_failed_source IN \('ingest', 'map'\)\)/);
     expect(tx).toMatch(/CHECK \(last_run_outcome IN \('running', 'succeeded', 'failed', 'stopped'\)\)/);
+    expect(tx).toMatch(/CHECK \(backfill_state IN \('running', 'time_limit', 'failed'\)\)/);
+    // The dictionary's fingerprint is a sha256 in hex (64), well under its cap.
+    expect(tx).toMatch(/CHECK \(backfill_dictionary IS NULL OR char_length\(backfill_dictionary\) <= 128\)/);
+    expect(src("lib/mentionIndexer.ts")).toMatch(/createHash\("sha256"\)[\s\S]*?\.digest\("hex"\)/);
     const lib = src("lib/mentionRunState.ts");
     expect(lib).toMatch(/export type MentionRunSource = "ingest" \| "map";/);
     expect(lib).toMatch(/export type MentionRunOutcome = "running" \| "succeeded" \| "failed" \| "stopped";/);
+    expect(lib).toMatch(/export type BackfillState = "running" \| "time_limit" \| "failed";/);
     // The plain-words sentence is capped below the column's CHECK.
     expect(lib).toMatch(/const ERROR_MAX = 500;/);
     expect(tx).toMatch(/char_length\(last_failed_error\) <= 2000/);
@@ -100,10 +105,23 @@ describe("20261194 — the table the code reads and writes", () => {
     expect(policies).toEqual([["mention_index_runs_member_read", "SELECT"]]);
     expect(tx).toMatch(/FOR SELECT TO authenticated\s+USING \(EXISTS \(SELECT 1 FROM org_members m\s+WHERE m\.org_id = mention_index_runs\.org_id\s+AND m\.uid = auth\.uid\(\)\s+AND m\.status = 'active'\)\);/);
     expect(tx).toMatch(/REVOKE ALL ON TABLE mention_index_runs FROM anon, authenticated;/);
-    expect(tx).toMatch(/GRANT SELECT ON TABLE mention_index_runs TO authenticated;/);
     expect(tx).toMatch(/GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE mention_index_runs TO service_role;/);
     // Writes are never granted to a signed-in session.
     expect(tx).not.toMatch(/GRANT[^;]*(INSERT|UPDATE|DELETE)[^;]*TO[^;]*authenticated/);
+  });
+
+  it("review minor: a member is granted SELECT on the member columns only — exactly MENTION_RUN_MEMBER_COLUMNS, which the reader selects — never a document id, the cursor, the run id or the fingerprint", () => {
+    expect(tx).not.toMatch(/GRANT SELECT ON TABLE mention_index_runs TO authenticated/);
+    const grants = [...tx.matchAll(/GRANT SELECT \(([^)]*)\)\s+ON TABLE mention_index_runs TO authenticated;/g)];
+    expect(grants).toHaveLength(1);
+    const granted = grants[0][1].split(",").map((c) => c.trim()).sort();
+    expect(granted).toEqual(MENTION_RUN_MEMBER_COLUMNS.split(",").map((c) => c.trim()).sort());
+    for (const c of ["last_run_id", "last_run_document_id", "last_failed_document_id", "backfill_cursor", "backfill_dictionary"]) {
+      expect(granted, c).not.toContain(c);
+    }
+    expect(src("lib/mentionRunState.ts")).toMatch(/\.select\(MENTION_RUN_MEMBER_COLUMNS\)\.eq\("org_id", orgId\)\.maybeSingle\(\)/);
+    // The probe pins the same twelve after apply.
+    expect(code).toMatch(/has_column_privilege\('authenticated', 'public\.mention_index_runs', c\.column_name, 'SELECT'\)\) = 12/);
   });
 
   it("creates no function (no SECURITY DEFINER for DRLS-16), trigger or view, and changes no existing row", () => {
@@ -120,6 +138,8 @@ describe("20261194 — the table the code reads and writes", () => {
     expect(sql).toMatch(/The app may be deployed before\n-- or after the paste, and keeps working while it is unpasted/);
     expect(sql).toMatch(/\(PGRST205 \/ 42P01\) or a missing\n-- column \(42703 \/ PGRST204\) as "no run state"/);
     expect(sql).toMatch(/WIDENING\? Yes, narrowly/);
+    expect(sql).toMatch(/The knowledge-document ids\n-- \(last_run_document_id, last_failed_document_id, backfill_cursor\), the\n-- build's run id and the dictionary's fingerprint are NOT granted/);
+    expect(sql).toMatch(/No document id, name or text,\n-- no person\./);
     expect(sql).toMatch(/WHO WRITES: the service role only/);
     expect(sql).toMatch(/no SECURITY DEFINER body for DRLS-16's revoke and grant/);
   });
@@ -148,7 +168,10 @@ describe("20261194 — the code tolerates the table being absent (today's behavi
     const ingest = src("lib/knowledgeIngest.ts");
     const fn = ingest.slice(ingest.indexOf("export async function rebuildDocumentMentions("), ingest.indexOf("export async function onDocumentReady("));
     expect(fn).not.toMatch(/catch \{ \/\*/);
-    expect(fn).toMatch(/finishMentionRun\(supabaseAdmin, run, \{ outcome: "failed", error: e \}\)/);
+    expect(fn).toMatch(/finishMentionRun\(supabaseAdmin, await started, \{ outcome: "failed", error: e \}\)/);
+    // Both the start (beside the build) and a pass that could not start are inside the cap.
+    expect(fn).toMatch(/await capped\(build\);/);
+    expect(fn).toMatch(/await capped\(recordMentionFailure\(/);
     expect(fn).toMatch(/recordMentionFailure\(supabaseAdmin, doc\.org_id, "ingest", doc\.id, e\)/);
   });
 });

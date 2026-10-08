@@ -620,21 +620,24 @@ The GOV-5 residual needs no migration. For the integrator's `MIGRATION-PASTE-ORD
 **MERGE note — I-23's limbs in other packages' files** (intelligence Round G, 2026-10-07; `IRLS-14`, opened `IRLS-16`). Whoever next edits each file keeps the limb.
 
 - `lib/knowledgeIngest.ts` (I-06's / I-06b's / I-18's / I-22's). `rebuildDocumentMentions` records each ingest-time build through `lib/mentionRunState.ts`:
-  - `startMentionRun(…, "ingest", doc.id)` before the build;
-  - the outcome is chained onto the build itself, so it is written when the build settles, even after the 8 s cap let the batch go on: `finishMentionRun` succeeded or failed, and `clearStandingFailure` when the standing failure is this document's;
+  - `startMentionRun(…, "ingest", doc.id)` beside the build (not awaited before it);
+  - the outcome is chained onto the build itself, so it is written when the build settles, even after the 8 s cap let the batch go on: `finishMentionRun` succeeded or failed (after the start), and `clearStandingFailure` when the standing failure is this document's;
   - the outer `catch` records a pass that could not start (`recordMentionFailure`). It is never `catch {}` again.
+  - Both the build-with-outcome and the catch's record are awaited through `capped(…)`: the batch never waits past the cap for the run state.
   - An empty equipment dictionary still builds and records nothing.
   - Every I-05, I-06b, I-18 and I-22 limb named above is untouched.
 - `lib/mentionIndexer.ts`. `backfillOrgMentions`:
   - reads the ready documents in id order by keyset windows (`DOC_WINDOW` 500) and records each rebuild (source `map`);
-  - saves its place (`saveBackfillCursor`) every `PLACE_SAVE_MS` and when it stops or fails, and continues after it on the next press;
+  - claims its place as `running` from its start, re-saves it (`saveBackfillCursor`, the whole place) every `PLACE_SAVE_MS`, and marks it `time_limit` or `failed` when it stops;
+  - continues a place on the next press only when `dictionaryFingerprint(dictionary)` equals the place's and the rebuild began within `BACKFILL_RESUME_MAX_MS` (24 h); otherwise reads from the first document and answers `startedOver`;
   - clears the place and the failure that stood before it began only when it reads to the end;
-  - adds `resumable` / `continued` / `passDocuments` to its answer only where the run state is recorded.
+  - adds `resumable` / `continued` / `passDocuments` / `startedOver` to its answer only where the run state is recorded.
   - `indexDocumentMentions` is unchanged.
-- `lib/graphView.ts` (I-14's) `mentionNotice(cov, equipmentOnMap, run?, readAt?)`. The coverage's own sentences are `coverageNotice`, byte for byte as I-14 shipped them. `mentionRunNotes` only appends, and never on a map whose index is not installed or that has no equipment.
+- `lib/mentionRunState.ts` (new, I-23's). Every UPDATE is a `checkedWrite(supabase.from(…)…)` call, so SAF-18's census in `lib/__tests__/checkedWrite.test.ts` judges the file under its "new code must be clean" rule; keep the client parameter named `supabase` and route any new update or delete through `checkedWrite`. The member read selects `MENTION_RUN_MEMBER_COLUMNS` only — the columns `20261194` grants to `authenticated`; a column added to it needs the grant too.
+- `lib/graphView.ts` (I-14's) `mentionNotice(cov, equipmentOnMap, run?, readAt?)`. The coverage's own sentences are `coverageNotice`, byte for byte as I-14 shipped them. `mentionRunNotes` only appends, and never on a map whose index is not installed or that has no equipment (`equipmentOnMap === 0`). It reads the rebuild's place through `readBackfillPlace`: a running rebuild is never offered "Continue" (nor the rebuild, by the note); a stopped one is said by why it stopped.
 - `app/(protected)/graph/page.tsx` (I-14's). The run-state read `readMentionRunState(supabase, activeOrgId)` is re-read on `reloadNonce`.
   - Keep the STATIC `supabase` import. With a dynamic import there, `graphPageRender.test.ts` "a URL carrying an asked question asks it again, once" failed 2 runs in 3: the ask's fetch had not landed within the test's flush.
-  - Also keep "Continue the rebuild" (same request body `{ orgId }`) and the stopped / continued messages.
+  - Also keep "Continue the rebuild" (same request body `{ orgId }`) and the stopped / continued / started-over messages.
 - `lib/orgGraph.ts` (I-15 next). The `MentionCoverage` comment still says the indexer keeps no run state; reword it when the file is next edited (no behaviour depends on it).
 - `app/api/graph/mentions/route.ts` (no owner). The per-document branch records nothing → `IRLS-16`, a six-line limb for the integrator or the next editor of the route.
 
@@ -643,12 +646,13 @@ The GOV-5 residual needs no migration. For the integrator's `MIGRATION-PASTE-ORD
 - the map says exactly what I-14 shipped;
 - every rebuild press starts at the first document, as before.
 
-For the integrator's `MIGRATION-PASTE-ORDER.md` row: a narrow WIDENING (a new table; every active member may read their own org's one row, the service role writes); no re-created object, no function; one result set of seven probes, one after-count and five inventory counts.
+For the integrator's `MIGRATION-PASTE-ORDER.md` row: a narrow WIDENING (a new table; every active member may read their own org's one row, twelve member columns only — no knowledge-document id, cursor, run id or fingerprint — and the service role writes); no re-created object, no function; one result set of eight probes, one after-count and five inventory counts.
 
 The integrator adds at merge:
 - the `lib/schemaExpectations.ts` row `{ table: "mention_index_runs", migration: "20261194_intel_roundG_mention_run_state.sql" }`;
 - the `lib/exportTables.ts` `EXPORT_EXCLUDED_TABLES` entry, after AO-P4. Reason: the run state is operational, re-derived by the next build, and names knowledge-document ids a restore re-keys, so a restore starts with none.
-- In the same merge, it removes the table from the tripwires' at-merge lists: `ROW_AT_MERGE` in `lib/__tests__/schemaExpectations.test.ts` and `DECISION_AT_MERGE` in `lib/__tests__/exportCoverage.test.ts`. Each list fails once the real row exists.
+- In the same commit that adds those two rows, it removes the table from the tripwires' at-merge lists: `ROW_AT_MERGE` in `lib/__tests__/schemaExpectations.test.ts` and `DECISION_AT_MERGE` in `lib/__tests__/exportCoverage.test.ts`. Each list fails once the real row exists. With no other entry, the two mechanisms (the lists, their filter clauses and their self-check tests) can be deleted in that commit too.
+- Optional, the integrator's call: a "Start over" control beside "Continue the rebuild" needs `app/api/graph/mentions/route.ts` to accept a flag that makes `backfillOrgMentions` ignore the saved place (IRLS-14's residual).
 
 ---
 

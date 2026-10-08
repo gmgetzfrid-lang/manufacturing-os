@@ -1094,32 +1094,39 @@ export function visionRetryMessage(pages: number[], cause: string | null, noVisi
  *  then its outcome: a failure with this document and its error in plain
  *  words, so the graph can name a build that failed here (it used to be
  *  swallowed by `catch {}`). A success clears this document's own standing
- *  failure. The outcome is written when the build settles, even after the
- *  cap has let the batch go on. Recording never throws and never fails or
- *  delays the batch beyond its two small writes; with the run state not
- *  installed (20261194 not pasted) nothing is recorded, as before. */
+ *  failure. The start is written beside the build, never before it, and the
+ *  outcome when the build settles, even after the cap has let the batch go
+ *  on; a pass that could not start is recorded within the same cap. The
+ *  batch waits for none of it past the cap, and recording never throws;
+ *  with the run state not installed (20261194 not pasted) nothing is
+ *  recorded, as before. */
 export async function rebuildDocumentMentions(
   doc: { id: string; org_id: string; source_document_id?: string | null },
   capMs = 8_000,
 ): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const capped = (work: Promise<unknown>) => {
+    if (timer) clearTimeout(timer);
+    return Promise.race([work, new Promise((r) => { timer = setTimeout(r, capMs); })]);
+  };
   try {
     const { loadAliasDictionary, indexDocumentMentions } = await import("@/lib/mentionIndexer");
     const dict = await loadAliasDictionary(doc.org_id);
     if (dict.length === 0) return;
-    const run = await startMentionRun(supabaseAdmin, doc.org_id, "ingest", doc.id);
+    const started = startMentionRun(supabaseAdmin, doc.org_id, "ingest", doc.id);
     const build = indexDocumentMentions(doc.org_id, doc.id, dict, doc.source_document_id ?? null).then(
       async () => {
+        const run = await started;
         if (run.standingFailure?.documentId === doc.id) await clearStandingFailure(supabaseAdmin, run);
         await finishMentionRun(supabaseAdmin, run, { outcome: "succeeded" });
       },
-      (e: unknown) => finishMentionRun(supabaseAdmin, run, { outcome: "failed", error: e }),
+      async (e: unknown) => { await finishMentionRun(supabaseAdmin, await started, { outcome: "failed", error: e }); },
     );
-    await Promise.race([build, new Promise((r) => { timer = setTimeout(r, capMs); })]);
+    await capped(build);
   } catch (e) {
     // Mention edges are a bonus — never block ingestion. The pass could not
     // even start (its engine did not load): recorded like a failed build.
-    await recordMentionFailure(supabaseAdmin, doc.org_id, "ingest", doc.id, e);
+    await capped(recordMentionFailure(supabaseAdmin, doc.org_id, "ingest", doc.id, e));
   }
   finally { if (timer) clearTimeout(timer); }
 }

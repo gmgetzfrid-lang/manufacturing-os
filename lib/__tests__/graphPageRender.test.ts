@@ -69,6 +69,7 @@
 //           any of those strings
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { MENTION_RUN_MEMBER_COLUMNS } from "@/lib/mentionRunState";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { GraphNode, GraphEdge, OrgGraph } from "@/lib/orgGraph";
@@ -89,6 +90,7 @@ const g = vi.hoisted(() => ({
   // I-23: what a read of mention_index_runs answers (none: no row).
   runState: { data: null as Record<string, unknown> | null, error: null as { code: string; message: string } | null },
   runReads: 0,
+  runColumns: "" as string,
 }));
 
 vi.mock("next/navigation", () => ({
@@ -161,9 +163,9 @@ vi.mock("@/lib/supabase", () => ({
     auth: { getSession: async () => ({ data: { session: { access_token: "tok" } } }) },
     from: (table: string) => table === "mention_index_runs"
       ? {
-        select: () => ({
+        select: (cols: string) => ({
           eq: () => ({
-            maybeSingle: async () => { g.runReads += 1; return g.runState; },
+            maybeSingle: async () => { g.runReads += 1; g.runColumns = cols; return g.runState; },
           }),
         }),
       }
@@ -249,6 +251,7 @@ beforeEach(() => {
   g.real2D = false;
   g.runState = { data: null, error: null };
   g.runReads = 0;
+  g.runColumns = "";
   g.proposals = { pairs: [], total: 0, capped: false, error: null };
   role.roles = ["Admin"];
   nav.params = new URLSearchParams("");
@@ -854,6 +857,8 @@ describe("IRLS-14 (I-23) — the mention index's run state on the map", () => {
     }, error: null };
     await render(page());
     expect(g.runReads).toBe(1);
+    // Read as the member: the member columns only (20261194 grants no other).
+    expect(g.runColumns).toBe(MENTION_RUN_MEMBER_COLUMNS);
     expect(notice()).toContain("The last mention build that failed ran at ingest (when a document finished indexing), on");
     expect(notice()).toContain(PLAIN);
     expect(btn("Rebuild the mention index")).toBeTruthy();
@@ -868,9 +873,11 @@ describe("IRLS-14 (I-23) — the mention index's run state on the map", () => {
 
   it("a stopped rebuild is offered to continue, with links drawn too; the second press continues it and says so", async () => {
     g.graph = { ...baseGraph(), mentionCoverage: { installed: true, rows: 4, drawn: 2, unmapped: 0, capped: false } };
+    // A place the map reads as the member: its state and count, no cursor.
+    const began = new Date(Date.now() - 60 * 60_000).toISOString();
     g.runState = { data: {
-      org_id: "o1", last_run_source: "map", last_run_started_at: AT, last_run_finished_at: AT, last_run_outcome: "stopped",
-      backfill_cursor: "k2", backfill_started_at: AT, backfill_documents: 2,
+      org_id: "o1", last_run_source: "map", last_run_started_at: began, last_run_finished_at: began, last_run_outcome: "stopped",
+      backfill_state: "time_limit", backfill_started_at: began, backfill_saved_at: began, backfill_documents: 2,
     }, error: null };
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: { body?: string }) => {
       g.fetches.push({ url, body: init?.body ? JSON.parse(init.body) : null });
@@ -883,7 +890,7 @@ describe("IRLS-14 (I-23) — the mention index's run state on the map", () => {
     // The same request as a rebuild: the server continues from the saved place.
     expect(g.fetches.find((f) => f.url === "/api/graph/mentions")?.body).toEqual({ orgId: "o1" });
     expect(host.querySelector('[data-testid="mention-run"]')?.textContent)
-      .toContain("Mention index rebuilt — the stopped rebuild is finished: 3 more documents read (5 documents in all), 5 mentions written.");
+      .toContain("Mention index rebuilt — it continued where the last rebuild left off: 3 more documents read (5 documents in all), 5 mentions written.");
     expect(g.build.length).toBe(2);
     expect(g.runReads).toBe(2);
     // Finished, with links drawn: nothing left to say.
@@ -896,6 +903,43 @@ describe("IRLS-14 (I-23) — the mention index's run state on the map", () => {
     await click(btn("Rebuild the mention index"));
     expect(host.querySelector('[data-testid="mention-run"]')?.textContent)
       .toContain("The rebuild stopped at its time limit after 2 documents (3 mentions written) — the rest were not reached this run. Continue the rebuild to pick up where it stopped.");
+  });
+
+  it("review blocker: a rebuild that is running is said as running — no Continue, and no rebuild button where links are drawn", async () => {
+    g.graph = { ...baseGraph(), mentionCoverage: { installed: true, rows: 4, drawn: 2, unmapped: 0, capped: false } };
+    const began = new Date(Date.now() - 30_000).toISOString();
+    g.runState = { data: {
+      org_id: "o1", last_run_source: "map", last_run_started_at: began, last_run_outcome: "running",
+      backfill_state: "running", backfill_started_at: began, backfill_saved_at: new Date(Date.now() - 20_000).toISOString(), backfill_documents: 2,
+    }, error: null };
+    await render(page());
+    expect(notice()).toContain("A rebuild of the whole index from this map is running now");
+    expect(notice()).toContain("2 documents read so far");
+    expect(notice()).not.toMatch(/time limit|continue it/);
+    expect(btn("Continue the rebuild")).toBeUndefined();
+    expect(btn("Rebuild the mention index")).toBeUndefined();
+  });
+
+  it("review blocker: a rebuild that failed with its place saved says it stopped on a failure, and offers to continue it", async () => {
+    const at = new Date(Date.now() - 10 * 60_000).toISOString();
+    g.runState = { data: {
+      org_id: "o1", last_run_source: "map", last_run_started_at: at, last_run_finished_at: at, last_run_outcome: "failed",
+      last_failed_source: "map", last_failed_at: at, last_failed_error: PLAIN,
+      backfill_state: "failed", backfill_started_at: at, backfill_saved_at: at, backfill_documents: 2,
+    }, error: null };
+    await render(page());
+    expect(notice()).toContain("The last mention build that failed ran from this map (a rebuild of the whole index)");
+    expect(notice()).toContain("stopped on a failure after 2 documents; continue it to try that document again and read the rest.");
+    expect(notice()).not.toMatch(/time limit/);
+    expect(btn("Continue the rebuild")).toBeTruthy();
+  });
+
+  it("a press that found the equipment changed since the rebuild stopped says it started again from the first document", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ documents: 5, mentionsWritten: 6, incomplete: false, startedOver: "equipment_changed" }) })));
+    await render(page());
+    await click(btn("Rebuild the mention index"));
+    expect(host.querySelector('[data-testid="mention-run"]')?.textContent)
+      .toContain("Mention index rebuilt — 5 documents read, 6 mentions written. The equipment list changed since the unfinished rebuild began, so this one started again from the first document.");
   });
 
   it("a failed map-started build is named as today, with a run state present", async () => {

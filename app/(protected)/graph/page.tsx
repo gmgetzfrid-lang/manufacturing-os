@@ -823,22 +823,29 @@ function GraphPageInner() {
       });
       const body = await res.json().catch(() => ({})) as {
         error?: string; documents?: number; mentionsWritten?: number; incomplete?: boolean;
-        resumable?: boolean; continued?: boolean; passDocuments?: number;
+        resumable?: boolean; continued?: boolean; passDocuments?: number; startedOver?: string;
       };
       if (!res.ok) {
         setMentionRun({ running: false, error: true, message: `The mention index could not be rebuilt: ${body.error ?? `HTTP ${res.status}`}` });
         return;
       }
       const docs = Number(body.documents ?? 0), written = Number(body.mentionsWritten ?? 0);
+      // I-23: an unfinished rebuild this press did not continue — it read
+      // from the first document, and says why.
+      const over = body.startedOver === "equipment_changed"
+        ? " The equipment list changed since the unfinished rebuild began, so this one started again from the first document."
+        : body.startedOver === "too_old"
+          ? " The unfinished rebuild was too old to continue, so this one started again from the first document."
+          : "";
       setMentionRun({
         running: false, error: false,
         message: body.incomplete
           ? `The rebuild stopped at its time limit after ${plural(docs, "document")} (${plural(written, "mention")} written) — the rest were not reached this run.`
             // I-23: its place is saved — the next press continues after it.
-            + (body.resumable ? " Continue the rebuild to pick up where it stopped." : "")
-          : body.continued
-            ? `Mention index rebuilt — the stopped rebuild is finished: ${plural(docs, "more document")} read (${plural(Number(body.passDocuments ?? docs), "document")} in all), ${plural(written, "mention")} written.`
-            : `Mention index rebuilt — ${plural(docs, "document")} read, ${plural(written, "mention")} written.`,
+            + over + (body.resumable ? " Continue the rebuild to pick up where it stopped." : "")
+          : (body.continued
+            ? `Mention index rebuilt — it continued where the last rebuild left off: ${plural(docs, "more document")} read (${plural(Number(body.passDocuments ?? docs), "document")} in all), ${plural(written, "mention")} written.`
+            : `Mention index rebuilt — ${plural(docs, "document")} read, ${plural(written, "mention")} written.`) + over,
       });
       setReloadNonce((x) => x + 1);
     } catch (e) {

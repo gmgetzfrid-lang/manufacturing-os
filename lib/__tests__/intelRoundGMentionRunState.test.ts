@@ -16,6 +16,8 @@
 //     every build, failure and rebuild behaves exactly as before the file.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { db, resetDb, rowsOf, type Row } from "./knowledgeFakeDb";
 
 vi.mock("@/lib/supabaseAdmin", async () => ({ supabaseAdmin: (await import("./knowledgeFakeDb")).fakeAdmin }));
@@ -28,11 +30,12 @@ vi.mock("@/lib/ai/keyVault", () => ({ openAiKey: (k: string) => k }));
 
 import { NextRequest } from "next/server";
 import { rebuildDocumentMentions } from "@/lib/knowledgeIngest";
-import { backfillOrgMentions } from "@/lib/mentionIndexer";
+import { backfillOrgMentions, dictionaryFingerprint } from "@/lib/mentionIndexer";
 import { POST as mentionsRoute } from "@/app/api/graph/mentions/route";
 import {
-  startMentionRun, clearStandingFailure, readMentionRunState, parseMentionRunRow, plainBuildError, runStateMissing,
-  MENTION_RUN_COLUMNS,
+  startMentionRun, finishMentionRun, clearStandingFailure, readMentionRunState, parseMentionRunRow, plainBuildError, runStateMissing,
+  readBackfillPlace, MENTION_RUN_COLUMNS, MENTION_RUN_MEMBER_COLUMNS, REBUILD_ALIVE_MS, BACKFILL_RESUME_MAX_MS,
+  type BackfillPlace,
 } from "@/lib/mentionRunState";
 import { fakeAdmin } from "./knowledgeFakeDb";
 import { mentionNotice, mentionRunNotes, formatRunTime } from "@/lib/graphView";
@@ -125,14 +128,17 @@ describe("IRLS-14 (I-23) — reproduction on the engine as it was: a build that 
     expect(first).toMatchObject({ documents: 2, incomplete: true, resumable: true });
     expect(chunkReads()).toEqual(["k1", "k2"]);
     expect(runRow()).toMatchObject({
-      last_run_source: "map", last_run_outcome: "stopped", backfill_cursor: "k2", backfill_documents: 2,
+      last_run_source: "map", last_run_outcome: "stopped", backfill_cursor: "k2", backfill_documents: 2, backfill_state: "time_limit",
     });
     db.ops = [];
     const second = await backfillOrgMentions(ORG, undefined, clock.deadlineAfter(10));
     // It reads k3…k5 only — never k1 and k2 again.
     expect(chunkReads()).toEqual(["k3", "k4", "k5"]);
     expect(second).toMatchObject({ documents: 3, incomplete: false, continued: true, passDocuments: 5 });
-    expect(runRow()).toMatchObject({ last_run_outcome: "succeeded", backfill_cursor: null, backfill_documents: 0 });
+    expect("startedOver" in second).toBe(false);
+    expect(runRow()).toMatchObject({
+      last_run_outcome: "succeeded", backfill_cursor: null, backfill_documents: 0, backfill_state: null, backfill_dictionary: null,
+    });
     // The map ends with every document's mentions, as one uninterrupted rebuild would.
     expect(mentionRows()).toEqual([
       "k1:a-p101:1", "k2:a-p101:1", "k3:a-p101:1", "k3:a-v7:1", "k4:a-p101:1", "k5:a-p101:1",
@@ -222,7 +228,7 @@ describe("IRLS-14 (I-23) — a rebuild from the map", () => {
       last_run_source: "map", last_run_outcome: "failed",
       last_failed_source: "map", last_failed_document_id: "k3",
       last_failed_error: "Clearing the document's earlier links failed: the database refused it (permission denied).",
-      backfill_cursor: "k2", backfill_documents: 2,
+      backfill_cursor: "k2", backfill_documents: 2, backfill_state: "failed",
     });
     db.hooks = [];
     db.ops = [];
@@ -267,9 +273,9 @@ describe("IRLS-14 (I-23) — a rebuild from the map", () => {
       clock.now += 6_000;
     });
     await backfillOrgMentions(ORG);
-    expect(seenAtThird).toMatchObject({ last_run_outcome: "running", backfill_cursor: "k2", backfill_documents: 2 });
+    expect(seenAtThird).toMatchObject({ last_run_outcome: "running", backfill_cursor: "k2", backfill_documents: 2, backfill_state: "running" });
     // Finished: the saved place is cleared.
-    expect(runRow()).toMatchObject({ last_run_outcome: "succeeded", backfill_cursor: null, backfill_documents: 0 });
+    expect(runRow()).toMatchObject({ last_run_outcome: "succeeded", backfill_cursor: null, backfill_documents: 0, backfill_state: null });
   });
 
   it("a rebuild that reads to the end clears a failure that stood before it began — never one recorded after it began", async () => {
@@ -295,17 +301,20 @@ describe("IRLS-14 (I-23) — a rebuild from the map", () => {
 });
 
 describe("IRLS-14 (I-23) — lib/mentionRunState.ts", () => {
-  it("reads the member's row, and null when the table, a column or the read is not there — never throws", async () => {
+  it("reads the member's row — the member columns only — and null when the table, a column or the read is not there; never throws", async () => {
     await rebuildDocumentMentions({ id: "k1", org_id: ORG, source_document_id: null });
+    db.ops = [];
     const state = await readMentionRunState(admin, ORG);
-    expect(state?.lastRun).toMatchObject({ source: "ingest", outcome: "succeeded", documentId: "k1" });
+    expect(runOps()[0].columns).toEqual(MENTION_RUN_MEMBER_COLUMNS.split(",").map((c) => c.trim()));
+    // A member's read carries no knowledge-document id (20261194 grants none).
+    expect(state?.lastRun).toMatchObject({ source: "ingest", outcome: "succeeded", documentId: null });
     expect(state?.lastFailure).toBeNull();
     expect(state?.backfill).toBeNull();
     expect(await readMentionRunState(admin, "other-org")).toBeNull();
     unpasted();
     expect(await readMentionRunState(admin, ORG)).toBeNull();
     db.missingTables = [];
-    db.missingColumns = { [RUNS]: ["backfill_cursor"] };
+    db.missingColumns = { [RUNS]: ["backfill_state"] };
     expect(await readMentionRunState(admin, ORG)).toBeNull();
     const broken = { from: () => { throw new TypeError("not a client"); } } as unknown as SupabaseClient;
     expect(await readMentionRunState(broken, ORG)).toBeNull();
@@ -349,9 +358,20 @@ describe("IRLS-14 (I-23) — lib/mentionRunState.ts", () => {
       .toEqual({ lastRun: null, lastFailure: null, backfill: null });
     expect(parseMentionRunRow({ org_id: ORG, last_failed_source: "map", last_failed_at: "2026-10-07T10:00:00Z", last_failed_error: "  " })?.lastFailure)
       .toEqual({ source: "map", at: "2026-10-07T10:00:00Z", error: "The build failed and recorded no reason.", documentId: null });
-    expect(parseMentionRunRow({ org_id: ORG, backfill_cursor: "k2", backfill_documents: -3 })?.backfill).toEqual({ cursor: "k2", startedAt: null, documents: 0 });
-    // The columns the reader names are the columns 20261194 creates (its shape test pins the file side).
-    expect(MENTION_RUN_COLUMNS.split(",").map((c) => c.trim())).toHaveLength(14);
+    expect(parseMentionRunRow({ org_id: ORG, backfill_cursor: "k2", backfill_documents: -3 })?.backfill)
+      .toEqual({ cursor: "k2", startedAt: null, documents: 0, state: null, savedAt: null, dictionary: null });
+    // A member's read carries the place's state and count, never its cursor or fingerprint.
+    expect(parseMentionRunRow({ org_id: ORG, backfill_state: "failed", backfill_documents: 2, backfill_started_at: "2026-10-07T10:00:00Z" })?.backfill)
+      .toEqual({ cursor: null, startedAt: "2026-10-07T10:00:00Z", documents: 2, state: "failed", savedAt: null, dictionary: null });
+    expect(parseMentionRunRow({ org_id: ORG, backfill_state: "paused" })?.backfill).toBeNull();
+    // The columns the builders name are the columns 20261194 creates (its shape test pins the file side);
+    // the member's are a subset without an id, the cursor or the fingerprint.
+    const all = MENTION_RUN_COLUMNS.split(",").map((c) => c.trim());
+    const member = MENTION_RUN_MEMBER_COLUMNS.split(",").map((c) => c.trim());
+    expect(all).toHaveLength(17);
+    expect(member).toHaveLength(12);
+    for (const c of member) expect(all, c).toContain(c);
+    for (const c of ["last_run_id", "last_run_document_id", "last_failed_document_id", "backfill_cursor", "backfill_dictionary"]) expect(member, c).not.toContain(c);
   });
 
   it("an error in plain words: the step and why, never a table, column or policy name", () => {
@@ -394,7 +414,8 @@ describe("IRLS-14 (I-23) — the map names the build (lib/graphView.ts mentionNo
       lastRun: { source: "map", startedAt: FAILED_AT, finishedAt: FAILED_AT, outcome: "succeeded", documentId: null },
       lastFailure: null, backfill: null,
     };
-    const running: MentionRunState = { ...succeeded, lastRun: { ...succeeded.lastRun!, outcome: "running", finishedAt: null, startedAt: new Date(NOW - 60_000).toISOString() } };
+    // An ingest-time build that is running adds nothing (a rebuild from the map that is running is said — below).
+    const running: MentionRunState = { ...succeeded, lastRun: { ...succeeded.lastRun!, source: "ingest", outcome: "running", finishedAt: null, startedAt: new Date(NOW - 60_000).toISOString() } };
     const shapes: Array<[MentionCoverage | undefined, number, unknown]> = [
       [cov({ rows: 3, drawn: 2 }), 10, null],
       [undefined, 10, null],
@@ -431,13 +452,16 @@ describe("IRLS-14 (I-23) — the map names the build (lib/graphView.ts mentionNo
   it("an index that is not installed, or a map with no equipment to name, says only what it said", () => {
     expect(mentionNotice(cov({ installed: false }), 10, failedAt("ingest"), NOW)).toEqual({ text: TEXTS.notInstalled, canRebuild: false });
     expect(mentionNotice(cov(), 0, failedAt("ingest"), NOW)).toEqual({ text: TEXTS.noEquipment, canRebuild: false });
+    // Fix pass (review minor): no equipment on the map means nothing is added even where rows were read.
+    expect(mentionNotice(cov({ rows: 3 }), 0, failedAt("ingest"), NOW)).toEqual({ text: TEXTS.rowsNotDrawn, canRebuild: false });
     expect(mentionNotice(undefined, 10, failedAt("ingest"), NOW)).toBeNull();
   });
 
   it("a stopped rebuild is offered to continue — with links drawn too, so the next press is always reachable", () => {
     const stopped: MentionRunState = {
       lastRun: { source: "map", startedAt: FAILED_AT, finishedAt: FAILED_AT, outcome: "stopped", documentId: null },
-      lastFailure: null, backfill: { cursor: "k2", startedAt: FAILED_AT, documents: 2 },
+      lastFailure: null,
+      backfill: { cursor: null, startedAt: FAILED_AT, documents: 2, state: "time_limit", savedAt: FAILED_AT, dictionary: null },
     };
     for (const c of [cov(), cov({ rows: 5, drawn: 2 })]) {
       const m = mentionNotice(c, 10, stopped, NOW)!;
@@ -456,5 +480,216 @@ describe("IRLS-14 (I-23) — the map names the build (lib/graphView.ts mentionNo
     expect(mentionNotice(cov(), 10, stale, NOW)!.text).toContain(`The last mention build, at ingest (when a document finished indexing), started on ${formatRunTime(started)} and never reported how it ended — it may have been cut off before it finished.`);
     expect(mentionNotice(cov(), 10, stale, NOW - 10 * 60_000)).toEqual({ text: TEXTS.cannotTell, canRebuild: true });
     expect(formatRunTime("not a time")).toBe("an unknown time");
+  });
+});
+
+// ── Fix pass (review of I-23) ────────────────────────────────────────────────
+
+describe("I-23 fix pass — a stopped rebuild is continued only with the dictionary it read with, and only while it is recent", () => {
+  it("reproduction of the review's blocker: stop after 2 documents, add equipment, press again — the read starts at k1, and the press says why", async () => {
+    const clock = documentClock();
+    await backfillOrgMentions(ORG, undefined, clock.deadlineAfter(2));
+    expect(runRow()).toMatchObject({ backfill_cursor: "k2", backfill_state: "time_limit" });
+    db.tables.assets.push({ id: "a-x9", org_id: ORG, tag: "X-9", archived: false });
+    db.ops = [];
+    const second = await backfillOrgMentions(ORG, undefined, clock.deadlineAfter(10));
+    expect(chunkReads()).toEqual(DOCS);
+    expect(second).toMatchObject({ documents: 5, incomplete: false, startedOver: "equipment_changed" });
+    expect("continued" in second).toBe(false);
+    expect(runRow()).toMatchObject({ last_run_outcome: "succeeded", backfill_cursor: null, backfill_state: null });
+  });
+
+  it("a changed alias counts too; a press that starts over and stops overwrites the place with its own (new dictionary, its own start and count)", async () => {
+    const clock = documentClock();
+    await backfillOrgMentions(ORG, undefined, clock.deadlineAfter(2));
+    const before = { ...runRow() };
+    db.tables.asset_aliases.push({ id: "al1", org_id: ORG, asset_id: "a-p101", alias: "the north pump", origin: "human" });
+    db.ops = [];
+    const second = await backfillOrgMentions(ORG, undefined, clock.deadlineAfter(3));
+    expect(chunkReads()).toEqual(["k1", "k2", "k3"]);
+    expect(second).toMatchObject({ documents: 3, incomplete: true, resumable: true, startedOver: "equipment_changed" });
+    const after = runRow();
+    expect(after).toMatchObject({ backfill_cursor: "k3", backfill_documents: 3, backfill_state: "time_limit" });
+    expect(after.backfill_dictionary).not.toBe(before.backfill_dictionary);
+    expect(Date.parse(String(after.backfill_started_at))).toBeGreaterThanOrEqual(Date.parse(String(before.backfill_started_at)));
+    // The third press, the dictionary unchanged since, continues the new place.
+    db.ops = [];
+    const third = await backfillOrgMentions(ORG, undefined, clock.deadlineAfter(10));
+    expect(chunkReads()).toEqual(["k4", "k5"]);
+    expect(third).toMatchObject({ continued: true, passDocuments: 5 });
+  });
+
+  it("a stopped rebuild that began more than BACKFILL_RESUME_MAX_MS ago is not continued", async () => {
+    const clock = documentClock();
+    await backfillOrgMentions(ORG, undefined, clock.deadlineAfter(2));
+    db.tables[RUNS][0].backfill_started_at = new Date(Date.parse(String(runRow().backfill_started_at)) - BACKFILL_RESUME_MAX_MS - 60_000).toISOString();
+    db.ops = [];
+    const second = await backfillOrgMentions(ORG, undefined, clock.deadlineAfter(10));
+    expect(chunkReads()).toEqual(DOCS);
+    expect(second).toMatchObject({ documents: 5, startedOver: "too_old" });
+  });
+
+  it("a press claims the place from its start — 'running', nothing read yet, the dictionary's fingerprint — so the map never offers to continue while it reads", async () => {
+    let atFirst: Row | undefined;
+    db.hooks.push((op) => { if (op.table === "knowledge_chunks" && op.kind === "select" && !atFirst) atFirst = { ...runRow() }; });
+    await backfillOrgMentions(ORG);
+    expect(atFirst).toMatchObject({ last_run_outcome: "running", backfill_state: "running", backfill_cursor: null, backfill_documents: 0 });
+    expect(atFirst!.backfill_dictionary).toBe(dictionaryFingerprint([
+      { assetId: "a-p101", alias: "P-101", origin: "tag" }, { assetId: "a-v7", alias: "V-7", origin: "tag" },
+    ]));
+    const seen = parseMentionRunRow(atFirst as never);
+    expect(mentionNotice({ installed: true, rows: 4, drawn: 2, unmapped: 0, capped: false }, 10, seen, Date.now())).toMatchObject({ canRebuild: false });
+  });
+
+  it("a rebuild that fails on its first document leaves nothing to continue: the map names the failure only, and the next press reads from k1", async () => {
+    failCleanupOf("k1");
+    await expect(backfillOrgMentions(ORG)).rejects.toThrow(/mention index cleanup/);
+    expect(runRow()).toMatchObject({ backfill_state: "failed", backfill_cursor: null, backfill_documents: 0, last_failed_document_id: "k1" });
+    const notice = mentionNotice({ installed: true, rows: 0, drawn: 0, unmapped: 0, capped: false }, 10, parseMentionRunRow(runRow() as never), Date.now())!;
+    expect(notice.text).toContain("The last mention build that failed ran from this map");
+    expect(notice.text).not.toMatch(/time limit|stopped on a failure after|continue it/);
+    expect("canContinue" in notice).toBe(false);
+    db.hooks = [];
+    db.ops = [];
+    const again = await backfillOrgMentions(ORG);
+    expect(chunkReads()).toEqual(DOCS);
+    expect(Object.keys(again).sort()).toEqual(["assetsTouched", "chunksScanned", "documents", "incomplete", "lowConfidence", "mentionsWritten"]);
+  });
+
+  it("the dictionary's fingerprint is its content, not its order — any asset, alias or origin changes it", () => {
+    const d = [
+      { assetId: "a1", alias: "P-101", origin: "tag" as const }, { assetId: "a2", alias: "north pump", origin: "human" as const },
+    ];
+    const fp = dictionaryFingerprint(d);
+    expect(fp).toMatch(/^[0-9a-f]{64}$/);
+    expect(dictionaryFingerprint([...d].reverse())).toBe(fp);
+    expect(dictionaryFingerprint([...d, { assetId: "a3", alias: "V-7", origin: "tag" }])).not.toBe(fp);
+    expect(dictionaryFingerprint([d[0], { ...d[1], alias: "south pump" }])).not.toBe(fp);
+    expect(dictionaryFingerprint([d[0], { ...d[1], origin: "vision" }])).not.toBe(fp);
+    expect(dictionaryFingerprint([d[0], { ...d[1], assetId: "a9" }])).not.toBe(fp);
+  });
+});
+
+describe("I-23 fix pass — the map says what the rebuild's place is: running, stopped at its time limit, stopped on a failure, cut off, too old", () => {
+  const cov = (over: Partial<MentionCoverage> = {}): MentionCoverage =>
+    ({ installed: true, rows: 0, drawn: 0, unmapped: 0, capped: false, ...over });
+  const NOW = Date.parse("2026-10-07T12:00:00Z");
+  const ago = (ms: number) => new Date(NOW - ms).toISOString();
+  const BEGAN = ago(60 * 60_000);
+  const PLAIN = "Clearing the document's earlier links failed: the database refused it (permission denied).";
+  const place = (over: Partial<BackfillPlace>): BackfillPlace =>
+    ({ cursor: null, startedAt: BEGAN, documents: 2, state: "time_limit", savedAt: ago(30 * 60_000), dictionary: null, ...over });
+  const state = (backfill: BackfillPlace | null, extra: Partial<MentionRunState> = {}): MentionRunState =>
+    ({ lastRun: null, lastFailure: null, backfill, ...extra });
+
+  it("review blocker, case 1: a rebuild 30 s in (its place saved 20 s ago) is said as running — never 'stopped at its time limit', never offered to continue", () => {
+    const run = state(place({ state: "running", savedAt: ago(20_000) }), {
+      lastRun: { source: "map", startedAt: ago(30_000), finishedAt: null, outcome: "running", documentId: null },
+    });
+    const drawn = mentionNotice(cov({ rows: 5, drawn: 2 }), 10, run, NOW)!;
+    expect(drawn.text).toBe(`Some “mentioned in the text” links may be missing from this map. A rebuild of the whole index from this map is running now (started ${formatRunTime(BEGAN)}, 2 documents read so far).`);
+    expect(drawn.canRebuild).toBe(false);
+    expect("canContinue" in drawn).toBe(false);
+    // Where the coverage offers the rebuild anyway, the offer stays — labelled as a rebuild, not a continue.
+    const none = mentionNotice(cov(), 10, run, NOW)!;
+    expect(none.canRebuild).toBe(true);
+    expect("canContinue" in none).toBe(false);
+    expect(none.text).not.toMatch(/time limit|continue it/);
+    // The first seconds of a press, before its place: the last build says it.
+    const early = state(null, { lastRun: { source: "map", startedAt: ago(5_000), finishedAt: null, outcome: "running", documentId: null } });
+    expect(mentionRunNotes(early, NOW)).toEqual({
+      text: `A rebuild of the whole index from this map is running now (started ${formatRunTime(ago(5_000))}).`, canContinue: false, canRebuild: false,
+    });
+  });
+
+  it("review blocker, case 2: a rebuild that failed on k3 says it stopped on a failure after 2 documents — never at its time limit", () => {
+    const run = state(place({ state: "failed", savedAt: ago(10 * 60_000) }), {
+      lastRun: { source: "map", startedAt: ago(11 * 60_000), finishedAt: ago(10 * 60_000), outcome: "failed", documentId: null },
+      lastFailure: { source: "map", at: ago(10 * 60_000), error: PLAIN, documentId: null },
+    });
+    const m = mentionNotice(cov(), 10, run, NOW)!;
+    expect(m.text).toContain(`The last mention build that failed ran from this map (a rebuild of the whole index), on ${formatRunTime(ago(10 * 60_000))}. ${PLAIN}`);
+    expect(m.text).toContain(`The last rebuild from this map (started ${formatRunTime(BEGAN)}) stopped on a failure after 2 documents; continue it to try that document again and read the rest.`);
+    expect(m.text).not.toMatch(/time limit/);
+    expect(m).toMatchObject({ canRebuild: true, canContinue: true });
+  });
+
+  it("a place saved as reading but not since REBUILD_ALIVE_MS is a press that was cut off — offered to continue, said once", () => {
+    const run = state(place({ state: "running", savedAt: ago(REBUILD_ALIVE_MS + 1_000) }), {
+      lastRun: { source: "map", startedAt: ago(20 * 60_000), finishedAt: null, outcome: "running", documentId: null },
+    });
+    const m = mentionNotice(cov({ rows: 5, drawn: 2 }), 10, run, NOW)!;
+    expect(m.text).toBe(`Some “mentioned in the text” links may be missing from this map. The last rebuild from this map (started ${formatRunTime(BEGAN)}) was cut off after 2 documents without reporting how it ended; continue it to pick up where it last saved its place.`);
+    expect(m).toMatchObject({ canRebuild: true, canContinue: true });
+  });
+
+  it("a rebuild that began more than BACKFILL_RESUME_MAX_MS ago is said too old to continue — the rebuild is offered, not the continue", () => {
+    const old = ago(BACKFILL_RESUME_MAX_MS + 60 * 60_000);
+    const m = mentionNotice(cov({ rows: 5, drawn: 2 }), 10, state(place({ startedAt: old })), NOW)!;
+    expect(m.text).toContain(`The last rebuild from this map (started ${formatRunTime(old)}) stopped after 2 documents and is too old to continue — a rebuild reads every document again.`);
+    expect(m.canRebuild).toBe(true);
+    expect("canContinue" in m).toBe(false);
+  });
+
+  it("readBackfillPlace: the readings, by state, save time, start time and count", () => {
+    expect(readBackfillPlace(null, NOW)).toBeNull();
+    expect(readBackfillPlace(place({ state: "running", savedAt: ago(1_000) }), NOW)).toEqual({ kind: "running" });
+    expect(readBackfillPlace(place({ state: "running", savedAt: ago(1_000), documents: 0 }), NOW)).toEqual({ kind: "running" });
+    expect(readBackfillPlace(place({ state: "running", savedAt: ago(REBUILD_ALIVE_MS + 1) }), NOW)).toEqual({ kind: "continue", why: "cut_off" });
+    expect(readBackfillPlace(place({ state: "running", savedAt: null }), NOW)).toEqual({ kind: "continue", why: "cut_off" });
+    expect(readBackfillPlace(place({ state: "time_limit" }), NOW)).toEqual({ kind: "continue", why: "time_limit" });
+    expect(readBackfillPlace(place({ state: "failed" }), NOW)).toEqual({ kind: "continue", why: "failed" });
+    expect(readBackfillPlace(place({ state: "failed", documents: 0 }), NOW)).toEqual({ kind: "none" });
+    expect(readBackfillPlace(place({ startedAt: ago(BACKFILL_RESUME_MAX_MS + 1) }), NOW)).toEqual({ kind: "expired" });
+    expect(readBackfillPlace(place({ startedAt: null }), NOW)).toEqual({ kind: "expired" });
+  });
+});
+
+describe("I-23 fix pass — checked writes, and the cap", () => {
+  it("SAF-18's census judges lib/mentionRunState.ts: every update is on a `supabase` chain routed through checkedWrite", () => {
+    const text = readFileSync(join(process.cwd(), "lib/mentionRunState.ts"), "utf8");
+    // The census's own statement rule (lib/__tests__/checkedWrite.test.ts writeSites).
+    const sites = [...text.matchAll(/\.(update|delete)\(/g)].map((m) => {
+      const at = m.index ?? 0;
+      const start = Math.max(text.lastIndexOf(";", at), text.lastIndexOf("{", at)) + 1;
+      const end = text.indexOf(";", at);
+      return text.slice(start, end < 0 ? text.length : end);
+    });
+    expect(sites).toHaveLength(4);
+    for (const stmt of sites) {
+      expect(stmt, stmt).toContain("supabase");
+      expect(stmt, stmt).toContain("checkedWrite(");
+    }
+  });
+
+  it("finishMentionRun answers whether the end landed: a build superseded by a later one is false, and not logged as a refusal", async () => {
+    const a = await startMentionRun(admin, ORG, "ingest", "k1");
+    const b = await startMentionRun(admin, ORG, "map");
+    expect(await finishMentionRun(admin, a, { outcome: "succeeded" })).toBe(false);
+    expect(runRow()).toMatchObject({ last_run_id: b.runId, last_run_outcome: "running" });
+    expect(await finishMentionRun(admin, b, { outcome: "succeeded" })).toBe(true);
+    expect(runRow()).toMatchObject({ last_run_id: b.runId, last_run_outcome: "succeeded" });
+    expect(logged.mock.calls.filter((c: unknown[]) => c[0] === "[mentionRunState]")).toEqual([]);
+    // A database error on the end is logged, with its code.
+    const c = await startMentionRun(admin, ORG, "map");
+    db.hooks.push((op) => op.table === RUNS && op.kind === "update" ? { error: { code: "40001", message: "could not serialize access" } } : undefined);
+    expect(await finishMentionRun(admin, c, { outcome: "succeeded" })).toBe(false);
+    expect(logged).toHaveBeenCalledWith("[mentionRunState]", expect.stringMatching(/^the build's end was not recorded: .*\(40001\)$/));
+  });
+
+  it("review minor: the ingest pass waits no longer than its cap for the run state — a slow start, or a slow failure record, never holds the batch", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    db.asyncHooks.push(async (op) => { if (op.table === RUNS && op.kind === "upsert") await gate; });
+    const held = <T,>(p: Promise<T>) => Promise.race([p.then(() => "done"), new Promise((r) => setTimeout(() => r("held"), 3_000))]);
+    expect(await held(rebuildDocumentMentions({ id: "k1", org_id: ORG, source_document_id: null }, 20))).toBe("done");
+    // The build itself went on beside the start.
+    await vi.waitFor(() => expect(mentionRows()).toEqual(["k1:a-p101:1"]));
+    // A pass that could not start (its dictionary read threw): recorded within the same cap.
+    db.hooks.push((op) => { if (op.table === "assets") throw new Error("socket hang up"); });
+    expect(await held(rebuildDocumentMentions({ id: "k2", org_id: ORG, source_document_id: null }, 20))).toBe("done");
+    release();
+    await vi.waitFor(() => expect(runRow()).toMatchObject({ last_failed_source: "ingest", last_failed_document_id: "k2" }));
+    await vi.waitFor(() => expect(runRow()).toMatchObject({ last_run_document_id: "k1", last_run_outcome: "succeeded" }));
   });
 });
