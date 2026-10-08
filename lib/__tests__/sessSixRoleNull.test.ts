@@ -557,8 +557,8 @@ describe("OFF-8 — every key the app keeps in this browser is in RoleContext's 
     expect(seen("components/ui/FirstRunHint.tsx")).toContain("local:first_run_hint:…");                              // a constant + a prop
     expect(seen("app/layout.tsx")).toContain("local:mfg-os.density");                                                 // an inline script
     expect(seen(ROLE_CONTEXT)).toEqual(expect.arrayContaining(["local:manufacturingos.lastIdentity", "session:manufacturingos.lastIdentity"]));
-    // OFF-15 (PS-P6): the uid-keyed stamp list (a local arrow's template), the legacy device-wide key (a constant, read until it is moved) and the device's moved marker (a constant) — in lib/customStamps.ts, which the viewer and RoleContext's noteIdentity call
-    expect(seen("lib/customStamps.ts")).toEqual(expect.arrayContaining(["local:manufacturingos.customStamps:…", "local:manufacturingos.customStamps", "local:manufacturingos.customStamps.moved"]));
+    // OFF-15 (PS-P6): the uid-keyed stamp list (a local arrow's template), the legacy device-wide key (a constant, read until it is moved), the device's moved marker and its ring of recent uids (constants) — in lib/customStamps.ts, which the viewer and RoleContext's noteIdentity call
+    expect(seen("lib/customStamps.ts")).toEqual(expect.arrayContaining(["local:manufacturingos.customStamps:…", "local:manufacturingos.customStamps", "local:manufacturingos.customStamps.moved", "local:manufacturingos.customStamps.recentUids"]));
     expect(seen("components/viewers/FullScreenViewer.tsx")).toEqual([]); // the viewer reads and writes its stamps only through lib/customStamps.ts
   }, CENSUS_TIMEOUT_MS);
 
@@ -612,14 +612,15 @@ describe("OFF-8 — every key the app keeps in this browser is in RoleContext's 
     for (const k of ["intel-status-", "schema-gaps-"]) { expect(kind("local", k), k).toBe("cache"); expect(kind("session", k), k).toBe("cache"); }
     for (const k of ["org-graph-", "mfg-os:lib:"]) expect(kind("session", k), k).toBe("cache");
     expect(kind("local", "dismissed:")).toBe("held");
-    // OFF-15 (PS-P6): a person's uploaded stamp images are their own work, keyed by uid — account / identity, as the package brief directs:
-    // kept across their sign-out, ended before a different identity reads anything (so a device keeps at most one identity's list); the
+    // OFF-15 (PS-P6, review fix 5): a person's uploaded stamp images are their own work, keyed by uid — "uid-scoped", no kind: taken by no
+    // purge, so kept across their sign-out AND another identity's run of the app here (review fix 4's kind "identity" ended them at a
+    // colleague's sign-in — a loss against c537602); what ends them is the device's ring of the last eight identities (a device row); the
     // legacy device-wide list (whose is unknown) is a device row, so no purge drops it before the first sign-in's claim takes it; the moved
     // marker is a device flag
-    expect(kind("local", "manufacturingos.customStamps:")).toBe("identity");
+    expect(kind("local", "manufacturingos.customStamps:")).toBeUndefined();
     expect(kind("local", "manufacturingos.customStamps")).toBeUndefined();
     const stampCls = (key: string) => CLIENT_STORAGE_INVENTORY.find((r) => r.store === "local" && r.key === key)?.class;
-    expect(["manufacturingos.customStamps:", "manufacturingos.customStamps", "manufacturingos.customStamps.moved"].map(stampCls)).toEqual(["account", "device", "device"]);
+    expect(["manufacturingos.customStamps:", "manufacturingos.customStamps", "manufacturingos.customStamps.moved", "manufacturingos.customStamps.recentUids"].map(stampCls)).toEqual(["uid-scoped", "device", "device", "device"]);
     // which end takes which kind
     expect(["cache", "held", "identity"].map((k) => purgeTakes("all", k as "cache"))).toEqual([true, true, true]);
     expect(["cache", "held", "identity"].map((k) => purgeTakes("signout", k as "cache"))).toEqual([true, true, false]);
@@ -638,7 +639,7 @@ describe("OFF-8 — the purge", () => {
     L.setItem("manufacturingos.preferMicrosoft", "true"); L.setItem("manufacturingos.rememberSession", "true");
     L.setItem("sb-ref-auth-token", "tok");
     L.setItem("mfgos.theme.mode", "dark"); L.setItem("orgGraph:settings:o1", "{}"); L.setItem("manufacturingos.dashboard.u1", "{}");
-    L.setItem("manufacturingos.customStamps", "[]"); L.setItem("manufacturingos.customStamps:u1", "[]"); L.setItem("manufacturingos.customStamps.moved", "1");
+    L.setItem("manufacturingos.customStamps", "[]"); L.setItem("manufacturingos.customStamps:u1", "[]"); L.setItem("manufacturingos.customStamps.moved", "1"); L.setItem("manufacturingos.customStamps.recentUids", "[\"u1\"]");
     S.setItem("org-graph-o1", "{}"); S.setItem("mfg-os:lib:l1:o1", "{}"); S.setItem("kl-active-thread-l1", "[]");
     S.setItem("manufacturingos.silentSSOAttempted", "1"); S.setItem("manufacturingos.signInNext", "{}"); S.setItem("kl-embed-nudge-at", "1");
   };
@@ -649,9 +650,9 @@ describe("OFF-8 — the purge", () => {
     purgeAccountStorage(window.localStorage, "local", "all");
     purgeAccountStorage(window.sessionStorage, "session", "all");
     expect(keys(window.localStorage)).toEqual([
-      "manufacturingos.activeOrgId", "manufacturingos.activeOrgId.owner", "manufacturingos.customStamps", "manufacturingos.customStamps.moved", "manufacturingos.dashboard.u1",
+      "manufacturingos.activeOrgId", "manufacturingos.activeOrgId.owner", "manufacturingos.customStamps", "manufacturingos.customStamps.moved", "manufacturingos.customStamps.recentUids", "manufacturingos.customStamps:u1", "manufacturingos.dashboard.u1",
       "manufacturingos.preferMicrosoft", "manufacturingos.rememberSession", "mfgos.theme.mode", "orgGraph:settings:o1", "sb-ref-auth-token",
-    ]);
+    ]); // OFF-15 review fix 5: the uid-scoped stamp list and the ring stay, like the dashboard mirror
     expect(keys(window.sessionStorage)).toEqual(["kl-embed-nudge-at", "manufacturingos.signInNext", "manufacturingos.silentSSOAttempted"]);
   });
 
@@ -660,7 +661,7 @@ describe("OFF-8 — the purge", () => {
     purgeAccountStorage(window.localStorage, "local", "signout");
     purgeAccountStorage(window.sessionStorage, "session", "signout");
     expect(keys(window.localStorage)).toEqual([
-      "manufacturingos.activeOrgId", "manufacturingos.activeOrgId.owner", "manufacturingos.customStamps", "manufacturingos.customStamps.moved", "manufacturingos.customStamps:u1", "manufacturingos.dashboard.u1",
+      "manufacturingos.activeOrgId", "manufacturingos.activeOrgId.owner", "manufacturingos.customStamps", "manufacturingos.customStamps.moved", "manufacturingos.customStamps.recentUids", "manufacturingos.customStamps:u1", "manufacturingos.dashboard.u1",
       LAST_IDENTITY_KEY, "manufacturingos.preferMicrosoft", "manufacturingos.rememberSession", "mfg-os.palette.recents", "mfgos.theme.mode",
       "orgGraph:pos3d:o1", "orgGraph:pos:o1", "orgGraph:settings:o1", "sb-ref-auth-token",
     ].sort());
@@ -681,6 +682,7 @@ describe("OFF-8 — the purge", () => {
     expect(window.localStorage.getItem("dismissed:u1:o1:hint")).toBe("1");
     expect(window.localStorage.getItem("manufacturingos.customStamps:u1")).toBe("[]");
     expect(window.localStorage.getItem("manufacturingos.customStamps")).toBe("[]");
+    expect(window.localStorage.getItem("manufacturingos.customStamps.recentUids")).toBe("[\"u1\"]");
     expect(window.localStorage.getItem(LAST_IDENTITY_KEY)).toBe("u1"); // so a different identity later still ends the held data
     expect(window.localStorage.getItem("manufacturingos.activeOrgId")).toBe("o1");
   });
@@ -808,7 +810,7 @@ describe("OFF-8 — the provider's branches, rendered", () => {
     expect(idbDeleted).toEqual([]);
   });
 
-  it("review fix: a DIFFERENT person signing in after a SIGNED_OUT ends all of it — layout, recents, ask thread, hand-off, uploaded stamps — before anything of theirs is read", async () => {
+  it("review fix: a DIFFERENT person signing in after a SIGNED_OUT ends all of it — layout, recents, ask thread, hand-off — before anything of theirs is read; the first person's uploaded stamps, uid-scoped, stay (OFF-15 review fix 5) and are offered to no one else", async () => {
     s.session = { user: { id: "u1", email: "a@x.io" } };
     s.member = ADMIN;
     await mount();
@@ -818,13 +820,15 @@ describe("OFF-8 — the provider's branches, rendered", () => {
     window.localStorage.setItem("manufacturingos.customStamps", "[{\"id\":\"cs-0\",\"name\":\"legacy.png\",\"src\":\"data:\"}]"); // only an old-code tab can write it now
     await act(async () => { await s.authCb!("SIGNED_OUT", null); });
     expect(window.localStorage.getItem("manufacturingos.customStamps")).toContain("legacy.png"); // OFF-15: kept across the sign-out (a device row)
-    expect(window.localStorage.getItem("manufacturingos.customStamps:u1")).toContain("initials.png"); // OFF-15: and the person's stamps (kind "identity")
+    expect(window.localStorage.getItem("manufacturingos.customStamps:u1")).toContain("initials.png"); // OFF-15: and the person's stamps (uid-scoped)
+    expect(window.localStorage.getItem("manufacturingos.customStamps.recentUids")).toBe("[\"u1\"]");
     s.member = { ...ADMIN, uid: "u2", email: "b@x.io" };
     await reload({ user: { id: "u2", email: "b@x.io" } });
     expect(probe()).toBe("Admin|Admin|member|any");
-    expect(window.localStorage.getItem("manufacturingos.customStamps:u1")).toBeNull(); // OFF-15 (kind "identity", the package brief): ended before u2 reads anything
+    expect(window.localStorage.getItem("manufacturingos.customStamps:u1")).toContain("initials.png"); // OFF-15 (review fix 5, uid-scoped): kept across u2's run — was ended here under review fix 4's kind "identity"
     expect(window.localStorage.getItem("manufacturingos.customStamps")).toBeNull();   // OFF-15: written after the device was marked, so taken by no one — removed, unread, at u2's sign-in
     expect(window.localStorage.getItem("manufacturingos.customStamps:u2")).toBeNull();
+    expect(window.localStorage.getItem("manufacturingos.customStamps.recentUids")).toBe("[\"u2\",\"u1\"]"); // the ring remembers both
     expect(window.localStorage.getItem("orgGraph:pos:o1")).toBeNull();
     expect(window.localStorage.getItem("mfg-os.palette.recents")).toBeNull();
     expect(window.sessionStorage.getItem("kl-active-thread-l1")).toBeNull();
@@ -955,6 +959,8 @@ describe("OFF-8 — the provider's branches, rendered", () => {
     const after = everything();
     delete (after.local as Record<string, unknown>)["manufacturingos.customStamps:u1"];
     delete (after.local as Record<string, unknown>)["manufacturingos.customStamps.moved"];
+    expect(window.localStorage.getItem("manufacturingos.customStamps.recentUids")).toBe("[\"u1\"]"); // OFF-15 review fix 5: and remembered in the device's ring
+    delete (after.local as Record<string, unknown>)["manufacturingos.customStamps.recentUids"];
     delete (after.local as Record<string, unknown>)[LAST_IDENTITY_KEY];
     delete (after.session as Record<string, unknown>)[LAST_IDENTITY_KEY];
     delete (after.local as Record<string, unknown>)["manufacturingos.activeOrgId"];
@@ -972,7 +978,7 @@ describe("OFF-8 — the provider's branches, rendered", () => {
     expect(cachesApi.delete).not.toHaveBeenCalled();
   });
 
-  it("OFF-15 (PS-P6 review fixes 3 and 4, the reviewer's path): a device that remembers B, with the legacy stamp list A uploaded under the old code — A, signing in first, takes it at the sign-in (the purge for B leaves it: a device row); B, signing in next, ends A's list, the moved stamps with it, and is offered none of it (was: the purge ended the list before A opened a drawing; then, at review fix 3, A kept it for good)", async () => {
+  it("OFF-15 (PS-P6 review fixes 3 to 5, the reviewer's path): a device that remembers B, with the legacy stamp list A uploaded under the old code — A, signing in first, takes it at the sign-in (the purge for B leaves it: a device row); B, signing in next, is offered none of it, and A's list stays for A (was: the purge ended the list before A opened a drawing; then, at review fix 4, B's sign-in ended A's list, the moved stamps with it)", async () => {
     seedAccount(); // B's (u2's) account data, remembered for the browser
     window.localStorage.setItem(LAST_IDENTITY_KEY, "u2");
     window.localStorage.setItem("manufacturingos.customStamps", "[{\"id\":\"cs-0\",\"name\":\"initials-A.png\",\"src\":\"data:\"}]");
@@ -988,9 +994,35 @@ describe("OFF-8 — the provider's branches, rendered", () => {
     s.member = { ...ADMIN, uid: "u2", email: "b@x.io" };
     await reload({ user: { id: "u2", email: "b@x.io" } }); // B signs in next
     expect(window.localStorage.getItem("manufacturingos.customStamps:u2")).toBeNull(); // never offered A's list
-    expect(window.localStorage.getItem("manufacturingos.customStamps:u1")).toBeNull(); // review fix 4: the one-time transition ends at the next identity change
+    expect(window.localStorage.getItem("manufacturingos.customStamps:u1")).toContain("initials-A.png"); // review fix 5: A's, kept (uid-scoped) across B's run
     expect(window.localStorage.getItem("manufacturingos.customStamps")).toBeNull();
+    expect(window.localStorage.getItem("manufacturingos.customStamps.recentUids")).toBe("[\"u2\",\"u1\"]");
   });
+
+  it("OFF-15 (PS-P6 review fix 5, the end for departed identities' lists, rendered): nine people boot the real provider one after another, each with a stamp list — the ninth's sign-in removes the first person's list and no other; the first person booting again is remembered at the front with a fresh list; nothing of it waits on a purge", async () => {
+    const key = (n: number) => `manufacturingos.customStamps:p${n}`;
+    const held = () => Array.from({ length: window.localStorage.length }, (_, i) => window.localStorage.key(i)!).filter((k) => k.startsWith("manufacturingos.customStamps:")).sort();
+    for (let n = 1; n <= 8; n++) {
+      s.member = { ...ADMIN, uid: `p${n}`, email: `p${n}@x.io` };
+      if (n === 1) { s.session = { user: { id: "p1", email: "p1@x.io" } }; await mount(); } else await reload({ user: { id: `p${n}`, email: `p${n}@x.io` } });
+      expect(probe()).toBe("Admin|Admin|member|any");
+      window.localStorage.setItem(key(n), `[{"id":"cs-${n}","name":"p${n}.png","src":"data:"}]`);
+    }
+    expect(held()).toEqual(Array.from({ length: 8 }, (_, i) => key(i + 1)).sort());
+    expect(JSON.parse(window.localStorage.getItem("manufacturingos.customStamps.recentUids")!)).toEqual(["p8", "p7", "p6", "p5", "p4", "p3", "p2", "p1"]);
+    s.member = { ...ADMIN, uid: "p9", email: "p9@x.io" };
+    await reload({ user: { id: "p9", email: "p9@x.io" } });
+    expect(probe()).toBe("Admin|Admin|member|any");
+    expect(window.localStorage.getItem(key(1))).toBeNull();                       // the person who signed in here longest ago
+    expect(held()).toEqual(Array.from({ length: 7 }, (_, i) => key(i + 2)).sort()); // every other list kept
+    expect(JSON.parse(window.localStorage.getItem("manufacturingos.customStamps.recentUids")!)).toEqual(["p9", "p8", "p7", "p6", "p5", "p4", "p3", "p2"]);
+    expect(window.localStorage.getItem(LAST_IDENTITY_KEY)).toBe("p9");
+    s.member = { ...ADMIN, uid: "p1", email: "p1@x.io" };
+    await reload({ user: { id: "p1", email: "p1@x.io" } });                      // p1 is back: remembered again, p2 the next to go
+    expect(JSON.parse(window.localStorage.getItem("manufacturingos.customStamps.recentUids")!)).toEqual(["p1", "p9", "p8", "p7", "p6", "p5", "p4", "p3"]);
+    expect(window.localStorage.getItem(key(2))).toBeNull();
+    expect(window.localStorage.getItem(key(3))).toContain("p3.png");
+  }, 60_000);
 
   it("OFF-15 (PS-P6 review fixes 3 and 4): the one-time transition runs once — a device marked at its first sign-in (nothing to move) never reads the legacy key again: what a tab still running the old code writes there later is taken by no one and removed, unread, at the next sign-in", async () => {
     s.session = { user: { id: "u1", email: "a@x.io" } };
@@ -1045,17 +1077,17 @@ describe("OFF-8 — the provider's branches, rendered", () => {
 
   it("source: SIGNED_OUT purges every account store before the Cache Storage purge and the redirect; the evaporated branch purges caches only, only when gated, and never the workspace or Cache Storage; boot notes the identity before reading anything", () => {
     const rc = src(ROLE_CONTEXT);
-    // OFF-15 (PS-P6 review fix 4): noteIdentity offers the legacy stamp list to the arriving identity AFTER every purge it runs (the list
-    // it moves is that identity's, kind "identity", which the purge for a different identity would end), with no await between the move
-    // and the remembered identity's write
+    // OFF-15 (PS-P6 review fixes 4 and 5): noteIdentity runs the stamp step — the device's ring, then the legacy list's move to the
+    // arriving identity (noteStampsAtSignIn) — AFTER every purge it runs, with no await between it and the remembered identity's write
     const noteStart = rc.indexOf("const noteIdentity = async (nextUid: string) => {");
     const note = rc.slice(noteStart, rc.indexOf("writeLastIdentity(nextUid);", noteStart));
-    const claimAt = note.indexOf("claimLegacyStampsAtSignIn(nextUid);");
+    const claimAt = note.indexOf("noteStampsAtSignIn(nextUid);");
     expect(claimAt).toBeGreaterThan(note.indexOf("if (lastIdentityRef.current === nextUid) return;"));
     expect(claimAt).toBeGreaterThan(note.lastIndexOf("purgeAccountClientStores("));
     expect(claimAt).toBeGreaterThan(note.lastIndexOf("purgeAccountStorage("));
     expect(note.slice(claimAt)).not.toMatch(/await /);
-    expect(note.match(/claimLegacyStampsAtSignIn\(/g)).toHaveLength(1);
+    expect(note.match(/noteStampsAtSignIn\(/g)).toHaveLength(1);
+    expect(rc).not.toMatch(/claimLegacyStampsAtSignIn\(|keepRecentStampLists\(/);
     const start = rc.indexOf('if (event === "SIGNED_OUT") {');
     const block = rc.slice(start, rc.indexOf('window.location.replace("/");', start));
     expect(block.indexOf("clearStoredOrgId();")).toBeGreaterThan(0);

@@ -4,19 +4,26 @@
 //   OFF-15  Per account: under manufacturingos.customStamps:<uid>, never one
 //           device-wide list the next person on a shared tablet is offered.
 //           CLIENT_STORAGE_INVENTORY (components/providers/RoleContext.tsx)
-//           classes it "account", kind "identity", as the package brief
-//           directs: the person's own work, kept across their sign-out and
-//           an expiry, ended when a DIFFERENT identity next runs the app here
-//           (noteIdentity's "all" purge), before that identity reads
-//           anything. So a device keeps at most one identity's list, as it
-//           kept one device-wide list before.
+//           classes it "uid-scoped", as the finding's done-whens 1 and 3
+//           say: keyed by the uid, so never served to another identity, and
+//           taken by no purge — the person's own work outlives their
+//           sign-out, an expiry AND another identity's run of the app on
+//           the device, as it did before OFF-15 (the fifth review: under
+//           the brief's kind "identity" a colleague's shift ended it, a
+//           loss against c537602). What ends it instead is this device's
+//           ring of the identities that last signed in here
+//           (manufacturingos.customStamps.recentUids, class "device", at
+//           most STAMP_LISTS_KEPT_PER_DEVICE uids): when an identity falls
+//           off its end, its list is removed (keepRecentStampLists, run by
+//           noteIdentity at every sign-in). Nothing here refuses a write.
 //           The device-wide list of before OFF-15 (whose it is is unknown)
 //           goes, once, to the first identity that signs in here after this
 //           code arrives — claimLegacyStampsAtSignIn, which noteIdentity runs
-//           AFTER its purge (the legacy key is class "device", so no purge
-//           drops it unread) — and the device is marked: the legacy key is
-//           never read again. The moved list is that identity's list from
-//           then on, so it ends at the next identity change: the one-time
+//           AFTER its purge (noteStampsAtSignIn; the legacy key is class
+//           "device", so no purge drops it unread) — and the device is
+//           marked: the legacy key is never read again. The moved list is
+//           that identity's list from then on, kept like their own uploads
+//           until they fall off the ring or remove it: the one-time
 //           transition IS-P1 recorded for OFF-8.
 //
 // Every function here never throws: storage can be missing, full or
@@ -35,6 +42,17 @@ export const LEGACY_CUSTOM_STAMPS_KEY = "manufacturingos.customStamps";
  *  legacy key is never read again. Holds no stamp and no uid. */
 export const LEGACY_CUSTOM_STAMPS_MOVED_KEY = "manufacturingos.customStamps.moved";
 export const customStampsKey = (uid: string) => `manufacturingos.customStamps:${uid}`;
+/** The uids whose stamp lists this device keeps, newest sign-in first, at
+ *  most STAMP_LISTS_KEPT_PER_DEVICE of them — identifiers only, no stamp.
+ *  Class "device": it must outlive every identity change, since it is what
+ *  ends the lists of the identities that no longer sign in here. */
+export const RECENT_STAMP_UIDS_KEY = "manufacturingos.customStamps.recentUids";
+/** How many identities' stamp lists one device keeps. Beyond it the list of
+ *  the identity that signed in here longest ago is removed, at the next
+ *  sign-in. Eight: a shared field tablet's crews, with room to spare under
+ *  the ~5 MB quota (a full list of 12 small images is ~100-200 KB), and few
+ *  enough that a device never fills up with lists nobody will read again. */
+export const STAMP_LISTS_KEPT_PER_DEVICE = 8;
 
 /** The stamps offered, with the uid they were read for. `legacyPending`: the
  *  legacy list is offered but the store refused its move — the person's
@@ -77,11 +95,10 @@ export function moveLegacyStamps(uid: string, list: CustomStamp[]): boolean {
   }
 }
 
-/** OFF-15, the one-time transition: RoleContext's noteIdentity runs this for
- *  every identity it notes, AFTER its purge (the legacy key is class
- *  "device", so the purge for a different identity never drops it unread;
- *  the list this moves is the arriving identity's, so that purge must not
- *  follow it). On a device not yet marked, the legacy device-wide list goes
+/** OFF-15, the one-time transition: noteStampsAtSignIn runs this for every
+ *  identity RoleContext's noteIdentity notes, AFTER its purge (the legacy
+ *  key is class "device", so the purge for a different identity never drops
+ *  it unread). On a device not yet marked, the legacy device-wide list goes
  *  to THIS identity — the first to sign in here since this code arrived —
  *  when it has no list of its own (moveLegacyStamps), and the device is
  *  marked either way, so no later identity is ever offered the legacy key.
@@ -128,4 +145,47 @@ export function loadStampShelf(uid: string | null): StampShelf {
  *  (full or forbidden) — ignored by the viewer, as before OFF-15. */
 export function writeStampList(uid: string, list: CustomStamp[]): boolean {
   try { window.localStorage.setItem(customStampsKey(uid), JSON.stringify(list)); return true; } catch { return false; }
+}
+
+function parseUids(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const v: unknown = JSON.parse(raw);
+    return Array.isArray(v) ? v.filter((u): u is string => typeof u === "string" && u.length > 0) : [];
+  } catch { return []; }
+}
+
+/** The uids whose stamp lists this device keeps, newest sign-in first. */
+export function readRecentStampUids(): string[] {
+  try { return parseUids(window.localStorage.getItem(RECENT_STAMP_UIDS_KEY)); } catch { return []; }
+}
+
+/** OFF-15: the end for the lists of the people who no longer sign in here.
+ *  A list is "uid-scoped" — no purge takes it — so without this a shared
+ *  tablet would keep every list ever uploaded on it. At every sign-in the
+ *  arriving uid goes to the front of the device's ring; the uids past its
+ *  STAMP_LISTS_KEPT_PER_DEVICE-th place fall off, and their lists are
+ *  removed — the oldest first, before the ring is written, so the ring's
+ *  write has their room. Nothing is refused: a person's own upload never
+ *  waits on this, and a ring write the store refuses ends nothing it should
+ *  not (the lists already removed were past the ring's end) and is recomputed
+ *  from the store at the next sign-in. */
+export function keepRecentStampLists(uid: string): void {
+  if (!uid || typeof window === "undefined") return;
+  try {
+    const ring = parseUids(window.localStorage.getItem(RECENT_STAMP_UIDS_KEY));
+    const next = [uid, ...ring.filter((u) => u !== uid)];
+    const dropped = next.splice(STAMP_LISTS_KEPT_PER_DEVICE);
+    for (const u of dropped) window.localStorage.removeItem(customStampsKey(u));
+    if (next.length !== ring.length || next.some((u, i) => u !== ring[i])) window.localStorage.setItem(RECENT_STAMP_UIDS_KEY, JSON.stringify(next));
+  } catch { /* storage forbidden or full — nothing to end here; the next sign-in recomputes it */ }
+}
+
+/** What RoleContext's noteIdentity runs for every identity it notes, after
+ *  its purge and before it remembers the identity: the ring that ends the
+ *  lists of departed identities (first, so a move below has their room),
+ *  then the one-time legacy move for this identity. */
+export function noteStampsAtSignIn(uid: string): void {
+  keepRecentStampLists(uid);
+  claimLegacyStampsAtSignIn(uid);
 }
