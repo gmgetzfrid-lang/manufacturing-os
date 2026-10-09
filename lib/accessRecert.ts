@@ -7,6 +7,11 @@
 // DEL-6: the owner is notified AND can open the flow (the library page admits
 // the owner alongside controllers); the write is checked, so a refused
 // attestation surfaces instead of silently no-oping.
+// ALOG-2 (admin-and-org P9): the attestation RECORD is checked too, and the
+// database binds it (20261188): only the library's owner or a controller
+// (Admin / DocCtrl by the role collection) may write one, naming themselves,
+// and nobody may change or delete one. The people the scan notifies are
+// exactly the people who may record the review.
 
 import { supabase } from "@/lib/supabase";
 import { normalizeRoles } from "@/lib/roleCapabilities";
@@ -228,12 +233,33 @@ export async function listAccessGrants(orgId: string, libraryId: string): Promis
 
 // ── Policy + attestation ─────────────────────────────────────────────────────
 
+/** ALOG-2 (fix pass 2): the authority rule is named only when the database
+ *  refused on it (42501 — 20261188's INSERT policy). Any other failure (a
+ *  timeout, a network error) is not an authority question, and telling an
+ *  Admin that only an Admin can record it is the wrong answer. */
+function recordRefusalWho(err: { code?: string | null } | null | undefined): string {
+  return err?.code === "42501"
+    ? " Only an Admin, a Document Controller or the library's owner can record it, naming themselves."
+    : "";
+}
+
 export async function setRecertPolicy(input: {
   libraryId: string; orgId: string; policy: RecertPolicy | null; actorId?: string | null; actorName?: string | null;
 }): Promise<void> {
   const next = input.policy?.enabled && input.policy.intervalMonths
     ? computeNextRecertDate(new Date().toISOString(), input.policy.intervalMonths)
     : null;
+  // ALOG-2 (fix pass 2): the stored cadence is read CHECKED first, so a
+  // refused record can put it back — a cadence in force with no history row
+  // is the unrecorded change the event record exists to prevent.
+  const { data: prior, error: priorErr } = await supabase
+    .from("libraries")
+    .select("recert_policy, next_recertification_date, recert_notified_at")
+    .eq("id", input.libraryId)
+    .maybeSingle();
+  if (priorErr || !prior) {
+    throw new Error(`The recertification cadence was NOT saved: the library could not be read (${priorErr?.message ?? "not found"}).`);
+  }
   // OWN-14: checked write — a refused save must not produce a policy_set event.
   const { data: polRows, error: polErr } = await supabase
     .from("libraries")
@@ -244,10 +270,30 @@ export async function setRecertPolicy(input: {
   if (!polRows || polRows.length === 0) {
     throw new Error("Recertification policy was NOT saved — you don't have authority over this library.");
   }
-  await supabase.from("access_recertification_events").insert({
+  // ALOG-2: the cadence's event row is checked. Since 20261188 only a
+  // controller or the library's owner may write one, naming themselves; a
+  // refusal is said, never reported as a recorded change — and (fix pass 2)
+  // the library's previous cadence and dates are put back first, count-checked,
+  // exactly as recertifyAccess puts back its attestation columns.
+  const { error: evErr } = await supabase.from("access_recertification_events").insert({
     org_id: input.orgId, library_id: input.libraryId, action: "policy_set",
     next_recertification_date: next, note: null, performed_by: input.actorId ?? null, performed_by_name: input.actorName ?? null,
   });
+  if (evErr) {
+    const { data: backRows, error: backErr } = await supabase
+      .from("libraries")
+      .update({
+        recert_policy: (prior.recert_policy as RecertPolicy | null) ?? null,
+        next_recertification_date: (prior.next_recertification_date as string | null) ?? null,
+        recert_notified_at: (prior.recert_notified_at as string | null) ?? null,
+      })
+      .eq("id", input.libraryId)
+      .select("id");
+    const putBack = !backErr && !!backRows && backRows.length > 0;
+    throw new Error(putBack
+      ? `The recertification cadence was NOT changed: its record was refused (${evErr.message}), so the library's previous cadence and dates were put back.${recordRefusalWho(evErr)}`
+      : `The recertification cadence was saved on the library, but its record was refused (${evErr.message}) and the previous cadence could not be put back (${backErr?.message ?? "no row was updated"}) — the change is in force with no recertification-history record. Tell an Admin.${recordRefusalWho(evErr)}`);
+  }
   await logAuditAction({ action: input.policy ? "ACCESS_RECERT_POLICY_SET" : "ACCESS_RECERT_POLICY_CLEARED", resourceType: "library", resourceId: input.libraryId, orgId: input.orgId, userId: input.actorId ?? "", details: { policy: input.policy } }).catch(() => {});
 }
 
@@ -264,9 +310,23 @@ export async function recertifyAccess(input: {
   if (!effective.complete) {
     throw new Error(`Recertification refused: the library's effective access list could not be resolved (${effective.issues.join("; ")}). Nothing was attested.`);
   }
+  // ALOG-2: `grants` is the LIVE population only — rules whose expiresAt has
+  // passed are in `effective.expired` and never counted or snapshotted as
+  // current (RET-3), so grant_count and grants_snapshot exclude them.
   const grants = effective.live;
-  const { data: lib } = await supabase.from("libraries").select("recert_policy").eq("id", input.libraryId).maybeSingle();
-  const policy = (lib?.recert_policy as RecertPolicy | null) ?? null;
+  // ALOG-2: the library row is read CHECKED — an unread cadence used to be
+  // taken as "no cadence" and the attestation then cleared the next date.
+  // The prior attestation columns are kept so a refused record can put them
+  // back (below).
+  const { data: lib, error: libErr } = await supabase
+    .from("libraries")
+    .select("recert_policy, last_recertified_at, last_recertified_by, next_recertification_date, recert_notified_at")
+    .eq("id", input.libraryId)
+    .maybeSingle();
+  if (libErr || !lib) {
+    throw new Error(`Recertification refused: the library could not be read (${libErr?.message ?? "not found"}). Nothing was attested.`);
+  }
+  const policy = (lib.recert_policy as RecertPolicy | null) ?? null;
   const now = new Date().toISOString();
   const nextDate = policy?.enabled && policy.intervalMonths ? computeNextRecertDate(now, policy.intervalMonths) : null;
 
@@ -280,11 +340,32 @@ export async function recertifyAccess(input: {
   if (!certRows || certRows.length === 0) {
     throw new Error("Recertification was NOT recorded — you don't have authority over this library.");
   }
-  await supabase.from("access_recertification_events").insert({
+  // ALOG-2: the attestation record is the evidence, so its insert is
+  // checked. Since 20261188 only a controller or the library's owner may
+  // write it, naming themselves (performed_by = auth.uid()). Without it the
+  // reset clock would claim a review nobody recorded, so the library's
+  // attestation columns are put back before the refusal is said.
+  const { error: evErr } = await supabase.from("access_recertification_events").insert({
     org_id: input.orgId, library_id: input.libraryId, action: "recertified",
     grants_snapshot: grants, grant_count: grants.length, note: input.note ?? null,
     next_recertification_date: nextDate, performed_by: input.actorId ?? null, performed_by_name: input.actorName ?? null,
   });
+  if (evErr) {
+    const { data: backRows, error: backErr } = await supabase
+      .from("libraries")
+      .update({
+        last_recertified_at: (lib.last_recertified_at as string | null) ?? null,
+        last_recertified_by: (lib.last_recertified_by as string | null) ?? null,
+        next_recertification_date: (lib.next_recertification_date as string | null) ?? null,
+        recert_notified_at: (lib.recert_notified_at as string | null) ?? null,
+      })
+      .eq("id", input.libraryId)
+      .select("id");
+    const putBack = !backErr && !!backRows && backRows.length > 0;
+    throw new Error(putBack
+      ? `Recertification was NOT recorded: the attestation record was refused (${evErr.message}). The library's recertification dates were put back.${recordRefusalWho(evErr)}`
+      : `Recertification was NOT recorded: the attestation record was refused (${evErr.message}), and the library's recertification dates could not be put back (${backErr?.message ?? "no row was updated"}) — the library now shows a recertification that has no record. Tell an Admin.${recordRefusalWho(evErr)}`);
+  }
   await logAuditAction({ action: "ACCESS_RECERTIFIED", resourceType: "library", resourceId: input.libraryId, orgId: input.orgId, userId: input.actorId ?? "", details: { grantCount: grants.length, note: input.note } }).catch(() => {});
   return { grantCount: grants.length, nextDate };
 }

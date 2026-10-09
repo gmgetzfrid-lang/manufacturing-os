@@ -31,7 +31,7 @@ What the trail can prove, and whether every admin surface is gated server-side.
 ## ALOG-1 · The capability policy is read from and written to `org_configurations.value` — a column that does not exist; the table's column is `data`, so every org's action-permission policy and every per-person delegation is inert, and the DB function that holds RLS depends on raises at runtime
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** admin-and-org P9 (done-when 2: a capability-policy read error is said, never rendered as the shipped defaults) — by the integrator, 2026-10-02 (at the A&O P0 merge: the verify-and-record package named the owner in its Partial block; fleet plan `audit-reports/fleet-plans/admin-and-org.json`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/capabilityPolicy.ts:172-176`, `lib/capabilityPolicy.ts:229-235`, `supabase/migrations/20260901_db_hard_enforcement.sql:44-45`, `supabase/schema.sql:52-59`, `lib/orgBranding.ts:22-28`, `lib/ticketRouting.ts:48-53`, `app/(protected)/admin/requests/page.tsx:98-99`
@@ -112,6 +112,26 @@ lib/capabilityPolicy.ts:173-176 — `.from("org_configurations")` / `.select("va
 
 **Integrator note (2026-10-07, DEC-90 A26).** *Ratified by the integrator under the user's delegation, 2026-10-07 (DEC-90): authority decisions fail closed (OWASP fail securely, deny by default) — the workflow route refuses on an unreadable policy (built), and the cached loader on a failed refresh serves the last good entry and, with none, refuses authority checks while non-authoritative UI may show the defaults labelled as such; `lib/holds.ts`'s fail-open becomes fail-closed (admin-and-org P9).* P9 lands the cached loader's rule together with this record's done-when 2 marker (a failed read distinguishable from an unset policy, shown by the policy editor and View-as), in `lib/capabilityPolicy.ts` `loadCapabilityPolicyEntry`, with a test that a healthy org's answers do not change. Status unchanged (OPEN, P9).
 
+**Resolution (2026-10-07, admin-and-org Round G).** Package P9 — done-when 2, the remainder P0 re-owned; done-when 1, 3 and 4 held already (P0, P2). Reproduced on base `c537602` (DEC-29): `lib/capabilityPolicy.ts:510` `if (error) return { policy: {}, version: null };` (and the catch at `:520`) — a failed read carried exactly the answer of "nothing stored"; `CapabilityPolicyEditor.tsx:117` and `ViewAsSimulator.tsx:46`, `:96` drew it as the org's policy, and the editor could save that grid over a stored narrowing.
+
+Landed, as DEC-89 item 3 rules (ratified by the integrator under the user's delegation, DEC-90 A26 — authority decisions fail closed):
+- `lib/capabilityPolicy.ts loadCapabilityPolicyEntry` (`:556`): a failed or thrown read is never "nothing stored". With a LAST GOOD entry for the org it serves that, marked `stale` (`staleError` the read error), and keeps the entry's old stamp so the next call reads again; with none it answers `{ policy: {}, version: null, unreadable: <error> }` (`failed`, `:572`). Nothing failed is cached. A good read — "nothing stored" included — carries no marker and is byte-identical to before. `LoadedCapabilityPolicy` documents both markers.
+- **Which of the two shapes P0 named (its "P9's close states which of two things it did"):** the first. `loadCapabilityPolicy` (`:606`) keeps a documented contract for NON-AUTHORITATIVE readers only — the last good copy, else the shipped defaults — and its comment names them (the requests and transmittals pages, HoldStrip, InspectorPanel, CheckoutStatusCell, the ticket-notification hook, /admin/holds, the hold-notification audience). Every caller that decides authority or presents the policy reads the entry's markers or the strict loader: the editor, View-as and the explorer say it; `lib/holds.ts` refuses (drafting-flow `AUTHZ-7`); the server's authority decisions use `loadCapabilityPolicyStrict` (`WF-10`).
+- `components/permissions/CapabilityPolicyEditor.tsx`: the grid loads FRESH (`readFresh`, `:163`, drops this tab's copy first); an unreadable policy renders a `role="alert"` with the error and Retry (`:383`) — no grid, no Save, nothing to write over the stored policy.
+- `components/permissions/ViewAsSimulator.tsx`: reads the entry; an unreadable policy is a `role="alert"` ("The actions below are NOT this org's policy — they follow the shipped defaults — … Do not sign off an access review on them", `:258`) and no grant or revoke is offered (`:367`); a stale serve is said in amber.
+- `components/permissions/PermissionsExplorer.tsx` (now a reader, `ALOG-14`): an unreadable policy shows the defaults LABELLED as the shipped defaults (`:306`).
+- The P0 census pin (`lib/__tests__/aoRoundGP0Records.test.ts`, "every caller of loadCapabilityPolicy / …Entry / …Strict … is one the record lists") now names the explorer — the one new caller.
+
+Tests: `lib/__tests__/aoRoundGP9PermissionsConsole.test.ts` "AUTHZ-7 / ALOG-1 — the cached loader on a failed read" (a healthy read and "nothing stored" carry no marker and answer as before; no last good → `unreadable`, nothing cached; a throw is the same; a failed refresh serves the last good entry marked stale, re-reads next call, and a good read replaces it; `loadCapabilityPolicy`'s documented contract; the strict loader unchanged); `lib/__tests__/aoRoundGP9ConsoleRendered.test.ts` (rendered: the editor's alert, no Save, Retry loads; View-as's alert and no Grant; the explorer's labelled defaults). `lib/__tests__/sweepRoundE_policyServer.test.ts`'s errored-read expectation now includes the marker (`unreadable: "boom"`) — the one existing pin the ruling changes, said in place.
+
+**Done-when.**
+1. ✓ (P0) one column everywhere; the route→loader round trip is pinned.
+2. ✓ An unreadable policy is distinguishable from an unset one: `loadCapabilityPolicyEntry` marks it (`unreadable`, or `stale` with the last good copy) and never caches it; the surfaces that present the policy say so; the wrapper `loadCapabilityPolicy` keeps the shipped defaults only for the non-authoritative readers its comment names (P0's first shape).
+3. ✓ (P0) executed live by `20261063`'s final SELECT.
+4. ✓ (P2) the `EXPECTED_COLUMNS` probe.
+
+**Scope / residual.** None for this finding's criteria. Outside them, and recorded for the integrator on drafting-flow `AUTHZ-7` (proposed finding, not opened here): DEC-89 item 3 lets a non-authoritative UI reader show the defaults "labelled as such". The console surfaces that present the policy label it (above); the affordance surfaces listed in `loadCapabilityPolicy`'s comment draw their controls from the last good copy or, with none, the defaults, with no label of their own. Each such control's action is decided by a server route, a strict gate or the database, which refuse on an unreadable policy — so no authority is widened — but a control may be offered that the server then refuses. *(Corrected at P9's second review fix, 2026-10-07: that remainder is now opened as drafting-flow [`AUTHZ-15`](../drafting-flow/09-authority-surfaces.md#authz-15) (LOW), with an owning package per surface, instead of being left "proposed". Separately, the explorer and View-as now re-read when the policy editor on the same page saves, so neither shows the pre-save policy as the org's. View-as also says when its member, library, project or team-name lists could not be read. The editor says a failed projects read to every viewer, not only to an editor.)*
+
 ---
 
 <a id="alog-2"></a>
@@ -119,7 +139,7 @@ lib/capabilityPolicy.ts:173-176 — `.from("org_configurations")` / `.select("va
 ## ALOG-2 · Access recertification — the periodic "does everyone still need this?" control — cannot fail visibly, is not restricted to the reviewers its own design names, and its attestation record is writable and deletable by any active member
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/accessRecert.ts:80-114`, `lib/accessRecert.ts:59-76`, `components/documents/AccessRecertModal.tsx:53-67`, `supabase/migrations/20260821_access_recert.sql:39-44`, `supabase/migrations/20260819_orphan_tables_backfill.sql:223-238`, `app/(protected)/documents/[libraryId]/page.tsx:3372-3379`, `lib/accessRecert.ts:128-145`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. All three limbs hold. `FOR ALL` with a plain active-member predicate means any member — Viewer, Contractor, the departed contractor being reviewed — can INSERT a forged attestation or DELETE a real one; there is no reviewer restriction at the data layer and no UPDATE/DELETE-blocking policy. The UI entry point is gated (page.tsx:3372 `{isController && ...}`, isControllerRole = Admin|DocCtrl only, permissions.ts:18-20), which notably excludes the library *owner* the module header names as a reviewer — so the gate is both wrong-tight in the UI and wrong-loose in the database.
@@ -144,6 +164,53 @@ lib/accessRecert.ts:106-111 — `await supabase.from("libraries").update({ last_
 - [ ] access_recertification_events binds performed_by to auth.uid() on INSERT and admits no UPDATE or DELETE from an authenticated caller.
 - [ ] The set of people who can perform a recertification matches the set the scan notifies, or the notification stops naming people who cannot act.
 - [ ] grant_count and grants_snapshot exclude rules whose expiresAt has passed, or label them.
+
+**Resolution (2026-10-07, admin-and-org Round G).** Package P9, first commit (`ALOG-2` + its migration first, as the plan sequences it). Reproduced on base `c537602` (DEC-29), after document-control P9's `RET-3` rewrite of `lib/accessRecert.ts`:
+- **Done-when 1 did not hold.** `recertifyAccess` checked the `libraries` update (OWN-14) but discarded the `access_recertification_events` insert (`lib/accessRecert.ts:283`, no `{ error }`), and `setRecertPolicy` did the same (`:247`). The modal's three handlers were `try { … } finally { setBusy(false) }` with no catch (`components/documents/AccessRecertModal.tsx:53-67`), so a thrown refusal was an unhandled rejection and the form came back unchanged. The library re-read before the update was unchecked too (`:268`, `const { data: lib } = …select("recert_policy")`): a failed read took the cadence as "none", and the attestation then cleared `next_recertification_date`.
+- **Done-when 2 did not hold.** The only policies were the two member `FOR ALL` policies (`20260821:41-44`, `20260819:223-238`).
+- **Done-when 3 held in the UI and at the library row, not on the event table.** The library page offers the flow to `isController || isLibraryOwner` (`app/(protected)/documents/[libraryId]/page.tsx:3145-3147`, `:3682`, DEL-6), the scan notifies `owner_user_id` plus `getOrgControllers` (by the collection, `lib/ownership.ts:245-252`), and `20261077` §2 binds the library's attestation columns to `is_org_controller OR owner_user_id` — but any active member could insert an event row.
+- **Done-when 4 held since `RET-3`.** `recertifyAccess` snapshots `listAccessGrantsDetailed(…).live`; expired rules are split into `.expired` and never counted.
+
+Landed:
+- `lib/accessRecert.ts`: `recertifyAccess` reads the library row CHECKED (`:286`, the prior attestation columns with it) and refuses before any write if it cannot; the event insert is checked (`:318`); on a refusal the library's `last_recertified_at` / `_by` / `next_recertification_date` / `recert_notified_at` are put back with a count-checked update and the error says whether they were (`:319-333`); no audit row is written for an attestation that was not recorded. `setRecertPolicy` checks its event insert (`:259`) and says the cadence was saved but not recorded.
+- `components/documents/AccessRecertModal.tsx`: one `run()` wrapper shows any refusal in a `role="alert"` box and re-reads what is stored; the access list comes from `listAccessGrantsDetailed`, so an unresolvable list is said ("Do not attest from this list") and the attest button is off, and expired grants are listed apart, struck through, "not attested as current" (done-when 4's "or label them" as well as "exclude").
+- `supabase/migrations/20261188_ao_roundG_access_recert_events.sql` (DEC-30 one paste; NARROWS only): both `FOR ALL` policies dropped; `access_recert_events_select` (member, as before); `access_recert_events_insert` (permissive, `TO authenticated`): `performed_by = auth.uid()`, an active membership of the row's org, the row's library in that org, and `is_org_controller(l.org_id) OR l.owner_user_id = auth.uid()`; the same authority again as RESTRICTIVE `access_recert_events_insert_authority` (a later permissive policy cannot widen it, the DRLS-1 lesson); RESTRICTIVE `…_no_update` / `…_no_delete` `USING (false)`. No function is created, so DRLS-16 does not apply; it reads `is_org_controller(uuid)` (live since `20260814`). Counts-only inventory before `BEGIN` (rows by action, rows with no performer, rows whose performer is today neither a controller nor the owner — kept, never deleted, rows whose library is in another org, and the `FOR ALL` count: 2 on a first apply, 0 on a re-run); one final `SELECT (check, ok, n)`, nine probes.
+- **Exercised on a throwaway PostgreSQL 16** with the two original policies and the live `is_org_controller` body: all nine probes true, a re-run idempotent (inventory "FOR ALL before" 0); admitted — an Admin naming themselves, a member holding DocCtrl only in `roles` (headline Manager), the library's owner (a Drafter), an Admin of another org on its own library; refused (42501) — an Admin naming someone else, a Viewer naming themselves, a removed Admin, a cross-org write either way, a session-less insert; `UPDATE` / `DELETE` touched 0 rows; the Viewer still read the history; the service role still wrote.
+
+**Decision (ALOG-2 done-when 3), applied as ruled by the integrator under the user's delegation (DEC-90 practice, least privilege):** the recertifiers are NARROWED to the library's owner and the controllers; the notification is not widened. "Owner" is `libraries.owner_user_id` — the column `20261077` §2, the page's `isLibraryOwner` and the scan's notification all read; the controllers are Admin / DocCtrl anywhere in the role collection (`is_org_controller`, `getOrgControllers`, `hasAnyRole`). A team-owned library's supervisor (its effective owner for READ, `RET-3`) is neither notified nor a recertifier — the two sets agree.
+
+Tests: `lib/__tests__/accessRecert.test.ts` "ALOG-2 — a recertification cannot fail silently, and the snapshot is the live population" (the expired rule is not counted; a refused record throws, puts the dates back and writes no audit row; a failed put-back is said; an unreadable library refuses before any write; a zero-row library update writes no record; the cadence's record is checked; regression: a controller's attestation and cadence save record exactly as before); `lib/__tests__/aoRoundGP9RecertModalRendered.test.ts` (rendered: a refused attestation and a refused cadence are shown; a successful one clears the note, reloads and calls `onSaved` with no alert; expired grants listed apart; an unresolvable list said and attesting off); `lib/__tests__/aoRoundGP9RecertEvents.test.ts` (replays `schema.sql` and every numbered migration: the table ends with exactly the five policies above, no `FOR ALL`, the INSERT bodies bind `performed_by` and owner-or-controller, the recertifier set matches `20261077` §2 / the page / the scan; the DEC-30 shape). The checked-write census (`lib/__tests__/checkedWrite.test.ts`): `lib/accessRecert.ts` stays at 1 unchecked site (the scan's `recert_notified_at` watermark), the new put-back is count-checked.
+
+**Paste and deploy order.** Either order; deploying the app first is the usual one (from that deploy a refused record is said and the dates are put back). Before the paste every member's insert is admitted as today; after it a recertifier's insert is admitted and anyone else's is refused, which the app surfaces. No 42883 / PGRST202 / 42P01 path (no function, column or table is added). Independent of every other pending file.
+
+*(P9's second review fix, 2026-10-07.)* Three gaps in the code above are closed:
+
+- **A refused cadence record was left in force.** `setRecertPolicy` left the new cadence on the library with no history row, and nothing put it back. Now it first reads the stored cadence, checked (`recert_policy`, `next_recertification_date`, `recert_notified_at`). A library it cannot read is refused before any write. When the event insert is refused, it puts the previous cadence back with a count-checked update and says whether that worked: "was NOT changed … put back", or "is in force with no recertification-history record. Tell an Admin."
+- **Every failure was blamed on authority.** Both functions now name the owner / Admin / Document Control rule only when the database refused on it (`42501`, `recordRefusalWho`). A timeout told to an Admin is no longer "only an Admin can record it".
+- **The modal could save defaults over an unread cadence.** When the library row could not be read (or was not found), Save cadence and Remove cadence still used the form's defaults. They are now off, with "The library's cadence could not be read …" (`libraryReadError`, separate from the access-list issues).
+
+Tests:
+- `accessRecert.test.ts`:
+  - "the cadence's event row is checked: a refusal puts the previous cadence and dates back (count-checked) and says so";
+  - "a refusal that is NOT an authority refusal (a timeout) does not blame authority; a failed put-back says the cadence is in force unrecorded";
+  - "a library whose cadence cannot be read is refused before anything is written";
+  - "the attestation's refusal names the authority rule only on 42501".
+- `aoRoundGP9RecertModalRendered.test.ts`:
+  - "a library row that could not be read turns Save / Remove cadence off";
+  - "regression: a readable library leaves the cadence controls on".
+
+**Done-when.**
+1. ✓ A failed recertification write surfaces an error to the reviewer — the library read, the update (OWN-14), the event insert and the cadence's event insert are all checked, and the modal shows the refusal.
+2. ✓ `access_recertification_events` binds `performed_by = auth.uid()` on INSERT and admits no UPDATE or DELETE from an authenticated caller — `20261188` (PASTE pending).
+3. ✓ The set of people who can perform a recertification matches the set the scan notifies — owner (`owner_user_id`) + controllers (by the collection) in the scan, the page, the library guard and, from `20261188`, the event table.
+4. ✓ `grant_count` and `grants_snapshot` exclude rules whose `expiresAt` has passed (since `RET-3`, pinned here), and the modal labels them.
+
+**Scope / residual.** None for this finding's code. Two notes:
+- A holder of `can_manage_node` on a library who is neither its owner nor a controller may set the CADENCE on the library row (`20261036`'s policy arm), but cannot write its event row after `20261188`. No product surface offers them the modal. If they reach `setRecertPolicy` anyway, it now puts the cadence back and says so.
+- The audit call's `userId: input.actorId ?? ""` is unchanged. The verifier dropped that leg: no caller passes a null actor.
+
+Done-when 2 and 3 hold at the database only once `20261188` is pasted (DEC-30). Until then, every member's event insert is admitted, as before.
+- Pending migration: `supabase/migrations/20261188_ao_roundG_access_recert_events.sql`.
 
 ---
 
@@ -352,7 +419,7 @@ No chunked test covers a *refused* `RESTORE_CHUNK` insert: that row was already 
 ## ALOG-9 · The action-permissions grid can only grant to 12 hardcoded role tokens; five of the system's nineteen real roles — Accounting, Safety, HR, Maintenance, Operations — have no column, so authority already held by those roles is invisible in the console that governs it
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/permissions/CapabilityPolicyEditor.tsx:24-25`, `components/permissions/CapabilityPolicyEditor.tsx:145-160`, `types/schema.ts:5-46`, `lib/capabilityPolicy.ts:57`, `app/(protected)/admin/users/page.tsx:56-62`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The arithmetic is exact — 19 roles, 12 tokens (one of which is the `*` wildcard, not a role), Engineer-1..4 collapsed to one `Engineer` token by design (roleTokenMatches, capabilityPolicy.ts:130), leaving the five named roles with no cell. lib/capabilityPolicy.ts:86-88 confirms holds.open/holds.release default to `["*"]`, so an admin who narrows them from Everyone has no way to re-add Operations or Safety through this grid; the only escape hatches are a per-person grant or hand-editing the JSON. MEDIUM is right.
@@ -376,6 +443,25 @@ components/permissions/CapabilityPolicyEditor.tsx:24 — `const TOKENS = ["*", "
 - [ ] The grid's columns are derived from the role model rather than a literal, or the omission is deliberate and stated in the UI.
 - [ ] A capability token stored for a role the grid does not render is surfaced to the admin rather than hidden.
 - [ ] The duplicated role literals (MGMT, ADMIN_ROLES, TOKENS) resolve to one declaration.
+
+**Partial (2026-10-07, admin-and-org Round G).** Package P9 — "ALOG-9 residual"; the grid half closed earlier by pointer (the plan's `alreadyResolvedElsewhere`: "ALOG-9 grid ← ROLE-1"). Reproduced on base `c537602` (DEC-29):
+- **Done-when 1 held (roles-and-permissions `ROLE-1`, Round E).** The grid's tokens are `POLICY_TOKENS`: the eleven named tokens plus the five dormant department labels, so every role in `ALL_ROLES` is reachable (the four Engineer tiers through the single `Engineer` token, DEC-4) — pinned by `roundE_D_rolesAdmin.test.ts` "ROLE-1".
+- **Done-when 2 did not hold.** A stored token outside `POLICY_TOKENS` (an `Engineer-2`, a retired name, a typo) rendered in no cell (`CapabilityPolicyEditor.tsx:290`, `(policy[d.id] ?? []).includes(t)` over the grid's tokens only) while staying live in `policyAllows` (`roleTokenMatches`: `token === role`) and in the SQL evaluator, and `toggle()` carried it through every save unseen.
+- **Done-when 3 held in part.** `MGMT` already derived from the one management-tier declaration (`lib/managementRoles.ts MANAGEMENT_ROLES`, WF-24 / CHAIN-3; `lib/capabilityPolicy.ts:87`); `POLICY_TOKENS` was declared in the editor component; the permissions page's `ADMIN_ROLES` is a spelled set.
+
+Landed:
+- `lib/roleCapabilities.ts:206` — `POLICY_TOKENS` is declared ONCE here, beside `DORMANT_ROLES`; `CapabilityPolicyEditor.tsx` imports and re-exports it (the existing importers keep working). `app/api/admin/capability-policy/route.ts:56` derives its controller tier (`ALL_ROLES.filter(isControllerRole)`) instead of spelling `["Admin","DocCtrl"]`.
+- `CapabilityPolicyEditor.tsx tokensOutsideGrid` (`:62`): every grid row, request-type override row and project row names a stored token it has no column for — "Also stored, no column here: Engineer-2 — still live".
+- `ADMIN_ROLES` (the permissions page's action set) is left as the page spells it: since roles-and-permissions `SURF-9` every `/admin` page spells its own set and `roundE_D_rolesAdmin.test.ts` "each ENTRY / WRITES set is spelled identically in the page's own source" holds it equal to the ONE declaration, `lib/adminSurfaces.ts ADMIN_SURFACES` (`permissions.writes` = its `CONTROLLERS`). Deriving it in the page breaks that census (tried in this package, then reverted), so the page follows the convention every admin page follows. *(Superseded at the integrator's fix pass, 2026-10-08 — DEC-35 ruled (b); see done-when 3 below.)*
+
+Tests: `lib/__tests__/aoRoundGP9PermissionsConsole.test.ts` "ALOG-9 — …" (declared once — no other file declares `POLICY_TOKENS`; the editor's export is the same array; `MGMT` from `MANAGEMENT_ROLES`; the page's `ADMIN_ROLES` equals `ADMIN_SURFACES.permissions.writes`; the route derives the tier; `tokensOutsideGrid`, and that such a token is still live in `policyAllows`); `lib/__tests__/rolePickerCensus.test.ts` "the permissions console's role axes cover the role model (ALOG-9, ALOG-14)"; rendered: `aoRoundGP9ConsoleRendered.test.ts` "ALOG-9: a stored token with no column is named on its row".
+
+**Done-when.**
+1. ✓ (`ROLE-1`) the grid's columns cover the role model; the department labels are addressable, the tiers through `Engineer`.
+2. ✓ a stored token with no column is surfaced on its row, never hidden.
+3. ✓ *(2026-10-08, the integrator's fix pass at the A&O P9 merge — DEC-35 ruled (b) under the user's delegation.)* `MGMT` → `MANAGEMENT_ROLES`; `POLICY_TOKENS` → `lib/roleCapabilities.ts`; the capability-policy route derives its controller tier from `isControllerRole`; and `app/(protected)/admin/permissions/page.tsx` now READS its action set from the one declaration — `const ADMIN_ROLES = new Set(adminSurface("permissions")?.writes ?? []);` (`lib/adminSurfaces.ts` `permissions.writes`, the registry's `CONTROLLERS`) — instead of spelling it. Who may edit the console does not change: the derived set is pinned equal to the old literal `["Admin", "DocCtrl"]`, and `canEdit` reads it as before (`roles.some(...)`, by the collection); a missing registry entry would admit nobody. The SURF-9 census (`roundE_D_rolesAdmin.test.ts` "each ENTRY / WRITES set is spelled identically in the page's own source, or the WRITES set is read from the registry") now accepts a `writes` set a page reads from `adminSurface("<key>")…writes`; every other admin page still spells its set and is held equal to the registry as before. *(Before the ruling this read "Not done as written": the page spelled a second literal the census held equal to the first, and SURF-9's census and this criterion conflicted. Corrected at P9's review fix from an earlier ✓ that counted the census-held literal as "one declaration".)*
+
+**Scope / residual.** None. DEC-35's "Noted 2026-10-07" question was ruled (b) by the integrator at the A&O P9 merge (2026-10-08; the Landed line on [DEC-35](../DECISIONS.md#dec-35)): the census accepts a registry-derived `writes` set, and the permissions page derives it. The two files (`app/(protected)/admin/permissions/page.tsx`, `lib/__tests__/roundE_D_rolesAdmin.test.ts`) were edited in the integrator's fix pass on P9's branch. Tests: `aoRoundGP9PermissionsConsole.test.ts` "done-when 3 (DEC-35 ruled (b)): MGMT derives from MANAGEMENT_ROLES; the page's ADMIN_ROLES is READ from the registry's permissions.writes, which is the old literal; the route derives the tier".
 
 ---
 
@@ -446,7 +532,7 @@ app/(protected)/admin/audit/page.tsx:271-274 — `<Select value={actionFilter} o
 ## ALOG-12 · The capability-policy save is a whole-grid read-modify-write off a mount-time snapshot behind a 60-second cache — two admins silently clobber each other, and the `before` half of the CAPABILITY_POLICY_CHANGED record can be a state that was never current
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** admin-and-org P9 (done-when 1: the editor's save carries the version it loaded; the route refuses a stale one with 409) — by the integrator, 2026-10-02 (at the A&O P0 merge: the verify-and-record package named the owner in its Partial block; fleet plan `audit-reports/fleet-plans/admin-and-org.json`).
 - **Verification:** CONFIRMED
 - **Locations:** `components/permissions/CapabilityPolicyEditor.tsx:35-43`, `components/permissions/CapabilityPolicyEditor.tsx:59-91`, `lib/capabilityPolicy.ts:161-196`, `lib/capabilityPolicy.ts:215-246`, `lib/capabilityPolicy.ts:252-283`
@@ -513,6 +599,22 @@ lib/capabilityPolicy.ts:161-163 — `const CACHE_TTL_MS = 60_000;` / `const cach
 3. ✓ grants never republish caps.
 
 **Scope / residual.** Done-when 1 only (owner P9). Outside this finding's criteria: the `revoke_member` race, proposed above as a LOW finding owned by P8. No application code changed in this package.
+
+**Resolution (2026-10-07, admin-and-org Round G).** Package P9 — done-when 1, the remainder P0 re-owned (done-when 2 and 3 held since roles-and-permissions `WF-11`, P0's Partial). Reproduced on base `c537602` (DEC-29): the editor loaded once through the browser cache and posted the whole grid (`CapabilityPolicyEditor.tsx:115-126`, `:216`); the `save` op carried no version (`lib/capabilityPolicy.ts:592`); the route's compare-and-set used the stamp it read in the same request (`route.ts:139`, `:223`) — so a second admin's grid change made after the editor mounted was overwritten.
+
+Landed (the shape P0 suggested):
+- `lib/capabilityPolicy.ts`: the `save` change carries `version?: string | null` (`CapabilityPolicyChange`); `saveCapabilityPolicy({ …, version })` sends it and answers the version the save wrote; a refused write throws `CapabilityPolicyChangeError` with the route's status and `code`; `samePolicyVersion` (`:702`) compares two stamps as text, then as the same instant (PostgREST's `+00:00` and an ISO `Z` spell one timestamptz).
+- `app/api/admin/capability-policy/route.ts:162-171`: a `save` carrying `version` is refused **409** `{ code: "policy_changed" }` when the stored row's `updated_at` is not that version (null = "nothing was stored"; a row that now exists is stale) — before anything is written or audited. A body without the key (a bundle from before this change, mid-deploy) keeps today's compare-and-set only. The compare-and-set's own 409s now carry the same code (`changed`, `:66`). Grants and revokes are not version-checked: they never republish the grid (done-when 3).
+- `components/permissions/CapabilityPolicyEditor.tsx`: the grid loads FRESH and remembers its version and the grid it started from; Save sends the version (`:340`). On 409 `policy_changed` it re-reads: if the stored ROLE GRID is still the one it started from (only grants moved — a delegation in View-as, a pruned expiry), it saves again on the new version (`:356-366`) — so the same admin's grant does not refuse their own grid edit; otherwise it shows the other admin's grid and says "your change was NOT saved. Make your change again." Any other refusal (a critical capability, the 20261136 probe) is said as before, with no reload.
+
+Tests: `lib/__tests__/aoRoundGP9PermissionsConsole.test.ts` "ALOG-12 — …" (the loaded version → 200 and audited; the same instant spelled the other way → 200; a stale version → 409 `policy_changed`, the row unchanged, no update call, no audit row; `version: null` against an existing row → 409; `null` with nothing stored → the first INSERT; no key → today's behaviour; a malformed version → 400; a grant is not version-checked; the CAS 409 carries the code); `lib/__tests__/aoRoundGP9ConsoleRendered.test.ts` (rendered: the save carries the version; a 409 where only grants moved re-saves on the new version with the edit intact; a 409 where the grid moved shows the other admin's row and saves nothing).
+
+**Done-when.**
+1. ✓ A save that would overwrite a policy changed since the editor loaded is refused (409 `policy_changed`), never applied blindly; when only grants moved the editor re-applies the same edit on the current version (the grid it started from is still the stored one).
+2. ✓ (P0) `before` is read from the database at write time, bypassing the cache (the `revoke_member` race is `ALOG-15`, P8's).
+3. ✓ (P0) grants never republish caps.
+
+**Scope / residual.** None for this finding. `ALOG-15` (the grant strip that leaves `updated_at` alone, so neither the compare-and-set nor this version check sees it) stays P8's.
 
 ---
 
@@ -592,7 +694,8 @@ Tripwire: `lib/__tests__/aoRoundGP0Records.test.ts`, `it.fails` "done-when 1: th
 ## ALOG-14 · The permissions console's headline panel is a hand-maintained 52-row string matrix that has drifted from the code — at least five rows assert authority boundaries the app does not have
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
+- **Partial (2026-10-08, the integrator's fix pass at the A&O P9 merge):** the 23 snapshot rows tagged NOT RE-CHECKED on screen (named under *Scope / residual*) are an explicit remainder with an owner — **admin-and-org P7** (the ACL / `PermissionDrawer` package); the integrator adds it to P7's plan entry at the merge. Each row is to be checked against the code and marked `checked: true` with a pinning test, or removed. The finding's three criteria hold; this remainder is outside them (DEC-31: a remainder needs a named owner, not "whoever next edits").
 - **Verification:** CONFIRMED
 - **Locations:** `components/permissions/PermissionsExplorer.tsx:14-80`, `app/(protected)/admin/permissions/page.tsx:148`, `app/(protected)/admin/holds/page.tsx:32`, `app/(protected)/admin/scope/page.tsx:36`, `app/(protected)/admin/assets/page.tsx:56`, `app/api/admin/create-user/route.ts:62`, `app/(protected)/documents/[libraryId]/page.tsx:3372-3379`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Right, and the drift runs in both directions — DocCtrl is understated on four rows while Manager is overstated on user management. Only the row count is off: the array holds 51 rows, not 52, which is immaterial to the claim. The one hedge in the file, the `warn` field flagging known gaps, is used on exactly one row ("Create / edit / refresh work packages"), so none of the six drifted rows carries any warning.
@@ -616,6 +719,96 @@ components/permissions/PermissionsExplorer.tsx:14 — `const ROLES = ["Admin", "
 - [ ] Rows that correspond to a registered capability are rendered from CAPABILITY_DEFS and the org's stored policy, not from a literal string.
 - [ ] The five mismatches above are each either corrected or shown to be intentional.
 - [ ] Any remaining hand-maintained rows are visibly marked as a documentation snapshot rather than presented as derived truth.
+
+**Resolution (2026-10-07, admin-and-org Round G).** Package P9, second step (after `ALOG-2`). Reproduced on base `c537602` (DEC-29): `components/permissions/PermissionsExplorer.tsx` was a literal array of 51 rows (`:20-80`) whose 12-character mark strings were hand-written, imported nothing from the policy or the admin-surface registry, never read the org's stored policy, and called itself "Derived from a code audit of every enforcement point" (`:6`).
+
+Landed — `PermissionsExplorer.tsx` now draws three sections, each labelled on screen:
+1. **Action permissions — this org's policy** (`capabilityRow`, `:89`): one row per `CAPABILITY_DEFS` entry, each cell `policyAllows(storedPolicy, cap, role)` for the column's roles (the evaluator the workflow route, the admin gate and the SQL mirror share), ✓ when every role in the column holds, ◐ when some do; the standing holders the policy cannot remove are said (`STANDING`: Admin / DocCtrl always sign off quality records; a project's owner; the identity rights of the ticket capabilities); scoped rules and live personal grants are noted per row; dormant rows greyed. The policy is read through `loadCapabilityPolicyEntry`; an unreadable one is said and the rows are LABELLED as the shipped defaults (`ALOG-1`).
+2. **Admin surfaces — the admin-surface registry** (`SURFACE_ROWS`, `:115`): the `/admin` pages' action authority read from `lib/adminSurfaces.ts` (`writes` where the page declares one, else `entry`), which `roundE_D_rolesAdmin.test.ts` already holds equal to each page's own rule.
+3. **Documentation snapshot — hand-maintained, reviewed 2026-10-07** (`SNAPSHOT_ROWS`, `:154`): the ACL, ownership and per-library rows no single evaluator answers, each tagged SNAPSHOT; the section says they are not derived. No snapshot row repeats a derived one.
+The columns are the role model (`EXPLORER_COLUMNS`, `:38`): every role in `ALL_ROLES` exactly once (the four Engineer tiers share a column, DEC-4; the dormant labels share "Staff*").
+
+**The six named mismatches, each decided from CAPABILITY_DEFS, the stored policy and the registry as the server evaluates them** (the integrator's ruling under the user's delegation: show the truth; change who may act only for a real defect proved — none was):
+1. *Audit log* — **display-only.** The row now IS `admin.audit_view` (the capability the admin gate and, since `20261063`, the database's `audit_logs_admin_trail` overlay read): Admin, DocCtrl, Manager, Supervisor, Auditor by default — the same marks, now live. The exposure the finding named is document-level history, which every member reads (`/activity`): a snapshot row says so, with ⚠ `ALOG-5` (open, not P9's).
+2. *Release stale checkouts (/admin/holds)* — **display-only, and stale.** `/admin/holds` releases HOLDS (`holds.release`, `HLD-8`); releasing another person's checkout is `checkout.force_release` (database-enforced). Both are derived rows (Admin + DocCtrl force-release by default — the old row had DocCtrl "—" and Manager / Supervisor "y", wrong both ways); the row is gone.
+3. *Operational scope* — **display-only.** From `ADMIN_SURFACES.scope.writes`: Admin, Manager, Supervisor, DocCtrl (DocCtrl ✓).
+4. *Equipment / asset admin pages* — **display-only.** From `ADMIN_SURFACES.assets.writes`: Admin, DocCtrl, Manager, Supervisor (DocCtrl ✓).
+5. *User management (invite, roles)* — **display-only; split in three.** "Add a member (invite)" is the create-user route's rule and the members page's `canAddMember` (Admin + DocCtrl by the collection; only an Admin grants Admin) — a snapshot row; "Change member roles, suspend or restore members" is `ADMIN_SURFACES.users.writes` (Admin, Manager) — derived, with the database's narrowing said on the row (only an Admin grants Admin or suspends / restores an Admin: `org_members_update`, `20260817`, and `revoke_member`); "Remove a member from the workspace" is Admin only (`revoke_member` mode `'remove'`, newest body `20261161`; `org_members_delete`, `20261042`) — a snapshot row. The page/route inconsistency the verifier saw (Manager opening a page whose route refused it; DocCtrl admitted by a route whose page refused it) no longer holds at HEAD: the page's entry admits DocCtrl and its add control follows the route. *(Corrected at P9's review fix: the derived row first read "Change member roles, suspend or remove members" and showed Manager ✓ for removal, which `revoke_member` refuses.)*
+6. *Access recertification reviews* — **holds as written** since DEL-6 and now at the database too: the owner (◐ "If library owner") plus Admin / DocCtrl — the page, the library guard (`20261077` §2) and the event table (`20261188`, `ALOG-2`) — the event table's rule pending the paste of `supabase/migrations/20261188_ao_roundG_access_recert_events.sql` (PASTE pending; until then every member's event insert is admitted, as before). *(Qualifier added at the integrator's fix pass, 2026-10-08: this row carried none, unlike `ALOG-2` and `RET-4`.)*
+The derivation also corrected rows the finding did not name: *Data export & backups* (Admin only since `BKP-8`; the old row said Admin, DocCtrl, Manager), *Workspace settings* and *Branding* (Admin only by the registry; the old row said DocCtrl too). Ownership and teams are three rows:
+- *Change a department's supervisor* (snapshot, Admin): the supervisor guard (`teams_guard_supervisor_change`, `20261046`) admits a controller and the teams write policy (`teams_admin_write`, `20261046`) admits Admin or Manager, so Admin alone — or a member holding Document Control together with Manager, which the row's note says.
+- *Reassign library ownership / owning team* (snapshot, `yycccccccccc`): the library guard (`enforce_library_sensitive_columns`, `20261077` §2) admits a controller, the library's current owner or a Manage Permissions grant on it; reached from the library's review policy (`setOwner`) and from `/admin/teams` (`setLibraryOwnerTeam`).
+- *Create teams & manage team membership* (derived, `ADMIN_SURFACES.teams.entry`, Admin and Manager): the page's audience, and the same two `teams_admin_write` / `team_members_admin_write` (`20261046`) admit. The registry's `teams.writes` (Admin, DocCtrl) is the page's supervisor and library-ownership controls, the two snapshot rows above.
+
+*(Corrected at P9's review fix, 2026-10-07. The rewrite first had one snapshot row, "Change a department's supervisor or library ownership", marked Admin only. That understated library ownership the same way the old matrix understated DocCtrl, which is what this finding is about: Document Control and a library's owner can both reassign it. The teams row was labelled "Teams & team members" with no source named. All three rows are now pinned to the SQL text they describe.)*
+
+*(Corrected at P9's second review fix, 2026-10-07.)* Two claims above were overstated:
+
+1. **Composed authority was missing from four derived rows.** `capabilityRow` asked only the row's own capability. But the workflow engine the route enforces (`lib/workflow.ts` `getActions`, called by `app/api/tickets/workflow-action/route.ts`) also admits the management override at those rows' stages:
+   - `allows('ticket.eng_review') || isManagement` at PENDING_ENG_TEAM;
+   - `allows('ticket.direct_approve') || isManagement` at PENDING_REVIEW and FINAL_DRAFT;
+   - `allows('ticket.final_approve') || isManagement` at PENDING_FINAL_APPROVAL;
+   - a co-reviewer acting on the requester's behalf.
+
+   So "Direct engineering approval" showed Admin, Manager and Supervisor "—", "Engineering scope review" and "Final engineering approval" showed them ◐ (identity only), and "Requester review" showed management and engineers as identity only. All are wrong; the old literal matrix had the final-approval row right. `PermissionsExplorer.tsx` now composes them:
+   - `COMPOSED` and `composedAllows`: management for those three rows; Direct engineering approval or management for Requester review; and, ◐, a Requester-review holder reopening a ticket with no requester (`canActAsRequester`).
+   - A cell held only through composition says so, for example "Via Management override (ticket.manage)".
+   - `ViewAsSimulator` answers through the same `composedAllows`.
+
+   With the shipped defaults, the rows now read:
+   - Direct engineering approval `y-yy-y------`;
+   - Engineering scope review and Final engineering approval `ycyycycccccc`;
+   - Requester review `ycyycycycccc`.
+2. **The snapshot's review date overclaimed.** Every snapshot row sat under "reviewed 2026-10-07", but only the rows this package changed had been checked against the code. One of them was stale: "Per-library permission (ACL) drawer" said Admin and Document Control only, beside the corrected ownership row that admits an owner and a Manage Permissions grant holder. Fixed:
+   - **ACL drawer row:** now `yycccccccccc`, matching the drawer's delegation mode (`PermissionDrawer` `delegationOnly`, DEL-1 / GAP-3). The library page offers that mode on the library to its owner, and on a folder or document to its effective owner or a Manage Permissions grant holder on the chain. It allows allow-rules only, never Admin or Manage Permissions, and each needs an expiry. The library guard (`20261077` §2) admits the same people on the library's ACL, without the drawer's bounds.
+   - **"Edit document metadata":** checked too (the reviewer named it). It is now `yycccccccccc` with ⚠:
+     - The metadata editor's fields are the controllers' (`MetadataEditor` `canEdit`). An ACL Edit Metadata grant opens nothing more there.
+     - The inline title rename is offered to every member.
+     - The database admits any member's update unless an ACL deny binds them: `documents_org_access`, plus `documents_deny_write_guard` (`20260901`). This is the OWN-2 / OWN-19 class.
+   - **Per-row stamps:** each snapshot row now says whether it was checked. The eight rows checked against the code on 2026-10-07 carry `checked` and are tagged SNAPSHOT. The other 23 are tagged **NOT RE-CHECKED** on screen (named under *Scope / residual*). The section header now reads "rows marked SNAPSHOT were checked against the code on 2026-10-07, rows marked NOT RE-CHECKED were not".
+   - **Live refresh:** the explorer and View-as panels re-read on the same page when the policy editor saves or a View-as grant or revoke lands (`announceCapabilityPolicyChanged` / `onCapabilityPolicyChanged`, `lib/capabilityPolicy.ts`). Before this, the matrix kept showing the pre-save policy under "this org's policy".
+
+Tests: `lib/__tests__/aoRoundGP9PermissionsConsole.test.ts` "ALOG-14 — the permissions explorer tells the truth" (the columns are the role model; every capability is a derived row and a stored narrowing moves it; each of the six rows is the server's answer; quality sign-off's standing holders; every registry row reads a field that exists; the snapshot is labelled, dated and duplicates nothing; the old "Derived from a code audit" claim is gone; review fix, each pinned to the newest migration that defines its rule: library ownership to the `20261077` §2 guard text, the supervisor row to `20261046`'s guard and `teams_admin_write`, the teams row to `teams_admin_write` / `team_members_admin_write` and the registry's `teams.entry`, member removal to `revoke_member`'s `'remove'` branch in `20261161` and `org_members_delete` in `20261042`); `lib/__tests__/aoRoundGP9ConsoleRendered.test.ts` "PermissionsExplorer" (rendered: three sections in order; a stored narrowing in the cells; the unreadable policy labelled); `lib/__tests__/rolePickerCensus.test.ts` (the columns cover every role once); `sweepRoundA3.test.ts`'s DEL-6 pin on the recertification row still holds.
+
+Second review fix, tests:
+- `aoRoundGP9PermissionsConsole.test.ts` "the four ticket rows the engine composes with ticket.manage show management as able".
+- **Engine parity** — "parity with the engine, per role column — the shipped defaults" and "— a narrowed policy". For every live ticket row, a synthetic ticket is built at the row's stage. `WorkflowEngine.getActions` is asked, per role, whether that role is offered the stage's action, and each column's cell must agree: ✓ when every role is offered, ◐ when some are, never ✓ when none are. Every `COMPOSED` entry must have a stage there. A mutation that drops one composition fails it.
+- "the narrowed policy moves the composed cells too".
+- "View-as answers through the same composition".
+- "exactly the rows checked against the code carry the review date".
+- "the ACL drawer row is the drawer's delegation contract (DEL-1 / GAP-3) and the library guard" (pinned to `PermissionDrawer`, the library page and `20261077` §2).
+- "document metadata: the editor is the controllers'…" (pinned to `MetadataEditor`, `saveInlineTitle`, `documents_org_access` and `documents_deny_write_guard`).
+- `aoRoundGP9ConsoleRendered.test.ts`:
+  - "a snapshot row not checked against the code says so on screen";
+  - "a policy-editor save re-reads the explorer and View-as on the same page";
+  - "View-as: a Manager approves drawings via the management override".
+
+**Done-when.**
+1. ✓ Rows that correspond to a registered capability are rendered from `CAPABILITY_DEFS` and the org's stored policy — every capability, not only the old matches.
+2. ✓ The mismatches are each corrected (1–5, display-only: derived or corrected snapshot rows) or shown to hold (6); none was a policy gap, so nobody's authority changed. The rewrite's own rows are held to the same bar: member removal (Admin only), library ownership (controllers, the owner, a Manage Permissions grant), a department's supervisor and team membership each say what the database admits, and tests pin each one to the SQL it describes. *(Corrected at P9's review fix: this first claimed every mismatch was corrected while two rows the rewrite added were wrong — library ownership shown Admin-only, and Manager ✓ for removing a member.)* *(Corrected again at P9's second review fix: the ✓ above was still overstated. Four derived ticket rows left out the management override the engine composes onto them, so Admin, Manager and Supervisor were shown unable, or identity-only, on approvals the route lets them make. They are now composed, and each live ticket row is pinned per role column to `WorkflowEngine.getActions` for the defaults and for a narrowed policy.)*
+3. ✓ The remaining hand-maintained rows are a labelled documentation snapshot (section header, per-row tag, the hint that they are not derived). *(Corrected at P9's second review fix: this first said "dated" for every row while only the rows this package changed had been checked. Now only the eight rows checked against the code carry the date (SNAPSHOT); the other 23 say NOT RE-CHECKED on screen.)*
+
+**Scope / residual.** The snapshot rows stay hand-maintained by design (the finding's own chain reaction: ACL and ownership semantics no single evaluator exposes).
+
+**Checked against the code on 2026-10-07 (8 rows):**
+- Edit document metadata
+- Access recertification reviews
+- Document-level activity history (/activity)
+- Add a member (invite)
+- Remove a member from the workspace
+- Change a department's supervisor
+- Reassign library ownership / owning team
+- Per-library permission (ACL) drawer
+
+**Not re-checked (23 rows).** These are carried from the earlier hand-written matrix and tagged NOT RE-CHECKED on screen:
+- **Documents:** Browse & read documents; Upload files / create folders; Download / print (stamped when uncontrolled); Edit equipment / asset tags; Manage sets & binders; Delete documents / versions; Request deletion (owner path).
+- **Publishing:** Publish / rev-up a revision; Publish over someone's checkout (reason required); Force past an active hold; Revert to a prior revision; Check out / check in documents; Place / release legal hold.
+- **Reviews:** Configure review policies & rosters; Sign a review (e-signature); Auto-publish as last review signer; Acknowledge read-&-understood; Retention, disposition & purge.
+- **Other areas:** Create a drafting request; Create / edit / refresh work packages; Request distribution confirmations; Confirm "I have this revision"; Create / manage projects & schedules.
+
+**Owner: admin-and-org P7** (the ACL / `PermissionDrawer` package), ruled by the integrator at the A&O P9 merge (2026-10-08, the fix pass; the integrator adds it to P7's plan entry at the merge): check each row against the code and mark it `checked: true` with a pinning test, or remove it. They are not part of this finding's three criteria; they are the explicit Partial in the header. *(This read "a documentation task for whoever next edits the snapshot" — no owner, which DEC-31 does not allow.)*
+
+*(Also at the integrator's fix pass, 2026-10-08 — `ORG-14`'s pre-paste truth on this panel.)* The derived *Sign off quality records* row asks the database once on mount (`probeQualitySignOffDecided`, `PermissionsExplorer.tsx`, shared with View-as) whether it decides quality sign-off yet (`quality_signoff_status`, which exists only from `20261136`). While it does not, a column the policy grants is ◐ — "Granted by the policy, but the database admits only Admin / Document Control and the project's owner until migration 20261136 is pasted — a policy grant of this capability is not read yet" — with ⚠ and a row note, never ✓; the controllers' ✓ stands; no other row reads the probe, and a probe that fails for another reason changes nothing. Tests: `aoRoundGP9PermissionsConsole.test.ts` "integrator fix pass — pre-paste truth on the explorer, no placeholder role, no stale gap"; `aoRoundGP9ConsoleRendered.test.ts` "integrator fix pass / ORG-14: before 20261136 is pasted the quality sign-off row shows a policy grant as ◐ …". The role model fold on the same page (`RoleModelTree.tsx`) no longer lists "the owner path is a known gap" under known gaps — the row above and DEL-6 say the owner can, and `20261188` admits exactly the owner or a controller (pending its paste).
 
 ---
 

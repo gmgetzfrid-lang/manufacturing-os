@@ -353,7 +353,7 @@ export function policyAllows(
 ## AUTHZ-7 · loadCapabilityPolicy fails open to the shipped defaults on any query error, so a narrowed policy silently reverts to wider authority
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/capabilityPolicy.ts:165-196`, `lib/capabilityPolicy.ts:171-178`, `lib/capabilityPolicy.ts:193-195`, `lib/capabilityPolicy.ts:159-160`, `app/api/tickets/workflow-action/route.ts:95-96`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and worse than described: the failure result is written into the module cache at line 190-191 (`cache.set(orgId, { at: Date.now(), policy })` with CACHE_TTL_MS = 60_000), so one bad read pins the widened default authority for a full minute of requests. Contrast the DB-side twin org_capability_allows, which fails CLOSED (`ELSE '[]'::jsonb`, 20260901_db_hard_enforcement.sql:55).
@@ -407,6 +407,26 @@ and the consumer — app/api/tickets/workflow-action/route.ts:95: `  const capPo
 - If the user ratifies `WF-1`'s rule for the route as well, the revert is the one loader call at `app/api/tickets/workflow-action/route.ts:302`, and the test at `lib/__tests__/dfRoundG_P1_rails.test.ts:538` flips.
 
 **Integrator note (2026-10-07, DEC-90 A26).** *Ratified by the integrator under the user's delegation, 2026-10-07 (DEC-90): authority decisions fail closed (OWASP fail securely, deny by default) — the workflow route refuses on an unreadable policy (built), and the cached loader on a failed refresh serves the last good entry and, with none, refuses authority checks while non-authoritative UI may show the defaults labelled as such; `lib/holds.ts`'s fail-open becomes fail-closed (admin-and-org P9).* Status stays OPEN, owner admin-and-org P9 (already assigned). Done-when 3 ("A stale cache entry is served in preference to defaults when a refresh fails") will hold as written once P9 lands the rule in `loadCapabilityPolicyEntry`: on a failed refresh it serves the last good entry; with none, an authority check refuses (a non-authoritative UI reader may show the defaults, labelled as such). `lib/holds.ts` `assertHoldCapability`'s "policy lookup hiccup: fail open" becomes fail-closed in the same change. The workflow route already refuses (503 `policy_unreadable`).
+
+**Resolution (2026-10-07, admin-and-org Round G).** Package P9 implements DEC-89 item 3 as ratified by the integrator under the user's delegation (DEC-90 A26 — authority decisions fail closed); done-when 1 and 2 held since DF-P1 (the route refuses on an unreadable policy, 503 `policy_unreadable`, kept). Reproduced on base `c537602` (DEC-29): `loadCapabilityPolicyEntry` answered `{ policy: {}, version: null }` on a read error and on a throw (`lib/capabilityPolicy.ts:510`, `:520`) — the shipped defaults, never a stale entry — and `lib/holds.ts assertHoldCapability` swallowed every lookup failure ("policy lookup hiccup: fail open", `:255`) with a placeholder `"Viewer"` role (`:246`).
+
+Landed:
+- `lib/capabilityPolicy.ts loadCapabilityPolicyEntry` (`:556`): a failed refresh serves the LAST GOOD entry for the org, marked `stale` (the entry keeps its old stamp, so the next call reads again); with none it answers the defaults marked `unreadable` (`failed`, `:572`). Nothing failed is cached; a healthy read — "nothing stored" included — is unchanged, field for field. `loadCapabilityPolicy` (`:606`) keeps the documented contract for non-authoritative readers only (the last good copy, else the defaults).
+- `lib/holds.ts assertHoldCapability` (`:236`) is fail-CLOSED: it reads the entry; an `unreadable` policy, an unreadable membership or any failure of the check itself refuses — "The hold was not placed / released: your permission … could not be checked (…). Try again in a moment." — and nothing is written; a failed refresh is decided on the last good copy; a non-member holds no role (DEC-91 — the `"Viewer"` placeholder is gone). The `document_holds` policies enforce the same capability in the database (`org_capability_allows`, which fails closed).
+- *Review fix, 2026-10-07.* As first landed, two paths still skipped the client gate. Every hold write is now checked or refused:
+  - **The session read.** `assertHoldCapability` returned before the check when `supabase.auth.getUser()` failed or found no user. In the browser (`typeof window !== "undefined"`) that now refuses: "… could not be checked (your session could not be read: …)" or "(no signed-in session was found)". Every caller today runs in the browser: `HoldStrip`, `CheckInPanel` and `/admin/holds`. Only a context with no window, meaning a server or cron caller with no person, is still left to the database.
+  - **The hold-row read.** `releaseHold` and `updateHoldExpectedRelease` skipped the gate when the read of the hold's `org_id` failed (`if (holdRow?.org_id)`). They now read it through `readHoldOrg`, which checks the error. A failed read refuses: "… the hold could not be read to check your permission (…)". A missing row refuses with the update's own "Hold already released or not found."
+  - **The re-date sentence.** The gate takes the action (`{ action: "redate" }`), so a re-date that cannot be checked says "The hold's expected date was not changed: …", not "The hold was not released".
+- The console surfaces that present the policy say when it could not be read (`ALOG-1`); every server-side authority decision reads the strict loader (`WF-10`'s census).
+
+Tests: `lib/__tests__/aoRoundGP9PermissionsConsole.test.ts` "AUTHZ-7 / ALOG-1 — the cached loader on a failed read" (healthy answers unchanged; `unreadable` with no last good; a failed refresh served stale from the last good, re-read next call, replaced by a good read; the strict loader unchanged) and "AUTHZ-7 — lib/holds.ts assertHoldCapability fails CLOSED" (regression: a healthy default still admits and a narrowed policy refuses with the same sentence; an unreadable policy with no last good refuses and writes nothing; a failed refresh is decided on the last good copy — a narrowing holds, an admitting copy admits; an unreadable membership refuses; a missing one holds no role; review fix: in the browser an unreadable or absent session refuses, while with no window the gate is left to the database as before; a failed hold-row read refuses release and re-date before any write; a re-date's sentence says the date). `holds.test.ts`'s HLD-14 source pin follows the re-date call. `sweepRoundE_policyServer.test.ts`'s errored-read pin now expects the marker. The route's tests (`dfRoundG_P1_rails.test.ts`) are unchanged and pass.
+
+**Done-when.**
+- ✓ (DF-P1) The loader distinguishes "no row stored" from "lookup failed", and the workflow route refuses the transition on a failed lookup.
+- ✓ `error` is inspected — by the strict loader and by the cached loader.
+- ✓ A stale cache entry is served in preference to the defaults when a refresh fails; with none, an authority check refuses (`lib/holds.ts`), and a non-authoritative reader gets the defaults. A browser check that cannot run refuses too, whether because the session or the hold row cannot be read (review fix).
+
+**Scope / residual.** Proposed finding for the integrator (DEC-31; not opened here, since it changes this area's counts): DEC-89 item 3 lets a non-authoritative UI reader show the defaults "labelled as such". The policy-presenting surfaces label it (`ALOG-1`), but the affordance surfaces — `app/(protected)/requests/page.tsx` and `[id]/page.tsx` (drafting-flow), `app/(protected)/transmittals/page.tsx` (document-control P16 / P22), `components/documents/HoldStrip.tsx`, `InspectorPanel.tsx`, `CheckoutStatusCell.tsx` (document-control), `app/(protected)/admin/holds/page.tsx` (plan: not to be edited), `hooks/useTicketNotifications.ts` — draw their controls from the last good copy or, with none, the defaults, unlabelled. No authority widens (each action is refused by its route, strict gate or the database), but a control may be offered and then refused. Proposed severity LOW; owner for the integrator to assign. *(Corrected at P9's second review fix, 2026-10-07: a remainder left "proposed, not opened" had no owner once P9 merged (DEC-31). It is now opened as [`AUTHZ-15`](#authz-15), with an owning package per surface.)*
 
 ---
 
@@ -757,5 +777,53 @@ and the policy that makes the narrowing optional — supabase/schema.sql:1080-10
 - ✓ A route test pins it.
 
 **Scope / residual.** None. (The engine action has no `requiresComment` flag; the picker dialog's default still pre-fills the note for the UI path.)
+
+---
+
+<a id="authz-15"></a>
+
+## AUTHZ-15 · During a policy-read fault, the affordance surfaces draw their controls from the shipped defaults with no label, though DEC-90 A26 asks a non-authoritative reader to label them
+
+- **Severity:** LOW
+- **Severity rationale:** No authority widens: every action these controls offer is decided by a server route, a strict gate or the database, and each refuses on an unreadable policy (`AUTHZ-7`, DEC-89 item 3). The harm is a control that is offered during a database fault and then refused, with nothing on screen saying that the policy behind it could not be read.
+- **Status:** OPEN
+- **Assigned:** CONFIRMED by the integrator at the admin-and-org P9 merge, 2026-10-08 (DEC-31) — drafting-flow DF-P9 TICKET-PAGE for the request surfaces; document-control P24 TRANSMITTAL ISSUE VERDICT for the transmittals page (plan entries updated). The proposal as made:
+  - drafting-flow **DF-P9 TICKET-PAGE**: `app/(protected)/requests/page.tsx`, `app/(protected)/requests/[id]/page.tsx`, `hooks/useTicketNotifications.ts`.
+  - **document-control**, the next package that lists each file:
+    - `app/(protected)/transmittals/page.tsx`: the transmittals surface of P7 / P22.
+    - `components/documents/HoldStrip.tsx` and `app/(protected)/admin/holds/page.tsx`: the holds surfaces of P5 / P15.
+    - `components/documents/InspectorPanel.tsx` and `components/documents/CheckoutStatusCell.tsx`: the checkout surfaces of P6 / P23.
+
+  P5, P6 and P15 have merged, so the integrator names the document-control remainder package.
+- **Verification:** CONFIRMED (by reading)
+- **Blast radius:** UI truth (affordances only)
+- **Locations:** each surface reads `loadCapabilityPolicy` (`lib/capabilityPolicy.ts:615-625`). For a failed read, its contract is "the last good entry, else the shipped defaults", and it carries no marker. None of these surfaces reads `loadCapabilityPolicyEntry`'s `unreadable` / `stale` markers:
+  - `app/(protected)/requests/page.tsx:249` — `void loadCapabilityPolicy(activeOrgId).then((p) => { if (alive) setCapPolicy(p); }).catch(() => {});`
+  - `app/(protected)/requests/[id]/page.tsx:837` — the same shape.
+  - `hooks/useTicketNotifications.ts:167` — the same shape.
+  - `app/(protected)/transmittals/page.tsx:118` — `.catch(() => { if (alive) setPolicy({}); })`.
+  - `components/documents/HoldStrip.tsx:107`.
+  - `components/documents/InspectorPanel.tsx:185`.
+  - `components/documents/CheckoutStatusCell.tsx:66`.
+  - `app/(protected)/admin/holds/page.tsx:52`.
+- **Related:** `AUTHZ-7` (the cached loader's failure rule, resolved by admin-and-org P9), admin-and-org `ALOG-1` (the console surfaces that present the policy now label it), `DEC-89` item 3, `DEC-90` A26.
+- **Independently verified:** — (`author`: opened 2026-10-07 by admin-and-org P9's second review fix, from the remainder the first P9 landing left "proposed" on `AUTHZ-7`, per `DEC-31`; not yet challenged)
+
+**Mechanism.** DEC-90 A26 lets a non-authoritative UI reader show the shipped defaults during a policy-read fault, labelled as such. P9 made the cached loader serve the last good entry on a failed refresh, and with no last good entry the defaults, never cached. It also labelled the defaults on the surfaces that present the policy: the policy editor, View-as and the permissions explorer (`ALOG-1`).
+
+The affordance surfaces read `loadCapabilityPolicy`, which returns the policy alone, with no marker. In a fresh tab during a fault (no last good entry), they draw each control as if the org's policy were the shipped defaults, with nothing on screen. Examples:
+- the ticket page's approve / assign buttons;
+- the transmittal issue controls;
+- the hold strip's place / release;
+- the checkout cell's force-release;
+- the attention badge's count.
+
+**Failure scenario.** An org narrowed `holds.release` to Document Control. During a database blip a Drafter opens a document in a new tab. The hold strip offers "Release" (the default is everyone). The Drafter clicks it and `lib/holds.ts` refuses, because its gate fails closed on an unreadable policy. Nothing told them the button came from the defaults rather than from their org's policy.
+
+**Remediation.** Read `loadCapabilityPolicyEntry` on these surfaces (or have `loadCapabilityPolicy` return the marker) and, when it says `unreadable`, either label the controls ("permissions could not be read — showing defaults") or draw the policy-dependent controls disabled with that reason. `stale` needs no label: it is the last good policy.
+
+**Done when.**
+- Each surface listed above, during a policy-read fault with no last good entry, either labels its policy-dependent controls as the shipped defaults or draws them disabled with the reason.
+- A rendered test per owning package drives the `unreadable` case.
 
 ---

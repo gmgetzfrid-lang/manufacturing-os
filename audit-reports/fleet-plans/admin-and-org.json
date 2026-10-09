@@ -271,7 +271,8 @@
     "ALOG-11",
     "ALOG-5 residual",
     "roles-and-permissions SURF-19 (purge / archive-cancel limb only, assigned by the integrator 2026-10-02 at the A&O P6 launch: app/api/admin/purge/route.ts and app/api/admin/archive-cancel/route.ts call authorizeAdminSurface instead of PURGE_ROLES / SHED_ROLES, using the writes-level intent A&O P6 adds)",
-    "drafting-flow EVID-6 and PERS-7 (remainders re-owned by the integrator 2026-10-07 at the DF-P1 merge: the audit dead-letter / outbox and its drain (ALOG-8), the actor_kind column and audit identity trigger (ALOG-7) building on DF-P1's lib/audit.ts, and the org_id IS NULL readability (ALOG-10); the call-site stand-ins stay with their pages' owners) \u2014 and EVID-12's reading rule: both audit viewers pair a TICKET_<ACTION> attempt row with the _NOT_APPLIED / _HOLDS_NOT_RELEASED row that names it (10-audit-evidence.md EVID-12 \"Reading the trail\")"
+    "drafting-flow EVID-6 and PERS-7 (remainders re-owned by the integrator 2026-10-07 at the DF-P1 merge: the audit dead-letter / outbox and its drain (ALOG-8), the actor_kind column and audit identity trigger (ALOG-7) building on DF-P1's lib/audit.ts, and the org_id IS NULL readability (ALOG-10); the call-site stand-ins stay with their pages' owners) \u2014 and EVID-12's reading rule: both audit viewers pair a TICKET_<ACTION> attempt row with the _NOT_APPLIED / _HOLDS_NOT_RELEASED row that names it (10-audit-evidence.md EVID-12 \"Reading the trail\")",
+    "ALOG-14 (explicit Partial assigned by the integrator 2026-10-08 at the A&O P9 merge: the 23 PermissionsExplorer snapshot rows tagged NOT RE-CHECKED on screen \u2014 re-check each against the live enforcement point beside the ACL / PermissionDrawer work, flip the tag or correct the row, and pin them)"
    ],
    "files": [
     "lib/audit.ts (internals only; keep the exported signature)",

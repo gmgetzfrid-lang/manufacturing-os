@@ -25,10 +25,10 @@
       "LOW": 5
     },
     "by_status": {
-      "RESOLVED": 127,
+      "RESOLVED": 128,
       "REFUTED": 3,
       "WONTFIX": 1,
-      "OPEN": 2
+      "OPEN": 1
     }
   },
   "status_vocabulary": [
@@ -3433,7 +3433,7 @@
       "id": "WF-10",
       "title": "The 60-second policy cache is never invalidated on the server — a revoked person keeps acting",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (currently masked by `WF-1`)",
       "blast_radius": "security",

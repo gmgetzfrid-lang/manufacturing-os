@@ -691,7 +691,8 @@
   {
    "name": "P24 TRANSMITTAL ISSUE VERDICT \u2014 a PDF the issue-time check could not decide needs the issuer's recorded yes, and the database requires a server-recorded verdict or acceptance at issue",
    "findings": [
-    "TRX-17 (opened 2026-10-07 at document-control P22's review fix pass, DEC-31; assigned by the integrator at the P22 merge: an 'unchecked' PDF or a check that did not run is issued with no warning and no recorded yes, and transmittals_guard (20261133) never verifies the browser-written stampable mark or an acceptance \u2014 the issue path asks for the yes, and a migration re-creating transmittals_guard from its NEWEST body requires a server-recorded verdict per PDF item for the draft as issued, or a recorded acceptance)"
+    "TRX-17 (opened 2026-10-07 at document-control P22's review fix pass, DEC-31; assigned by the integrator at the P22 merge: an 'unchecked' PDF or a check that did not run is issued with no warning and no recorded yes, and transmittals_guard (20261133) never verifies the browser-written stampable mark or an acceptance \u2014 the issue path asks for the yes, and a migration re-creating transmittals_guard from its NEWEST body requires a server-recorded verdict per PDF item for the draft as issued, or a recorded acceptance)",
+    "drafting-flow AUTHZ-15 (document-control surface, owner confirmed by the integrator 2026-10-08 at the A&O P9 merge: app/(protected)/transmittals/page.tsx \u2014 during a policy-read fault the page draws its controls from the shipped defaults with no label; label the fault state)"
    ],
    "files": [
     "lib/transmittals.ts (unstampableItems / issueTransmittal / armCheckedItems: an unchecked verdict asks for the yes)",

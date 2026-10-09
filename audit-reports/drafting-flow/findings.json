@@ -17,16 +17,16 @@
     "audit-reports/drafting-flow/13-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 143,
+    "findings": 144,
     "gaps": 14,
     "by_severity": {
       "CRITICAL": 9,
       "HIGH": 47,
       "MEDIUM": 63,
-      "LOW": 24
+      "LOW": 25
     },
     "by_status": {
-      "RESOLVED": 29,
+      "RESOLVED": 30,
       "OPEN": 107,
       "REFUTED": 4,
       "BLOCKED": 1,
@@ -375,7 +375,7 @@
       "id": "AUTHZ-7",
       "title": "loadCapabilityPolicy fails open to the shipped defaults on any query error, so a narrowed policy silently reverts to wider authority",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -3399,6 +3399,41 @@
       ],
       "refuted": false,
       "summary": "A direct POST of requestfinalengineerapproval with an engineer and no comment reaches PENDINGFINALAPPROVAL with engineerreviewreason null. The engineer signs off without seeing the correction the requester wanted.",
+      "area": "drafting-flow",
+      "report": "audit-reports/drafting-flow/09-authority-surfaces.md"
+    },
+    {
+      "id": "AUTHZ-15",
+      "title": "During a policy-read fault, the affordance surfaces draw their controls from the shipped defaults with no label, though DEC-90 A26 asks a non-authoritative reader to label them",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by reading)",
+      "blast_radius": "UI truth (affordances only)",
+      "related": [
+        "AUTHZ-7",
+        "ALOG-1",
+        "DEC-89",
+        "DEC-90"
+      ],
+      "locations": [
+        "lib/capabilityPolicy.ts:615-625",
+        "app/(protected)/requests/page.tsx:249",
+        "app/(protected)/requests/[id]/page.tsx:837",
+        "hooks/useTicketNotifications.ts:167",
+        "app/(protected)/transmittals/page.tsx:118",
+        "components/documents/HoldStrip.tsx:107",
+        "components/documents/InspectorPanel.tsx:185",
+        "components/documents/CheckoutStatusCell.tsx:66",
+        "app/(protected)/admin/holds/page.tsx:52"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "An org narrowed holds.release to Document Control. During a database blip a Drafter opens a document in a new tab. The hold strip offers \"Release\" (the default is everyone). The Drafter clicks it and lib/holds.ts refuses, because its gate fails closed on an unreadable policy. Nothing told them the button came from the defaults rather than from their org's policy.",
       "area": "drafting-flow",
       "report": "audit-reports/drafting-flow/09-authority-surfaces.md"
     },

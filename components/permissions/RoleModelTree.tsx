@@ -119,7 +119,11 @@ const GAPS: string[] = [
   "Rule expiry dates are enforced by the raw-rule evaluator but not by the acl_index snapshot the publish path and the database read — an expired grant keeps authorizing until the node's permissions are re-saved.",
   "A deny-read rule on a 'normal'-visibility node is app-enforced; to make hiding database-hard, set the node private/hidden with explicit grants (the designed model).",
   "Manager can administer users but the Admin sidebar section is shown only to Admin/DocCtrl — reachable by URL. Conversely, DocCtrl sees the Users link and /admin/users denies them.",
-  "Owners are notified when an access recertification is due, but only Admin/DocCtrl can open the recertification flow — the owner path is a known gap.",
+  // The owner recertification path is NOT a gap: since DEL-6 the library page
+  // offers the flow to the library's owner as well as a controller, and the
+  // event record (20261188, ALOG-2) admits exactly those — so the entry that
+  // called it "a known gap" was removed at the A&O P9 integrator fix pass
+  // (the explorer's "Access recertification reviews" row says the same).
 ];
 
 function Fold({ label, count, children, tone }: { label: React.ReactNode; count?: number; children: React.ReactNode; tone?: "warn" }) {

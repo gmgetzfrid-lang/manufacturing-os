@@ -197,9 +197,12 @@ describe("ALOG-1 done-when 2 — the record's census of the loaders' callers is 
   // Grouped as ALOG-1's record groups them. A caller of the defaults-on-error
   // loader that is not listed here is one the record has not judged.
   const RECORDED = new Set([
-    // the two console surfaces P9's marker must change
+    // the two console surfaces P9's marker must change — and (admin-and-org
+    // P9, ALOG-14) the explorer, which now reads the stored policy and says
+    // when it could not
     "components/permissions/CapabilityPolicyEditor.tsx",
     "components/permissions/ViewAsSimulator.tsx",
+    "components/permissions/PermissionsExplorer.tsx",
     // field-facing: the hold opened / released / stale audience, and the
     // client holds gate (fail-open by design)
     "lib/holds.ts",

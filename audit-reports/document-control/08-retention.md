@@ -182,7 +182,7 @@ lib/accessRecert.ts:60-62 `const { data } = await supabase.from("libraries").sel
 ## RET-4 · Any active org member can clear a legal hold, wipe a retention clock, or self-attest an access recertification via PostgREST
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** admin-and-org P9 (ALOG-2: access_recertification_events split; then close by pointer) — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:1060-1070`, `supabase/migrations/20260901_db_hard_enforcement.sql:152-162`, `supabase/migrations/20260820_retention.sql:59-64`, `supabase/migrations/20260821_access_recert.sql:39-44`, `lib/retention.ts:113-116`, `components/documents/RetentionSection.tsx:29-33`
@@ -216,6 +216,16 @@ supabase/schema.sql:1068-1069 `CREATE POLICY "documents_org_access" ON documents
 - ✓ / ✗ `document_disposition_events`: SELECT member + RESTRICTIVE INSERT authority (20261043), no UPDATE (20261043), no DELETE for any non-service role (20261077 §5). **`access_recertification_events` NOT done here**: the fleet plan assigns that table's policy split (INSERT bound to `performed_by = auth.uid()`, no UPDATE/DELETE, replacing `access_recert_events_member`) to admin-and-org P9 `ALOG-2`, which runs after this wave; a second migration on the same policies from this package would fork it.
 
 **Scope / residual.** Stays OPEN until `ALOG-2` lands its migration; the record then closes by pointer. `libraries.acl` (also named in the mechanism) is under the 20261036 guard already.
+
+**Resolution (2026-10-07, admin-and-org Round G).** Closed by pointer, as the integrator's orphan sweep assigned it (admin-and-org P9, `ALOG-2`). Re-verified on base `c537602` (DEC-29): done-when 1 holds (`20261043`, live), done-when 2 holds in `20261077` §2 (PASTE pending — the library attestation columns, controller or owner), and the disposition half of done-when 3 in `20261043` / `20261077` §5. The open part was the second table: `access_recertification_events` still had only the two member `FOR ALL` policies (`20260821:41-44`, `20260819:223-238`). `supabase/migrations/20261188_ao_roundG_access_recert_events.sql` (admin-and-org `ALOG-2`) drops both and leaves a member SELECT, an INSERT bound to `performed_by = auth.uid()` for a controller (by the role collection) or the library's owner — the same population `20261077` §2 admits for the attestation columns — repeated as a RESTRICTIVE INSERT, and RESTRICTIVE no-UPDATE / no-DELETE (`USING (false)`). The done-when wrote "INSERT (controller)"; the brief's ruling for `ALOG-2` (narrow to the owner, Admin and DocCtrl) keeps the library owner, whom roles `DEL-6` and `20261077` §2 already admit to record a recertification. Exercised on a throwaway PostgreSQL 16 (`ALOG-2`'s record); pinned by `lib/__tests__/aoRoundGP9RecertEvents.test.ts` (a replay of `schema.sql` and every numbered migration leaves exactly those five policies on the table).
+
+**Done-when.**
+- ✓ documents' legal-hold / retention columns guarded — `20261043` (live).
+- ✓ libraries' attestation columns controller-or-owner — `20261077` §2 (PASTE pending).
+- ✓ `document_disposition_events` and `access_recertification_events` are SELECT (member) + INSERT (authority-bound) with no UPDATE or DELETE for authenticated — `20261043` / `20261077` §5 (disposition) and `20261188` (recertification; PASTE pending).
+
+**Scope / residual.** None. Paste order: `20261077` and `20261188` are independent of each other. Until `20261188` is pasted, done-when 3's recertification half holds in the file only; every member's event insert is admitted as before (DEC-30). *(Added at P9's second review fix, 2026-10-07: this record first said "(PASTE pending)" inline only, with no `Pending migration:` line.)*
+- Pending migration: `supabase/migrations/20261188_ao_roundG_access_recert_events.sql`.
 
 ---
 

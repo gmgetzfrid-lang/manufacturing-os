@@ -17,8 +17,8 @@
       "LOW": 9
     },
     "by_status": {
-      "OPEN": 41,
-      "RESOLVED": 18
+      "RESOLVED": 25,
+      "OPEN": 34
     }
   },
   "status_vocabulary": [
@@ -34,7 +34,7 @@
       "id": "ALOG-1",
       "title": "The capability policy is read from and written to `org_configurations.value` — a column that does not exist; the table's column is `data`, so every org's action-permission policy and every per-person delegation is inert, and the DB function that holds RLS depends on raises at runtime",
       "severity": "CRITICAL",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -178,7 +178,7 @@
       "id": "ALOG-2",
       "title": "Access recertification — the periodic \"does everyone still need this?\" control — cannot fail visibly, is not restricted to the reviewers its own design names, and its attestation record is writable and deletable by any active member",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -706,7 +706,7 @@
       "id": "ALOG-9",
       "title": "The action-permissions grid can only grant to 12 hardcoded role tokens; five of the system's nineteen real roles — Accounting, Safety, HR, Maintenance, Operations — have no column, so authority already held by those roles is invisible in the console that governs it",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -789,7 +789,7 @@
       "id": "ALOG-12",
       "title": "The capability-policy save is a whole-grid read-modify-write off a mount-time snapshot behind a 60-second cache — two admins silently clobber each other, and the `before` half of the CAPABILITY_POLICY_CHANGED record can be a state that was never current",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -844,7 +844,7 @@
       "id": "ALOG-14",
       "title": "The permissions console's headline panel is a hand-maintained 52-row string matrix that has drifted from the code — at least five rows assert authority boundaries the app does not have",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1328,7 +1328,7 @@
       "id": "ORG-10",
       "title": "The \"View as\" access simulator queries team_members by a column that does not exist, so team-derived access is invisible in the one screen built to show effective access",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1378,7 +1378,7 @@
       "id": "ORG-14",
       "title": "The \"View as\" simulator reports that Admin, Document Control and the project owner cannot sign off quality records — and cannot show a project-scoped grantee at all — while the database admits all of them",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (by reading)",
       "blast_radius": null,

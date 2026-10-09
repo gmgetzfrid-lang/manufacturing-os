@@ -28,7 +28,7 @@ use it without being taught.
 
 ## Findings
 
-**143 findings** — 9 CRITICAL, 47 HIGH, 63 MEDIUM, 24 LOW — plus **14 gap specs**, all
+**144 findings** — 9 CRITICAL, 47 HIGH, 63 MEDIUM, 25 LOW — plus **14 gap specs**, all
 buildable.
 
 Two passes. **`01`–`05`** are the design read: review tiering, friction, wiring,
@@ -45,7 +45,7 @@ completeness critic, every finding put through an adversarial refutation pass.
 | 06 | [State machine](./06-state-machine.md) | 14 | Reachable transitions, concurrency, partial failure, and the actions that skip the gates |
 | 07 | [Persistence & RLS](./07-persistence-and-rls.md) | 8 | What the database actually permits, and which writes fail silently |
 | 08 | [Routing & attention](./08-routing-and-attention.md) | 11 | Who is told what, and what goes quiet |
-| 09 | [Authority surfaces](./09-authority-surfaces.md) | 14 | Every door into a ticket, including the public verify endpoint |
+| 09 | [Authority surfaces](./09-authority-surfaces.md) | 15 | Every door into a ticket, including the public verify endpoint — `AUTHZ-15` (LOW) opened at the admin-and-org P9 second review fix, 2026-10-07 (the count was corrected at the integrator's P9 fix pass) |
 | 10 | [Audit & evidence](./10-audit-evidence.md) | 14 | What this system could prove to a PSM auditor, and what it could not |
 | 11 | [Document handoff](./11-document-handoff.md) | 13 | Where the request flow meets the controlled document, and the as-built path |
 | 12 | [Projects boundary](./12-projects-boundary.md) | 13 | The bidirectional-portal question, answered from the schema up |

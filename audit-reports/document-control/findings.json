@@ -24,8 +24,8 @@
       "LOW": 25
     },
     "by_status": {
-      "RESOLVED": 154,
-      "OPEN": 16
+      "RESOLVED": 155,
+      "OPEN": 15
     }
   },
   "status_vocabulary": [
@@ -1382,7 +1382,7 @@
       "id": "RET-4",
       "title": "Any active org member can clear a legal hold, wipe a retention clock, or self-attest an access recertification via PostgREST",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

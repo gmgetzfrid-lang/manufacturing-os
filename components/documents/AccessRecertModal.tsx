@@ -1,15 +1,21 @@
 "use client";
 
 // AccessRecertModal — set the access-recertification cadence for a LIBRARY and
-// perform the attestation: review the current access list (from the ACL), prune
-// via the Permissions panel if needed, then confirm it's still appropriate. The
-// attestation snapshots the list and resets the clock.
+// perform the attestation: review the current access list (the EFFECTIVE
+// population, RET-3), prune via the Permissions panel if needed, then confirm
+// it's still appropriate. The attestation snapshots the list and resets the
+// clock. ALOG-2: a refused cadence save or attestation is shown here, a list
+// that could not be read is said (and attesting is off), and expired grants
+// are listed apart — never as current access. A library row that could not
+// be read turns the cadence controls off too (fix pass 2): the form's
+// defaults are not the stored cadence, and saving them would overwrite a
+// cadence the reviewer never saw.
 
 import React, { useCallback, useEffect, useState } from "react";
 import { KeyRound, X, Loader2, CheckCircle2, ShieldAlert } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import {
-  setRecertPolicy, recertifyAccess, listAccessGrants, recertStatusFor, daysUntilRecert,
+  setRecertPolicy, recertifyAccess, listAccessGrantsDetailed, recertStatusFor, daysUntilRecert,
   type AccessGrant,
 } from "@/lib/accessRecert";
 import type { RecertPolicy } from "@/types/schema";
@@ -32,39 +38,65 @@ export default function AccessRecertModal({ libraryId, orgId, name, uid, userNam
   const [lastAt, setLastAt] = useState<string | null>(null);
   const [nextDate, setNextDate] = useState<string | null>(null);
   const [note, setNote] = useState("");
+  // ALOG-2: rules whose expiresAt has passed are listed apart, never as current.
+  const [expired, setExpired] = useState<AccessGrant[]>([]);
+  // ALOG-2: a read that failed is said — an empty list would read as "nobody
+  // has access", the false answer an attestation must never be signed on.
+  const [loadIssue, setLoadIssue] = useState<string | null>(null);
+  // ALOG-2 (fix pass 2): the library row itself — its stored cadence — could
+  // not be read. Kept apart from the access-list issues: it gates the cadence
+  // controls, not only the attestation.
+  const [libraryReadError, setLibraryReadError] = useState<string | null>(null);
+  // ALOG-2 done-when 1: a refused write is shown to the reviewer, never a
+  // silent return to the form.
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [{ data }, g] = await Promise.all([
+      const [{ data, error }, eff] = await Promise.all([
         supabase.from("libraries").select("recert_policy, last_recertified_at, next_recertification_date").eq("id", libraryId).maybeSingle(),
-        listAccessGrants(orgId, libraryId),
+        listAccessGrantsDetailed(orgId, libraryId),
       ]);
       const p = (data?.recert_policy as RecertPolicy) ?? null;
       setExisting(p);
       if (p) { setEnabled(p.enabled); setMonths(p.intervalMonths ?? 6); }
       setLastAt((data?.last_recertified_at as string | null) ?? null);
       setNextDate((data?.next_recertification_date as string | null) ?? null);
-      setGrants(g);
+      setGrants(eff.live);
+      setExpired(eff.expired);
+      const libErr = error ? error.message : !data ? "the library was not found" : null;
+      setLibraryReadError(libErr);
+      const issues = [...(libErr ? [`library: ${libErr}`] : []), ...(eff.complete ? [] : eff.issues)];
+      setLoadIssue(issues.length ? issues.join("; ") : null);
+    } catch (e) {
+      const m = (e as Error)?.message || "the access list could not be read";
+      setLoadIssue(m);
+      setLibraryReadError(m);
     } finally { setLoading(false); }
   }, [libraryId, orgId]);
   useEffect(() => { void load(); }, [load]);
 
-  const savePolicy = async () => {
+  const run = async (write: () => Promise<unknown>, after?: () => void) => {
     setBusy(true);
-    try { await setRecertPolicy({ libraryId, orgId, policy: { enabled, intervalMonths: months }, actorId: uid, actorName: userName }); await load(); onSaved?.(); }
-    finally { setBusy(false); }
+    setActionError(null);
+    try {
+      await write();
+      after?.();
+      await load();
+      onSaved?.();
+    } catch (e) {
+      setActionError((e as Error)?.message || "The change was not saved.");
+      // The library's dates may have been put back (or not): show what is stored.
+      await load();
+    } finally { setBusy(false); }
   };
-  const clearPolicy = async () => {
-    setBusy(true);
-    try { await setRecertPolicy({ libraryId, orgId, policy: null, actorId: uid, actorName: userName }); await load(); onSaved?.(); }
-    finally { setBusy(false); }
-  };
-  const recertify = async () => {
-    setBusy(true);
-    try { await recertifyAccess({ libraryId, orgId, note: note.trim() || undefined, actorId: uid, actorName: userName }); setNote(""); await load(); onSaved?.(); }
-    finally { setBusy(false); }
-  };
+  const savePolicy = () => run(() => setRecertPolicy({ libraryId, orgId, policy: { enabled, intervalMonths: months }, actorId: uid, actorName: userName }));
+  const clearPolicy = () => run(() => setRecertPolicy({ libraryId, orgId, policy: null, actorId: uid, actorName: userName }));
+  const recertify = () => run(
+    () => recertifyAccess({ libraryId, orgId, note: note.trim() || undefined, actorId: uid, actorName: userName }),
+    () => setNote(""),
+  );
 
   const status = recertStatusFor(nextDate);
   const days = daysUntilRecert(nextDate);
@@ -98,25 +130,35 @@ export default function AccessRecertModal({ libraryId, orgId, name, uid, userNam
 
             {/* Cadence */}
             <div className="rounded-lg border border-[var(--color-border)] p-3 space-y-2">
+              {libraryReadError && (
+                <div role="alert" className="rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-1.5 text-[11px] text-rose-800 dark:bg-rose-950/40 dark:text-rose-200">
+                  The library&apos;s cadence could not be read ({libraryReadError}). Saving or removing a cadence is off until it loads — the settings below are not the stored ones.
+                </div>
+              )}
               <label className="flex items-center gap-2 text-sm text-[var(--color-text)]">
-                <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Require periodic recertification
+                <input type="checkbox" checked={enabled} disabled={!!libraryReadError} onChange={(e) => setEnabled(e.target.checked)} /> Require periodic recertification
               </label>
               {enabled && (
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-[var(--color-text-muted)]">Every</span>
                   <input type="number" min={1} value={months} onChange={(e) => setMonths(Math.max(1, parseInt(e.target.value) || 1))} className={`${inp} w-20`} />
                   <span className="text-xs text-[var(--color-text-muted)]">months</span>
-                  <button onClick={() => void savePolicy()} disabled={busy} className="ml-auto px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-white text-xs font-bold disabled:opacity-50">Save cadence</button>
+                  <button onClick={() => void savePolicy()} disabled={busy || !!libraryReadError} className="ml-auto px-3 py-1.5 rounded-lg bg-[var(--color-accent)] text-white text-xs font-bold disabled:opacity-50">Save cadence</button>
                 </div>
               )}
-              {existing && <button onClick={() => void clearPolicy()} disabled={busy} className="text-[11px] text-red-600 hover:underline">Remove cadence</button>}
+              {existing && <button onClick={() => void clearPolicy()} disabled={busy || !!libraryReadError} className="text-[11px] text-red-600 hover:underline disabled:opacity-50">Remove cadence</button>}
             </div>
 
             {/* Access list */}
             <div>
               <div className="text-[11px] font-black uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5">Current access · {grants.length}</div>
+              {loadIssue && (
+                <div role="alert" className="mb-2 rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-1.5 text-[11px] text-rose-800 dark:bg-rose-950/40 dark:text-rose-200">
+                  The access list could not be read ({loadIssue}). Do not attest from this list — recertifying is refused until it loads.
+                </div>
+              )}
               {grants.length === 0 ? (
-                <div className="text-[11px] text-[var(--color-text-muted)]">No explicit grants on this library (inherited / default access only).</div>
+                <div className="text-[11px] text-[var(--color-text-muted)]">{loadIssue ? "Access list unavailable." : "No member can read this library today."}</div>
               ) : (
                 <div className="rounded-lg border border-[var(--color-border)] max-h-52 overflow-y-auto divide-y divide-[var(--color-border)]">
                   {grants.map((g, i) => (
@@ -128,15 +170,34 @@ export default function AccessRecertModal({ libraryId, orgId, name, uid, userNam
                   ))}
                 </div>
               )}
+              {expired.length > 0 && (
+                <div className="mt-2">
+                  <div className="text-[10px] font-black uppercase tracking-wider text-[var(--color-text-faint)] mb-1">Expired grants · {expired.length} — not attested as current</div>
+                  <div className="rounded-lg border border-dashed border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+                    {expired.map((g, i) => (
+                      <div key={i} className="flex items-center gap-2 px-2.5 py-1 text-[11px] text-[var(--color-text-faint)]">
+                        <span className="text-[10px] font-bold uppercase w-10 shrink-0">{g.subjectType}</span>
+                        <span className="min-w-0 truncate line-through">{g.subjectName}</span>
+                        <span className="ml-auto text-[10px]">expired {(g.expiresAt ?? "").slice(0, 10)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="text-[10px] text-[var(--color-text-muted)] mt-1 flex items-center gap-1"><ShieldAlert className="w-3 h-3" /> To remove access, use the library&apos;s Permissions panel, then attest below.</div>
             </div>
 
             {/* Attest */}
             <div className="space-y-2 pt-1 border-t border-[var(--color-border)]">
+              {actionError && (
+                <div role="alert" className="rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-1.5 text-[11px] font-bold text-rose-800 dark:bg-rose-950/40 dark:text-rose-200">
+                  {actionError}
+                </div>
+              )}
               <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional) — e.g. removed 2 contractors" className={`${inp} w-full`} />
               <div className="flex justify-end gap-2">
                 <button onClick={onClose} className="px-3 py-2 rounded-lg text-xs font-bold text-[var(--color-text-muted)]">Close</button>
-                <button onClick={() => void recertify()} disabled={busy} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold disabled:opacity-50">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Recertify — access reviewed</button>
+                <button onClick={() => void recertify()} disabled={busy || !!loadIssue} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold disabled:opacity-50">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Recertify — access reviewed</button>
               </div>
             </div>
           </div>

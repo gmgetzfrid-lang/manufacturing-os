@@ -42,6 +42,8 @@
 
 import { supabase } from "@/lib/supabase";
 import { MANAGEMENT_ROLES } from "@/lib/managementRoles";
+import { isControllerRole } from "@/lib/permissions";
+import type { Role } from "@/types/schema";
 
 export type CapabilityId =
   | "ticket.manage"            // management override tier (approve anywhere, force close)
@@ -377,6 +379,33 @@ export function policyAllows(
   return false;
 }
 
+export type QualitySignOffVia = "controller" | "owner" | "capability";
+
+/** ORG-14: the TypeScript mirror of quality_signer_eligible (20261136) — who
+ *  the four quality write policies admit on ONE project, for a member already
+ *  known to be ACTIVE in the project's org (the simulator lists only active
+ *  members): a controller (Admin / DocCtrl anywhere in the collection —
+ *  is_org_controller_for), the project's owner, or a holder of
+ *  quality.sign_off FOR THAT PROJECT (policyAllows with resource
+ *  { projectId } — a rule scoped to the project, the base list, or a live
+ *  personal grant) who can also see the project (quality_signoff_granted_for:
+ *  not private, or the owner, a controller or a project member). The
+ *  database decides; this is what the View-as simulator says it decides. */
+export function qualitySignOffEligible(input: {
+  policy: CapabilityPolicy | null | undefined;
+  uid: string;
+  /** The FULL held collection (headline included). */
+  roles: readonly string[];
+  project: { id: string; ownerUserId: string | null; visibility?: string | null; memberIds?: readonly string[] };
+}): { eligible: boolean; via: QualitySignOffVia | null } {
+  const { policy, uid, roles, project } = input;
+  if (roles.some((r) => isControllerRole(r as Role))) return { eligible: true, via: "controller" };
+  if (project.ownerUserId && project.ownerUserId === uid) return { eligible: true, via: "owner" };
+  const sees = project.visibility !== "private" || (project.memberIds ?? []).includes(uid);
+  const granted = policyAllows(policy, "quality.sign_off", roles[0] ?? null, [...roles], uid, { projectId: project.id });
+  return sees && granted ? { eligible: true, via: "capability" } : { eligible: false, via: null };
+}
+
 /** Parse one stored entry: a bare string list, or a list of `{tokens, when?}`
  *  rules. Unknown `when` keys are dropped (the SQL evaluator ignores them
  *  too); a rule without a usable `tokens` list is dropped; a rule list with
@@ -418,6 +447,21 @@ export function normalizeCapabilityEntry(v: unknown): CapabilityEntry | undefine
 // seen within the same bound. Each entry carries the row's
 // `updated_at` as its VERSION so an authority decision can name the policy
 // version it was made under (the workflow route's audit row does).
+//
+// WF-10 (admin-and-org Round G, P9): no server-side AUTHORITY decision reads
+// through this cache any more. The workflow route (drafting-flow AUTHZ-7),
+// the admin gate (lib/adminGate.ts), the transmittal issue rail
+// (lib/transmittals.ts) and the AI-cap route (app/api/ai/usage) all read
+// through loadCapabilityPolicyStrict — fresh on every decision, never cached
+// — so a revoked grant, a narrowed role list or a removed member (whose
+// grants revoke_member strips from the stored row, and whose membership every
+// route re-reads) is refused on the very next server-side decision, on every
+// instance. A census test (aoRoundGP9PermissionsConsole.test.ts) keeps the
+// cached loader out of app/api and the server-only lib modules. What remains
+// cached is the BROWSER's copy, which only draws controls;
+// invalidateCapabilityPolicy(orgId) drops it in the tab that changed the
+// policy, a grant or a membership (the policy route's callers do; the members
+// page is admin-and-org P8's to call it after a removal or role change).
 
 const BROWSER_CACHE_TTL_MS = 60_000;
 /** How long a server process may act on a policy it has already read. */
@@ -428,6 +472,25 @@ export function __resetCapabilityPolicyCache(): void { cache.clear(); }
 /** Drop one org's entry from THIS instance's cache — the policy route calls
  *  this after every write; other instances age theirs out (SERVER_CACHE_TTL_MS). */
 export function invalidateCapabilityPolicy(orgId: string): void { cache.delete(orgId); }
+
+/** ALOG-14 (admin-and-org Round G, P9 fix pass 2): the browser event a
+ *  console write announces — the policy editor's save, a View-as grant or
+ *  revoke — so the other panels on /admin/permissions (PermissionsExplorer,
+ *  ViewAsSimulator) re-read instead of showing the pre-save policy under
+ *  "this org's policy". The writer drops the cached copy first; a listener
+ *  re-reads with loadCapabilityPolicyEntry and never announces in turn. */
+export const CAPABILITY_POLICY_CHANGED_EVENT = "capability-policy-changed";
+export function announceCapabilityPolicyChanged(orgId: string): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(CAPABILITY_POLICY_CHANGED_EVENT, { detail: { orgId } }));
+}
+/** Subscribe to the announcement for one org; returns the unsubscribe. */
+export function onCapabilityPolicyChanged(orgId: string, fn: () => void): () => void {
+  if (typeof window === "undefined") return () => undefined;
+  const handler = (e: Event) => { if ((e as CustomEvent<{ orgId?: string }>).detail?.orgId === orgId) fn(); };
+  window.addEventListener(CAPABILITY_POLICY_CHANGED_EVENT, handler);
+  return () => window.removeEventListener(CAPABILITY_POLICY_CHANGED_EVENT, handler);
+}
 
 /** Parse a stored `org_configurations.data` blob into a policy. Two stored
  *  shapes: canonical {caps, grants}, and the legacy flat {capId: roles[]}
@@ -447,7 +510,23 @@ export function parseStoredCapabilityPolicy(stored: unknown): CapabilityPolicy {
   return { caps, grants };
 }
 
-export interface LoadedCapabilityPolicy { policy: CapabilityPolicy; version: string | null }
+export interface LoadedCapabilityPolicy {
+  policy: CapabilityPolicy;
+  version: string | null;
+  /** ALOG-1 / DEC-89 item 3 (ratified, DEC-90 A26): the stored policy could
+   *  not be read and there was no last good entry to serve. `policy` is then
+   *  `{}` — the SHIPPED DEFAULTS — which only a non-authoritative reader may
+   *  show, LABELLED as defaults; an authority check refuses (lib/holds.ts
+   *  assertHoldCapability), and the console says it could not read the
+   *  policy (CapabilityPolicyEditor, ViewAsSimulator, PermissionsExplorer).
+   *  The read error's text. Absent on a good read — "nothing stored" is a
+   *  good read (version null, no marker): that IS the org's policy. */
+  unreadable?: string;
+  /** AUTHZ-7 done-when 3: the refresh failed and the LAST GOOD entry for this
+   *  org was served instead of the defaults. `staleError` is the read error. */
+  stale?: boolean;
+  staleError?: string;
+}
 
 /** The strict (fail-closed) admin-gate loader reads the SAME shape with the
  *  SAME rule as the cached one — one parser, two names. */
@@ -482,8 +561,17 @@ export async function loadCapabilityPolicyStrict(
 
 /** `client` lets server routes pass their own (service-role) client — the
  *  shared browser client has no session in a route handler. Returns the
- *  policy with the version stamp it was read at (null = nothing stored, or
- *  the read failed and the shipped defaults apply for this call only). */
+ *  policy with the version stamp it was read at (null = nothing stored).
+ *
+ *  A failed read (DEC-89 item 3, ratified by DEC-90 A26 — authority
+ *  decisions fail closed; drafting-flow AUTHZ-7 done-when 3, ALOG-1
+ *  done-when 2): the LAST GOOD entry for the org is served, marked `stale`;
+ *  with none, the answer is marked `unreadable` and its `policy` is `{}` —
+ *  the shipped defaults, for a non-authoritative reader to show LABELLED as
+ *  defaults. An authority check reads the marker and refuses. A failure is
+ *  never cached, and a stale entry keeps its old timestamp, so the next call
+ *  reads again. Every server-side authority decision reads through
+ *  loadCapabilityPolicyStrict instead (fresh, never cached — WF-10). */
 export async function loadCapabilityPolicyEntry(
   orgId: string,
   client?: Pick<typeof supabase, "from">,
@@ -496,6 +584,13 @@ export async function loadCapabilityPolicyEntry(
   // is an empty policy for this call — never a cached one that would disable
   // every stored narrowing and grant org-wide for the TTL.
   const sessionless = !client && typeof window === "undefined";
+  // A read ERROR is not "no policy stored", and it is never cached: caching
+  // the defaults would let an org's stored narrowing vanish for the TTL
+  // after any transient failure (WF-1 done-when 2). The last good entry is
+  // the org's policy as last read; with none, the caller is told.
+  const failed = (message: string): LoadedCapabilityPolicy => (hit
+    ? { policy: hit.policy, version: hit.version, stale: true, staleError: message }
+    : { policy: {}, version: null, unreadable: message });
   try {
     const { data, error } = await (client ?? supabase)
       .from("org_configurations")
@@ -503,11 +598,7 @@ export async function loadCapabilityPolicyEntry(
       .eq("org_id", orgId)
       .eq("key", "capability_policy")
       .maybeSingle();
-    // A read ERROR is not "no policy stored": returning defaults is correct
-    // for one call, but caching them for the TTL would let an org's stored
-    // narrowing vanish for a minute after any transient failure (WF-1
-    // done-when 2). Fail closed to defaults WITHOUT caching.
-    if (error) return { policy: {}, version: null };
+    if (error) return failed(error.message || "the capability policy could not be read");
     // The column is `data` — reading `value` (which does not exist) errored on
     // every call, so the catch below returned {} and the entire capability
     // layer was inert (DB-1). Both this read and the SQL org_capability_allows
@@ -516,11 +607,21 @@ export async function loadCapabilityPolicyEntry(
     const version = typeof data?.updated_at === "string" ? data.updated_at : null;
     if (!sessionless) cache.set(orgId, { at: Date.now(), policy, version });
     return { policy, version };
-  } catch {
-    return { policy: {}, version: null }; // defaults apply
+  } catch (e) {
+    return failed((e as Error)?.message || "the capability policy read threw");
   }
 }
 
+/** The policy alone — for NON-AUTHORITATIVE readers only: the affordance
+ *  surfaces that decide which controls to draw while a server route, a
+ *  strict gate or the database decides (ALOG-1's census: the requests and
+ *  transmittals pages, HoldStrip, InspectorPanel, CheckoutStatusCell, the
+ *  ticket-notification hook, /admin/holds, and the hold-notification
+ *  audience in lib/holds.ts). Its contract on a failed read is DEC-89's for
+ *  such a reader: the last good entry, else the shipped defaults. A caller
+ *  that DECIDES authority, or that presents the policy as the org's, reads
+ *  loadCapabilityPolicyEntry and its `unreadable` / `stale` markers (or the
+ *  strict loader) instead. */
 export async function loadCapabilityPolicy(
   orgId: string,
   client?: Pick<typeof supabase, "from">,
@@ -587,13 +688,45 @@ export function validateCapabilityPolicy(policy: CapabilityPolicy): string | nul
 export const CAPABILITY_POLICY_ROUTE = "/api/admin/capability-policy";
 
 /** The three writes the policy route accepts. `save` carries the role grid
- *  only — grants are owned by the server and preserved across a save. */
+ *  only — grants are owned by the server and preserved across a save.
+ *  ALOG-12: a `save` carries the `version` (org_configurations.updated_at,
+ *  null = nothing was stored) the grid was LOADED at; the route refuses it
+ *  with 409 `policy_changed` when the stored row has moved on since, instead
+ *  of overwriting another admin's change. A save without the key (a bundle
+ *  from before this change, mid-deploy) keeps the route's own
+ *  compare-and-set only. */
 export type CapabilityPolicyChange =
-  | { op: "save"; orgId: string; caps: NonNullable<CapabilityPolicy["caps"]> }
+  | { op: "save"; orgId: string; caps: NonNullable<CapabilityPolicy["caps"]>; version?: string | null }
   | { op: "grant"; orgId: string; uid: string; cap: CapabilityId; expiresAt?: string | null; note?: string | null }
   | { op: "revoke"; orgId: string; uid: string; cap: CapabilityId };
 
-async function postPolicyChange(change: CapabilityPolicyChange): Promise<CapabilityPolicy> {
+/** The route's 409 code when the stored policy moved on under a write. */
+export const POLICY_CHANGED = "policy_changed";
+
+/** A refused policy write, with the route's status and code (ALOG-12: the
+ *  editor reloads on `policy_changed`). */
+export class CapabilityPolicyChangeError extends Error {
+  readonly status: number;
+  readonly code: string | null;
+  constructor(message: string, status: number, code: string | null) {
+    super(message);
+    this.name = "CapabilityPolicyChangeError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+/** Two version stamps name the same stored row: the same text, or the same
+ *  instant (PostgREST's "+00:00" and an ISO "Z" spell one timestamptz). */
+export function samePolicyVersion(a: string | null | undefined, b: string | null | undefined): boolean {
+  const x = a ?? null, y = b ?? null;
+  if (x === y) return true;
+  if (x === null || y === null) return false;
+  const tx = Date.parse(x), ty = Date.parse(y);
+  return !Number.isNaN(tx) && tx === ty;
+}
+
+async function postPolicyChange(change: CapabilityPolicyChange): Promise<{ policy: CapabilityPolicy; version: string | null }> {
   const { data: { session } } = await supabase.auth.getSession();
   const token = session?.access_token;
   if (!token) throw new Error("Not signed in");
@@ -602,25 +735,30 @@ async function postPolicyChange(change: CapabilityPolicyChange): Promise<Capabil
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
     body: JSON.stringify(change),
   });
-  const json = (await res.json().catch(() => ({}))) as { error?: string; policy?: CapabilityPolicy };
-  if (!res.ok) throw new Error(json.error || `Policy change failed (${res.status})`);
+  const json = (await res.json().catch(() => ({}))) as { error?: string; code?: string; policy?: CapabilityPolicy; version?: string };
+  if (!res.ok) throw new CapabilityPolicyChangeError(json.error || `Policy change failed (${res.status})`, res.status, json.code ?? null);
   cache.delete(change.orgId);
-  return json.policy ?? {};
+  return { policy: json.policy ?? {}, version: typeof json.version === "string" ? json.version : null };
 }
 
 /** Save the role grid. `policy.grants` is ignored: grants are changed only
  *  through addUserGrant / revokeUserGrant and preserved by the server. The
  *  actor is derived from the session on the server; the actor fields are
- *  kept for call-site compatibility. */
+ *  kept for call-site compatibility. ALOG-12: pass the `version` the grid
+ *  was loaded at; the answer is the version the save wrote. */
 export async function saveCapabilityPolicy(input: {
   orgId: string;
   policy: CapabilityPolicy;
   actorUserId: string;
   actorEmail?: string | null;
-}): Promise<void> {
+  version?: string | null;
+}): Promise<{ version: string | null }> {
   const err = validateCapabilityPolicy({ caps: input.policy.caps });
   if (err) throw new Error(err);
-  await postPolicyChange({ op: "save", orgId: input.orgId, caps: input.policy.caps ?? {} });
+  const change: CapabilityPolicyChange = { op: "save", orgId: input.orgId, caps: input.policy.caps ?? {} };
+  if (input.version !== undefined) change.version = input.version;
+  const out = await postPolicyChange(change);
+  return { version: out.version };
 }
 
 // ── Per-person delegation (server-side read-modify-write on grants only) ───
