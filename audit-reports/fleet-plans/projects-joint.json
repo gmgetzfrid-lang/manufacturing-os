@@ -1191,7 +1191,8 @@
     "projects-tab MON-14 (opened by J14's fix pass, DEC-31; assigned by the integrator at the J14 merge: a BEFORE DELETE rail on project_parties so a contractor answering for open quotes, or flagged, is not deleted from under them \u2014 after 20261179)",
     "projects-tab SAF-20 (opened by J14's fix pass, DEC-31; assigned by the integrator at the J14 merge: app/api/intake/upload/route.ts tells every quote submitter 'You'll be contacted about the award decision' \u2014 say it only when the link has a contact, otherwise say the outcome shows on the portal; AFTER J16 merges, which edits this route)",
     "projects-tab A11Y-16 (opened by J14, DEC-31; assigned by the integrator at the J14 merge: the project page's write buttons outside its Members tab take DECISION_TARGET \u2014 the same per-file pass over app/(protected)/projects/[id]/page.tsx J15 already makes)",
-    "projects-tab PERF-5 remainder (assigned by the integrator at the J14 merge: done-when 1 measured at 4x CPU on a quiet host with the committed harness scripts/perf/execution-drag/ \u2014 a measurement only; J18 runs last, when the fleet's load is gone)"
+    "projects-tab PERF-5 remainder (assigned by the integrator at the J14 merge: done-when 1 measured at 4x CPU on a quiet host with the committed harness scripts/perf/execution-drag/ \u2014 a measurement only; J18 runs last, when the fleet's load is gone)",
+    "projects-tab SEC-22 (LOW; opened by J16 2026-10-07 as GAP-401's remainder; assigned by the integrator at the J16 merge 2026-10-08: the door's submission, pointer and promote under a bound identity and its housekeeping writes under the service role move under row-level security \u2014 limb (a)'s submission sub-limb only once SEC-23 is settled)"
    ],
    "files": [
     "lib/milestones.ts (the import's match scope)",

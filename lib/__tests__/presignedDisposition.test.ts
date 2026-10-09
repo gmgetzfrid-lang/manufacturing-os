@@ -10,7 +10,7 @@
 // browser will receive back as headers.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { NextRequest } from "next/server";
 
@@ -285,7 +285,10 @@ describe("census — every presigned GET issuer under app/api and lib signs a di
     const putOnly: string[] = [];
     for (const file of [...walk(join(root, "app", "api")), ...walk(join(root, "lib"))]) {
       const src = readFileSync(file, "utf8");
-      if (!/getSignedUrl\(/.test(src) || !/new GetObjectCommand\(/.test(src)) continue;
+      // GAP-401 (J16): lib/untrustedContent.ts signStorageGet is the same
+      // presigned GET (the command carries the disposition), so a caller of
+      // it is an issuer exactly like a caller of getSignedUrl.
+      if (!/getSignedUrl\(|signStorageGet\(/.test(src) || !/new GetObjectCommand\(/.test(src)) continue;
       const rel = file.replace(root + "/", "");
       // A file whose every signature is a PUT (projects-and-cost INTK-15: the
       // intake door presigns its staging PUT and READS staged objects with
@@ -299,6 +302,40 @@ describe("census — every presigned GET issuer under app/api and lib signs a di
     expect(issuers).not.toContain("app/api/transmittal/route.ts");
     expect(bare).toEqual([]);
     expect(putOnly).toEqual(["app/api/intake/upload/route.ts"]);
+  });
+  // GAP-401 owed item 2 (J16 review fix pass 3): the hand-off's done-when, made
+  // mechanical. The workspace export signs through lib/untrustedContent.ts
+  // signStorageGet today; download-url and resolve (admin-and-org P6's files)
+  // adopt it in the two-line change recorded on GAP-401 — owner: the
+  // integrator at the J16 / P6 merge. Until then this case is an EXPECTED
+  // failure. When the change lands it passes, vitest reports the `.fails` case
+  // as failing, and whoever lands it drops `.fails` (and the operator note's
+  // "the Intake tab's own download links do not change yet").
+  // Review fix pass 4 (minor): a `.fails` case also "fails as expected" when a
+  // file it reads is gone, so a move or rename of either issuer could have
+  // made the owed adoption vanish silently. Two guards: the plain case below
+  // fails on a move, a rename or a split; and inside the `.fails` case a
+  // missing file makes the case PASS — which vitest reports as a failure — so
+  // the only way it "fails as expected" is the missing signStorageGet call.
+  const HANDED_OVER = ["app/api/storage/download-url/route.ts", "app/api/storage/resolve/route.ts"];
+  /** The presigned-GET calls in a file: getSignedUrl( or signStorageGet( (an import line names them without a paren). */
+  const presignCalls = (src: string) => (src.match(/\b(?:getSignedUrl|signStorageGet)\(/g) ?? []).length;
+  it("the two handed-over issuers are still where the hand-off names them, each signing exactly one presigned GET (so a move or rename breaks a PASSING test, not only the expected failure below)", () => {
+    for (const f of HANDED_OVER) {
+      expect(existsSync(join(root, f)), `${f} moved or renamed — carry GAP-401's signStorageGet hand-off (and this census) to its new path`).toBe(true);
+      const src = read(f);
+      expect(presignCalls(src), f).toBe(1);
+      expect(src, f).toMatch(/new GetObjectCommand\(/);
+    }
+  });
+  it.fails("download-url and resolve sign through signStorageGet, like the export (GAP-401 owed item 2 hand-off — expected to fail until it lands)", () => {
+    // a missing file returns here: the case passes, and `.fails` turns that red
+    if (!HANDED_OVER.every((f) => existsSync(join(root, f)))) return;
+    expect(read("lib/dataExport.ts")).toMatch(/signStorageGet\(/);
+    for (const f of HANDED_OVER) {
+      expect(read(f), f).toMatch(/signStorageGet\(/);
+      expect(read(f), f).not.toMatch(/getSignedUrl\(/);
+    }
   });
 });
 

@@ -335,4 +335,23 @@ export const EXPECTED_FUNCTIONS: readonly FunctionExpectation[] = [
     migration: "20261179_prj_roundG_award_answers_for_each.sql",
     feature: "The bid row's company picker, with its reason and record in one transaction (lib/costDocs.ts relinkQuoteCompany; MON-12)",
   },
+  // projects-joint J16 (GAP-401): the contractor door's content writes run
+  // through these as an identity the guards judge; the route writes as the
+  // service role while they are missing (PGRST202). The two probed take a
+  // uuid document id, which refuses "schema-health-probe" (22P02), so the
+  // body never runs; EXECUTE is the service role's, as this probe is.
+  {
+    signature: "intake_door_promote(text, uuid, uuid, jsonb, text)",
+    fn: "intake_door_promote",
+    probeArgs: { p_token_hash: "schema-health-probe", p_doc: "schema-health-probe", p_expected_base: null, p_version: {} },
+    migration: "20261184_prj_roundG_intake_door_identity.sql",
+    feature: "The intake door's trusted promote as the link's creator, the publish guard judging it (app/api/intake/upload; GAP-401)",
+  },
+  {
+    signature: "intake_door_point_pending(text, uuid, uuid, uuid, timestamptz)",
+    fn: "intake_door_point_pending",
+    probeArgs: { p_token_hash: "schema-health-probe", p_doc: "schema-health-probe", p_version: "schema-health-probe", p_from: null },
+    migration: "20261184_prj_roundG_intake_door_identity.sql",
+    feature: "The intake door's submissions written as the link's identity, scoped to the link (app/api/intake/upload; GAP-401)",
+  },
 ];

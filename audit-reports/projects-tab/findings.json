@@ -14,18 +14,18 @@
     "audit-reports/projects-tab/10-accessibility-mobile.md"
   ],
   "totals": {
-    "findings": 148,
+    "findings": 150,
     "gaps": 10,
     "by_severity": {
       "CRITICAL": 17,
-      "HIGH": 52,
+      "HIGH": 53,
       "MEDIUM": 68,
-      "LOW": 11
+      "LOW": 12
     },
     "by_status": {
       "RESOLVED": 137,
       "REFUTED": 2,
-      "OPEN": 9
+      "OPEN": 11
     }
   },
   "status_vocabulary": [
@@ -1550,6 +1550,30 @@
       ],
       "refuted": false,
       "summary": "Both external routes to a live drawing revision — trusted auto-supersede and Intake-tab approve — write a version with mocreference = NULL on a declared drawing. The row that lands in the revision chain reads blank for what OSHA treats as a change.",
+      "area": "projects-tab",
+      "report": "audit-reports/projects-tab/01-security-access.md"
+    },
+    {
+      "id": "SEC-23",
+      "title": "On the repository's migration sequence, no role row-level security applies to can insert a `document_versions` row: the rewrite fails with 42P17, members included",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED on the repository's sequence (scratch PostgreSQL 16 carrying `schema.sql` and every numbered migration through base `2de62f1`, applied as a non-superuser `postgres`); **NOT verified against the live database**, which may hold different policy text.",
+      "blast_radius": "document-control availability: every member's client-side version insert",
+      "related": [
+        "SEC-22",
+        "GAP-401",
+        "DEC-95"
+      ],
+      "locations": [],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "If the live policy matches the repository, every client-side version insert fails with 42P17: a member uploading a new revision from the library page, the document lifecycle helpers, an in-review draft. The user sees a failed upload with a database error, and nothing is written. If the live policy differs (the app's revision uploads work today), the repository no longer describes the live database",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/01-security-access.md"
     },
@@ -3996,6 +4020,31 @@
       ],
       "refuted": false,
       "summary": "A member who is not on a private project reads auditlogs?action=like.MILESTONE and gets that project's document-anchored milestone names, dates and status changes, while SEC-20 says the project's own rows are covered.",
+      "area": "projects-tab",
+      "report": "audit-reports/projects-tab/01-security-access.md"
+    },
+    {
+      "id": "SEC-22",
+      "title": "Only the contractor door's new documents and quotes run under row-level security; its submission, pointer and promote run under a bound identity, and its housekeeping writes still run as the service role",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (scratch PostgreSQL 16 carrying the whole sequence, review fix pass 2, recorded on `GAP-401`)",
+      "blast_radius": "document-control integrity",
+      "related": [
+        "GAP-401",
+        "SEC-4",
+        "DEC-56",
+        "DEC-95"
+      ],
+      "locations": [],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "(a) A future edit of the submission, pointer or promote door function that drops a scope check is not backstopped by a policy, so the door could write a version or move a pointer outside its link's documents until a test catches it. The new document and the quote are backstopped. If the hosted paste reports a false row-level-security probe, they are not either, and neither is a single write that f",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/01-security-access.md"
     }

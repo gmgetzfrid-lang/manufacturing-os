@@ -102,6 +102,33 @@
 // fallback when storage refuses or cannot be reached; a fallback names its
 // begin in the x-intake-begun header, which is claimed once and not counted
 // again.
+//
+// J16 (GAP-401) — the door's constrained identity. Every CONTENT write the
+// door makes, on both paths (multipart and finalize) — a new document, a
+// submission, its pending pointer, the trusted promote, a quote, a redline —
+// goes first through a door function (20261184): the service role's only, it
+// resolves the link from its token HASH in the database (live, its project
+// open — a revocation is effective mid-request too), refuses a write outside
+// the link's project / library / documents, and binds the door's identity for
+// that one write (auth.uid() = the link; for the promote, the link's creator)
+// so every guard a member's write meets judges the door's write too. The new
+// document and the quote are also written UNDER ROW-LEVEL SECURITY: their
+// door functions switch to the NOLOGIN role intake_door (granted to
+// authenticator) for the one INSERT, and policies keyed on the bound link
+// judge it — their refusal is a 42501 without the door's HINT, answered as
+// the write's own failure (500). Where the database lacks a privilege the
+// role needs, or holds a restrictive policy for every role that the link
+// may fail, the door function keeps that write's bound identity instead and
+// the upload is filed as today (20261184; projects-tab SEC-22). While
+// the function is not there (20261184 not
+// pasted: PGRST202, or 42883 naming an intake_door_ function at the start of
+// its message — decided by the CODE, never by a message alone) the write is
+// the service-role write below it, unchanged. Any OTHER answer — a guard, the
+// link's scope, a dead link — is answered and never followed by the
+// service-role write. The door's housekeeping of its own rows (retiring a
+// displaced submission, withdrawing a lost race, restoring, discarding, the
+// intake folder, the project reference) stays service-role (projects-tab
+// SEC-22).
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
@@ -162,6 +189,83 @@ function asServiceRole<T>(fn: () => Promise<T>): Promise<T> {
   return runWithServerClient(supabaseAdmin, fn);
 }
 
+// ── J16 (GAP-401): the door's constrained identity (20261184) ──────────────
+/** Per request: once a door function answers "not there", every later write
+ *  in the request takes today's path — one migration creates them all. */
+interface DoorState { absent: boolean }
+type DoorError = { message?: string; code?: string; details?: string | null; hint?: string | null };
+type DoorAnswer<T> = { kind: "absent" } | { kind: "ok"; data: T } | { kind: "error"; error: DoorError };
+
+/** The migration is not pasted: PostgREST cannot find the door function
+ *  (PGRST202), or the database answers 42883 for an intake_door_ function
+ *  it does not have ("function public.intake_door_…(…) does not exist") —
+ *  or intake_door_append_redline's own 42883 while append_ticket_redline
+ *  (20261166) is not pasted, which names itself first.
+ *  Decided by the CODE: a guard's refusal (23514, P0001, …) is never
+ *  "absent", whatever its message says — a guard message can carry text the
+ *  contractor chose (a document number), and "absent" sends the request
+ *  down the service-role path the guards exempt. A 42883's message is
+ *  matched only at its START, where Postgres (or the redline door) puts the
+ *  function's name. */
+function doorFunctionAbsent(e: DoorError): boolean {
+  const code = String(e.code ?? "");
+  if (code === "PGRST202") return true;
+  if (code !== "42883") return false;
+  const msg = String(e.message ?? "");
+  return /^function (public\.)?intake_door_[a-z_]+\(/.test(msg) || msg.startsWith("intake_door_append_redline:");
+}
+
+/** One door call. Skipped once this request has seen the migration absent. */
+async function viaDoor<T>(state: DoorState, call: () => PromiseLike<{ data: unknown; error: unknown }>): Promise<DoorAnswer<T>> {
+  if (state.absent) return { kind: "absent" };
+  const { data, error } = await call();
+  if (!error) return { kind: "ok", data: data as T };
+  const e = error as DoorError;
+  if (doorFunctionAbsent(e)) {
+    state.absent = true;
+    return { kind: "absent" };
+  }
+  return { kind: "error", error: e };
+}
+
+/** What the portal hears when a door function refuses: the link went dead
+ *  mid-request (28000 — its HINT says how; the same answers as the checks
+ *  before the body), or a write outside the link's scope (42501 with the
+ *  door's HINT 'scope' or 'not_configured'). Anything else — a 42501 the door
+ *  did not raise for the link (a privilege the database lacks, a policy
+ *  refusing what the door's own checks admitted, a guard's 42501) included —
+ *  is the caller's to answer as the write's own failure (500 and a
+ *  reference), never a sentence about the link the contractor's contact
+ *  could not act on (J16 fix pass 3). */
+type DoorScope = { message: string; status: number; code?: string };
+function doorAnswer(e: DoorError, scope: DoorScope): { message: string; status: number; code: string } | null {
+  const code = String(e.code ?? "");
+  if (code === "28000") {
+    switch (String(e.hint ?? "")) {
+      case "revoked": return { message: "This link has been revoked.", status: 410, code: "revoked" };
+      case "expired": return { message: "This link has expired.", status: 410, code: "expired" };
+      case "link_gone": return { message: LINK_GONE_MESSAGE, status: 410, code: "link_gone" };
+      case "project_closed": return { message: PROJECT_CLOSED_MESSAGE, status: 410, code: "project_closed" };
+      default: return { message: LINK_INVALID_MESSAGE, status: 404, code: "notfound" };
+    }
+  }
+  if (code === "42501") {
+    const hint = String(e.hint ?? "");
+    if (hint === "not_configured") {
+      return { message: "This link isn't fully configured yet — ask your contact to set the intake library.", status: 409, code: "not_configured" };
+    }
+    if (hint === "scope") return { message: scope.message, status: scope.status, code: scope.code ?? "door_scope" };
+  }
+  return null;
+}
+
+const DOOR_SCOPE_DOCUMENTS: DoorScope = { message: "This link may only submit revisions to its own or assigned documents.", status: 403 };
+/** A NEW document the door would not file: the folder the route filed into
+ *  is not (or no longer) the project's intake folder inside its intake
+ *  library — a configuration answer, never the revision sentence. (A quote
+ *  link never reaches the document branch.) */
+const DOOR_SCOPE_NEW_DOCUMENT: DoorScope = { message: "This link isn't fully configured yet — ask your contact to check the project's intake library and folder.", status: 409, code: "not_configured" };
+
 /** INTK-13: the portal gets a plain sentence and a reference id; any
  *  database detail goes to the server log under the same id. */
 function refuser(ref: string) {
@@ -169,6 +273,14 @@ function refuser(ref: string) {
     if (detail) console.error(`[intake/upload] ref=${ref} ${detail}`);
     return NextResponse.json({ error: msg, ref, ...(extra ?? {}) }, { status });
   };
+}
+
+/** J16: a door function's refusal as the portal's answer (doorAnswer), or
+ *  null when it is not one of those — the caller answers it as the write's
+ *  own failure, and never retries the write as the service role. */
+function doorRefused(e: DoorError, fail: ReturnType<typeof refuser>, scope: DoorScope): NextResponse | null {
+  const a = doorAnswer(e, scope);
+  return a ? fail(a.message, a.status, `door refused: ${e.code ?? ""} ${e.message ?? ""}`, { code: a.code }) : null;
 }
 
 /** SEC-16 dw2: a token used from a browser that is ALSO signed in to the
@@ -334,21 +446,43 @@ const SAME_FILE_ELSEWHERE = "This same file is already awaiting review through t
 /** INTK-13 dw3: one intake folder per project, whatever the concurrency.
  *  The folder is created, then CLAIMED with a compare-and-set on the
  *  project's still-empty pointer; the loser deletes its own folder and uses
- *  the winner's. Every write is checked. */
+ *  the winner's. Every write is checked.
+ *  J16 (GAP-401): the pointer the project row carries is used only when it
+ *  names a folder OF the project's intake library in the link's org — the
+ *  column is owner-writable and no database rail ties it to the library,
+ *  and the door (intake_door_create_document, 20261184) files only into
+ *  such a folder. Any other value (a folder of another library or org, or
+ *  one that is gone) is treated as unset: a folder is made in the intake
+ *  library and claimed with a compare-and-set on that stale value, so the
+ *  contractor's drawing is filed before and after the paste alike, never
+ *  into a folder outside the library. */
 async function ensureIntakeFolder(input: {
   orgId: string; projectId: string; projectName: string; libraryId: string; current: string | null;
 }): Promise<{ id: string } | { error: string }> {
-  if (input.current) return { id: input.current };
+  let stale: string | null = null;
+  if (input.current) {
+    const { data: cur, error: curErr } = await supabaseAdmin
+      .from("collections").select("id")
+      .eq("id", input.current).eq("org_id", input.orgId).eq("library_id", input.libraryId)
+      .maybeSingle();
+    if (curErr) return { error: `intake folder read: ${curErr.message}` };
+    if (cur) return { id: input.current };
+    stale = input.current;
+    console.error(`[intake/upload] project ${input.projectId}: intake folder ${stale} is not a folder of the project's intake library ${input.libraryId} in its org — a folder is made there and the pointer moved to it`);
+  }
   const { data: col, error: colErr } = await supabaseAdmin
     .from("collections")
     .insert({ org_id: input.orgId, library_id: input.libraryId, name: `Intake — ${input.projectName}` })
     .select("id").single();
   if (colErr || !col) return { error: `intake folder insert: ${colErr?.message ?? "no row"}` };
   const colId = String((col as { id: string }).id);
-  const { data: claimed, error: claimErr } = await supabaseAdmin
+  const claim = supabaseAdmin
     .from("projects").update({ intake_collection_id: colId })
-    .eq("id", input.projectId).is("intake_collection_id", null)
-    .select("id");
+    .eq("id", input.projectId);
+  const { data: claimed, error: claimErr } = await (stale
+    ? claim.eq("intake_collection_id", stale)
+    : claim.is("intake_collection_id", null)
+  ).select("id");
   if (claimErr) {
     await supabaseAdmin.from("collections").delete().eq("id", colId);
     return { error: `intake folder pointer write: ${claimErr.message}` };
@@ -366,37 +500,75 @@ async function ensureIntakeFolder(input: {
 }
 
 type PublishOutcome =
-  | { kind: "published"; versionId: string }
+  | { kind: "published"; versionId: string; stamped: boolean }
   | { kind: "demote"; reason: string; detail?: string }
-  | { kind: "refuse"; status: number; message: string; detail?: string };
+  | { kind: "refuse"; status: number; message: string; detail?: string; code?: string };
 
 /** SAF-5 / INTK-2 / SEC-4: the trusted promote is the SAME contract every
  *  internal publish uses — publish_revision, acting as the link's creator
  *  (the person who sanctioned auto-publish). It locks the document row,
  *  refuses a held document, a foreign checkout, a moved base and a
  *  duplicate label, and applies the drawing-class MOC gate — in the
- *  database, not in this route. */
+ *  database, not in this route.
+ *  J16 (GAP-401): through the door first (intake_door_promote, 20261184) —
+ *  the creator and the link come from the link row the token hash names, and
+ *  the creator is BOUND as the session, so the publish guard and the
+ *  register / hold-label rails judge the documents write (on the service
+ *  role they returned early); the new version's provenance is stamped in the
+ *  same transaction (`stamped`). A guard's refusal demotes like any other; a
+ *  link that went dead mid-request is refused. Before 20261184 is pasted,
+ *  the service-role call below, unchanged. */
 async function publishThroughContract(input: {
   documentId: string; expectedBase: string | null; creator: string; company: string;
   revLabel: string; key: string; contentType: string; size: number; changeNote: string | null; fileHash: string;
+  door: { state: DoorState; tokenHash: string };
 }): Promise<PublishOutcome> {
-  const { data, error } = await supabaseAdmin.rpc("publish_revision", {
+  const version = {
+    revision_label: input.revLabel,
+    file_url: input.key,
+    file_type: input.contentType,
+    size: input.size,
+    change_log: input.changeNote ?? `Submitted by ${input.company} via project intake`,
+    created_by_name: input.company,
+    provenance: "external",
+    file_hash: input.fileHash,
+  };
+  let data: unknown = null;
+  let error: PgError = null;
+  let stamped = false;
+  const promoted = await viaDoor<Record<string, unknown>>(input.door.state, () => supabaseAdmin.rpc("intake_door_promote", {
+    p_token_hash: input.door.tokenHash,
     p_doc: input.documentId,
     p_expected_base: input.expectedBase,
-    p_op_class: "content",
-    p_version: {
-      revision_label: input.revLabel,
-      file_url: input.key,
-      file_type: input.contentType,
-      size: input.size,
-      change_log: input.changeNote ?? `Submitted by ${input.company} via project intake`,
-      created_by_name: input.company,
-      provenance: "external",
-      file_hash: input.fileHash,
-    },
-    p_actor: input.creator,
+    p_version: version,
     p_actor_name: `${input.company} (intake)`,
-  });
+  }));
+  if (promoted.kind === "ok") {
+    data = promoted.data;
+    stamped = (promoted.data as { intake_link_stamped?: unknown } | null)?.intake_link_stamped === true;
+  } else if (promoted.kind === "error") {
+    const e = promoted.error;
+    if (String(e.code ?? "") === "28000") {
+      const a = doorAnswer(e, DOOR_SCOPE_DOCUMENTS);
+      if (a) return { kind: "refuse", status: a.status, message: a.message, code: a.code, detail: `intake_door_promote: ${e.message ?? ""}` };
+    }
+    // 42501: the link's scope as the database reads it now (no longer
+    // trusted, no creator, the document assigned meanwhile) — the upload
+    // goes to review, where the submission's own door decides.
+    if (String(e.code ?? "") === "42501") {
+      return { kind: "demote", reason: "automatic publication could not be completed", detail: `intake_door_promote: ${e.message ?? ""}` };
+    }
+    error = e;
+  } else {
+    ({ data, error } = await supabaseAdmin.rpc("publish_revision", {
+      p_doc: input.documentId,
+      p_expected_base: input.expectedBase,
+      p_op_class: "content",
+      p_version: version,
+      p_actor: input.creator,
+      p_actor_name: `${input.company} (intake)`,
+    }));
+  }
   if (error) {
     if (/MOC reference/i.test(error.message ?? "")) {
       return { kind: "demote", reason: "a drawing-class revision needs a management-of-change (MOC) reference — the project team adds it when they review it" };
@@ -404,12 +576,23 @@ async function publishThroughContract(input: {
     if (/not an active member/i.test(error.message ?? "")) {
       return { kind: "demote", reason: "the link's creator is no longer an active member" };
     }
+    // J16: the publish guard's refusals, now that it judges the promote as
+    // the creator — the same sentences the route's own gates give.
+    if (/authority to publish|Only a publisher on this library/i.test(error.message ?? "")) {
+      return { kind: "demote", reason: "the link's creator no longer holds publish authority on this library", detail: `publish guard: ${error.message}` };
+    }
+    if (/requires reviewer sign-off|outstanding review sign-offs/i.test(error.message ?? "")) {
+      return { kind: "demote", reason: "this library requires reviewer sign-off", detail: `publish guard: ${error.message}` };
+    }
+    if (/active hold/i.test(error.message ?? "")) {
+      return { kind: "demote", reason: "the document has an active hold", detail: `publish guard: ${error.message}` };
+    }
     return { kind: "demote", reason: "automatic publication could not be completed", detail: `publish_revision: ${error.message}` };
   }
   const res = (data ?? {}) as { status?: string; version?: { id?: string } | null };
   switch (res.status) {
     case "published":
-      if (res.version?.id) return { kind: "published", versionId: String(res.version.id) };
+      if (res.version?.id) return { kind: "published", versionId: String(res.version.id), stamped };
       return { kind: "demote", reason: "automatic publication could not be completed", detail: "publish_revision returned no version" };
     case "on_hold":
       return { kind: "demote", reason: "the document has an active hold" };
@@ -566,6 +749,8 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
   const tokenHash = sha256Hex(token);
   const ip = clientIp(req);
   const limits = intakeLimits();
+  // J16: the door functions' availability, learned on this request's first call.
+  const doorState: DoorState = { absent: false };
   // INTK-15: a multipart POST that is the portal's fallback for a direct
   // upload names its begin — which already counted this upload's attempt.
   // Its reservation is claimed for THIS token (once: a second POST naming
@@ -875,10 +1060,30 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
       created_by: null,
       file_hash: fileHash,
     };
-    let { data: qdoc, error: qErr } = await supabaseAdmin.from("cost_documents").insert(quoteRow).select("id").single();
-    if (qErr && missingColumn(qErr, "file_hash")) {
-      delete quoteRow.file_hash;
+    // J16 (GAP-401): filed through the door's identity (20261184) — the
+    // link's org, project, company and RFQ group are the database's, the
+    // party must be the project's, the project record rail judges the
+    // write, and it is inserted as intake_door under the quote policies.
+    // Before the paste, the service-role insert, unchanged.
+    let qdoc: unknown = null;
+    let qErr: PgError = null;
+    const filed = await viaDoor<string>(doorState, () => supabaseAdmin.rpc("intake_door_file_quote", {
+      p_token_hash: tokenHash,
+      p_quote: { file_url: key, file_name: file.name, mime_type: contentType, party_id: partyId, file_hash: fileHash },
+    }));
+    if (filed.kind === "ok") {
+      if (filed.data) qdoc = { id: filed.data };
+      else qErr = { message: "intake_door_file_quote answered no id" };
+    } else if (filed.kind === "error") {
+      const refused = doorRefused(filed.error, fail, { message: "This link can't file that quote — reopen the portal from the link you were sent.", status: 403 });
+      if (refused) { await deleteObject(ref, key); return refused; }
+      qErr = filed.error;
+    } else {
       ({ data: qdoc, error: qErr } = await supabaseAdmin.from("cost_documents").insert(quoteRow).select("id").single());
+      if (qErr && missingColumn(qErr, "file_hash")) {
+        delete quoteRow.file_hash;
+        ({ data: qdoc, error: qErr } = await supabaseAdmin.from("cost_documents").insert(quoteRow).select("id").single());
+      }
     }
     if (qErr && String(qErr.code ?? "") === "23505") {
       // A concurrent retry won the idempotency index — answer with its row.
@@ -975,9 +1180,27 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
       details: changeNote || safeName,
     };
     let attached = false;
-    const { data: appended, error: appendErr } = await supabaseAdmin.rpc("append_ticket_redline", {
-      p_ticket_id: ticketId, p_org_id: orgId, p_attachment: attachment, p_history: historyEntry,
-    });
+    // J16 (GAP-401): through the door first (20261184), which checks in the
+    // database that this ticket of the link's org names the link and the file
+    // is under the link's project, then makes the ticket rails' one append —
+    // binding no identity: the rails keep a ticket's attachments a
+    // service-only write. Before the paste (or before 20261166, which the
+    // door answers 42883 for) the call below, unchanged.
+    let appended: unknown = null;
+    let appendErr: PgError = null;
+    const doorAppend = await viaDoor<boolean>(doorState, () => supabaseAdmin.rpc("intake_door_append_redline", {
+      p_token_hash: tokenHash, p_ticket: ticketId, p_attachment: attachment, p_history: historyEntry,
+    }));
+    if (doorAppend.kind === "ok") appended = doorAppend.data;
+    else if (doorAppend.kind === "error") {
+      const refused = doorRefused(doorAppend.error, fail, { message: "No redline request on this link matches that ticket.", status: 404 });
+      if (refused) { await deleteObject(ref, key); return refused; }
+      appendErr = doorAppend.error;
+    } else {
+      ({ data: appended, error: appendErr } = await supabaseAdmin.rpc("append_ticket_redline", {
+        p_ticket_id: ticketId, p_org_id: orgId, p_attachment: attachment, p_history: historyEntry,
+      }));
+    }
     const appendAbsent = !!appendErr && (
       (appendErr as { code?: string }).code === "PGRST202" ||
       /could not find the function|does not exist in the schema cache/i.test(appendErr.message ?? ""));
@@ -1362,11 +1585,28 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
       // INTK-1: the one authorship fact, written once, here.
       authored_by_link_id: linkId,
     };
-    let { data: doc, error: docErr } = await supabaseAdmin.from("documents").insert(docRow).select("id").single();
-    if (docErr && missingColumn(docErr, "authored_by_link_id")) {
-      // Pre-20261104: authorship falls back to the first version's link.
-      delete docRow.authored_by_link_id;
+    // J16 (GAP-401): created through the door's identity (20261184) — into
+    // the project's intake library and folder only, authored by this link
+    // (INTK-16's rail admits the door for its OWN link), every insert rail
+    // judging it, inserted as intake_door under the documents policies.
+    // Before the paste, the service-role insert, unchanged.
+    let doc: unknown = null;
+    let docErr: PgError = null;
+    const created = await viaDoor<string>(doorState, () => supabaseAdmin.rpc("intake_door_create_document", { p_token_hash: tokenHash, p_doc: docRow }));
+    if (created.kind === "ok") {
+      if (created.data) doc = { id: created.data };
+      else docErr = { message: "intake_door_create_document answered no id" };
+    } else if (created.kind === "error") {
+      const refused = doorRefused(created.error, fail, DOOR_SCOPE_NEW_DOCUMENT);
+      if (refused) { await deleteObject(ref, key); return refused; }
+      docErr = created.error;
+    } else {
       ({ data: doc, error: docErr } = await supabaseAdmin.from("documents").insert(docRow).select("id").single());
+      if (docErr && missingColumn(docErr, "authored_by_link_id")) {
+        // Pre-20261104: authorship falls back to the first version's link.
+        delete docRow.authored_by_link_id;
+        ({ data: doc, error: docErr } = await supabaseAdmin.from("documents").insert(docRow).select("id").single());
+      }
     }
     if (docErr && String(docErr.code ?? "") === "23505") {
       // A numbered new document whose retry raced its original: the first
@@ -1390,16 +1630,19 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
   // ── Publish (trusted, eligible) or queue for review ───────────────────
   let versionId: string | null = null;
   let published = false;
+  /** J16: the door's promote stamped the provenance in its own transaction. */
+  let provenanceStamped = false;
   if (autoNow && targetDoc) {
     const outcome = await publishThroughContract({
       documentId: theDocId,
       expectedBase: (targetDoc.current_version_id as string | null) ?? null,
       creator: String(link.created_by),
       company, revLabel, key, contentType, size: file.size, changeNote, fileHash,
+      door: { state: doorState, tokenHash },
     });
     if (outcome.kind === "refuse") {
       await discard();
-      return fail(outcome.message, outcome.status, outcome.detail);
+      return fail(outcome.message, outcome.status, outcome.detail, outcome.code ? { code: outcome.code } : undefined);
     }
     if (outcome.kind === "demote") {
       autoWithheld = outcome.reason;
@@ -1407,6 +1650,7 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
     } else {
       versionId = outcome.versionId;
       published = true;
+      provenanceStamped = outcome.stamped;
     }
   }
 
@@ -1418,7 +1662,7 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
    *  index against it. `then` runs after the new version is resolved — a
    *  displaced draft is restored only once the replacement no longer holds
    *  its revision label. */
-  const withdraw = async (msg: string, detail?: string, then?: () => Promise<void>) => {
+  const withdraw = async (msg: string, detail?: string, then?: () => Promise<void>, status = 409, extra?: Record<string, unknown>) => {
     if (versionId) {
       let { error: wErr } = await supabaseAdmin.from("document_versions")
         .update({ review_state: "superseded", superseded_at: nowIso }).eq("id", versionId);
@@ -1429,14 +1673,17 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
     }
     if (then) await then();
     if (createdDocId) await discard();
-    return fail(msg, 409, detail);
+    return fail(msg, status, detail, extra);
   };
 
   if (published && versionId) {
     // publish_revision's INSERT carries no intake_link_id: stamp the
-    // provenance so the portal register and the review queue see it.
-    const { error: stampErr } = await supabaseAdmin.from("document_versions").update({ intake_link_id: linkId }).eq("id", versionId);
-    if (stampErr) console.error(`[intake/upload] ref=${ref} provenance stamp failed on ${versionId}: ${stampErr.message}`);
+    // provenance so the portal register and the review queue see it (the
+    // door's promote already did, in the publish's own transaction — J16).
+    if (!provenanceStamped) {
+      const { error: stampErr } = await supabaseAdmin.from("document_versions").update({ intake_link_id: linkId }).eq("id", versionId);
+      if (stampErr) console.error(`[intake/upload] ref=${ref} provenance stamp failed on ${versionId}: ${stampErr.message}`);
+    }
     // No pending submission is displaced here: a trusted link with its own
     // submission still awaiting review never auto-publishes (INTK-1 dw3) —
     // that upload replaces it IN REVIEW, below.
@@ -1488,26 +1735,48 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
       displacedRetired = false;
       await restoreDisplaced(ref, { orgId, documentId: theDocId, displacedId: priorPending, nowIso, projectId, contactEmail });
     };
-    const { data: ver, error: verErr } = await supabaseAdmin
-      .from("document_versions")
-      .insert({
-        org_id: orgId, record_id: theDocId,
-        revision_label: revLabel || "A",
-        file_url: key, file_type: contentType, size: file.size,
-        change_log: changeNote ?? `Submitted by ${company} via project intake`,
-        created_by_name: company, created_at: nowIso,
-        released_at: null,
-        // OWN-4: an external upload is never "approved" by arriving — it is
-        // in review until a person decides.
-        review_state: "in_review",
-        provenance: "external",
-        intake_link_id: linkId,
-        file_hash: fileHash,
-        // REV-5: the base this submission was made against — finalize
-        // refuses to promote a draft whose base is no longer current.
-        supersedes_version_id: (targetDoc?.current_version_id as string | null) ?? null,
-      })
-      .select("id").single();
+    // J16 (GAP-401): the submission, as the door's identity (20261184) — a
+    // version only of a document this link authored or was assigned, its
+    // file under the link's project; the function takes org, link,
+    // provenance, review state and release from the link, never from this
+    // row. Before the paste, the service-role insert of the same row.
+    const versionRow = {
+      org_id: orgId, record_id: theDocId,
+      revision_label: revLabel || "A",
+      file_url: key, file_type: contentType, size: file.size,
+      change_log: changeNote ?? `Submitted by ${company} via project intake`,
+      created_by_name: company, created_at: nowIso,
+      released_at: null,
+      // OWN-4: an external upload is never "approved" by arriving — it is
+      // in review until a person decides.
+      review_state: "in_review",
+      provenance: "external",
+      intake_link_id: linkId,
+      file_hash: fileHash,
+      // REV-5: the base this submission was made against — finalize
+      // refuses to promote a draft whose base is no longer current.
+      supersedes_version_id: (targetDoc?.current_version_id as string | null) ?? null,
+    };
+    let ver: unknown = null;
+    let verErr: PgError = null;
+    const submitted = await viaDoor<string>(doorState, () => supabaseAdmin.rpc("intake_door_submit_version", { p_token_hash: tokenHash, p_version: versionRow }));
+    if (submitted.kind === "ok") {
+      if (submitted.data) ver = { id: submitted.data };
+      else verErr = { message: "intake_door_submit_version answered no id" };
+    } else if (submitted.kind === "error") {
+      const refused = doorRefused(submitted.error, fail, DOOR_SCOPE_DOCUMENTS);
+      if (refused) {
+        await undoDisplace();
+        await discard();
+        return refused;
+      }
+      verErr = submitted.error;
+    } else {
+      ({ data: ver, error: verErr } = await supabaseAdmin
+        .from("document_versions")
+        .insert(versionRow)
+        .select("id").single());
+    }
     if (verErr && String(verErr.code ?? "") === "23505") {
       await undoDisplace();
       const msg = `${verErr.message ?? ""} ${verErr.details ?? ""}`;
@@ -1528,11 +1797,27 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
     // read above — from NULL, or (a trusted link replacing its own
     // roster-free draft, checked above) from exactly that draft. A pointer
     // that moved to anything else is a lost race: the new version retires.
-    let point = supabaseAdmin.from("documents")
-      .update({ pending_version_id: versionId, updated_at: nowIso })
-      .eq("id", theDocId);
-    point = priorPending ? point.eq("pending_version_id", priorPending) : point.is("pending_version_id", null);
-    const { data: pointed, error: pointErr } = await point.select("id");
+    // J16 (GAP-401): through the door's identity (20261184) — only this
+    // link's own in-review submission, and a replace only by a trusted link
+    // of its own earlier one (INTK-4 dw3), the same compare-and-set. Before
+    // the paste, the service-role write below, unchanged.
+    let pointed: unknown[] | null = null;
+    let pointErr: PgError = null;
+    const repointed = await viaDoor<number>(doorState, () => supabaseAdmin.rpc("intake_door_point_pending", {
+      p_token_hash: tokenHash, p_doc: theDocId, p_version: versionId, p_from: priorPending, p_at: nowIso,
+    }));
+    if (repointed.kind === "ok") pointed = Number(repointed.data ?? 0) > 0 ? [{ id: theDocId }] : [];
+    else if (repointed.kind === "error") {
+      const a = doorAnswer(repointed.error, DOOR_SCOPE_DOCUMENTS);
+      if (a) return withdraw(a.message, `door refused: ${repointed.error.code ?? ""} ${repointed.error.message ?? ""}`, undoDisplace, a.status, { code: a.code });
+      pointErr = repointed.error;
+    } else {
+      let point = supabaseAdmin.from("documents")
+        .update({ pending_version_id: versionId, updated_at: nowIso })
+        .eq("id", theDocId);
+      point = priorPending ? point.eq("pending_version_id", priorPending) : point.is("pending_version_id", null);
+      ({ data: pointed, error: pointErr } = await point.select("id"));
+    }
     if (pointErr) return withdraw("Couldn't queue the submission for review — try again shortly.", `pending pointer write: ${pointErr.message}`, undoDisplace);
     if (!pointed || pointed.length === 0) {
       return withdraw("Another revision of this document just went into review — your submission was not taken. Try again once it is approved or rejected.", undefined, undoDisplace);
