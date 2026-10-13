@@ -91,7 +91,7 @@ function chunk(i: number, over: Row = {}): Row {
   return {
     id: `kc-${String(i).padStart(4, "0")}`, org_id: SRC, library_id: "kl-1", document_id: "kd-1", page: 1 + (i % 9), seq: i,
     section: "Specs", content: `Pump P-101A passage ${i}`, tsv: "'p-101a':3B 'pump':2B 'spec':1A",
-    embedding: VECTOR, embedding_model: "voyage-3", embed_attempts: 0, embed_error: null,
+    embedding: VECTOR, embedding_model: "embed-model-a", embed_attempts: 0, embed_error: null,
     embed_claimed_until: null, embed_retry_after: null, source: "text", source_model: null,
     ...over,
   };
@@ -178,7 +178,7 @@ describe("ILIFE-11 criterion 1 — knowledge_chunks is exported by an explicit c
     const out = env.tables.knowledge_chunks as Row[];
     expect(out).toHaveLength(1500);
     expect(out.some((r) => "embedding" in r)).toBe(false);
-    expect(out[0]).toMatchObject({ id: "kc-0000", content: "Pump P-101A passage 0", embedding_model: "voyage-3" });
+    expect(out[0]).toMatchObject({ id: "kc-0000", content: "Pump P-101A passage 0", embedding_model: "embed-model-a" });
     // one refused list read, then "*" for the rest of the table
     expect(hooks.selects.knowledge_chunks).toEqual([exportSelectFor("knowledge_chunks"), "*", "*"]);
     expect(env.manifest.tables.find((t) => t.name === "knowledge_chunks")).toEqual({ name: "knowledge_chunks", rowCount: 1500 });
