@@ -256,14 +256,27 @@ export interface NotificationRow {
   createdAt: string;
 }
 
+/** The bell's page size: the attention feed loads the newest this many
+ *  unread rows, then older pages on request (TAX-6 / DELIV-10). */
+export const NOTIFICATION_PAGE_SIZE = 50;
+
 export async function listMyNotifications(
-  opts?: { limit?: number; onlyUnread?: boolean; orgId?: string | null },
+  opts?: {
+    limit?: number;
+    onlyUnread?: boolean;
+    orgId?: string | null;
+    /** A created_at cursor: only rows created strictly before it — the next
+     *  page after a page whose oldest row has this created_at (TAX-6 dw2,
+     *  DELIV-10 dw2). */
+    before?: string | null;
+  },
 ): Promise<NotificationRow[]> {
   let q = supabase
     .from("notifications")
     .select("*")
     .order("created_at", { ascending: false })
-    .limit(opts?.limit ?? 50);
+    .limit(opts?.limit ?? NOTIFICATION_PAGE_SIZE);
+  if (opts?.before) q = q.lt("created_at", opts.before);
   // Scope to the active workspace. Without this the bell counts notifications
   // from EVERY org the user belongs to, so the badge can show items the
   // current workspace's portal will never list. RLS already restricts to the
@@ -279,6 +292,9 @@ export async function listMyNotifications(
   return (data || []).map(rowToNotification);
 }
 
+/** The badge's number (PROD-7 dw1, TAX-6 dw1, TRAIL-7 dw1, DELIV-10 dw1): an
+ *  exact head count of my unread, unsuperseded rows in the workspace —
+ *  independent of how many rows the feed has loaded. */
 export async function countUnread(orgId?: string | null): Promise<number> {
   let q = supabase
     .from("notifications")
@@ -289,6 +305,26 @@ export async function countUnread(orgId?: string | null): Promise<number> {
   const { count, error } = await q;
   if (error) throw error;
   return count ?? 0;
+}
+
+/** The kind and resource of my unread rows BEYOND the rows the feed loaded
+ *  (newest first, from `offset`, at most `cap`) — so the per-section badges
+ *  and the action count include the rows below the page (TAX-6 dw1,
+ *  TRAIL-7 dw1) without loading them. Throws on a refused read. */
+export async function listUnreadKindsBeyond(
+  orgId: string, offset: number, cap: number,
+): Promise<Array<{ kind: string; resourceId: string | null }>> {
+  const { data, error } = await supabase
+    .from("notifications")
+    .select("kind, resource_id")
+    .eq("org_id", orgId)
+    .is("read_at", null)
+    .is("metadata->>superseded_at", null)
+    .order("created_at", { ascending: false })
+    .range(offset, offset + Math.max(0, cap) - 1);
+  if (error) throw error;
+  return ((data as Array<{ kind: string; resource_id: string | null }> | null) ?? [])
+    .map((r) => ({ kind: r.kind, resourceId: r.resource_id ?? null }));
 }
 
 export async function markRead(id: string): Promise<void> {

@@ -1,10 +1,12 @@
-import { useState, useEffect, useMemo, useId } from 'react';
+import { createContext, useCallback, useContext, useState, useEffect, useMemo, useId, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
 import { Ticket } from '@/types/schema';
 import {
-  listMyNotifications, markRead, markAllRead, type NotificationRow,
+  listMyNotifications, countUnread, listUnreadKindsBeyond, markRead, markAllRead,
+  NOTIFICATION_PAGE_SIZE, type NotificationRow,
 } from '@/lib/inAppNotifications';
+import { reconcileClassOf, requestReconcile } from '@/lib/notificationReconcile';
 import {
   isActionRequired, attentionLabel, isQueueViewer, isEngineerRole,
 } from '@/lib/ticketAttention';
@@ -25,9 +27,42 @@ import {
 //   3. unread in-app notification rows (mentions, comments, etc.)
 // deduped so a notification about a ticket already in the feed doesn't double up.
 //
+// ONE feed per tab (notifications Round G, N4 — RT-3 / TRAIL-8): the state,
+// the fetch and the ONE realtime channel live in useAttentionFeedState, which
+// components/providers/AttentionProvider.tsx mounts once in the protected
+// layout; every consumer of useTicketNotifications reads that one snapshot
+// through AttentionContext, so a new consumer adds no query and no channel.
+// Outside the provider (a test, a preview) the hook runs its own copy, as
+// every instance did before.
+//
+// It stays current (RT-1): a burst of realtime events collapses into one
+// refetch (FETCH_DEBOUNCE_MS, trailing — components/projects/ScheduleTab.tsx's
+// pattern); the channel's status is watched, so a rejoin after a drop
+// reconciles the whole feed, and a channel that errors or times out says so
+// (AttentionStatus.stale); the tab coming back (visibilitychange / focus) and
+// a visible-only VISIBLE_POLL_MS interval refetch too (the /inbox pattern).
+//
+// Its numbers are true (TAX-6 / DELIV-10 / TRAIL-7 / PROD-7): the feed lists
+// the newest NOTIFICATION_PAGE_SIZE unread rows and pages older ones on
+// request (a created_at cursor), while the count comes from an exact head
+// count (countUnread) and the rows below the loaded window are tallied by
+// kind into the section badges and the action count. A read that fails is an
+// error the surfaces show, never an empty "all caught up".
+//
 // Both the ticket feed AND the notification rows are scoped to the active
-// workspace, and stale workflow alerts (whose ticket has already moved on) are
-// reconciled away — so the badge can never disagree with the portal.
+// workspace. A stale ticket workflow alert (its ticket has moved on) is left
+// out of the feed as soon as it is seen, as before (DF-P1). Retiring a row
+// whose condition is gone — that workflow alert; a hold_opened whose hold was
+// released; a branch_open whose branch was resolved; a stale-checkout
+// escalation whose session ended; an acknowledgment, sign-off or access
+// recertification already discharged, and its overdue escalation copy once
+// nobody owes it — is done on the SERVER: the feed sends
+// the candidates' ids to POST /api/notifications/reconcile, which re-checks
+// each against the database and marks the gone ones metadata.superseded_at
+// (lib/notificationReconcile.ts; NEDGE-18, TRAIL-9, DEC-81 §2). Rows of any
+// other kind are not reconciled: they stay until their recipient reads them.
+// The browser writes no metadata, and the pass runs once per tab, after the
+// read (a fetch is never also a write); its echo is ignored (RT-8).
 //
 // Where a notification lands — its sidebar section, whether it is an action —
 // is read from ONE table, lib/notificationKinds.ts KIND_META (notifications
@@ -47,10 +82,31 @@ import {
 //     every surface reads it — no surface recounts.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Cap open-ticket fetches so the attention feed can't pull an unbounded set
-// (and re-pull it on every realtime change). Newest-first, so the most
-// recently active tickets — the ones likely to need attention — are kept.
+// Open tickets are read a page at a time, most recently active first. The
+// first page is OPEN_TICKET_CAP rows with an exact count; when the scope holds
+// more, the next pages are read too, up to TICKET_SCAN_CEILING (TRAIL-7: an
+// untouched ticket is often the one that needs attention, so truncating the
+// oldest hid exactly those). Beyond the ceiling the surfaces say "showing N of
+// M" (AttentionStatus). Only the columns the attention rule reads are fetched
+// (RT-3 dw3) — never the comments or history JSON.
 const OPEN_TICKET_CAP = 500;
+const TICKET_SCAN_CEILING = 5000;
+/** The columns isActionRequired (lib/ticketAttention.ts → lib/workflow.ts)
+ *  and the feed's rows read: identity, status, type, unit, the requester's
+ *  role, and the attachments (a staged Draft offers "Submit Draft"). */
+export const TICKET_ATTENTION_COLUMNS =
+  'id, org_id, ticket_id, title, status, unit, request_type, requester_id, requester_role, assigned_drafter_id, assigned_engineer_id, attachments, unread_by, created_at, last_modified';
+/** A burst of realtime events within this window is one refetch (RT-3 dw2). */
+export const FETCH_DEBOUNCE_MS = 400;
+/** The safety-net refetch while the tab is visible (RT-1 dw3). */
+export const VISIBLE_POLL_MS = 60_000;
+/** Rows below the loaded window tallied into the badges (TAX-6 dw1). */
+export const REMAINDER_TALLY_CAP = 1000;
+/** A row the server checked and kept is not sent again for this long. */
+export const RECONCILE_KEEP_MS = 60_000;
+/** The realtime echo of a row the reconcile pass just marked is ignored for
+ *  this long (RT-8 dw2). */
+export const RECONCILE_ECHO_MS = 30_000;
 
 function fromDbTicket(row: Record<string, unknown>): Ticket {
   return {
@@ -141,11 +197,134 @@ function emptySectionCounts(): SectionCounts {
   ) as SectionCounts;
 }
 
-export function useTicketNotifications() {
+/** What every surface reads — the hook's return shape, unchanged by N4. */
+export interface TicketNotifications {
+  /** The unified feed every surface renders. */
+  items: AttentionItem[];
+  /** The single count every surface badges (the header bell + Home). */
+  count: number;
+  /** { all, action, activity, notifications } — the one place the feed is
+   *  counted (TAX-7). */
+  counts: AttentionCounts;
+  /** = counts.action. */
+  actionRequiredCount: number;
+  /** = counts.activity. */
+  unreadCount: number;
+  /** Per-sidebar-section counts so each nav item badges only ITS own items. */
+  sectionCounts: SectionCounts;
+  loading: boolean;
+  markRead: (id: string) => Promise<void>;
+  markAllRead: () => Promise<void>;
+}
+
+/** How current and how complete the feed is — for the surfaces that say so
+ *  (components/cockpit/AttentionFeed.tsx). Read with useAttentionStatus(). */
+export interface AttentionStatus {
+  /** The realtime channel errored, timed out or closed (RT-1 dw4): the
+   *  numbers may be out of date until it rejoins (the refetches go on). */
+  stale: boolean;
+  /** A read failed (DELIV-10 dw5): what is shown is the last good read, or
+   *  nothing on a first load — never a claim that nothing is unread. */
+  error: string | null;
+  /** Notification rows the feed lists (the loaded window, stale workflow
+   *  alerts left out). */
+  notificationsShown: number;
+  /** My unread notification rows in the workspace (an exact count), or null
+   *  when it could not be read. */
+  notificationsTotal: number | null;
+  /** Older unread rows exist below the window. */
+  hasMoreNotifications: boolean;
+  /** Load the next page of older rows (a created_at cursor — TAX-6 dw2). */
+  loadMoreNotifications: () => void;
+  loadingMore: boolean;
+  /** Open tickets the feed evaluated, and how many the scope holds (null =
+   *  not counted). They differ only past TICKET_SCAN_CEILING. */
+  ticketsLoaded: number;
+  ticketsTotal: number | null;
+}
+
+/** The provider's value: the hook's shape plus the status. */
+export interface AttentionFeedState {
+  value: TicketNotifications;
+  status: AttentionStatus;
+}
+
+const IDLE_STATUS: AttentionStatus = Object.freeze({
+  stale: false,
+  error: null,
+  notificationsShown: 0,
+  notificationsTotal: null,
+  hasMoreNotifications: false,
+  loadMoreNotifications: () => {},
+  loadingMore: false,
+  ticketsLoaded: 0,
+  ticketsTotal: null,
+});
+
+/** The one feed of the tab (AttentionProvider). Null outside it. */
+export const AttentionContext = createContext<AttentionFeedState | null>(null);
+
+type TicketQuery = PromiseLike<{ data: unknown; error: { code?: string; message?: string } | null; count?: number | null }> & {
+  limit: (n: number) => TicketQuery;
+  range: (from: number, to: number) => TicketQuery;
+};
+
+/** One ticket scope, read a page at a time (see OPEN_TICKET_CAP). `build`
+ *  starts a fresh query each call (the select with its count, then the
+ *  scope's filters and order). A database without one of the attention
+ *  columns (42703) is read with '*', as it always was. */
+async function loadTicketScope(
+  build: (cols: string, counted: boolean) => TicketQuery,
+): Promise<{ rows: Record<string, unknown>[]; total: number | null; failed: boolean }> {
+  let cols = TICKET_ATTENTION_COLUMNS;
+  let first = await build(cols, true).limit(OPEN_TICKET_CAP);
+  if (first.error && first.error.code === '42703') {
+    cols = '*';
+    first = await build(cols, true).limit(OPEN_TICKET_CAP);
+  }
+  if (first.error) return { rows: [], total: null, failed: true };
+  const rows = [...((first.data as Record<string, unknown>[] | null) ?? [])];
+  const total = typeof first.count === 'number' ? first.count : null;
+  while (total !== null && rows.length < total && rows.length < TICKET_SCAN_CEILING && rows.length % OPEN_TICKET_CAP === 0) {
+    const page = await build(cols, false).range(rows.length, Math.min(rows.length + OPEN_TICKET_CAP, TICKET_SCAN_CEILING) - 1);
+    if (page.error) break;
+    const got = (page.data as Record<string, unknown>[] | null) ?? [];
+    if (got.length === 0) break;
+    rows.push(...got);
+  }
+  return { rows, total, failed: false };
+}
+
+/**
+ * The feed itself — state, fetch, realtime — for ONE consumer: the
+ * AttentionProvider (enabled), or a hook used outside it. Disabled, it does
+ * nothing (no read, no channel) and answers the empty feed.
+ */
+export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
   const { roles, activeOrgId, uid, membershipState } = useRole();
   const [tickets, setTickets] = useState<Ticket[]>([]);
-  const [notifs, setNotifs] = useState<NotificationRow[]>([]);
+  // The loaded window, as read (stale workflow alerts included); `hidden`
+  // names the stale workflow alerts the feed leaves out.
+  const [rawNotifs, setRawNotifs] = useState<NotificationRow[]>([]);
+  const rawRef = useRef<NotificationRow[]>([]);
+  const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set<string>());
+  const [notifTotal, setNotifTotal] = useState<number | null>(null);
+  const [remainder, setRemainder] = useState<Array<{ kind: string; resourceId: string | null }>>([]);
+  const [remainderRead, setRemainderRead] = useState(true);
+  const [docLibrary, setDocLibrary] = useState<Record<string, string>>({});
+  const [ticketTotal, setTicketTotal] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [stale, setStale] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const pagesRef = useRef(1);
+  const requestNowRef = useRef<() => void>(() => {});
+  // The reconcile pass's memory, for the life of the tab: rows the server
+  // kept (not re-sent for RECONCILE_KEEP_MS) and rows it just marked (their
+  // realtime echo is ignored — RT-8).
+  const keptAtRef = useRef(new Map<string, number>());
+  const echoRef = useRef(new Map<string, number>());
+  const reconcilingRef = useRef(false);
   // WF-24: "must act" is derived from the workflow engine under the org's
   // OWN capability policy — the same inputs the ticket page evaluates — so
   // the badge cannot count a ticket the page will show as view-only.
@@ -163,7 +342,7 @@ export function useTicketNotifications() {
   const [activeMemberCount, setActiveMemberCount] = useState<number | undefined>(undefined);
   useEffect(() => {
     let alive = true;
-    if (!activeOrgId) return;
+    if (!enabled || !activeOrgId) return;
     void loadCapabilityPolicy(activeOrgId).then((p) => { if (alive) setPolicy(p); }).catch(() => {});
     void supabase
       .from('org_members')
@@ -184,123 +363,315 @@ export function useTicketNotifications() {
         setCloseWithoutReviewTypes(closeTypes.length > 0 ? closeTypes : undefined);
       }, () => {});
     return () => { alive = false; };
-  }, [activeOrgId]);
-  // Unique per hook instance so multiple consumers (sidebar/bell/inbox) don't
-  // collide on the same realtime channel name.
+  }, [enabled, activeOrgId]);
+  // Unique per feed instance: the provider's one channel, and a test's own.
   const channelId = useId().replace(/[^a-z0-9]/gi, '');
 
   useEffect(() => {
+    if (!enabled) return;
     let alive = true;
 
     // This hook is also mounted PRE-GATE (the notification center panel
     // exists before the protected layout admits the app), where `roles` is
     // still the unresolved placeholder []. Acting then would fetch under the
-    // wrong (least-privileged) scope and run the mark-read reconciliation as
-    // a not-yet-resolved identity — then refetch everything when the real
+    // wrong (least-privileged) scope and run the reconciliation as a
+    // not-yet-resolved identity — then refetch everything when the real
     // roles land (SESS-5). Wait for the answer instead.
     if (!uid || !activeOrgId || membershipState !== 'member') {
-      void (async () => { if (alive) { setTickets([]); setNotifs([]); setLoading(false); } })();
+      void (async () => {
+        if (alive) {
+          rawRef.current = [];
+          setTickets([]); setRawNotifs([]); setHidden(new Set()); setNotifTotal(null); setRemainder([]);
+          setTicketTotal(null); setLoadError(null); setLoading(false);
+        }
+      })();
       return () => { alive = false; };
     }
 
-    const fetchAll = async () => {
+    /** The reconcile pass — after the read, never inside it (RT-8 dw3): send
+     *  the candidates to the server, which re-checks and marks the gone ones;
+     *  drop what it retired. One pass in flight per feed. */
+    const reconcile = async (rows: NotificationRow[], staleWorkflow: ReadonlySet<string>) => {
+      if (reconcilingRef.current) return;
+      const now = Date.now();
+      const kept = keptAtRef.current;
+      for (const [id, at] of kept) if (now - at > RECONCILE_KEEP_MS) kept.delete(id);
+      const ids = rows
+        .filter((r) => {
+          const cls = reconcileClassOf(r);
+          if (!cls) return false;
+          // A workflow alert is sent when the feed has seen it go stale.
+          if (cls === 'workflow' && !staleWorkflow.has(r.id)) return false;
+          return !kept.has(r.id);
+        })
+        .map((r) => r.id);
+      if (ids.length === 0) return;
+      reconcilingRef.current = true;
       try {
-        // 1) My tickets, scoped by role (same visibility rules as the portal).
-        let list: Ticket[] = [];
-        if (isQueueViewer(roles) || isEngineerRole(roles) || roles.includes('DocCtrl')) {
-          const { data } = await supabase.from('tickets').select('*').eq('org_id', activeOrgId).not('status', 'in', '("CLOSED","CANCELED")').order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP);
-          list = (data || []).map((r) => fromDbTicket(r as Record<string, unknown>));
-        } else if (roles.includes('Drafter')) {
-          const [assigned, pool] = await Promise.all([
-            supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('assigned_drafter_id', uid).order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP),
-            supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('status', 'PENDING_ASSIGNMENT').order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP),
-          ]);
-          const map = new Map<string, Ticket>();
-          for (const row of [...(assigned.data || []), ...(pool.data || [])]) {
-            const t = fromDbTicket(row as Record<string, unknown>);
-            map.set(t.id!, t);
-          }
-          list = Array.from(map.values());
-        } else {
-          const { data } = await supabase.from('tickets').select('*').eq('org_id', activeOrgId).eq('requester_id', uid).not('status', 'in', '("CLOSED","CANCELED")').order('last_modified', { ascending: false }).limit(OPEN_TICKET_CAP);
-          list = (data || []).map((r) => fromDbTicket(r as Record<string, unknown>));
+        const answer = await requestReconcile(activeOrgId, ids);
+        const at = Date.now();
+        // Not answered (offline, no session, a route not deployed): nothing
+        // is retired and every row keeps showing; it is asked again after
+        // RECONCILE_KEEP_MS, not on every refetch.
+        if (!answer) { for (const id of ids) kept.set(id, at); return; }
+        if (!alive) return;
+        const retired = new Set(answer.retired);
+        for (const id of ids) if (!retired.has(id)) kept.set(id, at);
+        if (retired.size === 0) return;
+        for (const id of retired) echoRef.current.set(id, at + RECONCILE_ECHO_MS);
+        const current = rawRef.current;
+        const gone = current.filter((r) => retired.has(r.id)).length;
+        if (gone > 0) {
+          const next = current.filter((r) => !retired.has(r.id));
+          rawRef.current = next;
+          setRawNotifs(next);
+          setNotifTotal((t) => (t === null ? t : Math.max(next.length, t - gone)));
         }
-
-        // 2) My unread in-app notifications (the bell's events), scoped to the
-        //    active workspace.
-        let n = await listMyNotifications({ onlyUnread: true, limit: 50, orgId: activeOrgId })
-          .catch(() => [] as NotificationRow[]);
-
-        // 3) Reconcile stale workflow alerts. A workflow notification (one that
-        //    carries metadata.action) means "this ticket entered state X —
-        //    someone must act". Once the ticket LEAVES state X (advanced,
-        //    reassigned, or closed) that alert is moot, but it lingers unread
-        //    until the recipient happens to open the ticket. We detect those —
-        //    the ticket's live status no longer matches the alert's recorded
-        //    status, or the ticket is no longer live in this workspace — and
-        //    leave them out so the bell, the sidebar badge, and the portal
-        //    can never disagree.
-        //    drafting-flow EVID-13 (DF-P1): read_at is the recipient's own act
-        //    of opening a row (the only "did they see it" signal), so no
-        //    reconciliation stamps it. The workflow route marks a retired alert
-        //    metadata.superseded_at (the unread list already omits those). This
-        //    catches any the route missed, e.g. a ticket the shed archived or
-        //    a status reached by a path that does not fan out, and marks it
-        //    the same way, in the recipient's own session on their own rows.
-        //    Otherwise those rows would stay unread forever, fill the 50-row
-        //    window and push live alerts off it. A failed ticket read proves
-        //    nothing, so in that case nothing is marked or left out.
-        const workflowRows = n.filter(
-          (r) => r.resourceId
-            && r.metadata
-            && typeof r.metadata.status === 'string'
-            && r.metadata.action != null,
-        );
-        if (workflowRows.length > 0) {
-          const refIds = Array.from(new Set(workflowRows.map((r) => r.resourceId as string)));
-          const { data: liveRows, error: liveErr } = await supabase
-            .from('tickets').select('id, status').eq('org_id', activeOrgId).in('id', refIds);
-          const statusById = new Map<string, string>();
-          for (const row of (liveRows || []) as Array<{ id: string; status: string }>) {
-            statusById.set(row.id, row.status);
-          }
-          const staleRows = liveErr ? [] : workflowRows
-            .filter((r) => statusById.get(r.resourceId as string) !== (r.metadata!.status as string));
-          if (staleRows.length > 0) {
-            const staleSet = new Set(staleRows.map((r) => r.id));
-            n = n.filter((r) => !staleSet.has(r.id));
-            // Best-effort: the filter above already hides them, so a refused
-            // mark never touches the feed.
-            const supersededAt = new Date().toISOString();
-            try {
-              await Promise.all(staleRows.map((r) => supabase
-                .from('notifications')
-                .update({ metadata: { ...(r.metadata ?? {}), superseded_at: supersededAt } })
-                .eq('id', r.id).eq('user_id', uid).is('read_at', null)
-                .then(() => undefined, () => undefined)));
-            } catch { /* the next load retries */ }
-          }
-        }
-
-        if (alive) { setTickets(list); setNotifs(n); setLoading(false); }
-      } catch (e) {
-        console.error('Attention feed fetch failed', e);
-        if (alive) setLoading(false);
+        setHidden((prev) => {
+          if (![...prev].some((id) => retired.has(id))) return prev;
+          return new Set([...prev].filter((id) => !retired.has(id)));
+        });
+      } finally {
+        reconcilingRef.current = false;
       }
     };
 
-    void fetchAll();
+    const fetchAll = async () => {
+      let failure: string | null = null;
+      try {
+        // 1) My tickets, scoped by role (same visibility rules as the portal).
+        let list: Ticket[] | null = null;
+        let total: number | null = null;
+        if (isQueueViewer(roles) || isEngineerRole(roles) || roles.includes('DocCtrl')) {
+          const scope = await loadTicketScope((cols, counted) => supabase.from('tickets').select(cols, counted ? { count: 'exact' } : undefined).eq('org_id', activeOrgId).not('status', 'in', '("CLOSED","CANCELED")').order('last_modified', { ascending: false }) as unknown as TicketQuery);
+          if (!scope.failed) { list = scope.rows.map((r) => fromDbTicket(r)); total = scope.total; }
+        } else if (roles.includes('Drafter')) {
+          const [assigned, pool] = await Promise.all([
+            loadTicketScope((cols, counted) => supabase.from('tickets').select(cols, counted ? { count: 'exact' } : undefined).eq('org_id', activeOrgId).eq('assigned_drafter_id', uid).order('last_modified', { ascending: false }) as unknown as TicketQuery),
+            loadTicketScope((cols, counted) => supabase.from('tickets').select(cols, counted ? { count: 'exact' } : undefined).eq('org_id', activeOrgId).eq('status', 'PENDING_ASSIGNMENT').order('last_modified', { ascending: false }) as unknown as TicketQuery),
+          ]);
+          if (!assigned.failed && !pool.failed) {
+            const map = new Map<string, Ticket>();
+            for (const row of [...assigned.rows, ...pool.rows]) {
+              const t = fromDbTicket(row);
+              map.set(t.id!, t);
+            }
+            list = Array.from(map.values());
+            // The two scopes can overlap, so their counts are summed only
+            // when one was cut at the ceiling.
+            const cut = (x: { rows: unknown[]; total: number | null }) => x.total !== null && x.rows.length < x.total;
+            total = cut(assigned) || cut(pool) ? (assigned.total ?? 0) + (pool.total ?? 0) : list.length;
+          }
+        } else {
+          const scope = await loadTicketScope((cols, counted) => supabase.from('tickets').select(cols, counted ? { count: 'exact' } : undefined).eq('org_id', activeOrgId).eq('requester_id', uid).not('status', 'in', '("CLOSED","CANCELED")').order('last_modified', { ascending: false }) as unknown as TicketQuery);
+          if (!scope.failed) { list = scope.rows.map((r) => fromDbTicket(r)); total = scope.total; }
+        }
+        if (list === null) failure = 'Your requests could not be loaded.';
 
+        // 2) My unread in-app notifications (the bell's events), scoped to the
+        //    active workspace: the newest page, and older pages on request
+        //    (a created_at cursor); the true count alongside (TAX-6, DELIV-10).
+        //    A failed read is an error the surfaces show (DELIV-10 dw5) and
+        //    keeps the last good window — never an empty "all caught up".
+        let n: NotificationRow[] | null = [];
+        let cursor: string | null = null;
+        try {
+          for (let page = 0; page < pagesRef.current; page++) {
+            const got = await listMyNotifications({ onlyUnread: true, limit: NOTIFICATION_PAGE_SIZE, orgId: activeOrgId, before: cursor });
+            n.push(...got);
+            if (got.length < NOTIFICATION_PAGE_SIZE) break;
+            cursor = got[got.length - 1].createdAt;
+          }
+        } catch {
+          n = null;
+          failure = 'Your notifications could not be loaded.';
+        }
+        let unreadTotal: number | null = null;
+        try { unreadTotal = await countUnread(activeOrgId); } catch { failure = failure ?? 'Your unread count could not be read.'; }
+
+        // 3) Stale workflow alerts. A workflow notification (one that carries
+        //    metadata.action) means "this ticket entered state X — someone must
+        //    act". Once the ticket LEAVES state X (advanced, reassigned, or
+        //    closed) that alert is moot, but it lingers unread until the
+        //    recipient happens to open the ticket. We detect those — the
+        //    ticket's live status no longer matches the alert's recorded
+        //    status, or the ticket is no longer live in this workspace — and
+        //    leave them out so the bell, the sidebar badge, and the portal can
+        //    never disagree.
+        //    drafting-flow EVID-13 (DF-P1): read_at is the recipient's own act
+        //    of opening a row (the only "did they see it" signal), so nothing
+        //    stamps it. The workflow route marks a retired alert
+        //    metadata.superseded_at (the unread list already omits those). One
+        //    the route missed — a ticket the shed archived, a status reached by
+        //    a path that does not fan out — is marked the same way by the
+        //    reconcile pass on the SERVER (NEDGE-18: since 20261161 the
+        //    browser may change only read_at), so it leaves the unread window
+        //    for good instead of filling it. A failed ticket read proves
+        //    nothing, so in that case nothing is left out or sent.
+        const staleSet = new Set<string>();
+        const rawWindow = n;
+        if (n) {
+          const workflowRows = n.filter(
+            (r) => r.resourceId
+              && r.metadata
+              && typeof r.metadata.status === 'string'
+              && r.metadata.action != null,
+          );
+          if (workflowRows.length > 0) {
+            const refIds = Array.from(new Set(workflowRows.map((r) => r.resourceId as string)));
+            const { data: liveRows, error: liveErr } = await supabase
+              .from('tickets').select('id, status').eq('org_id', activeOrgId).in('id', refIds);
+            const statusById = new Map<string, string>();
+            for (const row of (liveRows || []) as Array<{ id: string; status: string }>) {
+              statusById.set(row.id, row.status);
+            }
+            const staleRows = liveErr ? [] : workflowRows
+              .filter((r) => statusById.get(r.resourceId as string) !== (r.metadata!.status as string));
+            for (const r of staleRows) staleSet.add(r.id);
+            if (staleSet.size > 0) n = n.filter((r) => !staleSet.has(r.id));
+          }
+        }
+
+        // 4) The rows below the window, tallied by kind into the badges
+        //    (TAX-6 dw1) — only when the count says there are any.
+        let beyond: Array<{ kind: string; resourceId: string | null }> = [];
+        let beyondRead = true;
+        if (rawWindow && unreadTotal !== null && unreadTotal > rawWindow.length) {
+          try {
+            beyond = await listUnreadKindsBeyond(activeOrgId, rawWindow.length, REMAINDER_TALLY_CAP);
+          } catch {
+            beyondRead = false;
+          }
+        }
+
+        // 5) TRAIL-12: a document row written without a link (its producer
+        //    did not know the library) links to the document in its library —
+        //    resolved in ONE batched read — never to a search for its id.
+        const unlinked = (n ?? []).filter((r) => !r.link && r.resourceType === 'document' && r.resourceId).map((r) => r.resourceId as string);
+        let libs: Record<string, string> | null = null;
+        if (unlinked.length > 0) {
+          const { data: docRows } = await supabase
+            .from('documents').select('id, library_id').eq('org_id', activeOrgId).in('id', Array.from(new Set(unlinked)));
+          libs = {};
+          for (const d of (docRows || []) as Array<{ id: string; library_id: string | null }>) {
+            if (d.library_id) libs[d.id] = d.library_id;
+          }
+        }
+
+        if (alive) {
+          if (list !== null) { setTickets(list); setTicketTotal(total); }
+          if (rawWindow !== null) {
+            rawRef.current = rawWindow;
+            setRawNotifs(rawWindow);
+            setHidden(staleSet);
+            setNotifTotal(unreadTotal === null ? null : Math.max(unreadTotal, rawWindow.length));
+            setRemainder(beyond);
+            setRemainderRead(beyondRead);
+          } else if (unreadTotal !== null) {
+            setNotifTotal(unreadTotal);
+          }
+          if (libs) { const add = libs; setDocLibrary((prev) => ({ ...prev, ...add })); }
+          setLoadError(failure);
+          setLoading(false);
+        }
+        if (alive && rawWindow) void reconcile(rawWindow, staleSet);
+      } catch (e) {
+        console.error('Attention feed fetch failed', e);
+        if (alive) { setLoadError('The attention feed could not be loaded.'); setLoading(false); }
+      }
+    };
+
+    // One fetch at a time; a request while one runs queues exactly one more.
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let running = false;
+    let again = false;
+    const run = async () => {
+      if (!alive) return;
+      if (running) { again = true; return; }
+      running = true;
+      try { await fetchAll(); } finally {
+        running = false;
+        if (alive) setLoadingMore(false);
+        if (again && alive) { again = false; void run(); }
+      }
+    };
+    /** RT-3 dw2: a burst collapses into one trailing refetch. */
+    const schedule = (delay: number = FETCH_DEBOUNCE_MS) => {
+      if (!alive) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { timer = null; void run(); }, delay);
+    };
+    requestNowRef.current = () => schedule(0);
+
+    void run();
+
+    /** A notifications event: the echo of a row the reconcile pass just
+     *  marked is not a reason to refetch (RT-8 dw2). */
+    const onNotification = (payload: { eventType?: string; new?: { id?: string } | null } | undefined) => {
+      if (!alive) return;
+      const id = payload?.new?.id;
+      const echo = echoRef.current;
+      const now = Date.now();
+      for (const [k, until] of echo) if (until < now) echo.delete(k);
+      if (payload?.eventType === 'UPDATE' && id && echo.has(id)) { echo.delete(id); return; }
+      schedule();
+    };
+
+    let joined = false;
     const channel = supabase
       .channel(`attention-${activeOrgId}-${channelId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tickets', filter: `org_id=eq.${activeOrgId}` },
-        () => { if (alive) void fetchAll(); })
+        () => { if (alive) schedule(); })
+      // RT-4: tickets keeps the default replica identity (its rows carry the
+      // comments / history / attachments JSON — FULL would log all of it on
+      // every write), so a DELETE's old record holds the id alone and can
+      // never match the org filter above. This companion hears every tickets
+      // DELETE (an id, nothing else — lib/libraryCollections.ts's pattern)
+      // and refetches; no app path hard-deletes a ticket, so it is rare.
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'tickets' },
+        () => { if (alive) schedule(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `user_id=eq.${uid}` },
-        () => { if (alive) void fetchAll(); })
-      .subscribe();
+        (payload) => onNotification(payload as unknown as { eventType?: string; new?: { id?: string } | null }))
+      // RT-1: the channel's status is watched. Every join after the first is a
+      // rejoin after a drop, and no event missed meanwhile is replayed — so a
+      // rejoin reconciles the whole feed. An error, a timeout or a close says
+      // the numbers may be stale until it rejoins.
+      .subscribe((status: string) => {
+        if (!alive) return;
+        if (status === 'SUBSCRIBED') {
+          setStale(false);
+          if (joined) schedule();
+          joined = true;
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          setStale(true);
+        }
+      });
 
-    return () => { alive = false; supabase.removeChannel(channel); };
-  }, [roles, activeOrgId, uid, channelId, membershipState]);
+    // RT-1: the tab coming back, and a visible-only safety net.
+    const onReturn = () => {
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') schedule();
+    };
+    document.addEventListener('visibilitychange', onReturn);
+    window.addEventListener('focus', onReturn);
+    const poll = setInterval(() => {
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') schedule();
+    }, VISIBLE_POLL_MS);
+
+    return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
+      clearInterval(poll);
+      document.removeEventListener('visibilitychange', onReturn);
+      window.removeEventListener('focus', onReturn);
+      requestNowRef.current = () => {};
+      supabase.removeChannel(channel);
+    };
+  }, [enabled, roles, activeOrgId, uid, channelId, membershipState]);
+
+  const notifs = useMemo(
+    () => (hidden.size === 0 ? rawNotifs : rawNotifs.filter((r) => !hidden.has(r.id))),
+    [rawNotifs, hidden],
+  );
 
   const { items, counts, sectionCounts } = useMemo(() => {
     const out: AttentionItem[] = [];
@@ -348,9 +719,11 @@ export function useTicketNotifications() {
       if (n.resourceId && ticketIds.has(n.resourceId)) continue;
       const section = sectionForKind(n.kind);
       // KIND_META decides what is an action: the conflict class (a stale-base
-      // branch, a lost checkout, an edit overlap). A legacy kind no union
-      // declares is FYI.
+      // branch, a lost checkout, an edit overlap) and the PSM obligations
+      // whose rows the reconcile pass clears once discharged (DEC-81 §2). A
+      // legacy kind no union declares is FYI.
       const actionRequired = kindMeta(n.kind)?.actionRequired ?? false;
+      const library = n.resourceId ? docLibrary[n.resourceId] : undefined;
       out.push({
         key: `notif:${n.id}`,
         source: 'notification',
@@ -359,8 +732,12 @@ export function useTicketNotifications() {
         section,
         title: n.title,
         subtitle: n.body || '',
+        // TRAIL-12: a document row without a link opens the document in its
+        // library (resolved by one batched read), or the Documents home when
+        // the library cannot be read — never a search for a raw id, which
+        // nothing in search matches.
         link: n.link || (n.resourceId
-          ? (n.resourceType === 'document' ? `/search?q=${encodeURIComponent(n.resourceId)}`
+          ? (n.resourceType === 'document' ? (library ? `/documents/${library}?doc=${n.resourceId}` : '/documents')
              : n.resourceType === 'library' ? `/documents/${n.resourceId}`
              : `/requests/${n.resourceId}`)
           : '/inbox'),
@@ -373,17 +750,41 @@ export function useTicketNotifications() {
     }
 
     out.sort((a, b) => (b.when || '').localeCompare(a.when || ''));
-    const action = out.filter((i) => i.actionRequired).length;
-    const notifications = out.filter((i) => i.source === 'notification').length;
-    const counts: AttentionCounts = { all: out.length, action, activity: out.length - action, notifications };
-    return { items: out, counts, sectionCounts };
-  }, [tickets, notifs, uid, roles, policy, engineeringFirstTypes, closeWithoutReviewTypes, activeMemberCount]);
+    let action = out.filter((i) => i.actionRequired).length;
+    let notifications = out.filter((i) => i.source === 'notification').length;
+    let all = out.length;
 
-  return {
+    // TAX-6 dw1 / TRAIL-7 dw1: the unread rows below the loaded window count
+    // too — by kind into their section and the action count (a row about a
+    // ticket already in the feed folds in, as above) — and any the tally
+    // could not reach count in the total as activity. The list pages them in
+    // on request; the number never waits for that.
+    const rawLoaded = rawNotifs.length;
+    if (notifTotal !== null && notifTotal > rawLoaded) {
+      let tallied = 0;
+      for (const r of remainder) {
+        tallied++;
+        if (r.resourceId && ticketIds.has(r.resourceId)) continue;
+        const section = sectionForKind(r.kind as NotificationRow['kind']);
+        const actionReq = kindMeta(r.kind)?.actionRequired ?? false;
+        all++; notifications++;
+        if (actionReq) action++;
+        if (section) tally(section, actionReq);
+      }
+      const untallied = Math.max(0, notifTotal - rawLoaded - (remainderRead ? tallied : 0));
+      all += untallied; notifications += untallied;
+    }
+    const counts: AttentionCounts = { all, action, activity: all - action, notifications };
+    return { items: out, counts, sectionCounts };
+  }, [tickets, notifs, rawNotifs, notifTotal, remainder, remainderRead, docLibrary, uid, roles, policy, engineeringFirstTypes, closeWithoutReviewTypes, activeMemberCount]);
+
+  const markAll = useCallback(() => markAllRead(activeOrgId), [activeOrgId]);
+  const value = useMemo<TicketNotifications>(() => ({
     /** The unified feed every surface renders. */
     items,
-    /** The single count every surface badges (the header bell + Home). */
-    count: items.length,
+    /** The single count every surface badges (the header bell + Home) — the
+     *  true count, including unread rows below the loaded window (TAX-6). */
+    count: counts.all,
     /** { all, action, activity, notifications } — the one place the feed is
      *  counted (TAX-7). */
     counts,
@@ -401,6 +802,40 @@ export function useTicketNotifications() {
     markRead,
     // Scoped to the active workspace so "mark all read" clears only this
     // workspace's bell, not every workspace the user belongs to.
-    markAllRead: () => markAllRead(activeOrgId),
-  };
+    markAllRead: markAll,
+  }), [items, counts, sectionCounts, loading, markAll]);
+
+  const loadMoreNotifications = useCallback(() => {
+    pagesRef.current += 1;
+    setLoadingMore(true);
+    requestNowRef.current();
+  }, []);
+  const status = useMemo<AttentionStatus>(() => ({
+    stale,
+    error: loadError,
+    notificationsShown: notifs.length,
+    notificationsTotal: notifTotal === null ? null : Math.max(notifs.length, notifTotal - hidden.size),
+    hasMoreNotifications: notifTotal !== null && notifTotal > rawNotifs.length,
+    loadMoreNotifications,
+    loadingMore,
+    ticketsLoaded: tickets.length,
+    ticketsTotal: ticketTotal,
+  }), [stale, loadError, notifs.length, notifTotal, hidden.size, rawNotifs.length, loadMoreNotifications, loadingMore, tickets.length, ticketTotal]);
+
+  return useMemo(() => ({ value, status }), [value, status]);
+}
+
+/** The attention feed. Inside AttentionProvider (the protected layout) every
+ *  caller reads the tab's ONE feed; outside it (a test, a preview) this runs
+ *  its own copy. The return shape is the one every surface has always read. */
+export function useTicketNotifications(): TicketNotifications {
+  const shared = useContext(AttentionContext);
+  const own = useAttentionFeedState(shared === null);
+  return (shared ?? own).value;
+}
+
+/** How current and complete the feed is (stale channel, a failed read, the
+ *  rows below the window and how to page them). Idle outside the provider. */
+export function useAttentionStatus(): AttentionStatus {
+  return useContext(AttentionContext)?.status ?? IDLE_STATUS;
 }
