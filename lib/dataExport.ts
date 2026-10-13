@@ -38,7 +38,7 @@ import { signStorageGet } from "@/lib/untrustedContent";
 // coverage tripwire test can import them without pulling in AWS clients.
 // Adding a table to the schema without deciding its backup fate fails the
 // test suite — see that file for the contract.
-import { ORG_SCOPED_TABLES, USER_SCOPED_FOR_ORG_TABLES, REDACT_COLUMNS, EXPORT_KEYED_BY, exportOrderKey, redactRow } from "@/lib/exportTables";
+import { ORG_SCOPED_TABLES, USER_SCOPED_FOR_ORG_TABLES, REDACT_COLUMNS, EXPORT_KEYED_BY, EXPORT_OMITTED_COLUMNS, exportOrderKey, exportSelectFor, omitExportColumns, redactRow } from "@/lib/exportTables";
 export { ORG_SCOPED_TABLES, USER_SCOPED_FOR_ORG_TABLES, EXPORT_EXCLUDED_TABLES, REDACT_COLUMNS } from "@/lib/exportTables";
 // BKP-2 / BKP-9: the file manifest reads the ONE storage-key registry the
 // orphan sweep reads too — a key column registered there is in every backup
@@ -109,6 +109,11 @@ export interface DataExportManifest {
    *  be re-issued and destination credentials re-entered rather than
    *  silently arriving dead. */
   redactedColumns: Record<string, string[]>;
+  /** intelligence ILIFE-11: columns that are NOT in this export at all (not
+   *  nulled — absent from every row), per table, because they are derived and
+   *  rebuilt after a restore: knowledge_chunks.embedding, which the embed
+   *  drain re-computes. Older backups have no such field. */
+  omittedColumns: Record<string, string[]>;
   notes: string[];
 }
 
@@ -437,9 +442,16 @@ export async function runOrgExport(params: {
   const redactedColumns: Record<string, string[]> = Object.fromEntries(
     Object.entries(REDACT_COLUMNS).map(([table, r]) => [table, [...r.columns]]),
   );
+  const omittedColumns: Record<string, string[]> = Object.fromEntries(
+    Object.entries(EXPORT_OMITTED_COLUMNS).map(([table, o]) => [table, [...o.omit]]),
+  );
   notes.push(
     "Every column from the source schema is preserved verbatim EXCEPT the credential columns listed in manifest.redactedColumns, " +
-    "which are exported as null. JSON keys mirror Postgres column names (snake_case).",
+    "which are exported as null, and the derived columns listed in manifest.omittedColumns, which are left out. " +
+    "JSON keys mirror Postgres column names (snake_case).",
+    `OMITTED derived columns (not in this export; rebuilt after a restore): ${
+      Object.entries(EXPORT_OMITTED_COLUMNS).map(([t, o]) => `${o.omit.map((c) => `${t}.${c}`).join(", ")}: ${o.reason}`).join("; ")
+    }.`,
     `REDACTED credential columns (secrets never leave the database): ${
       Object.entries(REDACT_COLUMNS).map(([t, r]) => r.columns.map((c) => `${t}.${c}`).join(", ")).join("; ")
     }. After a restore, share links and vendor intake links must be RE-ISSUED (restored rows arrive revoked), ` +
@@ -469,6 +481,7 @@ export async function runOrgExport(params: {
     },
     spaceArchives: shedInfo.archiveIds,
     redactedColumns,
+    omittedColumns,
     notes,
   };
 
@@ -1419,8 +1432,14 @@ async function readScoped(
   value: string | string[],
   arrayValue: boolean,
 ): Promise<{ rows: Array<Record<string, unknown>>; short: string | null }> {
+  // ILIFE-11: a table with omitted columns is read by its explicit column
+  // list (exportSelectFor). A database that does not have one of the listed
+  // columns yet (a migration not pasted) answers 42703; the read then falls
+  // back to "*" for the rest of this table — today's read — and the omitted
+  // columns are still dropped from every row (omitExportColumns below).
+  let columns = exportSelectFor(table);
   const scoped = (head: boolean) => {
-    const q = head ? sb.from(table).select("*", { count: "exact", head: true }) : sb.from(table).select("*");
+    const q = head ? sb.from(table).select("*", { count: "exact", head: true }) : sb.from(table).select(columns);
     return arrayValue && Array.isArray(value) ? q.in(column, value) : q.eq(column, value as string);
   };
   const countNow = async (): Promise<number | null> => {
@@ -1438,9 +1457,10 @@ async function readScoped(
     for (const k of keys) q = q.order(k, { ascending: true });
     if (last !== null) q = keys.length === 1 ? q.gt(keys[0], last[0]) : q.or(keysetAfter(keys, last));
     const { data, error } = await q.limit(PAGE_SIZE);
+    if (error && columns !== "*" && isUndefinedColumn(error)) { columns = "*"; continue; }
     if (error) throw new Error(error.message);
     const page = (data ?? []) as unknown as Array<Record<string, unknown>>;
-    for (const r of page) rows.push(r);
+    for (const r of page) rows.push(omitExportColumns(table, r));
     if (page.length === 0) break;
     if (page.length < PAGE_SIZE && (before === null || rows.length >= before)) break;
     const tail = page[page.length - 1];
@@ -1465,6 +1485,12 @@ async function readScoped(
     }
   }
   return { rows, short: null };
+}
+
+/** PostgREST's answer for a select list naming a column the table does not
+ *  have (yet): 42703, or PGRST204 from an older schema cache. */
+function isUndefinedColumn(e: { code?: unknown }): boolean {
+  return e.code === "42703" || e.code === "PGRST204";
 }
 
 /** A storage error that says the object is not there (HeadObject's 404) —

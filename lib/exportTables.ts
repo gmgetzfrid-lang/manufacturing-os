@@ -212,6 +212,54 @@ export function exportOrderKey(table: string): readonly string[] {
   return Object.prototype.hasOwnProperty.call(EXPORT_ORDER_KEYS, table) ? EXPORT_ORDER_KEYS[table] : ["id"];
 }
 
+/** intelligence ILIFE-11: columns a table is exported WITHOUT. Every other
+ *  table is read `select("*")`; a table listed here is read with an explicit
+ *  column list (`select`) that leaves the `omit` columns out, so their values
+ *  never reach the envelope, the ZIP or a destination. The manifest names
+ *  each omitted column with its reason (manifest.omittedColumns and a note).
+ *  lib/__tests__/exportCoverage.test.ts fails when `select` is not exactly
+ *  the table's columns in the census of supabase/ less `omit` — a column a
+ *  later migration adds fails the build until it is listed here, so the
+ *  explicit list can never silently drop one.
+ *
+ *  knowledge_chunks.embedding: one 1024-dimension vector per chunk, written
+ *  as text by PostgREST (on the order of 15–20 KB a row), was inlined into
+ *  every backup. It is derived, not authored: the embed drain
+ *  (lib/knowledgeEmbedDrain.ts, embed_claim_batch) rebuilds every chunk whose
+ *  embedding is NULL, so a restored chunk comes back with keyword search at
+ *  once and its meaning index rebuilt by the drain. */
+export const EXPORT_OMITTED_COLUMNS: Record<string, { omit: readonly string[]; select: readonly string[]; reason: string }> = {
+  knowledge_chunks: {
+    omit: ["embedding"],
+    select: [
+      "id", "org_id", "library_id", "document_id", "page", "seq", "section", "content", "tsv",
+      "embedding_model", "embed_attempts", "embed_error", "embed_claimed_until", "embed_retry_after",
+      "source", "source_model",
+    ],
+    reason:
+      "the semantic-search vector (1024 numbers per passage) is derived from the passage text and is not exported; " +
+      "after a restore the embed drain rebuilds it for every restored passage (keyword search works at once, meaning search as the drain catches up)",
+  },
+};
+
+/** The PostgREST select list the export reads `table` with: "*", or the
+ *  explicit column list of a table that omits columns (ILIFE-11). */
+export function exportSelectFor(table: string): string {
+  return Object.prototype.hasOwnProperty.call(EXPORT_OMITTED_COLUMNS, table) ? EXPORT_OMITTED_COLUMNS[table].select.join(", ") : "*";
+}
+
+/** Drop every omitted column of a `table` row (ILIFE-11). Pure; returns a new
+ *  object, and leaves a table with no omissions byte-identical. Applied to
+ *  every row read, so a row read `select("*")` (the fallback when the
+ *  explicit list names a column the database does not have yet) carries no
+ *  omitted value either. */
+export function omitExportColumns(table: string, row: Record<string, unknown>): Record<string, unknown> {
+  if (!Object.prototype.hasOwnProperty.call(EXPORT_OMITTED_COLUMNS, table)) return row;
+  const out: Record<string, unknown> = { ...row };
+  for (const c of EXPORT_OMITTED_COLUMNS[table].omit) delete out[c];
+  return out;
+}
+
 /** User-scoped tables exported alongside (membership in this org acts as
  *  the join — we only include rows for users who belong to the org). */
 export const USER_SCOPED_FOR_ORG_TABLES = ["notification_preferences"] as const;

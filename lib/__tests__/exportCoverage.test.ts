@@ -26,7 +26,10 @@ import {
   REDACT_COLUMNS,
   EXPORT_KEYED_BY,
   EXPORT_ORDER_KEYS,
+  EXPORT_OMITTED_COLUMNS,
   exportOrderKey,
+  exportSelectFor,
+  omitExportColumns,
   redactRow,
 } from "@/lib/exportTables";
 import { RESTORE_TABLE_ORDER, CONFLICT_TARGETS, planRestore, isBearerColumn, ORG_LESS_RESTORE_PARENTS } from "@/lib/dataRestore";
@@ -298,5 +301,50 @@ describe("export paging order tripwire (ILIFE-6): every exported table pages by 
     expect(exportOrderKey("documents")).toEqual(["id"]);
     expect(exportOrderKey("curated_collection_items")).toEqual(["collection_id", "document_id"]);
     expect(exportOrderKey("notification_preferences")).toEqual(["user_id"]);
+  });
+});
+
+// intelligence ILIFE-11: a table the export reads by an explicit column list
+// (to leave a derived column out) is a DECLARED exception, never a silent
+// one. The list must be exactly the table's columns in the census less the
+// omitted ones: a column a later migration adds fails here until it is
+// listed, so the explicit list can never drop a column nobody decided on.
+describe("export column-list exception (ILIFE-11): an omitted column is declared, and the list is every other column", () => {
+  const census = censusSchema();
+  const exported = [...ORG_SCOPED_TABLES, ...USER_SCOPED_FOR_ORG_TABLES] as readonly string[];
+
+  it("knowledge_chunks is exported WITHOUT its embedding, for a written reason that names the rebuild", () => {
+    expect(Object.keys(EXPORT_OMITTED_COLUMNS)).toEqual(["knowledge_chunks"]);
+    expect(EXPORT_OMITTED_COLUMNS.knowledge_chunks.omit).toEqual(["embedding"]);
+    expect(census.get("knowledge_chunks")?.columns.has("embedding")).toBe(true); // 20260930_semantic_layer.sql
+    expect(EXPORT_OMITTED_COLUMNS.knowledge_chunks.reason).toMatch(/embed drain rebuilds it/);
+  });
+
+  it("every entry names an exported table; each omitted column is real; the select list is exactly the census columns less the omitted ones", () => {
+    for (const [table, o] of Object.entries(EXPORT_OMITTED_COLUMNS)) {
+      expect(exported.includes(table), `${table} is not exported`).toBe(true);
+      const cols = census.get(table)?.columns ?? new Set<string>();
+      for (const c of o.omit) expect(cols.has(c), `${table}.${c} is not a column`).toBe(true);
+      expect(new Set(o.select).size, `${table}: duplicate in select`).toBe(o.select.length);
+      expect(o.select.filter((c) => o.omit.includes(c)), `${table}: an omitted column is selected`).toEqual([]);
+      const expected = [...cols].filter((c) => !o.omit.includes(c)).sort();
+      expect([...o.select].sort(), `${table}: the explicit column list must be every column but the omitted ones (a new column? list it)`).toEqual(expected);
+      for (const k of exportOrderKey(table)) expect(o.select, `${table}: the paging key ${k} must be read`).toContain(k);
+      expect(o.reason.length, `${table}: write the reason`).toBeGreaterThan(20);
+    }
+  });
+
+  it("the read list: explicit for knowledge_chunks, \"*\" for every other table", () => {
+    expect(exportSelectFor("knowledge_chunks")).toBe(EXPORT_OMITTED_COLUMNS.knowledge_chunks.select.join(", "));
+    expect(exportSelectFor("knowledge_chunks")).not.toMatch(/\bembedding\b(?!_)/);
+    for (const t of exported.filter((x) => x !== "knowledge_chunks")) expect(exportSelectFor(t), t).toBe("*");
+  });
+
+  it("omitExportColumns drops exactly the omitted columns, and leaves other tables' rows byte-identical", () => {
+    const chunk = { id: "c1", content: "Pump P-101A", embedding: "[0.1,0.2]", embedding_model: "m" };
+    expect(omitExportColumns("knowledge_chunks", chunk)).toEqual({ id: "c1", content: "Pump P-101A", embedding_model: "m" });
+    expect(chunk.embedding).toBe("[0.1,0.2]"); // pure
+    const doc = { id: "d1", embedding: "kept" };
+    expect(omitExportColumns("documents", doc)).toBe(doc);
   });
 });
