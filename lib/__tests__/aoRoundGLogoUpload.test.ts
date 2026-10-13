@@ -307,8 +307,9 @@ describe("ORG-5 fix pass — a backup restore puts the workspace logo back (app/
   });
 
   it("the page builds its request with the helper, sends its body, PUTs the same type, and says why a file failed", () => {
-    expect(restorePage).toMatch(/import \{ restoreUploadRequest, isWorkspaceLogoKey \} from "@\/lib\/storageKey";/);
-    expect(restorePage).toContain("const head = isWorkspaceLogoKey(key) ? new Uint8Array(await blob.slice(0, 12).arrayBuffer()) : null;");
+    // (admin-and-org ORG-16, Round G P10 review fix: a cover's / background's first bytes are read too)
+    expect(restorePage).toMatch(/import \{ restoreUploadRequest, isWorkspaceLogoKey, isNodeImageKey \} from "@\/lib\/storageKey";/);
+    expect(restorePage).toContain("const head = isWorkspaceLogoKey(key) || isNodeImageKey(key) ? new Uint8Array(await blob.slice(0, 12).arrayBuffer()) : null;");
     expect(restorePage).toMatch(/const req = restoreUploadRequest\(key, blob\.size, head\);/);
     expect(restorePage).toMatch(/body: JSON\.stringify\(req\.body\),/);
     expect(restorePage).toMatch(/method: "PUT", body: blob, headers: \{ "Content-Type": req\.contentType \}/);
@@ -370,11 +371,14 @@ describe("ORG-5 fix pass 2 — a logo's type is its bytes' and its signed type's
     expect(req.logoProblem).toBe("A workspace logo must be a PNG, JPEG or WebP image (SVG is not accepted).");
   });
 
-  it("bytes that are no known image fall back to the extension; a non-logo key never reads its bytes' type", () => {
+  it("bytes that are no known image fall back to the extension; a document key never reads its bytes' type (a cover's does: ORG-16, P10)", () => {
     expect(restoreUploadRequest(key("png"), 10, bytes(0x3c, 0x73, 0x76, 0x67)).contentType).toBe("image/png");
     expect(restoreUploadRequest(key("svg"), 10, bytes(0x3c, 0x73, 0x76, 0x67)).logoProblem).not.toBeNull();
     expect(restoreUploadRequest(`orgs/${ORG}/libraries/l/a.pdf`, 10, JPEG).contentType).toBe("application/pdf");
-    expect(restoreUploadRequest(`orgs/${ORG}/branding/covers/c.bin`, 10, PNG).contentType).toBe("application/octet-stream");
+    // admin-and-org ORG-16 (Round G, P10 review fix): a cover is signed only as an image now, so its
+    // bytes decide its type as a logo's do (lib/__tests__/aoRoundGStorageFollowups.test.ts)
+    expect(restoreUploadRequest(`orgs/${ORG}/branding/covers/c.bin`, 10, PNG).contentType).toBe("image/png");
+    expect(restoreUploadRequest(`orgs/${ORG}/tickets/t1/c.bin`, 10, PNG).contentType).toBe("application/octet-stream");
   });
 
   it("sniffImageType reads the four magic numbers and nothing else", () => {

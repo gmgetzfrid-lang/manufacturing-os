@@ -25,9 +25,10 @@
 // shared deployment with no operator to tell is never silent: each
 // workspace's Admins get a notice that carries no figures, and the cron
 // reports it in its errors (BILL-5 fix pass). On a single-workspace
-// deployment the quota alert states the R2 figure too and stands in for the
-// R2 bell (BILL-15), so its Admin / DocCtrl get one storage bell, not two
-// different percentages for the same files.
+// deployment the quota alert states the R2 figure too and, when that figure
+// was measured in full, stands in for the R2 bell (BILL-15), so its Admin /
+// DocCtrl get one storage bell, not two different measured percentages for
+// the same files on the same day.
 //
 // admin-and-org BILL-5 / BILL-12 (Round G, P6; DEC-99): the plan
 // ceilings and the bucket walk are DEPLOYMENT facts — one bucket, one
@@ -449,6 +450,34 @@ export function platformAlertUnroutedError(run: {
     "each workspace's Admins were told without figures";
 }
 
+/** A quota bell row the R2 step reads (BILL-15): its metadata and when it
+ *  went out. */
+export type QuotaBellRow = { metadata?: Record<string, unknown> | null; created_at?: string | null };
+
+const BAND_RANK: Record<AlertBand, number> = { ok: 0, warn: 1, crit: 2 };
+
+/** BILL-15 (DEC-99 §3), single-workspace server: does a this-week quota
+ *  bell that stated the R2 plan figure stand in for the R2 bell the
+ *  platform step would send now at `measured`? Only a COMPLETE plan figure
+ *  counts (metadata.r2PlanTruncated === false; a floor — "at least N%",
+ *  banded warn because the walk stopped early — never hides a measured
+ *  figure). Such a bell covers the R2 bell's week when the band it stated
+ *  ranks at or above `measured` (ok < warn < crit). One that went out
+ *  today (UTC, at or after `dayStartIso`) holds the R2 bell to the next day
+ *  whatever band it stated: one measured plan percentage per person per
+ *  day. */
+export function quotaBellCoversR2Bell(rows: readonly QuotaBellRow[] | null | undefined, measured: AlertBand, dayStartIso: string): boolean {
+  for (const r of rows ?? []) {
+    const m = r.metadata;
+    if (!m || m.r2PlanTruncated !== false) continue;
+    const stated = m.r2PlanBand;
+    if (stated !== "ok" && stated !== "warn" && stated !== "crit") continue;
+    if (BAND_RANK[stated] >= BAND_RANK[measured]) return true;
+    if (typeof r.created_at === "string" && r.created_at >= dayStartIso) return true;
+  }
+  return false;
+}
+
 /** Daily watchdog: notify the people who may see the deployment's figures
  *  (platformAlertRecipients) when a platform resource runs hot against its
  *  plan ceiling. Deduped per person per resource per week. Returns the
@@ -464,7 +493,7 @@ export async function runPlatformStorageAlerts(sb: SupabaseClient): Promise<{
   // `title` / `body` carry the figures; `blindTitle` / `blindBody` are the
   // no-operator fallback, which carries none (BILL-5: a tenant's admin may
   // not read the deployment's totals).
-  const hot: Array<{ kind: NotificationKind; title: string; body: string; blindTitle: string; blindBody: string }> = [];
+  const hot: Array<{ kind: NotificationKind; band: AlertBand; title: string; body: string; blindTitle: string; blindBody: string }> = [];
   const blindTail =
     "These figures cover every workspace on the server, so they go to a platform operator, and this server has none " +
     "to tell. Let whoever runs the server know. If that is you, register as its platform operator from Admin → Storage " +
@@ -472,6 +501,7 @@ export async function runPlatformStorageAlerts(sb: SupabaseClient): Promise<{
   if (status.r2.band !== "ok") {
     hot.push({
       kind: "storage_platform_r2",
+      band: status.r2.band,
       title: status.r2.band === "crit"
         ? `File storage critical — ${status.r2.pct}% of plan`
         : `File storage high — ${status.r2.pct}% of plan`,
@@ -491,6 +521,7 @@ export async function runPlatformStorageAlerts(sb: SupabaseClient): Promise<{
   if (status.db.band !== "ok" && status.db.bytes !== null) {
     hot.push({
       kind: "storage_platform_db",
+      band: status.db.band,
       title: status.db.band === "crit"
         ? `Database critical — ${status.db.pct}% of plan`
         : `Database high — ${status.db.pct}% of plan`,
@@ -512,6 +543,7 @@ export async function runPlatformStorageAlerts(sb: SupabaseClient): Promise<{
   }
   const blind = route === "no-operator";
   const sevenDaysAgo = new Date(Date.now() - 7 * 86400 * 1000).toISOString();
+  const utcDayStart = new Date(Math.floor(Date.now() / 86_400_000) * 86_400_000).toISOString();
   for (const t of targets) {
     for (const alert of hot) {
       // BILL-15 (DEC-99 §3): on a single-workspace server the workspace's
@@ -519,18 +551,20 @@ export async function runPlatformStorageAlerts(sb: SupabaseClient): Promise<{
       // earlier step, lib/storageAlerts.ts runStorageAlerts) goes to these
       // same people. When it fires there it states BOTH figures — the files
       // against the limit an admin set, and the whole bucket against this R2
-      // plan ceiling — so it is this bell too: a quota bell from this week
-      // that stated the bucket running hot counts as the R2 bell, on the
-      // R2 bell's own week, and the person never gets a second percentage
-      // for the same files that day. A shared server keeps both (different
-      // people). A read that fails skips nothing: the R2 bell goes.
+      // plan ceiling — so it can be this bell too (quotaBellCoversR2Bell:
+      // only a COMPLETE plan figure, stated at or above the band measured
+      // now, covers this bell's week; one stated earlier today holds it to
+      // the next day). A shared server keeps both (different people). A read
+      // that fails skips nothing: the R2 bell goes. storage_alert is a
+      // server-only kind once 20261160 is live (rule 2); before that paste
+      // a forged row could feed this read, as each kind's own weekly dedupe
+      // already could at base.
       if (route === "sole-workspace" && alert.kind === "storage_platform_r2") {
         const { data: filesBells } = await sb
-          .from("notifications").select("metadata")
+          .from("notifications").select("metadata, created_at")
           .eq("org_id", t.orgId).eq("user_id", t.uid)
           .eq("kind", "storage_alert").gte("created_at", sevenDaysAgo);
-        if (((filesBells as Array<{ metadata?: { r2PlanBand?: unknown } | null }> | null) ?? [])
-          .some((b) => b.metadata?.r2PlanBand === "warn" || b.metadata?.r2PlanBand === "crit")) continue;
+        if (quotaBellCoversR2Bell(filesBells as QuotaBellRow[] | null, alert.band, utcDayStart)) continue;
       }
       // Deduped per person per resource per week — but a blind (no-figures)
       // bell never stands in for the figures: an Admin belled blind on day 1

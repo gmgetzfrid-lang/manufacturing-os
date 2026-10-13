@@ -90,7 +90,8 @@ describe("runStorageAlerts — the quota watermark (lib/storageAlerts.ts)", () =
       // admin-and-org BILL-15 (Round G, P10): this world has ONE workspace
       // (orgs → [o1]), so the quota bell also states the whole bucket against
       // the R2 plan ceiling (the 10 GB default here) and carries the band
-      // the platform step reads to count it as its R2 bell.
+      // the platform step reads to count it as its R2 bell (r2PlanTruncated:
+      // whether that plan figure was a floor; this walk finished).
       expect(rows[i]).toEqual({
         table: "notifications", org_id: "o1", user_id: uid, kind: "storage_alert",
         title: "Storage critical — 95% of the set limit, 0% of plan",
@@ -100,7 +101,7 @@ describe("runStorageAlerts — the quota watermark (lib/storageAlerts.ts)", () =
           "past it, Cloudflare bills the overage, or refuses writes on an account without billing. " +
           "Take a full backup and free up space from Admin → Storage (archive superseded revisions or closed tickets, delete orphaned files).",
         link: "/admin/storage", resource_type: null, resource_id: null, actor_user_id: null, actor_name: null,
-        metadata: { r2PlanBand: "ok", r2PlanPct: 0 },
+        metadata: { r2PlanBand: "ok", r2PlanPct: 0, r2PlanTruncated: false },
       });
     }
     expect(isNotificationKind("storage_alert")).toBe(true);

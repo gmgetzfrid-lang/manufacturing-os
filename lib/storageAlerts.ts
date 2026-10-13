@@ -110,12 +110,16 @@ export async function runStorageAlerts(sb: SupabaseClient, opts: { budgetMs?: nu
   // BILL-15 (DEC-99 §3): on a single-workspace server this workspace's files
   // are nearly the whole bucket, and the platform R2 alert (the cron's later
   // step, lib/storageUsage.ts runPlatformStorageAlerts) goes to the same
-  // Admin / DocCtrl. There the walk covers the whole bucket once (the
-  // workspace's own total measured in the same pass), and the bell states
-  // both figures, each with what it measured and against which limit; the
-  // R2 step counts it as its own bell. A shared server walks the prefix and
-  // keeps the two alerts apart (they reach different people). Unreadable
-  // orgs: not sole, as before.
+  // Admin / DocCtrl. There the bell states both figures, each with what it
+  // measured and against which limit, and the R2 step counts it as its own
+  // bell when its plan figure was complete and not below the band the R2
+  // step measures. The quota figure is the workspace prefix walk's, exactly
+  // as on a shared server (a whole-bucket walk would list root-level and
+  // other top-level keys first, and could stop before the workspace's own);
+  // the plan figure is a second, whole-bucket walk with whatever budget is
+  // left, a floor when it stops early. A shared server keeps the two alerts
+  // apart (they reach different people). Unreadable orgs: not sole, as
+  // before.
   const soleOrg = order.length > 0 ? await soleTenantId(sb) : null;
   for (let i = 0; i < order.length; i++) {
     const s = order[i];
@@ -123,20 +127,17 @@ export async function runStorageAlerts(sb: SupabaseClient, opts: { budgetMs?: nu
     const sole = soleOrg !== null && s.org_id === soleOrg;
     let usage: Awaited<ReturnType<typeof measureR2Usage>>;
     try {
-      const deadline = fairShareDeadline(Date.now(), deadlineMs, order.length - i);
-      usage = await measureR2Usage(sole
-        ? { orgTotalFor: s.org_id, deadlineMs: deadline }
-        : { prefix: orgStoragePrefix(s.org_id), deadlineMs: deadline });
+      usage = await measureR2Usage({
+        prefix: orgStoragePrefix(s.org_id),
+        deadlineMs: fairShareDeadline(Date.now(), deadlineMs, order.length - i),
+      });
     } catch {
       unmeasured++;
       continue;
     }
-    // The workspace's own files: the prefix walk's total, or (sole) its
-    // total within the whole-bucket walk.
-    const files = sole ? (usage.org ?? { bytes: 0, objects: 0 }) : usage;
-    if (usage.truncated && files.objects === 0) { unmeasured++; continue; }
+    if (usage.truncated && usage.objects === 0) { unmeasured++; continue; }
     orgsChecked++;
-    const { pct, band } = alertBand(files.bytes, quota);
+    const { pct, band } = alertBand(usage.bytes, quota);
     if (band === "ok") {
       // A partial walk below 70% says nothing about the real total.
       if (usage.truncated) unmeasured++;
@@ -144,12 +145,28 @@ export async function runStorageAlerts(sb: SupabaseClient, opts: { budgetMs?: nu
     }
     const atLeast = usage.truncated ? "at least " : "";
     // Sole: the whole bucket against the R2 plan ceiling, banded exactly as
-    // the platform watchdog bands it (a partial walk is never below warn).
-    let plan: { pct: number; band: AlertBand; bytes: number; limitBytes: number } | null = null;
+    // the platform watchdog bands a walk (a partial walk is never below
+    // warn). A walk that cannot run, or limits that cannot be read: the
+    // quota-only bell, as before, and the R2 step sends its own.
+    let plan: { pct: number; band: AlertBand; bytes: number; limitBytes: number; truncated: boolean } | null = null;
     if (sole) {
-      const limits = await loadPlatformLimits(sb);
-      plan = { ...r2PlanBand(usage.bytes, usage.truncated, limits.r2Bytes), bytes: usage.bytes, limitBytes: limits.r2Bytes };
+      try {
+        const whole = await measureR2Usage({
+          orgTotalFor: s.org_id,
+          deadlineMs: fairShareDeadline(Date.now(), deadlineMs, order.length - i),
+        });
+        const limits = await loadPlatformLimits(sb);
+        // A whole walk that stopped early saw only part of the bucket: the
+        // floor is the workspace's files (whichever walk counted more) plus
+        // what it saw outside them.
+        const seenFiles = whole.org?.bytes ?? 0;
+        const bytes = whole.truncated ? Math.max(usage.bytes, seenFiles) + (whole.bytes - seenFiles) : whole.bytes;
+        plan = { ...r2PlanBand(bytes, whole.truncated, limits.r2Bytes), bytes, limitBytes: limits.r2Bytes, truncated: whole.truncated };
+      } catch {
+        plan = null;
+      }
     }
+    const planAtLeast = plan?.truncated ? "at least " : "";
     const crit = band === "crit" || plan?.band === "crit";
 
     const { data: admins } = await sb
@@ -164,35 +181,41 @@ export async function runStorageAlerts(sb: SupabaseClient, opts: { budgetMs?: nu
         // BILL-15, the shared per-day key: a person the R2 step already
         // belled with the plan's figure TODAY (UTC; a second cron run the
         // same day) is not sent a second percentage for the same files now.
-        // The next day's run sends this bell, stating both figures.
+        // The next day's run sends this bell, stating both figures. (A
+        // server-only kind once 20261160 is live; see below.)
         const { count: planToday } = await sb
           .from("notifications").select("id", { count: "exact", head: true })
           .eq("org_id", s.org_id).eq("user_id", a.uid).eq("kind", "storage_platform_r2").gte("created_at", utcDayStart);
         if ((planToday ?? 0) > 0) continue;
       }
       // BILL-15: on a sole server one bell, both figures, each named by what
-      // it measured and against which limit. metadata.r2PlanBand is what the
-      // R2 step reads to count this as its bell (a server-only kind: no
-      // browser can write a row of it).
+      // it measured and against which limit. metadata.r2PlanBand /
+      // r2PlanTruncated are what the R2 step reads to count this as its
+      // bell. storage_alert is a server-only kind once 20261160 is live (its
+      // rule 2 refuses it from a browser); before that paste, a member could
+      // insert a forged row to feed this read, as the kind's own weekly
+      // dedupe above already could at base.
       const copy: { title: string; body: string; metadata?: Record<string, unknown> } = plan
         ? {
-          title: `Storage ${crit ? "critical" : "high"} — ${atLeast}${pct}% of the set limit, ${atLeast}${plan.pct}% of plan`,
+          title: `Storage ${crit ? "critical" : "high"} — ${atLeast}${pct}% of the set limit, ${planAtLeast}${plan.pct}% of plan`,
           body:
             `This workspace's files are at ${atLeast}${pct}% of the storage limit an admin set ` +
-            `(${atLeast}${fmtSize(files.bytes)} of ${fmtSize(quota)}, measured under this workspace only), ` +
-            `and the server's file storage is at ${atLeast}${plan.pct}% of its Cloudflare R2 plan ceiling ` +
-            `(${atLeast}${fmtSize(plan.bytes)} of ${fmtSize(plan.limitBytes)}, every file on the server; this is its only workspace). ` +
+            `(${atLeast}${fmtSize(usage.bytes)} of ${fmtSize(quota)}, measured under this workspace only), ` +
+            `and the server's file storage is at ${planAtLeast}${plan.pct}% of its Cloudflare R2 plan ceiling ` +
+            `(${planAtLeast}${fmtSize(plan.bytes)} of ${fmtSize(plan.limitBytes)}, every file on the server; this is its only workspace). ` +
             "The limit is advisory: uploads are not blocked when it is reached. This app does not stop uploads at the plan ceiling " +
             "either: past it, Cloudflare bills the overage, or refuses writes on an account without billing. " +
             (plan.band !== "ok" ? "Upgrade the R2 plan, or take" : "Take") +
             " a full backup and free up space from Admin → Storage (archive superseded revisions or closed tickets, delete orphaned files).",
-          metadata: { r2PlanBand: plan.band, r2PlanPct: plan.pct },
+          // r2PlanTruncated: the plan figure was a floor (the walk stopped
+          // early); the R2 step never counts such a bell as its own.
+          metadata: { r2PlanBand: plan.band, r2PlanPct: plan.pct, r2PlanTruncated: plan.truncated },
         }
         : {
           title: band === "crit" ? `Storage critical — ${atLeast}${pct}% full` : `Storage high — ${atLeast}${pct}% full`,
           body:
             `This workspace's files are at ${atLeast}${pct}% of the storage limit an admin set ` +
-            `(${atLeast}${fmtSize(files.bytes)} of ${fmtSize(quota)}, measured under this workspace only). ` +
+            `(${atLeast}${fmtSize(usage.bytes)} of ${fmtSize(quota)}, measured under this workspace only). ` +
             "The limit is advisory: uploads are not blocked when it is reached. " +
             // Only what lowers THIS figure (the workspace's files): purging
             // database rows frees database space, which the quota does not count.

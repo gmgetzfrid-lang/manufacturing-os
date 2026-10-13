@@ -31,6 +31,12 @@ const state = vi.hoisted(() => ({
   rows: {} as Record<string, Row[]>,
   errors: {} as Record<string, { message: string }>,
   objects: [] as Array<{ Key: string; Size: number }>,
+  // The Nth whole-bucket walk (no Prefix; 1-based, counted per walk) lists
+  // one page and then runs out of time — its deadline passes mid-walk.
+  stallWholeWalk: null as number | null,
+  // The Nth whole-bucket walk fails outright (a storage error, not a deadline).
+  failWholeWalk: null as number | null,
+  wholeWalks: 0,
   // ── the routes' world ──
   user: { id: "u1", email: "u1@example.com" } as { id: string; email?: string } | null,
   member: { uid: "u1", role: "Drafter", roles: ["Drafter"] } as Row | null,
@@ -126,7 +132,16 @@ vi.mock("@/lib/r2", async () => {
     state.r2Sends.push({ name: cmd.constructor.name, input: cmd.input });
     if (cmd.constructor.name === "ListObjectsV2Command") {
       const prefix = String(cmd.input.Prefix ?? "");
-      return { Contents: state.objects.filter((o) => o.Key.startsWith(prefix)), IsTruncated: false };
+      const listed = state.objects.filter((o) => o.Key.startsWith(prefix)).sort((a, b) => (a.Key < b.Key ? -1 : 1));
+      if (!cmd.input.Prefix) {
+        if (!cmd.input.ContinuationToken) state.wholeWalks++;
+        if (state.failWholeWalk === state.wholeWalks) throw new Error("storage unavailable");
+        if (state.stallWholeWalk === state.wholeWalks) {
+          if (cmd.input.ContinuationToken) throw Object.assign(new Error("the walk's deadline passed"), { name: "TimeoutError" });
+          return { Contents: listed.slice(0, 1), IsTruncated: true, NextContinuationToken: "more" };
+        }
+      }
+      return { Contents: listed, IsTruncated: false };
     }
     return { UploadId: "up-1" };
   };
@@ -135,12 +150,14 @@ vi.mock("@/lib/r2", async () => {
 });
 
 import { runStorageAlerts } from "@/lib/storageAlerts";
-import { runPlatformStorageAlerts, PLATFORM_OPERATORS_KEY, STORAGE_LIMITS_KEY, r2PlanBand, soleTenantId, isSoleTenant } from "@/lib/storageUsage";
+import {
+  runPlatformStorageAlerts, PLATFORM_OPERATORS_KEY, STORAGE_LIMITS_KEY, r2PlanBand, soleTenantId, isSoleTenant, quotaBellCoversR2Bell,
+} from "@/lib/storageUsage";
 import { POST as uploadUrl } from "@/app/api/storage/upload-url/route";
 import { POST as multipart } from "@/app/api/storage/multipart/route";
 import {
   isNodeImageKey, isWorkspaceLogoKey, NODE_CUSTOMIZE_ROLES, NODE_IMAGE_CONTENT_TYPES, nodeImageUploadProblem,
-  restoreUploadRequest, contentTypeForKey,
+  restoreUploadRequest, contentTypeForKey, nodeImageTypeFor, nodeImageExtensionForType, sniffNodeImageType,
 } from "@/lib/storageKey";
 
 const O1 = "11111111-1111-4111-8111-111111111111";
@@ -150,6 +167,7 @@ const KB = 1024;
 
 beforeEach(() => {
   state.rows = {}; state.errors = {}; state.objects = [];
+  state.stallWholeWalk = null; state.failWholeWalk = null; state.wholeWalks = 0;
   state.user = { id: "u1", email: "u1@example.com" };
   state.member = { uid: "u1", role: "Drafter", roles: ["Drafter"] };
   state.memberSelects = []; state.r2Sends = [];
@@ -193,11 +211,11 @@ describe("BILL-15 — one storage bell per day on a single-workspace server", ()
       expect(String(b.body)).toContain("The limit is advisory: uploads are not blocked when it is reached.");
       expect(String(b.body)).toContain("past it, Cloudflare bills the overage, or refuses writes on an account without billing");
       expect(String(b.body)).toContain("Upgrade the R2 plan, or take a full backup");
-      expect(b.metadata).toEqual({ r2PlanBand: "warn", r2PlanPct: 72 });
+      expect(b.metadata).toEqual({ r2PlanBand: "warn", r2PlanPct: 72, r2PlanTruncated: false });
     }
-    // one whole-bucket walk measured both figures for the quota step
+    // the quota figure is the workspace prefix walk's (exact, as on a shared server); the plan figure a second, whole walk
     const lists = state.r2Sends.filter((c) => c.name === "ListObjectsV2Command").map((c) => c.input.Prefix ?? null);
-    expect(lists).toEqual([null, null]); // step 3's whole walk, step 9's whole walk — no prefix walk on a sole server
+    expect(lists).toEqual([`orgs/${O1}/`, null, null]); // step 3's prefix walk and whole walk, step 9's whole walk
   });
 
   it("the record's first scenario (quota 90%, plan 46%): one bell stating both; the R2 step has nothing to say", async () => {
@@ -208,7 +226,7 @@ describe("BILL-15 — one storage bell per day on a single-workspace server", ()
     state.objects = [{ Key: `orgs/${O1}/a`, Size: 4_500 }, { Key: "root", Size: 100 }];
     await cronStorageSteps();
     expect(bells().map((b) => [b.kind, b.title, b.metadata])).toEqual([
-      ["storage_alert", "Storage critical — 90% of the set limit, 46% of plan", { r2PlanBand: "ok", r2PlanPct: 46 }],
+      ["storage_alert", "Storage critical — 90% of the set limit, 46% of plan", { r2PlanBand: "ok", r2PlanPct: 46, r2PlanTruncated: false }],
     ]);
     expect(String(bells()[0].body)).toContain("Take a full backup"); // the plan is fine: no "upgrade" line
     expect(String(bells()[0].body)).not.toContain("Upgrade the R2 plan");
@@ -221,7 +239,7 @@ describe("BILL-15 — one storage bell per day on a single-workspace server", ()
     state.rows.org_members = [{ org_id: O1, uid: "admin", role: "Admin", roles: ["Admin"], status: "active" }];
     state.rows.notifications = [{
       org_id: O1, user_id: "admin", kind: "storage_alert", title: "Storage critical — 142% of the set limit, 72% of plan",
-      metadata: { r2PlanBand: "warn", r2PlanPct: 72 }, created_at: new Date(Date.now() - 86_400_000).toISOString(),
+      metadata: { r2PlanBand: "warn", r2PlanPct: 72, r2PlanTruncated: false }, created_at: new Date(Date.now() - 86_400_000).toISOString(),
     }];
     state.objects = [{ Key: `orgs/${O1}/a`, Size: 7_100 }, { Key: "root", Size: 100 }];
     await cronStorageSteps();
@@ -259,7 +277,7 @@ describe("BILL-15 — one storage bell per day on a single-workspace server", ()
     state.rows.platform_settings = [planCeiling(10_000)];
     state.rows.notifications = [{
       org_id: O1, user_id: "admin", kind: "storage_alert", title: "Storage critical — 90% of the set limit, 46% of plan",
-      metadata: { r2PlanBand: "ok", r2PlanPct: 46 }, created_at: new Date(Date.now() - 86_400_000).toISOString(),
+      metadata: { r2PlanBand: "ok", r2PlanPct: 46, r2PlanTruncated: false }, created_at: new Date(Date.now() - 86_400_000).toISOString(),
     }];
     state.objects = [{ Key: `orgs/${O1}/a`, Size: 7_100 }, { Key: "root", Size: 100 }];
     await cronStorageSteps();
@@ -324,11 +342,100 @@ describe("BILL-15 — one storage bell per day on a single-workspace server", ()
     expect(r2PlanBand(95, true, 100)).toEqual({ pct: 95, band: "crit" });
   });
 
+  it("review fix (major): the quota step's plan walk stops early (a floor, banded warn) while the R2 step's walk finishes at crit — the R2 bell still goes the same day", async () => {
+    // keys outside the workspace sort before orgs/: the quota step's whole walk lists "a-root" and runs out of time
+    state.rows.orgs = [{ id: O1 }];
+    state.rows.platform_settings = [planCeiling(10_000)];
+    state.rows.archive_settings = [{ org_id: O1, quota_bytes: 1_000 }];
+    state.rows.org_members = [{ org_id: O1, uid: "admin", role: "Admin", roles: ["Admin"], status: "active" }];
+    state.objects = [{ Key: "a-root", Size: 3_000 }, { Key: "b-root", Size: 5_600 }, { Key: `orgs/${O1}/a`, Size: 900 }];
+    state.stallWholeWalk = 1; // step 3's whole walk; step 9's (the 2nd) finishes
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let quota: Awaited<ReturnType<typeof runStorageAlerts>>;
+    try {
+      quota = await runStorageAlerts(sb as never);
+      await runPlatformStorageAlerts(sb as never);
+    } finally {
+      warn.mockRestore();
+    }
+    // the quota figure is the prefix walk's — exact, measured, although the whole walk never reached orgs/
+    expect(quota).toEqual({ alerts: 1, orgsChecked: 1, unmeasured: 0 });
+    expect(bells().map((b) => [b.kind, b.title, b.metadata])).toEqual([
+      // the floor: the workspace's 900 plus the 3,000 the whole walk saw outside it — 39%, never banded below warn
+      ["storage_alert", "Storage critical — 90% of the set limit, at least 39% of plan", { r2PlanBand: "warn", r2PlanPct: 39, r2PlanTruncated: true }],
+      // before the fix: dropped for the week by the floor's "warn"
+      ["storage_platform_r2", "File storage critical — 95% of plan", null],
+    ]);
+    expect(String(bells()[0].body)).toContain("This workspace's files are at 90% of the storage limit an admin set");
+    expect(String(bells()[0].body)).toContain("at least 39% of its Cloudflare R2 plan ceiling (at least 0 MB of 0 MB, every file on the server");
+  });
+
+  it("review fix: a complete plan figure stated below the band the R2 step measures does not cover its week — but one stated earlier TODAY holds the R2 bell to the next day (one measured plan percentage a day)", async () => {
+    state.rows.orgs = [{ id: O1 }];
+    state.rows.platform_settings = [planCeiling(10_000)];
+    state.rows.archive_settings = [{ org_id: O1, quota_bytes: 100_000 }]; // the quota step has nothing to say now
+    state.rows.org_members = [{ org_id: O1, uid: "admin", role: "Admin", roles: ["Admin"], status: "active" }];
+    state.objects = [{ Key: `orgs/${O1}/a`, Size: 7_000 }]; // 70%: warn, uploads since the 69% quota bell
+    const earlier = { org_id: O1, user_id: "admin", kind: "storage_alert", title: "Storage high — 92% of the set limit, 69% of plan", metadata: { r2PlanBand: "ok", r2PlanPct: 69, r2PlanTruncated: false } };
+    state.rows.notifications = [{ ...earlier, created_at: new Date().toISOString() }];
+    await cronStorageSteps();
+    expect(bells()).toHaveLength(1); // not "70% of plan" the same day as "69% of plan"
+    state.rows.notifications = [{ ...earlier, created_at: new Date(Date.now() - 86_400_000).toISOString() }];
+    await cronStorageSteps();
+    expect(bells().slice(1).map((b) => [b.kind, b.title])).toEqual([["storage_platform_r2", "File storage high — 70% of plan"]]);
+  });
+
+  it("review fix: a floor stated earlier today never holds the R2 bell (the measured figure corrects 'at least N%')", async () => {
+    state.rows.orgs = [{ id: O1 }];
+    state.rows.platform_settings = [planCeiling(10_000)];
+    state.rows.archive_settings = [{ org_id: O1, quota_bytes: 100_000 }];
+    state.rows.org_members = [{ org_id: O1, uid: "admin", role: "Admin", roles: ["Admin"], status: "active" }];
+    state.objects = [{ Key: `orgs/${O1}/a`, Size: 7_500 }];
+    state.rows.notifications = [{
+      org_id: O1, user_id: "admin", kind: "storage_alert", title: "Storage high — 92% of the set limit, at least 31% of plan",
+      metadata: { r2PlanBand: "warn", r2PlanPct: 31, r2PlanTruncated: true }, created_at: new Date().toISOString(),
+    }];
+    await cronStorageSteps();
+    expect(bells().slice(1).map((b) => [b.kind, b.title])).toEqual([["storage_platform_r2", "File storage high — 75% of plan"]]);
+  });
+
+  it("the plan walk fails outright: the quota bell alone, as on a shared server (no plan figure), and the R2 step sends its own", async () => {
+    state.rows.orgs = [{ id: O1 }];
+    state.rows.platform_settings = [planCeiling(10_000)];
+    state.rows.archive_settings = [{ org_id: O1, quota_bytes: 5_000 }];
+    state.rows.org_members = [{ org_id: O1, uid: "admin", role: "Admin", roles: ["Admin"], status: "active" }];
+    state.objects = [{ Key: `orgs/${O1}/a`, Size: 7_100 }, { Key: "root", Size: 100 }];
+    state.failWholeWalk = 1;
+    await cronStorageSteps();
+    expect(bells().map((b) => [b.kind, b.title, b.metadata])).toEqual([
+      ["storage_alert", "Storage critical — 142% full", null],
+      ["storage_platform_r2", "File storage high — 72% of plan", null],
+    ]);
+  });
+
+  it("quotaBellCoversR2Bell: only a complete plan figure counts; at or above the measured band it covers the week, below it only today", () => {
+    const today = new Date(Math.floor(Date.now() / 86_400_000) * 86_400_000).toISOString();
+    const now = new Date().toISOString();
+    const yesterday = new Date(Date.now() - 86_400_000).toISOString();
+    const row = (band: string, truncated: unknown, at = yesterday) => ({ metadata: { r2PlanBand: band, r2PlanPct: 1, r2PlanTruncated: truncated }, created_at: at });
+    expect(quotaBellCoversR2Bell([row("warn", false)], "warn", today)).toBe(true);
+    expect(quotaBellCoversR2Bell([row("crit", false)], "warn", today)).toBe(true);
+    expect(quotaBellCoversR2Bell([row("warn", false)], "crit", today)).toBe(false);
+    expect(quotaBellCoversR2Bell([row("warn", false, now)], "crit", today)).toBe(true); // held to the next day
+    expect(quotaBellCoversR2Bell([row("ok", false, now)], "warn", today)).toBe(true);
+    expect(quotaBellCoversR2Bell([row("crit", true)], "warn", today)).toBe(false); // a floor never counts
+    expect(quotaBellCoversR2Bell([row("warn", true, now)], "warn", today)).toBe(false);
+    expect(quotaBellCoversR2Bell([row("warn", undefined)], "warn", today)).toBe(false); // no flag: not known complete
+    expect(quotaBellCoversR2Bell([{ metadata: null, created_at: now }], "warn", today)).toBe(false); // a quota-only bell
+    expect(quotaBellCoversR2Bell([row("hot", false, now)], "warn", today)).toBe(false);
+    expect(quotaBellCoversR2Bell(null, "warn", today)).toBe(false);
+  });
+
   it("the R2 step's read of the quota bell is a filter, not a write: lib/storageUsage.ts names storage_alert exactly once, in that read", () => {
     const src = readFileSync(join(process.cwd(), "lib/storageUsage.ts"), "utf8")
       .replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/[^\n]*/g, "$1");
     expect(src.match(/["'`]storage_alert["'`]/g)).toHaveLength(1);
-    expect(src).toMatch(/\.from\("notifications"\)\.select\("metadata"\)\s*\.eq\("org_id", t\.orgId\)\.eq\("user_id", t\.uid\)\s*\.eq\("kind", "storage_alert"\)\.gte\("created_at", sevenDaysAgo\);/);
+    expect(src).toMatch(/\.from\("notifications"\)\.select\("metadata, created_at"\)\s*\.eq\("org_id", t\.orgId\)\.eq\("user_id", t\.uid\)\s*\.eq\("kind", "storage_alert"\)\.gte\("created_at", sevenDaysAgo\);/);
     // and it runs only for the sole workspace's R2 bell
     expect(src).toContain('if (route === "sole-workspace" && alert.kind === "storage_platform_r2") {');
   });
@@ -388,7 +495,7 @@ describe("ORG-16 — a node's cover and background are the node editor's to writ
     for (const type of ["image/svg+xml", "text/html", "application/octet-stream", "", undefined]) {
       const res = await post({ path: COVER, contentType: type });
       expect(res.status, String(type)).toBe(415);
-      expect((await res.json()).error).toBe("A cover or background image must be a PNG, JPEG, WebP, GIF or AVIF image (SVG is not accepted).");
+      expect((await res.json()).error).toBe("A cover or background image must be a PNG, JPEG, WebP, GIF, AVIF or BMP image (SVG is not accepted).");
     }
   });
 
@@ -448,11 +555,15 @@ describe("ORG-16 — the rule is the node editor's gate, read from the pages tha
     expect(listPage.match(/storagePrefix=\{activeOrgId \? `orgs\/\$\{activeOrgId\}\/branding` : undefined\}/g)).toHaveLength(1);
     expect(libPage.match(/storagePrefix=\{activeOrgId \? `orgs\/\$\{activeOrgId\}\/branding` : undefined\}/g)).toHaveLength(1);
   });
-  it("the modal mints exactly the keys the rule covers, and PUTs with the file's type (the type the route signs)", () => {
+  it("the modal mints exactly the keys the rule covers, named after the allowed type it PUTs with (the type the route signs)", () => {
     const modal = readFileSync(join(process.cwd(), "components/documents/CustomizeNodeModal.tsx"), "utf8");
     expect(modal).toContain('const path = `${storagePrefix.replace(/\\/+$/, "")}/covers/${rand}.${ext}`;');
     expect(modal).toContain('const path = `${storagePrefix.replace(/\\/+$/, "")}/backgrounds/${rand}.${ext}`;');
-    expect(modal.match(/await uploadToPath\(file, path, \{ contentType: file\.type \}\);/g)).toHaveLength(2);
+    // review fix: the type is the browser's when allowed, else the file's bytes' (nodeImageTypeFor); nothing is requested without one
+    expect(modal.match(/const contentType = await pickedImageType\(file\);\n\s*if \(!contentType\) return;\n\s*const ext = nodeImageExtensionForType\(contentType\);/g)).toHaveLength(2);
+    expect(modal.match(/await uploadToPath\(file, path, \{ contentType \}\);/g)).toHaveLength(2);
+    expect(modal).not.toContain("contentType: file.type");
+    expect(modal).toContain("type = nodeImageTypeFor(file.type, head);");
     expect(isNodeImageKey(`orgs/${ORG}/branding/covers/abc.jpg`)).toBe(true);
     expect(isNodeImageKey(`orgs/${ORG}/branding/backgrounds/abc.png`)).toBe(true);
   });
@@ -464,6 +575,58 @@ describe("ORG-16 — the rule is the node editor's gate, read from the pages tha
     expect(isNodeImageKey(`covers/a.png`)).toBe(false);
     expect(nodeImageUploadProblem("image/webp")).toBeNull();
     expect(nodeImageUploadProblem("image/svg+xml")?.status).toBe(415);
+  });
+});
+
+describe("ORG-16 review fix — a real picture whose browser reports no type, or a legacy one, is still signed", () => {
+  const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46, 0x49, 0x46, 0, 1]);
+  const BMP = new Uint8Array([0x42, 0x4d, 0x36, 0x10, 0, 0, 0, 0, 0, 0, 0x36, 0]);
+  const AVIF = new Uint8Array([0, 0, 0, 0x1c, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66]);
+  const HTML = new TextEncoder().encode("<html><script>");
+  it("the modal's type: the browser's when allowed; image/jpg and image/pjpeg as image/jpeg; an empty or unknown type from the first bytes; otherwise none", () => {
+    expect(nodeImageTypeFor("image/png", null)).toBe("image/png");
+    expect(nodeImageTypeFor("image/jpg", null)).toBe("image/jpeg");
+    expect(nodeImageTypeFor("image/pjpeg", null)).toBe("image/jpeg");
+    expect(nodeImageTypeFor("", JPEG)).toBe("image/jpeg");
+    expect(nodeImageTypeFor("application/octet-stream", BMP)).toBe("image/bmp");
+    expect(nodeImageTypeFor("", AVIF)).toBe("image/avif");
+    expect(nodeImageTypeFor("image/bmp", null)).toBe("image/bmp");
+    expect(nodeImageTypeFor("", null)).toBeNull();
+    expect(nodeImageTypeFor("text/html", HTML)).toBeNull();
+    expect(nodeImageTypeFor("image/svg+xml", new TextEncoder().encode("<svg xmlns="))).toBeNull();
+    expect(sniffNodeImageType(HTML)).toBeNull();
+    expect(nodeImageExtensionForType("image/jpeg")).toBe("jpg");
+    expect(nodeImageExtensionForType("image/bmp")).toBe("bmp");
+    expect(nodeImageExtensionForType("image/avif")).toBe("avif");
+  });
+  it("REPRODUCED → fixed: a JPEG the browser typed '' is sent as image/jpeg and signed (it was a 415 after ORG-16); a BMP is signed", async () => {
+    state.member = { uid: "u1", role: "DocCtrl", roles: ["DocCtrl"] };
+    expect((await post({ path: COVER, contentType: "" })).status).toBe(415); // what the modal used to send
+    for (const [bytes, declared] of [[JPEG, ""], [JPEG, "image/pjpeg"], [BMP, ""]] as const) {
+      const type = nodeImageTypeFor(declared, bytes)!;
+      const res = await post({ path: `orgs/${ORG}/branding/covers/x.${nodeImageExtensionForType(type)}`, contentType: type });
+      expect(res.status, `${declared} → ${type}`).toBe(200);
+      expect(signedHeaders((await res.json()).url)).toEqual(expect.arrayContaining(["content-type", "host"]));
+    }
+  });
+  it("REPRODUCED → fixed: a cover picked as 'photo' (no extension) sits at '<uuid>.photo'; with its first bytes the restore puts it back as a JPEG", async () => {
+    state.member = ADMIN;
+    const key = `orgs/${ORG}/branding/covers/0d0d0d0d-0d0d-4d0d-8d0d-0d0d0d0d0d0d.photo`;
+    expect((await post(restoreUploadRequest(key, 4096).body)).status).toBe(415); // by extension alone: octet-stream
+    const req = restoreUploadRequest(key, 4096, JPEG);
+    expect(req.contentType).toBe("image/jpeg");
+    expect((await post(req.body)).status).toBe(200);
+    // a BMP background by its extension, and by its bytes
+    expect(restoreUploadRequest(`orgs/${ORG}/branding/backgrounds/b.bmp`, 10).contentType).toBe("image/bmp");
+    expect(restoreUploadRequest(`orgs/${ORG}/branding/backgrounds/b`, 10, BMP).contentType).toBe("image/bmp");
+    // bytes that are no image leave the extension to decide (and the route refuses it)
+    expect(restoreUploadRequest(`orgs/${ORG}/branding/backgrounds/b.photo`, 10, HTML).contentType).toBe("application/octet-stream");
+    // the logo's rule is unchanged: a BMP's bytes do not decide a logo's type
+    expect(restoreUploadRequest(`orgs/${ORG}/branding/logo.png`, 10, BMP).contentType).toBe("image/png");
+  });
+  it("the restore page reads the first bytes of a cover / background as it does a logo's", () => {
+    const page = readFileSync(join(process.cwd(), "app/(protected)/admin/restore/page.tsx"), "utf8");
+    expect(page).toContain("const head = isWorkspaceLogoKey(key) || isNodeImageKey(key) ? new Uint8Array(await blob.slice(0, 12).arrayBuffer()) : null;");
   });
 });
 
