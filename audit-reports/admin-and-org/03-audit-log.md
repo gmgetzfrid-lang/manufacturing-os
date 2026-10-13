@@ -219,7 +219,7 @@ Done-when 2 and 3 hold at the database only once `20261188` is pasted (DEC-30). 
 ## ALOG-3 · Deleting a library cascades away every document and revision in it, writes no audit row, and its "safety" modal previews nothing — the confirmation asks the admin to type a name against a hedge, not a count
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/admin/libraries/page.tsx:147-162`, `app/(protected)/admin/libraries/DeleteSafetyModal.tsx:47-52`, `supabase/schema.sql:93, 117, 133`, `supabase/schema.sql:322`, `supabase/schema.sql:1060`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by absence too: grep across the repo finds no LIBRARY_DELETED/LIBRARY_CREATED/LIBRARY_UPDATED audit action and no trigger on `libraries` (the only migrations touching it add columns and indexes). The modal takes no count props at all — its whole prop surface is {isOpen,onClose,onConfirm,libraryName,isLoading} — so it structurally cannot preview what is destroyed, and 'may become orphaned' actively understates a two-level ON DELETE CASCADE. The legal-hold triggers in 20260826_legal_hold_delete_guard.sql fire per-row on documents/document_versions, so they stop only flagged rows.
@@ -242,6 +242,23 @@ app/(protected)/admin/libraries/page.tsx:151 — `const { error } = await supaba
 - [ ] A library deletion writes an audit_logs row naming the library, the counts and the actor, on a path whose failure is observable.
 - [ ] The modal's copy matches what the database actually does (cascade, not orphan).
 
+**Resolution (2026-10-13, admin-and-org Round G).** Package P8 ORG-ADMIN SURFACES. Reproduced on `6503ea7` (DEC-29): `app/(protected)/admin/libraries/page.tsx:192` was one client `libraries.delete()` with no count and no audit row, and `DeleteSafetyModal.tsx:47-52` said documents "may become orphaned".
+- **One door for a library delete.** `app/api/admin/libraries/delete/route.ts` (new, POST). It holds the caller to the library-config surface (`lib/adminGate.ts`, Admin or Document Control by the role collection). It counts what the cascade removes as the service client (`lib/libraryDeleteImpact.ts` `countLibraryDeleteImpact`): folders, document records, revisions, open holds, legal holds, and requests raised from the library's documents. Every read is paged and checked, and a count that cannot be read refuses the delete (503), never a zero.
+  - `preview: true` returns the counts for the dialog and deletes nothing.
+  - A confirmation whose folder, document or revision count has moved since the dialog opened is refused (409), with the new counts.
+  - The delete runs **as the caller** (`lib/serverAuth.ts` `callerScopedClient`), so RLS, the legal-hold delete guard and `20261149`'s evidence guard judge it exactly as they judged the browser's delete. A refusal comes back in the database's own words, and a delete that matched no row is a refusal (DRLS-14's two messages are unchanged).
+  - It then writes `LIBRARY_DELETED`: the actor's uid, email and admitted role, the library's name, the counts, `via: "app"`, `countedBeforeDelete: true`. A refused audit write is returned (`auditError`) and the page says so ("The library was deleted, but its audit record could not be written: …").
+- **The record inside the delete's own statement.** `supabase/migrations/20261204_ao_roundG_revoke_member_acl_prune.sql` §4: `trg_library_delete_audit` (BEFORE DELETE on `libraries`, SECURITY DEFINER, `search_path` pinned, EXECUTE revoked from PUBLIC / anon / authenticated) counts the same things before the cascade runs and writes `LIBRARY_DELETED` (`via: "database"`) in the same statement. No audit row, no delete; and a delete a guard refuses rolls the row back with it. After the paste the route finds the trigger's row and writes none (exactly one row). Before the paste the route's row is the record.
+- **The dialog.** `DeleteSafetyModal.tsx` lists the counts (document records, revisions, folders, open holds). It says a legal hold refuses the delete, that requests raised from the documents keep their record but lose the link, and that the stored files stay in storage with nothing pointing at them. It says the delete cascades ("These records are not orphaned; they are gone"), and it cannot confirm until the counts are known (a read failure offers "Count again").
+- **Tests.** `lib/__tests__/adminOrgSurfaces.test.ts` (ALOG-3 block: the counts; a failed count deletes nothing; preview; the `LIBRARY_DELETED` row and its fields; the trigger's row not duplicated; moved counts → 409; another workspace's library → 404; the guard's refusal and the zero-row refusal; a refused audit row said; the rendered dialog). `lib/__tests__/dcRoundFLibraryDeleteRefusal.test.ts`: DRLS-14's three rendered cases now run through the real route against the same in-memory PostgREST, with unchanged assertions. `lib/__tests__/aoRoundGP8Migrations.test.ts` (the trigger's shape). PG16 (throwaway cluster): a delete of a library with 1 folder, 2 documents, 3 revisions, 1 open hold and 1 request writes one row carrying exactly those counts, and a legal hold refuses the cascade and leaves no audit row.
+
+**Done-when.**
+- ✓ The confirmation shows the real counts it is about to destroy (folders, documents, revisions, open holds, referencing requests, and legal holds), queried before the delete: when the dialog opens, and again by the route immediately before it deletes.
+- ✓ A library deletion writes an audit_logs row naming the library, the counts and the actor, on a path whose failure is observable. The route returns a refused audit write and the page shows it. After `20261204` is pasted the row is written inside the delete's statement (no row, no delete). The paste is pending; until then the route's row holds.
+- ✓ The modal's copy matches what the database does (it cascades; nothing is orphaned).
+
+**Scope / residual.** Who may DELETE a library stays with `OWN-1` (RLS), unchanged. A delete the guards refuse writes no row (nothing happened). A library delete outside this page (the SQL console, a cascade from an org delete) is recorded only once `20261204` is pasted, by the trigger, as a machine row when no one is signed in. **One change for a legitimate user:** a controller's delete now needs the counts to load. A read failure refuses the delete instead of deleting blind (the fail-safe side, DEC-90). The delete itself is the same statement under the same session. *App before the paste:* unchanged apart from the route's own row. *Paste order:* `20261161` first (`20261204` stops with a message without it). Either order with the P8 deploy.
+
 ---
 
 <a id="alog-4"></a>
@@ -249,7 +266,7 @@ app/(protected)/admin/libraries/page.tsx:151 — `const { error } = await supaba
 ## ALOG-4 · The entire user and role administration surface writes no audit row at all: granting a role, removing a role, adding a member and removing a member are all unrecorded
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/admin/users/page.tsx:123-156`, `app/(protected)/admin/users/page.tsx:163-186`, `app/api/admin/create-user/route.ts:127-170`, `app/(protected)/admin/settings/page.tsx:103-118`, `app/(protected)/admin/libraries/page.tsx:110-129`, `lib/orgBranding.ts:32-38`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The absence claim checks out repo-wide: a grep for ROLE_GRANT/ROLE_CHANGE/MEMBER_ADDED/MEMBER_REMOVED/USER_CREATED-style actions returns nothing, and the only migrations touching org_members with triggers are 20260831's last-admin guards (trg_prevent_last_admin_update/_delete), which block but do not record. `addRole`/`removeRole` (:159-161) both funnel into persistRoles, so the whole grant/revoke surface is unrecorded.
@@ -271,6 +288,20 @@ app/(protected)/admin/users/page.tsx:134-137 — `const { error } = await supaba
 - [ ] A role grant, a role revocation, a member add and a member removal each write an audit_logs row naming actor, subject, before-roles and after-roles.
 - [ ] The ticket-numbering and branding writes on /admin/settings and /admin/branding are audited, or an explicit decision records why they are not.
 - [ ] The audit row is written on a path whose failure is observable (see the swallowed-insert finding).
+
+**Resolution (2026-10-13, admin-and-org Round G).** Package P8. Reproduced on `6503ea7` (DEC-29). Member removal and suspension were already audited inside `revoke_member` (`20261042`, live; newest body `20261161`), and the users page wrote a fire-and-forget `ROLE_REMOVED` (`app/(protected)/admin/users/page.tsx:220-229`), the halves the plan closes by pointer. A role **grant** wrote nothing. `/api/admin/create-user` swallowed its one `MEMBER_CREATED` insert (`:345-349`) and wrote nothing on the re-add path (a reactivation or role grant, `:257-296`). The numbering and branding saves wrote nothing.
+- **Roles on `/admin/users`.** `persistRoles` reads back the row it changed (`.select('id')`), so a write RLS filtered out (zero rows, no error) is a refusal, said and reverted, never a role shown as saved. Every change writes one row, `ROLE_GRANTED` or `ROLE_REMOVED`, naming the actor (uid, email, role), the subject (`resource_id` the member's uid; `details.memberUid`, `memberEmail`), `added`, `removed`, `before`, `after` and the headline before and after. The write is awaited and checked: a refused row raises "The roles were saved, but the audit record could not be written: …".
+- **`/api/admin/create-user`.** `MEMBER_CREATED` is now a checked write naming the subject and the roles before (`[]`) and after. The re-add path writes `MEMBER_REACTIVATED` (status was not active) or `ROLE_GRANTED` (a role was added), with `added`, `before`, `after`, `statusBefore` / `statusAfter` and `via: "add_member"`, read before the write. A re-add that changes nothing writes nothing. A refused audit row is returned as `auditError`, and the page shows it after the member is added.
+- **Removal.** `20261204` (revoke_member, from its newest body) adds the roles the removal ended to `MEMBER_REMOVED`: `rolesBefore`, `rolesAfter: []`, and `prunedAclGrants`.
+- **Done-when 2 — DEC-90 ruling for this package: audit it.** `/admin/settings` writes `TICKET_NUMBERING_CHANGED` (before and after, from the stored scheme) after a checked save (`ORG-4`). `lib/orgBranding.ts` `saveOrgBranding` writes `BRANDING_CHANGED` (the palette, logo path and shape, before and after) after a checked save. `OrgBrandingProvider` passes the actor and says a refused row.
+- **Tests.** `lib/__tests__/adminOrgSurfaces.test.ts`: the rendered page's grant and removal rows, the zero-row refusal (no audit row), the refused audit row said; create-user's created, refused-audit, reactivated and no-change cases; the numbering row; the branding row. `lib/__tests__/aoRoundGP8Migrations.test.ts` pins the removal row's roles. PG16: `MEMBER_REMOVED.details.rolesBefore = ["Viewer"]`, `rolesAfter = []`. `lib/__tests__/createUserRoute.test.ts` (16) unchanged and green.
+
+**Done-when.**
+- ✓ A role grant (`ROLE_GRANTED`, from the role editor or from Add member), a role revocation (`ROLE_REMOVED`), a member add (`MEMBER_CREATED`, or `MEMBER_REACTIVATED` for a re-add) and a member removal (`MEMBER_REMOVED`) each write an audit_logs row naming the actor and the subject. The roles before and after are named on every one of them; the removal's carry them once `20261204` is pasted (before it, the removal row names the actor and subject, as since `20261042`).
+- ✓ The ticket-numbering write on `/admin/settings` and the branding write behind `/admin/branding` are audited (DEC-90).
+- ✓ Every one of these rows is written on a path whose failure is observable. A browser write is awaited and checked, and a refusal is shown. The route returns `auditError`, and the page shows it. The removal row is inside `revoke_member`'s transaction.
+
+**Scope / residual.** Suspension and restoration keep their rows (no role changes). The client-written rows carry the browser's `user_email` / `user_role` hints, which `ALOG-7`'s trigger (admin-and-org P7) resolves from `org_members`. Team membership rows stay `SURF-16`'s (`lib/teams.ts`).
 
 ---
 
@@ -815,7 +846,7 @@ Second review fix, tests:
 ## ALOG-15 · The capability-policy route's compare-and-set cannot see `revoke_member`'s grant strip, so a concurrent save can write a removed member's grant back
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** admin-and-org P8 (set `updated_at = now()` in `revoke_member`'s grant strip, in P8's re-creation of `revoke_member` from its newest definition, `20261043` — `20261161` since the notifications N5 merge) — by the integrator, 2026-10-02 (at the A&O P0 merge, from P0's proposed finding; fleet plan `audit-reports/fleet-plans/admin-and-org.json`).
 - **Verification:** CONFIRMED (by reading; not exercised against a live database)
 - **Blast radius:** access control / audit integrity
@@ -835,5 +866,14 @@ Second review fix, tests:
 **Done when.**
 - `revoke_member`'s grant strip stamps `updated_at`, re-created from its newest definition with a lineDiff test.
 - The tripwire `lib/__tests__/aoRoundGP0Records.test.ts` "the grant strip stamps updated_at, so the policy route's compare-and-set sees it" flips from `it.fails` to `it`.
+
+**Resolution (2026-10-13, admin-and-org Round G).** Package P8. `supabase/migrations/20261204_ao_roundG_revoke_member_acl_prune.sql` re-creates `revoke_member` from its NEWEST definition, `20261161`, found by scanning: it keeps the NEDGE-7 tombstone, and `notificationWriteRails.test.ts`'s tripwire still passes. The grant strip's one changed line is `SET updated_at = NOW(), data = jsonb_set(data, '{grants}',`. A strip that lands between the capability-policy route's read and its compare-and-set now moves `updated_at`, so the route answers 409 instead of writing the removed member's grant back. The route is unchanged.
+- Tests: the tripwire `lib/__tests__/aoRoundGP0Records.test.ts` "the grant strip stamps updated_at, so the policy route's compare-and-set sees it" is flipped from `it.fails` to `it` and passes. `lib/__tests__/aoRoundGP8Migrations.test.ts` lineDiffs the body against the newest earlier definition (scanned at test time). PG16: after a REMOVE the policy row's `updated_at` moved and the removed member's grant was gone.
+
+**Done-when.**
+- ✓ `revoke_member`'s grant strip stamps `updated_at`, re-created from its newest definition with a lineDiff test (`20261204`, PASTE pending; `20261161` must be pasted first, and the script stops with a message if it is not).
+- ✓ The tripwire is flipped from `it.fails` to `it`.
+
+**Scope / residual.** None. `trg_capability_policy_write_guard` (`20261137`) does not compare `updated_at`, so the stamped strip passes it as before.
 
 ---

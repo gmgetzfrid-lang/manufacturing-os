@@ -266,7 +266,7 @@ No request is lost or exposed; the rows stay in `access_requests`. admin-and-org
 ## ORG-4 · A DocCtrl can edit Request Numbering in /admin/settings and be told "Saved" — the orgs RLS policy admits only Admin, so the write matches zero rows and returns no error
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/admin/settings/page.tsx:25, 39, 103-120`, `supabase/schema.sql:1042-1045`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: a DocCtrl's UPDATE matches zero rows, PostgREST returns no error, and the code treats no-error as success. MEDIUM is appropriate — silent data loss on the numbering scheme, no security boundary crossed.
@@ -296,6 +296,17 @@ settings/page.tsx:108-114 — `const { error } = await supabase.from("orgs").upd
 - [ ] Either `orgs_admin_write` admits DocCtrl (roles[]-aware, via a helper like `is_org_controller`), or the Request Numbering card is disabled for non-Admins
 - [ ] `saveNumbering` requests the updated row back (`.select()`) and treats an empty result as failure rather than success
 - [ ] A shared helper is used for RLS-filtered client writes so "zero rows changed" never renders as Saved
+
+**Resolution (2026-10-13, admin-and-org Round G).** Package P8. Reproduced on `6503ea7` (DEC-29): `saveNumbering` (`app/(protected)/admin/settings/page.tsx:132-149`) destructured `{ error }` off a bare `orgs.update()`, so an RLS-filtered write rendered "Saved".
+- `saveNumbering` now writes through the shared helper `lib/checkedWrite.ts` (`checkedWrite(supabase.from("orgs").update(…).eq("id", org).select("id"))`). The row read back is the success. Zero rows is "Couldn't save numbering: the database saved nothing — only an Admin can change request numbering. Nothing was changed.", with no green "Saved". A database error is translated by `describeWriteError`. The change is audited (`TICKET_NUMBERING_CHANGED`, before / after; `ALOG-4` done-when 2).
+- Tests: `lib/__tests__/adminOrgSurfaces.test.ts` (the rendered page: a save writes and audits; a write RLS refused shows no "Saved" and no audit row). `lib/__tests__/adminSettingsDeadLetters.test.ts` unchanged and green (the requeue already read its rows back).
+
+**Done-when.**
+- ✓ The Request Numbering card is shown only to an Admin. The whole page is Admin-only since DEC-17 / SURF-9 (`app/(protected)/admin/settings/page.tsx:27`, `:41`, by the role collection; `lib/adminSurfaces.ts` "settings" entry `["Admin"]`), so a DocCtrl never reaches the card. That is the "disabled for non-Admins" limb; `orgs_admin_write` is not widened (DEC-90: fail safe).
+- ✓ `saveNumbering` requests the updated row back and treats an empty result as failure.
+- ✓ The shared helper (`lib/checkedWrite.ts`, GAP-402) is what this write uses. The same rule is applied to the role editor and the time-zone save on these admin pages (`ALOG-4`, `NEDGE-19`); `lib/__tests__/checkedWrite.test.ts`'s SAF-18 census ratchets the rest of the codebase.
+
+**Scope / residual.** None for this finding.
 
 ---
 
@@ -379,7 +390,7 @@ upload-url/route.ts:36-45 — the entire authorization: `.from("org_members").se
 ## ORG-6 · Every org-authority SECURITY DEFINER helper — the functions all RLS policies call — is missing SET search_path, while the guards written later all set it
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** admin-and-org P8 (done-when 1: one `ALTER FUNCTION acl_subject_in_bucket … SET search_path` in its ORG-13 migration) — by the integrator, 2026-10-02 (at the A&O P0 merge: the verify-and-record package named the owner in its Partial block; fleet plan `audit-reports/fleet-plans/admin-and-org.json`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:1031-1034`, `supabase/migrations/20260707_teams.sql:52-55`, `supabase/migrations/20260713_branding_admin_writes.sql:11-18`, `supabase/migrations/20260814_documents_delete_controllers.sql:31-35`, `supabase/migrations/20260817_org_members_escalation_and_config.sql:21-28`, `supabase/migrations/20260708_acl_rls_enforcement.sql:42-45`
@@ -438,6 +449,15 @@ schema.sql:1031-1034 — `CREATE OR REPLACE FUNCTION my_org_ids() RETURNS SETOF 
 
 **Scope / residual.** One `ALTER FUNCTION` line (P8, once the plan is amended). The out-of-order paste of 20261011 stays with the paste guide's row 10; a live-state probe is outside this finding. Test-only change here: `lib/__tests__/searchPathPin.test.ts` (commit `447bb8b`, and this package's fix passes). No migration.
 
+**Resolution (2026-10-13, admin-and-org Round G).** Package P8, as P0's Partial named. `supabase/migrations/20261203_ao_roundG_team_members_org_rail.sql` §4 carries the one line, top-level inside its transaction: `ALTER FUNCTION acl_subject_in_bucket(jsonb, text, text, text[]) SET search_path = public;`. Its final SELECT probes `proconfig @> ARRAY['search_path=public']`.
+- Tests: the tripwire `lib/__tests__/searchPathPin.test.ts` "acl_subject_in_bucket carries SET search_path = public" is flipped from `it.fails` to `it` and passes. The census counts a top-level static ALTER as a pin. `lib/__tests__/aoRoundGP8Migrations.test.ts` pins the line. PG16: the probe is true after the paste.
+
+**Done-when.**
+1. ✓ All twelve helpers carry `SET search_path = public`: the eleven SECURITY DEFINER helpers as P0 recorded, and `acl_subject_in_bucket` from `20261203` (PASTE pending; it is a SECURITY INVOKER helper over its own arguments, so nothing is open before the paste).
+2. ✓ Unchanged from P0: the CI lint (`searchPathPin.test.ts`) fails on any SECURITY DEFINER function the numbered replay leaves unpinned.
+
+**Scope / residual.** The out-of-order paste of `20261011` stays with the paste guide's row 10, as P0 recorded. `20261203` does not ALTER `enforce_document_move_guard()`, so the pin "the known out-of-order case is as recorded" is unchanged.
+
 ---
 
 <a id="org-7"></a>
@@ -476,6 +496,29 @@ users/page.tsx:178 — the entire removal: `const { error } = await supabase.fro
 - [ ] Explicit per-user ACL ALLOW rules naming the removed uid are pruned or flagged, and `acl.ts`'s `isActiveMember` is passed at every grant-evaluating call site
 - [ ] `listAccessGrants` resolves names from a durable source (or records the name at grant time) so a recert snapshot never contains a bare UUID
 - [ ] `effectiveOwnerForDocument`'s supervisor lookup filters by org_id
+
+**Partial (2026-10-13, admin-and-org Round G).** Package P8. Reproduced on `6503ea7` (DEC-29). Done-when 1 already held (below). The per-user ACL rules naming a removed member were never touched: `revoke_member`, newest body `20261161`, pruned capability grants and rosters, not `acl` / `acl_index`.
+- **Done-when 2, the prune: DEC-90 ruling for this package, PRUNE in `revoke_member`'s transaction, never flag.** `supabase/migrations/20261204_ao_roundG_revoke_member_acl_prune.sql` re-creates `revoke_member` from its NEWEST definition (`20261161`, found by scanning; it keeps `20261043` §0's TEXT[] lock clear and N5's NEDGE-7 tombstone). On REMOVE only, after the capability-grant strip and before the roster deletes, it removes the removed member's **ALLOW** rules from the `acl` of every library, folder, document and document set of the workspace, and from the library's template for new nodes (`default_new_acl`). It removes the member's uid from every `acl_index` allow user list, the exact image of the rebuild: the builder fills allow and deny buckets independently, pinned against `lib/acl.ts` `buildAclIndexFromChain` in `lib/__tests__/aoRoundGP8Migrations.test.ts`. It writes `MEMBER_ACL_GRANTS_PRUNED` with the counts.
+  - DENY rules naming the member are kept (a block outlives the membership). Grants by role, team or org are untouched.
+  - An ACL whose rules all go keeps its object with `rules: []`. An ACL with no rule grants nothing; it is not read as "no ACL" (`canWithAclChain` falls back to the default only when the chain has no ACL object at all), so nothing widens.
+  - Suspension keeps the grants, for the member's return; every evaluator refuses a non-active member.
+  - Grants that already named someone with no membership in the workspace (removed before the paste) are pruned once, inside the transaction, counted before it, one machine `ACL_STALE_GRANTS_PRUNED` row per workspace. A suspended or inactive member still has a membership row and is not touched.
+  - PG16: the removal pruned one library, folder, document and set; a deny and another member's allow stayed; the ghost uid was pruned by the backfill and the inactive member's grant kept; a second run found nothing.
+- **Done-when 2, the `isActiveMember` half: not done.** The grant-evaluating sites were censused: `lib/principal.ts`, `lib/knowledgeAccess.ts`, `lib/docFileServer.ts`, `lib/documentDiscoverers.ts`, `app/api/storage/download-url/route.ts:99`, `app/api/acl/rebuild/route.ts:76` and `app/(protected)/requests/[id]/page.tsx:1083` pass `isActiveMember: true` for a principal read from an ACTIVE membership. Three sites do not pass what they know:
+  - `app/(protected)/documents/[libraryId]/page.tsx:1726` builds the signed-in member's principal without it. The member is active by the protected shell's gate, but the flag is not passed. Document-control P25 holds this file now.
+  - `lib/principal.ts` `resolveActorPrincipal`'s fallback (membership unread) omits it, by design: "never wider".
+  - `components/permissions/ViewAsSimulator.tsx:450` passes `true` for the SIMULATED member whatever their status. Admin-and-org P7 holds this file now.
+  With the prune, a removed member has no user rule left to be honoured; a suspended member is refused by RLS and by every active-membership read before an ACL is evaluated.
+- **Done-when 3: not done for a suspended member.** A removed member's grants are pruned, so no rule names them and no snapshot shows their uid. `lib/accessRecert.ts` `listAccessGrantsDetailed` still admits a uid from the index's allow user lists without checking membership, and `nameOf` resolves names only from ACTIVE members. A SUSPENDED member with a personal grant is listed under a bare uid (and listed at all, though RLS refuses them). Notifications N14 holds this file now.
+- **Done-when 4: not done.** `lib/ownership.ts:187`, the team rung's display-name read `org_members … .eq("uid", eff.userId).maybeSingle()`, still has no `org_id` filter. The person is an active member of the org, so the name is right, but a person in two workspaces makes `maybeSingle` error and the name falls back to the team's. It needs one `.eq("org_id", orgId)`. Notifications N14 holds this file now.
+
+**Done-when.**
+1. ✓ By pointer: `revoke_member` REMOVE deletes the member's `team_members` rows, clears `teams.supervisor_user_id` and clears `owner_user_id` at library, folder and document level, audited, in one transaction (`20261042` → `20261161` → `20261204`; DEC-20 / GAP-5).
+2. Partly. ✓ The ALLOW rules naming the removed uid are pruned (`20261204`, PASTE pending). ✗ `isActiveMember` is not passed at the three sites named above.
+3. ✗ for a suspended member's personal grant (`lib/accessRecert.ts`). ✓ for a removed member, whose grants are pruned.
+4. ✗ (`lib/ownership.ts:187`).
+
+**Owner of the remainder:** admin-and-org. It is a P8 follow-up the integrator schedules once notifications N14 (`lib/accessRecert.ts`, `lib/ownership.ts`), document-control P25 (the documents page) and admin-and-org P7 (`ViewAsSimulator.tsx`) have merged those files; this package may not edit them. Each fix is one line, as named above. The finding stays OPEN.
 
 ---
 
@@ -633,7 +676,7 @@ Tests: `lib/__tests__/aoRoundGP9ConsoleRendered.test.ts` (rendered, the real sim
 ## ORG-11 · The org-enforced palette is applied straight from the database with no hex validation, while every other palette entry point validates
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `components/providers/ThemeProvider.tsx:79-108, 116-127, 183, 198-206`, `components/providers/OrgBrandingProvider.tsx:35-44`, `lib/orgBranding.ts:24-38`, `lib/dataRestore.ts:311`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and slightly worse than stated: a non-string palette value makes hexToRgb's `hex.replace("#","")` (:59) throw inside an unguarded useEffect, which takes down the whole provider tree for every member, not just the color tokens. Write access to the branding row is Admin-only (20260713 RESTRICTIVE policies), so the realistic vectors are a hostile/careless Admin or the ORG-1 restore path — MEDIUM stands.
@@ -660,6 +703,17 @@ ThemeProvider.tsx:183 — `const applyOrgPalette = useCallback((p: Palette | nul
 
 - [ ] `applyOrgPalette` (or `applyTheme`) validates `primary`/`secondary` with the existing `isHex` and falls back to `PALETTE_PRESETS[0]` otherwise, matching `initialPalette`
 - [ ] `saveOrgBranding` rejects a non-hex palette before writing
+
+**Resolution (2026-10-13, admin-and-org Round G).** Package P8. Reproduced on `6503ea7` (DEC-29): `components/providers/ThemeProvider.tsx:183` `applyOrgPalette = (p) => setOrgPalette(p)` applied the branding row's palette unvalidated, and `lib/orgBranding.ts:32-38` wrote any shape.
+- `ThemeProvider.tsx`: `isHex` takes any value (a non-string is not hex, so `hexToRgb` can no longer throw on one). The new exported `sanitizeOrgPalette` passes a palette whose primary and secondary are both `#RRGGBB`, keeps `null` as `null` (no enforced palette: each member's own applies), and replaces anything else with `PALETTE_PRESETS[0]`, as `initialPalette` does for the stored personal palette. `applyOrgPalette` applies `sanitizeOrgPalette(p)`.
+- `lib/orgBranding.ts`: `brandingPaletteProblem` and `saveOrgBranding` refuse a palette that is not two `#RRGGBB` colours before anything is written. The write reads back its row (a refused write throws in words, never a silent success). The save is audited (`BRANDING_CHANGED`; `ALOG-4` done-when 2). The branding page's colour inputs only emit hex, so no legitimate save changes.
+- Tests: `lib/__tests__/adminOrgSurfaces.test.ts` (ORG-11 block: valid, null, non-hex and non-string palettes; a non-hex save refused before any write; a valid save checked and audited; a refused write throws).
+
+**Done-when.**
+- ✓ `applyOrgPalette` validates `primary` / `secondary` with the existing `isHex` and falls back to `PALETTE_PRESETS[0]` otherwise, matching `initialPalette`.
+- ✓ `saveOrgBranding` rejects a non-hex palette before writing.
+
+**Scope / residual.** A tampered `branding` row from a restore is rendered safely by the first point. The restore's own row validation stays with the restore boundary (DEC-75).
 
 ---
 
@@ -704,7 +758,7 @@ The obvious fix is constrained: a third vercel.json cron entry fails deployment 
 ## ORG-13 · team_members rows are not constrained to the team's own org, and my_team_ids()/node_visible() read team membership with no org scope
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `supabase/migrations/20260707_teams.sql:19-26, 45-55`, `supabase/migrations/20260708_acl_rls_enforcement.sql:75-76`, `lib/teams.ts:107-112`, `app/(protected)/admin/teams/page.tsx:85-96, 189-203`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Factually correct on every point, and the finding is honest that it is SUSPECTED. Exploitation is blocked in both directions: team_members INSERT is gated by team_members_admin_write (20260707:50-54, USING doubles as the INSERT check) to orgs where you are already Admin/Manager, and node_visible only runs inside policies that already require membership of the row's org — so a foreign team_id buys nothing without membership you already have. Latent schema-integrity debt: LOW.
@@ -733,6 +787,23 @@ Separately, `updateTeam` writes `supervisor_user_id` with no validation that the
 - [ ] `my_team_ids()` and `node_visible`'s team lookup filter by the org in question, matching `user_can_publish_on_library`
 - [ ] `updateTeam` validates that `supervisorUserId` is an active member of the team's org
 - [ ] Team membership and supervisor changes write audit_logs rows
+
+**Resolution (2026-10-13, admin-and-org Round G).** Package P8. Reproduced on `6503ea7` (DEC-29). `team_members.org_id` was tied to nothing (`20260707:19-26`), and `node_visible`'s team lookup (newest body `20261041:74-75`) read `team_members WHERE uid = auth.uid()` with no org. Reproduced on a throwaway PostgreSQL 16: before the paste, a member planted in another workspace's team, and a member whose legitimate team belongs to another workspace, both saw a restricted document whose index named that team.
+- **The rail: a trigger, not a composite FK (DEC-90 ruling for this package).** A composite FK needs a new unique key on `teams` and rewrites every row. `supabase/migrations/20261203_ao_roundG_team_members_org_rail.sql`:
+  - `trg_team_members_org_rail` (BEFORE INSERT OR UPDATE OF team_id, org_id). A SECURITY DEFINER read of the team's org refuses a row whose `org_id` is not its team's (check_violation). It is a definer read so that RLS cannot hide another workspace's team and let the row through.
+  - `trg_teams_org_move_rail`: a team that has members cannot move to another org.
+  - The rows that already broke the rail are counted before the transaction and removed inside it, one machine `TEAM_MEMBER_REMOVED` row each (`reason: cross_org_team_member`).
+- **`node_visible` org-scoped.** `node_visible/6` is re-created from its NEWEST definition (`20261041`, found by scanning) with exactly one line changed: `FROM team_members WHERE uid = auth.uid() AND org_id = p_org;`, matching `user_can_publish_on_library`. The 3-arg wrapper delegates to it. Its grants are left exactly as they are: a policy written for every role calls it.
+- **The supervisor.** `lib/teams.ts` `assertSupervisorIsActiveMember` (new) runs before `setTeamSupervisor`'s and `updateTeam`'s write. A suspended person, a uid of another workspace, or a stale picker entry is refused in words, and a read failure refuses too.
+- **Tests.** `lib/__tests__/aoRoundGP8Migrations.test.ts` (node_visible lineDiff against the newest earlier definition, plus a tripwire on the newest in the whole sequence; the rail's shape; the audited removal inside the transaction). `lib/__tests__/adminOrgSurfaces.test.ts` (ORG-13 block). `lib/__tests__/rpPhase6Additive.test.ts`: its two supervisor-change cases now seed the new supervisor's active membership; their assertions are unchanged. PG16 (throwaway cluster): the forged row removed and audited; a cross-org insert, and an UPDATE of team_id to another org's team, refused, including as an Admin of org A (whom RLS would not show team B); a same-org add passes; a team with members cannot move and an empty one can; a rename is unaffected. After the paste neither member above sees the document; a member of the document's own team still does. A re-run is a no-op.
+
+**Done-when.**
+- ✓ `team_members` gets a trigger enforcing `org_id = (SELECT org_id FROM teams WHERE id = team_id)` (`20261203`, PASTE pending).
+- ✓ `node_visible`'s team lookup filters by the node's org (`20261203`). `my_team_ids()` has no org parameter and no caller (no policy and no app code calls it). Since `20261042` it returns teams only through the caller's ACTIVE membership in `tm.org_id`, which the rail makes the team's own org. The plan closes it by pointer to DEC-20.
+- ✓ `updateTeam` (and `setTeamSupervisor`) validate that `supervisorUserId` is an active member of the team's org.
+- ✓ Verified first, as the plan asks: team membership and supervisor changes write audit_logs rows: `TEAM_MEMBER_ADDED`, `TEAM_MEMBER_REMOVED`, `TEAM_SUPERVISOR_CHANGED`, `TEAM_UPDATED` (`lib/teams.ts`, SURF-16).
+
+**Scope / residual.** `can_manage_node`'s team lookup (`20261046:186`) is not org-scoped. It is not named by this finding, and with the rail its team ids are each in their own org (DEC-31: not widened here). *Before the paste* the app works as today. *After it* a forged cross-org team row is refused (the teams page never writes one).
 
 ---
 
@@ -802,7 +873,7 @@ Tests: `aoRoundGP9ConsoleRendered.test.ts` "ORG-14 (fix pass 2 / integrator fix 
 ## ORG-15 · `/admin/users` ignores the error on its members and pending-requests reads, so a failed read draws an empty roster and hides every pending request
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** admin-and-org P8 (its plan entry already lists `app/(protected)/admin/users/page.tsx`) — by the integrator, 2026-10-02 (at the A&O P0 merge, from P0's proposed finding in `ORG-3`'s record; fleet plan `audit-reports/fleet-plans/admin-and-org.json`).
 - **Verification:** CONFIRMED (by reading)
 - **Blast radius:** admin visibility
@@ -821,6 +892,17 @@ Tests: `aoRoundGP9ConsoleRendered.test.ts` "ORG-14 (fix pass 2 / integrator fix 
 **Done when.**
 - A failed members read or pending-requests read shows an error, never an empty roster or a missing card.
 - A rendered test drives both failures.
+
+**Resolution (2026-10-13, admin-and-org Round G).** Package P8. Reproduced on `6503ea7` (DEC-29) at `app/(protected)/admin/users/page.tsx:119-124` and `:139-145`.
+- `fetchMembers` destructures `{ data, error }`. A failed read sets `membersError`, and the table is replaced by "Couldn't load the member list (…). Nothing is shown rather than an empty roster." with a Retry button. "No team members found." renders only after a read that succeeded.
+- `fetchPendingRequests` destructures `{ data, error }`. A failed read renders an error card ("Couldn't load pending access requests (…). Anyone waiting to join is not shown until this loads.") with a Retry button in place of a missing card.
+- Tests: `lib/__tests__/adminOrgSurfaces.test.ts` (ORG-15, rendered: a members read failure shows the error and no empty roster, and Retry then shows the roster; a pending-requests read failure shows the error card; the regression case renders both as before).
+
+**Done-when.**
+- ✓ A failed members read or pending-requests read shows an error, never an empty roster or a missing card.
+- ✓ A rendered test drives both failures.
+
+**Scope / residual.** None. The org-name read on the same page still shows "Loading..." on a failure (cosmetic, outside this finding).
 
 ---
 

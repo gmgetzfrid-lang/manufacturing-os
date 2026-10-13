@@ -774,6 +774,17 @@ DEC-63 §4 Reversal (4): "An org / library zone setting replaces the deployment 
 **Owner.** Unassigned — a settings column plus a resolver signature change across the four callers (document-control P3's module); not built in PS-VERIFY (DEC-31).
 - **Assigned:** admin-and-org P8 (org-admin surfaces — its file set holds the org settings page, where a per-org time-zone setting lives; the resolver change in `lib/effectiveDate.ts` follows it) — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 
+**Partial (2026-10-13, admin-and-org Round G).** Package P8.
+- **The setting exists.** The workspace time zone is an Admin's setting on `/admin/settings`: `org_configurations` key `timezone`, `data.timeZone`, a validated IANA name, checked and audited. Since `20261203` (PASTE pending) only an Admin may write the key. See `NEDGE-19`'s Resolution.
+- **The resolver does not read it yet, so effective dates do not follow it.** `lib/effectiveDate.ts` `effectiveDateTimeZone()` still reads only `NEXT_PUBLIC_FACILITY_TIME_ZONE`, and its four callers (`/api/verify`, the badge, the suppression watermark, the daily scan) pass no org. The change is DEC-63 §4 reversal 4: the resolver takes the document's org and prefers this row over the deployment variable, with the never-early fallback kept. `lib/effectiveDate.ts` is being edited by notifications N14 (the compliance scan files) in parallel, and this package may not edit it.
+
+**Done-when.**
+1. Partly. ✓ An org time-zone setting exists. ✗ The resolver does not take the document's org or prefer the setting.
+2. ✗ `/api/verify`, the badge, the suppression watermark and the daily scan do not pass the document's org.
+3. ✗ No two-org test yet.
+
+**Owner of the remainder:** admin-and-org, a P8 follow-up. The integrator schedules it once notifications N14 has merged `lib/effectiveDate.ts`, and decides whether it goes with document-control instead (the module's original owner, DC P3). The resolver reads `lib/workspaceTimeZone.ts` `readWorkspaceTimeZone` (or `lib/recordTime.ts` `orgTimeZone`) with the service client for the document's org. The finding stays OPEN.
+
 ---
 
 <a id="vfy-16"></a>

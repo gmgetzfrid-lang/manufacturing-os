@@ -837,7 +837,7 @@ There is no status predicate and no membership filter on `recipients`. `20261160
 ## NEDGE-16 · After a restore every member is inactive, and nothing asserts or repairs it: notifications reach nobody and, after 20261161, nobody can read their bell
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** unassigned. Opened 2026-10-02 by notifications Round G (N5's second review fix). It is the remainder of `NEDGE-3` done-when 3 ("a post-restore all-inactive org is caught by an explicit assertion or a restore-completion step that reactivates members"). The fleet plan pointed it at admin-and-org P1 (restore / apply), and that package merged without it (DEC-31). The integrator assigns it, most likely to admin-and-org.
 - **Assigned:** admin-and-org P8 (membership integrity: a post-restore check that refuses or repairs an org left with no active Admin) — by the integrator, 2026-10-02, at the N5 merge (DEC-31; fleet plan `audit-reports/fleet-plans/admin-and-org.json`).
 - **Verification:** CONFIRMED by reading `app/api/admin/restore/begin/route.ts:100` and `app/api/admin/restore/apply/route.ts:110 (deleted by admin-and-org P3, ILIFE-4)`: a restore's members are created with `status: "inactive"`. *(Integrator, at the admin-and-org P3 merge, 2026-10-02: P3 deleted the single-shot `/apply` route, which had no caller; `/begin` is now the only place that inserts placeholder members as `inactive`, so this finding runs through it alone.)* Combined with `NEDGE-3`'s active-member filter and `20261161`'s read policy.
@@ -854,6 +854,17 @@ There is no status predicate and no membership filter on `recipients`. `20261160
 - [ ] A test drives a restore to completion and asserts one of the two.
 
 **Closer:** unassigned (admin-and-org; the integrator assigns it).
+
+**Resolution (2026-10-13, admin-and-org Round G).** Package P8 (assigned at the N5 merge). Reproduced on `6503ea7` (DEC-29): `/api/admin/restore/begin:99-104` creates each unknown backup person as an `inactive` placeholder, and nothing after the run said so.
+- **The restore's completion step.** `app/api/admin/restore/complete/route.ts` (new, POST, the restore surface's Admin gate, as `/begin`) reads the workspace's members (`lib/restoreMembership.ts` `readRestoreMembership`, paged and checked): active members, members not active (they receive no notifications and read no bell), active Admins, and whether the restoring Admin is still active. It writes `RESTORE_MEMBERSHIP_CHECK` with those numbers (`receiveNoNotifications`), checked; a refused row is returned and shown. A workspace with no active Admin is refused (409), never reported as fine. The restoring Admin is one by construction: the route admits only an active Admin, and the restore never changes an existing member's status.
+- **The page.** After `runChunkedRestore` (whether it finished or stopped), `app/(protected)/admin/restore/page.tsx` calls `completeRestoreMembership` and renders, under the result panel: "N member(s) of this workspace are not active — restored people are created inactive — and will receive no notifications, and cannot read their notification bell, until an Admin reactivates them (Admin → Users → Restore). …", with a link to Users. A failed check is shown in words.
+- **Tests.** `lib/__tests__/aoRoundGP8RestoreMembership.test.ts` drives a restore to completion through the page's driver against the in-memory PostgREST. It asserts 2 inactive placeholders, the sentence, the audit row, and the restoring Admin still active. It also covers the 409 for a workspace with no active Admin, an unread member list said (never 0), and a source pin that the page calls the step after the run.
+
+**Done-when.**
+- ✓ The restore's completion step ends with an explicit, visible assertion that the workspace has N inactive members who will receive no notifications until reactivated, on the restore page and in its audit row (`RESTORE_MEMBERSHIP_CHECK`).
+- ✓ A test drives a restore to completion and asserts it.
+
+**Scope / residual.** Reactivation stays an Admin's choice per person (Admin → Users → Restore, `revoke_member` restore). A placeholder has no sign-in account until they are invited, so reactivating every placeholder automatically would make no one able to read anything, and is not done. No migration.
 
 ---
 
@@ -939,7 +950,7 @@ There is no status predicate and no membership filter on `recipients`. `20261160
 ## NEDGE-19 · No org-level timezone exists: every server-composed time and the compliance digest are in UTC, labelled, never the plant's own zone
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** admin-and-org P8 (the org settings page, beside `VFY-15`'s per-org time zone) — by the integrator, 2026-10-07, at the N6 merge (DEC-31). Opened 2026-10-07 by notifications Round G (N6 EMAIL-PIPELINE-AND-CRON) as `NEDGE-12` done-when 3, per the fleet plan's decision ("an org-level timezone setting is recorded as a new finding, not built here").
 - **Verification:** CONFIRMED by search at `2de62f1` + N6: no `timezone` / `time_zone` column or `org_configurations` key is written anywhere in `app/`, `lib/`, `components/` or `supabase/`.
 - **Locations:** `lib/recordTime.ts` (`orgTimeZone` reads `org_configurations` key `timezone`, `data.timeZone`; nothing writes it), `app/api/cron/maintenance/route.ts` (the digest's name and the escalation's date use it), `vercel.json` (`0 3 * * *`)
@@ -956,6 +967,19 @@ There is no status predicate and no membership filter on `recipients`. `20261160
 - [ ] Whether the digest's send time follows the zone is decided: it cannot without a cron entry per zone (`99-fix-sequencing.md`: no new cron entry), so either the daily run composes per-zone windows, or the digest stays one daily run named for its window.
 
 **Closer:** admin-and-org P8.
+
+**Resolution (2026-10-13, admin-and-org Round G).** Package P8 (assigned at the N6 merge). Reproduced on `6503ea7` (DEC-29): nothing wrote `org_configurations` key `timezone`, and the key fell to the permissive org policy (`20260818`'s per-key RESTRICTIVE policies name only `branding` and `drafting`).
+- **The setting.** `/admin/settings` (Admin-only) gains a "Workspace time zone" card. It lists the runtime's IANA zones plus "Not set (UTC)" and saves through `lib/workspaceTimeZone.ts` `saveWorkspaceTimeZone`. The zone is validated (`lib/recordTime.ts` `isValidTimeZone`; an unknown zone is refused before any write) and stored as `org_configurations` key `timezone`, `data.timeZone`, the shape `orgTimeZone` reads. The write is checked (`lib/checkedWrite.ts`; a refusal is said) and audited (`WORKSPACE_TIMEZONE_CHANGED`, before and after). "Not set" deletes the row.
+- **The key is an Admin's.** `supabase/migrations/20261203_ao_roundG_team_members_org_rail.sql` §5 re-creates the three RESTRICTIVE per-key policies from their newest definition (`20260818`) with one added line each: `WHEN 'timezone' THEN is_org_admin(org_id)`. Before it, any active member could set the zone every body is written in. NARROWS; PASTE pending.
+- **The digest's send time (DEC-90 ruling for this package).** It stays the one daily UTC run (`vercel.json` `0 3 * * *`); no cron entry per zone. Its body names its window in the workspace zone through `recordTime`. The card says so.
+- **Tests.** `lib/__tests__/adminOrgSurfaces.test.ts` (the rendered card saves `America/Chicago` as the row, audited; `orgTimeZone` then reads it and `formatRecordTime` writes `2026-03-20T18:15:15-05:00 (America/Chicago)`; an unknown zone refused, a refused write said, clearing an unset zone not a refusal, a read failure said). `lib/__tests__/aoRoundGP8Migrations.test.ts` (the three policies lineDiffed against `20260818`). PG16: a Manager's INSERT of the key refused; their UPDATE and DELETE touch nothing; an Admin's INSERT lands; another key is still open to a member.
+
+**Done-when.**
+- ✓ An Admin can set the workspace's IANA timezone: a validated `org_configurations` row, key `timezone`, `data.timeZone`.
+- ✓ Server-composed bodies then show that zone, with no change in `lib/recordTime.ts` or its callers (pinned through `orgTimeZone` / `formatRecordTime`).
+- ✓ Decided: the digest stays one daily run at 03:00 UTC, named for its window in the workspace zone (DEC-90).
+
+**Scope / residual.** Effective dates do not follow the zone yet: `lib/effectiveDate.ts` still reads only `NEXT_PUBLIC_FACILITY_TIME_ZONE`. That is `VFY-15`'s remainder, recorded there with its owner. *Before the paste* the card's save works for an Admin (the key is open to every member); after it only an Admin's lands.
 
 ---
 
