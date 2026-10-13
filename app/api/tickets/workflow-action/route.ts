@@ -505,9 +505,11 @@ export async function POST(req: NextRequest) {
   // text the comment carries. A named outcome must be one this action can
   // record (a cancel is never "completed"), refused with nothing written
   // otherwise. An action that requires one (cancel_request) and arrives
-  // without it is recorded as the engine's default and the audit row says so
-  // (`outcomeDefaulted`): the request page does not send the category yet
-  // (DF-P9 owns the page), and a cancel that works today must keep working.
+  // without it still applies — the request page does not send the category
+  // yet (DF-P9 owns the page), and a cancel that works today must keep
+  // working — but records NO outcome (never a guessed "withdrawn", which the
+  // leak rate would count) and the audit row says the category was not named
+  // (`outcomeDefaulted`).
   const endsWith = outcomesFor(action.action);
   let outcome: TicketOutcome | null = null;
   let outcomeDefaulted = false;
@@ -687,14 +689,19 @@ export async function POST(req: NextRequest) {
       ...(action.action === "reassign_drafter" && body.assignment
         ? { from_drafter_id: ticket.assignedDrafterId ?? null, to_drafter_id: body.assignment.id, reason: body.comment ?? null }
         : {}),
-      // LEAK-9 / GAP-107 (DF-P3): how the request ended, and whether the
-      // category was named or defaulted.
+      // LEAK-9 / GAP-107 (DF-P3): how the request is meant to have ended,
+      // and whether the category was named. Written before the write lands:
+      // `outcomeIntended`, never a claim that it was stored — when the column
+      // is not there yet the write retries without it and a
+      // TICKET_<ACTION>_OUTCOME_NOT_STORED row follows (below).
       ...(TERMINAL_STATUSES.includes(String(newStatus))
-        ? { outcome: (updates.outcome as string | null | undefined) ?? null, ...(outcomeDefaulted ? { outcomeDefaulted: true } : {}) }
+        ? { outcomeIntended: (updates.outcome as string | null | undefined) ?? null, ...(outcomeDefaulted ? { outcomeDefaulted: true } : {}) }
         : {}),
-      // LEAK-1 done-when 3 (DF-P3): how many people this transition tells —
-      // a transition that tells nobody is visible in the trail, never silent.
-      notified: recipients.length,
+      // LEAK-1 done-when 3 (DF-P3): how many people this transition resolves
+      // to, BEFORE the active-members filter fanOut applies — a transition
+      // that resolves to nobody is visible in the trail; one whose people are
+      // all inactive is logged by fanOut.
+      recipientsResolved: recipients.length,
       // Written before the compare-and-set; a TICKET_<ACTION>_NOT_APPLIED row
       // naming this id follows when the transition did not land.
       recordedBeforeApply: true,
@@ -798,8 +805,11 @@ export async function POST(req: NextRequest) {
   // LEAK-9 (DF-P3): before 20261195 is pasted the `outcome` column is not
   // there — the write retries without it (today's path: that request's
   // outcome is not recorded) rather than refusing the close or the cancel.
+  let outcomeNotStored = false;
+  let intendedOutcome: string | null = null;
   if (updErr && (updErr.code === "PGRST204" || updErr.code === "42703") && "outcome" in updates && /outcome/.test(updErr.message ?? "")) {
     console.warn(`[workflow-action] tickets.outcome is not in the database yet (20261195 not pasted) — ${action.action} on ticket ${body.ticketId} is applied without it`);
+    intendedOutcome = (updates.outcome as string | null | undefined) ?? null;
     delete updates.outcome;
     let noOutcome = supabaseAdmin
       .from("tickets")
@@ -812,6 +822,7 @@ export async function POST(req: NextRequest) {
     ({ data: updated, error: updErr } = await noOutcome
       .select("id")
       .maybeSingle());
+    if (!updErr && updated) outcomeNotStored = true;
   }
   // Pre-migration tolerance: if the deliverable-rev columns (20260827) aren't
   // deployed yet, retry without them so the workflow itself never blocks on a
@@ -842,6 +853,26 @@ export async function POST(req: NextRequest) {
       { error: "The ticket changed while you were acting — refresh and try again", conflict: true },
       { status: 409 },
     );
+  }
+  // LEAK-9 (DF-P3, DEC-29): the attempt row names the outcome the action
+  // meant to record; when the write landed without the column (20261195 not
+  // pasted yet) the trail says so, naming the attempt — never a recorded
+  // outcome the row does not carry. A failure to say so is logged.
+  if (outcomeNotStored) {
+    const notStoredErr = await insertAuditRowOnce({
+      id: crypto.randomUUID(),
+      action: `${auditRow.action}_OUTCOME_NOT_STORED`,
+      resource_id: body.ticketId,
+      resource_type: "ticket",
+      org_id: ticket.orgId,
+      user_id: caller.id,
+      user_email: callerEmail,
+      user_role: callerRole,
+      details: { attempt: auditRow.id, outcomeIntended: intendedOutcome, reason: "tickets.outcome is not in the database yet (20261195 not pasted)" },
+    });
+    if (notStoredErr) {
+      console.error(`[workflow-action] ${auditRow.action} (audit row ${auditRow.id}) on ticket ${body.ticketId} was applied WITHOUT its outcome, and that could not be recorded: ${notStoredErr}`);
+    }
   }
 
   // LIFE-6 / DEC-25: the closer's hold resolution, applied only now that the
@@ -1096,7 +1127,7 @@ async function fanOut(params: {
   if (activity && recipients.length === 0) return;
   if (!activity && recipients.length === 0) {
     // LEAK-1 done-when 3: visible, not silently dropped (the audit row
-    // carries `notified: 0` too).
+    // carries `recipientsResolved: 0` too).
     console.warn(`[workflow-action] ${action.type} on ticket ${ticketId} (now ${newStatus}) has nobody to tell`);
   }
 
@@ -1118,6 +1149,11 @@ async function fanOut(params: {
   const active = membersErr ? null : ((members as Array<{ uid: string; email: string | null }> | null) ?? []);
   const activeUids = new Set((active ?? []).map((m) => m.uid));
   const audience = active ? recipients.filter((uid) => activeUids.has(uid)) : recipients;
+  if (!activity && recipients.length > 0 && audience.length === 0) {
+    // LEAK-1 done-when 3: a transition whose people are all suspended or
+    // removed tells nobody — as visible as one that resolved to nobody.
+    console.warn(`[workflow-action] ${action.type} on ticket ${ticketId} (now ${newStatus}) has nobody to tell — the active-members filter removed all ${recipients.length} recipient(s)`);
+  }
 
   if (activity) {
     if (audience.length === 0) return;

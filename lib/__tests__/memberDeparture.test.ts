@@ -82,7 +82,15 @@ describe("20261195 — ticket_update_guard re-created from its NEWEST earlier bo
     expect(M).toContain("PERFORM set_config('app.ticket_departure', '', true);");
     // the only writer of the mark is the departure function
     expect(M.match(/set_config\('app\.ticket_departure'/g)).toHaveLength(2);
-    for (const f of files.filter((x) => x !== FILE)) expect(mig(f), f).not.toContain("app.ticket_departure");
+    for (const f of files.filter((x) => x !== FILE)) expect(mig(f), f).not.toContain("set_config('app.ticket_departure'");
+  });
+  it("every re-creation of ticket_update_guard from 20261195 on keeps the departure pass (found by scanning) — without it member removals would leave tickets behind", () => {
+    const fromHere = guardDefiners.filter((f) => f >= FILE);
+    expect(fromHere[0]).toBe(FILE);
+    for (const f of fromHere) {
+      const body = between(mig(f), GUARD_HEAD, "\n$$;");
+      expect(body, f).toContain("  IF pg_trigger_depth() > 1\n     AND COALESCE(current_setting('app.ticket_departure', true), '') <> ''\n     AND current_setting('app.ticket_departure', true) IN (OLD.assigned_drafter_id::text, OLD.assigned_engineer_id::text) THEN\n    RETURN NEW;\n  END IF;");
+    }
   });
   it("the trigger is restated, DRLS-16 revoke kept, definer with search_path pinned", () => {
     expect(M).toContain("CREATE TRIGGER trg_ticket_update_guard\n  BEFORE UPDATE ON tickets\n  FOR EACH ROW EXECUTE FUNCTION ticket_update_guard();");
@@ -127,8 +135,18 @@ describe("20261195 — EDGE-4: the departure triggers", () => {
     expect(fn).toContain("ELSIF v_engineer AND v_t.status = 'PENDING_FINAL_APPROVAL' THEN\n      v_status := 'PENDING_REVIEW';");
     // a member still (or again) active departs nothing
     expect(fn).toContain("IF EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = p_org AND m.uid = p_uid AND m.status = 'active') THEN\n    RETURN 0;");
-    // the notice and the audit row are best-effort INSIDE a sub-block: a failure is a WARNING
-    expect(fn).toContain("EXCEPTION WHEN OTHERS THEN\n      RAISE WARNING 'return_departed_member_tickets:");
+    // the notice and the audit row are best-effort, each in its OWN sub-block:
+    // a refused audit row never rolls the bell rows back
+    expect(fn).toContain("          FROM unnest(v_tell) AS x(u);\n      END IF;\n    EXCEPTION WHEN OTHERS THEN\n      RAISE WARNING 'return_departed_member_tickets: ticket % was handed back, but its notice was not written: %', v_t.id, SQLERRM;\n    END;\n    BEGIN\n      INSERT INTO audit_logs");
+    expect(fn).toContain("EXCEPTION WHEN OTHERS THEN\n      RAISE WARNING 'return_departed_member_tickets: ticket % was handed back, but its audit row was not written: %', v_t.id, SQLERRM;\n    END;\n    v_n := v_n + 1;");
+    // the hand-back itself is guarded: a refusal (a later guard that dropped
+    // the departure pass) is a WARNING and a skipped ticket, never a refused removal
+    expect(fn).toContain("    BEGIN\n      UPDATE tickets t\n");
+    expect(fn).toContain("       WHERE t.id = v_t.id;\n    EXCEPTION WHEN OTHERS THEN\n      v_skipped := v_skipped + 1;\n      RAISE WARNING 'return_departed_member_tickets: ticket % was NOT handed back");
+    expect(fn).toContain("      CONTINUE;\n    END;");
+    expect(fn).toContain("      BEGIN\n        DELETE FROM document_intents WHERE ticket_id = v_t.id AND user_id = p_uid AND source = 'ticket';\n      EXCEPTION WHEN OTHERS THEN");
+    // nothing in the function writes outside a handler except the mark and the read
+    expect(fn.match(/EXCEPTION WHEN OTHERS THEN/g)).toHaveLength(4);
     expect(fn).toContain("'ticket_status'");
     expect(fn).toContain("INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, details)\n      VALUES ('TICKET_RETURNED_ON_DEPARTURE'");
     // a history line in the 20261053 form, and the CAS token bumped

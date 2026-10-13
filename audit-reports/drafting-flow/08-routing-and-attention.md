@@ -550,9 +550,9 @@ const scans: Array<[string, (orgId: string) => Promise<number>]> = [
 **Partial (2026-10-13, drafting-flow Round G).** DF-P3 ROUTING, base `5378ccb` — the build is `GAP-106`, recorded in full on `EDGE-7` (same root cause): `lib/ticketSla.ts` + step 5b of `app/api/cron/maintenance/route.ts:351`.
 
 **Done-when.**
-1. ✓ A server-side scan in the maintenance cron selects open tickets whose target is past or within the warn window (75 %) and emits with `category: "sla"`, so `email_on_sla_warning` gates something real (`lib/notify/dispatch.ts` maps `sla` → `sla_warning`; `lib/notificationPrefs.ts` honours it).
+1. ✓ A server-side scan in the maintenance cron selects open tickets whose target is past or within the warn window (75 %) — soonest-due first, so the cap on what one run reads never starves a breach (fix pass; the first version restarted from the lowest id each run and never reached a due ticket past its 2000-row cap; see `EDGE-7`) — and emits with `category: "sla"`, so `email_on_sla_warning` gates something real (`lib/notify/dispatch.ts` maps `sla` → `sla_warning`; `lib/notificationPrefs.ts` honours it).
 2. ✓ The recipients are the party the CURRENT status waits on plus its routed pool (`LEAK-1`'s resolver), the queue when nobody is named — an overdue `PENDING_ASSIGNMENT` ticket goes to the queue, not a drafter (`lib/__tests__/ticketSla.test.ts`).
-3. ✓ A ticket past its target produces exactly one notice per recipient per stage across runs (stamped compare-and-set; `ticketSla.test.ts` "a second run the same day sends nothing", "later runs read nothing").
+3. ✓ A ticket past its target produces exactly one notice per recipient per stage across runs (stamped compare-and-set; `ticketSla.test.ts` "a second run the same day sends nothing", "later runs read nothing"; bell rows that fail while the email is queued keep the claim, so the email is not re-sent daily).
 4. ✗ in part — the scan reads `sla_defaults` for a ticket with no target, but creation does not seed from it and `lib/notifications.ts:321`'s "first fallback when an org hasn't configured sla_defaults rows" comment still describes a lookup creation never makes. **Owner: DF-P2** (the create route stamps from `sla_defaults` first, and corrects the comment).
 
 **Scope / residual.** Done-when 4 → DF-P2 (see `EDGE-7`).

@@ -67,19 +67,20 @@ export function outcomesFor(actionType: string): readonly TicketOutcome[] | null
  *  - `close_ticket` from FINAL_DRAFT (the requester's acknowledgement, or a
  *    co-reviewer's on their behalf) and `close_rfi` (answered) → completed:
  *    the flow ran to its end.
- *  - `cancel_request` → withdrawn: DEC-14's cancel IS a withdrawal (the
- *    requester's own, or management's on the queue's behalf). The engine marks
- *    the action `requiresOutcome`; until the request page sends the category
- *    (DF-P9 owns the page), a cancel without one is recorded as withdrawn and
- *    the audit row says the category was defaulted — so a cancel that works
- *    today keeps working (REGRESSION FIRST).
+ *  - `cancel_request` → null: a cancel ends a request for many reasons (the
+ *    requester withdrew it, management canceled a duplicate or rejected it),
+ *    and "withdrawn" — a LEAK outcome — guessed for all of them would make
+ *    the leak rate a number nobody chose. The engine marks the action
+ *    `requiresOutcome`; until the request page sends the category (DF-P9 owns
+ *    the page), a cancel without one still works (REGRESSION FIRST), its
+ *    outcome is NULL ("Not recorded" on /admin/analytics, never in the leak
+ *    rate) and the audit row says the category was not named.
  *  - `close_ticket` from any other status (the Admin force close) → null:
  *    nothing says how that request ended, and "completed" would be a lie.
  */
 export function defaultOutcome(actionType: string, fromStatus: string): TicketOutcome | null {
   if (actionType === "close_rfi") return "completed";
   if (actionType === "close_ticket") return fromStatus === "FINAL_DRAFT" ? "completed" : null;
-  if (actionType === "cancel_request") return "withdrawn";
   return null;
 }
 
@@ -92,8 +93,8 @@ export interface OutcomeRow {
 export interface OutcomeSummary {
   /** Requests that ended (CLOSED or CANCELED). */
   ended: number;
-  /** Count per outcome, plus `unrecorded` (ended before 20261195, or a force
-   *  close that named none). */
+  /** Count per outcome, plus `unrecorded` (ended before 20261195, a force
+   *  close that named none, or a cancel that named no category). */
   byOutcome: Record<TicketOutcome | "unrecorded", number>;
   /** (withdrawn + handled_out_of_band) / ended with a recorded outcome — the
    *  leak rate; null when nothing ended with an outcome yet. */

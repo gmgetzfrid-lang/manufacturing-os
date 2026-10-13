@@ -309,7 +309,10 @@ export default function AnalyticsPage() {
   const selectedTickets = selectedReason ? metrics.drillDownMap.get(selectedReason) || [] : [];
 
   // LEAK-9 / GAP-107 (drafting-flow DF-P3): how requests ENDED — the only
-  // instrument that says whether work is leaving the app. Read-only.
+  // instrument that says whether work is leaving the app. Read-only. All
+  // time (labelled so): the time-range control belongs to the volume chart,
+  // and the rows are what the analytics route returns (its unpaged select is
+  // capped by the server's row limit — said in the block's footnote).
   const outcomes = useMemo(
     () => summarizeOutcomes(tickets.map((t) => ({ status: t.status, outcome: t.outcome ?? null, requestType: t.requestType }))),
     [tickets],
@@ -590,7 +593,7 @@ export default function AnalyticsPage() {
       {/* LEAK ACCOUNTING (LEAK-9 / GAP-107): how requests ended, per request type */}
       <section aria-labelledby="request-outcomes-heading" className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm p-6">
         <div className="flex flex-wrap items-baseline justify-between gap-2 mb-4">
-          <h3 id="request-outcomes-heading" className="font-bold text-[var(--color-text)] flex items-center"><ArrowUpRight className="w-5 h-5 mr-2 text-[var(--color-text-faint)]" /> How Requests Ended</h3>
+          <h3 id="request-outcomes-heading" className="font-bold text-[var(--color-text)] flex items-center"><ArrowUpRight className="w-5 h-5 mr-2 text-[var(--color-text-faint)]" /> How Requests Ended <span className="ml-2 text-xs font-normal text-[var(--color-text-muted)]" data-testid="outcomes-scope">(all time — not the Request Volume range)</span></h3>
           <p className="text-xs text-[var(--color-text-muted)]">
             Leak rate (withdrawn or handled outside the app):{' '}
             <span className="font-bold text-[var(--color-text)]" data-testid="leak-rate">{outcomes.leakRate === null ? '—' : formatPercent(outcomes.leakRate)}</span>
@@ -627,7 +630,7 @@ export default function AnalyticsPage() {
             </tbody>
           </table>
         )}
-        <p className="mt-3 text-xs text-[var(--color-text-muted)]">&ldquo;Not recorded&rdquo; counts requests that ended before outcomes were recorded, and force closes that named none.</p>
+        <p className="mt-3 text-xs text-[var(--color-text-muted)]">&ldquo;Not recorded&rdquo; counts requests that ended before outcomes were recorded, force closes that named none, and cancels that named no category; none of them is in the leak rate. Every request this page loaded counts, whenever it ended — the page loads at most the server&rsquo;s row limit, so a very large workspace&rsquo;s oldest requests may be missing.</p>
       </section>
 
       {/* SECTION 2: CHARTS & LISTS */}

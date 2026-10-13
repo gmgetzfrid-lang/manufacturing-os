@@ -3,7 +3,9 @@
 //   LEAK-1 / ROUTE-5  routing runs on EVERY entry into a routed status
 //                     (PENDING_ASSIGNMENT, PENDING_IFC + the originating
 //                     engineer, a revision nobody drafts), and a transition
-//                     that tells nobody is visible (audit `notified`).
+//                     that tells nobody is visible (audit
+//                     `recipientsResolved`, and a log line when the
+//                     active-members filter empties the audience).
 //   ROUTE-1 / SM-6    a revision with no drafter returns to the assignment
 //                     queue (never a REVISION_REQ nobody's queue shows); a
 //                     drafterless REVISION_REQ / DRAFTING offers `assign`.
@@ -214,7 +216,8 @@ describe("LEAK-1 / ROUTE-5 — every entry into a routed status tells that statu
     expect((upd.unread_by as string[]).sort()).toEqual(["d-1", "e-2", "sup-1"]);
     expect(insertsOf("notifications").map((n) => n.user_id).sort()).toEqual(["d-1", "e-2", "sup-1"]);
     expect(insertsOf("email_notifications").map((e) => e.to_user_id).sort()).toEqual(["d-1", "e-2", "sup-1"]);
-    expect(auditOf("TICKET_APPROVE_DRAFT_IFC")!.details.notified).toBe(3);
+    expect(auditOf("TICKET_APPROVE_DRAFT_IFC")!.details.recipientsResolved).toBe(3);
+    expect(auditOf("TICKET_APPROVE_DRAFT_IFC")!.details.notified).toBeUndefined();
   });
   it("route: a status change that stays inside a routed status, or never enters one, does not re-notify the pool", async () => {
     state.user = { id: "d-1" };
@@ -275,7 +278,25 @@ describe("ROUTE-6 — followers hear every transition; the queue's alerts retire
     const superseded = updateOf("notifications");
     expect(superseded).toHaveLength(1);
     expect((superseded[0].metadata as Record<string, unknown>).superseded_by).toBe("self_assign");
-    expect(auditOf("TICKET_SELF_ASSIGN")!.details.notified).toBe(0);
+    expect(auditOf("TICKET_SELF_ASSIGN")!.details.recipientsResolved).toBe(0);
+  });
+  it("LEAK-1 done-when 3: a transition whose only recipients are inactive members tells nobody, and SAYS so (log names how many the active filter removed)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      state.user = { id: "d-1" };
+      // the requester has been suspended
+      state.rows.org_members = ORG.map((m) => (m.uid === "req-1" ? { ...m, status: "suspended" } : m));
+      state.rows.tickets = [ticketRow({ status: "DRAFTING", attachments: [{ id: "dr", name: "d.pdf", url: "orgs/o1/tickets/REQ-1/d.pdf", type: "Draft", status: "staged" }] })];
+      const res = await post({ ticketId: "t1", actionType: "submit_draft" });
+      expect(res.status, await res.clone().text()).toBe(200);
+      expect((await res.json()).status).toBe("PENDING_REVIEW");
+      expect(insertsOf("notifications")).toEqual([]);
+      // the trail says how many it RESOLVED to (before the filter), never "notified"
+      expect(auditOf("TICKET_SUBMIT_DRAFT")!.details).toMatchObject({ recipientsResolved: 1 });
+      expect(warn.mock.calls.map((c) => String(c[0])).join("\n")).toMatch(/submit_draft on ticket t1 \(now PENDING_REVIEW\) has nobody to tell — the active-members filter removed all 1 recipient\(s\)/);
+    } finally {
+      warn.mockRestore();
+    }
   });
   it("thread activity with nobody to tell does nothing (no supersede — an attachment does not retire workflow alerts)", async () => {
     state.user = { id: "req-1" };
@@ -297,10 +318,11 @@ describe("LEAK-9 / GAP-107 — how a request ended is a typed fact", () => {
     expect(outcomesFor("close_ticket")).toBe(TICKET_OUTCOMES);
     expect(outcomesFor("save_progress")).toBeNull();
   });
-  it("defaults: an acknowledgement or an answered RFI completed; a cancel withdrew; a force close records nothing", () => {
+  it("defaults: an acknowledgement or an answered RFI completed; a cancel that names no category and a force close record nothing (never a guessed leak)", () => {
     expect(defaultOutcome("close_ticket", "FINAL_DRAFT")).toBe("completed");
     expect(defaultOutcome("close_rfi", "DRAFTING")).toBe("completed");
-    expect(defaultOutcome("cancel_request", "DRAFTING")).toBe("withdrawn");
+    expect(defaultOutcome("cancel_request", "DRAFTING")).toBeNull();
+    expect(computeTransition(ticket({ status: "DRAFTING" }), { actionType: "cancel_request", actionLabel: "Cancel Request", comment: "dup", actor: admin, now: NOW }).updates.outcome).toBeNull();
     expect(defaultOutcome("close_ticket", "DRAFTING")).toBeNull();
   });
   it("computeTransition stamps it on close / cancel, and a reopen clears it", () => {
@@ -325,17 +347,21 @@ describe("LEAK-9 / GAP-107 — how a request ended is a typed fact", () => {
     const res = await post({ ticketId: "t1", actionType: "cancel_request", comment: "filed twice", outcome: "duplicate" });
     expect(res.status).toBe(200);
     expect(updateOf("tickets")[0]).toMatchObject({ status: "CANCELED", outcome: "duplicate" });
-    expect(auditOf("TICKET_CANCEL_REQUEST")!.details).toMatchObject({ outcome: "duplicate" });
+    expect(auditOf("TICKET_CANCEL_REQUEST")!.details).toMatchObject({ outcomeIntended: "duplicate" });
+    expect(auditOf("TICKET_CANCEL_REQUEST")!.details.outcome).toBeUndefined();
     expect(auditOf("TICKET_CANCEL_REQUEST")!.details.outcomeDefaulted).toBeUndefined();
+    expect(insertsOf("audit_logs").some((r) => String(r.action).endsWith("_OUTCOME_NOT_STORED"))).toBe(false);
   });
-  it("REGRESSION: a cancel from today's page (no category) still works — recorded as withdrawn, and the audit row says it was defaulted", async () => {
+  it("REGRESSION: a cancel from today's page (no category) still works — its outcome is NOT recorded (never a guessed 'withdrawn' the leak rate would count), and the audit row says no category was named", async () => {
     state.user = { id: "req-1" };
     state.rows.org_members = ORG;
     state.rows.tickets = [ticketRow({ status: "DRAFTING" })];
     const res = await post({ ticketId: "t1", actionType: "cancel_request", comment: "not needed any more" });
     expect(res.status).toBe(200);
-    expect(updateOf("tickets")[0]).toMatchObject({ status: "CANCELED", outcome: "withdrawn" });
-    expect(auditOf("TICKET_CANCEL_REQUEST")!.details).toMatchObject({ outcome: "withdrawn", outcomeDefaulted: true });
+    expect(updateOf("tickets")[0]).toMatchObject({ status: "CANCELED", outcome: null });
+    expect(auditOf("TICKET_CANCEL_REQUEST")!.details).toMatchObject({ outcomeIntended: null, outcomeDefaulted: true });
+    // …and the leak rate does not count it
+    expect(summarizeOutcomes([{ status: "CANCELED", outcome: null, requestType: "ISO" }])).toMatchObject({ leakRate: null, byOutcome: { withdrawn: 0, unrecorded: 1 } });
   });
   it("route: an outcome the action cannot record is refused with nothing written", async () => {
     for (const [status, body] of [
@@ -367,6 +393,14 @@ describe("LEAK-9 / GAP-107 — how a request ended is a typed fact", () => {
     expect(ups[1].status).toBe("CLOSED");
     expect("outcome" in ups[1]).toBe(false);
     expect(insertsOf("audit_logs").some((r) => String(r.action).endsWith("_NOT_APPLIED"))).toBe(false);
+    // DEC-29: the attempt row names the outcome as INTENDED, and a follow-up
+    // row says it was not stored, naming the attempt
+    const attempt = insertsOf("audit_logs").find((r) => r.action === "TICKET_CLOSE_TICKET")!;
+    expect((attempt.details as Record<string, unknown>).outcomeIntended).toBe("completed");
+    expect((attempt.details as Record<string, unknown>).outcome).toBeUndefined();
+    const notStored = insertsOf("audit_logs").find((r) => r.action === "TICKET_CLOSE_TICKET_OUTCOME_NOT_STORED")!;
+    expect(notStored).toBeDefined();
+    expect(notStored.details).toMatchObject({ attempt: attempt.id, outcomeIntended: "completed" });
   });
   it("summarizeOutcomes: the leak rate per request type (GAP-107 acceptance 2)", () => {
     const s = summarizeOutcomes([
@@ -391,6 +425,10 @@ describe("LEAK-9 / GAP-107 — how a request ended is a typed fact", () => {
     expect(p).toContain("summarizeOutcomes(tickets.map((t) => ({ status: t.status, outcome: t.outcome ?? null, requestType: t.requestType })))");
     expect(p).toContain("outcome: r.outcome ?? null,");
     expect(p).toContain('How Requests Ended');
+    // it is all time, and says so (the range control belongs to the volume chart), and names the row cap
+    expect(p).toContain('(all time — not the Request Volume range)');
+    expect(p).toContain('the page loads at most the server&rsquo;s row limit');
+    expect(p).toContain('cancels that named no category; none of them is in the leak rate');
     expect(src("app/api/admin/analytics/route.ts")).toContain('asCaller.from("tickets").select("*").eq("org_id", orgId)');
   });
 });

@@ -365,7 +365,10 @@ async function handler(req: NextRequest) {
     const { errors: slaErrors, ...slaCounts } = sla;
     result.ticketSla = slaCounts;
     for (const line of slaErrors) { result.errors.push(line); console.error(`[cron/maintenance] ${line}`); }
-    if (sla.truncated) result.errors.push("ticket-sla: more open requests than one run reads — the next run continues");
+    // Not a resume point: the scan reads soonest-due first every run, so what
+    // this run did not reach is due no sooner than what it did, and a ticket
+    // leaves the scan once its breach is sent (lib/ticketSla.ts).
+    if (sla.truncated) result.errors.push("ticket-sla: this run stopped before every open request was read (its read cap or time ran out) — the next run starts again with the soonest-due; a request leaves the scan once its breach is sent");
   } catch (e) {
     result.errors.push(`ticket-sla: ${(e as Error).message}`);
   }

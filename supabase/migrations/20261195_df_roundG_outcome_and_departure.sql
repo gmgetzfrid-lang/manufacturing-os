@@ -10,7 +10,8 @@
 --       2026-10-07; lib/ticketOutcome.ts holds the same five). One terminal
 --       status per exit (CLOSED / CANCELED) and a reason FIELD, never a
 --       status per reason. NULL = not recorded (every request that ended
---       before this paste, and an Admin force close that names none). The
+--       before this paste, an Admin force close that names none, and a
+--       cancel that names no category — never a guessed one). The
 --       workflow route (service role) writes it with the close or the cancel.
 --   (2) ticket_update_guard RE-CREATED FROM ITS NEWEST BODY (20261166 — found
 --       by scanning; lineDiff-pinned by lib/__tests__/memberDeparture.test.ts:
@@ -51,9 +52,13 @@
 --       these triggers; a removal by any other path is covered the same way.
 --       AFTER, not BEFORE: the tickets move only when the membership change
 --       itself happened (a BEFORE trigger that ran ahead of a refusing one
---       would have moved them for a member who stayed). A bell row or an
---       audit row that cannot be written is a WARNING and never refuses the
---       removal; the ticket move itself is part of the removal's transaction.
+--       would have moved them for a member who stayed). The ticket move is
+--       part of the removal's transaction, but nothing in it refuses the
+--       removal: a hand-back the database refuses (a later guard that lost
+--       the departure pass) is a WARNING and a skipped ticket; the bell rows
+--       and the audit row are each written in their own sub-block, so a
+--       refused audit row never takes the bell rows with it, and either
+--       failing is a WARNING.
 --   (4) The backlog (DEC-30): open tickets ALREADY held by a uid that is not
 --       an active member of the ticket's org (the triggers cannot see past
 --       departures) are handed back by the same function; and the
@@ -319,6 +324,7 @@ DECLARE
   v_tell     uuid[];
   v_now      text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
   v_n        integer := 0;
+  v_skipped  integer := 0;
 BEGIN
   IF p_org IS NULL OR p_uid IS NULL THEN
     RETURN 0;
@@ -385,30 +391,46 @@ BEGIN
     END IF;
     v_tell := ARRAY(SELECT DISTINCT u FROM unnest(v_tell) AS x(u) WHERE u IS NOT NULL AND u IS DISTINCT FROM p_uid);
 
-    UPDATE tickets t
-       SET status                       = v_status,
-           assigned_drafter_id          = CASE WHEN v_drafter THEN NULL ELSE t.assigned_drafter_id END,
-           assigned_drafter_name        = CASE WHEN v_drafter THEN NULL ELSE t.assigned_drafter_name END,
-           assigned_engineer_id         = CASE WHEN v_engineer THEN NULL ELSE t.assigned_engineer_id END,
-           assigned_engineer_name       = CASE WHEN v_engineer THEN NULL ELSE t.assigned_engineer_name END,
-           assigned_engineer_email      = CASE WHEN v_engineer THEN NULL ELSE t.assigned_engineer_email END,
-           engineer_review_requested_at = CASE WHEN v_engineer AND v_t.status = 'PENDING_ENG_TEAM' THEN NULL
-                                               ELSE t.engineer_review_requested_at END,
-           history                      = COALESCE(t.history, '[]'::jsonb) || jsonb_build_array(jsonb_build_object(
-                                            'action', v_action, 'user', 'system', 'role', 'System',
-                                            'date', v_now, 'details', v_line)),
-           unread_by                    = ARRAY(SELECT DISTINCT u FROM unnest(COALESCE(t.unread_by, '{}'::uuid[]) || v_tell) AS x(u)
-                                                 WHERE u IS DISTINCT FROM p_uid),
-           last_modified                = now()
-     WHERE t.id = v_t.id;
+    -- Never a refusal of the removal (DEC-20): a hand-back the database
+    -- refuses (a later re-creation of ticket_update_guard that dropped the
+    -- departure pass, say) is a WARNING and a skipped ticket; the removal
+    -- goes through and the ticket is caught by the backlog query below on a
+    -- re-paste, or by the SLA clock.
+    BEGIN
+      UPDATE tickets t
+         SET status                       = v_status,
+             assigned_drafter_id          = CASE WHEN v_drafter THEN NULL ELSE t.assigned_drafter_id END,
+             assigned_drafter_name        = CASE WHEN v_drafter THEN NULL ELSE t.assigned_drafter_name END,
+             assigned_engineer_id         = CASE WHEN v_engineer THEN NULL ELSE t.assigned_engineer_id END,
+             assigned_engineer_name       = CASE WHEN v_engineer THEN NULL ELSE t.assigned_engineer_name END,
+             assigned_engineer_email      = CASE WHEN v_engineer THEN NULL ELSE t.assigned_engineer_email END,
+             engineer_review_requested_at = CASE WHEN v_engineer AND v_t.status = 'PENDING_ENG_TEAM' THEN NULL
+                                                 ELSE t.engineer_review_requested_at END,
+             history                      = COALESCE(t.history, '[]'::jsonb) || jsonb_build_array(jsonb_build_object(
+                                              'action', v_action, 'user', 'system', 'role', 'System',
+                                              'date', v_now, 'details', v_line)),
+             unread_by                    = ARRAY(SELECT DISTINCT u FROM unnest(COALESCE(t.unread_by, '{}'::uuid[]) || v_tell) AS x(u)
+                                                   WHERE u IS DISTINCT FROM p_uid),
+             last_modified                = now()
+       WHERE t.id = v_t.id;
+    EXCEPTION WHEN OTHERS THEN
+      v_skipped := v_skipped + 1;
+      RAISE WARNING 'return_departed_member_tickets: ticket % was NOT handed back (the removal goes through; the ticket still names the departed member): %', v_t.id, SQLERRM;
+      CONTINUE;
+    END;
 
     -- The departed drafter's ticket-sourced edit intent goes with them.
     IF v_drafter THEN
-      DELETE FROM document_intents WHERE ticket_id = v_t.id AND user_id = p_uid AND source = 'ticket';
+      BEGIN
+        DELETE FROM document_intents WHERE ticket_id = v_t.id AND user_id = p_uid AND source = 'ticket';
+      EXCEPTION WHEN OTHERS THEN
+        RAISE WARNING 'return_departed_member_tickets: ticket % was handed back, but the departed drafter''s edit intent was not removed: %', v_t.id, SQLERRM;
+      END;
     END IF;
 
     -- Never silent, never a refusal: a bell row to whoever must act and an
-    -- audit row on the ticket; either failing is a WARNING.
+    -- audit row on the ticket, each in its OWN sub-block — a refused audit
+    -- row never takes the bell rows with it; either failing is a WARNING.
     BEGIN
       IF cardinality(v_tell) > 0 THEN
         INSERT INTO notifications (org_id, user_id, kind, title, body, link, resource_type, resource_id, actor_name, metadata)
@@ -418,17 +440,24 @@ BEGIN
                jsonb_build_object('action', 'member_departed', 'status', v_status)
           FROM unnest(v_tell) AS x(u);
       END IF;
+    EXCEPTION WHEN OTHERS THEN
+      RAISE WARNING 'return_departed_member_tickets: ticket % was handed back, but its notice was not written: %', v_t.id, SQLERRM;
+    END;
+    BEGIN
       INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, details)
       VALUES ('TICKET_RETURNED_ON_DEPARTURE', v_t.id::text, 'ticket', p_org, auth.uid(),
               jsonb_build_object('departedUid', p_uid, 'from', v_t.status, 'to', v_status,
                                  'drafterCleared', v_drafter, 'engineerCleared', v_engineer, 'told', to_jsonb(v_tell)));
     EXCEPTION WHEN OTHERS THEN
-      RAISE WARNING 'return_departed_member_tickets: ticket % was handed back, but its notice or audit row was not written: %', v_t.id, SQLERRM;
+      RAISE WARNING 'return_departed_member_tickets: ticket % was handed back, but its audit row was not written: %', v_t.id, SQLERRM;
     END;
     v_n := v_n + 1;
   END LOOP;
 
   PERFORM set_config('app.ticket_departure', '', true);
+  IF v_skipped > 0 THEN
+    RAISE WARNING 'return_departed_member_tickets: % ticket(s) of the departed member % in org % were not handed back (see the warnings above)', v_skipped, p_uid, p_org;
+  END IF;
   RETURN v_n;
 END;
 $$;

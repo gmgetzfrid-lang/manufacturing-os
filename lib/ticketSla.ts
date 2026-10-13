@@ -23,6 +23,8 @@
 //     two runs, or a run racing a transition, never send twice; a send that
 //     reached nobody releases its claim and is reported, so the next run
 //     tries again.
+//   * Every run reads the most urgent first (soonest target), so a cap on
+//     what one run reads never starves a breach (runTicketSlaScan).
 //   * No new cron entry: one step in app/api/cron/maintenance/route.ts.
 //
 // The warn fraction is a named constant; making it org-configurable is a
@@ -179,11 +181,14 @@ export interface SlaScanReport {
   scanned: number;
   warned: number;
   breached: number;
-  /** Open tickets with no target and no org default for their type. */
+  /** Open tickets with no target of their own (those whose org set
+   *  sla_defaults for their type are on the clock through it; the rest are
+   *  not). */
   noTarget: number;
   /** Stages due whose notice reached nobody (claim released; retried). */
   unreached: number;
-  /** The run stopped before reading every open ticket (page cap / time). */
+  /** The run stopped before reading every ticket it would have (page cap /
+   *  time); the next run starts again with the soonest-due. */
   truncated: boolean;
   errors: string[];
 }
@@ -201,10 +206,32 @@ const toTicket = (r: Row): SlaTicket => ({
   slaBreachWarnedAt: r.sla_breach_warned_at, slaBreachedAt: r.sla_breached_at,
 });
 
+/** A value inside a PostgREST logic tree (`or=(…)`): quoted, because a
+ *  timestamp carries the reserved `.` and `:`. */
+const pgq = (v: string): string => `"${v.replace(/"/g, "")}"`;
+
+const SLA_COLUMNS = "id, org_id, ticket_id, title, status, request_type, requester_id, assigned_drafter_id, assigned_engineer_id, created_at, target_completion_at, sla_breach_warned_at, sla_breached_at";
+
 /**
- * Scan every open ticket whose breach has not been sent, and send the stage
+ * Scan the open tickets whose breach has not been sent, and send the stage
  * that is due. Never throws: every failure is a line in `errors`, and a
  * ticket whose org could not be read is left for the next run (no stamp).
+ *
+ * Every run makes progress on the tickets that are due (ROUTE-9 done-when 1
+ * / EDGE-7 done-when 1), whatever the number of open tickets:
+ *  (1) tickets WITH a target are read soonest-due first — ordered by
+ *      (target_completion_at, id), keyset-paged — so the at-most-maxTickets
+ *      a run reads are the most urgent. A ticket is passed over only while
+ *      maxTickets tickets due no later than it are all still short of their
+ *      own target (so it is short of its own too), and each of those leaves
+ *      the scan the run it breaches; a breach is never starved. (A warning
+ *      can wait behind earlier-due tickets with shorter windows; it is sent
+ *      by its target at the latest, with the breach.)
+ *  (2) tickets with NO target, only in an org that configured sla_defaults
+ *      for their type, are read per (org, type) by a filter that matches
+ *      exactly the tickets whose stage is due (created_at against the
+ *      window) — each one read is stamped and leaves the filter, so the next
+ *      run starts with the rest. Each pass reads at most maxTickets.
  */
 export async function runTicketSlaScan(deps: SlaScanDeps): Promise<SlaScanReport> {
   const sb = deps.client;
@@ -215,7 +242,6 @@ export async function runTicketSlaScan(deps: SlaScanDeps): Promise<SlaScanReport
   const report: SlaScanReport = { scanned: 0, warned: 0, breached: 0, noTarget: 0, unreached: 0, truncated: false, errors: [] };
 
   const orgCtx = new Map<string, RoutingContext | null>();
-  const orgDefaults = new Map<string, Map<string, number>>();
   const zones = new Map<string, string | null>();
   const contextOf = async (orgId: string): Promise<RoutingContext | null> => {
     if (!orgCtx.has(orgId)) {
@@ -225,103 +251,167 @@ export async function runTicketSlaScan(deps: SlaScanDeps): Promise<SlaScanReport
     }
     return orgCtx.get(orgId) ?? null;
   };
-  const defaultsOf = async (orgId: string): Promise<Map<string, number>> => {
-    if (!orgDefaults.has(orgId)) {
-      const m = new Map<string, number>();
-      const { data, error } = await sb.from("sla_defaults").select("request_type, default_days").eq("org_id", orgId);
-      if (error) report.errors.push(`ticket-sla@${orgId}: sla_defaults could not be read — tickets with no target were skipped: ${error.message}`);
-      for (const r of ((data as Array<{ request_type: string; default_days: number }> | null) ?? [])) {
-        if (r.request_type && Number(r.default_days) > 0) m.set(r.request_type, Number(r.default_days));
-      }
-      orgDefaults.set(orgId, m);
-    }
-    return orgDefaults.get(orgId)!;
-  };
   const zoneOf = async (orgId: string): Promise<string | null> => {
     if (!deps.zoneOf) return null;
     if (!zones.has(orgId)) zones.set(orgId, await deps.zoneOf(orgId).catch(() => null));
     return zones.get(orgId) ?? null;
   };
+  const openTickets = () => sb.from("tickets")
+    .select(SLA_COLUMNS)
+    .not("status", "in", "(CLOSED,CANCELED)")
+    .is("archived_at", null)
+    .is("sla_breached_at", null);
+  const pastDeadline = () => deps.deadlineAt !== undefined && Date.now() >= deps.deadlineAt;
 
-  // Keyset pages on id: a breach stamped on this page drops its row out of
-  // the filter, so an offset would skip rows on the next page.
-  let after: string | null = null;
-  for (let read = 0; read < maxTickets; read += pageSize) {
-    let q = sb.from("tickets")
-      .select("id, org_id, ticket_id, title, status, request_type, requester_id, assigned_drafter_id, assigned_engineer_id, created_at, target_completion_at, sla_breach_warned_at, sla_breached_at")
-      .not("status", "in", "(CLOSED,CANCELED)")
-      .is("archived_at", null)
-      .is("sla_breached_at", null);
-    if (after) q = q.gt("id", after);
-    const { data, error } = await q.order("id", { ascending: true }).limit(pageSize);
+  /** Evaluate one ticket and send its due stage. */
+  const handle = async (row: Row, orgDefaults: ReadonlyMap<string, number> | null): Promise<void> => {
+    report.scanned += 1;
+    const t = toTicket(row);
+    const target = effectiveTarget(t, t.targetCompletionAt ? null : orgDefaults);
+    if (target === null) return;
+    const stage = slaStage(t, now, target);
+    if (stage === "none") return;
+    const ctx = await contextOf(t.orgId);
+    if (!ctx) return;
+    const pools = {
+      routed: routedPool(ctx, t.status as TicketStatus, undefined, { assignedDrafterId: t.assignedDrafterId, assignedEngineerId: t.assignedEngineerId }),
+      queue: queuePool(ctx),
+    };
+    const active = new Set(ctx.members.map((m) => m.uid));
+    const recipients = slaRecipients(t, stage, pools).filter((u) => active.has(u));
+
+    // Claim the stage first (compare-and-set on the stamp AND the status we
+    // read): one run sends it, a transition in between wins.
+    const stamp: Record<string, string> = stage === "breach"
+      ? { sla_breached_at: nowIso, ...(t.slaBreachWarnedAt ? {} : { sla_breach_warned_at: nowIso }) }
+      : { sla_breach_warned_at: nowIso };
+    const column = stage === "breach" ? "sla_breached_at" : "sla_breach_warned_at";
+    const { data: claimed, error: claimErr } = await sb.from("tickets").update(stamp)
+      .eq("id", t.id).eq("status", t.status).is(column, null).select("id");
+    if (claimErr) { report.errors.push(`ticket-sla: ticket ${t.id} — the ${stage} could not be recorded, nothing was sent (retried on the next run): ${claimErr.message}`); return; }
+    if (!claimed || (claimed as unknown[]).length === 0) return; // another run, or a transition, got there first
+
+    const notice = slaNotice(t, stage, target, await zoneOf(t.orgId));
+    // emit() addresses every resolved recipient on BOTH channels: the bell
+    // row and the email (queued whatever the bell did). A stage counts as
+    // delivered when emit resolved anyone; a bell that landed for nobody
+    // while the email was queued keeps the claim (released, the next run
+    // would mail everyone again, every day) and is reported.
+    let resolved = 0;
+    if (recipients.length > 0) {
+      try {
+        const r = await deps.emit({
+          orgId: t.orgId, category: "sla", kind: "ticket_status",
+          title: notice.title, body: notice.body, link: `/requests/${t.id}`,
+          resource: { type: "ticket", id: t.id }, actorName: "System",
+          audience: { involved: recipients },
+          metadata: { action: stage === "breach" ? "sla_breach" : "sla_warning", status: t.status, sla: stage, target: new Date(target).toISOString() },
+        });
+        resolved = r.recipients;
+        if (resolved > 0 && r.inapp && r.inapp.sent === 0) {
+          report.errors.push(`ticket-sla: ticket ${t.id} (${t.status}) — the ${stage} bell rows were not written for any of ${resolved} recipient(s); the email was queued, so it is not sent again`);
+        }
+      } catch (e) {
+        report.errors.push(`ticket-sla: ticket ${t.id} — the ${stage} notice failed: ${(e as Error)?.message ?? String(e)}`);
+      }
+    }
+    if (resolved === 0) {
+      // Nobody was told: release the claim so the next run tries again, and
+      // say so (LEAK-1 done-when 3 — never silently dropped).
+      report.unreached += 1;
+      report.errors.push(`ticket-sla: ticket ${t.id} (${t.status}) — the ${stage} reached nobody (${recipients.length} recipient(s) resolved); it is retried on the next run`);
+      const release: Record<string, null> = stage === "breach"
+        ? { sla_breached_at: null, ...(t.slaBreachWarnedAt ? {} : { sla_breach_warned_at: null }) }
+        : { sla_breach_warned_at: null };
+      const { data: released, error: relErr } = await sb.from("tickets").update(release).eq("id", t.id).eq(column, nowIso).select("id");
+      if (relErr || !released || (released as unknown[]).length === 0) {
+        report.errors.push(`ticket-sla: ticket ${t.id} — the unsent ${stage} could not be released (${relErr?.message ?? "no row"}); it will not be retried`);
+      }
+      return;
+    }
+    if (stage === "breach") report.breached += 1; else report.warned += 1;
+  };
+
+  // ── (1) tickets with a target, soonest-due first ──────────────────────────
+  // Keyset pages on (target, id): a breach stamped on this page drops its
+  // row out of the filter, so an offset would skip rows on the next page.
+  let cursor: { target: string; id: string } | null = null;
+  for (let read = 0; ;) {
+    if (read >= maxTickets) { report.truncated = true; break; }
+    const want = Math.min(pageSize, maxTickets - read);
+    let q = openTickets().not("target_completion_at", "is", null);
+    if (cursor) q = q.or(`target_completion_at.gt.${pgq(cursor.target)},and(target_completion_at.eq.${pgq(cursor.target)},id.gt.${cursor.id})`);
+    const { data, error } = await q.order("target_completion_at", { ascending: true }).order("id", { ascending: true }).limit(want);
     if (error) {
       report.errors.push(`ticket-sla: the open tickets could not be read — no SLA notice was sent: ${error.message}`);
       return report;
     }
     const rows = (data as Row[] | null) ?? [];
-    if (rows.length > 0) after = rows[rows.length - 1].id;
-    for (const row of rows) {
-      if (deps.deadlineAt !== undefined && Date.now() >= deps.deadlineAt) { report.truncated = true; return report; }
-      report.scanned += 1;
-      const t = toTicket(row);
-      const target = effectiveTarget(t, t.targetCompletionAt ? null : await defaultsOf(t.orgId));
-      if (target === null) { report.noTarget += 1; continue; }
-      const stage = slaStage(t, now, target);
-      if (stage === "none") continue;
-      const ctx = await contextOf(t.orgId);
-      if (!ctx) continue;
-      const pools = {
-        routed: routedPool(ctx, t.status as TicketStatus, undefined, { assignedDrafterId: t.assignedDrafterId, assignedEngineerId: t.assignedEngineerId }),
-        queue: queuePool(ctx),
-      };
-      const active = new Set(ctx.members.map((m) => m.uid));
-      const recipients = slaRecipients(t, stage, pools).filter((u) => active.has(u));
-
-      // Claim the stage first (compare-and-set on the stamp AND the status we
-      // read): one run sends it, a transition in between wins.
-      const stamp: Record<string, string> = stage === "breach"
-        ? { sla_breached_at: nowIso, ...(t.slaBreachWarnedAt ? {} : { sla_breach_warned_at: nowIso }) }
-        : { sla_breach_warned_at: nowIso };
-      const column = stage === "breach" ? "sla_breached_at" : "sla_breach_warned_at";
-      const { data: claimed, error: claimErr } = await sb.from("tickets").update(stamp)
-        .eq("id", t.id).eq("status", t.status).is(column, null).select("id");
-      if (claimErr) { report.errors.push(`ticket-sla: ticket ${t.id} — the ${stage} could not be recorded, nothing was sent (retried on the next run): ${claimErr.message}`); continue; }
-      if (!claimed || (claimed as unknown[]).length === 0) continue; // another run, or a transition, got there first
-
-      const notice = slaNotice(t, stage, target, await zoneOf(t.orgId));
-      let reached = 0;
-      if (recipients.length > 0) {
-        try {
-          const r = await deps.emit({
-            orgId: t.orgId, category: "sla", kind: "ticket_status",
-            title: notice.title, body: notice.body, link: `/requests/${t.id}`,
-            resource: { type: "ticket", id: t.id }, actorName: "System",
-            audience: { involved: recipients },
-            metadata: { action: stage === "breach" ? "sla_breach" : "sla_warning", status: t.status, sla: stage, target: new Date(target).toISOString() },
-          });
-          reached = r.inapp ? r.inapp.sent : r.recipients;
-        } catch (e) {
-          report.errors.push(`ticket-sla: ticket ${t.id} — the ${stage} notice failed: ${(e as Error)?.message ?? String(e)}`);
-        }
-      }
-      if (reached === 0) {
-        // Nobody was told: release the claim so the next run tries again, and
-        // say so (LEAK-1 done-when 3 — never silently dropped).
-        report.unreached += 1;
-        report.errors.push(`ticket-sla: ticket ${t.id} (${t.status}) — the ${stage} reached nobody (${recipients.length} recipient(s) resolved); it is retried on the next run`);
-        const release: Record<string, null> = stage === "breach"
-          ? { sla_breached_at: null, ...(t.slaBreachWarnedAt ? {} : { sla_breach_warned_at: null }) }
-          : { sla_breach_warned_at: null };
-        const { data: released, error: relErr } = await sb.from("tickets").update(release).eq("id", t.id).eq(column, nowIso).select("id");
-        if (relErr || !released || (released as unknown[]).length === 0) {
-          report.errors.push(`ticket-sla: ticket ${t.id} — the unsent ${stage} could not be released (${relErr?.message ?? "no row"}); it will not be retried`);
-        }
-        continue;
-      }
-      if (stage === "breach") report.breached += 1; else report.warned += 1;
+    read += rows.length;
+    if (rows.length > 0) {
+      const last = rows[rows.length - 1];
+      cursor = { target: String(last.target_completion_at), id: last.id };
     }
-    if (rows.length < pageSize) return report;
+    for (const row of rows) {
+      if (pastDeadline()) { report.truncated = true; return report; }
+      await handle(row, null);
+    }
+    if (rows.length < want) break;
   }
-  report.truncated = true;
+
+  // ── (2) no target of their own: only where the org set sla_defaults ──────
+  const { count: untargeted, error: countErr } = await sb.from("tickets")
+    .select("id", { count: "exact", head: true })
+    .not("status", "in", "(CLOSED,CANCELED)")
+    .is("archived_at", null)
+    .is("sla_breached_at", null)
+    .is("target_completion_at", null);
+  if (countErr) report.errors.push(`ticket-sla: the open tickets with no target could not be counted: ${countErr.message}`);
+  else report.noTarget = untargeted ?? 0;
+  if (!countErr && (untargeted ?? 0) === 0) return report;
+
+  const { data: defs, error: defErr } = await sb.from("sla_defaults").select("org_id, request_type, default_days");
+  if (defErr) {
+    report.errors.push(`ticket-sla: sla_defaults could not be read — tickets with no target were skipped: ${defErr.message}`);
+    return report;
+  }
+  const byOrg = new Map<string, Map<string, number>>();
+  for (const d of ((defs as Array<{ org_id: string; request_type: string; default_days: number }> | null) ?? [])) {
+    if (!d.org_id || !d.request_type || !(Number(d.default_days) > 0)) continue;
+    const m = byOrg.get(d.org_id) ?? new Map<string, number>();
+    m.set(d.request_type, Number(d.default_days));
+    byOrg.set(d.org_id, m);
+  }
+  let read2 = 0;
+  for (const [orgId, types] of byOrg) {
+    for (const [requestType, days] of types) {
+      // Due exactly when created_at is past the warn point (75 % of the
+      // window) and not yet warned, or past the whole window (the breach).
+      const warnFrom = new Date(now - days * DAY_MS * SLA_WARN_FRACTION).toISOString();
+      const breachFrom = new Date(now - days * DAY_MS).toISOString();
+      let after: string | null = null;
+      for (;;) {
+        if (read2 >= maxTickets) { report.truncated = true; return report; }
+        const want = Math.min(pageSize, maxTickets - read2);
+        let q = openTickets().is("target_completion_at", null).eq("org_id", orgId).eq("request_type", requestType)
+          .lte("created_at", warnFrom)
+          .or(`sla_breach_warned_at.is.null,created_at.lte.${pgq(breachFrom)}`);
+        if (after) q = q.gt("id", after);
+        const { data, error } = await q.order("id", { ascending: true }).limit(want);
+        if (error) {
+          report.errors.push(`ticket-sla@${orgId}: the ${requestType} tickets with no target could not be read — none was evaluated: ${error.message}`);
+          break;
+        }
+        const rows = (data as Row[] | null) ?? [];
+        read2 += rows.length;
+        if (rows.length > 0) after = rows[rows.length - 1].id;
+        for (const row of rows) {
+          if (pastDeadline()) { report.truncated = true; return report; }
+          await handle(row, types);
+        }
+        if (rows.length < want) break;
+      }
+    }
+  }
   return report;
 }
