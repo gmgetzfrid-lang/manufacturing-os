@@ -1,4 +1,11 @@
-// lib/subscription.ts
+// lib/billing.ts — the org's billing (Stripe subscription) state. TABLE:
+// public.orgs (its subscription_status, trial_ends_at, current_period_end and
+// Stripe columns — DEC-98). It is NOT the watch / follow list: that is the
+// `subscriptions` table, read by lib/watches.ts.
+//
+// Renamed from lib/subscription.ts (NEDGE-21, notifications Round G N15):
+// the old name was one letter from the watch module (lib/subscriptions.ts,
+// now lib/watches.ts) — the collision that hid NEDGE-8.
 //
 // Helpers for figuring out an org's current subscription state. The
 // data lives on the orgs table (subscription_status, trial_ends_at,
