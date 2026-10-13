@@ -12,13 +12,33 @@
 // the transmittal's workspace holding transmit authority for every document
 // on it (TRX-1, `transmittal.issue` per item library — the people who can
 // issue it). Only a DRAFT is checked (an issued transmittal's files are what
-// was sent). Read-only: nothing is written, and the answer carries each
-// item's verdict (and why), never file content.
+// was sent). The answer carries each item's verdict (and why), never file
+// content.
+//
+// TRX-17 (20261199): the verdicts are RECORDED on the draft row
+// (transmittals.stamp_check: the draft's updated_at as read, who checked,
+// when, and each document's verdict with the version it was decided on),
+// written with the service role and only on the draft as read (an
+// updated_at match), so the issue trigger can require a server-recorded
+// verdict for the draft as issued instead of trusting the browser's mark.
+// That is the route's one write. Before 20261199 the column does not exist
+// (PGRST204 / 42703): the check is answered exactly as before, unrecorded
+// (the older trigger does not ask for it). A record that cannot be written
+// for any other reason answers 503, and a draft saved while it was being
+// checked answers 409 — both read as a check that could not run, so the
+// issuer is asked for a yes on every file. Known degradation (TRX-17
+// residual): the issue trigger arms a file from the RECORDED verdict alone,
+// so a yes given after a 503 sends every file unarmed — even one this check
+// found stampable; the 503 says so and asks the issuer to issue again first.
+// The database's own text is never shown (REL-3: userFacingError); it is
+// logged here.
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { evaluateTransmitAuthority, rowToTransmittal } from "@/lib/transmittals";
-import { checkItemsStampable } from "@/lib/transmittalStampCheck";
+import { checkItemsStampableWithFiles } from "@/lib/transmittalStampCheck";
+import { isMissingSchemaError } from "@/lib/checkedWrite";
+import { userFacingError } from "@/lib/userFacingError";
 
 export const runtime = "nodejs";
 // The check reads each file once (up to the portal's stamping bound) within
@@ -57,6 +77,43 @@ export async function POST(req: NextRequest) {
 
   // TRX-15 (P22 review fix): the transmittal's number is stamped too — the
   // check stamps what the download will.
-  const items = await checkItemsStampable(supabaseAdmin, { orgId: t.orgId, items: t.items, transmittalNumber: t.number });
-  return NextResponse.json({ items }, { headers: { "Cache-Control": "no-store" } });
+  const checked = await checkItemsStampableWithFiles(supabaseAdmin, { orgId: t.orgId, items: t.items, transmittalNumber: t.number });
+  const items = checked.map((c) => c.check);
+  const noStore = { headers: { "Cache-Control": "no-store" } };
+
+  // TRX-17: record the verdicts on the draft as it was read.
+  const raw = row as Record<string, unknown>;
+  const draftUpdatedAt = typeof raw.updated_at === "string" && raw.updated_at ? raw.updated_at : null;
+  if (!draftUpdatedAt) return bad("The check ran, but it cannot be recorded: the draft carries no save time. Issue again, or issue anyway — your yes is recorded.", 503);
+  const record = {
+    draftUpdatedAt,
+    checkedAt: new Date().toISOString(),
+    checkedBy: user.id,
+    items: checked.map(({ check, versionId }) => ({
+      documentId: check.documentId,
+      versionId,
+      verdict: check.verdict,
+      ...(check.detail ? { detail: check.detail } : {}),
+    })),
+  };
+  const { data: wrote, error: recErr } = await supabaseAdmin
+    .from("transmittals")
+    .update({ stamp_check: record })
+    .eq("id", t.id)
+    .eq("status", "draft")
+    .eq("updated_at", draftUpdatedAt)
+    .select("id");
+  if (recErr) {
+    if (isMissingSchemaError(recErr)) {
+      // Before 20261199: nothing to record into, and nothing asks for it.
+      console.warn("[stamp-check] transmittals.stamp_check is missing (apply 20261199) — the check is answered unrecorded");
+      return NextResponse.json({ items, recorded: false }, noStore);
+    }
+    console.warn(`[stamp-check] the verdicts for ${t.number} could not be recorded:`, recErr.message);
+    return bad(`The check ran, but its result could not be recorded (${userFacingError(recErr, { context: "stamp-check", clause: true })}). Issue again to re-run it — if you issue anyway, every file goes out on your yes alone, without the portal's refusal to release an unmarked copy.`, 503);
+  }
+  if (!Array.isArray(wrote) || wrote.length === 0) {
+    return bad(`${t.number} was saved while its files were being checked — the check was not recorded. Open the draft, check it and issue again.`, 409);
+  }
+  return NextResponse.json({ items, recorded: true }, noStore);
 }

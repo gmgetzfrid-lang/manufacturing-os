@@ -18,7 +18,7 @@
 // it in; a null policy means "not loaded yet", which evaluates the shipped
 // defaults — byte-identical to the old literal pairs for an unconfigured org.
 
-import { policyAllows, type CapabilityPolicy } from "@/lib/capabilityPolicy";
+import { policyAllows, type CapabilityPolicy, type LoadedCapabilityPolicy } from "@/lib/capabilityPolicy";
 
 /** May this member force-release another user's checkout? The database
  *  (enforce_checkout_release_guard, trg_checkout_session_guard, the
@@ -54,4 +54,27 @@ export function holdAffordances(
     canOpen: policyAllows(policy, "holds.open", role ?? null, extra, uid ?? null),
     canRelease: policyAllows(policy, "holds.release", role ?? null, extra, uid ?? null),
   };
+}
+
+/** drafting-flow AUTHZ-15 (DEC-89 item 3, ratified DEC-90 A26; the
+ *  integrator's ruling of 2026-10-13 under the user's delegation, recorded
+ *  under DEC-89). Reads a loadCapabilityPolicyEntry answer for an AFFORDANCE
+ *  surface: the fault's words when the controls the policy decides must be
+ *  held back, else null.
+ *  - `unreadable`: no last good entry — `policy` is the shipped defaults, so
+ *    the policy-dependent controls are held back, labelled, with Try again;
+ *  - `stale`: the refresh failed and the last good policy was served — it IS
+ *    the org's policy as last read and is drawn as is, with no label
+ *    (AUTHZ-15's Remediation: "`stale` needs no label"); every action it
+ *    offers is re-checked by the server and the database. null.
+ *  A good read (fresh, or within the cache's TTL with no marker) is null.
+ *  On a fault the surface keeps its policy null AND forces its
+ *  policy-dependent controls off (a null policy evaluates the shipped
+ *  defaults in policyAllows), and says why on screen with a way to read
+ *  again. A read that throws is handled by the caller as a fault too. */
+export function affordancePolicyFault(
+  entry: Partial<LoadedCapabilityPolicy>,
+): string | null {
+  if (typeof entry.unreadable === "string") return entry.unreadable || "the capability policy could not be read";
+  return null;
 }

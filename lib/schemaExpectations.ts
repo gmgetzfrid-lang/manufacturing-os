@@ -197,6 +197,7 @@ export const RETIRED_TABLES: readonly RetiredTable[] = [
 
 export const EXPECTED_COLUMNS: readonly ColumnExpectation[] = [
   { table: "transmittals", column: "portal_token", migration: "20260910_transmittal_portal.sql", feature: "Transmittal recipient portal + issue emails" },
+  { table: "transmittals", column: "stamp_check", migration: "20261199_dc_roundF_transmittal_issue_verdict.sql", feature: "The transmittal issue verdict the server recorded for each PDF of the draft as issued (TRX-17)" },
   { table: "ai_connections", column: "embedding_api_key", migration: "20260930_semantic_layer.sql", feature: "Meaning-based (semantic) search" },
   { table: "knowledge_chunks", column: "embedding", migration: "20260930_semantic_layer.sql", feature: "pgvector semantic index" },
   { table: "documents", column: "ai_excluded", migration: "20260807_link_proposals.sql", feature: "Per-document AI exclusion (Pillar A)" },
@@ -211,6 +212,7 @@ export const EXPECTED_COLUMNS: readonly ColumnExpectation[] = [
   // ticket write — schema-health must shout, not the trigger.
   { table: "tickets", column: "closed_at", migration: "20260811_ticket_closed_at.sql (repair: 20261039)", feature: "Ticket close clock — archive eligibility; workflow close writes it" },
   { table: "tickets", column: "archived_at", migration: "20260809_ticket_archive.sql (repair: 20261039)", feature: "Closed-ticket archival (ticket-shed)" },
+  { table: "tickets", column: "outcome", migration: "20261195_df_roundG_outcome_and_departure.sql", feature: "How a request ended — the leak rate on /admin/analytics (drafting-flow LEAK-9 / GAP-107)" },
   { table: "tickets", column: "archive_id", migration: "20260809_ticket_archive.sql (repair: 20261039)", feature: "Closed-ticket archival (ticket-shed)" },
   { table: "tickets", column: "deliverable_rev", migration: "20260827_ticket_deliverable_rev.sql (repair: 20261039)", feature: "Autonomous deliverable revision labels" },
   { table: "tickets", column: "draft_iteration", migration: "20260827_ticket_deliverable_rev.sql (repair: 20261039)", feature: "Autonomous deliverable revision labels" },
@@ -394,5 +396,19 @@ export const EXPECTED_FUNCTIONS: readonly FunctionExpectation[] = [
     probeArgs: { p_org_id: "schema-health-probe", p_kind: "unit", p_old_code: "x", p_new_code: "y", p_dry_run: true },
     migration: "20261178_intel_roundG_codebook_lifecycle.sql",
     feature: "Renaming a Site Codebook code in place, every filing moved with it (/admin/codebook; CB-5)",
+  },
+  {
+    signature: "claim_access_request_burst(uuid, uuid[], text, text)",
+    fn: "claim_access_request_burst",
+    probeArgs: { p_org: "schema-health-probe", p_recipients: [], p_title: "x", p_body: "x" },
+    migration: "20261197_notif_roundG_burst_claim_digest_rail.sql",
+    feature: "The access-request door's 'more requests are waiting' notice, claimed once per Admin / DocCtrl under a per-org lock (PROD-16)",
+  },
+  {
+    signature: "departed_member_ticket_holders(integer)",
+    fn: "departed_member_ticket_holders",
+    probeArgs: { p_limit: "schema-health-probe" },
+    migration: "20261195_df_roundG_outcome_and_departure.sql",
+    feature: "The maintenance run hands back a departed member's leftover requests (drafting-flow EDGE-4, step 5b(i))",
   },
 ];

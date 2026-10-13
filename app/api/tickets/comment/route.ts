@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { notifyBatchWithReason } from "@/lib/inAppNotifications";
 import { extractMentionUids } from "@/lib/notifications";
 import { rowToTicket, escapeHtml } from "@/lib/ticketTransitions";
 import { memberHoldsAny } from "@/lib/roleHeld";
@@ -353,22 +354,24 @@ async function fanOut(params: {
   const audience = active ? recipients.filter((uid) => activeUids.has(uid)) : recipients;
   if (audience.length === 0) return;
 
-  // DELIV-7 dw3: a refused insert is logged, never silently dropped.
-  const { error: bellErr } = await supabaseAdmin.from("notifications").insert(
+  // DELIV-7 dw3: a refused insert is logged, never silently dropped. TAX-11
+  // (N14): the typed sink, ONE statement on the service role as before.
+  const { error: bellErr } = await notifyBatchWithReason(
     audience.map((uid) => ({
-      org_id: ticket.orgId,
-      user_id: uid,
-      kind: mentionSet.has(uid) ? "ticket_mention" : "ticket_comment",
+      orgId: ticket.orgId,
+      userId: uid,
+      kind: mentionSet.has(uid) ? "ticket_mention" as const : "ticket_comment" as const,
       title: mentionSet.has(uid) ? `${actorName} mentioned you · ${ticketLabel}` : `${actorName} commented · ${ticketLabel}`,
       body: snippet,
       link,
-      resource_type: "ticket",
-      resource_id: ticketId,
-      actor_user_id: actorUid,
-      actor_name: actorName,
+      resourceType: "ticket",
+      resourceId: ticketId,
+      actorUserId: actorUid,
+      actorName,
     })),
+    supabaseAdmin,
   );
-  if (bellErr) console.error("[ticket-comment] bell rows were not written (comment committed):", bellErr.message);
+  if (bellErr) console.error("[ticket-comment] bell rows were not written (comment committed):", bellErr);
 
   const [{ data: prefs }, { data: orgRow }] = await Promise.all([
     supabaseAdmin.from("notification_preferences").select("*").in("user_id", recipients),

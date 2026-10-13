@@ -699,6 +699,125 @@ one-paste migration:
   document under require (RG-7's hatch, a pointer move, so outside the
   status-only rule): for the integrator or the user to decide.
 
+⚠ **Paste order — P25 STATUS-SURFACE FOLLOW-UPS (2026-10-07).** Two
+one-paste migrations and an app deploy, in this order (the integrator's
+order at the P16 merge):
+1. **Deploy the app carrying P25 first.** It works on every database below
+   (each missing piece takes today's path, said in a comment where it is
+   decided): with `put_back_retired_issue` / `restore_reversed_source` at
+   their `20261165` / `20261164` bodies, a NULL-status rollback or reversal
+   meets their blank-status refusal (raised before any write) and puts the
+   document back as 'Issued', exactly as before P25; a reversal of a source
+   recorded with an EMPTY status is refused with a sentence naming
+   `20261192`, nothing changed; with no function at all, the direct write
+   puts back the NULL. With `20261193` missing, the rev-up of an IFC
+   document under require is routed to review by the app anyway. The
+   status editors record a move into force out of IFC (`REV-26`), and the
+   un-archive dialog offers an IFC-stamped archive back as IFC (`REV-27`),
+   whatever is pasted.
+2. **`20261192_dc_roundF_null_prior_status_put_back.sql`** (`REV-29`) —
+   after `20261165` and `20261164` (required; its first statement refuses,
+   changing nothing, without them), so it waits with them behind
+   `20261159` (paste guide row 119); **before `20261185`**. It re-creates
+   `put_back_retired_issue` (from `20261165`) and `restore_reversed_source`
+   (from `20261164`) so a rollback door / a reversal naming its event takes
+   a NULL or blank status; nothing else. After it a NULL-status rollback
+   lands as NULL wherever the put-back of the stamped status lands.
+   **Never re-paste `20261165` or `20261164` after it** — each brings back
+   the blank-status refusal on every door.
+3. **`20261185`** (P16, `REV-21`) — after `20261182`, as P16's paragraph
+   above says. With P25 deployed and `20261192` pasted, its deploy
+   condition is met.
+4. **`20261193_dc_roundF_ifc_rev_up_first_issue.sql`** (`REV-28` (a)) —
+   **after `20261185` (required**; its first statement refuses without
+   `20261185`'s REV-21 limb). It re-creates `enforce_document_publish_guard`
+   from `20261185`'s body with one block: a non-controller's rev-up (or
+   revert) of a document whose status no gate reads as in force (IFC,
+   empty, a variant, a library's own, NULL) into Issued / Locked, with no
+   reviewer roster, under require, is refused as a first issue. Every
+   rev-up of an Issued / Locked document is unchanged. **Never re-paste
+   `20261185`, `20261182`, `20261174`, `20261165`, `20261164`, `20261159`,
+   `20261151`, `20261144`, `20261139`, `20261105` or any earlier guard
+   migration after it.** One app result changes: a non-controller's revert
+   of such a document under require is refused — by the app up front
+   (`revertToVersion` asks `firstIssueGateForRevUp` and names the revert's
+   route: a Major revision of the earlier file through review, or Document
+   Control; P25 review fix), and by this file's block should the app's
+   gate be bypassed.
+- **What the app gets wrong if a step is skipped:** none of it admits a
+  write the guard refuses. With `20261185` pasted before `20261192`
+  (against this order), the P25 app's NULL rollback falls back to 'Issued',
+  which `20261185` refuses where its rule binds — the document stays
+  Superseded and the saga names it for manual attention, as on HEAD before
+  P25. Before `20261185`, an IFC-stamped archive is offered back as IFC
+  (not Issued) and Document Control is not offered an override into Issued
+  over a hold — the fail-closed direction.
+- **Probes for `lib/schemaExpectations.ts`** (not edited here; for the
+  integrator at merge): `put_back_retired_issue` prosrc LIKE
+  `%IF p_via = 'unarchive' THEN%IF btrim(COALESCE(p_status, '')) = '' THEN%`
+  (REV-29, `20261192`); `restore_reversed_source` prosrc LIKE
+  `%IF p_reversal_of IS NULL THEN%IF btrim(COALESCE(p_status, '')) = '' THEN%`
+  (REV-29, `20261192`); `enforce_document_publish_guard` prosrc LIKE
+  `%IF OLD.current_version_id IS NOT NULL AND v_intake_link IS NULL%AND COALESCE(is_controlled_issue_status(OLD.status)%AND COALESCE(OLD.status, '') NOT IN ('Issued', 'Locked')%AND NEW.status IN ('Issued', 'Locked'), false)%`
+  (REV-28 (a), `20261193`).
+  *Integrator at the P25 merge, 2026-10-13: not added — `lib/schemaExpectations.ts` checks that tables, columns and functions exist (with a call probe), never a function's body, and both re-created functions keep their signatures; as for `20261185` / `20261182`, each file's own final result set is the paste check. Paste rows 149 (`20261192`) and 150 (`20261193`), with §3A gates and step 5.*
+
+**MERGE note — for document-control P23 DIRECT-WRITE ISSUE RECORD (runs
+after P25 and rebases on `lib/revisions.ts` and the status editors).** P25
+added these limbs; keep each when rebasing (each is pinned by a test):
+- `lib/revisions.ts`:
+  - `isEntryIntoForce` (new, exported) and the `entryIntoForce` field of
+    `StatusIssueBasis` / `StatusIssueOutcome`;
+  - `putBackFromRetirementStamp(row, toStatus?)` — the new `toStatus`
+    argument (answers `v_restoring` for the target);
+  - `readStatusIssueBasis(documentId, held?, toStatus?)` — the new
+    `toStatus` argument, `entryIntoForce`, and `putBack: false` for an
+    entry into force;
+  - `recordStatusIssue`'s `entryIntoForce` input (the roster opened, the
+    review clock NOT reset, `STATUS_ISSUE_CLOCKS_NOTE.entryIntoForce`,
+    `details.entryIntoForce`);
+  - `changeDocumentStatus` — records `isIssueTransition ||
+    isUnguardedEntryIntoForce` (the `change` object), and passes `toStatus`
+    to `readStatusIssueBasis`;
+  - `unarchiveStampedRestoreStatus` (new), `readArchiveStampedRestore`
+    (new), `unarchiveRestoreDefault`'s `not-in-force` basis
+    (`stampedStatus` / `stampedRestore`), and `unarchiveDocument`'s
+    admission of the stamped status and its `entryIntoForce` pass-through;
+  - `putBackRetiredIssue` — `status: string | null`, `olderBodyStatus`,
+    the single `putBack` closure and `putBackAs` (the P19 lines it pins are
+    kept byte for byte); `PUT_BACK_BLANK_STATUS_REFUSAL` and
+    `describePutBackStatus` (new);
+  - `undoFailedSupersede` — the NULL prior status, `olderBodyStatus`,
+    `putBackAs` and `describePutBackStatus` in both sentences;
+  - `firstIssueGateForRevUp` — the in-force test (`IN_FORCE_STATUSES`) on
+    the "revision through the gate" return; `describeFirstIssue`'s
+    not-in-force sentence;
+  - `revertToVersion` — the first-issue gate before `publish_revision`
+    (its refusal names the revert's route) and the `REVERT` event's
+    `firstIssueWithoutSignOff` / `reviewPolicy` (P25 review fix).
+- `components/documents/BulkEditModal.tsx`: entering-force rows written
+  through `changeDocumentStatus` (`issuingIds.has(doc.id) ||
+  enteringForceIds.has(doc.id)`), their refusal marked "not issued:", and
+  the note's new text.
+- `components/documents/MetadataEditor.tsx`: the entry-into-force note's
+  new text and the refusal suffix's `isIssueRefusal(message)` for an
+  entry into force.
+- `app/(protected)/documents/[libraryId]/page.tsx` (three call-site edits):
+  `pageSawIssue` (~2799) also counts `isUnguardedEntryIntoForce`; the
+  `reissued` sentence's `outcome.entryIntoForce` branch (~2827, P25 review
+  fix); the un-archive `ArchiveConfirmModal` `onSuccess(restoredStatus)`
+  (~3417) shows the restored status. (Plus the `isUnguardedEntryIntoForce`
+  import the first edit needs.)
+- Also: `lib/documentLifecycle/common.ts` (`markSupersededAndLink`'s NULL
+  prior status and its compensation's rollback note, `Compensation.run`'s
+  optional note and `withCompensation`'s "Rollback note:" suffix,
+  `restoreSupersededSource`'s `string | null`, `olderBodyStatus` and its
+  `putBackAs` answer), `merge.ts` (`priorStatuses` keeps NULL), `reverse.ts`
+  (`recordsPriorStatus`, `statusToRestore`'s `present`, `restoreStatus`'s
+  older-body fallback and return value, `RESTORE_BLANK_STATUS_REFUSAL`),
+  `components/documents/ArchiveConfirmModal.tsx` and
+  `components/documents/lifecycle/ReverseConfirmModal.tsx`.
+
 ⚠ **Deploy note — P12 (operators, public-surfaces `SHR-11`).** Before
 deploying the app carrying P12, a self-hosted deployment (the Docker image,
 `next start`) must set `NEXT_PUBLIC_SITE_URL` to its public address — a
@@ -767,3 +886,51 @@ before that paste the modal behaves as before and logs why (`SHR-14`).
 **Handoffs from admin-and-org Round G P2 (2026-10-01).** Two more byte-freeing checks were left unowned when P9 merged. Admin-and-org P2 could not land them: neither is in P2's brief. Both are handed off; the integrator assigns the owner at the P2 merge (proposed: admin-and-org P3, after document-control P14 merges). (This paragraph first said both were P14's; P14's brief lists neither.) Each is recorded with its exact hunk and test shape:
 1. **Intelligence `ILIFE-5`, the direct storage delete.** `app/api/storage/delete/route.ts` must refuse with 409 a key that a knowledge-library mirror still names, or that any other registered key column outside `document_versions` names. It must fail closed with 503 when the read errors. The check is `lib/storageKeyRegistry.ts keysReferencedOutside(supabaseAdmin, [path], ["document_versions.file_url", "document_versions.source_file_key"])`, placed after the hold / retention refusal and before the custody row. The hunk is in `audit-reports/intelligence/18-lifecycle.md`, `ILIFE-5`, "the second call site". The shed's two call sites have landed in A&O P2.
 2. **Intelligence `ILIFE-6` criterion 3, the purge side.** `lib/storageOrphans.ts deleteOrphans` must re-check each candidate key just before its `DeleteObjects` batch, against every registered key column: `keysReferencedOutside` for the plain columns, and one containment read per key for the JSON-embedded ones. Any key still named is kept, and a read error deletes nothing. The scan reads its reference set page by page, so a reference that moves behind the cursor can be missing from it. The hunk is on `ILIFE-6`. A&O P2 owns the collector half of that file (`collectReferencedKeys`, keyset-paged); the purge half was P9's (`RET-7`).
+
+⚠ **Deploy then paste — P24 TRANSMITTAL ISSUE VERDICT (2026-10-13, `TRX-17`).**
+One one-paste migration, `20261199_dc_roundF_transmittal_issue_verdict.sql`.
+It goes after `20261133`, which it re-creates `transmittals_guard` from (it
+raises and changes nothing without it). **Never re-paste `20261133` after
+it**, or the verdict rule is dropped.
+- **Deploy the P24 app FIRST, then paste.** The P24 app works before the
+  paste: the stamp-check route meets the missing `stamp_check` column and
+  answers as before, unrecorded. The issuer's yes for an undecided file is
+  written on the item, which the older trigger keeps as item JSON.
+- **Pasted ahead of the app**, the old stamp-check route records nothing and
+  the old issue writes no yes. Every issue from the register is then refused
+  with the TRX-17 sentence until the app deploys. This fails closed (nothing
+  leaves unchecked), but keep that window at zero.
+- **Browser tabs left open across the deploy** run the old register code.
+  After the paste their issues are refused with the TRX-17 sentence (fail
+  closed) until the tab is refreshed. Say so in the deploy note. *(Added at
+  P24's review fix, at the reviewer's suggestion.)*
+- **The result set's inventory** counts the issued / acknowledged
+  transmittals (none carries a server verdict, and none is changed), their
+  armed and unmarked items, and the drafts that from now on need a recorded
+  check or a yes.
+- **Records (P24's integrator fix pass, 2026-10-13).** `TRX-17` is RESOLVED
+  for the code half. Its header now carries DEC-30's `Pending migration:`
+  line for `20261199`: paste after `20261133` and after the P24 app
+  deploys. Until then, done-when 2 holds in the file only. `TRX-15` is
+  restated: done-when 1's remainder is closed in code by P24, and the record
+  stays OPEN for its device check (`userHeld.TRX-15`).
+- **The confirm when the check could not run** now says the reason once,
+  above a list naming each file once (`describeUnstampable`'s
+  `notRunReason`). Before, the route's whole 503 / 409 sentence was copied
+  into every file's line.
+- **AUTHZ-15 under the integrator's ruling (2026-10-13, recorded under
+  DEC-89).** `stale` is the last good policy and is drawn as is, with no
+  label. Only `unreadable`, or a read that throws, holds the
+  policy-dependent controls back, with "Permissions could not be read — …"
+  and Try again. The integrator names P24 the owner of `HoldStrip`,
+  `/admin/holds`, `InspectorPanel` and `CheckoutStatusCell` (DEC-31), and
+  all five document-control surfaces follow the ruling. The Inspector
+  decides Force Release Lock, its hold controls and its notice from one
+  read. Only drafting-flow DF-P9's request surfaces stay open. This part of
+  P24 needs no migration.
+- **For the integrator at merge, not edited by P24:**
+  - the `20261199` row in `MIGRATION-PASTE-ORDER.md`;
+  - the optional `lib/schemaExpectations.ts` probe on
+    `transmittals.stamp_check`;
+  - restating `lib/capabilityPolicy.ts`'s `loadCapabilityPolicy` comment,
+    which still names these five surfaces as its readers.

@@ -113,8 +113,9 @@ describe("20261164 — restore_reversed_source, the reversal's recorded put-back
     expect(R).toContain("CREATE OR REPLACE FUNCTION restore_reversed_source(\n  p_document_id uuid,\n  p_status text,\n  p_reversal_of uuid,\n  p_reason text DEFAULT NULL\n) RETURNS text\nLANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$");
     expect(R).not.toMatch(/SECURITY DEFINER/);
     expect((stripComments(M).match(/CREATE OR REPLACE FUNCTION restore_reversed_source\(/g) ?? []).length).toBe(1);
-    // no other migration defines it
-    for (const f of files.filter((x) => x !== FILE)) expect(stripComments(mig(f)), f).not.toMatch(/FUNCTION\s+(?:public\.)?restore_reversed_source\b/);
+    // no other migration defines it — but 20261192 (P25, REV-29), which re-creates it from
+    // this body to take a NULL status (lineDiff-pinned in dcRoundFNullPriorStatusMigration.test.ts)
+    for (const f of files.filter((x) => x !== FILE && x !== "20261192_dc_roundF_null_prior_status_put_back.sql")) expect(stripComments(mig(f)), f).not.toMatch(/FUNCTION\s+(?:public\.)?restore_reversed_source\b/);
   });
 
   it("DRLS-16: refuses a call with no session first; authenticated only (PUBLIC, anon and service_role revoked)", () => {
@@ -222,7 +223,8 @@ describe("20261164 — restore_reversed_source, the reversal's recorded put-back
     const setters = files.filter((f) => /publish_hold_override/.test(withoutFlagReads(stripComments(mig(f)))));
     // REV-23 (P19): 20261165's put_back_retired_issue is the one later setter (the stamped put-back's
     // recorded door) — dcRoundFStampedPutBackMigration.test.ts pins it as this test pins restore_reversed_source.
-    expect(setters).toEqual(["20261151_dc_roundF_promote_transaction_and_hold_override.sql", FILE, "20261165_dc_roundF_stamped_put_back.sql"]);
+    // REV-29 (P25): and 20261192, which re-creates both doors (pinned in dcRoundFNullPriorStatusMigration.test.ts).
+    expect(setters).toEqual(["20261151_dc_roundF_promote_transaction_and_hold_override.sql", FILE, "20261165_dc_roundF_stamped_put_back.sql", "20261192_dc_roundF_null_prior_status_put_back.sql"]);
     // in this file: the restore's two set_config calls, the COMMENT ON FUNCTION's description,
     // and the probes that quote them — nothing in the guard but its reads
     const here = stripComments(M);

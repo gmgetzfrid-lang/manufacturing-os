@@ -368,6 +368,31 @@ describe("GOV-10 — cap changes are the ai.manage_caps capability, never the co
   });
 });
 
+describe("REGRESSION (notifications N14, TAX-11 done-when 2) — the cap-change notice is the row the raw insert wrote, through the typed sink", () => {
+  it("the same recipients, kind, link and columns; a refused write is logged with its reason and the change still answers ok", async () => {
+    await post(ADMIN, { capUsd: 0, userId: ENG });
+    const strip = ({ id: _id, created_at: _c, ...r }: Row) => r;
+    const base = {
+      org_id: ORG, kind: "ai_cap_changed", body: "Ada changed Eve's monthly AI cap from $10 to $0 (locked).",
+      link: "/intelligence/setup", resource_type: "ai_usage_limit", resource_id: ORG,
+      actor_user_id: ADMIN, actor_name: "Ada", metadata: { targetUserId: ENG, capUsd: 0, previousCapUsd: 10 },
+    };
+    expect(notices().map(strip).sort((a, b) => String(a.user_id).localeCompare(String(b.user_id)))).toEqual([
+      { ...base, user_id: ADMIN2, title: "A monthly AI cap changed" },
+      { ...base, user_id: ENG, title: "Your monthly AI cap changed" },
+    ].sort((a, b) => a.user_id.localeCompare(b.user_id)));
+    // before N14 the insert's outcome was swallowed (.then(() => undefined, () => undefined))
+    db.tables.notifications = [];
+    db.errors["notifications:insert"] = { message: "permission denied" };
+    const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const r = await post(ADMIN, { capUsd: 5, userId: ENG });
+    expect(r.status).toBe(200);
+    expect(warned).toHaveBeenCalledWith(expect.stringMatching(/^\[ai-usage\] the cap-change notice to 2 member\(s\) was not written \(the change stands\): permission denied$/));
+    warned.mockRestore();
+    delete db.errors["notifications:insert"];
+  });
+});
+
 describe("GOV-10 — a request that changes nothing is answered, audited and told as nothing (fix pass 11, sequential)", () => {
   const capDetails = () => db.tables.audit_logs.filter((a) => a.action === "AI_CAP_CHANGED").map((a) => plainDetails(a.details));
   const limitsOf = (uid: string | null) => db.tables.ai_usage_limits.filter((l) => (l.user_id ?? null) === uid).map((l) => l.monthly_cap_usd);

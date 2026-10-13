@@ -1741,6 +1741,8 @@ function stepDownSchema(missing: Set<SchemaSet>, msg: string | undefined, eligib
  *  structure. */
 interface ExistingImportRow {
   id: string;
+  /** SEC-21 residual 3: the row's own project, which a re-import keeps. */
+  project_id: string | null;
   external_ref: string | null;
   name: string;
   description: string | null;
@@ -1834,7 +1836,7 @@ function samePlanValue(column: string, stored: unknown, next: unknown): boolean 
 
 /** The existing-row read's columns: the base columns every database has,
  *  plus each migration's set the database is not known to lack. */
-const EXISTING_READ_BASE = ["id", "external_ref", "name", "description", "weight", "status", "actual_at", "planned_at", "created_by", "created_by_name"] as const;
+const EXISTING_READ_BASE = ["id", "project_id", "external_ref", "name", "description", "weight", "status", "actual_at", "planned_at", "created_by", "created_by_name"] as const;
 const READ_SETS = SCHEMA_FALLBACK.filter((id) => SCHEMA_SETS[id].read);
 /** The sets a chunked insert / upsert writes (links go in the structure pass). */
 const WRITE_SETS = SCHEMA_FALLBACK.filter((id) => id !== "20260715");
@@ -2167,8 +2169,16 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
   });
   // The upsert's INSERT half must be a complete row (NOT NULL columns), so the
   // existing row's provenance travels with it unchanged.
+  // SEC-21 residual 3 (projects Round G J19): a matched row keeps its own
+  // project. A document-only import matches the document's rows by
+  // document_id (the per-document unique index makes the document their
+  // identity), and some may have been imported onto a project with that
+  // document; writing the import's `project_id: null` onto them moved each
+  // one OFF its project. A project import matches only rows of its project,
+  // so for it this is the same value. 20261198's rail refuses a signed-in
+  // move of milestones.project_id without the projects' schedule authority.
   const upsertPayload = (p: Prepared) => ({
-    id: p.id!, ...scope, external_ref: p.row.externalRef ?? null,
+    id: p.id!, ...scope, project_id: p.existing!.project_id ?? null, external_ref: p.row.externalRef ?? null,
     created_by: p.existing!.created_by, created_by_name: p.existing!.created_by_name,
     ...updateFields(p),
   });

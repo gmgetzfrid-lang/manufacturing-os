@@ -358,3 +358,67 @@ describe("DELIV-7 dw1 — notify() answers whether its row landed; notifyMany re
     expect(await notifyMany({ orgId: ORG, userIds: [W_ACTIVE], actorUserId: W_ACTIVE, kind: "ticket_comment", title: "t" })).toEqual({ sent: 0, failed: 0 });
   });
 });
+
+describe("REGRESSION (notifications N14, TAX-11 done-when 2) — the ticket routes' bell rows are the rows the raw inserts wrote, through the typed sink", () => {
+  // The raw inserts wrote these columns by name; a column one left out
+  // (the comment route's metadata) is NULL — notifications has no column
+  // default but id and created_at (20260621 / 20260723) — and the typed
+  // sink writes it as an explicit null: the stored row is the same.
+  const COLUMNS = ["actor_name", "actor_user_id", "body", "kind", "link", "metadata", "org_id", "resource_id", "resource_type", "title", "user_id"];
+  const bellCalls = () => state.calls.filter((c) => c.table === "notifications" && c.method === "insert");
+
+  it("comment route: ONE statement on the service role; the mention and the comment rows, column for column", async () => {
+    seedMembers();
+    state.rows.tickets = [ticketRow()];
+    state.user = { id: REQ };
+    expect((await commentPost(req("/api/tickets/comment", { ticketId: "t1", text: `see @[Dee Drafter](${DRAFTER})` }))).status).toBe(200);
+    expect(bellCalls()).toHaveLength(1);
+    expect(bellCalls()[0].args[1]).toEqual({ count: "exact" });
+    const rows = inserted("notifications");
+    for (const r of rows) expect(Object.keys(r).sort()).toEqual(COLUMNS);
+    const link = rows[0].link as string;
+    expect(link).toMatch(/^\/requests\/t1\?c=.+/);
+    const base = { org_id: ORG, body: `see @[Dee Drafter](${DRAFTER})`, link, resource_type: "ticket", resource_id: "t1", actor_user_id: REQ, actor_name: "01", metadata: null };
+    expect(rows.find((r) => r.user_id === DRAFTER)).toEqual({ ...base, user_id: DRAFTER, kind: "ticket_mention", title: "01 mentioned you · REQ-1 Pump iso" });
+    expect(rows.find((r) => r.user_id === W_ACTIVE)).toEqual({ ...base, user_id: W_ACTIVE, kind: "ticket_comment", title: "01 commented · REQ-1 Pump iso" });
+    expect(bellUsers()).toEqual([DRAFTER, W_ACTIVE].sort());
+  });
+
+  it("workflow-action transition: ONE statement; every recipient's row the same but its user_id, carrying metadata.action (the alert the next transition retires)", async () => {
+    seedMembers();
+    state.rows.tickets = [ticketRow({ attachments: [DRAFT] })];
+    state.user = { id: DRAFTER };
+    expect((await workflowAction(req("/api/tickets/workflow-action", { ticketId: "t1", actionType: "submit_draft" }))).status).toBe(200);
+    expect(bellCalls()).toHaveLength(1);
+    const rows = inserted("notifications");
+    expect(rows.map((r) => r.user_id).sort()).toEqual([REQ, W_ACTIVE].sort());
+    for (const r of rows) expect(Object.keys(r).sort()).toEqual(COLUMNS);
+    const [a, b] = rows;
+    expect({ ...a, user_id: null }).toEqual({ ...b, user_id: null });
+    expect(a).toMatchObject({
+      org_id: ORG, kind: expect.stringMatching(/^ticket_(assigned|status)$/), link: "/requests/t1",
+      resource_type: "ticket", resource_id: "t1", actor_user_id: DRAFTER, actor_name: "02",
+      metadata: { action: "submit_draft", status: expect.any(String) },
+    });
+  });
+
+  it("workflow-action attach_file (thread activity): ONE statement; a comment-style row with no metadata.action", async () => {
+    seedMembers();
+    state.rows.tickets = [ticketRow({ attachments: [DRAFT] })];
+    state.user = { id: DRAFTER };
+    const res = await workflowAction(req("/api/tickets/workflow-action", { ticketId: "t1", actionType: "attach_file", attachment: { ...DRAFT, id: "a-d2", type: "Reference" } }));
+    expect(res.status).toBe(200);
+    expect(bellCalls()).toHaveLength(1);
+    const rows = inserted("notifications");
+    expect(rows.map((r) => r.user_id).sort()).toEqual([REQ, W_ACTIVE].sort());
+    for (const r of rows) {
+      expect(Object.keys(r).sort()).toEqual(COLUMNS);
+      expect(r).toMatchObject({
+        org_id: ORG, kind: "ticket_comment", title: "File added · REQ-1 Pump iso", link: "/requests/t1",
+        resource_type: "ticket", resource_id: "t1", actor_user_id: DRAFTER, actor_name: "02",
+        metadata: { activity: "attach_file", status: expect.any(String) },
+      });
+      expect((r.metadata as Row).action).toBeUndefined();
+    }
+  });
+});

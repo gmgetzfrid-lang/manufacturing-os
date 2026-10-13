@@ -110,6 +110,7 @@ lib/capabilityPolicy.ts:87-88 —
 
 - **Severity:** HIGH
 - **Status:** OPEN
+- **Assigned:** drafting-flow DF-P9 TICKET-PAGE (done-when 3: the page shows the source's drift through `SourceDriftBanner`) — by the integrator, 2026-10-13 (at the DF-P2 merge, DEC-31: DF-P2 has merged and named these limbs in drafting-flow `99-fix-sequencing.md`, "Hand-offs from DF-P2"; fleet plan updated).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/ticketTransitions.ts:221`, `lib/ticketTransitions.ts:247`, `app/api/tickets/workflow-action/route.ts:148`, `app/api/tickets/workflow-action/route.ts:240`, `app/(protected)/requests/[id]/page.tsx:577`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: no ticket transition writes documents.current_version_id or inserts a document_versions row. Corroborating dead code — `related_ticket_id` exists in supabase/schema.sql:334 and is READ at lib/revisions.ts:958 and documents/[libraryId]/page.tsx:1893, but a repo-wide grep finds no write to it anywhere. The only cross-link is advisory (lib/impact.ts:117 queries `metadata->source_document->>id`), and requests/[id]/page.tsx:577 stamps the ticket deliverable 'UNCONTROLLED COPY'.
@@ -160,6 +161,15 @@ app/(protected)/requests/[id]/page.tsx:649-651 —
 - ✗ (in part) Drift is flagged by rev labels, not a captured base version id (unchanged).
 
 **Scope / residual.** The stamp → **DF-P10** (`PHYS-9`); the captured base version id → **DF-P2** (`HAND-7`) — both as the DF-P0 record handed them.
+
+**Partial (2026-10-07, drafting-flow Round G).** DF-P2 CREATE — the base-version limb DF-P0 handed to DF-P2 (`99-fix-sequencing.md`, "Hand-offs from DF-P0"), the same work as `HAND-7`: a new ticket's `metadata.source_document` carries `version_id` captured at creation, `revDrift` compares version ids when both sides carry one, and `SourceDriftBanner` flags a moved source by version id.
+
+**Done-when.**
+- ✓ (in `DEC-22`'s shape) Unchanged (DF-P1).
+- ✗ The stamp (unchanged) → DF-P10.
+- ✗ (in part) A captured base version id now exists and the banner compares it; the ticket page's existing chip (`revDrift(sourceRef.rev, sourceDoc.doc?.rev)`) still passes rev labels until DF-P9 mounts the banner or passes `{ versionId, rev }` sides.
+
+**Scope / residual.** The stamp → **DF-P10** (`PHYS-9`); the page's comparison → **DF-P9** (the banner mount, `HAND-7`).
 
 ---
 
@@ -312,6 +322,7 @@ CREATE TABLE IF NOT EXISTS collections (
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** drafting-flow DF-P9 TICKET-PAGE (done-when 2: mount `SourceDriftBanner` on the ticket page and the queue's 'source moved' chip) and DF-P6 REVIEW-MODEL (done-when 3: approving over a drifted source needs a recorded acknowledgement) — by the integrator, 2026-10-13 (at the DF-P2 merge, DEC-31: DF-P2 has merged and named these limbs in drafting-flow `99-fix-sequencing.md`, "Hand-offs from DF-P2"; fleet plan updated).
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/requests/new/page.tsx:291`, `components/documents/CheckInPanel.tsx:262`, `app/api/tickets/workflow-action/route.ts:254`, `lib/revisions.ts:439`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: no document_versions.id is captured on the ticket, so the stale-base machinery in lib/revisions.ts:437-450 (`expectedBaseVersionId` / provenance session|declared|unverified) has nothing to compare against for a ticket-sourced change. The one version-anchored artifact, document_intents.base_version_id, is anchored to whatever was current when the ticket entered DRAFTING and expires on a TTL, so it also cannot flag the redlined Rev 3 having been superseded by Rev 4.
@@ -346,6 +357,17 @@ lib/revisions.ts:461 —
 - [ ] `metadata.source_document` captures `current_version_id` at request time alongside the display rev.
 - [ ] The ticket surface compares that captured version against the document's live `current_version_id` and shows a "source revision has moved" banner in the drafting queue and on the ticket.
 - [ ] Approving a deliverable drafted from a superseded base requires an explicit acknowledgement.
+
+**Partial (2026-10-07, drafting-flow Round G).** DF-P2 CREATE.
+- **The captured version.** The canonical shape gains `version_id`: `lib/sourceDocRef.ts` `buildSourceDocumentRef` always writes it (`null` when unknown), and `app/api/tickets/create/route.ts` fills it at request time from the register (`capturedVersion`, `:254-266`): a named version kept only when it is a version of that document; otherwise the document's `current_version_id` when the rev the requester saw is still current (or none was shown); `null` when the rev they saw is no longer current (never the wrong version). The check-in passes the version it checked in against.
+- **The comparison.** `revDrift` compares version ids when both sides carry one and falls back to rev labels for historical rows. New `components/requests/SourceDriftBanner.tsx` reads each source document's live `current_version_id` (in the ticket's org) and says "The source revision has moved since this request was raised", naming each sheet that moved; a failed read or an unreadable document says nothing.
+
+**Done-when.**
+- ✓ (1) `metadata.source_document` captures the version id alongside the display rev — `lib/__tests__/ticketCreateRoute.test.ts`, "HAND-7 / GAP-8 — the source documents, in this workspace, with the version each was raised against"; `lib/__tests__/sourceDocRef.test.ts`.
+- ✗ (in part) (2) The banner is built and tested (`lib/__tests__/sourceDriftBanner.test.ts`) but not mounted: the ticket page and the drafting queue are DF-P9's files.
+- ✗ (3) Approving a deliverable drafted from a superseded base requires no acknowledgement yet.
+
+**Scope / residual.** (2) → **DF-P9** (its brief mounts `SourceDriftBanner` on the ticket page as one line; the drafting-queue chip is added in `99-fix-sequencing.md`, "Hand-offs from DF-P2"). (3) → proposed **DF-P6** (the approval actions' review model), same section.
 
 ---
 

@@ -5,13 +5,12 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { uploadTicketAttachment } from '@/lib/storage';
 import { useRole } from '@/components/providers/RoleContext';
-import { TicketAttachment, TicketStatus, OrgDraftingSettings } from '@/types/schema';
-import { defaultSlaTargetDate } from '@/lib/notifications';
-import { emit } from '@/lib/notify/dispatch';
-import { resolveTicketRecipients } from '@/lib/ticketRouting';
-import { generateTicketNumber } from '@/lib/ticketNumber';
+import { OrgDraftingSettings } from '@/types/schema';
 import { readDraft, discardDraft } from '@/lib/draftHandoff';
-import { loadCodebook } from '@/lib/codebook';
+// DF-P2: the request is filed by /api/tickets/create — it validates, numbers,
+// inserts and notifies server-side. This page stages the files and posts.
+import { capSourceDocuments, contractLimitRefusal, droppedSourceDocumentsWarning, missingRequiredCustomField, ticketStagingFolder, unitOptionsFor, UNIT_UNKNOWN_LABEL, type TicketCreateAttachment, type TicketCreateSourceDoc } from '@/lib/ticketCreate';
+import { submitTicketCreate, discardStagedFiles, loadCodebookUnitList, queueNotNotifiedLine } from '@/lib/ticketCreateClient';
 import IsoGuidance from '@/components/ui/IsoGuidance';
 import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
 import { Input, Select } from '@/components/ui/Field';
@@ -39,13 +38,14 @@ const DEFAULT_SETTINGS: OrgDraftingSettings = {
       { label: "Inspection", value: "INSPECTION" }
     ]
   },
+  // No built-in units: the list is the workspace's own — its saved units,
+  // else its Site Codebook's, else none (lib/ticketCreate.ts unitOptionsFor,
+  // the resolver the create route runs too). A built-in list here was offered
+  // to a workspace that never saved its settings, and the route refused it.
   units: {
     label: "Unit / Area",
     enabled: true,
-    options: [
-      { label: "Unit 100", value: "100" },
-      { label: "Unit 200", value: "200" }
-    ]
+    options: []
   },
   priorities: {
     label: "Priority / Urgency",
@@ -63,7 +63,7 @@ const DEFAULT_SETTINGS: OrgDraftingSettings = {
 export default function NewTicketPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { activeRole, roles, userEmail, activeOrgId, uid } = useRole();
+  const { activeRole, roles, activeOrgId, uid } = useRole();
 
   // Pre-fill from URL params when arriving via "Send to Drafting" from the
   // document viewer. Parameters that aren't present just fall through to
@@ -83,6 +83,15 @@ export default function NewTicketPage() {
   // Config State
   const [config, setConfig] = useState<OrgDraftingSettings>(DEFAULT_SETTINGS);
   const [loadingConfig, setLoadingConfig] = useState(true);
+  // The workspace's settings could not be read: the form shows the built-in
+  // lists, which the server may refuse — said on the page, with a retry.
+  const [configError, setConfigError] = useState(false);
+  // DCW-7 / FRIC-3: the Site Codebook's unit list exists but could not be
+  // read — the form offers no unit (the request files as "Unit unknown") and
+  // says so, as the route does when ITS read fails: never a free-text box
+  // the route would check against a list this page could not show.
+  const [unitListError, setUnitListError] = useState(false);
+  const [configAttempt, setConfigAttempt] = useState(0);
 
   // Form State
   const [title, setTitle] = useState(prefillTitle);
@@ -101,9 +110,12 @@ export default function NewTicketPage() {
   // LIFE-4: the book-viewer hand-off stashes the marked-up sheet's document id
   // next to the blob. Keep it, so the ticket carries metadata.source_document
   // in the marked-up case too — that link is what the Impact panel and the
-  // drafting-intent bridge key on. (One sheet: source_document stays
-  // single-valued; multi-sheet provenance is GAP-8.)
+  // drafting-intent bridge key on. The first sheet is the singular
+  // source_document; GAP-8 lists every sheet in source_documents beside it.
   const [stashedDoc, setStashedDoc] = useState<{ id: string; number: string } | null>(null);
+  // GAP-8: every marked-up sheet the hand-off carried, in order — the first
+  // is the primary (`stashedDoc`), the rest ride in metadata.source_documents.
+  const [stashedDocs, setStashedDocs] = useState<Array<{ id: string; number: string }>>([]);
   const srcDocId = sourceDocId || stashedDoc?.id || '';
   const srcDocNum = sourceDocNum || stashedDoc?.number || '';
 
@@ -124,6 +136,12 @@ export default function NewTicketPage() {
         });
         const withDoc = d.files.find((f) => f.docId);
         if (withDoc?.docId) setStashedDoc({ id: withDoc.docId, number: withDoc.docNumber ?? '' });
+        const seenDocs = new Set<string>();
+        setStashedDocs(d.files.flatMap((f) => {
+          if (!f.docId || seenDocs.has(f.docId)) return [];
+          seenDocs.add(f.docId);
+          return [{ id: f.docId, number: f.docNumber ?? '' }];
+        }));
       })
       .catch((e) => console.error('draft markup handoff failed', e));
     return () => { alive = false; };
@@ -142,42 +160,65 @@ export default function NewTicketPage() {
     const loadConfig = async () => {
       setLoadingConfig(true);
       try {
-        const { data } = await supabase
+        const { data, error } = await supabase
           .from('org_configurations')
           .select('data')
           .eq('org_id', activeOrgId)
           .eq('key', 'drafting')
-          .single();
-        const cfg: OrgDraftingSettings = (data?.data as OrgDraftingSettings) || DEFAULT_SETTINGS;
-        // No unit options configured on the form? Inherit the Site Codebook's
-        // unit list — taught once in Admin → Site Codebook, spoken here too.
-        if (!(cfg.units?.options?.length > 0)) {
-          try {
-            const book = await loadCodebook(activeOrgId);
-            if (book.units.length > 0) {
-              cfg.units = {
-                label: cfg.units?.label ?? 'Unit',
-                enabled: cfg.units?.enabled ?? true,
-                options: book.units.map((u) => ({ label: `${u.code} — ${u.label}`, value: u.code })),
-              };
-            }
-          } catch { /* codebook optional — free-text unit input remains */ }
+          .maybeSingle();
+        setConfigError(!!error);
+        // The SAVED settings — null when this workspace never saved any (no
+        // row), which is not an error.
+        const saved = error ? null : ((data?.data as OrgDraftingSettings | null | undefined) ?? null);
+        const cfg: OrgDraftingSettings = { ...DEFAULT_SETTINGS, ...(saved ?? {}) };
+        // A saved request-type list an admin emptied (Admin → Requests allows
+        // it) would leave nothing to pick, and the route needs a type: the
+        // built-in list stands in — the route takes any type when the
+        // workspace configures none (20261038's rule, requestTypeAllowed).
+        if (!((cfg.requestTypes?.options?.length ?? 0) > 0)) {
+          cfg.requestTypes = { ...DEFAULT_SETTINGS.requestTypes, label: cfg.requestTypes?.label || DEFAULT_SETTINGS.requestTypes.label };
         }
+        // DCW-7: the unit list is the one the create route checks against —
+        // unitOptionsFor(saved settings, Site Codebook units): the saved units,
+        // else the codebook's (taught once in Admin → Site Codebook, spoken
+        // here too), else none (free text).
+        // The codebook read is classed as the route classes its own
+        // (unitListReadFailure): not there yet → no list (free text); there
+        // but unreadable → no unit offered, said on the page.
+        let codebookUnits: Array<{ code: string; label: string | null }> = [];
+        let unitsUnreadable = false;
+        if (!((saved?.units?.options?.length ?? 0) > 0)) {
+          const read = await loadCodebookUnitList(activeOrgId);
+          codebookUnits = read.units;
+          unitsUnreadable = read.failure === 'unreadable';
+        }
+        setUnitListError(unitsUnreadable);
+        if (unitsUnreadable) setUnit('');
+        cfg.units = {
+          label: saved?.units?.label ?? DEFAULT_SETTINGS.units.label,
+          enabled: saved?.units?.enabled ?? true,
+          options: unitOptionsFor(saved, codebookUnits).map((o) => ({ label: o.label, value: o.value })),
+        };
         setConfig(cfg);
         if (cfg.requestTypes?.options?.length > 0) setRequestType(String(cfg.requestTypes.options[0].value));
-        if (cfg.units?.options?.length > 0) setUnit(String(cfg.units.options[0].value));
+        // FRIC-3 / DCW-7: unit is optional, and "unknown" is an explicit
+        // answer. A one-unit workspace has only one honest answer and gets it;
+        // with several, nothing is silently pre-selected (the first unit in the
+        // list filed requests against the wrong area).
+        if (cfg.units?.options?.length === 1) setUnit(String(cfg.units.options[0].value));
         if (cfg.priorities?.options?.length > 0) {
           const mid = Math.floor(cfg.priorities.options.length / 2);
           setPriority(Number(cfg.priorities.options[mid].value));
         }
       } catch (e) {
         console.error("Config Load Failed", e);
+        setConfigError(true);
       } finally {
         setLoadingConfig(false);
       }
     };
     loadConfig();
-  }, [activeOrgId]);
+  }, [activeOrgId, configAttempt]);
 
   // --- HANDLERS ---
 
@@ -211,179 +252,141 @@ export default function NewTicketPage() {
     setFiles(prev => prev.filter((_, i) => i !== index));
   };
 
+  // FRIC-3 done-when 1: a refused submit says which field and puts the
+  // cursor there. Field names are the contract's (lib/ticketCreate.ts).
+  const focusField = (field: string) => {
+    const id = field.startsWith('custom:') ? `custom-${field.slice(7).replace('.', '-')}` : `request-${field}`;
+    const el = document.getElementById(id) as HTMLElement | null;
+    el?.focus();
+    el?.scrollIntoView?.({ block: 'center' });
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title || !description || !unit) return;
+    // The inputs are `required`, so the browser normally stops this first;
+    // a value of only spaces gets here and is named, never a silent return.
+    if (!title.trim() || !description.trim()) {
+      const field = !title.trim() ? 'title' : 'description';
+      await appAlert(field === 'title' ? 'A title is required.' : 'A description of the work is required.');
+      focusField(field);
+      return;
+    }
     if (!activeOrgId) {
       await appAlert("No active workspace selected.");
       return;
     }
-    
+    if (!uid) {
+      await appAlert({ message: "Failed to create ticket: Not authenticated", tone: "danger" });
+      return;
+    }
+    // EDGE-13: every check the form can make runs BEFORE any file is uploaded
+    // and before the request has a number — the server repeats them, and
+    // allocates the number only once they pass.
+    const missing = missingRequiredCustomField(config, customValues);
+    if (missing) {
+      await appAlert(missing.error);
+      focusField(missing.field);
+      return;
+    }
+    // The contract's size limits too (the route applies the same rule).
+    const tooBig = contractLimitRefusal({ title, description, attachmentCount: files.length + (sourceFileUrl ? 1 : 0) });
+    if (tooBig) {
+      await appAlert(tooBig.error);
+      focusField(tooBig.field);
+      return;
+    }
+
     setIsSubmitting(true);
     setUploadStatus('Initializing Request...');
 
+    // Files are staged under this requester's pending prefix; the route moves
+    // them under the request's own number once the row exists.
+    const staged: Array<{ key: string; name: string }> = [];
     try {
-      if (!uid) throw new Error("Not authenticated");
-
-      if (!activeOrgId) throw new Error("No active workspace selected.");
-      // Atomic, collision-proof, human request number (e.g. KE-DDRT-26-0001).
-      const ticketNumber = await generateTicketNumber(activeOrgId);
-      const uploadedAttachments: TicketAttachment[] = [];
-
-      // If we arrived via "Send to Drafting" with a source file URL,
-      // attach it as a Source reference. The url is the R2 storage path —
-      // FileViewerModal resolves it to a presigned URL on view.
-      if (sourceFileUrl) {
-        uploadedAttachments.push({
-          id: crypto.randomUUID(),
-          name: sourceFileName || sourceDocNum || 'source.pdf',
-          url: sourceFileUrl,
-          type: 'Source',
-          status: 'submitted',
-          size: '—',
-          uploadedBy: userEmail || 'Unknown',
-          uploadedAt: new Date().toISOString(),
-        } as TicketAttachment);
-      }
-
       if (files.length > 0) {
         setUploadStatus(`Uploading ${files.length} files...`);
+        const batch = crypto.randomUUID();
         for (const file of files) {
-          const result = await uploadTicketAttachment({ file, orgId: activeOrgId, ticketId: ticketNumber });
-          uploadedAttachments.push({
-            id: crypto.randomUUID(),
-            name: file.name,
-            url: result.url,
-            type: 'Source',
-            status: 'submitted',
-            size: (file.size / 1024 / 1024).toFixed(2) + ' MB',
-            uploadedBy: userEmail || 'Unknown',
-            uploadedAt: new Date().toISOString()
-          });
+          const result = await uploadTicketAttachment({ file, orgId: activeOrgId, ticketId: ticketStagingFolder(uid, batch) });
+          staged.push({ key: result.url, name: file.name });
         }
       }
-
-      setUploadStatus('Finalizing Ticket...');
-      const now = new Date().toISOString();
-      // Every request enters the assignment queue (Admin / DraftingSupervisor).
-      // Engineering review is a manual branch from there, not an auto-gate.
-      const initialStatus: TicketStatus = 'PENDING_ASSIGNMENT';
-
-      // Resolve target completion: user-supplied wins, else default per request_type
-      const targetCompletion = targetDate
-        ? new Date(targetDate).toISOString()
-        : defaultSlaTargetDate(requestType);
-
-      const historyEntries: Array<Record<string, unknown>> = [
-        { action: 'Created', user: userEmail, role: activeRole, date: now, details: 'Ticket created via portal' },
-      ];
-      if (srcDocId) {
-        historyEntries.push({
-          action: 'Source Linked', user: userEmail, role: activeRole, date: now,
-          details: `Sent from document viewer · ${srcDocNum || sourceDocTitle || srcDocId} Rev ${sourceDocRev || '?'}`,
-        });
-      }
-
-      // Validate required custom fields before insert
-      for (const cat of (config.customCategories ?? []).filter((c) => c.enabled)) {
-        const vals = customValues[cat.id] ?? {};
-        for (const f of cat.fields) {
-          if (!f.required) continue;
-          const v = vals[f.key];
-          const empty = v == null || v === "" || (Array.isArray(v) && v.length === 0);
-          if (empty) {
-            await appAlert(`"${f.label}" (${cat.label}) is required.`);
-            setIsSubmitting(false);
-            setUploadStatus('');
-            return;
-          }
-        }
-      }
-
-      const metadata: Record<string, unknown> = {};
-      if (Object.keys(customValues).length > 0) metadata.custom_categories = customValues;
-      if (srcDocId) {
-        // LIFE-15: the one canonical shape (null over "", no path).
-        metadata.source_document = buildSourceDocumentRef({ id: srcDocId, documentNumber: srcDocNum, title: sourceDocTitle, rev: sourceDocRev });
-      }
-
-      const ticketRow: Record<string, unknown> = {
-        org_id: activeOrgId,
-        ticket_id: ticketNumber,
-        title, description, unit,
-        request_type: requestType,
-        priority, status: initialStatus,
-        requester_id: uid,
-        requester_name: userEmail?.split('@')[0] || 'Unknown',
-        requester_email: userEmail,
-        // ADD-3: the role that decides approval routing is chosen by
-        // relevance (an engineer tier held anywhere waives the engineer
-        // route), not by the headline's rank.
-        requester_role: relevantRequesterRole(roles, activeRole),
-        attachments: uploadedAttachments,
-        history: historyEntries,
-        comments: [], unread_by: [],
-        // Requester auto-subscribes as a watcher so they see all activity
-        watchers: uid ? [uid] : [],
-        target_completion_at: targetCompletion,
-        created_at: now, last_modified: now,
-      };
-      // Only attach metadata when there's actually something to store
-      // (custom-category values or a linked source document). Avoids sending
-      // an empty blob for the common case.
-      if (Object.keys(metadata).length > 0) ticketRow.metadata = metadata;
-
-      // IMPORTANT: supabase-js does NOT throw on a failed insert — it returns
-      // { error }. Check it explicitly. Skipping this is what let a rejected
-      // insert (e.g. a missing column or RLS denial) look like success and
-      // redirect to an empty queue.
-      const { data: inserted, error: insertError } = await supabase
-        .from('tickets')
-        .insert(ticketRow)
-        .select('id')
-        .single();
-      if (insertError) throw insertError;
-      // The hand-off stash has done its job (LIFE-3): drop it now, not on read.
-      if (draftKey) void discardDraft(draftKey).catch(() => { /* best-effort */ });
-
-      // Notify the right people. Fire-and-forget — the redirect
-      // shouldn't wait. resolveTicketRecipients picks the role pool
-      // (DraftingSupervisor → fallback Admin for assignment,
-      // engineers for initial review) so we never spam every admin.
-      void (async () => {
-        try {
-          const recipients = await resolveTicketRecipients(activeOrgId, initialStatus, uid ?? undefined);
-          if (recipients.length === 0) return;
-          await emit({
-            orgId: activeOrgId,
-            category: 'assignment',
-            kind: 'request_pending_approval',
-            title: `New drafting request: ${title}`,
-            body: 'Ready for a drafter to be assigned.',
-            link: `/requests/${inserted?.id ?? ''}`,
-            resource: { type: 'ticket', id: String(inserted?.id ?? '') },
-            actorUserId: uid ?? undefined,
-            actorName: userEmail?.split('@')[0],
-            audience: { involved: recipients.map((m) => m.uid) },
-            metadata: { request_type: requestType, priority, unit },
-          });
-        } catch (e) {
-          console.warn('[requests] notify failed (non-blocking)', e);
-        }
-      })();
-
-      setUploadStatus('Done!');
-      setTimeout(() => {
-        router.push('/requests'); // Redirect to new route
-      }, 500);
-
     } catch (error) {
-      console.error("Creation failed:", error);
+      console.error("Attachment upload failed:", error);
+      void discardStagedFiles(activeOrgId, staged.map((f) => f.key));
       const msg = error instanceof Error ? error.message : String(error);
       await appAlert({ message: `Failed to create ticket: ${msg}`, tone: "danger" });
       setIsSubmitting(false);
       setUploadStatus('');
+      return;
     }
+
+    setUploadStatus('Finalizing Ticket...');
+    // If we arrived via "Send to Drafting" with a source file URL, attach it
+    // as a Source reference (the R2 storage path — FileViewerModal resolves
+    // it to a presigned URL on view).
+    const attachments: TicketCreateAttachment[] = [
+      ...(sourceFileUrl ? [{ kind: 'source_reference' as const, key: sourceFileUrl, name: sourceFileName || sourceDocNum || 'source.pdf' }] : []),
+      ...staged.map((f) => ({ kind: 'staged' as const, key: f.key, name: f.name })),
+    ];
+    // The source documents, primary first (LIFE-4: the stashed sheet when
+    // no document came by URL; GAP-8: every other stashed sheet after it).
+    const sourceDocuments: TicketCreateSourceDoc[] = [];
+    if (srcDocId) {
+      sourceDocuments.push({ id: srcDocId, documentNumber: srcDocNum || null, title: sourceDocTitle || null, rev: sourceDocRev || null, versionId: null });
+    }
+    for (const d of stashedDocs) {
+      if (d.id !== srcDocId) sourceDocuments.push({ id: d.id, documentNumber: d.number || null, title: null, rev: null, versionId: null });
+    }
+    // GAP-8 / DEC-101 item 5: the sheet list is advisory — the same
+    // cap the route keeps, applied here; the sheets past it are named after
+    // filing, never a refusal.
+    const cappedDocs = capSourceDocuments(sourceDocuments);
+    const formWarnings = cappedDocs.dropped > 0 ? [droppedSourceDocumentsWarning(cappedDocs.dropped)] : [];
+
+    const res = await submitTicketCreate({
+      orgId: activeOrgId,
+      title, description,
+      requestType,
+      priority,
+      unit: unitListError ? null : (unit || null),
+      targetCompletionAt: targetDate ? new Date(targetDate).toISOString() : null,
+      // ADD-3: the role that decides approval routing is chosen by
+      // relevance (an engineer tier held anywhere waives the engineer
+      // route), not by the headline's rank — and kept only if held.
+      requesterRole: relevantRequesterRole(roles, activeRole),
+      customCategories: Object.keys(customValues).length > 0 ? customValues : null,
+      sourceDocuments: cappedDocs.kept,
+      attachments,
+      origin: { kind: 'portal' },
+    });
+    if (!res.ok) {
+      console.error("Creation failed:", res.error);
+      await appAlert({ message: `Failed to create ticket: ${res.error}`, tone: "danger" });
+      if (res.field) focusField(res.field);
+      setIsSubmitting(false);
+      setUploadStatus('');
+      return;
+    }
+    // The hand-off stash has done its job (LIFE-3): drop it now, not on read.
+    if (draftKey) void discardDraft(draftKey).catch(() => { /* best-effort */ });
+    // A hand-off the route could not use (a source document since removed or
+    // not visible to you, a file outside this workspace, sheets past the
+    // cap) was dropped, not refused — say what.
+    // EDGE-8: the route filed the request but could not tell the assignment
+    // queue (the notice failed, or nobody holds the queue) — said here, never
+    // a 'Done!' that looks told.
+    const notTold = queueNotNotifiedLine(res);
+    const warnings = [...formWarnings, ...(res.warnings ?? []), ...(notTold ? [notTold] : [])];
+    if (warnings.length > 0) {
+      await appAlert({ title: `Filed ${res.ticketNumber}`, message: warnings.join(' ') });
+    }
+
+    // EDGE-8: the route filed (and notified, or said it could not) before it
+    // answered — nothing is left for this tab to finish, so the redirect
+    // waits on nothing.
+    setUploadStatus('Done!');
+    router.push('/requests');
   };
 
   if (loadingConfig) {
@@ -419,9 +422,25 @@ export default function NewTicketPage() {
 
         <form onSubmit={handleSubmit} className="space-y-6">
 
+          {configError && (
+            <div role="alert" className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-3 text-xs text-amber-900">
+              <span className="flex-1">
+                Couldn&apos;t load this workspace&apos;s request settings — the lists below are the built-in ones, and the
+                request may be refused for a type or unit this workspace doesn&apos;t use.
+              </span>
+              <button
+                type="button"
+                onClick={() => setConfigAttempt((n) => n + 1)}
+                className="px-3 py-1.5 rounded-lg border border-amber-300 bg-[var(--color-surface)] font-bold hover:bg-amber-100"
+              >
+                Try again
+              </button>
+            </div>
+          )}
+
           {/* Source-document chip when arriving via "Send to Drafting" */}
           {(srcDocId || sourceFileUrl) && (
-            <div className="bg-teal-50 border border-teal-200 rounded-xl p-3 flex items-start gap-3">
+            <div id="request-sourceDocuments" tabIndex={-1} className="bg-teal-50 border border-teal-200 rounded-xl p-3 flex items-start gap-3">
               <FileText className="w-5 h-5 text-teal-700 mt-0.5 shrink-0" />
               <div className="flex-1 min-w-0">
                 <div className="text-[10px] font-black text-teal-800 uppercase tracking-widest">Source document</div>
@@ -452,6 +471,7 @@ export default function NewTicketPage() {
                   {config.requestTypes.label} <span className="text-red-500">*</span>
                 </label>
                 <Select
+                  id="request-requestType"
                   className="font-medium"
                   value={requestType}
                   onChange={(e) => setRequestType(e.target.value)}
@@ -465,26 +485,50 @@ export default function NewTicketPage() {
               {/* DYNAMIC UNIT / AREA */}
               <div>
                 <label className="block text-sm font-bold text-[var(--color-text)] mb-2">
-                  {config.units.label} <span className="text-red-500">*</span>
+                  {config.units.label} <span className="text-[var(--color-text-faint)] font-normal text-xs">(optional)</span>
                 </label>
-                {config.units.options.length > 0 ? (
+                {unitListError ? (
+                  <div role="alert" id="request-unit-unreadable" className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-3 text-xs text-amber-900">
+                    <span className="flex-1">
+                      Couldn&apos;t load this workspace&apos;s unit list — retry, or file the request with no unit
+                      (&ldquo;{UNIT_UNKNOWN_LABEL}&rdquo;).
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setConfigAttempt((n) => n + 1)}
+                      className="px-3 py-1.5 rounded-lg border border-amber-300 bg-[var(--color-surface)] font-bold hover:bg-amber-100"
+                    >
+                      Try again
+                    </button>
+                  </div>
+                ) : config.units.options.length > 0 ? (
                   <Select
+                    id="request-unit"
                     className="font-medium"
                     value={unit}
                     onChange={(e) => setUnit(e.target.value)}
                   >
+                    {/* FRIC-3: not knowing the unit is an answer, never a dead end. */}
+                    <option value="">{UNIT_UNKNOWN_LABEL}</option>
                     {config.units.options.map((opt, idx) => (
                       <option key={idx} value={opt.value}>{opt.label}</option>
                     ))}
                   </Select>
                 ) : (
-                  <Input
-                    type="text"
-                    placeholder="e.g. 20-CRUDE"
-                    value={unit}
-                    onChange={(e) => setUnit(e.target.value.toUpperCase())}
-                    required
-                  />
+                  <>
+                    <Input
+                      id="request-unit"
+                      type="text"
+                      placeholder="e.g. 20-CRUDE — or leave blank"
+                      value={unit}
+                      onChange={(e) => setUnit(e.target.value.toUpperCase())}
+                    />
+                    {/* DCW-7: the free-text box is a setup gap, and says so. */}
+                    <p className="text-[10px] text-[var(--color-text-muted)] mt-1">
+                      This workspace has no unit list yet — an admin can add one in Admin → Site Codebook.
+                      Leave it blank if you don&apos;t know: {UNIT_UNKNOWN_LABEL.toLowerCase()}.
+                    </p>
+                  </>
                 )}
               </div>
             </div>
@@ -526,6 +570,7 @@ export default function NewTicketPage() {
                 Title / Subject <span className="text-red-500">*</span>
               </label>
               <input 
+                id="request-title"
                 type="text"
                 placeholder="Brief summary of the work..."
                 className="w-full p-3 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-lg focus:ring-2 focus:ring-orange-500 outline-none transition-all text-sm font-bold text-[var(--color-text)]"
@@ -540,6 +585,7 @@ export default function NewTicketPage() {
                 Detailed Scope <span className="text-red-500">*</span>
               </label>
               <textarea 
+                id="request-description"
                 className="w-full p-3 h-32 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-lg focus:ring-2 focus:ring-orange-500 outline-none resize-none transition-all text-sm"
                 placeholder="Describe the work required in detail..."
                 value={description}
@@ -567,6 +613,7 @@ export default function NewTicketPage() {
             </h2>
             
             <div
+              id="request-attachments"
               role="button"
               tabIndex={0}
               onClick={() => fileInputRef.current?.click()}
@@ -659,7 +706,6 @@ export default function NewTicketPage() {
 // where `next` is the whole map for this category.
 
 import type { CustomCategoryConfig, CustomFieldDef } from '@/types/schema';
-import { buildSourceDocumentRef } from '@/lib/sourceDocRef';
 import { relevantRequesterRole } from '@/lib/roleCapabilities';
 
 function CustomCategoryCard({
@@ -679,7 +725,7 @@ function CustomCategoryCard({
       {category.description && <p className="text-xs text-[var(--color-text-muted)] mb-4">{category.description}</p>}
       <div className="space-y-3">
         {category.fields.map((f) => (
-          <CustomFieldRenderer key={f.key} field={f} value={values[f.key]} onChange={(v) => setField(f.key, v)} />
+          <CustomFieldRenderer key={f.key} domId={`custom-${category.id}-${f.key}`} field={f} value={values[f.key]} onChange={(v) => setField(f.key, v)} />
         ))}
       </div>
     </div>
@@ -687,8 +733,10 @@ function CustomCategoryCard({
 }
 
 function CustomFieldRenderer({
-  field, value, onChange,
+  domId, field, value, onChange,
 }: {
+  /** FRIC-3: the id a refused submit focuses. */
+  domId: string;
   field: CustomFieldDef;
   value: unknown;
   onChange: (v: unknown) => void;
@@ -706,6 +754,7 @@ function CustomFieldRenderer({
         <div>
           {baseLabel}
           <input
+            id={domId}
             value={(value as string) ?? ""}
             onChange={(e) => onChange(e.target.value)}
             placeholder={field.placeholder}
@@ -719,6 +768,7 @@ function CustomFieldRenderer({
         <div>
           {baseLabel}
           <textarea
+            id={domId}
             value={(value as string) ?? ""}
             onChange={(e) => onChange(e.target.value)}
             placeholder={field.placeholder}
@@ -733,6 +783,7 @@ function CustomFieldRenderer({
         <div>
           {baseLabel}
           <input
+            id={domId}
             type="number"
             value={value == null ? "" : Number(value)}
             onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))}
@@ -747,6 +798,7 @@ function CustomFieldRenderer({
         <div>
           {baseLabel}
           <input
+            id={domId}
             type="date"
             value={(value as string) ?? ""}
             onChange={(e) => onChange(e.target.value)}
@@ -760,6 +812,7 @@ function CustomFieldRenderer({
         <div>
           <label className="inline-flex items-center gap-2 text-sm text-[var(--color-text)]">
             <input
+              id={domId}
               type="checkbox"
               checked={!!value}
               onChange={(e) => onChange(e.target.checked)}
@@ -775,6 +828,7 @@ function CustomFieldRenderer({
         <div>
           {baseLabel}
           <select
+            id={domId}
             value={(value as string) ?? ""}
             onChange={(e) => onChange(e.target.value)}
             className="w-full px-3 py-2 border border-[var(--color-border)] rounded-lg text-sm bg-[var(--color-surface)]"
@@ -792,7 +846,7 @@ function CustomFieldRenderer({
       return (
         <div>
           {baseLabel}
-          <div className="flex flex-wrap gap-1.5">
+          <div id={domId} tabIndex={-1} className="flex flex-wrap gap-1.5">
             {(field.options ?? []).map((o, i) => {
               const v = String(o.value);
               const on = selected.includes(v);

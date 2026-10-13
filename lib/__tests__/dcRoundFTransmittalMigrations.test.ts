@@ -120,9 +120,9 @@ describe("20261133 — transmittals_guard extended from 20261027, verbatim and c
   const baseHead = base.slice(0, base.indexOf("BEGIN\n"));
   const baseTail = base.slice(base.indexOf("  -- Every item that names a document"));
 
-  it("20261027 is the newest definition before this file (no other migration re-creates the guard)", () => {
+  it("20261027 is the newest definition before this file (no other migration re-creates the guard before it; P24's 20261199 builds on this one in turn — pinned in dcRoundFTransmittalIssueVerdict.test.ts)", () => {
     const definers = numbered.filter((f) => read(f).includes(H));
-    expect(definers).toEqual(["20261027_dc_phase1_unguarded_doors.sql", "20261133_dc_roundF_transmittal_rails.sql"]);
+    expect(definers).toEqual(["20261027_dc_phase1_unguarded_doors.sql", "20261133_dc_roundF_transmittal_rails.sql", "20261199_dc_roundF_transmittal_issue_verdict.sql"]);
   });
   it("every line of the 20261027 body survives (lineDiff), its header is the prefix and its item rail + mint + RETURN the suffix", () => {
     expect(lineDiff(base, next).onlyInA).toEqual([]);

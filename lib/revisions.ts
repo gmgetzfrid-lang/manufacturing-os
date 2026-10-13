@@ -45,6 +45,8 @@ import { onDocumentIssuedAck } from "@/lib/acknowledgments";
 import { recomputeRetention } from "@/lib/retention";
 import { assertNotOnHold } from "@/lib/holdGate";
 import { isControlledIssueStatus, isRetiredStatus, isIssueTransition, RETIRED_NOT_ISSUED_STAMP, WORK_IN_PROGRESS_STATUSES } from "@/lib/issueStatus";
+import { isUnguardedEntryIntoForce } from "@/lib/documentStatusOptions";
+import { IN_FORCE_STATUSES } from "@/lib/verifyVerdict";
 import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
 
 // ─── Publish contract errors ─────────────────────────────────────────────
@@ -1001,7 +1003,23 @@ export async function createDocumentWithFile(input: {
  *  (never for a controller, who issues it directly) every door refuses it up
  *  front with describeControllerOnlyFirstIssue instead of routing it to a
  *  review that cannot complete; `mustReview` stays true (the actor still may
- *  not publish it unreviewed). */
+ *  not publish it unreviewed).
+ *
+ *  REV-28 option (a) (document-control P25; DEC-77, decided by the
+ *  integrator under the user's delegation at the P16 merge): a document in
+ *  an issue status that NO gate reads as in force — IFC, an empty status, a
+ *  case or spacing variant, a library's own, NULL — with a current revision
+ *  is a first issue too. Its current revision was never put in force, so
+ *  nothing says it was reviewed, and a rev-up writes 'Issued': the new
+ *  revision would enter force for the first time. RG-7's Minor / Correction
+ *  hatch assumes a reviewed base in force (Issued / Locked — IN_FORCE_STATUSES,
+ *  compared exactly as the gates compare), so it does not open such a
+ *  rev-up: RevUpModal, setLevelRevUp and the merge rev-up route it to review
+ *  for a non-controller under a policy that requires sign-off, exactly as a
+ *  Draft's, and revertToVersion (the same write, as a Correction) refuses it
+ *  up front naming the route (P25 review fix). The database refuses the same
+ *  write (20261193). Every rev-up of a document in force (Issued / Locked)
+ *  answers exactly as before. */
 export async function firstIssueGateForRevUp(opts: {
   doc: Pick<DocumentRecord, "id" | "collectionId" | "currentVersionId" | "status" | "reviewControl">;
   libraryId: string;
@@ -1023,7 +1041,11 @@ export async function firstIssueGateForRevUp(opts: {
   }
   const seen = { hasCurrentRevision: !!live.current, status: live.status, retired: false, controllerOnly: false };
   if (isRetiredStatus(live.status)) return { ...seen, retired: true, firstIssue: false, requiresSignOff: false, mustReview: false };
-  if (live.current && isControlledIssueStatus(live.status)) return { ...seen, firstIssue: false, requiresSignOff: false, mustReview: false };
+  // A revision through the gate: the document is IN FORCE (REV-28 (a): an
+  // issue status no gate reads as in force — IFC — is not; it falls through).
+  if (live.current && isControlledIssueStatus(live.status) && IN_FORCE_STATUSES.has(live.status ?? "")) {
+    return { ...seen, firstIssue: false, requiresSignOff: false, mustReview: false };
+  }
   const chain = await effectiveReviewControlForDocument({
     reviewControl: null, collectionId: opts.doc.collectionId ?? null, libraryId: opts.libraryId,
   });
@@ -1064,6 +1086,10 @@ export function describeFirstIssue(label: string, gate: { hasCurrentRevision: bo
   const rev = revisionLabel?.trim() ? `Rev ${revisionLabel.trim()}` : "this revision";
   // a retired document is not "not issued yet" (P13 second review fix)
   if (gate.retired) return `${label} is ${(gate.status ?? "").trim() || "retired"} (retired), so ${rev} can't be published onto it until it is restored`;
+  // REV-28 (a) (P25): an issue status no gate reads as in force (IFC) — named as what it is
+  if (gate.hasCurrentRevision && isControlledIssueStatus(gate.status)) {
+    return `${label} is ${gate.status?.trim() ? `"${gate.status}"` : "in no status"} — not a status any gate reads as in force — so publishing ${rev} puts it in force for the first time`;
+  }
   return gate.hasCurrentRevision
     ? `${label} is not issued yet (${gate.status || "Draft"}), so publishing ${rev} makes it a controlled issue for the first time`
     : `${label} has no current revision, so ${rev} would be its first controlled issue`;
@@ -1850,6 +1876,36 @@ export async function revertToVersion(input: RevertInput): Promise<DocumentVersi
   const baseRev = (doc.rev ?? targetVersion.revisionLabel ?? "0").replace(/-revert-\d+$/, "");
   const revertedLabel = suggestNextRevisionLabel(baseRev);
 
+  // REV-28 (a) (document-control P25 review fix): a revert is the write a
+  // rev-up makes — publish_revision moves the pointer and writes 'Issued'
+  // (as a Correction) — so the first-issue rule binds it the same way: a
+  // document whose status no gate reads as in force (IFC, an empty status,
+  // a variant, a library's own, NULL) has no revision in force, and the
+  // revert would put the earlier file in force for the first time,
+  // unreviewed. 20261193 refuses that write for a non-controller under a
+  // policy that requires sign-off; this door says so up front, in its own
+  // words — a revert cannot be "submitted for review", so the route it names
+  // is a Major revision of the earlier file through review, or Document
+  // Control. Nothing is written before it. A document in force (Issued /
+  // Locked) is asked nothing (RG-7's hatch, no policy read), and a retired
+  // document is not refused here (the revert's own rules decide it, as
+  // before). A controller's revert of such a document is recorded on the
+  // REVERT event as a first issue made without the sign-off (DEC-63 §2).
+  const label = doc.documentNumber || doc.title || "this document";
+  let firstIssue: Awaited<ReturnType<typeof firstIssueGateForRevUp>>;
+  try {
+    firstIssue = await firstIssueGateForRevUp({ doc, libraryId, actor: { orgId, actorUserId, actorRole } });
+  } catch (e) {
+    throw new Error(`Couldn't verify the review policy for ${label} — nothing was reverted: ${(e as Error).message}`);
+  }
+  if (firstIssue.controllerOnly) throw new Error(`${describeControllerOnlyFirstIssue(label)} Nothing was reverted.`);
+  if (firstIssue.mustReview) {
+    throw new Error(
+      `This library requires reviewer sign-off, and ${describeFirstIssue(label, firstIssue, revertedLabel)} — a first issue is not a revision through the review gate, so a revert (a Correction) doesn't exempt it. ` +
+      "Nothing was reverted. Publish the earlier file as a Major revision through review, or ask Document Control, who may issue it.",
+    );
+  }
+
   const revertPayload = {
     revision_label: revertedLabel,
     issue_type: targetVersion.issueType ?? null,
@@ -1950,6 +2006,15 @@ export async function revertToVersion(input: RevertInput): Promise<DocumentVersi
       pendingDraftVoided: draftVoid.voidedVersionId,
       pendingDraftVoidProblem: draftVoid.problem,
       effectiveDateReconcileError: effectiveDateError,
+      // REV-28 (a) / DEC-63 §2 (P25 review fix): a controller's revert that
+      // puts the document in force for the first time under a policy that
+      // requires sign-off is recorded as such, as a rev-up's is.
+      ...(firstIssue.firstIssue && firstIssue.requiresSignOff && !firstIssue.mustReview
+        ? {
+          reviewPolicy: `require — Rev ${revertedLabel} is ${doc.documentNumber || doc.title || "the document"}'s FIRST controlled issue, published WITHOUT the sign-off the policy requires, by controller ${actorUserId} (DEC-63 §2)`,
+          firstIssueWithoutSignOff: true,
+        }
+        : {}),
     },
   });
 
@@ -2119,9 +2184,25 @@ export interface PutBackSupersessionFields {
  *  database predates 20261165: the caller makes its own direct write, as
  *  before). */
 export type RetiredIssuePutBack =
-  | { kind: "landed"; recorded: boolean }
+  /** `putBackAs` (REV-29, P25): set only when the status written is not the
+   *  one asked for — a NULL prior status put back as `olderBodyStatus` on a
+   *  database whose put_back_retired_issue predates 20261192. */
+  | { kind: "landed"; recorded: boolean; putBackAs?: string }
   | { kind: "refused"; reason: string; noRow?: boolean }
   | { kind: "absent" };
+
+/** REV-29 (P25): put_back_retired_issue's refusal of a blank status. Since
+ *  20261192 its rollback doors take a NULL (or blank) status — what the
+ *  document was — and only the un-archive door refuses one; before that
+ *  paste (20261165's body) every door refused it. */
+export const PUT_BACK_BLANK_STATUS_REFUSAL = "put_back_retired_issue: name the status to put the document back to.";
+
+/** REV-29 (P25): how a rollback names the status it puts back — a NULL or
+ *  blank one as what it is, never as "Issued". */
+export function describePutBackStatus(status: string | null | undefined): string {
+  if (status === null || status === undefined) return "no status (the status it had)";
+  return status.trim() ? status : "an empty status (the status it had)";
+}
 
 /** REV-23 (P19): PostgREST's answer for a function that does not exist yet
  *  (PGRST202 — its schema cache — or Postgres' undefined_function): the
@@ -2143,17 +2224,26 @@ export function isMissingPutBackRpc(e: { code?: string | null; message?: string 
  *  refusal and makes its direct write on `absent`. */
 export async function putBackRetiredIssue(input: {
   documentId: string;
-  status: string;
+  /** REV-29 (P25): what the document WAS — a NULL (or blank) status
+   *  included, for a rollback door (since 20261192 the function takes it). */
+  status: string | null;
   door: RetiredIssuePutBackDoor;
   reason?: string | null;
   /** Ask for Document Control's recorded pass over an active hold (p_force_hold). */
   forceHold?: boolean;
   supersession?: PutBackSupersessionFields;
+  /** REV-29 (P25): the status this rollback put back before P25 for a NULL
+   *  prior status (`?? "Issued"`). Put back INSTEAD only when the database's
+   *  put_back_retired_issue predates 20261192 and refuses the NULL in its
+   *  blank-status sentence — the rollback then lands exactly as it did
+   *  before that paste (an older body takes today's path). Never used once
+   *  20261192 is pasted. */
+  olderBodyStatus?: string;
 }): Promise<RetiredIssuePutBack> {
   const s = input.supersession;
-  const { data, error } = await supabase.rpc("put_back_retired_issue", {
+  const putBack = (status: string | null) => supabase.rpc("put_back_retired_issue", {
     p_document_id: input.documentId,
-    p_status: input.status,
+    p_status: status,
     p_via: input.door,
     p_reason: input.reason?.trim() || null,
     p_force_hold: input.forceHold === true,
@@ -2164,17 +2254,53 @@ export async function putBackRetiredIssue(input: {
       p_supersession_moc: s?.supersession_moc ?? null,
     }),
   });
+  let { data, error } = await putBack(input.status);
+  // REV-29 (P25): 20261165's body refuses a NULL status (raised before any
+  // write: nothing was changed) — before 20261192 the rollback takes today's
+  // path, the status it put back before P25.
+  let putBackAs: string | undefined;
+  if (error && input.olderBodyStatus !== undefined && input.status === null && (error.message ?? "").includes(PUT_BACK_BLANK_STATUS_REFUSAL)) {
+    putBackAs = input.olderBodyStatus;
+    ({ data, error } = await putBack(putBackAs));
+  }
   if (error) {
     return isMissingPutBackRpc(error) ? { kind: "absent" } : { kind: "refused", reason: error.message || "the put-back was refused" };
   }
+  // REV-29 (P25): landed as the older body's status — said so to the caller.
+  if (putBackAs !== undefined && (data === "restored" || data === "restored_over_hold")) return { kind: "landed", recorded: data === "restored_over_hold", putBackAs };
   if (data === "restored" || data === "restored_over_hold") return { kind: "landed", recorded: data === "restored_over_hold" };
   if (data === "no_match") return { kind: "refused", reason: "the write was refused", noRow: true };
   return { kind: "refused", reason: `the database answered ${JSON.stringify(data ?? null)}` };
 }
 
 /** OWN-15: the statuses an unarchive may restore to — never an arbitrary
- *  string (documents.status has no CHECK constraint). */
+ *  string (documents.status has no CHECK constraint). REV-27 (P25): beside
+ *  them, only the archive's own stamped status when no gate reads it as in
+ *  force (unarchiveStampedRestoreStatus) — the put-back of what it was. */
 export const UNARCHIVE_RESTORE_STATUSES = ["Issued", "Draft", "In Review"] as const;
+
+/** REV-27 (document-control P25; decided and recorded with DEC-77): the
+ *  status an un-archive may restore BESIDES UNARCHIVE_RESTORE_STATUSES — the
+ *  archive's own stamped status (20261144's retirement stamp), when the
+ *  stamp names the current revision and its status is one no gate reads as
+ *  in force (an IFC drawing archived as IFC, a library's own status).
+ *  Restoring it puts back exactly what the document was — the guard's
+ *  v_restoring, the put-back 20261185 still spares — so it is offered as a
+ *  put-back, never as a new choice (DEC-77 §1 keeps IFC out of the
+ *  editors). Null otherwise: no stamp, a stamp naming another revision, an
+ *  Issued / Locked stamp (Issued is offered anyway), 'not-issued', and a
+ *  NULL or blank stamp (put_back_retired_issue's un-archive door refuses a
+ *  blank status, so what it was cannot be restored — the dialog says so and
+ *  defaults to a Draft). Pure. */
+export function unarchiveStampedRestoreStatus(row: {
+  currentVersionId: string | null; retiredIssueStatus?: string | null; retiredIssueVersionId?: string | null;
+}): string | null {
+  const stamp = row.retiredIssueStatus ?? null;
+  if (!row.currentVersionId || (row.retiredIssueVersionId ?? null) !== row.currentVersionId) return null;
+  if (stamp === null || !stamp.trim() || stamp === RETIRED_NOT_ISSUED_STAMP || IN_FORCE_STATUSES.has(stamp)) return null;
+  if ((UNARCHIVE_RESTORE_STATUSES as readonly string[]).includes(stamp)) return null;
+  return isControlledIssueStatus(stamp) ? stamp : null;
+}
 
 /** REV-18 (P13 second review fix; third review fix): which status the
  *  un-archive dialog offers first, and why. 20261144's retirement stamp
@@ -2194,18 +2320,50 @@ export const UNARCHIVE_RESTORE_STATUSES = ["Issued", "Draft", "In Review"] as co
  *  decides that restore (20261144: the publisher tier, the hold, and under
  *  require the roster unless it is the stamped put-back), and a refused one
  *  leaves the Draft restore open. The dialog offers every
- *  UNARCHIVE_RESTORE_STATUSES either way. Read-only. */
+ *  UNARCHIVE_RESTORE_STATUSES either way. Read-only.
+ *
+ *  REV-27 (document-control P25): `issued` now means what it says — the
+ *  stamp names the current revision AND an in-force status (Issued /
+ *  Locked), whose restore into Issued is the put-back of that issue. A stamp
+ *  naming the current revision with a status no gate reads as in force (an
+ *  IFC drawing archived; 20261185 judges its restore into Issued as a first
+ *  entry into force, not a put-back) is `not-in-force`: it is read as what
+ *  it was — `stampedStatus` — and comes back as that status (`stampedRestore`,
+ *  unarchiveStampedRestoreStatus), or as a Draft when what it was cannot be
+ *  restored (a NULL or blank status: `stampedRestore` null). Never Issued
+ *  by default: that would put an unreviewed revision in force. */
 export async function unarchiveRestoreDefault(documentId: string): Promise<{
-  status: (typeof UNARCHIVE_RESTORE_STATUSES)[number]; basis: "issued" | "not-issued" | "unknown";
+  status: string; basis: "issued" | "not-in-force" | "not-issued" | "unknown";
+  stampedStatus?: string | null; stampedRestore?: string | null;
 }> {
   const { data, error } = await supabase.from("documents")
     .select("current_version_id, retired_issue_status, retired_issue_version_id").eq("id", documentId).maybeSingle();
   if (error || !data) return { status: "Issued", basis: "unknown" };
   const current = (data.current_version_id as string | null) ?? null;
   const stampedVersion = (data.retired_issue_version_id as string | null) ?? null;
-  if (current && stampedVersion === current) return { status: "Issued", basis: "issued" };
+  if (current && stampedVersion === current) {
+    const stamp = (data.retired_issue_status as string | null) ?? null;
+    if (IN_FORCE_STATUSES.has(stamp ?? "")) return { status: "Issued", basis: "issued" };
+    const own = unarchiveStampedRestoreStatus({ currentVersionId: current, retiredIssueStatus: stamp, retiredIssueVersionId: stampedVersion });
+    return { status: own ?? "Draft", basis: "not-in-force", stampedStatus: stamp, stampedRestore: own };
+  }
   if (current && !stampedVersion && data.retired_issue_status === RETIRED_NOT_ISSUED_STAMP) return { status: "Draft", basis: "not-issued" };
   return { status: "Issued", basis: "unknown" };
+}
+
+/** REV-27 (P25): the archive's own stamped status this un-archive may
+ *  restore besides UNARCHIVE_RESTORE_STATUSES (unarchiveStampedRestoreStatus),
+ *  read from the row now — null when the row is not Archived, carries no
+ *  such stamp, or cannot be read (fails closed: nothing more is admitted). */
+async function readArchiveStampedRestore(documentId: string): Promise<string | null> {
+  const { data: row, error } = await supabase.from("documents")
+    .select("status, current_version_id, retired_issue_status, retired_issue_version_id").eq("id", documentId).maybeSingle();
+  if (error || !row || row.status !== "Archived") return null;
+  return unarchiveStampedRestoreStatus({
+    currentVersionId: (row.current_version_id as string | null) ?? null,
+    retiredIssueStatus: (row.retired_issue_status as string | null) ?? null,
+    retiredIssueVersionId: (row.retired_issue_version_id as string | null) ?? null,
+  });
 }
 
 export async function unarchiveDocument(input: ArchiveInput & {
@@ -2218,15 +2376,23 @@ export async function unarchiveDocument(input: ArchiveInput & {
   const { doc, reason, orgId, actorUserId, actorEmail, actorRole, restoreStatus } = input;
   if (!doc.id) throw new Error("Document is missing an id");
   if (restoreStatus && !(UNARCHIVE_RESTORE_STATUSES as readonly string[]).includes(restoreStatus)) {
-    throw new Error(`Cannot restore to "${restoreStatus}" — choose Issued, Draft or In Review.`);
+    // REV-27 (P25): beside the three, only the archive's own stamped status
+    // (what it was — unarchiveStampedRestoreStatus), for that stamp only,
+    // read now (fails closed: an unreadable row admits nothing more).
+    const own = await readArchiveStampedRestore(doc.id);
+    if (own === null || own !== restoreStatus) {
+      throw new Error(`Cannot restore to "${restoreStatus}" — choose Issued, Draft or In Review.`);
+    }
   }
 
   const restoredStatus = restoreStatus || "Issued";
   // REV-19: what this restore issues, read BEFORE the write — the publish
   // guard (20261144) clears the retirement stamp as the document leaves its
   // retirement, so afterwards it can no longer say whether this is the
-  // put-back of the issue the archive took away.
-  const before = isControlledIssueStatus(restoredStatus) ? await readStatusIssueBasis(doc.id, doc) : null;
+  // put-back of the issue the archive took away. REV-27 (P25): read for the
+  // restore's target, so a restore into Issued of a stamp no gate reads as
+  // in force is a first entry into force (isEntryIntoForce), not a put-back.
+  const before = isControlledIssueStatus(restoredStatus) ? await readStatusIssueBasis(doc.id, doc, restoredStatus) : null;
   const now = new Date().toISOString();
   const notRestored = "The document was NOT restored — you don't have authority to change it, or it is no longer visible to you. Nothing was changed.";
   // REV-23 (P19): through put_back_retired_issue (20261165) — the same write,
@@ -2283,12 +2449,15 @@ export async function unarchiveDocument(input: ArchiveInput & {
   });
 
   // REV-19: an un-archive into an issue status is an issue — its clocks and
-  // its record (a put-back of the stamped issue keeps the clocks it had).
+  // its record (a put-back of the stamped issue keeps the clocks it had; a
+  // first entry into force — REV-27 — opens the roster and keeps the review
+  // clock as it was).
   if (before && isIssueTransition({ fromStatus: before.fromStatus, toStatus: restoredStatus, hasCurrentRevision: !!before.versionId })) {
     return await recordStatusIssue({
       orgId, documentId: doc.id, fromStatus: before.fromStatus, toStatus: restoredStatus,
       versionId: before.versionId, rev: before.rev, putBack: before.putBack, door: "unarchive",
       actorUserId, actorEmail: actorEmail ?? null, actorRole: actorRole ?? null,
+      entryIntoForce: before.entryIntoForce,
     });
   }
   return NO_STATUS_ISSUE;
@@ -2327,6 +2496,15 @@ export interface StatusIssueOutcome {
   complianceClockErrors: string[];
   /** The issue record could not be written (the issue itself stands). */
   recordError: string | null;
+  /** REV-26 / REV-27 (document-control P25): set (true) only when the
+   *  issue put the current revision in force for the FIRST time — out of an
+   *  issue status no gate reads as in force (IFC, an empty status, a variant,
+   *  a library's own, NULL), directly or out of a retirement stamped with it
+   *  (isEntryIntoForce). `putBack` is then false (nothing in force was taken
+   *  away), the acknowledgment roster was opened, and the review clock was
+   *  NOT reset (no evidence the revision was reviewed now). Absent on every
+   *  other outcome. */
+  entryIntoForce?: true;
   /** REV-19 (P17 integrator fix): set only by changeDocumentStatus, only
    *  when it wrote a controlled issue status but recorded no issue — the
    *  basis its pre-write read gave (StatusIssueNotRecorded). Absent on every
@@ -2351,7 +2529,39 @@ const NO_STATUS_ISSUE: StatusIssueOutcome = { issued: false, putBack: false, com
 
 /** `readFailed`: the row could not be read and the other fields are the
  *  caller's fallback (REV-19, P17 integrator fix). */
-interface StatusIssueBasis { fromStatus: string | null; versionId: string | null; rev: string | null; putBack: boolean | null; readFailed?: boolean }
+interface StatusIssueBasis { fromStatus: string | null; versionId: string | null; rev: string | null; putBack: boolean | null; entryIntoForce: boolean; readFailed?: boolean }
+
+/** The document as a status-change issue reads it (its status, current
+ *  revision and 20261144's retirement stamp). */
+interface StatusIssueRow {
+  status: string | null; currentVersionId: string | null;
+  retiredIssueStatus?: string | null; retiredIssueVersionId?: string | null;
+}
+
+/** REV-26 / REV-27 (document-control P25; DEC-77's REV-26 line): does this
+ *  status change put the current revision IN FORCE (IN_FORCE_STATUSES — the
+ *  field pack prints it, a scan reads it current) for the FIRST time, out of
+ *  an issue status no gate reads as in force — an existing IFC row, an empty
+ *  status, a case or spacing variant, a library's own, a NULL status?
+ *  Either directly (lib/documentStatusOptions.ts isUnguardedEntryIntoForce —
+ *  the guard's REV-21 limb of v_issuing, 20261185) or out of a retirement
+ *  whose stamp names the current revision with such a status (an IFC drawing
+ *  archived, then restored into Issued: 20261185's second block takes it
+ *  out of the guard's v_restoring, so it is no put-back). Nothing in force
+ *  was taken away, so it is not a put-back; nothing records that its
+ *  revision was reviewed now. Decided (REV-26, recorded on DEC-77): such a
+ *  move OWES REV-19's record — DOCUMENT_ISSUED, the policy decision — and
+ *  opens the acknowledgment roster for the revision (it is now the copy the
+ *  field works from), but it does NOT reset the review clock: a reset would
+ *  mark the document reviewed today on no evidence and could hide a review
+ *  already due. Pure. */
+export function isEntryIntoForce(row: StatusIssueRow, toStatus: string | null | undefined): boolean {
+  if (!row.currentVersionId || !IN_FORCE_STATUSES.has(toStatus ?? "")) return false;
+  if (isUnguardedEntryIntoForce({ fromStatus: row.status, toStatus, hasCurrentRevision: true })) return true;
+  return isRetiredStatus(row.status)
+    && (row.retiredIssueVersionId ?? null) === row.currentVersionId
+    && !IN_FORCE_STATUSES.has(row.retiredIssueStatus ?? "");
+}
 
 /** P14 review fix (REV-19): is an issue out of this status the put-back of
  *  the issue its retirement took away? Three-state, from the evidence alone
@@ -2362,15 +2572,21 @@ interface StatusIssueBasis { fromStatus: string | null; versionId: string | null
  *  revision); `null` otherwise — a retirement with no stamp (before
  *  20261144, or the service role), a stamp naming another revision, a
  *  database without the stamp columns. A missing stamp is no evidence
- *  (P13 third review fix), so it never restarts the review clock. */
-export function putBackFromRetirementStamp(row: {
-  status: string | null; currentVersionId: string | null;
-  retiredIssueStatus?: string | null; retiredIssueVersionId?: string | null;
-}): boolean | null {
+ *  (P13 third review fix), so it never restarts the review clock.
+ *
+ *  REV-27 (document-control P25): it answers the guard's v_restoring FOR
+ *  THE RESTORE'S TARGET when the caller names one (`toStatus`): since
+ *  20261185 a put-back INTO Issued / Locked of a stamp outside them (an IFC
+ *  drawing archived, restored into Issued) is not v_restoring — nothing in
+ *  force was taken away — so it is `false`, not a put-back (isEntryIntoForce
+ *  says what it owes instead). A put-back to the stamped status itself, and
+ *  an Issued / Locked stamp put back into Issued, stay `true`. Without a
+ *  target the answer is the one it always gave. */
+export function putBackFromRetirementStamp(row: StatusIssueRow, toStatus?: string | null): boolean | null {
   if (WORK_IN_PROGRESS_STATUSES.has((row.status ?? "").trim())) return false;
   if (!isRetiredStatus(row.status)) return null;
   const stampedVersion = row.retiredIssueVersionId ?? null;
-  if (row.currentVersionId && stampedVersion === row.currentVersionId) return true;
+  if (row.currentVersionId && stampedVersion === row.currentVersionId) return !isEntryIntoForce(row, toStatus);
   if (!stampedVersion && row.retiredIssueStatus === RETIRED_NOT_ISSUED_STAMP) return false;
   return null;
 }
@@ -2380,22 +2596,27 @@ export function putBackFromRetirementStamp(row: {
  *  (putBackFromRetirementStamp). `select("*")` so a database without
  *  20261144's stamp columns still answers (the stamp reads as absent: the
  *  put-back unknown). An unreadable row falls back to what the caller holds,
- *  with the put-back unknown. */
-async function readStatusIssueBasis(documentId: string, held?: Pick<DocumentRecord, "status" | "currentVersionId" | "rev">): Promise<StatusIssueBasis> {
+ *  with the put-back unknown. REV-26 / REV-27 (P25): read for the write's
+ *  target (`toStatus`), so a first entry into force (isEntryIntoForce) is
+ *  told apart — `entryIntoForce`, and `putBack` false: no put-back. */
+async function readStatusIssueBasis(documentId: string, held?: Pick<DocumentRecord, "status" | "currentVersionId" | "rev">, toStatus?: string | null): Promise<StatusIssueBasis> {
   const { data, error } = await supabase.from("documents").select("*").eq("id", documentId).maybeSingle();
   if (error || !data) {
-    return { fromStatus: held?.status ?? null, versionId: held?.currentVersionId ?? null, rev: held?.rev ?? null, putBack: null, readFailed: true };
+    return { fromStatus: held?.status ?? null, versionId: held?.currentVersionId ?? null, rev: held?.rev ?? null, putBack: null, entryIntoForce: false, readFailed: true };
   }
   const row = data as Record<string, unknown>;
   const fromStatus = (row.status as string | null) ?? null;
   const versionId = (row.current_version_id as string | null) ?? null;
+  const stamped: StatusIssueRow = {
+    status: fromStatus, currentVersionId: versionId,
+    retiredIssueStatus: (row.retired_issue_status as string | null | undefined) ?? null,
+    retiredIssueVersionId: (row.retired_issue_version_id as string | null | undefined) ?? null,
+  };
+  const entryIntoForce = isEntryIntoForce(stamped, toStatus);
   return {
     fromStatus, versionId, rev: (row.rev as string | null) ?? null,
-    putBack: putBackFromRetirementStamp({
-      status: fromStatus, currentVersionId: versionId,
-      retiredIssueStatus: (row.retired_issue_status as string | null | undefined) ?? null,
-      retiredIssueVersionId: (row.retired_issue_version_id as string | null | undefined) ?? null,
-    }),
+    putBack: entryIntoForce ? false : putBackFromRetirementStamp(stamped, toStatus),
+    entryIntoForce,
   };
 }
 
@@ -2405,6 +2626,7 @@ const STATUS_ISSUE_CLOCKS_NOTE = {
   putBack: "the put-back of the issue its retirement took away (the retirement stamp names this revision): the review clock and the acknowledgment roster it had keep running, not restarted",
   newIssue: "a new issue: the review clock and the acknowledgment roster were started",
   unknown: "no evidence whether this puts back the issue its retirement took away (the retirement carries no stamp — retired before 20261144 or by the service role — names another revision, or could not be read): the review clock was NOT reset (a reset would mark the document reviewed today and could hide a review already due); only the acknowledgment roster was opened for this revision",
+  entryIntoForce: "a first entry into force out of a status no gate reads as in force (IFC, an empty status, a variant, a library's own, or no status — directly, or out of a retirement stamped with it): nothing in force was taken away, so it is no put-back, and nothing records that this revision was reviewed now, so the review clock was NOT reset (a reset would mark the document reviewed today and could hide a review already due); the acknowledgment roster was opened for this revision (DEC-77, REV-26)",
 } as const;
 
 /** REV-19: what a landed status-change issue owes. A NEW issue (putBack
@@ -2428,15 +2650,23 @@ export async function recordStatusIssue(input: {
   orgId: string; documentId: string; fromStatus: string | null; toStatus: string;
   versionId: string | null; rev?: string | null; putBack: boolean | null; door: StatusIssueDoor;
   actorUserId: string; actorEmail?: string | null; actorRole?: string | null;
+  /** REV-26 / REV-27 (P25): a first entry into force (isEntryIntoForce) —
+   *  recorded as an issue, the acknowledgment roster opened, the review
+   *  clock NOT reset (no evidence the revision was reviewed now). */
+  entryIntoForce?: boolean;
 }): Promise<StatusIssueOutcome> {
   const complianceClockErrors: string[] = [];
+  const entryIntoForce = input.entryIntoForce === true;
+  // A NEW issue on evidence resets the review clock; a first entry into
+  // force (P25) does not — nothing says its revision was reviewed now.
+  const reviewClock = input.putBack === false && !entryIntoForce;
   if (input.putBack !== true) {
     try {
       complianceClockErrors.push(...await startIssuedDocumentClocks({
         orgId: input.orgId, documentId: input.documentId, actorUserId: input.actorUserId, actorName: input.actorEmail ?? null,
-        // No evidence (null): the review clock is left as it was; only the
-        // roster for this revision is opened.
-        reviewClock: input.putBack === false,
+        // No evidence (null), or a first entry into force: the review clock
+        // is left as it was; only the roster for this revision is opened.
+        reviewClock,
       }));
     } catch (e) {
       complianceClockErrors.push(`the start failed (${(e as Error).message})`);
@@ -2483,13 +2713,15 @@ export async function recordStatusIssue(input: {
       versionId: input.versionId,
       rev: input.rev ?? null,
       putBack: input.putBack,
+      ...(entryIntoForce ? { entryIntoForce: true } : {}),
       reviewPolicyMode,
       rosterComplete,
       issuedWithoutSignOff,
-      complianceClocksStarted: input.putBack === false,
-      reviewClockReset: input.putBack === false,
+      complianceClocksStarted: reviewClock,
+      reviewClockReset: reviewClock,
       acknowledgmentRosterOpened: input.putBack !== true,
       complianceClocksNote: input.putBack === true ? STATUS_ISSUE_CLOCKS_NOTE.putBack
+        : entryIntoForce ? STATUS_ISSUE_CLOCKS_NOTE.entryIntoForce
         : input.putBack === false ? STATUS_ISSUE_CLOCKS_NOTE.newIssue : STATUS_ISSUE_CLOCKS_NOTE.unknown,
       complianceClockErrors: complianceClockErrors.length > 0 ? complianceClockErrors : null,
     },
@@ -2497,7 +2729,7 @@ export async function recordStatusIssue(input: {
   if (complianceClockErrors.length > 0) {
     console.warn(`[revisions] REV-19: the review clock / acknowledgment roster of document ${input.documentId} did not fully start (${complianceClockErrors.join("; ")})`);
   }
-  return { issued: true, putBack: input.putBack, complianceClockErrors, recordError: recordErr ?? null };
+  return { issued: true, putBack: input.putBack, ...(entryIntoForce ? { entryIntoForce: true as const } : {}), complianceClockErrors, recordError: recordErr ?? null };
 }
 
 /** REV-19: THE status write for a status editor — one checked UPDATE of the
@@ -2506,14 +2738,24 @@ export async function recordStatusIssue(input: {
  *  thrown in the database's own words (the publish guard's sentences, which
  *  isIssueRefusal recognises); a write that matched no row is a refusal,
  *  never a silent success. A write to an issue status that recorded no
- *  issue says why (`notRecordedBecause` — P17 integrator fix). */
+ *  issue says why (`notRecordedBecause` — P17 integrator fix).
+ *
+ *  REV-26 (document-control P25; DEC-77's REV-26 line): a write that puts
+ *  the current revision in force for the first time out of an issue status
+ *  no gate reads as in force (an existing IFC row -> Issued / Locked:
+ *  isUnguardedEntryIntoForce, read from the database row as every other
+ *  basis here) is recorded as an issue too — the guard judges it as one
+ *  since 20261185 — with the acknowledgment roster opened and the review
+ *  clock left as it was (isEntryIntoForce). It answered
+ *  `notRecordedBecause: 'already_issued'` before. isIssueTransition is not
+ *  widened (it still names a NEW issue on evidence). */
 export async function changeDocumentStatus(input: {
   orgId: string; documentId: string; toStatus: string; door: Exclude<StatusIssueDoor, "unarchive">;
   actorUserId: string; actorEmail?: string | null; actorRole?: string | null;
   /** Other columns written in the same checked UPDATE (a metadata save). */
   patch?: Record<string, unknown>;
 }): Promise<StatusIssueOutcome> {
-  const before = await readStatusIssueBasis(input.documentId);
+  const before = await readStatusIssueBasis(input.documentId, undefined, input.toStatus);
   const now = new Date().toISOString();
   const { data: rows, error } = await supabase.from("documents")
     .update({ ...(input.patch ?? {}), status: input.toStatus, updated_at: now, updated_by: input.actorUserId })
@@ -2523,7 +2765,8 @@ export async function changeDocumentStatus(input: {
   if (((rows as unknown[] | null) ?? []).length === 0) {
     throw new Error("The status was NOT changed — you don't have authority to change this document, or it is no longer visible to you. Nothing was changed.");
   }
-  if (!isIssueTransition({ fromStatus: before.fromStatus, toStatus: input.toStatus, hasCurrentRevision: !!before.versionId })) {
+  const change = { fromStatus: before.fromStatus, toStatus: input.toStatus, hasCurrentRevision: !!before.versionId };
+  if (!isIssueTransition(change) && !isUnguardedEntryIntoForce(change)) {
     // A write that is not to an issue status: exactly as before.
     if (!isControlledIssueStatus(input.toStatus)) return NO_STATUS_ISSUE;
     // REV-19 (P17 integrator fix): an issue status written but not recorded
@@ -2539,6 +2782,7 @@ export async function changeDocumentStatus(input: {
     orgId: input.orgId, documentId: input.documentId, fromStatus: before.fromStatus, toStatus: input.toStatus,
     versionId: before.versionId, rev: before.rev, putBack: before.putBack, door: input.door,
     actorUserId: input.actorUserId, actorEmail: input.actorEmail ?? null, actorRole: input.actorRole ?? null,
+    entryIntoForce: before.entryIntoForce,
   });
 }
 
@@ -2647,7 +2891,16 @@ export async function writeSupersessionLineage(
  *  — the same write, run as the caller, recorded (REV_HOLD_OVERRIDDEN) when
  *  Document Control puts a held document back into the issue the supersede
  *  stamped, which the guard no longer admits bare — and the direct write
- *  only while the function is absent. */
+ *  only while the function is absent.
+ *
+ *  REV-29 (P25): the status put back is the one read before the
+ *  retirement, a NULL (or blank) one included — never "Issued" for a
+ *  document that had none (that put it in force, unreviewed). On a database
+ *  whose put_back_retired_issue predates 20261192 (it refuses a NULL
+ *  status) a NULL prior status is put back as "Issued", exactly as before
+ *  P25 (an older body takes today's path); with no function at all the
+ *  direct write puts back the NULL (the guard there judges it as it judged
+ *  'Issued'). */
 async function undoFailedSupersede(opts: {
   docId: string;
   prior: Record<string, unknown>;
@@ -2656,7 +2909,8 @@ async function undoFailedSupersede(opts: {
   actorUserId: string;
 }): Promise<never> {
   const { docId, prior, failure } = opts;
-  const priorStatus = String(prior.status ?? "Issued");
+  const priorStatus = (prior.status as string | null | undefined) ?? null;
+  let putBackAs: string | null = priorStatus;
   let restoreProblem: string | null = null;
   // The rollback puts back the state from before the supersede (its own
   // force over a hold, if any, was the supersede's): it asks for the pass —
@@ -2664,7 +2918,9 @@ async function undoFailedSupersede(opts: {
   const door = await putBackRetiredIssue({
     documentId: docId, status: priorStatus, door: "supersede_rollback",
     reason: `The supersede was rolled back: ${failure.message}`, supersession: prior, forceHold: true,
+    ...(priorStatus === null ? { olderBodyStatus: "Issued" } : {}),
   });
+  if (door.kind === "landed" && door.putBackAs !== undefined) putBackAs = door.putBackAs;
   if (door.kind === "refused") restoreProblem = door.reason;
   if (door.kind === "absent") {
     const { data: restored, error: restoreErr } = await supabase
@@ -2687,7 +2943,7 @@ async function undoFailedSupersede(opts: {
   if (restoreProblem !== null) {
     throw new Error(
       `${failure.message} The document is now Superseded and its previous status could not be restored ` +
-      `(${restoreProblem}) — ask Doc Control to restore it to ${priorStatus} or record the replacement links.`,
+      `(${restoreProblem}) — ask Doc Control to restore it to ${describePutBackStatus(priorStatus)} or record the replacement links.`,
     );
   }
   let leftover = 0;
@@ -2701,7 +2957,7 @@ async function undoFailedSupersede(opts: {
     leftover = delErr || leftErr ? opts.addedPairs.length : ((left as unknown[] | null) ?? []).length;
   }
   throw new Error(
-    `Nothing was superseded: ${failure.message} The document is back to ${priorStatus}.` +
+    `Nothing was superseded: ${failure.message} The document is back to ${describePutBackStatus(putBackAs)}.` +
     (leftover > 0 ? ` ${leftover} replacement link(s) this attempt wrote could not be removed — ask Doc Control to delete them.` : "") +
     " Fix the cause and supersede it again.",
   );

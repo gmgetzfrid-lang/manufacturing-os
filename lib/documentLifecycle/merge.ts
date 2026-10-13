@@ -111,7 +111,8 @@ interface MergeGate {
   absorbed: DocumentRecord[];
   preStates: Map<string, PublishGuardState>;
   heldSourceIds: Set<string>;
-  priorStatuses: Record<string, string>;
+  /** REV-12; REV-29 (P25): a NULL status recorded as NULL — what it was. */
+  priorStatuses: Record<string, string | null>;
   reviewPolicy: string;
 }
 
@@ -268,8 +269,10 @@ async function gateMerge(input: MergeDocumentsInput): Promise<MergeGate> {
   const { data: rows, error: stErr } = await supabase
     .from("documents").select("id, status").in("id", absorbed.map((s) => s.id!));
   if (stErr) throw new Error(`Couldn't read the sources' statuses (${stErr.message}) — nothing was merged.`);
-  const priorStatuses: Record<string, string> = {};
-  for (const r of (rows as Array<{ id: string; status: string | null }> | null) ?? []) priorStatuses[r.id] = String(r.status ?? "Issued");
+  // REV-29 (P25): each source's status as it was — a NULL one kept as NULL
+  // (DOC_MERGED records it so; a reversal restores it), never "Issued".
+  const priorStatuses: Record<string, string | null> = {};
+  for (const r of (rows as Array<{ id: string; status: string | null }> | null) ?? []) priorStatuses[r.id] = r.status ?? null;
   const missing = absorbed.filter((s) => !(s.id! in priorStatuses));
   if (missing.length > 0) throw new Error(`Couldn't find ${missing.map((s) => s.documentNumber ?? s.id).join(", ")} — nothing was merged.`);
 

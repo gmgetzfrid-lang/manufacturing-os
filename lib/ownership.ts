@@ -7,7 +7,10 @@
 // falls behind on review upkeep, Admin/DocCtrl get a side escalation.
 
 import { supabase } from "@/lib/supabase";
-import { notify } from "@/lib/inAppNotifications";
+// DELIV-16 (notifications N14): a deletion request reaches the controllers as
+// a compliance notice — notify(), retried and dead-lettered when it does not
+// land (lib/complianceNotify.ts).
+import { notifyCompliance as notify } from "@/lib/complianceNotify";
 import { logAuditAction } from "@/lib/audit";
 import { csvCell } from "@/lib/csvSafe";
 

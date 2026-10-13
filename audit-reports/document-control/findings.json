@@ -24,8 +24,8 @@
       "LOW": 25
     },
     "by_status": {
-      "RESOLVED": 155,
-      "OPEN": 15
+      "RESOLVED": 160,
+      "OPEN": 10
     }
   },
   "status_vocabulary": [
@@ -3375,7 +3375,7 @@
       "id": "REV-28",
       "title": "A Minor / Correction rev-up puts an unreviewed IFC revision's successor in force in a library that requires sign-off — RG-7's hatch assumes a reviewed base in force",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (PostgreSQL 16 case B-13 in `REV-21`'s record — the owner's pointer + IFC → Issued, a Minor revision, in a require library, ADMITTED before and after `20261185`; read from `firstIssueGateForRevUp`)",
       "blast_radius": null,
@@ -4264,7 +4264,7 @@
       "id": "REV-26",
       "title": "After 20261185 a move into force out of \"IFC\" is an issue to the database, but the app still calls it unguarded and never records it as one",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (read from the code; the database refusal of the move driven against the real editors in `lib/__tests__/dcRoundFStatusIntoForce.test.ts`)",
       "blast_radius": null,
@@ -4291,7 +4291,7 @@
       "id": "REV-27",
       "title": "After 20261185 the un-archive dialog still offers an IFC-stamped archive's restore into Issued as \"the put-back of that issue\", with no restore to what it was",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (read from the code; the database's refusal driven against the real `unarchiveDocument` in `lib/__tests__/dcRoundFStatusIntoForce.test.ts`, and the dialog's default pinned there by an `it.fails` tripwire; the refusals run on PostgreSQL 16 — `REV-21`'s review fix, C-1..C-10)",
       "blast_radius": null,
@@ -4316,7 +4316,7 @@
       "id": "REV-29",
       "title": "A rollback puts a NULL-status document back as \"Issued\", not as what it was — and after 20261185 the guard refuses that as a new issue",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (PostgreSQL 16 — `REV-21`'s second review fix, N-1..N-7; the REAL `undoFailedSupersede` and `restoreSupersededSource` driven against the bound guard before and after `20261185` in `lib/__tests__/dcRoundFStatusIntoForce.test.ts`, with an `it.fails` tripwire for this finding)",
       "blast_radius": null,
@@ -4555,9 +4555,9 @@
       "id": "TRX-17",
       "title": "A PDF can still leave the portal unmarked with no warning at issue and no recorded yes: one the issue-time check could not decide, and any issue made outside the app's issue path",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
-      "verification_note": "CONFIRMED (by reading; the client half is pinned in `lib/__tests__/dcRoundFP15TransmittalIssueWarn.test.ts`: an `unchecked` file is not warned and carries no mark, and a check that cannot run never blocks an issue)",
+      "verification_note": "CONFIRMED (by reading; the client half is pinned in `lib/__tests__/dcRoundFP15TransmittalIssueWarn.test.ts`: an `unchecked` file is not warned and carries no mark, and a check that cannot run never blocks an issue). *(This is the pre-fix state, reproduced on `49cd27e`. P24 rewrote those pins to the new rule: an unchecked file now warns, and a check that cannot run now stops the issue. See the Resolution.)*",
       "blast_radius": "document-control integrity (an uncontrolled copy without its marking, and no recorded yes for it)",
       "related": [
         "TRX-15",

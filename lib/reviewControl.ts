@@ -15,7 +15,11 @@
 // upload + draft-version creation live in lib/revisions.ts (submitForReview).
 
 import { supabase } from "@/lib/supabase";
-import { notify } from "@/lib/inAppNotifications";
+// DELIV-16 / DELIV-7 dw1 (notifications N14): the bell notices here carry
+// document-control obligations — notify(), retried and dead-lettered when
+// it does not land (lib/complianceNotify.ts).
+import { notifyCompliance as notify } from "@/lib/complianceNotify";
+import { loadScanRetryPlan } from "@/lib/complianceNotify";
 import { logAuditAction } from "@/lib/audit";
 import { recordSignature, type SigningCredential } from "@/lib/eSignatures";
 import { effectiveOwnerForDocument, resolveEffectiveOwner, getOrgControllers, teamSupervisorMap, type LibraryOwnerCols, type TeamSupervisorLookup } from "@/lib/ownership";
@@ -1180,6 +1184,8 @@ export async function scanReviews(orgId: string, opts?: { cooldownDays?: number 
 
   const now = Date.now();
   const cooldownMs = cooldownDays * 86_400_000;
+  // DELIV-7 dw1 (notifications N14 integrator pass): what the last run lost
+  const plan = await loadScanRetryPlan(orgId, "pre-publish-review", cooldownMs);
 
   // Per-row work is independent — run it in bounded-parallel chunks so a big
   // backlog doesn't turn into hundreds of strictly sequential round-trips
@@ -1210,13 +1216,17 @@ export async function scanReviews(orgId: string, opts?: { cooldownDays?: number 
 
     if (r.notified_at && now - new Date(r.notified_at as string).getTime() < cooldownMs) continue;
 
+    // A row whose last run dead-lettered a notice sends only that notice now.
+    const retryKey = `pre-publish-review:${r.id as string}`;
+    const wants = plan.only(retryKey, r.notified_at as string | null);
     work.push(async () => {
-      await notify({
+      const landed: boolean[] = [];
+      if (wants("review_requested", r.reviewer_user_id as string)) landed.push(await notify({
         orgId, userId: r.reviewer_user_id as string, kind: "review_requested",
         title: `Reminder — review ${label}`,
         body: "A draft revision is still waiting on your sign-off.",
         link, resourceType: "document", resourceId: r.document_id as string,
-      });
+      }, { retryKey }));
       if (ageDays >= timeoutDays) {
         const owner = resolveEffectiveOwner(
           { owner_user_id: doc.owner_user_id as string | null, owner_name: doc.owner_name as string | null },
@@ -1226,11 +1236,15 @@ export async function scanReviews(orgId: string, opts?: { cooldownDays?: number 
           teamSupervisors,
         );
         const escalateTo = uniq([...(owner.userId ? [owner.userId] : []), ...controllers]).filter((u) => u !== (r.reviewer_user_id as string));
-        await Promise.all(escalateTo.map((uid) =>
-          notify({ orgId, userId: uid, kind: "review_overdue", title: `Review overdue: ${label}`, body: `${(r.reviewer_name as string) || "A reviewer"} hasn't signed off — ${ageDays} days outstanding.`, link, resourceType: "document", resourceId: r.document_id as string })
-        ));
+        landed.push(...await Promise.all(escalateTo.filter((uid) => wants("review_overdue", uid)).map((uid) =>
+          notify({ orgId, userId: uid, kind: "review_overdue", title: `Review overdue: ${label}`, body: `${(r.reviewer_name as string) || "A reviewer"} hasn't signed off — ${ageDays} days outstanding.`, link, resourceType: "document", resourceId: r.document_id as string }, { retryKey })
+        )));
       }
-      await supabase.from("document_review_signoffs").update({ notified_at: new Date().toISOString() }).eq("id", r.id as string);
+      // DELIV-7 dw1: stamped only when every notice landed (a lost one is
+      // sent again on the next run, to its recipient only).
+      if (landed.every(Boolean)) {
+        await supabase.from("document_review_signoffs").update({ notified_at: new Date().toISOString() }).eq("id", r.id as string);
+      }
       return 1;
     });
   }

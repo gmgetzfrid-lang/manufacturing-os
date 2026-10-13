@@ -41,7 +41,7 @@ vi.mock("@/lib/supabase", () => {
   return { supabase: { from: (t: string) => builder(t) } };
 });
 
-import { resolveTicketRecipients, listActiveMembers } from "@/lib/ticketRouting";
+import { resolveTicketRecipients, listActiveMembers, isRoutedStatus, routedPool, queuePool, loadRoutingContext, type RoutingClient } from "@/lib/ticketRouting";
 
 const uids = (xs: Array<{ uid: string }>) => xs.map((m) => m.uid).sort();
 
@@ -130,5 +130,50 @@ describe("resolveTicketRecipients", () => {
       { uid: "super1", role: "DraftingSupervisor" },
     ];
     expect(uids(await resolveTicketRecipients("org-1", "PENDING_IFC"))).toEqual(["super1"]);
+  });
+});
+
+// drafting-flow Round G, DF-P3 ROUTING — LEAK-1 / ROUTE-5 / ROUTE-1: every
+// routed status's pool, as the workflow route and the SLA clock read it.
+describe("DF-P3 — the routed statuses (LEAK-1)", () => {
+  const ctx = (members: Array<{ uid: string; roles: string[] }>, also = false) => ({
+    members: members.map((m) => ({ uid: m.uid, role: m.roles[0] as never, roles: m.roles as never[] })),
+    routing: { adminsAlsoReceiveWhenSupervisorSet: also },
+  });
+  it("PENDING_IFC → the queue's owners + the originating engineer (its own header's promise, now kept)", async () => {
+    h.members = [
+      { uid: "admin1", role: "Admin" },
+      { uid: "super1", role: "DraftingSupervisor" },
+      { uid: "eng1", role: "Engineer-2" },
+    ];
+    expect(uids(await resolveTicketRecipients("org-1", "PENDING_IFC", undefined, undefined, { assignedEngineerId: "eng1" }))).toEqual(["eng1", "super1"]);
+    // an engineer who is no longer an active member is not addressed
+    expect(uids(await resolveTicketRecipients("org-1", "PENDING_IFC", undefined, undefined, { assignedEngineerId: "gone" }))).toEqual(["super1"]);
+  });
+  it("a REVISION_REQ nobody drafts routes to the queue; one with a drafter routes nowhere (the drafter is the transition's own recipient)", async () => {
+    h.members = [{ uid: "super1", role: "DraftingSupervisor" }];
+    expect(uids(await resolveTicketRecipients("org-1", "REVISION_REQ", undefined, undefined, { assignedDrafterId: null }))).toEqual(["super1"]);
+    expect(await resolveTicketRecipients("org-1", "REVISION_REQ", undefined, undefined, { assignedDrafterId: "d1" })).toEqual([]);
+  });
+  it("isRoutedStatus names exactly those three", () => {
+    expect(isRoutedStatus("PENDING_ASSIGNMENT")).toBe(true);
+    expect(isRoutedStatus("PENDING_IFC")).toBe(true);
+    expect(isRoutedStatus("REVISION_REQ", { assignedDrafterId: null })).toBe(true);
+    expect(isRoutedStatus("REVISION_REQ", { assignedDrafterId: "d1" })).toBe(false);
+    for (const s of ["PENDING_ENG_TEAM", "DRAFTING", "PENDING_REVIEW", "PENDING_FINAL_APPROVAL", "FINAL_DRAFT", "CLOSED", "CANCELED"]) {
+      expect(isRoutedStatus(s), s).toBe(false);
+    }
+  });
+  it("queuePool / routedPool are the same policy, pure (the SLA clock reads them once per org)", () => {
+    const c = ctx([{ uid: "a1", roles: ["Admin"] }, { uid: "s1", roles: ["Manager", "DraftingSupervisor"] }]);
+    expect(queuePool(c)).toEqual(["s1"]);
+    expect(queuePool({ ...c, routing: { adminsAlsoReceiveWhenSupervisorSet: true } }).sort()).toEqual(["a1", "s1"]);
+    expect(queuePool(ctx([{ uid: "a1", roles: ["Admin"] }]))).toEqual(["a1"]);
+    expect(routedPool(c, "PENDING_ASSIGNMENT", "s1")).toEqual([]);
+    expect(routedPool(c, "DRAFTING")).toEqual([]);
+  });
+  it("loadRoutingContext REPORTS a failed member read (an escalation must never read an outage as 'nobody to tell')", async () => {
+    const client = { from: () => ({ select: () => ({ eq: () => ({ eq: async () => ({ data: null, error: { message: "boom" } }) }) }) }) } as unknown as RoutingClient;
+    expect(await loadRoutingContext("org-1", client)).toEqual({ ok: false, error: "boom" });
   });
 });

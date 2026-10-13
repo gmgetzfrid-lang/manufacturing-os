@@ -188,7 +188,10 @@ describe("20261151 — the guard and publish_revision re-created from their NEWE
     // REV-23 (P19): and 20261165's put_back_retired_issue — the stamped put-back's recorded door;
     // dcRoundFStampedPutBackMigration.test.ts pins that it sets the flag only there, around its own write, and clears it.
     const PUT_BACK_DOOR = "20261165_dc_roundF_stamped_put_back.sql";
-    for (const f of files.filter((x) => x !== FILE && x !== RESTORE_DOOR && x !== PUT_BACK_DOOR)) expect(withoutFlagReads(stripComments(mig(f))), f).not.toMatch(/publish_hold_override/);
+    // REV-29 (P25): and 20261192, which re-creates those two doors (the flag set on exactly the
+    // conditions each had) — pinned in dcRoundFNullPriorStatusMigration.test.ts.
+    const NULL_PUT_BACK_DOORS = "20261192_dc_roundF_null_prior_status_put_back.sql";
+    for (const f of files.filter((x) => x !== FILE && x !== RESTORE_DOOR && x !== PUT_BACK_DOOR && x !== NULL_PUT_BACK_DOORS)) expect(withoutFlagReads(stripComments(mig(f))), f).not.toMatch(/publish_hold_override/);
     expect(withoutFlagReads("SET LOCAL app.publish_hold_override = p_doc::text;")).toMatch(/publish_hold_override/);
   });
 

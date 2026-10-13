@@ -403,7 +403,9 @@ describe("ADD-3 — rank is not relevance", () => {
     const doc = between(rc, "/** Highest-ranked role in the collection", "export function primaryRole");
     expect(doc).toMatch(/NEVER an authority or\s+\*\s+applicability test/);
     expect(doc).toContain("rank is not relevance");
-    expect(src("app/(protected)/requests/new/page.tsx")).toContain("requester_role: relevantRequesterRole(roles, activeRole)");
+    // DF-P2: the page names the role in the create contract; the route keeps
+    // it only if held (20261038's rule, replicated — ticketCreateRoute.test.ts).
+    expect(src("app/(protected)/requests/new/page.tsx")).toContain("requesterRole: relevantRequesterRole(roles, activeRole)");
     expect(src("app/(protected)/requests/[id]/page.tsx")).toContain("canSign={hasAnyRole(['Admin', 'DocCtrl']) || roles.some((r) => r.startsWith('Engineer'))}");
     expect(src("app/(protected)/requests/page.tsx")).toContain("{hasAnyRole(['Manager', 'Admin']) && (");
   });

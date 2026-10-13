@@ -33,7 +33,41 @@ const s = vi.hoisted(() => ({
   notifyThrows: false,
   countFails: false,
   openReadFails: false,
+  /** PROD-16 (N14): claim_access_request_burst (20261197) — "missing" before
+   *  the paste (PGRST202, today's path), "live" after it, "error" otherwise. */
+  burstRpc: "missing" as "missing" | "live" | "error",
+  rpcCalls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
+  /** The function's per-org advisory lock, transcribed: one claim at a time. */
+  burstLock: Promise.resolve() as Promise<void>,
 }));
+
+/** claim_access_request_burst as 20261197 writes it, over the fake: under the
+ *  lock, the recipients who are ACTIVE members of the org and hold no unread
+ *  server burst row (no actor) get one; it answers {told, already}. */
+async function claimBurst(args: Record<string, unknown>) {
+  const org = String(args.p_org);
+  const recipients = [...new Set((args.p_recipients as string[]).filter(Boolean))];
+  const open = (uid: string) => (s.db.tables.notifications ?? []).some((n) => n.org_id === org && n.user_id === uid
+    && n.kind === "access_request_pending" && n.resource_type === "org" && n.resource_id === org && n.read_at == null && n.actor_user_id == null);
+  const prev = s.burstLock;
+  let release!: () => void;
+  s.burstLock = new Promise<void>((r) => { release = r; });
+  await prev;
+  try {
+    const already = recipients.filter(open).length;
+    await new Promise((r) => setTimeout(r, 5));      // the window the lock closes
+    const rest = recipients.filter((uid) => !open(uid)
+      && (s.db.tables.org_members ?? []).some((m) => m.org_id === org && m.uid === uid && m.status === "active"));
+    for (const uid of rest) {
+      (s.db.tables.notifications ??= []).push({
+        id: `burst-${uid}-${(s.db.tables.notifications ?? []).length}`, org_id: org, user_id: uid, kind: "access_request_pending",
+        title: args.p_title, body: args.p_body, link: "/admin/users", resource_type: "org", resource_id: org,
+        actor_user_id: null, actor_name: null, metadata: { accessRequestBurst: true }, read_at: null,
+      });
+    }
+    return { data: { told: rest.length, already }, error: null };
+  } finally { release(); }
+}
 
 /** access_requests whose head-count read fails (the email cap's read). */
 function failingCount(b: Record<string, unknown>) {
@@ -71,6 +105,14 @@ vi.mock("@/lib/supabaseAdmin", () => ({
     const base = makeFakeSupabase(s.db);
     return {
       ...base,
+      rpc: async (fn: string, args: Record<string, unknown>) => {
+        s.rpcCalls.push({ fn, args });
+        if (fn !== "claim_access_request_burst" || s.burstRpc === "missing") {
+          return { data: null, error: { code: "PGRST202", message: `Could not find the function public.${fn} in the schema cache` } };
+        }
+        if (s.burstRpc === "error") return { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } };
+        return claimBurst(args);
+      },
       from: (t: string) => {
         const b = base.from(t) as unknown as Record<string, unknown>;
         if (t === "access_requests" && s.countFails) return failingCount(b);
@@ -117,6 +159,9 @@ beforeEach(() => {
   s.notifyThrows = false;
   s.countFails = false;
   s.openReadFails = false;
+  s.burstRpc = "missing";
+  s.rpcCalls = [];
+  s.burstLock = Promise.resolve();
   s.db.tables.orgs = [{ id: ORG, name: "Acme Refining" }];
   s.db.tables.org_members = [
     member("admin1", ["Admin"]),
@@ -319,6 +364,55 @@ describe("PROD-2 — what a stranger types at the public door never reaches a no
     expect(s.emails).toEqual([]);
     expect(s.db.tables.notifications ?? []).toEqual([]);
     expect(warn).toHaveBeenCalledWith(expect.stringMatching(/open notices could not be read \(open read failed\) — no notice was written for this request/));
+  });
+
+  // ── PROD-16 (notifications N14): the burst slot claimed atomically ──────
+  it("PROD-16 — after 20261197: the route claims the burst slot through ONE call (the org, the pool, the notice's words) and writes no notifications row itself; the rows are the ones today's path writes", async () => {
+    s.burstRpc = "live";
+    s.countFails = true;
+    expect((await ask()).status).toBe(200);
+    expect(s.rpcCalls).toEqual([{ fn: "claim_access_request_burst", args: {
+      p_org: ORG, p_recipients: expect.arrayContaining(["admin1", "dc1", "mgr-dc"]),
+      p_title: "Access requests are waiting for Acme Refining",
+      p_body: "Access requests are waiting for Acme Refining. Every request is listed under Admin → Users: review them there.",
+    } }]);
+    expect((s.rpcCalls[0].args.p_recipients as string[]).sort()).toEqual(["admin1", "dc1", "mgr-dc"]);
+    // the app neither reads the open rows nor inserts: the function does both under its lock
+    expect(s.db.calls.filter((c) => c.table === "notifications")).toEqual([]);
+    const claimed = burstRows();
+    expect(claimed.map((n) => n.user_id).sort()).toEqual(["admin1", "dc1", "mgr-dc"]);
+    expect(claimed[0]).toMatchObject({ org_id: ORG, resource_id: ORG, link: "/admin/users", actor_user_id: null, metadata: { accessRequestBurst: true } });
+    expect(s.bells).toEqual([]);
+    expect(s.emails).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/count could not be read — this request gets no notice of its own; 3 pool member\(s\) newly told that more are waiting, 0 already were$/));
+  });
+
+  it("PROD-16 — two over-cap requests that land at once give each pool member ONE unread burst row (the claim is serialised per org); before the paste the same pair runs today's unserialised two steps, said in the log", async () => {
+    s.burstRpc = "live";
+    s.countFails = true;
+    const both = await Promise.all([
+      ask({ displayName: "Ann", email: "ann@corp.com", orgName: "Acme Refining" }),
+      ask({ displayName: "Bob", email: "bob@corp.com", orgName: "Acme Refining" }),
+    ]);
+    expect(both.map((r) => r.status)).toEqual([200, 200]);
+    expect(burstRows().map((n) => n.user_id).sort()).toEqual(["admin1", "dc1", "mgr-dc"]);
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/0 pool member\(s\) newly told that more are waiting, 3 already were$/));
+    // before 20261197 (PGRST202): today's path, and the log says it is unserialised
+    s.burstRpc = "missing";
+    s.db.tables.notifications = [];
+    expect((await ask({ displayName: "Cy", email: "cy@corp.com", orgName: "Acme Refining" })).status).toBe(200);
+    expect(burstRows().map((n) => n.user_id).sort()).toEqual(["admin1", "dc1", "mgr-dc"]);
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/3 pool member\(s\) newly told that more are waiting, 0 already were \(unserialised: 20261197 is not pasted — PROD-16\)$/));
+  });
+
+  it("PROD-16 — a claim that fails for any other reason writes nothing (as an unreadable open-row read does) and never changes the answer", async () => {
+    s.burstRpc = "error";
+    s.countFails = true;
+    expect((await ask()).status).toBe(200);
+    expect(s.db.tables.access_requests).toHaveLength(1);
+    expect(s.db.tables.notifications ?? []).toEqual([]);
+    expect(s.db.calls.filter((c) => c.table === "notifications")).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/could not be claimed \(canceling statement due to statement timeout\) — no notice was written for this request$/));
   });
 
   it("wellFormedAddress: one address, at most 254 characters, no control or invisible character, no scheme or path", () => {

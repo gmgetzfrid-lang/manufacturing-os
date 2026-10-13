@@ -23,6 +23,8 @@ import {
 } from 'lucide-react';
 import { Ticket, DocumentRecord } from '@/types/schema';
 import { isTerminalTicketStatus } from '@/lib/ticketShed';
+import { summarizeOutcomes } from '@/lib/ticketOutcome';
+import RequestOutcomes from '@/components/requests/RequestOutcomes';
 import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
 import UserAvatar from '@/components/ui/UserAvatar';
 
@@ -133,6 +135,8 @@ export default function AnalyticsPage() {
           comments: r.comments ?? [], history: r.history ?? [],
           createdAt: r.created_at, lastModified: r.last_modified,
           archivedAt: r.archived_at ?? null, metadata: r.metadata ?? null,
+          // LEAK-9 / GAP-107: how the request ended (absent before 20261195).
+          outcome: r.outcome ?? null,
         } as Ticket)));
 
         setDocuments((docsData || []).map(r => ({
@@ -304,6 +308,16 @@ export default function AnalyticsPage() {
   }, [tickets, documents, timeRange]);
 
   const selectedTickets = selectedReason ? metrics.drillDownMap.get(selectedReason) || [] : [];
+
+  // LEAK-9 / GAP-107 (drafting-flow DF-P3): how requests ENDED — the only
+  // instrument that says whether work is leaving the app. Read-only. All
+  // time (labelled so): the time-range control belongs to the volume chart,
+  // and the rows are what the analytics route returns (its unpaged select is
+  // capped by the server's row limit — said in the block's footnote).
+  const outcomes = useMemo(
+    () => summarizeOutcomes(tickets.map((t) => ({ status: t.status, outcome: t.outcome ?? null, requestType: t.requestType }))),
+    [tickets],
+  );
 
   // --- USER PROFILE COMPUTATION ---
   const userProfile = useMemo(() => {
@@ -576,6 +590,11 @@ export default function AnalyticsPage() {
           <p className="text-xs text-[var(--color-text-muted)]">Active tickets untouched for &gt;7 days.</p>
         </div>
       </div>
+
+      {/* LEAK ACCOUNTING (LEAK-9 / GAP-107): how requests ended, per request type
+          (components/requests/RequestOutcomes.tsx — the rate is withheld, never
+          shown as 0 %, while no cancel names a category; fix pass 3) */}
+      <RequestOutcomes summary={outcomes} />
 
       {/* SECTION 2: CHARTS & LISTS */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
