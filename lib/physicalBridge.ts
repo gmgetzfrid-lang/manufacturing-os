@@ -111,6 +111,13 @@ export const LABEL_CAPTION_LINES: readonly string[] = [
   "report a problem",
 ];
 
+/** PHYS-16 (integrator ruling, 2026-10-13): the equipment label's marker,
+ *  drawn only when a character of its tag, description or location was
+ *  replaced or removed, with a trailing "*" on the tag line. It fits the
+ *  narrowest label's text column (100 pt on the 3.5" sticker). */
+export const LABEL_PLAIN_MARK = "* plain characters — scan for exact tag";
+export const LABEL_PLAIN_MARK_SIZE = 5.5;
+
 /** The equipment label's QR target. Exported for tests: the path shape
  *  /assets/<tag> must survive (existing stickers). */
 export function equipmentLabelUrl(tag: string): string {
@@ -143,15 +150,32 @@ export async function printEquipmentLabels(assets: LabelAsset[]): Promise<void> 
     const tx = x + pad + qrSize + pad;
     const maxW = w - (tx - x) - pad;
     // PHYS-16: the tag, description and location in characters the fonts
-    // print (textMapper). The QR above still targets the tag on record. A
-    // 3.5"×2" sticker has no room for a note; the scan resolves the real tag.
-    const { drawable } = textMapper();
-    page.drawText(fit(drawable(asset.tag), bold, 20, maxW), { x: tx, y: y + h - pad - 20, size: 20, font: bold, color: INK });
-    if (asset.description) {
-      page.drawText(fit(drawable(asset.description), regular, 9, maxW), { x: tx, y: y + h - pad - 34, size: 9, font: regular, color: INK });
+    // print (textMapper) — mapped once, up front. The QR above still targets
+    // the tag on record.
+    const { drawable, mapped } = textMapper();
+    const tag = drawable(asset.tag);
+    const description = asset.description ? drawable(asset.description) : null;
+    const location = asset.location ? drawable(asset.location) : null;
+    // PHYS-16 (integrator ruling, 2026-10-13): a tag printed with a
+    // substituted character must never look like the exact tag ("P‐101" and
+    // "P-101" would otherwise print the same sticker). Only when something on
+    // this label was replaced or removed: a trailing "*" on the tag line —
+    // after the cut, so it always shows — and LABEL_PLAIN_MARK under the
+    // location, inside the text column. A label in characters the fonts print
+    // is drawn exactly as before.
+    const marked = mapped.length > 0;
+    const tagLine = marked
+      ? `${fit(tag, bold, 20, maxW - bold.widthOfTextAtSize("*", 20))}*`
+      : fit(tag, bold, 20, maxW);
+    page.drawText(tagLine, { x: tx, y: y + h - pad - 20, size: 20, font: bold, color: INK });
+    if (description !== null) {
+      page.drawText(fit(description, regular, 9, maxW), { x: tx, y: y + h - pad - 34, size: 9, font: regular, color: INK });
     }
-    if (asset.location) {
-      page.drawText(fit(drawable(asset.location), regular, 8, maxW), { x: tx, y: y + h - pad - 46, size: 8, font: regular, color: MUTED });
+    if (location !== null) {
+      page.drawText(fit(location, regular, 8, maxW), { x: tx, y: y + h - pad - 46, size: 8, font: regular, color: MUTED });
+    }
+    if (marked) {
+      page.drawText(LABEL_PLAIN_MARK, { x: tx, y: y + h - pad - 56, size: LABEL_PLAIN_MARK_SIZE, font: regular, color: AMBER });
     }
     // Bottom-up: the last caption line sits on the label's bottom margin.
     LABEL_CAPTION_LINES.forEach((line, i) => {
@@ -297,9 +321,10 @@ export async function printTicketTraveler(input: TravelerInput): Promise<void> {
 
   // PHYS-16: the ticket's number, title, status, revision, people and date
   // in characters the fonts print (textMapper) — mapped once, up front, so
-  // the note names every replacement. A number such as "KE‐0001" used to
-  // throw here and nothing downloaded. The QR and the file name keep the
-  // values on record.
+  // the note names every replacement on the page: the number, the title and
+  // every row value (status, revision, requester, drafter, opened date). A
+  // number such as "KE‐0001" used to throw here and nothing downloaded. The
+  // QR and the file name keep the values on record.
   const { drawable, mapped } = textMapper();
   const ticketNumber = drawable(input.ticketNumber ?? "");
   const title = drawable(input.title);
