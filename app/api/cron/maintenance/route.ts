@@ -16,6 +16,15 @@
 //   5. Stale-checkout escalation: checkouts held past 14 days notify the
 //      org's DocCtrl/Admin pool (a stale lock stops being the holder's
 //      private secret).
+//   5b(i). Departed members' leftover requests (drafting-flow EDGE-4): what a
+//      member removal could not hand back (row-locked, refused, past its
+//      bound) goes back to the queue through the same database function.
+//   5b. Drafting-request SLA clock (drafting-flow GAP-106 / EDGE-7 /
+//      ROUTE-9): an open request at 75 % of its window warns whoever it is
+//      waiting on; one past its target escalates to them, the assignment
+//      queue and the requester — once each, stamped on the ticket
+//      (lib/ticketSla.ts runTicketSlaScan). Escalation notifies; it never
+//      advances, closes or reassigns a request.
 //   6. Compliance clocks per org — including the hold aging sweep (HLD-14):
 //      a hold past its expected release, or open past HOLD_AGING_DAYS with
 //      no date, nudges its opener and the release pool once.
@@ -72,11 +81,15 @@ import {
 import { runWithServerClient } from "@/lib/serverClientScope";
 import { sweepIntakeStaging } from "@/lib/intakeStaging";
 import { emit, type EmitResult } from "@/lib/notify/dispatch";
+import { notifyBatchWithReason } from "@/lib/inAppNotifications";
+import { runComplianceScan } from "@/lib/complianceNotifyScope";
 import { KIND_META } from "@/lib/notificationKinds";
 import { emailAllowedByPrefs } from "@/lib/notificationPrefs";
 import { renderNotificationEmail } from "@/lib/emailRender";
 import { publicOrigin } from "@/lib/publicOrigin";
 import { formatRecordDate, formatRecordTime, orgTimeZone } from "@/lib/recordTime";
+import { runTicketSlaScan, type SlaScanReport } from "@/lib/ticketSla";
+import { runDepartureBackstop, type DepartureBackstopReport, type DepartureRpcClient } from "@/lib/ticketDepartureBackstop";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -118,7 +131,17 @@ async function handler(req: NextRequest) {
     storageAlerts: number;
     prunedIntents: number;
     staleEscalations: number;
+    /** The rows (roster rows, documents, libraries) the step-6 scans sent
+     *  notices for this run — ATTEMPTED, a row whose notice was dead-lettered
+     *  included (DELIV-7). How many bell notices LANDED is
+     *  complianceBellNotices. */
     complianceNotices: number;
+    /** The step-6 scans' bell notices, one by one: attempted, delivered (the
+     *  row landed) and dead-lettered (re-sent on the next run). Counted by
+     *  lib/complianceNotify for the scans that write through it; the
+     *  distribution-ack and hold-aging scans (notifications N9's files) are
+     *  not counted here yet. */
+    complianceBellNotices: { attempted: number; delivered: number; deadLettered: number };
     complianceOrgs: number;
     complianceEmails: number;
     folderTrashPurged?: number;
@@ -135,6 +158,10 @@ async function handler(req: NextRequest) {
     intakeStagingSwept?: number;
     reviewHealthNudges?: number;
     verifyScansPruned?: number;
+    /** GAP-106: the drafting-request SLA step (5b). */
+    ticketSla?: Omit<SlaScanReport, "errors">;
+    /** EDGE-4 (fix pass 3): the departure backstop (5b(i)). */
+    ticketDeparture?: Omit<DepartureBackstopReport, "errors">;
     /** DELIV-11: what the drain did — an empty queue, a batch that failed, and
      *  unconfigured email are three different answers here. */
     emailDrain?: DrainReport;
@@ -147,6 +174,7 @@ async function handler(req: NextRequest) {
     prunedIntents: 0,
     staleEscalations: 0,
     complianceNotices: 0,
+    complianceBellNotices: { attempted: 0, delivered: 0, deadLettered: 0 },
     complianceOrgs: 0,
     complianceEmails: 0,
     errors: [],
@@ -342,6 +370,66 @@ async function handler(req: NextRequest) {
     result.errors.push(`stale-escalation: ${(e as Error).message}`);
   }
 
+  // 5b(i). EDGE-4 BACKSTOP (drafting-flow, DF-P3 fix pass 3): what a member
+  //     departure left on a uid that cannot sign in — a ticket another write
+  //     held row-locked, a hand-back the database refused, or past one call's
+  //     bound of 200 — is handed back here, through the same function
+  //     (lib/ticketDepartureBackstop.ts → return_departed_member_tickets), as
+  //     the service role. Before the SLA scan, so an overdue request is
+  //     escalated to the queue it is back in, not to the departed member.
+  //     Bounded (TICKET_DEPARTURE_MS, and never into the SLA scan's reserve),
+  //     idempotent (a handed-back ticket leaves the list), never throws.
+  //     Before 20261195 is pasted the function is missing: nothing to do (no
+  //     departure triggers either), and no line.
+  const departureDeadlineAt = Math.min(Date.now() + TICKET_DEPARTURE_MS, runEnd - TICKET_SLA_RESERVE_MS);
+  if (departureDeadlineAt - Date.now() < TICKET_DEPARTURE_MIN_MS) {
+    result.errors.push(`ticket-departure: not run — ${Math.max(0, Math.round(left() / 1000))} s of the run were left, and it stops ${TICKET_SLA_RESERVE_MS / 1000} s before the run's end; the next run hands back what departed members still hold`);
+  } else {
+    try {
+      const dep = await runDepartureBackstop({ client: sb as unknown as DepartureRpcClient, deadlineAt: departureDeadlineAt });
+      const { errors: depErrors, ...depCounts } = dep;
+      result.ticketDeparture = depCounts;
+      for (const line of depErrors) { result.errors.push(line); console.error(`[cron/maintenance] ${line}`); }
+      if (dep.truncated) result.errors.push("ticket-departure: this run stopped before every departed member's tickets were handed back (its time or its holder cap ran out) — the next run continues");
+    } catch (e) {
+      result.errors.push(`ticket-departure: ${(e as Error).message}`);
+    }
+  }
+
+  // 5b. DRAFTING-REQUEST SLA CLOCK (drafting-flow GAP-106 / EDGE-7 /
+  //     ROUTE-9) — one step on this cron (a third vercel.json entry fails
+  //     deployment; see step 10). Warns at 75 % of a request's window,
+  //     escalates at its target, once each (stamped compare-and-set on the
+  //     ticket), through emit() — bell + email under the "SLA warnings"
+  //     preference, drained at 6c. Never throws; every failure is a line.
+  //     Its time (fix pass 2): at most TICKET_SLA_MS, and it stops
+  //     TICKET_SLA_RESERVE_MS before the run's end — the compliance digest's
+  //     floor, the second drain's reserve and the embed drain's minimum — so
+  //     it never takes time the steps after it are guaranteed; with less than
+  //     TICKET_SLA_MIN_MS of its own it is not run, and says so.
+  const slaDeadlineAt = Math.min(Date.now() + TICKET_SLA_MS, runEnd - TICKET_SLA_RESERVE_MS);
+  if (slaDeadlineAt - Date.now() < TICKET_SLA_MIN_MS) {
+    result.errors.push(`ticket-sla: not run — ${Math.max(0, Math.round(left() / 1000))} s of the run were left, and it stops ${TICKET_SLA_RESERVE_MS / 1000} s before the run's end so the compliance digest, the second drain and the embed drain keep their time — the next run reads the soonest-due first`);
+  } else {
+    try {
+      const sla = await runTicketSlaScan({
+        client: sb,
+        emit: (input) => runWithServerClient(sb, () => emit(input)),
+        zoneOf: (orgId) => orgTimeZone(sb, orgId),
+        deadlineAt: slaDeadlineAt,
+      });
+      const { errors: slaErrors, ...slaCounts } = sla;
+      result.ticketSla = slaCounts;
+      for (const line of slaErrors) { result.errors.push(line); console.error(`[cron/maintenance] ${line}`); }
+      // Not a resume point: the scan reads soonest-due first every run, so what
+      // this run did not reach is due no sooner than what it did, and a ticket
+      // leaves the scan once its breach is sent (lib/ticketSla.ts).
+      if (sla.truncated) result.errors.push("ticket-sla: this run stopped before every open request was read (its read cap or time ran out) — the next run starts again with the soonest-due; a request leaves the scan once its breach is sent");
+    } catch (e) {
+      result.errors.push(`ticket-sla: ${(e as Error).message}`);
+    }
+  }
+
   // 4b. Rebuild acl_index from each node's ACL + ancestor chain, dropping
   //     expired rules (DB-4 / OWN-7 / DEC-10). Idempotent and diff-guarded:
   //     it only writes a node whose recomputed index differs from the stored
@@ -386,7 +474,8 @@ async function handler(req: NextRequest) {
       result.complianceOrgs += 1;
       for (const [name, fn] of scans) {
         try {
-          result.complianceNotices += await fn(org.id);
+          // DELIV-7 dw1 / DELIV-16 (notifications N14): the scan's dead-lettered notices are a line in errors; no retry past the digest's time; its bell notices tallied
+          result.complianceNotices += await runComplianceScan(`${name}@${org.id}`, () => fn(org.id), result.errors, runEnd - DIGEST_FLOOR_MS - AFTER_DIGEST_RESERVE_MS, result.complianceBellNotices);
         } catch (e) {
           // Loud, per-scan, per-org — a permanently failing scan must be
           // distinguishable from a clean one.
@@ -660,9 +749,9 @@ async function drainEmailQueue(origin: string, maxBatches: number, label: string
 
 const STALE_ESCALATION_DAYS = 14;
 
-// The escalation's raw insert stays here until notifications N14 (TAX-11's
-// tail) routes it through notify(); DELIV-7 / NEDGE-12 (N6) report its
-// failures and label its date.
+// The escalation writes through the typed sink (notifications N14, TAX-11's
+// tail — ONE statement on the cron's client, as the raw insert was);
+// DELIV-7 / NEDGE-12 (N6) report its failures and label its date.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function escalateStaleCheckouts(sb: SupabaseClient<any>, errors: string[]): Promise<number> {
   const cutoff = new Date(Date.now() - STALE_ESCALATION_DAYS * 24 * 3600 * 1000).toISOString();
@@ -712,22 +801,21 @@ async function escalateStaleCheckouts(sb: SupabaseClient<any>, errors: string[])
 
     const days = Math.floor((Date.now() - Date.parse(row.started_at)) / (24 * 3600 * 1000));
     const since = formatRecordDate(row.started_at, await zoneOf(row.org_id));
-    const inserts = recipients.map((uid) => ({
-      org_id: row.org_id,
-      user_id: uid,
-      kind: "checkout_released",
+    const { error: insErr } = await notifyBatchWithReason(recipients.map((uid) => ({
+      orgId: row.org_id,
+      userId: uid,
+      kind: "checkout_released" as const,
       title: `Checkout held ${days} days — review needed`,
       body: `${row.user_name || "A user"} has had a document checked out since ${since}${row.purpose ? ` (${row.purpose})` : ""}. Nudge them or force-release if the work is done.`,
       link: row.library_id ? `/documents/${row.library_id}?doc=${row.document_id}` : "/checkouts",
-      resource_type: "document",
-      resource_id: row.document_id,
-      actor_name: "System",
+      resourceType: "document",
+      resourceId: row.document_id,
+      actorName: "System",
       metadata: { staleSessionId: row.id, escalation: true },
-    }));
-    const { error: insErr } = await sb.from("notifications").insert(inserts);
+    })), sb);
     if (insErr) {
       // DELIV-7 dw3: reported, never only a counter that did not move.
-      errors.push(`stale-escalation: session ${row.id} — the controllers' notice was not written (retried on the next run): ${insErr.message}`);
+      errors.push(`stale-escalation: session ${row.id} — the controllers' notice was not written (retried on the next run): ${insErr}`);
       continue;
     }
     escalated += 1;
@@ -790,9 +878,21 @@ const INGEST_MS = 40_000;
 /** Room after the ingest's deadline for its last batch to commit. */
 const INGEST_COMMIT_MS = 15_000;
 const STORAGE_WALK_MS = 15_000;
+/** GAP-106 (step 5b): the drafting-request SLA scan's share of the run. */
+const TICKET_SLA_MS = 30_000;
 const EMBED_DRAIN_MS = 100_000;
 /** Below this the embed drain only marks libraries starved. */
 const EMBED_DRAIN_MIN_MS = 20_000;
+/** GAP-106 (step 5b, fix pass 2): the scan stops this long before the run's
+ *  end — what the steps after it are guaranteed (the digest's floor, the
+ *  second drain's reserve, the embed drain's minimum). */
+const TICKET_SLA_RESERVE_MS = DIGEST_FLOOR_MS + AFTER_DIGEST_RESERVE_MS + EMBED_DRAIN_MIN_MS;
+/** Below this much time of its own the SLA scan is not run (it says so). */
+const TICKET_SLA_MIN_MS = 5_000;
+/** EDGE-4 (step 5b(i), fix pass 3): the departure backstop's share of the run,
+ *  and below what it is not run (it says so). */
+const TICKET_DEPARTURE_MS = 15_000;
+const TICKET_DEPARTURE_MIN_MS = 2_000;
 
 /** The digest's deadline: the run's end less the 6c reserve — and never less
  *  than DIGEST_FLOOR_MS from `now`, unless the run itself ends sooner. */
@@ -902,6 +1002,27 @@ function digestThrough(row: { created_at?: unknown; metadata?: unknown }): numbe
   if (Number.isFinite(t)) return t;
   const c = typeof row.created_at === "string" ? Date.parse(row.created_at) : NaN;
   return Number.isFinite(c) ? c : null;
+}
+
+/** NEDGE-20: a digest row the cron wrote ends its window (`through`, the
+ *  run's `asOf`) no later than it was queued, give or take the clock margin;
+ *  one that ends later was not written by a digest run, and is not trusted
+ *  as the recipient's last digest. A row with no `through` (before N6 fix
+ *  pass 2) is trusted, as before. */
+function digestTrusted(row: { created_at?: unknown; metadata?: unknown }): boolean {
+  const through = (row.metadata as { through?: unknown } | null)?.through;
+  const t = typeof through === "string" ? Date.parse(through) : NaN;
+  const c = typeof row.created_at === "string" ? Date.parse(row.created_at) : NaN;
+  return !Number.isFinite(t) || !Number.isFinite(c) || t <= c + DIGEST_CLOCK_OVERLAP_MS;
+}
+
+/** NEDGE-20: the recipient's last digest rows read, newest first — the
+ *  newest of them that digestTrusted() passes is their last digest. */
+const DIGEST_LAST_ROWS = 10;
+
+/** email_notifications.queued_by is not there yet (20261183 unpasted). */
+function isMissingQueuedBy(e: { code?: string; message?: string }): boolean {
+  return e.code === "42703" || e.code === "PGRST204" || /queued_by/.test(e.message ?? "") && /does not exist|schema cache/i.test(e.message ?? "");
 }
 
 /** The ids a recipient's last digest counted in its last
@@ -1071,6 +1192,9 @@ async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: s
   };
 
   let queued = 0;
+  /** NEDGE-20 (notifications N14): whether email_notifications.queued_by
+   *  (20261183) can be read — false after the first 42703, for the run. */
+  let queuedByKnown = true;
   /** Offer one member their digest. `owe(fromMs)`: what a later run's search
    *  for them must start from, when this one held something back. */
   const one = async (m: Member, windowMs: number, oldestMs: number, owe: (fromMs: number) => void) => {
@@ -1088,17 +1212,36 @@ async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: s
     let sinceMs = windowMs;
     let readFromMs = windowMs;
     let tail: string[] = [];
-    const { data: last, error: lastErr } = await sb
-      .from("email_notifications").select("created_at, metadata")
-      .eq("org_id", m.org_id)
-      .eq("to_user_id", m.uid)
-      .eq("event_type", "compliance_digest")
-      .order("created_at", { ascending: false })
-      .limit(1);
+    // NEDGE-20 (notifications N14): only a digest row the SERVER queued is
+    // trusted as their last one — queued_by IS NULL once 20261183 is pasted
+    // (a signed-in member's row is stamped with its queuer; 20261197 also
+    // refuses one at the door). Before that paste (42703) today's read runs.
+    const lastDigest = (serverOnly: boolean) => {
+      let q = sb
+        .from("email_notifications").select("created_at, metadata")
+        .eq("org_id", m.org_id)
+        .eq("to_user_id", m.uid)
+        .eq("event_type", "compliance_digest");
+      if (serverOnly) q = q.is("queued_by", null);
+      return q.order("created_at", { ascending: false }).limit(DIGEST_LAST_ROWS);
+    };
+    const serverOnly = queuedByKnown;
+    let { data: last, error: lastErr } = await lastDigest(serverOnly);
+    if (lastErr && serverOnly && isMissingQueuedBy(lastErr)) {
+      queuedByKnown = false;
+      ({ data: last, error: lastErr } = await lastDigest(false));
+    }
     if (lastErr) {
       say(`${m.org_id}/${m.uid}: their last digest could not be read — sent anyway, listing from ${iso(windowMs)}: ${lastErr.message}`);
     } else {
-      const row = ((last as Array<{ created_at?: unknown; metadata?: unknown }> | null) ?? [])[0];
+      const recent = (last as Array<{ created_at?: unknown; metadata?: unknown }> | null) ?? [];
+      // …and never one whose window ends after it was queued (plus the clock
+      // margin): a forged `through` would silence the digests until it. The
+      // newest TRUSTED row of the last few is their last digest, so a forged
+      // newer row neither hides it nor widens their window.
+      const row = recent.find(digestTrusted);
+      const skipped = row ? recent.indexOf(row) : recent.length;
+      if (skipped > 0) say(`${m.org_id}/${m.uid}: ${skipped} newer digest row(s) end their window after they were queued — not trusted; ${row ? "their newest trusted digest row is their last digest" : `listing from ${iso(windowMs)}`}`);
       if (row) {
         const through = digestThrough(row);
         if ((row.metadata as { day?: unknown } | null)?.day === dayKey) {

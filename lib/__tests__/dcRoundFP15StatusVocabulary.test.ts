@@ -45,6 +45,18 @@ vi.mock("@/lib/supabase", () => ({
     }),
   },
 }));
+// REV-26 (document-control P25): the bulk editor writes a row it puts in force
+// out of IFC through changeDocumentStatus (recorded as an issue — driven in
+// dcRoundFBulkStatusIssue / dcRoundFStatusIssueRecord); here it is the same
+// one write, recorded in s.calls as the bare write was, so this file still
+// pins only the hold check.
+vi.mock("@/lib/revisions", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/revisions")>()),
+  changeDocumentStatus: vi.fn(async (input: { documentId: string; toStatus: string; patch?: Record<string, unknown> }) => {
+    s.calls.push({ table: "documents", payload: { ...(input.patch ?? {}), status: input.toStatus }, id: input.documentId });
+    return { issued: true, putBack: false, entryIntoForce: true, complianceClockErrors: [], recordError: null };
+  }),
+}));
 vi.mock("@/lib/stamping", () => ({ applyStampToPdfDoc: vi.fn() }));
 vi.mock("@/lib/intents", () => ({ recordIntent: vi.fn() }));
 vi.mock("@/lib/publicOrigin", () => ({ publicOrigin: () => "" }));
@@ -220,7 +232,9 @@ describe("VFY-20 — an existing IFC row is shown as what it is, never silently 
     expect(host.querySelector('[data-testid="issue-transition-note"]')).toBeNull();
     const note = host.querySelector('[data-testid="entry-into-force-note"]')!.textContent!;
     expect(note).toMatch(/^Saving puts Rev 0 in force as a controlled copy: the field pack will print it and a scan will read it as current\./);
-    expect(note).toMatch(/The database does not check this change \(it already counts "IFC" as an issue\), so this editor checks the hold — the save is refused while the document is on hold\. Its review is not checked: choose Issued only for a revision that was reviewed\./);
+    // REV-26 (P25): what the database does, true before and after 20261185, and the record the save makes
+    expect(note).toMatch(/It is an issue and is recorded as one: the acknowledgment roster opens for this revision, and its review clock is left as it is\. This editor checks the hold before it saves — the save is refused while the document is on hold — and since database update 20261185 the database refuses it over a hold too \(before that update the database does not check this change: it counts "IFC" as an issue already\)\. Its review is not checked: choose Issued only for a revision that was reviewed\./);
+    expect(note).not.toMatch(/^The database does not check this change/m);
     await act(async () => { button("Save").dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
     expect(s.holdReads).toEqual(["d1"]);
@@ -283,7 +297,7 @@ describe("VFY-20 — an existing IFC row is shown as what it is, never silently 
     expect(s.calls.map((c) => [c.id, c.payload.status])).toEqual([["a1", "Superseded"], ["a2", "Superseded"]]);
     expect(s.holdReads).toEqual([]); // nothing entered force: no hold read
   });
-  it("the bulk editor names the IFC rows Issued would put in force with no database check, checks each one's hold, refuses a held one and writes the rest", async () => {
+  it("the bulk editor names the IFC rows Issued would put in force (an issue, recorded — REV-26), checks each one's hold, refuses a held one and writes the rest", async () => {
     const LIB = { id: "lib", customColumns: [], uniquenessKeys: ["documentNumber"] } as unknown as LibraryConfig;
     const docs = [
       { id: "b1", documentNumber: "B1", title: "b1", rev: "0", status: "IFC", metadata: {}, currentVersionId: "v" },
@@ -299,7 +313,8 @@ describe("VFY-20 — an existing IFC row is shown as what it is, never silently 
     await act(async () => setValue(labelled("New value") as HTMLSelectElement, "Issued"));
     const note = host.querySelector('[data-testid="bulk-entry-into-force-note"]')!.textContent!;
     expect(note).toMatch(/^2 of the selected rows \(B1, B2\) have statuses no gate reads as in force \(IFC\): setting Issued puts their current revision in force/);
-    expect(note).toMatch(/The database does not check this change, so each row's hold is checked first and a held row is refused \(named after the apply\); the revision's review is not checked\./);
+    // REV-26 (P25): the record, and what the database does before and after 20261185
+    expect(note).toMatch(/Each is an issue and is recorded as one \(its acknowledgment roster opens; its review clock is left as it is\)\. Each row's hold is checked first and a held row is refused \(named after the apply\); since database update 20261185 the database refuses a held row too \(before that update it does not check this change\)\. The revision's review is not checked\./);
     expect(host.querySelector('[data-testid="bulk-issue-note"]')).toBeNull(); // not a REV-18 issue to the database
     await act(async () => { button("Apply to 4").dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     await act(async () => { await new Promise((r) => setTimeout(r, 0)); });

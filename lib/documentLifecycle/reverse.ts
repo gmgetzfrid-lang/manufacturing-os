@@ -69,7 +69,18 @@
 //   A split or merge recorded before Round F carries no prior status: the
 //   reversal REFUSES rather than guess one (it used to write 'Issued', which
 //   resurrected Void and Draft sources as controlled copies) unless the caller
-//   names the status explicitly. Reversal rewrites the supersession record,
+//   names the status explicitly.
+//
+//   REV-29 (P25): a source that had NO status (NULL) — or an empty one — is
+//   recorded so (the event's `priorStatus` / `priorStatuses` key present,
+//   its value null or blank) and restored as that, never as 'Issued'; only a
+//   status the event does not carry at all is a legacy one. Since 20261192
+//   restore_reversed_source takes it; on a database whose function predates
+//   that paste a NULL is restored as 'Issued', exactly as the reversal of an
+//   event the app recorded before P25 (it wrote 'Issued' for a NULL) did — an
+//   older body takes today's path. An empty status has no such path (before
+//   P25 the reversal asked Document Control to name one): there the restore
+//   is refused, nothing changed, until 20261192 is pasted. Reversal rewrites the supersession record,
 //   whose rows only Document Control / Admin may delete (20261131) — so it is
 //   their act, checked here before anything moves.
 //
@@ -91,7 +102,7 @@ import { isControllerPrincipal } from "@/lib/permissions";
 import { resolveCanControlLibrary } from "@/lib/documentGuards";
 import { isEffectiveOwnerOfDocument } from "@/lib/ownership";
 import { assertNotOnHold, holdReasonLabel } from "@/lib/holdGate";
-import { voidPendingDraftAfterPublish, revokeLiveSharesForDocument, putBackRetiredIssue } from "@/lib/revisions";
+import { voidPendingDraftAfterPublish, revokeLiveSharesForDocument, putBackRetiredIssue, describePutBackStatus } from "@/lib/revisions";
 import { requestUnitCodeDecode } from "@/lib/unitCodeClient";
 import {
   withCompensation, copyActiveHoldsToDoc, releaseCarriedHolds,
@@ -153,21 +164,33 @@ export class PriorStatusUnknownError extends Error {
  *  still prefers whatever IS recorded. */
 export function reversalNeedsLegacyStatus(action: string, details: Record<string, unknown> | null | undefined): boolean {
   const d = details ?? {};
-  const has = (v: unknown) => typeof v === "string" && v.trim().length > 0;
-  if (action === "DOC_SPLIT") return !has(d.priorStatus);
+  if (action === "DOC_SPLIT") return !recordsPriorStatus(d, "priorStatus");
   if (action === "DOC_MERGED") {
     const recorded = (d.priorStatuses && typeof d.priorStatuses === "object" ? d.priorStatuses : {}) as Record<string, unknown>;
     const siblings = ((d.mergeSiblings as string[] | undefined) ?? []).filter(Boolean);
-    if (siblings.length === 0) return !has(d.priorStatus);
-    return !siblings.every((id) => has(recorded[id]));
+    if (siblings.length === 0) return !recordsPriorStatus(d, "priorStatus");
+    return !siblings.every((id) => recordsPriorStatus(recorded, id));
   }
   return false;
 }
 
+/** REV-12 / REV-29 (P25): does the event record a prior status under this
+ *  key? A non-blank status — and, since P25, a NULL (the key present with a
+ *  null value) or a blank one: what a source with no status had. A key the
+ *  event does not carry is no record (a split / merge before Round F). */
+export function recordsPriorStatus(record: Record<string, unknown>, key: string): boolean {
+  if (!Object.prototype.hasOwnProperty.call(record, key)) return false;
+  const v = record[key];
+  return v === null || typeof v === "string";
+}
+
 /** REV-12: the status to restore — recorded on the event, else the caller's
- *  explicit (validated) choice for a legacy event, else refuse. */
-function statusToRestore(recorded: unknown, explicit: string | undefined, label: string): string {
+ *  explicit (validated) choice for a legacy event, else refuse. REV-29
+ *  (P25): a NULL or blank status the event records (`present`: the key is
+ *  there) is restored as that — what the source had — never guessed. */
+function statusToRestore(recorded: unknown, explicit: string | undefined, label: string, present = recorded !== undefined): string | null {
   if (typeof recorded === "string" && recorded.trim()) return recorded;
+  if (present && (recorded === null || typeof recorded === "string")) return recorded as string | null;
   if (explicit) {
     if (!(LEGACY_RESTORE_STATUSES as readonly string[]).includes(explicit)) {
       throw new Error(`Cannot restore to "${explicit}" — choose ${LEGACY_RESTORE_STATUSES.join(", ")}.`);
@@ -191,7 +214,8 @@ type Register = (c: Compensation) => void;
 /** The status fields a reversal changes on a document — what its rollback
  *  puts back. */
 interface StatusSnapshot {
-  status: string;
+  /** REV-29 (P25): NULL for a document with no status — put back as that. */
+  status: string | null;
   superseded_at: unknown;
   superseded_by_user: unknown;
   supersession_reason: unknown;
@@ -226,7 +250,7 @@ async function putStatusBack(docId: string, snap: StatusSnapshot, actorUserId: s
     supersession: snap, forceHold: true,
   });
   if (door.kind === "landed") return;
-  if (door.kind === "refused") throw new Error(`${docId} could not be put back to ${snap.status} (${door.reason})`);
+  if (door.kind === "refused") throw new Error(`${docId} could not be put back to ${describePutBackStatus(snap.status)} (${door.reason})`);
   const { data, error } = await supabase.from("documents").update({
     status: snap.status,
     superseded_at: snap.superseded_at ?? null,
@@ -237,7 +261,7 @@ async function putStatusBack(docId: string, snap: StatusSnapshot, actorUserId: s
     updated_by: actorUserId,
   }).eq("id", docId).select("id");
   if (error || ((data as unknown[] | null) ?? []).length === 0) {
-    throw new Error(`${docId} could not be put back to ${snap.status} (${error?.message ?? "the write was refused"})`);
+    throw new Error(`${docId} could not be put back to ${describePutBackStatus(snap.status)} (${error?.message ?? "the write was refused"})`);
   }
 }
 
@@ -408,7 +432,17 @@ export function sameAuditId(a: unknown, b: unknown): boolean {
  *  the hold: `recorded` when it answered restored_over_hold, `unknown` when
  *  its answer was an error other than the function being absent — a refusal,
  *  or a transport error after the database committed (integrator fix). */
-interface RecordedPass { recorded: boolean; unknown: boolean }
+interface RecordedPass {
+  recorded: boolean; unknown: boolean;
+  /** REV-29 (P25): the status actually restored when it is not the one
+   *  asked (a NULL put back as 'Issued' by a restore_reversed_source that
+   *  predates 20261192), for the correction's record. */
+  restoredAs?: string | null;
+}
+
+/** REV-29 (P25): restore_reversed_source's refusal of a blank status — every
+ *  call before 20261192; since then only a call naming no reversed event. */
+export const RESTORE_BLANK_STATUS_REFUSAL = "restore_reversed_source: name the status to restore the document to.";
 
 /** REV-22 (P18): PostgREST's answer for a function that does not exist yet
  *  (PGRST202 — its schema cache — or Postgres' undefined_function): the
@@ -462,7 +496,7 @@ async function findUncorrectedPass(docId: string, door: RestoreDoor): Promise<{ 
  *  reads like a refusal): once the source reads back as it was, the record
  *  itself is read (findUncorrectedPass) and a pass it finds is corrected the
  *  same way; a read that fails is named for manual attention, never silent. */
-function correctRecordedPass(docId: string, snap: StatusSnapshot, restoredTo: string, door: RestoreDoor, pass: RecordedPass): () => Promise<void> {
+function correctRecordedPass(docId: string, snap: StatusSnapshot, restoredTo: string | null, door: RestoreDoor, pass: RecordedPass): () => Promise<void> {
   return async () => {
     if (!pass.recorded && !pass.unknown) return;
     let after: StatusSnapshot;
@@ -497,7 +531,7 @@ function correctRecordedPass(docId: string, snap: StatusSnapshot, restoredTo: st
         via: "reversal_restore",
         corrects: "REV_HOLD_OVERRIDDEN",
         reversedAuditEventId: door.reversalOf,
-        restoredStatus: restoredTo,
+        restoredStatus: pass.restoredAs !== undefined ? pass.restoredAs : restoredTo,
         putBackTo: snap.status,
         rollbackReason: door.rollback.reason,
         ...(lostAnswerPass ? { restoreAnswerLost: true, correctsAuditLogId: lostAnswerPass.id } : {}),
@@ -518,34 +552,53 @@ function correctRecordedPass(docId: string, snap: StatusSnapshot, restoredTo: st
  *  over its hold — and the direct write below only while that function is
  *  absent. Any other answer from it is the restore's refusal. A recorded
  *  pass the saga later undoes is corrected on the record (review fix,
- *  correctRecordedPass). */
-async function restoreStatus(docId: string, status: string, actorUserId: string, now: string, register: Register, door: RestoreDoor): Promise<void> {
+ *  correctRecordedPass).
+ *
+ *  REV-29 (P25): `status` may be NULL (or blank) — what the source had — and
+ *  the answer is the status it was restored to: on a database whose
+ *  restore_reversed_source predates 20261192 (it refuses a blank status,
+ *  raising before any write) a NULL is restored as 'Issued' instead, as the
+ *  reversal of an event recorded before P25 did (an older body takes today's
+ *  path); a blank one is refused there, nothing changed. */
+async function restoreStatus(docId: string, status: string | null, actorUserId: string, now: string, register: Register, door: RestoreDoor): Promise<string | null> {
   const snap = await readStatusSnapshot(docId);
   const outcome: WriteOutcome = { attempted: false, landed: false };
   const pass: RecordedPass = { recorded: false, unknown: false };
   register({ describe: `correct the hold-override record on ${docId}`, run: correctRecordedPass(docId, snap, status, door, pass) });
   register({ describe: `put ${docId} back to ${snap.status}`, run: putBackIfChanged(docId, snap, actorUserId, outcome) });
   outcome.attempted = true;
-  const { data: answer, error: rpcErr } = await supabase.rpc("restore_reversed_source", {
+  const restore = (p_status: string | null) => supabase.rpc("restore_reversed_source", {
     p_document_id: docId,
-    p_status: status,
+    p_status,
     p_reversal_of: door.reversalOf,
     p_reason: door.reason.trim() || null,
   });
+  let { data: answer, error: rpcErr } = await restore(status);
+  if (rpcErr && (status === null || !status.trim()) && (rpcErr.message ?? "").includes(RESTORE_BLANK_STATUS_REFUSAL)) {
+    // REV-29 (P25): 20261164's body refuses a blank status before it writes
+    // anything. A NULL takes today's path ('Issued'); a blank one has none.
+    if (status !== null) {
+      throw new Error(`Reversal stopped: ${docId} had an empty status, which this database's restore_reversed_source cannot put back until database update 20261192 is applied — nothing was changed. Apply 20261192, then reverse again.`);
+    }
+    pass.restoredAs = "Issued";
+    ({ data: answer, error: rpcErr } = await restore("Issued"));
+  }
+  const restoredAs = pass.restoredAs !== undefined ? pass.restoredAs : status;
+  const target = describePutBackStatus(restoredAs);
   if (!rpcErr) {
     if (answer === "restored" || answer === "restored_over_hold") {
       outcome.landed = true;
       pass.recorded = answer === "restored_over_hold";
-      return;
+      return restoredAs;
     }
     const why = answer === "no_match" ? "the write was refused" : `the database answered ${JSON.stringify(answer ?? null)}`;
-    throw new Error(`Reversal stopped: ${docId} could not be restored to ${status} (${why}).`);
+    throw new Error(`Reversal stopped: ${docId} could not be restored to ${target} (${why}).`);
   }
   if (!isMissingRestoreRpc(rpcErr)) {
     // Integrator fix: a refusal, or a transport error after the database
     // committed — the pass's correction reads back whether one was recorded.
     pass.unknown = true;
-    throw new Error(`Reversal stopped: ${docId} could not be restored to ${status} (${rpcErr.message || "the restore was refused"}).`);
+    throw new Error(`Reversal stopped: ${docId} could not be restored to ${target} (${rpcErr.message || "the restore was refused"}).`);
   }
   const { data, error } = await supabase.from("documents").update({
     status,
@@ -557,9 +610,10 @@ async function restoreStatus(docId: string, status: string, actorUserId: string,
     updated_by: actorUserId,
   }).eq("id", docId).select("id");
   if (error || ((data as unknown[] | null) ?? []).length === 0) {
-    throw new Error(`Reversal stopped: ${docId} could not be restored to ${status} (${error?.message ?? "the write was refused"}).`);
+    throw new Error(`Reversal stopped: ${docId} could not be restored to ${target} (${error?.message ?? "the write was refused"}).`);
   }
   outcome.landed = true;
+  return status;
 }
 
 /** Delete this operation's supersession rows — the saga's LAST step
@@ -729,7 +783,9 @@ export async function reverseSplit(input: ReverseSplitInput): Promise<ReverseRes
   if (replacementIds.length === 0) throw new Error("Split event has no replacement doc ids — cannot reverse precisely.");
 
   await assertReversalAuthority(input.orgId, input.actorUserId, input.actorRole);
-  const priorStatus = statusToRestore(ev.details?.priorStatus, input.legacyRestoreStatus, "the source");
+  const priorStatus = statusToRestore(ev.details?.priorStatus, input.legacyRestoreStatus, "the source", recordsPriorStatus(ev.details ?? {}, "priorStatus"));
+  // REV-29 (P25): the status the source was actually restored to (an older restore_reversed_source puts a NULL back as 'Issued').
+  let restoredAs: string | null = priorStatus;
 
   // Surface what'll get parked under Superseded — work done AFTER the split.
   const warnings = await summarizeDerivativeWork(replacementIds, operationInstant(ev), "split");
@@ -752,7 +808,7 @@ export async function reverseSplit(input: ReverseSplitInput): Promise<ReverseRes
     // HLD-2: a parked sheet's holds onto the source BEFORE it comes back.
     holdsCarriedBack = await carryParkedHolds(heldParked, [sourceDocId], "split", actor, register);
     // Un-supersede the source — to the status it actually held (REV-12).
-    await restoreStatus(sourceDocId, priorStatus, input.actorUserId, now, register, { reversalOf: ev.id, reversalResource: ev.resource_id, reason: input.reason, actor, rollback });
+    restoredAs = await restoreStatus(sourceDocId, priorStatus, input.actorUserId, now, register, { reversalOf: ev.id, reversalResource: ev.resource_id, reason: input.reason, actor, rollback });
     // Delete the join rows; the audit log retains the relationship so
     // history is still reconstructable.
     await deleteLineage({ supersededIds: [sourceDocId], replacementIds }, register);
@@ -787,8 +843,8 @@ export async function reverseSplit(input: ReverseSplitInput): Promise<ReverseRes
       reversedNewDocIds: replacementIds,
       reason: input.reason.trim(),
       derivativeWorkWarnings: warnings,
-      restoredStatus: priorStatus,
-      restoredStatusSource: typeof ev.details?.priorStatus === "string" ? "recorded" : "explicit",
+      restoredStatus: restoredAs,
+      restoredStatusSource: recordsPriorStatus(ev.details ?? {}, "priorStatus") ? "recorded" : "explicit",
       proceededOverHolds: Object.fromEntries(heldParked.map((h) => [h.id, h.reasons])),
       holdsCarriedBack,
       revokedShareLinks,
@@ -862,10 +918,13 @@ export async function reverseMerge(input: ReverseMergeInput): Promise<ReverseRes
   // REV-12: each sibling back to the status IT held. A post-Round-F event
   // carries all of them; a legacy event carries none (refused unless named).
   const recorded = (ev.details?.priorStatuses as Record<string, unknown> | undefined) ?? {};
-  const restoreTo = new Map<string, string>();
+  const restoreTo = new Map<string, string | null>();
   for (const sId of allSourceIds) {
-    const own = sId === sourceDocId ? (recorded[sId] ?? ev.details?.priorStatus) : recorded[sId];
-    restoreTo.set(sId, statusToRestore(own, input.legacyRestoreStatus, sId === sourceDocId ? "the source" : `merge source ${sId}`));
+    // REV-29 (P25): a NULL recorded for a source is what it had — read as recorded, not as missing.
+    const inMap = recordsPriorStatus(recorded, sId);
+    const own = inMap ? recorded[sId] : sId === sourceDocId ? ev.details?.priorStatus : undefined;
+    const present = inMap || (sId === sourceDocId && recordsPriorStatus(ev.details ?? {}, "priorStatus"));
+    restoreTo.set(sId, statusToRestore(own, input.legacyRestoreStatus, sId === sourceDocId ? "the source" : `merge source ${sId}`, present));
   }
 
   const warnings = await summarizeDerivativeWork([targetDocId], operationInstant(ev), "merge");
@@ -891,7 +950,9 @@ export async function reverseMerge(input: ReverseMergeInput): Promise<ReverseRes
     // HLD-2: the parked target's holds onto every source BEFORE it returns.
     holdsCarriedBack = await carryParkedHolds(heldParked, allSourceIds, "merge", actor, register);
     for (const sId of allSourceIds) {
-      await restoreStatus(sId, restoreTo.get(sId)!, input.actorUserId, now, register, { reversalOf: ev.id, reversalResource: ev.resource_id, reason: input.reason, actor, rollback });
+      const restoredAs = await restoreStatus(sId, restoreTo.get(sId)!, input.actorUserId, now, register, { reversalOf: ev.id, reversalResource: ev.resource_id, reason: input.reason, actor, rollback });
+      // REV-29 (P25): what each source was actually restored to (an older function puts a NULL back as 'Issued').
+      restoreTo.set(sId, restoredAs);
     }
     await deleteLineage({ supersededIds: allSourceIds, replacementIds: [targetDocId] }, register);
   });

@@ -8,7 +8,11 @@
 // owner + acknowledgment assignees are told it's now in force.
 
 import { supabase } from "@/lib/supabase";
-import { notify } from "@/lib/inAppNotifications";
+// DELIV-16 / DELIV-7 dw1 (notifications N14): the bell notices here carry
+// document-control obligations — notify(), retried and dead-lettered when
+// it does not land (lib/complianceNotify.ts).
+import { notifyCompliance as notify } from "@/lib/complianceNotify";
+import { loadScanRetryPlan } from "@/lib/complianceNotify";
 import { effectiveOwnerForDocument, getOrgControllers } from "@/lib/ownership";
 
 export type EffectiveStatus = "none" | "pending" | "effective";
@@ -162,6 +166,11 @@ export async function applyEffectiveDate(input: { documentId: string; versionId:
   if (docErr) throw new Error(docErr.message);
 }
 
+/** How far back the effective-date scan reads its dead letters: a notice lost
+ *  this long ago (the cron down for a week) is no longer told apart, and its
+ *  document is announced to every recipient again. */
+const EFFECTIVE_RETRY_LOOKBACK_MS = 7 * 86_400_000;
+
 /** Daily scan: announce revisions whose future effective date has arrived. Fires
  *  once per document (watermark), telling the owner + Admin/DocCtrl (and anyone
  *  who had to acknowledge it) that the revision is now in force. */
@@ -194,6 +203,8 @@ export async function scanEffectiveDates(orgId: string): Promise<number> {
   }
 
   const controllers = await getOrgControllers(orgId);
+  // DELIV-7 dw1 (notifications N14 integrator pass): what the last run lost
+  const plan = await loadScanRetryPlan(orgId, "effective-dates", EFFECTIVE_RETRY_LOOKBACK_MS);
   let n = 0;
   for (const d of docs) {
     const docId = d.id as string;
@@ -214,15 +225,22 @@ export async function scanEffectiveDates(orgId: string): Promise<number> {
       .select("assignee_user_id").eq("document_id", docId).in("status", ["pending", "acknowledged"]);
     const ackUsers = ((ackRows ?? []) as Array<Record<string, unknown>>).map((r) => r.assignee_user_id as string);
     const targets = Array.from(new Set([...(owner.userId ? [owner.userId] : controllers), ...ackUsers].filter(Boolean)));
-    await Promise.all(targets.map((uid) =>
+    // A document whose last run dead-lettered a notice tells only that recipient now.
+    const retryKey = `effective-dates:${docId}`;
+    const wants = plan.only(retryKey, null);
+    const landed = await Promise.all(targets.filter((uid) => wants("effective_now", uid)).map((uid) =>
       notify({
         orgId, userId: uid, kind: "effective_now",
         title: `Now in effect: ${label}${d.rev ? ` Rev ${d.rev}` : ""}`,
         body: `This revision's effective date (${(d.effective_date as string).slice(0, 10)}) has arrived — it is now the in-force controlled copy.`,
         link, resourceType: "document", resourceId: docId,
-      })
+      }, { retryKey })
     ));
-    await supabase.from("documents").update({ effective_notified_at: new Date().toISOString() }).eq("id", docId);
+    // DELIV-7 dw1: the one-shot watermark is set only when every notice
+    // landed — a lost one is sent again on the next run, to its recipient only.
+    if (landed.every(Boolean)) {
+      await supabase.from("documents").update({ effective_notified_at: new Date().toISOString() }).eq("id", docId);
+    }
     n++;
   }
   return n;

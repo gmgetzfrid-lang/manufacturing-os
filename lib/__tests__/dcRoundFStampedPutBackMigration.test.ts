@@ -123,7 +123,9 @@ describe("20261165 — put_back_retired_issue, the stamped put-back's recorded d
     expect(P).toContain("CREATE OR REPLACE FUNCTION put_back_retired_issue(\n  p_document_id uuid,\n  p_status text,\n  p_via text,\n  p_reason text DEFAULT NULL,\n  p_force_hold boolean DEFAULT false,\n  p_superseded_at timestamptz DEFAULT NULL,\n  p_superseded_by_user uuid DEFAULT NULL,\n  p_supersession_reason text DEFAULT NULL,\n  p_supersession_moc text DEFAULT NULL\n) RETURNS text\nLANGUAGE plpgsql SECURITY INVOKER SET search_path = public AS $$");
     expect(P).not.toMatch(/SECURITY DEFINER/);
     expect((stripComments(M).match(/CREATE OR REPLACE FUNCTION put_back_retired_issue\(/g) ?? []).length).toBe(1);
-    for (const f of files.filter((x) => x !== FILE)) expect(stripComments(mig(f)), f).not.toMatch(/FUNCTION\s+(?:public\.)?put_back_retired_issue\b/);
+    // REV-29 (P25): but 20261192, which re-creates it from this body to take a NULL status on
+    // the rollback doors (lineDiff-pinned in dcRoundFNullPriorStatusMigration.test.ts)
+    for (const f of files.filter((x) => x !== FILE && x !== "20261192_dc_roundF_null_prior_status_put_back.sql")) expect(stripComments(mig(f)), f).not.toMatch(/FUNCTION\s+(?:public\.)?put_back_retired_issue\b/);
     // P18's door is not re-created here (decided: a sibling, not an extension)
     expect(stripComments(M)).not.toMatch(/FUNCTION\s+(?:public\.)?restore_reversed_source\b/);
   });
@@ -238,7 +240,8 @@ describe("20261165 — put_back_retired_issue, the stamped put-back's recorded d
       .split("current_setting('app.publish_hold_override', true)").join("")
       .split("current_setting(''app.publish_hold_override'', true)").join("");
     const setters = files.filter((f) => /publish_hold_override/.test(withoutFlagReads(stripComments(mig(f)))));
-    expect(setters).toEqual(["20261151_dc_roundF_promote_transaction_and_hold_override.sql", "20261164_dc_roundF_reversal_restore.sql", FILE]);
+    // REV-29 (P25): and 20261192, which re-creates both doors (pinned in dcRoundFNullPriorStatusMigration.test.ts).
+    expect(setters).toEqual(["20261151_dc_roundF_promote_transaction_and_hold_override.sql", "20261164_dc_roundF_reversal_restore.sql", FILE, "20261192_dc_roundF_null_prior_status_put_back.sql"]);
     expect(withoutFlagReads(stripComments(G.next))).not.toMatch(/publish_hold_override/);
     expect(stripComments(G.next)).not.toMatch(/set_config/);
     const outsidePutBack = withoutFlagReads(stripComments(M).replace(stripComments(P), ""));

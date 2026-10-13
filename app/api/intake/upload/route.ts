@@ -176,6 +176,29 @@ function missingColumn(e: PgError, col: string): boolean {
   return !!e && msg.includes(col) && (/^(42703|PGRST204)$/.test(String(e.code ?? "")) || /does not exist|could not find/i.test(msg));
 }
 
+/** SAF-20 — the quote door's success sentence. The award / decline notice
+ *  is emailed only to the contact the org typed on the link (DEC-56), so the
+ *  promise of contact is made only when the link carries one; a link with
+ *  none (optional since J14, absent on older links) points at the portal,
+ *  whose status chip shows the decision — but only while the link answers:
+ *  app/api/intake/resolve refuses an expired or revoked link, or a closed
+ *  project, before it reads any quote. So the sentence names the link's own
+ *  window (its expiry, "at the latest" because a revoke or a close can come
+ *  sooner) and says who to ask after it. The date itself is NOT formatted
+ *  here: a link closes at 23:59:59 in the issuer's local time
+ *  (lib/intakeLinks.ts intakeExpiryFor), so a server-side date (UTC on the
+ *  host) names the next day for every link minted west of UTC. The sentence
+ *  points at the expiry the portal header already shows, in the viewer's
+ *  own locale (app/submit/[token]/page.tsx). */
+function quoteReceivedMessage(projectName: string, contactEmail: string | null, expiresAt: string | null): string {
+  const lead = `Your quote is in — ${projectName}'s team has been notified.`;
+  if ((contactEmail ?? "").trim()) return `${lead} You'll be contacted about the award decision.`;
+  const until = expiresAt && Number.isFinite(Date.parse(expiresAt))
+    ? " (until the link's expiry shown at the top of this page, at the latest)"
+    : "";
+  return `${lead} The decision will be shown on this page while this link stays open${until}; after that, ask ${projectName}'s team.`;
+}
+
 // ── The shared client, bound to the service role for the pipeline ──────────
 // lib/postPublish.ts, lib/notify/dispatch.ts and lib/intents.ts are written
 // against the shared `supabase` client (a browser session in the app). This
@@ -1117,11 +1140,16 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
     });
     await bumpUse(ref, linkId, file.size);
 
+    // SAF-20: the award / decline notice reaches only the link's contact
+    // (app/api/intake/outcome-notice quoteNotice answers `no_contact` for a
+    // link with none), so contact is promised only when the link has one;
+    // otherwise the contractor is pointed at the portal's status for as long
+    // as the link answers, and told who to ask after.
     return NextResponse.json({
       ok: true,
       quoteId,
       status: "quote_received",
-      message: `Your quote is in — ${String(project.name ?? "the project")}'s team has been notified. You'll be contacted about the award decision.`,
+      message: quoteReceivedMessage(String(project.name ?? "the project"), contactEmail, (link.expires_at as string | null) ?? null),
     });
   }
 

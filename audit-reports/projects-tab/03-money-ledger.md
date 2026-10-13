@@ -1026,7 +1026,7 @@ explicit override that captures a reason and writes an audit row. Decide what
 *Numbered MON-14 on this branch (opened by projects-joint J14 PROJECTS FOLLOW-UPS from its `MON-12` move rail's FK pass, per `DEC-31`). If the number collides at merge the integrator renumbers.*
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint: one migration after `20261179`, a `BEFORE DELETE` rail on `project_parties`. Proposed by projects-joint J14 PROJECTS FOLLOW-UPS, 2026-10-07, in its review's fix pass (DEC-31). The integrator names the package at the J14 merge.
 - **Assigned:** projects-joint J19 PROJECTS REMAINDERS — by the integrator, 2026-10-07 (J14 merge; fleet plan `projects-joint.json`).
 - **Verification:** CONFIRMED (on a private scratch PostgreSQL 16 with `20261157` and `20261179` applied — J14's `scenarios_j14.sql`)
@@ -1048,6 +1048,21 @@ explicit override that captures a reason and writes an audit row. Decide what
 - A signed-in direct delete of a flagged contractor named by an open quote is refused; the project's own delete and purge still pass.
 - A scratch run shows both, and a shape test pins the rail (DRLS-16).
 
+**Resolution (2026-10-13, projects Round G).** Package projects-joint J19 PROJECTS REMAINDERS, migration `supabase/migrations/20261198_prj_roundG_milestone_project_and_party_delete.sql` §2 (pending paste, DEC-30; after `20261179`). Reproduced first on a scratch PostgreSQL 16 without the file: the project owner, signed in, deleted a DO-NOT-USE contractor named by an open quote, and the quote then answered for no flagged company (`cost_doc_companies_barred` → `[]`), so an award would pass with no reason.
+- `enforce_project_party_delete` (BEFORE DELETE ON `project_parties`, per row; SECURITY DEFINER, `search_path` pinned, EXECUTE revoked from PUBLIC, anon and authenticated — DRLS-16). A signed-in delete of a contractor is refused:
+  - (a) while an OPEN quote (`kind = 'quote'`, status `draft` / `parsed` — 20261093's CHECK set) names it. This is the brief's "a contractor with open quotes is not deleted from under them": the bid under evaluation keeps who submitted it;
+  - (b) while a quote in ANY status answers through this contractor for a flagged company that it would no longer answer for once the foreign key nulls its `party_id`. The test is 20261179 §3's own: `cost_doc_companies_barred` before (`party_id` = this contractor) and after (`NULL`), read as the definer, the same left-company query and the same flag wording. A decided quote is judged for the same reason §3 judges one: nothing refuses a signed-in reopen.
+- Passes: the service role (`auth.uid()` NULL — a restore, the SQL editor); the project's own delete and the org's (`project_parties` cascades from both; the parent row is already gone); `delete_project_record`'s audited purge (`app.record_purge`, 20261103's pattern — and the purge deletes the quotes before the contractors anyway). A contractor no quote names, or one named only by decided quotes that answer for no flagged company through it, is deleted exactly as before; the foreign key nulls `party_id` as today. No app path deletes a contractor (pinned).
+- Scratch PostgreSQL 16 (a stub of the touched tables with RLS, the real `caller_holds_any_role`, `can_edit_project_schedule` and the four registry functions from 20261157 / 20261179; the file applied twice, idempotent, all 6 probes `t` both times; the guard refuses on a database without 20261179 and creates nothing). As the project owner: a contractor named by an open quote → refused (23514); a DO-NOT-USE contractor named only by a declined quote it answers through → refused, naming the company; MON-14's own case (DO-NOT-USE contractor, open quote) → refused, and the quote still answers for the company; a clean contractor named only by a declined quote → deleted, the quote's `party_id` NULL (as today); a contractor no quote names → deleted; an inactive contractor whose awarded quote is linked to an active company (the link decides alone) → deleted; an inactive contractor whose quote's vendor name is that company's exact name (it still answers) → deleted. A Viewer's delete is hidden by RLS (0 rows, the rail never fires). An Admin's delete of a project, and of the whole org, with open-quote and flagged contractors → passed; the purge → passed; the service role's delete of an open-quote contractor → passed. Calling the function: no EXECUTE for anon or authenticated. The same cases before the file: every delete passed.
+- Tests: `lib/__tests__/prjRoundGJ19Migration.test.ts` (the one-paste shape and its set-based, counts-only inventory; the guard; DRLS-16; the order of the passes and limbs; `company_id` read through `to_jsonb` as §3 does; the before/after query identical to §3's; the open statuses are the CHECK set's; the purge deletes the quotes first; no app path deletes a contractor; every probe fragment present in the body it probes).
+
+**Done-when.**
+- ✓ A signed-in direct delete of a flagged contractor named by an open quote is refused (limb (a), and limb (b) for every status); the project's own delete and purge still pass.
+- ✓ A scratch run shows both (above), and a shape test pins the rail (DRLS-16).
+
+**Scope / residual.** Wider than the finding by the brief's limb (a): a contractor named by an open quote is refused whether or not it is flagged (no app path deletes a contractor, so no flow changes). The inventory counts limb (a)'s contractors exactly, and limb (b)'s as a lower bound: its row counts contractors whose `company_id` links a flagged registry company, while the rail (through `cost_doc_companies_barred`) also refuses a contractor whose quote answers for a flagged company by vendor name or a do-not-use look-alike (a set-based count of those would call the registry function per row, which the inventory avoids). A service-role delete still nulls the quotes' `party_id` (an operator action, as 20261179 §3 lets the service role move a quote). Paste row: after `20261179` (which is after `20261157`, HOLD); deploy order either.
+
+
 ---
 
 ## Report progress
@@ -1067,4 +1082,4 @@ explicit override that captures a reason and writes an audit row. Decide what
 | MON-11 | MEDIUM | RESOLVED |
 | MON-12 | MEDIUM | RESOLVED |
 | MON-13 | LOW | RESOLVED |
-| MON-14 | LOW | OPEN |
+| MON-14 | LOW | RESOLVED |

@@ -1,0 +1,1009 @@
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 20261195_df_roundG_outcome_and_departure.sql
+--
+-- drafting-flow Round G — DF-P3 ROUTING: how a request ended, the revision
+-- nobody drafts, and the member who leaves with work in hand.
+--
+--   (1) LEAK-9 / GAP-107: tickets.outcome — how a request ENDED, one of
+--       completed, withdrawn, duplicate, handled_out_of_band, rejected (the
+--       vocabulary ratified by the integrator under the user's delegation,
+--       2026-10-07; lib/ticketOutcome.ts holds the same five). One terminal
+--       status per exit (CLOSED / CANCELED) and a reason FIELD, never a
+--       status per reason. NULL = not recorded (every request that ended
+--       before this paste, an Admin force close that names none, and a
+--       cancel that names no category — never a guessed one). The
+--       workflow route (service role) writes it with the close or the cancel.
+--   (2) ticket_update_guard RE-CREATED FROM ITS NEWEST BODY (20261166 — found
+--       by scanning; lineDiff-pinned by lib/__tests__/memberDeparture.test.ts:
+--       every line of the base is kept, the lines added are exactly DF-P3's):
+--         * `outcome` is workflow-owned (a client cannot rewrite how a
+--           request ended — the leak count would be forgeable);
+--         * the member-departure path (3) passes: a row the departing
+--           member held, written inside a trigger by a transaction that
+--           marked itself with that member's uid (set_config, which the API
+--           cannot reach). Every other client write is decided exactly as
+--           20261166 decides it.
+--       (The SLA clocks the maintenance cron now stamps — sla_breach_warned_at
+--       and sla_breached_at, 20260529 — are already workflow-owned (20261166).
+--       The plan's `sla_warned_at` would duplicate sla_breach_warned_at; it
+--       is not added.)
+--   (3) EDGE-4 (the ratified default: never block a removal — DEC-20 — and
+--       never leave a ticket on a uid that cannot sign in): a member who
+--       stops being active in an org (suspended, deactivated or removed)
+--       hands their in-flight tickets back, with a history line and an audit
+--       row on each ticket, and a notice to whoever must act — ONE summary
+--       bell row per queue owner per call (fix pass 3: never one per ticket,
+--       which a 200-ticket hand-back would have multiplied into the
+--       notification rail's per-actor caps), plus a per-ticket row to the
+--       requester whose review a request is back at:
+--         * the drafter of a DRAFTING / REVISION_REQ ticket → the ticket
+--           returns to PENDING_ASSIGNMENT, drafter cleared;
+--         * the drafter of a ticket at any other open status → the drafter
+--           is cleared, the status stays (the drafting pool picks up the IFC
+--           issue at PENDING_IFC; a revision of a drafterless ticket returns
+--           to the queue — lib/ticketTransitions.ts);
+--         * the engineer of a PENDING_ENG_TEAM ticket → PENDING_ASSIGNMENT,
+--           engineer and the review-requested stamp cleared (an
+--           "engineering first" type must be flagged again);
+--         * the engineer of a PENDING_FINAL_APPROVAL ticket → back to the
+--           requester's review (PENDING_REVIEW), engineer cleared, to send
+--           for engineer approval again.
+--       It is a SEPARATE pair of triggers on org_members
+--       (trg_org_member_departure_status — AFTER UPDATE OF status, active →
+--       anything else; trg_org_member_departure_delete — AFTER DELETE),
+--       never a change to revoke_member's body: admin-and-org P8 re-creates
+--       revoke_member (from its newest body, 20261161) and must not drop
+--       these triggers; a removal by any other path is covered the same way.
+--       AFTER, not BEFORE: the tickets move only when the membership change
+--       itself happened (a BEFORE trigger that ran ahead of a refusing one
+--       would have moved them for a member who stayed). The ticket move is
+--       part of the removal's transaction, but nothing in it refuses the
+--       removal: a hand-back the database refuses (a later guard that lost
+--       the departure pass) is a WARNING and a skipped ticket; the bell rows
+--       and the audit row are each written in their own sub-block, so a
+--       refused audit row never takes the bell rows with it, and either
+--       failing is a WARNING. A ticket another write holds row-locked is
+--       skipped, never waited on (FOR UPDATE SKIP LOCKED), and one removal
+--       hands back at most 200 tickets, so the work stays well inside the
+--       API's statement timeout; what it leaves (skipped, refused or past
+--       the bound) is counted in a WARNING and handed back by the
+--       maintenance cron (fix pass 3: step 5b lists the pairs still holding
+--       open work while not active — departed_member_ticket_holders — and
+--       calls the same function for each, every run; (4)(a) does the same at
+--       the paste). The one case left in which a removal can still fail is
+--       a statement the server cancels (statement_timeout / lock_timeout:
+--       QUERY_CANCELED, which no handler can catch).
+--   (4) The backlog (DEC-30): open tickets ALREADY held by a uid that is not
+--       an active member of the ticket's org (the triggers cannot see past
+--       departures) are handed back by the same function; and the
+--       drafterless REVISION_REQ stragglers (SM-6 / ROUTE-1 — "Return with
+--       Questions" from engineering review used to land there, where nobody's
+--       queue matched) move to PENDING_ASSIGNMENT with a history line and a
+--       bell row to the queue (the 20261053 pattern).
+--   (5) GAP-106 / EDGE-7: THE SLA CLOCK STARTS AT THIS PASTE. On the FIRST
+--       paste only (tickets.outcome not there before it), every open ticket
+--       already past its target — its target_completion_at, or for a ticket
+--       with none the window its org set in sla_defaults — is recorded as
+--       overdue (sla_breached_at, and sla_breach_warned_at when unset)
+--       WITHOUT a notice each, and each workspace's assignment queue gets ONE
+--       bell row naming how many. The maintenance cron (lib/ticketSla.ts)
+--       sends nothing until tickets.outcome exists (it only counts this
+--       backlog), so the backlog is never mailed request by request and a
+--       breach after the paste never waits behind it. A re-paste stamps
+--       nothing: what is past its target then is the cron's to send.
+--       "Past its target" is judged against ONE instant captured before the
+--       transaction (df_round_g_195_clock.clock_at, clock_timestamp()), by
+--       the stamp and by the final probe alike (fix pass 3: the probe used a
+--       fresh now() less a minute, so a paste that ran longer than a minute
+--       reported a correct stamp as missing).
+--   (6) ticket_insert_integrity RE-CREATED FROM ITS NEWEST BODY (20261038 —
+--       found by scanning; lineDiff-pinned by memberDeparture.test.ts): a
+--       client-created ticket is born with no SLA stamps and no outcome
+--       (sla_breached_at, sla_breach_warned_at, outcome := NULL). From DF-P3
+--       on the clock skips a ticket whose sla_breached_at is set, so a
+--       browser insert carrying one would have kept that request off the
+--       clock forever (fix pass 3). Every other line is 20261038's.
+--
+-- NOT a widening: nobody gains authority; one column more is refused to a
+-- client, and the departure path writes only rows the departed member held.
+-- DEC-30 inventory (aggregate counts only, captured BEFORE the transaction):
+-- the stragglers, the stranded tickets by role, the requests that ended
+-- with no outcome, the SLA backlog this paste records without a notice each,
+-- and the open tickets the SLA clock warns on its first run after the paste.
+--
+-- PRE-DEPLOY (optional, counts only — run it alone in the SQL editor to see
+-- the SLA backlog before you deploy; nothing is sent before this paste):
+--   SELECT COUNT(*) FILTER (WHERE target_completion_at < now()) AS past_target,
+--          COUNT(*) FILTER (WHERE target_completion_at >= now() AND sla_breach_warned_at IS NULL
+--                             AND created_at + (target_completion_at - created_at) * 0.75 <= now()) AS warn_due
+--     FROM tickets
+--    WHERE status NOT IN ('CLOSED', 'CANCELED') AND archived_at IS NULL AND sla_breached_at IS NULL;
+--
+-- ⚠ DF-P2 (the server create route, service role — the trigger does not run
+-- for it) must never write sla_breached_at / sla_breach_warned_at / outcome on
+-- insert, and a later re-creation of ticket_insert_integrity starts FROM THIS
+-- BODY (memberDeparture.test.ts checks every re-creation keeps the three).
+-- HOW TO APPLY: after 20261166 (the first statement refuses to run,
+-- changing nothing, without its guard). DEPLOY THE DF-P3 APP FIRST, THEN
+-- PASTE THIS. Either app works with or without the paste: before it, the
+-- workflow route writes `outcome`, meets 42703 / PGRST204 and retries
+-- without the column (today's path — that request's outcome is not
+-- recorded), and the analytics block counts it as not recorded; the SLA
+-- clock sends nothing and reports the backlog as a count. Deploy first
+-- because the app before DF-P3 still lands "Return with Questions" in a
+-- drafterless REVISION_REQ; this paste moves every straggler made before
+-- it. Re-running is safe (idempotent; the SLA backlog is stamped by the
+-- first paste only).
+-- ⚠ DF-P4 / P6 / P7 / P8 re-create ticket_update_guard FROM THIS BODY (the
+-- newest, found by scanning); never re-paste 20261166 after this — it would
+-- drop `outcome` and the departure path, and a member removal would then be
+-- REFUSED by the guard whenever the member held an open ticket.
+-- Single paste: prerequisite check → temp-table inventory →
+-- BEGIN/DDL/COMMIT → one SELECT (check text, ok boolean, n text).
+-- ⚠ APPLIED BY HAND (DEC-30).
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- ── Prerequisites (refuse to run, changing nothing, without the base) ───────
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'ticket_update_guard'
+                  AND prosrc LIKE '%tickets: last_modified cannot be cleared%') THEN
+    RAISE EXCEPTION '20261195 needs 20261166 (the DF-P1 ticket rails) pasted first; nothing was changed.';
+  END IF;
+END
+$$;
+
+-- ── Is this the first paste? (GAP-106: the SLA clock starts at the first) ───
+DROP TABLE IF EXISTS df_round_g_195_clock;
+CREATE TEMP TABLE df_round_g_195_clock AS
+SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'tickets' AND column_name = 'outcome') AS first_paste,
+       clock_timestamp() AS clock_at;
+
+-- ── Pre-apply inventory (aggregate only; captured BEFORE the DDL) ───────────
+DROP TABLE IF EXISTS df_round_g_195_before;
+CREATE TEMP TABLE df_round_g_195_before AS
+SELECT 1 AS ord, 'inventory (before apply): SM-6 / ROUTE-1 — open REVISION_REQ tickets with no drafter (moved to PENDING_ASSIGNMENT by this paste, a history line and a bell row to the queue each)' AS inventory,
+       COUNT(*)::text AS n
+  FROM tickets t
+ WHERE t.status = 'REVISION_REQ' AND t.assigned_drafter_id IS NULL AND t.archived_at IS NULL
+UNION ALL
+SELECT 2, 'inventory (before apply): EDGE-4 — open tickets whose DRAFTER is not an active member of the ticket''s org (handed back by this paste)',
+       COUNT(*)::text
+  FROM tickets t
+ WHERE t.status NOT IN ('CLOSED', 'CANCELED') AND t.archived_at IS NULL AND t.assigned_drafter_id IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = t.org_id AND m.uid = t.assigned_drafter_id AND m.status = 'active')
+UNION ALL
+SELECT 3, 'inventory (before apply): EDGE-4 — PENDING_ENG_TEAM / PENDING_FINAL_APPROVAL tickets whose ENGINEER is not an active member (handed back by this paste)',
+       COUNT(*)::text
+  FROM tickets t
+ WHERE t.status IN ('PENDING_ENG_TEAM', 'PENDING_FINAL_APPROVAL') AND t.archived_at IS NULL AND t.assigned_engineer_id IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = t.org_id AND m.uid = t.assigned_engineer_id AND m.status = 'active')
+UNION ALL
+SELECT 4, 'inventory (before apply): LEAK-9 — requests that already ended (CLOSED or CANCELED); their outcome stays NULL ("not recorded" on /admin/analytics) — nothing records how they ended',
+       COUNT(*)::text
+  FROM tickets WHERE status IN ('CLOSED', 'CANCELED')
+UNION ALL
+SELECT 5, 'inventory (before apply): GAP-106 — open tickets already past their target (target_completion_at, or their org''s sla_defaults window when they have none) with no breach recorded (FIRST paste: recorded as overdue WITHOUT a notice each, one summary bell row per workspace queue; a re-paste stamps nothing and the cron sends these)',
+       COUNT(*)::text
+  FROM tickets t
+ WHERE t.status NOT IN ('CLOSED', 'CANCELED') AND t.archived_at IS NULL AND t.sla_breached_at IS NULL
+   AND (t.target_completion_at < now()
+        OR (t.target_completion_at IS NULL AND EXISTS (
+              SELECT 1 FROM sla_defaults d
+               WHERE d.org_id = t.org_id AND d.request_type = t.request_type AND d.default_days > 0
+                 AND t.created_at + make_interval(days => d.default_days) < now())))
+UNION ALL
+SELECT 6, 'inventory (before apply): GAP-106 — open tickets with no target_completion_at (the SLA clock skips them unless their org configured sla_defaults for their type)',
+       COUNT(*)::text
+  FROM tickets
+ WHERE status NOT IN ('CLOSED', 'CANCELED') AND archived_at IS NULL AND target_completion_at IS NULL
+UNION ALL
+SELECT 7, 'inventory (before apply): GAP-106 — open tickets past 75 % of their window and not yet past their target, not yet warned (the first maintenance-cron run after this paste sends each one "due soon" notice)',
+       COUNT(*)::text
+  FROM tickets
+ WHERE status NOT IN ('CLOSED', 'CANCELED') AND archived_at IS NULL AND sla_breached_at IS NULL AND sla_breach_warned_at IS NULL
+   AND target_completion_at >= now() AND created_at + (target_completion_at - created_at) * 0.75 <= now();
+
+BEGIN;
+
+-- ── 0. Every column this script references exists (20261039's lesson: a
+--       plpgsql body is late-bound). 20261166 added the rest; IF NOT EXISTS
+--       leaves an existing column alone.
+ALTER TABLE tickets ADD COLUMN IF NOT EXISTS outcome TEXT;
+ALTER TABLE tickets ADD COLUMN IF NOT EXISTS sla_breach_warned_at TIMESTAMPTZ;
+ALTER TABLE tickets ADD COLUMN IF NOT EXISTS sla_breached_at TIMESTAMPTZ;
+ALTER TABLE document_intents ADD COLUMN IF NOT EXISTS ticket_id UUID;
+
+-- ── 1. LEAK-9 / GAP-107: the outcome vocabulary, held by the database too ──
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conname = 'tickets_outcome_check' AND conrelid = 'tickets'::regclass) THEN
+    ALTER TABLE tickets ADD CONSTRAINT tickets_outcome_check
+      CHECK (outcome IS NULL OR outcome IN ('completed', 'withdrawn', 'duplicate', 'handled_out_of_band', 'rejected'));
+  END IF;
+END
+$$;
+COMMENT ON COLUMN tickets.outcome IS
+  'drafting-flow LEAK-9 / GAP-107 (20261195): how the request ended — completed, withdrawn, duplicate, handled_out_of_band, rejected; NULL = not recorded. Written by the workflow route with close_ticket / close_rfi / cancel_request; cleared by reopen_ticket. Workflow-owned (ticket_update_guard).';
+
+-- ── 2. ticket_update_guard — re-created from 20261166 (lineDiff-pinned) ─────
+CREATE OR REPLACE FUNCTION ticket_update_guard()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_bad TEXT[] := '{}';
+  v_old_len INT;
+  v_email TEXT;
+  v_entry JSONB;
+BEGIN
+  -- The workflow-action route (service role) is the transition authority.
+  IF auth.uid() IS NULL THEN RETURN NEW; END IF;
+
+  -- DF-P3 (drafting-flow EDGE-4): the member-departure path. When a member
+  -- is suspended or removed, return_departed_member_tickets() (run by the
+  -- org_members departure triggers, as the definer, inside the removing
+  -- Admin's session) hands their in-flight tickets back to the queue. It marks
+  -- its own transaction with the departing uid (set_config(..., true), which
+  -- the API cannot reach), and only a row that member held, written from
+  -- inside a trigger, passes on the mark.
+  IF pg_trigger_depth() > 1
+     AND COALESCE(current_setting('app.ticket_departure', true), '') <> ''
+     AND current_setting('app.ticket_departure', true) IN (OLD.assigned_drafter_id::text, OLD.assigned_engineer_id::text) THEN
+    RETURN NEW;
+  END IF;
+
+  IF NEW.org_id                      IS DISTINCT FROM OLD.org_id                      THEN v_bad := array_append(v_bad, 'org_id'); END IF;
+  IF NEW.ticket_id                   IS DISTINCT FROM OLD.ticket_id                   THEN v_bad := array_append(v_bad, 'ticket_id'); END IF;
+  IF NEW.status                      IS DISTINCT FROM OLD.status                      THEN v_bad := array_append(v_bad, 'status'); END IF;
+  IF NEW.requester_id                IS DISTINCT FROM OLD.requester_id                THEN v_bad := array_append(v_bad, 'requester_id'); END IF;
+  IF NEW.requester_role              IS DISTINCT FROM OLD.requester_role              THEN v_bad := array_append(v_bad, 'requester_role'); END IF;
+  IF NEW.requester_name              IS DISTINCT FROM OLD.requester_name              THEN v_bad := array_append(v_bad, 'requester_name'); END IF;
+  IF NEW.requester_email             IS DISTINCT FROM OLD.requester_email             THEN v_bad := array_append(v_bad, 'requester_email'); END IF;
+  IF NEW.assigned_drafter_id         IS DISTINCT FROM OLD.assigned_drafter_id         THEN v_bad := array_append(v_bad, 'assigned_drafter_id'); END IF;
+  IF NEW.assigned_drafter_name       IS DISTINCT FROM OLD.assigned_drafter_name       THEN v_bad := array_append(v_bad, 'assigned_drafter_name'); END IF;
+  IF NEW.assigned_engineer_id        IS DISTINCT FROM OLD.assigned_engineer_id        THEN v_bad := array_append(v_bad, 'assigned_engineer_id'); END IF;
+  IF NEW.assigned_engineer_name      IS DISTINCT FROM OLD.assigned_engineer_name      THEN v_bad := array_append(v_bad, 'assigned_engineer_name'); END IF;
+  IF NEW.assigned_engineer_email     IS DISTINCT FROM OLD.assigned_engineer_email     THEN v_bad := array_append(v_bad, 'assigned_engineer_email'); END IF;
+  IF NEW.engineer_review_requested_at IS DISTINCT FROM OLD.engineer_review_requested_at THEN v_bad := array_append(v_bad, 'engineer_review_requested_at'); END IF;
+  IF NEW.engineer_approved_at        IS DISTINCT FROM OLD.engineer_approved_at        THEN v_bad := array_append(v_bad, 'engineer_approved_at'); END IF;
+  IF NEW.engineer_review_reason      IS DISTINCT FROM OLD.engineer_review_reason      THEN v_bad := array_append(v_bad, 'engineer_review_reason'); END IF;
+  IF NEW.deliverable_rev             IS DISTINCT FROM OLD.deliverable_rev             THEN v_bad := array_append(v_bad, 'deliverable_rev'); END IF;
+  IF NEW.draft_iteration             IS DISTINCT FROM OLD.draft_iteration             THEN v_bad := array_append(v_bad, 'draft_iteration'); END IF;
+  IF NEW.revision_count              IS DISTINCT FROM OLD.revision_count              THEN v_bad := array_append(v_bad, 'revision_count'); END IF;
+  IF NEW.closed_at                   IS DISTINCT FROM OLD.closed_at                   THEN v_bad := array_append(v_bad, 'closed_at'); END IF;
+  IF NEW.archived_at                 IS DISTINCT FROM OLD.archived_at                 THEN v_bad := array_append(v_bad, 'archived_at'); END IF;
+  IF NEW.archive_id                  IS DISTINCT FROM OLD.archive_id                  THEN v_bad := array_append(v_bad, 'archive_id'); END IF;
+  IF NEW.created_at                  IS DISTINCT FROM OLD.created_at                  THEN v_bad := array_append(v_bad, 'created_at'); END IF;
+  -- DF-P1 (drafting-flow SM-2's census, LEAK-10, LEAK-3, EVID-1, DCW-4 / HAND-3,
+  -- SM-14): every other column the browser does not write is service-owned
+  -- too — the row's key, the request's scope (title, description), the
+  -- DEC-13 resource every scoped capability rule reads (request_type, unit),
+  -- the arrays and the metadata bag the routes write compare-and-set, the
+  -- search fields and the SLA clocks. A client keeps exactly four: priority
+  -- (the queue's mark-urgent), last_modified (stamped, never cleared),
+  -- unread_by (its own marker only) and history (append only, in its own
+  -- name) — each decided below.
+  IF NEW.id                          IS DISTINCT FROM OLD.id                          THEN v_bad := array_append(v_bad, 'id'); END IF;
+  IF NEW.title                       IS DISTINCT FROM OLD.title                       THEN v_bad := array_append(v_bad, 'title'); END IF;
+  IF NEW.description                 IS DISTINCT FROM OLD.description                 THEN v_bad := array_append(v_bad, 'description'); END IF;
+  IF NEW.request_type                IS DISTINCT FROM OLD.request_type                THEN v_bad := array_append(v_bad, 'request_type'); END IF;
+  IF NEW.unit                        IS DISTINCT FROM OLD.unit                        THEN v_bad := array_append(v_bad, 'unit'); END IF;
+  IF NEW.attachments                 IS DISTINCT FROM OLD.attachments                 THEN v_bad := array_append(v_bad, 'attachments'); END IF;
+  IF NEW.comments                    IS DISTINCT FROM OLD.comments                    THEN v_bad := array_append(v_bad, 'comments'); END IF;
+  IF NEW.metadata                    IS DISTINCT FROM OLD.metadata                    THEN v_bad := array_append(v_bad, 'metadata'); END IF;
+  IF NEW.watchers                    IS DISTINCT FROM OLD.watchers                    THEN v_bad := array_append(v_bad, 'watchers'); END IF;
+  IF NEW.search_keywords             IS DISTINCT FROM OLD.search_keywords             THEN v_bad := array_append(v_bad, 'search_keywords'); END IF;
+  IF NEW.search_tsv                  IS DISTINCT FROM OLD.search_tsv                  THEN v_bad := array_append(v_bad, 'search_tsv'); END IF;
+  IF NEW.target_completion_at        IS DISTINCT FROM OLD.target_completion_at        THEN v_bad := array_append(v_bad, 'target_completion_at'); END IF;
+  IF NEW.sla_breach_warned_at        IS DISTINCT FROM OLD.sla_breach_warned_at        THEN v_bad := array_append(v_bad, 'sla_breach_warned_at'); END IF;
+  IF NEW.sla_breached_at             IS DISTINCT FROM OLD.sla_breached_at             THEN v_bad := array_append(v_bad, 'sla_breached_at'); END IF;
+  IF NEW.updated_at                  IS DISTINCT FROM OLD.updated_at                  THEN v_bad := array_append(v_bad, 'updated_at'); END IF;
+  -- DF-P3 (drafting-flow LEAK-9 / GAP-107): how a request ended is the
+  -- workflow route's to record, with the close or the cancel.
+  IF NEW.outcome                     IS DISTINCT FROM OLD.outcome                     THEN v_bad := array_append(v_bad, 'outcome'); END IF;
+
+  IF array_length(v_bad, 1) > 0 THEN
+    RAISE EXCEPTION 'tickets: column(s) % are workflow-owned — use the request workflow actions', array_to_string(v_bad, ', ');
+  END IF;
+
+  -- WF-2: the history log only grows. (Append is a legitimate client write —
+  -- file uploads and project links add entries — deletion is not.)
+  IF jsonb_array_length(COALESCE(NEW.history, '[]'::jsonb))
+     < jsonb_array_length(COALESCE(OLD.history, '[]'::jsonb)) THEN
+    RAISE EXCEPTION 'tickets: the history log cannot shrink';
+  END IF;
+
+  -- DF-P1 (EVID-1 / AUTHZ-2 / PERS-1): the entries already in the log are
+  -- immutable — a client may only APPEND (no browser path writes history
+  -- today; the dormant project-link push in lib/projects.ts appends), and an
+  -- entry it appends names the caller, never somebody else.
+  v_old_len := jsonb_array_length(COALESCE(OLD.history, '[]'::jsonb));
+  IF COALESCE((SELECT jsonb_agg(h.value ORDER BY h.ordinality)
+                 FROM jsonb_array_elements(COALESCE(NEW.history, '[]'::jsonb)) WITH ORDINALITY AS h
+                WHERE h.ordinality <= v_old_len), '[]'::jsonb)
+     IS DISTINCT FROM COALESCE(OLD.history, '[]'::jsonb) THEN
+    RAISE EXCEPTION 'tickets: history entries cannot be changed — the log is append-only';
+  END IF;
+  IF jsonb_array_length(COALESCE(NEW.history, '[]'::jsonb)) > v_old_len THEN
+    SELECT email INTO v_email FROM org_members
+     WHERE org_id = NEW.org_id AND uid = auth.uid() AND status = 'active' LIMIT 1;
+    FOR v_entry IN SELECT h.value FROM jsonb_array_elements(NEW.history) WITH ORDINALITY AS h
+                    WHERE h.ordinality > v_old_len LOOP
+      IF (v_entry->>'user') IS DISTINCT FROM v_email
+         AND (v_entry->>'user') IS DISTINCT FROM auth.uid()::text THEN
+        RAISE EXCEPTION 'tickets: a history entry you add must name you';
+      END IF;
+    END LOOP;
+  END IF;
+
+  -- DF-P1 (PERS-1 / LEAK-4): unread_by — a client clears only its OWN unread
+  -- marker (the request page's mark-read). Whatever array a client writes,
+  -- what lands is the stored array minus the caller: nobody else leaves it
+  -- and nobody joins it. Never an error: the page sends the whole array it
+  -- read moments earlier, and a reader who marked it read in between makes
+  -- that array stale; refusing it would leave the caller's own marker in place.
+  IF NEW.unread_by IS DISTINCT FROM OLD.unread_by THEN
+    NEW.unread_by := array_remove(COALESCE(OLD.unread_by, '{}'::uuid[]), auth.uid());
+  END IF;
+
+  -- DF-P1 (EDGE-15): last_modified is the compare-and-set token. A client may
+  -- stamp it (the queue's mark-urgent does) but never clear it — a NULL token
+  -- reduced every later route write on the row to a status-only check.
+  IF NEW.last_modified IS NULL AND OLD.last_modified IS NOT NULL THEN
+    RAISE EXCEPTION 'tickets: last_modified cannot be cleared';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+-- CREATE OR REPLACE keeps the function trg_ticket_update_guard runs; the
+-- trigger is restated so a database missing it gets it back.
+DROP TRIGGER IF EXISTS trg_ticket_update_guard ON tickets;
+CREATE TRIGGER trg_ticket_update_guard
+  BEFORE UPDATE ON tickets
+  FOR EACH ROW EXECUTE FUNCTION ticket_update_guard();
+
+-- DRLS-16: a trigger function is executable by no client role (the trigger
+-- fires regardless of EXECUTE; nobody calls it directly).
+REVOKE ALL ON FUNCTION ticket_update_guard() FROM PUBLIC, anon, authenticated, service_role;
+
+-- ── 2b. ticket_insert_integrity — re-created from 20261038 (lineDiff-pinned) ─
+-- A client-created ticket is born with no SLA stamps and no outcome (fix
+-- pass 3). The service role (the workflow route, the DF-P2 create route)
+-- passes as before and stamps nothing of the three on insert.
+CREATE OR REPLACE FUNCTION ticket_insert_integrity()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_role  TEXT;
+  v_roles TEXT[];
+  v_email TEXT;
+  v_types TEXT[];
+BEGIN
+  -- Service-role writes (API routes) stamp identity themselves.
+  IF auth.uid() IS NULL THEN RETURN NEW; END IF;
+
+  SELECT role, COALESCE(roles, ARRAY[role]), email INTO v_role, v_roles, v_email
+  FROM org_members
+  WHERE org_id = NEW.org_id AND uid = auth.uid() AND status = 'active'
+  LIMIT 1;
+  IF v_role IS NULL THEN
+    RAISE EXCEPTION 'tickets: only active members of the workspace can create requests';
+  END IF;
+
+  -- WF-5: the requester is the caller — not whoever the payload names.
+  NEW.requester_id := auth.uid();
+  IF v_email IS NOT NULL THEN
+    NEW.requester_email := v_email;
+  END IF;
+  -- The stamped role must be one the caller actually HOLDS (multi-role
+  -- members may file under any of their roles); otherwise their primary.
+  IF NEW.requester_role IS NULL OR NOT (NEW.requester_role = ANY(v_roles)) THEN
+    NEW.requester_role := v_role;
+  END IF;
+  -- Tickets are born in the assignment queue, never mid-workflow.
+  NEW.status := 'PENDING_ASSIGNMENT';
+  -- Nothing is approved, closed, or archived at birth.
+  NEW.assigned_drafter_id := NULL;
+  NEW.assigned_drafter_name := NULL;
+  NEW.assigned_engineer_id := NULL;
+  NEW.assigned_engineer_name := NULL;
+  NEW.assigned_engineer_email := NULL;
+  NEW.engineer_approved_at := NULL;
+  NEW.closed_at := NULL;
+  NEW.archived_at := NULL;
+  NEW.archive_id := NULL;
+  -- DF-P3 (drafting-flow GAP-106 / LEAK-9): nor is it born overdue, warned or
+  -- ended — the SLA clocks and the outcome are the workflow's to stamp (a
+  -- ticket born with sla_breached_at would never be on the clock).
+  NEW.sla_breached_at := NULL;
+  NEW.sla_breach_warned_at := NULL;
+  NEW.outcome := NULL;
+
+  -- WF-15: request_type honesty. The union keeps the check-in / transition-in
+  -- vocabulary (Revision / ASBUILT / RFI) working for orgs whose configured
+  -- portal list doesn't include them. Unconfigured orgs keep free vocabulary.
+  SELECT array_agg(o->>'value') INTO v_types
+  FROM org_configurations c,
+       jsonb_array_elements(c.data->'requestTypes'->'options') o
+  WHERE c.org_id = NEW.org_id AND c.key = 'drafting'
+    AND jsonb_typeof(c.data->'requestTypes'->'options') = 'array';
+  IF v_types IS NOT NULL AND array_length(v_types, 1) > 0
+     AND NOT (NEW.request_type = ANY(v_types))
+     AND NEW.request_type NOT IN ('Revision', 'ASBUILT', 'RFI') THEN
+    RAISE EXCEPTION 'tickets: request type "%" is not one this workspace offers', NEW.request_type;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+-- CREATE OR REPLACE keeps the function trg_ticket_insert_integrity runs; the
+-- trigger is restated so a database missing it gets it back.
+DROP TRIGGER IF EXISTS trg_ticket_insert_integrity ON tickets;
+CREATE TRIGGER trg_ticket_insert_integrity
+  BEFORE INSERT ON tickets
+  FOR EACH ROW EXECUTE FUNCTION ticket_insert_integrity();
+-- DRLS-16: a trigger function is executable by no client role.
+REVOKE ALL ON FUNCTION ticket_insert_integrity() FROM PUBLIC, anon, authenticated, service_role;
+
+-- ── 3. EDGE-4: a departed member's in-flight tickets go back ───────────────
+-- The pool told is the assignment queue's owners, exactly as
+-- lib/ticketRouting.ts queuePool() resolves them: active members HOLDING
+-- DraftingSupervisor (headline or collection, trimmed — heldRoles()), else
+-- the Admin holders; both when the org's drafting routing says
+-- adminsAlsoReceiveWhenSupervisorSet. The pool gets ONE summary row per call
+-- (fix pass 3); a ticket returned to the requester's review tells the
+-- requester on the ticket. The departed member is never told.
+CREATE OR REPLACE FUNCTION return_departed_member_tickets(p_org uuid, p_uid uuid, p_label text)
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_who      text := COALESCE(NULLIF(btrim(p_label), ''), 'A former member');
+  v_sup      uuid[];
+  v_adm      uuid[];
+  v_both     boolean := false;
+  v_pool     uuid[];
+  v_t        record;
+  v_status   text;
+  v_drafter  boolean;
+  v_engineer boolean;
+  v_action   text;
+  v_line     text;
+  v_tell     uuid[];
+  v_now      text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+  v_n        integer := 0;
+  v_skipped  integer := 0;
+  v_left     integer := 0;
+  v_max      integer := 200;
+  v_queue_n  integer := 0;
+  v_clear_n  integer := 0;
+  v_review_n integer := 0;
+  v_summary  text;
+BEGIN
+  IF p_org IS NULL OR p_uid IS NULL THEN
+    RETURN 0;
+  END IF;
+  -- Still (or again) an active member of this org: nothing departed.
+  IF EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = p_org AND m.uid = p_uid AND m.status = 'active') THEN
+    RETURN 0;
+  END IF;
+
+  SELECT COALESCE(array_agg(DISTINCT m.uid), '{}'::uuid[]) INTO v_sup
+    FROM org_members m
+   WHERE m.org_id = p_org AND m.status = 'active' AND m.uid IS NOT NULL
+     AND EXISTS (SELECT 1 FROM unnest(ARRAY[m.role] || COALESCE(m.roles, '{}'::text[])) AS h(r)
+                  WHERE btrim(h.r) = 'DraftingSupervisor');
+  SELECT COALESCE(array_agg(DISTINCT m.uid), '{}'::uuid[]) INTO v_adm
+    FROM org_members m
+   WHERE m.org_id = p_org AND m.status = 'active' AND m.uid IS NOT NULL
+     AND EXISTS (SELECT 1 FROM unnest(ARRAY[m.role] || COALESCE(m.roles, '{}'::text[])) AS h(r)
+                  WHERE btrim(h.r) = 'Admin');
+  SELECT COALESCE((c.data -> 'routing' -> 'adminsAlsoReceiveWhenSupervisorSet') = 'true'::jsonb, false) INTO v_both
+    FROM org_configurations c WHERE c.org_id = p_org AND c.key = 'drafting' LIMIT 1;
+  v_pool := CASE WHEN cardinality(v_sup) = 0 THEN v_adm
+                 WHEN COALESCE(v_both, false) THEN v_sup || v_adm
+                 ELSE v_sup END;
+
+  -- The mark ticket_update_guard honours (this transaction only).
+  PERFORM set_config('app.ticket_departure', p_uid::text, true);
+
+  -- Never a wait that could cancel the removal: a ticket another write holds
+  -- is skipped (SKIP LOCKED), and one call hands back at most v_max tickets
+  -- (the removal runs inside the Admin's API request, under its statement
+  -- timeout). What is left is counted below and handed back by the
+  -- maintenance cron's step 5b (departed_member_ticket_holders → this
+  -- function), every run.
+  FOR v_t IN
+    SELECT t.id, t.ticket_id, t.title, t.status, t.requester_id, t.assigned_drafter_id, t.assigned_engineer_id
+      FROM tickets t
+     WHERE t.org_id = p_org AND t.archived_at IS NULL AND t.status NOT IN ('CLOSED', 'CANCELED')
+       AND (t.assigned_drafter_id = p_uid
+            OR (t.assigned_engineer_id = p_uid AND t.status IN ('PENDING_ENG_TEAM', 'PENDING_FINAL_APPROVAL')))
+     ORDER BY t.created_at, t.id
+     LIMIT v_max
+     FOR UPDATE SKIP LOCKED
+  LOOP
+    v_drafter  := v_t.assigned_drafter_id IS NOT DISTINCT FROM p_uid;
+    v_engineer := v_t.assigned_engineer_id IS NOT DISTINCT FROM p_uid
+                  AND v_t.status IN ('PENDING_ENG_TEAM', 'PENDING_FINAL_APPROVAL');
+    v_status := v_t.status;
+    IF v_engineer AND v_t.status = 'PENDING_ENG_TEAM' THEN
+      v_status := 'PENDING_ASSIGNMENT';
+    ELSIF v_engineer AND v_t.status = 'PENDING_FINAL_APPROVAL' THEN
+      v_status := 'PENDING_REVIEW';
+    END IF;
+    IF v_drafter AND v_status IN ('DRAFTING', 'REVISION_REQ') THEN
+      v_status := 'PENDING_ASSIGNMENT';
+    END IF;
+
+    IF v_status = 'PENDING_ASSIGNMENT' THEN
+      v_action := 'Returned to the assignment queue';
+      v_line := v_who || ', the ' || CASE WHEN v_engineer THEN 'reviewing engineer' ELSE 'drafter' END
+                || ', is no longer an active member of this workspace. The request is back in the assignment queue.';
+      v_tell := v_pool;
+    ELSIF v_status = 'PENDING_REVIEW' AND v_engineer THEN
+      v_action := 'Returned to the requester''s review';
+      v_line := v_who || ', the reviewing engineer, is no longer an active member of this workspace. Send the request for engineer approval again.';
+      v_tell := v_pool || ARRAY[v_t.requester_id];
+    ELSE
+      v_action := 'Drafter cleared';
+      v_line := v_who || ', the drafter, is no longer an active member of this workspace. The drafting pool can pick up this request.';
+      v_tell := v_pool;
+    END IF;
+    v_tell := ARRAY(SELECT DISTINCT u FROM unnest(v_tell) AS x(u) WHERE u IS NOT NULL AND u IS DISTINCT FROM p_uid);
+
+    -- Never a refusal of the removal (DEC-20): a hand-back the database
+    -- refuses (a later re-creation of ticket_update_guard that dropped the
+    -- departure pass, say) is a WARNING and a skipped ticket; the removal
+    -- goes through and the maintenance cron's step 5b tries it again.
+    BEGIN
+      UPDATE tickets t
+         SET status                       = v_status,
+             assigned_drafter_id          = CASE WHEN v_drafter THEN NULL ELSE t.assigned_drafter_id END,
+             assigned_drafter_name        = CASE WHEN v_drafter THEN NULL ELSE t.assigned_drafter_name END,
+             assigned_engineer_id         = CASE WHEN v_engineer THEN NULL ELSE t.assigned_engineer_id END,
+             assigned_engineer_name       = CASE WHEN v_engineer THEN NULL ELSE t.assigned_engineer_name END,
+             assigned_engineer_email      = CASE WHEN v_engineer THEN NULL ELSE t.assigned_engineer_email END,
+             engineer_review_requested_at = CASE WHEN v_engineer AND v_t.status = 'PENDING_ENG_TEAM' THEN NULL
+                                                 ELSE t.engineer_review_requested_at END,
+             history                      = COALESCE(t.history, '[]'::jsonb) || jsonb_build_array(jsonb_build_object(
+                                              'action', v_action, 'user', 'system', 'role', 'System',
+                                              'date', v_now, 'details', v_line)),
+             unread_by                    = ARRAY(SELECT DISTINCT u FROM unnest(COALESCE(t.unread_by, '{}'::uuid[]) || v_tell) AS x(u)
+                                                   WHERE u IS DISTINCT FROM p_uid),
+             last_modified                = now()
+       WHERE t.id = v_t.id;
+    EXCEPTION WHEN OTHERS THEN
+      v_skipped := v_skipped + 1;
+      RAISE WARNING 'return_departed_member_tickets: ticket % was NOT handed back (the removal goes through; the ticket still names the departed member): %', v_t.id, SQLERRM;
+      CONTINUE;
+    END;
+
+    -- The departed drafter's ticket-sourced edit intent goes with them.
+    IF v_drafter THEN
+      BEGIN
+        DELETE FROM document_intents WHERE ticket_id = v_t.id AND user_id = p_uid AND source = 'ticket';
+      EXCEPTION WHEN OTHERS THEN
+        RAISE WARNING 'return_departed_member_tickets: ticket % was handed back, but the departed drafter''s edit intent was not removed: %', v_t.id, SQLERRM;
+      END;
+    END IF;
+
+    IF v_status = 'PENDING_ASSIGNMENT' THEN
+      v_queue_n := v_queue_n + 1;
+    ELSIF v_status = 'PENDING_REVIEW' AND v_engineer THEN
+      v_review_n := v_review_n + 1;
+    ELSE
+      v_clear_n := v_clear_n + 1;
+    END IF;
+
+    -- Never silent, never a refusal: the requester whose review the request
+    -- is back at is told on the ticket (the queue's owners get ONE summary
+    -- row after the loop — fix pass 3), and an audit row goes on the ticket,
+    -- each in its OWN sub-block — a refused audit row never takes the notice
+    -- with it; either failing is a WARNING.
+    BEGIN
+      IF v_status = 'PENDING_REVIEW' AND v_engineer
+         AND v_t.requester_id IS NOT NULL AND v_t.requester_id IS DISTINCT FROM p_uid THEN
+        INSERT INTO notifications (org_id, user_id, kind, title, body, link, resource_type, resource_id, actor_name, metadata)
+        VALUES (p_org, v_t.requester_id, 'ticket_status',
+                v_action || ' · ' || btrim(COALESCE(v_t.ticket_id, '') || ' ' || COALESCE(v_t.title, '')),
+                v_line, '/requests/' || v_t.id::text, 'ticket', v_t.id::text, 'System',
+                jsonb_build_object('action', 'member_departed', 'status', v_status));
+      END IF;
+    EXCEPTION WHEN OTHERS THEN
+      RAISE WARNING 'return_departed_member_tickets: ticket % was handed back, but its notice was not written: %', v_t.id, SQLERRM;
+    END;
+    BEGIN
+      INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, details)
+      VALUES ('TICKET_RETURNED_ON_DEPARTURE', v_t.id::text, 'ticket', p_org, auth.uid(),
+              jsonb_build_object('departedUid', p_uid, 'from', v_t.status, 'to', v_status,
+                                 'drafterCleared', v_drafter, 'engineerCleared', v_engineer, 'told', to_jsonb(v_tell)));
+    EXCEPTION WHEN OTHERS THEN
+      RAISE WARNING 'return_departed_member_tickets: ticket % was handed back, but its audit row was not written: %', v_t.id, SQLERRM;
+    END;
+    v_n := v_n + 1;
+  END LOOP;
+
+  PERFORM set_config('app.ticket_departure', '', true);
+  -- What this call left on the departed member: refused (v_skipped), held by
+  -- another write, or past the bound. Never silent; never a refusal.
+  SELECT COUNT(*) INTO v_left
+    FROM tickets t
+   WHERE t.org_id = p_org AND t.archived_at IS NULL AND t.status NOT IN ('CLOSED', 'CANCELED')
+     AND (t.assigned_drafter_id = p_uid
+          OR (t.assigned_engineer_id = p_uid AND t.status IN ('PENDING_ENG_TEAM', 'PENDING_FINAL_APPROVAL')));
+  IF v_left > 0 THEN
+    RAISE WARNING 'return_departed_member_tickets: % ticket(s) of the departed member % in org % still name them (% refused — see the warnings above; the rest held by another write or past this call''s bound of % tickets) — the maintenance cron (step 5b) hands them back on its next run', v_left, p_uid, p_org, v_skipped, v_max;
+  END IF;
+
+  -- ONE summary row per queue owner for the whole call (fix pass 3): never
+  -- one per ticket, so a 200-ticket hand-back writes a handful of rows, far
+  -- below the notification rail's per-actor caps (20261160), and the queue
+  -- gets one row it can act on. Each request's history line says the rest.
+  IF v_n > 0 THEN
+    v_summary := v_who || ' is no longer an active member of this workspace. ' || v_n
+                 || ' request(s) they held were handed back: '
+                 || concat_ws('; ',
+                      CASE WHEN v_queue_n > 0 THEN v_queue_n || ' back in the assignment queue' END,
+                      CASE WHEN v_clear_n > 0 THEN v_clear_n || ' with the drafter cleared, for the drafting pool to pick up' END,
+                      CASE WHEN v_review_n > 0 THEN v_review_n || ' back at the requester''s review, to send for engineer approval again' END)
+                 || '. Each request''s history says what happened.';
+    BEGIN
+      INSERT INTO notifications (org_id, user_id, kind, title, body, link, resource_type, resource_id, actor_name, metadata)
+      SELECT p_org, u, 'ticket_status',
+             v_who || ' left · ' || v_n || ' request(s) handed back',
+             v_summary, '/requests', NULL, NULL, 'System',
+             jsonb_build_object('action', 'member_departed', 'count', v_n, 'queue', v_queue_n,
+                                'drafterCleared', v_clear_n, 'requesterReview', v_review_n)
+        FROM unnest(v_pool) AS x(u)
+       WHERE u IS NOT NULL AND u IS DISTINCT FROM p_uid;
+    EXCEPTION WHEN OTHERS THEN
+      RAISE WARNING 'return_departed_member_tickets: % ticket(s) were handed back, but the queue''s summary notice was not written: %', v_n, SQLERRM;
+    END;
+  END IF;
+  RETURN v_n;
+END;
+$$;
+COMMENT ON FUNCTION return_departed_member_tickets(uuid, uuid, text) IS
+  'drafting-flow EDGE-4 (20261195): hands a departed member''s in-flight tickets in one org back — DRAFTING / REVISION_REQ and PENDING_ENG_TEAM to the assignment queue, PENDING_FINAL_APPROVAL to the requester''s review, any other open status with the drafter cleared — with a history line and an audit row each, a bell row to the requester whose review a request is back at, and ONE summary bell row per queue owner per call; at most 200 per call, skipping a ticket another write holds (what it leaves is a WARNING, handed back by the maintenance cron''s step 5b). Answers how many it handed back, 0 for a member who is still active. Run by the org_members departure triggers, by the maintenance cron (departed_member_ticket_holders) and by 20261195''s backlog move (each repeated while a call hits the bound); service role only.';
+-- DRLS-16: definer, search_path pinned; no client may call it.
+REVOKE ALL ON FUNCTION return_departed_member_tickets(uuid, uuid, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION return_departed_member_tickets(uuid, uuid, text) TO service_role;
+
+-- EDGE-4 fix pass 3: who still holds open work while not an active member of
+-- the ticket's org — what a departure left (row-locked, refused, past the
+-- bound) and what no trigger saw. Read by the maintenance cron's step 5b
+-- (lib/ticketDepartureBackstop.ts), which hands each pair back through
+-- return_departed_member_tickets every run, and by (4)(a) below. Read-only;
+-- the invoker's rights (the service role); p_limit NULL = every pair.
+CREATE OR REPLACE FUNCTION departed_member_ticket_holders(p_limit integer)
+RETURNS TABLE (org_id uuid, uid uuid, label text, held integer)
+LANGUAGE sql STABLE SET search_path = public AS $$
+  SELECT s.org_id, s.uid,
+         (SELECT COALESCE(NULLIF(btrim(m.display_name), ''), split_part(COALESCE(m.email, ''), '@', 1))
+            FROM org_members m WHERE m.org_id = s.org_id AND m.uid = s.uid LIMIT 1) AS label,
+         COUNT(DISTINCT s.id)::integer AS held
+    FROM (SELECT t.id, t.org_id, t.assigned_drafter_id AS uid FROM tickets t
+           WHERE t.status NOT IN ('CLOSED', 'CANCELED') AND t.archived_at IS NULL AND t.assigned_drafter_id IS NOT NULL
+          UNION ALL
+          SELECT t.id, t.org_id, t.assigned_engineer_id FROM tickets t
+           WHERE t.status IN ('PENDING_ENG_TEAM', 'PENDING_FINAL_APPROVAL') AND t.archived_at IS NULL
+             AND t.assigned_engineer_id IS NOT NULL) AS s
+   WHERE NOT EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = s.org_id AND m.uid = s.uid AND m.status = 'active')
+   GROUP BY s.org_id, s.uid
+   ORDER BY s.org_id, s.uid
+   LIMIT p_limit
+$$;
+COMMENT ON FUNCTION departed_member_ticket_holders(integer) IS
+  'drafting-flow EDGE-4 (20261195, fix pass 3): the (org, uid) pairs that still hold open tickets (drafter, or engineer at PENDING_ENG_TEAM / PENDING_FINAL_APPROVAL) while not an active member of that org, with a label and how many each holds. Read by the maintenance cron''s departure backstop (step 5b) and by 20261195 (4)(a); service role only.';
+-- DRLS-16: no client may call it (it names departed members across orgs).
+REVOKE ALL ON FUNCTION departed_member_ticket_holders(integer) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION departed_member_ticket_holders(integer) TO service_role;
+
+CREATE OR REPLACE FUNCTION org_member_departure_returns_tickets()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  PERFORM return_departed_member_tickets(OLD.org_id, OLD.uid,
+                                         COALESCE(NULLIF(btrim(OLD.display_name), ''), split_part(COALESCE(OLD.email, ''), '@', 1)));
+  RETURN NULL;
+END;
+$$;
+COMMENT ON FUNCTION org_member_departure_returns_tickets() IS
+  'drafting-flow EDGE-4 (20261195): the org_members departure triggers'' function — a SEPARATE trigger, never part of revoke_member''s body (admin-and-org P8 re-creates revoke_member and must keep these triggers).';
+REVOKE ALL ON FUNCTION org_member_departure_returns_tickets() FROM PUBLIC, anon, authenticated, service_role;
+
+DROP TRIGGER IF EXISTS trg_org_member_departure_status ON org_members;
+CREATE TRIGGER trg_org_member_departure_status
+  AFTER UPDATE OF status ON org_members
+  FOR EACH ROW
+  WHEN (OLD.status = 'active' AND NEW.status IS DISTINCT FROM 'active')
+  EXECUTE FUNCTION org_member_departure_returns_tickets();
+DROP TRIGGER IF EXISTS trg_org_member_departure_delete ON org_members;
+CREATE TRIGGER trg_org_member_departure_delete
+  AFTER DELETE ON org_members
+  FOR EACH ROW
+  EXECUTE FUNCTION org_member_departure_returns_tickets();
+
+-- ── 4. The backlog (DEC-30): what the triggers cannot see ───────────────────
+-- (a) open tickets already held by a uid that is not an active member of
+--     the ticket's org (departed_member_ticket_holders — the list the
+--     maintenance cron reads every run) — handed back by the same function,
+--     labelled from the member row when one is left.
+DO $$
+DECLARE
+  r      record;
+  v_n    integer;
+  v_pass integer;
+BEGIN
+  FOR r IN
+    SELECT h.org_id, h.uid, h.label FROM departed_member_ticket_holders(NULL) AS h
+  LOOP
+    -- One call hands back at most 200; repeat until it hands back none (each
+    -- ticket it moves leaves its query, so this ends; 1000 passes is a guard).
+    v_pass := 0;
+    LOOP
+      v_n := return_departed_member_tickets(r.org_id, r.uid, r.label);
+      v_pass := v_pass + 1;
+      EXIT WHEN COALESCE(v_n, 0) = 0 OR v_pass >= 1000;
+    END LOOP;
+  END LOOP;
+END
+$$;
+
+-- (b) SM-6 / ROUTE-1: the drafterless REVISION_REQ stragglers return to the
+--     assignment queue (the state is unreachable from the DF-P3 app on).
+DO $$
+DECLARE
+  r      record;
+  v_pool uuid[];
+  v_line text := 'Returned for revision with no drafter assigned, where no queue showed it. It is back in the assignment queue for a drafter to be assigned.';
+  v_now  text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
+BEGIN
+  FOR r IN
+    SELECT t.id, t.org_id, t.ticket_id, t.title FROM tickets t
+     WHERE t.status = 'REVISION_REQ' AND t.assigned_drafter_id IS NULL AND t.archived_at IS NULL
+     ORDER BY t.created_at, t.id
+  LOOP
+    SELECT CASE WHEN cardinality(s.sup) = 0 THEN s.adm
+                WHEN COALESCE((SELECT (c.data -> 'routing' -> 'adminsAlsoReceiveWhenSupervisorSet') = 'true'::jsonb
+                                 FROM org_configurations c WHERE c.org_id = r.org_id AND c.key = 'drafting' LIMIT 1), false)
+                  THEN s.sup || s.adm
+                ELSE s.sup END
+      INTO v_pool
+      FROM (SELECT
+              COALESCE((SELECT array_agg(DISTINCT m.uid) FROM org_members m
+                         WHERE m.org_id = r.org_id AND m.status = 'active' AND m.uid IS NOT NULL
+                           AND EXISTS (SELECT 1 FROM unnest(ARRAY[m.role] || COALESCE(m.roles, '{}'::text[])) AS h(x)
+                                        WHERE btrim(h.x) = 'DraftingSupervisor')), '{}'::uuid[]) AS sup,
+              COALESCE((SELECT array_agg(DISTINCT m.uid) FROM org_members m
+                         WHERE m.org_id = r.org_id AND m.status = 'active' AND m.uid IS NOT NULL
+                           AND EXISTS (SELECT 1 FROM unnest(ARRAY[m.role] || COALESCE(m.roles, '{}'::text[])) AS h(x)
+                                        WHERE btrim(h.x) = 'Admin')), '{}'::uuid[]) AS adm) AS s;
+    UPDATE tickets t
+       SET status        = 'PENDING_ASSIGNMENT',
+           history       = COALESCE(t.history, '[]'::jsonb) || jsonb_build_array(jsonb_build_object(
+                             'action', 'Returned to the assignment queue', 'user', 'system', 'role', 'System',
+                             'date', v_now, 'details', v_line)),
+           unread_by     = ARRAY(SELECT DISTINCT u FROM unnest(COALESCE(t.unread_by, '{}'::uuid[]) || v_pool) AS x(u)),
+           last_modified = now()
+     WHERE t.id = r.id AND t.status = 'REVISION_REQ' AND t.assigned_drafter_id IS NULL;
+    IF cardinality(v_pool) > 0 THEN
+      INSERT INTO notifications (org_id, user_id, kind, title, body, link, resource_type, resource_id, actor_name, metadata)
+      SELECT r.org_id, u, 'ticket_status',
+             'Returned to the assignment queue · ' || btrim(COALESCE(r.ticket_id, '') || ' ' || COALESCE(r.title, '')),
+             v_line, '/requests/' || r.id::text, 'ticket', r.id::text, 'System',
+             jsonb_build_object('action', 'revision_without_drafter', 'status', 'PENDING_ASSIGNMENT')
+        FROM unnest(v_pool) AS x(u);
+    END IF;
+  END LOOP;
+END
+$$;
+
+-- ── 5. GAP-106 / EDGE-7: the SLA clock starts at this paste (FIRST paste) ──
+-- The open tickets already past their target are recorded as overdue
+-- WITHOUT a notice each — the maintenance cron never mails the backlog — and
+-- each workspace's assignment queue (queuePool()'s rule, as (4)(b)) gets one
+-- bell row naming how many. A re-paste stamps nothing.
+DO $$
+DECLARE
+  r      record;
+  v_n    integer;
+  v_pool uuid[];
+  v_line text;
+  v_at   timestamptz;
+BEGIN
+  IF NOT COALESCE((SELECT c.first_paste FROM df_round_g_195_clock c LIMIT 1), false) THEN
+    RETURN;
+  END IF;
+  -- ONE instant for "past its target", captured before the transaction; the
+  -- final probe reads the same one (fix pass 3).
+  SELECT c.clock_at INTO v_at FROM df_round_g_195_clock c LIMIT 1;
+  FOR r IN
+    SELECT t.org_id
+      FROM tickets t
+     WHERE t.status NOT IN ('CLOSED', 'CANCELED') AND t.archived_at IS NULL AND t.sla_breached_at IS NULL
+       AND (t.target_completion_at < v_at
+            OR (t.target_completion_at IS NULL AND EXISTS (
+                  SELECT 1 FROM sla_defaults d
+                   WHERE d.org_id = t.org_id AND d.request_type = t.request_type AND d.default_days > 0
+                     AND t.created_at + make_interval(days => d.default_days) < v_at)))
+     GROUP BY t.org_id
+  LOOP
+    UPDATE tickets t
+       SET sla_breached_at      = now(),
+           sla_breach_warned_at = COALESCE(t.sla_breach_warned_at, now())
+     WHERE t.org_id = r.org_id
+       AND t.status NOT IN ('CLOSED', 'CANCELED') AND t.archived_at IS NULL AND t.sla_breached_at IS NULL
+       AND (t.target_completion_at < v_at
+            OR (t.target_completion_at IS NULL AND EXISTS (
+                  SELECT 1 FROM sla_defaults d
+                   WHERE d.org_id = t.org_id AND d.request_type = t.request_type AND d.default_days > 0
+                     AND t.created_at + make_interval(days => d.default_days) < v_at)));
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    CONTINUE WHEN v_n = 0;
+    SELECT CASE WHEN cardinality(s.sup) = 0 THEN s.adm
+                WHEN COALESCE((SELECT (c.data -> 'routing' -> 'adminsAlsoReceiveWhenSupervisorSet') = 'true'::jsonb
+                                 FROM org_configurations c WHERE c.org_id = r.org_id AND c.key = 'drafting' LIMIT 1), false)
+                  THEN s.sup || s.adm
+                ELSE s.sup END
+      INTO v_pool
+      FROM (SELECT
+              COALESCE((SELECT array_agg(DISTINCT m.uid) FROM org_members m
+                         WHERE m.org_id = r.org_id AND m.status = 'active' AND m.uid IS NOT NULL
+                           AND EXISTS (SELECT 1 FROM unnest(ARRAY[m.role] || COALESCE(m.roles, '{}'::text[])) AS h(x)
+                                        WHERE btrim(h.x) = 'DraftingSupervisor')), '{}'::uuid[]) AS sup,
+              COALESCE((SELECT array_agg(DISTINCT m.uid) FROM org_members m
+                         WHERE m.org_id = r.org_id AND m.status = 'active' AND m.uid IS NOT NULL
+                           AND EXISTS (SELECT 1 FROM unnest(ARRAY[m.role] || COALESCE(m.roles, '{}'::text[])) AS h(x)
+                                        WHERE btrim(h.x) = 'Admin')), '{}'::uuid[]) AS adm) AS s;
+    v_line := 'The request SLA clock started today. ' || v_n || ' open request(s) in this workspace were already past their target date; each is recorded as overdue without a notice of its own. Find them on Requests: reassign them, close them, or tell their requesters when they will be done. From now on a request is warned at 75 % of its time and escalated when it passes its target.';
+    IF cardinality(v_pool) > 0 THEN
+      INSERT INTO notifications (org_id, user_id, kind, title, body, link, resource_type, resource_id, actor_name, metadata)
+      SELECT r.org_id, u, 'ticket_status',
+             'SLA clock started · ' || v_n || ' request(s) already overdue',
+             v_line, '/requests', NULL, NULL, 'System',
+             jsonb_build_object('action', 'sla_clock_started', 'overdue', v_n)
+        FROM unnest(v_pool) AS x(u);
+    END IF;
+  END LOOP;
+END
+$$;
+
+COMMIT;
+
+-- ── Verification + inventory (the only result set the SQL editor shows) ──
+-- Probes: ok = true × 13. Inventory rows: n = the aggregate count before the
+-- apply. pg_proc.prosrc is verbatim (an apostrophe inside a body's string
+-- literal is '''' here).
+SELECT 'LEAK-9 / GAP-107: tickets.outcome exists, CHECKed to completed / withdrawn / duplicate / handled_out_of_band / rejected (or NULL)' AS check,
+       EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'tickets' AND column_name = 'outcome')
+       AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tickets_outcome_check' AND conrelid = 'tickets'::regclass AND contype = 'c'
+                    AND pg_get_constraintdef(oid) LIKE '%completed%' AND pg_get_constraintdef(oid) LIKE '%withdrawn%'
+                    AND pg_get_constraintdef(oid) LIKE '%duplicate%' AND pg_get_constraintdef(oid) LIKE '%handled_out_of_band%'
+                    AND pg_get_constraintdef(oid) LIKE '%rejected%') AS ok,
+       NULL::text AS n
+UNION ALL
+SELECT 'ticket_update_guard owns outcome, and still owns the 37 columns 20261166 decided (the SLA clocks among them)',
+       (SELECT bool_and(p.prosrc LIKE '%IF NEW.' || c.col || ' %IS DISTINCT FROM OLD.' || c.col || ' %THEN v_bad := array_append(v_bad, ''' || c.col || ''');%')
+          FROM pg_proc p
+         CROSS JOIN unnest(ARRAY['outcome','org_id','ticket_id','status','requester_id','requester_role','requester_name','requester_email',
+                                 'assigned_drafter_id','assigned_drafter_name','assigned_engineer_id','assigned_engineer_name',
+                                 'assigned_engineer_email','engineer_review_requested_at','engineer_approved_at','engineer_review_reason',
+                                 'deliverable_rev','draft_iteration','revision_count','closed_at','archived_at','archive_id','created_at',
+                                 'id','title','description','request_type','unit','attachments','comments','metadata','watchers',
+                                 'search_keywords','search_tsv','target_completion_at','sla_breach_warned_at','sla_breached_at','updated_at']) AS c(col)
+         WHERE p.proname = 'ticket_update_guard'),
+       NULL
+UNION ALL
+SELECT 'ticket_update_guard keeps every 20261166 rail (service-role pass, shrink block, append-only history in the caller''s name, own unread marker, last_modified never cleared) and passes only the marked departure path from inside a trigger',
+       (SELECT prosrc LIKE '%IF auth.uid() IS NULL THEN RETURN NEW; END IF;%'
+           AND prosrc LIKE '%RAISE EXCEPTION ''tickets: the history log cannot shrink'';%'
+           AND prosrc LIKE '%RAISE EXCEPTION ''tickets: history entries cannot be changed — the log is append-only'';%'
+           AND prosrc LIKE '%RAISE EXCEPTION ''tickets: a history entry you add must name you'';%'
+           AND prosrc LIKE '%NEW.unread_by := array_remove(COALESCE(OLD.unread_by, ''{}''::uuid[]), auth.uid());%'
+           AND prosrc LIKE '%IF NEW.last_modified IS NULL AND OLD.last_modified IS NOT NULL THEN%'
+           AND prosrc LIKE '%IF pg_trigger_depth() > 1%current_setting(''app.ticket_departure'', true) IN (OLD.assigned_drafter_id::text, OLD.assigned_engineer_id::text) THEN%'
+          FROM pg_proc WHERE proname = 'ticket_update_guard'),
+       NULL
+UNION ALL
+SELECT 'the guard is SECURITY DEFINER with search_path pinned, no client role may execute it, and trg_ticket_update_guard (BEFORE UPDATE) still fires it',
+       EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                WHERE n.nspname = 'public' AND p.proname = 'ticket_update_guard'
+                  AND p.prosecdef AND p.proconfig @> ARRAY['search_path=public'])
+       AND NOT has_function_privilege('anon', 'ticket_update_guard()', 'EXECUTE')
+       AND NOT has_function_privilege('authenticated', 'ticket_update_guard()', 'EXECUTE')
+       AND EXISTS (SELECT 1 FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
+                    WHERE t.tgname = 'trg_ticket_update_guard' AND NOT t.tgisinternal
+                      AND t.tgrelid = 'tickets'::regclass AND p.proname = 'ticket_update_guard'),
+       NULL
+UNION ALL
+SELECT 'EDGE-4: return_departed_member_tickets and org_member_departure_returns_tickets are SECURITY DEFINER with search_path pinned; anon, authenticated and PUBLIC cannot execute either',
+       (SELECT COUNT(*) = 2 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+         WHERE n.nspname = 'public' AND p.proname IN ('return_departed_member_tickets', 'org_member_departure_returns_tickets')
+           AND p.prosecdef AND p.proconfig @> ARRAY['search_path=public'])
+       AND NOT has_function_privilege('anon', 'return_departed_member_tickets(uuid, uuid, text)', 'EXECUTE')
+       AND NOT has_function_privilege('authenticated', 'return_departed_member_tickets(uuid, uuid, text)', 'EXECUTE')
+       AND NOT has_function_privilege('anon', 'org_member_departure_returns_tickets()', 'EXECUTE')
+       AND NOT has_function_privilege('authenticated', 'org_member_departure_returns_tickets()', 'EXECUTE')
+       AND NOT EXISTS (SELECT 1 FROM pg_proc p, aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) x
+                        WHERE p.proname IN ('return_departed_member_tickets', 'org_member_departure_returns_tickets')
+                          AND x.grantee = 0 AND x.privilege_type = 'EXECUTE'),
+       NULL
+UNION ALL
+SELECT 'EDGE-4: the two departure triggers are on org_members — AFTER UPDATE OF status (active → anything else) and AFTER DELETE — and revoke_member''s body does not carry them (a separate trigger: admin-and-org P8 re-creates revoke_member and must keep these)',
+       EXISTS (SELECT 1 FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
+                WHERE t.tgname = 'trg_org_member_departure_status' AND t.tgrelid = 'org_members'::regclass AND NOT t.tgisinternal
+                  AND p.proname = 'org_member_departure_returns_tickets'
+                  AND pg_get_triggerdef(t.oid) LIKE '%AFTER UPDATE OF status ON%'
+                  AND pg_get_triggerdef(t.oid) LIKE '%old.status = ''active''%')
+       AND EXISTS (SELECT 1 FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
+                    WHERE t.tgname = 'trg_org_member_departure_delete' AND t.tgrelid = 'org_members'::regclass AND NOT t.tgisinternal
+                      AND p.proname = 'org_member_departure_returns_tickets'
+                      AND pg_get_triggerdef(t.oid) LIKE '%AFTER DELETE ON%')
+       AND NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'revoke_member' AND prosrc LIKE '%return_departed_member_tickets%'),
+       NULL
+UNION ALL
+SELECT 'SM-6 / ROUTE-1: no open REVISION_REQ ticket is left without a drafter',
+       NOT EXISTS (SELECT 1 FROM tickets WHERE status = 'REVISION_REQ' AND assigned_drafter_id IS NULL AND archived_at IS NULL),
+       NULL
+UNION ALL
+SELECT 'EDGE-4: no open ticket is left on a drafter who is not an active member of its org',
+       NOT EXISTS (SELECT 1 FROM tickets t
+                    WHERE t.status NOT IN ('CLOSED', 'CANCELED') AND t.archived_at IS NULL AND t.assigned_drafter_id IS NOT NULL
+                      AND NOT EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = t.org_id AND m.uid = t.assigned_drafter_id AND m.status = 'active')),
+       NULL
+UNION ALL
+SELECT 'EDGE-4: no PENDING_ENG_TEAM / PENDING_FINAL_APPROVAL ticket waits on an engineer who is not an active member of its org',
+       NOT EXISTS (SELECT 1 FROM tickets t
+                    WHERE t.status IN ('PENDING_ENG_TEAM', 'PENDING_FINAL_APPROVAL') AND t.archived_at IS NULL AND t.assigned_engineer_id IS NOT NULL
+                      AND NOT EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = t.org_id AND m.uid = t.assigned_engineer_id AND m.status = 'active')),
+       NULL
+UNION ALL
+SELECT 'EDGE-4: return_departed_member_tickets marks the departure path for its own transaction only and clears it after its loop, never waits on a ticket another write holds (SKIP LOCKED), hands back at most 200 tickets per call, and tells the queue ONE summary row per call (never one per ticket)',
+       EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'return_departed_member_tickets'
+                  AND prosrc LIKE '%PERFORM set_config(''app.ticket_departure'', p_uid::text, true);%END LOOP;%PERFORM set_config(''app.ticket_departure'', '''', true);%'
+                  AND prosrc LIKE '%FOR UPDATE SKIP LOCKED%'
+                  AND prosrc LIKE '%v_max      integer := 200;%'
+                  AND prosrc LIKE '%END LOOP;%FROM unnest(v_pool) AS x(u)%RETURN v_n;%'
+                  AND prosrc NOT LIKE '%FROM unnest(v_tell) AS x(u);%'),
+       NULL
+UNION ALL
+SELECT 'EDGE-4: departed_member_ticket_holders (the maintenance cron''s backstop list) exists with search_path pinned; the service role may execute it, and anon, authenticated and PUBLIC may not',
+       EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                WHERE n.nspname = 'public' AND p.proname = 'departed_member_ticket_holders'
+                  AND p.proconfig @> ARRAY['search_path=public'])
+       AND has_function_privilege('service_role', 'departed_member_ticket_holders(integer)', 'EXECUTE')
+       AND NOT has_function_privilege('anon', 'departed_member_ticket_holders(integer)', 'EXECUTE')
+       AND NOT has_function_privilege('authenticated', 'departed_member_ticket_holders(integer)', 'EXECUTE')
+       AND NOT EXISTS (SELECT 1 FROM pg_proc p, aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) x
+                        WHERE p.proname = 'departed_member_ticket_holders' AND x.grantee = 0 AND x.privilege_type = 'EXECUTE'),
+       NULL
+UNION ALL
+SELECT 'ticket_insert_integrity clears sla_breached_at, sla_breach_warned_at and outcome on a client insert, keeps every 20261038 rail (requester = caller, born PENDING_ASSIGNMENT, request type offered), no client role may execute it, and trg_ticket_insert_integrity (BEFORE INSERT) still fires it',
+       EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+                WHERE n.nspname = 'public' AND p.proname = 'ticket_insert_integrity'
+                  AND p.prosecdef AND p.proconfig @> ARRAY['search_path=public']
+                  AND p.prosrc LIKE '%NEW.sla_breached_at := NULL;%'
+                  AND p.prosrc LIKE '%NEW.sla_breach_warned_at := NULL;%'
+                  AND p.prosrc LIKE '%NEW.outcome := NULL;%'
+                  AND p.prosrc LIKE '%NEW.requester_id := auth.uid();%'
+                  AND p.prosrc LIKE '%NEW.status := ''PENDING_ASSIGNMENT'';%'
+                  AND p.prosrc LIKE '%is not one this workspace offers%')
+       AND NOT has_function_privilege('anon', 'ticket_insert_integrity()', 'EXECUTE')
+       AND NOT has_function_privilege('authenticated', 'ticket_insert_integrity()', 'EXECUTE')
+       AND EXISTS (SELECT 1 FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
+                    WHERE t.tgname = 'trg_ticket_insert_integrity' AND NOT t.tgisinternal
+                      AND t.tgrelid = 'tickets'::regclass AND p.proname = 'ticket_insert_integrity'),
+       NULL
+UNION ALL
+SELECT 'GAP-106: the SLA clock started at the first paste — no open ticket is left past its target as of the instant the paste captured before its transaction (one passing it since is the cron''s) with no breach recorded (on a re-paste nothing is stamped and this row is true: the maintenance cron sends those)',
+       NOT COALESCE((SELECT c.first_paste FROM df_round_g_195_clock c LIMIT 1), false)
+       OR NOT EXISTS (SELECT 1 FROM tickets t, df_round_g_195_clock c
+                       WHERE t.status NOT IN ('CLOSED', 'CANCELED') AND t.archived_at IS NULL AND t.sla_breached_at IS NULL
+                         AND (t.target_completion_at < c.clock_at
+                              OR (t.target_completion_at IS NULL AND EXISTS (
+                                    SELECT 1 FROM sla_defaults d
+                                     WHERE d.org_id = t.org_id AND d.request_type = t.request_type AND d.default_days > 0
+                                       AND t.created_at + make_interval(days => d.default_days) < c.clock_at)))),
+       NULL
+UNION ALL
+SELECT inventory, NULL::boolean, n FROM (SELECT ord, inventory, n FROM df_round_g_195_before ORDER BY ord) AS i;

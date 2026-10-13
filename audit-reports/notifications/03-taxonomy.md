@@ -573,7 +573,7 @@ lib/orchestrator/tools.ts:509-511 -- `kind: "orchestrator_message",\n      title
 ## TAX-11 · Notification kinds are written that do not exist in the `NotificationKind` union - they get no icon, no section, and no classification anywhere
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** notifications N8 PRODUCERS-FREE (done-when 2: the eleven raw inserts onto notify(), each file once its own package has merged; the census stays a ratchet, not ratified as the ban) — by the integrator, 2026-10-02, at the N5 merge (DEC-31; fleet plan `audit-reports/fleet-plans/notifications.json`).
 - **Assigned:** notifications N14 RAW-INSERT TAIL (done-when 2's sites whose owning package was still in flight when N8 launched: `app/api/ai/usage/route.ts` and `lib/orchestrator/tools.ts` (intelligence I-18), `app/api/cron/maintenance/route.ts` (N6), `app/api/tickets/comment/route.ts` and `app/api/tickets/workflow-action/route.ts` (drafting-flow DF-P1); N8 keeps the rest) — by the integrator, 2026-10-07, at N8's launch (DEC-31; fleet plan `audit-reports/fleet-plans/notifications.json`).
 - **Verification:** CONFIRMED
@@ -672,6 +672,49 @@ supabase/migrations/20260621_in_app_notifications.sql:17 -- `  kind TEXT NOT NUL
 - ✓ (unchanged) The census test arm.
 
 **Scope / residual.** Stays OPEN only for N14's five files (six calls). For a service-role writer that must report what landed, the batch sink (`notifyBatchWithReason`) is now the way onto the typed path.
+
+**Resolution (2026-10-13, notifications Round G).** Package N14 RAW-INSERT TAIL: done-when 2's last six calls, in the five files the second Assigned line names. Every owning package had merged (base `5378ccb`).
+
+**Reproduced first** on `5378ccb`. The census (`lib/__tests__/notificationKinds.test.ts` `RAW_SITES`) pinned six raw `.from("notifications").insert(` calls:
+- `app/api/ai/usage/route.ts:298` (`ai_cap_changed`). Its outcome was swallowed by `.then(() => undefined, () => undefined)`.
+- `lib/orchestrator/tools.ts:726` (`orchestrator_message`).
+- `app/api/cron/maintenance/route.ts:721` (the `checkout_released` stale-checkout escalation).
+- `app/api/tickets/comment/route.ts:357` (`ticket_comment` / `ticket_mention`).
+- `app/api/tickets/workflow-action/route.ts:1057, :1111` (`ticket_comment` file activity; `ticket_assigned` / `ticket_status`).
+
+**What landed (commit `855152f`).**
+- Each call now writes through the typed sink in `lib/inAppNotifications.ts`, on the client it already held. Each is still one statement, so nothing about atomicity changes.
+  - `notifyBatchWithReason(rows, supabaseAdmin)` for the AI cap notice (`app/api/ai/usage/route.ts:303`), the comment fan-out (`comment/route.ts:359`) and the two workflow fan-outs (`workflow-action/route.ts:1059, :1114`).
+  - `notifyBatchWithReason(rows, sb)` for the cron's escalation (`maintenance/route.ts:719`).
+  - `notifyWithReason(row, supabaseAdmin)` for the orchestrator's `notify_personnel` (`lib/orchestrator/tools.ts:729`). It is imported inside the hunk, so I-21's `loadLineGraph` edit merges cleanly.
+  - `lib/inAppNotifications.ts` is not edited (N9 owns it).
+- **REGRESSION.** The rows, the recipients and every failure path are unchanged:
+  - Same rows. A column the raw insert left out (the comment route's `metadata`, the escalation's `actor_user_id`) is now written as an explicit NULL. `notifications` has no default for either column (`20260621` / `20260723`), so the stored row is identical.
+  - Same recipients. Each call's audience is computed exactly as before, and every one was already filtered to ACTIVE members: NEDGE-14's active-member read for the ticket routes, the holder roster for the AI cap, the `org_members … status = 'active'` reads for the escalation and the orchestrator.
+  - Same failure paths. The ticket routes still log and answer ok. The escalation still pushes into `result.errors` and does not count. The orchestrator still answers "could not be sent" (AI_ACTION_FAILED). The AI cap notice's refusal, previously swallowed, is now logged with its reason, and the change still stands.
+  - Every row is a service-role row, so the 20261160 / 20261161 rails pass it untouched (DEC-86 §2), exactly as they passed the raw insert.
+- **The census.** `RAW_SITES` is empty. `RAW_RESOLVED` is now read at typed sites too, so the workflow route's `cls.inAppKind` still counts `ticket_assigned` / `ticket_status` as written.
+- Tests:
+  - `lib/__tests__/notificationKinds.test.ts` "TAX-11 done-when 2 (N14)": no insert call anywhere but the sink. Each moved call is pinned to its typed form, its client and its refusal handling, and the kinds are still resolved.
+  - `lib/__tests__/notificationWriteRails.test.ts`: the REGRESSION census now finds exactly the sink's two inserts, and their row mapper sets no `created_at`. The link census also reads `notifyWithReason` / `notifyBatchWithReason` / `notifyCompliance` producers.
+  - Before/after row pins:
+    - `lib/__tests__/n6TicketFanout.test.ts` "REGRESSION (notifications N14 …)": the comment, transition and attach_file rows column for column, one statement each.
+    - `lib/__tests__/maintenanceDrain.test.ts`: the escalation row column for column, the holder never a recipient, and the dedupe still finds it.
+    - `lib/__tests__/aiUsageRoute.test.ts`: the cap notice's rows; a refusal is logged and answered 200.
+    - `lib/__tests__/orchestratorExecute.test.ts`: the delivered row, with `metadata: null` and the typed source pin.
+
+**Done-when.**
+- ✓ (unchanged) `storage_alert` / `storage_platform_*` are in the union and the registry.
+- ✓ Every insert into `notifications` goes through the typed sink, so `NotificationKind` is enforced at compile time. No `.from("notifications").insert(` is left in `app/`, `lib/`, `components/` or `hooks/` outside `lib/inAppNotifications.ts`.
+  - The criterion names `notify()` / `notifyMany()`. Those two write on the shared client only, so the service-role and cron writers use their server forms in the same module: `notifyWithReason` / `notifyBatchWithReason`, with the same `NotificationInput` type and the same row mapper. This is the reading N8's records used. The criterion's purpose, a compile-time kind check at every producer, holds as written.
+  - One database writer is added: `claim_access_request_burst` (`20261197`, PROD-16). Its single kind is pinned to `KIND_META` by `lib/__tests__/notifRoundGBurstDigestMigration.test.ts`.
+- ✓ (unchanged) The census test arm, now empty of raw sites.
+
+**Scope / residual.** None for this finding.
+- Merge notes: N14's hunks are minimal so they merge beside the parallel packages.
+  - `app/api/cron/maintenance/route.ts`: N9 changes the escalation's kind string there, and DF-P3 adds an SLA step.
+  - `app/api/tickets/workflow-action/route.ts`: DF-P3 edits the outcome / cancel / SLA limbs.
+  - `lib/orchestrator/tools.ts`: I-21 edits `loadLineGraph`.
 
 ---
 

@@ -18,7 +18,7 @@ import React, { useEffect, useState } from "react";
 import { Undo2, X, Loader2, AlertTriangle, Check, Info } from "lucide-react";
 import {
   reverseSplit, reverseMerge, reverseRenumber, type ReverseResult,
-  LEGACY_RESTORE_STATUSES, reversalNeedsLegacyStatus,
+  LEGACY_RESTORE_STATUSES, reversalNeedsLegacyStatus, recordsPriorStatus,
 } from "@/lib/documentLifecycle";
 import type { TimelineEvent } from "@/lib/timeline";
 import { listActiveHoldsForDocument } from "@/lib/holds";
@@ -285,7 +285,10 @@ function describeReversal(event: TimelineEvent): Description {
       steps: [
         prior
           ? `Source document will return to "${prior}" — the status it held before the split.`
-          : `Source document will return to the status you choose below (this split did not record the one it held).`,
+          // REV-29 (P25): a source that had no status (or an empty one) is recorded so, and goes back as that.
+          : recordsPriorStatus(d, "priorStatus")
+            ? `Source document will return to ${d.priorStatus === null ? "having no status" : "an empty status"} — what it had before the split (it is not put in force).`
+            : `Source document will return to the status you choose below (this split did not record the one it held).`,
         `${newCount} new doc${newCount === 1 ? "" : "s"} from the split will be marked Superseded with reason "Reverted split".`,
         `document_supersessions links from this split will be removed (audit row retains the history).`,
         `Asset tags on the parked docs are NOT moved back — they stay with the new doc rows for the audit reconstructable.`,

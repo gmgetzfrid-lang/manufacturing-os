@@ -22,8 +22,8 @@
     },
     "by_status": {
       "REFUTED": 3,
-      "RESOLVED": 66,
-      "OPEN": 54
+      "RESOLVED": 70,
+      "OPEN": 50
     }
   },
   "status_vocabulary": [
@@ -999,7 +999,7 @@
       "id": "NEDGE-13",
       "title": "Two declared digest kinds have full consumer support and no producer anywhere, while a live producer emits a kind that is not in the union at all",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2296,7 +2296,7 @@
       "id": "TAX-11",
       "title": "Notification kinds are written that do not exist in the `NotificationKind` union - they get no icon, no section, and no classification anywhere",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2693,7 +2693,7 @@
       "id": "NEDGE-20",
       "title": "A member can queue a forged \"compliance digest\" email row for a colleague whose `metadata.through` silences that colleague's next digests",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED by reading at the N6 merge (N6 integrator fix pass `30bb540`, which reported it as out of scope): the digest reads a recipient's last digest by `org_id`, `to_user_id` and `event_type = 'compliance_digest'` only (`app/api/cron/maintenance/route.ts:1085-1091`), and trusts its `metadata.through` (`digestThrough`, `:893-899`); the `email_notif_insert` policy (`20261047`, `:208-209`) lets any active member of the org queue a row.",
       "blast_radius": null,
@@ -2866,7 +2866,7 @@
       "id": "PROD-16",
       "title": "Two access requests past the per-org cap that land at once can give a pool member two \"more are waiting\" rows",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED by reading (`fleet/N8-producers-free`); not reproduced against a live database, where it needs two requests in flight at once.",
       "blast_radius": null,

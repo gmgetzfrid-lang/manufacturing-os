@@ -14,9 +14,11 @@ const src = (p: string) => readFileSync(process.cwd() + "/" + p, "utf8");
 describe("LIFE-15 — one canonical source_document shape, tolerant reader", () => {
   it("the builder writes canonical keys with null (never \"\") and no path; the parser reads it back exactly", () => {
     const ref = buildSourceDocumentRef({ id: "d1", documentNumber: " P-101 ", title: "", rev: null });
-    expect(ref).toEqual({ id: "d1", document_number: "P-101", title: null, rev: null });
-    expect(Object.keys(ref!)).toEqual(["id", "document_number", "title", "rev"]);
-    expect(parseSourceDocument({ source_document: ref })).toEqual({ id: "d1", documentNumber: "P-101", title: null, rev: null, path: null });
+    // drafting-flow DF-P2 (HAND-7): the canonical shape gains version_id —
+    // null when unknown, as every other unknown field is.
+    expect(ref).toEqual({ id: "d1", document_number: "P-101", title: null, rev: null, version_id: null });
+    expect(Object.keys(ref!)).toEqual(["id", "document_number", "title", "rev", "version_id"]);
+    expect(parseSourceDocument({ source_document: ref })).toEqual({ id: "d1", documentNumber: "P-101", title: null, rev: null, path: null, versionId: null });
   });
   it("no id → no reference (a producer cannot point at nothing)", () => {
     expect(buildSourceDocumentRef({ id: "", documentNumber: "P-1" })).toBeNull();
@@ -28,9 +30,17 @@ describe("LIFE-15 — one canonical source_document shape, tolerant reader", () 
     expect(parseSourceDocument({ source_document: { id: "a", number: "N2", title: "T" } })?.documentNumber).toBe("N2");
   });
   it("all three producers and the strict intake reader go through the helper", () => {
-    expect(src("components/documents/CheckInPanel.tsx")).toMatch(/source_document: buildSourceDocumentRef\(\{ id: doc\.id, documentNumber: doc\.documentNumber, title: doc\.title, rev: doc\.rev \}\)/);
-    expect(src("app/(protected)/requests/new/page.tsx")).toMatch(/metadata\.source_document = buildSourceDocumentRef\(/);
-    expect(src("lib/transitionIn.ts")).toMatch(/source_document: buildSourceDocumentRef\(\{ id: candidate\.docId, documentNumber: candidate\.number, title: candidate\.title, rev: candidate\.rev \}\)/);
+    // DF-P2: the three producers describe their source document in the
+    // create contract; /api/tickets/create is the one writer, through the helper.
+    const route = src("app/api/tickets/create/route.ts");
+    expect(route).toMatch(/const ref = buildSourceDocumentRef\(\{/);
+    expect(route).toContain("if (primary) metadata.source_document = primary;");
+    expect(src("components/documents/CheckInPanel.tsx")).toMatch(/id: doc\.id!, documentNumber: doc\.documentNumber \?\? null, title: doc\.title \?\? null, rev: doc\.rev \?\? null,/);
+    expect(src("app/(protected)/requests/new/page.tsx")).toMatch(/sourceDocuments\.push\(\{ id: srcDocId, documentNumber: srcDocNum \|\| null, title: sourceDocTitle \|\| null, rev: sourceDocRev \|\| null, versionId: null \}\);/);
+    expect(src("lib/transitionIn.ts")).toMatch(/sourceDocuments: \[\{ id: candidate\.docId, documentNumber: candidate\.number, title: candidate\.title, rev: candidate\.rev, versionId: null \}\]/);
+    for (const f of ["components/documents/CheckInPanel.tsx", "app/(protected)/requests/new/page.tsx", "lib/transitionIn.ts"]) {
+      expect(src(f), f).not.toMatch(/supabase\s*\.from\(["']tickets["']\)\s*\.insert\(/);
+    }
     const intake = src("app/api/intake/resolve/route.ts");
     expect(intake).toMatch(/parseSourceDocument\(/);
     expect(intake).not.toMatch(/meta\.source_document\?\.number/);
@@ -45,9 +55,16 @@ describe("LIFE-9 — in-app tickets carry the request form's required fields", (
     expect(unitOfDocumentMetadata(null)).toBeNull();
   });
   it("the check-in producer writes unit; the collision producer writes unit, target date and watcher", () => {
-    expect(src("components/documents/CheckInPanel.tsx")).toMatch(/unit: unitOfDocumentMetadata\(/);
-    const t = src("lib/transitionIn.ts");
-    expect(t).toMatch(/unit,\s*\n\s*\/\/ Same SLA clock[^\n]*\n\s*target_completion_at: defaultSlaTargetDate\("Revision"\),\s*\n\s*watchers: \[input\.actorId\],/);
+    // DF-P2: one writer for every door — /api/tickets/create derives the unit
+    // from the source document's metadata when none is given, sets the SLA
+    // clock and enrols the requester as a watcher, the same for all three
+    // (driven end to end in lib/__tests__/ticketCreateRoute.test.ts).
+    const route = src("app/api/tickets/create/route.ts");
+    expect(route).toMatch(/unitOfDocumentMetadata\(doc\.metadata\)/);
+    expect(route).toContain("target_completion_at: input.targetCompletionAt ?? defaultSlaTargetDate(input.requestType),");
+    expect(route).toContain("watchers: [caller.id],");
+    expect(src("components/documents/CheckInPanel.tsx")).toMatch(/unit: null,/);
+    expect(src("lib/transitionIn.ts")).toMatch(/requestType: "Revision",[\s\S]*?unit: null,/);
   });
 });
 
@@ -100,9 +117,16 @@ describe("LIFE-12 — the ticket shows its source document's review requirement"
 
 describe("LIFE-14 — resume, never re-create; the sweep never clobbers a verdict", () => {
   it("CheckInPanel resumes the ticket keyed on metadata.checkin.episodeId before creating one", () => {
+    // drafting-flow LEAK-6 (DF-P2): the lookup's error is read and the commit
+    // awaits it (lib/ticketCreateClient.ts resumeCheckinTicket); the create
+    // route resumes by the same key server-side.
     const c = src("components/documents/CheckInPanel.tsx");
-    expect(c).toMatch(/\.eq\("metadata->checkin->>episodeId", episode\.id\)/);
-    expect(c).toMatch(/const ticket = done\.ticket \?\? resumedTicketRef\.current \?\? await createDraftingTicket\(selected\);/);
+    expect(c).toMatch(/\.eq\("metadata->checkin->>episodeId", episodeId\)/);
+    // DF-P2 second review: a found ticket is reused unless its PSM
+    // escalation never went out — then the route resumes it and sends it.
+    expect(c).toMatch(/const found = done\.ticket \? null : await resumedTicket\(\);/);
+    expect(c).toMatch(/\?\? await createDraftingTicket\(selected, \{ resuming: !!found \}\);/);
+    expect(src("app/api/tickets/create/route.ts")).toMatch(/\.eq\("metadata->checkin->>episodeId", origin\.episodeId\)/);
   });
   it("the 24h sweep only writes auto_released over a NULL outcome", () => {
     const p = src("lib/projects.ts");

@@ -228,15 +228,32 @@ describe("REV-19 — changeDocumentStatus: the status editors' write, the clocks
     expect(await changeDocumentStatus({ orgId: ORG, documentId: "f1", toStatus: "Issued", door: "bulk", actorUserId: ME }))
       .toEqual({ issued: false, putBack: false, complianceClockErrors: [], recordError: null, notRecordedBecause: "read_failed" });
     expect(docRow("f1").status).toBe("Issued");
-    // already issued (another door issued it): this write issued nothing — for IFC → Issued too
+    // already issued (another door issued it): this write issued nothing — Issued → Issued, and Issued → Locked
     seedDoc("f2", { status: "Issued" });
-    seedDoc("f3", { status: "IFC" });
-    for (const id of ["f2", "f3"]) {
-      expect(await changeDocumentStatus({ orgId: ORG, documentId: id, toStatus: "Issued", door: "bulk", actorUserId: ME }))
+    seedDoc("f2b", { status: "Issued" });
+    for (const [id, to] of [["f2", "Issued"], ["f2b", "Locked"]] as const) {
+      expect(await changeDocumentStatus({ orgId: ORG, documentId: id, toStatus: to, door: "bulk", actorUserId: ME }))
         .toEqual({ issued: false, putBack: false, complianceClockErrors: [], recordError: null, notRecordedBecause: "already_issued" });
     }
     expect(onDocumentIssued).not.toHaveBeenCalled();
     expect(issued()).toEqual([]);
+    // REV-26 (document-control P25; DEC-77's REV-26 line — the pin moved with the decision): IFC → Issued is NOT
+    // "already issued" any more: no gate read IFC as in force, so the write puts the revision in force for the first
+    // time — recorded as an issue, the acknowledgment roster opened, the review clock left as it was (no evidence
+    // the revision was reviewed now). It answered `already_issued` before.
+    seedDoc("f3", { status: "IFC" });
+    expect(await changeDocumentStatus({ orgId: ORG, documentId: "f3", toStatus: "Issued", door: "bulk", actorUserId: ME }))
+      .toEqual({ issued: true, putBack: false, entryIntoForce: true, complianceClockErrors: [], recordError: null });
+    expect(onDocumentIssued).not.toHaveBeenCalled();
+    expect(onDocumentIssuedAck).toHaveBeenCalledTimes(1);
+    expect(issued()).toHaveLength(1);
+    expect(issued()[0].details).toMatchObject({
+      door: "bulk", fromStatus: "IFC", toStatus: "Issued", putBack: false, entryIntoForce: true,
+      complianceClocksStarted: false, reviewClockReset: false, acknowledgmentRosterOpened: true,
+    });
+    expect(String((issued()[0].details as Row).complianceClocksNote)).toMatch(/^a first entry into force out of a status no gate reads as in force/);
+    T("audit_logs").length = 0;
+    vi.mocked(onDocumentIssuedAck).mockClear();
     // a failed read on a write to a status that is not an issue: exactly as before (no basis named)
     seedDoc("f4", { status: "Issued" });
     state.failBasisRead = true;
