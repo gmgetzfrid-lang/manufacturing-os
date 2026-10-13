@@ -43,11 +43,19 @@
 //     only when nothing has been read yet (RT-10 / DEC-74 §7). A refresh
 //     never waits on an older read, and a late answer never overwrites a
 //     newer one. Bell rows are never affected.
+//   * The per-category switches (notifications Round G, N4 — RT-10's last
+//     limb): the same read (`readToastPreferences`) carries a switch per
+//     email category (toast_on_mention … toast_on_sla_warning, 20261200),
+//     and a row toasts only when the master switch AND its kind's category
+//     (lib/notificationKinds.ts KIND_META.category) are on — `toastAllowed`.
+//     Before 20261200 is pasted every category reads on.
 
 import { useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import { kindMeta } from "@/lib/notificationKinds";
-import { readToastPreference } from "@/lib/notificationPrefs";
+import {
+  readToastPreferences, normalizeToastPreference, toastAllowed, type ToastPreference,
+} from "@/lib/notificationPrefs";
 import { useRole } from "./RoleContext";
 import { toastCoalesceKey, useToast, type ToastType } from "./ToastProvider";
 
@@ -125,8 +133,10 @@ export function burstSummary(n: number): ToastSpec {
 
 export interface ToasterDeps {
   show: (t: ToastSpec) => void;
-  /** The member's pop-up switch; fails open (readToastPreference). */
-  readPreference: () => Promise<boolean>;
+  /** The member's pop-up switches: the master switch alone (a boolean) or
+   *  with its per-category switches (readToastPreferences). A read that
+   *  rejects or stalls keeps the last value read; none read: on. */
+  readPreference: () => Promise<boolean | ToastPreference>;
   now?: () => number;
   setTimer?: (cb: () => void, ms: number) => unknown;
   clearTimer?: (t: unknown) => void;
@@ -140,12 +150,12 @@ export function createNotificationToaster(deps: ToasterDeps) {
   const clearTimer = deps.clearTimer ?? ((t: unknown) => clearTimeout(t as ReturnType<typeof setTimeout>));
   const seen = new Set<string>();
   const seenOrder: string[] = [];
-  let pref: { value: boolean; at: number } | null = null;
+  let pref: { value: ToastPreference; at: number } | null = null;
   // The last value a read actually returned (never a fallback). A refresh
   // forgets `pref`'s freshness, never this: a stalled or failed re-read keeps
   // a known "off" (RT-10, third review fix).
-  let lastRead: boolean | null = null;
-  let pending: Promise<boolean> | null = null;
+  let lastRead: ToastPreference | null = null;
+  let pending: Promise<ToastPreference> | null = null;
   // Bumped by every refresh: a read begun before it may still answer, but
   // never writes the cache a newer read owns.
   let generation = 0;
@@ -162,29 +172,29 @@ export function createNotificationToaster(deps: ToasterDeps) {
   /** One read of the switch. A read that rejects, or has not answered
    *  within PREF_READ_TIMEOUT_MS, keeps the last value actually read and
    *  fails open only when nothing has been read yet. */
-  const readOnce = (gen: number): Promise<boolean> => new Promise<boolean>((resolve) => {
+  const readOnce = (gen: number): Promise<ToastPreference> => new Promise<ToastPreference>((resolve) => {
     let settled = false;
     let handle: unknown = null;
-    const settle = (value: boolean, answered: boolean) => {
+    const settle = (value: ToastPreference, answered: boolean) => {
       if (settled) return;
       settled = true;
       if (handle !== null) { clearTimer(handle); prefTimers.delete(handle); }
       if (answered && gen === generation) lastRead = value;
       resolve(value);
     };
-    const unanswered = () => settle(lastRead ?? true, false);
+    const unanswered = () => settle(lastRead ?? normalizeToastPreference(true), false);
     handle = setTimer(unanswered, PREF_READ_TIMEOUT_MS);
     prefTimers.add(handle);
-    let read: Promise<boolean>;
+    let read: Promise<boolean | ToastPreference>;
     try { read = deps.readPreference(); } catch { read = Promise.reject(new Error("unreadable")); }
-    read.then((value) => settle(value, true), unanswered);
+    read.then((value) => settle(normalizeToastPreference(value), true), unanswered);
   });
 
-  const ensurePreference = (): Promise<boolean> => {
+  const ensurePreference = (): Promise<ToastPreference> => {
     if (pref && now() - pref.at < PREF_FRESH_MS) return Promise.resolve(pref.value);
     if (pending) return pending;
     const gen = generation;
-    const p: Promise<boolean> = readOnce(gen).then((value) => {
+    const p: Promise<ToastPreference> = readOnce(gen).then((value) => {
       if (gen === generation) pref = { value, at: now() };
       if (pending === p) pending = null;
       return value;
@@ -198,9 +208,11 @@ export function createNotificationToaster(deps: ToasterDeps) {
     windowOpen = false;
     shownInWindow = 0;
     shownKeys.clear();
-    const rows = held;
+    // A switch turned off (master or category) while rows were held: they
+    // do not toast.
+    const rows = pref ? held.filter((r) => toastAllowed(pref!.value, r.kind)) : held;
     held = [];
-    if (stopped || rows.length === 0 || pref?.value === false) return;
+    if (stopped || rows.length === 0) return;
     // Each summary is its own card: two windows' "3 more" never read as one
     // "3 more ×2".
     deps.show(rows.length === 1 ? toastForRow(rows[0]) : { ...burstSummary(rows.length), coalesceKey: `notification-burst:${++burstSeq}` });
@@ -237,8 +249,8 @@ export function createNotificationToaster(deps: ToasterDeps) {
       seen.add(row.id);
       seenOrder.push(row.id);
       if (seenOrder.length > SEEN_IDS_MAX) seen.delete(seenOrder.shift()!);
-      void ensurePreference().then((enabled) => {
-        if (!stopped && enabled) route(row);
+      void ensurePreference().then((value) => {
+        if (!stopped && toastAllowed(value, row.kind)) route(row);
       });
     },
     /** Forget the cached preference's freshness and read it again (mount,
@@ -270,7 +282,7 @@ export function NotificationListener() {
 
     const toaster = createNotificationToaster({
       show: (t) => showToast(t),
-      readPreference: () => readToastPreference(uid),
+      readPreference: () => readToastPreferences(uid),
     });
     // The pop-up switch: read now, and again whenever the tab comes back
     // (the settings page is one tab away).

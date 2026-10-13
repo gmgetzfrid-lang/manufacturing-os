@@ -97,16 +97,19 @@ vi.mock("@/lib/checkoutEpisodes", () => ({
   isMissingEpisodeSchema: () => false,
 }));
 
-vi.mock("@/lib/notificationPrefs", async (orig) => ({
-  ...(await orig<Record<string, unknown>>()),
-  readToastPreference: async (uid: string) => {
+vi.mock("@/lib/notificationPrefs", async (orig) => {
+  const read = async (uid: string) => {
     fx.prefReads.push(uid);
     const v = fx.pref[uid];
     if (v === "throw") throw new Error("network");
     if (v === "stall") return new Promise<boolean>(() => {}); // associated Wi-Fi, no route out
     return v ?? true;
-  },
-}));
+  };
+  // notifications N4 (RT-10): the listener reads readToastPreferences (the
+  // master switch with the per-category switches); a boolean answer is the
+  // master switch alone, every category on — what this file drives.
+  return { ...(await orig<Record<string, unknown>>()), readToastPreference: read, readToastPreferences: read };
+});
 
 vi.mock("@/components/providers/RoleContext", async () => {
   const R = await import("react");
@@ -324,7 +327,7 @@ describe("TAX-9 dw4 — a burst is one summary, never one card per row", () => {
     vi.useFakeTimers();
     await mountListener("u1");
     await act(async () => { await vi.advanceTimersByTimeAsync(1); });
-    for (let i = 0; i < 5; i++) await insertNotification({ user_id: "u1", kind: "ack_requested", title: `Ack ${i}`, body: null, resource_id: `d${i}` });
+    for (let i = 0; i < 5; i++) await insertNotification({ user_id: "u1", kind: "ack_complete", title: `Ack ${i}`, body: null, resource_id: `d${i}` });
     await insertNotification({ user_id: "u1", kind: "branch_open", title: "Branch opened on P-9", body: null, resource_id: "d9" });
     await act(async () => { await vi.advanceTimersByTimeAsync(1); });
     expect(toastsOf("u1").map((t) => t.title)).toEqual(["Ack 0", "Ack 1", "Branch opened on P-9"]);
@@ -553,6 +556,6 @@ describe("RT-10 — the member's pop-up switch is read before a toast, re-read w
 
   it("the settings page offers the switch now that the listener reads it (the N1 tripwire's other side)", () => {
     expect(TOAST_PREFERENCE_HONOURED).toBe(true);
-    expect(LISTENER).toContain("readToastPreference(uid)");
+    expect(LISTENER).toContain("readToastPreferences(uid)");
   });
 });

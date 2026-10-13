@@ -120,6 +120,8 @@ describe("NEDGE-2 / DELIV-12 — a member with no row saves the defaults", () =>
       user_id: "u1",
       email_enabled: true, email_on_mention: true, email_on_assignment: true, email_on_status_change: true,
       email_on_watched_activity: true, email_on_sla_warning: true, toast_enabled: true, digest_frequency: "instant",
+      // RT-10 (notifications N4, 20261200): the per-category pop-up switches, all on
+      toast_on_mention: true, toast_on_assignment: true, toast_on_status_change: true, toast_on_watched_activity: true, toast_on_sla_warning: true,
     });
   });
 

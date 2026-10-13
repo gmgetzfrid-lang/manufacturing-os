@@ -15,6 +15,10 @@
 //   group          the Notification Center's "what is it about" chip (N3
 //                  derives KIND_GROUPS from it)
 //   pushWorthy     set by the push channel (N10, GAP-205); unset = not pushed
+//   category       which "Pop-up toasts" category switch governs its toast —
+//                  the email toggles' five categories (notification_preferences
+//                  toast_on_<category>, 20261200; RT-10, notifications N4).
+//                  The bell row is never governed by it.
 //
 // `satisfies Record<NotificationKind, KindMeta>` makes a kind added to the
 // union without an entry here a `tsc` error, and an entry for a kind the union
@@ -71,6 +75,13 @@ export type KindTone = "orange" | "blue" | "indigo" | "violet" | "rose" | "amber
  *  'other' has no chip and shows under "Everything". */
 export type KindGroup = "mentions" | "documents" | "requests" | "locks" | "other";
 
+/** The per-category toast switches (RT-10) — the email toggles' categories,
+ *  so the settings page offers one vocabulary for both channels:
+ *  notification_preferences toast_on_<category> (20261200) beside
+ *  email_on_<category> (20260529). */
+export const TOAST_CATEGORIES = ["mention", "assignment", "status_change", "watched_activity", "sla_warning"] as const;
+export type ToastCategory = (typeof TOAST_CATEGORIES)[number];
+
 export interface KindMeta {
   section: NotificationSection | null;
   actionRequired: boolean;
@@ -78,51 +89,59 @@ export interface KindMeta {
   icon: KindIcon;
   tone: KindTone;
   group: KindGroup;
+  /** Which toast category switch governs the pop-up (RT-10). */
+  category: ToastCategory;
   pushWorthy?: boolean;
 }
 
-// actionRequired (DEC-81 §2) — true for exactly the conflict class
+// actionRequired (DEC-81 §2) — true for the conflict class
 // (checkout_conflict, checkout_released, overlap_advisory, branch_open, and
 // since N9 the two kinds split off checkout_released, checkout_force_released
-// and checkout_auto_released): the feed's actionKinds on b9cdfdc, which now
-// also turn the Documents badge red (TRAIL-5). Everything else is false, as it was on b9cdfdc — someone else's
-// sign-off, a completion, and, for now, the PSM obligations (ack_requested,
-// review_requested, review_invalidated, access_recert_due, …) with their
-// overdue copies to the owner and controllers (ack_overdue, review_overdue).
-// The flag is per kind, whoever receives the row, so no rule here makes an
-// escalation copy FYI: the conflict class fans out to controllers as an
-// action — escalateStaleCheckouts (app/api/cron/maintenance/route.ts) writes
-// checkout_released with metadata.escalation to every active Admin / DocCtrl
-// but the holder, and announceBranchOpened (lib/branches.ts) writes
-// branch_open to every DocCtrl. An action notification stays red, pulsing
-// and in the Action count until its row is read, and nothing reads a row
-// when its condition ends: not a PSM row when the person acknowledges or
-// signs (lib/acknowledgments.ts, lib/reviewControl.ts, lib/effectiveDate.ts
-// never touch notifications.read_at; the hook reconciles ticket workflow rows
-// only), and not those controller copies when the checkout is released or
-// the branch resolves (branch_resolved reaches only the branch's creator).
-// Clearing a row whose condition is gone is the TRAIL-9 class (N4), for the
-// controller copies as much as for the PSM obligations. Flipping an
-// obligation to true is one line here, and lands with that clearing and
-// after the badge's reduced-motion / accessible-name work (NEDGE-5) —
+// and checkout_auto_released): the feed's actionKinds on b9cdfdc, which also
+// turn the Documents badge red (TRAIL-5) — and, since notifications N4
+// (DEC-81 §2 as DEC-90 A11 ratified it: "each PSM kind flips to
+// action-required in the same change that clears its row on discharge"), the
+// PSM obligations whose rows are now cleared once discharged:
+//   ack_requested       you owe an acknowledgment — cleared when you owe none
+//                       on the document (a read-&-understood roster row or a
+//                       binding distribution confirmation)
+//   review_requested,   you owe a sign-off — cleared when you owe none on the
+//   review_invalidated  document's draft in review
+//   access_recert_due   the library's access needs recertifying — cleared
+//                       when its next recertification is no longer due
+//   ack_overdue,        the escalation copies to the owner and controllers
+//   review_overdue      ("someone is long overdue") — cleared when nobody
+//                       owes an acknowledgment on the document any more /
+//                       when the document has no draft in review
+// "Cleared" is the reconcile pass (lib/notificationReconcile.ts, run by the
+// attention feed through POST /api/notifications/reconcile): it re-checks the
+// condition on the server and marks the row metadata.superseded_at, which
+// leaves the unread list and every count. The same pass clears the conflict
+// class's controller copies — a branch_open once the branch is resolved, a
+// stale-checkout escalation once its session ends — and a hold_opened once its
+// hold is released (TRAIL-9). Everything else is false, as on b9cdfdc:
+// someone else's sign-off, a completion, and effective_now ("now in effect" —
+// nothing to do). The flag is per kind, whoever receives the row. An action notification stays red, pulsing
+// and in the Action count until its row is read or cleared. Flipping another
+// kind to true is one line here, and lands with the clearing of its row —
 // DEC-81 §2.
 
 export const KIND_META = {
   // ── Drafting requests (the 'requests' row) ────────────────────────────────
   // Unchanged: these five were 'requests' on b9cdfdc.
-  ticket_comment:           { section: "requests", actionRequired: false, compliance: false, icon: "MessageSquare", tone: "blue", group: "mentions" },
-  ticket_mention:           { section: "requests", actionRequired: false, compliance: false, icon: "MessageSquare", tone: "violet", group: "mentions" },
-  ticket_status:            { section: "requests", actionRequired: false, compliance: false, icon: "FileText", tone: "slate", group: "requests" },
-  ticket_assigned:          { section: "requests", actionRequired: false, compliance: false, icon: "UserPlus", tone: "orange", group: "requests" },
-  request_pending_approval: { section: "requests", actionRequired: false, compliance: false, icon: "MailPlus", tone: "orange", group: "requests" },
+  ticket_comment:           { section: "requests", actionRequired: false, compliance: false, icon: "MessageSquare", tone: "blue", group: "mentions", category: "watched_activity" },
+  ticket_mention:           { section: "requests", actionRequired: false, compliance: false, icon: "MessageSquare", tone: "violet", group: "mentions", category: "mention" },
+  ticket_status:            { section: "requests", actionRequired: false, compliance: false, icon: "FileText", tone: "slate", group: "requests", category: "status_change" },
+  ticket_assigned:          { section: "requests", actionRequired: false, compliance: false, icon: "UserPlus", tone: "orange", group: "requests", category: "assignment" },
+  request_pending_approval: { section: "requests", actionRequired: false, compliance: false, icon: "MailPlus", tone: "orange", group: "requests", category: "assignment" },
 
   // ── Documents (the 'documents' row) ───────────────────────────────────────
   // Unchanged: these twelve were 'documents' on b9cdfdc.
-  checkout_conflict:        { section: "documents", actionRequired: true, compliance: false, icon: "AlertOctagon", tone: "amber", group: "locks" },
+  checkout_conflict:        { section: "documents", actionRequired: true, compliance: false, icon: "AlertOctagon", tone: "amber", group: "locks", category: "status_change" },
   // checkout_handoff: now emitted by the checkout thread's handoff post
   // (lib/activityThread.ts — PROD-8), which used to collapse into checkout_message.
-  checkout_handoff:         { section: "documents", actionRequired: false, compliance: false, icon: "Lock", tone: "indigo", group: "locks" },
-  checkout_message:         { section: "documents", actionRequired: false, compliance: false, icon: "MessageSquare", tone: "blue", group: "mentions" },
+  checkout_handoff:         { section: "documents", actionRequired: false, compliance: false, icon: "Lock", tone: "indigo", group: "locks", category: "watched_activity" },
+  checkout_message:         { section: "documents", actionRequired: false, compliance: false, icon: "MessageSquare", tone: "blue", group: "mentions", category: "watched_activity" },
   // checkout_released: since N9 only the maintenance cron's stale-checkout
   // escalation to the controllers writes it ("Checkout held N days — review
   // needed"; app/api/cron/maintenance/route.ts, N6's file — the rename to
@@ -133,13 +152,13 @@ export const KIND_META = {
   //   checkout_auto_released: your ad-hoc checkout expired and was released
   //     (lib/projects.ts autoReleaseExpiredAdHoc — the browser sweep and the
   //     cron).
-  checkout_released:        { section: "documents", actionRequired: true, compliance: false, icon: "Lock", tone: "indigo", group: "locks" },
-  checkout_force_released:  { section: "documents", actionRequired: true, compliance: false, icon: "Lock", tone: "indigo", group: "locks" },
-  checkout_auto_released:   { section: "documents", actionRequired: true, compliance: false, icon: "Lock", tone: "indigo", group: "locks" },
-  overlap_advisory:         { section: "documents", actionRequired: true, compliance: false, icon: "AlertOctagon", tone: "slate", group: "other" },
-  branch_open:              { section: "documents", actionRequired: true, compliance: false, icon: "GitBranch", tone: "slate", group: "other" },
-  branch_resolved:          { section: "documents", actionRequired: false, compliance: false, icon: "Check", tone: "slate", group: "other" },
-  doc_superseded:           { section: "documents", actionRequired: false, compliance: true, icon: "GitBranch", tone: "slate", group: "documents" },
+  checkout_released:        { section: "documents", actionRequired: true, compliance: false, icon: "Lock", tone: "indigo", group: "locks", category: "sla_warning" },
+  checkout_force_released:  { section: "documents", actionRequired: true, compliance: false, icon: "Lock", tone: "indigo", group: "locks", category: "status_change" },
+  checkout_auto_released:   { section: "documents", actionRequired: true, compliance: false, icon: "Lock", tone: "indigo", group: "locks", category: "status_change" },
+  overlap_advisory:         { section: "documents", actionRequired: true, compliance: false, icon: "AlertOctagon", tone: "slate", group: "other", category: "status_change" },
+  branch_open:              { section: "documents", actionRequired: true, compliance: false, icon: "GitBranch", tone: "slate", group: "other", category: "status_change" },
+  branch_resolved:          { section: "documents", actionRequired: false, compliance: false, icon: "Check", tone: "slate", group: "other", category: "status_change" },
+  doc_superseded:           { section: "documents", actionRequired: false, compliance: true, icon: "GitBranch", tone: "slate", group: "documents", category: "status_change" },
   // ── The doc_superseded / checkout_released split (notifications N9 —
   // PROD-13 / TAX-13; names from the plan, DEC-90 delegation). One name per
   // human meaning: until N9 the two kinds carried eight. Each split-off kind
@@ -160,62 +179,62 @@ export const KIND_META = {
   // digest of folded publishes). Manual distribution-ack requests moved to
   // ack_requested (lib/distributionAcks.ts). 20261191 re-files the rows
   // already written by their metadata discriminators.
-  doc_recalled:             { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "documents" },
-  doc_upstream_changed:     { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "documents" },
-  package_doc_stale:        { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "documents" },
-  package_doc_retired:      { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "documents" },
+  doc_recalled:             { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "documents", category: "status_change" },
+  doc_upstream_changed:     { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "documents", category: "watched_activity" },
+  package_doc_stale:        { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "documents", category: "status_change" },
+  package_doc_retired:      { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "documents", category: "status_change" },
   // markup_request: about a markup request on a document — the person asked
   // (PROD-14, N8's producer) or the request's markups shared to the thread
   // (the checkout thread's markup_ref post, lib/activityThread.ts — PROD-8).
-  markup_request:           { section: "documents", actionRequired: false, compliance: false, icon: "FileSignature", tone: "violet", group: "requests" },
-  provenance_flag:          { section: "documents", actionRequired: false, compliance: false, icon: "FileText", tone: "slate", group: "other" },
-  hold_opened:              { section: "documents", actionRequired: false, compliance: false, icon: "AlertOctagon", tone: "rose", group: "locks" },
-  hold_released:            { section: "documents", actionRequired: false, compliance: false, icon: "Check", tone: "rose", group: "locks" },
+  markup_request:           { section: "documents", actionRequired: false, compliance: false, icon: "FileSignature", tone: "violet", group: "requests", category: "assignment" },
+  provenance_flag:          { section: "documents", actionRequired: false, compliance: false, icon: "FileText", tone: "slate", group: "other", category: "status_change" },
+  hold_opened:              { section: "documents", actionRequired: false, compliance: false, icon: "AlertOctagon", tone: "rose", group: "locks", category: "status_change" },
+  hold_released:            { section: "documents", actionRequired: false, compliance: false, icon: "Check", tone: "rose", group: "locks", category: "status_change" },
   // Moved from 'other' to 'documents' — each is about a document, folder or
   // library and links into the tree (PROD-1 / TRAIL-2 / DELIV-3 / TAX-2 /
   // OS-12 / RT-6 name them; TRAIL-2 done-when 1 lists exactly this set).
-  revision_published_over_checkout: { section: "documents", actionRequired: false, compliance: false, icon: "GitBranch", tone: "indigo", group: "documents" },
-  library_doc_added:        { section: "documents", actionRequired: false, compliance: false, icon: "Bell", tone: "slate", group: "documents" },
-  library_doc_revised:      { section: "documents", actionRequired: false, compliance: false, icon: "GitBranch", tone: "blue", group: "documents" },
-  owner_assigned:           { section: "documents", actionRequired: false, compliance: false, icon: "Briefcase", tone: "orange", group: "requests" },
-  owner_behind:             { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "other" },
-  deletion_requested:       { section: "documents", actionRequired: false, compliance: true, icon: "Briefcase", tone: "orange", group: "other" },
+  revision_published_over_checkout: { section: "documents", actionRequired: false, compliance: false, icon: "GitBranch", tone: "indigo", group: "documents", category: "status_change" },
+  library_doc_added:        { section: "documents", actionRequired: false, compliance: false, icon: "Bell", tone: "slate", group: "documents", category: "watched_activity" },
+  library_doc_revised:      { section: "documents", actionRequired: false, compliance: false, icon: "GitBranch", tone: "blue", group: "documents", category: "watched_activity" },
+  owner_assigned:           { section: "documents", actionRequired: false, compliance: false, icon: "Briefcase", tone: "orange", group: "requests", category: "assignment" },
+  owner_behind:             { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "other", category: "sla_warning" },
+  deletion_requested:       { section: "documents", actionRequired: false, compliance: true, icon: "Briefcase", tone: "orange", group: "other", category: "assignment" },
   // the acknowledgment family — read & acknowledge an issued revision
-  ack_requested:            { section: "documents", actionRequired: false, compliance: true, icon: "Briefcase", tone: "orange", group: "documents" },
-  ack_complete:             { section: "documents", actionRequired: false, compliance: false, icon: "Bell", tone: "slate", group: "documents" },
-  ack_overdue:              { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "documents" },
-  ack_unsatisfiable:        { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "documents" },
+  ack_requested:            { section: "documents", actionRequired: true, compliance: true, icon: "Briefcase", tone: "orange", group: "documents", category: "assignment" },
+  ack_complete:             { section: "documents", actionRequired: false, compliance: false, icon: "Bell", tone: "slate", group: "documents", category: "status_change" },
+  ack_overdue:              { section: "documents", actionRequired: true, compliance: true, icon: "Bell", tone: "slate", group: "documents", category: "sla_warning" },
+  ack_unsatisfiable:        { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "documents", category: "sla_warning" },
   // the review family — periodic review and the pre-publish sign-off
-  review_due:               { section: "documents", actionRequired: false, compliance: true, icon: "GitBranch", tone: "blue", group: "documents" },
+  review_due:               { section: "documents", actionRequired: false, compliance: true, icon: "GitBranch", tone: "blue", group: "documents", category: "sla_warning" },
   // review_requested: a document's sign-off request (lib/reviewControl.ts,
   // CheckInPanel). Until N9 the contractor-intake path also wrote it for
   // three notices that open a project — the overload DEC-81 §3 recorded and
   // DEC-90 A13 ratified as an interim only, the split ordered: those notices
   // now carry intake_quote / intake_submission (section 'projects', below).
-  review_requested:         { section: "documents", actionRequired: false, compliance: true, icon: "GitBranch", tone: "blue", group: "documents" },
-  review_signed:            { section: "documents", actionRequired: false, compliance: false, icon: "GitBranch", tone: "blue", group: "documents" },
-  review_invalidated:       { section: "documents", actionRequired: false, compliance: true, icon: "GitBranch", tone: "blue", group: "documents" },
-  review_complete:          { section: "documents", actionRequired: false, compliance: true, icon: "GitBranch", tone: "blue", group: "documents" },
-  review_overdue:           { section: "documents", actionRequired: false, compliance: true, icon: "GitBranch", tone: "blue", group: "documents" },
-  review_alternate_activated: { section: "documents", actionRequired: false, compliance: true, icon: "GitBranch", tone: "blue", group: "documents" },
-  effective_now:            { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "documents" },
-  retention_eligible:       { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "documents" },
-  legal_hold_placed:        { section: "documents", actionRequired: false, compliance: false, icon: "AlertOctagon", tone: "rose", group: "locks" },
-  legal_hold_released:      { section: "documents", actionRequired: false, compliance: false, icon: "AlertOctagon", tone: "rose", group: "locks" },
-  access_recert_due:        { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "other" },
+  review_requested:         { section: "documents", actionRequired: true, compliance: true, icon: "GitBranch", tone: "blue", group: "documents", category: "assignment" },
+  review_signed:            { section: "documents", actionRequired: false, compliance: false, icon: "GitBranch", tone: "blue", group: "documents", category: "status_change" },
+  review_invalidated:       { section: "documents", actionRequired: true, compliance: true, icon: "GitBranch", tone: "blue", group: "documents", category: "assignment" },
+  review_complete:          { section: "documents", actionRequired: false, compliance: true, icon: "GitBranch", tone: "blue", group: "documents", category: "status_change" },
+  review_overdue:           { section: "documents", actionRequired: true, compliance: true, icon: "GitBranch", tone: "blue", group: "documents", category: "sla_warning" },
+  review_alternate_activated: { section: "documents", actionRequired: false, compliance: true, icon: "GitBranch", tone: "blue", group: "documents", category: "assignment" },
+  effective_now:            { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "documents", category: "status_change" },
+  retention_eligible:       { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "documents", category: "sla_warning" },
+  legal_hold_placed:        { section: "documents", actionRequired: false, compliance: false, icon: "AlertOctagon", tone: "rose", group: "locks", category: "status_change" },
+  legal_hold_released:      { section: "documents", actionRequired: false, compliance: false, icon: "AlertOctagon", tone: "rose", group: "locks", category: "status_change" },
+  access_recert_due:        { section: "documents", actionRequired: true, compliance: true, icon: "Bell", tone: "slate", group: "other", category: "sla_warning" },
   // transmittal_issued (N9 — PROD-12): a transmittal carrying a document you
   // own, or one in a library you follow, was issued to an outside party — a
   // controlled copy left the building (lib/transmittals.ts issueTransmittal).
   // Links to /transmittals; FYI. (transmittal_unstampable badges Documents
   // too since N9 — its entry is the registry's last, below.)
-  transmittal_issued:       { section: "documents", actionRequired: false, compliance: false, icon: "Send", tone: "blue", group: "documents" },
+  transmittal_issued:       { section: "documents", actionRequired: false, compliance: false, icon: "Send", tone: "blue", group: "documents", category: "watched_activity" },
 
   // ── Projects (the 'projects' row) ─────────────────────────────────────────
   // Unchanged: project_member, project_status.
-  project_member:           { section: "projects", actionRequired: false, compliance: false, icon: "Briefcase", tone: "slate", group: "other" },
-  project_status:           { section: "projects", actionRequired: false, compliance: false, icon: "Briefcase", tone: "slate", group: "other" },
+  project_member:           { section: "projects", actionRequired: false, compliance: false, icon: "Briefcase", tone: "slate", group: "other", category: "status_change" },
+  project_status:           { section: "projects", actionRequired: false, compliance: false, icon: "Briefcase", tone: "slate", group: "other", category: "status_change" },
   // Moved from 'other': a comment on a project you are on (TRAIL-2 dw1).
-  project_comment:          { section: "projects", actionRequired: false, compliance: false, icon: "Briefcase", tone: "blue", group: "mentions" },
+  project_comment:          { section: "projects", actionRequired: false, compliance: false, icon: "Briefcase", tone: "blue", group: "mentions", category: "watched_activity" },
   // Added by notifications N8 PRODUCERS-FREE (PROD-6 / PROD-11) — the
   // controls program and the schedule were silent. Each badges Projects (it
   // is about a project and links into it) and is FYI (DEC-81 §2: nothing
@@ -228,9 +247,9 @@ export const KIND_META = {
   //   milestone_assigned: you were made responsible for a task.
   //   milestone_slipped: a move pushed baselined tasks past their baseline —
   //     to the project owner, once per move (lib/milestones.ts).
-  change_order_status:      { section: "projects", actionRequired: false, compliance: false, icon: "Bell", tone: "slate", group: "other" },
-  milestone_assigned:       { section: "projects", actionRequired: false, compliance: false, icon: "Flag", tone: "emerald", group: "requests" },
-  milestone_slipped:        { section: "projects", actionRequired: false, compliance: false, icon: "Flag", tone: "emerald", group: "other" },
+  change_order_status:      { section: "projects", actionRequired: false, compliance: false, icon: "Bell", tone: "slate", group: "other", category: "status_change" },
+  milestone_assigned:       { section: "projects", actionRequired: false, compliance: false, icon: "Flag", tone: "emerald", group: "requests", category: "assignment" },
+  milestone_slipped:        { section: "projects", actionRequired: false, compliance: false, icon: "Flag", tone: "emerald", group: "other", category: "sla_warning" },
   // The contractor-intake notices (notifications N9 — DEC-90 A13, DEC-81 §3:
   // one name per concept; a project notice must not light the Documents
   // badge or ride the PSM sign-off kind). Both open the project and badge
@@ -243,39 +262,39 @@ export const KIND_META = {
   //     notifyTeam — "Intake submission awaiting review: …"), and the digest
   //     of folded submissions when none was published (lib/intakeRateLimit.ts
   //     foldedDigestKind; doc_superseded when one was).
-  intake_quote:             { section: "projects", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "other" },
-  intake_submission:        { section: "projects", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "other" },
+  intake_quote:             { section: "projects", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "other", category: "watched_activity" },
+  intake_submission:        { section: "projects", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "other", category: "assignment" },
 
   // ── Bell-only (section null) ──────────────────────────────────────────────
   // Were 'other' (tallied, rendered by no row) on b9cdfdc; the header bell
   // owns them (Sidebar.tsx: "The header bell owns the org-wide total").
   // A person's message relayed by the document-controller assistant: it is
   // addressed to the person, not filed in the tree.
-  orchestrator_message:     { section: null, actionRequired: false, compliance: false, icon: "MessageSquare", tone: "blue", group: "mentions" },
+  orchestrator_message:     { section: null, actionRequired: false, compliance: false, icon: "MessageSquare", tone: "blue", group: "mentions", category: "mention" },
   // Workspace security: a full export was run — links to Admin → Data export.
-  security_export:          { section: null, actionRequired: false, compliance: false, icon: "Bell", tone: "slate", group: "other" },
+  security_export:          { section: null, actionRequired: false, compliance: false, icon: "Bell", tone: "slate", group: "other", category: "status_change" },
   // Admin housekeeping: a removed member's ownership was cleared — links to
   // the register's unowned filter. Departure: today's feed drew GitBranch /
   // blue / "Documents & revisions" only because 'revoked' contains 'rev'.
-  member_revoked:           { section: null, actionRequired: false, compliance: false, icon: "Bell", tone: "slate", group: "other" },
+  member_revoked:           { section: null, actionRequired: false, compliance: false, icon: "Bell", tone: "slate", group: "other", category: "status_change" },
   // Admin housekeeping: a Save-As library was born unowned — links to Admin →
   // Permissions & ownership.
-  library_unowned:          { section: null, actionRequired: false, compliance: false, icon: "Bell", tone: "slate", group: "other" },
+  library_unowned:          { section: null, actionRequired: false, compliance: false, icon: "Bell", tone: "slate", group: "other", category: "status_change" },
   // Admin housekeeping (PROD-2, N8): someone asked to join the workspace —
   // to the Admin / DocCtrl pool, links to Admin → Users, where the pending
   // requests are listed. Bell-only like the other admin notices; FYI until a
   // decision clears it (DEC-81 §2).
-  access_request_pending:   { section: null, actionRequired: false, compliance: false, icon: "Briefcase", tone: "orange", group: "other" },
+  access_request_pending:   { section: null, actionRequired: false, compliance: false, icon: "Briefcase", tone: "orange", group: "other", category: "assignment" },
   // Infrastructure (PROD-10 / TAX-11 — raw inserts before N2; lib/storageAlerts.ts,
   // lib/storageUsage.ts now go through notify()). The set is finite: the quota
   // watermark, and the two platform ceilings (storageUsage.ts hot[] keys).
-  storage_alert:            { section: null, actionRequired: false, compliance: false, icon: "HardDrive", tone: "slate", group: "other" },
-  storage_platform_r2:      { section: null, actionRequired: false, compliance: false, icon: "HardDrive", tone: "slate", group: "other" },
-  storage_platform_db:      { section: null, actionRequired: false, compliance: false, icon: "Database", tone: "slate", group: "other" },
+  storage_alert:            { section: null, actionRequired: false, compliance: false, icon: "HardDrive", tone: "slate", group: "other", category: "sla_warning" },
+  storage_platform_r2:      { section: null, actionRequired: false, compliance: false, icon: "HardDrive", tone: "slate", group: "other", category: "sla_warning" },
+  storage_platform_db:      { section: null, actionRequired: false, compliance: false, icon: "Database", tone: "slate", group: "other", category: "sla_warning" },
   // Written by a raw insert in a file another package owns, found by the
   // census (lib/__tests__/notificationKinds.test.ts) and kept at today's
   // behaviour: a monthly AI cap changed (app/api/ai/usage/route.ts).
-  ai_cap_changed:           { section: null, actionRequired: false, compliance: false, icon: "Bell", tone: "slate", group: "other" },
+  ai_cap_changed:           { section: null, actionRequired: false, compliance: false, icon: "Bell", tone: "slate", group: "other", category: "status_change" },
 
   // ── Moved from bell-only to Documents (notifications N9) ─────────────────
   // transmittal_unstampable: the transmittal portal refused to stamp an
@@ -287,7 +306,7 @@ export const KIND_META = {
   // may need to act on (ISO 9001 §7.5.3); the other eight bell-only kinds stay
   // bell-only. Kept last, where it has always been in the registry (and in
   // notification_kinds()), so the move changes one field.
-  transmittal_unstampable:  { section: "documents", actionRequired: false, compliance: false, icon: "Send", tone: "blue", group: "documents" },
+  transmittal_unstampable:  { section: "documents", actionRequired: false, compliance: false, icon: "Send", tone: "blue", group: "documents", category: "status_change" },
 } as const satisfies Record<NotificationKind, KindMeta>;
 
 /** The kinds this table classifies. Equal to NotificationKind while the
