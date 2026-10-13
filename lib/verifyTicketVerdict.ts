@@ -22,7 +22,7 @@
 //   unknown              the copy names no revision (a file from before
 //                        per-file revisions, a source file), the ticket
 //                        carries no revision record for it (closed before
-//                        revisions were recorded, an RFI), or the ticket is
+//                        revisions were recorded, an RFI closed with no label), or the ticket is
 //                        an archived stub — "cannot confirm"
 //
 // A CLOSED ticket with an issue on it — its issued label, or the history
@@ -141,7 +141,7 @@ export function ticketVerdict(row: VerifyTicketRowFacts, printedRev: string): Ti
       // EDGE-2: ended on a review label with no issue anywhere — the request
       // used the revision scheme and issued nothing: withdrawn. With no label
       // and no issue line (closed before revisions were recorded —
-      // 20260827 — or an RFI closed by close_rfi) nothing proves either way:
+      // 20260827 — or an RFI closed by close_rfi with no label) nothing proves either way:
       // "cannot confirm", never a false "withdrawn".
       if (letterLabel) withdrawn = true;
       else noRecord = true;

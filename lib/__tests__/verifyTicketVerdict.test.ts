@@ -20,7 +20,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NextRequest } from "next/server";
 import { ticketVerdict, ticketVerifyUrl, lastIssuedFromHistory, ticketFactsState, ticketRevInReview } from "@/lib/verifyTicketVerdict";
-import { ticketCopyPlan, ticketCopyControlState, ticketCopySource, recordTicketCopy, isMissingSourceColumn } from "@/lib/ticketDeliverableCopy";
+import { ticketCopyPlan, ticketCopyControlState, ticketCopySource, recordTicketCopy, isMissingSourceColumn, ticketCopyStanding, type TicketCopyLiveFacts } from "@/lib/ticketDeliverableCopy";
 import { stampWatermark, withoutScanInstruction } from "@/lib/stamping";
 import type { TicketAttachment } from "@/types/schema";
 
@@ -128,7 +128,8 @@ describe("PHYS-2 — the QR and footer carry the printed FILE's revision", () =>
     const plan = ticketCopyPlan({ file: final("1"), ticketNumber: "KE-1", ticketRowId: T, origin: ORIGIN, channel: "print" });
     expect(plan.verifyUrl).toBe(`${ORIGIN}/verify-ticket/${T}?r=1`);
     expect(plan.verifyUrl).not.toContain(`r=${ticketCurrentRev}`);
-    expect(plan.footerNotice).toContain("Rev 1 at time of printing");
+    expect(plan.footerNotice).toContain("This file is KE-1 deliverable Rev 1");
+    expect(plan.footerNotice).not.toContain("at time of"); // never "the deliverable at time of printing"
     expect(plan.footerNotice).not.toContain(`Rev ${ticketCurrentRev}`);
     // …and the scan of that paper answers superseded, never current.
     expect(ticketVerdict({ status: "FINAL_DRAFT", deliverable_rev: ticketCurrentRev, history: [issued(1), issued(2)] }, plan.rev!).verdict).toBe("superseded");
@@ -145,7 +146,52 @@ describe("PHYS-2 — the QR and footer carry the printed FILE's revision", () =>
   it("no public origin → no QR (DEC-64 §2), and a rev'd footer then loses only its scan instruction", () => {
     const plan = ticketCopyPlan({ file: final("3"), ticketNumber: "KE-1", ticketRowId: T, origin: "", channel: "download" });
     expect(plan.verifyUrl).toBeUndefined();
-    expect(withoutScanInstruction(plan.footerNotice)).toBe("KE-1 deliverable Rev 3 at time of download — not a controlled document revision. Confirm the current revision before use.");
+    expect(withoutScanInstruction(plan.footerNotice)).toBe("This file is KE-1 deliverable Rev 3 — not a controlled document revision. Confirm the current revision before use.");
+  });
+  // Reviewer PHYS-2 (fix pass 2): a file the page KNOWS is superseded never
+  // prints as if it were the deliverable at time of printing.
+  const live = (over: Partial<TicketCopyLiveFacts>): TicketCopyLiveFacts => ({ status: "FINAL_DRAFT", deliverableRev: "2", history: [issued(1), issued(2)], ...over });
+  it("Rev 1 Final, ticket at Rev 2 → the stamp says SUPERSEDED by Rev 2, the QR still asks about Rev 1, and the page confirms first", () => {
+    for (const channel of ["print", "download"] as const) {
+      const plan = ticketCopyPlan({ file: final("1"), ticketNumber: "KE-1", ticketRowId: T, origin: ORIGIN, channel, live: live({}) });
+      expect(plan.verifyUrl).toBe(`${ORIGIN}/verify-ticket/${T}?r=1`); // a warning input only
+      expect(plan.standing).toEqual({ kind: "superseded", by: "2" });
+      expect(plan.footerNotice).toMatch(/^SUPERSEDED by Rev 2 at time of (printing|download) — this file is KE-1 deliverable Rev 1, not the current revision/);
+      expect(plan.footerNotice).not.toMatch(/Rev 1 at time of/);
+      expect(plan.confirmMessage).toMatch(/This file is Rev 1, but KE-1 has since issued Rev 2\. The copy will be stamped SUPERSEDED\./);
+      // with no QR on the page the SUPERSEDED words survive the scan-clause strip
+      expect(withoutScanInstruction(plan.footerNotice)).toBe(`SUPERSEDED by Rev 2 at time of ${channel === "print" ? "printing" : "download"} — this file is KE-1 deliverable Rev 1, not the current revision — not a controlled document revision. Confirm the current revision before use.`);
+    }
+  });
+  it("superseded is read from the history too — a reopened ticket (label nulled) that issued Rev 2, or a closed one", () => {
+    expect(ticketCopyPlan({ file: final("1"), ticketNumber: "KE-1", ticketRowId: T, origin: ORIGIN, channel: "print", live: live({ status: "PENDING_REVIEW", deliverableRev: null }) }).standing)
+      .toEqual({ kind: "superseded", by: "2" });
+    expect(ticketCopyPlan({ file: final("1"), ticketNumber: "KE-1", ticketRowId: T, origin: ORIGIN, channel: "print", live: live({ status: "CLOSED", deliverableRev: "3A" }) }).standing)
+      .toEqual({ kind: "superseded", by: "2" });
+  });
+  it("the last issue while the ticket is re-worked → 'a newer revision is in progress', confirmed first; agrees with the scan", () => {
+    for (const l of [
+      live({ status: "REVISION_REQ", deliverableRev: "2" }),          // reject_final keeps the label
+      live({ status: "PENDING_REVIEW", deliverableRev: "3A" }),       // a review label on the row
+      live({ status: "PENDING_REVIEW", deliverableRev: null }),       // reopened (WF-21)
+    ]) {
+      const plan = ticketCopyPlan({ file: final("2"), ticketNumber: "KE-1", ticketRowId: T, origin: ORIGIN, channel: "print", live: l });
+      expect(plan.standing).toEqual({ kind: "in_progress" });
+      expect(plan.footerNotice).toBe("This file is KE-1 deliverable Rev 2 — a newer revision is in progress at time of printing — not a controlled document revision — scan the QR to confirm it is still the latest.");
+      expect(plan.confirmMessage).toMatch(/a newer revision is in progress/);
+      expect(ticketVerdict({ status: l.status, deliverable_rev: l.deliverableRev, history: l.history }, "2").verdict).toBe("revision_in_progress");
+    }
+  });
+  it("the latest issue, a Draft, a rev-less file or no live facts: no standing, no confirmation", () => {
+    const cur = ticketCopyPlan({ file: final("2"), ticketNumber: "KE-1", ticketRowId: T, origin: ORIGIN, channel: "print", live: live({}) });
+    expect([cur.standing, cur.confirmMessage]).toEqual([null, null]);
+    expect(cur.footerNotice).toBe("This file is KE-1 deliverable Rev 2 — not a controlled document revision — scan the QR to confirm it is still the latest.");
+    const draft = ticketCopyPlan({ file: { type: "Draft", rev: "1A" }, ticketNumber: "KE-1", ticketRowId: T, origin: ORIGIN, channel: "download", live: live({}) });
+    expect([draft.standing, draft.confirmMessage]).toEqual([null, null]);
+    expect(draft.footerNotice).toContain("This file is KE-1 review draft Rev 1A");
+    expect(ticketCopyPlan({ file: final(null), ticketNumber: "KE-1", ticketRowId: T, origin: ORIGIN, channel: "print", live: live({}) }).standing).toBeNull();
+    expect(ticketCopyPlan({ file: final("1"), ticketNumber: "KE-1", ticketRowId: T, origin: ORIGIN, channel: "print" }).standing).toBeNull();
+    expect(ticketCopyStanding("1", null)).toBeNull();
   });
   it("ticketVerifyUrl only carries a well-formed rev", () => {
     expect(ticketVerifyUrl(ORIGIN, T, "2A")).toBe(`${ORIGIN}/verify-ticket/${T}?r=2A`);
@@ -228,10 +274,15 @@ describe("EVID-5 / PHYS-8 — the copy's record is awaited, checked and in the t
 describe("the ticket page's FileViewerModal — wired to the rules above", () => {
   const page = src("app/(protected)/requests/[id]/page.tsx");
   const modal = page.slice(page.indexOf("const FileViewerModal = ("), page.indexOf("<DownloadComplianceModal"));
-  it("no ticket-level deliverableRev reaches the modal; the plan reads the file", () => {
+  it("no ticket-level deliverableRev reaches the QR; the plan reads the file, with the live ticket as a warning input only", () => {
     expect(modal).not.toMatch(/deliverableRev/);
     expect(page).not.toContain("deliverableRev={ticket?.deliverableRev}");
-    expect(modal).toContain("ticketCopyPlan({ file, ticketNumber: ticketId, ticketRowId, origin: publicOrigin(), channel })");
+    expect(modal).toContain("ticketCopyPlan({ file, ticketNumber: ticketId, ticketRowId, origin: publicOrigin(), channel, live: liveTicket })");
+    expect(page).toContain("liveTicket={ticket ? { status: ticket.status, deliverableRev: ticket.deliverableRev ?? null, history: ticket.history } : null}");
+  });
+  it("a superseded or re-worked file is confirmed before stamping, on both paths", () => {
+    expect(modal).toContain('!plan.confirmMessage || (await appConfirm({ message: plan.confirmMessage, tone: "danger" }))');
+    expect(modal.match(/if \(!\(await confirmStanding\(plan\)\)\)/g)).toHaveLength(2);
   });
   it("both paths stamp with the plan's control state, QR and footer — no watermark literal", () => {
     expect(modal.match(/controlState: plan\.controlState,/g)).toHaveLength(2);
@@ -245,6 +296,8 @@ describe("the ticket page's FileViewerModal — wired to the rules above", () =>
     expect(modal).not.toMatch(/\.then\(\(\) => \{\}, \(\) => \{\}\)/);
     expect(modal).not.toMatch(/ticket_id:|attachment_id:|attachment_type:|watermark_text:/);
     expect(modal).toContain('await recordCopy("print", stamped, plan.watermark,');
+    // the print starts BEFORE its record is awaited — a slow record never delays paper
+    expect(modal.indexOf("document.body.appendChild(iframe);")).toBeLessThan(modal.indexOf('await recordCopy("print"'));
     expect(modal).toContain('await recordCopy("download", stamped, plan.watermark, expiresAt);');
     expect(modal).toContain("if (!res.recorded) {");
   });

@@ -9,6 +9,7 @@
 // lib/__tests__/ticketTransitions.test.ts freezes it.
 
 import type { Ticket, TicketAttachment, TicketComment, TicketHistoryEntry, TicketStatus } from "@/types/schema";
+import { lastIssuedFromHistory } from "@/lib/verifyTicketVerdict";
 
 export interface TransitionActor {
   uid?: string | null;
@@ -118,6 +119,32 @@ export function draftRevLabel(revisionCount: number | undefined, iteration: numb
 
 export function issuedRevLabel(revisionCount: number | undefined): string {
   return String((revisionCount ?? 0) + 1);
+}
+
+/**
+ * drafting-flow SM-5 / LEAK-7: the label an issuing action writes, checked
+ * against the ticket's own history. Issued labels are monotonic: when the
+ * cycle's label (issuedRevLabel) is at or below a number the history already
+ * issued ("… — issued Rev N", the line every approval writes) — a ticket
+ * reopened before Round E kept its revision_count, so its next approval
+ * would issue the same Rev N a second time and both packages would scan
+ * "current" — the issue is RE-CYCLED to the next number above the history
+ * (revision_count moves to match, so the cycle and the label agree), with a
+ * history note saying so. Never refused: refusing would block a legitimate
+ * approval on a legacy row.
+ */
+export function issueLabelFor(ticket: Pick<Ticket, "revisionCount" | "history">): {
+  label: string;
+  /** The revision_count to write when the label was re-cycled; null otherwise. */
+  revisionCount: number | null;
+  /** The label the cycle alone would have issued, when it was already issued. */
+  recycledFrom: string | null;
+} {
+  const label = issuedRevLabel(ticket.revisionCount);
+  const last = lastIssuedFromHistory(ticket.history);
+  if (last === null || parseInt(label, 10) > parseInt(last, 10)) return { label, revisionCount: null, recycledFrom: null };
+  const next = parseInt(last, 10) + 1;
+  return { label: String(next), revisionCount: next - 1, recycledFrom: label };
 }
 
 // ─── Per-file revision (public-surfaces PHYS-2, drafting-flow DF-P10) ─────
@@ -235,6 +262,19 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
   // tells, as opposed to the readers a transition resets `unread_by` to.
   let activityRecipients: string[] | null = null;
 
+  // SM-5 / LEAK-7: the issuing actions write a label the history has never
+  // issued (issueLabelFor); a re-cycle moves revision_count with it and says
+  // so on the issue's own history line.
+  const issueRev = () => {
+    const issue = issueLabelFor(ticket);
+    updates.deliverable_rev = issue.label;
+    if (issue.revisionCount !== null) {
+      updates.revision_count = issue.revisionCount;
+      const note = `Rev ${issue.recycledFrom} was already issued on this ticket — issued as Rev ${issue.label} instead, so no two packages share a label.`;
+      historyEntry.details = historyEntry.details ? `${historyEntry.details} [${note}]` : note;
+    }
+  };
+
   switch (input.actionType) {
     case "save_progress":
       break;
@@ -330,7 +370,7 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
     }
     case "approve_draft_ifc":
       updates.status = "PENDING_IFC";
-      updates.deliverable_rev = issuedRevLabel(ticket.revisionCount);
+      issueRev(); // SM-5: never a label the history already issued
       historyEntry.action = `${input.actionLabel} — issued Rev ${updates.deliverable_rev}`;
       currentAttachments = stampIssuedFinals(currentAttachments, updates.deliverable_rev as string); // PHYS-2
       break;
@@ -340,7 +380,7 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
     // review cycle for a mislabel or a typo.
     case "approve_minor_correction":
       updates.status = "PENDING_IFC";
-      updates.deliverable_rev = issuedRevLabel(ticket.revisionCount);
+      issueRev(); // SM-5: never a label the history already issued
       historyEntry.action = `Approved with minor correction — issued Rev ${updates.deliverable_rev}`;
       currentAttachments = stampIssuedFinals(currentAttachments, updates.deliverable_rev as string); // PHYS-2
       // WF-21 / DEC-15: at the engineer sign-off stage this IS the engineer's
@@ -363,7 +403,7 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
     case "engineer_approve_final":
       updates.status = "PENDING_IFC";
       updates.engineer_approved_at = now;
-      updates.deliverable_rev = issuedRevLabel(ticket.revisionCount);
+      issueRev(); // SM-5: never a label the history already issued
       historyEntry.action = `${input.actionLabel} — issued Rev ${updates.deliverable_rev}`;
       currentAttachments = stampIssuedFinals(currentAttachments, updates.deliverable_rev as string); // PHYS-2
       if (ticket.assignedDrafterId) updates.unread_by = [ticket.assignedDrafterId];

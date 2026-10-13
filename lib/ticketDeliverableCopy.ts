@@ -11,7 +11,15 @@
 //           prints "Rev 1" and its QR asks about Rev 1, so the scan answers
 //           "superseded". A file with no recorded revision prints a QR with
 //           no ?r= (the scan answers "cannot confirm") and a footer that says
-//           the printing cannot be confirmed.
+//           the printing cannot be confirmed. The footer describes THE FILE
+//           ("This file is KE-1 deliverable Rev 1"), never "Rev 1 at time of
+//           printing" as if it were the deliverable then: when the page
+//           already knows the file is superseded (a later issue on the
+//           ticket — its issued label or its history) the stamp says
+//           SUPERSEDED by Rev N, and when a newer revision is being worked
+//           it says so; the page confirms before stamping either. The
+//           ticket's live facts are a warning input ONLY — the QR keeps
+//           file.rev.
 //   PHYS-9  One control state per file drives both marks (DEC-64 §5): a Draft
 //           is a review copy, everything else is an uncontrolled copy. No
 //           caller literal; the watermark recorded is the one the stamper
@@ -26,7 +34,7 @@
 
 import type { TicketAttachment } from "@/types/schema";
 import { stampWatermark, type StampControlState } from "@/lib/stamping";
-import { ticketVerifyUrl } from "@/lib/verifyTicketVerdict";
+import { ticketVerifyUrl, ticketVerdict, lastIssuedFromHistory, isIssuedTicketRev } from "@/lib/verifyTicketVerdict";
 
 export type TicketCopyChannel = "print" | "download";
 
@@ -40,6 +48,41 @@ export interface TicketCopyPlan {
   footerNotice: string;
   /** The watermark the stamper prints for this state — what the record names. */
   watermark: string;
+  /** What the page knows of this file against the ticket now (PHYS-2):
+   *  superseded by a later issue, a newer revision in progress, or null
+   *  (latest as far as the page knows, or nothing to compare). */
+  standing: TicketCopyStanding | null;
+  /** The plain-words question the page asks before stamping a file whose
+   *  standing is set; null when no confirmation is needed. */
+  confirmMessage: string | null;
+}
+
+export type TicketCopyStanding =
+  | { kind: "superseded"; by: string }
+  | { kind: "in_progress" };
+
+/** The ticket's live facts as the page holds them — a warning input only. */
+export interface TicketCopyLiveFacts {
+  status: string | null;
+  deliverableRev: string | null;
+  history: unknown;
+}
+
+/** Where an issued file stands against the ticket as the page holds it.
+ *  Superseded: a later number is issued — on the row (deliverable_rev) or in
+ *  the history's "issued Rev N" lines, whichever is higher. In progress: the
+ *  file IS the last issue and the verify ladder reads the ticket as being
+ *  re-worked (ticketVerdict's revision_in_progress — reopened, sent back, or
+ *  a review label on the row). A Draft / letter label or a rev-less file has
+ *  no standing here (its watermark and its "cannot confirm" footer speak). */
+export function ticketCopyStanding(rev: string | null, live: TicketCopyLiveFacts | null | undefined): TicketCopyStanding | null {
+  if (!live || !isIssuedTicketRev(rev)) return null;
+  const fromRow = isIssuedTicketRev(live.deliverableRev) ? parseInt(live.deliverableRev, 10) : null;
+  const fromHistory = lastIssuedFromHistory(live.history);
+  const latest = Math.max(fromRow ?? 0, fromHistory ? parseInt(fromHistory, 10) : 0);
+  if (latest > parseInt(rev, 10)) return { kind: "superseded", by: String(latest) };
+  const v = ticketVerdict({ status: live.status, deliverable_rev: live.deliverableRev, history: live.history }, rev);
+  return v.verdict === "revision_in_progress" ? { kind: "in_progress" } : null;
 }
 
 /** The control state a ticket file is stamped with: a Draft is a review
@@ -56,20 +99,40 @@ export function ticketCopyPlan(input: {
   ticketRowId?: string | null;
   origin: string;
   channel: TicketCopyChannel;
+  /** The ticket as the page holds it now — a WARNING input only; the QR and
+   *  the revision printed are the file's own. */
+  live?: TicketCopyLiveFacts | null;
 }): TicketCopyPlan {
   const controlState = ticketCopyControlState(input.file);
   const rev = typeof input.file.rev === "string" && input.file.rev.trim() ? input.file.rev.trim() : null;
   const label = input.ticketNumber || "Ticket";
   const when = input.channel === "print" ? "printing" : "download";
-  const footerNotice = rev
-    ? `${label} deliverable Rev ${rev} at time of ${when} — not a controlled document revision — scan the QR to confirm it is still the latest.`
-    : `${label} ${input.file.type ?? "ticket"} file — no deliverable revision is recorded for this file, so which printing this is cannot be confirmed. Not a controlled document revision.`;
+  const standing = ticketCopyStanding(rev, input.live);
+  const what = input.file.type === "Draft" ? "review draft" : "deliverable";
+  let footerNotice: string;
+  if (!rev) {
+    footerNotice = `${label} ${input.file.type ?? "ticket"} file — no deliverable revision is recorded for this file, so which printing this is cannot be confirmed. Not a controlled document revision.`;
+  } else if (standing?.kind === "superseded") {
+    footerNotice = `SUPERSEDED by Rev ${standing.by} at time of ${when} — this file is ${label} ${what} Rev ${rev}, not the current revision — not a controlled document revision — scan the QR for the current status.`;
+  } else if (standing?.kind === "in_progress") {
+    footerNotice = `This file is ${label} ${what} Rev ${rev} — a newer revision is in progress at time of ${when} — not a controlled document revision — scan the QR to confirm it is still the latest.`;
+  } else {
+    footerNotice = `This file is ${label} ${what} Rev ${rev} — not a controlled document revision — scan the QR to confirm it is still the latest.`;
+  }
+  const verb = input.channel === "print" ? "Print" : "Download";
+  const confirmMessage = !standing || !rev
+    ? null
+    : standing.kind === "superseded"
+      ? `This file is Rev ${rev}, but ${label} has since issued Rev ${standing.by}. The copy will be stamped SUPERSEDED. ${verb} it anyway?`
+      : `This file is Rev ${rev}, the last issue of ${label}, but a newer revision is in progress. The copy will say so. ${verb} it anyway?`;
   return {
     controlState,
     rev,
     verifyUrl: ticketVerifyUrl(input.origin, input.ticketRowId, rev),
     footerNotice,
     watermark: stampWatermark(undefined, controlState),
+    standing,
+    confirmMessage,
   };
 }
 

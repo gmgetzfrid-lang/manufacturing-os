@@ -32,7 +32,7 @@ import { getMyTeamIds } from '@/lib/teams';
 import { handbackPreset, latestFinalAttachment, deliverableStateOf } from '@/lib/ticketHandback';
 import RevUpModal from '@/components/documents/RevUpModal';
 import { publicOrigin } from '@/lib/publicOrigin';
-import { ticketCopyPlan, recordTicketCopy } from '@/lib/ticketDeliverableCopy';
+import { ticketCopyPlan, recordTicketCopy, type TicketCopyLiveFacts } from '@/lib/ticketDeliverableCopy';
 import { logAuditAction } from '@/lib/audit';
 // Code-split: the redline editor pulls react-pdf/pdfjs + fabric + pdf-lib, none
 // of which the request-detail page needs until the user actually opens markup.
@@ -526,6 +526,7 @@ const FileViewerModal = ({
   onApprove,
   archived,
   archiveId,
+  liveTicket,
 }: {
   file: TicketAttachment | null;
   isOpen: boolean;
@@ -540,6 +541,10 @@ const FileViewerModal = ({
   onApprove?: () => void;
   archived?: boolean;
   archiveId?: string | null;
+  /** The ticket as this page holds it — a WARNING input only (PHYS-2): a
+   *  file the page knows is superseded, or whose ticket is being re-worked,
+   *  is confirmed before stamping and stamped as such. Never the QR's rev. */
+  liveTicket?: TicketCopyLiveFacts | null;
 }) => {
   const [showCompliance, setShowCompliance] = useState(false);
   // file.url is stored as the raw R2 storage path (orgs/<org>/tickets/...).
@@ -576,7 +581,11 @@ const FileViewerModal = ({
   // one control state for both marks, and "not a controlled document
   // revision". lib/ticketDeliverableCopy.ts.
   const planFor = (channel: "print" | "download") =>
-    ticketCopyPlan({ file, ticketNumber: ticketId, ticketRowId, origin: publicOrigin(), channel });
+    ticketCopyPlan({ file, ticketNumber: ticketId, ticketRowId, origin: publicOrigin(), channel, live: liveTicket });
+  // A superseded or re-worked file is never stamped silently: the user is
+  // asked first, and the stamp says what the page knows.
+  const confirmStanding = async (plan: ReturnType<typeof planFor>) =>
+    !plan.confirmMessage || (await appConfirm({ message: plan.confirmMessage, tone: "danger" }));
 
   // EVID-5 / PHYS-8: the copy's record is awaited and checked; a refusal never
   // blocks the copy, and it is said rather than swallowed.
@@ -602,6 +611,7 @@ const FileViewerModal = ({
     let printUrl = resolvedUrl;
     let stamped = false;
     const plan = planFor("print");
+    if (!(await confirmStanding(plan))) return;
     try {
       const { stampPdf } = await import("@/lib/stamping");
       const blob = await stampPdf(resolvedUrl, {
@@ -622,8 +632,6 @@ const FileViewerModal = ({
       );
       if (!proceed) return;
     }
-    // Record the print on the audit trail either way.
-    await recordCopy("print", stamped, plan.watermark, new Date(Date.now() + 30 * 24 * 3600 * 1000));
     const iframe = document.createElement('iframe');
     iframe.style.display = 'none';
     iframe.src = printUrl;
@@ -636,6 +644,10 @@ const FileViewerModal = ({
       document.body.removeChild(iframe);
       if (stamped) URL.revokeObjectURL(printUrl);
     }, 60_000);
+    // Record the print on the audit trail either way — AFTER the print has
+    // started, as the download path does: a slow or refused record never
+    // delays or blocks the copy, and a refusal is said once it settles.
+    await recordCopy("print", stamped, plan.watermark, new Date(Date.now() + 30 * 24 * 3600 * 1000));
   };
 
   const handleDownloadClick = () => {
@@ -654,6 +666,7 @@ const FileViewerModal = ({
 
     let stamped = false;
     const plan = planFor("download");
+    if (!(await confirmStanding(plan))) { setShowCompliance(false); return; }
     try {
       const downloadUrl = resolvedUrl || (await getSignedUrlForPath(file.url));
       // Every downloaded copy carries a QR that answers "is this still the
@@ -1690,6 +1703,7 @@ export default function TicketDetailView() {
         userId={uid ?? undefined}
         archived={!!ticket?.archivedAt}
         archiveId={ticket?.archiveId}
+        liveTicket={ticket ? { status: ticket.status, deliverableRev: ticket.deliverableRev ?? null, history: ticket.history } : null}
         onApprove={(() => {
           const action = availableActions.find(a => a.action === 'approve_draft_ifc' && !a.disabledReason);
           return action ? () => { setViewerFile(null); initiateWorkflowAction(action); } : undefined;

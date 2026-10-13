@@ -5,8 +5,8 @@
 // identical to the legacy client-side computation it replaced.
 
 import { describe, it, expect } from "vitest";
-import { computeTransition, classifyTransitionNotification, rowToTicket, draftRevLabel, issuedRevLabel, joiningFileRev, stampIssuedFinals } from "@/lib/ticketTransitions";
-import type { Ticket, TicketAttachment } from "@/types/schema";
+import { computeTransition, classifyTransitionNotification, rowToTicket, draftRevLabel, issuedRevLabel, joiningFileRev, stampIssuedFinals, issueLabelFor } from "@/lib/ticketTransitions";
+import type { Ticket, TicketAttachment, TicketHistoryEntry } from "@/types/schema";
 
 const NOW = "2026-06-15T12:00:00.000Z";
 
@@ -440,5 +440,57 @@ describe("PHYS-2 — per-file revision, stamped server-side", () => {
     expect(byId.rev1.rev).toBe("1");
     expect(byId.rev2.rev).toBe("2");
     expect(byId.d2.rev).toBe("2A");
+  });
+});
+
+// ─── drafting-flow SM-5 / LEAK-7 (DF-P10): an issuing action never re-issues a label ───
+describe("SM-5 — an issued label is never written twice: re-cycled from the history", () => {
+  const issuedLine = (n: number) => ({ action: `Approve (Issue for Construction) — issued Rev ${n}`, user: "r@x.com", role: "Requester", date: NOW });
+  const reviewer = { uid: "u-req", email: "r@x.com", role: "Requester" };
+  // A ticket reopened BEFORE Round E (LEAK-7 population (a)): the old reopen
+  // kept revision_count 0 and the issued label "1"; the history issued Rev 1.
+  const legacy = (over: Partial<Ticket> = {}) => mk({
+    status: "PENDING_REVIEW", revisionCount: 0, deliverableRev: "1", assignedDrafterId: "u-d",
+    history: [issuedLine(1) as TicketHistoryEntry, { action: "Reopen Ticket", user: "r@x.com", role: "Requester", date: NOW } as TicketHistoryEntry],
+    attachments: [{ id: "f-old", name: "v1.pdf", url: "orgs/o/tickets/T/v1.pdf", type: "Final", status: "submitted", rev: "1" } as TicketAttachment,
+      { id: "f-new", name: "v2.pdf", url: "orgs/o/tickets/T/v2.pdf", type: "Final", status: "submitted", rev: null } as TicketAttachment],
+    ...over,
+  });
+
+  for (const [actionType, actionLabel, status] of [
+    ["approve_draft_ifc", "Approve (Issue for Construction)", "PENDING_REVIEW"],
+    ["approve_minor_correction", "Approve with Minor Correction", "PENDING_REVIEW"],
+    ["engineer_approve_final", "Engineer Approve", "PENDING_FINAL_APPROVAL"],
+  ] as const) {
+    it(`${actionType} on a legacy row whose history issued Rev 1 issues Rev 2 — never Rev 1 again`, () => {
+      const r = computeTransition(legacy({ status }), { actionType, actionLabel, actor: reviewer, now: NOW });
+      expect(r.updates.deliverable_rev).toBe("2");
+      expect(r.updates.revision_count).toBe(1); // the cycle moves with the label
+      expect(r.historyEntry.action).toMatch(/issued Rev 2$/);
+      expect(r.historyEntry.details).toMatch(/Rev 1 was already issued on this ticket — issued as Rev 2 instead/);
+      // the package waiting for this issue takes Rev 2; the old package keeps Rev 1
+      const files = Object.fromEntries((r.updates.attachments as TicketAttachment[]).map((a) => [a.id, a.rev]));
+      expect(files).toEqual({ "f-old": "1", "f-new": "2" });
+    });
+  }
+
+  it("a reviewer comment is kept, with the re-cycle note beside it", () => {
+    const r = computeTransition(legacy(), { actionType: "approve_draft_ifc", actionLabel: "Approve (Issue for Construction)", comment: "Looks good", actor: reviewer, now: NOW });
+    expect(r.historyEntry.details).toBe("Looks good [Rev 1 was already issued on this ticket — issued as Rev 2 instead, so no two packages share a label.]");
+  });
+
+  it("monotonic: a cycle label BELOW the highest issued number is re-cycled above it", () => {
+    expect(issueLabelFor({ revisionCount: 1, history: [issuedLine(1), issuedLine(3)] as TicketHistoryEntry[] })).toEqual({ label: "4", revisionCount: 3, recycledFrom: "2" });
+  });
+
+  it("the ordinary path is untouched: a label the history never issued is written as before, with no revision_count write and no note", () => {
+    expect(issueLabelFor({ revisionCount: 1, history: [issuedLine(1)] as TicketHistoryEntry[] })).toEqual({ label: "2", revisionCount: null, recycledFrom: null });
+    expect(issueLabelFor({ revisionCount: 0, history: [] })).toEqual({ label: "1", revisionCount: null, recycledFrom: null });
+    const r = computeTransition(mk({ status: "PENDING_REVIEW", revisionCount: 1, deliverableRev: "2A", history: [issuedLine(1) as TicketHistoryEntry] }), {
+      actionType: "approve_draft_ifc", actionLabel: "Approve (Issue for Construction)", actor: reviewer, now: NOW,
+    });
+    expect(r.updates.deliverable_rev).toBe("2");
+    expect("revision_count" in r.updates).toBe(false);
+    expect(r.historyEntry.details).toBeUndefined();
   });
 });
