@@ -176,6 +176,18 @@ function missingColumn(e: PgError, col: string): boolean {
   return !!e && msg.includes(col) && (/^(42703|PGRST204)$/.test(String(e.code ?? "")) || /does not exist|could not find/i.test(msg));
 }
 
+/** SAF-20 — the quote door's success sentence. The award / decline notice
+ *  is emailed only to the contact the org typed on the link (DEC-56), so the
+ *  promise of contact is made only when the link carries one; a link with
+ *  none (optional since J14, absent on older links) points at the portal,
+ *  whose status chip shows the decision. */
+function quoteReceivedMessage(projectName: string, contactEmail: string | null): string {
+  const lead = `Your quote is in — ${projectName}'s team has been notified.`;
+  return (contactEmail ?? "").trim()
+    ? `${lead} You'll be contacted about the award decision.`
+    : `${lead} The decision will be shown on this page — check back here.`;
+}
+
 // ── The shared client, bound to the service role for the pipeline ──────────
 // lib/postPublish.ts, lib/notify/dispatch.ts and lib/intents.ts are written
 // against the shared `supabase` client (a browser session in the app). This
@@ -1117,11 +1129,15 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
     });
     await bumpUse(ref, linkId, file.size);
 
+    // SAF-20: the award / decline notice reaches only the link's contact
+    // (app/api/intake/outcome-notice quoteNotice answers `no_contact` for a
+    // link with none), so contact is promised only when the link has one;
+    // otherwise the contractor is pointed at the portal's status.
     return NextResponse.json({
       ok: true,
       quoteId,
       status: "quote_received",
-      message: `Your quote is in — ${String(project.name ?? "the project")}'s team has been notified. You'll be contacted about the award decision.`,
+      message: quoteReceivedMessage(String(project.name ?? "the project"), contactEmail),
     });
   }
 

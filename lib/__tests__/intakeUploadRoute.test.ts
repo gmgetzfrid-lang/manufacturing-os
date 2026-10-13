@@ -2816,3 +2816,36 @@ describe("INTK-15 — the direct door: begin presigns, finalize checks the store
     expect((vercel.crons ?? []).length).toBeLessThanOrEqual(2);
   });
 });
+
+// ── SAF-20 (projects Round G J19): the quote door promises only what it can send ──
+describe("SAF-20 — the quote door's success sentence follows the link's contact", () => {
+  it("a link WITH a contact keeps today's promise (regression): 'You'll be contacted about the award decision.'", async () => {
+    seed({ link: { purpose: "quote", contact_email: "v@vendor.test" } });
+    const res = await upload({});
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({ ok: true, status: "quote_received" });
+    expect(body.message).toBe("Your quote is in — Unit 4's team has been notified. You'll be contacted about the award decision.");
+    expect(db.tables.cost_documents).toHaveLength(1);
+  });
+
+  it("a link with NO contact never promises contact: it points at the portal", async () => {
+    seed({ link: { purpose: "quote", contact_email: null } });
+    const body = await (await upload({})).json();
+    expect(body).toMatchObject({ ok: true, status: "quote_received" });
+    expect(body.message).toBe("Your quote is in — Unit 4's team has been notified. The decision will be shown on this page — check back here.");
+    expect(body.message).not.toMatch(/contacted/);
+    // the quote is filed exactly as before — only the sentence differs
+    expect(db.tables.cost_documents).toHaveLength(1);
+  });
+
+  it("a blank contact is no contact (the outcome notice trims it and answers no_contact)", async () => {
+    seed({ link: { purpose: "quote", contact_email: "   " } });
+    const body = await (await upload({})).json();
+    expect(body.message).toMatch(/check back here\.$/);
+    expect(body.message).not.toMatch(/contacted/);
+    const notice = readFileSync(join(process.cwd(), "app/api/intake/outcome-notice/route.ts"), "utf8");
+    expect(notice).toContain('const to = (l.contact_email ?? "").trim();');
+    expect(notice).toContain('if (!to) return NextResponse.json({ sent: false, reason: "no_contact" });');
+  });
+});

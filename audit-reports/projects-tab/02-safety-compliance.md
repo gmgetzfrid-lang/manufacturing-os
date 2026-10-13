@@ -1043,7 +1043,7 @@ project history for the document will be hidden.
 *Numbered SAF-20 on this branch (opened by projects-joint J14 PROJECTS FOLLOW-UPS's review fix pass as `SAF-9` done-when 3's remainder, per `DEC-31`). If the number collides at merge the integrator renumbers.*
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** projects-joint, the owner of `app/api/intake/upload/route.ts` (the intake door; J16 INTAKE DOOR IDENTITY & UNTRUSTED ORIGIN edits this file). Proposed by projects-joint J14 PROJECTS FOLLOW-UPS, 2026-10-07, in its review's fix pass (DEC-31). The integrator names the package at the J14 merge.
 - **Assigned:** projects-joint J19 PROJECTS REMAINDERS (after J16, which edits the intake route) — by the integrator, 2026-10-07 (J14 merge; fleet plan `projects-joint.json`).
 - **Verification:** READ (the door's quote branch and the notice route at J14's HEAD; not exercised against a live database)
@@ -1064,6 +1064,19 @@ project history for the document will be hidden.
 **Done when.**
 - The quote door's success sentence promises contact only when the link carries a contact email, and otherwise points at the portal.
 - A route test covers both branches.
+
+**Resolution (2026-10-13, projects Round G).** Package projects-joint J19 PROJECTS REMAINDERS, on a base carrying J16 (`DEC-95`; every J16 limb of the route is unchanged). Reproduced on HEAD first: `app/api/intake/upload/route.ts` returned "… You'll be contacted about the award decision." for every quote, a link with `contact_email` NULL included. Fixed in the same route:
+- `quoteReceivedMessage(projectName, contactEmail)` (`app/api/intake/upload/route.ts:184`, not exported — a route file exports only its handlers) builds the quote branch's success sentence (`:1140`). With a contact (non-blank after trim) it keeps today's sentence word for word. Without one it says "Your quote is in — <project>'s team has been notified. The decision will be shown on this page — check back here." (the record's own wording).
+- "A contact" is decided the way the notice decides it: `app/api/intake/outcome-notice/route.ts` `quoteNotice` trims `project_intake_links.contact_email` and answers `no_contact` when it is empty, so a blank contact is no contact on both sides.
+- The link row the door already reads carries `contact_email` (the `readIntakeLinkByToken` columns); no new read. Nothing else in the quote branch changed: the same row is filed, the same notice and audit row are written, and the duplicate answers ("This quote was already received …") are untouched.
+- Tests: `lib/__tests__/intakeUploadRoute.test.ts` "SAF-20 — the quote door's success sentence follows the link's contact": a link WITH a contact keeps today's sentence exactly (regression) and still files one quote; a link with NO contact never promises contact and points at the portal, and the quote is filed as before; a blank contact is no contact, and the notice route's own trim / `no_contact` lines are pinned beside it. The second and third fail against the HEAD route.
+
+**Done-when.**
+- ✓ The quote door's success sentence promises contact only when the link carries a contact email, and otherwise points at the portal.
+- ✓ A route test covers both branches (and the blank contact).
+
+**Scope / residual.** None. The redline and document branches promise no contact and were not touched; the duplicate-quote answers say only that nothing new was stored.
+
 
 ---
 
@@ -1090,4 +1103,4 @@ project history for the document will be hidden.
 | SAF-17 | MEDIUM | RESOLVED |
 | SAF-18 | MEDIUM | OPEN |
 | SAF-19 | LOW | OPEN |
-| SAF-20 | LOW | OPEN |
+| SAF-20 | LOW | RESOLVED |
