@@ -9,6 +9,12 @@
 // is computed, not simulated: nothing drifts, nothing overlaps, and the
 // same folder is in the same place every visit.
 //
+// Exploring, not admiring: click a folder and it becomes the root of the
+// view — everything outside it is gone, its contents fan out, the camera
+// fits. A dim "up" node above the root climbs back out; the page's
+// breadcrumbs jump anywhere on the way. Click a file to zoom to it and see
+// its details; double-click to open it.
+//
 // Two things a folder list can't show:
 //   * SAME BYTES — a dashed red arc between files whose hashes match.
 //   * SEARCH LIGHT — with a search live, everything dims except the
@@ -42,13 +48,21 @@ export interface FileGraphHandle {
 }
 
 interface Props {
-  nodes: FileGraphNode[];
-  expanded: Set<string>;
+  /** The nodes to draw — the page decides what is in view. */
+  visible: FileGraphNode[];
+  /** Containers in view whose children are not all in view (badge + "click to explore"). */
+  collapsed: Set<string>;
+  /** The node above the current root, drawn dim as the way back up. */
+  upNode: FileGraphNode | null;
   sameBytes: Map<string, string[]>;
   lit: Map<string, FileGraphLight>;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
-  onToggle: (id: string) => void;
+  /** A container was clicked: make it the root of the view. */
+  onDrill: (id: string) => void;
+  onUp: () => void;
+  /** A file was double-clicked. */
+  onOpen: (id: string) => void;
   className?: string;
 }
 
@@ -61,7 +75,7 @@ const isContainer = (k: FileNodeKind) => k !== "file" && k !== "extfile";
 interface Camera { x: number; y: number; scale: number }
 
 const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
-  { nodes, expanded, sameBytes, lit, selectedId, onSelect, onToggle, className = "" }, ref,
+  { visible, collapsed, upNode, sameBytes, lit, selectedId, onSelect, onDrill, onUp, onOpen, className = "" }, ref,
 ) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const { images, hostRef } = useIconImages();
@@ -75,33 +89,34 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
   const selRef = useRef(selectedId); useEffect(() => { selRef.current = selectedId; }, [selectedId]);
   const hoverRef = useRef(hoverId); useEffect(() => { hoverRef.current = hoverId; }, [hoverId]);
   const imagesRef = useRef(images); useEffect(() => { imagesRef.current = images; }, [images]);
-  const expandedRef = useRef(expanded); useEffect(() => { expandedRef.current = expanded; }, [expanded]);
+  const collapsedRef = useRef(collapsed); useEffect(() => { collapsedRef.current = collapsed; }, [collapsed]);
+  const upRef = useRef(upNode); useEffect(() => { upRef.current = upNode; }, [upNode]);
 
-  const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
-  const visible = useMemo(() => {
-    const out: FileGraphNode[] = [];
-    for (const n of nodes) {
-      let ok = true, p = n.parentId;
-      const seen = new Set<string>();
-      while (p && ok && !seen.has(p)) { seen.add(p); if (!expanded.has(p)) ok = false; p = byId.get(p)?.parentId ?? null; }
-      if (ok) out.push(n);
-    }
-    return out;
-  }, [nodes, expanded, byId]);
+  const byId = useMemo(() => new Map(visible.map((n) => [n.id, n])), [visible]);
   const visibleRef = useRef(visible); useEffect(() => { visibleRef.current = visible; }, [visible]);
 
   // Target layout; current positions ease toward it.
   const target = useMemo(() => balloonLayout(
-    visible.map((n) => ({ id: n.id, parentId: n.parentId, r: RADIUS[n.kind], labelPad: isContainer(n.kind) ? 16 : 14 })),
+    visible.map((n) => ({ id: n.id, parentId: n.parentId && byId.has(n.parentId) ? n.parentId : null, r: RADIUS[n.kind], labelPad: isContainer(n.kind) ? 16 : 14 })),
     { gap: 12 },
-  ), [visible]);
+  ), [visible, byId]);
+  /** Where the "up" node sits: above the whole layout, over the root. */
+  const upPos = useMemo<Placed | null>(() => {
+    if (!upNode || !target.size) return null;
+    const b = layoutBounds(target, 0);
+    const root = visible.find((n) => !n.parentId || !byId.has(n.parentId));
+    const rp = root ? target.get(root.id) : null;
+    return { x: rp?.x ?? (b.minX + b.maxX) / 2, y: b.minY - 70 };
+  }, [upNode, target, visible, byId]);
+  const upPosRef = useRef(upPos); useEffect(() => { upPosRef.current = upPos; }, [upPos]);
   const targetRef = useRef(target);
   const posRef = useRef<Map<string, Placed>>(new Map());
   const fitted = useRef(false);
-  function fitTo(pos: Map<string, Placed>) {
+  function fitTo(pos: Map<string, Placed>, up?: Placed | null) {
     const canvas = canvasRef.current;
     if (!canvas || !pos.size) return;
     const b = layoutBounds(pos, 60);
+    if (up) b.minY = Math.min(b.minY, up.y - 50);
     const w = canvas.clientWidth, h = canvas.clientHeight;
     const scale = Math.min(2.5, Math.max(0.08, Math.min(w / (b.maxX - b.minX), h / (b.maxY - b.minY))));
     camTarget.current = { scale, x: -((b.minX + b.maxX) / 2) * scale, y: -((b.minY + b.maxY) / 2) * scale };
@@ -118,7 +133,8 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
       }
     }
     for (const id of [...pos.keys()]) if (!target.has(id)) pos.delete(id);
-    if (!fitted.current && target.size) { fitted.current = true; fitTo(target); }
+    // Every change of what is in view re-fits: a drill-down lands framed.
+    if (target.size) { fitted.current = true; fitTo(target, upPosRef.current); }
   }, [target, byId]);
 
   const sameEdges = useMemo(() => {
@@ -138,7 +154,7 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
   const sameRef = useRef(sameEdges); useEffect(() => { sameRef.current = sameEdges; }, [sameEdges]);
 
   useImperativeHandle(ref, () => ({
-    fit: () => fitTo(targetRef.current),
+    fit: () => fitTo(targetRef.current, upPosRef.current),
     focus: (id: string) => {
       const p = targetRef.current.get(id);
       if (!p) return;
@@ -189,6 +205,28 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
       ctx.scale(cam.scale, cam.scale);
       const s = cam.scale;
 
+      // The way up: a dim node above the root.
+      const up = upRef.current, upP = upPosRef.current;
+      const rootNode = visibleRef.current.find((n) => !n.parentId || !byId.has(n.parentId));
+      const rootP = rootNode ? pos.get(rootNode.id) : null;
+      if (up && upP && rootP) {
+        ctx.setLineDash([4 / s, 4 / s]);
+        ctx.strokeStyle = "rgba(100,116,139,0.45)"; ctx.lineWidth = Math.max(1, 1.2 / s);
+        ctx.beginPath(); ctx.moveTo(upP.x, upP.y); ctx.lineTo(rootP.x, rootP.y); ctx.stroke();
+        ctx.setLineDash([]);
+        const r = RADIUS[up.kind] * 0.8;
+        ctx.globalAlpha = hoverRef.current === "__up__" ? 0.95 : 0.5;
+        ctx.beginPath(); ctx.arc(upP.x, upP.y, r, 0, Math.PI * 2);
+        ctx.fillStyle = up.type.color; ctx.fill();
+        ctx.strokeStyle = "rgba(255,255,255,0.9)"; ctx.lineWidth = 1.5; ctx.stroke();
+        const img = imagesRef.current.get(up.kind === "folder" || up.kind === "extfolder" ? "folderOpen" : up.type.key);
+        if (img) ctx.drawImage(img, upP.x - r * 0.6, upP.y - r * 0.6, r * 1.2, r * 1.2);
+        ctx.font = "600 11px ui-sans-serif, system-ui"; ctx.textAlign = "center"; ctx.textBaseline = "top";
+        ctx.fillStyle = "#334155";
+        ctx.fillText(`↑ ${up.label.length > 24 ? up.label.slice(0, 22) + "…" : up.label}`, upP.x, upP.y + r + 4);
+        ctx.globalAlpha = 1;
+      }
+
       // Tree edges.
       ctx.lineWidth = Math.max(1, 1.2 / s);
       for (const n of visibleRef.current) {
@@ -217,7 +255,7 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
       ctx.setLineDash([]);
 
       // Nodes.
-      const sel = selRef.current, hov = hoverRef.current, imgs = imagesRef.current, exp = expandedRef.current;
+      const sel = selRef.current, hov = hoverRef.current, imgs = imagesRef.current, col = collapsedRef.current;
       ctx.textAlign = "center"; ctx.textBaseline = "top";
       for (const n of visibleRef.current) {
         const p = pos.get(n.id);
@@ -239,12 +277,12 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
         ctx.strokeStyle = n.id === sel ? "#0ea5e9" : n.id === hov ? "#0ea5e9" : "rgba(255,255,255,0.9)";
         ctx.stroke();
         // Icon.
-        const key = n.kind === "folder" || n.kind === "extfolder" ? (exp.has(n.id) ? "folderOpen" : "folder") : n.type.key;
+        const key = n.kind === "folder" || n.kind === "extfolder" ? (col.has(n.id) ? "folder" : "folderOpen") : n.type.key;
         const img = imgs.get(key);
         const iconSize = r * 1.15;
         if (img) ctx.drawImage(img, p.x - iconSize / 2, p.y - iconSize / 2, iconSize, iconSize);
         // Collapsed count badge.
-        if (isContainer(n.kind) && n.childCount > 0 && !exp.has(n.id)) {
+        if (isContainer(n.kind) && n.childCount > 0 && col.has(n.id)) {
           const bx = p.x + r * 0.75, by = p.y - r * 0.75, br = Math.max(7, r * 0.42);
           ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2);
           ctx.fillStyle = "#0f172a"; ctx.fill();
@@ -303,6 +341,8 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
   };
   const hit = (wx: number, wy: number): string | null => {
     let best: string | null = null, bestD = Infinity;
+    const upP = upPosRef.current, up = upRef.current;
+    if (up && upP && Math.hypot(upP.x - wx, upP.y - wy) < RADIUS[up.kind] * 0.8 + 4 / camRef.current.scale) return "__up__";
     for (const n of visibleRef.current) {
       const p = posRef.current.get(n.id);
       if (!p) continue;
@@ -325,17 +365,28 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
     camRef.current.x = d.cx + (e.clientX - d.sx);
     camRef.current.y = d.cy + (e.clientY - d.sy);
   };
+  const lastClick = useRef<{ id: string | null; at: number }>({ id: null, at: 0 });
   const onPointerUp = (e: React.PointerEvent) => {
     const d = drag.current;
     drag.current = { on: false, sx: 0, sy: 0, cx: 0, cy: 0, moved: false };
     if (d.moved) return;
     const { x, y } = toWorld(e);
     const id = hit(x, y);
+    if (id === "__up__") { onUp(); return; }
+    const now = performance.now();
+    const dbl = id && lastClick.current.id === id && now - lastClick.current.at < 350;
+    lastClick.current = { id, at: now };
+    if (!id) { onSelect(null); return; }
+    const n = byId.get(id);
+    if (!n) return;
+    if (isContainer(n.kind)) { onDrill(id); return; }
+    if (dbl) { onOpen(id); return; }
     onSelect(id);
-    if (id) { const n = byId.get(id); if (n && isContainer(n.kind)) onToggle(id); }
+    const p = targetRef.current.get(id);
+    if (p) { const scale = Math.max(camRef.current.scale, 1.5); camTarget.current = { scale, x: -p.x * scale, y: -p.y * scale }; }
   };
 
-  const hoverNode = hoverId ? byId.get(hoverId) : null;
+  const hoverNode = hoverId === "__up__" ? upNode : hoverId ? byId.get(hoverId) : null;
 
   return (
     <div className={`relative w-full h-full ${className}`}>
@@ -351,7 +402,9 @@ const FileGraph = React.forwardRef<FileGraphHandle, Props>(function FileGraph(
       {hoverNode && (
         <div className="pointer-events-none absolute top-3 right-3 max-w-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]/95 px-2.5 py-1.5 text-xs shadow-sm">
           <div className="font-bold truncate">{hoverNode.label}</div>
-          <div className="text-[var(--color-text-muted)]">{hoverNode.type.label}{isContainer(hoverNode.kind) ? ` · ${hoverNode.childCount} inside · click to ${expanded.has(hoverNode.id) ? "close" : "open"}` : ""}</div>
+          <div className="text-[var(--color-text-muted)]">
+            {hoverId === "__up__" ? "Click to go back up" : isContainer(hoverNode.kind) ? `${hoverNode.type.label} · ${hoverNode.childCount} inside · click to explore` : `${hoverNode.type.label} · click for details · double-click to open`}
+          </div>
         </div>
       )}
     </div>

@@ -16,7 +16,7 @@ import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } fr
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
-  Search, X, Loader2, Waypoints, FolderOpen, HardDrive, Sparkles, Plus, Trash2,
+  Search, X, Loader2, Waypoints, HardDrive, Sparkles, Plus, Trash2,
   ExternalLink, ChevronRight, Info, AlertTriangle, Tag, Minus, Maximize2,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
@@ -54,6 +54,8 @@ const CHIP_STYLE: Record<QueryChip["kind"], string> = {
 
 const LIT_CAP = 150;
 const AUTO_EXPAND_TOP = 25;
+/** How many nodes a drilled-in view fans out before deeper folders close. */
+const AUTO_NODES = 90;
 
 function GraphPageInner() {
   const { activeOrgId, activeRole, hasAnyRole, uid, userEmail } = useRole();
@@ -68,7 +70,8 @@ function GraphPageInner() {
 
   const [query, setQuery] = useState(params.get("q") ?? "");
   const [parsed, setParsed] = useState<ParsedQuery | null>(null);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  /** The container the view is rooted at; null = the whole estate. */
+  const [focusId, setFocusId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [panel, setPanel] = useState<"search" | "drives" | "aliases">("search");
   const graphRef = useRef<FileGraphHandle | null>(null);
@@ -83,7 +86,6 @@ function GraphPageInner() {
         listFinderListings(activeOrgId),
       ]);
       setData(d); setAliases(a); setListings(l);
-      setExpanded((prev) => (prev.size ? prev : new Set(d.libraries.map((x) => `lib:${x.id}`))));
     } catch (e) { setError((e as Error).message); }
     finally { setLoading(false); }
   }, [activeOrgId, activeRole, controller]);
@@ -151,17 +153,6 @@ function GraphPageInner() {
     setParsed(parseQuery(trimmed, { units: data?.units ?? [], aliases }));
   }, [data, aliases]);
 
-  const hits = useMemo<RankedHit[]>(() => {
-    if (!parsed || !parsed.chips.length) return [];
-    return rankEntries(entries, parsed, { units: data?.units ?? [], sameBytes: sameBytesByHash });
-  }, [parsed, entries, data, sameBytesByHash]);
-
-  const lit = useMemo(() => {
-    const m = new Map<string, FileGraphLight>();
-    for (const h of hits.slice(0, LIT_CAP)) m.set(h.entry.id, { verdict: h.verdict, score: h.score });
-    return m;
-  }, [hits]);
-
   const ancestorsOf = useCallback((id: string) => {
     const out: string[] = [];
     let p = nodeById.get(id)?.parentId ?? null;
@@ -170,18 +161,70 @@ function GraphPageInner() {
     return out;
   }, [nodeById]);
 
-  // When results change, open the folders the best ones live in.
-  const lastAuto = useRef<string>("");
-  useEffect(() => {
-    const key = hits.slice(0, AUTO_EXPAND_TOP).map((h) => h.entry.id).join("|");
-    if (!key || key === lastAuto.current) return;
-    lastAuto.current = key;
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      for (const h of hits.slice(0, AUTO_EXPAND_TOP)) for (const a of ancestorsOf(h.entry.id)) next.add(a);
-      return next;
-    });
-  }, [hits, ancestorsOf]);
+  const allHits = useMemo<RankedHit[]>(() => {
+    if (!parsed || !parsed.chips.length) return [];
+    return rankEntries(entries, parsed, { units: data?.units ?? [], sameBytes: sameBytesByHash });
+  }, [parsed, entries, data, sameBytesByHash]);
+
+  // Exploring a folder narrows the results to what is inside it.
+  const hits = useMemo(() => (focusId ? allHits.filter((h) => ancestorsOf(h.entry.id).includes(focusId)) : allHits), [allHits, focusId, ancestorsOf]);
+  const hiddenHits = allHits.length - hits.length;
+
+  const lit = useMemo(() => {
+    const m = new Map<string, FileGraphLight>();
+    for (const h of hits.slice(0, LIT_CAP)) m.set(h.entry.id, { verdict: h.verdict, score: h.score });
+    return m;
+  }, [hits]);
+
+  // ── What is in view ───────────────────────────────────────────────────
+  // Rooted at the focus (or at the libraries and drives), the subtree fans
+  // out level by level until the view would get crowded; folders past that
+  // point are shown closed with a count, and a click explores them. The
+  // folders on the way to the best search hits are always opened.
+  const childrenOf = useMemo(() => {
+    const m = new Map<string, FileGraphNode[]>();
+    for (const n of nodes) if (n.parentId) { const arr = m.get(n.parentId) ?? []; arr.push(n); m.set(n.parentId, arr); }
+    return m;
+  }, [nodes]);
+  const { visible, collapsed, upNode } = useMemo(() => {
+    const vis = new Map<string, FileGraphNode>();
+    const roots = focusId && nodeById.has(focusId) ? [nodeById.get(focusId)!] : nodes.filter((n) => !n.parentId);
+    for (const r of roots) vis.set(r.id, r);
+    if (focusId) {
+      let frontier = roots, count = roots.length, first = true;
+      while (frontier.length) {
+        const kids = frontier.flatMap((n) => childrenOf.get(n.id) ?? []);
+        if (!kids.length) break;
+        if (!first && count + kids.length > AUTO_NODES) break;
+        for (const k of kids) vis.set(k.id, k);
+        count += kids.length; first = false;
+        frontier = kids.filter((k) => k.kind !== "file" && k.kind !== "extfile");
+      }
+    }
+    // The way to the best hits is always open, inside the focus or across the estate.
+    for (const h of hits.slice(0, AUTO_EXPAND_TOP)) {
+      const chain = ancestorsOf(h.entry.id);
+      const cut = focusId ? chain.indexOf(focusId) : chain.length;
+      if (focusId && cut < 0) continue;
+      for (const id of chain.slice(0, cut)) { const n = nodeById.get(id); if (n) vis.set(id, n); }
+      const n = nodeById.get(h.entry.id); if (n) vis.set(n.id, n);
+    }
+    const collapsed = new Set<string>();
+    for (const n of vis.values()) {
+      if (n.kind === "file" || n.kind === "extfile") continue;
+      const kids = childrenOf.get(n.id) ?? [];
+      if (kids.some((k) => !vis.has(k.id))) collapsed.add(n.id);
+    }
+    const focusNode = focusId ? nodeById.get(focusId) : null;
+    const upNode = focusNode ? (focusNode.parentId ? nodeById.get(focusNode.parentId) ?? null : { id: "__all__", kind: "library" as const, label: "Whole estate", parentId: null, childCount: 0, type: { ...CONTAINER_TYPES.library, color: "#475569" } }) : null;
+    return { visible: [...vis.values()], collapsed, upNode };
+  }, [nodes, nodeById, childrenOf, focusId, hits, ancestorsOf]);
+
+  const crumbs = useMemo(() => {
+    if (!focusId) return [];
+    const chain = [focusId, ...ancestorsOf(focusId)].reverse();
+    return chain.map((id) => nodeById.get(id)).filter((n): n is FileGraphNode => !!n);
+  }, [focusId, ancestorsOf, nodeById]);
 
   // ?q= runs once data is in.
   const ranInitial = useRef(false);
@@ -203,14 +246,33 @@ function GraphPageInner() {
     const usedAliasIds = new Set(parsed.chips.filter((c) => c.via === "alias" && c.aliasId).map((c) => c.aliasId!));
     for (const id of usedAliasIds) void bumpFinderAlias(activeOrgId, id, "hit");
   };
+  const drill = useCallback((id: string | null) => { setFocusId(id); setSelectedId(null); }, []);
+  const up = useCallback(() => {
+    const cur = focusId ? nodeById.get(focusId) : null;
+    drill(cur?.parentId ?? null);
+  }, [focusId, nodeById, drill]);
+  /** Show a file: explore its folder, select it, fly to it. */
   const reveal = (id: string) => {
+    const n = nodeById.get(id);
+    if (n?.parentId && n.parentId !== focusId) setFocusId(n.parentId);
     setSelectedId(id);
-    setExpanded((prev) => { const n = new Set(prev); for (const a of ancestorsOf(id)) n.add(a); return n; });
-    // Let the layout settle on the new expansion before the camera moves.
-    window.setTimeout(() => graphRef.current?.focus(id), 60);
+    window.setTimeout(() => graphRef.current?.focus(id), 80);
   };
-  const toggle = (id: string) => setExpanded((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
-  const collapseAll = () => setExpanded(new Set(data?.libraries.map((l) => `lib:${l.id}`) ?? []));
+  const openEntry = (id: string) => {
+    const e = entryById.get(id);
+    if (e?.href) { onOpenHit(); window.location.assign(e.href); }
+  };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" && e.key !== "Backspace") return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
+      if (selectedId) { setSelectedId(null); return; }
+      if (focusId) { e.preventDefault(); up(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedId, focusId, up]);
 
   const selectedEntry = selectedId ? entryById.get(selectedId) : undefined;
   const selectedHit = selectedId ? hits.find((h) => h.entry.id === selectedId) : undefined;
@@ -296,7 +358,7 @@ function GraphPageInner() {
 
             {panel === "drives" && (
               <DrivesPanel orgId={activeOrgId} controller={controller} listings={listings} uid={uid} userEmail={userEmail}
-                onChange={setListings} onReveal={(id) => { setExpanded((p) => new Set(p).add(id)); setSelectedId(id); }} />
+                onChange={setListings} onReveal={(id) => drill(id)} />
             )}
             {panel === "aliases" && (
               <AliasesPanel orgId={activeOrgId} controller={controller} aliases={aliases} uid={uid} userEmail={userEmail} units={data?.units ?? []} onChange={setAliases} />
@@ -311,17 +373,35 @@ function GraphPageInner() {
               <span className="inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Reading the estate…</span>
             </div>
           ) : (
-            <FileGraph ref={graphRef} nodes={nodes} expanded={expanded} sameBytes={sameBytesById} lit={lit} selectedId={selectedId} onSelect={setSelectedId} onToggle={toggle} />
+            <FileGraph ref={graphRef} visible={visible} collapsed={collapsed} upNode={upNode} sameBytes={sameBytesById} lit={lit} selectedId={selectedId} onSelect={setSelectedId} onDrill={drill} onUp={up} onOpen={openEntry} />
           )}
-          <div className="absolute top-3 left-3 flex items-center gap-2 text-[11px]">
-            <span className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-2">
-              <Waypoints className="w-3.5 h-3.5" />
-              {data ? `${data.libraries.length} libraries · ${data.folders.size} folders · ${data.entries.length} files` : "…"}
-              {listingEntries.length > 0 && ` · ${listingEntries.length} on drives`}
-            </span>
-            <button onClick={() => graphRef.current?.fit()} className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1"><Maximize2 className="w-3 h-3" /> Fit</button>
-            <button onClick={collapseAll} className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1"><Minus className="w-3 h-3" /> Collapse</button>
-            <button onClick={() => { setExpanded(new Set(nodes.filter((n) => n.kind !== "file" && n.kind !== "extfile").map((n) => n.id))); window.setTimeout(() => graphRef.current?.fit(), 80); }} className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1"><FolderOpen className="w-3 h-3" /> Expand all</button>
+          <div className="absolute top-3 left-3 right-3 flex items-start justify-between gap-2 text-[11px] pointer-events-none">
+            <div className="flex flex-wrap items-center gap-1 pointer-events-auto">
+              <button onClick={() => drill(null)} className={`rounded-md border px-2 py-1 inline-flex items-center gap-1 font-semibold ${focusId ? "bg-[var(--color-surface)]/90 border-[var(--color-border)]" : "bg-[var(--color-accent)] text-[var(--color-accent-fg)] border-transparent"}`}>
+                <Waypoints className="w-3.5 h-3.5" /> Whole estate
+              </button>
+              {crumbs.map((c, i) => (
+                <React.Fragment key={c.id}>
+                  <ChevronRight className="w-3 h-3 opacity-50" />
+                  <button onClick={() => drill(c.id)} className={`rounded-md border px-2 py-1 inline-flex items-center gap-1 font-semibold max-w-[220px] bg-[var(--color-surface)]/95 ${i === crumbs.length - 1 ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent-ring)]" : "border-[var(--color-border)]"}`}>
+                    <FileTypeIcon type={c.type} className="w-3.5 h-3.5" /> <span className="truncate">{c.label}</span>
+                  </button>
+                </React.Fragment>
+              ))}
+              {focusId && (
+                <span className="ml-1 text-[var(--color-text-muted)]">
+                  {(childrenOf.get(focusId) ?? []).filter((n) => n.kind === "file" || n.kind === "extfile").length} files · {(childrenOf.get(focusId) ?? []).filter((n) => n.kind !== "file" && n.kind !== "extfile").length} folders inside
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-1 pointer-events-auto">
+              {focusId && <button onClick={up} className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1"><Minus className="w-3 h-3" /> Up</button>}
+              <button onClick={() => graphRef.current?.fit()} className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1"><Maximize2 className="w-3 h-3" /> Fit</button>
+              <span className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1">
+                {data ? `${data.libraries.length} libraries · ${data.folders.size} folders · ${data.entries.length} files` : "…"}
+                {listingEntries.length > 0 && ` · ${listingEntries.length} on drives`}
+              </span>
+            </div>
           </div>
           <div className="absolute bottom-3 left-3 flex flex-wrap gap-1.5 text-[11px]">
             {[CONTAINER_TYPES.library, CONTAINER_TYPES.folder, CONTAINER_TYPES.drive, fileTypeOf("x.pdf"), fileTypeOf("x.dwg"), fileTypeOf("x.xlsx"), fileTypeOf("x.docx"), fileTypeOf("x.xml"), fileTypeOf("x.png")].map((t) => (
@@ -332,7 +412,7 @@ function GraphPageInner() {
             ))}
             <span className="inline-flex items-center gap-1 rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-1.5 py-0.5"><span className="w-4 border-t-2 border-dashed border-red-600" /> Same bytes</span>
           </div>
-          <div className="absolute bottom-3 right-3 text-[11px] text-[var(--color-text-muted)]">Click a folder to open it · drag to pan · scroll to zoom</div>
+          <div className="absolute bottom-3 right-3 text-[11px] text-[var(--color-text-muted)]">Click a folder to explore it · click a file for details · double-click to open · Esc goes up</div>
         </main>
 
         {/* ── Right: results / selection ──────────────────────────────── */}
@@ -341,24 +421,23 @@ function GraphPageInner() {
             <SelectedCard entry={selectedEntry} hit={selectedHit} sameBytes={(sameBytesById.get(selectedEntry.id) ?? []).map((id) => entryById.get(id)).filter((x): x is IndexEntry => !!x)}
               onClose={() => setSelectedId(null)} onReveal={reveal} onOpen={onOpenHit} />
           )}
-          {!selectedEntry && selectedId && nodeById.get(selectedId) && (
-            <div className="p-3 border-b border-[var(--color-border)] text-sm">
-              <div className="font-bold flex items-center gap-1.5"><FolderOpen className="w-4 h-4 text-amber-500" /> {nodeById.get(selectedId)!.label}</div>
-              <div className="text-xs text-[var(--color-text-muted)] mt-1">{nodeById.get(selectedId)!.childCount} items inside. Click again to {expanded.has(selectedId) ? "close" : "open"}.</div>
-            </div>
-          )}
           <div className="p-3">
             {parsed ? (
               <>
                 <div className="flex items-center justify-between mb-2">
                   <div className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">
-                    {hits.length} candidate{hits.length === 1 ? "" : "s"}
+                    {hits.length} candidate{hits.length === 1 ? "" : "s"}{focusId ? " here" : ""}
                   </div>
                   <div className="text-[11px] text-[var(--color-text-muted)]">
                     {hits.filter((h) => h.verdict === "strong").length} strong · {hits.filter((h) => h.verdict === "possible").length} possible
                   </div>
                 </div>
-                {hits.length === 0 && (
+                {hiddenHits > 0 && (
+                  <button onClick={() => drill(null)} className="mb-2 w-full text-left rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-800">
+                    {hiddenHits} more candidate{hiddenHits === 1 ? "" : "s"} outside {crumbs[crumbs.length - 1]?.label ?? "this folder"} — show the whole estate
+                  </button>
+                )}
+                {hits.length === 0 && hiddenHits === 0 && (
                   <div className="text-sm text-[var(--color-text-muted)]">
                     Nothing in the system or on any pasted drive listing matched. Try fewer words, or teach an alias if people call this something else.
                   </div>
@@ -374,7 +453,7 @@ function GraphPageInner() {
               <div className="text-sm text-[var(--color-text-muted)] space-y-2">
                 <div className="font-bold text-[var(--color-text)]">Nothing searched yet</div>
                 <div>Type what you would ask a colleague. Tags in any spelling, the words on the drawing, the unit as people call it, the year.</div>
-                <div>Click libraries and folders on the map to walk the estate without searching.</div>
+                <div>Or just explore: click a library or folder on the map and it becomes the whole view. Esc climbs back out.</div>
               </div>
             )}
           </div>
