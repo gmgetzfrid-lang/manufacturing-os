@@ -132,7 +132,8 @@ export interface RoutingTicketContext {
  *  are notified. Uids, deduped. */
 export function queuePool(ctx: Pick<RoutingContext, "members" | "routing">): string[] {
   // ADD-1: a role pool is everyone HOLDING the role, not everyone whose headline it is.
-  const byRole = (r: Role) => ctx.members.filter((m) => m.roles.includes(r));
+  const members = ctx.members;
+  const byRole = (r: Role) => members.filter((m) => m.roles.includes(r));
   const admins = byRole("Admin");
   const supervisors = byRole("DraftingSupervisor");
   const pool = supervisors.length === 0 ? admins : ctx.routing.adminsAlsoReceiveWhenSupervisorSet ? [...supervisors, ...admins] : supervisors;
