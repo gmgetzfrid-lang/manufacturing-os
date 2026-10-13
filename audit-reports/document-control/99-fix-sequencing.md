@@ -827,8 +827,8 @@ nothing in §1):
    asks `document_status_issue_recorded_by_database()` after each
    status-change issue and, while that function is missing (PGRST202 /
    42883), answers false or cannot be asked, writes `DOCUMENT_ISSUED`
-   itself — today's path. Its doors also send the `x-mos-issue-door` header,
-   which a database before the paste ignores.
+   itself — today's path — and sends no custom header (the probe is asked
+   before each write; review fix pass).
 2. **Then paste `20261205`.** It needs `20261144` (`is_controlled_issue_status`,
    the retirement stamp) and `20261037` (`doc_is_visible`, the policy): its
    first statement refuses to run, changing nothing, without them. It
@@ -837,9 +837,19 @@ nothing in §1):
    newest guard reads; pasted before or after them it records exactly what
    the guard in place admitted). After it, the database writes the one
    `DOCUMENT_ISSUED` per status-change issue (an app door's row names the
-   door; a direct write's says `direct` and that no clock was started), and
-   a member's `document_versions` insert is judged by the policy's own
-   limbs instead of failing with 42P17.
+   door — a rollback's put-back its rollback door; a direct write's says
+   `direct`; every row says what the issue owes, never that a clock
+   started, and the door's `COMPLIANCE_CLOCKS_STARTED` /
+   `COMPLIANCE_CLOCKS_NOT_STARTED` row follows), and a member's
+   `document_versions` insert is judged by the policy's own limbs instead
+   of failing with 42P17.
+3. **Right after the paste (precondition for keeping it):** the doors now
+   send the custom `x-mos-issue-door` request header, which the hosted
+   API's CORS preflight must admit. Issue one document from the metadata
+   editor: it must save. If it fails with a network error ("Failed to
+   fetch") and nothing is written, run the reversal
+   (`DROP TRIGGER trg_document_status_issue_record ON documents;`) — the
+   doors then send no header and write their own record, as before.
 - **What goes wrong if the order is reversed:** pasted before the P23
   deploy, today's app and the trigger each write a row for an app door's
   issue — two rows, never none — until the deploy lands. Nothing is

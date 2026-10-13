@@ -24,21 +24,34 @@
 --     same transaction as the write (if the record cannot be written, the
 --     write does not land). The record keeps the app doors' shape:
 --     `door` (the app's door, named by the request header the app sends —
---     x-mos-issue-door: metadata | bulk | unarchive; 'direct' otherwise),
---     the statuses, the revision, `putBack` (three-state, P14's rule),
---     `entryIntoForce` (P25's), the policy decision (`reviewPolicyMode`,
---     `rosterComplete`, `issuedWithoutSignOff` — read here, the roster
---     counted exactly as the guard counts it), and the clock fields with
---     the app's own sentences; plus `recordedBy: 'database'` and the
---     request path. The app (deployed first) asks
---     document_status_issue_recorded_by_database() after its write and,
---     when it answers true, writes no DOCUMENT_ISSUED of its own — it still
---     starts the compliance clocks, and a clock that did not start is
---     recorded as a follow-up COMPLIANCE_CLOCKS_NOT_STARTED row (REV-15's
---     precedent). A direct write starts no clock (no app is there): its
---     record says so ("Document Control starts them from the document").
---     The service role (auth.uid() NULL: the backend, a restore, the SQL
---     console) is not recorded, as the guard does not judge it.
+--     x-mos-issue-door: metadata | bulk | unarchive, or a rollback's
+--     put-back: supersede_rollback | lifecycle_rollback | reversal_rollback;
+--     the legacy reversal's restore by its request path, reversal_restore;
+--     'direct' otherwise), the statuses, the revision, `putBack`
+--     (three-state, P14's rule), `entryIntoForce` (P25's), the policy
+--     decision (`reviewPolicyMode`, `rosterComplete`,
+--     `issuedWithoutSignOff` — read here, the roster counted exactly as the
+--     guard counts it), the actor's headline role (`user_role`, as the
+--     doors wrote it) and role collection (`actorRoles`); plus
+--     `recordedBy: 'database'` and the request path. The clock fields
+--     (P23 fix pass) record what the issue OWES (`complianceClocksOwed`
+--     and the sentence for its put-back state —
+--     STATUS_ISSUE_CLOCKS_OWED_NOTE), never that a clock started: the row
+--     is written with the status change, before any door could start one,
+--     and the header (the caller's claim) decides none of them —
+--     `complianceClocksStarted` / `reviewClockReset` /
+--     `acknowledgmentRosterOpened` are NULL here. A put-back owes nothing
+--     and is never told to restart a clock, whichever door made it. The
+--     app (deployed first) asks document_status_issue_recorded_by_database()
+--     before its write (and names its door only when it answers true) and
+--     then writes no DOCUMENT_ISSUED of its own — it still starts the
+--     compliance clocks, and records the outcome on a follow-up row:
+--     COMPLIANCE_CLOCKS_STARTED, or COMPLIANCE_CLOCKS_NOT_STARTED with what
+--     did not start (REV-15's precedent). With neither row, nothing was
+--     started (a direct write, or a door that stopped after its write):
+--     Document Control starts what is owed from the document. The service
+--     role (auth.uid() NULL: the backend, a restore, the SQL console) is
+--     not recorded, as the guard does not judge it.
 --
 -- §2  SEC-23  20261037's document_versions_insert_integrity (AS RESTRICTIVE
 --     FOR INSERT) tests "the document's FIRST version" with a sublink on
@@ -77,8 +90,17 @@
 -- HOW TO APPLY — DEPLOY ORDER: deploy the app carrying P23 FIRST, then
 -- paste this file. That app asks document_status_issue_recorded_by_database()
 -- and, while it is missing (PGRST202 / 42883) or answers false, writes
--- DOCUMENT_ISSUED itself — exactly today's path, so the app works before
--- this paste. Pasted BEFORE that deploy, today's app and this trigger would
+-- DOCUMENT_ISSUED itself and sends no custom header — exactly today's path,
+-- so the app works before this paste. AFTER THE PASTE (a precondition for
+-- keeping it): its doors' status writes carry the x-mos-issue-door request
+-- header, which the hosted API must admit in its CORS preflight (it admits
+-- supabase-js's own x-client-info the same way). Right after the paste,
+-- issue one document from the metadata editor (Draft -> Issued) on staging
+-- or in the workspace: it must save. If it fails with a network error
+-- ("Failed to fetch") and nothing is written, the API refuses the header:
+-- run the reversal (DROP TRIGGER trg_document_status_issue_record ON
+-- documents;) — the probe then answers false, the doors send no header and
+-- write their own record again, as before this paste. Pasted BEFORE that deploy, today's app and this trigger would
 -- each write a row for an app door's issue (two rows, never none) until the
 -- deploy lands. It re-creates no guard and no other function; it needs
 -- 20261144 (is_controlled_issue_status and the retirement stamp, which §1
@@ -92,7 +114,9 @@
 -- a member's version insert fails with 42P17 wherever the live policy
 -- matches the repository. After — one DOCUMENT_ISSUED per status-change
 -- issue, written here (an app door's record names its door and carries its
--- shape; a clock that did not start follows as COMPLIANCE_CLOCKS_NOT_STARTED);
+-- shape and what the issue owes; what the door started follows as
+-- COMPLIANCE_CLOCKS_STARTED, what did not as COMPLIANCE_CLOCKS_NOT_STARTED;
+-- a rollback's put-back names its rollback door and owes nothing);
 -- a member's version insert is judged by the policy's own limbs.
 --
 -- Single paste: prerequisite check → temp-table inventory →
@@ -153,7 +177,7 @@ BEGIN;
 -- the same transaction as the write. The predicates are the guard's
 -- (is_controlled_issue_status; 20261185's REV-21 limb) and the app's
 -- (lib/revisions.ts isEntryIntoForce, putBackFromRetirementStamp,
--- STATUS_ISSUE_CLOCKS_NOTE — pinned to this body by test).
+-- STATUS_ISSUE_CLOCKS_OWED_NOTE — pinned to this body by test).
 CREATE OR REPLACE FUNCTION record_document_status_issue()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
@@ -171,10 +195,12 @@ DECLARE
   v_reqs     integer;
   v_signed   integer;
   v_roster   boolean;
-  v_clock    boolean;
+  v_owes_review boolean;
+  v_owes_roster boolean;
   v_note     text;
   v_email    text;
   v_role     text;
+  v_roles    text[];
 BEGIN
   -- The service role is trusted and not judged by the guard; it is not
   -- recorded here either (a restore replays documents as they were).
@@ -230,19 +256,26 @@ BEGIN
   END IF;
 
   -- The app's door, named by the request header the app sends with its
-  -- write (PostgREST's request.headers). Any other write is 'direct'. The
-  -- name is the caller's claim, as the app's own record always was; the
-  -- actor is the session's.
+  -- write (PostgREST's request.headers): a status editor, the un-archive
+  -- (out of Archived), or a rollback's put-back (put_back_retired_issue's
+  -- p_via, out of a retirement); the legacy reversal's restore is named by
+  -- its request path (restore_reversed_source — PostgREST sets it from the
+  -- function that ran). Any other write is 'direct'. The name is the
+  -- caller's claim, as the app's own record always was — it labels the row
+  -- and decides nothing else on it: the clock fields below never read it.
+  -- The actor is the session's.
   BEGIN
     v_header := lower(btrim(NULLIF(current_setting('request.headers', true), '')::jsonb ->> 'x-mos-issue-door'));
   EXCEPTION WHEN others THEN
     v_header := NULL;
   END;
+  v_path := NULLIF(current_setting('request.path', true), '');
   v_door := CASE WHEN v_header IN ('metadata', 'bulk') THEN v_header
                  WHEN v_header = 'unarchive' AND v_from = 'Archived' THEN v_header
+                 WHEN v_header IN ('supersede_rollback', 'lifecycle_rollback', 'reversal_rollback') AND v_retired THEN v_header
+                 WHEN v_path = '/rpc/restore_reversed_source' AND v_retired THEN 'reversal_restore'
                  ELSE 'direct' END;
-  v_app_door := v_door <> 'direct';
-  v_path := NULLIF(current_setting('request.path', true), '');
+  v_app_door := v_door IN ('metadata', 'bulk', 'unarchive');
 
   -- The policy decision (DEC-63 §2), read as the app reads it and the roster
   -- counted as the guard counts it.
@@ -272,21 +305,27 @@ BEGIN
     ) g;
   v_roster := COALESCE(v_reqs, 0) > 0 AND COALESCE(v_signed, 0) >= v_reqs;
 
-  -- The compliance clocks: an app door starts them after its write (its
-  -- sentence, lib/revisions.ts STATUS_ISSUE_CLOCKS_NOTE); a direct write
-  -- starts none.
-  v_clock := v_app_door AND v_put_back IS NOT DISTINCT FROM false AND NOT v_entry;
+  -- The compliance clocks (P23 fix pass): this row is written in the status
+  -- change's own transaction, before any door could start a clock, and
+  -- whatever header the write carried — so it records what the issue OWES
+  -- (lib/revisions.ts STATUS_ISSUE_CLOCKS_OWED_NOTE), never that a clock
+  -- started; an app door that starts them records the outcome on the row
+  -- that follows (COMPLIANCE_CLOCKS_STARTED / COMPLIANCE_CLOCKS_NOT_STARTED).
+  -- A put-back owes nothing, whichever door (or none) made it.
+  v_owes_review := v_put_back IS NOT DISTINCT FROM false AND NOT v_entry;
+  v_owes_roster := v_put_back IS DISTINCT FROM true;
   v_note := CASE
-    WHEN NOT v_app_door THEN 'a status change made outside the app''s doors (a direct database write): no compliance clock was started — the review clock and the acknowledgment roster were NOT started (no app door was there to start them); Document Control starts them from the document'
-    WHEN v_put_back IS NOT DISTINCT FROM true THEN 'the put-back of the issue its retirement took away (the retirement stamp names this revision): the review clock and the acknowledgment roster it had keep running, not restarted'
-    WHEN v_entry THEN 'a first entry into force out of a status no gate reads as in force (IFC, an empty status, a variant, a library''s own, or no status — directly, or out of a retirement stamped with it): nothing in force was taken away, so it is no put-back, and nothing records that this revision was reviewed now, so the review clock was NOT reset (a reset would mark the document reviewed today and could hide a review already due); the acknowledgment roster was opened for this revision (DEC-77, REV-26)'
-    WHEN v_put_back IS NOT DISTINCT FROM false THEN 'a new issue: the review clock and the acknowledgment roster were started'
-    ELSE 'no evidence whether this puts back the issue its retirement took away (the retirement carries no stamp — retired before 20261144 or by the service role — names another revision, or could not be read): the review clock was NOT reset (a reset would mark the document reviewed today and could hide a review already due); only the acknowledgment roster was opened for this revision'
+    WHEN v_put_back IS NOT DISTINCT FROM true THEN 'the put-back of the issue its retirement took away (the retirement stamp names this revision): nothing is owed — the review clock and the acknowledgment roster it had keep running and are not to be restarted (a restart would mark the document reviewed today and could hide a review already due)'
+    WHEN v_entry THEN 'a first entry into force out of a status no gate reads as in force (IFC, an empty status, a variant, a library''s own, or no status — directly, or out of a retirement stamped with it): it owes the acknowledgment roster for this revision only — the review clock is not to be reset (nothing records that this revision was reviewed now; a reset would mark the document reviewed today and could hide a review already due). This record was written with the status change, before any clock could start: an app door that starts them records the outcome on the row that follows (COMPLIANCE_CLOCKS_STARTED, or COMPLIANCE_CLOCKS_NOT_STARTED for what did not start); with neither row, nothing was started — Document Control then opens the roster from the document and leaves the review clock as it is'
+    WHEN v_put_back IS NOT DISTINCT FROM false THEN 'a new issue: it owes the review clock and the acknowledgment roster for this revision. This record was written with the status change, before any clock could start: an app door that starts them records the outcome on the row that follows (COMPLIANCE_CLOCKS_STARTED, or COMPLIANCE_CLOCKS_NOT_STARTED for what did not start); with neither row, nothing was started — Document Control then starts both from the document'
+    ELSE 'no evidence whether this puts back the issue its retirement took away (the retirement carries no stamp — retired before 20261144 or by the service role — or names another revision): it owes the acknowledgment roster for this revision only — the review clock is not to be reset (a reset would mark the document reviewed today and could hide a review already due). This record was written with the status change, before any clock could start: an app door that starts them records the outcome on the row that follows (COMPLIANCE_CLOCKS_STARTED, or COMPLIANCE_CLOCKS_NOT_STARTED for what did not start); with neither row, nothing was started — Document Control then opens the roster from the document and leaves the review clock as it is'
   END;
 
-  -- The writer's ROLE COLLECTION (DEC-2 / ADD-1), never the headline alone,
-  -- as 20261072's database-written audit rows record it.
-  SELECT m.email, array_to_string(COALESCE(NULLIF(m.roles, '{}'), ARRAY[m.role]), ',') INTO v_email, v_role
+  -- The writer's headline role in user_role, as the app's doors wrote it
+  -- (the audit viewer's role filter and the audit identity rail compare it
+  -- with one held role); the ROLE COLLECTION (DEC-2 / ADD-1) beside it in
+  -- details.actorRoles.
+  SELECT m.email, m.role, COALESCE(NULLIF(m.roles, '{}'), ARRAY[m.role]) INTO v_email, v_role, v_roles
     FROM org_members m
    WHERE m.org_id = NEW.org_id AND m.uid = v_actor
    LIMIT 1;
@@ -306,17 +345,19 @@ BEGIN
             'reviewPolicyMode', v_mode,
             'rosterComplete', v_roster,
             'issuedWithoutSignOff', (v_mode = 'require' AND NOT v_roster),
-            'complianceClocksStarted', v_clock,
-            'reviewClockReset', v_clock,
-            'acknowledgmentRosterOpened', v_app_door AND v_put_back IS DISTINCT FROM true,
+            -- Unknown when this row is written (NULL, never true): the
+            -- outcome is the door's follow-up row.
+            'complianceClocksStarted', NULL::boolean,
+            'reviewClockReset', NULL::boolean,
+            'acknowledgmentRosterOpened', NULL::boolean,
+            'complianceClocksOwed', jsonb_build_object('reviewClock', v_owes_review, 'acknowledgmentRoster', v_owes_roster),
             'complianceClocksNote', v_note,
             'complianceClockErrors', NULL::jsonb,
-            -- Written before the door starts its clocks: the clock fields
-            -- above say what this issue owes; what did not start follows on
-            -- the door's COMPLIANCE_CLOCKS_NOT_STARTED row.
-            'complianceClocksBy', CASE WHEN v_app_door
-              THEN 'the ' || v_door || ' door, after this write (a step that did not start is recorded on a COMPLIANCE_CLOCKS_NOT_STARTED row that follows)'
-              ELSE 'none (no app door made this write)' END,
+            'complianceClocksBy', CASE
+              WHEN NOT v_owes_roster THEN 'none owed (a put-back: the clocks it had keep running)'
+              WHEN v_app_door THEN 'the ' || v_door || ' door named on this write, after it: its COMPLIANCE_CLOCKS_STARTED or COMPLIANCE_CLOCKS_NOT_STARTED row follows; with neither, nothing was started'
+              ELSE 'no app door that starts clocks made this write: nothing was started — Document Control starts what is owed from the document' END,
+            'actorRoles', to_jsonb(v_roles),
             'recordedBy', 'database',
             'requestPath', v_path
           ));
@@ -399,8 +440,8 @@ SELECT 'REV-19 (a): an AFTER UPDATE OF status trigger on documents records every
               FROM pg_proc WHERE proname = 'record_document_status_issue') AS ok,
        NULL::text AS n
 UNION ALL
-SELECT 'REV-19 (a): the record is DOCUMENT_ISSUED in the app doors'' shape — door (the x-mos-issue-door header, else direct), statuses, revision, putBack, entryIntoForce, the policy decision, the clock fields — recordedBy database',
-       (SELECT prosrc LIKE '%''x-mos-issue-door''%INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, user_email, user_role, details)%VALUES (''DOCUMENT_ISSUED''%''door'', v_door%''putBack'', v_put_back%''entryIntoForce'', true%''reviewPolicyMode'', v_mode%''rosterComplete'', v_roster%''issuedWithoutSignOff''%''complianceClocksNote'', v_note%''recordedBy'', ''database''%'
+SELECT 'REV-19 (a): the record is DOCUMENT_ISSUED in the app doors'' shape — door (the x-mos-issue-door header, a rollback''s door included, else direct), statuses, revision, putBack, entryIntoForce, the policy decision, what the clocks are owed (never that they started) — recordedBy database',
+       (SELECT prosrc LIKE '%''x-mos-issue-door''%''supersede_rollback'', ''lifecycle_rollback'', ''reversal_rollback''%INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, user_email, user_role, details)%VALUES (''DOCUMENT_ISSUED''%''door'', v_door%''putBack'', v_put_back%''entryIntoForce'', true%''reviewPolicyMode'', v_mode%''rosterComplete'', v_roster%''issuedWithoutSignOff''%''complianceClocksStarted'', NULL::boolean%''complianceClocksOwed''%''complianceClocksNote'', v_note%''actorRoles''%''recordedBy'', ''database''%'
           FROM pg_proc WHERE proname = 'record_document_status_issue'),
        NULL
 UNION ALL

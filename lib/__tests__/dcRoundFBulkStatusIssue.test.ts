@@ -35,6 +35,10 @@ const state = vi.hoisted(() => ({
   updatePayloads: [] as Array<{ id: unknown; payload: Record<string, unknown> }>,
   /** documents whose pre-write read (changeDocumentStatus's select("*")) fails */
   failRead: new Set<string>(),
+  /** P23 fix pass: document_status_issue_recorded_by_database() answers true (20261205 pasted) */
+  probeTrue: false,
+  /** audit actions whose insert the database refuses */
+  refuseActions: [] as string[],
 }));
 
 vi.mock("@/lib/supabase", () => ({
@@ -42,6 +46,11 @@ vi.mock("@/lib/supabase", () => ({
     const real = makeFakeSupabase(state.db);
     return {
       ...real,
+      // the fake has no rpc: the probe answers true only when a test says so, else as a database before 20261205
+      rpc: (fn: string) => {
+        if (fn !== "document_status_issue_recorded_by_database") throw new Error(`rpc ${fn} is not mocked in this test`);
+        return Promise.resolve(state.probeTrue ? { data: true, error: null } : { data: null, error: { code: "PGRST202", message: `Could not find the function public.${fn}` } });
+      },
       from: (t: string) => {
         const b = real.from(t) as unknown as Record<string, (...a: unknown[]) => unknown>;
         if (t !== "documents") return b;
@@ -144,6 +153,12 @@ beforeEach(() => {
   state.refuse = {};
   state.updatePayloads = [];
   state.failRead = new Set();
+  state.probeTrue = false;
+  state.refuseActions = [];
+  state.db.beforeInsert!.audit_logs = (row) => {
+    if (state.refuseActions.includes(String(row.action))) throw { code: "42501", message: "new row violates row-level security policy" };
+    return row;
+  };
   // the guard's part these tests need: its refusal, and the retirement stamp cleared on an exit (20261144)
   state.db.beforeUpdate!.documents = (next) => {
     const r = state.refuse[String(next.id)];
@@ -234,6 +249,21 @@ describe("REV-19 (P17) — the bulk editor's issuing rows start the clocks and a
     expect(items[0]).toContain("start its clocks from the document");
     expect(items[0]).not.toMatch(/already issued/);
     expect(host.querySelector('[data-testid="bulk-not-issued-rows"]')).toBeNull();
+  });
+
+  it("P23 fix pass: after 20261205, a read-failed row whose follow-up row (no clock started) the database refuses is named with that too — never a silent success", async () => {
+    state.probeTrue = true;
+    state.refuseActions = ["COMPLIANCE_CLOCKS_NOT_STARTED"];
+    const a = seedDoc("e5");
+    state.failRead.add("e5");
+    await applyStatus([asRecord(a)], "Issued");
+    expect(docRow("e5").status).toBe("Issued");
+    const box = host.querySelector('[data-testid="bulk-issue-follow-ups"]')!;
+    expect(box).not.toBeNull();
+    const text = box.textContent ?? "";
+    expect(text).toContain("The status was changed, but it was not recorded as an issue");
+    expect(text).toMatch(/The record that no clock was started could not be written \([^)]*row-level security[^)]*\), so the document's history does not say so\./);
+    expect(T("audit_logs").filter((r) => r.action === "COMPLIANCE_CLOCKS_NOT_STARTED")).toHaveLength(0);
   });
 
   it("P17 integrator fix: a row someone else ISSUED between page load and apply is named as already issued — nothing owed, never the 'start its clocks' advice (which would restart a review clock)", async () => {

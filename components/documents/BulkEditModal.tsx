@@ -218,6 +218,8 @@ export default function BulkEditModal({
           // unknown: said so, never guessed.
           if (!pageSawIssue && !outcome.issued) {
             unseen.push({ doc: label, note: "it was changed, but its state just before the change could not be read, so whether this change issued it is unknown: if another change after this page loaded had moved it out of issue (or given it its first revision), it is now issued and may carry no review clock or acknowledgment roster — check its history." });
+            // P23 fix pass: the follow-up row saying no clock was started could not be written.
+            if (outcome.recordError) followUps.push({ doc: label, problems: [`The record that no clock was started could not be written (${outcome.recordError}), so the document's history does not say so.`] });
             ok += 1;
             continue;
           }
@@ -254,7 +256,11 @@ export default function BulkEditModal({
             // REV-19 (a) (P23): since 20261205 the database records an issue
             // itself (it reads the row as it was), so "no issue record" is
             // said of this editor only.
-            : ["The status was changed, but it was not recorded as an issue — its status before the change could not be read, so no review clock or acknowledgment roster was started and this editor wrote no issue record (since database update 20261205 the database records the issue itself, if it was one). Check its history and start its clocks from the document."];
+            : [
+                "The status was changed, but it was not recorded as an issue — its status before the change could not be read, so no review clock or acknowledgment roster was started and this editor wrote no issue record (since database update 20261205 the database records the issue itself, if it was one). Check its history and start its clocks from the document.",
+                // P23 fix pass: the follow-up row saying so could not be written.
+                ...(outcome.recordError ? [`The record that no clock was started could not be written (${outcome.recordError}), so the document's history does not say so.`] : []),
+              ];
           if (problems.length > 0) followUps.push({ doc: label, problems });
           ok += 1;
           continue;

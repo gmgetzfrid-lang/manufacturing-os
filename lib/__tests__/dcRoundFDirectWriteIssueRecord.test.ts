@@ -8,10 +8,16 @@
 // The app's doors:
 //   - name their door on the write (the x-mos-issue-door request header —
 //     withIssueDoor), so the database's record carries it;
-//   - ask document_status_issue_recorded_by_database() after the write and,
-//     when it answers true, write no DOCUMENT_ISSUED of their own (exactly
-//     one row), still start the clocks, and record what did not start on a
-//     follow-up COMPLIANCE_CLOCKS_NOT_STARTED row;
+//   - ask document_status_issue_recorded_by_database() before the write
+//     (P23 fix pass: the header is sent only when it answers true — a
+//     database before 20261205 is sent no custom header) and, when it
+//     answers true, write no DOCUMENT_ISSUED of their own (exactly one row),
+//     still start the clocks, and record the outcome on a follow-up row —
+//     COMPLIANCE_CLOCKS_STARTED, or COMPLIANCE_CLOCKS_NOT_STARTED with what
+//     did not start (the database's row says what is owed, never that a
+//     clock started); a put-back owes nothing and writes no follow-up;
+//   - the rollbacks' put-backs name their door too (p_via), so a rollback is
+//     never recorded as a direct database write;
 //   - before 20261205 (the function missing: PGRST202), or when the probe
 //     answers false or fails, write the record exactly as before.
 //
@@ -33,7 +39,8 @@ const state = vi.hoisted(() => ({
   /** put_back_retired_issue: absent (PGRST202) or present (restores the row). */
   putBack: "absent" as "absent" | "present",
   rpcHeaders: [] as Array<{ fn: string; name: string; value: string }>,
-  refuseFollowUp: false,
+  /** audit actions whose insert the database refuses (a follow-up row). */
+  refuseActions: [] as string[],
 }));
 
 vi.mock("@/lib/supabase", () => ({
@@ -67,6 +74,7 @@ vi.mock("@/lib/supabase", () => ({
             // the function's own write, as the caller (the trigger sees its header)
             const old = { ...d };
             Object.assign(d, { status: args.p_status, archived_at: null, archived_by: null, archive_reason: null });
+            if (!RETIRED.includes(String(d.status))) { d.retired_issue_status = null; d.retired_issue_version_id = null; }
             emulateTrigger(d, old, state.rpcHeaders.filter((h) => h.fn === fn).at(-1)?.value ?? null);
             return { data: "restored", error: null };
           });
@@ -127,12 +135,15 @@ const T = (t: string) => (state.db.tables[t] ??= []);
 const docRow = (id: string) => T("documents").find((d) => d.id === id)!;
 const issuedRows = (id?: string) => T("audit_logs").filter((a) => a.action === "DOCUMENT_ISSUED" && (!id || a.resource_id === id));
 const followUps = (id?: string) => T("audit_logs").filter((a) => a.action === "COMPLIANCE_CLOCKS_NOT_STARTED" && (!id || a.resource_id === id));
+const startedRows = (id?: string) => T("audit_logs").filter((a) => a.action === "COMPLIANCE_CLOCKS_STARTED" && (!id || a.resource_id === id));
 const RETIRED = ["Superseded", "Archived", "Void"];
 
 /** 20261205's record_document_status_issue, transcribed: one DOCUMENT_ISSUED
  *  for a status-only issue (the guard's v_issuing, the pointer unmoved), the
- *  door from the header the write carried, else 'direct'. Only while the
- *  probe says the trigger is installed. */
+ *  door from the header the write carried (a rollback's door only out of a
+ *  retirement, the un-archive's only out of Archived), else 'direct'; the
+ *  clock fields what is owed, never started. Only while the probe says the
+ *  trigger is installed. */
 function emulateTrigger(next: Row, old: Row, header: string | null) {
   if (state.probe !== "true") return;
   if (!next.current_version_id || next.current_version_id !== old.current_version_id) return;
@@ -143,7 +154,11 @@ function emulateTrigger(next: Row, old: Row, header: string | null) {
   if (!issuing) return;
   T("audit_logs").push({
     id: `db-${++state.db.seq}`, action: "DOCUMENT_ISSUED", resource_id: next.id, resource_type: "document", org_id: next.org_id, user_id: ME,
-    details: { door: header && ["metadata", "bulk", "unarchive"].includes(header) ? header : "direct", fromStatus: from, toStatus: to, recordedBy: "database" },
+    details: {
+      door: header && (["metadata", "bulk"].includes(header) || (header === "unarchive" && from === "Archived")
+        || (["supersede_rollback", "lifecycle_rollback", "reversal_rollback"].includes(header) && RETIRED.includes(String(from)))) ? header : "direct",
+      fromStatus: from, toStatus: to, complianceClocksStarted: null, recordedBy: "database",
+    },
   });
 }
 /** The header the last documents write carried (the fake records setHeader calls). */
@@ -175,7 +190,7 @@ beforeEach(() => {
   state.failBasisRead = false;
   state.putBack = "absent";
   state.rpcHeaders = [];
-  state.refuseFollowUp = false;
+  state.refuseActions = [];
   state.db.beforeUpdate!.documents = (next, old) => {
     if (!RETIRED.includes(String(next.status))) { next.retired_issue_status = null; next.retired_issue_version_id = null; }
     // the database's record, in the write's own statement
@@ -183,7 +198,7 @@ beforeEach(() => {
     return next;
   };
   state.db.beforeInsert!.audit_logs = (row) => {
-    if (state.refuseFollowUp && row.action === "COMPLIANCE_CLOCKS_NOT_STARTED") throw { code: "42501", message: "new row violates row-level security policy" };
+    if (state.refuseActions.includes(String(row.action))) throw { code: "42501", message: "new row violates row-level security policy" };
     return row;
   };
 });
@@ -210,25 +225,30 @@ describe("REV-19 (a) (P23) — withIssueDoor names the door; the probe decides w
 });
 
 describe("REV-19 (a) (P23) — each app door leaves exactly one DOCUMENT_ISSUED", () => {
-  it("BEFORE 20261205 (the probe's function missing): changeDocumentStatus writes the record itself, exactly as before — and the write carries its door", async () => {
+  it("BEFORE 20261205 (the probe's function missing): changeDocumentStatus writes the record itself, exactly as before — and the write carries NO custom header (P23 fix pass)", async () => {
     seedDoc("d1");
     const out = await changeDocumentStatus({ orgId: ORG, documentId: "d1", toStatus: "Issued", door: "metadata", actorUserId: ME, actorEmail: "ctl@example.com", actorRole: "DocCtrl", patch: { title: "Pump P&ID" } });
     expect(out).toEqual({ issued: true, putBack: false, complianceClockErrors: [], recordError: null });
-    expect(lastDocumentsHeader()).toBe("metadata");
+    expect(lastDocumentsHeader()).toBeNull();
     expect(issuedRows("d1")).toHaveLength(1);
     expect(issuedRows("d1")[0].details).toMatchObject({ door: "metadata", fromStatus: "Draft", toStatus: "Issued", putBack: false, reviewPolicyMode: "none", complianceClocksStarted: true });
     expect(issuedRows("d1")[0].details).not.toHaveProperty("recordedBy");
     expect(state.probeCalls).toBe(1);
   });
 
-  it("AFTER 20261205: the metadata door leaves exactly ONE record — the database's, naming the door — the app writes none, and the clocks still start", async () => {
+  it("AFTER 20261205: the metadata door leaves exactly ONE record — the database's, naming the door — the app writes none, the clocks still start, and a COMPLIANCE_CLOCKS_STARTED row says they did", async () => {
     state.probe = "true";
     seedDoc("d2");
     const out = await changeDocumentStatus({ orgId: ORG, documentId: "d2", toStatus: "Issued", door: "metadata", actorUserId: ME, actorEmail: "ctl@example.com", actorRole: "DocCtrl" });
     expect(out).toEqual({ issued: true, putBack: false, complianceClockErrors: [], recordError: null });
     expect(issuedRows("d2")).toHaveLength(1);
-    expect(issuedRows("d2")[0].details).toMatchObject({ door: "metadata", recordedBy: "database" });
+    expect(issuedRows("d2")[0].details).toMatchObject({ door: "metadata", recordedBy: "database", complianceClocksStarted: null });
+    expect(lastDocumentsHeader()).toBe("metadata");
     expect(followUps("d2")).toHaveLength(0);
+    expect(startedRows("d2")).toHaveLength(1);
+    expect(startedRows("d2")[0]).toMatchObject({ user_id: ME, user_email: "ctl@example.com", user_role: "DocCtrl" });
+    expect(startedRows("d2")[0].details).toEqual({ followsUp: "DOCUMENT_ISSUED", door: "metadata", versionId: "d2-v2", putBack: false, reviewClockReset: true, acknowledgmentRosterOpened: true });
+    expect(state.probeCalls).toBe(1);
     expect(onDocumentIssued).toHaveBeenCalledTimes(1);
     expect(onDocumentIssuedAck).toHaveBeenCalledTimes(1);
     expect(docRow("d2").status).toBe("Issued");
@@ -243,9 +263,11 @@ describe("REV-19 (a) (P23) — each app door leaves exactly one DOCUMENT_ISSUED"
     expect(out).toMatchObject({ issued: true, putBack: false, entryIntoForce: true });
     expect(issuedRows("d3").map((r) => (r.details as Row).door)).toEqual(["bulk"]);
     expect(issuedRows("d4").map((r) => (r.details as Row).door)).toEqual(["bulk"]);
+    // the entry into force's follow-up: the roster opened, the review clock NOT reset
+    expect(startedRows("d4")[0].details).toEqual({ followsUp: "DOCUMENT_ISSUED", door: "bulk", versionId: "d4-v2", putBack: false, entryIntoForce: true, reviewClockReset: false, acknowledgmentRosterOpened: true });
   });
 
-  it("AFTER 20261205: the un-archive door (put_back_retired_issue) names itself on the RPC and leaves one record; a rollback's put-back names no door", async () => {
+  it("AFTER 20261205: the un-archive door (put_back_retired_issue) names itself on the RPC and leaves one record — a put-back owes nothing, so no follow-up row; a rollback's put-back names ITS door, never 'direct'", async () => {
     state.probe = "true";
     state.putBack = "present";
     const d = seedDoc("d5", { status: "Archived", retired_issue_status: "Issued", retired_issue_version_id: "d5-v2" });
@@ -254,20 +276,47 @@ describe("REV-19 (a) (P23) — each app door leaves exactly one DOCUMENT_ISSUED"
     expect(state.rpcHeaders).toEqual([{ fn: "put_back_retired_issue", name: ISSUE_DOOR_HEADER, value: "unarchive" }]);
     expect(issuedRows("d5")).toHaveLength(1);
     expect(issuedRows("d5")[0].details).toMatchObject({ door: "unarchive", recordedBy: "database" });
-    // a rollback door's call is unchanged: no header
-    state.rpcHeaders = [];
-    seedDoc("d6", { status: "Superseded" });
-    await putBackRetiredIssue({ documentId: "d6", status: "Issued", door: "supersede_rollback" });
-    expect(state.rpcHeaders).toEqual([]);
+    expect(followUps("d5")).toHaveLength(0);
+    expect(startedRows("d5")).toHaveLength(0);
+    expect(state.probeCalls).toBe(1); // asked once, before the write
+    // P23 fix pass: every rollback door names itself (p_via) — its put-back
+    // of a stamped issue is recorded as that rollback, not a direct write
+    for (const via of ["supersede_rollback", "lifecycle_rollback", "reversal_rollback"] as const) {
+      state.rpcHeaders = [];
+      const id = `d6-${via}`;
+      seedDoc(id, { status: "Superseded", retired_issue_status: "Issued", retired_issue_version_id: `${id}-v2` });
+      const r = await putBackRetiredIssue({ documentId: id, status: "Issued", door: via, forceHold: true });
+      expect(r, via).toEqual({ kind: "landed", recorded: false });
+      expect(state.rpcHeaders, via).toEqual([{ fn: "put_back_retired_issue", name: ISSUE_DOOR_HEADER, value: via }]);
+      expect(issuedRows(id).map((x) => (x.details as Row).door), via).toEqual([via]);
+    }
   });
 
-  it("BEFORE 20261205: the un-archive's direct write (no put_back_retired_issue either) carries its door, and the app records the issue as before", async () => {
+  it("BEFORE 20261205: no put-back sends the custom header — neither the un-archive nor a rollback (the probe answers missing)", async () => {
+    state.putBack = "present";
+    for (const via of ["supersede_rollback", "lifecycle_rollback", "reversal_rollback"] as const) {
+      seedDoc(`p-${via}`, { status: "Superseded", retired_issue_status: "Issued", retired_issue_version_id: `p-${via}-v2` });
+      await putBackRetiredIssue({ documentId: `p-${via}`, status: "Issued", door: via });
+    }
+    const d = seedDoc("p-un", { status: "Archived", retired_issue_status: "Issued", retired_issue_version_id: "p-un-v2" });
+    await unarchiveDocument({ doc: asRecord(d), reason: "back", orgId: ORG, actorUserId: ME, restoreStatus: "Issued" } as never);
+    expect(state.rpcHeaders).toEqual([]);
+    expect(issuedRows("p-un")).toHaveLength(1); // the app's own record, as before
+    expect((issuedRows("p-un")[0].details as Row).recordedBy).toBeUndefined();
+  });
+
+  it("BEFORE 20261205: the un-archive's direct write (no put_back_retired_issue either) carries no custom header, and the app records the issue as before; AFTER it, that write names its door", async () => {
     const d = seedDoc("d7", { status: "Archived", retired_issue_status: "Issued", retired_issue_version_id: "d7-v2" });
     await unarchiveDocument({ doc: asRecord(d), reason: "back", orgId: ORG, actorUserId: ME, restoreStatus: "Issued" } as never);
-    expect(lastDocumentsHeader()).toBe("unarchive");
+    expect(lastDocumentsHeader()).toBeNull();
     expect(issuedRows("d7")).toHaveLength(1);
     expect(issuedRows("d7")[0].details).toMatchObject({ door: "unarchive", putBack: true });
     expect(issuedRows("d7")[0].details).not.toHaveProperty("recordedBy");
+    state.probe = "true";
+    const d7b = seedDoc("d7b", { status: "Archived", retired_issue_status: "Issued", retired_issue_version_id: "d7b-v2" });
+    await unarchiveDocument({ doc: asRecord(d7b), reason: "back", orgId: ORG, actorUserId: ME, restoreStatus: "Issued" } as never);
+    expect(lastDocumentsHeader()).toBe("unarchive");
+    expect(issuedRows("d7b").map((r) => (r.details as Row).door)).toEqual(["unarchive"]);
   });
 
   it("AFTER 20261205: clocks that did not fully start are recorded on a follow-up COMPLIANCE_CLOCKS_NOT_STARTED row (no second DOCUMENT_ISSUED) and returned, as before", async () => {
@@ -278,6 +327,7 @@ describe("REV-19 (a) (P23) — each app door leaves exactly one DOCUMENT_ISSUED"
     expect(out).toEqual({ issued: true, putBack: false, complianceClockErrors: ["next_review_date: permission denied"], recordError: null });
     expect(issuedRows("d8")).toHaveLength(1);
     expect(followUps("d8")).toHaveLength(1);
+    expect(startedRows("d8")).toHaveLength(0);
     expect(followUps("d8")[0]).toMatchObject({ user_id: ME, user_email: "ctl@example.com", user_role: "DocCtrl" });
     expect(followUps("d8")[0].details).toEqual({
       followsUp: "DOCUMENT_ISSUED", door: "metadata", versionId: "d8-v2", putBack: false,
@@ -288,13 +338,25 @@ describe("REV-19 (a) (P23) — each app door leaves exactly one DOCUMENT_ISSUED"
   it("AFTER 20261205: a follow-up row that cannot be written is said with the clocks — the issue's record stands (recordError stays null)", async () => {
     state.probe = "true";
     state.clockErrors = ["roster: timeout"];
-    state.refuseFollowUp = true;
+    state.refuseActions = ["COMPLIANCE_CLOCKS_NOT_STARTED"];
     seedDoc("d9");
     const out = await changeDocumentStatus({ orgId: ORG, documentId: "d9", toStatus: "Issued", door: "bulk", actorUserId: ME });
     expect(out.recordError).toBeNull();
     expect(out.complianceClockErrors[0]).toBe("roster: timeout");
     expect(out.complianceClockErrors[1]).toMatch(/^the record of what did not start could not be written \(.*row-level security.*\), so it is not on the document's history$/);
     expect(issuedRows("d9")).toHaveLength(1);
+  });
+
+  it("AFTER 20261205: a COMPLIANCE_CLOCKS_STARTED row that cannot be written is said (never a silent success) — the clocks did start, and are not to be started again", async () => {
+    state.probe = "true";
+    state.refuseActions = ["COMPLIANCE_CLOCKS_STARTED"];
+    seedDoc("d9b");
+    const out = await changeDocumentStatus({ orgId: ORG, documentId: "d9b", toStatus: "Issued", door: "bulk", actorUserId: ME });
+    expect(out.recordError).toBeNull();
+    expect(onDocumentIssued).toHaveBeenCalledTimes(1);
+    expect(out.complianceClockErrors).toHaveLength(1);
+    expect(out.complianceClockErrors[0]).toMatch(/^the clocks started, but the record that they did could not be written \(.*row-level security.*\), so the document's history reads as if they had not — do not start them again$/);
+    expect(startedRows("d9b")).toHaveLength(0);
   });
 
   it("a probe that answers false, fails or throws: the app writes its record (two rows at worst, never none)", async () => {
@@ -320,6 +382,18 @@ describe("REV-19 (a) (P23) — each app door leaves exactly one DOCUMENT_ISSUED"
     expect(followUps("d10")[0].details).toMatchObject({ followsUp: "DOCUMENT_ISSUED", door: "bulk", readFailed: true });
   });
 
+  it("AFTER 20261205, the row unreadable before the write and the follow-up row refused: the outcome says so (recordError), never a silent success", async () => {
+    state.probe = "true";
+    state.refuseActions = ["COMPLIANCE_CLOCKS_NOT_STARTED"];
+    seedDoc("d10b");
+    state.failBasisRead = true;
+    const out = await changeDocumentStatus({ orgId: ORG, documentId: "d10b", toStatus: "Issued", door: "metadata", actorUserId: ME });
+    expect(out.issued).toBe(false);
+    expect(out.notRecordedBecause).toBe("read_failed");
+    expect(out.recordError).toMatch(/row-level security/);
+    expect(followUps("d10b")).toHaveLength(0);
+  });
+
   it("BEFORE 20261205, the row unreadable before the write: exactly as before — nothing recorded, no follow-up", async () => {
     seedDoc("d11");
     state.failBasisRead = true;
@@ -329,7 +403,7 @@ describe("REV-19 (a) (P23) — each app door leaves exactly one DOCUMENT_ISSUED"
     expect(followUps("d11")).toHaveLength(0);
   });
 
-  it("regression — a save that issues nothing writes no record and asks no probe: Issued → Draft, an Issued row kept Issued, a register row with no revision", async () => {
+  it("regression — a save that issues nothing writes no record (and a save to a status that is no issue asks no probe and sends no header): Issued → Draft, an Issued row kept Issued, a register row with no revision", async () => {
     for (const p of ["absent", "true"] as const) {
       state.probe = p;
       state.probeCalls = 0;
@@ -338,11 +412,15 @@ describe("REV-19 (a) (P23) — each app door leaves exactly one DOCUMENT_ISSUED"
       seedDoc(`r3-${p}`, { current_version_id: null });
       expect(await changeDocumentStatus({ orgId: ORG, documentId: `r1-${p}`, toStatus: "Draft", door: "metadata", actorUserId: ME }))
         .toEqual({ issued: false, putBack: false, complianceClockErrors: [], recordError: null });
+      expect(state.probeCalls, p).toBe(0);
+      expect(lastDocumentsHeader(), p).toBeNull();
       expect((await changeDocumentStatus({ orgId: ORG, documentId: `r2-${p}`, toStatus: "Issued", door: "metadata", actorUserId: ME })).notRecordedBecause).toBe("already_issued");
       expect((await changeDocumentStatus({ orgId: ORG, documentId: `r3-${p}`, toStatus: "Issued", door: "metadata", actorUserId: ME })).notRecordedBecause).toBe("no_current_revision");
       expect(issuedRows().filter((r) => String(r.resource_id).endsWith(p)), p).toHaveLength(0);
       expect(followUps().filter((r) => String(r.resource_id).endsWith(p)), p).toHaveLength(0);
-      expect(state.probeCalls, p).toBe(0);
+      expect(startedRows().filter((r) => String(r.resource_id).endsWith(p)), p).toHaveLength(0);
+      // the two writes TO an issue status asked once each, before the write
+      expect(state.probeCalls, p).toBe(2);
     }
     expect(onDocumentIssued).not.toHaveBeenCalled();
   });

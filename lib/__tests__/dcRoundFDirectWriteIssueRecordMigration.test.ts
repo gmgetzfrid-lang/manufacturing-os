@@ -7,7 +7,9 @@
 //      (document_status_issue_recorded_by_database). Its predicates are the
 //      guard's (is_controlled_issue_status, 20261185's REV-21 limb — the
 //      NEWEST guard body, found by scanning) and the app's (isEntryIntoForce,
-//      putBackFromRetirementStamp, STATUS_ISSUE_CLOCKS_NOTE — pinned here).
+//      putBackFromRetirementStamp, STATUS_ISSUE_CLOCKS_OWED_NOTE — pinned
+//      here; P23 fix pass: the database's row records what the issue OWES,
+//      never that a clock started, whatever header the write carried).
 //   §2 document_versions_insert_integrity re-created from its NEWEST body
 //      (scan: 20261037) with ONE change — the first-version sublink on
 //      document_versions replaced by document_has_versions(record_id) — so
@@ -22,7 +24,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 vi.mock("@/lib/supabase", () => ({ supabase: {} }));
-import { STATUS_ISSUE_CLOCKS_NOTE, ISSUE_DOOR_HEADER } from "@/lib/revisions";
+import { STATUS_ISSUE_CLOCKS_NOTE, STATUS_ISSUE_CLOCKS_OWED_NOTE, ISSUE_DOOR_HEADER } from "@/lib/revisions";
 
 const dir = join(process.cwd(), "supabase", "migrations");
 const mig = (f: string) => readFileSync(join(dir, f), "utf8");
@@ -136,28 +138,67 @@ describe("20261205 §1 — REV-19 (a): the database's record of a status-change 
     for (const o of order) { const i = FN.indexOf(o); expect(i, o).toBeGreaterThan(at); at = i; }
   });
 
-  it("the record keeps the app doors' shape: DOCUMENT_ISSUED with the door (the app's header, else 'direct'), statuses, revision, putBack, entryIntoForce, the policy decision and the clock fields, in the app's own sentences", () => {
+  it("the record keeps the app doors' shape: DOCUMENT_ISSUED with the door (the app's header — a rollback's door included — else 'direct'), statuses, revision, putBack, entryIntoForce, the policy decision, the headline role and the role collection", () => {
     expect(FN).toContain(`current_setting('request.headers', true), '')::jsonb ->> '${ISSUE_DOOR_HEADER}'`);
-    expect(FN).toContain("v_door := CASE WHEN v_header IN ('metadata', 'bulk') THEN v_header\n                 WHEN v_header = 'unarchive' AND v_from = 'Archived' THEN v_header\n                 ELSE 'direct' END;");
+    expect(FN).toContain("v_door := CASE WHEN v_header IN ('metadata', 'bulk') THEN v_header\n                 WHEN v_header = 'unarchive' AND v_from = 'Archived' THEN v_header\n                 WHEN v_header IN ('supersede_rollback', 'lifecycle_rollback', 'reversal_rollback') AND v_retired THEN v_header\n                 WHEN v_path = '/rpc/restore_reversed_source' AND v_retired THEN 'reversal_restore'\n                 ELSE 'direct' END;");
+    // the rollback doors the header may name are exactly put_back_retired_issue's p_via (the app's type)
+    const rev = src("lib/revisions.ts");
+    const vias = /export type RetiredIssuePutBackDoor = ([^;]+);/.exec(rev)![1].split("|").map((x) => x.trim().replace(/"/g, "")).filter((x) => x !== "unarchive");
+    expect(FN).toContain(`WHEN v_header IN (${vias.map((v) => `'${v}'`).join(", ")}) AND v_retired THEN v_header`);
     for (const k of ["door", "fromStatus", "toStatus", "versionId", "rev", "putBack", "entryIntoForce", "reviewPolicyMode", "rosterComplete", "issuedWithoutSignOff",
-      "complianceClocksStarted", "reviewClockReset", "acknowledgmentRosterOpened", "complianceClocksNote", "complianceClockErrors", "complianceClocksBy", "recordedBy", "requestPath"]) {
+      "complianceClocksStarted", "reviewClockReset", "acknowledgmentRosterOpened", "complianceClocksOwed", "complianceClocksNote", "complianceClockErrors", "complianceClocksBy",
+      "actorRoles", "recordedBy", "requestPath"]) {
       expect(FN, k).toContain(`'${k}'`);
     }
     expect(FN).toContain("VALUES ('DOCUMENT_ISSUED', NEW.id::text, 'document', NEW.org_id, v_actor, v_email, v_role,");
-    // the app's four sentences, verbatim (an apostrophe doubled in SQL)
-    for (const [k, note] of Object.entries(STATUS_ISSUE_CLOCKS_NOTE)) expect(FN, k).toContain(`'${sqlString(note)}'`);
+    // P23 fix pass: user_role is the headline role, as the app's doors wrote it; the collection rides in details
+    expect(FN).toContain("SELECT m.email, m.role, COALESCE(NULLIF(m.roles, '{}'), ARRAY[m.role]) INTO v_email, v_role, v_roles");
+    expect(FN).toContain("'actorRoles', to_jsonb(v_roles),");
+    expect(FN).not.toMatch(/array_to_string\(/);
     // the roster counted exactly as the guard counts it (bound e-signatures, per slot group)
     expect(FN).toContain("AND e.signer_user_id = s.reviewer_user_id");
     expect(FN).toContain("v_roster := COALESCE(v_reqs, 0) > 0 AND COALESCE(v_signed, 0) >= v_reqs;");
     expect(FN).toContain("v_mode := CASE WHEN v_chain = 'require'\n                   OR review_control_mode_for(NEW.review_control, NEW.collection_id, NEW.library_id) = 'require'\n                 THEN 'require' ELSE v_chain END;");
   });
 
-  it("the app's doors send the header the trigger reads: changeDocumentStatus (its door), the un-archive (RPC and direct write); a rollback's put-back sends none", () => {
+  it("P23 fix pass: the clock fields record what the issue OWES — never that a clock started — and never read the header; a put-back wins first and is never told to restart a clock", () => {
+    const clocks = between(FN, "v_owes_review := ", "\n  END;");
+    // header-independent: the owed flags and the sentence read only the put-back state
+    for (const v of ["v_door", "v_header", "v_app_door", "v_path"]) expect(clocks, v).not.toContain(v);
+    expect(clocks).toContain("v_owes_review := v_put_back IS NOT DISTINCT FROM false AND NOT v_entry;");
+    expect(clocks).toContain("v_owes_roster := v_put_back IS DISTINCT FROM true;");
+    // the CASE: put-back first, then entry into force, new issue, unknown — the database's own sentences, verbatim
+    const order = ["WHEN v_put_back IS NOT DISTINCT FROM true THEN", "WHEN v_entry THEN", "WHEN v_put_back IS NOT DISTINCT FROM false THEN", "ELSE"];
+    let at = -1;
+    for (const o of order) { const i = clocks.indexOf(o, at + 1); expect(i, o).toBeGreaterThan(at); at = i; }
+    for (const [k, note] of Object.entries(STATUS_ISSUE_CLOCKS_OWED_NOTE)) expect(FN, k).toContain(`'${sqlString(note)}'`);
+    expect(clocks.indexOf(`'${sqlString(STATUS_ISSUE_CLOCKS_OWED_NOTE.putBack)}'`)).toBeLessThan(clocks.indexOf("WHEN v_entry THEN"));
+    // a put-back's sentence owes nothing and advises no start
+    expect(STATUS_ISSUE_CLOCKS_OWED_NOTE.putBack).toMatch(/nothing is owed/);
+    expect(STATUS_ISSUE_CLOCKS_OWED_NOTE.putBack).not.toMatch(/Document Control then|starts both|opens the roster/);
+    // the "unknown" and "entry" sentences never advise resetting the review clock
+    for (const k of ["unknown", "entryIntoForce"] as const) expect(STATUS_ISSUE_CLOCKS_OWED_NOTE[k]).toMatch(/the review clock is not to be reset[\s\S]*leaves the review clock as it is$/);
+    // no sentence claims anything started: the app's past-tense sentences are NOT in the database's body
+    for (const [k, note] of Object.entries(STATUS_ISSUE_CLOCKS_NOTE)) {
+      if (k === "putBack") continue; // its words differ too, but share the stamp clause
+      expect(FN, k).not.toContain(`'${sqlString(note)}'`);
+    }
+    expect(FN).not.toMatch(/were started|was opened/);
+    // the three outcome fields are NULL on the database's row; complianceClocksOwed carries the owed flags
+    expect(FN).toContain("'complianceClocksStarted', NULL::boolean,\n            'reviewClockReset', NULL::boolean,\n            'acknowledgmentRosterOpened', NULL::boolean,");
+    expect(FN).toContain("'complianceClocksOwed', jsonb_build_object('reviewClock', v_owes_review, 'acknowledgmentRoster', v_owes_roster),");
+    expect(FN).toContain("WHEN NOT v_owes_roster THEN 'none owed (a put-back: the clocks it had keep running)'");
+    expect(FN).not.toContain("v_clock");
+  });
+
+  it("the app's doors send the header the trigger reads only once the database records (the probe, before the write): changeDocumentStatus, the un-archive (RPC and direct write), and every rollback's put-back (its p_via)", () => {
     const rev = src("lib/revisions.ts");
     expect(ISSUE_DOOR_HEADER).toBe("x-mos-issue-door");
-    expect(rev).toContain('    .select("id"), input.door);');
-    expect(rev).toContain('  }), input.door === "unarchive" ? "unarchive" : null);');
-    expect(rev).toContain('      .select("id"), "unarchive");');
+    expect(rev).toContain('    .select("id"), recordedByDatabase ? input.door : null);');
+    expect(rev).toContain('  }), nameDoor ? input.door : null);');
+    expect(rev).toContain("  const nameDoor = input.nameDoor ?? await isStatusIssueRecordedByDatabase();");
+    expect(rev).toContain('      .select("id"), recordedByDatabase ? "unarchive" : null);');
+    expect(rev).toContain("  const recordedByDatabase = isControlledIssueStatus(input.toStatus) ? await isStatusIssueRecordedByDatabase() : false;");
   });
 });
 
