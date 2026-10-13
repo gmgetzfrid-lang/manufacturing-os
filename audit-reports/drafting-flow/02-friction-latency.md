@@ -145,7 +145,7 @@ technical review is not blocked on their answering it.
 ## FRIC-3 · The intake form demands a unit before it will accept the request
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** friction / adoption
 - **Locations:**
@@ -186,6 +186,15 @@ document.
 1. A failed submit tells the user which field is missing and moves focus to it.
 2. Unit is derived from the source document where one is attached.
 3. All three creation paths satisfy the same field contract (`LIFE-9`).
+
+**Resolution (2026-10-07, drafting-flow Round G).** DF-P2 CREATE, on `DEC-101` item 1: the unit is **optional** at intake, with an explicit answer for "I don't know". The form's unit select opens on "Unit unknown — triage assigns" (`lib/ticketCreate.ts` `UNIT_UNKNOWN_LABEL`) whenever there is more than one unit — no silent first-option pre-selection (the verifier's quieter failure) — and pre-selects the only one when there is exactly one. With no unit list the box is optional and says it is a setup gap. The route records the unknown explicitly (`unit: NULL`, `metadata.unit_unknown: true`) and never refuses for it. The form and the route offer and check **one** list — `unitOptionsFor` (the saved units, else the Site Codebook's, else none), called by both; the form's built-in settings carry no units, so a workspace that never saved its request settings is offered its codebook's units, never a list the route refuses. *(Corrected at DF-P2's review fix, 2026-10-07: the form first fell back to two built-in units, "100" and "200", whenever the workspace had no saved settings row, and the route refused them.)*
+
+**Done-when.**
+- ✓ (1) A failed submit says which field and puts the cursor there: a route refusal carries its `field`, and the form focuses it (`focusField`); a required custom field is named and focused before any upload; a title or description of only spaces is named and focused (no bare `return` left). `lib/__tests__/requestFormCreate.test.ts`, "a refused submit names the field and moves the cursor to it", "a title of only spaces is named and focused", and the EDGE-13 required-field case.
+- ✓ (2) Unit is derived from the source document where one is attached — server-side, when the requester gave none: the document's metadata unit (`unitOfDocumentMetadata`, what the check-in and the collision always wrote), then its codebook `unit_code`; the first that is on the list wins, else the first given, kept and marked `unit_unlisted` (`lib/ticketCreate.ts` `resolveDerivedUnit`; `lib/__tests__/ticketCreateRoute.test.ts`, "no unit given but a source document names one: derived and resolved to the list's value", and "FRIC-3 / DCW-7 — one unit list for the form and the route; a derived unit tries each candidate").
+- ✓ (3) All three creation paths satisfy the same field contract (`FRIC-8`).
+
+**Scope / residual.** A triage action that sets the unit on a "Unit unknown" ticket is `DCW-7`'s residual. Nothing yet **shows** the recorded unknown: no reader of `metadata.unit_unknown` / `unit_unlisted` / `unit_unchecked` (the unit given when the list could not be read — `DCW-7`, third review fix) exists, and the queue and the ticket page render an empty unit chip for a NULL unit (`app/(protected)/requests/page.tsx`, `app/(protected)/requests/[id]/page.tsx`, DF-P9's files) — proposed for **DF-P9** in `99-fix-sequencing.md`, "Hand-offs from DF-P2".
 
 ---
 
@@ -360,7 +369,7 @@ role/status combination, ideally because attention is derived from the engine.
 ## FRIC-8 · Three ticket-creation paths, three different field contracts
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** data quality / friction
 - **Re-verified:** hardening pass — **SURVIVES**. Three creation paths were counted directly during the drafting-flow audit and re-counted here: `requests/new/page.tsx`, `lib/transitionIn.ts` and `components/documents/CheckInPanel.tsx`. Each assembles its own field set.
@@ -376,6 +385,14 @@ role/status combination, ideally because attention is derived from the engine.
 The highest-priority ticket kind in the system is the one that can never be late.
 
 **Done when.** See `LIFE-9`.
+
+**Resolution (2026-10-07, drafting-flow Round G).** DF-P2 CREATE. One contract, one path. `lib/ticketCreate.ts` is the field contract every creator posts (`TicketCreateInput`: title, description, request type, priority, unit, target date, requester role, custom categories, source documents, attachments, and an `origin` that is `portal`, `checkin` or `intake_collision`), and `app/api/tickets/create/route.ts` is the only writer. It checks each origin against what binds it: the request form's required custom fields and unit list for `portal`; for `checkin`, a checkout of the source document by this requester (in the named episode — that document's, in this workspace — or still active); for `intake_collision`, a project in this workspace whose intake folder (`projects.intake_collection_id`) holds the source sheet, an intake link of that project when one is named, and — when named — a colliding document the caller can see (otherwise dropped with a warning, never stored); the queue notice's title is the sheet's own number read from the row, never the client's `sheetLabel` (`checkOrigin`; refused 400, field `origin`, otherwise). Source documents are read as the caller, so a document the caller cannot open never lends its fields to a request. So naming an origin is not a way around the form, and a check-in's PSM flags (`undocumented_change`, `moc`) are never written without a checkout behind them. What is **not** re-checked: a collision's overlap list is the scan's description and is stored as reported (`metadata.intake_collision.overlaps`, up to `MAX_COLLISION_OVERLAPS` with the full count and a truncated flag past it). *(Corrected at DF-P2's review fix, 2026-10-07: the required fields were first enforced only when the caller named the `portal` origin, so a member could name another origin to skip them.)* *(Corrected at DF-P2's second review fix, 2026-10-07: an `intake_collision` was first checked only for "a project exists in this workspace", so any member could post a collision against any project with a made-up sheet label as the notice title.)* It stamps the same row for every origin — `PENDING_ASSIGNMENT`, the SLA clock (`target_completion_at`, the form's date or `defaultSlaTargetDate`), the requester as watcher, the opening history line, the canonical source reference(s) and `unit` (resolved, derived from the source document, or the explicit "Unit unknown — triage assigns", `DEC-101` item 1). A collision ticket now has a due date and its flagger as a watcher, as `LIFE-9` required, from the same code as the other two.
+
+**Done-when.** `LIFE-9`'s (roles-and-permissions, RESOLVED 2026-09-02) — re-checked on the one path: ✓ (1) all three origins produce the same required-field set (`lib/__tests__/ticketCreateRoute.test.ts`, "REGRESSION — each door's legitimate flow files the same ticket": the request form, a check-in and an intake collision); ✓ (2) a collision ticket has a target date and enrols its flagger; ✓ (3) a check-in or collision ticket carries `unit` whenever its source document names one, and the explicit unknown (`metadata.unit_unknown`) when it does not — sortable and searchable like any other (there is no unit facet filter, as the verifier noted); the record is explicit, its display is not yet (an empty chip on the queue and the ticket page — `FRIC-3` Scope). And the origin is checked against its own facts: `lib/__tests__/ticketCreateRoute.test.ts`, "FRIC-8 — the origin is checked against its own facts; naming one is not a way around the form" (no checkout: 400, nothing numbered, no PSM flag; another member's checkout; an episode of another document or workspace; a retry after a failed close files; a legacy check-in with no episode files on an active checkout only; a collision naming another workspace's project; unreadable facts 503) and "FRIC-8 — an intake collision is held to the project's own intake facts" (a sheet outside the project's intake folder, another project of the workspace, an intake link not the project's: each 400 with nothing numbered; the notice and history carry the sheet's own number; a colliding document the caller cannot see is dropped with a warning; a malformed id is refused); "source documents are read AS THE CALLER — the document ACL applies" (a restricted document is dropped like one not here, none of its fields stored; a check-in on it is refused).
+
+Third review fix (2026-10-13). A viewer's "Send to Drafting" whose library key predates the `orgs/<orgId>/` prefix is attached when a version of a document in this workspace, read as the caller, carries it (`sourceReferenceUsable`, `app/api/tickets/create/route.ts:280-297`, `DEC-101` item 5). Before this fix it was dropped as "not a file in this workspace". A legacy check-in retried after its checkout closed is told so instead of getting the ownership refusal (`LEAK-6`). `lib/__tests__/ticketCreateRoute.test.ts`, "FRIC-8 / DEC-101 item 5 — a legacy library key the register carries is attached" and "FRIC-8 / LEAK-6 — a legacy check-in retried after its checkout closed is told what happened".
+
+**Scope / residual.** Who resolves a "Unit unknown" ticket at triage is `DCW-7`'s residual.
 
 ---
 

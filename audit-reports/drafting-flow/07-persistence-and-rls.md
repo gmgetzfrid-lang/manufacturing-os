@@ -276,6 +276,7 @@ app/api/tickets/workflow-action/route.ts:231-233 —
 
 - **Severity:** LOW
 - **Status:** OPEN
+- **Assigned:** drafting-flow DF-P4 LIBRARY (done-whens 2–3: `Ticket.unit` becomes `string | null` in `types/schema.ts` and `rowToTicket` stops casting) and DF-P9 TICKET-PAGE (the request pages' `fromRow`) — by the integrator, 2026-10-13 (at the DF-P2 merge, DEC-31: DF-P2 has merged and named these limbs in drafting-flow `99-fix-sequencing.md`, "Hand-offs from DF-P2"; fleet plan updated).
 - **Verification:** CONFIRMED
 - **Locations:** `components/documents/CheckInPanel.tsx:236-268`, `lib/transitionIn.ts:304-331`, `app/(protected)/requests/new/page.tsx:299-315`, `types/schema.ts:1112`, `supabase/schema.sql:402`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The absence claim is correct on all three paths. Corrected to LOW: the consequence is cosmetic/searchability only — requests/page.tsx:1046 and :984 render `{ticket.unit}` as an empty chip and the text filter at :400 guards with `(ticket.unit || '')`, so nothing throws and no ticket is hidden; there is no unit facet filter. The safety escalation for an undocumented field change does not depend on unit (CheckInPanel.tsx:291-300 notifies controllers directly, priority 1).
@@ -312,6 +313,15 @@ supabase/schema.sql:402 —
 - [ ] CheckInPanel and transitionIn derive and write `unit` (from the source document's unit/asset tags, or an explicit picker) on every ticket they create
 - [ ] Either `unit` is made NOT NULL in the DB or the TypeScript type is relaxed to `unit?: string | null` so the two agree
 - [ ] Row mappers stop using `as string` for columns that can be null
+
+**Partial (2026-10-07, drafting-flow Round G).** DF-P2 CREATE closes done-when 1; done-whens 2 and 3 are type and row-mapper changes in files other packages own.
+
+**Done-when.**
+- ✓ (1) Every ticket the check-in and the intake collision create carries a unit decision, made by `app/api/tickets/create/route.ts` for every origin: the source document's unit (its metadata unit, `unitOfDocumentMetadata(metadata)`, then `documents.unit_code` — the first on the workspace's unit list wins, `resolveDerivedUnit`), resolved against the list where there is one; with none known, `unit` is NULL with `metadata.unit_unknown: true` — the explicit "Unit unknown — triage assigns" (`DEC-101` item 1) — and never `""`. A derived unit that is not on the list is kept and marked `metadata.unit_unlisted`. `lib/__tests__/ticketCreateRoute.test.ts`, "FRIC-3 / DCW-7 — the unit is optional, explicit when unknown, resolved against the list".
+- ✗ (2) `Ticket.unit` is still `unit: string` (`types/schema.ts`) while the column is nullable and NULL is now a designed value. Not in DF-P2's files.
+- ✗ (3) The row mappers still cast `row.unit as string` (`lib/ticketTransitions.ts` `rowToTicket`, the request pages' `fromRow`). Not in DF-P2's files.
+
+**Scope / residual.** (2) and `rowToTicket` → **DF-P4** (it edits `types/schema.ts` and `rowToTicket` for `PERS-5`); the pages' `fromRow` → **DF-P9**. Proposed in `99-fix-sequencing.md`, "Hand-offs from DF-P2".
 
 ---
 

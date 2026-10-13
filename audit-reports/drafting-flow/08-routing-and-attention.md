@@ -191,7 +191,7 @@ self.addEventListener("push", (event) => {
 ## ROUTE-4 · Drafting requests raised from a document check-in notify in-app only — no email — unlike identical requests raised from the portal
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/documents/CheckInPanel.tsx:45`, `components/documents/CheckInPanel.tsx:276`, `components/documents/CheckInPanel.tsx:296`, `app/(protected)/requests/new/page.tsx:342`, `lib/transitionIn.ts:339`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: the check-in path fans out through notifyMany (bell rows only) while the portal path and the intake-collision path (lib/transitionIn.ts:339) both use emit(), which defaults to inapp+email. Same recipient pool (resolveTicketRecipients(..., 'PENDING_ASSIGNMENT')), two different channel sets.
@@ -231,6 +231,14 @@ contrast app/(protected)/requests/new/page.tsx:342-353 —
 
 - [ ] Both CheckInPanel notification sites go through `emit()` with an appropriate `category`, so the email channel and per-user preferences apply identically to portal-created and check-in-created requests.
 - [ ] A test (or a single shared `notifyNewDraftingRequest` helper used by all three creation paths) makes it structurally impossible for one creation path to skip a channel the others use.
+
+**Resolution (2026-10-07, drafting-flow Round G).** DF-P2 CREATE. A request raised from a check-in is announced exactly as a portal request is: the check-in posts the shared contract (`origin: { kind: "checkin", … }`) to `app/api/tickets/create/route.ts`, which sends the one creation notice through `emit()` — bell and preference-aware email, category `assignment` — for every door. `CheckInPanel` no longer imports `notifyMany`; its second site, the PSM escalation for an undocumented field change, went through `emit()` on the `safety` category (`LIFE-7`) and is now the route's as well (`escalatePsm`, second review fix: sent once per ticket, stamped `metadata.psm_escalated_at`).
+
+**Done-when.**
+- ✓ Both `CheckInPanel` notification sites go through `emit()`, both from the route: the creation notice (`announce`) and the PSM escalation (`escalatePsm`, `category: "safety"`, which no preference mutes); the panel holds no escalation of its own (`lib/__tests__/checkInPanelCreate.test.ts`, "the panel holds no escalation of its own (source)").
+- ✓ Structurally impossible for one creation path to skip a channel: the route is the single notifier for every origin, and a census pins it (`lib/__tests__/ticketCreateClient.test.ts`, "the creation notice is written only by the route (one channel set for every door — ROUTE-4)"); `lib/__tests__/ticketCreateRoute.test.ts` drives a check-in and a collision through the same announce.
+
+**Scope / residual.** None.
 
 ---
 
@@ -566,7 +574,7 @@ contrast lib/notify/recipients.ts:57-60 —
 ## ROUTE-11 · Ticket-creation notifications carry no metadata.action/status, so neither the server supersede nor the client reconcile ever retires them
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/requests/new/page.tsx:352`, `app/api/tickets/workflow-action/route.ts:329`, `hooks/useTicketNotifications.ts:188`, `app/api/tickets/workflow-action/route.ts:347`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on both halves. Creation rows carry neither metadata.action nor metadata.status, so they are excluded from the supersede UPDATE and from the staleness reconcile, and once the ticket closes it also drops out of the ticket feed (line 156 `.neq('status','CLOSED')`) so the row can no longer even be folded into a live ticket item at line 283. Only a manual click or mark-all-read retires them.
@@ -611,6 +619,14 @@ hooks/useTicketNotifications.ts:188-193 —
 
 - [ ] All three ticket-creation notification paths stamp `metadata: { action: 'created', status: <initialStatus> }` (plus any extras) so both retirement mechanisms recognise them.
 - [ ] A test asserts that after a ticket transitions out of its creation status, no unread creation notification for that ticket remains.
+
+**Resolution (2026-10-07, drafting-flow Round G).** DF-P2 CREATE. The three doors now write one creation notice, from the route, and it carries the marker both retirement mechanisms key on: `app/api/tickets/create/route.ts` `announce()` emits with `metadata: { action: "created", status: "PENDING_ASSIGNMENT", request_type, priority, unit }` (`:1021-1027`). The title and body come from `lib/ticketCreate.ts` `creationNotice`, the only producer of the notice text (census), worded per door — "Ready for a drafter to be assigned." for the form and a check-in, the collision's own sentence for an intake collision — so the body says what the creation status asks.
+
+**Done-when.**
+- ✓ All three creation paths stamp `metadata.action` and the creation status — one notice, one producer (`lib/__tests__/ticketCreateClient.test.ts`, "the creation notice is written only by the route"; `lib/__tests__/ticketCreateRoute.test.ts`, "bell rows carry metadata.action and a string status").
+- ✓ `lib/__tests__/ticketCreateRoute.test.ts`, "once the ticket leaves PENDING_ASSIGNMENT (a supervisor assigns it, through the real workflow route), no creation alert is left live in any bell": the route drives `POST /api/tickets/workflow-action` `assign`, and every creation row is superseded (`superseded_by: "assign"`), none unread and live.
+
+**Scope / residual.** None for creation. Re-entry into `PENDING_ASSIGNMENT` is `ROUTE-5`'s (DF-P3).
 
 ---
 

@@ -248,7 +248,8 @@
     "DCW-5",
     "DCW-3",
     "AUTHZ-10",
-    "PERS-5 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': remove the `} as Ticket` cast in rowToTicket (map the columns the server path reads, or narrow the return type))"
+    "PERS-5 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': remove the `} as Ticket` cast in rowToTicket (map the columns the server path reads, or narrow the return type))",
+    "DF-P2 hand-offs (assigned by the integrator 2026-10-13 at the DF-P2 merge, DEC-31 — read drafting-flow 99-fix-sequencing.md 'Hand-offs from DF-P2' IN FULL): DCW-7 / FRIC-3 triage sets the unit (unitOptionsFor; clears unit_unknown / unit_unlisted / unit_unchecked; history line); PERS-6 done-whens 2-3 (types/schema.ts Ticket.unit string | null, rowToTicket); roles-and-permissions GAP-8 acceptance 2 (the assign intent bridge iterates parseSourceDocuments with SM-14's org scope); AUTHZ-3 (narrowing migration after the DF-P2 deploy: drop tickets_org_insert or stamp requester_name / requester_role from org_members); EDGE-8 limbs: a reader or sweep for PENDING_ASSIGNMENT tickets without metadata.created_notice_at, and the check-in's owner-review notice (review_requested) moved from CheckInPanel's browser emit to a stamped server leg in /api/tickets/create (re-owned from the proposed DF-P3, which was already in its fix pass); SM-9 / EDGE-15 class: the null-token last_modified leg in app/api/tickets/handback/**"
    ],
    "severityMix": "1 HIGH, 3 MEDIUM",
    "files": [
@@ -337,7 +338,8 @@
     "SM-3",
     "DCW-2",
     "TIER-6 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': MOC applicability through the work-class mechanism, after GAP-101)",
-    "AUTHZ-6 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': rewrite the CAPABILITY_DEFS descriptions of ticket.requester_review / draft_work / direct_approve to state their reach)"
+    "AUTHZ-6 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': rewrite the CAPABILITY_DEFS descriptions of ticket.requester_review / draft_work / direct_approve to state their reach)",
+    "HAND-7 done-when 3 (assigned by the integrator 2026-10-13 at the DF-P2 merge, DEC-31): approving a deliverable whose source's captured version_id is no longer current requires an explicit acknowledgement — an engine flag the route checks, the modal states the drift, the history line records it; and DEC-101's seam: TicketCreateInput.declaration is parsed and not written — run the declaration's signature in /api/tickets/create"
    ],
    "severityMix": "2 CRITICAL, 4 HIGH",
    "files": [
@@ -425,7 +427,8 @@
     "PROJ-3",
     "PROJ-7",
     "LEAK-4 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': project push: convertTicketToProject's browser history push becomes part of the server-side project link, or is removed)",
-    "EVID-1 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': project push limb, with LEAK-4)"
+    "EVID-1 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': project push limb, with LEAK-4)",
+    "DEC-101's seam (assigned by the integrator 2026-10-13 at the DF-P2 merge, DEC-31): TicketCreateInput.projectId is parsed and not written (lib/ticketCreate.ts, lib/ticketCreateClient.ts) — write project_id in /api/tickets/create"
    ],
    "severityMix": "1 HIGH, 1 MEDIUM, 7 LOW",
    "files": [
@@ -484,7 +487,8 @@
     "FRIC-7 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': AttentionContext.requesterRoles fed by the badge hook so a departed requester's co-review is counted by badge, bell and inbox)",
     "PERS-7 (remainder re-owned by the integrator 2026-10-07 at the DF-P1 merge: the call sites' stand-ins on the pages DF-P9 owns — the two ticket-queue sites and the request pages' remaining direct writes — read logAuditAction's refusal and say it; 07-persistence-and-rls.md PERS-7 Scope / residual) — and DF-P1's hand-off: the request page shows the workflow route's new warning / holdsNotReleased (a close whose hold could not be released)",
     "drafting-flow AUTHZ-15 (LOW; opened by A&O P9's second review fix 2026-10-07; owner confirmed by the integrator 2026-10-08 at the P9 merge for its drafting-flow surfaces: app/(protected)/requests/page.tsx, app/(protected)/requests/[id]/page.tsx, hooks/useTicketNotifications.ts — during a policy-read fault the affordances draw the shipped defaults with no label; label the fault state and offer nothing the server would refuse)",
-    "PROD-4 done-when 3 (notifications; assigned by the integrator 2026-10-13 at the N9 merge, DEC-31: computeTransition's newUnreadBy includes ticket.assignedEngineerId, matching the comment route; a test)"
+    "PROD-4 done-when 3 (notifications; assigned by the integrator 2026-10-13 at the N9 merge, DEC-31: computeTransition's newUnreadBy includes ticket.assignedEngineerId, matching the comment route; a test)",
+    "DF-P2 hand-offs (assigned by the integrator 2026-10-13 at the DF-P2 merge, DEC-31 — read drafting-flow 99-fix-sequencing.md 'Hand-offs from DF-P2'): HAND-7 done-when 2 / HAND-3 done-when 3 (mount components/requests/SourceDriftBanner.tsx on the ticket page; the queue's 'source moved' chip from driftedSources; the 'Rev advanced' chip compares version ids); FRIC-3 / FRIC-8 readers (show UNIT_UNKNOWN_LABEL for unit_unknown, mark unit_unlisted and unit_unchecked on the queue chip and the ticket page); PERS-6 the request pages' fromRow stops casting row.unit as string"
    ],
    "severityMix": "2 HIGH, 11 MEDIUM",
    "files": [

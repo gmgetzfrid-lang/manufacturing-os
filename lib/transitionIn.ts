@@ -21,11 +21,8 @@
 import { supabase } from "@/lib/supabase";
 import { userFacingError, userFacingReadError, userFacingCaughtError } from "@/lib/userFacingError";
 import { normalizeTag } from "@/lib/assets";
-import { generateTicketNumber } from "@/lib/ticketNumber";
-import { resolveTicketRecipients } from "@/lib/ticketRouting";
-import { emit } from "@/lib/notify/dispatch";
-import { buildSourceDocumentRef, unitOfDocumentMetadata } from "@/lib/sourceDocRef";
-import { defaultSlaTargetDate } from "@/lib/notifications";
+import { submitTicketCreate, queueNotNotifiedLine } from "@/lib/ticketCreateClient";
+import { clipToLimit, MAX_DESCRIPTION, MAX_TITLE } from "@/lib/ticketCreate";
 import { completeUniquenessKey, numberIsTheKey, uniquenessTuple } from "@/lib/intakeLinks";
 
 /** Global variant of the entity-tag pattern (lib/notes.ts keeps the
@@ -698,9 +695,8 @@ export interface FlagCollisionInput {
  *  contractor's portal can request redlines against the ticket. */
 export async function flagCollisionToDrafting(
   input: FlagCollisionInput,
-): Promise<{ ok: boolean; ticketNumber?: string; error?: string }> {
+): Promise<{ ok: boolean; ticketNumber?: string; error?: string; warning?: string }> {
   const { orgId, projectId, candidate, impact } = input;
-  const nowIso = new Date().toISOString();
 
   // Which intake link authored this sheet (if any) — lets the contractor's
   // portal see the redline request.
@@ -729,69 +725,45 @@ export async function flagCollisionToDrafting(
   lines.push("", "Resolution paths: draft the tie-in on our border, or request redline markups from the submitting company through their intake portal (attachments land on this ticket).");
 
   try {
-    const ticketNumber = await generateTicketNumber(orgId);
-    // LIFE-9: the same required-field set the request form enforces — the
-    // unit comes from the intake sheet's own metadata (best-effort read).
-    let unit = "";
-    try {
-      const { data: sheet } = await supabase.from("documents").select("metadata").eq("id", candidate.docId).eq("org_id", orgId).maybeSingle();
-      unit = unitOfDocumentMetadata((sheet as { metadata?: Record<string, unknown> | null } | null)?.metadata) ?? "";
-    } catch { /* unit stays blank; the ticket is still created */ }
-    const { data: row, error } = await supabase.from("tickets").insert({
-      org_id: orgId,
-      ticket_id: ticketNumber,
-      title: `Intake collision: ${candidate.label}`,
-      description: lines.join("\n"),
-      request_type: "Revision",
-      status: "PENDING_ASSIGNMENT",
+    // DF-P2: filed through /api/tickets/create — the one contract every door
+    // uses. The route numbers the request only once it is valid, stamps the
+    // requester from the membership, derives the unit from the intake sheet
+    // (LIFE-9), sets the same SLA clock a request-form ticket gets, enrols the
+    // flagger as a watcher, and notifies the assignment queue server-side.
+    // The title and description are written here, not typed: clipped to the
+    // contract's limits (a sheet that overlaps hundreds of drawings still
+    // files). The overlap list rides in metadata.intake_collision: every
+    // overlap the scan reported (it reads at most 50 overlapping documents),
+    // stored up to MAX_COLLISION_OVERLAPS — past that the route records the
+    // full count and overlapsTruncated, never a silent cut. The route checks
+    // the sheet, the project and the intake link, and titles the queue's
+    // notice with the sheet's own number.
+    const res = await submitTicketCreate({
+      orgId,
+      title: clipToLimit(`Intake collision: ${candidate.label}`, MAX_TITLE),
+      description: clipToLimit(lines.join("\n"), MAX_DESCRIPTION),
+      requestType: "Revision",
       priority: impact.numberCollision ? 1 : 2,
-      unit,
-      // Same SLA clock a request-form ticket gets, and the flagger follows it.
-      target_completion_at: defaultSlaTargetDate("Revision"),
-      watchers: [input.actorId],
-      requester_id: input.actorId,
-      requester_name: input.actorEmail?.split("@")[0] || "User",
-      requester_email: input.actorEmail,
-      requester_role: input.actorRole,
-      history: [{
-        action: "Created from transition-in impact scan",
-        user: input.actorEmail, date: nowIso,
-        details: `Project intake sheet: ${candidate.label}`,
-      }],
-      metadata: {
-        source_document: buildSourceDocumentRef({ id: candidate.docId, documentNumber: candidate.number, title: candidate.title, rev: candidate.rev }),
-        intake_collision: {
-          projectId,
-          intakeLinkId,
-          numberCollisionDocId: impact.numberCollision?.id ?? null,
-          overlaps: impact.overlapDocs.map((o) => ({ id: o.id, label: o.label, sharedTags: o.sharedTags })),
-          flaggedAt: nowIso,
-        },
+      unit: null,
+      requesterRole: input.actorRole,
+      sourceDocuments: [{ id: candidate.docId, documentNumber: candidate.number, title: candidate.title, rev: candidate.rev, versionId: null }],
+      origin: {
+        kind: "intake_collision",
+        projectId,
+        intakeLinkId,
+        numberCollisionDocId: impact.numberCollision?.id ?? null,
+        overlaps: impact.overlapDocs.map((o) => ({ id: o.id, label: o.label, sharedTags: o.sharedTags })),
+        sheetLabel: candidate.label,
       },
-    }).select("id").single();
-    if (error || !row) return { ok: false, error: error ? userFacingError(error, { context: "transitionIn" }) : "Couldn't create the ticket." };
-
-    // Same routing as any new drafting request.
-    void (async () => {
-      try {
-        const recipients = await resolveTicketRecipients(orgId, "PENDING_ASSIGNMENT", input.actorId);
-        if (!recipients.length) return;
-        await emit({
-          orgId,
-          category: "assignment",
-          kind: "request_pending_approval",
-          title: `Intake collision flagged: ${candidate.label}`,
-          body: impact.numberCollision
-            ? "A submitted sheet collides with an existing document number — needs a drafter and a source-of-truth decision."
-            : "A submitted sheet overlaps existing drawings — tie-in revision work to assign.",
-          link: `/requests/${row.id}`,
-          resource: { type: "ticket", id: String(row.id) },
-          actorUserId: input.actorId,
-          actorName: input.actorEmail?.split("@")[0],
-          audience: { involved: recipients.map((m) => m.uid) },
-        });
-      } catch { /* non-blocking */ }
-    })();
+    });
+    if (!res.ok) return { ok: false, error: res.error };
+    // EDGE-8: the route filed the request but could not tell the assignment
+    // queue — handed back to the flagger as `warning` (IntakePanel shows it)
+    // and on the console, never swallowed; the flag itself stands.
+    const notTold = queueNotNotifiedLine(res);
+    if (notTold) console.warn(`[transitionIn] ${notTold}`);
+    const ticketNumber = res.ticketNumber;
+    const row = { id: res.id };
 
     await supabase.from("audit_logs").insert({
       action: "INTAKE_COLLISION_FLAGGED",
@@ -804,7 +776,7 @@ export async function flagCollisionToDrafting(
       },
     }).then(() => undefined, () => undefined);
 
-    return { ok: true, ticketNumber };
+    return { ok: true, ticketNumber, ...(notTold ? { warning: notTold } : {}) };
   } catch (e) {
     return { ok: false, error: userFacingCaughtError(e, { context: "flagCollisionToDrafting" }) };
   }

@@ -108,16 +108,41 @@ export async function getDocumentImpact(
     }
   } catch { /* slice empty */ }
 
-  // 3. Open drafting tickets raised from this document.
+  // 3. Open drafting tickets raised from this document. GAP-8: a request
+  //    raised from several sheets names its PRIMARY sheet in the singular
+  //    metadata.source_document and every sheet in metadata.source_documents,
+  //    so this reads both — a ticket appears in the panel of each sheet it
+  //    names, and a single-source ticket (every historical row) exactly as
+  //    before. Two reads (never an .or() string around a JSON value), merged
+  //    by id; a failed read leaves its half of the slice empty, as before.
   try {
-    const { data: tickets } = await supabase
-      .from("tickets")
-      .select("id, ticket_id, title, status")
-      .eq("org_id", orgId)
-      .eq("metadata->source_document->>id", documentId)
-      .in("status", OPEN_TICKET_STATUSES)
-      .limit(10);
-    out.openTickets = ((tickets as Array<Record<string, unknown>>) ?? []).map((t) => ({
+    const [single, listed] = await Promise.all([
+      supabase
+        .from("tickets")
+        .select("id, ticket_id, title, status")
+        .eq("org_id", orgId)
+        .eq("metadata->source_document->>id", documentId)
+        .in("status", OPEN_TICKET_STATUSES)
+        .limit(10),
+      supabase
+        .from("tickets")
+        .select("id, ticket_id, title, status")
+        .eq("org_id", orgId)
+        .contains("metadata->source_documents", JSON.stringify([{ id: documentId }]))
+        .in("status", OPEN_TICKET_STATUSES)
+        .limit(10),
+    ]);
+    const seen = new Set<string>();
+    const rows = [
+      ...(((single.data as Array<Record<string, unknown>> | null) ?? [])),
+      ...(((listed.data as Array<Record<string, unknown>> | null) ?? [])),
+    ].filter((t) => {
+      const id = String(t.id);
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+    out.openTickets = rows.slice(0, 10).map((t) => ({
       id: String(t.id),
       ticketId: (t.ticket_id as string | null) ?? null,
       title: String(t.title ?? "Ticket"),

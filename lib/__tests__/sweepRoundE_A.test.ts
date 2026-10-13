@@ -486,8 +486,10 @@ describe("WF-17 / DEC-14 — cancel_request exists; NEW and PENDING_ENG_INITIAL 
     expect(src("lib/workflow.ts")).not.toContain("action: 'approve_initial'");
     expect(src("lib/ticketTransitions.ts")).not.toContain('case "approve_initial"');
     expect(src("app/(protected)/requests/[id]/page.tsx")).not.toMatch(/['"]approve_initial['"]/);
-    // metadata.minor_correction is kept (DEC-11: provenance on a PSM record)
-    expect(src("components/documents/CheckInPanel.tsx")).toContain("minor_correction: true");
+    // metadata.minor_correction is kept (DEC-11: provenance on a PSM record) —
+    // the check-in names it in the create contract and the route writes it (DF-P2)
+    expect(src("components/documents/CheckInPanel.tsx")).toContain('minorCorrection: card.ticketKind === "minor",');
+    expect(src("app/api/tickets/create/route.ts")).toContain("if (o.minorCorrection) metadata.minor_correction = true;");
   });
   it("DEC-11: initial_review / eng_review / final_approve are marked dormant with a reason and the editor greys them; defaults are untouched", () => {
     for (const id of ["ticket.initial_review", "ticket.eng_review", "ticket.final_approve"]) {

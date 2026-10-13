@@ -958,6 +958,8 @@ recovery, and neither reconciles the orphaned tickets.
 
 *Cross-area note (2026-10-02, drafting-flow Round G; corrected by the records fix the same day): drafting-flow [`LEAK-6`](../drafting-flow/04-flow-leaks.md) first closed on this record and is back to OPEN — done-when (1) does not hold on HEAD: `CheckInPanel`'s resume lookup never reads its `{error}` (`components/documents/CheckInPanel.tsx:167-171`) and runs un-awaited in an effect, so a remounted check-in whose lookup failed or has not returned falls through `done.ticket ?? resumedTicketRef.current ?? await createDraftingTicket(selected)` (`:402`) to a second ticket. This record's done-when (1) is the same sentence; its status is this area's to settle. Owner of the fix: drafting-flow DF-P2 (the `CheckInPanel` → create-route hunk). Done-when (2) holds as recorded.*
 
+*Cross-area note (2026-10-07, drafting-flow Round G, DF-P2 CREATE): the gap the 2026-10-02 note recorded is closed. `CheckInPanel` reads the resume lookup's error and the commit awaits it (a failed read is made once more — `components/documents/CheckInPanel.tsx` `lookupResumeTicket`, `lib/ticketCreateClient.ts` `resumeCheckinTicket`), and `/api/tickets/create` resumes an open ticket of the same requester and check-in episode server-side before it numbers anything; its failed lookup is a 503 with nothing written. Drafting-flow [`LEAK-6`](../drafting-flow/04-flow-leaks.md) is RESOLVED on it (tests: `lib/__tests__/checkInPanelCreate.test.ts`, `lib/__tests__/ticketCreateRoute.test.ts`). This record's done-when (1) holds again; its status stands.*
+
 ---
 
 ## LIFE-15 · Three producers of `metadata.source_document` write three different shapes

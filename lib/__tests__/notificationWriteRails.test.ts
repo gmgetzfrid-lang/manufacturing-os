@@ -416,7 +416,7 @@ describe("20261160 — enforce_notification_insert(): the insert rails", () => {
       "link: N.a (unresolved)",
     ]);
     expect(byMember.seen).toBe(6);
-  }, 30_000);
+  }, 60_000); // a whole-repo AST census, like the two below: room under a loaded full-suite run (DF-P2: 6.5 s there, 1.6 s alone)
 
   it("OS-1 dw3 / DELIV-6 dw2: an undeclared kind is refused (22023)", () => {
     expect(squash(body)).toContain(squash(`RAISE EXCEPTION 'notifications: unknown kind %', NEW.kind USING ERRCODE = '22023';`));
@@ -566,6 +566,9 @@ const DEDUPE_READS: Record<string, Array<{ marks: string; keys?: string[]; kinds
   // drafting-flow DF-P1 (EVID-13; classified by the integrator at the DF-P1 merge): the route
   // reads a ticket's unread workflow alerts only to mark them superseded, on the service role.
   "app/api/tickets/workflow-action/route.ts": [{ marks: '.is("metadata->>superseded_at", null)', none: "not a dedupe: the workflow route reads a ticket's unread workflow alerts (metadata.action set, not yet superseded) to mark them metadata.superseded_at on the service role (DF-P1 EVID-13); it decides no send" }],
+  // drafting-flow DF-P2 third review fix (EDGE-8): the create route reads back whether the
+  // creation notice reached a recipient's bell, because notify() swallows a refused insert.
+  "app/api/tickets/create/route.ts": [{ marks: '.eq("metadata->>action", "created").in("user_id", recipients.map((m) => m.uid))', none: "not a dedupe: after emit(), the create route reads whether a creation bell row (metadata.action 'created') for the new ticket is in a queue recipient's bell — notify() logs and swallows a refused insert — to answer notified: false and leave metadata.created_notice_at unstamped when none is. A row a browser wrote there is in a recipient's bell all the same, so it cannot make a notice nobody received read as received; the requester's own bell is not read" }],
   "app/api/transmittal/route.ts": [{ marks: '.eq("kind", UNSTAMPABLE_NOTICE_KIND)', kinds: ["transmittal_unstampable"] }],
   // ackRequest (the nag's watermark) is written by browsers by design — a manual request or
   // re-nudge counts as the nag (the scan's own comment); only the escalation's key is server-only
@@ -1307,7 +1310,6 @@ const ACTOR_PASS_THROUGHS = [
   "lib/revisions.ts#notifyHolderOfRetirement(opts.actorUserId)",
   "lib/staleCopies.ts#nudgeStaleHolders(input.actorUserId)",
   "lib/staleCopies.ts#recallRetiredDocument(input.actorUserId)",
-  "lib/transitionIn.ts#flagCollisionToDrafting(input.actorId)",
   "lib/turnover.ts#notifyTurnoverRejected(actor.uid)",              // N8 (MON-11)
   "lib/workPackages.ts#notifyPackagesOfRevUp(input.actorUserId)",
 ];
@@ -1607,7 +1609,11 @@ describe("rule 1's obligation on the producers — a browser row names the signe
     // lib/checkoutNudge.ts sendCheckoutNudge and the library page's staged-
     // upload notice into lib/libraryNotify.ts notifyLibraryDocsAdded; their
     // pages pass RoleContext's uid, judged by the one-hop census below)
-    expect(sessions).toBeGreaterThanOrEqual(7);
+    // (drafting-flow DF-P2: the request form's and the check-in's new-request notices moved
+    // to /api/tickets/create, which writes them as the service role; at DF-P2's second review
+    // the check-in's PSM escalation moved there too, sent once and stamped on the ticket.
+    // Integrator at the DF-P2 merge: N9's 9 → 7 and DF-P2's 9 → 6 compose to 4: 9 − 2 − 3.)
+    expect(sessions).toBeGreaterThanOrEqual(4);
     expect([...pass].sort()).toEqual([...ACTOR_PASS_THROUGHS].sort());
   }, 60_000); // a whole-repo AST census: given room under a loaded full-suite run (integrator, N5 merge)
 
@@ -1655,7 +1661,9 @@ describe("rule 1's obligation on the producers — a browser row names the signe
     }
     expect(judged).toBeGreaterThan(40);
     expect(offenders).toEqual([]);
-    expect(sessions).toBeGreaterThanOrEqual(17);   // each traced to RoleContext's uid
+    // each traced to RoleContext's uid (DF-P2: 17 → 16 — flagCollisionToDrafting no longer writes a
+    // browser row, so IntakePanel's call of it is no longer a pass-through to judge)
+    expect(sessions).toBeGreaterThanOrEqual(16);
     expect([...forwarded].sort()).toEqual([...ACTOR_CALLER_PASS_THROUGHS].sort());
   }, 60_000);
 
