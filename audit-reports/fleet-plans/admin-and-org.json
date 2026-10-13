@@ -433,6 +433,27 @@
     "A&O P8 merged (it edits admin/libraries and libraries delete)"
    ],
    "sequencingNotes": "Added by the integrator 2026-10-13 at the A&O P10 merge (DEC-31: ORG-17 and ORG-18 were opened with 'the integrator, to route')."
+  },
+  {
+   "name": "P12 \u2014 Member-removal and workspace time-zone follow-ups: the one-line remainders P8 could not reach, and the effective-date resolver reading the Admin's time zone (ORG-7 remainder, VFY-15 remainder)",
+   "findings": [
+    "ORG-7 (LOW; P8's Partial, 2026-10-13 \u2014 done-when 2's isActiveMember at app/(protected)/documents/[libraryId]/page.tsx (the signed-in principal) and components/permissions/ViewAsSimulator.tsx (pass the SIMULATED member's real status, never a hard-coded true \u2014 DEC-90: a simulation shows what the server would decide); done-when 3: lib/accessRecert.ts lists a SUSPENDED member's personal grant under their name with a 'suspended' mark, so the reviewer sees and can revoke it (never a bare uid, never hidden); done-when 4: lib/ownership.ts team-rung name read gets .eq('org_id', orgId); the re-add residual: /api/admin/create-user (or the re-add path) clears the person's stale inherited acl_index entries through prune_removed_member_acl_index before the membership is re-activated, within a time budget, else the nightly rebuild \u2014 said in the record)",
+    "VFY-15 (LOW; P8's Partial \u2014 lib/effectiveDate.ts effectiveDateTimeZone resolves the document's org's workspace time zone (lib/workspaceTimeZone.ts readWorkspaceTimeZone, service client) before the deployment variable; its four callers pass the document's org; an unreadable setting falls back to today's deployment variable, never to UTC silently)"
+   ],
+   "files": [
+    "lib/ownership.ts, lib/accessRecert.ts, lib/effectiveDate.ts and its callers (app/api/verify/route.ts and the compliance scan)",
+    "app/(protected)/documents/[libraryId]/page.tsx (one prop), components/permissions/ViewAsSimulator.tsx (one argument)",
+    "app/api/admin/create-user/route.ts (the re-add prune) and its shared test mocks",
+    "tests: each line pinned; a member in two workspaces names the right person; a suspended grant listed and named; a re-added member carries no stale inherited entry; the verify verdict follows the Admin's time zone and falls back to the deployment variable"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "A&O P8 merged (2026-10-13; prune_removed_member_acl_index, lib/workspaceTimeZone.ts)",
+    "A&O P7 merged (components/permissions/ViewAsSimulator.tsx)",
+    "notifications N14 merged (2026-10-13 at 0cb6409; lib/effectiveDate.ts, lib/accessRecert.ts, lib/ownership.ts)",
+    "document-control P25 merged (dd49a18; the documents page)"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-13 at the A&O P8 merge (DEC-31: P8 named both remainders 'a P8 follow-up the integrator schedules'). VFY-15 stays with admin-and-org (the package that built the setting), not document-control: the resolver's one input is the A&O setting, and DC P3's module change is a read of it. Rulings under DEC-90 are in the findings lines."
   }
  ],
  "crossAreaFileOverlaps": [

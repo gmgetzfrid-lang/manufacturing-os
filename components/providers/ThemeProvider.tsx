@@ -74,7 +74,28 @@ function contrastFg(hex: string): string {
   const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
   return lum > 0.6 ? "#0f172a" : "#ffffff";
 }
-const isHex = (s: string) => /^#[0-9a-fA-F]{6}$/.test(s);
+const isHex = (s: unknown): s is string => typeof s === "string" && /^#[0-9a-fA-F]{6}$/.test(s);
+/** A "#RRGGBB" colour — the one shape every palette entry point accepts. */
+export const isHexColor = isHex;
+
+/** ORG-11: the org-enforced palette as the theme may apply it. The org
+ *  branding row is read straight from the database (and is on the restore
+ *  contract), so it is validated here exactly as the personal palette is in
+ *  initialPalette(): a primary or secondary that is not "#RRGGBB" (or not a
+ *  string at all — hexToRgb would throw and take the provider tree down)
+ *  falls back to PALETTE_PRESETS[0], never "#NaNNaNNaN" tokens org-wide.
+ *  null stays null (no enforced palette: each member's own applies). */
+export function sanitizeOrgPalette(p: unknown): Palette | null {
+  if (p == null) return null;
+  const o = p as Partial<Palette>;
+  if (typeof o !== "object" || !isHex(o.primary) || !isHex(o.secondary)) return PALETTE_PRESETS[0];
+  return {
+    id: typeof o.id === "string" && o.id ? o.id : "org",
+    name: typeof o.name === "string" && o.name ? o.name : "Organization",
+    primary: o.primary,
+    secondary: o.secondary,
+  };
+}
 
 function applyTheme(mode: ThemeMode, p: Palette) {
   if (typeof document === "undefined") return;
@@ -180,7 +201,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const setAccent = useCallback((hex: string) => {
     setPaletteState((prev) => { const p = { ...prev, id: "custom", name: "Custom", primary: hex }; persistPalette(p); return p; });
   }, []);
-  const applyOrgPalette = useCallback((p: Palette | null) => { setOrgPalette(p); }, []);
+  const applyOrgPalette = useCallback((p: Palette | null) => { setOrgPalette(sanitizeOrgPalette(p)); }, []);
 
   const value = useMemo(
     () => ({ mode, palette: effective, accent: effective.primary, paletteLocked: !!orgPalette, setMode, toggleMode, setPalette, setAccent, applyOrgPalette }),

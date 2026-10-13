@@ -11,6 +11,12 @@ import { LibraryConfig, type AccessControl } from "@/types/schema";
 import { appAlert } from "@/components/providers/DialogProvider";
 import { setOwner as assignLibraryOwner } from "@/lib/ownership";
 import { buildAclIndex, mergeWizardLibraryAcl } from "@/lib/acl";
+import type { LibraryDeleteImpact } from "@/lib/libraryDeleteImpact";
+import { postLibraryDelete } from "@/lib/libraryDeleteClient";
+
+// ALOG-3: the delete door — counts, deletes as the caller, records
+// LIBRARY_DELETED (app/api/admin/libraries/delete). The fetch is shared with
+// the library tile menu on /documents (lib/libraryDeleteClient.ts).
 
 export default function LibraryAdminPage() {
   const router = useRouter();
@@ -26,6 +32,8 @@ export default function LibraryAdminPage() {
 
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [libraryToDelete, setLibraryToDelete] = useState<LibraryConfig | null>(null);
+  const [deleteImpact, setDeleteImpact] = useState<LibraryDeleteImpact | null>(null);
+  const [deleteImpactError, setDeleteImpactError] = useState<string | null>(null);
 
   const [searchTerm, setSearchTerm] = useState("");
   const [sortOrder, setSortOrder] = useState<"name" | "recent">("recent");
@@ -175,9 +183,25 @@ export default function LibraryAdminPage() {
     }
   };
 
+  // ALOG-3: the dialog shows what the cascade removes, counted on the server
+  // before anything is deleted; the delete is refused until it is known.
+  const loadDeleteImpact = async (lib: LibraryConfig) => {
+    setDeleteImpact(null);
+    setDeleteImpactError(null);
+    if (!activeOrgId || !lib.id) { setDeleteImpactError("no active workspace"); return; }
+    try {
+      const r = await postLibraryDelete({ orgId: activeOrgId, libraryId: lib.id, preview: true });
+      if (!r.ok || !r.body.impact) throw new Error(typeof r.body.error === "string" && r.body.error ? r.body.error : `HTTP ${r.status}`);
+      setDeleteImpact(r.body.impact as LibraryDeleteImpact);
+    } catch (e) {
+      setDeleteImpactError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   const initiateDelete = (lib: LibraryConfig) => {
     setLibraryToDelete(lib);
     setIsDeleteModalOpen(true);
+    void loadDeleteImpact(lib);
   };
 
   const confirmDelete = async () => {
@@ -189,14 +213,20 @@ export default function LibraryAdminPage() {
       // confirmation, acknowledgment or sign-off, a legal hold, RLS — is shown
       // in the database's own words, as /documents shows it; a delete that
       // matched no row is a refusal too, never a silent success.
-      const { data: deleted, error } = await supabase.from("libraries").delete().eq("id", libraryToDelete.id!).select("id");
-      if (error) throw new Error(error.message);
-      if (!deleted || deleted.length === 0) {
-        throw new Error("the database deleted nothing (you may not have permission to delete this library); nothing was changed.");
+      // ALOG-3: the delete runs through the route, as this user (RLS and
+      // every guard judge it as before), after it counted what goes; the
+      // route records LIBRARY_DELETED with those counts.
+      const r = await postLibraryDelete({ orgId: activeOrgId, libraryId: libraryToDelete.id!, expected: deleteImpact ?? undefined });
+      if (!r.ok) {
+        if (r.body.changed === true && r.body.impact) setDeleteImpact(r.body.impact as LibraryDeleteImpact);
+        throw new Error(typeof r.body.error === "string" && r.body.error ? r.body.error : `the library was not deleted (HTTP ${r.status}).`);
       }
       setLibraries((prev) => prev.filter((l) => l.id !== libraryToDelete.id));
       setIsDeleteModalOpen(false);
       setLibraryToDelete(null);
+      if (typeof r.body.auditError === "string") {
+        await appAlert({ message: `The library was deleted, but its audit record could not be written: ${r.body.auditError}`, tone: "danger" });
+      }
     } catch (e) {
       console.error(e);
       const why = (e as { message?: unknown } | null)?.message;
@@ -278,6 +308,9 @@ export default function LibraryAdminPage() {
           onConfirm={confirmDelete}
           libraryName={libraryToDelete.name}
           isLoading={deleting}
+          impact={deleteImpact}
+          impactError={deleteImpactError}
+          onRetryImpact={() => void loadDeleteImpact(libraryToDelete)}
         />
       )}
 

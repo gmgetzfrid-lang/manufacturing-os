@@ -27,7 +27,8 @@
     },
     "by_status": {
       "RESOLVED": 42,
-      "OPEN": 94,
+      "OPEN": 93,
+      "RESOLVED (2026-10-13, by the integrator at the admin-and-org P8 merge — done-when 2 superseded by `DEC-103`; PASTE pending: `20261195`, paste guide row 153)": 1,
       "REFUTED": 4,
       "RESOLVED (2026-10-13, by the integrator's ruling at the DF-P2 merge — below)": 1,
       "BLOCKED": 1,
@@ -516,7 +517,7 @@
       "id": "EDGE-4",
       "title": "Removing a member hard-deletes their org_members row with no check for in-flight drafting requests, stranding tickets on a non-member that nothing escalates and nobody is notified about",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED (2026-10-13, by the integrator at the admin-and-org P8 merge — done-when 2 superseded by `DEC-103`; PASTE pending: `20261195`, paste guide row 153)",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

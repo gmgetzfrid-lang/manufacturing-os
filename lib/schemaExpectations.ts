@@ -411,4 +411,15 @@ export const EXPECTED_FUNCTIONS: readonly FunctionExpectation[] = [
     migration: "20261195_df_roundG_outcome_and_departure.sql",
     feature: "The maintenance run hands back a departed member's leftover requests (drafting-flow EDGE-4, step 5b(i))",
   },
+  // admin-and-org P8 (ORG-7): a removed member's inherited acl_index entries
+  // stripped in bounded chunks after the removal. The uuid argument refuses
+  // "schema-health-probe" (22P02), so the body never runs; until 20261204 is
+  // pasted revoke_member returns no aclIndexScope and the page makes no call.
+  {
+    signature: "prune_removed_member_acl_index(uuid, uuid, uuid[], uuid[], text, uuid, integer)",
+    fn: "prune_removed_member_acl_index",
+    probeArgs: { p_org_id: "schema-health-probe", p_uid: "schema-health-probe", p_library_ids: [], p_collection_ids: [] },
+    migration: "20261204_ao_roundG_revoke_member_acl_prune.sql",
+    feature: "A removed member's access is stripped from every inherited folder and document entry (/admin/users removal; ORG-7)",
+  },
 ];

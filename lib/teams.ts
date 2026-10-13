@@ -91,11 +91,34 @@ export async function createTeam(input: {
 /** Actor context for audited team writes (SURF-16). */
 export interface TeamActorCtx { orgId: string; actorId: string; actorEmail?: string | null }
 
+/** ORG-13 done-when 3 (admin-and-org Round G, P8): a supervisor is an ACTIVE
+ *  member of the team's own workspace. The supervisor becomes the effective
+ *  owner of every library the team owns, so a stale picker entry, a
+ *  suspended person or a uid from another workspace is refused before the
+ *  write, in words. A read that fails refuses too (never assumed). */
+export async function assertSupervisorIsActiveMember(orgId: string, supervisorUserId: string): Promise<void> {
+  const { data, error } = await supabase.from("org_members").select("uid")
+    .eq("org_id", orgId).eq("uid", supervisorUserId).eq("status", "active").maybeSingle();
+  if (error) throw new Error(`Couldn't check that the supervisor is a member of this workspace (${error.message}) — nothing was changed.`);
+  if (!data) throw new Error("That person is not an active member of this workspace, so they cannot supervise its team — nothing was changed.");
+}
+
 export async function updateTeam(
   teamId: string,
   patch: { name?: string; description?: string; color?: string; supervisorUserId?: string | null },
   ctx?: TeamActorCtx,
 ): Promise<void> {
+  if (patch.supervisorUserId) {
+    // ORG-13 dw3: the team's own org — from the caller, else read off the row.
+    let orgId = ctx?.orgId ?? null;
+    if (!orgId) {
+      const { data: t, error: tErr } = await supabase.from("teams").select("org_id").eq("id", teamId).maybeSingle();
+      if (tErr) throw new Error(tErr.message);
+      orgId = ((t as { org_id?: string } | null)?.org_id) ?? null;
+      if (!orgId) throw new Error("Team not found.");
+    }
+    await assertSupervisorIsActiveMember(orgId, patch.supervisorUserId);
+  }
   const row: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (patch.name !== undefined) row.name = patch.name;
   if (patch.description !== undefined) row.description = patch.description;
@@ -130,6 +153,8 @@ export async function setTeamSupervisor(input: {
     .select("id, name").eq("org_id", input.orgId).eq("owner_team_id", input.teamId);
   if (libErr) throw new Error(libErr.message);
   const affected = ((libs ?? []) as Array<{ id: string; name: string }>);
+
+  if (input.supervisorUserId) await assertSupervisorIsActiveMember(input.orgId, input.supervisorUserId);
 
   if (input.supervisorUserId === null && affected.length > 0 && !input.clearOwnership) {
     throw new Error(`This department owns ${affected.length} librar${affected.length === 1 ? "y" : "ies"} (${affected.map((l) => l.name).join(", ")}). Clearing its supervisor would leave them without an effective owner — pick a new supervisor, or clear the department's library ownership first.`);

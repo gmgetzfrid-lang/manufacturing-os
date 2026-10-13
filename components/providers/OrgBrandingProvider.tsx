@@ -11,6 +11,7 @@ import { useRole } from "@/components/providers/RoleContext";
 import { useTheme } from "@/components/providers/ThemeProvider";
 import { getOrgBranding, saveOrgBranding, type OrgBranding } from "@/lib/orgBranding";
 import { peekSignedUrl, subscribeSignedUrl } from "@/lib/storage";
+import { appAlert } from "@/components/providers/DialogProvider";
 
 interface OrgBrandingCtx {
   branding: OrgBranding | null;
@@ -24,7 +25,7 @@ interface OrgBrandingCtx {
 const Ctx = createContext<OrgBrandingCtx | null>(null);
 
 export function OrgBrandingProvider({ children }: { children: React.ReactNode }) {
-  const { activeOrgId, hasAnyRole } = useRole();
+  const { activeOrgId, hasAnyRole, uid, userEmail } = useRole();
   const { applyOrgPalette } = useTheme();
   const [branding, setBranding] = useState<OrgBranding | null>(null);
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
@@ -62,9 +63,11 @@ export function OrgBrandingProvider({ children }: { children: React.ReactNode })
 
   const save = useCallback(async (b: OrgBranding) => {
     if (!activeOrgId) return;
-    await saveOrgBranding(activeOrgId, b);
+    const { auditError } = await saveOrgBranding(activeOrgId, b, { uid: uid ?? null, email: userEmail ?? null });
     await applyBranding(b);
-  }, [activeOrgId, applyBranding]);
+    // ALOG-4 dw2: the branding is saved; a refused audit row is said.
+    if (auditError) void appAlert({ message: `Branding saved, but the audit record could not be written: ${auditError}`, tone: "danger" });
+  }, [activeOrgId, applyBranding, uid, userEmail]);
 
   return (
     <Ctx.Provider value={{ branding, logoUrl, loading, canEdit, save, reload: load }}>

@@ -22,8 +22,8 @@
     },
     "by_status": {
       "REFUTED": 3,
-      "RESOLVED": 70,
-      "OPEN": 50
+      "RESOLVED": 72,
+      "OPEN": 48
     }
   },
   "status_vocabulary": [
@@ -1050,7 +1050,7 @@
       "id": "NEDGE-16",
       "title": "After a restore every member is inactive, and nothing asserts or repairs it: notifications reach nobody and, after 20261161, nobody can read their bell",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED by reading `app/api/admin/restore/begin/route.ts:100` and `app/api/admin/restore/apply/route.ts:110 (deleted by admin-and-org P3, ILIFE-4)`: a restore's members are created with `status: \"inactive\"`. *(Integrator, at the admin-and-org P3 merge, 2026-10-02: P3 deleted the single-shot `/apply` route, which had no caller; `/begin` is now the only place that inserts placeholder members as `inactive`, so this finding runs through it alone.)* Combined with `NEDGE-3`'s active-member filter and `20261161`'s read policy.",
       "blast_radius": null,
@@ -2670,7 +2670,7 @@
       "id": "NEDGE-19",
       "title": "No org-level timezone exists: every server-composed time and the compliance digest are in UTC, labelled, never the plant's own zone",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED by search at `2de62f1` + N6: no `timezone` / `time_zone` column or `org_configurations` key is written anywhere in `app/`, `lib/`, `components/` or `supabase/`.",
       "blast_radius": null,
