@@ -338,6 +338,10 @@ describe("export column-list exception (ILIFE-11): an omitted column is declared
       const expected = [...cols].filter((c) => !o.omit.includes(c)).sort();
       expect([...o.select].sort(), `${table}: the explicit column list must be every column but the omitted ones (a new column? list it)`).toEqual(expected);
       for (const k of exportOrderKey(table)) expect(o.select, `${table}: the paging key ${k} must be read`).toContain(k);
+      for (const c of Object.keys(o.reset)) {
+        expect(o.select, `${table}.${c}: a reset column must be one the export reads`).toContain(c);
+        expect(o.omit.includes(c), `${table}.${c}: a reset column is not an omitted one`).toBe(false);
+      }
       expect(o.reason.length, `${table}: write the reason`).toBeGreaterThan(20);
     }
   });
@@ -348,10 +352,25 @@ describe("export column-list exception (ILIFE-11): an omitted column is declared
     for (const t of exported.filter((x) => x !== "knowledge_chunks")) expect(exportSelectFor(t), t).toBe("*");
   });
 
+  it("knowledge_chunks' embed-drain state is exported at the column defaults, and the reason says so", () => {
+    // Defaults from 20261121_intel_roundG_semantic_layer.sql: embed_attempts
+    // INTEGER NOT NULL DEFAULT 0; the other three are nullable with no default.
+    expect(EXPORT_OMITTED_COLUMNS.knowledge_chunks.reset).toEqual({
+      embed_attempts: 0, embed_error: null, embed_claimed_until: null, embed_retry_after: null,
+    });
+    expect(EXPORT_OMITTED_COLUMNS.knowledge_chunks.reason).toMatch(/retry state .* is exported reset to its default/);
+  });
+
   it("omitExportColumns drops exactly the omitted columns, and leaves other tables' rows byte-identical", () => {
     const chunk = { id: "c1", content: "Pump P-101A", embedding: "[0.1,0.2]", embedding_model: "m" };
     expect(omitExportColumns("knowledge_chunks", chunk)).toEqual({ id: "c1", content: "Pump P-101A", embedding_model: "m" });
     expect(chunk.embedding).toBe("[0.1,0.2]"); // pure
+    // the drain state the dropped vector left behind is reset; a column the
+    // row does not have is not added
+    const spent = { id: "c2", embedding: "[0.3]", embed_attempts: 4, embed_error: "provider 503", embed_claimed_until: "2099-01-01T00:00:00Z", embed_retry_after: "2099-01-01T00:00:00Z" };
+    expect(omitExportColumns("knowledge_chunks", spent)).toEqual({ id: "c2", embed_attempts: 0, embed_error: null, embed_claimed_until: null, embed_retry_after: null });
+    expect(spent.embed_attempts).toBe(4); // pure
+    expect(omitExportColumns("knowledge_chunks", { id: "c3", embedding: null })).toEqual({ id: "c3" });
     const doc = { id: "d1", embedding: "kept" };
     expect(omitExportColumns("documents", doc)).toBe(doc);
   });

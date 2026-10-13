@@ -447,7 +447,7 @@ export async function runOrgExport(params: {
   );
   notes.push(
     "Every column from the source schema is preserved verbatim EXCEPT the credential columns listed in manifest.redactedColumns, " +
-    "which are exported as null, and the derived columns listed in manifest.omittedColumns, which are left out. " +
+    "which are exported as null, and the derived columns listed in manifest.omittedColumns, which are left out (the state columns that described them are exported at their defaults, as the OMITTED note says). " +
     "JSON keys mirror Postgres column names (snake_case).",
     `OMITTED derived columns (not in this export): ${
       Object.entries(EXPORT_OMITTED_COLUMNS).map(([t, o]) => `${o.omit.map((c) => `${t}.${c}`).join(", ")}: ${o.reason}`).join("; ")

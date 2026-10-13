@@ -178,7 +178,8 @@ describe("ILIFE-11 criterion 1 — knowledge_chunks is exported by an explicit c
     expect(note).toMatch(/Nothing re-embeds them automatically/);
     expect(note).not.toMatch(/drain|rebuilt after a restore/);
     expect(/^[\x20-\x7e]*$/.test(note)).toBe(true);                // ASCII (total_bytes compares characters)
-    expect(env.manifest.notes.join("\n")).toMatch(/derived columns listed in manifest\.omittedColumns, which are left out/);
+    expect(env.manifest.notes.join("\n")).toMatch(/derived columns listed in manifest\.omittedColumns, which are left out \(the state columns that described them are exported at their defaults/);
+    expect(note).toMatch(/embedding retry state \(embed_attempts, embed_error, embed_claimed_until, embed_retry_after\) is exported reset to its default/);
     expect(env.manifest.notes.join("\n")).not.toMatch(/preserved verbatim EXCEPT the credential columns listed in manifest\.redactedColumns, which are exported as null\. JSON keys/);
   });
 
@@ -292,6 +293,39 @@ describe("ILIFE-11 criterion 3 (chunk half) — a restore of a backup taken with
     // The model-mix guard looks only at rows WITH an embedding: none here.
     expect(def.body).toContain("o.embedding IS NOT NULL");
     expect(chunks.filter((c) => c.embedding !== undefined && c.embedding !== null)).toEqual([]);
+  });
+
+  it("a chunk that embedded on its LAST allowed try comes back with a fresh retry state, not one try from refused", async () => {
+    // knowledgeEmbedCore raises embed_attempts on a failure and never lowers
+    // it on success, so a live embedded chunk can carry EMBED_MAX_ATTEMPTS-1
+    // (and a stale error / lease / backoff). Those described the vector the
+    // export leaves out; restored with it, one transient provider error on
+    // the next Build would refuse the passage for good.
+    const future = new Date(Date.now() + 86_400_000).toISOString();
+    seedSource([
+      chunk(0, { embed_attempts: EMBED_MAX_ATTEMPTS - 1, embed_error: "provider 503 (transient)", embed_claimed_until: future, embed_retry_after: future }),
+      chunk(1, { embed_attempts: EMBED_MAX_ATTEMPTS - 1 }),
+    ]);
+    const env = await exportEnvelope();
+    for (const r of env.tables.knowledge_chunks as Row[]) {
+      expect(r).toMatchObject({ embed_attempts: 0, embed_error: null, embed_claimed_until: null, embed_retry_after: null });
+      expect(r).not.toHaveProperty("embedding");
+    }
+    seedTarget();
+    const envelope = env as unknown as RestoreEnvelopeLike;
+    const plan = planRestore(envelope, { orgId: TARGET, orgName: "Acme", members: [{ uid: "t-alice", email: "alice@acme.com" }] });
+    const result = await runChunkedRestore({ orgId: TARGET, envelope, plan, orgNameChoice: "current", post: routePost });
+    expect(result.stoppedAt).toBeNull();
+    expect(result.totalRefused).toBe(0);
+    const chunks = rowsOf("knowledge_chunks");
+    expect(chunks).toHaveLength(2);
+    for (const c of chunks) {
+      expect(c.embedding ?? null).toBeNull();
+      expect(c.embed_attempts).toBe(0);                            // the whole budget of tries, as a new chunk has
+      expect(c.embed_error ?? null).toBeNull();
+      expect(c.embed_claimed_until ?? null).toBeNull();            // claimable at once
+      expect(c.embed_retry_after ?? null).toBeNull();
+    }
   });
 
   it("the drain's pre-20261121 queue (no claim function yet) is `embedding IS NULL` too", () => {
