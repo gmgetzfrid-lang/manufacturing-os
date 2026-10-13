@@ -6,10 +6,12 @@
 // colored by status. Drag a chip to another tile to reschedule the
 // whole task by that delta; click it to open the full detail panel.
 //
-// We render leaf tasks and bottom-level groups (a parent whose children
-// are all leaves) — never the broad containers (the project root or a
-// phase-of-phases would otherwise repeat down every day of the month).
-// Inside a tile, chips stack in time-of-day order. The rules live in
+// Every task that covers a day is on that day's tile — the schedule
+// keeps its integrity. The WORK (leaf tasks, or bottom-level groups in
+// Tasks mode) renders as chips in time-of-day order. The GROUPS above
+// it (the project root, phases, units) render as thin bands at the top
+// of the tile with a Day x/n badge: solid when work under them is
+// placed that day, muted when they merely carry over. The rules live in
 // lib/calendarPlacement.ts so they're unit-tested. The detail panel
 // surfaces a group chip's subtask accordion.
 
@@ -20,7 +22,7 @@ import StatusControl from "@/components/projects/StatusControl";
 import ProgressControl from "@/components/projects/ProgressControl";
 import { GROUP_PALETTE } from "@/lib/scheduleColors";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
-import { placeableTasks, compareDayPlacements, startMsOf, finishMsOf } from "@/lib/calendarPlacement";
+import { splitPlacements, compareDayPlacements, compareBandPlacements, startMsOf, finishMsOf, type BandPlacement } from "@/lib/calendarPlacement";
 import { addDays as addDaysTz, addMonths as addMonthsTz, clockLabel, dayDiff as dayDiffTz, dayKey, dayKeyToMs, dayOfWeek, fmtInTz, hasTimeOfDay, tzAbbrev, startOfDay as startOfDayTz, startOfMonth as startOfMonthTz, wallClock } from "@/lib/scheduleTz";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 
@@ -122,16 +124,16 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
     return out;
   }, [childrenByParent]);
 
-  // Which rows actually get placed on the grid: leaves, plus (in Tasks
-  // mode) bottom-level groups standing in for their steps. Containers
-  // such as the project root are never placed — they aren't specific
-  // to any one day. In Sub-tasks mode every leaf is placed exactly once
-  // so a single sub-item can be dragged on its own day while its
-  // siblings stay put. See lib/calendarPlacement.ts.
-  const mains = useMemo(
-    () => placeableTasks(milestones, childrenByParent, showSubtasks),
+  // Chips = the work (leaves, plus bottom-level groups in Tasks mode);
+  // bands = every group above it. In Sub-tasks mode every leaf is a chip
+  // exactly once so a single sub-item can be dragged on its own day
+  // while its siblings stay put. See lib/calendarPlacement.ts.
+  const split = useMemo(
+    () => splitPlacements(milestones, childrenByParent, showSubtasks),
     [milestones, childrenByParent, showSubtasks],
   );
+  const mains = split.chips;
+  const bandTasks = split.bands;
 
   // Distinct top-level groups that actually have rendered tasks beneath
   // them, in calendar order — used for the group color legend.
@@ -185,6 +187,34 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
     for (const arr of m.values()) arr.sort(compareDayPlacements);
     return m;
   }, [mains, tz]);
+
+  // Bucket every group (band) onto each day it covers, root-first, and
+  // note whether any chip placed that day sits beneath it.
+  const bandsByDay = useMemo(() => {
+    const activeAncestors = new Map<string, Set<string>>();
+    for (const [key, arr] of byDay) {
+      const set = new Set<string>();
+      for (const p of arr) for (const a of ancestorsOf(p.ms)) if (a.id) set.add(a.id);
+      activeAncestors.set(key, set);
+    }
+    const m = new Map<string, BandPlacement<Milestone>[]>();
+    for (const ms of bandTasks) {
+      const s = startMs(ms), f = finishMs(ms);
+      if (!Number.isFinite(s) || !Number.isFinite(f)) continue;
+      const start = startOfDayUTC(new Date(s), tz);
+      const finish = startOfDayUTC(new Date(f), tz);
+      const total = Math.max(1, dayDiff(start, finish, tz) + 1);
+      const depth = ancestorsOf(ms).length;
+      for (let i = 0; i < total; i++) {
+        const key = ymd(addDaysUTC(start, i, tz), tz);
+        const arr = m.get(key) ?? [];
+        arr.push({ ms, dayIndex: i, spanDays: total, depth, hasWorkToday: !!ms.id && (activeAncestors.get(key)?.has(ms.id) ?? false) });
+        m.set(key, arr);
+      }
+    }
+    for (const arr of m.values()) arr.sort(compareBandPlacements);
+    return m;
+  }, [bandTasks, byDay, ancestorsOf, tz]);
 
   // 6-week grid starting on the Sunday on/before the 1st.
   const weeks = useMemo(() => {
@@ -345,6 +375,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
         <span className="inline-flex items-center gap-1"><GripVertical className="w-3 h-3" /> drag handle (move to another day)</span>
         <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-slate-400 border border-black/10" /> status dot (click to change)</span>
         <span className="inline-flex items-center gap-1"><span className="text-[8.5px] font-bold px-1 rounded bg-black/10">2/3</span> day 2 of a 3-day task</span>
+        <span className="inline-flex items-center gap-1"><span className="inline-block w-6 h-2.5 rounded-sm bg-[var(--color-accent-soft)] border border-[var(--color-accent-ring)]/40" /> group covering the day (muted = nothing under it today)</span>
       </div>
 
       {/* Weekday header */}
@@ -361,10 +392,14 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
             {week.map((day) => {
               const key = ymd(day, tz);
               const items = byDay.get(key) ?? [];
+              const bands = bandsByDay.get(key) ?? [];
               const inMonth = wallClock(day.getTime(), tz).month === monthIdx;
               const isToday = sameDayUTC(day, today, tz);
               const shown = items.slice(0, 4);
               const extra = items.length - shown.length;
+              const MAX_BANDS = 3;
+              const shownBands = bands.slice(0, MAX_BANDS);
+              const extraBands = bands.length - shownBands.length;
               return (
                 <div
                   key={key}
@@ -378,6 +413,16 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
                       {wallClock(day.getTime(), tz).day}
                     </span>
                   </div>
+                  {/* Groups covering this day — root first. Solid = work
+                      under it is scheduled today; muted = it only carries over. */}
+                  {shownBands.map((b) => {
+                    const unit = topGroupOf(b.ms);
+                    const color = GROUP_COLORS[(unit.id ? groupColorIndex.get(unit.id) : undefined) ?? 0];
+                    return <Band key={`band-${b.ms.id}-${b.dayIndex}`} band={b} color={color} onClick={() => onOpenDetail(b.ms)} />;
+                  })}
+                  {extraBands > 0 && (
+                    <button onClick={() => setOverflowDay(key)} className="text-[9px] font-bold text-[var(--color-text-faint)] hover:text-[var(--color-accent)] px-1 text-left transition-colors">+{extraBands} more group{extraBands === 1 ? "" : "s"}</button>
+                  )}
                   {shown.map((p) => {
                     const unit = topGroupOf(p.ms);
                     const color = GROUP_COLORS[(unit.id ? groupColorIndex.get(unit.id) : undefined) ?? 0];
@@ -430,11 +475,16 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
             <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
               <CalendarDays className="w-4 h-4 text-[var(--color-accent)]" />
               <div className="font-bold text-[var(--color-text)] text-sm">{fmtInTz(ymdToDate(overflowDay, tz), tz, { weekday: "long", month: "long", day: "numeric" })}</div>
-              <span className="ml-auto text-[11px] text-[var(--color-text-faint)]">{(byDay.get(overflowDay) ?? []).length} tasks</span>
+              <span className="ml-auto text-[11px] text-[var(--color-text-faint)]">{(byDay.get(overflowDay) ?? []).length} tasks · {(bandsByDay.get(overflowDay) ?? []).length} groups</span>
             </div>
             <div className="max-h-[60vh] overflow-y-auto p-2 space-y-1">
-              {/* Same time-of-day order as the tile; the color stripe and
-                  parent label on each chip say which group it belongs to. */}
+              {/* Groups covering the day, root first, then the work in the
+                  same time-of-day order as the tile. */}
+              {(bandsByDay.get(overflowDay) ?? []).map((b) => {
+                const unit = topGroupOf(b.ms);
+                const color = GROUP_COLORS[(unit.id ? groupColorIndex.get(unit.id) : undefined) ?? 0];
+                return <Band key={`band-${b.ms.id}-${b.dayIndex}`} band={b} color={color} full onClick={() => { setOverflowDay(null); onOpenDetail(b.ms); }} />;
+              })}
               {(byDay.get(overflowDay) ?? []).map((p) => {
                 const unit = topGroupOf(p.ms);
                 const color = GROUP_COLORS[(unit.id ? groupColorIndex.get(unit.id) : undefined) ?? 0];
@@ -513,6 +563,35 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
         </div>
       )}
     </div>
+  );
+}
+
+// A group (the root, a phase, a unit) covering this day: one thin strip,
+// never a full chip, so the hierarchy is always visible without the
+// root repeating down the month. Solid when work under it is scheduled
+// today, muted when it only carries over.
+function Band({ band, color, onClick, full }: {
+  band: BandPlacement<Milestone>;
+  color: { bar: string; soft: string; text: string; dot: string };
+  onClick: () => void;
+  full?: boolean;
+}) {
+  const { ms, dayIndex, spanDays, hasWorkToday, depth } = band;
+  const tip = `${ms.name}\nGroup · day ${dayIndex + 1} of ${spanDays}${hasWorkToday ? "" : "\nCarries over — nothing scheduled under it today"}\n— Click to open`;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={tip}
+      className={`w-full flex items-center gap-1 rounded px-1 ${full ? "py-1" : "h-[15px]"} text-[8.5px] font-bold uppercase tracking-wide text-left border transition-colors ${hasWorkToday
+        ? `${color.soft} ${color.text} border-transparent hover:brightness-95`
+        : "border-dashed border-[var(--color-border)] text-[var(--color-text-faint)] bg-transparent hover:bg-[var(--color-surface-2)]"}`}
+      style={{ paddingLeft: 4 + Math.min(depth, 3) * 6 }}
+    >
+      <span className={`w-1.5 h-1.5 rounded-sm shrink-0 ${hasWorkToday ? color.dot : "bg-[var(--color-border-strong)]"}`} />
+      <span className={`truncate ${full ? "" : "min-w-0"}`}>{ms.name}</span>
+      <span className="ml-auto shrink-0 font-mono normal-case tracking-normal opacity-70">{dayIndex + 1}/{spanDays}</span>
+    </button>
   );
 }
 

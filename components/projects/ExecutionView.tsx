@@ -42,7 +42,7 @@ import SchedulePulse from "@/components/projects/SchedulePulse";
 import TaskDetailPanel from "@/components/projects/TaskDetailPanel";
 import ScheduleCalendarTileView from "@/components/projects/ScheduleCalendarTileView";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
-import { addDays as addDaysTz, dayDiff as dayDiffTz, dayOfWeek, fmtInTz, startOfDay as startOfDayTz } from "@/lib/scheduleTz";
+import { addDays as addDaysTz, dayDiff as dayDiffTz, dayOfWeek, fmtInTz, startOfDay as startOfDayTz, wallClock } from "@/lib/scheduleTz";
 import StatusControl from "@/components/projects/StatusControl";
 import ProgressControl from "@/components/projects/ProgressControl";
 import ExecutionGuide from "@/components/projects/ExecutionGuide";
@@ -1360,22 +1360,39 @@ function Axis({ domain, pxPerDay }: { domain: { start: Date; totalDays: number }
   const tz = useScheduleTz();
   // Choose a tick step that keeps labels legible at the current zoom.
   const step = pxPerDay >= 60 ? 1 : pxPerDay >= 34 ? 2 : pxPerDay >= 16 ? 7 : pxPerDay >= 8 ? 14 : 30;
-  const ticks: Array<{ x: number; label: string }> = [];
+  // Anchor ticks the eye looks for: the schedule's first and last day and
+  // the 1st of each month. A plain every-N-days grid can skip the last
+  // day entirely ("the axis stops at the 29th while the bars run to the
+  // 31st"), so these are always labelled and a regular tick that would
+  // collide with one steps aside.
+  const firstDay = PAD_DAYS, lastDay = Math.max(firstDay, domain.totalDays - 1 - PAD_DAYS);
+  const anchors = new Set<number>([firstDay, lastDay]);
+  for (let d = 0; d < domain.totalDays; d++) {
+    if (wallClock(addDaysUTC(domain.start, d, tz).getTime(), tz).day === 1) anchors.add(d);
+  }
+  const minGapDays = Math.max(1, Math.ceil(30 / pxPerDay)); // ~30px so labels don't overlap
+  const days = new Set<number>(anchors);
   for (let d = 0; d < domain.totalDays; d += step) {
+    if ([...anchors].some((a) => Math.abs(a - d) < minGapDays)) continue;
+    days.add(d);
+  }
+  const ticks: Array<{ x: number; label: string; anchor: boolean }> = [...days].sort((a, b) => a - b).map((d) => {
     const date = addDaysUTC(domain.start, d, tz);
-    ticks.push({
+    const monthStart = wallClock(date.getTime(), tz).day === 1;
+    return {
       x: d * pxPerDay,
-      label: step >= 28
+      anchor: anchors.has(d),
+      label: step >= 28 && monthStart
         ? fmtInTz(date, tz, { month: "short", year: "2-digit" })
         : fmtInTz(date, tz, { month: "short", day: "numeric" }),
-    });
-  }
+    };
+  });
   return (
     <div className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur border-b border-[var(--color-border)]" style={{ height: AXIS_H }}>
       {ticks.map((t, i) => (
         <div key={i} className="absolute top-0 bottom-0 flex flex-col justify-center" style={{ left: t.x }}>
           <div className="absolute top-0 bottom-0 w-px bg-slate-200" />
-          <span className="pl-1 text-[9px] font-mono text-[var(--color-text-muted)] whitespace-nowrap">{t.label}</span>
+          <span className={`pl-1 text-[9px] font-mono whitespace-nowrap ${t.anchor ? "font-bold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>{t.label}</span>
         </div>
       ))}
     </div>

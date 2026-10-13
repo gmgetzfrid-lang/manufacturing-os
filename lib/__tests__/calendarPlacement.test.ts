@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { placeableTasks, compareDayPlacements, type DayPlacement, type PlaceableTask } from "@/lib/calendarPlacement";
+import { placeableTasks, splitPlacements, compareDayPlacements, compareBandPlacements, type DayPlacement, type BandPlacement, type PlaceableTask } from "@/lib/calendarPlacement";
 
 type T = PlaceableTask & { id: string; parentId: string | null };
 
@@ -27,10 +27,29 @@ const L2 = t("l2", "u2a", "2026-10-03T06:00:00Z", "2026-10-03T10:00:00Z");
 const ALL = [ROOT, DIRECT, SHUTDOWN, S1, S2, UNIT2, U2A, L1, L2];
 
 describe("placeableTasks", () => {
-  it("never places containers (the project root, a phase of phases)", () => {
-    const ids = placeableTasks(ALL, kids(ALL), false).map((m) => m.id);
-    expect(ids).not.toContain("root");
-    expect(ids).not.toContain("unit2");
+  it("containers (the project root, a phase of phases) are bands, never chips", () => {
+    const { chips, bands } = splitPlacements(ALL, kids(ALL), false);
+    expect(chips.map((m) => m.id)).not.toContain("root");
+    expect(chips.map((m) => m.id)).not.toContain("unit2");
+    expect(bands.map((m) => m.id)).toEqual(["root", "unit2"]);
+  });
+
+  it("keeps the schedule's integrity: every dated row is a chip or a band, never both", () => {
+    const k = kids(ALL);
+    for (const mode of [false, true]) {
+      const { chips, bands } = splitPlacements(ALL, k, mode);
+      const chipIds = new Set(chips.map((m) => m.id));
+      const bandIds = new Set(bands.map((m) => m.id));
+      for (const m of ALL) {
+        const represented = chipIds.has(m.id) || bandIds.has(m.id)
+          // Tasks mode: a step under a bottom group rides its group's chip.
+          || (!mode && !!m.parentId && chipIds.has(m.parentId) && (k.get(m.id) ?? []).length === 0);
+        expect(represented, `${m.id} missing in ${mode ? "Sub-tasks" : "Tasks"} mode`).toBe(true);
+        expect(chipIds.has(m.id) && bandIds.has(m.id)).toBe(false);
+      }
+    }
+    // Sub-tasks mode: bottom groups become bands too, so their steps show as chips.
+    expect(splitPlacements(ALL, kids(ALL), true).bands.map((m) => m.id)).toEqual(["root", "shutdown", "unit2", "u2a"]);
   });
 
   it("Tasks mode: bottom groups stand in for their steps; stray leaves stand alone", () => {
@@ -49,6 +68,14 @@ describe("placeableTasks", () => {
     const bare = { ...DIRECT, id: "bare", parentId: null, plannedAt: null } as T;
     const ids = placeableTasks([bare, DIRECT], kids([bare]), false).map((m) => m.id);
     expect(ids).toEqual(["direct"]);
+  });
+});
+
+describe("compareBandPlacements", () => {
+  const b = (ms: T, depth: number): BandPlacement => ({ ms, dayIndex: 0, spanDays: 1, depth, hasWorkToday: true });
+  it("orders bands root-first, then by start", () => {
+    const list = [b(U2A, 2), b(UNIT2, 1), b(ROOT, 0), b(SHUTDOWN, 1)];
+    expect(list.sort(compareBandPlacements).map((x) => x.ms.id)).toEqual(["root", "shutdown", "unit2", "u2a"]);
   });
 });
 
