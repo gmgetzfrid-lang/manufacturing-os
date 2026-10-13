@@ -723,8 +723,13 @@ describe("ALOG-14 — the permissions explorer tells the truth", () => {
     "Reassign library ownership / owning team", "Per-library permission (ACL) drawer",
   ];
   it("exactly the rows checked against the code carry the review date; every other snapshot row is marked NOT RE-CHECKED", () => {
-    expect(SNAPSHOT_ROWS.filter((r) => r.checked).map((r) => r.cap).sort()).toEqual([...CHECKED].sort());
-    for (const r of rows.filter((x) => x.source === "snapshot")) expect(!!r.unchecked, r.cap).toBe(!CHECKED.includes(r.cap));
+    // admin-and-org P7 (ALOG-14's remainder, 2026-10-13): the other 23 rows
+    // were checked too (21 pinned in auditExplorerSnapshot.test.ts, 2
+    // removed), so every snapshot row now carries the date; the eight rows
+    // checked here on 2026-10-07 are still among them.
+    for (const cap of CHECKED) expect(SNAPSHOT_ROWS.find((r) => r.cap === cap)?.checked, cap).toBe(true);
+    for (const r of rows.filter((x) => x.source === "snapshot")) expect(!!r.unchecked, r.cap).toBe(!SNAPSHOT_ROWS.find((s) => s.cap === r.cap)?.checked);
+    expect(rows.filter((x) => x.source === "snapshot" && x.unchecked)).toEqual([]);
   });
   it("the ACL drawer row is the drawer's delegation contract (DEL-1 / GAP-3) and the library guard — owners and Manage Permissions holders, not controllers only", () => {
     const drawer = src("components/permissions/PermissionDrawer.tsx");
