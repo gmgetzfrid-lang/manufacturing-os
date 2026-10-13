@@ -917,7 +917,7 @@ lib/inAppNotifications.ts:26 —
 ## PROD-16 · Two access requests past the per-org cap that land at once can give a pool member two "more are waiting" rows
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** notifications N14 RAW-INSERT TAIL — named by notifications Round G N8 PRODUCERS-FREE (final review fix, 2026-10-07) as the DEC-31 remainder of `PROD-2`; the integrator confirms it in `audit-reports/fleet-plans/notifications.json` (N8 does not edit the plan). N14 already moves service-role writers onto the typed sink, which is where the fix lands.
 - **Verification:** CONFIRMED by reading (`fleet/N8-producers-free`); not reproduced against a live database, where it needs two requests in flight at once.
 - **Locations:** `app/api/auth/request-access/route.ts:85` `notifyAccessRequestBurst` (the open-row read, then the insert of the rows for members with none).
@@ -931,5 +931,46 @@ lib/inAppNotifications.ts:26 —
 
 - [ ] Two over-cap requests that land at once give a pool member at most one unread burst row for the org. For example, take the check and the insert in one SECURITY DEFINER function under a transaction advisory lock keyed on the org, granted to the service role only (DRLS-16). A partial unique index on its own is not enough: a conflict would fail the whole batch insert, and PostgREST cannot name a partial index in `ON CONFLICT`. So an index also needs such a function. Either way it is a migration in the DEC-30 one-paste shape.
 - [ ] A test pins it with a concurrent pair, or a source pin on the serialising statement.
+
+**Resolution (2026-10-13, notifications Round G).** Package N14 RAW-INSERT TAIL (commit `fed6288`).
+
+**Reproduced first** on a throwaway PostgreSQL 16, with the schema stubbed: `notifications` as in `20260621` / `20260723`; `org_members` holding 2 active pool members and 1 suspended. Two sessions ran today's two steps at once (read the open rows, wait 1 s, insert for the members without one). Each pool member got **2** burst rows.
+
+**What landed.**
+- `supabase/migrations/20261197_notif_roundG_burst_claim_digest_rail.sql` adds `claim_access_request_burst(p_org uuid, p_recipients uuid[], p_title text, p_body text)`.
+  - It is SECURITY DEFINER with `SET search_path = public`. EXECUTE is revoked from PUBLIC, anon and authenticated and granted to service_role only (DRLS-16). It never reads `auth.uid()`.
+  - It first takes `pg_advisory_xact_lock(hashtextextended('access-request-burst:' || p_org::text, 0))`. Then it counts the recipients who already hold an unread server burst row, and inserts one for each ACTIVE member of the org who holds none.
+  - It answers `{told, already}`.
+  - The row is the one the route writes: kind `access_request_pending`; the route's title and body; link `/admin/users`; resource `('org', the org id)`; no actor; metadata `{"accessRequestBurst": true}`.
+  - The lock is held until the RPC's transaction commits. Each later statement in a READ COMMITTED plpgsql function takes a new snapshot, so the next claim for the org sees the last claim's rows.
+- `app/api/auth/request-access/route.ts` `notifyAccessRequestBurst` (:85) calls the claim (:97) with the notice's words.
+  - Before the paste (`42883` / `PGRST202`, matched by `lib/intakeRateLimit.ts` `isMissingFunction`), today's two steps run unchanged. The log line says they are unserialised.
+  - Any other error writes nothing and logs, as an unreadable open-row read does.
+  - The response never changes.
+- **REGRESSION.** Who is told is unchanged: the same pool, ACTIVE members only, no row for a member who already holds an unread one, and a member who has read theirs is told again by the next request. The words, link and resource are unchanged, and the under-cap path is untouched. The census still forbids an upsert on `notifications`. The function is a plain INSERT, and the service role passes the 20261160 rail untouched.
+
+**Exercised on PostgreSQL 16** (throwaway cluster under `/var/lib/postgresql`, deleted afterwards).
+- The paste ran twice. Every probe read `true` both times, and the inventory came back as counts only.
+- Two claims in flight together: A answered `{"told": 2, "already": 0}`. B waited for A's commit and answered `{"told": 0, "already": 2}`. Each member held one row.
+- 50 concurrent claims wrote 2 rows for the 2 active members. The suspended member got none.
+- After one member read theirs, the next claim answered `{"told": 1, "already": 1}`.
+- `authenticated` and `anon` were refused ("permission denied for function claim_access_request_burst").
+
+**Tests.**
+- `lib/__tests__/producersRoutes.test.ts` "PROD-16 — …" (3 cases). The fake service role transcribes the function, including its per-org lock:
+  - After the paste, ONE call with the org, the pool and the words, and the app neither reads nor inserts `notifications` itself.
+  - Two over-cap requests at once leave each pool member one row. Before the paste, the same path as today, logged as unserialised.
+  - Any other error writes nothing.
+  - The existing PROD-2 burst tests run unchanged on the pre-paste path.
+- `lib/__tests__/notifRoundGBurstDigestMigration.test.ts`: the DEC-30 shape; the function defined once in the sequence; DRLS-16 grants; the lock taken before the read and the insert; and the row shape equal to the route's fallback, with its kind pinned to `KIND_META`.
+
+**Done-when.**
+- ✓ Two over-cap requests that land at once give a pool member at most one unread burst row for the org, once `20261197` is pasted. This is the done-when's own example: one SECURITY DEFINER function, a transaction advisory lock keyed on the org, service role only, in the DEC-30 one-paste shape. PostgreSQL 16 above.
+- ✓ A test pins it with a concurrent pair (`producersRoutes.test.ts`, the transcribed lock) and a source pin on the serialising statement (`notifRoundGBurstDigestMigration.test.ts`).
+
+**Scope / residual.**
+- Until `20261197` is pasted, the route runs today's unserialised path and says so in its log line.
+- Duplicate burst rows written before the paste are left as they are. Inventory row 2 counts the (org, member) pairs holding more than one.
+- Paste and deploy order: either order is safe.
 
 ---

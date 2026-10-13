@@ -509,3 +509,18 @@ Everything about *what a user sees* is read from JSX and CSS classes and was
   These are cheap to confirm in a browser and should be.
 
 - *Integrator, at the N3 SURFACES merge (2026-10-08): `DEC-94` item 4's reading ratified (`RT-11`, `OS-4` RESOLVED), `DEC-74` §7 and the 2 + 1 burst shape ratified for `TAX-9` (OPEN on the summary click-through only), `TAX-5` RESOLVED (every map derives from `KIND_META` — N2 + N3 + N6). The two `ToastProvider` hand-offs above — the newest-words merge and the summary card's click-through — are owned by **notifications N13 LAYERS SWEEP** (plan entry updated).*
+
+*Hand-off (2026-10-13, notifications Round G, N14 RAW-INSERT TAIL → N9, drafting-flow DF-P2, the intake door's owner, the integrator):*
+- *`TAX-11`, `NEDGE-13`, `PROD-16` and `NEDGE-20` are RESOLVED. No raw `.from("notifications").insert(` remains outside `lib/inAppNotifications.ts`, and `RAW_SITES` is empty. A new server writer uses `notifyWithReason` / `notifyBatchWithReason` with the client it holds.*
+- *Merge notes. N14's hunks in the files parallel packages also edit are minimal:*
+  - *`app/api/cron/maintenance/route.ts`: the escalation's insert moved onto `notifyBatchWithReason(…, sb)`. N9 changes the kind string there, and DF-P3 adds an SLA step. N14 also changed step 6's scan loop (the compliance shortfall line) and the digest's last-digest read (`NEDGE-20`).*
+  - *`app/api/tickets/workflow-action/route.ts`: the two fan-out inserts only. DF-P3 owns the outcome / cancel / SLA limbs.*
+  - *`lib/orchestrator/tools.ts`: the `notify_personnel` insert only, imported inside the hunk. I-21 edits `loadLineGraph`.*
+- *`DELIV-16` / `DELIV-7` (OPEN, Partial). A compliance notice that does not land is retried and dead-lettered by `lib/complianceNotify.ts` `notifyCompliance` (`DEC-44 (N14)`). A producer adopts it with ONE import line: `import { notifyCompliance as notify } from "@/lib/complianceNotify"`.*
+  - ***N9:** `lib/distributionAcks.ts` (and its `emit()` calls), `lib/postPublish.ts`, `lib/staleCopies.ts`, `lib/revisionImpact.ts`, `lib/workPackages.ts`, and `emit()`'s in-app leg for compliance kinds (`lib/notify/dispatch.ts`, for `lib/holds.ts` and `lib/distributionAcks.ts`).*
+  - ***DF-P2:** `components/documents/CheckInPanel.tsx` (`review_requested`).*
+  - ***The intake door's owner (projects):** `app/api/intake/upload/route.ts` (`review_requested`, `doc_superseded`).*
+  - *The cron already reports a step-6 scan's shortfall, so `scanDistributionAcks` / `scanStaleHolds` are reported as soon as they adopt it.*
+- *Paste `20261197` (`claim_access_request_burst`, `email_notif_insert` + one line) at any time, in either order with the deploy and with `20261183`. Its five probes read `true`, and it changes no row.*
+- *For the integrator, `lib/schemaExpectations.ts` probes to add (N14 does not edit that file):*
+  - *the function `claim_access_request_burst` (migration `20261197_notif_roundG_burst_claim_digest_rail.sql`).*
