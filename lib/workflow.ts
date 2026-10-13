@@ -64,8 +64,16 @@ export interface WorkflowContext {
  *  its request type and unit. The route, the page and the simulator all
  *  build it from here, so a type-scoped rule reads the same fields
  *  everywhere. (`libraryId` / `discipline` are not ticket properties.) */
-export function ticketResource(ticket: Pick<Ticket, "requestType" | "unit">): CapabilityResource {
-  return { requestType: ticket.requestType || null, unit: ticket.unit || null };
+export function ticketResource(ticket: Pick<Ticket, "requestType" | "unit"> & Partial<Pick<Ticket, "libraryId">>): CapabilityResource {
+  // GAP-105 (DF-P4): the library joins the resource — a `when.libraryId`
+  // rule (DEC-13; RESOURCE_KEYS already carries the key) can now match a
+  // ticket. A ticket with no library presents none, so such a rule never
+  // matches it and the base list governs, exactly as before (the key is left
+  // out, so the resource is the same object it always was).
+  return {
+    requestType: ticket.requestType || null, unit: ticket.unit || null,
+    ...(ticket.libraryId ? { libraryId: ticket.libraryId } : {}),
+  };
 }
 
 /** DEC-12 threshold: independence appears exactly when it becomes possible

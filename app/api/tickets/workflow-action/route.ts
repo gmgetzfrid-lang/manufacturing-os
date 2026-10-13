@@ -18,9 +18,10 @@ import {
 } from "@/lib/ticketTransitions";
 import type { Role, TicketAttachment, TicketOutcome } from "@/types/schema";
 import { TICKET_INTENT_TTL_MS } from "@/lib/intents";
-import { parseSourceDocument } from "@/lib/sourceDocRef";
+import { parseSourceDocument, parseSourceDocuments } from "@/lib/sourceDocRef";
+import { unitOptionsFor, resolveUnit, unitListReadFailure } from "@/lib/ticketCreate";
 import { heldRoles } from "@/lib/roleHeld";
-import { noteDeliverableNotInRegister, deliverableStateOf } from "@/lib/ticketHandback";
+import { noteDeliverableNotInRegister, noteDeliverableNotInLibrary, deliverableStateOf } from "@/lib/ticketHandback";
 import { resolveTicketRecipients, isRoutedStatus } from "@/lib/ticketRouting";
 import { isTicketOutcome, outcomesFor } from "@/lib/ticketOutcome";
 import { SLA_NOTICE_ACTIONS } from "@/lib/ticketSla";
@@ -64,6 +65,14 @@ interface Body {
   /** LEAK-9 / GAP-107 (DF-P3): how the request ended, for close_ticket /
    *  close_rfi / cancel_request — one of lib/ticketOutcome.ts's vocabulary. */
   outcome?: string | null;
+  /** DCW-1 / GAP-105 (DF-P4): the library triage records with `assign` /
+   *  `request_eng_review` at PENDING_ASSIGNMENT — a library of the ticket's
+   *  org. Never required. */
+  libraryId?: string | null;
+  /** DCW-7 / FRIC-3 (DF-P4): the unit triage records with the same actions,
+   *  resolved against the org's unit list (lib/ticketCreate.ts
+   *  unitOptionsFor). Never required. */
+  unit?: string | null;
 }
 
 /** DCW-4 / HAND-3: the shape of a register row id (document_versions.id,
@@ -529,6 +538,59 @@ export async function POST(req: NextRequest) {
     outcomeDefaulted = true;
   }
 
+  // DCW-1 / GAP-105 and DCW-7 / FRIC-3 (DF-P4): triage may record the
+  // request's library and its unit — with the assignment or the engineering
+  // flag, from the assignment queue, never elsewhere — on the same
+  // compare-and-set write. Neither is ever required (99-fix-sequencing
+  // Phase 2 item 1: "Do not make it required at intake"; DEC-101 item 1).
+  const triageAction = ticket.status === "PENDING_ASSIGNMENT"
+    && (action.action === "assign" || action.action === "request_eng_review");
+  const wantsLibrary = typeof body.libraryId === "string" && body.libraryId.trim() !== "";
+  const wantsUnit = typeof body.unit === "string" && body.unit.trim() !== "";
+  let triage: TransitionInput["triage"] = null;
+  let libraryNotStored = false;
+  if ((wantsLibrary || wantsUnit) && !triageAction) {
+    return NextResponse.json({ error: "A library or a unit is recorded at triage — when assigning, or flagging for engineering review, from the assignment queue." }, { status: 400 });
+  }
+  if (wantsLibrary) {
+    const libraryId = String(body.libraryId).trim();
+    if (!UUID_RE.test(libraryId)) return NextResponse.json({ error: "That library is not one of this workspace's" }, { status: 400 });
+    if (!("library_id" in (row as Record<string, unknown>))) {
+      // 20261208 not pasted yet: the column is not there. The action applies
+      // as today, without a library, and the answer says so.
+      libraryNotStored = true;
+    } else {
+      const { data: lib, error: libErr } = await supabaseAdmin
+        .from("libraries").select("id, name").eq("id", libraryId).eq("org_id", ticket.orgId).maybeSingle();
+      if (libErr) return NextResponse.json({ error: "Couldn't check that library right now — try again in a moment." }, { status: 503 });
+      if (!lib) return NextResponse.json({ error: "That library is not one of this workspace's" }, { status: 400 });
+      triage = { ...(triage ?? {}), library: { id: String((lib as { id: string }).id), name: String((lib as { name?: string | null }).name ?? "library") } };
+    }
+  }
+  if (wantsUnit) {
+    // The SAME list the request form offers and the create route checks:
+    // the saved units, else the Site Codebook's, else none (free text, as
+    // the form keeps it — DEC-101 item 1). A list that is there but cannot
+    // be read is a 503, never an unchecked unit.
+    const { data: unitCfg, error: unitCfgErr } = await supabaseAdmin
+      .from("org_configurations").select("data").eq("org_id", ticket.orgId).eq("key", "drafting").maybeSingle();
+    if (unitCfgErr) return NextResponse.json({ error: "Couldn't read this workspace's unit list — try again in a moment." }, { status: 503 });
+    const cfgUnits = ((unitCfg as { data?: unknown } | null)?.data ?? null) as Parameters<typeof unitOptionsFor>[0];
+    let codebookUnits: Array<{ code: string; label: string | null }> = [];
+    if (!((cfgUnits?.units?.options?.length ?? 0) > 0)) {
+      const { data: cb, error: cbErr } = await supabaseAdmin
+        .from("codebook_entries").select("code, label").eq("org_id", ticket.orgId).eq("kind", "unit");
+      const failure = unitListReadFailure(cbErr);
+      if (failure === "unreadable") return NextResponse.json({ error: "Couldn't read this workspace's unit list — try again in a moment." }, { status: 503 });
+      if (failure === "none") codebookUnits = ((cb ?? []) as Array<{ code: string; label: string | null }>).filter((u) => !!u.code);
+    }
+    const resolved = resolveUnit(String(body.unit).slice(0, 120), unitOptionsFor(cfgUnits, codebookUnits));
+    if (resolved.kind === "unmatched") {
+      return NextResponse.json({ error: `"${String(body.unit).trim().slice(0, 60)}" is not on this workspace's unit list`, field: "unit" }, { status: 400 });
+    }
+    if (resolved.unit) triage = { ...(triage ?? {}), unit: resolved.unit };
+  }
+
   const input: TransitionInput = {
     actionType: action.action,
     actionLabel: action.label,
@@ -543,6 +605,7 @@ export async function POST(req: NextRequest) {
     finalAttachment: vetted.finalAttachment,
     attachment: vetted.attachment,
     outcome: outcome ?? undefined,
+    triage,
     actor: { uid: caller.id, email: callerEmail, role: callerRole },
   };
   const { updates, newStatus, recipients: transitionRecipients, newComment } = computeTransition(ticket, input);
@@ -773,6 +836,22 @@ export async function POST(req: NextRequest) {
           const history = Array.isArray(updates.history) ? (updates.history as Array<Record<string, unknown>>) : [...(ticket.history ?? [])];
           updates.history = [...history, { action: "Closed — deliverable not in the register", user: callerEmail, role: callerRole, date: new Date().toISOString(), details: handbackNote }];
         }
+      } else if (!src?.id && ticket.libraryId && recorded?.state !== "published") {
+        // DCW-4 (DF-P4): a request with no source document but a target
+        // library (GAP-105) that closes without its deliverable in that
+        // library is said too — the register visibly knows it does not have
+        // it. (Publishing it as a new document of the library is the
+        // document-creation path's, not this route's: DEC-22.)
+        const { data: libRow } = await supabaseAdmin
+          .from("libraries").select("name").eq("id", ticket.libraryId).eq("org_id", ticket.orgId).maybeSingle();
+        const libLabel = ((libRow as { name?: string | null } | null)?.name) || "the target library";
+        const merged = noteDeliverableNotInLibrary(ticket.metadata, { libraryId: ticket.libraryId });
+        if (merged) {
+          updates.metadata = merged;
+          handbackNote = `Closed without a register document: the deliverable was not published into ${libLabel}.`;
+          const history = Array.isArray(updates.history) ? (updates.history as Array<Record<string, unknown>>) : [...(ticket.history ?? [])];
+          updates.history = [...history, { action: "Closed — deliverable not in the register", user: callerEmail, role: callerRole, date: new Date().toISOString(), details: handbackNote }];
+        }
       }
     } catch (e) {
       console.warn("[workflow-action] deliverable-state note failed (non-blocking)", e);
@@ -992,10 +1071,14 @@ export async function POST(req: NextRequest) {
   // its own; no zombie-lock factory). Ticket closure — or cancellation, the
   // other terminal exit (WF-17) — clears it. Best-effort: never fails the
   // transition; no-op on pre-migration envs.
+  // GAP-8 acceptance 2 (DF-P4): every sheet the request names —
+  // parseSourceDocuments: the singular source_document first, then each
+  // entry of metadata.source_documents — not only the primary. Each sheet is
+  // read in the ticket's org (SM-14) and gets its own intent row; a
+  // single-source ticket (every historical row) is a list of one and is
+  // handled exactly as before.
   try {
-    const srcDoc = (ticket.metadata as Record<string, unknown> | undefined)
-      ?.source_document as { id?: string } | undefined;
-    if (srcDoc?.id) {
+    for (const srcDoc of parseSourceDocuments(ticket.metadata)) {
       const drafterId =
         (updates.assigned_drafter_id as string | undefined) ?? ticket.assignedDrafterId;
       const drafterName =
@@ -1102,7 +1185,10 @@ export async function POST(req: NextRequest) {
     console.error("[workflow-action] fan-out failed (transition committed):", e);
   }
 
-  return NextResponse.json({ ok: true, status: newStatus, ...(holdOutcome ?? {}) });
+  return NextResponse.json({
+    ok: true, status: newStatus, ...(holdOutcome ?? {}),
+    ...(libraryNotStored && !holdOutcome ? { warning: "The request moved on, but its library could not be recorded yet (database update 20261208 is not applied)." } : {}),
+  });
 }
 
 async function fanOut(params: {

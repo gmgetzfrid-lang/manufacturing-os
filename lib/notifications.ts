@@ -318,7 +318,10 @@ export function isNearingDue(ticket: { targetCompletionAt?: string | number | Da
 }
 
 // ─── DEFAULT SLA per request type ────────────────────────────────────────
-// First fallback when an org hasn't configured sla_defaults rows.
+// The built-in window per request type. /api/tickets/create reads the
+// org's own sla_defaults row for the type first and falls back to these
+// (EDGE-7 / ROUTE-9, DF-P4); the SLA clock (lib/ticketSla.ts) never applies
+// them retroactively to a ticket that has no target.
 
 export const DEFAULT_SLA_DAYS: Record<string, number> = {
   INSPECTION: 1,
@@ -329,7 +332,12 @@ export const DEFAULT_SLA_DAYS: Record<string, number> = {
 };
 
 export function defaultSlaTargetDate(requestType: string): string | null {
-  const days = DEFAULT_SLA_DAYS[requestType] ?? 14;
+  return slaTargetDateInDays(DEFAULT_SLA_DAYS[requestType] ?? 14);
+}
+
+/** A due date `days` from now, at 17:00 — the shape every creation path
+ *  stamps (the org's sla_defaults window or the built-in one). */
+export function slaTargetDateInDays(days: number): string {
   const d = new Date();
   d.setDate(d.getDate() + days);
   d.setHours(17, 0, 0, 0);

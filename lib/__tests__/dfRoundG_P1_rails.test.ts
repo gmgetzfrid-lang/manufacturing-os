@@ -153,7 +153,8 @@ describe("20261166 — ticket_update_guard re-created from its NEWEST earlier bo
 
   it("LEAK-10 / LEAK-3 / AUTHZ-6: request_type and unit are workflow-owned (the whole DEC-13 resource)", () => {
     expect(guardedIn(G.next)).toEqual(expect.arrayContaining(["request_type", "unit"]));
-    expect(src("lib/workflow.ts")).toContain("return { requestType: ticket.requestType || null, unit: ticket.unit || null };");
+    // DF-P4 (GAP-105) adds the library to the resource when the ticket has one; request type and unit are unchanged.
+    expect(src("lib/workflow.ts")).toContain("requestType: ticket.requestType || null, unit: ticket.unit || null,");
   });
 
   it("every column the body references is ADDed IF NOT EXISTS before the function (20261039's lesson); the trigger is restated; DRLS-16 revoke", () => {

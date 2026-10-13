@@ -1178,7 +1178,9 @@ export interface Ticket {
   ticketId: string;
   title: string;
   description?: string;
-  unit: string;
+  /** PERS-6 (DF-P4): NULL is a designed value — "Unit unknown, triage
+   *  assigns" (DEC-101 item 1) — so the type says so. */
+  unit: string | null;
   requestType: string;
   status: TicketStatus;
   priority?: number;
@@ -1227,6 +1229,11 @@ export interface Ticket {
    *  revision is requested. */
   draftIteration?: number;
 
+  /** GAP-105 / DCW-1 (DF-P4, 20261208): the library this request targets —
+   *  derived from the source document at creation, set or corrected at
+   *  triage. null = not known yet (never required at intake). */
+  libraryId?: string | null;
+
   /** Free-form per-request data. Holds admin-defined custom category values
    *  (metadata.custom_categories[categoryId][fieldKey]) and the source
    *  document a request was raised from (metadata.source_document). Stored as
@@ -1244,6 +1251,10 @@ export interface Ticket {
    *  lightweight stub; `archiveId` names the archive to provide to view/restore it. */
   archivedAt?: Timestamp | null;
   archiveId?: string | null;
+  /** The archive-eligibility clock: stamped when the ticket enters CLOSED /
+   *  CANCELED, cleared on reopen (computeTransition). Mapped by rowToTicket
+   *  (PERS-5, DF-P4). */
+  closedAt?: Timestamp | null;
 }
 
 // --- CONFIGURATION SCHEMA ---
