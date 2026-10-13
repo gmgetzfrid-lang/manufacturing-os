@@ -25,6 +25,7 @@ import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { splitPlacements, compareDayPlacements, compareBandPlacements, startMsOf, finishMsOf, type BandPlacement } from "@/lib/calendarPlacement";
 import { addDays as addDaysTz, addMonths as addMonthsTz, clockLabel, dayDiff as dayDiffTz, dayKey, dayKeyToMs, dayOfWeek, fmtInTz, hasTimeOfDay, tzAbbrev, startOfDay as startOfDayTz, startOfMonth as startOfMonthTz, wallClock } from "@/lib/scheduleTz";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
+import DayAgendaPanel from "@/components/projects/DayAgendaPanel";
 
 // Use the shared palette so a group is the SAME hue here and on the
 // timeline. `.rail` is the solid accent (was `.bar` locally).
@@ -71,6 +72,9 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
   // and tucks the other days' steps behind a toggle.
   const [subPopover, setSubPopover] = useState<{ ms: Milestone; top: number; left: number; dayKey: string } | null>(null);
   const [popoverShowOthers, setPopoverShowOthers] = useState(false);
+  // The day agenda: click a day number to get that day's full work list
+  // (every step due, grouped by equipment, with progress entry).
+  const [agendaDay, setAgendaDay] = useState<string | null>(null);
   const today = useMemo(() => startOfDayUTC(new Date(), tz), [tz]);
 
   const byId = useMemo(() => {
@@ -362,7 +366,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
         {showSubtasks ? (
           <span><b className="text-[var(--color-text)]">Sub-item mode:</b> each step is its own chip. Drag its <GripVertical className="inline w-3 h-3 align-middle text-[var(--color-text-muted)]" /> handle to another day to move just that step — the rest stay put and the parent stretches to follow.</span>
         ) : (
-          <span><b className="text-[var(--color-text)]">To move one sub-item:</b> click a task&apos;s <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded bg-[var(--color-accent)] text-[var(--color-accent-fg)] align-middle"><ChevronRight className="w-3 h-3" /></span> to pop open its steps, then use each step&apos;s ◀ ▶ buttons. Or flip <b>Show → Sub-items</b> to spread every step across the grid as draggable chips.</span>
+          <span><b className="text-[var(--color-text)]">Day view:</b> click a day&apos;s number for everything due that day with progress entry. <b className="text-[var(--color-text)]">To move one sub-item:</b> click a task&apos;s <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded bg-[var(--color-accent)] text-[var(--color-accent-fg)] align-middle"><ChevronRight className="w-3 h-3" /></span> to pop open its steps, then use each step&apos;s ◀ ▶ buttons. Or flip <b>Show → Sub-items</b> to spread every step across the grid as draggable chips.</span>
         )}
         <span className="ml-auto inline-flex items-center gap-2 text-[var(--color-text-faint)]">
           <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-slate-400 border border-black/10" /> dot = status</span>
@@ -410,12 +414,18 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
                   data-daykey={key}
                   onDragOver={(e) => { if (canEdit) { e.preventDefault(); } }}
                   onDrop={(e) => void onDropDay(key, e)}
-                  className={`border-r border-[var(--color-border)] last:border-r-0 p-1 flex flex-col gap-1 ${inMonth ? "bg-[var(--color-surface)]" : "bg-slate-50/40"} ${isToday ? "ring-1 ring-inset ring-rose-300" : ""}`}
+                  className={`group/tile border-r border-[var(--color-border)] last:border-r-0 p-1 flex flex-col gap-1 ${inMonth ? "bg-[var(--color-surface)]" : "bg-slate-50/40"} ${isToday ? "ring-1 ring-inset ring-rose-300" : ""}`}
                 >
                   <div className="flex items-center justify-between px-0.5">
-                    <span className={`text-[11px] font-bold ${isToday ? "text-rose-600" : inMonth ? "text-[var(--color-text)]" : "text-slate-300"}`}>
+                    <button
+                      type="button"
+                      onClick={() => setAgendaDay(key)}
+                      title={`Open ${fmtInTz(day, tz, { weekday: "long", month: "long", day: "numeric" })} — every step due that day, with progress entry`}
+                      className={`inline-flex items-center gap-1 text-[11px] font-bold rounded px-1 -ml-1 hover:bg-[var(--color-accent-soft)] hover:text-[var(--color-accent)] transition-colors ${isToday ? "text-rose-600" : inMonth ? "text-[var(--color-text)]" : "text-slate-300"}`}
+                    >
                       {wallClock(day.getTime(), tz).day}
-                    </span>
+                      {(items.length > 0 || bands.length > 0) && <span className="text-[8px] font-black uppercase tracking-wider opacity-0 group-hover/tile:opacity-70">Day view</span>}
+                    </button>
                   </div>
                   {/* Groups covering this day — root first. Solid = work
                       under it is scheduled today; muted = it only carries over. */}
@@ -617,6 +627,25 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
           </div>
         );
       })()}
+
+      {/* Day agenda — the work list for one day. */}
+      {agendaDay && (
+        <DayAgendaPanel
+          day={agendaDay}
+          tz={tz}
+          milestones={milestones}
+          childrenByParent={childrenByParent}
+          ancestorsOf={ancestorsOf}
+          progress={progress}
+          canEdit={canEdit}
+          onSetStatus={onSetStatus}
+          onSetProgress={onSetProgress}
+          onOpenDetail={(m) => { onOpenDetail(m); }}
+          onChangeDay={setAgendaDay}
+          onClose={() => setAgendaDay(null)}
+          colorOf={(top) => GROUP_COLORS[(top.id ? groupColorIndex.get(top.id) : undefined) ?? 0]}
+        />
+      )}
 
       {/* Floating ghost that follows the finger during a touch drag. */}
       {touchDrag && (
