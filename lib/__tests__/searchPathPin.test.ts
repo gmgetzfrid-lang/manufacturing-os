@@ -381,7 +381,9 @@ describe("ORG-6 done-when 1 — the org-authority helpers it names", () => {
   // path. Owner: admin-and-org P8 (one `ALTER FUNCTION
   // acl_subject_in_bucket(jsonb, text, text, text[]) SET search_path = public`
   // in its ORG-13 migration). Flip to `it` when it lands.
-  it.fails("acl_subject_in_bucket carries SET search_path = public (ORG-6 residual, owner A&O P8)", () => {
+  // Flipped from it.fails by admin-and-org P8: 20261203's top-level
+  // ALTER FUNCTION acl_subject_in_bucket(...) SET search_path = public.
+  it("acl_subject_in_bucket carries SET search_path = public (ORG-6 residual, landed by A&O P8 in 20261203)", () => {
     expect(census().get("acl_subject_in_bucket/4")?.pinned).toBe(true);
   });
 });
