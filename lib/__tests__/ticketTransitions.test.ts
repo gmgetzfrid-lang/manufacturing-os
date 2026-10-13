@@ -109,7 +109,9 @@ describe("computeTransition — core behaviors", () => {
   });
 
   it("revision actions bump revision_count and record the round in history", () => {
-    const t = mk({ status: "PENDING_REVIEW", revisionCount: 1 });
+    // A ticket in review has its drafter (drafting-flow DF-P3: a revision with
+    // NO drafter returns to the assignment queue instead — dfRoundG_P3_routing.test.ts).
+    const t = mk({ status: "PENDING_REVIEW", revisionCount: 1, assignedDrafterId: "u-draft" });
     const { updates, historyEntry, newStatus } = computeTransition(t, {
       actionType: "request_revision", actionLabel: "Request Revision",
       comment: "fix dims", variant: "warning", actor, now: NOW,

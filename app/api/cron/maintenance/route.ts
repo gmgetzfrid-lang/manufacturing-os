@@ -16,6 +16,15 @@
 //   5. Stale-checkout escalation: checkouts held past 14 days notify the
 //      org's DocCtrl/Admin pool (a stale lock stops being the holder's
 //      private secret).
+//   5b(i). Departed members' leftover requests (drafting-flow EDGE-4): what a
+//      member removal could not hand back (row-locked, refused, past its
+//      bound) goes back to the queue through the same database function.
+//   5b. Drafting-request SLA clock (drafting-flow GAP-106 / EDGE-7 /
+//      ROUTE-9): an open request at 75 % of its window warns whoever it is
+//      waiting on; one past its target escalates to them, the assignment
+//      queue and the requester — once each, stamped on the ticket
+//      (lib/ticketSla.ts runTicketSlaScan). Escalation notifies; it never
+//      advances, closes or reassigns a request.
 //   6. Compliance clocks per org — including the hold aging sweep (HLD-14):
 //      a hold past its expected release, or open past HOLD_AGING_DAYS with
 //      no date, nudges its opener and the release pool once.
@@ -79,6 +88,8 @@ import { emailAllowedByPrefs } from "@/lib/notificationPrefs";
 import { renderNotificationEmail } from "@/lib/emailRender";
 import { publicOrigin } from "@/lib/publicOrigin";
 import { formatRecordDate, formatRecordTime, orgTimeZone } from "@/lib/recordTime";
+import { runTicketSlaScan, type SlaScanReport } from "@/lib/ticketSla";
+import { runDepartureBackstop, type DepartureBackstopReport, type DepartureRpcClient } from "@/lib/ticketDepartureBackstop";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -147,6 +158,10 @@ async function handler(req: NextRequest) {
     intakeStagingSwept?: number;
     reviewHealthNudges?: number;
     verifyScansPruned?: number;
+    /** GAP-106: the drafting-request SLA step (5b). */
+    ticketSla?: Omit<SlaScanReport, "errors">;
+    /** EDGE-4 (fix pass 3): the departure backstop (5b(i)). */
+    ticketDeparture?: Omit<DepartureBackstopReport, "errors">;
     /** DELIV-11: what the drain did — an empty queue, a batch that failed, and
      *  unconfigured email are three different answers here. */
     emailDrain?: DrainReport;
@@ -353,6 +368,66 @@ async function handler(req: NextRequest) {
     result.staleEscalations = await escalateStaleCheckouts(sb, result.errors);
   } catch (e) {
     result.errors.push(`stale-escalation: ${(e as Error).message}`);
+  }
+
+  // 5b(i). EDGE-4 BACKSTOP (drafting-flow, DF-P3 fix pass 3): what a member
+  //     departure left on a uid that cannot sign in — a ticket another write
+  //     held row-locked, a hand-back the database refused, or past one call's
+  //     bound of 200 — is handed back here, through the same function
+  //     (lib/ticketDepartureBackstop.ts → return_departed_member_tickets), as
+  //     the service role. Before the SLA scan, so an overdue request is
+  //     escalated to the queue it is back in, not to the departed member.
+  //     Bounded (TICKET_DEPARTURE_MS, and never into the SLA scan's reserve),
+  //     idempotent (a handed-back ticket leaves the list), never throws.
+  //     Before 20261195 is pasted the function is missing: nothing to do (no
+  //     departure triggers either), and no line.
+  const departureDeadlineAt = Math.min(Date.now() + TICKET_DEPARTURE_MS, runEnd - TICKET_SLA_RESERVE_MS);
+  if (departureDeadlineAt - Date.now() < TICKET_DEPARTURE_MIN_MS) {
+    result.errors.push(`ticket-departure: not run — ${Math.max(0, Math.round(left() / 1000))} s of the run were left, and it stops ${TICKET_SLA_RESERVE_MS / 1000} s before the run's end; the next run hands back what departed members still hold`);
+  } else {
+    try {
+      const dep = await runDepartureBackstop({ client: sb as unknown as DepartureRpcClient, deadlineAt: departureDeadlineAt });
+      const { errors: depErrors, ...depCounts } = dep;
+      result.ticketDeparture = depCounts;
+      for (const line of depErrors) { result.errors.push(line); console.error(`[cron/maintenance] ${line}`); }
+      if (dep.truncated) result.errors.push("ticket-departure: this run stopped before every departed member's tickets were handed back (its time or its holder cap ran out) — the next run continues");
+    } catch (e) {
+      result.errors.push(`ticket-departure: ${(e as Error).message}`);
+    }
+  }
+
+  // 5b. DRAFTING-REQUEST SLA CLOCK (drafting-flow GAP-106 / EDGE-7 /
+  //     ROUTE-9) — one step on this cron (a third vercel.json entry fails
+  //     deployment; see step 10). Warns at 75 % of a request's window,
+  //     escalates at its target, once each (stamped compare-and-set on the
+  //     ticket), through emit() — bell + email under the "SLA warnings"
+  //     preference, drained at 6c. Never throws; every failure is a line.
+  //     Its time (fix pass 2): at most TICKET_SLA_MS, and it stops
+  //     TICKET_SLA_RESERVE_MS before the run's end — the compliance digest's
+  //     floor, the second drain's reserve and the embed drain's minimum — so
+  //     it never takes time the steps after it are guaranteed; with less than
+  //     TICKET_SLA_MIN_MS of its own it is not run, and says so.
+  const slaDeadlineAt = Math.min(Date.now() + TICKET_SLA_MS, runEnd - TICKET_SLA_RESERVE_MS);
+  if (slaDeadlineAt - Date.now() < TICKET_SLA_MIN_MS) {
+    result.errors.push(`ticket-sla: not run — ${Math.max(0, Math.round(left() / 1000))} s of the run were left, and it stops ${TICKET_SLA_RESERVE_MS / 1000} s before the run's end so the compliance digest, the second drain and the embed drain keep their time — the next run reads the soonest-due first`);
+  } else {
+    try {
+      const sla = await runTicketSlaScan({
+        client: sb,
+        emit: (input) => runWithServerClient(sb, () => emit(input)),
+        zoneOf: (orgId) => orgTimeZone(sb, orgId),
+        deadlineAt: slaDeadlineAt,
+      });
+      const { errors: slaErrors, ...slaCounts } = sla;
+      result.ticketSla = slaCounts;
+      for (const line of slaErrors) { result.errors.push(line); console.error(`[cron/maintenance] ${line}`); }
+      // Not a resume point: the scan reads soonest-due first every run, so what
+      // this run did not reach is due no sooner than what it did, and a ticket
+      // leaves the scan once its breach is sent (lib/ticketSla.ts).
+      if (sla.truncated) result.errors.push("ticket-sla: this run stopped before every open request was read (its read cap or time ran out) — the next run starts again with the soonest-due; a request leaves the scan once its breach is sent");
+    } catch (e) {
+      result.errors.push(`ticket-sla: ${(e as Error).message}`);
+    }
   }
 
   // 4b. Rebuild acl_index from each node's ACL + ancestor chain, dropping
@@ -803,9 +878,21 @@ const INGEST_MS = 40_000;
 /** Room after the ingest's deadline for its last batch to commit. */
 const INGEST_COMMIT_MS = 15_000;
 const STORAGE_WALK_MS = 15_000;
+/** GAP-106 (step 5b): the drafting-request SLA scan's share of the run. */
+const TICKET_SLA_MS = 30_000;
 const EMBED_DRAIN_MS = 100_000;
 /** Below this the embed drain only marks libraries starved. */
 const EMBED_DRAIN_MIN_MS = 20_000;
+/** GAP-106 (step 5b, fix pass 2): the scan stops this long before the run's
+ *  end — what the steps after it are guaranteed (the digest's floor, the
+ *  second drain's reserve, the embed drain's minimum). */
+const TICKET_SLA_RESERVE_MS = DIGEST_FLOOR_MS + AFTER_DIGEST_RESERVE_MS + EMBED_DRAIN_MIN_MS;
+/** Below this much time of its own the SLA scan is not run (it says so). */
+const TICKET_SLA_MIN_MS = 5_000;
+/** EDGE-4 (step 5b(i), fix pass 3): the departure backstop's share of the run,
+ *  and below what it is not run (it says so). */
+const TICKET_DEPARTURE_MS = 15_000;
+const TICKET_DEPARTURE_MIN_MS = 2_000;
 
 /** The digest's deadline: the run's end less the 6c reserve — and never less
  *  than DIGEST_FLOOR_MS from `now`, unless the run itself ends sooner. */

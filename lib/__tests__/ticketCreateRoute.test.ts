@@ -555,11 +555,14 @@ describe("REGRESSION — each door's legitimate flow files the same ticket, now 
 });
 
 describe("20261038 ticket_insert_integrity, replicated for the service-role insert", () => {
-  it("the newest ticket_insert_integrity is still 20261038's — its rules are what lib/ticketCreate.ts copies", () => {
+  it("the newest ticket_insert_integrity keeps 20261038's rules — what lib/ticketCreate.ts copies", () => {
     const dir = join(process.cwd(), "supabase/migrations");
     const defining = readdirSync(dir).filter((f) => /^\d+_.*\.sql$/.test(f)).sort()
       .filter((f) => /CREATE OR REPLACE FUNCTION ticket_insert_integrity\(/.test(readFileSync(join(dir, f), "utf8")));
-    expect(defining.at(-1)).toBe("20261038_rp_phase4_ticket_workflow_rails.sql");
+    // drafting-flow DF-P3's 20261195 §2b re-created it from 20261038 with three lines that NULL
+    // the SLA stamps and the outcome on a client insert (integrator, at the DF-P3 merge); every
+    // rule the create route copies is unchanged, so the newest body is read whichever file holds it.
+    expect(defining.slice(-2)).toEqual(["20261038_rp_phase4_ticket_workflow_rails.sql", "20261195_df_roundG_outcome_and_departure.sql"]);
     const sql = readFileSync(join(dir, defining.at(-1)!), "utf8");
     expect(sql).toContain("NEW.requester_id := auth.uid();");
     expect(sql).toContain("IF NEW.requester_role IS NULL OR NOT (NEW.requester_role = ANY(v_roles)) THEN\n    NEW.requester_role := v_role;");

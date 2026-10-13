@@ -14,7 +14,7 @@ does not come back.
 ## LEAK-1 · Queue routing runs once, at ticket creation, and never again
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Blast radius:** friction / adoption
 - **Locations:**
@@ -58,6 +58,19 @@ in, it covers two live states of twelve.
 2. The routing policy covers every state that has a waiting party.
 3. A transition whose notification resolves to nobody is visible somewhere, not
    silently dropped.
+
+**Resolution (2026-10-13, drafting-flow Round G).** Package DF-P3 ROUTING, base `5378ccb`. Reproduced first: the route routed only an entry into `PENDING_ASSIGNMENT` (`app/api/tickets/workflow-action/route.ts:529` on the base, `WF-19`), so an entry into `PENDING_IFC` told the drafter alone, and `resolveTicketRecipients` had no pool for a revision nobody drafts.
+- `lib/ticketRouting.ts` names the ROUTED statuses — the ones whose waiting party is a pool, not one person — and resolves each: `PENDING_ASSIGNMENT` → the assignment queue (`queuePool()`: DraftingSupervisor holders, else Admins, both when the org says so); `PENDING_IFC` → the queue + the originating engineer when still active (the module's own header promised this; `routedPool()`, `:149`); `REVISION_REQ` with no drafter → the queue. `isRoutedStatus()` (`:143`). Every other waiting status names one person, whom `lib/ticketTransitions.ts` already puts in the transition's `unread_by`. The header is corrected (callers, the routed set, the follower note). `resolveTicketRecipients` keeps its signature and takes an optional ticket context (`:188`); the creation paths are unchanged. `loadRoutingContext()` (`:108`) reports a failed member read as `ok: false` (an escalation never reads an outage as "nobody to tell").
+- `app/api/tickets/workflow-action/route.ts:563` — on EVERY entry into a routed status (`newStatus !== ticket.status && isRoutedStatus(newStatus, …)`), with the drafter and engineer the ticket will have after the transition, the pool joins `unread_by` and the fan-out (the `WF-19` block generalised; same in-app + email path).
+- The audit row records `recipientsResolved` — how many people the transition resolves to, BEFORE the active-members filter (named so; the first version called it `notified`, which overstated it); `fanOut` logs a transition that resolves to nobody and, since the fix pass, one whose recipients the active-members filter removed entirely ("has nobody to tell — the active-members filter removed all N recipient(s)"). N6's limbs (active-members filter, render at queue time) are unchanged.
+- Tests: `lib/__tests__/dfRoundG_P3_routing.test.ts` ("LEAK-1 / ROUTE-5" — PENDING_IFC tells the supervisor pool and the originating engineer; a non-entry does not re-notify; done-when 2 drives each waiting status and asserts its waiting party is told; "LEAK-1 done-when 3: a transition whose only recipients are inactive members" — a suspended requester, no bell row, the log line, `recipientsResolved: 1`); `lib/__tests__/ticketRouting.test.ts` ("DF-P3 — the routed statuses"); `lib/__tests__/sweepRoundE_A.test.ts` WF-19 pins updated to the generalised call.
+
+**Done-when.**
+1. ✓ A transition into a queue state notifies the queue's owners: `PENDING_ASSIGNMENT` and `PENDING_IFC` and a drafterless revision route to their pool on every entry (route `:563`; test above).
+2. ✓ Every state that has a waiting party reaches it: the routed statuses through `routedPool()`, the single-person statuses through the transition's own recipient (engineer at `PENDING_ENG_TEAM` / `PENDING_FINAL_APPROVAL`, drafter at `DRAFTING` / `REVISION_REQ`, requester at `PENDING_REVIEW` / `FINAL_DRAFT`) — driven per status in `dfRoundG_P3_routing.test.ts` ("LEAK-1 done-when 2").
+3. ✓ A transition that resolves to nobody is visible: `recipientsResolved: 0` on its audit row and a log line; a transition whose resolved recipients are all suspended or removed members is logged too, naming how many the filter removed (fix pass); its stale alerts are still retired (`ROUTE-6`).
+
+**Scope / residual.** `ROUTE-5` closes with this. The SLA escalation that depends on it (`GAP-106`) is `ROUTE-9` / `EDGE-7`. No migration is needed for this finding. `EDGE-11` diff-check: the compare-and-set legs, the archived-stub refusal, the service-role preference reads and engine-derived attention are untouched (`dfRoundG_P1_rails.test.ts`, `dfRoundG_P0.test.ts` green).
 
 ---
 
@@ -419,6 +432,7 @@ with no Final attachment. The requester acknowledges, the ticket closes, and
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** drafting-flow DF-P9 TICKET-PAGE (done-whens 1–2: the cancel dialog's category picker from the engine action's `outcomes`; the leak rate then measures) — by the integrator, 2026-10-13 (at the DF-P3 merge, DEC-31; DF-P3 named these in drafting-flow `99-fix-sequencing.md`, "Hand-offs from DF-P3"; fleet plans updated).
 - **Verification:** CONFIRMED
 - **Blast radius:** process visibility
 - **Locations:**
@@ -455,6 +469,21 @@ worth doing early despite being MEDIUM.
 2. Those outcomes are reportable — a queue's leak rate is a number someone can
    look at.
 3. `CANCELED` is reachable, per `DEC-14`.
+
+**Partial (2026-10-13, drafting-flow Round G).** DF-P3 ROUTING, base `5378ccb` (`GAP-107`). Reproduced: `close_ticket` and `cancel_request` set a status and nothing else; nothing could tell a withdrawn or out-of-band request from a delivered one.
+- The vocabulary (ratified by the integrator under the user's delegation, 2026-10-07; [`DEC-103`](../DECISIONS.md#dec-103)): `completed`, `withdrawn`, `duplicate`, `handled_out_of_band`, `rejected` — one terminal status per exit and a reason FIELD; the free text stays in the comment. `lib/ticketOutcome.ts` (new): the list, `CANCEL_OUTCOMES` (never `completed`), `outcomesFor()`, `defaultOutcome()`, `summarizeOutcomes()`; `types/schema.ts` `TicketOutcome`, `Ticket.outcome`.
+- `lib/ticketTransitions.ts:250` / `:383` / `:395` — close / close_rfi / cancel stamp `outcome` (the named one, else the default: an acknowledgement or answered RFI `completed`; a cancel that names no category and a force close nothing — NULL, "Not recorded"); a reopen clears it. (Fix pass: the first version defaulted a cancel to `withdrawn`, a LEAK outcome, so every cancel from today's page — a duplicate canceled by a supervisor included — would have counted as work leaving the app.) `lib/workflow.ts:268` — `cancel_request` carries `requiresOutcome` and its allowed `outcomes`.
+- `app/api/tickets/workflow-action/route.ts:520` — a named outcome the action cannot record is a 400 `outcome_invalid` with nothing written; `:525` — a cancel without one (today's request page sends none) still applies, so a cancel that works today keeps working (REGRESSION FIRST), with NO outcome recorded and the audit row saying `outcomeDefaulted: true`; the audit row (written before the compare-and-set) names the outcome as `outcomeIntended`, never as stored; before the paste, a write that meets 42703 / PGRST204 on `outcome` retries without it (today's path) and a `TICKET_<ACTION>_OUTCOME_NOT_STORED` row names the attempt and the intended outcome (fix pass — DEC-29: the trail never claims an outcome the row does not carry).
+- `app/(protected)/admin/analytics/page.tsx` — "How Requests Ended": counts per outcome, "not recorded", and the leak rate (withdrawn + handled outside the app, over ended requests with a recorded outcome) per request type, read-only, from the rows its gated route (`/api/admin/analytics`, `admin.analytics_view`) already returns. It is all time and labelled so ("not the Request Volume range" — the page's range control belongs to the volume chart), and its footnote says the rows are capped by the server's row limit (the route's select is unpaged).
+- `supabase/migrations/20261195_df_roundG_outcome_and_departure.sql` §1: `tickets.outcome` with a CHECK of the five, workflow-owned in `ticket_update_guard`. Exercised on PostgreSQL 16 (the service role writes it; a value outside the five is refused; a client write is refused).
+- Tests: `lib/__tests__/dfRoundG_P3_routing.test.ts` ("LEAK-9 / GAP-107"), `lib/__tests__/memberDeparture.test.ts` (the CHECK equals the vocabulary).
+
+**Done-when.**
+1. ✗ in the product, ✓ at the route: a request can be ended as withdrawn, duplicate, handled out of band or rejected, with a reason, through `/api/tickets/workflow-action` — but the request page's cancel dialog has no category picker yet, so a cancel from the UI records NO outcome (NULL, "Not recorded"). **Owner: DF-P9** (owns `app/(protected)/requests/[id]/page.tsx`): show the picker from the engine action's `outcomes` and send `outcome`; once it ships, the route's no-category path for `cancel_request` becomes a 400 (the `outcomeDefaulted = true` branch) — the engine already marks the action `requiresOutcome`.
+2. ✗ in the product until DF-P9's picker ships, ✓ as an instrument. `/admin/analytics` ("How Requests Ended", `components/requests/RequestOutcomes.tsx` drawing `lib/ticketOutcome.ts` `summarizeOutcomes`) counts only outcomes someone named: a cancel without a category is "Not recorded" and outside the rate (fix pass — the first version counted it as `withdrawn`). *Fix pass 3:* a rate over the recorded rows alone was 0 % by construction while every UI cancel records none and every acknowledged close records "completed" — e.g. 140 closes and 40 uncategorized cancels showed "Leak rate: 0.0% of 140", the opposite of what the instrument exists to show (DEC-29). Now, whenever no cancel named a category and some named none (`notMeasured`), the headline is "—" with "not measured yet: N cancels named no category", and each request type's row says the same ("— (not measured)", with a "Cancels with no category" column); once some cancels carry a category, the rate is shown over the recorded rows and the uncategorized cancels are counted next to it as not in it. So today, with no category picker, a workspace in which any request was canceled sees no leak rate unless an API caller named a cancel's category — it sees why and how many cancels cannot be classified; a workspace with no cancels sees the rate over its closes. The number GAP-107 asks for appears once DF-P9's picker sends categories. **Owner: DF-P9.** Tests: `lib/__tests__/dfRoundG_P3_outcomesRender.test.ts` (rendered: the 140 + 40 fixture shows "—" and never "0.0%"; a mixed fixture shows 3.3 % with the 40 named; no-uncategorized-cancel fixtures read as before), `lib/__tests__/dfRoundG_P3_routing.test.ts`.
+3. ✓ `CANCELED` is reachable (DEC-14, Round E).
+
+**Scope / residual.** Done-when 1's UI half → DF-P9. Org-configurable vocabulary: later (recorded on `DEC-103`). Pending migration: `supabase/migrations/20261195_df_roundG_outcome_and_departure.sql` — until pasted, outcomes are not stored and the analytics block counts every ended request as not recorded.
 
 ---
 

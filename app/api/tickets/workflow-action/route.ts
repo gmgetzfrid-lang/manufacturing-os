@@ -16,12 +16,14 @@ import {
   escapeHtml,
   type TransitionInput,
 } from "@/lib/ticketTransitions";
-import type { Role, TicketAttachment } from "@/types/schema";
+import type { Role, TicketAttachment, TicketOutcome } from "@/types/schema";
 import { TICKET_INTENT_TTL_MS } from "@/lib/intents";
 import { parseSourceDocument } from "@/lib/sourceDocRef";
 import { heldRoles } from "@/lib/roleHeld";
 import { noteDeliverableNotInRegister, deliverableStateOf } from "@/lib/ticketHandback";
-import { resolveTicketRecipients } from "@/lib/ticketRouting";
+import { resolveTicketRecipients, isRoutedStatus } from "@/lib/ticketRouting";
+import { isTicketOutcome, outcomesFor } from "@/lib/ticketOutcome";
+import { SLA_NOTICE_ACTIONS } from "@/lib/ticketSla";
 import { ticketReadScope } from "@/lib/ticketReadScope";
 
 // POST /api/tickets/workflow-action
@@ -59,6 +61,9 @@ interface Body {
    *  opened — release them now, or keep them with a stated reason. Absent
    *  when a close would leave one open, the close is refused (409 holds_open). */
   holdResolution?: { action: "release" | "keep"; reason?: string | null } | null;
+  /** LEAK-9 / GAP-107 (DF-P3): how the request ended, for close_ticket /
+   *  close_rfi / cancel_request — one of lib/ticketOutcome.ts's vocabulary. */
+  outcome?: string | null;
 }
 
 /** DCW-4 / HAND-3: the shape of a register row id (document_versions.id,
@@ -498,6 +503,32 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Sending for engineer final approval requires a note for the engineer" }, { status: 400 });
   }
 
+  // LEAK-9 / GAP-107 (DF-P3): how the request ended — typed, beside the free
+  // text the comment carries. A named outcome must be one this action can
+  // record (a cancel is never "completed"), refused with nothing written
+  // otherwise. An action that requires one (cancel_request) and arrives
+  // without it still applies — the request page does not send the category
+  // yet (DF-P9 owns the page), and a cancel that works today must keep
+  // working — but records NO outcome (never a guessed "withdrawn", which the
+  // leak rate would count) and the audit row says the category was not named
+  // (`outcomeDefaulted`).
+  const endsWith = outcomesFor(action.action);
+  let outcome: TicketOutcome | null = null;
+  let outcomeDefaulted = false;
+  if (body.outcome !== undefined && body.outcome !== null && body.outcome !== "") {
+    if (!endsWith || !isTicketOutcome(body.outcome) || !endsWith.includes(body.outcome)) {
+      return NextResponse.json({
+        error: endsWith
+          ? `"${String(body.outcome).slice(0, 40)}" is not a way this action can end a request (one of: ${endsWith.join(", ")})`
+          : "This action does not end the request, so it records no outcome",
+        code: "outcome_invalid",
+      }, { status: 400 });
+    }
+    outcome = body.outcome;
+  } else if (action.requiresOutcome) {
+    outcomeDefaulted = true;
+  }
+
   const input: TransitionInput = {
     actionType: action.action,
     actionLabel: action.label,
@@ -511,6 +542,7 @@ export async function POST(req: NextRequest) {
     redlineAttachment: vetted.redlineAttachment,
     finalAttachment: vetted.finalAttachment,
     attachment: vetted.attachment,
+    outcome: outcome ?? undefined,
     actor: { uid: caller.id, email: callerEmail, role: callerRole },
   };
   const { updates, newStatus, recipients: transitionRecipients, newComment } = computeTransition(ticket, input);
@@ -521,16 +553,20 @@ export async function POST(req: NextRequest) {
   }
   let recipients = transitionRecipients;
 
-  // WF-19: a ticket (RE-)entering the assignment queue tells the queue's
-  // owners — the DraftingSupervisor pool, falling back to Admins, exactly as
-  // the routing policy resolves them at creation (lib/ticketRouting.ts). The
-  // default fan-out only knew requester + drafter, so every engineering-review
-  // round-trip landed in the queue silently. The pool joins `unread_by` too
-  // (the unread badge and the follow list read that column) and rides the
-  // same in-app + email path as every other recipient.
-  if (newStatus === "PENDING_ASSIGNMENT" && ticket.status !== "PENDING_ASSIGNMENT") {
+  // WF-19 / LEAK-1 (DF-P3): a ticket ENTERING a routed status tells that
+  // status's pool — the assignment queue (the DraftingSupervisor pool, falling
+  // back to Admins), the IFC issue (the same pool + the originating engineer),
+  // and a revision nobody drafts — exactly as the routing policy resolves
+  // them at creation (lib/ticketRouting.ts). The default fan-out only knew
+  // requester + drafter, so every re-entry landed in the queue silently. The
+  // pool joins `unread_by` too (the unread badge and the follow list read
+  // that column) and rides the same in-app + email path as every other
+  // recipient.
+  const drafterAfter = ("assigned_drafter_id" in updates ? updates.assigned_drafter_id : ticket.assignedDrafterId) as string | null | undefined;
+  const engineerAfter = ("assigned_engineer_id" in updates ? updates.assigned_engineer_id : ticket.assignedEngineerId) as string | null | undefined;
+  if (newStatus !== ticket.status && isRoutedStatus(newStatus, { assignedDrafterId: drafterAfter })) {
     try {
-      const pool = (await resolveTicketRecipients(ticket.orgId, "PENDING_ASSIGNMENT", caller.id, supabaseAdmin))
+      const pool = (await resolveTicketRecipients(ticket.orgId, newStatus, caller.id, supabaseAdmin, { assignedDrafterId: drafterAfter, assignedEngineerId: engineerAfter }))
         .map((m) => m.uid);
       if (pool.length > 0) {
         const unread = new Set<string>([...((updates.unread_by as string[] | undefined) ?? []), ...pool]);
@@ -655,6 +691,19 @@ export async function POST(req: NextRequest) {
       ...(action.action === "reassign_drafter" && body.assignment
         ? { from_drafter_id: ticket.assignedDrafterId ?? null, to_drafter_id: body.assignment.id, reason: body.comment ?? null }
         : {}),
+      // LEAK-9 / GAP-107 (DF-P3): how the request is meant to have ended,
+      // and whether the category was named. Written before the write lands:
+      // `outcomeIntended`, never a claim that it was stored — when the column
+      // is not there yet the write retries without it and a
+      // TICKET_<ACTION>_OUTCOME_NOT_STORED row follows (below).
+      ...(TERMINAL_STATUSES.includes(String(newStatus))
+        ? { outcomeIntended: (updates.outcome as string | null | undefined) ?? null, ...(outcomeDefaulted ? { outcomeDefaulted: true } : {}) }
+        : {}),
+      // LEAK-1 done-when 3 (DF-P3): how many people this transition resolves
+      // to, BEFORE the active-members filter fanOut applies — a transition
+      // that resolves to nobody is visible in the trail; one whose people are
+      // all inactive is logged by fanOut.
+      recipientsResolved: recipients.length,
       // Written before the compare-and-set; a TICKET_<ACTION>_NOT_APPLIED row
       // naming this id follows when the transition did not land.
       recordedBeforeApply: true,
@@ -755,6 +804,28 @@ export async function POST(req: NextRequest) {
   let { data: updated, error: updErr } = await baseQuery
     .select("id")
     .maybeSingle();
+  // LEAK-9 (DF-P3): before 20261195 is pasted the `outcome` column is not
+  // there — the write retries without it (today's path: that request's
+  // outcome is not recorded) rather than refusing the close or the cancel.
+  let outcomeNotStored = false;
+  let intendedOutcome: string | null = null;
+  if (updErr && (updErr.code === "PGRST204" || updErr.code === "42703") && "outcome" in updates && /outcome/.test(updErr.message ?? "")) {
+    console.warn(`[workflow-action] tickets.outcome is not in the database yet (20261195 not pasted) — ${action.action} on ticket ${body.ticketId} is applied without it`);
+    intendedOutcome = (updates.outcome as string | null | undefined) ?? null;
+    delete updates.outcome;
+    let noOutcome = supabaseAdmin
+      .from("tickets")
+      .update(updates)
+      .eq("id", body.ticketId)
+      .eq("status", ticket.status);
+    noOutcome = ticket.lastModified
+      ? noOutcome.eq("last_modified", String(ticket.lastModified))
+      : noOutcome.is("last_modified", null);
+    ({ data: updated, error: updErr } = await noOutcome
+      .select("id")
+      .maybeSingle());
+    if (!updErr && updated) outcomeNotStored = true;
+  }
   // Pre-migration tolerance: if the deliverable-rev columns (20260827) aren't
   // deployed yet, retry without them so the workflow itself never blocks on a
   // pending migration.
@@ -784,6 +855,26 @@ export async function POST(req: NextRequest) {
       { error: "The ticket changed while you were acting — refresh and try again", conflict: true },
       { status: 409 },
     );
+  }
+  // LEAK-9 (DF-P3, DEC-29): the attempt row names the outcome the action
+  // meant to record; when the write landed without the column (20261195 not
+  // pasted yet) the trail says so, naming the attempt — never a recorded
+  // outcome the row does not carry. A failure to say so is logged.
+  if (outcomeNotStored) {
+    const notStoredErr = await insertAuditRowOnce({
+      id: crypto.randomUUID(),
+      action: `${auditRow.action}_OUTCOME_NOT_STORED`,
+      resource_id: body.ticketId,
+      resource_type: "ticket",
+      org_id: ticket.orgId,
+      user_id: caller.id,
+      user_email: callerEmail,
+      user_role: callerRole,
+      details: { attempt: auditRow.id, outcomeIntended: intendedOutcome, reason: "tickets.outcome is not in the database yet (20261195 not pasted)" },
+    });
+    if (notStoredErr) {
+      console.error(`[workflow-action] ${auditRow.action} (audit row ${auditRow.id}) on ticket ${body.ticketId} was applied WITHOUT its outcome, and that could not be recorded: ${notStoredErr}`);
+    }
   }
 
   // LIFE-6 / DEC-25: the closer's hold resolution, applied only now that the
@@ -1031,7 +1122,16 @@ async function fanOut(params: {
   emailOrigin: string;
 }) {
   const { ticket, ticketId, action, newStatus, recipients, actorUid, actorEmail, comment, activity, emailOrigin } = params;
-  if (recipients.length === 0) return;
+  // ROUTE-6 (DF-P3): thread activity with nobody to tell has nothing to do.
+  // A TRANSITION always reaches the supersede step below, even when it tells
+  // nobody (a Drafter picking up their own request): the queue's "needs a
+  // drafter" alerts are stale the moment the ticket leaves the queue.
+  if (activity && recipients.length === 0) return;
+  if (!activity && recipients.length === 0) {
+    // LEAK-1 done-when 3: visible, not silently dropped (the audit row
+    // carries `recipientsResolved: 0` too).
+    console.warn(`[workflow-action] ${action.type} on ticket ${ticketId} (now ${newStatus}) has nobody to tell`);
+  }
 
   const ticketLabel = `${ticket.ticketId || ""} ${ticket.title}`.trim();
   // In-app rows navigate inside the app (relative); the email link leaves it.
@@ -1051,6 +1151,11 @@ async function fanOut(params: {
   const active = membersErr ? null : ((members as Array<{ uid: string; email: string | null }> | null) ?? []);
   const activeUids = new Set((active ?? []).map((m) => m.uid));
   const audience = active ? recipients.filter((uid) => activeUids.has(uid)) : recipients;
+  if (!activity && recipients.length > 0 && audience.length === 0) {
+    // LEAK-1 done-when 3: a transition whose people are all suspended or
+    // removed tells nobody — as visible as one that resolved to nobody.
+    console.warn(`[workflow-action] ${action.type} on ticket ${ticketId} (now ${newStatus}) has nobody to tell — the active-members filter removed all ${recipients.length} recipient(s)`);
+  }
 
   if (activity) {
     if (audience.length === 0) return;
@@ -1089,6 +1194,12 @@ async function fanOut(params: {
   //    read_at is never touched — read_at means the recipient opened it, and
   //    is the only "did they see it" signal there is. The bell's unread list
   //    leaves superseded rows out (lib/inAppNotifications.ts).
+  //    DF-P3 fix pass 3: the SLA clock's "Overdue" / "Due soon" rows
+  //    (lib/ticketSla.ts — metadata.action sla_breach / sla_warning) say "this
+  //    request is late", which an open-to-open transition (save progress, a
+  //    reassignment) does not change; only an exit (CLOSED / CANCELED) clears
+  //    it, so only an exit retires them.
+  const exits = newStatus === "CLOSED" || newStatus === "CANCELED";
   try {
     const supersededAt = new Date().toISOString();
     const { data: stale } = await supabaseAdmin.from("notifications")
@@ -1099,6 +1210,7 @@ async function fanOut(params: {
       .not("metadata->>action", "is", null)
       .is("metadata->>superseded_at", null);
     for (const row of (stale ?? []) as Array<{ id: string; metadata: Record<string, unknown> | null }>) {
+      if (!exits && SLA_NOTICE_ACTIONS.has(String(row.metadata?.action ?? ""))) continue;
       await supabaseAdmin.from("notifications")
         .update({ metadata: { ...(row.metadata ?? {}), superseded_at: supersededAt, superseded_by: action.type } })
         .eq("id", row.id)

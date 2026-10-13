@@ -211,6 +211,7 @@ export const EXPECTED_COLUMNS: readonly ColumnExpectation[] = [
   // ticket write — schema-health must shout, not the trigger.
   { table: "tickets", column: "closed_at", migration: "20260811_ticket_closed_at.sql (repair: 20261039)", feature: "Ticket close clock — archive eligibility; workflow close writes it" },
   { table: "tickets", column: "archived_at", migration: "20260809_ticket_archive.sql (repair: 20261039)", feature: "Closed-ticket archival (ticket-shed)" },
+  { table: "tickets", column: "outcome", migration: "20261195_df_roundG_outcome_and_departure.sql", feature: "How a request ended — the leak rate on /admin/analytics (drafting-flow LEAK-9 / GAP-107)" },
   { table: "tickets", column: "archive_id", migration: "20260809_ticket_archive.sql (repair: 20261039)", feature: "Closed-ticket archival (ticket-shed)" },
   { table: "tickets", column: "deliverable_rev", migration: "20260827_ticket_deliverable_rev.sql (repair: 20261039)", feature: "Autonomous deliverable revision labels" },
   { table: "tickets", column: "draft_iteration", migration: "20260827_ticket_deliverable_rev.sql (repair: 20261039)", feature: "Autonomous deliverable revision labels" },
@@ -401,5 +402,12 @@ export const EXPECTED_FUNCTIONS: readonly FunctionExpectation[] = [
     probeArgs: { p_org: "schema-health-probe", p_recipients: [], p_title: "x", p_body: "x" },
     migration: "20261197_notif_roundG_burst_claim_digest_rail.sql",
     feature: "The access-request door's 'more requests are waiting' notice, claimed once per Admin / DocCtrl under a per-org lock (PROD-16)",
+  },
+  {
+    signature: "departed_member_ticket_holders(integer)",
+    fn: "departed_member_ticket_holders",
+    probeArgs: { p_limit: "schema-health-probe" },
+    migration: "20261195_df_roundG_outcome_and_departure.sql",
+    feature: "The maintenance run hands back a departed member's leftover requests (drafting-flow EDGE-4, step 5b(i))",
   },
 ];
