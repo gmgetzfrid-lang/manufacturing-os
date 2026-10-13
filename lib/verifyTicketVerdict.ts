@@ -61,10 +61,16 @@
 // not written by an approval and is ignored. The row's own label proves a
 // tighter bound (issueOnRecord): a review label N<letters> means issue N has
 // not happened, so the last issue is at most N − 1; an issued label N means
-// it is N. A line above that bound is ignored too. What a forged line can
-// still do is a line AT or below the bound, which the row cannot tell from a
-// real issue: the guard limb refusing client-appended "issued Rev" entries
-// (proposed under SM-5) closes it.
+// it is N; NO label means nothing was issued since the row was last
+// reopened (every issue writes a label; only reopen_ticket nulls one, and it
+// bumps revision_count), so the last issue is at most revision_count. A line
+// above that bound is ignored too. What a forged line can still do is a line
+// AT or below the bound, which the row cannot tell from a real issue (on a
+// row with no label: only where revision_count was bumped by cycles that
+// issued nothing — a reject or return before any issue, a reopen of a
+// request closed without one, a reject after a reopen): the guard limb
+// refusing client-appended "issued Rev" entries (proposed under SM-5)
+// closes it.
 
 export type TicketVerdict =
   | "current"
@@ -127,20 +133,28 @@ export function lastIssuedFromHistory(history: unknown, revisionCount?: number |
 
 /** The bound the row's own label puts on the last issue: N − 1 under a
  *  review label N<letters> (0 = nothing can have been issued), N under an
- *  issued label N, null with no label (only the cycle cap applies). */
-export function issueBoundFromLabel(rev: string | null | undefined): number | null {
-  if (typeof rev !== "string" || !TICKET_REV_RE.test(rev)) return null;
+ *  issued label N. With NO label, `revisionCount` itself (when given): every
+ *  issue writes a label, and only reopen_ticket nulls one — AND bumps
+ *  revision_count after the issue. A real issue N is written at
+ *  revision_count N − 1 (or sets it to N − 1 on an SM-5 re-cycle), so every
+ *  real issue line on a row with no label has N ≤ revision_count. null with
+ *  no label and no count (only the cycle cap, if any, applies). */
+export function issueBoundFromLabel(rev: string | null | undefined, revisionCount?: number | null): number | null {
+  if (typeof rev !== "string" || !TICKET_REV_RE.test(rev)) {
+    return typeof revisionCount === "number" && Number.isFinite(revisionCount) ? revisionCount : null;
+  }
   return isIssuedTicketRev(rev) ? cycleOf(rev) : cycleOf(rev) - 1;
 }
 
 /** The last issue the history proves, under BOTH trust caps: the cycle cap
- *  (revision_count + 1) and the row's label (issueBoundFromLabel). null when
- *  no issue line survives them. The verdict and the copy standing read this;
- *  the SM-5 re-cycle does not (it must see a legacy collision AT the label). */
+ *  (revision_count + 1) and the row's label — or, with no label, the row's
+ *  revision_count (issueBoundFromLabel). null when no issue line survives
+ *  them. The verdict and the copy standing read this; the SM-5 re-cycle does
+ *  not (it must see a legacy collision AT the label). */
 export function issueOnRecord(history: unknown, revisionCount: number | null | undefined, deliverableRev: string | null | undefined): string | null {
   const fromHistory = lastIssuedFromHistory(history, revisionCount);
   if (fromHistory === null) return null;
-  const bound = issueBoundFromLabel(deliverableRev);
+  const bound = issueBoundFromLabel(deliverableRev, revisionCount);
   if (bound === null) return fromHistory;
   const n = Math.min(parseInt(fromHistory, 10), bound);
   return n >= 1 ? String(n) : null;

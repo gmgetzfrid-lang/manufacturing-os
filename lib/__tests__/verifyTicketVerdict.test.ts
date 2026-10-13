@@ -13,7 +13,10 @@
 //            review; archived → "cannot confirm".
 //   SM-5 / PHYS-2 trust boundary: an "issued Rev N" history line above
 //            revision_count + 1, or above the bound the row's own label
-//            proves (N − 1 under N<letters>, N under N), never counts.
+//            proves (N − 1 under N<letters>, N under N, revision_count with
+//            no label), never counts.
+//   PHYS-2 / EDGE-2  a deliverable of a withdrawn request is stamped REQUEST
+//            WITHDRAWN, confirmed first.
 //   AUTHZ-12 the public answer carries revision-status facts only (no workflow
 //            status, no unit, no activity time); scans stay logged.
 //   EVID-5 / PHYS-8  the copy's record is awaited and checked, written in the
@@ -24,9 +27,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NextRequest } from "next/server";
 import { ticketVerdict, ticketVerifyUrl, lastIssuedFromHistory, ticketFactsState, ticketRevInReview, issueBoundFromLabel, issueOnRecord } from "@/lib/verifyTicketVerdict";
+import { computeTransition } from "@/lib/ticketTransitions";
+import type { Ticket, TicketAttachment, TicketHistoryEntry } from "@/types/schema";
 import { ticketCopyPlan, ticketCopyControlState, ticketCopySource, recordTicketCopy, isMissingSourceColumn, ticketCopyStanding, type TicketCopyLiveFacts } from "@/lib/ticketDeliverableCopy";
 import { stampWatermark, withoutScanInstruction } from "@/lib/stamping";
-import type { TicketAttachment } from "@/types/schema";
 
 const src = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
 const ORIGIN = "https://plant.example.com";
@@ -110,7 +114,7 @@ describe("EDGE-2 — the verdict reads the request's state, not the label alone"
     expect([issueBoundFromLabel("2A"), issueBoundFromLabel("1B"), issueBoundFromLabel("3"), issueBoundFromLabel(null), issueBoundFromLabel("x")]).toEqual([1, 0, 3, null, null]);
     expect(issueOnRecord([issued(1), forged(2)], 1, "2A")).toBe("1");
     expect(issueOnRecord([forged(1)], 0, "1A")).toBeNull();
-    expect(issueOnRecord([issued(1), forged(2)], 1, null)).toBe("2"); // no label: only the cycle cap applies
+    expect(issueOnRecord([issued(1), forged(2)], 1, null)).toBe("1"); // no label: bounded by revision_count itself
     expect(issueOnRecord([issued(2), forged(3)], 2, "2")).toBe("2");
     // probed row 1: 2A in review, real Rev 1, a member appends "issued Rev 2" (within revision_count + 1)
     const review2A = { status: "PENDING_REVIEW", deliverable_rev: "2A", history: [issued(1), forged(2)], revision_count: 1 };
@@ -133,6 +137,59 @@ describe("EDGE-2 — the verdict reads the request's state, not the label alone"
     expect(ticketCopyStanding("1", { status: "FINAL_DRAFT", deliverableRev: "1", history: [issued(1), forged(2)], revisionCount: 1 })).toBeNull();
     // a live review label with a set-aside issue line (forged, or a pre-Round-E collision): a print of it is "cannot confirm", never "review draft"
     expect(ticketVerdict({ status: "PENDING_REVIEW", deliverable_rev: "1B", history: [issued(1)], revision_count: 0 }, "1")).toMatchObject({ verdict: "unknown", latestIssuedRev: null });
+  });
+  it("trust boundary: a row with NO label bounds the history at revision_count — a reopen nulls the label AND bumps the count after a real issue", () => {
+    const forged = (n: number) => ({ action: `x — issued Rev ${n}`, user: "member@x.com" });
+    expect([issueBoundFromLabel(null, 0), issueBoundFromLabel(null, 2), issueBoundFromLabel(undefined, 1), issueBoundFromLabel("x", 1), issueBoundFromLabel("2A", 5)]).toEqual([0, 2, 1, 1, 1]);
+    // probed row: a CLOSED RFI (no label, revision_count 0) that never issued anything; a member appends "issued Rev 1"
+    const closedRfi = { status: "CLOSED", deliverable_rev: null, history: [forged(1)], revision_count: 0 };
+    expect(issueOnRecord(closedRfi.history, 0, null)).toBeNull();
+    expect(ticketVerdict(closedRfi, "1")).toMatchObject({ verdict: "unknown", latestIssuedRev: null }); // base's "cannot confirm", never green
+    expect(ticketFactsState(ticketVerdict(closedRfi, "1"))).toEqual({ label: "Revision status", value: "Cannot confirm" });
+    // live, the same forged line never makes the row read "reopened"
+    expect(ticketVerdict({ ...closedRfi, status: "PENDING_ENG_TEAM" }, "1")).toMatchObject({ verdict: "unknown", latestIssuedRev: null, inReview: false });
+    // probed row: reopened after a REAL Rev 1 (revision_count 1, no label); a member appends "issued Rev 2" (within revision_count + 1)
+    const reopened1 = { status: "PENDING_REVIEW", deliverable_rev: null, history: [issued(1), { action: "Reopen Ticket" }, forged(2)], revision_count: 1 };
+    expect(ticketVerdict(reopened1, "1")).toMatchObject({ verdict: "revision_in_progress", latestIssuedRev: "1", inReview: true });
+    expect(ticketVerdict(reopened1, "2").verdict).toBe("unknown"); // never a Rev 2 the count proves was not issued
+    const live1: TicketCopyLiveFacts = { status: reopened1.status, deliverableRev: null, history: reopened1.history, revisionCount: 1 };
+    expect(ticketCopyStanding("1", live1)).toEqual({ kind: "in_progress" });
+    expect(ticketCopyPlan({ file: { type: "Final", rev: "1" }, ticketNumber: "KE-1", ticketRowId: T, origin: ORIGIN, channel: "print", live: live1 }).footerNotice).not.toMatch(/SUPERSEDED/);
+    // …and closed again: the real Rev 1 is the issue in force, never "superseded by Rev 2"
+    expect(ticketVerdict({ ...reopened1, status: "CLOSED" }, "1")).toMatchObject({ verdict: "current", latestIssuedRev: "1" });
+  });
+  it("the legitimate reopen walks are unchanged under the revision_count bound (driven through computeTransition)", () => {
+    const actor = { uid: "a-1", email: "a@x.io", role: "Admin" };
+    const NOW = "2026-10-13T12:00:00.000Z";
+    type Row = { status: string; deliverable_rev: string | null; revision_count: number; history: TicketHistoryEntry[] };
+    const toTicket = (r: Row) => ({ id: T, orgId: "o", ticketId: "KE-1", title: "x", unit: "U", requestType: "ISO", requesterId: "u", requesterRole: "Viewer",
+      attachments: [], comments: [], unreadBy: [], watchers: [], createdAt: NOW, assignedDrafterId: "d",
+      status: r.status, deliverableRev: r.deliverable_rev, revisionCount: r.revision_count, draftIteration: 1, history: r.history }) as unknown as Ticket;
+    const step = (r: Row, actionType: string, actionLabel: string): Row => {
+      const t = computeTransition(toTicket(r), { actionType, actionLabel, actor, now: NOW } as Parameters<typeof computeTransition>[1]);
+      const u = t.updates as Record<string, unknown>;
+      return {
+        status: t.newStatus ?? r.status,
+        deliverable_rev: "deliverable_rev" in u ? (u.deliverable_rev as string | null) : r.deliverable_rev,
+        revision_count: "revision_count" in u ? (u.revision_count as number) : r.revision_count,
+        history: [...r.history, t.historyEntry as TicketHistoryEntry],
+      };
+    };
+    // issue 2 (2A approved at revision_count 1) → closed → reopened: revision_count 2, no label
+    let r: Row = step({ status: "PENDING_REVIEW", deliverable_rev: "2A", revision_count: 1, history: [{ action: "Approve — issued Rev 1" } as TicketHistoryEntry] }, "approve_draft_ifc", "Approve (Issue for Construction)");
+    expect(r.deliverable_rev).toBe("2");
+    r = step({ ...r, status: "CLOSED" }, "reopen_ticket", "Reopen Ticket");
+    expect([r.deliverable_rev, r.revision_count]).toEqual([null, 2]);
+    expect(ticketVerdict(r, "2")).toMatchObject({ verdict: "revision_in_progress", latestIssuedRev: "2" });
+    expect(ticketVerdict(r, "1").verdict).toBe("superseded");
+    expect(ticketVerdict({ ...r, status: "CLOSED" }, "2")).toMatchObject({ verdict: "current", latestIssuedRev: "2" });
+    // an SM-5 re-cycle (a pre-Round-E reopened row: revision_count 0, label 1, Rev 1 already issued) → Rev 2 at revision_count 1 → reopened
+    let legacy: Row = step({ status: "PENDING_REVIEW", deliverable_rev: "1", revision_count: 0, history: [{ action: "Approve — issued Rev 1" } as TicketHistoryEntry, { action: "Reopen Ticket" } as TicketHistoryEntry] }, "approve_draft_ifc", "Approve (Issue for Construction)");
+    expect([legacy.deliverable_rev, legacy.revision_count]).toEqual(["2", 1]);
+    legacy = step({ ...legacy, status: "CLOSED" }, "reopen_ticket", "Reopen Ticket");
+    expect([legacy.deliverable_rev, legacy.revision_count]).toEqual([null, 2]);
+    expect(ticketVerdict(legacy, "2")).toMatchObject({ verdict: "revision_in_progress", latestIssuedRev: "2" });
+    expect(ticketVerdict(legacy, "1").verdict).toBe("superseded");
   });
   it("no phantom issue: a review label after a reject before any issue reports no latest issue when the history shows none", () => {
     // 1A rejected (cycle bumped, nothing issued) → resubmitted as 2A: cycle − 1 = 1 was never issued
@@ -244,6 +301,30 @@ describe("PHYS-2 — the QR and footer carry the printed FILE's revision", () =>
       expect(plan.confirmMessage).toMatch(/a newer revision is in progress/);
       expect(ticketVerdict({ status: l.status, deliverable_rev: l.deliverableRev, history: l.history }, "2").verdict).toBe("revision_in_progress");
     }
+  });
+  it("a deliverable of a WITHDRAWN request (EDGE-2) → stamped REQUEST WITHDRAWN, confirmed first; agrees with the scan", () => {
+    for (const l of [
+      live({ status: "CANCELED", deliverableRev: "1", history: [issued(1)] }),        // canceled after its issue
+      live({ status: "CANCELED", deliverableRev: "2", history: [issued(1), issued(2)] }), // withdrawn outranks superseded, as the scan does
+      live({ status: "CANCELED", deliverableRev: "1A", history: [] }),               // canceled before any issue
+    ]) {
+      for (const channel of ["print", "download"] as const) {
+        const plan = ticketCopyPlan({ file: final("1"), ticketNumber: "KE-1", ticketRowId: T, origin: ORIGIN, channel, live: l });
+        const when = channel === "print" ? "printing" : "download";
+        expect(plan.standing).toEqual({ kind: "withdrawn" });
+        expect(plan.footerNotice).toBe(`REQUEST WITHDRAWN at time of ${when} — this file is KE-1 deliverable Rev 1 — do not work from it — not a controlled document revision — scan the QR for the current status.`);
+        expect(plan.confirmMessage).toBe(`This file is Rev 1, but the KE-1 request was withdrawn. The copy will be stamped WITHDRAWN. ${channel === "print" ? "Print" : "Download"} it anyway?`);
+        expect(plan.verifyUrl).toBe(`${ORIGIN}/verify-ticket/${T}?r=1`); // the QR stays the file's own
+        expect(ticketVerdict({ status: l.status, deliverable_rev: l.deliverableRev, history: l.history }, "1").verdict).toBe("withdrawn");
+        // with no QR on the page the WITHDRAWN words survive the scan-clause strip
+        expect(withoutScanInstruction(plan.footerNotice)).toMatch(/^REQUEST WITHDRAWN at time of .* — do not work from it — not a controlled document revision\. Confirm the current revision before use\.$/);
+      }
+    }
+    // a request CLOSED on a review label with no issue anywhere answers withdrawn too
+    expect(ticketCopyStanding("1", { status: "CLOSED", deliverableRev: "1A", history: [], revisionCount: 0 })).toEqual({ kind: "withdrawn" });
+    // a Draft or a rev-less file of a withdrawn request keeps no standing (its watermark / "cannot confirm" footer speak)
+    expect(ticketCopyPlan({ file: { type: "Draft", rev: "1A" }, ticketNumber: "KE-1", ticketRowId: T, origin: ORIGIN, channel: "print", live: live({ status: "CANCELED" }) }).standing).toBeNull();
+    expect(ticketCopyPlan({ file: final(null), ticketNumber: "KE-1", ticketRowId: T, origin: ORIGIN, channel: "print", live: live({ status: "CANCELED" }) }).confirmMessage).toBeNull();
   });
   it("the latest issue, a Draft, a rev-less file or no live facts: no standing, no confirmation", () => {
     const cur = ticketCopyPlan({ file: final("2"), ticketNumber: "KE-1", ticketRowId: T, origin: ORIGIN, channel: "print", live: live({}) });

@@ -16,8 +16,9 @@
 //           printing" as if it were the deliverable then: when the page
 //           already knows the file is superseded (a later issue on the
 //           ticket — its issued label or its history) the stamp says
-//           SUPERSEDED by Rev N, and when a newer revision is being worked
-//           it says so; the page confirms before stamping either. The
+//           SUPERSEDED by Rev N, when the request was withdrawn (EDGE-2) it
+//           says REQUEST WITHDRAWN, and when a newer revision is being worked
+//           it says so; the page confirms before stamping any of them. The
 //           ticket's live facts are a warning input ONLY — the QR keeps
 //           file.rev.
 //   PHYS-9  One control state per file drives both marks (DEC-64 §5): a Draft
@@ -49,7 +50,8 @@ export interface TicketCopyPlan {
   /** The watermark the stamper prints for this state — what the record names. */
   watermark: string;
   /** What the page knows of this file against the ticket now (PHYS-2):
-   *  superseded by a later issue, a newer revision in progress, or null
+   *  the request withdrawn (EDGE-2), superseded by a later issue, a newer
+   *  revision in progress, or null
    *  (latest as far as the page knows, or nothing to compare). */
   standing: TicketCopyStanding | null;
   /** The plain-words question the page asks before stamping a file whose
@@ -58,6 +60,7 @@ export interface TicketCopyPlan {
 }
 
 export type TicketCopyStanding =
+  | { kind: "withdrawn" }
   | { kind: "superseded"; by: string }
   | { kind: "in_progress" };
 
@@ -68,13 +71,17 @@ export interface TicketCopyLiveFacts {
   history: unknown;
   /** The server-guarded cycle count: a history "issued Rev N" line above
    *  revisionCount + 1, or above the bound the live label proves (N − 1
-   *  under a review label N<letters>, N under an issued label N), is not an
+   *  under a review label N<letters>, N under an issued label N,
+   *  revisionCount itself with no label), is not an
    *  approval's (any member may append history in their own name) and never
    *  marks a file superseded. */
   revisionCount?: number | null;
 }
 
 /** Where an issued file stands against the ticket as the page holds it.
+ *  Withdrawn: the verify ladder answers "withdrawn" for it (EDGE-2 — the
+ *  request was CANCELED, or ended on a review label with no issue
+ *  anywhere); checked first, as the scan answers it whatever the rev.
  *  Superseded: a later number is issued — on the row (deliverable_rev) or in
  *  the history's "issued Rev N" lines (only those within revisionCount + 1
  *  and the live label's bound — issueOnRecord, the trust boundary in
@@ -86,11 +93,12 @@ export interface TicketCopyLiveFacts {
  *  no standing here (its watermark and its "cannot confirm" footer speak). */
 export function ticketCopyStanding(rev: string | null, live: TicketCopyLiveFacts | null | undefined): TicketCopyStanding | null {
   if (!live || !isIssuedTicketRev(rev)) return null;
+  const v = ticketVerdict({ status: live.status, deliverable_rev: live.deliverableRev, history: live.history, revision_count: live.revisionCount }, rev);
+  if (v.verdict === "withdrawn") return { kind: "withdrawn" };
   const fromRow = isIssuedTicketRev(live.deliverableRev) ? parseInt(live.deliverableRev, 10) : null;
   const fromHistory = issueOnRecord(live.history, live.revisionCount, live.deliverableRev);
   const latest = Math.max(fromRow ?? 0, fromHistory ? parseInt(fromHistory, 10) : 0);
   if (latest > parseInt(rev, 10)) return { kind: "superseded", by: String(latest) };
-  const v = ticketVerdict({ status: live.status, deliverable_rev: live.deliverableRev, history: live.history, revision_count: live.revisionCount }, rev);
   return v.verdict === "revision_in_progress" ? { kind: "in_progress" } : null;
 }
 
@@ -121,6 +129,8 @@ export function ticketCopyPlan(input: {
   let footerNotice: string;
   if (!rev) {
     footerNotice = `${label} ${input.file.type ?? "ticket"} file — no deliverable revision is recorded for this file, so which printing this is cannot be confirmed. Not a controlled document revision.`;
+  } else if (standing?.kind === "withdrawn") {
+    footerNotice = `REQUEST WITHDRAWN at time of ${when} — this file is ${label} ${what} Rev ${rev} — do not work from it — not a controlled document revision — scan the QR for the current status.`;
   } else if (standing?.kind === "superseded") {
     footerNotice = `SUPERSEDED by Rev ${standing.by} at time of ${when} — this file is ${label} ${what} Rev ${rev}, not the current revision — not a controlled document revision — scan the QR for the current status.`;
   } else if (standing?.kind === "in_progress") {
@@ -131,7 +141,9 @@ export function ticketCopyPlan(input: {
   const verb = input.channel === "print" ? "Print" : "Download";
   const confirmMessage = !standing || !rev
     ? null
-    : standing.kind === "superseded"
+    : standing.kind === "withdrawn"
+      ? `This file is Rev ${rev}, but the ${label} request was withdrawn. The copy will be stamped WITHDRAWN. ${verb} it anyway?`
+      : standing.kind === "superseded"
       ? `This file is Rev ${rev}, but ${label} has since issued Rev ${standing.by}. The copy will be stamped SUPERSEDED. ${verb} it anyway?`
       : `This file is Rev ${rev}, the last issue of ${label}, but a newer revision is in progress. The copy will say so. ${verb} it anyway?`;
   return {
