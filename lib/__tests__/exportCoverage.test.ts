@@ -313,11 +313,19 @@ describe("export column-list exception (ILIFE-11): an omitted column is declared
   const census = censusSchema();
   const exported = [...ORG_SCOPED_TABLES, ...USER_SCOPED_FOR_ORG_TABLES] as readonly string[];
 
-  it("knowledge_chunks is exported WITHOUT its embedding, for a written reason that names the rebuild", () => {
+  it("knowledge_chunks is exported WITHOUT its embedding, for a written reason that says what a restore leaves", () => {
     expect(Object.keys(EXPORT_OMITTED_COLUMNS)).toEqual(["knowledge_chunks"]);
     expect(EXPORT_OMITTED_COLUMNS.knowledge_chunks.omit).toEqual(["embedding"]);
     expect(census.get("knowledge_chunks")?.columns.has("embedding")).toBe(true); // 20260930_semantic_layer.sql
-    expect(EXPORT_OMITTED_COLUMNS.knowledge_chunks.reason).toMatch(/embed drain rebuilds it/);
+    // The meaning index does not rebuild by itself after a restore (the
+    // embed drain spends only on a stamped consent): the reason says that a
+    // person must start a Build on their own key, and promises no drain.
+    const reason = EXPORT_OMITTED_COLUMNS.knowledge_chunks.reason;
+    expect(reason).toMatch(/keyword search works at once/);
+    expect(reason).toMatch(/meaning-index Build on each library/);
+    expect(reason).toMatch(/own embedding key/);
+    expect(reason).toMatch(/Nothing re-embeds them automatically/);
+    expect(reason).not.toMatch(/drain/);
   });
 
   it("every entry names an exported table; each omitted column is real; the select list is exactly the census columns less the omitted ones", () => {

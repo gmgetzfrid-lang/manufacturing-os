@@ -2,11 +2,18 @@
 //
 // intelligence Round G, package I-01 phase B — ILIFE-11. The export read
 // knowledge_chunks `select("*")`, so every chunk's 1024-dimension embedding
-// (derived, rebuilt by the embed drain) rode every backup inline. Now the
-// table is read by an explicit column list that leaves `embedding` out
+// (derived from the passage text) rode every backup inline. Now the table is
+// read by an explicit column list that leaves `embedding` out
 // (lib/exportTables.ts EXPORT_OMITTED_COLUMNS), the manifest names the
-// omission, and a restore of such a backup leaves every chunk in the state
-// the embed drain claims (embedding NULL).
+// omission, and a restore of such a backup leaves every chunk with embedding
+// NULL, in the queue embed_claim_batch claims from.
+//
+// What the restore does NOT do (review fix pass): bring meaning search back
+// by itself. The embed drain spends only on a consent stamped on a library
+// (ai_features.embedBuild); a finished build's stamp is cleared at 100%, and
+// a stamp whose payer is not an active member of the restored workspace is
+// released unspent. The last describe below runs the real drain over what a
+// restore leaves and pins exactly that, which is what the manifest note says.
 //
 // Driven end to end with the real producer (lib/dataExport.ts runOrgExport)
 // and the real restore (planRestore + runChunkedRestore through /begin and
@@ -28,7 +35,18 @@ const hooks = vi.hoisted(() => ({
   selects: {} as Record<string, string[]>,
   /** An error answered to a read by an explicit column list, per table. */
   listError: {} as Record<string, { code: string; message: string }>,
+  /** While set, the service-role client the embed drain imports answers from
+   *  this stand-in (./helpers/knowledgeFakeAdmin) instead of the memory DB. */
+  drain: null as null | import("./helpers/knowledgeFakeAdmin").FakeAdminState,
 }));
+vi.mock("@/lib/supabaseAdmin", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/supabaseAdmin")>();
+  const { makeFakeAdmin } = await import("./helpers/knowledgeFakeAdmin");
+  const proxy = new Proxy({}, {
+    get: (_t, p: string) => ((hooks.drain ? makeFakeAdmin(hooks.drain) : real.supabaseAdmin) as unknown as Record<string, unknown>)[p],
+  });
+  return { ...real, supabaseAdmin: proxy };
+});
 vi.mock("@/lib/serverAuth", async () => {
   const mem = await import("./helpers/restoreMemoryDb");
   return {
@@ -81,6 +99,8 @@ import { planRestore, runChunkedRestore, type RestorePost, type RestoreEnvelopeL
 import { EMBED_MAX_ATTEMPTS } from "@/lib/ai/embeddings";
 import { POST as applyTable } from "@/app/api/admin/restore/apply-table/route";
 import { POST as beginRoute } from "@/app/api/admin/restore/begin/route";
+import { drainEmbedBacklog } from "@/lib/knowledgeEmbedDrain";
+import { freshAdminState, installMarkerRpc } from "./helpers/knowledgeFakeAdmin";
 
 const SRC = "33333333-3333-4333-8333-333333333333";
 const TARGET = "55555555-5555-4555-8555-555555555555";
@@ -126,7 +146,7 @@ const routePost: RestorePost = async (path, body) => {
 const rowsOf = (t: string): Row[] => db.rows[t] ?? [];
 
 beforeEach(() => {
-  hooks.absent = {}; hooks.selects = {}; hooks.listError = {};
+  hooks.absent = {}; hooks.selects = {}; hooks.listError = {}; hooks.drain = null;
   db.keys = {}; db.writeError = null; db.readError = {}; db.writes = []; db.attempts = []; db.countless = false;
   db.fks = {}; db.maxRows = 1000; db.generated = { knowledge_chunks: ["tsv"] }; db.authUsers = null;
 });
@@ -146,13 +166,18 @@ describe("ILIFE-11 criterion 1 — knowledge_chunks is exported by an explicit c
     expect(env.manifest.complete).toBe(true);
   });
 
-  it("the manifest says so: omittedColumns names the column, and a note names it with the rebuild", async () => {
+  it("the manifest says so: omittedColumns names the column, and a note says what a restore leaves (no automatic rebuild)", async () => {
     seedSource([chunk(0)]);
     const env = await exportEnvelope();
     expect(env.manifest.omittedColumns).toEqual({ knowledge_chunks: ["embedding"] });
-    const note = env.manifest.notes.find((n) => n.startsWith("OMITTED derived columns"));
+    const note = env.manifest.notes.find((n) => n.startsWith("OMITTED derived columns"))!;
     expect(note).toContain("knowledge_chunks.embedding");
-    expect(note).toContain("embed drain rebuilds it");
+    expect(note).toContain(EXPORT_OMITTED_COLUMNS.knowledge_chunks.reason);
+    expect(note).toMatch(/keyword search works at once/);
+    expect(note).toMatch(/meaning-index Build on each library, which re-embeds them on that person's own embedding key/);
+    expect(note).toMatch(/Nothing re-embeds them automatically/);
+    expect(note).not.toMatch(/drain|rebuilt after a restore/);
+    expect(/^[\x20-\x7e]*$/.test(note)).toBe(true);                // ASCII (total_bytes compares characters)
     expect(env.manifest.notes.join("\n")).toMatch(/derived columns listed in manifest\.omittedColumns, which are left out/);
     expect(env.manifest.notes.join("\n")).not.toMatch(/preserved verbatim EXCEPT the credential columns listed in manifest\.redactedColumns, which are exported as null\. JSON keys/);
   });
@@ -229,7 +254,7 @@ describe("IEDGE-10 criterion 3 — the DATA_EXPORT row records the exporter's ro
   });
 });
 
-describe("ILIFE-11 criterion 3 — a restore of a backup taken without embeddings leaves every chunk where the embed drain rebuilds it", () => {
+describe("ILIFE-11 criterion 3 (chunk half) — a restore of a backup taken without embeddings leaves every chunk in the queue embed_claim_batch claims from", () => {
   it("export → restore into a fresh workspace: every chunk lands with no embedding, and each meets the drain's claim predicate", async () => {
     seedSource([chunk(0), chunk(1, { embed_attempts: 1 }), chunk(2, { embedding: null, embedding_model: null })]);
     const env = await exportEnvelope();
@@ -276,5 +301,69 @@ describe("ILIFE-11 criterion 3 — a restore of a backup taken without embedding
 
   it("the omission is the declared one only", () => {
     expect(Object.keys(EXPORT_OMITTED_COLUMNS)).toEqual(["knowledge_chunks"]);
+  });
+});
+
+describe("ILIFE-11 criterion 3 (library half) — what a restore leaves for the embed drain: nothing it will spend on", () => {
+  // A real uuid, as a consent stamp carries (the drain releases a non-uuid
+  // stamp before it looks at membership).
+  const PAYER = "0d000000-0000-4000-8000-0000000000a1";
+  /** Export the source, restore into a fresh workspace, and hand what the
+   *  restore wrote to the service-role stand-in the drain reads. */
+  async function exportRestoreAndHandToDrain() {
+    const env = await exportEnvelope();
+    seedTarget();
+    const envelope = env as unknown as RestoreEnvelopeLike;
+    const plan = planRestore(envelope, { orgId: TARGET, orgName: "Acme", members: [{ uid: "t-alice", email: "alice@acme.com" }] });
+    const result = await runChunkedRestore({ orgId: TARGET, envelope, plan, orgNameChoice: "current", post: routePost });
+    expect(result.stoppedAt).toBeNull();
+    expect(result.totalRefused).toBe(0);
+    const state = freshAdminState();
+    for (const t of ["knowledge_libraries", "knowledge_documents", "knowledge_chunks", "org_members"]) {
+      state.tables[t] = rowsOf(t).map((r) => ({ ...r }));
+    }
+    installMarkerRpc(state);
+    hooks.drain = state;
+    return state;
+  }
+
+  it("a fully built library (its stamp cleared at 100%) is not picked up: the drain does nothing, and every restored chunk stays without a vector", async () => {
+    seedSource([chunk(0), chunk(1), chunk(2)]);
+    db.rows.knowledge_libraries = [{ id: "kl-1", org_id: SRC, name: "Vendor manuals", ai_features: { summary: "pump vendor manuals" } }];
+    const state = await exportRestoreAndHandToDrain();
+    const lib = state.tables.knowledge_libraries.find((l) => l.name === "Vendor manuals")!;
+    expect(lib.org_id).toBe(TARGET);
+    expect((lib.ai_features as Record<string, unknown> | null)?.embedBuild).toBeUndefined();
+
+    const first = await drainEmbedBacklog({ scopeOrgIds: null, budgetMs: 200_000 });
+    expect(first.drained).toEqual([]);                                   // no stamped library, nothing to continue
+    const again = await drainEmbedBacklog({ scopeOrgIds: [TARGET], budgetMs: 200_000 });
+    expect(again.drained).toEqual([]);                                   // the page-load nudge: the same
+    expect(state.calls.some((c) => c.table === "knowledge_libraries" && c.method === "select")).toBe(true); // it did look
+    expect(state.calls.some((c) => c.table === "ai_connections")).toBe(false); // nobody's key was even looked up
+    const chunks = state.tables.knowledge_chunks;
+    expect(chunks).toHaveLength(3);
+    for (const c of chunks) expect(c.embedding ?? null, String(c.id)).toBeNull();
+  });
+
+  it("a standing 'keep current' consent restored into a fresh workspace names nobody there: the drain releases it unspent, and nothing is embedded", async () => {
+    seedSource([chunk(0), chunk(1)]);
+    db.rows.org_members = [{ org_id: SRC, uid: PAYER, email: "alice@acme.com", role: "Admin", roles: ["Admin"], status: "active" }];
+    db.rows.knowledge_libraries = [{
+      id: "kl-1", org_id: SRC, name: "Vendor manuals",
+      ai_features: { embedBuild: { userId: PAYER, at: "2026-09-01T00:00:00.000Z", standing: true, completedAt: "2026-09-02T00:00:00.000Z" } },
+    }];
+    const state = await exportRestoreAndHandToDrain();
+    const lib = state.tables.knowledge_libraries.find((l) => l.name === "Vendor manuals")!;
+    expect(state.tables.org_members.some((m) => m.org_id === TARGET && m.uid === PAYER && m.status === "active")).toBe(false);
+
+    const run = await drainEmbedBacklog({ scopeOrgIds: null, budgetMs: 200_000 });
+    expect(run.drained.map((d) => [d.libraryId, d.outcome])).toEqual([[lib.id, "released"]]);
+    expect(run.drained[0].note).toMatch(/names no active member/);
+    expect((lib.ai_features as Record<string, unknown>).embedBuild).toBeUndefined();
+    expect(state.calls.some((c) => c.table === "ai_connections")).toBe(false);
+    for (const c of state.tables.knowledge_chunks) expect(c.embedding ?? null, String(c.id)).toBeNull();
+    // ...and the next run has nothing left to continue.
+    expect((await drainEmbedBacklog({ scopeOrgIds: null, budgetMs: 200_000 })).drained).toEqual([]);
   });
 });

@@ -224,10 +224,16 @@ export function exportOrderKey(table: string): readonly string[] {
  *
  *  knowledge_chunks.embedding: one 1024-dimension vector per chunk, written
  *  as text by PostgREST (on the order of 15–20 KB a row), was inlined into
- *  every backup. It is derived, not authored: the embed drain
- *  (lib/knowledgeEmbedDrain.ts, embed_claim_batch) rebuilds every chunk whose
- *  embedding is NULL, so a restored chunk comes back with keyword search at
- *  once and its meaning index rebuilt by the drain. */
+ *  every backup. It is derived, not authored: every restored chunk arrives
+ *  with embedding NULL, in the queue embed_claim_batch claims from, and
+ *  keyword search works at once. The meaning index does NOT rebuild by
+ *  itself: the embed drain (lib/knowledgeEmbedDrain.ts) spends only on a
+ *  consent stamped on the library (ai_features.embedBuild), a finished
+ *  build's stamp is cleared at 100%, and a stamp whose payer is not an
+ *  active member of the restored workspace is released unspent. Meaning
+ *  search comes back when someone starts a meaning-index Build on each
+ *  library, on their own embedding key (lib/__tests__/
+ *  intelRoundGChunkExport.test.ts drives the drain over a restore). */
 export const EXPORT_OMITTED_COLUMNS: Record<string, { omit: readonly string[]; select: readonly string[]; reason: string }> = {
   knowledge_chunks: {
     omit: ["embedding"],
@@ -237,8 +243,10 @@ export const EXPORT_OMITTED_COLUMNS: Record<string, { omit: readonly string[]; s
       "source", "source_model",
     ],
     reason:
-      "the semantic-search vector (1024 numbers per passage) is derived from the passage text and is not exported; " +
-      "after a restore the embed drain rebuilds it for every restored passage (keyword search works at once, meaning search as the drain catches up)",
+      "the semantic-search vector (1024 numbers per passage) is derived from the passage text and is not exported. " +
+      "After a restore, keyword search works at once; meaning search stays off for the restored passages until someone starts a " +
+      "meaning-index Build on each library, which re-embeds them on that person's own embedding key (their own AI spend). " +
+      "Nothing re-embeds them automatically",
   },
 };
 

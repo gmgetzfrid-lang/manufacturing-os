@@ -1170,6 +1170,8 @@ lib/dataRestore.ts:346-348 `export function conflictTargetFor(table: string): st
 
 *Cross-note (2026-10-13, intelligence Round G, I-01 phase B): intelligence `ILIFE-2` is RESOLVED by record. The FK census test here (`lib/__tests__/dataRestore.test.ts:257`) pins the knowledge tables ahead of `process_flows` / `entity_mentions` (`lib/dataRestore.ts:909`, `:920`, `:924`), so phase B made no edit to `lib/dataRestore.ts`. `ILIFE-10` stays OPEN on its business keys and the `is_explicit` limb, which needs a ruling against `DEC-75` §5. The proposed owner is admin-and-org P10.*
 
+*Cross-note (2026-10-13, intelligence Round G, I-01 phase B review fix pass): intelligence `ILIFE-11` stays OPEN on criteria 2 and 3, proposed owner admin-and-org P10. Exports now leave out `knowledge_chunks.embedding`. A restore does NOT bring meaning search back by itself, because the embed drain spends only on a consent stamped on the library, and a finished or fresh-workspace library has none it will use. The manifest note says so. Three remainders: (1) a post-restore "meaning index needs a rebuild" prompt per restored library that had vectors, with the Build started by a person on their own key, or a vector side file the restore writes back; (2) streaming or a measured size warning; (3) an "Omitted derived columns" section in the server ZIP's `README.md` (`lib/exportRunner.ts buildReadme`), rendered from `manifest.omittedColumns` next to the redacted-columns section.*
+
 ---
 
 <a id="bkp-13"></a>

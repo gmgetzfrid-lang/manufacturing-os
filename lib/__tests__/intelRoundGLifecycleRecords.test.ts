@@ -11,7 +11,9 @@
 //   IRLS-12 criterion 3 the skill libraries tell "not installed" (a missing
 //                       table: null) from "nothing here yet" (an empty
 //                       shelf: []), as lib/processFlows.ts does (I-09's
-//                       limb, pinned in processFlowsLib.test.ts).
+//                       limb, pinned in processFlowsLib.test.ts). A missing
+//                       COLUMN is still read as "not installed" there: an
+//                       expected-fail tripwire pins that open residual.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Role } from "@/types/schema";
@@ -76,5 +78,19 @@ describe("IRLS-12 criterion 3 — the skill libraries tell a missing table from 
   ] as const)("%s: any other read failure is thrown, never shown as empty or 'not installed'", async (_table, list) => {
     state.answer = () => ({ data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } });
     await expect(list()).rejects.toThrow(/statement timeout/);
+  });
+
+  // Residual (review fix pass), owned on the IRLS-12 record: the skill
+  // libraries' `missing` test is `/does not exist/`, which a missing COLUMN
+  // (42703, e.g. an order column) also matches, so such a read would say
+  // "not installed" instead of the error. lib/processFlows.ts was tightened
+  // against exactly this. Expected to fail until the owner tightens
+  // `missing` in lib/linkRules.ts and lib/answerSkills.ts; then flip to `it`.
+  it.fails.each([
+    ["link_rules", () => listLinkRules("org-1", "u-1")],
+    ["answer_skills", () => listAnswerSkills("org-1", "u-1")],
+  ] as const)("%s: a missing COLUMN (42703) is thrown, never shown as 'not installed' (open residual)", async (table, list) => {
+    state.answer = () => ({ data: null, error: { code: "42703", message: `column ${table}.builtin_key does not exist` } });
+    await expect(list()).rejects.toThrow(/builtin_key does not exist/);
   });
 });

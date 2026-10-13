@@ -109,10 +109,10 @@ export interface DataExportManifest {
    *  be re-issued and destination credentials re-entered rather than
    *  silently arriving dead. */
   redactedColumns: Record<string, string[]>;
-  /** intelligence ILIFE-11: columns that are NOT in this export at all (not
-   *  nulled — absent from every row), per table, because they are derived and
-   *  rebuilt after a restore: knowledge_chunks.embedding, which the embed
-   *  drain re-computes. Older backups have no such field. */
+  /** intelligence ILIFE-11: columns NOT in this export at all (not nulled —
+   *  absent from every row), per table, because they are derived:
+   *  knowledge_chunks.embedding. Nothing rebuilds it by itself after a restore
+   *  (see EXPORT_OMITTED_COLUMNS). Older backups have no such field. */
   omittedColumns: Record<string, string[]>;
   notes: string[];
 }
@@ -449,7 +449,7 @@ export async function runOrgExport(params: {
     "Every column from the source schema is preserved verbatim EXCEPT the credential columns listed in manifest.redactedColumns, " +
     "which are exported as null, and the derived columns listed in manifest.omittedColumns, which are left out. " +
     "JSON keys mirror Postgres column names (snake_case).",
-    `OMITTED derived columns (not in this export; rebuilt after a restore): ${
+    `OMITTED derived columns (not in this export): ${
       Object.entries(EXPORT_OMITTED_COLUMNS).map(([t, o]) => `${o.omit.map((c) => `${t}.${c}`).join(", ")}: ${o.reason}`).join("; ")
     }.`,
     `REDACTED credential columns (secrets never leave the database): ${
