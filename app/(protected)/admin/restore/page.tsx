@@ -34,7 +34,7 @@ import {
   planRestore, remapOrgPath, previewChunkedRestore, runChunkedRestore, readBackupArchive, RESTORE_ADDITIVE_NOTE,
   RESTORE_HELD_ELSEWHERE_NOTE, RESTORE_LINK_MEMBER_STATUSES, restoreRefusalLabel, isDanglingFlowRefusal, DANGLING_FLOW_CODE,
   type RestorePlan, type RestoreEnvelopeLike, type RestorePost, type ChunkedRestoreResult, type ChunkedRestorePreview,
-  type BackupArchiveRead,
+  type BackupArchiveRead, clearSkippedNodeImagePointers, nodeImagePointerLabel, type SkippedNodeImage,
 } from "@/lib/dataRestore";
 import { restoreUploadRequest, isWorkspaceLogoKey, isNodeImageKey } from "@/lib/storageKey";
 import { withRestoreMembershipCheck, restoreMembershipSentence, type RestoreMembershipCheck } from "@/lib/restoreMembership";
@@ -64,6 +64,14 @@ interface FilesProgress {
   /** Folder / library covers and backgrounds the server will not sign
    *  (ORG-16: an SVG, HEIC or TIFF from before the rule), by file name. */
   nodeImagesNotRestored?: string[];
+  /** ORG-18: the folders / libraries whose pointer at such a file was
+   *  cleared (it is confirmed missing from storage), one line each. */
+  nodeImagesCleared?: string[];
+  /** ORG-18: nodes that name such a file whose absence could not be
+   *  confirmed — named, not changed. */
+  nodeImagesKept?: string[];
+  /** ORG-18: a read or write of those pointers that failed, in words. */
+  nodeImagePointerErrors?: string[];
 }
 
 function fmtNum(n: number) { return n >= 1000 ? n.toLocaleString() : String(n); }
@@ -262,6 +270,9 @@ export default function RestorePage() {
     const reasons = new Map<string, number>();
     let logoNotRestored: string | null = null;
     const nodeImagesNotRestored: string[] = [];
+    // ORG-18: each skipped cover / background key, and whether the storage
+    // check said it is not there (only then is a node's pointer cleared).
+    const skippedNodeImages: SkippedNodeImage[] = [];
     const detail = () => ({
       reasons: [...reasons].map(([reason, files]) => ({ reason, files })),
       logoNotRestored,
@@ -280,7 +291,7 @@ export default function RestorePage() {
         const check = await fetch(`/api/storage/resolve?path=${encodeURIComponent(key)}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
-        const state = await check.json().catch(() => null) as { archived?: boolean; archiveId?: string | null } | null;
+        const state = await check.json().catch(() => null) as { archived?: boolean; archiveId?: string | null; missing?: boolean } | null;
         if (check.ok && state?.archived === false) { counters.skipped++; return; }
         if (check.ok && state?.archived === true && state?.archiveId) { counters.offline++; return; }
 
@@ -302,9 +313,11 @@ export default function RestorePage() {
         }
         // ORG-16: a cover or background the server will not sign (an SVG,
         // HEIC or TIFF from before the rule) is not asked for either; the
-        // panel names it so the node can be given its image again.
+        // panel names it so the node can be given its image again. ORG-18:
+        // the key is kept, with whether storage confirmed it missing.
         if (req.nodeImageProblem) {
           nodeImagesNotRestored.push(key.split("/").slice(-2).join("/"));
+          skippedNodeImages.push({ key, confirmedMissing: check.ok && state?.missing === true });
           return;
         }
         const up = await fetch(`/api/storage/upload-url`, {
@@ -338,7 +351,24 @@ export default function RestorePage() {
         }
       }),
     );
-    setFilesProgress({ running: false, total: entries.length, ...counters, ...detail() });
+    // ORG-18: no folder or library is left pointing at a cover or background
+    // this run skipped — the pointer is cleared (only when storage confirmed
+    // the file is missing) and each node is named. The restored rows are in
+    // place: this step follows "Restore records".
+    let pointers: { nodeImagesCleared: string[]; nodeImagesKept: string[]; nodeImagePointerErrors: string[] } | null = null;
+    if (skippedNodeImages.length > 0) {
+      try {
+        const r = await clearSkippedNodeImagePointers(supabase, activeOrgId, skippedNodeImages);
+        pointers = {
+          nodeImagesCleared: r.cleared.map(nodeImagePointerLabel),
+          nodeImagesKept: r.kept.map(nodeImagePointerLabel),
+          nodeImagePointerErrors: r.errors,
+        };
+      } catch (e) {
+        pointers = { nodeImagesCleared: [], nodeImagesKept: [], nodeImagePointerErrors: [(e instanceof Error && e.message) || "The folders and libraries using these images could not be checked."] };
+      }
+    }
+    setFilesProgress({ running: false, total: entries.length, ...counters, ...detail(), ...(pointers ?? {}) });
   };
 
   const onDrop = (e: React.DragEvent) => {
@@ -604,6 +634,23 @@ export default function RestorePage() {
                       until then it shows no cover or background.
                     </div>
                   )}
+                  {(filesProgress.nodeImagesCleared ?? []).length > 0 && (
+                    <div data-testid="restore-node-images-cleared" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-800">
+                      So nothing points at a missing image, the cover or background was removed from{" "}
+                      {fmtNum(filesProgress.nodeImagesCleared!.length)} folder(s) / librar(ies): {filesProgress.nodeImagesCleared!.slice(0, 10).join("; ")}
+                      {filesProgress.nodeImagesCleared!.length > 10 ? "; …" : ""}. Pick a new image for each under Customize.
+                    </div>
+                  )}
+                  {(filesProgress.nodeImagesKept ?? []).length > 0 && (
+                    <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-800">
+                      These still point at a skipped image, because storage could not confirm the file is missing (nothing was
+                      changed): {filesProgress.nodeImagesKept!.slice(0, 10).join("; ")}{filesProgress.nodeImagesKept!.length > 10 ? "; …" : ""}.
+                      Run again, or pick a new image under Customize.
+                    </div>
+                  )}
+                  {(filesProgress.nodeImagePointerErrors ?? []).slice(0, 5).map((e) => (
+                    <div key={e} className="text-[10.5px] text-red-700 mt-0.5">{e}</div>
+                  ))}
                 </div>
               )}
               <div className="flex items-center justify-end">

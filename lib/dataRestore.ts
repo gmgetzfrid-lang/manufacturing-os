@@ -20,6 +20,7 @@
 import { heldRoles } from "@/lib/roleHeld";
 import { primaryRole } from "@/lib/roleCapabilities";
 import { ORG_SCOPED_TABLES, USER_SCOPED_FOR_ORG_TABLES, REDACT_COLUMNS, redactedColumnsFor } from "@/lib/exportTables";
+import { checkedWrite } from "@/lib/checkedWrite";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Role } from "@/types/schema";
 
@@ -2076,4 +2077,122 @@ export async function readBackupArchive(parts: ReadonlyArray<{ name: string; zip
     );
   }
   return { envelope, layout: rec.layout, recordsPart: rec.name, files, warnings };
+}
+
+// ── ORG-18: a cover or background the restore could not put back ───────────
+// ORG-16 holds a folder's or library's cover / background bytes to an image
+// allow-list, so "Put the files back" skips a legacy SVG, HEIC or TIFF one
+// (lib/storageKey.ts restoreUploadRequest.nodeImageProblem). The restored row
+// still names that key, so the node pointed at a missing object and its card
+// drew nothing, with no way to tell which node. Ruled under DEC-90 for P11:
+// the restore clears that node's pointer and names the node and the file.
+//
+// Fail-safe: only a key the storage check CONFIRMED is absent is cleared
+// (`/api/storage/resolve` answered `missing: true`) — a pointer to a file
+// that may be there is never removed; such a key's nodes are named, not
+// cleared. Only the pointer that equals the skipped key changes: a cover
+// pointer becomes NULL, a background becomes `{ type: "none" }` (what the
+// Customize editor writes for "no background"), and every other column and
+// the page header are kept. Every write is checked (a zero-row answer is a
+// refusal, said). The caller is the Admin running the restore — the node
+// editor's authority, so 20261210's appearance rail admits the write before
+// and after its paste.
+
+export type SkippedNodeImage = { key: string; confirmedMissing: boolean };
+export type NodeImagePointerNode = {
+  kind: "library" | "folder";
+  id: string;
+  name: string;
+  slot: "cover" | "background";
+  /** The skipped file, as the panel names it (`covers/<file>`). */
+  file: string;
+};
+export interface NodeImagePointerClearResult {
+  /** Pointers cleared: the node no longer names the missing image. */
+  cleared: NodeImagePointerNode[];
+  /** Nodes that name a skipped file whose absence could not be confirmed —
+   *  named, NOT changed. */
+  kept: NodeImagePointerNode[];
+  /** Each read or write that failed, in words (nothing is assumed). */
+  errors: string[];
+}
+
+const NODE_IMAGE_TABLES: ReadonlyArray<{ table: "libraries" | "collections"; kind: "library" | "folder" }> = [
+  { table: "libraries", kind: "library" },
+  { table: "collections", kind: "folder" },
+];
+
+/** The skipped file as the restore panel names it: its last two segments. */
+export function nodeImageFileLabel(key: string): string {
+  return key.split("/").slice(-2).join("/");
+}
+
+/** The page_config a cleared background leaves: the same object with
+ *  `background` set to "none" (header and every other key kept). Pure. */
+export function pageConfigWithoutBackground(pageConfig: unknown): Record<string, unknown> {
+  const base = pageConfig && typeof pageConfig === "object" && !Array.isArray(pageConfig) ? (pageConfig as Record<string, unknown>) : {};
+  return { ...base, background: { type: "none" } };
+}
+
+/** One line per node for the restore panel: `library "P&IDs" — cover (covers/a.svg)`. */
+export function nodeImagePointerLabel(n: NodeImagePointerNode): string {
+  return `${n.kind} "${n.name || n.id}" — ${n.slot} (${n.file})`;
+}
+
+/** ORG-18: find every library and folder in `orgId` whose cover or page
+ *  background names a key the restore skipped, clear the pointer when the
+ *  key is confirmed missing from storage, and name each node either way. */
+export async function clearSkippedNodeImagePointers(
+  supabase: Pick<SupabaseClient, "from">,
+  orgId: string,
+  skipped: ReadonlyArray<SkippedNodeImage>,
+): Promise<NodeImagePointerClearResult> {
+  const result: NodeImagePointerClearResult = { cleared: [], kept: [], errors: [] };
+  const byKey = new Map<string, SkippedNodeImage>();
+  for (const s of skipped) {
+    if (!s.key) continue;
+    // A key confirmed missing on any pass is confirmed (the check only ever
+    // says "missing" for an object that is not there).
+    const prior = byKey.get(s.key);
+    byKey.set(s.key, { key: s.key, confirmedMissing: s.confirmedMissing || !!prior?.confirmedMissing });
+  }
+  const unique = [...byKey.values()];
+  if (!orgId || unique.length === 0) return result;
+
+  for (const { table, kind } of NODE_IMAGE_TABLES) {
+    for (const { key, confirmedMissing } of unique) {
+      const file = nodeImageFileLabel(key);
+      // ── the cover pointer ──
+      const { data: covers, error: coverErr } = await supabase.from(table)
+        .select("id, name").eq("org_id", orgId).eq("cover_image_url", key);
+      if (coverErr) {
+        result.errors.push(`Could not read the ${kind === "library" ? "libraries" : "folders"} that use ${file} as a cover (${coverErr.message}).`);
+      } else {
+        for (const row of (covers ?? []) as Array<{ id: string; name: string | null }>) {
+          const node: NodeImagePointerNode = { kind, id: row.id, name: row.name ?? "", slot: "cover", file };
+          if (!confirmedMissing) { result.kept.push(node); continue; }
+          const w = await checkedWrite(supabase.from(table).update({ cover_image_url: null })
+            .eq("id", row.id).eq("org_id", orgId).eq("cover_image_url", key).select("id"));
+          if (w.ok) result.cleared.push(node);
+          else result.errors.push(`The ${kind} "${node.name || node.id}" still points at the missing cover ${file}: ${w.error}`);
+        }
+      }
+      // ── the page background (page_config.background.imagePath) ──
+      const { data: backs, error: backErr } = await supabase.from(table)
+        .select("id, name, page_config").eq("org_id", orgId).contains("page_config", { background: { imagePath: key } });
+      if (backErr) {
+        result.errors.push(`Could not read the ${kind === "library" ? "libraries" : "folders"} that use ${file} as a page background (${backErr.message}).`);
+        continue;
+      }
+      for (const row of (backs ?? []) as Array<{ id: string; name: string | null; page_config: unknown }>) {
+        const node: NodeImagePointerNode = { kind, id: row.id, name: row.name ?? "", slot: "background", file };
+        if (!confirmedMissing) { result.kept.push(node); continue; }
+        const w = await checkedWrite(supabase.from(table).update({ page_config: pageConfigWithoutBackground(row.page_config) })
+          .eq("id", row.id).eq("org_id", orgId).contains("page_config", { background: { imagePath: key } }).select("id"));
+        if (w.ok) result.cleared.push(node);
+        else result.errors.push(`The ${kind} "${node.name || node.id}" still points at the missing background ${file}: ${w.error}`);
+      }
+    }
+  }
+  return result;
 }
