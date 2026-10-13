@@ -9,6 +9,7 @@ import { pickBestMembership } from "@/lib/membershipSelection";
 import { readStoredOrgId, readStoredOrgIdFor, writeStoredOrgId, clearStoredOrgId } from "@/lib/workspaceDeviceState";
 import { logWorkspaceRelocation } from "@/lib/audit";
 import { normalizeEmail } from "@/lib/identity";
+import { noteStampsAtSignIn } from "@/lib/customStamps";
 
 type OrgMember = {
   orgId: string;
@@ -117,6 +118,7 @@ export const CLIENT_STORAGE_INVENTORY: readonly ClientStorageRule[] = [
   { store: "session", key: "sb-", match: "prefix", class: "sign-in", owners: ["lib/supabase.ts"], why: "the same, for a session not kept signed in" },
   // ── uid-scoped ──
   { store: "local", key: "manufacturingos.dashboard.", match: "prefix", class: "uid-scoped", owners: ["lib/dashboard/config.ts"], why: "the mirror of users.dashboard_config, keyed by uid" },
+  { store: "local", key: "manufacturingos.customStamps:", match: "prefix", class: "uid-scoped", owners: ["lib/customStamps.ts", "components/viewers/FullScreenViewer.tsx"], why: "the stamp images the person uploaded, keyed by their uid (public-surfaces OFF-15; class ruled by the integrator 2026-10-08, reversing the brief's account/identity) — their own work, never offered to another identity, and taken by no purge: kept across their sign-out, an expiry and another identity's run of the app on this device, as it was before OFF-15; ended only by the person's Remove or when the identity falls off this device's ring of the last STAMP_LISTS_KEPT_PER_DEVICE identities to sign in here (manufacturingos.customStamps.recentUids, lib/customStamps.ts keepRecentStampLists, run by noteIdentity), so a shared device keeps at most that many lists; the first identity to sign in here since OFF-15 also takes the device-wide list of before into it" },
   // ── device ──
   { store: "local", key: "mfgos.theme.mode", match: "exact", class: "device", owners: ["components/providers/ThemeProvider.tsx"], why: "light / dark" },
   { store: "local", key: "mfgos.theme.palette", match: "exact", class: "device", owners: ["components/providers/ThemeProvider.tsx"], why: "accent colours" },
@@ -135,7 +137,9 @@ export const CLIENT_STORAGE_INVENTORY: readonly ClientStorageRule[] = [
   { store: "local", key: "mfg-os.staleCheckouts.dismissedUntil", match: "exact", class: "device", owners: ["components/projects/StaleCheckoutBanner.tsx"], why: "a banner snooze time" },
   { store: "local", key: "mfg.inspector.sec.", match: "prefix", class: "device", owners: ["components/ui/CollapsibleSection.tsx"], why: "which inspector sections are folded" },
   { store: "local", key: "mfg.revup.", match: "prefix", class: "device", owners: ["components/documents/RevUpModal.tsx"], why: "the issue type last chosen in a library's rev-up" },
-  { store: "local", key: "manufacturingos.customStamps", match: "exact", class: "device", owners: ["components/viewers/FullScreenViewer.tsx"], why: "stamp images the person uploaded on this device — not an account read; not keyed by uid, so the next account on the device is offered them (public-surfaces OFF-15)" },
+  { store: "local", key: "manufacturingos.customStamps", match: "exact", class: "device", owners: ["lib/customStamps.ts"], why: "the device-wide stamp list of before OFF-15 — never written now (only put back when its move is refused); whose it is is unknown, so no purge takes it unread: the first identity to sign in here since OFF-15 takes it into its own list (claimLegacyStampsAtSignIn, run by noteIdentity through noteStampsAtSignIn after its purge) and the device is marked; anything a tab still running the old code writes here afterwards is never read, and is removed unread at the next sign-in (public-surfaces OFF-15)" },
+  { store: "local", key: "manufacturingos.customStamps.moved", match: "exact", class: "device", owners: ["lib/customStamps.ts"], why: "set once this device's one-time stamp transition has run — the legacy list moved to an account, or found absent, at the first sign-in since OFF-15 — so the legacy key is never read again (public-surfaces OFF-15) — holds no stamp and no uid" },
+  { store: "local", key: "manufacturingos.customStamps.recentUids", match: "exact", class: "device", owners: ["lib/customStamps.ts"], why: "the uids of the last STAMP_LISTS_KEPT_PER_DEVICE (8) identities to sign in on this device, newest first — identifiers only, no stamp, nothing an account read: the ring that ends the uid-scoped stamp lists of the identities that no longer sign in here (keepRecentStampLists, run by noteIdentity at every sign-in); it must outlive every identity change, so it is a device row (public-surfaces OFF-15)" },
   { store: "session", key: "kl-embed-nudge-at", match: "exact", class: "device", owners: ["lib/knowledge.ts"], why: "a throttle timestamp" },
 ];
 
@@ -382,6 +386,16 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
       // that one-time transition residual is recorded in OFF-8's Scope.
       await purgeAccountClientStores("cache");
     }
+    // public-surfaces OFF-15 (PS-P6): the stamp lists are uid-scoped, so no
+    // purge above touched them. This identity goes to the front of the
+    // device's ring of the identities that last signed in here, and the
+    // lists of those that fell off its end are removed (keepRecentStampLists);
+    // then the stamp list kept device-wide before OFF-15 (whose it is is
+    // unknown; class "device", so no purge above took it) goes to this
+    // identity if it is the first to sign in here since then, and the device
+    // is marked: the legacy key is never read again. After the purge, so
+    // nothing it writes for this identity is ended by it.
+    noteStampsAtSignIn(nextUid);
     lastIdentityRef.current = nextUid;
     writeLastIdentity(nextUid);
   };
