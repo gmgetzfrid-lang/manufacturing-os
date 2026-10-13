@@ -20,6 +20,8 @@
 // client until the user clicks "Import N milestones".
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
+import { fmtInTz } from "@/lib/scheduleTz";
 import {
   Upload, FileUp, X, Loader2, CheckCircle2, AlertTriangle,
   FileText, Calendar as CalIcon,
@@ -72,6 +74,7 @@ const FORMAT_TO_SOURCE: Record<ScheduleFormat, ImportSource> = {
 export default function ScheduleImportModal({
   orgId, projectId, projectName, projectStatus, userId, userName, onClose, onDone,
 }: Props) {
+  const tz = useScheduleTz();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [filename, setFilename] = useState<string | null>(null);
@@ -113,7 +116,7 @@ export default function ScheduleImportModal({
     try {
       const buf = await file.arrayBuffer();
       const bytes = new Uint8Array(buf);
-      setParseResult(parseScheduleFileFromBytes(file.name, bytes));
+      setParseResult(parseScheduleFileFromBytes(file.name, bytes, { timeZone: tz }));
     } catch (e) {
       setParseResult({
         format: "unknown",
@@ -121,7 +124,7 @@ export default function ScheduleImportModal({
         warnings: [`Couldn't read the file: ${(e as Error).message}`],
       });
     } finally { setParsing(false); }
-  }, []);
+  }, [tz]);
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -153,6 +156,7 @@ export default function ScheduleImportModal({
       const shaped = parseResult.rows.map(applyColConfig);
       const res = await importMilestonesFromParsed({
         orgId, projectId,
+        timeZone: tz,
         source: FORMAT_TO_SOURCE[parseResult.format],
         // CRITICAL: pass through every hierarchy + duration field
         // the parser captured. Previous code dropped these on the
@@ -200,7 +204,7 @@ export default function ScheduleImportModal({
         setTimeout(() => onDone(), 800);
       }
     } finally { setImporting(false); }
-  }, [parseResult, orgId, projectId, userId, userName, onDone, applyColConfig]);
+  }, [parseResult, orgId, projectId, userId, userName, onDone, applyColConfig, tz]);
 
   const canSubmit = !!parseResult && parseResult.rows.length > 0 && !importing;
   const previewRows = parseResult?.rows.slice(0, 8) ?? [];
@@ -408,7 +412,7 @@ export default function ScheduleImportModal({
                           </td>
                           <td className="px-3 py-1.5 text-[var(--color-text)]">
                             <CalIcon className="inline w-3 h-3 mr-1 text-[var(--color-text-faint)]" />
-                            {humanDate(r.plannedAt)}
+                            {humanDate(r.plannedAt, tz)}
                           </td>
                           <td className="px-3 py-1.5 text-[10px] font-mono text-[var(--color-text-muted)] truncate">
                             {r.parentExternalRef ? r.parentExternalRef.split(":")[1] : <span className="text-slate-300">—</span>}
@@ -484,14 +488,13 @@ function FormatBadge({ label, hint }: { label: string; hint: string }) {
   );
 }
 
-function humanDate(iso: string): string {
+function humanDate(iso: string, tz: string): string {
   try {
     const d = new Date(iso);
     if (isNaN(d.getTime())) return iso;
-    // Schedule dates are stored as wall-clock-as-UTC, so render them in UTC —
-    // otherwise the preview shows a different day than the source file for any
-    // viewer west of UTC, which reads as "the import got the dates wrong".
-    return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" });
+    // Render in the plant's zone, which is also how the file's naive dates
+    // were read, so the preview matches the source file for every viewer.
+    return fmtInTz(d, tz, { year: "numeric", month: "short", day: "numeric" });
   } catch { return iso; }
 }
 

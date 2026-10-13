@@ -22,6 +22,7 @@ import {
 import IntakePanel from "@/components/projects/IntakePanel";
 import ProjectDocumentsCard from "@/components/projects/ProjectDocumentsCard";
 import EditProjectModal from "@/components/projects/EditProjectModal";
+import { ScheduleTzProvider } from "@/components/projects/ScheduleTzContext";
 import CostsTab from "@/components/projects/CostsTab";
 import QualityTab from "@/components/projects/QualityTab";
 import ProjectCoach from "@/components/projects/ProjectCoach";
@@ -532,17 +533,19 @@ export default function ProjectDetailPage() {
           />
         )}
         {tab === "schedule" && uid && (
-          <ScheduleTab
-            orgId={project.orgId}
-            projectId={project.id!}
-            projectName={project.name}
-            projectStatus={project.status}
-            userId={uid}
-            userName={userEmail ?? undefined}
-            userEmail={userEmail ?? undefined}
-            userRole={activeRole ?? undefined}
-            isProjectOwner={!!isOwner}
-          />
+          <ScheduleTzProvider timeZone={project.timezone}>
+            <ScheduleTab
+              orgId={project.orgId}
+              projectId={project.id!}
+              projectName={project.name}
+              projectStatus={project.status}
+              userId={uid}
+              userName={userEmail ?? undefined}
+              userEmail={userEmail ?? undefined}
+              userRole={activeRole ?? undefined}
+              isProjectOwner={!!isOwner}
+            />
+          </ScheduleTzProvider>
         )}
         {tab === "members" && (
           <MembersTab

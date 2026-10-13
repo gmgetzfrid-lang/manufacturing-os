@@ -1,7 +1,7 @@
 "use client";
 
 // ScheduleCalendarTileView — the Outlook-style month grid for the
-// Execution tab. Each task lands on the day tiles its planned span
+// Execution tab. Days and clocks are the PLANT's (project timezone). Each task lands on the day tiles its planned span
 // covers (multi-day tasks repeat across tiles with a Day x/n badge),
 // colored by status. Drag a chip to another tile to reschedule the
 // whole task by that delta; click it to open the full detail panel.
@@ -21,6 +21,8 @@ import ProgressControl from "@/components/projects/ProgressControl";
 import { GROUP_PALETTE } from "@/lib/scheduleColors";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { placeableTasks, compareDayPlacements, startMsOf, finishMsOf } from "@/lib/calendarPlacement";
+import { addDays as addDaysTz, addMonths as addMonthsTz, clockLabel, dayDiff as dayDiffTz, dayKey, dayKeyToMs, dayOfWeek, fmtInTz, hasTimeOfDay, tzAbbrev, startOfDay as startOfDayTz, startOfMonth as startOfMonthTz, wallClock } from "@/lib/scheduleTz";
+import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 
 // Use the shared palette so a group is the SAME hue here and on the
 // timeline. `.rail` is the solid accent (was `.bar` locally).
@@ -50,6 +52,7 @@ interface Props {
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export default function ScheduleCalendarTileView({ milestones, childrenByParent, canEdit, onMoveDays, onSetStatus, onSetProgress, progress, onBulkStatus, onBulkMove, onOpenDetail }: Props) {
+  const tz = useScheduleTz();
   // Multi-select for bulk actions on the calendar (mirrors the timeline).
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const toggleSelected = useCallback((id: string) => {
@@ -62,7 +65,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
   // right at the chip instead — no scatter, nothing disappears.
   const [showSubtasks, setShowSubtasks] = useState(false);
   const [subPopover, setSubPopover] = useState<{ ms: Milestone; top: number; left: number } | null>(null);
-  const today = useMemo(() => startOfDayUTC(new Date()), []);
+  const today = useMemo(() => startOfDayUTC(new Date(), tz), [tz]);
 
   const byId = useMemo(() => {
     const m = new Map<string, Milestone>();
@@ -152,28 +155,28 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
     return Number.isFinite(min) ? { earliest: new Date(min), latest: new Date(max) } : null;
   }, [mains]);
 
-  const [cursor, setCursor] = useState<Date>(() => firstOfMonthUTC(new Date()));
+  const [cursor, setCursor] = useState<Date>(() => firstOfMonthUTC(new Date(), tz));
   // Snap to the schedule's first month if today isn't within the span.
   const didSnap = React.useRef(false);
   React.useEffect(() => {
     if (didSnap.current || !span) return;
     const now = new Date();
     const inSpan = now >= span.earliest && now <= span.latest;
-    setCursor(firstOfMonthUTC(inSpan ? now : span.earliest));
+    setCursor(firstOfMonthUTC(inSpan ? now : span.earliest, tz));
     didSnap.current = true;
-  }, [span]);
+  }, [span, tz]);
 
   // Bucket every placed task onto each UTC day it covers, then order
   // each tile by time of day (carry-overs first, then start time).
   const byDay = useMemo(() => {
     const m = new Map<string, Array<{ ms: Milestone; dayIndex: number; spanDays: number }>>();
     for (const ms of mains) {
-      const start = startOfDayUTC(new Date(startMs(ms)));
-      const finish = startOfDayUTC(new Date(finishMs(ms)));
-      const total = Math.max(1, dayDiff(start, finish) + 1);
+      const start = startOfDayUTC(new Date(startMs(ms)), tz);
+      const finish = startOfDayUTC(new Date(finishMs(ms)), tz);
+      const total = Math.max(1, dayDiff(start, finish, tz) + 1);
       for (let i = 0; i < total; i++) {
-        const d = addDaysUTC(start, i);
-        const key = ymd(d);
+        const d = addDaysUTC(start, i, tz);
+        const key = ymd(d, tz);
         const arr = m.get(key) ?? [];
         arr.push({ ms, dayIndex: i, spanDays: total });
         m.set(key, arr);
@@ -181,18 +184,18 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
     }
     for (const arr of m.values()) arr.sort(compareDayPlacements);
     return m;
-  }, [mains]);
+  }, [mains, tz]);
 
   // 6-week grid starting on the Sunday on/before the 1st.
   const weeks = useMemo(() => {
     const first = cursor;
-    const gridStart = addDaysUTC(first, -first.getUTCDay());
+    const gridStart = addDaysUTC(first, -dayOfWeek(first.getTime(), tz), tz);
     return Array.from({ length: 6 }, (_, w) =>
-      Array.from({ length: 7 }, (_, d) => addDaysUTC(gridStart, w * 7 + d)),
+      Array.from({ length: 7 }, (_, d) => addDaysUTC(gridStart, w * 7 + d, tz)),
     );
-  }, [cursor]);
+  }, [cursor, tz]);
 
-  const monthIdx = cursor.getUTCMonth();
+  const monthIdx = wallClock(cursor.getTime(), tz).month;
   const [overflowDay, setOverflowDay] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   // Touch-drag state — HTML5 DnD doesn't fire on touch, so we run a parallel
@@ -202,7 +205,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
 
   const applyMove = (id: string, chipYmd: string, targetKey: string) => {
     if (!canEdit || !onMoveDays || !id || !chipYmd) return;
-    const delta = dayDiff(ymdToDate(chipYmd), ymdToDate(targetKey));
+    const delta = dayDiff(ymdToDate(chipYmd, tz), ymdToDate(targetKey, tz), tz);
     if (delta === 0) return;
     onMoveDays(id, delta);
   };
@@ -268,16 +271,17 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
       )}
       {/* Toolbar */}
       <div className="px-3 py-2 border-b border-[var(--color-border)] flex items-center gap-2 flex-wrap bg-gradient-to-b from-white to-slate-50/40">
-        <button onClick={() => setCursor(addMonthsUTC(cursor, -1))} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] transition-colors"><ChevronLeft className="w-4 h-4" /></button>
+        <button onClick={() => setCursor(addMonthsUTC(cursor, -1, tz))} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] transition-colors"><ChevronLeft className="w-4 h-4" /></button>
         <div className="text-sm font-bold text-[var(--color-text)] min-w-[150px] text-center">
-          {cursor.toLocaleString(undefined, { month: "long", year: "numeric", timeZone: "UTC" })}
+          {fmtInTz(cursor, tz, { month: "long", year: "numeric" })}
         </div>
-        <button onClick={() => setCursor(addMonthsUTC(cursor, 1))} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] transition-colors"><ChevronRight className="w-4 h-4" /></button>
-        <button onClick={() => setCursor(firstOfMonthUTC(new Date()))} className="ml-1 inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded-md hover:bg-[var(--color-surface-2)] border border-[var(--color-border)] transition-colors">
+        <button onClick={() => setCursor(addMonthsUTC(cursor, 1, tz))} className="p-1.5 rounded-md hover:bg-[var(--color-surface-2)] text-[var(--color-text-muted)] transition-colors"><ChevronRight className="w-4 h-4" /></button>
+        <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" title={`Days and times are shown in the plant's zone: ${tz}`}>{tzAbbrev(tz, cursor.getTime())}</span>
+        <button onClick={() => setCursor(firstOfMonthUTC(new Date(), tz))} className="ml-1 inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded-md hover:bg-[var(--color-surface-2)] border border-[var(--color-border)] transition-colors">
           <Crosshair className="w-3.5 h-3.5 text-rose-500" /> Today
         </button>
         {span && (
-          <button onClick={() => setCursor(firstOfMonthUTC(span.earliest))} className="text-[11px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded-md hover:bg-[var(--color-surface-2)] transition-colors">
+          <button onClick={() => setCursor(firstOfMonthUTC(span.earliest, tz))} className="text-[11px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded-md hover:bg-[var(--color-surface-2)] transition-colors">
             ⏮ Schedule start
           </button>
         )}
@@ -355,10 +359,10 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
         {weeks.map((week, wi) => (
           <div key={wi} className="grid grid-cols-7 border-b border-[var(--color-border)] last:border-b-0" style={{ minHeight: 116 }}>
             {week.map((day) => {
-              const key = ymd(day);
+              const key = ymd(day, tz);
               const items = byDay.get(key) ?? [];
-              const inMonth = day.getUTCMonth() === monthIdx;
-              const isToday = sameDayUTC(day, today);
+              const inMonth = wallClock(day.getTime(), tz).month === monthIdx;
+              const isToday = sameDayUTC(day, today, tz);
               const shown = items.slice(0, 4);
               const extra = items.length - shown.length;
               return (
@@ -371,7 +375,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
                 >
                   <div className="flex items-center justify-between px-0.5">
                     <span className={`text-[11px] font-bold ${isToday ? "text-rose-600" : inMonth ? "text-[var(--color-text)]" : "text-slate-300"}`}>
-                      {day.getUTCDate()}
+                      {wallClock(day.getTime(), tz).day}
                     </span>
                   </div>
                   {shown.map((p) => {
@@ -425,7 +429,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
           <div className="relative w-full max-w-sm bg-[var(--color-surface)] rounded-2xl shadow-2xl ring-1 ring-slate-900/10 overflow-hidden animate-in fade-in zoom-in-95 duration-150" onClick={(e) => e.stopPropagation()}>
             <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center gap-2">
               <CalendarDays className="w-4 h-4 text-[var(--color-accent)]" />
-              <div className="font-bold text-[var(--color-text)] text-sm">{ymdToDate(overflowDay).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" })}</div>
+              <div className="font-bold text-[var(--color-text)] text-sm">{fmtInTz(ymdToDate(overflowDay, tz), tz, { weekday: "long", month: "long", day: "numeric" })}</div>
               <span className="ml-auto text-[11px] text-[var(--color-text-faint)]">{(byDay.get(overflowDay) ?? []).length} tasks</span>
             </div>
             <div className="max-h-[60vh] overflow-y-auto p-2 space-y-1">
@@ -481,7 +485,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
                   </span>
                   <button onClick={() => { onOpenDetail(leaf); setSubPopover(null); }} className="flex-1 min-w-0 text-left">
                     <span className={`block text-[12px] truncate ${leaf.status === "completed" ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{leaf.name}</span>
-                    <span className="block text-[9px] text-[var(--color-text-faint)] font-mono">{new Date(leaf.plannedAt as string).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" })}</span>
+                    <span className="block text-[9px] text-[var(--color-text-faint)] font-mono">{fmtInTz(leaf.plannedAt as string, tz, { month: "short", day: "numeric" })}</span>
                   </button>
                   {canEdit && onMoveDays && leaf.id && (
                     <span className="shrink-0 flex items-center gap-0.5">
@@ -532,6 +536,7 @@ function Chip({
   selectable?: boolean; selected?: boolean; onToggleSelect?: () => void;
   dimmed?: boolean; full?: boolean;
 }) {
+  const tz = useScheduleTz();
   const kids = ms.id ? (childrenByParent.get(ms.id) ?? []) : [];
   const leafKids = kids.filter((k) => !k.id || (childrenByParent.get(k.id) ?? []).length === 0);
   const hasSubs = leafKids.length > 0;
@@ -544,11 +549,11 @@ function Chip({
   const pct = info?.percent ?? (hasSubs ? Math.round((done / Math.max(1, leafKids.length)) * 100) : (ms.status === "completed" ? 100 : 0));
   const effStatus = !isLeaf && info ? info.status : ms.status;
   const tone = chipTone(effStatus);
-  const time = timeLabel(ms);
+  const time = timeLabel(ms, tz);
   // Short clock shown on the chip itself so the tile's time order is
   // visible at a glance: the start time on the day it starts, "cont."
   // on later days of a multi-day task.
-  const clock = dayIndex > 0 ? "cont." : startClock(ms);
+  const clock = dayIndex > 0 ? "cont." : startClock(ms, tz);
 
   // The immediate parent (e.g. "Shut Down Transmix 1") and the full
   // path up to the unit, so the chip is never context-free.
@@ -696,15 +701,15 @@ function chipTone(s: MilestoneStatus): string {
   }
 }
 
-// ── UTC date helpers (kept consistent with the timeline view) ──
-function startOfDayUTC(d: Date): Date { const c = new Date(d); c.setUTCHours(0, 0, 0, 0); return c; }
-function firstOfMonthUTC(d: Date): Date { return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)); }
-function addMonthsUTC(d: Date, n: number): Date { return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + n, 1)); }
-function addDaysUTC(d: Date, n: number): Date { const c = new Date(d); c.setUTCDate(c.getUTCDate() + n); return c; }
-function dayDiff(a: Date, b: Date): number { return Math.round((startOfDayUTC(b).getTime() - startOfDayUTC(a).getTime()) / 86400000); }
-function sameDayUTC(a: Date, b: Date): boolean { return ymd(a) === ymd(b); }
-function ymd(d: Date): string { return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`; }
-function ymdToDate(s: string): Date { return new Date(`${s}T00:00:00Z`); }
+// ── Date helpers in the PLANT's zone (tz), shared with the timeline view ──
+function startOfDayUTC(d: Date, tz: string): Date { return new Date(startOfDayTz(d.getTime(), tz)); }
+function firstOfMonthUTC(d: Date, tz: string): Date { return new Date(startOfMonthTz(d.getTime(), tz)); }
+function addMonthsUTC(d: Date, n: number, tz: string): Date { return new Date(addMonthsTz(d.getTime(), n, tz)); }
+function addDaysUTC(d: Date, n: number, tz: string): Date { return new Date(addDaysTz(d.getTime(), n, tz)); }
+function dayDiff(a: Date, b: Date, tz: string): number { return dayDiffTz(a.getTime(), b.getTime(), tz); }
+function sameDayUTC(a: Date, b: Date, tz: string): boolean { return ymd(a, tz) === ymd(b, tz); }
+function ymd(d: Date, tz: string): string { return dayKey(d.getTime(), tz); }
+function ymdToDate(s: string, tz: string): Date { return new Date(dayKeyToMs(s, tz)); }
 function startMs(m: Milestone): number { return startMsOf(m); }
 function finishMs(m: Milestone): number { return finishMsOf(m); }
 
@@ -712,26 +717,21 @@ function statusLabel(s: MilestoneStatus): string {
   return s === "in_progress" ? "In progress" : s === "on_hold" ? "On hold" : s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-// "6:00" when the task carries a start time-of-day, else "" (a start
-// at exactly midnight is treated as date-only, matching timeLabel).
-function startClock(m: Milestone): string {
-  const iso = (m.plannedStartAt as string | undefined) ?? (m.plannedAt as string);
-  const d = new Date(iso);
-  if (isNaN(d.getTime()) || (d.getUTCHours() === 0 && d.getUTCMinutes() === 0)) return "";
-  return `${d.getUTCHours()}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+// "6:00" (plant time) when the task carries a start time-of-day, else ""
+// (a start at exactly midnight is treated as date-only, matching timeLabel).
+function startClock(m: Milestone, tz: string): string {
+  return clockLabel(startMs(m), tz);
 }
 
-// A "6am–2pm" style label when the task carries times-of-day, else "".
-function timeLabel(m: Milestone): string {
-  const startIso = m.plannedStartAt as string | undefined;
-  const finishIso = m.plannedAt as string;
-  const s = startIso ? new Date(startIso) : null;
-  const f = new Date(finishIso);
-  const hasS = s && (s.getUTCHours() !== 0 || s.getUTCMinutes() !== 0);
-  const hasF = f.getUTCHours() !== 0 || f.getUTCMinutes() !== 0;
-  const t = (d: Date) => `${d.getUTCHours()}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
-  if (hasS && hasF && s) return `${t(s)}–${t(f)}`;
-  if (hasF) return `ends ${t(f)}`;
-  if (hasS && s) return `starts ${t(s)}`;
+// A "6:00–14:00" style label (plant time) when the task carries
+// times-of-day, else "".
+function timeLabel(m: Milestone, tz: string): string {
+  const s = m.plannedStartAt ? startMs(m) : NaN;
+  const f = finishMs(m);
+  const hasS = Number.isFinite(s) && hasTimeOfDay(s, tz);
+  const hasF = Number.isFinite(f) && hasTimeOfDay(f, tz);
+  if (hasS && hasF) return `${clockLabel(s, tz)}–${clockLabel(f, tz)}`;
+  if (hasF) return `ends ${clockLabel(f, tz)}`;
+  if (hasS) return `starts ${clockLabel(s, tz)}`;
   return "";
 }

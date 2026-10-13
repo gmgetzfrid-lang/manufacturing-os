@@ -41,6 +41,8 @@ import { assignGroupColors, type GroupColor } from "@/lib/scheduleColors";
 import SchedulePulse from "@/components/projects/SchedulePulse";
 import TaskDetailPanel from "@/components/projects/TaskDetailPanel";
 import ScheduleCalendarTileView from "@/components/projects/ScheduleCalendarTileView";
+import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
+import { addDays as addDaysTz, dayDiff as dayDiffTz, dayOfWeek, fmtInTz, startOfDay as startOfDayTz } from "@/lib/scheduleTz";
 import StatusControl from "@/components/projects/StatusControl";
 import ProgressControl from "@/components/projects/ProgressControl";
 import ExecutionGuide from "@/components/projects/ExecutionGuide";
@@ -95,6 +97,7 @@ export default function ExecutionView({
   milestones, canEdit, orgId, projectId, userId, userName, userEmail, userRole,
   onRefresh, onMoveMany, onSetStatus, onSetProgress,
 }: Props) {
+  const tz = useScheduleTz();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [optimistic, setOptimistic] = useState<Map<string, MilestoneStatus>>(new Map());
@@ -280,11 +283,11 @@ export default function ExecutionView({
       if (Number.isFinite(f)) max = Math.max(max, f);
     }
     if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
-    const start = addDaysUTC(startOfDayUTC(new Date(min)), -PAD_DAYS);
-    const end = addDaysUTC(startOfDayUTC(new Date(max)), PAD_DAYS);
-    const totalDays = Math.max(1, dayDiff(start, end) + 1);
+    const start = addDaysUTC(startOfDayUTC(new Date(min), tz), -PAD_DAYS, tz);
+    const end = addDaysUTC(startOfDayUTC(new Date(max), tz), PAD_DAYS, tz);
+    const totalDays = Math.max(1, dayDiff(start, end, tz) + 1);
     return { start, end, totalDays };
-  }, [items]);
+  }, [items, tz]);
 
   // The px/day that exactly fills the available timeline width with the
   // whole schedule (clamped so days never get unreadably narrow). This
@@ -303,8 +306,8 @@ export default function ExecutionView({
   }, [zoomFactor, fitPxPerDay]);
 
   const timelineW = domain ? domain.totalDays * pxPerDay : 0;
-  const today = useMemo(() => startOfDayUTC(new Date()), []);
-  const todayX = domain ? (dayDiff(domain.start, today) + 0.5) * pxPerDay : -1;
+  const today = useMemo(() => startOfDayUTC(new Date(), tz), [tz]);
+  const todayX = domain ? (dayDiff(domain.start, today, tz) + 0.5) * pxPerDay : -1;
 
   // Center the viewport on "today" (or schedule start) on first paint.
   useEffect(() => {
@@ -453,12 +456,12 @@ export default function ExecutionView({
       const c = map.get(n.id);
       return c ? { ...n, plannedStartAt: c.plannedStartAt, plannedAt: c.plannedAt } : n;
     });
-    const cascade = cascadeDependents(updated, primary.map((c) => c.id));
+    const cascade = cascadeDependents(updated, primary.map((c) => c.id), tz);
     if (cascade.length === 0) return primary;
     const merged = new Map(primary.map((c) => [c.id, c]));
     for (const c of cascade) merged.set(c.id, c);
     return Array.from(merged.values());
-  }, [reflowNodes]);
+  }, [reflowNodes, tz]);
 
   // A move requested by the UI, awaiting confirmation. Carries the
   // target ids (one, or the multi-selection) and the day delta.
@@ -481,7 +484,7 @@ export default function ExecutionView({
     const primary: DateChange[] = [];
     const seen = new Set<string>();
     for (const id of pm.ids) {
-      for (const c of computeTreeMove(reflowNodes, id, pm.deltaDays, mode)) {
+      for (const c of computeTreeMove(reflowNodes, id, pm.deltaDays, mode, tz)) {
         if (seen.has(c.id)) continue; // later writers win on overlap; first is fine
         seen.add(c.id);
         primary.push(c);
@@ -511,7 +514,7 @@ export default function ExecutionView({
       }
     }
     finally { setBusy((s) => { const n = new Set(s); for (const c of all) n.delete(c.id); return n; }); }
-  }, [pendingMove, onMoveMany, reflowNodes, byId, announce, withCascade]);
+  }, [pendingMove, onMoveMany, reflowNodes, byId, announce, withCascade, tz]);
 
   // Move a node by N days. The engine shifts the node + its descendants
   // and bleeds every ancestor's span to envelope its children; we
@@ -525,7 +528,7 @@ export default function ExecutionView({
   // with an undo that restores the affected rows' prior dates.
   const resizeEdge = useCallback(async (id: string, edge: "start" | "finish", deltaDays: number) => {
     if (!canEdit || !onMoveMany || deltaDays === 0) return;
-    const changes = withCascade(computeEdgeResize(reflowNodes, id, edge, deltaDays));
+    const changes = withCascade(computeEdgeResize(reflowNodes, id, edge, deltaDays, tz));
     if (changes.length === 0) return;
     const before: DateChange[] = [];
     for (const c of changes) {
@@ -539,13 +542,13 @@ export default function ExecutionView({
     } finally {
       setBusy((s) => { const n = new Set(s); for (const c of changes) n.delete(c.id); return n; });
     }
-  }, [canEdit, onMoveMany, reflowNodes, byId, announce, withCascade]);
+  }, [canEdit, onMoveMany, reflowNodes, byId, announce, withCascade, tz]);
 
   // Resize a SUMMARY/parent edge → proportionally stretch its subtree
   // ("extend the overall project"). Same commit+undo shape as resizeEdge.
   const resizeSummaryEdge = useCallback(async (id: string, edge: "start" | "finish", deltaDays: number) => {
     if (!canEdit || !onMoveMany || deltaDays === 0) return;
-    const changes = withCascade(computeSummaryResize(reflowNodes, id, edge, deltaDays));
+    const changes = withCascade(computeSummaryResize(reflowNodes, id, edge, deltaDays, tz));
     if (changes.length === 0) return;
     const before: DateChange[] = [];
     for (const c of changes) {
@@ -559,13 +562,13 @@ export default function ExecutionView({
     } finally {
       setBusy((s) => { const n = new Set(s); for (const c of changes) n.delete(c.id); return n; });
     }
-  }, [canEdit, onMoveMany, reflowNodes, byId, announce, withCascade]);
+  }, [canEdit, onMoveMany, reflowNodes, byId, announce, withCascade, tz]);
 
   // Chain a phase's direct children finish-to-start (sequential steps), with
   // one undo. The pure layout is in sequenceSiblings.
   const sequencePhase = useCallback(async (parentId: string) => {
     if (!canEdit || !onMoveMany) return;
-    const changes = withCascade(sequenceSiblings(reflowNodes, parentId));
+    const changes = withCascade(sequenceSiblings(reflowNodes, parentId, tz));
     if (changes.length === 0) { notify("These tasks are already in sequence.", "default"); return; }
     const before: DateChange[] = [];
     for (const c of changes) {
@@ -579,7 +582,7 @@ export default function ExecutionView({
     } finally {
       setBusy((s) => { const n = new Set(s); for (const c of changes) n.delete(c.id); return n; });
     }
-  }, [canEdit, onMoveMany, reflowNodes, byId, announce, notify, withCascade]);
+  }, [canEdit, onMoveMany, reflowNodes, byId, announce, notify, withCascade, tz]);
 
   const toggleCollapse = useCallback((id: string) => {
     setCollapsed((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
@@ -942,6 +945,7 @@ function SummaryStrip({ items, today, domain }: {
   items: Milestone[]; today: Date;
   domain: { start: Date; end: Date; totalDays: number };
 }) {
+  const tz = useScheduleTz();
   const leaves = items.filter((m) => !items.some((c) => c.parentId === m.id));
   const total = leaves.length;
   const done = leaves.filter((m) => m.status === "completed").length;
@@ -949,7 +953,7 @@ function SummaryStrip({ items, today, domain }: {
   const overdue = leaves.filter((m) => m.status !== "completed" && finishMs(m) < today.getTime()).length;
   // Duration-weighted earned %, counting partial progress — not a flat done/total.
   const pct = overallPercent(items);
-  const elapsed = Math.max(0, Math.min(domain.totalDays, dayDiff(domain.start, today)));
+  const elapsed = Math.max(0, Math.min(domain.totalDays, dayDiff(domain.start, today, tz)));
 
   return (
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm ring-1 ring-slate-900/[0.03] px-4 py-3 flex items-center gap-5 flex-wrap">
@@ -1078,6 +1082,7 @@ function OutlineRow({
   onSetDuration: () => void; onOpenDetail: () => void;
   onViewOnly?: () => void; onSequence?: () => void;
 }) {
+  const tz = useScheduleTz();
   const { ms, depth, hasChildren, done, total, pct, derivedStatus } = row;
   // A summary's status/percent are DERIVED from its children — shown, never set
   // here. A leaf carries its own.
@@ -1131,7 +1136,7 @@ function OutlineRow({
         </div>
         <div className="flex items-center gap-1.5 text-[10px] text-[var(--color-text-faint)] font-mono leading-tight min-w-0">
           {ms.wbs && <span className="text-[var(--color-text-faint)] shrink-0">{ms.wbs}</span>}
-          <span className="truncate">{rangeLabel(ms)}</span>
+          <span className="truncate">{rangeLabel(ms, tz)}</span>
           {(ms.dependsOn?.length ?? 0) > 0 && (
             <span className="inline-flex items-center gap-0.5 text-[var(--color-accent)] font-bold shrink-0" title={`Depends on ${ms.dependsOn!.length} task${ms.dependsOn!.length === 1 ? "" : "s"} — can't start until they finish`}>
               <Link2 className="w-2.5 h-2.5" />{ms.dependsOn!.length}
@@ -1186,6 +1191,7 @@ function Bar({
   critical?: boolean | null;
   color: GroupColor;
 }) {
+  const tz = useScheduleTz();
   const { ms, hasChildren } = row;
   const dimmed = critical === false;
   const onPath = critical === true;
@@ -1213,8 +1219,8 @@ function Bar({
 
   const start = new Date(startMs(ms));
   const finish = new Date(finishMs(ms));
-  const startIdx = dayDiff(domain.start, start);
-  const spanDays = Math.max(1, dayDiff(start, finish) + 1);
+  const startIdx = dayDiff(domain.start, start, tz);
+  const spanDays = Math.max(1, dayDiff(start, finish, tz) + 1);
   // Apply live resize preview to the rendered geometry.
   const previewStartShift = resize?.edge === "start" ? resize.days : 0;
   const previewSpanShift = resize?.edge === "finish" ? resize.days : (resize?.edge === "start" ? -resize.days : 0);
@@ -1280,7 +1286,7 @@ function Bar({
   // Milestone marker — a diamond at the point date, with the label beside it.
   if (isMilestonePoint) {
     return (
-      <div className={`absolute group/bar flex items-center gap-1.5 transition-opacity ${dimmed ? "opacity-25" : ""} ${onPath ? "z-10" : ""}`} style={{ top, left: left - 6, height: ROW_H }} title={`${ms.name} — milestone · ${fmtDateUTC(finish)}`}>
+      <div className={`absolute group/bar flex items-center gap-1.5 transition-opacity ${dimmed ? "opacity-25" : ""} ${onPath ? "z-10" : ""}`} style={{ top, left: left - 6, height: ROW_H }} title={`${ms.name} — milestone · ${fmtDateUTC(finish, tz)}`}>
         <button onClick={onOpenDetail} className="relative shrink-0" aria-label={`Milestone ${ms.name}`}>
           <span className={`block w-3 h-3 rotate-45 border-2 border-white shadow ${ms.status === "completed" ? "bg-emerald-500" : onPath ? "bg-rose-500" : "bg-slate-700"}`} />
         </button>
@@ -1302,7 +1308,7 @@ function Bar({
         onPointerUp={onPointerUp}
         style={draggable ? { touchAction: "none" } : undefined}
         className={`relative w-full h-full rounded-md border ${tone.border} ${tone.bar} shadow-sm overflow-hidden ${draggable ? "cursor-grab active:cursor-grabbing" : ""} ${dragDelta !== 0 || resize ? "ring-2 ring-[var(--color-accent-ring)] z-20" : onPath ? "ring-2 ring-rose-500 ring-offset-1" : ""}`}
-        title={`${ms.name}\n${fmtDateUTC(start)} → ${fmtDateUTC(finish)}${dragDelta ? `\nmove ${dragDelta > 0 ? "+" : ""}${dragDelta}d` : ""}${resize ? `\nresize ${resize.days > 0 ? "+" : ""}${resize.days}d` : ""}`}
+        title={`${ms.name}\n${fmtDateUTC(start, tz)} → ${fmtDateUTC(finish, tz)}${dragDelta ? `\nmove ${dragDelta > 0 ? "+" : ""}${dragDelta}d` : ""}${resize ? `\nresize ${resize.days > 0 ? "+" : ""}${resize.days}d` : ""}`}
       >
         {/* Group-hue cap on the left edge — a quiet identity marker that
             ties the leaf to its phase without overriding the status fill. */}
@@ -1351,16 +1357,17 @@ function Bar({
 // ─── Axis + gridlines ──────────────────────────────────────────
 
 function Axis({ domain, pxPerDay }: { domain: { start: Date; totalDays: number }; pxPerDay: number }) {
+  const tz = useScheduleTz();
   // Choose a tick step that keeps labels legible at the current zoom.
   const step = pxPerDay >= 60 ? 1 : pxPerDay >= 34 ? 2 : pxPerDay >= 16 ? 7 : pxPerDay >= 8 ? 14 : 30;
   const ticks: Array<{ x: number; label: string }> = [];
   for (let d = 0; d < domain.totalDays; d += step) {
-    const date = addDaysUTC(domain.start, d);
+    const date = addDaysUTC(domain.start, d, tz);
     ticks.push({
       x: d * pxPerDay,
       label: step >= 28
-        ? date.toLocaleDateString(undefined, { month: "short", year: "2-digit", timeZone: "UTC" })
-        : date.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" }),
+        ? fmtInTz(date, tz, { month: "short", year: "2-digit" })
+        : fmtInTz(date, tz, { month: "short", day: "numeric" }),
     });
   }
   return (
@@ -1376,11 +1383,12 @@ function Axis({ domain, pxPerDay }: { domain: { start: Date; totalDays: number }
 }
 
 function Gridlines({ domain, pxPerDay, rowCount }: { domain: { start: Date; totalDays: number }; pxPerDay: number; rowCount: number }) {
+  const tz = useScheduleTz();
   const step = pxPerDay >= 60 ? 1 : pxPerDay >= 34 ? 2 : pxPerDay >= 16 ? 7 : pxPerDay >= 8 ? 14 : 30;
   const lines: React.ReactNode[] = [];
   for (let d = 0; d < domain.totalDays; d += step) {
-    const date = addDaysUTC(domain.start, d);
-    const weekend = pxPerDay >= 12 && (date.getUTCDay() === 0 || date.getUTCDay() === 6);
+    const date = addDaysUTC(domain.start, d, tz);
+    const weekend = pxPerDay >= 12 && [0, 6].includes(dayOfWeek(date.getTime(), tz));
     lines.push(
       <div key={d} className={`absolute top-0 bottom-0 ${weekend ? "bg-[var(--color-surface-2)]" : ""}`} style={{ left: d * pxPerDay, width: step * pxPerDay }}>
         <div className="absolute top-0 bottom-0 left-0 w-px bg-[var(--color-surface-2)]" />
@@ -1398,6 +1406,7 @@ function DependencyArrows({ rows, byId, domain, pxPerDay }: {
   domain: { start: Date; end: Date; totalDays: number };
   pxPerDay: number;
 }) {
+  const tz = useScheduleTz();
   const indexById = new Map<string, number>();
   rows.forEach((r, i) => { if (r.ms.id) indexById.set(r.ms.id, i); });
   const parentOf = (id: string) => byId.get(id)?.parentId ?? null;
@@ -1406,8 +1415,8 @@ function DependencyArrows({ rows, byId, domain, pxPerDay }: {
     const ms = rows[i].ms;
     const s = new Date(startMs(ms));
     const f = new Date(finishMs(ms));
-    const startIdx = dayDiff(domain.start, s);
-    const span = Math.max(1, dayDiff(s, f) + 1);
+    const startIdx = dayDiff(domain.start, s, tz);
+    const span = Math.max(1, dayDiff(s, f, tz) + 1);
     return {
       leftX: startIdx * pxPerDay,
       rightX: (startIdx + span) * pxPerDay - 2,
@@ -1601,9 +1610,10 @@ function GroupTasksModal({
 // ─── Duration modal ────────────────────────────────────────────
 
 function SetDurationModal({ task, actorUserId, onClose, onDone }: { task: Milestone; actorUserId: string; onClose: () => void; onDone: () => void }) {
+  const tz = useScheduleTz();
   const finish = new Date(finishMs(task));
   const startStored = task.plannedStartAt ? new Date(task.plannedStartAt as string) : null;
-  const current = startStored ? Math.max(1, dayDiff(startStored, finish) + 1) : 1;
+  const current = startStored ? Math.max(1, dayDiff(startStored, finish, tz) + 1) : 1;
   const [days, setDays] = useState(current);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1632,7 +1642,7 @@ function SetDurationModal({ task, actorUserId, onClose, onDone }: { task: Milest
         <div className="p-5 space-y-3">
           <label className="text-[10px] font-bold uppercase tracking-widest text-[var(--color-text-muted)]">Days the task runs</label>
           <input type="number" min={1} max={365} value={days} onChange={(e) => setDays(Math.max(1, Math.min(365, Number(e.target.value) || 1)))} className="w-full px-3 py-2 text-sm border border-[var(--color-border-strong)] rounded-md outline-none focus:ring-2 focus:ring-[var(--color-accent-ring)]/30" />
-          <div className="text-[11px] text-[var(--color-text-muted)]">Ends on <b>{fmtDateUTC(finish)}</b>. {days > 1 ? `Starts ${days - 1} day${days - 1 === 1 ? "" : "s"} earlier.` : "Single-day task."}</div>
+          <div className="text-[11px] text-[var(--color-text-muted)]">Ends on <b>{fmtDateUTC(finish, tz)}</b>. {days > 1 ? `Starts ${days - 1} day${days - 1 === 1 ? "" : "s"} earlier.` : "Single-day task."}</div>
           {error && <div className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-md p-2">{error}</div>}
         </div>
         <div className="px-5 py-3 border-t border-[var(--color-border)] bg-slate-50/60 flex items-center justify-end gap-2">
@@ -1659,13 +1669,11 @@ function statusTone(status: MilestoneStatus): { bar: string; border: string; dot
   }
 }
 
-// All schedule math runs in UTC so the ISO string in the database is
-// exactly what lands on the axis, regardless of the viewer's timezone.
-function startOfDayUTC(d: Date): Date { const c = new Date(d); c.setUTCHours(0, 0, 0, 0); return c; }
-function addDaysUTC(d: Date, n: number): Date { const c = new Date(d); c.setUTCDate(c.getUTCDate() + n); return c; }
-function dayDiff(a: Date, b: Date): number {
-  return Math.round((startOfDayUTC(b).getTime() - startOfDayUTC(a).getTime()) / 86400000);
-}
+// All schedule math runs in the PLANT's zone (the project timezone, via
+// useScheduleTz) so every viewer sees the same day boundaries on the axis.
+function startOfDayUTC(d: Date, tz: string): Date { return new Date(startOfDayTz(d.getTime(), tz)); }
+function addDaysUTC(d: Date, n: number, tz: string): Date { return new Date(addDaysTz(d.getTime(), n, tz)); }
+function dayDiff(a: Date, b: Date, tz: string): number { return dayDiffTz(a.getTime(), b.getTime(), tz); }
 function startMs(m: Milestone): number {
   const s = (m.plannedStartAt as string | undefined) ?? (m.plannedAt as string);
   return Date.parse(s);
@@ -1694,21 +1702,19 @@ function wbsCompare(a?: string | null, b?: string | null): number {
   return 0;
 }
 
-function rangeLabel(m: Milestone): string {
+function rangeLabel(m: Milestone, tz: string): string {
   const s = new Date(startMs(m)), f = new Date(finishMs(m));
-  const span = dayDiff(s, f) + 1;
-  if (span <= 1) return fmtDayUTC(f);
-  return `${fmtDayUTC(s)} – ${fmtDayUTC(f)} · ${span}d`;
+  const span = dayDiff(s, f, tz) + 1;
+  if (span <= 1) return fmtDayUTC(f, tz);
+  return `${fmtDayUTC(s, tz)} – ${fmtDayUTC(f, tz)} · ${span}d`;
 }
 
-// Schedule dates are stored as wall-clock-as-UTC (a bare "2026-06-05" becomes
-// midnight UTC) and all the timeline geometry above runs in UTC. Format the
-// human labels in UTC too, so the date printed under a task matches both the
-// axis tick it sits on and the value in the source file. Formatting in local
-// time instead makes every date read a day early for any viewer west of UTC.
-function fmtDayUTC(d: Date): string {
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+// Human labels are formatted in the plant's zone, the same zone the
+// timeline geometry runs in, so the date printed under a task matches the
+// axis tick it sits on for every viewer.
+function fmtDayUTC(d: Date, tz: string): string {
+  return fmtInTz(d, tz, { month: "short", day: "numeric" });
 }
-function fmtDateUTC(d: Date): string {
-  return d.toLocaleDateString(undefined, { timeZone: "UTC" });
+function fmtDateUTC(d: Date, tz: string): string {
+  return fmtInTz(d, tz, { year: "numeric", month: "numeric", day: "numeric" });
 }

@@ -8,6 +8,8 @@ import React, { useState } from "react";
 import { X, Loader2, Check, Pencil, Lock, Globe } from "lucide-react";
 import { updateProjectMeta } from "@/lib/projects";
 import type { Project, ProjectVisibility } from "@/types/schema";
+import TimeZoneSelect from "@/components/projects/TimeZoneSelect";
+import { DEFAULT_SCHEDULE_TZ, normalizeTimeZone, tzLabel } from "@/lib/scheduleTz";
 
 export default function EditProjectModal({ project, actorUserId, actorEmail, actorRole, onClose, onSaved }: {
   project: Project;
@@ -24,6 +26,12 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
     project.targetCompletionDate ? String(project.targetCompletionDate).slice(0, 10) : "",
   );
   const [visibility, setVisibility] = useState<ProjectVisibility>(project.visibility ?? "public");
+  const originalTz = normalizeTimeZone(project.timezone);
+  const [timezone, setTimezone] = useState<string>(originalTz);
+  // On a zone change, keep "8:00" reading 8:00 at the plant (re-anchor the
+  // stored instants) — the expected outcome when correcting the zone.
+  const [keepWallClock, setKeepWallClock] = useState(true);
+  const tzChanged = timezone !== originalTz;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -39,7 +47,9 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
           mocReference: moc.trim() || null,
           targetCompletionDate: target || null,
           visibility,
+          timezone: timezone === DEFAULT_SCHEDULE_TZ ? null : timezone,
         },
+        keepWallClock,
         actorUserId, actorEmail, actorRole,
       });
       onSaved();
@@ -74,6 +84,23 @@ export default function EditProjectModal({ project, actorUserId, actorEmail, act
               <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Target completion</span>
               <input type="date" value={target} onChange={(e) => setTarget(e.target.value)} className="mt-1 w-full h-9 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2.5 text-sm [color-scheme:light] dark:[color-scheme:dark] focus:ring-2 focus:ring-[var(--color-accent-ring)] outline-none" />
             </label>
+          </div>
+          <div>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Plant timezone</span>
+            <TimeZoneSelect value={timezone} onChange={setTimezone} className="mt-1" />
+            <div className="mt-1 text-[10px] text-[var(--color-text-faint)]">
+              Every schedule date, calendar day and shift is shown and entered in this zone, for everyone on the project.
+              {originalTz === DEFAULT_SCHEDULE_TZ && !tzChanged && " Currently UTC — pick the plant's zone so evening work lands on the right day."}
+            </div>
+            {tzChanged && (
+              <label className="mt-2 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
+                <input type="checkbox" checked={keepWallClock} onChange={(e) => setKeepWallClock(e.target.checked)} className="mt-0.5" />
+                <span>
+                  <b>Keep the schedule&apos;s times as written</b> — a task at 8:00 ({tzLabel(originalTz)}) becomes 8:00 ({tzLabel(timezone)}).
+                  Untick to keep the exact instants instead, so the clock readings shift by the zone difference.
+                </span>
+              </label>
+            )}
           </div>
           <div>
             <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Visibility</span>

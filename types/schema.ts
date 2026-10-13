@@ -956,6 +956,9 @@ export interface Project {
   linkedTicketId?: string;
   startedAt?: Timestamp;
   targetCompletionDate?: Timestamp;
+  /** IANA zone the schedule is read and written in ("America/Chicago").
+   *  Null = UTC, the pre-timezone behaviour. See lib/scheduleTz.ts. */
+  timezone?: string | null;
   completedAt?: Timestamp;
   cancelledAt?: Timestamp;
   cancelledReason?: string;

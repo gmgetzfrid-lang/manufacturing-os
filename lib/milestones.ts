@@ -20,6 +20,7 @@ import { supabase } from "@/lib/supabase";
 import { logMilestoneEvent, logAuditAction } from "@/lib/audit";
 import { reflowAllAncestors, type ReflowNode } from "@/lib/scheduleReflow";
 import { effectiveWeight, leafPercent } from "@/lib/scheduleProgress";
+import { DEFAULT_SCHEDULE_TZ, naiveToIso, normalizeTimeZone, shiftWallClock, wallClock } from "@/lib/scheduleTz";
 import type {
   Milestone, MilestoneStatus, MilestoneSource, MilestoneNote, MilestoneAttributes,
 } from "@/types/schema";
@@ -890,22 +891,28 @@ export interface ImportParsedInput {
   rows: ParsedMilestoneRow[];
   createdBy: string;
   createdByName?: string;
+  /** The project's zone: bare dates and naive times in the rows are
+   *  plant wall-clock time. Omitted = UTC. */
+  timeZone?: string | null;
 }
 
-function coerceIsoMaybe(s: string | null | undefined): string | null {
+/** Bare "2026-08-15" / naive "2026-08-15 08:00" → plant time; anything
+ *  with its own offset is kept. Unparseable input passes through so the
+ *  database rejects it with a clear error. */
+function coerceIsoMaybe(s: string | null | undefined, tz: string): string | null {
   if (!s) return null;
   const trimmed = s.trim();
   if (!trimmed) return null;
-  return /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? `${trimmed}T00:00:00Z` : trimmed;
+  return naiveToIso(trimmed, tz) ?? trimmed;
 }
 
-/** Heuristic shift assignment based on a planned start hour.
+/** Heuristic shift assignment based on a planned start hour at the plant.
  *  6am-6pm → day, 6pm-6am → night. Null until plannedStartAt is known. */
-function shiftFromStart(plannedStartIso: string | null): "day" | "night" | null {
+function shiftFromStart(plannedStartIso: string | null, tz: string): "day" | "night" | null {
   if (!plannedStartIso) return null;
-  const d = new Date(plannedStartIso);
-  if (isNaN(d.getTime())) return null;
-  const h = d.getUTCHours();
+  const ms = Date.parse(plannedStartIso);
+  if (isNaN(ms)) return null;
+  const h = wallClock(ms, tz).hour;
   return (h >= 6 && h < 18) ? "day" : "night";
 }
 
@@ -934,6 +941,7 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
   // batch and may not have ids until they're inserted. Track each
   // row's externalRef → DB id in a map for pass 2.
   const refToId = new Map<string, string>();
+  const tz = normalizeTimeZone(input.timeZone ?? DEFAULT_SCHEDULE_TZ);
 
   for (let i = 0; i < input.rows.length; i++) {
     const r = input.rows[i];
@@ -941,8 +949,8 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
     if (!name) { result.skipped++; continue; }
     const planned = r.plannedAt?.trim();
     if (!planned) { result.skipped++; continue; }
-    const plannedIso = coerceIsoMaybe(planned)!;
-    const plannedStartIso = coerceIsoMaybe(r.plannedStartAt ?? null);
+    const plannedIso = coerceIsoMaybe(planned, tz)!;
+    const plannedStartIso = coerceIsoMaybe(r.plannedStartAt ?? null, tz);
     const weight = Number(r.weight ?? 1);
 
     // Carry the source schedule's progress through: MS Project %Complete, P6
@@ -972,7 +980,7 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
       baseFields.outline_level = r.outlineLevel ?? null;
       baseFields.wbs = r.wbs ?? null;
       baseFields.is_summary = !!r.isSummary;
-      baseFields.shift = shiftFromStart(plannedStartIso);
+      baseFields.shift = shiftFromStart(plannedStartIso, tz);
       baseFields.work_order_ref = r.workOrderRef ?? null;
       baseFields.responsible_party = r.responsibleParty ?? null;
       baseFields.responsible_kind = r.responsibleKind ?? null;
@@ -1150,6 +1158,46 @@ export interface RebaseResult {
   /** New anchor date. */
   newAnchor: string;
   errors: string[];
+}
+
+// ─── PROJECT TIMEZONE CHANGE ─────────────────────────────────────────
+// When a project's zone changes, the schedule's written times should
+// survive: a task the team knows as "Oct 14, 8:00" must still read
+// 8:00 at the plant afterwards. Each planned/baseline instant is
+// re-anchored so its wall clock in the OLD zone becomes the same wall
+// clock in the NEW zone. Actual dates are history (real instants) and
+// are left alone.
+
+export async function shiftScheduleTimeZone(input: {
+  orgId: string; projectId: string; fromTimeZone: string; toTimeZone: string;
+}): Promise<{ shiftedCount: number; errors: string[] }> {
+  const from = normalizeTimeZone(input.fromTimeZone), to = normalizeTimeZone(input.toTimeZone);
+  if (from === to) return { shiftedCount: 0, errors: [] };
+  const errors: string[] = [];
+  const cols = ["planned_at", "planned_start_at", "baseline_start_at", "baseline_finish_at"] as const;
+  const { data: rows, error } = await supabase
+    .from("milestones")
+    .select("id, planned_at, planned_start_at, baseline_start_at, baseline_finish_at")
+    .eq("org_id", input.orgId)
+    .eq("project_id", input.projectId);
+  if (error) return { shiftedCount: 0, errors: [`Couldn't load milestones: ${error.message}`] };
+  let shiftedCount = 0;
+  const updatedAt = new Date().toISOString();
+  for (const raw of (rows ?? []) as Array<Record<string, string | null> & { id: string }>) {
+    const patch: Record<string, string> = {};
+    for (const c of cols) {
+      const v = raw[c];
+      if (!v) continue;
+      const moved = shiftWallClock(v, from, to);
+      if (moved !== v) patch[c] = moved;
+    }
+    if (Object.keys(patch).length === 0) continue;
+    patch.updated_at = updatedAt;
+    const { error: upErr } = await supabase.from("milestones").update(patch).eq("id", raw.id);
+    if (upErr) errors.push(`${raw.id.slice(0, 8)}: ${upErr.message}`);
+    else shiftedCount++;
+  }
+  return { shiftedCount, errors };
 }
 
 export async function rebaseSchedule(input: RebaseScheduleInput): Promise<RebaseResult> {

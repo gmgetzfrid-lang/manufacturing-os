@@ -8,6 +8,8 @@
 // doubles as an end-of-job report.
 
 import React, { useMemo } from "react";
+import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
+import { fmtInTz } from "@/lib/scheduleTz";
 import {
   TrendingUp, TrendingDown, AlertTriangle, PauseCircle, Clock, CheckCircle2,
   CalendarDays, Users, Printer, Zap,
@@ -17,6 +19,7 @@ import { computeExecutionReport } from "@/lib/executionReport";
 import { computeCriticalPathLite } from "@/lib/criticalPath";
 
 export default function ExecutionReportView({ milestones }: { milestones: Milestone[] }) {
+  const tz = useScheduleTz();
   const r = useMemo(() => computeExecutionReport(milestones), [milestones]);
   const critical = useMemo(() => computeCriticalPathLite(milestones), [milestones]);
   const criticalNames = useMemo(
@@ -70,9 +73,9 @@ export default function ExecutionReportView({ milestones }: { milestones: Milest
 
         <Card>
           <Label>Forecast finish</Label>
-          <div className="text-lg font-black tracking-tight text-[var(--color-text)]">{fmtDate(r.forecastFinish)}</div>
+          <div className="text-lg font-black tracking-tight text-[var(--color-text)]">{fmtDate(r.forecastFinish, tz)}</div>
           <div className="text-[11px] text-[var(--color-text-muted)] mt-1">
-            planned {fmtDate(r.finish)} · day {r.elapsedDays} of {r.totalDays}
+            planned {fmtDate(r.finish, tz)} · day {r.elapsedDays} of {r.totalDays}
           </div>
         </Card>
       </div>
@@ -104,7 +107,7 @@ export default function ExecutionReportView({ milestones }: { milestones: Milest
             <span className={`text-lg font-black ${r.baseline.finishDriftDays > 0 ? "text-rose-600" : r.baseline.finishDriftDays < 0 ? "text-emerald-600" : "text-[var(--color-text)]"}`}>
               {r.baseline.finishDriftDays === 0 ? "On plan" : r.baseline.finishDriftDays > 0 ? `${r.baseline.finishDriftDays}d behind plan` : `${Math.abs(r.baseline.finishDriftDays)}d ahead of plan`}
             </span>
-            <span className="text-[11px] text-[var(--color-text-muted)]">planned finish {fmtDate(r.baseline.baselineFinish)} → now {fmtDate(r.baseline.currentFinish)}</span>
+            <span className="text-[11px] text-[var(--color-text-muted)]">planned finish {fmtDate(r.baseline.baselineFinish, tz)} → now {fmtDate(r.baseline.currentFinish, tz)}</span>
             <span className="ml-auto text-[11px] text-[var(--color-text-muted)]">
               <b className="text-rose-600">{r.baseline.slipped}</b> slipped · <b className="text-emerald-600">{r.baseline.pulledIn}</b> pulled in
             </span>
@@ -151,7 +154,7 @@ export default function ExecutionReportView({ milestones }: { milestones: Milest
                   <div className="text-[13px] font-semibold text-[var(--color-text)]">{b.name}{b.group && <span className="text-[var(--color-text-faint)] font-normal"> · {b.group}</span>}</div>
                   <div className="text-[12px] text-[var(--color-text-muted)]">{b.reason ? b.reason : <span className="italic text-[var(--color-text-faint)]">no reason given</span>}</div>
                 </div>
-                <div className="text-[11px] text-[var(--color-text-faint)] font-mono shrink-0">{fmtDate(b.plannedAt)}</div>
+                <div className="text-[11px] text-[var(--color-text-faint)] font-mono shrink-0">{fmtDate(b.plannedAt, tz)}</div>
               </li>
             ))}
           </ul>
@@ -167,7 +170,7 @@ export default function ExecutionReportView({ milestones }: { milestones: Milest
               <div key={g.id} className="px-4 py-2.5 flex items-center gap-3">
                 <div className="w-40 shrink-0 min-w-0">
                   <div className="text-[13px] font-bold text-[var(--color-text)] truncate">{g.name}</div>
-                  <div className="text-[10px] text-[var(--color-text-faint)] font-mono">{fmtDate(g.start)} – {fmtDate(g.finish)}</div>
+                  <div className="text-[10px] text-[var(--color-text-faint)] font-mono">{fmtDate(g.start, tz)} – {fmtDate(g.finish, tz)}</div>
                 </div>
                 <div className="flex-1">
                   <Bar pct={g.pctComplete} done={g.pctComplete === 100} />
@@ -246,8 +249,7 @@ function Health({ icon, tone, label, value }: { icon: React.ReactNode; tone: "em
   );
 }
 
-function fmtDate(iso?: string | null): string {
+function fmtDate(iso: string | null | undefined, tz: string): string {
   if (!iso) return "—";
-  try { return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }); }
-  catch { return "—"; }
+  return fmtInTz(iso, tz, { month: "short", day: "numeric", year: "numeric" }) || "—";
 }
