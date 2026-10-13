@@ -873,6 +873,33 @@ WHERE (en.metadata->>'external') IS DISTINCT FROM 'true'
 1. No route under `app/api/admin/**`, `app/api/data-export/**` or `app/api/stripe/**` declares its own admin role constant; each calls `authorizeAdminSurface`.
 2. The registry is the only place an admin surface's role set is spelled, and a route test proves a registry change moves the route's answer.
 
+
+**Partial (2026-10-02, admin-and-org Round G).** Package P6, the narrowed assignment (every listed route except `app/api/stripe/{checkout,portal}` and `app/api/admin/{purge,archive-cancel}`, plus the writes-level intent). Status stays OPEN for those four routes.
+
+What landed:
+- **The gate's intent** (`lib/adminGate.ts`). `authorizeAdminSurface(req, orgId, surface, intent = "enter")`. `"enter"` is the entry rule, as before. `"write"` holds a mutating route to the entry rule AND the surface's `writes` set, by the full collection; a surface with no `writes` set (restore) is held to its entry alone. A member who may open the surface but not act on it reads `writesDeniedMessage` ("Changes on Storage & Backup are limited to Admin and Document Control."). For a write, `admittedRole` is the first writes role held. `adminSurfaceWriteAllows` and `writesDeniedMessage` are exported. The registry's sets (`lib/adminSurfaces.ts`) are unchanged. *(Review fix pass:)* its header used to say `writes` "is documentation … NOT [enforced] by the entry gate". It now says the gate's `"write"` intent enforces it for the converted routes, so a change to a surface's `writes` changes who they admit. Comment only.
+- **Twelve route files converted** (seventeen handlers); no role constant, no `authorizeOrgRole`:
+  - storage `writes` (`["Admin","DocCtrl"]`, the constant each spelled): `app/api/admin/shed`, `shed/commit`, `archives`, `orphans`, `ticket-shed`, `ticket-shed/commit`, `ticket-shed/restore`, `archive-settings` and `storage-stats` POST.
+  - storage `entry` (`["Admin","Manager","DocCtrl"]`): `storage-stats` GET.
+  - restore (`["Admin"]`): `restore/begin` and `apply-table` (write), `restore/preview` (enter).
+  - The read handlers held to the writes set (shed / ticket-shed previews, the archive catalog, the orphan scan, archive-settings GET) are held there because their constant WAS the writes set: each feeds an action only that set may take. Holding them to the entry would have admitted Manager.
+- **Verified, not edited:** every `/api/data-export` route already calls the gate (admin-and-org P3, `DEC-87`), pinned in `lib/__tests__/roundE_D_rolesAdmin.test.ts`. `app/api/admin/restore/apply` no longer exists (removed under `ORG-1`).
+- **Who is admitted is unchanged.** `lib/__tests__/aoRoundGStorageQuota.test.ts`, "every converted route answers exactly the roles it answered before", calls every converted handler for each role in `ALL_ROLES` and five collections (`["Viewer","DocCtrl"]`, `["Manager","Drafter"]`, `["Requester","Admin"]`, `["Auditor","Manager"]`, an unknown role). It checks each answer against the constant the route spelled at base `f5073fc`. A mutation holding the shed preview to the entry rule fails it (Manager admitted).
+- **A registry change moves the answer** (Done-when 2, for the converted routes). Adding Manager to storage's `writes`, or DocCtrl to restore's `entry`, moves the shed preview's and the restore begin's answers, and restoring the registry moves them back.
+- **The pins** (`lib/__tests__/roundE_D_rolesAdmin.test.ts`):
+  - "API routes behind a surface" now lists only the four routes that still carry a constant;
+  - a new pin requires each converted route's exact gate call (surface and intent) and no constant;
+  - the storage page's entry is pinned to the stats GET's `authorizeAdminSurface(req, orgId, "storage")`.
+  - Four test files whose `authorizeOrgRole` mock returned an actor without a role collection now give it `roles: ["Admin"]` (`dcRoundFShed`, `shedLegalHold`, `dfRoundG_P0_shed`, `dcRoundFArchiveCatalog`): the gate reads the collection, as the real `authorizeOrgRole` always returns it.
+
+**Done-when.**
+1. Not done for four routes, done for the rest. `app/api/admin/purge` and `archive-cancel` still declare `PURGE_ROLES` / `SHED_ROLES`: those are A&O P7's files (the integrator's split, 2026-10-02). `app/api/stripe/checkout` and `portal` still declare `ADMIN_ROLES`: A&O P5's, after P4, which owns those files, and P6 merge. Every other route under `app/api/admin/**` named here, and every `/api/data-export` route, calls `authorizeAdminSurface`. The routes outside this finding's census (`capability-policy`, `create-user`, `access-requests`, `schema-health`, `unit-identity`) were not part of it and are untouched (`DEC-31`).
+2. ✓ for the converted routes: the registry is the only place their set is spelled, and a route test proves a registry change moves the answer. The four routes above keep the pinned-equal constant until their owners convert them. Each is one line: `authorizeAdminSurface(req, orgId, "storage", "write")` for purge and archive-cancel, `authorizeAdminSurface(req, orgId, "billing", "write")` for checkout and portal, since billing's `writes` is `["Admin","Manager"]`, their constant. Then drop the "still carry a constant" pin.
+
+**Scope / residual.**
+- **The write intent is the conjunction** (entry AND writes). For storage, writes ⊂ entry, so it equals the writes set, as pinned. A future route on a surface whose `writes` is not inside its `entry` (teams: entry Admin / Manager, writes Admin / DocCtrl) would admit only the overlap. Its owner should check that before converting.
+- **The refusal message changed** for a refused caller of a converted route: from "Insufficient role" to the surface's sentence. The status (403) and the admitted set did not change.
+
 ---
 
 ## Verified sound — do not break

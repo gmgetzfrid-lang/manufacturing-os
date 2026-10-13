@@ -61,7 +61,7 @@ function fakeServiceClient(): SupabaseClient {
       if (table === "orgs") return { data: [{ id: "o1" }], error: null };
       return { data: null, error: null };
     };
-    for (const m of ["select", "not", "or", "gte", "order", "limit"]) q[m] = (...args: unknown[]) => { world.calls.push({ table, op: m, args }); return q; };
+    for (const m of ["select", "not", "neq", "or", "gte", "order", "limit"]) q[m] = (...args: unknown[]) => { world.calls.push({ table, op: m, args }); return q; };
     q.eq = (c: string, v: unknown) => { filters.push([c, v]); world.calls.push({ table, op: "eq", args: [c, v] }); return q; };
     q.insert = (row: Record<string, unknown>) => { op = "insert"; world.inserts.push({ table, ...row }); return q; };
     q.maybeSingle = async () => ({ data: null, error: null });
@@ -77,7 +77,9 @@ function fakeServiceClient(): SupabaseClient {
 
 describe("runStorageAlerts — the quota watermark (lib/storageAlerts.ts)", () => {
   it("writes through notify() as the service role, with the declared kind storage_alert", async () => {
-    world.tableBytes = 95; // 95% of a 100-byte quota: critical
+    // admin-and-org BILL-12 (P6): the workspace is measured under its OWN key
+    // prefix (orgs/o1/, a bucket walk), not the deployment's tables
+    r2State.bytes = 95; // 95% of a 100-byte quota: critical
     const sb = fakeServiceClient();
     const r = await runStorageAlerts(sb);
     expect(r.alerts).toBe(2);
@@ -88,7 +90,9 @@ describe("runStorageAlerts — the quota watermark (lib/storageAlerts.ts)", () =
       expect(rows[i]).toEqual({
         table: "notifications", org_id: "o1", user_id: uid, kind: "storage_alert",
         title: "Storage critical — 95% full",
-        body: "This workspace is at 95% of its storage limit. Take a full backup and free up space (archive superseded revisions, purge disposable rows).",
+        body: "This workspace's files are at 95% of the storage limit an admin set (0 MB of 0 MB, measured under this workspace only). " +
+          "The limit is advisory: uploads are not blocked when it is reached. " +
+          "Take a full backup and free up space from Admin → Storage (archive superseded revisions or closed tickets, delete orphaned files).",
         link: "/admin/storage", resource_type: null, resource_id: null, actor_user_id: null, actor_name: null, metadata: null,
       });
     }
@@ -97,7 +101,7 @@ describe("runStorageAlerts — the quota watermark (lib/storageAlerts.ts)", () =
   });
 
   it("the 7-day dedupe read stays: an admin with a recent storage_alert is skipped", async () => {
-    world.tableBytes = 80;
+    r2State.bytes = 80;
     world.existing.add("a1");
     const r = await runStorageAlerts(fakeServiceClient());
     expect(r.alerts).toBe(1);
@@ -107,7 +111,7 @@ describe("runStorageAlerts — the quota watermark (lib/storageAlerts.ts)", () =
   });
 
   it("a refused write is not counted as an alert, and does not throw", async () => {
-    world.tableBytes = 95;
+    r2State.bytes = 95;
     world.insertError = { message: "new row violates row-level security policy" };
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const r = await runStorageAlerts(fakeServiceClient());
@@ -118,7 +122,7 @@ describe("runStorageAlerts — the quota watermark (lib/storageAlerts.ts)", () =
 
   it("the binding is for the write only: afterwards the shared client resolves to the anonymous client, not the watchdog's", async () => {
     const resolvesToDouble = () => (supabase.from("notifications") as unknown as Record<PropertyKey, unknown>)[DOUBLE] === true;
-    world.tableBytes = 95;
+    r2State.bytes = 95;
     const sb = fakeServiceClient();
     // the probe can see a binding: inside the scope, and under a module-wide
     // swap (the shape that WOULD outlive the write), it resolves to the double

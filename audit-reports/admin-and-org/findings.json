@@ -8,17 +8,17 @@
     "audit-reports/admin-and-org/04-billing.md"
   ],
   "totals": {
-    "findings": 59,
+    "findings": 61,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 5,
       "HIGH": 17,
       "MEDIUM": 28,
-      "LOW": 9
+      "LOW": 11
     },
     "by_status": {
-      "RESOLVED": 32,
-      "OPEN": 27
+      "RESOLVED": 38,
+      "OPEN": 23
     }
   },
   "status_vocabulary": [
@@ -397,7 +397,7 @@
       "id": "BILL-5",
       "title": "The platform storage ceiling is a single global row that any Admin/DocCtrl of any org can overwrite, and the storage dashboard leaks deployment-wide usage across tenants",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -899,7 +899,7 @@
       "id": "BILL-7",
       "title": "Changing the storage quota or the plan ceiling — the numbers that drive every storage alert — writes no audit record",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1004,7 +1004,7 @@
       "id": "BILL-11",
       "title": "Quota is advisory only — nothing refuses a write at the ceiling, while the alert copy tells admins uploads are about to start failing",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1030,7 +1030,7 @@
       "id": "BILL-12",
       "title": "Storage usage is measured deployment-wide but charged against each org's own quota — another tenant's uploads push your workspace into 'critical'",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1057,7 +1057,7 @@
       "id": "BILL-13",
       "title": "The R2 bucket walk has no time budget and runs inside a user-facing request — up to 500 sequential list round trips with no maxDuration",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "SUSPECTED",
       "verification_note": null,
       "blast_radius": null,
@@ -1247,7 +1247,7 @@
       "id": "ORG-5",
       "title": "Any active org member can overwrite the org logo in R2 — the Admin-only branding RLS is bypassed because authority lives on the config row, not the storage key",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1460,6 +1460,36 @@
       "report": "audit-reports/admin-and-org/03-audit-log.md"
     },
     {
+      "id": "BILL-15",
+      "title": "On a single-workspace server the quota alert and the platform R2 alert can both fire on the same day, with two different percentages for nearly the same bytes",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by construction: `BILL-12`'s resolution describes both paths)",
+      "blast_radius": null,
+      "related": [
+        "BILL-12",
+        "DEC-31",
+        "BILL-5",
+        "BILL-11",
+        "DEC-99"
+      ],
+      "locations": [
+        "lib/storageAlerts.ts",
+        "lib/storageUsage.ts",
+        "app/api/cron/maintenance/route.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A single-plant server. The Admin set a 5 GB quota as a reminder; the deployment's R2 plan is 10 GB. The bucket reaches 4.6 GB, of which 4.5 GB is the workspace's. The daily cron bells the Admin \"Storage critical — 90% full … of the storage limit an admin set\" (step 3) and nothing from step 9 (46%). Two months later at 7.2 GB: step 3 is deduped (sent within the week), step 9 bells \"File storage hig",
+      "area": "admin-and-org",
+      "report": "audit-reports/admin-and-org/04-billing.md"
+    },
+    {
       "id": "BKP-10",
       "title": "A cancelled backup still downloads a final part whose report says \"Every file verified by SHA-256\" — with no cancellation flag and no file total",
       "severity": "LOW",
@@ -1639,6 +1669,36 @@
       ],
       "refuted": false,
       "summary": "The pending-requests read fails (an outage, an expired session, a policy error). The Admin sees no requests card and no sign that anything failed, and a person waiting for access is not seen. Likewise a failed members read draws an empty roster. No request is lost or exposed: the rows stay in accessrequests.",
+      "area": "admin-and-org",
+      "report": "audit-reports/admin-and-org/01-org-lifecycle.md"
+    },
+    {
+      "id": "ORG-16",
+      "title": "Any member can replace a folder's or library's cover image and page background: `branding/covers/` and `branding/backgrounds/` keys are signed for any member, any Content-Type",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by reading)",
+      "blast_radius": null,
+      "related": [
+        "ORG-5",
+        "DEC-31",
+        "SEC-7"
+      ],
+      "locations": [
+        "app/api/storage/upload-url/route.ts",
+        "lib/storageKey.ts",
+        "components/documents/CustomizeNodeModal.tsx:76-77",
+        "app/(protected)/documents/page.tsx:511",
+        "app/(protected)/documents/[libraryId]/page.tsx:4805"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A Viewer or Contractor reads a library's coverImageUrl (or bgImagePath) key (orgs/<org>/branding/covers/<key>), posts it to /api/storage/upload-url with any contentType, and PUTs any image (or an HTML document) to the signed URL. Every member sees the replaced cover on the library's card the next time it loads. No audit row is written, and the node's customize authority is never consulted, because",
       "area": "admin-and-org",
       "report": "audit-reports/admin-and-org/01-org-lifecycle.md"
     }

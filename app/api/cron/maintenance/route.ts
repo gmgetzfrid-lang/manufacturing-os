@@ -62,7 +62,7 @@ import { syncAllKnowledgeSources } from "@/lib/knowledgeSourceSync";
 import { drainKnowledgeIngestQueue } from "@/lib/knowledgeIngest";
 import { drainEmbedBacklog } from "@/lib/knowledgeEmbedDrain";
 import { pruneOrchestratorProposals } from "@/lib/orchestrator/proposals";
-import { runPlatformStorageAlerts } from "@/lib/storageUsage";
+import { runPlatformStorageAlerts, platformAlertUnroutedError } from "@/lib/storageUsage";
 import { rebuildAclIndexes, type RebuildCounts } from "@/lib/aclIndexRebuild";
 import { roleFilter } from "@/lib/roleHeld";
 import {
@@ -178,9 +178,12 @@ async function handler(req: NextRequest) {
   }
 
   // 3. Storage watermark alerts: notify admins of orgs over their set quota.
+  //    A workspace the shared walk budget did not measure is never "fine"
+  //    (admin-and-org BILL-12): it is said here, where an operator reads.
   try {
-    const { alerts } = await runStorageAlerts(sb);
+    const { alerts, unmeasured } = await runStorageAlerts(sb);
     result.storageAlerts = alerts;
+    if (unmeasured > 0) result.errors.push(`storage-alerts: ${unmeasured} workspace(s) with a storage limit were not measured in time; none was reported fine`);
   } catch (e) {
     result.errors.push(`storage-alerts: ${(e as Error).message}`);
   }
@@ -518,11 +521,14 @@ async function handler(req: NextRequest) {
   //    exact DB relation sizes) against the plan ceilings (free tiers by
   //    default). Admins get an in-app notification at 70%/90%, deduped to
   //    one per person per resource per week — "upgrade before it breaks",
-  //    not "why did uploads stop".
+  //    not "why did uploads stop". A hot ceiling with no platform operator to
+  //    give the figures to is said here too (admin-and-org BILL-5 fix pass).
   if (!noTimeFor("platform-storage", STORAGE_WALK_MS)) {
     try {
-      const { status, alerts } = await runPlatformStorageAlerts(sb);
-      result.platformStorage = { r2Pct: status.r2.pct, dbPct: status.db.pct, alerts };
+      const platform = await runPlatformStorageAlerts(sb);
+      result.platformStorage = { r2Pct: platform.status.r2.pct, dbPct: platform.status.db.pct, alerts: platform.alerts };
+      const unrouted = platformAlertUnroutedError(platform);
+      if (unrouted) result.errors.push(unrouted);
     } catch (e) {
       result.errors.push(`platform-storage: ${(e as Error).message}`);
     }

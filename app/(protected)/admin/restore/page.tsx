@@ -36,6 +36,7 @@ import {
   type RestorePlan, type RestoreEnvelopeLike, type RestorePost, type ChunkedRestoreResult, type ChunkedRestorePreview,
   type BackupArchiveRead,
 } from "@/lib/dataRestore";
+import { restoreUploadRequest, isWorkspaceLogoKey } from "@/lib/storageKey";
 
 type ZipLike = {
   files: Record<string, { dir: boolean }>;
@@ -55,18 +56,11 @@ interface FilesProgress {
   done: number; total: number;
   uploaded: number; skipped: number; offline: number; failed: number;
   error?: string | null;
+  /** Why files failed: each distinct refusal, with how many files it hit. */
+  reasons?: Array<{ reason: string; files: number }>;
+  /** A workspace logo the server will not sign (ORG-5), named with why. */
+  logoNotRestored?: string | null;
 }
-
-const CONTENT_TYPES: Record<string, string> = {
-  pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
-  gif: "image/gif", svg: "image/svg+xml", webp: "image/webp", txt: "text/plain",
-  csv: "text/csv", zip: "application/zip", dxf: "image/vnd.dxf", dwg: "application/acad",
-  doc: "application/msword", xls: "application/vnd.ms-excel",
-  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-};
-const contentTypeFor = (key: string) =>
-  CONTENT_TYPES[(key.toLowerCase().split(".").pop() || "")] || "application/octet-stream";
 
 function fmtNum(n: number) { return n >= 1000 ? n.toLocaleString() : String(n); }
 
@@ -252,7 +246,15 @@ export default function RestorePage() {
     const token = await authToken();
 
     const counters = { done: 0, uploaded: 0, skipped: 0, offline: 0, failed: 0 };
-    const bump = () => setFilesProgress({ running: true, total: entries.length, ...counters, error: null });
+    // ORG-5 fix pass: a failure keeps the route's (or storage's) reason, so
+    // the panel says why instead of a bare count.
+    const reasons = new Map<string, number>();
+    let logoNotRestored: string | null = null;
+    const detail = () => ({
+      reasons: [...reasons].map(([reason, files]) => ({ reason, files })),
+      logoNotRestored,
+    });
+    const bump = () => setFilesProgress({ running: true, total: entries.length, ...counters, error: null, ...detail() });
 
     const uploadOne = async (item: BackupArchiveRead["files"][number]) => {
       try {
@@ -270,18 +272,33 @@ export default function RestorePage() {
         if (check.ok && state?.archived === true && state?.archiveId) { counters.offline++; return; }
 
         const blob = await zips[item.zip].file(item.entry)!.async("blob");
+        // ORG-5: upload-url signs a workspace logo only with its type AND its
+        // size (both signed into the PUT), so the request carries the blob's
+        // size and the PUT sends the type the request named. A logo it will
+        // not sign (an SVG or GIF from before ORG-5, or over 5 MB) is not
+        // asked for: the panel says to upload it again under Branding. A
+        // logo's type is read from its first bytes — its key was once named
+        // after the file (".jfif", or no extension), not after its type.
+        const head = isWorkspaceLogoKey(key) ? new Uint8Array(await blob.slice(0, 12).arrayBuffer()) : null;
+        const req = restoreUploadRequest(key, blob.size, head);
+        if (req.logoProblem) {
+          logoNotRestored = `${key.split("/").pop()}: ${req.logoProblem}`;
+          return;
+        }
         const up = await fetch(`/api/storage/upload-url`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ path: key, contentType: contentTypeFor(key) }),
+          body: JSON.stringify(req.body),
         });
         const upBody = await up.json().catch(() => null);
         if (!up.ok || !upBody?.url) throw new Error(upBody?.error || `HTTP ${up.status}`);
-        const put = await fetch(upBody.url as string, { method: "PUT", body: blob, headers: { "Content-Type": contentTypeFor(key) } });
-        if (!put.ok) throw new Error(`PUT ${put.status}`);
+        const put = await fetch(upBody.url as string, { method: "PUT", body: blob, headers: { "Content-Type": req.contentType } });
+        if (!put.ok) throw new Error(`Storage refused the upload (HTTP ${put.status})`);
         counters.uploaded++;
-      } catch {
+      } catch (e) {
         counters.failed++;
+        const reason = (e instanceof Error && e.message) || "Upload failed";
+        reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
       } finally {
         counters.done++;
         bump();
@@ -299,7 +316,7 @@ export default function RestorePage() {
         }
       }),
     );
-    setFilesProgress({ running: false, total: entries.length, ...counters });
+    setFilesProgress({ running: false, total: entries.length, ...counters, ...detail() });
   };
 
   const onDrop = (e: React.DragEvent) => {
@@ -514,6 +531,18 @@ export default function RestorePage() {
                     {filesProgress.offline > 0 && <> · {fmtNum(filesProgress.offline)} left to space archives</>}
                     {filesProgress.failed > 0 && <span className="text-red-600 font-bold"> · {fmtNum(filesProgress.failed)} failed — run again to retry</span>}
                   </div>
+                  {(filesProgress.reasons ?? []).slice(0, 5).map((r) => (
+                    <div key={r.reason} className="text-[10.5px] text-red-700 mt-0.5">
+                      {fmtNum(r.files)} file(s): {r.reason}
+                    </div>
+                  ))}
+                  {filesProgress.logoNotRestored && (
+                    <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-800">
+                      The workspace logo in this backup was not put back ({filesProgress.logoNotRestored}). Upload it again
+                      as a PNG, JPEG or WebP of at most 5 MB under <Link href="/admin/branding" className="font-bold underline">Admin → Branding</Link>;
+                      until then the workspace&apos;s logo does not load.
+                    </div>
+                  )}
                 </div>
               )}
               <div className="flex items-center justify-end">

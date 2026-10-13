@@ -32,7 +32,9 @@ function chain(table: string) {
   return new Proxy(c, handler);
 }
 vi.mock("@/lib/serverAuth", () => ({
-  authorizeOrgRole: vi.fn(async () => ({ admin: { from: (t: string) => chain(t) }, userId: "admin1", email: "a@x" })),
+  // SURF-19 (A&O P6): the routes ask lib/adminGate.ts, which reads the actor's
+  // full role collection — an Admin, as these tests assumed.
+  authorizeOrgRole: vi.fn(async () => ({ admin: { from: (t: string) => chain(t) }, userId: "admin1", email: "a@x", role: "Admin", roles: ["Admin"] })),
 }));
 import { GET as ARCHIVES } from "@/app/api/admin/archives/route";
 

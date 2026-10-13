@@ -21,7 +21,7 @@ import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { createHash } from "node:crypto";
 import JSZip from "jszip";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { authorizeOrgRole } from "@/lib/serverAuth";
+import { authorizeAdminSurface } from "@/lib/adminGate";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import {
   selectTicketShedCandidates,
@@ -35,7 +35,9 @@ import { isOrgOwnedKey } from "@/lib/shedKeyGuard";
 
 export const runtime = "nodejs";
 
-const SHED_ROLES = ["Admin", "DocCtrl"];
+// SURF-19 (admin-and-org Round G, P6): held to the storage surface's writes
+// set (lib/adminSurfaces.ts) through lib/adminGate.ts — the ["Admin","DocCtrl"]
+// this route spelled as a constant before; who is admitted is unchanged.
 const DEFAULT_DAYS = 90;
 const FETCH_LIMIT = 8000;
 
@@ -74,7 +76,7 @@ export async function GET(req: NextRequest) {
   const orgId = req.nextUrl.searchParams.get("orgId") || "";
   const days = clampDays(req.nextUrl.searchParams.get("days"));
   const targetBytes = clampTarget(req.nextUrl.searchParams.get("targetBytes"));
-  const actor = await authorizeOrgRole(req, orgId, SHED_ROLES);
+  const actor = await authorizeAdminSurface(req, orgId, "storage", "write");
   if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
 
   const { rows, capped } = await fetchTerminalTickets(actor.admin, orgId);
@@ -104,7 +106,7 @@ export async function POST(req: NextRequest) {
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
   const orgId = body.orgId || "";
-  const actor = await authorizeOrgRole(req, orgId, SHED_ROLES);
+  const actor = await authorizeAdminSurface(req, orgId, "storage", "write");
   if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
   if (body.confirm !== true) return NextResponse.json({ error: "Confirmation required: pass confirm:true." }, { status: 400 });
   const sb = actor.admin;

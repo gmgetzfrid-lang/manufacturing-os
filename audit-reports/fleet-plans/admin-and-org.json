@@ -397,6 +397,23 @@
     "ALOG-9 grid \u2190 ROLE-1",
     "ORG-10 column bug \u2190 DB-2"
    ]
+  },
+  {
+    "name": "P10 \u2014 Storage follow-ups: one storage bell per day on a single-workspace server, and node cover/background uploads gated like the node editor (BILL-15, ORG-16)",
+    "findings": [
+      "BILL-15 (assigned by the integrator 2026-10-13 at the A&O P6 merge, DEC-31; the product call ruled by the integrator under the user's delegation, DEC-90 practice: on a server with exactly one workspace, the quota alert and the platform R2 alert for the same day collapse into ONE bell that states both figures, each with what it measured and against which limit \u2014 lib/storageAlerts.ts runStorageAlerts and lib/storageUsage.ts runPlatformStorageAlerts share the per-day dedupe key; a multi-workspace server keeps both, since they reach different people)",
+      "ORG-16 (assigned by the integrator 2026-10-13 at the A&O P6 merge, DEC-31: app/api/storage/upload-url/route.ts signs branding/covers/ and branding/backgrounds/ keys only for a member holding the authority components/documents/CustomizeNodeModal.tsx's node customization requires (read it from the node editor's gate; do not invent a role list), and only for image Content-Types \u2014 ORG-5's rule on the smaller surface; regression: every member who can customise a node today still can)"
+    ],
+    "files": [
+      "lib/storageAlerts.ts, lib/storageUsage.ts (the shared dedupe; single-workspace detection)",
+      "app/api/storage/upload-url/route.ts (the covers/backgrounds gate and Content-Type allow-list)",
+      "tests: one bell on a single-workspace server, two on a multi-workspace one; a member without node-customize authority is refused a cover key, one with it is signed; a non-image Content-Type is refused"
+    ],
+    "migrationsLikely": 0,
+    "dependsOn": [
+      "P6 merged (DEC-99; the storage files and upload-url)"
+    ],
+    "sequencingNotes": "Added by the integrator 2026-10-13 at the A&O P6 merge (DEC-31). Small; no migration; runs after P6 (P5 also touches app/api/cron/maintenance/route.ts but not these files)."
   }
  ],
  "crossAreaFileOverlaps": [

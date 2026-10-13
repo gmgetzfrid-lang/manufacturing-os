@@ -28,16 +28,19 @@
 // Admin-only, same as apply.
 
 import { NextRequest, NextResponse } from "next/server";
-import { authorizeOrgRole } from "@/lib/serverAuth";
+import { authorizeAdminSurface } from "@/lib/adminGate";
 import { planRestore, mergeNewUserUids, placeholderProfile, type CurrentMember, RESTORE_LINK_MEMBER_STATUSES, restoredMemberRoles, restoredMemberHeadline } from "@/lib/dataRestore";
 
 export const runtime = "nodejs";
 
-const RESTORE_ROLES = ["Admin"];
+// SURF-19 (admin-and-org Round G, P6): held to the restore surface through
+// lib/adminGate.ts (a write: the surface has no separate writes set, so its
+// entry, ["Admin"], as the constant this route spelled before); who is
+// admitted is unchanged.
 
 export async function POST(req: NextRequest) {
   const orgId = req.nextUrl.searchParams.get("orgId") || "";
-  const actor = await authorizeOrgRole(req, orgId, RESTORE_ROLES);
+  const actor = await authorizeAdminSurface(req, orgId, "restore", "write");
   if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
   const sb = actor.admin;
 

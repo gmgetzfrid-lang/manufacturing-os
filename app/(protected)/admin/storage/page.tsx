@@ -9,9 +9,13 @@
 //   • Free up space now                                   (guarded purge)
 //   • Get a real backup out (records + binaries)          (JSON / full ZIP)
 //
-// Stats are read-only and deployment-wide. Purge is destructive and scoped to
-// your workspace. Backup folds in the data-export download actions so this is
-// a single section, not two.
+// Stats are read-only. The storage limit is compared to THIS workspace's own
+// files (measured under its storage prefix); the deployment's figures — every
+// table, the whole bucket, the plan ceilings — are shown, labelled as such,
+// only to a platform operator or on a single-workspace server (admin-and-org
+// BILL-5 / BILL-12). Purge is destructive and scoped to your workspace.
+// Backup folds in the data-export download actions so this is a single
+// section, not two (Admin-only, as the export routes are — DEC-87).
 
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
@@ -22,6 +26,8 @@ import {
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
+import { adminSurface } from "@/lib/adminSurfaces";
+import type { Role } from "@/types/schema";
 import { CATEGORY_LABEL, type DataClass } from "@/lib/storageClassify";
 import { catalogNeedsReclaim, catalogCommitTarget, catalogReclaimLabel } from "@/lib/archiveCatalog";
 import { appConfirm } from "@/components/providers/DialogProvider";
@@ -30,14 +36,41 @@ interface TableRow {
   name: string; rows: number; bytes: number;
   category: DataClass; reason: string; grower: boolean;
 }
+interface Segment { label: string; bytes: number; objects: number; newest: string | null }
 interface Stats {
   generatedAt: string;
-  db: { totalBytes: number; tables: TableRow[]; byCategory: Record<DataClass, number> };
-  r2Estimate: { totalBytes: number; versionsBytes: number; photosBytes: number; versionCount: number; photoCount: number };
+  /** BILL-5 / BILL-12: "deployment" — the server's figures are this
+   *  member's to see (a platform operator, or the only workspace on the
+   *  server); "workspace" — a shared server: only this workspace's files, and
+   *  the deployment fields below are null. */
+  scope?: "deployment" | "workspace";
+  /** May change the plan ceilings (BILL-5). */
+  platformOperator?: boolean;
+  /** This is the server's only workspace — then its Admin / DocCtrl, not the
+   *  platform operators, get the plan-ceiling alert (lib/storageUsage.ts
+   *  platformAlertRecipients). */
+  soleTenant?: boolean;
+  /** The SQL that would make this member an operator (deployment scope, not
+   *  an operator). */
+  operatorSql?: string | null;
+  /** Set when the operator list could not be read: the server fails closed
+   *  (not an operator), so the page says "could not be read — refresh" in
+   *  place of the registration line, never "register" to someone who is. */
+  operatorsError?: string | null;
+  /** This workspace's own files, measured under its storage prefix — what
+   *  the storage limit is compared to. Null when the walk failed. */
+  workspace?: {
+    files: { bytes: number; objects: number; newest: string | null; truncated: boolean; stoppedBy?: string | null; segments?: Segment[] } | null;
+    filesError: string | null;
+  };
+  db: { totalBytes: number; tables: TableRow[]; byCategory: Record<DataClass, number> } | null;
+  r2Estimate: { totalBytes: number; versionsBytes: number; photosBytes: number; versionCount: number; photoCount: number } | null;
   /** REAL bucket walk — actual object sizes, not row-recorded estimates. */
   r2Real: {
     bytes: number; objects: number; truncated: boolean; pct: number; band: "ok" | "warn" | "crit";
-    segments?: Array<{ label: string; bytes: number; objects: number; newest: string | null }>;
+    /** Why a partial walk stopped: the page cap, or its time budget (BILL-13). */
+    stoppedBy?: "pages" | "deadline" | null;
+    segments?: Segment[];
     newest?: string | null;
   } | null;
   /** Why the bucket walk failed, when it did — the estimate that replaces it
@@ -46,7 +79,7 @@ interface Stats {
   freeTier?: {
     r2LimitBytes: number; dbLimitBytes: number; dbPct: number; dbBand: "ok" | "warn" | "crit";
     source?: "settings" | "env" | "default";
-  };
+  } | null;
   dedup: { totalVersions: number; totalBytes: number; distinctHashes: number; dupGroups: number; reclaimableBytes: number } | null;
   ai: { last24h: number; last30d: number } | null;
   note: string;
@@ -108,6 +141,12 @@ export default function StorageBackupPage() {
   const { activeOrgId, hasAnyRole } = useRole();
   // ADD-1: authority by the role COLLECTION, never the headline alone.
   const canPurge = hasAnyRole(["Admin", "DocCtrl"]);
+  // DEC-87 §1 / BKP-8 (P3 handoff): the backup downloads call the data-export
+  // routes, which admit only the data-export surface's entry. Show them to
+  // that set (by the full collection) and point anyone else to an Admin,
+  // instead of a button that answers 403.
+  const exportSurface = adminSurface("data-export");
+  const canExport = !!exportSurface && (exportSurface.entry === "*" || hasAnyRole(exportSurface.entry as Role[]));
 
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -307,6 +346,10 @@ export default function StorageBackupPage() {
         body: JSON.stringify({ orgId: activeOrgId, locationHint: locDraft, naming: noteDraft }),
       });
       if (!res.ok) throw new Error((await res.text().catch(() => "")) || `HTTP ${res.status}`);
+      // BILL-7: the change is saved, but a refused audit row comes back as a
+      // warning — say it, as the quota and ceiling saves do.
+      const saved = await res.json().catch(() => null);
+      if (saved?.warning) setError(String(saved.warning));
       setArchiveRoot(locDraft.trim() || null);
       setFinderNote(noteDraft.trim() || null);
       setEditingLoc(false);
@@ -330,6 +373,8 @@ export default function StorageBackupPage() {
         body: JSON.stringify({ orgId: activeOrgId, quotaBytes: bytes }),
       });
       if (!res.ok) throw new Error((await res.text().catch(() => "")) || `HTTP ${res.status}`);
+      const saved = await res.json().catch(() => null);
+      if (saved?.warning) setError(String(saved.warning));
       setQuotaBytes(bytes);
       setEditingQuota(false);
     } catch (e) {
@@ -360,6 +405,7 @@ export default function StorageBackupPage() {
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.error || `HTTP ${res.status}`);
       setEditingLimits(false);
+      if (body?.warning) setError(String(body.warning));
       await load();
     } catch (e) {
       setError((e as Error).message);
@@ -774,15 +820,49 @@ export default function StorageBackupPage() {
     }
   };
 
-  const tables = stats?.db.tables ?? [];
+  // BILL-5: the deployment's figures, present only when they are this
+  // member's to see (null on a shared server for anyone but an operator).
+  const db = stats?.db ?? null;
+  const est = stats?.r2Estimate ?? null;
+  const tables = db?.tables ?? [];
   const maxBytes = tables.reduce((m, t) => Math.max(m, t.bytes), 0);
   const isRealQuota = !!(quotaBytes && quotaBytes > 0);
   const budgetBytes = isRealQuota ? (quotaBytes as number) : SOFT_BUDGET_BYTES;
-  const usedBytes = (stats?.db.totalBytes ?? 0) + (stats?.r2Real?.bytes ?? stats?.r2Estimate.totalBytes ?? 0);
+  // BILL-12: the limit is compared to THIS workspace's own files (measured
+  // under its storage prefix), as the cron's alert is — never the server's
+  // total, which counts every other workspace's bytes too.
+  const wsFiles = stats?.workspace?.files ?? null;
+  const usedMeasured = !!wsFiles;
+  const usedFloor = !!wsFiles?.truncated;
+  const usedBytes = wsFiles?.bytes ?? 0;
   const pct = Math.min(100, Math.round((usedBytes / budgetBytes) * 100));
-  const health: "ok" | "warn" | "crit" = pct >= 90 ? "crit" : pct >= 70 ? "warn" : "ok";
-  const byCat = stats?.db.byCategory ?? { purge: 0, archive: 0, reference: 0 };
-  const reclaimNow = (preview?.totalEstBytes ?? 0) + (stats?.dedup?.reclaimableBytes ?? 0);
+  // A partial walk is a FLOOR: under 70% it says nothing about the real
+  // total, so it is "partial", never "ok" — the rule the deployment figure
+  // and the cron already keep (lib/storageUsage.ts measurePlatformStorage,
+  // lib/storageAlerts.ts). An unmeasured workspace is neutral, never green.
+  const health: "ok" | "warn" | "crit" | "partial" | "unmeasured" =
+    !usedMeasured ? "unmeasured" : pct >= 90 ? "crit" : pct >= 70 ? "warn" : usedFloor ? "partial" : "ok";
+  const byCat = db?.byCategory ?? { purge: 0, archive: 0, reference: 0 };
+  const shared = stats?.scope === "workspace";
+  // The segment list: the whole bucket's when the server's figures are shown,
+  // else this workspace's own walk.
+  const segWalk: { bytes: number; segments?: Segment[] } | null = db ? (stats?.r2Real ?? null) : wsFiles;
+  // BILL-12 fix pass: the watermark counts this workspace's FILES, so its
+  // "reclaim now" counts only what lowers that figure — superseded revisions
+  // and closed tickets archived off live storage, and orphans deleted (each
+  // under this workspace's prefix, once its preview or scan has loaded). The
+  // purge estimate is DATABASE rows: said apart, as database space. Dedup is
+  // not counted: no action here performs it (the Duplication card measures
+  // what content-addressed storage would save), and in the server's view its
+  // figure covers every workspace.
+  const filesReclaimParts: Array<[string, number]> = [
+    ["archive superseded revisions", shedPreview?.reclaimableBytes ?? 0],
+    ["archive closed tickets", ticketPreview?.reclaimableBytes ?? 0],
+    ["delete orphaned files", orphanScan?.orphanBytes ?? 0],
+  ];
+  const filesReclaim = filesReclaimParts.reduce((a, [, b]) => a + b, 0);
+  const filesReclaimHow = filesReclaimParts.filter(([, b]) => b > 0).map(([how]) => how).join(", ");
+  const dbReclaim = preview?.totalEstBytes ?? 0;
   const ticketRow = tables.find((t) => t.name === "tickets");
 
   return (
@@ -822,34 +902,56 @@ export default function StorageBackupPage() {
       ) : stats ? (
         <>
           {/* ── Health watermark ─────────────────────────────────────────── */}
-          <div className={`rounded-2xl border p-4 mb-5 ${
+          <div data-watermark={health} className={`rounded-2xl border p-4 mb-5 ${
             health === "crit" ? "border-red-300 bg-red-50" :
-            health === "warn" ? "border-amber-300 bg-amber-50" :
+            health === "warn" || health === "partial" ? "border-amber-300 bg-amber-50" :
             "border-[var(--color-border)] bg-[var(--color-surface)]"
           }`}>
             <div className="flex items-end justify-between gap-3 flex-wrap mb-2">
               <div>
-                <div className="text-[11px] font-bold uppercase tracking-widest text-[var(--color-text-muted)]">Total footprint</div>
+                <div className="text-[11px] font-bold uppercase tracking-widest text-[var(--color-text-muted)]">This workspace&apos;s files</div>
                 <div className="text-2xl font-black text-[var(--color-text)]">
-                  {fmtBytes(usedBytes)} <span className="text-sm font-bold text-[var(--color-text-muted)]">/ {fmtBytes(budgetBytes)} {isRealQuota ? "limit" : "soft budget"}</span>
+                  {usedMeasured ? <>{usedFloor && <span className="text-sm font-bold text-[var(--color-text-muted)]">at least </span>}{fmtBytes(usedBytes)}</> : "Not measured"}{" "}
+                  <span className="text-sm font-bold text-[var(--color-text-muted)]">/ {fmtBytes(budgetBytes)} {isRealQuota ? "limit" : "soft budget"}</span>
                 </div>
               </div>
-              <div className={`text-right ${health === "crit" ? "text-red-700" : health === "warn" ? "text-amber-700" : "text-emerald-700"}`}>
-                <div className="text-2xl font-black">{pct}%</div>
-                <div className="text-[11px] font-bold">{health === "crit" ? "Act now" : health === "warn" ? "Plan a backup" : "Healthy"}</div>
+              <div className={`text-right ${
+                health === "crit" ? "text-red-700" :
+                health === "warn" || health === "partial" ? "text-amber-700" :
+                health === "ok" ? "text-emerald-700" : "text-[var(--color-text-muted)]"
+              }`}>
+                <div className="text-2xl font-black">{usedMeasured ? `${usedFloor ? "≥" : ""}${pct}%` : "—"}</div>
+                <div className="text-[11px] font-bold">{
+                  health === "unmeasured" ? "Try Refresh" :
+                  health === "crit" ? "Act now" :
+                  health === "warn" ? "Plan a backup" :
+                  health === "partial" ? "Partial — refresh" : "Healthy"
+                }</div>
               </div>
             </div>
             <div className="h-2.5 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
-              <div className={`h-full rounded-full transition-all ${health === "crit" ? "bg-red-500" : health === "warn" ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${Math.max(2, pct)}%` }} />
+              <div className={`h-full rounded-full transition-all ${
+                health === "crit" ? "bg-red-500" :
+                health === "warn" || health === "partial" ? "bg-amber-500" :
+                health === "ok" ? "bg-emerald-500" : "bg-[var(--color-border)]"
+              }`} style={{ width: `${health === "unmeasured" ? 0 : Math.max(2, pct)}%` }} />
             </div>
             <div className="mt-2 flex items-start gap-1.5 text-[11px] text-[var(--color-text-muted)] leading-relaxed">
               <Info className="w-3.5 h-3.5 mt-px shrink-0" />
               <span>
-                {health === "ok"
+                {health === "unmeasured"
+                  ? <>This workspace&apos;s files could not be measured just now{stats.workspace?.filesError ? <> ({stats.workspace.filesError})</> : null}.</>
+                  : health === "partial"
+                  ? `Partial: the measurement stopped early, so this workspace's files are at least ${pct}% of the limit and the real figure is higher, possibly close to it. Refresh to measure again.`
+                  : health === "ok"
                   ? "Plenty of headroom. Still recommended: take a full backup quarterly so you can restore from scratch."
-                  : `At ${pct}% it's time to take a full backup and free up space below.`}
-                {reclaimNow > 0 && <> You can reclaim ≈<b>{fmtBytes(reclaimNow)}</b> now (purge + dedup).</>}
+                  : `At ${usedFloor ? "least " : ""}${pct}% it's time to take a full backup and free up space below.`}
+                {usedFloor && health !== "partial" && " The measurement stopped early, so the real figure is higher."}
+                {filesReclaim > 0 && <> You can free ≈<b>{fmtBytes(filesReclaim)}</b> of this workspace&apos;s files now ({filesReclaimHow}).</>}
+                {dbReclaim > 0 && <> Purging disposable rows would free ≈{fmtBytes(dbReclaim)} of database space, which this figure does not count.</>}
                 {!isRealQuota && " The limit shown is a guideline until you set your plan's real quota."}
+                {" "}Measured from this workspace&apos;s own files in storage, not the whole server; the database is shared
+                {shared ? " with the other workspaces on this server." : " and shown under Plan headroom."}
               </span>
             </div>
             {canPurge && (
@@ -871,18 +973,46 @@ export default function StorageBackupPage() {
                     <Gauge className="w-3.5 h-3.5" /> {isRealQuota ? "Change storage limit" : "Set your storage limit"}
                   </button>
                 )}
-                {isRealQuota && !editingQuota && <span className="text-[var(--color-text-faint)]">Admins are alerted at 70% / 90%.</span>}
+                {isRealQuota && !editingQuota && (
+                  <span className="text-[var(--color-text-faint)]">
+                    Advisory: Admin and Document Control are notified at 70% / 90%; uploads are never blocked at this limit. A change is recorded in the audit log.
+                  </span>
+                )}
               </div>
             )}
           </div>
 
-          {/* ── DB / R2 headline ─────────────────────────────────────────── */}
+          {/* ── Deployment-wide figures (BILL-5 / BILL-12) ───────────────── */}
+          {shared && (
+            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3 mb-5 text-[11px] text-[var(--color-text-muted)] flex items-start gap-2">
+              <Info className="w-3.5 h-3.5 mt-px shrink-0" />
+              <span>
+                This workspace shares its server with other workspaces, so the server&apos;s own figures — the
+                database&apos;s tables, the whole bucket and the hosting-plan ceilings — are shown to a platform
+                operator only. Everything on this page about <b>your workspace</b> (its files, purge, archives,
+                backups) is unaffected.
+                {canPurge && stats.operatorsError ? (
+                  <> The platform operator list could not be read ({stats.operatorsError}) — refresh to try again.</>
+                ) : canPurge && stats.operatorSql ? (
+                  <> If you run this server, make yourself its operator in the Supabase SQL editor:{" "}
+                    <code className="font-mono break-all text-[var(--color-text)]">{stats.operatorSql}</code>
+                  </>
+                ) : null}
+              </span>
+            </div>
+          )}
+          {db && (
+            <div className="text-[11px] font-bold uppercase tracking-widest text-[var(--color-text-muted)] mb-2">
+              The whole server — every workspace on it{stats.platformOperator ? " (you are a platform operator)" : " (this is its only workspace)"}
+            </div>
+          )}
+          {db && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
               <div className="flex items-center gap-2 text-[var(--color-text-muted)] text-xs font-bold uppercase tracking-widest mb-1">
                 <Database className="w-3.5 h-3.5" /> Database (Postgres)
               </div>
-              <div className="text-2xl font-black text-[var(--color-text)]">{fmtBytes(stats.db.totalBytes)}</div>
+              <div className="text-2xl font-black text-[var(--color-text)]">{fmtBytes(db.totalBytes)}</div>
               <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">{tables.length} tables on disk</div>
             </div>
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
@@ -890,12 +1020,12 @@ export default function StorageBackupPage() {
                 <HardDrive className="w-3.5 h-3.5" /> Files (R2{stats.r2Real ? ", measured" : ", estimated"})
               </div>
               <div className="text-2xl font-black text-[var(--color-text)]">
-                {stats.r2Real ? fmtBytes(stats.r2Real.bytes) : `~${fmtBytes(stats.r2Estimate.totalBytes)}`}
+                {stats.r2Real ? fmtBytes(stats.r2Real.bytes) : `~${fmtBytes(est?.totalBytes ?? 0)}`}
               </div>
               <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
                 {stats.r2Real
                   ? `${fmtNum(stats.r2Real.objects)} objects in the bucket · measured ${new Date(stats.generatedAt).toLocaleTimeString()}`
-                  : `${fmtNum(stats.r2Estimate.versionCount)} revisions · ${fmtNum(stats.r2Estimate.photoCount)} photos`}
+                  : `${fmtNum(est?.versionCount ?? 0)} revisions · ${fmtNum(est?.photoCount ?? 0)} photos`}
               </div>
               {stats.r2Real?.newest && (
                 <div className="text-[10px] text-[var(--color-text-faint)] mt-0.5">
@@ -904,12 +1034,13 @@ export default function StorageBackupPage() {
               )}
             </div>
           </div>
+          )}
 
           {/* The measurement failed and the page fell back to a row-sum that
               structurally cannot see knowledge PDFs, templates, or orphans.
               Silently showing that as "storage used" is worse than showing
               nothing — it never moves no matter how much you upload. */}
-          {!stats.r2Real && (
+          {db && !stats.r2Real && (
             <div className="rounded-2xl border border-red-300 bg-red-50 p-4 mb-5 text-xs text-red-800 flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
               <div>
@@ -922,13 +1053,15 @@ export default function StorageBackupPage() {
               </div>
             </div>
           )}
-          {stats.r2Real?.truncated && (
+          {db && stats.r2Real?.truncated && (
             <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 mb-5 text-xs text-amber-900 flex items-start gap-2">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
               <div>
-                <b>Partial walk — the real total is higher.</b> The bucket has more than 500,000
-                objects, so measuring stopped early. Treat {fmtBytes(stats.r2Real.bytes)} as a floor,
-                not a total.
+                <b>Partial walk — the real total is higher.</b>{" "}
+                {stats.r2Real.stoppedBy === "deadline"
+                  ? "Measuring the bucket ran out of its time budget, so it stopped early."
+                  : "The bucket has more than 500,000 objects, so measuring stopped early."}{" "}
+                Treat {fmtBytes(stats.r2Real.bytes)} as a floor, not a total.
               </div>
             </div>
           )}
@@ -936,15 +1069,15 @@ export default function StorageBackupPage() {
           {/* WHERE the bytes are. A single total invites "is that even right?";
               an itemized breakdown with object counts and a newest-file stamp
               is the receipt that answers it. */}
-          {stats.r2Real && (stats.r2Real.segments?.length ?? 0) > 0 && (
+          {segWalk && (segWalk.segments?.length ?? 0) > 0 && (
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5">
               <div className="text-[11px] font-bold uppercase tracking-widest text-[var(--color-text-muted)] mb-2.5">
-                Where the files are — measured from the bucket
+                {db ? "Where the files are — measured from the whole bucket (every workspace)" : "Where this workspace's files are — measured from its own storage"}
               </div>
               <div className="space-y-2">
-                {stats.r2Real.segments!.map((s) => {
-                  const share = stats.r2Real!.bytes > 0
-                    ? Math.round((s.bytes / stats.r2Real!.bytes) * 100) : 0;
+                {segWalk.segments!.map((s) => {
+                  const share = segWalk.bytes > 0
+                    ? Math.round((s.bytes / segWalk.bytes) * 100) : 0;
                   return (
                     <div key={s.label}>
                       <div className="flex items-baseline justify-between gap-2 text-[11px]">
@@ -970,7 +1103,7 @@ export default function StorageBackupPage() {
           )}
 
           {/* ── Plan headroom: REAL usage vs the hosting plan's ceilings ──── */}
-          {stats.freeTier && (
+          {db && stats.freeTier && (
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5">
               <div className="text-[11px] font-bold uppercase tracking-widest text-[var(--color-text-muted)] mb-2.5">
                 Plan headroom — free-tier ceilings
@@ -994,7 +1127,7 @@ export default function StorageBackupPage() {
                   <div className="flex items-center justify-between text-[11px] mb-1">
                     <span className="font-bold text-[var(--color-text)]">Supabase (database)</span>
                     <span className={`font-black ${stats.freeTier.dbBand === "crit" ? "text-red-600" : stats.freeTier.dbBand === "warn" ? "text-amber-600" : "text-emerald-700"}`}>
-                      {fmtBytes(stats.db.totalBytes)} of {fmtBytes(stats.freeTier.dbLimitBytes)} · {stats.freeTier.dbPct}%
+                      {fmtBytes(db?.totalBytes ?? 0)} of {fmtBytes(stats.freeTier.dbLimitBytes)} · {stats.freeTier.dbPct}%
                     </span>
                   </div>
                   <div className="h-2 rounded-full bg-[var(--color-surface-2)] overflow-hidden">
@@ -1023,14 +1156,30 @@ export default function StorageBackupPage() {
                   {stats.freeTier.source === "settings"
                     ? " (set by an admin here)"
                     : " (defaulting to the FREE tiers — R2 10 GB, Supabase 500 MB)"}.
-                  Admins get an in-app notification at 70% and 90%.{" "}
-                  <button onClick={() => {
-                    setR2LimitDraft(String(Math.round((stats.freeTier!.r2LimitBytes / 1024 ** 3) * 10) / 10));
-                    setDbLimitDraft(String(Math.round(stats.freeTier!.dbLimitBytes / 1024 ** 2)));
-                    setEditingLimits(true);
-                  }} className="font-bold text-[var(--color-accent)] hover:underline">
-                    {stats.freeTier.source === "settings" ? "Change plan ceilings" : "Upgraded your plan? Set the real ceilings"}
-                  </button>
+                  This app never refuses an upload at a ceiling. Past the R2 plan, Cloudflare bills the overage or refuses
+                  writes on an account without billing; past the Supabase plan&apos;s database size, the database can go
+                  read-only.{" "}
+                  {stats.soleTenant ? "This workspace's Admin / DocCtrl" : "Platform operators"} get an in-app notification at 70% and 90%.{" "}
+                  {stats.platformOperator ? (
+                    <button onClick={() => {
+                      setR2LimitDraft(String(Math.round((stats.freeTier!.r2LimitBytes / 1024 ** 3) * 10) / 10));
+                      setDbLimitDraft(String(Math.round(stats.freeTier!.dbLimitBytes / 1024 ** 2)));
+                      setEditingLimits(true);
+                    }} className="font-bold text-[var(--color-accent)] hover:underline">
+                      {stats.freeTier.source === "settings" ? "Change plan ceilings" : "Upgraded your plan? Set the real ceilings"}
+                    </button>
+                  ) : (
+                    <>
+                      The ceilings are one setting for the whole server, so only a platform operator can change them.
+                      {canPurge && stats.operatorsError ? (
+                        <> The platform operator list could not be read ({stats.operatorsError}) — refresh to try again.</>
+                      ) : canPurge && stats.operatorSql ? (
+                        <> To make yourself one, the deployment&apos;s owner runs this in the Supabase SQL editor:{" "}
+                          <code className="font-mono break-all text-[var(--color-text)]">{stats.operatorSql}</code>
+                        </>
+                      ) : null}
+                    </>
+                  )}
                 </p>
               )}
             </div>
@@ -1094,12 +1243,13 @@ export default function StorageBackupPage() {
           </div>
 
           {/* ── Category breakdown: purge vs keep vs reference ───────────── */}
+          {db && (
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
             {(["purge", "archive", "reference"] as DataClass[]).map((cat) => {
               const M = CATEGORY_META[cat];
               const Icon = M.icon;
               const bytes = byCat[cat] ?? 0;
-              const share = stats.db.totalBytes > 0 ? Math.round((bytes / stats.db.totalBytes) * 100) : 0;
+              const share = db.totalBytes > 0 ? Math.round((bytes / db.totalBytes) * 100) : 0;
               return (
                 <div key={cat} className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
                   <div className={`flex items-center gap-2 text-xs font-bold mb-1 ${M.tint}`}>
@@ -1114,6 +1264,7 @@ export default function StorageBackupPage() {
               );
             })}
           </div>
+          )}
 
           {/* ── Free up space (purge) ────────────────────────────────────── */}
           {canPurge ? (
@@ -1430,6 +1581,7 @@ export default function StorageBackupPage() {
               </div>
             )}
 
+            {canExport ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <button
                 onClick={() => void downloadZip()} disabled={busyZip || !activeOrgId}
@@ -1446,6 +1598,12 @@ export default function StorageBackupPage() {
                 JSON only (records)
               </button>
             </div>
+            ) : (
+              <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-[11px] text-[var(--color-text-muted)] flex items-start gap-1.5">
+                <Lock className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                <span>{exportSurface?.denied ?? "Exporting the whole workspace is limited to Admins."} Ask an Admin to take a full backup.</span>
+              </div>
+            )}
             {lastArchiveId && (
               <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] text-emerald-900 flex items-start gap-1.5">
                 <CheckCircle2 className="w-3.5 h-3.5 shrink-0 mt-0.5" />
@@ -1494,7 +1652,7 @@ export default function StorageBackupPage() {
           {/* ── AI usage ─────────────────────────────────────────────────── */}
           <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 mb-5">
             <div className="flex items-center gap-2 text-[var(--color-text-muted)] text-xs font-bold uppercase tracking-widest mb-2">
-              <Sparkles className="w-3.5 h-3.5" /> AI usage (shared key)
+              <Sparkles className="w-3.5 h-3.5" /> AI usage ({shared ? "this workspace" : "every workspace on this server"})
             </div>
             {stats.ai ? (
               <div className="flex items-center gap-6 flex-wrap">
@@ -1533,6 +1691,7 @@ export default function StorageBackupPage() {
           )}
 
           {/* ── Tables by size ───────────────────────────────────────────── */}
+          {db && (
           <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden mb-4">
             <div className="px-4 py-3 border-b border-[var(--color-border)] text-sm font-bold text-[var(--color-text)] flex items-center justify-between flex-wrap gap-2">
               <span>Tables by size</span>
@@ -1567,6 +1726,7 @@ export default function StorageBackupPage() {
               })}
             </div>
           </div>
+          )}
 
           <p className="text-[11px] text-[var(--color-text-faint)] leading-relaxed">{stats.note}</p>
           <p className="text-[10px] text-[var(--color-text-faint)] mt-2">Snapshot {new Date(stats.generatedAt).toLocaleString()}</p>
