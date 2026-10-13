@@ -191,6 +191,7 @@ describe("20261204 — revoke_member from its NEWEST body + ALOG-15 + ORG-7; ALO
     const prune = next.slice(pruneStart, pruneEnd);
     const allowed = new Set([
       "  v_acl_libs int := 0;", "  v_acl_cols int := 0;", "  v_acl_docs int := 0;", "  v_acl_sets int := 0;",
+      "  v_rule_probe jsonb;", "  v_bucket_probe jsonpath;",
       "  -- ALOG-15 (admin-and-org Round G, 20261204): the strip stamps updated_at,",
       "  -- so the policy route's compare-and-set sees it and answers 409 to a save",
       "  -- built from a policy that still held this member's grant.",
@@ -215,6 +216,13 @@ describe("20261204 — revoke_member from its NEWEST body + ALOG-15 + ORG-7; ALO
     }
     expect(next).toMatch(/default_new_acl = acl_without_user_allow\(default_new_acl, ARRAY\[v_member\.uid::text\]\)/);
     expect(at("MEMBER_ACL_GRANTS_PRUNED")).toBeLessThan(at("DELETE FROM subscriptions WHERE org_id = v_member.org_id"));
+    // fix pass: each scan is narrowed by binary jsonb tests built once — no
+    // text cast of any row — before the exact acl_allow_user_ids check
+    expect(next).not.toMatch(/strpos\(|acl::text|acl_index::text/);
+    expect(next).toMatch(/v_rule_probe := jsonb_build_object\('rules', jsonb_build_array\(jsonb_build_object\('subject', jsonb_build_object\('type', 'user', 'id', v_member\.uid::text\)\)\)\);/);
+    expect(next).toMatch(/v_bucket_probe := format\('\$\.allow\.users\.\*\[\*\] \? \(@ == "%s"\)', v_member\.uid::text\)::jsonpath;/);
+    expect(next).toMatch(/AND \(acl @> v_rule_probe OR default_new_acl @> v_rule_probe OR acl_index @\? v_bucket_probe\)\n     AND v_member\.uid::text = ANY\(acl_allow_user_ids\(acl, acl_index\) \|\| acl_allow_user_ids\(default_new_acl, NULL\)\);/);
+    expect(next.match(/AND \(acl @> v_rule_probe OR acl_index @\? v_bucket_probe\)\n     AND v_member\.uid::text = ANY\(acl_allow_user_ids\(acl, acl_index\)\);/g)).toHaveLength(3);
     expect(at("DELETE FROM subscriptions WHERE org_id = v_member.org_id")).toBeLessThan(at("DELETE FROM org_members WHERE id = p_member_id;"));
   });
 

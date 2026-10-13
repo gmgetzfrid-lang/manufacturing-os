@@ -43,7 +43,11 @@ export function brandingPaletteProblem(p: unknown): string | null {
 }
 
 /** Saves the org branding. ORG-11: a palette that is not two "#RRGGBB"
- *  colours is refused before anything is written. The write reads back the
+ *  colours is refused before anything is written — but only a palette the
+ *  caller is changing. A save that carries the stored palette along
+ *  unchanged (the logo modal's logo-only save) is never refused for a
+ *  palette written before ORG-11 or brought in by a restore; the theme
+ *  sanitizes that one on the way in (sanitizeOrgPalette). The write reads back the
  *  row it stored (a write RLS refused is an error, never a silent success),
  *  and ALOG-4 dw2: the change is audited (BRANDING_CHANGED, before and
  *  after) — a refused audit row is returned for the caller to say. */
@@ -52,9 +56,10 @@ export async function saveOrgBranding(
   branding: OrgBranding,
   actor?: { uid: string | null; email?: string | null },
 ): Promise<{ auditError: string | null }> {
-  const problem = brandingPaletteProblem(branding.palette);
-  if (problem) throw new Error(problem);
   const before = await getOrgBranding(orgId);
+  const paletteChanged = JSON.stringify(branding.palette ?? null) !== JSON.stringify(before?.palette ?? null);
+  const problem = paletteChanged ? brandingPaletteProblem(branding.palette) : null;
+  if (problem) throw new Error(problem);
   const payload = { ...branding, updatedAt: new Date().toISOString() };
   const res = await checkedWrite(supabase
     .from("org_configurations")

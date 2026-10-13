@@ -501,7 +501,7 @@ function WorkspaceTimeZoneCard({ orgId, uid, userEmail }: { orgId: string | null
         <Clock className="w-3.5 h-3.5" /> Workspace time zone
       </div>
       <p className="text-xs text-[var(--color-text-muted)] mb-3">
-        The plant&apos;s time zone. Times in notifications and emails are written in it, with the zone named. Not set, they read UTC. The daily compliance digest is still sent once a day at 03:00 UTC; its body names its window in this zone.
+        The plant&apos;s time zone. Times in notifications and emails are written in it, with the zone named. Not set, they read UTC. The daily compliance digest is still sent once a day at 03:00 UTC; its body names its window in this zone. Effective dates and whether a revision is &ldquo;in effect&rdquo; still follow the deployment&apos;s facility time zone, not this setting, until that change lands.
       </p>
       {readError ? (
         <div role="alert" className="text-xs text-rose-700 inline-flex items-center gap-2">

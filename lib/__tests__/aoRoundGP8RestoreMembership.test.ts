@@ -4,7 +4,10 @@
 // nothing and reads an empty bell. The completion step
 // (/api/admin/restore/complete) says how many members are not active, shows
 // it on the restore page and writes RESTORE_MEMBERSHIP_CHECK; a workspace
-// left with no active Admin is refused, never reported as fine.
+// left with no active Admin is reported (409), never shown as fine — a
+// defensive report, since the restoring Admin is an active Admin by
+// construction. The check runs whenever the run started, whether it
+// returned or threw.
 //
 // Driven to completion through the page's own driver (runChunkedRestore) and
 // the completion helper, against the in-memory PostgREST the restore routes
@@ -29,7 +32,7 @@ import { POST as applyTable } from "@/app/api/admin/restore/apply-table/route";
 import { POST as beginRoute } from "@/app/api/admin/restore/begin/route";
 import { POST as completeRoute } from "@/app/api/admin/restore/complete/route";
 import { planRestore, runChunkedRestore, type RestorePost, type RestoreEnvelopeLike } from "@/lib/dataRestore";
-import { completeRestoreMembership, restoreMembershipSentence } from "@/lib/restoreMembership";
+import { completeRestoreMembership, restoreMembershipSentence, withRestoreMembershipCheck, type RestoreMembershipCheck } from "@/lib/restoreMembership";
 
 const ORG = "org-1";
 const routePost: RestorePost = async (path, body) => {
@@ -90,12 +93,47 @@ describe("NEDGE-16 — the restore ends with an explicit membership assertion", 
     expect(rowsOf("org_members").find((m) => m.uid === "admin-1")?.status).toBe("active");
   });
 
-  it("a workspace with no active Admin is refused (409), never reported as fine", async () => {
+  it("defensive: a workspace with no active Admin is reported (409), never shown as fine (reachable only with the gate mocked — the gate admits only an active Admin)", async () => {
     db.rows.org_members = [{ id: "m-admin", org_id: ORG, uid: "admin-1", email: "admin@x.io", role: "Viewer", roles: ["Viewer"], status: "active" }];
     const check = await completeRestoreMembership(ORG, routePost);
     expect(check.ok).toBe(false);
     if (check.ok) return;
     expect(check.error).toMatch(/no active Admin/);
+    expect(check.error).not.toMatch(/audit log/);
+  });
+
+  it("the 409 carries a refused audit row too (auditError), never dropped", async () => {
+    db.rows.org_members = [{ id: "m-admin", org_id: ORG, uid: "admin-1", email: "admin@x.io", role: "Viewer", roles: ["Viewer"], status: "active" }];
+    db.writeError = (table) => table === "audit_logs" ? { code: "42501", message: "audit insert refused" } : null;
+    const res = await routePost(`/api/admin/restore/complete?orgId=${ORG}`, {});
+    expect(res.status).toBe(409);
+    expect(res.body?.auditError).toBe("audit insert refused");
+    const check = await completeRestoreMembership(ORG, routePost);
+    expect(check.ok).toBe(false);
+    if (check.ok) return;
+    expect(check.error).toMatch(/no active Admin.*could not be written to the audit log: audit insert refused/);
+  });
+
+  it("a run that throws after /begin created inactive placeholders still ends with the membership check, then rethrows", async () => {
+    const env = envelope();
+    const plan = planRestore(env, { orgId: ORG, orgName: "Acme", members: [{ uid: "admin-1", email: "admin@x.io", status: "active" }] });
+    // /begin runs for real (2 inactive placeholders are created), then its
+    // answer is lost on the way back: runChunkedRestore throws.
+    const lossyPost: RestorePost = async (path, body) => {
+      if (path.startsWith("/api/admin/restore/begin")) {
+        await routePost(path, body);
+        throw new Error("connection reset");
+      }
+      return routePost(path, body);
+    };
+    const seen: RestoreMembershipCheck[] = [];
+    await expect(withRestoreMembershipCheck(ORG, lossyPost,
+      () => runChunkedRestore({ orgId: ORG, envelope: env, plan, orgNameChoice: "current", post: lossyPost }),
+      (c) => seen.push(c))).rejects.toThrow(/connection reset/);
+    expect(rowsOf("org_members").filter((m) => m.status === "inactive")).toHaveLength(2);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ ok: true, summary: { activeMembers: 1, inactiveMembers: 2, activeAdmins: 1, actorActive: true } });
+    expect(rowsOf("audit_logs").filter((r) => r.action === "RESTORE_MEMBERSHIP_CHECK")).toHaveLength(1);
   });
 
   it("a member list that cannot be read is said, never shown as zero inactive", async () => {
@@ -110,10 +148,13 @@ describe("NEDGE-16 — the restore ends with an explicit membership assertion", 
     expect(restoreMembershipSentence({ activeMembers: 3, inactiveMembers: 0, activeAdmins: 1, actorActive: true })).toBe("All 3 member(s) of this workspace are active.");
   });
 
-  it("the restore page calls the completion step after the run and renders its sentence (source pin)", () => {
+  it("the restore page wraps the run in the completion step and renders its sentence outside the result branch (source pin)", () => {
     const page = readFileSync(join(process.cwd(), "app/(protected)/admin/restore/page.tsx"), "utf8");
-    expect(page.indexOf("await runChunkedRestore(")).toBeLessThan(page.indexOf("await completeRestoreMembership(activeOrgId, post)"));
+    expect(page).toMatch(/await withRestoreMembershipCheck\(activeOrgId, post,\s*async \(\) => await runChunkedRestore\(/);
+    expect(page.match(/runChunkedRestore\(/g)).toHaveLength(1);
     expect(page).toMatch(/restoreMembershipSentence\(membershipCheck\.summary\)/);
     expect(page).toMatch(/data-testid="restore-membership-check"/);
+    // the panel is not nested in the applyResult branch: a thrown run shows it too
+    expect(page.indexOf("<RestoreResultPanel result={applyResult} />\n          ) : !applying")).toBeGreaterThan(0);
   });
 });

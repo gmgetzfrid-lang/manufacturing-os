@@ -90,7 +90,7 @@ import { POST as createUserRoute } from "@/app/api/admin/create-user/route";
 import DeleteSafetyModal from "@/app/(protected)/admin/libraries/DeleteSafetyModal";
 import AdminUsersPage from "@/app/(protected)/admin/users/page";
 import WorkspaceSettingsPage from "@/app/(protected)/admin/settings/page";
-import { countLibraryDeleteImpact, impactChanged } from "@/lib/libraryDeleteImpact";
+import { countLibraryDeleteImpact, impactChanged, LIBRARY_DELETE_COUNT_CONCURRENCY } from "@/lib/libraryDeleteImpact";
 import { sanitizeOrgPalette, PALETTE_PRESETS } from "@/components/providers/ThemeProvider";
 import { saveOrgBranding, brandingPaletteProblem } from "@/lib/orgBranding";
 import { assertSupervisorIsActiveMember, setTeamSupervisor } from "@/lib/teams";
@@ -157,6 +157,50 @@ describe("ALOG-3 — a library delete counts, refuses when it must, deletes as t
     s.db.selectErrors = { document_versions: { message: "statement timeout" } };
     const r = await countLibraryDeleteImpact(makeFakeSupabase(s.db) as never, "o1", "L1");
     expect(r).toEqual({ ok: false, error: "revisions: statement timeout" });
+  });
+
+  it("a library of a few thousand documents is counted chunk by chunk with bounded concurrency, and the totals are exact", async () => {
+    const N = 4000;
+    s.db.tables.libraries = [{ id: "L1", org_id: "o1", name: "Big" }];
+    s.db.tables.collections = [{ id: "c1", library_id: "L1" }];
+    s.db.tables.documents = Array.from({ length: N }, (_, i) => ({ id: `d${String(i).padStart(5, "0")}`, org_id: "o1", library_id: "L1", legal_hold: i === 7 }));
+    s.db.tables.document_versions = s.db.tables.documents.flatMap((d, i) => i % 2 ? [{ id: `v${i}a`, record_id: d.id }, { id: `v${i}b`, record_id: d.id }] : [{ id: `v${i}`, record_id: d.id }]);
+    s.db.tables.document_holds = [{ id: "h1", document_id: "d03999", released_at: null }];
+    s.db.tables.tickets = []; // the in-memory PostgREST does not evaluate the JSON-path filter
+    // Count queries resolve after a tick; track how many are in flight.
+    const base = makeFakeSupabase(s.db) as unknown as { from: (t: string) => unknown };
+    let inFlight = 0, peak = 0, versionQueries = 0;
+    const delayed = {
+      from(table: string) {
+        const inner = base.from(table) as Record<string, unknown>;
+        if (table === "documents" || table === "collections") return inner;
+        const wrap = (q: Record<string, unknown>): unknown => new Proxy(q, {
+          get(target, prop) {
+            if (prop === "then") {
+              return (res: (v: unknown) => unknown, rej: (e: unknown) => unknown) => {
+                inFlight++; peak = Math.max(peak, inFlight);
+                if (table === "document_versions") versionQueries++;
+                return new Promise((r) => setTimeout(r, 1)).then(() => Promise.resolve(target as unknown as PromiseLike<unknown>)).finally(() => { inFlight--; }).then(res, rej);
+              };
+            }
+            const v = (target as Record<string | symbol, unknown>)[prop];
+            return typeof v === "function" ? (...a: unknown[]) => wrap((v as (...x: unknown[]) => Record<string, unknown>).apply(target, a)) : v;
+          },
+        });
+        return wrap(inner);
+      },
+    };
+    const r = await countLibraryDeleteImpact(delayed as never, "o1", "L1");
+    expect(r).toEqual({ ok: true, impact: { folders: 1, documents: N, revisions: N / 2 + N, openHolds: 1, legalHolds: 1, requests: 0 } });
+    expect(versionQueries).toBe(Math.ceil(N / 150));
+    // more than one chunk at once (3 counts per chunk), never more than the bound allows
+    expect(peak).toBeGreaterThan(3);
+    expect(peak).toBeLessThanOrEqual(3 * LIBRARY_DELETE_COUNT_CONCURRENCY);
+  });
+
+  it("the delete route declares a function time limit for large counts", async () => {
+    const mod = await import("@/app/api/admin/libraries/delete/route");
+    expect(mod.maxDuration).toBe(60);
   });
 
   it("preview returns the counts and deletes nothing", async () => {
@@ -439,6 +483,8 @@ describe("NEDGE-19 / VFY-15 — the workspace time zone", () => {
     await mountSettings();
     const card = host.querySelector('[data-testid="workspace-timezone-card"]')!;
     expect(card.textContent).toMatch(/still sent once a day at 03:00 UTC/);
+    // the card does not claim effective dates follow the workspace zone (VFY-15's remainder)
+    expect(card.textContent).toMatch(/Effective dates and whether a revision is “in effect” still follow the deployment's facility time zone, not this setting/);
     const select = card.querySelector("select") as HTMLSelectElement;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(select, "America/Chicago");
@@ -486,6 +532,16 @@ describe("ORG-11 — the org palette is validated on the way in and on the way t
     expect(audits("BRANDING_CHANGED")[0].details).toMatchObject({ before: null, after: { palette: { primary: "#112233" } } });
     s.db.refuseWrites.add("org_configurations");
     await expect(saveOrgBranding("o1", { palette: { id: "c", name: "C", primary: "#112233", secondary: "#aabbcc" } })).rejects.toThrow();
+  });
+
+  it("a logo-only save that carries a stored invalid palette along unchanged still saves; changing it to another invalid one is refused", async () => {
+    const stale = { primary: "#abc" } as unknown as { id: string; name: string; primary: string; secondary: string };
+    s.db.tables.org_configurations = [{ id: "cfg1", org_id: "o1", key: "branding", data: { palette: stale } }];
+    const r = await saveOrgBranding("o1", { palette: stale, logoPath: "orgs/o1/branding/logo-1.png", logoShape: "mark" }, { uid: "a1" });
+    expect(r).toEqual({ auditError: null });
+    const row = (s.db.tables.org_configurations ?? []).find((c) => c.key === "branding");
+    expect((row?.data as { logoPath?: string }).logoPath).toBe("orgs/o1/branding/logo-1.png");
+    await expect(saveOrgBranding("o1", { palette: { id: "c", name: "C", primary: "red", secondary: "#aabbcc" }, logoPath: "orgs/o1/branding/logo-1.png" }, { uid: "a1" })).rejects.toThrow(/#RRGGBB/);
   });
 });
 

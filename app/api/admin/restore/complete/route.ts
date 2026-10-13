@@ -7,10 +7,15 @@
 // receive no notifications until an Admin reactivates them, and that an
 // active Admin remains. The same numbers are written to the audit log
 // (RESTORE_MEMBERSHIP_CHECK), checked — a refused audit row is returned, not
-// swallowed. A workspace with no active Admin is refused (409), never
-// reported as fine; the restoring Admin is one (this route admits only an
-// active Admin), so that answer means something outside the restore changed
-// the membership. Admin-only, same as /begin.
+// swallowed, on every answer. The restoring Admin is an active Admin by
+// construction (this route admits only an active Admin, and nothing in the
+// restore changes an existing member's status), so "no active Admin" cannot
+// arise from the restore itself; the 409 for it is a defensive REPORT, not a
+// refusal — the restore has already been applied and this check changes
+// nothing. It answers 409 rather than "fine" only so that a membership
+// changed outside the restore is never shown as healthy. The page runs this
+// step whenever the run started, whether it finished, stopped or threw
+// (withRestoreMembershipCheck). Admin-only, same as /begin.
 
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeAdminSurface } from "@/lib/adminGate";
@@ -34,7 +39,7 @@ export async function POST(req: NextRequest) {
     details: { ...s, receiveNoNotifications: s.inactiveMembers },
   });
   if (s.activeAdmins === 0) {
-    return NextResponse.json({ error: "This workspace has no active Admin after the restore. Nothing was changed by this check; reactivate an Admin before anyone relies on notifications.", summary: s }, { status: 409 });
+    return NextResponse.json({ error: "This workspace has no active Admin after the restore. Nothing was changed by this check; reactivate an Admin before anyone relies on notifications.", summary: s, ...(auditErr ? { auditError: auditErr.message } : {}) }, { status: 409 });
   }
   return NextResponse.json({ ok: true, summary: s, ...(auditErr ? { auditError: auditErr.message } : {}) });
 }

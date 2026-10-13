@@ -29,6 +29,9 @@ import { callerScopedClient } from "@/lib/serverAuth";
 import { countLibraryDeleteImpact, impactChanged, type LibraryDeleteImpact } from "@/lib/libraryDeleteImpact";
 
 export const runtime = "nodejs";
+// Fix pass: counting a large library (twice: the preview, then before the
+// delete) can take longer than the default function limit.
+export const maxDuration = 60;
 
 const bad = (error: string, status: number, extra?: Record<string, unknown>) => NextResponse.json({ error, ...(extra ?? {}) }, { status });
 

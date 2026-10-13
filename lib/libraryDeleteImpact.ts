@@ -11,6 +11,12 @@
 // Every read is checked and paged: a count that could not be read is a
 // failure (the route then refuses the delete), never a zero shown to the
 // person about to confirm it.
+//
+// Fix pass: the per-document counts run CONCURRENCY id-chunks at a time (a
+// bounded pool, not one chunk after another), so a library of tens of
+// thousands of documents is counted in a fraction of the serial time; the
+// delete route also declares maxDuration. The first chunk that fails stops
+// the pool and the whole count fails.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -35,6 +41,8 @@ export type LibraryDeleteImpactResult =
 
 const PAGE = 1000;
 const CHUNK = 150;
+/** How many id-chunks are counted at once (each chunk is three head counts). */
+export const LIBRARY_DELETE_COUNT_CONCURRENCY = 6;
 
 type CountRes = { count: number | null; error: { message?: string } | null };
 
@@ -64,20 +72,31 @@ export async function countLibraryDeleteImpact(sb: SupabaseClient, orgId: string
 
     let revisions = 0, openHolds = 0, requests = 0;
     const ids = docs.map((d) => d.id);
-    for (let i = 0; i < ids.length; i += CHUNK) {
-      const chunk = ids.slice(i, i + CHUNK);
+    const chunks: string[][] = [];
+    for (let i = 0; i < ids.length; i += CHUNK) chunks.push(ids.slice(i, i + CHUNK));
+    const pool = { next: 0, failure: null as string | null };
+    const countChunk = async (chunk: string[]): Promise<string | null> => {
       const [v, h, t] = (await Promise.all([
         sb.from("document_versions").select("id", { count: "exact", head: true }).in("record_id", chunk),
         sb.from("document_holds").select("id", { count: "exact", head: true }).in("document_id", chunk).is("released_at", null),
         sb.from("tickets").select("id", { count: "exact", head: true }).eq("org_id", orgId).in("metadata->source_document->>id", chunk),
       ])) as unknown as CountRes[];
-      if (v.error || typeof v.count !== "number") return { ok: false, error: `revisions: ${v.error?.message ?? "no count returned"}` };
-      if (h.error || typeof h.count !== "number") return { ok: false, error: `holds: ${h.error?.message ?? "no count returned"}` };
-      if (t.error || typeof t.count !== "number") return { ok: false, error: `requests: ${t.error?.message ?? "no count returned"}` };
+      if (v.error || typeof v.count !== "number") return `revisions: ${v.error?.message ?? "no count returned"}`;
+      if (h.error || typeof h.count !== "number") return `holds: ${h.error?.message ?? "no count returned"}`;
+      if (t.error || typeof t.count !== "number") return `requests: ${t.error?.message ?? "no count returned"}`;
       revisions += v.count;
       openHolds += h.count;
       requests += t.count;
-    }
+      return null;
+    };
+    const worker = async () => {
+      while (pool.failure === null && pool.next < chunks.length) {
+        const problem = await countChunk(chunks[pool.next++]);
+        if (problem && pool.failure === null) pool.failure = problem;
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(LIBRARY_DELETE_COUNT_CONCURRENCY, chunks.length) }, worker));
+    if (pool.failure !== null) return { ok: false, error: pool.failure };
     return {
       ok: true,
       impact: {

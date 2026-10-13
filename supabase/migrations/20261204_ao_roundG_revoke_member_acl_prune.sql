@@ -223,6 +223,8 @@ DECLARE
   v_acl_cols int := 0;
   v_acl_docs int := 0;
   v_acl_sets int := 0;
+  v_rule_probe jsonb;
+  v_bucket_probe jsonpath;
   r         record;
 BEGIN
   IF v_actor IS NULL THEN
@@ -348,33 +350,44 @@ BEGIN
   -- for new nodes. DENY rules naming them are KEPT: a block outlives the
   -- membership, so a re-added person is still refused where they were.
   -- Grants by role, team or org are not touched.
+  -- Each scan is narrowed BEFORE the exact check by two binary jsonb tests,
+  -- built once here (no text cast of any row, no per-row construction):
+  -- containment for a rule naming the uid, and a jsonpath for an allow
+  -- bucket naming it. Both are supersets of the exact check
+  -- (acl_allow_user_ids), so nothing is missed. The cost is set by the rows
+  -- REWRITTEN, not by the scan: should a removal exceed the caller's
+  -- statement_timeout (a personal grant indexed into tens of thousands of
+  -- descendants), the whole call rolls back (57014) — the member stays,
+  -- nothing is half-pruned, and the Admin sees the error (ORG-7 record).
+  v_rule_probe := jsonb_build_object('rules', jsonb_build_array(jsonb_build_object('subject', jsonb_build_object('type', 'user', 'id', v_member.uid::text))));
+  v_bucket_probe := format('$.allow.users.*[*] ? (@ == "%s")', v_member.uid::text)::jsonpath;
   UPDATE libraries
      SET acl = acl_without_user_allow(acl, ARRAY[v_member.uid::text]),
          acl_index = acl_index_without_user_allow(acl_index, ARRAY[v_member.uid::text]),
          default_new_acl = acl_without_user_allow(default_new_acl, ARRAY[v_member.uid::text])
    WHERE org_id = v_member.org_id
-     AND strpos(COALESCE(acl::text, '') || COALESCE(acl_index::text, '') || COALESCE(default_new_acl::text, ''), v_member.uid::text) > 0
+     AND (acl @> v_rule_probe OR default_new_acl @> v_rule_probe OR acl_index @? v_bucket_probe)
      AND v_member.uid::text = ANY(acl_allow_user_ids(acl, acl_index) || acl_allow_user_ids(default_new_acl, NULL));
   GET DIAGNOSTICS v_acl_libs = ROW_COUNT;
   UPDATE collections
      SET acl = acl_without_user_allow(acl, ARRAY[v_member.uid::text]),
          acl_index = acl_index_without_user_allow(acl_index, ARRAY[v_member.uid::text])
    WHERE org_id = v_member.org_id
-     AND strpos(COALESCE(acl::text, '') || COALESCE(acl_index::text, ''), v_member.uid::text) > 0
+     AND (acl @> v_rule_probe OR acl_index @? v_bucket_probe)
      AND v_member.uid::text = ANY(acl_allow_user_ids(acl, acl_index));
   GET DIAGNOSTICS v_acl_cols = ROW_COUNT;
   UPDATE documents
      SET acl = acl_without_user_allow(acl, ARRAY[v_member.uid::text]),
          acl_index = acl_index_without_user_allow(acl_index, ARRAY[v_member.uid::text])
    WHERE org_id = v_member.org_id
-     AND strpos(COALESCE(acl::text, '') || COALESCE(acl_index::text, ''), v_member.uid::text) > 0
+     AND (acl @> v_rule_probe OR acl_index @? v_bucket_probe)
      AND v_member.uid::text = ANY(acl_allow_user_ids(acl, acl_index));
   GET DIAGNOSTICS v_acl_docs = ROW_COUNT;
   UPDATE document_sets
      SET acl = acl_without_user_allow(acl, ARRAY[v_member.uid::text]),
          acl_index = acl_index_without_user_allow(acl_index, ARRAY[v_member.uid::text])
    WHERE org_id = v_member.org_id
-     AND strpos(COALESCE(acl::text, '') || COALESCE(acl_index::text, ''), v_member.uid::text) > 0
+     AND (acl @> v_rule_probe OR acl_index @? v_bucket_probe)
      AND v_member.uid::text = ANY(acl_allow_user_ids(acl, acl_index));
   GET DIAGNOSTICS v_acl_sets = ROW_COUNT;
   IF v_acl_libs + v_acl_cols + v_acl_docs + v_acl_sets > 0 THEN

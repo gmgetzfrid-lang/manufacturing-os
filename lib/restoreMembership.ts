@@ -55,16 +55,39 @@ export type RestoreMembershipCheck =
   | { ok: true; summary: RestoreMembershipSummary; auditError: string | null }
   | { ok: false; error: string };
 
-/** Client side: the restore's completion step (the page calls it after
- *  runChunkedRestore, whether the run finished or stopped). Never throws. */
+/** Client side: the restore's completion step. Never throws. The page runs
+ *  it through withRestoreMembershipCheck, so it runs whether the restore
+ *  finished, stopped at a table, or threw. */
 export async function completeRestoreMembership(orgId: string, post: RestorePost): Promise<RestoreMembershipCheck> {
   try {
     const res = await post(`/api/admin/restore/complete?orgId=${encodeURIComponent(orgId)}`, {});
     const body = res.body ?? {};
-    if (!res.ok || !body.summary) return { ok: false, error: String(body.error ?? `HTTP ${res.status}`) };
+    if (!res.ok || !body.summary) {
+      const auditNote = typeof body.auditError === "string" ? ` The membership check could not be written to the audit log: ${body.auditError}` : "";
+      return { ok: false, error: `${String(body.error ?? `HTTP ${res.status}`)}${auditNote}` };
+    }
     return { ok: true, summary: body.summary as RestoreMembershipSummary, auditError: typeof body.auditError === "string" ? body.auditError : null };
   } catch (e) {
     return { ok: false, error: (e as Error)?.message ?? String(e) };
+  }
+}
+
+/** NEDGE-16 (fix pass): runs the restore and ends with the membership check
+ *  once the run has STARTED — whether it returns or throws. A /begin that
+ *  stops part-way (a refused placeholder, or a response lost on the way
+ *  back) keeps the inactive placeholders it already created, which is
+ *  exactly when the operator must be told. The check is handed to onCheck
+ *  before the run's result is returned or its error is rethrown. */
+export async function withRestoreMembershipCheck<T>(
+  orgId: string,
+  post: RestorePost,
+  run: () => Promise<T>,
+  onCheck: (check: RestoreMembershipCheck) => void,
+): Promise<T> {
+  try {
+    return await run();
+  } finally {
+    onCheck(await completeRestoreMembership(orgId, post));
   }
 }
 

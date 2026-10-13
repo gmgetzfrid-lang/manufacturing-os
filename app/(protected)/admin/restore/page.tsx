@@ -37,7 +37,7 @@ import {
   type BackupArchiveRead,
 } from "@/lib/dataRestore";
 import { restoreUploadRequest, isWorkspaceLogoKey } from "@/lib/storageKey";
-import { completeRestoreMembership, restoreMembershipSentence, type RestoreMembershipCheck } from "@/lib/restoreMembership";
+import { withRestoreMembershipCheck, restoreMembershipSentence, type RestoreMembershipCheck } from "@/lib/restoreMembership";
 
 type ZipLike = {
   files: Record<string, { dir: boolean }>;
@@ -176,7 +176,7 @@ export default function RestorePage() {
   const applyRestore = async () => {
     const envelope = envelopeRef.current;
     if (!activeOrgId || !envelope || !plan) return;
-    setError(null);
+    setError(null); setMembershipCheck(null);
     // Fix pass 5: plan again against the members as they are NOW — a run
     // /begin stopped (a refused placeholder) kept the placeholders it made,
     // and a re-run links them, so the plan made at drop time would overstate
@@ -227,13 +227,15 @@ export default function RestorePage() {
         confirmLabel: "Apply restore",
       });
       if (!ok) return;
-      const result = await runChunkedRestore({ orgId: activeOrgId, envelope, plan: fresh, orgNameChoice: keepName, post, onProgress });
+      // NEDGE-16: the completion step — who is active now (restored people
+      // are inactive and hear nothing until reactivated), shown and audited
+      // — runs once the run has started, whether it returns or throws.
+      const result = await withRestoreMembershipCheck(activeOrgId, post,
+        async () => await runChunkedRestore({ orgId: activeOrgId, envelope, plan: fresh, orgNameChoice: keepName, post, onProgress }),
+        setMembershipCheck);
       idRemapRef.current = result.idRemap; // "Put the files back" follows the org remap
       setApplyProgress((p) => ({ ...p, phase: "done" }));
       setApplyResult(result);
-      // NEDGE-16: the completion step — who is active now (restored people
-      // are inactive and hear nothing until reactivated), shown and audited.
-      setMembershipCheck(await completeRestoreMembership(activeOrgId, post));
     } catch (e) {
       setApplyProgress((p) => ({ ...p, phase: "error" }));
       setError((e as Error).message);
@@ -500,34 +502,7 @@ export default function RestorePage() {
 
           {/* Apply / result */}
           {applyResult ? (
-            <>
-              <RestoreResultPanel result={applyResult} />
-              {membershipCheck && (
-                <div
-                  role="status"
-                  data-testid="restore-membership-check"
-                  className={`mt-3 rounded-2xl border p-4 text-[11px] leading-relaxed ${
-                    !membershipCheck.ok || membershipCheck.summary.inactiveMembers > 0
-                      ? "border-amber-200 bg-amber-50 text-amber-900"
-                      : "border-emerald-200 bg-emerald-50 text-emerald-900"
-                  }`}
-                >
-                  {membershipCheck.ok ? (
-                    <>
-                      <b>Members:</b> {restoreMembershipSentence(membershipCheck.summary)}
-                      {membershipCheck.summary.inactiveMembers > 0 && (
-                        <> <Link href="/admin/users" className="font-bold underline">Open Users</Link>.</>
-                      )}
-                      {membershipCheck.auditError && (
-                        <div className="mt-1 text-rose-800">The membership check could not be written to the audit log: {membershipCheck.auditError}</div>
-                      )}
-                    </>
-                  ) : (
-                    <><b>Members:</b> {membershipCheck.error}</>
-                  )}
-                </div>
-              )}
-            </>
+            <RestoreResultPanel result={applyResult} />
           ) : !applying && (
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
               <div className="flex items-start gap-3">
@@ -542,6 +517,35 @@ export default function RestorePage() {
                   <Database className="w-4 h-4" /> Check &amp; restore {fmtNum(plan.counts.totalRows)} records
                 </button>
               </div>
+            </div>
+          )}
+
+          {/* NEDGE-16: the membership check, shown whether the run returned or
+              threw — a /begin that stopped part-way keeps the inactive
+              placeholders it created. */}
+          {membershipCheck && (
+            <div
+              role="status"
+              data-testid="restore-membership-check"
+              className={`mt-3 rounded-2xl border p-4 text-[11px] leading-relaxed ${
+                !membershipCheck.ok || membershipCheck.summary.inactiveMembers > 0
+                  ? "border-amber-200 bg-amber-50 text-amber-900"
+                  : "border-emerald-200 bg-emerald-50 text-emerald-900"
+              }`}
+            >
+              {membershipCheck.ok ? (
+                <>
+                  <b>Members:</b> {restoreMembershipSentence(membershipCheck.summary)}
+                  {membershipCheck.summary.inactiveMembers > 0 && (
+                    <> <Link href="/admin/users" className="font-bold underline">Open Users</Link>.</>
+                  )}
+                  {membershipCheck.auditError && (
+                    <div className="mt-1 text-rose-800">The membership check could not be written to the audit log: {membershipCheck.auditError}</div>
+                  )}
+                </>
+              ) : (
+                <><b>Members:</b> {membershipCheck.error}</>
+              )}
             </div>
           )}
 
