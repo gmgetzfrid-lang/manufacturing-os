@@ -274,12 +274,16 @@ describe("DCK-5 — forceReleaseDocument writes the audit row itself, after the 
     expect(state.emits).toHaveLength(2);
     expect(state.emits[0]).toMatchObject({ kind: "checkout_force_released", audience: { involved: ["vic"] } });
     expect(state.emits[1]).toMatchObject({
-      kind: "checkout_message", category: "watched",
+      // fix pass: its own lock kind, not the thread's chat kind (checkout_message)
+      kind: "checkout_force_released_fyi", category: "watched",
       title: "P-4412 was force-released by ctl",
       resource: { type: "document", id: "d1" }, link: "/documents/lib-1?doc=d1",
       actorUserId: "ctl", audience: { followers: true, exclude: ["vic"] },
       metadata: { forceRelease: true, followerNotice: true },
+      // until 20261206 declares the kind the rail refuses the bell row; no email without it
+      emailOnlyWithBell: true,
     });
+    expect(state.emits[1].kind).not.toBe("checkout_message");
     // the reason stays in the body (never a subject line — NEDGE-6), and the holder's words are not reused
     expect(String(state.emits[1].title)).not.toContain("walkdown");
     expect(String(state.emits[1].body)).toContain('"walkdown finished, drawing abandoned"');

@@ -38,6 +38,7 @@ export type NotificationKind =
   | "checkout_released"       // LEGACY rows only (TAX-17, N15): what the stale-checkout escalation was written as before 20261206 re-filed it; nothing writes it now
   | "checkout_stale_escalation" // (to Admin/DocCtrl) a checkout has been held for weeks — review it (the maintenance cron's stale-checkout escalation; was checkout_released — TAX-17)
   | "checkout_force_released" // your checkout was force-released by someone else (lib/checkoutEpisodes.ts; was checkout_released)
+  | "checkout_force_released_fyi" // a document you WATCH was force-released — the watchers' FYI beside the holder's notice (lib/checkoutEpisodes.ts — PROD-17, N15)
   | "checkout_auto_released"  // your ad-hoc checkout expired and was released automatically (lib/projects.ts; was checkout_released + metadata.autoReleasedSessionId)
   | "overlap_advisory"        // two people hold live edit intents on the same doc
   | "branch_open"             // an unreconciled revision branch was opened

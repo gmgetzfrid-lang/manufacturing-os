@@ -791,10 +791,12 @@ export async function forceReleaseDocument(input: {
 
   // PROD-17 (notifications N15): the document's WATCHERS hear it too — in
   // their own words (the holder's "your session has ended" is false for
-  // them), minus the holders the notice above already told. An FYI on the
-  // document's checkout thread (checkout_message — the thread's own system
-  // line, told to its watchers); the dispatcher drops a watcher who may not
-  // discover the document (NEDGE-6). The reason stays in the body.
+  // them), minus the holders the notice above already told. Its own kind,
+  // checkout_force_released_fyi (fix pass: not checkout_message, the
+  // thread's bell-only chat kind); the dispatcher drops a watcher who may
+  // not discover the document (NEDGE-6). The reason stays in the body. The
+  // kind is declared by 20261206 — until that paste the rail refuses the
+  // row, and emailOnlyWithBell keeps the email from going without it.
   try {
     const { emit } = await import("@/lib/notify/dispatch");
     const { data: doc } = await supabase.from("documents").select("document_number, title, name, library_id")
@@ -804,7 +806,7 @@ export async function forceReleaseDocument(input: {
     await emit({
       orgId: input.orgId,
       category: "watched",
-      kind: "checkout_message",
+      kind: "checkout_force_released_fyi",
       title: `${label} was force-released by ${input.actorName}`,
       body: `${input.actorName} force-released the checkout on ${label}${input.reason ? `: "${input.reason}"` : ""}. Every session on it has ended; the document can be checked out again.`,
       link: d?.library_id ? `/documents/${d.library_id}?doc=${input.documentId}` : undefined,
@@ -813,6 +815,7 @@ export async function forceReleaseDocument(input: {
       actorName: input.actorName,
       audience: { followers: true, exclude: victims },
       metadata: { forceRelease: true, followerNotice: true },
+      emailOnlyWithBell: true,
     });
   } catch (e) {
     console.warn("[forceRelease] follower notify failed (non-blocking)", e);

@@ -549,11 +549,12 @@ export async function notify(input: NotificationInput): Promise<void> {
 - `scanStaleHolds`: the nudge's bell rows go through `emit()`'s new `inappRetry: { retryKey: "hold-aging:<hold>:<expectation>" }`, which routes them through `notifyCompliance` (the hold kinds are not compliance kinds).
   - The dedupe is now per recipient: once a hold's nudge has rows, the scan reads its dead letters (`loadScanRetryPlan`, 7 days; `ScanRetryPlan.has` new) and sends again only to the recipients its latest run lost who still have no row, bell only.
   - A pool member who joined since is not nudged about an old miss, as before.
+  - Fix pass 2: when the dead letters cannot be read (`plan.unreadable` — the `audit_logs` read failed), the hold is no longer skipped (`plan.has` was false, so a recipient whose row dead-lettered stayed un-nudged until the hold's expectation changed — marked sent in effect). The bell row goes to every current recipient who still has no row, bell only (the email went the first time). A pool member who joined since may then be nudged; that is the `ScanRetryPlan` contract ("the dead letters could not be read: every row sends every notice"), and the plan's read failure is already a note in the scan's line.
 - Both scans run inside `runComplianceScan` (the cron's step 6, unchanged). Their bell notices are now counted attempted / delivered / dead-lettered in `result.complianceBellNotices`, and their shortfall is reported in the run's errors.
 
 **Tests.**
 - `lib/__tests__/n15EmitRouting.test.ts` "scanDistributionAcks": retry keys; a dead-lettered nudge is sent again next run to that recipient only.
-- `lib/__tests__/holds.test.ts` "DELIV-7 dw1 (notifications N15)": the retry key; the lost recipient re-sent bell-only; nobody else; no dead letter means no re-send (REGRESSION).
+- `lib/__tests__/holds.test.ts` "DELIV-7 dw1 (notifications N15)": the retry key; the lost recipient re-sent bell-only; nobody else; no dead letter means no re-send (REGRESSION). "DELIV-7 dw1 (N15 fix pass 2)": an unreadable plan (the `audit_logs` read fails) re-sends the bell row to the recipient with no row, with the retry key, and once everyone has a row sends nothing more.
 - `lib/__tests__/n15EmitRouting.test.ts`: `emit()`'s routing.
 
 **Done-when.**

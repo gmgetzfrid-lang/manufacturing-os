@@ -3,8 +3,8 @@
 //
 //   · TAX-17 / PROD-17: notification_kinds() re-created from its NEWEST
 //     definition (found by scanning the sequence below this file) with
-//     exactly TWO rows added — checkout_stale_escalation and doc_retired, in
-//     KIND_META order, with the registry's compliance flags — nothing removed
+//     exactly THREE rows added — checkout_stale_escalation,
+//     checkout_force_released_fyi and doc_retired, in KIND_META order, with the registry's compliance flags — nothing removed
 //     (lineDiff); the escalation's backlog re-filed by its discriminator
 //     (staleSessionId);
 //   · the guard stops without 20261160 AND without 20261191 (its kinds);
@@ -96,9 +96,11 @@ describe("20261206 — one paste for the SQL editor (DEC-30)", () => {
     expect(CODE).not.toMatch(/DROP TRIGGER|CREATE TRIGGER/);
   });
 
-  it("states the paste / deploy order: deploy first, then paste (the old cron's dedupe reads checkout_released only), and what that costs doc_retired", () => {
+  it("states the paste / deploy order: deploy first, then paste (the old cron's dedupe reads checkout_released only), and what that costs the two watcher FYIs — no bell row and no email", () => {
     expect(SQL).toMatch(/DEPLOY the N15 app FIRST, then paste this file/);
     expect(SQL).toMatch(/retirement FYI \(doc_retired, written from the browser by the\s*\n--\s+supersede door\) is refused by 20261160's rail/);
+    expect(SQL).toMatch(/so does their force-release FYI \(checkout_force_released_fyi\)/);
+    expect(SQL).toMatch(/emailOnlyWithBell, so a watcher whose bell row was\s*\n--\s+refused gets NO email either/);
   });
 
   it("the guard also stops when 20261191 has not been pasted (its notification_kinds() declares transmittal_issued and doc_recalled)", () => {
@@ -113,7 +115,7 @@ describe("20261206 — one paste for the SQL editor (DEC-30)", () => {
   });
 });
 
-describe("20261206 — notification_kinds() from its NEWEST definition, plus checkout_stale_escalation (TAX-17) and doc_retired (PROD-17)", () => {
+describe("20261206 — notification_kinds() from its NEWEST definition, plus checkout_stale_escalation (TAX-17), checkout_force_released_fyi and doc_retired (PROD-17)", () => {
   const before = definitionsOf("notification_kinds", FILES.filter((f) => f < FILE)).at(-1)!;
   const mine = definitionsOf("notification_kinds", [FILE]);
 
@@ -122,16 +124,26 @@ describe("20261206 — notification_kinds() from its NEWEST definition, plus che
     expect(mine).toHaveLength(1);
   });
 
-  it("removes no line and adds exactly the two rows, each right after its neighbour in KIND_META, with the registry's flags", () => {
+  it("removes no line and adds exactly the three rows, each right after its neighbour in KIND_META, with the registry's flags", () => {
     const d = lineDiff(before[1], mine[0][1]);
     expect(d.onlyInA).toEqual([]);
     expect(d.onlyInB.map((l) => l.trim())).toEqual([
       `('checkout_stale_escalation',        ${KIND_META.checkout_stale_escalation.compliance}),`,
+      `('checkout_force_released_fyi',      ${KIND_META.checkout_force_released_fyi.compliance}),`,
       `('doc_retired',                      ${KIND_META.doc_retired.compliance}),`,
     ]);
     const kinds = valuesOf(mine[0][1]).map(([k]) => k);
     expect(kinds.indexOf("checkout_stale_escalation")).toBe(kinds.indexOf("checkout_released") + 1);
+    expect(kinds.indexOf("checkout_force_released_fyi")).toBe(kinds.indexOf("checkout_force_released") + 1);
     expect(kinds.indexOf("doc_retired")).toBe(kinds.indexOf("doc_recalled") + 1);
+  });
+
+  it("checkout_force_released_fyi is a lock notice under Locks — checkout_handoff's flags (an FYI, not an action, not compliance), never the thread's chat kind (fix pass)", () => {
+    const { section, actionRequired, compliance, icon, tone, group } = KIND_META.checkout_handoff;
+    expect(KIND_META.checkout_force_released_fyi).toEqual({ section, actionRequired, compliance, icon, tone, group });
+    expect(KIND_META.checkout_force_released_fyi.group).toBe("locks");
+    expect(KIND_META.checkout_force_released_fyi.icon).toBe("Lock");
+    expect(valuesOf(mine[0][1]).find(([k]) => k === "checkout_force_released_fyi")).toEqual(["checkout_force_released_fyi", false]);
   });
 
   it("doc_retired is doc_recalled's badge, icon and group but NOT a compliance kind (PROD-17: a watcher's FYI stays out of the digest and is deletable)", () => {
@@ -149,7 +161,7 @@ describe("20261206 — notification_kinds() from its NEWEST definition, plus che
   it("its own probe states its own list's counts", () => {
     const values = valuesOf(mine[0][1]);
     const n = values.length, c = values.filter(([, x]) => x).length;
-    expect(n).toBe(valuesOf(before[1]).length + 2);
+    expect(n).toBe(valuesOf(before[1]).length + 3);
     expect(SQL).toContain(`COUNT(*) = ${n} AND COUNT(DISTINCT kind) = ${n} AND COUNT(*) FILTER (WHERE compliance) = ${c}`);
   });
 
@@ -175,6 +187,13 @@ describe("20261206 — notification_i_wrote(): a member confirms only their OWN 
     expect(b).toMatch(/n\.resource_id IS NOT DISTINCT FROM p_resource_id/);
     expect(b).toMatch(/GREATEST\(COALESCE\(p_since, now\(\)\), now\(\) - interval '1 hour'\)/);
     expect(b).not.toMatch(/SELECT\s+n\.\w+\s*,/); // never returns a row's columns
+  });
+  it("the schema-health panel probes it (fix pass 2): a uuid argument that refuses the probe value, so the body never runs", async () => {
+    const { EXPECTED_FUNCTIONS } = await import("@/lib/schemaExpectations");
+    const f = EXPECTED_FUNCTIONS.find((x) => x.fn === "notification_i_wrote");
+    expect(f).toMatchObject({ signature: "notification_i_wrote(uuid, uuid, text, text, text, timestamptz)", migration: FILE });
+    expect(f!.probeArgs.p_org).toBe("schema-health-probe");
+    expect(Object.keys(f!.probeArgs).sort()).toEqual(["p_kind", "p_org", "p_resource_id", "p_since", "p_title", "p_user"]);
   });
   it("the app asks it with the same argument names", () => {
     const src = readFileSync(join(process.cwd(), "lib/complianceNotify.ts"), "utf8");

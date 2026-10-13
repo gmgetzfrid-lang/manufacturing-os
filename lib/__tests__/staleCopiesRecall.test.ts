@@ -138,6 +138,9 @@ describe("recallRetiredDocument (DIST-1)", () => {
       resource: { type: "document", id: "d1" }, actorUserId: "actor",
       audience: { followers: true, exclude: ["u1"] },
       metadata: { retirement: true, followerNotice: true, newStatus: "Void" },
+      // fix pass 2: doc_retired is declared by 20261206, pasted after the
+      // deploy — a refused bell row sends no email either
+      emailOnlyWithBell: true,
     });
     expect(String(f.body)).toContain("doccontrol retired P-101 (void)");
     expect(String(f.body)).not.toMatch(/your copy/i);

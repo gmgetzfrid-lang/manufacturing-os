@@ -7,7 +7,7 @@
 // It wraps the existing notifyMany()/queueEmail() helpers rather than replacing
 // them, so producers can migrate to emit() one at a time with zero regression.
 
-import { notifyMany, notifyBatchWithReason, type NotificationKind } from "@/lib/inAppNotifications";
+import { notify, notifyMany, notifyBatchWithReason, type NotificationKind } from "@/lib/inAppNotifications";
 import { queueEmail } from "@/lib/notifications";
 import { supabase } from "@/lib/supabase";
 import { renderNotificationEmail, requireEmailOrigin } from "@/lib/emailRender";
@@ -75,6 +75,14 @@ export interface EmitInput {
    *  scan's notice passes its `retryKey` (`<scan>:<row id>`) so its dead
    *  letter is sent again by the scan's next run (loadScanRetryPlan). */
   inappRetry?: { retryKey?: string };
+  /** notifications N15 (fix pass — TAX-17 / PROD-17 deploy window): email
+   *  only the recipients whose bell row LANDED. For a kind a later paste
+   *  declares (20261206), written from the browser before that paste:
+   *  20261160's rail refuses the row as an undeclared kind, and without this
+   *  the email would still go — a notice the reader cannot find in the app.
+   *  The bell rows are written one per recipient (inappOneStatement is
+   *  ignored); with no in-app channel it has no effect. */
+  emailOnlyWithBell?: boolean;
   /** An explicit subject / body is sent as given, to everyone. Without one,
    *  the subject is decided per recipient (emailSubjectFor): the title for
    *  someone the producer named, broadcastSubject(category, resource.type)
@@ -184,10 +192,25 @@ export function emailSubjectFor(
 
 /** Resolve the deduped recipient set for an event: the union of every
  *  audience source, minus the actor, limited to ACTIVE members of the org
- *  (NEDGE-3 — once, centrally, involved[] included). emit() is its only
- *  caller today; it is exported so a "who will this notify" preview reads
- *  the same set the send uses (no such preview exists yet — PROD-7). */
+ *  (NEDGE-3 — once, centrally, involved[] included). emit() reads the same
+ *  set (resolveAudience); it is exported so a "who will this notify" preview
+ *  reads the set the send uses (no such preview exists yet — PROD-7). A
+ *  recipient sent the REDACTED notice (resolveAudience) is in it: they get a
+ *  row too. */
 export async function resolveRecipients(input: EmitInput): Promise<string[]> {
+  const { full, redacted } = await resolveAudience(input);
+  return [...full, ...redacted];
+}
+
+/** emit()'s audience, in two parts: `full` — the people sent the notice as
+ *  the producer wrote it; `redacted` — a document's followers the discover
+ *  check could not settle (it ran and FAILED — a 503, a thrown fetch, an
+ *  expired token), sent redactedNotice() instead (NEDGE-6, N15 fix pass).
+ *  Before N15 every follower was told; a follower the check could not
+ *  settle is neither cut off (a hold's stop-work notice must reach the
+ *  people working the document) nor told the document's name or the
+ *  reason (they might not be allowed to know it exists). */
+export async function resolveAudience(input: EmitInput): Promise<{ full: string[]; redacted: string[] }> {
   const ids = new Set<string>();
   (input.audience.involved ?? []).forEach((u) => u && ids.add(u));
 
@@ -205,17 +228,59 @@ export async function resolveRecipients(input: EmitInput): Promise<string[]> {
   // private document, or an ACL that no longer includes them, takes them out
   // (discoveringAmong; controllers are never dropped, DEC-43). Someone the
   // producer named, a role pool and a project roster are the producer's
-  // choice and are not filtered here.
+  // choice and are not filtered here. A check that FAILS settles nobody but
+  // the controllers: the rest are moved to the redacted notice (fix pass).
   const followerOnly = followers.filter((u) => u && !ids.has(u) && u !== input.actorUserId);
   followers.forEach((u) => u && ids.add(u));
+  const unsettled = new Set<string>();
   if (input.resource.type === "document" && followerOnly.length > 0) {
-    const kept = new Set((await discoveringAmong(input.orgId, input.resource.id, followerOnly)).uids);
-    followerOnly.forEach((u) => { if (!kept.has(u)) ids.delete(u); });
+    const filter = await discoveringAmong(input.orgId, input.resource.id, followerOnly);
+    const kept = new Set(filter.uids);
+    followerOnly.forEach((u) => {
+      if (kept.has(u)) return;
+      ids.delete(u);
+      if (filter.outcome === "failed") unsettled.add(u);
+    });
+    if (unsettled.size > 0) {
+      console.warn(`[notify] ${unsettled.size} follower(s) of document ${input.resource.id} the discover check could not settle get the ${input.kind} notice without its details`);
+    }
   }
 
-  if (input.actorUserId) ids.delete(input.actorUserId);
-  (input.audience.exclude ?? []).forEach((u) => ids.delete(u));
-  return activeMembersOf(input.orgId, Array.from(ids));
+  if (input.actorUserId) { ids.delete(input.actorUserId); unsettled.delete(input.actorUserId); }
+  (input.audience.exclude ?? []).forEach((u) => { ids.delete(u); unsettled.delete(u); });
+  const active = new Set(await activeMembersOf(input.orgId, [...ids, ...unsettled]));
+  return {
+    full: [...ids].filter((u) => active.has(u)),
+    redacted: [...unsettled].filter((u) => active.has(u)),
+  };
+}
+
+/** The redacted title of a kind whose generic category subject would hide
+ *  what the reader must do (a hold is a stop-work signal). No document name,
+ *  no reason. */
+const REDACTED_TITLE: Partial<Record<NotificationKind, string>> = {
+  hold_opened: "HOLD placed on a document you follow",
+  hold_released: "Hold released on a document you follow",
+};
+
+/** NEDGE-6 (N15 fix pass): the notice a follower the discover check could
+ *  not settle receives — the event's kind, resource, link and channels, but
+ *  a generic title and body (REDACTED_TITLE, else broadcastSubject), no
+ *  document label, no free-text reason, none of the producer's metadata or
+ *  email copy. Opening the link shows the document only to someone allowed
+ *  to read it (the page's own read). NEDGE-6 done-when 1's redaction model:
+ *  nothing leaks, nothing is lost. Exported for the test. */
+export function redactedNotice(input: EmitInput): EmitInput {
+  const title = REDACTED_TITLE[input.kind] ?? broadcastSubject(input.category, input.resource.type);
+  const body = `Open it to see which ${input.resource.type === "document" ? "document" : "item"} and what changed. The details are left out of this notice because whether you may see it could not be confirmed when it was sent.`;
+  return {
+    ...input,
+    title,
+    body,
+    audience: {},
+    metadata: { redacted: true },
+    email: { subject: title, bodyText: `${title}\n\n${body}` },
+  };
 }
 
 /** What one emit() reached (DELIV-7 dw4): how many recipients the audience
@@ -230,8 +295,8 @@ export interface EmitResult {
  *  never throws for a refused row; a caller that needs to know reads the
  *  result. */
 export async function emit(input: EmitInput): Promise<EmitResult> {
-  const recipients = await resolveRecipients(input);
-  if (recipients.length === 0) {
+  const { full, redacted } = await resolveAudience(input);
+  if (full.length + redacted.length === 0) {
     // DELIV-7 dw4: a fan-out that reaches nobody is observable, not silent.
     console.warn("[notify] emit reached no recipient", {
       orgId: input.orgId, kind: input.kind, category: input.category,
@@ -243,14 +308,34 @@ export async function emit(input: EmitInput): Promise<EmitResult> {
     });
     return { recipients: 0 };
   }
+  const result = await deliver(input, full);
+  if (redacted.length > 0) {
+    // NEDGE-6 (N15 fix pass): the followers a failed discover check could not
+    // settle — one row and one email each, without the document's name.
+    const r = await deliver(redactedNotice(input), redacted);
+    if (r.inapp) {
+      result.inapp = {
+        sent: (result.inapp?.sent ?? 0) + r.inapp.sent,
+        failed: (result.inapp?.failed ?? 0) + r.inapp.failed,
+      };
+    }
+  }
+  return { ...result, recipients: full.length + redacted.length };
+}
+
+/** One notice to `recipients` on every enabled channel (emit's body). */
+async function deliver(input: EmitInput, recipients: string[]): Promise<EmitResult> {
+  if (recipients.length === 0) return { recipients: 0 };
   const channels = input.channels ?? ["inapp", "email"];
   const result: EmitResult = { recipients: recipients.length };
+  // emailOnlyWithBell: the recipients whose bell row landed (null: everyone)
+  let bellLanded: Set<string> | null = null;
 
   // 1) In-app bell — reuse the existing fan-out helper (it also drops the actor
   //    and dedupes recipients defensively), or, when the producer asks for it,
   //    ONE statement for every recipient (inappOneStatement). Either way the
   //    result says how many bell rows landed (DELIV-7 dw4).
-  if (channels.includes("inapp") && input.inappOneStatement) {
+  if (channels.includes("inapp") && input.inappOneStatement && !input.emailOnlyWithBell) {
     const { landed, error } = await notifyBatchWithReason(recipients.map((uid) => ({
       orgId: input.orgId,
       userId: uid,
@@ -289,6 +374,29 @@ export async function emit(input: EmitInput): Promise<EmitResult> {
     }, opts)));
     const sent = landed.filter(Boolean).length;
     result.inapp = { sent, failed: landed.length - sent };
+    if (input.emailOnlyWithBell) bellLanded = new Set(recipients.filter((_, i) => landed[i]));
+  } else if (channels.includes("inapp") && input.emailOnlyWithBell) {
+    // one typed row per recipient, as notifyMany writes them, answering
+    // which landed (the email follows only those)
+    const landed = await Promise.all(recipients.map((uid) => notify({
+      orgId: input.orgId,
+      userId: uid,
+      kind: input.kind,
+      title: input.title,
+      body: input.body,
+      link: input.link,
+      resourceType: input.resource.type,
+      resourceId: input.resource.id,
+      actorUserId: input.actorUserId,
+      actorName: input.actorName,
+      metadata: input.metadata,
+    })));
+    const sent = landed.filter(Boolean).length;
+    result.inapp = { sent, failed: landed.length - sent };
+    bellLanded = new Set(recipients.filter((_, i) => landed[i]));
+    if (bellLanded.size < recipients.length) {
+      console.warn(`[notify] ${recipients.length - bellLanded.size} ${input.kind} bell row(s) refused — no email for those recipients (emailOnlyWithBell)`);
+    }
   } else if (channels.includes("inapp")) {
     result.inapp = await notifyMany({
       orgId: input.orgId,
@@ -307,8 +415,9 @@ export async function emit(input: EmitInput): Promise<EmitResult> {
 
   // 2) Email — queueEmail already checks notification_preferences + dedupes
   //    within a 60s window, so per-user opt-outs are honored automatically.
-  if (channels.includes("email")) {
-    const emailByUid = await emailsFor(input.orgId, recipients);
+  const mailTo = bellLanded ? recipients.filter((u) => bellLanded!.has(u)) : recipients;
+  if (channels.includes("email") && mailTo.length > 0) {
+    const emailByUid = await emailsFor(input.orgId, mailTo);
     const resourceType = EMAILABLE.includes(input.resource.type)
       ? (input.resource.type as "ticket" | "project" | "document")
       : undefined;
@@ -327,7 +436,7 @@ export async function emit(input: EmitInput): Promise<EmitResult> {
     }
     const orgName = origin && !input.email?.bodyHtml ? await orgNameFor(input.orgId) : null;
     await Promise.all(
-      recipients.map((uid) => {
+      mailTo.map((uid) => {
         const to = emailByUid.get(uid);
         if (!to) return Promise.resolve();
         // NEDGE-6: the subject is decided per recipient — never the title for

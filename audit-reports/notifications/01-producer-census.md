@@ -314,7 +314,7 @@ lib/ticketTransitions.ts:130-132 —
 **Partial (2026-10-13, notifications Round G).** Package N15 RECIPIENT VISIBILITY AND NAMES, branch `fleet/N15-recipient-visibility` (base `89c9aaa`) — done-whens 1 and 4 as `DEC-100` item 2 (ratified) narrows them.
 
 - Done-when 1, superseded for the personal kinds (`DEC-100` item 2, ratified): every non-personal document-scoped emit already passes `followers: true` (the supersede notice, the hold pair). The follower notice for a force-release and a retirement is `PROD-17`'s, landed here.
-- Done-when 4: `lib/__tests__/recipientDiscovery.test.ts` "PROD-4 done-whens 1 and 4" censuses, from the source, every `emit()` in `app/` and `lib/` that passes `followers: true` on a `document` resource, by kind (`doc_superseded`, `hold_opened`, `hold_released`, `checkout_message`, `doc_recalled`). For each kind it asserts that a `subscriptions` row on the document puts the watcher in `resolveRecipients`, with the discover check registered and passing.
+- Done-when 4: `lib/__tests__/recipientDiscovery.test.ts` "PROD-4 done-whens 1 and 4" censuses, from the source, every `emit()` in `app/` and `lib/` that passes `followers: true` on a `document` resource, by kind (`doc_superseded`, `hold_opened`, `hold_released`, and `PROD-17`'s `checkout_force_released_fyi` and `doc_retired` — the force-release FYI rode `checkout_message` until fix pass 2). For each kind it asserts that a `subscriptions` row on the document puts the watcher in `resolveRecipients`, with the discover check registered and passing.
 
 **Done-when.**
 - ✓ 1, as `DEC-100` item 2 narrows it.
@@ -1108,7 +1108,8 @@ lib/inAppNotifications.ts:26 —
 **What landed.**
 - `lib/checkoutEpisodes.ts` `forceReleaseDocument`: after the holders' notice, a second `emit()` to `audience: { followers: true, exclude: <the holders told> }`.
   - Title "<doc> was force-released by <actor>"; the reason in the body only, never the title (NEDGE-6).
-  - Kind `checkout_message`, category `watched`: the checkout thread's own system line, told to its watchers (FYI).
+  - Kind `checkout_force_released_fyi` (fix pass 2 — new, declared in `KIND_META`, the union and `20261206`), category `watched`: a lock notice under Locks (Lock icon, not an action, not a compliance kind). *(Corrected at fix pass 2: it rode `checkout_message`, the checkout thread's bell-only chat kind — so the FYI showed under the Mentions filter with a chat icon, and gave that kind an email leg for the first time; the kind overloading `TAX-13` removed.)*
+  - Both watcher FYIs pass `emailOnlyWithBell` (fix pass 2): `emit()` emails only the watchers whose bell row landed. Until `20261206` is pasted the rail refuses both kinds from the browser, so in that window a watcher gets neither the row nor the email (never an email the app cannot show).
 - `lib/staleCopies.ts` `recallRetiredDocument`: before the copy-holder recall, an `emit()` to `audience: { followers: true, exclude: <the copy holders> }`.
   - Title "<doc> was retired (<status>)"; the body says who retired it and any replacement note, and never "your copy".
   - Kind `doc_retired` (fix pass — new, declared in `KIND_META`, the union and `20261206`'s `notification_kinds()`): `doc_recalled`'s badge, icon and group, but FYI and NOT a compliance kind, on the `watched` category. So the watcher's own email toggle governs its email, the daily compliance digest does not list it, a read one can be deleted (`20261161` keeps only compliance kinds dismiss-only), and `emit()` does not retry it as an obligation. *(Corrected at the fix pass: it rode `doc_recalled`, a compliance kind — so the FYI would have been in the compliance digest, gated by `compliance_digest` rather than the watcher's toggle, dismiss-only, and dead-lettered as an obligation; the claim that "the watcher's own email toggle governs it" held for the direct email only.)*
@@ -1118,7 +1119,9 @@ lib/inAppNotifications.ts:26 —
 - `lib/notify/dispatch.ts`: `audience.exclude`.
 
 **Tests.**
-- `lib/__tests__/checkoutRoundF.test.ts` "PROD-17": the follower notice's audience, words, reason placement and kind.
+- `lib/__tests__/checkoutRoundF.test.ts` "PROD-17": the follower notice's audience, words, reason placement and kind (`checkout_force_released_fyi`, never `checkout_message`; `emailOnlyWithBell`).
+- `lib/__tests__/recipientDiscovery.test.ts` "TAX-17 / PROD-17 deploy window (fix pass 2)": with the rail refusing the kind, `emailOnlyWithBell` sends no email; reproduced without it (the email went with no row); after the paste one row and one email each; both FYIs pass it.
+- `lib/__tests__/notifStaleEscalationMigration.test.ts` (fix pass 2): `checkout_force_released_fyi` is `checkout_handoff`'s flags (Locks, Lock), the row after `checkout_force_released`, lineDiff-pinned.
 - `lib/__tests__/staleCopiesRecall.test.ts` "PROD-17": the retirement notice under `doc_retired`; (fix pass) the checkout holder and the open packages' owners excluded with the copy holders; a door that sends neither keeps them; the recall and its audit row unchanged.
 - `lib/__tests__/recipientDiscovery.test.ts`: a subscriptions row puts the watcher in `resolveRecipients` for these kinds. (Fix pass) "PROD-17 (fix pass)", through the real dispatcher: a watcher who holds the checkout and a watcher who owns a pinning package each get exactly their personal notice, the plain watcher exactly one `doc_retired`; `doc_retired` is not in the digest set and the delete policy's registry flags it non-compliance.
 - `lib/__tests__/maintenanceDrain.test.ts` "PROD-17 (notifications N15 fix pass)": the cron's compliance digest does not list a watcher's `doc_retired`; it still lists a copy holder's `doc_recalled`.
@@ -1132,6 +1135,6 @@ lib/inAppNotifications.ts:26 —
 - ✓ Done-when 2: a test asserts a subscriptions row puts the watcher in the notice's recipients.
 
 **Scope / residual.** Stays OPEN on done-when 1's other retirement doors. Owner: document-control (P23 holds `changeDocumentStatus`; the integrator routes split / merge). One call fixes each door: `lib/staleCopies.ts` `recallRetiredDocument({ … newStatus })`, which now carries the follower notice; a door that does not tell the checkout holder or the package owners passes `personallyToldElsewhere: { checkoutHolder: false, packageOwners: false }`.
-- For the integrator to ratify: `doc_retired` is a second row in `20261206`, whose number the brief reserved for `notification_kinds()` plus one kind. Until `20261206` is pasted (it is pasted AFTER the N15 deploy, `TAX-17`), the browser's `doc_retired` rows are refused by `20261160`'s rail and only logged, so watchers miss the retirement FYI in that window.
+- For the integrator to ratify: `doc_retired` and (fix pass 2) `checkout_force_released_fyi` are a second and third row in `20261206`, whose number the brief reserved for `notification_kinds()` plus one kind. Until `20261206` is pasted (it is pasted AFTER the N15 deploy, `TAX-17`), the browser's rows of both kinds are refused by `20261160`'s rail and only logged, and (fix pass 2, `emailOnlyWithBell`) no email goes either, so watchers miss both FYIs in that window. Before fix pass 2 the force-release FYI rode a declared kind (`checkout_message`) and was not affected; it is now, for the window only.
 
 ---

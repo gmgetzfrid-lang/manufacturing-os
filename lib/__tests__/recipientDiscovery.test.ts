@@ -5,7 +5,9 @@
 // server check lib/documentDiscoverers.ts registers, the route from the
 // browser); controllers are never dropped (DEC-43); someone the producer
 // names, a role pool and a project roster are not filtered. REGRESSION:
-// every recipient with access still gets exactly one row.
+// every recipient with access still gets exactly one row — when the check
+// FAILS too (fix pass 2): a follower it could not settle gets one row and
+// one email WITHOUT the document's name or the reason (redactedNotice).
 //
 // PROD-4 done-whens 1 and 4 (as DEC-100 item 2 narrows them): a
 // subscriptions row on a document puts that user in resolveRecipients for
@@ -117,20 +119,80 @@ describe("NEDGE-6 done-when 3 — a document's follower who may not discover it 
     expect(h.emails).toHaveLength(5);
   });
 
-  it("a check that FAILS keeps only the controllers (fail closed), logged", async () => {
+  const rowsOf = () => (h.state.tables.notifications ?? []) as Array<Record<string, unknown>>;
+  const rowFor = (u: string) => rowsOf().filter((r) => r.user_id === u);
+  const mailFor = (u: string) => h.emails.filter((e) => e.toUserId === u);
+
+  it("a check that FAILS: the controllers get the notice as written; every other follower gets exactly one REDACTED row and email (fix pass 2 — nothing leaks, nothing is lost), logged", async () => {
     __registerServerDiscoverCheck(async () => ({ ok: false, error: "The document could not be read." }));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    await emit(ev());
-    expect(bell()).toEqual(["w-admin", "w-dc"]);
+    const r = await emit(ev());
+    expect(bell()).toEqual(["named", "w-admin", "w-dc", "w-hidden", "w-sees"]);
+    expect(new Set(bell()).size).toBe(bell().length);
+    expect(r.recipients).toBe(5);
+    expect(r.inapp).toEqual({ sent: 5, failed: 0 });
+    for (const u of ["w-admin", "w-dc"]) expect(rowFor(u)[0].title, u).toBe("PID-4412 advanced to Rev C");
+    for (const u of ["named", "w-hidden", "w-sees"]) {
+      const [row] = rowFor(u);
+      expect(row.title, u).toBe("New activity on a document");
+      expect(String(row.body), u).not.toMatch(/PID-4412|Rev C|Dana published/);
+      expect(row.metadata, u).toEqual({ redacted: true });
+      expect(row.kind, u).toBe("doc_superseded");
+      expect(row.resource_id, u).toBe("doc-1");
+      const mail = mailFor(u);
+      expect(mail, u).toHaveLength(1);
+      expect(mail[0].subject, u).toBe("New activity on a document");
+      expect(String(mail[0].bodyText), u).not.toMatch(/PID-4412|Rev C/);
+    }
+    expect(h.emails).toHaveLength(5);
     expect(warn.mock.calls.some((c) => String(c[0]).includes("discover check for document doc-1 failed"))).toBe(true);
+    expect(warn.mock.calls.some((c) => String(c[0]).includes("could not settle get the doc_superseded notice without its details"))).toBe(true);
     warn.mockRestore();
   });
 
-  it("a check that THROWS is a failure too", async () => {
+  it("a check that THROWS is a failure too — the same redacted notice", async () => {
     __registerServerDiscoverCheck(async () => { throw new Error("boom"); });
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     await emit(ev());
-    expect(bell()).toEqual(["w-admin", "w-dc"]);
+    expect(bell()).toEqual(["named", "w-admin", "w-dc", "w-hidden", "w-sees"]);
+    expect(rowFor("w-sees")[0].title).toBe("New activity on a document");
+  });
+
+  it("fix pass 2 (the review's scenario): a hold's stop-work notice under a failed check (a 503) — the engineer who follows the P&ID still gets exactly one row and one email, saying a hold was placed, without the document or the reason", async () => {
+    __registerServerDiscoverCheck(async () => ({ ok: false, error: "the discover check answered 503" }));
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    // notifyHoldChange's shape (lib/holds.ts): a reason in the title, the
+    // release pool named, the followers walked, the bell rows retried (DELIV-16)
+    const r = await emit(ev({
+      category: "status", kind: "hold_opened",
+      title: "HOLD placed on P-101 — Do not fabricate", body: 'Dana placed a "Do not fabricate" hold. Work from this document should stop until it\'s released.',
+      link: "/documents/lib-1?doc=doc-1",
+      audience: { involved: ["named"], followers: true },
+      inappRetry: {},
+    }));
+    expect(r.recipients).toBe(5);
+    const [row] = rowFor("w-sees");
+    expect(rowFor("w-sees")).toHaveLength(1);
+    expect(row).toMatchObject({ kind: "hold_opened", title: "HOLD placed on a document you follow", link: "/documents/lib-1?doc=doc-1", resource_id: "doc-1", metadata: { redacted: true } });
+    expect(String(row.body)).not.toMatch(/P-101|fabricate/i);
+    const mail = mailFor("w-sees");
+    expect(mail).toHaveLength(1);
+    expect(mail[0].subject).toBe("HOLD placed on a document you follow");
+    expect(String(mail[0].bodyText)).not.toMatch(/P-101|fabricate/i);
+    // the named release-pool member and the controllers keep the notice as written
+    for (const u of ["named", "w-admin", "w-dc"]) expect(rowFor(u)[0].title, u).toBe("HOLD placed on P-101 — Do not fabricate");
+    expect(rowFor("w-hidden")).toHaveLength(1);
+  });
+
+  it("redactedNotice keeps the kind, resource, link and channels and drops the label, the reason, the metadata and the producer's email copy", async () => {
+    const { redactedNotice } = await import("@/lib/notify/dispatch");
+    const out = redactedNotice(ev({
+      kind: "hold_released", category: "status", title: "Hold released on P-101", channels: ["inapp"],
+      metadata: { holdId: "h1", reason: "x" }, email: { subject: "P-101", bodyHtml: "<b>P-101</b>" },
+    }));
+    expect(out).toMatchObject({ kind: "hold_released", title: "Hold released on a document you follow", channels: ["inapp"], link: "/documents/lib-1?doc=doc-1", resource: { type: "document", id: "doc-1" }, metadata: { redacted: true }, audience: {} });
+    expect(out.email).toEqual({ subject: "Hold released on a document you follow", bodyText: expect.not.stringMatching(/P-101/) });
+    expect(JSON.stringify(out)).not.toMatch(/P-101/);
   });
 
   it("a library-scoped event is not checked (the filter is the document's)", async () => {
@@ -379,5 +441,46 @@ describe("PROD-17 (fix pass) — one retirement, one notice per person: a watche
     expect(sql).toMatch(/\('doc_retired',\s+false\),/);
     expect(readFileSync(join(ROOT, "supabase/migrations/20261161_notif_roundG_read_scope.sql"), "utf8"))
       .toMatch(/AND NOT EXISTS \(SELECT 1 FROM notification_kinds\(\) k WHERE k\.kind = notifications\.kind AND k\.compliance\)/);
+  });
+});
+
+describe("TAX-17 / PROD-17 deploy window (fix pass 2) — a watcher FYI of a kind the rail refuses sends no email without its bell row", () => {
+  const refuseNotifications = () => {
+    h.state.tableWriteError = { notifications: { code: "22023", message: "notification kind doc_retired is not declared (notification_kinds())" } };
+  };
+
+  it("before 20261206 is pasted: doc_retired's bell rows are refused, and emailOnlyWithBell sends no email either", async () => {
+    __registerServerDiscoverCheck(openDoc);
+    refuseNotifications();
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const r = await emit(ev({ kind: "doc_retired", title: "P-101 was retired (Superseded)", emailOnlyWithBell: true }));
+    expect(r.inapp).toEqual({ sent: 0, failed: 5 });
+    expect(bell()).toEqual([]);
+    expect(h.emails).toEqual([]);
+  });
+
+  it("reproduced: without emailOnlyWithBell the email went out with no bell row (the review's finding)", async () => {
+    __registerServerDiscoverCheck(openDoc);
+    refuseNotifications();
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await emit(ev({ kind: "doc_retired", title: "P-101 was retired (Superseded)" }));
+    expect(bell()).toEqual([]);
+    expect(h.emails).toHaveLength(5);
+  });
+
+  it("after the paste: every watcher gets exactly one row and one email", async () => {
+    __registerServerDiscoverCheck(openDoc);
+    const r = await emit(ev({ kind: "doc_retired", title: "P-101 was retired (Superseded)", emailOnlyWithBell: true }));
+    expect(r.inapp).toEqual({ sent: 5, failed: 0 });
+    expect(bell()).toEqual(["named", "w-admin", "w-dc", "w-hidden", "w-sees"]);
+    expect(h.emails.map((e) => e.toUserId).sort()).toEqual(["named", "w-admin", "w-dc", "w-hidden", "w-sees"]);
+  });
+
+  it("both watcher FYIs pass it (the force-release and the retirement)", () => {
+    for (const f of ["lib/checkoutEpisodes.ts", "lib/staleCopies.ts"]) {
+      expect(readFileSync(join(ROOT, f), "utf8"), f).toMatch(/kind: "(checkout_force_released_fyi|doc_retired)",[\s\S]*?emailOnlyWithBell: true,/);
+    }
   });
 });

@@ -137,6 +137,14 @@ export const KIND_META = {
   checkout_released:        { section: "documents", actionRequired: true, compliance: false, icon: "Lock", tone: "indigo", group: "locks" },
   checkout_stale_escalation: { section: "documents", actionRequired: true, compliance: false, icon: "Lock", tone: "indigo", group: "locks" },
   checkout_force_released:  { section: "documents", actionRequired: true, compliance: false, icon: "Lock", tone: "indigo", group: "locks" },
+  // checkout_force_released_fyi (notifications N15 fix pass — PROD-17): a
+  //   document you WATCH was force-released by someone — the watchers' FYI
+  //   beside the holder's own checkout_force_released (lib/checkoutEpisodes.ts
+  //   forceReleaseDocument). Its own name, so the checkout thread's chat kind
+  //   (checkout_message — Mentions, bell-only) keeps one meaning: a lock
+  //   notice under Locks, not an action, not a compliance kind; its email
+  //   rides the watcher's own toggle (category 'watched').
+  checkout_force_released_fyi: { section: "documents", actionRequired: false, compliance: false, icon: "Lock", tone: "indigo", group: "locks" },
   checkout_auto_released:   { section: "documents", actionRequired: true, compliance: false, icon: "Lock", tone: "indigo", group: "locks" },
   overlap_advisory:         { section: "documents", actionRequired: true, compliance: false, icon: "AlertOctagon", tone: "slate", group: "other" },
   branch_open:              { section: "documents", actionRequired: true, compliance: false, icon: "GitBranch", tone: "slate", group: "other" },

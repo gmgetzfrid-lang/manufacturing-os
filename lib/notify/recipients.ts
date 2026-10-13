@@ -213,7 +213,9 @@ export type DiscoverFilter = {
   /** the people kept, in input order */
   uids: string[];
   /** checked: the check answered; failed: it ran and did not answer — only
-   *  the controllers were kept (fail closed); unavailable: no check exists in
+   *  the controllers were kept (fail closed; the caller decides what the
+   *  others get — emit() sends them redactedNotice(), the checkout thread
+   *  keeps its session holders); unavailable: no check exists in
    *  this context (a server entry that did not load lib/documentDiscoverers)
    *  — everyone was kept, as before the filter, and it is logged. */
   outcome: "checked" | "failed" | "unavailable";
@@ -230,8 +232,9 @@ export type DiscoverFilter = {
  * A check that runs and fails keeps only the org's controllers among `uids`
  * (fail closed — a notice names the document, so it is not sent to someone
  * who might not be allowed to know it exists; DEC-90's fail-safe rule) and
- * logs. A context with no check (unregistered server entry) keeps everyone,
- * logged — the behaviour before this filter. Never throws.
+ * logs; the caller decides what the others get (emit() sends them a notice
+ * without the details — dispatch.ts redactedNotice). A context with no
+ * check (unregistered server entry) keeps everyone, logged — the behaviour before this filter. Never throws.
  */
 export async function discoveringAmong(orgId: string, documentId: string, uids: Array<string | null | undefined>): Promise<DiscoverFilter> {
   const want = Array.from(new Set(uids.filter((u): u is string => !!u)));
@@ -259,7 +262,7 @@ export async function discoveringAmong(orgId: string, documentId: string, uids: 
       controllers = new Set(await resolveRoleRecipients(orgId, ["Admin", "DocCtrl"]));
     } catch { /* nobody but a known controller */ }
     const kept = want.filter((u) => controllers.has(u));
-    console.warn(`[notify] the discover check for document ${documentId} failed (${failure}) — ${want.length - kept.length} non-controller recipient(s) withheld`);
+    console.warn(`[notify] the discover check for document ${documentId} failed (${failure}) — ${want.length - kept.length} non-controller recipient(s) not settled (the caller withholds them or sends them a notice without the details)`);
     return { uids: kept, outcome: "failed", error: failure };
   }
   return { uids: want.filter((u) => seen.has(u)), outcome: "checked" };

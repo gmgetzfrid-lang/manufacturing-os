@@ -320,7 +320,10 @@ export async function recallRetiredDocument(input: {
     // category, so the watcher's own email toggle governs its email (the
     // copy holders' recall below is the safety category). The dispatcher
     // drops a watcher who may not discover the document (NEDGE-6). Sent
-    // whether or not anyone holds a copy.
+    // whether or not anyone holds a copy. doc_retired is declared by
+    // 20261206, pasted after the deploy: until then 20261160's rail refuses
+    // the bell row, and emailOnlyWithBell keeps the email from going
+    // without it (no notice the watcher cannot find in the app).
     try {
       const toldElsewhere = await personallyToldOfRetirement(input);
       await emit({
@@ -336,6 +339,7 @@ export async function recallRetiredDocument(input: {
         actorName: input.actorName ?? undefined,
         audience: { followers: true, exclude: [...new Set([...holders, ...toldElsewhere])] },
         metadata: { retirement: true, followerNotice: true, newStatus: input.newStatus },
+        emailOnlyWithBell: true,
       });
     } catch { /* the recall below still goes out */ }
     if (holders.length === 0) return 0;

@@ -17,7 +17,10 @@
 --            holders' doc_recalled — so it stays out of the daily compliance
 --            digest, a watcher may delete it once read (20261161 keeps only
 --            compliance kinds dismiss-only), and its email rides the
---            watcher's own toggle.
+--            watcher's own toggle. Their force-release FYI likewise has its
+--            own kind, checkout_force_released_fyi (lib/checkoutEpisodes.ts
+--            forceReleaseDocument), so the checkout thread's chat kind
+--            (checkout_message — Mentions, bell-only) keeps one meaning.
 --   DELIV-16 a compliance notice a browser writes to ANOTHER member could not
 --            be read back (notifications_own_select shows a member only the
 --            rows addressed to them), so lib/complianceNotify.ts did not retry
@@ -29,9 +32,11 @@
 --
 -- What this file does:
 --   · notification_kinds() RE-CREATED from its NEWEST definition (20261191,
---     found by scanning the sequence) with TWO rows added, in KIND_META order
---     (checkout_stale_escalation right after checkout_released, doc_retired
---     right after doc_recalled; neither a compliance kind), none removed.
+--     found by scanning the sequence) with THREE rows added, in KIND_META
+--     order (checkout_stale_escalation right after checkout_released,
+--     checkout_force_released_fyi right after checkout_force_released,
+--     doc_retired right after doc_recalled; none a compliance kind), none
+--     removed.
 --     EXECUTE restated.
 --   · notification_i_wrote(uuid, uuid, text, text, text, timestamptz) — NEW,
 --     STABLE SECURITY DEFINER, search_path pinned, EXECUTE to authenticated
@@ -69,9 +74,12 @@
 --      retirement FYI (doc_retired, written from the browser by the
 --      supersede door) is refused by 20261160's rail as an undeclared kind
 --      and only logged — the watchers miss that FYI for retirements in the
---      window. The copy holders' recall (doc_recalled), the checkout
---      holder's and the package owners' notices are declared kinds and
---      unaffected. Keep the window short: paste right after the deploy.
+--      window; so does their force-release FYI (checkout_force_released_fyi).
+--      Both are sent with emailOnlyWithBell, so a watcher whose bell row was
+--      refused gets NO email either (never an email the app cannot show).
+--      The copy holders' recall (doc_recalled), the checkout holder's and
+--      the package owners' notices are declared kinds and unaffected. Keep
+--      the window short: paste right after the deploy.
 --   3. Before this paste the app keeps today's paths: lib/complianceNotify.ts
 --      asks notification_i_wrote, finds it missing (PGRST202 / 42883) and
 --      does not retry a browser notice to another member (dead-lettered at
@@ -111,7 +119,7 @@ SELECT 4, 'BEFORE: rows written in the last hour by a member to another member (
 
 BEGIN;
 
--- ── 1. notification_kinds(): the newest body (20261191) + two rows ─────────
+-- ── 1. notification_kinds(): the newest body (20261191) + three rows ───────
 CREATE OR REPLACE FUNCTION notification_kinds()
 RETURNS TABLE (kind text, compliance boolean)
 LANGUAGE sql IMMUTABLE SET search_path = public AS $$
@@ -127,6 +135,7 @@ LANGUAGE sql IMMUTABLE SET search_path = public AS $$
     ('checkout_released',                false),
     ('checkout_stale_escalation',        false),
     ('checkout_force_released',          false),
+    ('checkout_force_released_fyi',      false),
     ('checkout_auto_released',           false),
     ('overlap_advisory',                 false),
     ('branch_open',                      false),
@@ -185,7 +194,7 @@ LANGUAGE sql IMMUTABLE SET search_path = public AS $$
 $$;
 
 COMMENT ON FUNCTION notification_kinds() IS
-  'The notification kind registry (lib/notificationKinds.ts KIND_META): every kind a browser may write, and whether it is a compliance kind. Re-created by a migration whenever the registry changes; lib/__tests__/notificationWriteRails.test.ts pins the two equal. notifications Round G, 20261160; four kinds added by 20261181 (N8); nine by 20261191 (N9 — the kind split and transmittal_issued); two by 20261206 (N15 — checkout_stale_escalation, TAX-17; doc_retired, PROD-17).';
+  'The notification kind registry (lib/notificationKinds.ts KIND_META): every kind a browser may write, and whether it is a compliance kind. Re-created by a migration whenever the registry changes; lib/__tests__/notificationWriteRails.test.ts pins the two equal. notifications Round G, 20261160; four kinds added by 20261181 (N8); nine by 20261191 (N9 — the kind split and transmittal_issued); three by 20261206 (N15 — checkout_stale_escalation, TAX-17; checkout_force_released_fyi and doc_retired, PROD-17).';
 
 REVOKE ALL ON FUNCTION notification_kinds() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION notification_kinds() TO authenticated, service_role;
@@ -223,18 +232,19 @@ UPDATE notifications SET kind = 'checkout_stale_escalation'
 COMMIT;
 
 -- ── Verification + inventory (ONE result set): expect ok = true × 7 ─────────
-SELECT 'notification_kinds() is IMMUTABLE, search_path pinned, and declares 66 kinds — 21 of them compliance kinds — each once' AS check,
+SELECT 'notification_kinds() is IMMUTABLE, search_path pinned, and declares 67 kinds — 21 of them compliance kinds — each once' AS check,
        EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
                 WHERE ns.nspname = 'public' AND p.proname = 'notification_kinds'
                   AND pg_get_function_identity_arguments(p.oid) = ''
                   AND p.provolatile = 'i' AND NOT p.prosecdef
                   AND p.proconfig @> ARRAY['search_path=public'])
-       AND (SELECT COUNT(*) = 66 AND COUNT(DISTINCT kind) = 66 AND COUNT(*) FILTER (WHERE compliance) = 21
+       AND (SELECT COUNT(*) = 67 AND COUNT(DISTINCT kind) = 67 AND COUNT(*) FILTER (WHERE compliance) = 21
               FROM notification_kinds()) AS ok,
        NULL::text AS n
 UNION ALL
-SELECT 'notification_kinds() declares checkout_stale_escalation and doc_retired (neither a compliance kind), and still declares checkout_released (legacy rows) and doc_recalled (a compliance kind)',
+SELECT 'notification_kinds() declares checkout_stale_escalation, checkout_force_released_fyi and doc_retired (none a compliance kind), and still declares checkout_released (legacy rows) and doc_recalled (a compliance kind)',
        (SELECT COUNT(*) FILTER (WHERE kind = 'checkout_stale_escalation' AND NOT compliance) = 1
+               AND COUNT(*) FILTER (WHERE kind = 'checkout_force_released_fyi' AND NOT compliance) = 1
                AND COUNT(*) FILTER (WHERE kind = 'doc_retired' AND NOT compliance) = 1
                AND COUNT(*) FILTER (WHERE kind = 'doc_recalled' AND compliance) = 1
                AND COUNT(*) FILTER (WHERE kind = 'checkout_released') = 1
