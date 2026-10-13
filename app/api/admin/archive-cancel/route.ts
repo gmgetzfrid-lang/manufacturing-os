@@ -19,6 +19,12 @@
 // ARCHIVE_PRODUCE_CANCELED audit row is checked too — the cancel has happened
 // either way, so a row that could not be written is reported in the answer
 // (`auditError`) and logged, never a silent success (the purge's rule).
+// P7 review fix: a PARTIAL discard is recorded too. When the tickets were
+// unlinked but the revisions' unlink is refused, the route has changed data,
+// so it writes a checked ARCHIVE_PRODUCE_CANCELED row with `partial: true`
+// (how many tickets were freed, and the error) before it answers 500 — a
+// retry finds those tickets already unlinked and records 0, so without this
+// row the trail would never show which archive's tickets were freed.
 
 import { NextRequest, NextResponse } from "next/server";
 import { authorizeAdminSurface } from "@/lib/adminGate";
@@ -36,6 +42,24 @@ export async function POST(req: NextRequest) {
   if (!archiveId) return NextResponse.json({ error: "archiveId is required" }, { status: 400 });
   const sb = actor.admin;
 
+  /** The checked ARCHIVE_PRODUCE_CANCELED insert: null when written, else why not (logged). */
+  const writeCancelRow = async (details: Record<string, unknown>): Promise<string | null> => {
+    let auditError: string | null = null;
+    try {
+      const { error } = await sb.from("audit_logs").insert({
+        action: "ARCHIVE_PRODUCE_CANCELED",
+        resource_id: orgId, resource_type: "org", org_id: orgId,
+        user_id: actor.userId, user_email: actor.email, user_role: actor.admittedRole,
+        details,
+      });
+      if (error) auditError = error.message;
+    } catch (e) {
+      auditError = (e as Error).message || String(e);
+    }
+    if (auditError) console.error("[admin/archive-cancel] the ARCHIVE_PRODUCE_CANCELED audit row was not written", auditError);
+    return auditError;
+  };
+
   // Unlink only the UNCOMMITTED rows; .select() tells us how many we freed.
   const { data: t, error: tErr } = await sb
     .from("tickets")
@@ -52,9 +76,14 @@ export async function POST(req: NextRequest) {
     .eq("org_id", orgId).eq("archive_id", archiveId).is("archived_at", null)
     .select("id");
   if (dErr) {
+    // Tickets already freed are a change: record it before answering (a retry would record 0).
+    const auditError = ticketsUnlinked > 0
+      ? await writeCancelRow({ archiveId, ticketsUnlinked, versionsUnlinked: 0, partial: true, error: dErr.message })
+      : null;
     return NextResponse.json({
       error: `The archive was only partly discarded: ${ticketsUnlinked} ticket(s) were unlinked, but its revisions could not be (${dErr.message}). Run Discard again.`,
       ticketsUnlinked,
+      ...(auditError ? { auditError: `the ${ticketsUnlinked} ticket(s) unlinked were not recorded: the ARCHIVE_PRODUCE_CANCELED audit row was not written: ${auditError}` } : {}),
     }, { status: 500 });
   }
   const versionsUnlinked = (d as Array<{ id: string }> | null)?.length ?? 0;
@@ -81,19 +110,7 @@ export async function POST(req: NextRequest) {
     else catalogRemoved = true;
   }
 
-  let auditError: string | null = null;
-  try {
-    const { error } = await sb.from("audit_logs").insert({
-      action: "ARCHIVE_PRODUCE_CANCELED",
-      resource_id: orgId, resource_type: "org", org_id: orgId,
-      user_id: actor.userId, user_email: actor.email, user_role: actor.admittedRole,
-      details: { archiveId, ticketsUnlinked, versionsUnlinked, catalogRemoved, ...(catalogKeptReason ? { catalogKeptReason } : {}) },
-    });
-    if (error) auditError = error.message;
-  } catch (e) {
-    auditError = (e as Error).message || String(e);
-  }
-  if (auditError) console.error("[admin/archive-cancel] the ARCHIVE_PRODUCE_CANCELED audit row was not written", auditError);
+  const auditError = await writeCancelRow({ archiveId, ticketsUnlinked, versionsUnlinked, catalogRemoved, ...(catalogKeptReason ? { catalogKeptReason } : {}) });
 
   return NextResponse.json({
     ok: true, archiveId, ticketsUnlinked, versionsUnlinked, catalogRemoved,

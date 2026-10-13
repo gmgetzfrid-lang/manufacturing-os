@@ -264,7 +264,7 @@ import {
  *  limit. Like PostgreSQL, rows that tie on every ORDER BY column come back
  *  in a DIFFERENT order on each query (the fake shuffles ties per query), so
  *  only a total order — "timestamp" DESC, id DESC — pages without loss. */
-function pager(n: number, failAt?: number, opts: { tieEvery?: number; undated?: number; seed?: number } = {}) {
+function pager(n: number, failAt?: number, opts: { tieEvery?: number; undated?: number; seed?: number; maxRows?: number } = {}) {
   const calls: Array<[string, unknown[]]> = [];
   const tieEvery = opts.tieEvery ?? 1;
   const iso = (i: number) => new Date(Date.UTC(2026, 9, 1) - Math.floor(i / tieEvery) * 1000).toISOString();
@@ -306,7 +306,9 @@ function pager(n: number, failAt?: number, opts: { tieEvery?: number; undated?: 
         }
         return x.tie - y.tie; // ties: no stable order across queries
       });
-      return Promise.resolve({ data: keyed.slice(0, lim).map((k) => k.r), error: null });
+      // PostgREST caps every response at the project's max_rows, whatever the limit asked
+      const cap = opts.maxRows === undefined ? lim : Math.min(lim, opts.maxRows);
+      return Promise.resolve({ data: keyed.slice(0, cap).map((k) => k.r), error: null });
     };
     return b as never;
   };
@@ -315,13 +317,14 @@ function pager(n: number, failAt?: number, opts: { tieEvery?: number; undated?: 
 const F = { range: "all" as const, action: "ALL", resource: "ALL" };
 
 describe("ALOG-6 — the export holds every row the filters select, says its bounds, and is audited", () => {
-  it("pages on the server until the rows run out: 2,345 rows in three keyset pages, all in the file", async () => {
+  it("pages on the server until the rows run out: 2,345 rows in three keyset pages, all in the file (a pass ends on an empty page)", async () => {
     const p = pager(2345);
     const got = await fetchAuditRowsForExport(p.start, F, Date.now());
     expect(got).toMatchObject({ ok: true, complete: true });
     if (got.ok) expect(got.rows).toHaveLength(2345);
-    // the (empty) dated-after-start pass, three dated pages of up to 1000, then the (empty) undated pass of "all time"
-    expect(p.calls.filter(([m]) => m === "limit").map(([, a]) => a)).toEqual([[1000], [1000], [1000], [1000], [1000]]);
+    // the (empty) dated-after-start pass, three dated pages of up to 1000 and the empty page that ends
+    // the pass, then the (empty) undated pass of "all time"
+    expect(p.calls.filter(([m]) => m === "limit").map(([, a]) => a)).toEqual([[1000], [1000], [1000], [1000], [1000], [1000]]);
     expect(p.calls.filter(([m]) => m === "order").slice(0, 2)).toEqual([["order", ["timestamp", { ascending: false }]], ["order", ["id", { ascending: false }]]]);
   });
 
@@ -399,7 +402,7 @@ describe("ALOG-6 — the export holds every row the filters select, says its bou
     const p = pager(120, undefined, { tieEvery: 10 });
     await fetchAuditRowsForExport(p.start, F, Date.UTC(2026, 9, 2), { page: 50 });
     const ors = p.calls.filter(([m]) => m === "or").map(([, a]) => (a as string[])[0]);
-    expect(ors).toHaveLength(2);
+    expect(ors).toHaveLength(3); // after pages 1, 2 and 3 (the third, short, is followed by the empty one that ends the pass)
     expect(ors[0]).toMatch(/^timestamp\.lt\."[^"]+",and\(timestamp\.eq\."[^"]+",id\.lt\."r\d{6}"\)$/);
     expect(p.calls.some(([m]) => m === "range")).toBe(false);
   });
@@ -417,6 +420,28 @@ describe("ALOG-6 — the export holds every row the filters select, says its bou
     expect((got7 as { rows: AuditExportRow[] }).rows).toHaveLength(30);
     expect(ranged.calls.some(([m]) => m === "is")).toBe(false);
   });
+  it("P7 review: a server max_rows below the page size (300 < 1000) still yields every row — a short page is not the end", async () => {
+    const startMs = Date.UTC(2026, 9, 2);
+    const p = pager(2345, undefined, { tieEvery: 7, undated: 450, maxRows: 300 });
+    for (let j = 0; j < 320; j++) p.all.push({ ...p.all[0], id: `f${String(j).padStart(4, "0")}`, timestamp: new Date(startMs + 1000 * (j + 1)).toISOString() });
+    const got = await fetchAuditRowsForExport(p.start, F, startMs);
+    expect(got).toMatchObject({ ok: true, complete: true, datedAfterStart: 320 });
+    const ids = (got as { rows: AuditExportRow[] }).rows.map((r) => r.id);
+    expect(ids).toHaveLength(2345 + 450 + 320);
+    expect(new Set(ids)).toEqual(new Set(p.all.map((r) => String(r.id))));
+    // every request asked for the full page; the server returned at most 300
+    expect(p.calls.filter(([m]) => m === "limit").every(([, a]) => (a as number[])[0] === 1000)).toBe(true);
+    // and the file says complete only because every row is in it
+    const csv = buildAuditCsv((got as { rows: AuditExportRow[] }).rows, new Map(), {
+      orgId: "o1", filters: F, exportedAtIso: new Date(startMs).toISOString(), rows: ids.length, complete: true, ceiling: 50_000, datedAfterStart: 320,
+    });
+    expect(csv).toMatch(/Complete,Yes/);
+    // with the cap at the ceiling's edge, the ceiling still stops it
+    const capped = await fetchAuditRowsForExport(pager(700, undefined, { maxRows: 300 }).start, F, startMs, { ceiling: 650 });
+    expect(capped).toMatchObject({ ok: true, complete: false });
+    expect((capped as { rows: AuditExportRow[] }).rows).toHaveLength(650);
+  });
+
   it("stops at the ceiling and says it is not complete", async () => {
     const p = pager(30);
     const got = await fetchAuditRowsForExport(p.start, F, Date.now(), { ceiling: 25, page: 10 });

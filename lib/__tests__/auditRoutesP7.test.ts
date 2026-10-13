@@ -199,6 +199,43 @@ describe("ALOG-8 — archive-cancel: checked writes, and a refused audit row is 
     expect(state.calls.some((c) => c.table === "document_versions" && c.method === "update")).toBe(false);
     expect(state.calls.some((c) => c.table === "archives")).toBe(false);
   });
+  it("P7 review: tickets unlinked, then the revisions' unlink refused — a partial ARCHIVE_PRODUCE_CANCELED row is written before the 500", async () => {
+    seed();
+    state.actor = { userId: "a", roles: ["Admin"] };
+    state.errors["document_versions.update"] = { message: "transient" };
+    const res = await cancel();
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body).toMatchObject({ ticketsUnlinked: 1 });
+    expect(body.error).toMatch(/only partly discarded: 1 ticket\(s\) were unlinked, but its revisions could not be \(transient\)\. Run Discard again\./);
+    expect(body.auditError).toBeUndefined();
+    expect(audits()).toEqual([expect.objectContaining({
+      action: "ARCHIVE_PRODUCE_CANCELED", org_id: O1, user_id: "a", user_role: "Admin",
+      details: { archiveId: "MOS-X", ticketsUnlinked: 1, versionsUnlinked: 0, partial: true, error: "transient" },
+    })]);
+    // the catalog is not touched on the partial path
+    expect(state.calls.some((c) => c.table === "archives")).toBe(false);
+  });
+  it("P7 review: the partial row itself refused — the 500 also says the unlinked tickets were not recorded, and it is logged", async () => {
+    seed();
+    state.actor = { userId: "a", roles: ["Admin"] };
+    state.errors["document_versions.update"] = { message: "transient" };
+    state.errors["audit_logs.insert"] = { message: "insert refused" };
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await cancel();
+    expect(res.status).toBe(500);
+    expect((await res.json()).auditError).toMatch(/the 1 ticket\(s\) unlinked were not recorded: the ARCHIVE_PRODUCE_CANCELED audit row was not written: insert refused/);
+    expect(err).toHaveBeenCalledWith(expect.stringMatching(/ARCHIVE_PRODUCE_CANCELED audit row was not written/), "insert refused");
+  });
+  it("P7 review: nothing unlinked before the revisions' refusal — nothing changed, so no row", async () => {
+    seed();
+    state.rows.tickets = [];
+    state.actor = { userId: "a", roles: ["Admin"] };
+    state.errors["document_versions.update"] = { message: "transient" };
+    const res = await cancel();
+    expect(res.status).toBe(500);
+    expect(audits()).toEqual([]);
+  });
   it("an unreadable committed count keeps the catalog row (never dropped on a guess) and says why", async () => {
     seed();
     state.actor = { userId: "a", roles: ["Admin"] };

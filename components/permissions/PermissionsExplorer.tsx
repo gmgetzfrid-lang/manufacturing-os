@@ -88,10 +88,16 @@ const STAFF_NOTE = `*Staff = ${DORMANT_ROLES.join(", ")} (dormant department lab
 /** When the snapshot rows marked `checked` were checked against the code.
  *  admin-and-org P7 (ALOG-14's remainder, 2026-10-13): the 23 rows carried
  *  from the earlier hand matrix were each re-checked against the enforcement
- *  point their note names — 21 corrected or confirmed and pinned
+ *  point their note names — 21 kept and pinned
  *  (lib/__tests__/auditExplorerSnapshot.test.ts), 2 removed — and the eight
  *  rows checked on 2026-10-07 still pass their pins, so every row is dated
- *  this day. */
+ *  this day. P7 review fix: a row's marks and `cond` say what the LIVE
+ *  database decides — every migration a `cond` cites is LIVE in
+ *  audit-reports/MIGRATION-PASTE-ORDER.md (or older than the files it
+ *  lists) — and a rule that waits on a migration not yet pasted is said in
+ *  the row's `warn` as "once <number> is pasted", never drawn as today's
+ *  (the same rule as the 20261136 pre-paste note on quality sign-off). The
+ *  test fails when a cited file is not LIVE and the row has no such clause. */
 export const SNAPSHOT_REVIEWED = "2026-10-13";
 
 export type CellMark = "y" | "c" | "-";
@@ -260,10 +266,16 @@ export function surfaceRow(spec: (typeof SURFACE_ROWS)[number]): ExplorerRow {
   };
 }
 
-// m: 12 chars in EXPLORER_COLUMNS order — y (yes), c (conditional), - (no).
+// m: 12 chars in EXPLORER_COLUMNS order — y (yes), c (conditional), - (no),
+// as the LIVE database decides it today.
+// cond: today's rule; every migration number it cites is LIVE.
+// warn: anything else the row must say — including each rule that waits on a
+// migration not yet pasted, as "once <number> is pasted" (or "once <number>
+// is confirmed applied" for a file no record says is live).
 // checked: the row was checked against the code on SNAPSHOT_REVIEWED and a
-// test pins it (aoRoundGP9PermissionsConsole.test.ts); absent = carried from
-// the earlier hand matrix, shown as NOT RE-CHECKED.
+// test pins it (aoRoundGP9PermissionsConsole.test.ts,
+// auditExplorerSnapshot.test.ts); absent = carried from the earlier hand
+// matrix, shown as NOT RE-CHECKED.
 interface SnapshotRow { area: string; cap: string; m: string; cond?: string; warn?: string; checked?: true }
 
 /** DOCUMENTATION SNAPSHOT — hand-maintained. These encode ACL, ownership and
@@ -274,11 +286,13 @@ export const SNAPSHOT_ROWS: SnapshotRow[] = [
   // ── Documents & files ──
   // ALOG-14 (P7, 2026-10-13): every row below names the enforcement point it
   // was checked against; auditExplorerSnapshot.test.ts pins each to that text.
+  // P7 review fix: the point named is the LIVE one (MIGRATION-PASTE-ORDER.md);
+  // a pending migration's rule is the row's "once … is pasted" warning.
   { area: "Documents", cap: "Browse & read documents", m: "yycccccccccc", checked: true,
     cond: "Every member reads a library, folder or document of normal visibility; a hidden or private one only Admin / Document Control (always), its effective owner, or a member an ACL rule grants (node_visible, 20261041 — the documents read policy)" },
   { area: "Documents", cap: "Upload files / create folders", m: "yycccccccccc", checked: true,
-    cond: "Uploading: the database admits any member's new document unless an ACL deny of upload on the library binds them (documents_deny_upload_guard, 20260901). Creating folders: Admin / Document Control only (collections_insert_controllers, 20261011)",
-    warn: "No role is refused an upload by the database — a read-only one (Viewer, Auditor) included; only an ACL deny of upload refuses it" },
+    cond: "Uploading: the database admits any member's new document unless an ACL deny of upload on the library binds them (documents_deny_upload_guard, 20260901). Creating folders: the screens offer it to Admin / Document Control only; the database's folder policy admits any member's new folder (collections_org_access, schema.sql)",
+    warn: "No role is refused an upload by the database — a read-only one (Viewer, Auditor) included; only an ACL deny of upload refuses it. No record says the controller-only folder policy is live (MIGRATION-PASTE-ORDER.md §5): once 20261011 is confirmed applied, the database refuses anyone but Admin / Document Control a new folder (collections_insert_controllers)" },
   { area: "Documents", cap: "Download / print (stamped when uncontrolled)", m: "yycccccccccc", checked: true,
     cond: "Admin / Document Control always (a bypass of a restriction is audited); the document's effective owner; anyone else for a document of normal visibility, or with an ACL read or download grant on a hidden or private one (canServeContent, the download-url route). A hard read-&-understood gate blocks the pull until the member signs (lib/downloads.ts)" },
   // ALOG-14 (fix pass 2): checked. The metadata editor's fields are the
@@ -289,24 +303,30 @@ export const SNAPSHOT_ROWS: SnapshotRow[] = [
   { area: "Documents", cap: "Edit document metadata", m: "yycccccccccc", checked: true,
     cond: "Admin / Document Control edit every field (the metadata editor). Anyone else is offered only the inline title rename in the details view — an ACL Edit Metadata grant opens nothing more in the editor — and the database admits their update unless an ACL deny of write or Edit Metadata binds them",
     warn: "The editor's controller-only line is not the database's: documents_org_access admits any member's update (the OWN-2 / OWN-19 class)" },
-  { area: "Documents", cap: "Edit equipment / asset tags", m: "yyyy--------", checked: true,
-    cond: "Linking a document to equipment by hand (document_assets, manual): Admin, Document Control, Manager or Supervisor, by the role collection (document_assets policies, 20261170). Links the equipment Bridge reads from drawings are the service's" },
+  // P7 review fix: 20261170 is not live — today's policy is the bare
+  // active-member one, so every column can link.
+  { area: "Documents", cap: "Edit equipment / asset tags", m: "yyyyyyyyyyyy", checked: true,
+    cond: "Any active member links a document to equipment, or removes a link, through the API (document_assets_member_all, 20260609). Links the equipment Bridge reads from drawings are the service's",
+    warn: "Migration 20261170 is not applied, so the database admits every member's equipment link today; once 20261170 is pasted: manual links by Admin, Document Control, Manager or Supervisor only (by the role collection)" },
   // ALOG-14 (P7): "Manage sets & binders" removed — no reachable screen
   // manages sets: SetManager is mounted by the library page but never opened
   // (its show flag is only set false), and only lib/documentLifecycle/split.ts
   // and the ACL index rebuild write document_sets — the row described no
   // surface.
   { area: "Documents", cap: "Delete documents / versions", m: "yy----------", checked: true,
-    cond: "Admin / Document Control only (documents_delete_controllers, 20260814; document_versions_delete_controllers, 20260815). A record under legal hold, or one carrying review or acknowledgment evidence, cannot be deleted by anyone (20260826, 20261149)" },
+    cond: "Admin / Document Control only (documents_delete_controllers, 20260814; document_versions_delete_controllers, 20260815). A record under legal hold cannot be deleted by anyone (enforce_legal_hold_delete_guard, 20260826)",
+    warn: "Migration 20261149 is not applied: a controller can still delete a record carrying review or acknowledgment evidence today; once 20261149 is pasted: no one can" },
   { area: "Documents", cap: "Request deletion (owner path)", m: "--cccccccccc", checked: true,
     cond: "A non-controller who is the document's effective owner asks Admin / Document Control to delete it (the inspector's Request deletion → lib/ownership.ts requestDeletion: a DELETION_REQUESTED row and a notice to the controllers); controllers delete directly" },
   // ── Publishing & revisions ──
   { area: "Publishing", cap: "Publish / rev-up a revision", m: "yycccccccccc", checked: true,
     cond: "Admin / Document Control; anyone else as the document's effective owner or with a publish (or admin) grant on its library (user_can_publish_doc, 20261037; user_can_publish_on_library, 20261059)" },
   { area: "Publishing", cap: "Publish over someone's checkout (reason required)", m: "yycccccccccc", checked: true,
-    cond: "The same people as publishing, with a reason of at least 5 characters the checkout holder is shown; it passes the checkout, never a hold (publish_revision p_override_lock, recorded as REV_LOCK_OVERRIDDEN, 20261151)" },
+    cond: "The same people as publishing (the publish guard, 20261060). The app asks for a reason of at least 5 characters the checkout holder is shown; the override passes the checkout, never a hold (publish_revision p_override_lock, 20261049)",
+    warn: "Migration 20261130 is not applied: today the database takes the override flag with no reason and keeps no record of it; once 20261130 is pasted: it requires the reason and records the pass (REV_LOCK_OVERRIDDEN)" },
   { area: "Publishing", cap: "Force past an active hold", m: "yy----------", checked: true,
-    cond: "Admin / Document Control only, as a recorded override (publish_revision p_force → REV_HOLD_OVERRIDDEN; the publish guard admits the write over a hold only under app.publish_hold_override for a controller, newest 20261185)" },
+    cond: "Admin / Document Control only (publish_revision p_force for a controller, 20261049; the publish guard refuses anyone else's write over an active hold and lets a controller's pass, 20261060)",
+    warn: "Migration 20261151 is not applied: today a controller's direct write passes a hold with no recorded override; once 20261151 is pasted: only the recorded force (REV_HOLD_OVERRIDDEN) passes it" },
   { area: "Publishing", cap: "Revert to a prior revision", m: "yycccccccccc", checked: true,
     cond: "The same people as publishing (lib/revisions.ts revertToVersion — an authorized publisher of the library or the document's effective owner; the inspector offers it on the publish authority), with a reason" },
   { area: "Publishing", cap: "Check out / check in documents", m: "yyyyyyyyyyyy", checked: true,
@@ -314,12 +334,14 @@ export const SNAPSHOT_ROWS: SnapshotRow[] = [
   // ALOG-14 (P7): was "yycccccccccc — If effective owner": the database
   // refuses everyone but a controller.
   { area: "Publishing", cap: "Place / release legal hold", m: "yy----------", checked: true,
-    cond: "Admin / Document Control only (enforce_document_retention_guard, 20261077; lib/retention.ts) — a document's owner cannot" },
+    cond: "Admin / Document Control only (enforce_document_retention_guard, 20261043; lib/retention.ts) — a document's owner cannot" },
   // ── Reviews & compliance ──
   { area: "Reviews", cap: "Configure review policies & rosters", m: "yycccccccccc", checked: true,
-    cond: "A document's pre-publish review policy: a controller or the document's effective owner (enforce_document_review_control_change, 20261072). A library's review settings: a controller, the library's owner or a Manage Permissions grant on it (enforce_library_sensitive_columns, 20261077 §2)" },
+    cond: "A library's review settings: a controller, the library's owner or a Manage Permissions grant on it (enforce_library_sensitive_columns, 20261036); a folder's: the same three (collections_update_controllers, 20261044). A document's own review policy: the database admits any member's change unless an ACL deny of write or Edit Metadata binds them (documents_org_access, schema.sql; documents_deny_write_guard, 20260901)",
+    warn: "Migration 20261072 is not applied: any member not denied write can change a document's own review policy through the API today; once 20261072 is pasted: a controller or the document's effective owner only, recorded as REVIEW_CONTROL_CHANGED" },
   { area: "Reviews", cap: "Sign a review (e-signature)", m: "cccccccccccc", checked: true,
-    cond: "Only the named reviewer signs their own roster row (enforce_review_signoff_guard, 20261070); where the library requires an independent reviewer, the revision's author never signs it" },
+    cond: "Only the named reviewer signs their own roster row, with their own e-signature for that draft (enforce_review_signoff_guard, 20261047). Where the library requires an independent reviewer, a publisher on the roster needs another primary reviewer's signature (the publish guard, 20261060)",
+    warn: "Migration 20261070 is not applied: a revision's author can still sign its review today; once 20261070 is pasted: where the library requires an independent reviewer, the author never signs it" },
   // ALOG-14 (P7): "Auto-publish as last review signer" removed — the last
   // signature no longer publishes: it routes "Ready to publish" to the
   // owner and the controllers, and the revision stays a draft until one of
@@ -327,24 +349,31 @@ export const SNAPSHOT_ROWS: SnapshotRow[] = [
   { area: "Reviews", cap: "Acknowledge read-&-understood", m: "cccccccccccc", checked: true,
     cond: "Only the named assignee acknowledges their own row, with their own signature (enforce_document_ack_guard, 20261047)" },
   { area: "Reviews", cap: "Retention, disposition & purge", m: "yycccccccccc", checked: true,
-    cond: "Retention settings and disposition: a controller, the document's effective owner, or a publisher of its library (lib/retention.ts assertRetentionAuthority; enforce_document_retention_guard, 20261077); a record under a hold is never disposed. Purging workspace byproducts is the Storage & Backup surface (above)" },
+    cond: "Retention settings and disposition: a controller, the document's effective owner, or a publisher of its library (lib/retention.ts assertRetentionAuthority; enforce_document_retention_guard, 20261043). The database never disposes a record under a legal hold; the app also refuses disposal under an open hold (lib/retention.ts disposeDocument). Purging workspace byproducts is the Storage & Backup surface (above)",
+    warn: "Migration 20261077 is not applied: an open (non-legal) hold stops disposal only in the app today; once 20261077 is pasted: the database refuses a non-controller's disposal under it too" },
   // ALOG-14 row 6 / ALOG-2: the library page offers the flow to a controller
-  // or the library's owner, and the database admits exactly them (20261077 §2
-  // for the dates, 20261188 for the record).
-  { area: "Reviews", cap: "Access recertification reviews", m: "yycccccccccc", cond: "If library owner", checked: true },
+  // or the library's owner. P7 review fix: the database admits exactly them
+  // only once 20261077 (the attestation dates) and 20261188 (the record) are
+  // pasted — neither is live, so today any member can record one.
+  { area: "Reviews", cap: "Access recertification reviews", m: "yyyyyyyyyyyy", checked: true,
+    cond: "The library page offers the review to a controller or the library's owner, but the database admits any member's attestation and recertification record today (libraries_org_access, schema.sql — the library guard, 20261036, does not cover the attestation dates; access_recert_events_member, 20260821)",
+    warn: "Migrations 20261077 and 20261188 are not applied: any member can record a recertification through the API today; once 20261077 and 20261188 are pasted: a controller or the library's owner only" },
   // ── Drafting requests ──
   { area: "Requests", cap: "Create a drafting request", m: "yyyyyyyyyyyy", checked: true,
-    cond: "Any active member files a request as themselves (tickets_org_insert: requester_id = auth.uid(), 20261166; ticket_insert_integrity refuses a non-member, 20261038). No page or role gate narrows it" },
+    cond: "Any active member files a request as themselves (tickets_org_access, schema.sql; ticket_insert_integrity stamps the caller as the requester and refuses a non-member, 20261038). No page or role gate narrows it" },
   // ── Packages & distribution ──
-  { area: "Packages", cap: "Create / edit / refresh work packages", m: "yycccccccccc", checked: true,
-    cond: "Any member creates one (work_packages_org_insert, 20260825); only its owner or Admin / Document Control edits, refreshes, closes or deletes it (work_packages_org_update / _delete, 20261143)" },
+  // P7 review fix: 20261143 is HOLD — today's update / delete policies are
+  // 20260825's bare active-member ones.
+  { area: "Packages", cap: "Create / edit / refresh work packages", m: "yyyyyyyyyyyy", checked: true,
+    cond: "Any active member creates, edits, refreshes, closes or deletes any package (work_packages_org_insert / _update / _delete, 20260825)",
+    warn: "No role differentiation today. Migration 20261143 is not applied; once 20261143 is pasted: only its owner or Admin / Document Control edits, refreshes, closes or deletes it" },
   { area: "Packages", cap: "Request distribution confirmations", m: "yyyyyyyyyyyy", checked: true,
     cond: "Any member (distribution_acks_org_insert, 20261032 — a new row is unacknowledged); refused while the document is under an active hold (lib/distributionAcks.ts requestAcks)" },
   { area: "Packages", cap: "Confirm “I have this revision”", m: "cccccccccccc", checked: true,
     cond: "Only the named recipient confirms their own row (enforce_distribution_ack_guard, 20261033)" },
   // ── Projects ──
   { area: "Projects", cap: "Create / manage projects & schedules", m: "yycccccccccc", checked: true,
-    cond: "Any member creates a project (projects_insert_member, 20260906). Editing or deleting it, and its membership, is its owner's or a controller's (projects_update_owner / projects_delete_owner, 20261102; project_members_write, 20260913). Any member adds or edits a milestone and deletes one they created (milestones_member_all; milestones_delete_guard, 20260818)" },
+    cond: "Any member creates a project (projects_insert_member, 20260906). Editing or deleting it, and its membership, is its owner's or a controller's (projects_update_owner / projects_delete_owner, 20260906; project_members_write, 20260913). Any member adds or edits a milestone and deletes one they created (milestones_member_all; milestones_delete_guard, 20260818)" },
   // ── Metrics ──
   // ALOG-14 row 1: the org-level authority trail is the "Audit log"
   // capability above (admin.audit_view, read by the database since 20261063);
@@ -358,26 +387,28 @@ export const SNAPSHOT_ROWS: SnapshotRow[] = [
   // surface's writes (derived above).
   { area: "Admin", cap: "Add a member (invite)", m: "yy----------", cond: "Only an Admin can grant the Admin role", checked: true },
   // ALOG-14 (review fix): removal is revoke_member's 'remove' mode (newest
-  // body 20261161) and org_members_delete (20261042) — Admin only.
-  { area: "Admin", cap: "Remove a member from the workspace", m: "y-----------", cond: "Admin only — revoke_member refuses anyone else; no one removes themselves", checked: true },
+  // LIVE body 20261043; the pending 20261161 keeps the same rule) and
+  // org_members_delete (20261042) — Admin only.
+  { area: "Admin", cap: "Remove a member from the workspace", m: "y-----------", cond: "Admin only — revoke_member refuses anyone else; no one removes themselves (revoke_member, 20261043; org_members_delete, 20261042)", checked: true },
   // ALOG-14 (review fix): the old single row said only Admin could reassign
   // library ownership. Split: the supervisor swap is the teams guard
   // (teams_guard_supervisor_change, 20261046: a controller) AND the teams
   // write policy (Admin or Manager) — so Admin alone, or a member holding
   // Document Control together with Manager. Library ownership is the library
-  // guard (enforce_library_sensitive_columns, 20261077 §2): a controller, the
+  // guard (enforce_library_sensitive_columns, newest LIVE body 20261036; the
+  // pending 20261077 §2 keeps the clause): a controller, the
   // library's current owner, or a Manage Permissions grant on it — reached
   // from the library's review policy (setOwner) and from /admin/teams
   // (setLibraryOwnerTeam).
   { area: "Admin", cap: "Change a department's supervisor", m: "y-----------", cond: "Needs a controller (the supervisor guard) who may also write teams (Admin or Manager): Admin, or Document Control held together with Manager", checked: true },
-  { area: "Admin", cap: "Reassign library ownership / owning team", m: "yycccccccccc", cond: "Admin / Document Control always; anyone else as the library's current owner, or with a Manage Permissions grant on it", checked: true },
+  { area: "Admin", cap: "Reassign library ownership / owning team", m: "yycccccccccc", cond: "Admin / Document Control always; anyone else as the library's current owner, or with a Manage Permissions grant on it (enforce_library_sensitive_columns, 20261036)", checked: true },
   // ALOG-14 (fix pass 2): the drawer's delegation mode (PermissionDrawer
   // `delegationOnly`, DEL-1 / GAP-3) is offered on the library to its owner
   // and on a folder or document to its effective owner or a Manage
   // Permissions grant holder on its chain (the library page); the library
-  // guard (20261077 §2) admits the same people on the library's ACL.
+  // guard (LIVE 20261036) admits the same people on the library's ACL.
   { area: "Admin", cap: "Per-library permission (ACL) drawer", m: "yycccccccccc", checked: true,
-    cond: "Admin / Document Control: any rule. Otherwise the drawer opens in delegation mode (DEL-1 / GAP-3) — allow rules only, never Admin or Manage Permissions, each with an expiry — for the library's owner, and on a folder or document for its effective owner or a Manage Permissions grant holder on its chain. The library guard (20261077 §2) admits the owner or a Manage Permissions grant holder; the delegation bounds are the drawer's" },
+    cond: "Admin / Document Control: any rule. Otherwise the drawer opens in delegation mode (DEL-1 / GAP-3) — allow rules only, never Admin or Manage Permissions, each with an expiry — for the library's owner, and on a folder or document for its effective owner or a Manage Permissions grant holder on its chain. The library guard (enforce_library_sensitive_columns, 20261036) admits the owner or a Manage Permissions grant holder; the delegation bounds are the drawer's" },
 ];
 
 export function snapshotRow(r: SnapshotRow): ExplorerRow {

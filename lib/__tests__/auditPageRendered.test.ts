@@ -30,16 +30,30 @@ const h = vi.hoisted(() => ({
 vi.mock("@/lib/supabase", () => {
   const from = (table: string) => {
     const filters: Array<(r: Row) => boolean> = [];
+    const orderBy: string[] = [];
     let lim: number | null = null;
     const data = () => {
       const src = table === "audit_logs" ? h.audit : table === "libraries" ? h.libraries : table === "documents" ? h.documents : [];
-      return src.filter((r) => filters.every((f) => f(r)));
+      const out = src.filter((r) => filters.every((f) => f(r)));
+      // DESC on each ordered column, as the export asks (P7 review: the export now
+      // pages until an EMPTY page, so the stand-in honours the keyset it sends)
+      return orderBy.length ? [...out].sort((x, y) => {
+        for (const k of orderBy) { const a = String(x[k] ?? ""), c = String(y[k] ?? ""); if (a !== c) return a < c ? 1 : -1; }
+        return 0;
+      }) : out;
     };
     const b: Record<string, unknown> = {
-      select: () => b, order: () => b,
+      select: () => b,
+      order: (k: string) => { orderBy.push(k); return b; },
       eq: (k: string, v: unknown) => { filters.push((r) => r[k] === v); return b; },
       in: (k: string, v: unknown[]) => { filters.push((r) => v.includes(r[k])); return b; },
-      gte: () => b, like: () => b, ilike: () => b, or: () => b, lt: () => b,
+      gte: () => b, like: () => b, ilike: () => b,
+      or: (f: string) => {
+        const m = /^timestamp\.lt\."([^"]+)",and\(timestamp\.eq\."([^"]+)",id\.lt\."([^"]+)"\)$/.exec(f);
+        if (m) filters.push((r) => r.timestamp != null && (String(r.timestamp) < m[1] || (String(r.timestamp) === m[2] && String(r.id) < m[3])));
+        return b;
+      },
+      lt: (k: string, v: string) => { filters.push((r) => String(r[k]) < v); return b; },
       gt: (k: string, v: string) => { filters.push((r) => r[k] != null && String(r[k]) > v); return b; },
       lte: (k: string, v: string) => { if (table === "audit_logs") h.lte.push(v); filters.push((r) => r[k] != null && String(r[k]) <= v); return b; },
       is: (k: string, v: unknown) => { filters.push((r) => (r[k] ?? null) === v); return b; },
@@ -125,9 +139,12 @@ describe("/admin/audit (rendered)", () => {
     await render();
     await act(async () => { exportBtn().click(); });
     await flush();
-    // Keyset pages of 1000 over the snapshot "dated at or before the export's start".
+    // Keyset pages of 1000 over the snapshot "dated at or before the export's start": the page of
+    // rows, then the empty page that ends the pass (P7 review: a short page may be the server's
+    // max_rows cap, never the end) — both bounded by the same start.
     expect(h.limits).toContain(1000);
-    expect(h.lte).toHaveLength(1);
+    expect(h.lte).toHaveLength(2);
+    expect(new Set(h.lte).size).toBe(1);
     expect(Date.parse(h.lte[0])).toBeGreaterThanOrEqual(now);
     expect(h.logged).toEqual([expect.objectContaining({
       action: "AUDIT_LOG_EXPORTED", orgId: "o1", resourceType: "org", userId: "u-aud", userRole: "Auditor",

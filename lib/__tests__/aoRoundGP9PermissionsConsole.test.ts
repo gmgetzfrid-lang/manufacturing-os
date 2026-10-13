@@ -542,8 +542,12 @@ describe("ALOG-14 — the permissions explorer tells the truth", () => {
     // (5) user management split: adding a member is Admin + DocCtrl; changing roles is the users surface's writes
     expect(SNAPSHOT_ROWS.find((r) => r.cap === "Add a member (invite)")!.m).toBe("yy----------");
     expect(row("Change member roles, suspend or restore members").cells.map((c) => c.v).join("")).toBe("y-y---------");
-    // (6) recertification: the owner (◐) plus the controllers, and nobody else — as 20261188 admits
-    expect(SNAPSHOT_ROWS.find((r) => r.cap === "Access recertification reviews")!.m).toBe("yycccccccccc");
+    // (6) recertification: the page offers it to the owner and the controllers; 20261188 (and 20261077's
+    // attestation arm) admit exactly them only once pasted — neither is LIVE, so the row draws every
+    // member and says the pending rule (admin-and-org P7 review fix; auditExplorerSnapshot.test.ts)
+    const recert = SNAPSHOT_ROWS.find((r) => r.cap === "Access recertification reviews")!;
+    expect(recert.m).toBe("yyyyyyyyyyyy");
+    expect(recert.warn).toContain("once 20261077 and 20261188 are pasted: a controller or the library's owner only");
   });
   // ── review fix: the rows the rewrite itself got wrong, pinned to the SQL ──
   const newestDefining = (re: RegExp) => readdirSync(join(process.cwd(), "supabase/migrations"))
@@ -848,6 +852,6 @@ describe("integrator fix pass — pre-paste truth on the explorer, no placeholde
     const t = src("components/permissions/RoleModelTree.tsx");
     expect(t).not.toMatch(/the owner path is a known gap/);
     expect(t).not.toMatch(/only Admin\/DocCtrl can open the recertification flow/);
-    expect(src("components/permissions/PermissionsExplorer.tsx")).toMatch(/cap: "Access recertification reviews", m: "yycccccccccc", cond: "If library owner", checked: true/);
+    expect(src("components/permissions/PermissionsExplorer.tsx")).toMatch(/cap: "Access recertification reviews", m: "yyyyyyyyyyyy", checked: true,\s+cond: "The library page offers the review to a controller or the library's owner/);
   });
 });

@@ -30,6 +30,11 @@
 //     screen shows such rows (it filters only on the lower bound), so the
 //     file holds them too — "Complete: Yes" stays true for every row that
 //     existed when the export began.
+//   * A pass ends only on an EMPTY page (P7 review fix). PostgREST silently
+//     caps a response at the project's max_rows, which an operator can set
+//     below AUDIT_EXPORT_PAGE; ending on a short page would then stop after
+//     the first capped page and call a truncated file complete. One extra
+//     request per pass is the price.
 //   * It stops at AUDIT_EXPORT_ROW_CEILING rows; the file says so inside it.
 //   * The file opens with its bounds (workspace, filters, time of export, how
 //     many rows, complete or stopped at the ceiling, which filters were
@@ -182,7 +187,9 @@ export async function fetchAuditRowsForExport(
       for (const r of got) rows.push(mapAuditRow(r));
       if (pass === "after") datedAfterStart += got.length;
       if (rows.length > ceiling) return stopped();
-      if (got.length < want) break;
+      // Only an empty page ends the pass: a short one may be the server's
+      // max_rows cap, not the end of the rows.
+      if (got.length === 0) break;
       const last = got[got.length - 1];
       cursor = { ts: String(last.timestamp), id: String(last.id) };
     }
@@ -199,7 +206,7 @@ export async function fetchAuditRowsForExport(
       const got = (data ?? []) as Array<Record<string, unknown>>;
       for (const r of got) rows.push(mapAuditRow(r));
       if (rows.length > ceiling) return stopped();
-      if (got.length < want) break;
+      if (got.length === 0) break;
       lastId = String(got[got.length - 1].id);
     }
   }
