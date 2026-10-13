@@ -263,6 +263,10 @@ export async function POST(req: NextRequest) {
     // explicit. The headline is recomputed from the merged collection so
     // `role` can never rank below a role the member still holds.
     const merged = normalizeRoles(existingMember.roles, existingMember.role as Role | undefined);
+    // ALOG-4: the state before this write, read before it (the audit row's "before").
+    const beforeRoles = [...merged];
+    const statusBefore = (existingMember.status as string | null) ?? null;
+    const headlineBefore = (existingMember.role as string | null) ?? null;
     if (!merged.includes(grantedRole)) merged.push(grantedRole);
     const headline = primaryRole(merged);
     const { error: updateError } = await supabaseAdmin
@@ -281,6 +285,26 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: updateError.message }, { status: 500 });
     }
 
+    // ALOG-4 (admin-and-org Round G, P8): a re-add that grants a role or
+    // reactivates the member is a change of authority — recorded with the
+    // actor, the subject and the roles before and after. Checked: a refused
+    // write is returned (auditError) and shown, never swallowed.
+    const added = merged.filter((r) => !beforeRoles.includes(r));
+    let auditError: string | null = null;
+    if (added.length > 0 || statusBefore !== "active") {
+      const { error: aErr } = await supabaseAdmin.from("audit_logs").insert({
+        action: statusBefore !== "active" ? "MEMBER_REACTIVATED" : "ROLE_GRANTED",
+        resource_type: "org_member", resource_id: userId, org_id: orgId,
+        user_id: caller.id, user_email: caller.email ?? null, user_role: callerHeld.has("Admin") ? "Admin" : "DocCtrl",
+        details: { memberEmail: email, memberUid: userId, via: "add_member", added, before: beforeRoles, after: merged,
+                   headlineBefore, headlineAfter: headline, statusBefore, statusAfter: "active" },
+      });
+      if (aErr) {
+        auditError = aErr.message;
+        console.error(`[create-user] audit row for the re-add of ${email} failed: ${aErr.message}`);
+      }
+    }
+
     // Refresh the profile email/display name; the membership row above is
     // the authority on roles.
     await supabaseAdmin.from("users").upsert({
@@ -292,7 +316,7 @@ export async function POST(req: NextRequest) {
 
     await resolvePendingAccessRequests(orgId, email, userId);
 
-    return NextResponse.json({ uid: userId, roles: merged, merged: true });
+    return NextResponse.json({ uid: userId, roles: merged, merged: true, ...(auditError ? { auditError } : {}) });
   }
 
   const { error: memberError } = await supabaseAdmin
@@ -341,12 +365,21 @@ export async function POST(req: NextRequest) {
   }
 
   // SURF-16: membership creation leaves a trail (MEMBER_% rides the admin-only
-  // audit overlay from 20261045).
-  await supabaseAdmin.from("audit_logs").insert({
-    action: "MEMBER_CREATED", resource_type: "member", resource_id: userId, org_id: orgId,
-    user_id: caller.id, user_email: caller.email ?? null,
-    details: { memberEmail: email, role, createdNewUser },
-  }).then(() => undefined, () => undefined);
+  // audit overlay from 20261045). ALOG-4 (P8): checked — a refused write is
+  // returned (auditError) and shown, never swallowed — and it names the
+  // subject and the roles before (none) and after.
+  let createdAuditError: string | null = null;
+  {
+    const { error: aErr } = await supabaseAdmin.from("audit_logs").insert({
+      action: "MEMBER_CREATED", resource_type: "member", resource_id: userId, org_id: orgId,
+      user_id: caller.id, user_email: caller.email ?? null, user_role: callerHeld.has("Admin") ? "Admin" : "DocCtrl",
+      details: { memberEmail: email, memberUid: userId, role, createdNewUser, before: [], after: [role] },
+    });
+    if (aErr) {
+      createdAuditError = aErr.message;
+      console.error(`[create-user] MEMBER_CREATED audit row for ${email} failed: ${aErr.message}`);
+    }
+  }
 
   // Seed the additive role collection to match the headline role. Best-effort:
   // if the `roles` column isn't present yet (pre-migration), this no-ops and
@@ -370,5 +403,5 @@ export async function POST(req: NextRequest) {
 
   await resolvePendingAccessRequests(orgId, email, userId);
 
-  return NextResponse.json({ uid: userId });
+  return NextResponse.json({ uid: userId, ...(createdAuditError ? { auditError: createdAuditError } : {}) });
 }

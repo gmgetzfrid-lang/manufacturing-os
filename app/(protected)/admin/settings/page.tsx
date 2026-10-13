@@ -12,7 +12,7 @@
 // org-wide categories from here directly.
 
 import React, { useEffect, useState } from "react";
-import { Settings, Loader2, AlertTriangle, Zap, Mail, Briefcase, Users, CheckCircle2, XCircle, ExternalLink, RefreshCw, Hash, Save } from "lucide-react";
+import { Settings, Loader2, AlertTriangle, Zap, Mail, Briefcase, Users, CheckCircle2, XCircle, ExternalLink, RefreshCw, Hash, Save, Clock } from "lucide-react";
 import Link from "next/link";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
@@ -21,6 +21,9 @@ import { formatTicketNumber, getTicketNumberConfig, TICKET_NUMBER_DEFAULTS, type
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Spinner } from "@/components/ui/Spinner";
 import { appAlert } from "@/components/providers/DialogProvider";
+import { checkedWrite } from "@/lib/checkedWrite";
+import { logAuditAction } from "@/lib/audit";
+import { readWorkspaceTimeZone, saveWorkspaceTimeZone, knownTimeZones } from "@/lib/workspaceTimeZone";
 
 // DEC-17: this page's main action (schema health) is an Admin-only API — the
 // client gate now says the same thing instead of admitting DocCtrl to a 403.
@@ -37,7 +40,7 @@ interface OrgSummary {
 }
 
 export default function WorkspaceSettingsPage() {
-  const { activeRole, activeOrgId, roles } = useRole();
+  const { activeRole, activeOrgId, roles, uid, userEmail } = useRole();
   const canRead = [activeRole, ...roles].some((r) => !!r && ADMIN_ROLES.has(r));
   const [org, setOrg] = useState<OrgSummary | null>(null);
   const [memberCount, setMemberCount] = useState<number | null>(null);
@@ -53,6 +56,8 @@ export default function WorkspaceSettingsPage() {
   const [numbering, setNumbering] = useState<TicketNumberConfig>(TICKET_NUMBER_DEFAULTS);
   const [savingNum, setSavingNum] = useState(false);
   const [numSaved, setNumSaved] = useState(false);
+  // The numbering as stored — the audit row's "before" (ALOG-4).
+  const [numberingStored, setNumberingStored] = useState<TicketNumberConfig>(TICKET_NUMBER_DEFAULTS);
 
   useEffect(() => {
     if (!activeOrgId) return;
@@ -61,7 +66,9 @@ export default function WorkspaceSettingsPage() {
       try {
         const { data } = await supabase.from("orgs").select("*").eq("id", activeOrgId).single();
         setOrg(data as OrgSummary);
-        setNumbering(await getTicketNumberConfig(activeOrgId));
+        const storedNumbering = await getTicketNumberConfig(activeOrgId);
+        setNumbering(storedNumbering);
+        setNumberingStored(storedNumbering);
         const [{ count: members }, { count: libs }] = await Promise.all([
           supabase.from("org_members").select("*", { count: "exact", head: true }).eq("org_id", activeOrgId).eq("status", "active"),
           supabase.from("libraries").select("*", { count: "exact", head: true }).eq("org_id", activeOrgId),
@@ -134,13 +141,37 @@ export default function WorkspaceSettingsPage() {
     setSavingNum(true);
     setNumSaved(false);
     try {
-      const { error } = await supabase.from("orgs").update({
+      // ORG-4 dw2/dw3: the shared checked-write helper — the update reads back
+      // the row it changed, so a write RLS filtered out (zero rows, no error)
+      // is a refusal, never a green "Saved" over nothing.
+      const after = {
         ticket_prefix: numbering.prefix.trim() || null,
         ticket_record_code: numbering.recordCode.trim() || TICKET_NUMBER_DEFAULTS.recordCode,
         ticket_number_pad: Math.min(9, Math.max(1, numbering.pad || 4)),
-      }).eq("id", activeOrgId);
-      if (error) throw error;
+      };
+      const res = await checkedWrite(supabase.from("orgs").update(after).eq("id", activeOrgId).select("id"));
+      if (!res.ok) {
+        throw new Error(res.code === "refused" ? "the database saved nothing — only an Admin can change request numbering. Nothing was changed." : res.error);
+      }
       setNumSaved(true);
+      const before = {
+        ticket_prefix: numberingStored.prefix.trim() || null,
+        ticket_record_code: numberingStored.recordCode,
+        ticket_number_pad: numberingStored.pad,
+      };
+      setNumberingStored({ ...numbering, prefix: after.ticket_prefix ?? "", recordCode: after.ticket_record_code, pad: after.ticket_number_pad });
+      // ALOG-4 dw2 (DEC-90 ruling for this package): the scheme every future
+      // request number is built from is on the record, before and after.
+      if (uid) {
+        const audit = await logAuditAction({
+          action: "TICKET_NUMBERING_CHANGED", resourceType: "org", resourceId: activeOrgId, orgId: activeOrgId,
+          userId: uid, userEmail: userEmail ?? undefined, userRole: "Admin",
+          details: { before, after },
+        });
+        if (!audit.ok) {
+          await appAlert({ message: `Numbering saved, but the audit record could not be written: ${audit.error ?? "unknown error"}`, tone: "danger" });
+        }
+      }
     } catch (e) {
       await appAlert({ message: `Couldn't save numbering: ${e instanceof Error ? e.message : String(e)}`, tone: "danger" });
     } finally {
@@ -238,6 +269,9 @@ export default function WorkspaceSettingsPage() {
             </button>
           </div>
         </div>
+
+        {/* Workspace time zone (NEDGE-19 / VFY-15) */}
+        <WorkspaceTimeZoneCard orgId={activeOrgId} uid={uid ?? null} userEmail={userEmail ?? null} />
 
         {/* AI status */}
         <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4">
@@ -415,6 +449,89 @@ function SchemaHealthCard({ orgId }: { orgId: string | null }) {
           <p className="text-[11px] text-[var(--color-text-muted)]">
             Paste the named files from <code className="bg-[var(--color-surface-2)] px-1 rounded">supabase/migrations/</code> into the Supabase SQL editor in filename order, then re-check.
           </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// NEDGE-19 / VFY-15 (admin-and-org Round G, P8): the workspace's IANA time
+// zone — org_configurations key "timezone", the shape lib/recordTime.ts
+// orgTimeZone reads. Server-composed notification and email bodies are
+// written in it; the compliance digest still runs once a day at 03:00 UTC
+// (one cron entry) and labels its window in this zone. Admin-only page.
+function WorkspaceTimeZoneCard({ orgId, uid, userEmail }: { orgId: string | null; uid: string | null; userEmail: string | null }) {
+  const [stored, setStored] = useState<string | null>(null);
+  const [choice, setChoice] = useState<string>("");
+  const [readError, setReadError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [note, setNote] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+  const zones = React.useMemo(() => knownTimeZones(), []);
+
+  const load = React.useCallback(async () => {
+    if (!orgId) return;
+    const r = await readWorkspaceTimeZone(supabase, orgId);
+    if (!r.ok) { setReadError(r.error); setLoaded(false); return; }
+    setReadError(null);
+    setStored(r.timeZone);
+    setChoice(r.timeZone ?? "");
+    setLoaded(true);
+  }, [orgId]);
+  useEffect(() => { void load(); }, [load]);
+
+  const save = async () => {
+    if (!orgId || !uid || saving) return;
+    setSaving(true);
+    setNote(null);
+    try {
+      const r = await saveWorkspaceTimeZone(supabase, { orgId, timeZone: choice || null, before: stored, actorId: uid, actorEmail: userEmail, actorRole: "Admin" });
+      if (!r.ok) { setNote({ tone: "error", text: `Not saved: ${r.error}` }); return; }
+      setStored(r.timeZone);
+      setNote(r.auditError
+        ? { tone: "error", text: `Saved, but the audit record could not be written: ${r.auditError}` }
+        : { tone: "ok", text: r.timeZone ? `Saved — times are now written in ${r.timeZone}.` : "Cleared — times are written in UTC." });
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm p-5 mb-4" data-testid="workspace-timezone-card">
+      <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest mb-3 flex items-center gap-1.5">
+        <Clock className="w-3.5 h-3.5" /> Workspace time zone
+      </div>
+      <p className="text-xs text-[var(--color-text-muted)] mb-3">
+        The plant&apos;s time zone. Times in notifications and emails are written in it, with the zone named. Not set, they read UTC. The daily compliance digest is still sent once a day at 03:00 UTC; its body names its window in this zone.
+      </p>
+      {readError ? (
+        <div role="alert" className="text-xs text-rose-700 inline-flex items-center gap-2">
+          <AlertTriangle className="w-3.5 h-3.5" /> Couldn&apos;t read the workspace time zone ({readError}).
+          <button type="button" onClick={() => void load()} className="font-bold underline">Retry</button>
+        </div>
+      ) : (
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+          <select
+            aria-label="Workspace time zone"
+            value={choice}
+            disabled={!loaded}
+            onChange={(e) => { setChoice(e.target.value); setNote(null); }}
+            className="flex-1 px-3 py-2 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg text-sm font-bold outline-none"
+          >
+            <option value="">Not set (UTC)</option>
+            {zones.filter((z) => z !== "UTC").map((z) => <option key={z} value={z}>{z}</option>)}
+          </select>
+          <button
+            type="button"
+            onClick={() => void save()}
+            disabled={!loaded || saving || (choice || null) === stored}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50"
+          >
+            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Save time zone
+          </button>
+        </div>
+      )}
+      {note && (
+        <div className={`mt-3 text-[11px] inline-flex items-center gap-1 ${note.tone === "ok" ? "text-emerald-700" : "text-rose-700"}`}>
+          {note.tone === "ok" ? <CheckCircle2 className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />} {note.text}
         </div>
       )}
     </div>

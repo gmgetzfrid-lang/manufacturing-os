@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
 import { logAuditAction } from '@/lib/audit';
+import { invalidateCapabilityPolicy } from '@/lib/capabilityPolicy';
 import { Button } from '@/components/ui/Button';
 import { Input, Select } from '@/components/ui/Field';
 import { Spinner } from '@/components/ui/Spinner';
@@ -36,6 +37,9 @@ interface MemberRow {
   status: string;
   created_at?: string | null;
 }
+
+/** A role write RLS filtered out: zero rows changed, no error (ALOG-4). */
+const ROLE_WRITE_REFUSED = "the database changed nothing — you may not have permission to change this member's roles. Nothing was saved.";
 
 // The member's role collection, tolerating pre-migration rows that only have
 // the single `role`.
@@ -74,6 +78,8 @@ export default function AdminUsersPage() {
 
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [loading, setLoading] = useState(true);
+  // ORG-15: a failed read is said, never drawn as an empty roster.
+  const [membersError, setMembersError] = useState<string | null>(null);
   const [orgName, setOrgName] = useState<string>('');
   // Pending access requests for THIS org (EGRESS-5 / DEC-19). The SELECT policy
   // is Admin-only, so the card renders only for Admins — a Manager would see a
@@ -85,6 +91,7 @@ export default function AdminUsersPage() {
   const canAddMember = hasAnyRole(['Admin', 'DocCtrl']);
   const canManageMembership = hasAnyRole(['Admin', 'Manager']);
   const [pendingRequests, setPendingRequests] = useState<Array<{ id: string; display_name: string; email: string; created_at: string }>>([]);
+  const [pendingError, setPendingError] = useState<string | null>(null);
   const [savingRoleId, setSavingRoleId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
 
@@ -116,14 +123,17 @@ export default function AdminUsersPage() {
     if (!activeOrgId) return;
     setLoading(true);
     try {
-      const { data } = await supabase
+      const { data, error: readError } = await supabase
         .from('org_members')
         .select('*')
         .eq('org_id', activeOrgId)
         .order('created_at', { ascending: false });
+      if (readError) throw new Error(readError.message || 'the member list could not be read');
+      setMembersError(null);
       setMembers(data || []);
     } catch (e) {
       console.error("Fetch members error:", e);
+      setMembersError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
@@ -134,14 +144,17 @@ export default function AdminUsersPage() {
   }, [fetchMembers]);
 
   const fetchPendingRequests = useCallback(async () => {
-    if (!activeOrgId || !isAdmin) { setPendingRequests([]); return; }
+    if (!activeOrgId || !isAdmin) { setPendingRequests([]); setPendingError(null); return; }
     // Org-scoped by RLS (access_requests_admin_select) AND explicitly here.
-    const { data } = await supabase
+    // ORG-15: a failed read shows an error card, never a missing one.
+    const { data, error: readError } = await supabase
       .from('access_requests')
       .select('id, display_name, email, created_at')
       .eq('org_id', activeOrgId)
       .eq('status', 'pending')
       .order('created_at', { ascending: false });
+    if (readError) { setPendingError(readError.message || 'the pending requests could not be read'); return; }
+    setPendingError(null);
     setPendingRequests((data ?? []) as Array<{ id: string; display_name: string; email: string; created_at: string }>);
   }, [activeOrgId, isAdmin]);
 
@@ -199,34 +212,49 @@ export default function AdminUsersPage() {
     const prevMembers = members;
     setMembers((prev) => prev.map((m) => (m.id === member.id ? { ...m, roles: cleaned, role: headline } : m)));
     try {
-      const { error } = await supabase
+      // ALOG-4 / ORG-4's shape: the update reads back the row it changed, so
+      // a write RLS filtered out (zero rows, no error) is a refusal — never a
+      // role shown as saved that the database never stored.
+      const { data: changed, error } = await supabase
         .from('org_members')
         .update({ roles: cleaned, role: headline })
-        .eq('id', member.id);
+        .eq('id', member.id)
+        .select('id');
       if (error) {
         // Pre-migration fallback: the roles[] column may not exist yet. Persist
         // the headline so editing still works, and point at the migration.
         const msg = error.message || '';
         if (/roles/i.test(msg) && /(column|schema|find)/i.test(msg)) {
-          const { error: e2 } = await supabase.from('org_members').update({ role: headline }).eq('id', member.id);
+          const { data: changed2, error: e2 } = await supabase.from('org_members').update({ role: headline }).eq('id', member.id).select('id');
           if (e2) throw e2;
+          if (!changed2 || changed2.length === 0) throw new Error(ROLE_WRITE_REFUSED);
           await appAlert('Saved the primary role. To stack multiple roles, apply migration 20260722_member_roles_collection.sql to your database.');
         } else {
           throw error;
         }
+      } else if (!changed || changed.length === 0) {
+        throw new Error(ROLE_WRITE_REFUSED);
       }
-      // A role removal is a capability loss that reaches RLS — record it
-      // (fire-and-forget, same contract as every audit write).
-      if (removed.length > 0 && uid) {
-        void logAuditAction({
-          action: 'ROLE_REMOVED',
+      // ALOG-4: every change of a member's roles is on the record — a grant
+      // as much as a removal (a removal reaches RLS through the recomputed
+      // headline; a grant widens it) — naming the actor, the subject and the
+      // roles before and after. The write is awaited and checked: a refused
+      // audit row is said, never swallowed.
+      const added = cleaned.filter((r) => !before.includes(r));
+      if ((removed.length > 0 || added.length > 0) && uid) {
+        const audit = await logAuditAction({
+          action: removed.length > 0 ? 'ROLE_REMOVED' : 'ROLE_GRANTED',
           resourceType: 'org_member',
           resourceId: (member.uid as string | null) || member.id,
           orgId: activeOrgId || undefined,
           userId: uid,
+          userEmail: userEmailForAudit ?? undefined,
           userRole: activeRole ?? undefined,
-          details: { memberEmail: member.email, removed, before, after: cleaned, headlineBefore: member.role, headlineAfter: headline },
+          details: { memberEmail: member.email, memberUid: member.uid ?? null, added, removed, before, after: cleaned, headlineBefore: member.role, headlineAfter: headline },
         });
+        if (!audit.ok) {
+          await appAlert({ message: `The roles were saved, but the audit record could not be written: ${audit.error ?? 'unknown error'}`, tone: 'danger' });
+        }
       }
     } catch (err) {
       console.error('Role update failed:', err);
@@ -285,6 +313,10 @@ export default function AdminUsersPage() {
     try {
       const result = await revokeMember({ memberId: member.id, mode: 'remove', orgId: activeOrgId, actorUserId: uid ?? '', actorName: userEmailForAudit, memberLabel: who });
       setMembers((prev) => prev.filter((m) => m.id !== member.id));
+      // revoke_member stripped their personal capability grants: this tab
+      // re-reads the policy at once (a display refresh — every server-side
+      // decision already reads it fresh).
+      invalidateCapabilityPolicy(activeOrgId);
       const c = result.cleared;
       const total = c ? c.libraries.length + c.collections.length + c.documents.length + c.teams.length : 0;
       if (total > 0) {
@@ -330,6 +362,11 @@ export default function AdminUsersPage() {
 
       setFormData({ firstName: '', lastName: '', email: '', password: '', role: 'Viewer' });
       setIsModalOpen(false);
+      // ALOG-4: the membership was granted; if its audit row was refused the
+      // admin is told so, never left to assume it was recorded.
+      if (typeof body.auditError === 'string' && body.auditError) {
+        void appAlert({ message: `The member was added, but the audit record could not be written: ${body.auditError}`, tone: 'danger' });
+      }
       fetchMembers();
       // create-user resolves the matching pending access request server-side —
       // refresh the card so an accepted request leaves it immediately.
@@ -370,8 +407,19 @@ export default function AdminUsersPage() {
         }
       />
 
+      {/* ORG-15: the pending-requests read failed — said, with a retry. */}
+      {isAdmin && pendingError && (
+        <div role="alert" data-testid="pending-requests-error" className="mb-5 rounded-2xl border border-rose-200 bg-rose-50 px-5 py-3 flex items-center justify-between gap-4">
+          <span className="text-sm text-rose-800 inline-flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            Couldn&apos;t load pending access requests ({pendingError}). Anyone waiting to join is not shown until this loads.
+          </span>
+          <Button size="sm" variant="secondary" onClick={() => void fetchPendingRequests()}>Retry</Button>
+        </div>
+      )}
+
       {/* Pending access requests (Admin-only; EGRESS-5 / DEC-19) */}
-      {isAdmin && pendingRequests.length > 0 && (
+      {isAdmin && !pendingError && pendingRequests.length > 0 && (
         <div className="mb-5 bg-[var(--color-surface)] rounded-2xl border border-amber-300/60 shadow-sm overflow-hidden">
           <div className="px-5 py-3 border-b border-[var(--color-border)] flex items-center gap-2 bg-amber-50/50">
             <Inbox className="w-4 h-4 text-amber-600" />
@@ -408,6 +456,13 @@ export default function AdminUsersPage() {
         <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm overflow-hidden">
           {loading ? (
             <div className="p-12 text-center text-[var(--color-text-muted)]"><Spinner className="mx-auto" /></div>
+          ) : membersError ? (
+            <div role="alert" data-testid="members-error" className="p-10 text-center space-y-3">
+              <p className="text-sm text-rose-700 inline-flex items-center gap-2">
+                <AlertCircle className="w-4 h-4" /> Couldn&apos;t load the member list ({membersError}). Nothing is shown rather than an empty roster.
+              </p>
+              <div><Button size="sm" variant="secondary" onClick={() => void fetchMembers()}>Retry</Button></div>
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-[var(--color-border)]">
