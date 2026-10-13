@@ -2087,10 +2087,15 @@ export async function readBackupArchive(parts: ReadonlyArray<{ name: string; zip
 // drew nothing, with no way to tell which node. Ruled under DEC-90 for P11:
 // the restore clears that node's pointer and names the node and the file.
 //
-// Fail-safe: only a key the storage check CONFIRMED is absent is cleared
-// (`/api/storage/resolve` answered `missing: true`) — a pointer to a file
-// that may be there is never removed; such a key's nodes are named, not
-// cleared. Only the pointer that equals the skipped key changes: a cover
+// Which keys are cleared: only a key for which `/api/storage/resolve`
+// answered 200 with `missing: true`, i.e. storage did not return the object.
+// That answer is NOT a proof of absence: the route gives `missing: true` for
+// a HEAD failure of any kind (a NotFound, but also a 5xx, throttling, a
+// timeout or a credentials error — app/api/storage/resolve/route.ts's catch),
+// so a transient storage error can clear a pointer whose file is still there
+// (DEC-90 rules a clear on any skip; the node is named and can be given its
+// image again under Customize). A key the check did not answer at all (a
+// non-200, or no `missing: true`) is named and NOT cleared. Only the pointer that equals the skipped key changes: a cover
 // pointer becomes NULL, a background becomes `{ type: "none" }` (what the
 // Customize editor writes for "no background"), and every other column and
 // the page header are kept. Every write is checked (a zero-row answer is a
@@ -2098,7 +2103,7 @@ export async function readBackupArchive(parts: ReadonlyArray<{ name: string; zip
 // editor's authority, so 20261210's appearance rail admits the write before
 // and after its paste.
 
-export type SkippedNodeImage = { key: string; confirmedMissing: boolean };
+export type SkippedNodeImage = { key: string; reportedMissing: boolean };
 export type NodeImagePointerNode = {
   kind: "library" | "folder";
   id: string;
@@ -2110,8 +2115,9 @@ export type NodeImagePointerNode = {
 export interface NodeImagePointerClearResult {
   /** Pointers cleared: the node no longer names the missing image. */
   cleared: NodeImagePointerNode[];
-  /** Nodes that name a skipped file whose absence could not be confirmed —
-   *  named, NOT changed. */
+  /** Nodes that name a skipped file the storage check did not report
+   *  missing (it did not answer 200 with `missing: true`) — named, NOT
+   *  changed. */
   kept: NodeImagePointerNode[];
   /** Each read or write that failed, in words (nothing is assumed). */
   errors: string[];
@@ -2139,9 +2145,18 @@ export function nodeImagePointerLabel(n: NodeImagePointerNode): string {
   return `${n.kind} "${n.name || n.id}" — ${n.slot} (${n.file})`;
 }
 
+/** ORG-18: the restore panel shows the first `cap` lines of a list and says
+ *  how many more there are (`more`), so no affected node goes unmentioned;
+ *  the page also offers every line under "Show all". Pure. */
+export function overflowLines(lines: ReadonlyArray<string>, cap: number): { shown: string[]; more: number } {
+  const n = Math.max(0, Math.floor(cap));
+  return { shown: lines.slice(0, n), more: Math.max(0, lines.length - n) };
+}
+
 /** ORG-18: find every library and folder in `orgId` whose cover or page
  *  background names a key the restore skipped, clear the pointer when the
- *  key is confirmed missing from storage, and name each node either way. */
+ *  storage check reported the key missing (any HEAD failure — see above),
+ *  and name each node either way. */
 export async function clearSkippedNodeImagePointers(
   supabase: Pick<SupabaseClient, "from">,
   orgId: string,
@@ -2151,16 +2166,16 @@ export async function clearSkippedNodeImagePointers(
   const byKey = new Map<string, SkippedNodeImage>();
   for (const s of skipped) {
     if (!s.key) continue;
-    // A key confirmed missing on any pass is confirmed (the check only ever
-    // says "missing" for an object that is not there).
+    // A key reported missing on any pass counts as reported missing (the
+    // same key is checked once per pass; any pass's report is enough).
     const prior = byKey.get(s.key);
-    byKey.set(s.key, { key: s.key, confirmedMissing: s.confirmedMissing || !!prior?.confirmedMissing });
+    byKey.set(s.key, { key: s.key, reportedMissing: s.reportedMissing || !!prior?.reportedMissing });
   }
   const unique = [...byKey.values()];
   if (!orgId || unique.length === 0) return result;
 
   for (const { table, kind } of NODE_IMAGE_TABLES) {
-    for (const { key, confirmedMissing } of unique) {
+    for (const { key, reportedMissing } of unique) {
       const file = nodeImageFileLabel(key);
       // ── the cover pointer ──
       const { data: covers, error: coverErr } = await supabase.from(table)
@@ -2170,7 +2185,7 @@ export async function clearSkippedNodeImagePointers(
       } else {
         for (const row of (covers ?? []) as Array<{ id: string; name: string | null }>) {
           const node: NodeImagePointerNode = { kind, id: row.id, name: row.name ?? "", slot: "cover", file };
-          if (!confirmedMissing) { result.kept.push(node); continue; }
+          if (!reportedMissing) { result.kept.push(node); continue; }
           const w = await checkedWrite(supabase.from(table).update({ cover_image_url: null })
             .eq("id", row.id).eq("org_id", orgId).eq("cover_image_url", key).select("id"));
           if (w.ok) result.cleared.push(node);
@@ -2186,7 +2201,7 @@ export async function clearSkippedNodeImagePointers(
       }
       for (const row of (backs ?? []) as Array<{ id: string; name: string | null; page_config: unknown }>) {
         const node: NodeImagePointerNode = { kind, id: row.id, name: row.name ?? "", slot: "background", file };
-        if (!confirmedMissing) { result.kept.push(node); continue; }
+        if (!reportedMissing) { result.kept.push(node); continue; }
         const w = await checkedWrite(supabase.from(table).update({ page_config: pageConfigWithoutBackground(row.page_config) })
           .eq("id", row.id).eq("org_id", orgId).contains("page_config", { background: { imagePath: key } }).select("id"));
         if (w.ok) result.cleared.push(node);

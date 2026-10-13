@@ -12,15 +12,17 @@
 //           skipped.
 //   ORG-18  lib/dataRestore.ts clearSkippedNodeImagePointers and the restore
 //           page: a cover / background the restore skipped (legacy SVG, HEIC,
-//           TIFF) leaves no node pointing at it when storage confirmed it is
-//           missing, and every such node is named.
+//           TIFF) leaves no node pointing at it when the storage check
+//           reported it missing (`missing: true`, which the resolve route
+//           gives for a HEAD failure of ANY kind — not a proof of absence),
+//           and every such node is named, with no list cut short silently.
 
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { NODE_CUSTOMIZE_ROLES } from "@/lib/storageKey";
 import {
-  clearSkippedNodeImagePointers, pageConfigWithoutBackground, nodeImageFileLabel, nodeImagePointerLabel,
+  clearSkippedNodeImagePointers, pageConfigWithoutBackground, nodeImageFileLabel, nodeImagePointerLabel, overflowLines,
   type NodeImagePointerNode,
 } from "@/lib/dataRestore";
 
@@ -300,10 +302,10 @@ function fixture(): Db {
 }
 
 describe("ORG-18 — a cover / background the restore skipped leaves no node pointing at it, and the node is named", () => {
-  it("REPRODUCED → fixed: a library's legacy SVG cover (confirmed missing) — the pointer is cleared and the library named; nothing else on the row changes", async () => {
+  it("REPRODUCED → fixed: a library's legacy SVG cover (reported missing) — the pointer is cleared and the library named; nothing else on the row changes", async () => {
     const db = fixture();
     const { client } = fakeClient(db);
-    const r = await clearSkippedNodeImagePointers(client, ORG, [{ key: SVG, confirmedMissing: true }]);
+    const r = await clearSkippedNodeImagePointers(client, ORG, [{ key: SVG, reportedMissing: true }]);
     expect(r.errors).toEqual([]);
     expect(r.kept).toEqual([]);
     expect(r.cleared).toEqual([
@@ -323,7 +325,7 @@ describe("ORG-18 — a cover / background the restore skipped leaves no node poi
   it("a legacy HEIC page background: background becomes { type: 'none' } (what Customize writes for none), the header and other keys are kept", async () => {
     const db = fixture();
     const { client, calls } = fakeClient(db);
-    const r = await clearSkippedNodeImagePointers(client, ORG, [{ key: HEIC, confirmedMissing: true }]);
+    const r = await clearSkippedNodeImagePointers(client, ORG, [{ key: HEIC, reportedMissing: true }]);
     expect(r.cleared.map(nodeImagePointerLabel)).toEqual([
       'library "P&IDs" — background (backgrounds/legacy.heic)',
       'folder "Unit 100" — background (backgrounds/legacy.heic)',
@@ -338,31 +340,31 @@ describe("ORG-18 — a cover / background the restore skipped leaves no node poi
     }
   });
 
-  it("fail-safe: a key whose absence storage did not confirm is NOT cleared — its nodes are named as still pointing at it", async () => {
+  it("a key the storage check did not report missing is NOT cleared — its nodes are named as still pointing at it", async () => {
     const db = fixture();
     const { client, calls } = fakeClient(db);
-    const r = await clearSkippedNodeImagePointers(client, ORG, [{ key: SVG, confirmedMissing: false }]);
+    const r = await clearSkippedNodeImagePointers(client, ORG, [{ key: SVG, reportedMissing: false }]);
     expect(r.cleared).toEqual([]);
     expect(r.kept.map((n) => n.id)).toEqual(["lib-1", "fold-2"]);
     expect(calls.filter((c) => c.op === "update")).toEqual([]);
     expect(db.libraries[0].cover_image_url).toBe(SVG);
   });
 
-  it("the same key seen twice is one key; confirmed on either pass counts as confirmed", async () => {
+  it("the same key seen twice is one key; reported missing on either pass counts as reported missing", async () => {
     const db = fixture();
     const { client, calls } = fakeClient(db);
-    const r = await clearSkippedNodeImagePointers(client, ORG, [{ key: SVG, confirmedMissing: false }, { key: SVG, confirmedMissing: true }]);
+    const r = await clearSkippedNodeImagePointers(client, ORG, [{ key: SVG, reportedMissing: false }, { key: SVG, reportedMissing: true }]);
     expect(r.cleared).toHaveLength(2);
     expect(calls.filter((c) => c.op === "select")).toHaveLength(4); // cover + background read, per table, once
   });
 
   it("a skipped file no node points at: nothing to clear, nothing written; no org or no keys: no reads at all", async () => {
     const { client, calls } = fakeClient(fixture());
-    const r = await clearSkippedNodeImagePointers(client, ORG, [{ key: `orgs/${ORG}/branding/covers/orphan.tiff`, confirmedMissing: true }]);
+    const r = await clearSkippedNodeImagePointers(client, ORG, [{ key: `orgs/${ORG}/branding/covers/orphan.tiff`, reportedMissing: true }]);
     expect(r).toEqual({ cleared: [], kept: [], errors: [] });
     expect(calls.filter((c) => c.op === "update")).toEqual([]);
     const empty = fakeClient(fixture());
-    expect(await clearSkippedNodeImagePointers(empty.client, "", [{ key: SVG, confirmedMissing: true }])).toEqual({ cleared: [], kept: [], errors: [] });
+    expect(await clearSkippedNodeImagePointers(empty.client, "", [{ key: SVG, reportedMissing: true }])).toEqual({ cleared: [], kept: [], errors: [] });
     expect(await clearSkippedNodeImagePointers(empty.client, ORG, [])).toEqual({ cleared: [], kept: [], errors: [] });
     expect(empty.calls).toEqual([]);
   });
@@ -373,7 +375,7 @@ describe("ORG-18 — a cover / background the restore skipped leaves no node poi
       readError: (t, f) => (t === "collections" && f.some((x) => x.startsWith("cover_image_url=")) ? "permission denied" : null),
       refuse: (t, id) => t === "libraries" && id === "lib-1",
     });
-    const r = await clearSkippedNodeImagePointers(client, ORG, [{ key: SVG, confirmedMissing: true }]);
+    const r = await clearSkippedNodeImagePointers(client, ORG, [{ key: SVG, reportedMissing: true }]);
     expect(r.cleared).toEqual([]);
     expect(r.errors).toHaveLength(2);
     expect(r.errors[0]).toMatch(/^The library "P&IDs" still points at the missing cover covers\/legacy\.svg: Nothing was changed/);
@@ -391,14 +393,41 @@ describe("ORG-18 — a cover / background the restore skipped leaves no node poi
     const n: NodeImagePointerNode = { kind: "folder", id: "f", name: "", slot: "cover", file: "covers/a.svg" };
     expect(nodeImagePointerLabel(n)).toBe('folder "f" — cover (covers/a.svg)');
   });
+
+  it("overflowLines: the first `cap` lines and how many more — every line is either shown or counted", () => {
+    const eight = Array.from({ length: 8 }, (_, i) => `line ${i + 1}`);
+    expect(overflowLines(eight, 5)).toEqual({ shown: eight.slice(0, 5), more: 3 });
+    expect(overflowLines(eight, 10)).toEqual({ shown: eight, more: 0 });
+    expect(overflowLines(eight, 8)).toEqual({ shown: eight, more: 0 });
+    expect(overflowLines([], 5)).toEqual({ shown: [], more: 0 });
+    expect(overflowLines(eight, 0)).toEqual({ shown: [], more: 8 });
+    expect(overflowLines(eight, -1)).toEqual({ shown: [], more: 8 });
+    for (const cap of [0, 1, 5, 10]) {
+      const { shown, more } = overflowLines(eight, cap);
+      expect(shown.length + more).toBe(eight.length);
+    }
+  });
+
+  it("DEC-29: the helper's comments do not claim more than the route gives — `missing: true` is any HEAD failure", () => {
+    const route = src("app/api/storage/resolve/route.ts");
+    // the route's catch around HeadObject is a catch-all: any error answers missing: true
+    expect(route).toMatch(/\} catch \{\n\s+const s = await settingsFor\(\);\n\s+return NextResponse\.json\(\{ archived: true, missing: true,/);
+    const lib = src("lib/dataRestore.ts");
+    const block = lib.slice(lib.indexOf("// ── ORG-18:"), lib.indexOf("export async function clearSkippedNodeImagePointers"));
+    expect(block).toContain("That answer is NOT a proof of absence");
+    expect(block).toContain("a HEAD failure of any kind");
+    expect(block).not.toMatch(/never removed|CONFIRMED|confirmed missing/);
+    expect(lib).not.toContain("the check only ever");
+    expect(lib).not.toContain("confirmedMissing");
+  });
 });
 
 describe("ORG-18 — the restore page clears and names (app/(protected)/admin/restore/page.tsx)", () => {
   const page = src("app/(protected)/admin/restore/page.tsx");
-  it("each skipped cover / background key is kept with whether storage CONFIRMED it missing (the resolve route's `missing: true`)", () => {
-    expect(page).toContain("skippedNodeImages.push({ key, confirmedMissing: check.ok && state?.missing === true });");
+  it("each skipped cover / background key is kept with whether the storage check reported it missing (the resolve route's `missing: true`)", () => {
+    expect(page).toContain("skippedNodeImages.push({ key, reportedMissing: check.ok && state?.missing === true });");
     expect(page).toContain("as { archived?: boolean; archiveId?: string | null; missing?: boolean } | null;");
-    // the route answers exactly that for an object that is not in storage
+    // the route answers that when HeadObject fails (for any reason)
     expect(src("app/api/storage/resolve/route.ts")).toMatch(/archived: true, missing: true, archiveId: v\?\.archive_id \?\? null/);
     // …and a file already present is counted present before any of this (never cleared)
     expect(page.indexOf("if (check.ok && state?.archived === false) { counters.skipped++; return; }"))
@@ -412,10 +441,30 @@ describe("ORG-18 — the restore page clears and names (app/(protected)/admin/re
     expect(page).toContain("setFilesProgress({ running: false, total: entries.length, ...counters, ...detail(), ...(pointers ?? {}) });");
     expect(page).toContain('data-testid="restore-node-images-cleared"');
     expect(page).toContain("So nothing points at a missing image, the cover or background was removed from");
-    expect(page).toContain("because storage could not confirm the file is missing (nothing was");
+    expect(page).toContain("because the storage check did not report the file missing (nothing was");
+    expect(page).not.toContain("could not confirm");
     expect(page).toContain("filesProgress.nodeImagePointerErrors");
     // a thrown helper is said, never a silent success
     expect(page).toMatch(/catch \(e\) \{\n\s+pointers = \{ nodeImagesCleared: \[\], nodeImagesKept: \[\], nodeImagePointerErrors: \[/);
+  });
+  it("no list drops a node silently: cleared and kept show 10 then 'and N more', errors show 5 then 'and N more that failed', each with every line under Show all", () => {
+    expect(page).toContain("overflowLines, type SkippedNodeImage,");
+    // cleared
+    expect(page).toMatch(/const all = filesProgress\.nodeImagesCleared!;\n\s+const \{ shown, more \} = overflowLines\(all, 10\);/);
+    expect(page).toContain('<ShowAllLines lines={all} testId="restore-node-images-cleared-all" />');
+    // kept
+    expect(page).toMatch(/const all = filesProgress\.nodeImagesKept!;\n\s+const \{ shown, more \} = overflowLines\(all, 10\);/);
+    expect(page).toContain('<ShowAllLines lines={all} testId="restore-node-images-kept-all" />');
+    expect((page.match(/\{more > 0 \? `; and \$\{fmtNum\(more\)\} more` : ""\}/g) ?? []).length).toBe(2);
+    // errors
+    expect(page).toMatch(/const all = filesProgress\.nodeImagePointerErrors!;\n\s+const \{ shown, more \} = overflowLines\(all, 5\);/);
+    expect(page).toContain("and {fmtNum(more)} more that failed");
+    expect(page).toContain('<ShowAllLines lines={all} testId="restore-node-image-errors-all" />');
+    // the old silent caps are gone
+    expect(page).not.toContain("nodeImagePointerErrors ?? []).slice(0, 5)");
+    expect(page).not.toMatch(/nodeImages(Cleared|Kept)!\.length > 10 \? "; …"/);
+    // Show all lists every line it is given
+    expect(page).toMatch(/function ShowAllLines\(\{ lines, testId \}[^)]*\) \{[\s\S]*?\{lines\.map\(\(l, i\) => <li key=\{`\$\{i\}:\$\{l\}`\}>\{l\}<\/li>\)\}/);
   });
   it("REGRESSION: the ORG-16 file notice is unchanged and still names each skipped file", () => {
     expect(page).toContain("nodeImagesNotRestored: [...nodeImagesNotRestored],");

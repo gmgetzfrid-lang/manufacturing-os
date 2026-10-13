@@ -34,7 +34,7 @@ import {
   planRestore, remapOrgPath, previewChunkedRestore, runChunkedRestore, readBackupArchive, RESTORE_ADDITIVE_NOTE,
   RESTORE_HELD_ELSEWHERE_NOTE, RESTORE_LINK_MEMBER_STATUSES, restoreRefusalLabel, isDanglingFlowRefusal, DANGLING_FLOW_CODE,
   type RestorePlan, type RestoreEnvelopeLike, type RestorePost, type ChunkedRestoreResult, type ChunkedRestorePreview,
-  type BackupArchiveRead, clearSkippedNodeImagePointers, nodeImagePointerLabel, type SkippedNodeImage,
+  type BackupArchiveRead, clearSkippedNodeImagePointers, nodeImagePointerLabel, overflowLines, type SkippedNodeImage,
 } from "@/lib/dataRestore";
 import { restoreUploadRequest, isWorkspaceLogoKey, isNodeImageKey } from "@/lib/storageKey";
 import { withRestoreMembershipCheck, restoreMembershipSentence, type RestoreMembershipCheck } from "@/lib/restoreMembership";
@@ -65,16 +65,29 @@ interface FilesProgress {
    *  (ORG-16: an SVG, HEIC or TIFF from before the rule), by file name. */
   nodeImagesNotRestored?: string[];
   /** ORG-18: the folders / libraries whose pointer at such a file was
-   *  cleared (it is confirmed missing from storage), one line each. */
+   *  cleared (the storage check reported it missing), one line each. */
   nodeImagesCleared?: string[];
-  /** ORG-18: nodes that name such a file whose absence could not be
-   *  confirmed — named, not changed. */
+  /** ORG-18: nodes that name such a file the storage check did not report
+   *  missing — named, not changed. */
   nodeImagesKept?: string[];
   /** ORG-18: a read or write of those pointers that failed, in words. */
   nodeImagePointerErrors?: string[];
 }
 
 function fmtNum(n: number) { return n >= 1000 ? n.toLocaleString() : String(n); }
+
+/** ORG-18: every line of a restore list, behind a "Show all" toggle, so a
+ *  list longer than the panel's summary still names every node. */
+function ShowAllLines({ lines, testId }: { lines: string[]; testId: string }) {
+  return (
+    <details data-testid={testId} className="mt-1">
+      <summary className="cursor-pointer font-bold underline">Show all {fmtNum(lines.length)}</summary>
+      <ul className="mt-1 list-disc pl-4">
+        {lines.map((l, i) => <li key={`${i}:${l}`}>{l}</li>)}
+      </ul>
+    </details>
+  );
+}
 
 export default function RestorePage() {
   const { activeOrgId, hasAnyRole } = useRole();
@@ -314,10 +327,11 @@ export default function RestorePage() {
         // ORG-16: a cover or background the server will not sign (an SVG,
         // HEIC or TIFF from before the rule) is not asked for either; the
         // panel names it so the node can be given its image again. ORG-18:
-        // the key is kept, with whether storage confirmed it missing.
+        // the key is kept, with whether the storage check reported it missing
+        // (`missing: true` — the route's answer to a HEAD failure of any kind).
         if (req.nodeImageProblem) {
           nodeImagesNotRestored.push(key.split("/").slice(-2).join("/"));
-          skippedNodeImages.push({ key, confirmedMissing: check.ok && state?.missing === true });
+          skippedNodeImages.push({ key, reportedMissing: check.ok && state?.missing === true });
           return;
         }
         const up = await fetch(`/api/storage/upload-url`, {
@@ -352,8 +366,8 @@ export default function RestorePage() {
       }),
     );
     // ORG-18: no folder or library is left pointing at a cover or background
-    // this run skipped — the pointer is cleared (only when storage confirmed
-    // the file is missing) and each node is named. The restored rows are in
+    // this run skipped — the pointer is cleared (when the storage check
+    // reported the file missing) and each node is named. The restored rows are in
     // place: this step follows "Restore records".
     let pointers: { nodeImagesCleared: string[]; nodeImagesKept: string[]; nodeImagePointerErrors: string[] } | null = null;
     if (skippedNodeImages.length > 0) {
@@ -634,23 +648,47 @@ export default function RestorePage() {
                       until then it shows no cover or background.
                     </div>
                   )}
-                  {(filesProgress.nodeImagesCleared ?? []).length > 0 && (
-                    <div data-testid="restore-node-images-cleared" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-800">
-                      So nothing points at a missing image, the cover or background was removed from{" "}
-                      {fmtNum(filesProgress.nodeImagesCleared!.length)} folder(s) / librar(ies): {filesProgress.nodeImagesCleared!.slice(0, 10).join("; ")}
-                      {filesProgress.nodeImagesCleared!.length > 10 ? "; …" : ""}. Pick a new image for each under Customize.
-                    </div>
-                  )}
-                  {(filesProgress.nodeImagesKept ?? []).length > 0 && (
-                    <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-800">
-                      These still point at a skipped image, because storage could not confirm the file is missing (nothing was
-                      changed): {filesProgress.nodeImagesKept!.slice(0, 10).join("; ")}{filesProgress.nodeImagesKept!.length > 10 ? "; …" : ""}.
-                      Run again, or pick a new image under Customize.
-                    </div>
-                  )}
-                  {(filesProgress.nodeImagePointerErrors ?? []).slice(0, 5).map((e) => (
-                    <div key={e} className="text-[10.5px] text-red-700 mt-0.5">{e}</div>
-                  ))}
+                  {(filesProgress.nodeImagesCleared ?? []).length > 0 && (() => {
+                    const all = filesProgress.nodeImagesCleared!;
+                    const { shown, more } = overflowLines(all, 10);
+                    return (
+                      <div data-testid="restore-node-images-cleared" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-800">
+                        So nothing points at a missing image, the cover or background was removed from{" "}
+                        {fmtNum(all.length)} folder(s) / librar(ies): {shown.join("; ")}
+                        {more > 0 ? `; and ${fmtNum(more)} more` : ""}. Pick a new image for each under Customize.
+                        {more > 0 && <ShowAllLines lines={all} testId="restore-node-images-cleared-all" />}
+                      </div>
+                    );
+                  })()}
+                  {(filesProgress.nodeImagesKept ?? []).length > 0 && (() => {
+                    const all = filesProgress.nodeImagesKept!;
+                    const { shown, more } = overflowLines(all, 10);
+                    return (
+                      <div data-testid="restore-node-images-kept" className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-800">
+                        These still point at a skipped image, because the storage check did not report the file missing (nothing was
+                        changed): {shown.join("; ")}{more > 0 ? `; and ${fmtNum(more)} more` : ""}.
+                        Run again, or pick a new image under Customize.
+                        {more > 0 && <ShowAllLines lines={all} testId="restore-node-images-kept-all" />}
+                      </div>
+                    );
+                  })()}
+                  {(filesProgress.nodeImagePointerErrors ?? []).length > 0 && (() => {
+                    const all = filesProgress.nodeImagePointerErrors!;
+                    const { shown, more } = overflowLines(all, 5);
+                    return (
+                      <div data-testid="restore-node-image-errors" className="text-[10.5px] text-red-700">
+                        {shown.map((e, i) => (
+                          <div key={`${i}:${e}`} className="mt-0.5">{e}</div>
+                        ))}
+                        {more > 0 && (
+                          <>
+                            <div className="mt-0.5 font-bold">and {fmtNum(more)} more that failed</div>
+                            <ShowAllLines lines={all} testId="restore-node-image-errors-all" />
+                          </>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
               <div className="flex items-center justify-end">
