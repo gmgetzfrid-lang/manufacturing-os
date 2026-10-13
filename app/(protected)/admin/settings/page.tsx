@@ -143,13 +143,14 @@ export default function WorkspaceSettingsPage() {
     try {
       // ORG-4 dw2/dw3: the shared checked-write helper — the update reads back
       // the row it changed, so a write RLS filtered out (zero rows, no error)
-      // is a refusal, never a green "Saved" over nothing.
+      // is a refusal, never a green "Saved" over nothing. The update names
+      // its three columns inline so the billing-column census can read them.
       const after = {
         ticket_prefix: numbering.prefix.trim() || null,
         ticket_record_code: numbering.recordCode.trim() || TICKET_NUMBER_DEFAULTS.recordCode,
         ticket_number_pad: Math.min(9, Math.max(1, numbering.pad || 4)),
       };
-      const res = await checkedWrite(supabase.from("orgs").update(after).eq("id", activeOrgId).select("id"));
+      const res = await checkedWrite(supabase.from("orgs").update({ ticket_prefix: after.ticket_prefix, ticket_record_code: after.ticket_record_code, ticket_number_pad: after.ticket_number_pad }).eq("id", activeOrgId).select("id"));
       if (!res.ok) {
         throw new Error(res.code === "refused" ? "the database saved nothing — only an Admin can change request numbering. Nothing was changed." : res.error);
       }

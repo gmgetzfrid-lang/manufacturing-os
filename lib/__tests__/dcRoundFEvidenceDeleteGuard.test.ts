@@ -171,10 +171,16 @@ describe("DRLS-14 — the doors that delete a document, and the ones that never 
   });
 
   it("P14 final review — a library delete on /admin/libraries shows the database's sentence too, and a delete that matched no row is a refusal (driven rendered in dcRoundFLibraryDeleteRefusal.test.ts)", () => {
+    // ALOG-3 (admin-and-org Round G) moved the delete into
+    // /api/admin/libraries/delete, still run as the caller: the route relays
+    // the database's sentence and treats a delete that matched no row as a
+    // refusal; the page shows whatever sentence the route returned.
     const page = src("app/(protected)/admin/libraries/page.tsx");
-    expect(page).toContain('const { data: deleted, error } = await supabase.from("libraries").delete().eq("id", libraryToDelete.id!).select("id");');
-    expect(page).toContain("if (error) throw new Error(error.message);");
-    expect(page).toContain("if (!deleted || deleted.length === 0) {");
+    const route = src("app/api/admin/libraries/delete/route.ts");
+    expect(route).toContain('const { data: deleted, error: delErr } = await caller.from("libraries").delete().eq("id", libraryId).select("id");');
+    expect(route).toContain("if (delErr) return bad(delErr.message, 409);");
+    expect(route).toContain("if (!deleted || (deleted as unknown[]).length === 0) {");
+    expect(page).toContain("throw new Error(typeof r.body.error === \"string\" && r.body.error ? r.body.error : `the library was not deleted (HTTP ${r.status}).`);");
     expect(page).toContain("await appAlert({ message: `Delete failed: ${typeof why === \"string\" && why ? why : \"the library was not deleted.\"}`, tone: \"danger\" });");
     expect(page).not.toContain("Failed to delete library.");
   });
