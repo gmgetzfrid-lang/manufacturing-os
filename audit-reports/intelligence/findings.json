@@ -34,8 +34,8 @@
       "LOW": 51
     },
     "by_status": {
-      "RESOLVED": 214,
-      "OPEN": 47,
+      "RESOLVED": 217,
+      "OPEN": 44,
       "REFUTED": 2,
       "WONTFIX": 3,
       "INVALID": 1
@@ -1134,7 +1134,7 @@
       "id": "ILIFE-2",
       "title": "Restore FK order puts process_flows and entity_mentions BEFORE knowledge_documents — both foreign-key to it, so the intelligence layer fails to restore",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -4377,7 +4377,7 @@
       "id": "ILIFE-7",
       "title": "Manager and DocCtrl can export the entire organization database, contradicting dataExport's own admin-only contract and the Admin-only restore",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -4895,7 +4895,7 @@
       "id": "IRLS-12",
       "title": "schema-health is blind to answer_skills, link_rules, process_flows and knowledge_line_traces — three live features can be entirely missing and the panel reports green",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

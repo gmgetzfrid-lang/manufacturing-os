@@ -340,7 +340,8 @@
     "DCW-2",
     "TIER-6 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': MOC applicability through the work-class mechanism, after GAP-101)",
     "AUTHZ-6 (re-owned by the integrator 2026-10-02 at the DF-P0 merge — see 99-fix-sequencing.md 'Hand-offs from DF-P0': rewrite the CAPABILITY_DEFS descriptions of ticket.requester_review / draft_work / direct_approve to state their reach)",
-    "HAND-7 done-when 3 (assigned by the integrator 2026-10-13 at the DF-P2 merge, DEC-31): approving a deliverable whose source's captured version_id is no longer current requires an explicit acknowledgement — an engine flag the route checks, the modal states the drift, the history line records it; and DEC-101's seam: TicketCreateInput.declaration is parsed and not written — run the declaration's signature in /api/tickets/create"
+    "HAND-7 done-when 3 (assigned by the integrator 2026-10-13 at the DF-P2 merge, DEC-31): approving a deliverable whose source's captured version_id is no longer current requires an explicit acknowledgement — an engine flag the route checks, the modal states the drift, the history line records it; and DEC-101's seam: TicketCreateInput.declaration is parsed and not written — run the declaration's signature in /api/tickets/create",
+    "intelligence GAP-312 and WIRE-7 criterion 1 (assigned by the integrator 2026-10-13 at the I-01B merge, DEC-31; 99-fix-sequencing Phase 5: they ship with GAP-110 / GAP-111 on the same form): the drafting request gets an equipment field — the request form and the ticket page take an equipment tag through the Bridge's relation (GAP-304 / GAP-311, built by I-11/I-10), never a free-text column; optional at intake, like library_id"
    ],
    "severityMix": "2 CRITICAL, 4 HIGH",
    "files": [
