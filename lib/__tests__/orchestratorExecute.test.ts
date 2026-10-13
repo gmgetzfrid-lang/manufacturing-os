@@ -565,6 +565,9 @@ describe("ORCH-1 / PR-1 — authority at execute: the controller tier for the au
       org_id: ORG, user_id: "u-dc", kind: "orchestrator_message", title: "About 025-PID-0103", body: "Rev C is out",
       link: "/documents/L-ops?doc=d-1", resource_type: "document", resource_id: "d-1",
       actor_user_id: "u-viewer", actor_name: "Vic Viewer",
+      // REGRESSION (notifications N14, TAX-11): through the typed sink the row
+      // is the one the raw insert wrote, metadata NULL included
+      metadata: null,
     });
     // The email copy was queued by the real dispatcher, bound to the service
     // role for that call: the recipient's address was found and the row written.
@@ -605,8 +608,9 @@ describe("ORCH-1 / PR-1 — authority at execute: the controller tier for the au
     // row itself and checks it, and binds the dispatcher for the email copy.
     const src = readFileSync(join(process.cwd(), "lib/orchestrator/tools.ts"), "utf8");
     const notifyBody = src.slice(src.indexOf("const notifyPersonnel: ToolDef"), src.indexOf("type DbError ="));
-    expect(notifyBody).toMatch(/const \{ error: bellErr \} = await supabaseAdmin\.from\("notifications"\)\.insert\(/);
-    expect(notifyBody).toMatch(/if \(bellErr\) \{\s*return \{ data: \{ error: /);
+    // TAX-11 (notifications N14): through the typed sink, on the service role
+    expect(notifyBody).toMatch(/const bell = await notifyWithReason\(\{[\s\S]*?kind: "orchestrator_message",[\s\S]*?\}, supabaseAdmin\);/);
+    expect(notifyBody).toMatch(/if \(!bell\.ok\) \{\s*return \{ data: \{ error: /);
     expect(notifyBody).toMatch(/runWithServerClient\(supabaseAdmin, \(\) => emit\(\{[\s\S]*channels: \["email"\],/);
   });
 

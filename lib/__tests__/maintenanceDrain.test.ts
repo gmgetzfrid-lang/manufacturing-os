@@ -1338,6 +1338,32 @@ describe("DELIV-7 / NEDGE-12 — the stale-checkout escalation reports a failed 
     expect(n.metadata).toEqual({ staleSessionId: "s1", escalation: true });
   });
 
+  it("REGRESSION (notifications N14, TAX-11): the escalation writes the row the raw insert wrote — ONE typed statement on the cron's client, the controllers but the holder, column for column", async () => {
+    seedStale();
+    db.tables.org_members.push({ ...member(ORG_A, U(8)), role: "Admin" });
+    const r = await runCron();
+    expect(r.staleEscalations).toBe(1);
+    const calls = db.calls.filter((c) => c.table === "notifications" && c.op === "insert");
+    expect(calls).toHaveLength(1);
+    expect(calls[0].args[1]).toEqual({ count: "exact" });
+    const sent = (calls[0].args[0] as Row[]);
+    // a column the raw insert left out (actor_user_id) is NULL either way:
+    // notifications has no default for it (20260621 / 20260723)
+    const row = (uid: string) => ({
+      org_id: ORG_A, user_id: uid, kind: "checkout_released",
+      title: expect.stringMatching(/^Checkout held \d+ days — review needed$/),
+      body: "Pat has had a document checked out since 2026-03-20 (UTC) (markups). Nudge them or force-release if the work is done.",
+      link: "/documents/l1?doc=d1", resource_type: "document", resource_id: "d1",
+      actor_user_id: null, actor_name: "System", metadata: { staleSessionId: "s1", escalation: true },
+    });
+    expect(sent.map((x) => x.user_id).sort()).toEqual([U(7), U(8)].sort());
+    for (const x of sent) expect(x).toEqual(row(x.user_id as string));
+    // the dedupe still finds it on the next run: nothing new is written
+    const again = await runCron();
+    expect(again.staleEscalations).toBe(0);
+    expect(db.calls.filter((c) => c.table === "notifications" && c.op === "insert")).toHaveLength(1);
+  });
+
   it("an insert that fails is pushed into errors and the session is not counted (it is retried next run)", async () => {
     seedStale();
     db.writeError.notifications = { message: "insert refused" };

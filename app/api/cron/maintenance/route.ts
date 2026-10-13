@@ -72,6 +72,7 @@ import {
 import { runWithServerClient } from "@/lib/serverClientScope";
 import { sweepIntakeStaging } from "@/lib/intakeStaging";
 import { emit, type EmitResult } from "@/lib/notify/dispatch";
+import { notifyBatchWithReason } from "@/lib/inAppNotifications";
 import { KIND_META } from "@/lib/notificationKinds";
 import { emailAllowedByPrefs } from "@/lib/notificationPrefs";
 import { renderNotificationEmail } from "@/lib/emailRender";
@@ -654,9 +655,9 @@ async function drainEmailQueue(origin: string, maxBatches: number, label: string
 
 const STALE_ESCALATION_DAYS = 14;
 
-// The escalation's raw insert stays here until notifications N14 (TAX-11's
-// tail) routes it through notify(); DELIV-7 / NEDGE-12 (N6) report its
-// failures and label its date.
+// The escalation writes through the typed sink (notifications N14, TAX-11's
+// tail — ONE statement on the cron's client, as the raw insert was);
+// DELIV-7 / NEDGE-12 (N6) report its failures and label its date.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function escalateStaleCheckouts(sb: SupabaseClient<any>, errors: string[]): Promise<number> {
   const cutoff = new Date(Date.now() - STALE_ESCALATION_DAYS * 24 * 3600 * 1000).toISOString();
@@ -706,22 +707,21 @@ async function escalateStaleCheckouts(sb: SupabaseClient<any>, errors: string[])
 
     const days = Math.floor((Date.now() - Date.parse(row.started_at)) / (24 * 3600 * 1000));
     const since = formatRecordDate(row.started_at, await zoneOf(row.org_id));
-    const inserts = recipients.map((uid) => ({
-      org_id: row.org_id,
-      user_id: uid,
-      kind: "checkout_released",
+    const { error: insErr } = await notifyBatchWithReason(recipients.map((uid) => ({
+      orgId: row.org_id,
+      userId: uid,
+      kind: "checkout_released" as const,
       title: `Checkout held ${days} days — review needed`,
       body: `${row.user_name || "A user"} has had a document checked out since ${since}${row.purpose ? ` (${row.purpose})` : ""}. Nudge them or force-release if the work is done.`,
       link: row.library_id ? `/documents/${row.library_id}?doc=${row.document_id}` : "/checkouts",
-      resource_type: "document",
-      resource_id: row.document_id,
-      actor_name: "System",
+      resourceType: "document",
+      resourceId: row.document_id,
+      actorName: "System",
       metadata: { staleSessionId: row.id, escalation: true },
-    }));
-    const { error: insErr } = await sb.from("notifications").insert(inserts);
+    })), sb);
     if (insErr) {
       // DELIV-7 dw3: reported, never only a counter that did not move.
-      errors.push(`stale-escalation: session ${row.id} — the controllers' notice was not written (retried on the next run): ${insErr.message}`);
+      errors.push(`stale-escalation: session ${row.id} — the controllers' notice was not written (retried on the next run): ${insErr}`);
       continue;
     }
     escalated += 1;

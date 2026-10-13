@@ -351,7 +351,9 @@ describe("20261160 — enforce_notification_insert(): the insert rails", () => {
     const offenders: string[] = [];
     for (const f of sourceFiles()) {
       const src = readFileSync(f, "utf8");
-      if (!/\b(?:notify|notifyMany|notifyChecked|emit)\(|from\(["']notifications["']\)/.test(src)) continue;
+      // the typed sink's server forms too (N14: the moved raw sites write
+      // through notifyWithReason / notifyBatchWithReason, and are still judged)
+      if (!/\b(?:notify|notifyMany|notifyChecked|notifyWithReason|notifyBatchChecked|notifyBatchWithReason|notifyCompliance|emit)\(|from\(["']notifications["']\)/.test(src)) continue;
       const r = linkStarts(src, f);
       seen += r.seen;
       shorthand += r.shorthand;
@@ -1774,7 +1776,10 @@ describe("REGRESSION census — every app write to notifications fits the read_a
   }
 
   it("the census sees the app's notification calls (sanity)", () => {
-    expect(writes.filter((w) => w.op === "insert").length).toBeGreaterThan(5);
+    // N14 (TAX-11 done-when 2): every raw insert moved onto the typed sink,
+    // so the inserts left are the sink's own two (notifyWithReason,
+    // notifyBatchWithReason) — every app row goes through one of them
+    expect(writes.filter((w) => w.op === "insert").map((w) => w.file)).toEqual(["lib/inAppNotifications.ts", "lib/inAppNotifications.ts"]);
     expect(writes.filter((w) => w.op === "update").length).toBeGreaterThanOrEqual(4);
   });
 
@@ -1829,10 +1834,12 @@ describe("REGRESSION census — every app write to notifications fits the read_a
     }
     // N8 (TAX-11 done-when 2): five raw calls moved onto the typed sink
     // (the transmittal portal's two, the checkout sweep's, and — N8's review
-    // fix — the export alert's and the folded intake digest's), so six raw
-    // calls and the sink's two inserts (notifyWithReason, and
-    // notifyBatchWithReason) are examined
-    expect(examined).toBeGreaterThanOrEqual(8);
+    // fix — the export alert's and the folded intake digest's); N14 moved the
+    // last six, so the sink's two inserts (notifyWithReason, and
+    // notifyBatchWithReason) are what is examined — and its row mapper
+    // (notificationRow) sets no created_at
+    expect(examined).toBe(2);
+    expect(readFileSync(join(ROOT, "lib/inAppNotifications.ts"), "utf8")).not.toMatch(/created_at:/);
     expect(offenders).toEqual([]);
   });
 

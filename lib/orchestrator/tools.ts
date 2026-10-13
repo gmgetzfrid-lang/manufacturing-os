@@ -723,13 +723,16 @@ const notifyPersonnel: ToolDef = {
     const title = `About ${d.document_number}`;
     const body = String(args.message);
     const link = `/documents/${d.library_id}?doc=${args.document_id}`;
-    const { error: bellErr } = await supabaseAdmin.from("notifications").insert({
-      org_id: ctx.orgId, user_id: recipient, kind: "orchestrator_message",
+    // TAX-11 done-when 2 (notifications Round G, N14): the typed sink on the
+    // service role — the same row, the kind checked by the compiler.
+    const { notifyWithReason } = await import("@/lib/inAppNotifications");
+    const bell = await notifyWithReason({
+      orgId: ctx.orgId, userId: recipient, kind: "orchestrator_message",
       title, body, link,
-      resource_type: "document", resource_id: String(args.document_id),
-      actor_user_id: ctx.userId, actor_name: ctx.actorName, metadata: null,
-    });
-    if (bellErr) {
+      resourceType: "document", resourceId: String(args.document_id),
+      actorUserId: ctx.userId, actorName: ctx.actorName,
+    }, supabaseAdmin);
+    if (!bell.ok) {
       return { data: { error: "The notification could not be sent — nothing reached them. Try again." } };
     }
     // The email copy goes through the dispatcher (the recipient's email
