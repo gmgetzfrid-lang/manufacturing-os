@@ -555,7 +555,7 @@ const scans: Array<[string, (orgId: string) => Promise<number>]> = [
 3. ✓ A ticket past its target produces exactly one notice per recipient per stage across runs (stamped compare-and-set; `ticketSla.test.ts` "a second run the same day sends nothing", "later runs read nothing"; bell rows that fail while the email is queued keep the claim, so the email is not re-sent daily).
 4. ✗ in part — the scan reads `sla_defaults` for a ticket with no target, but creation does not seed from it and `lib/notifications.ts:321`'s "first fallback when an org hasn't configured sla_defaults rows" comment still describes a lookup creation never makes. **Owner: DF-P2** (the create route stamps from `sla_defaults` first, and corrects the comment).
 
-**Scope / residual.** Done-when 4 → DF-P2 (see `EDGE-7`).
+**Scope / residual.** Done-when 4 → DF-P2 (see `EDGE-7`). *Fix pass 2:* the clock starts at the first paste of `20261195`, which records the backlog already past its target without a notice each (one summary to each queue); before the paste the scan sends nothing and counts that backlog; step 5b stops 120 s before the run's end; a request waiting on its requester is worded as such (see `EDGE-7`).
 
 ---
 

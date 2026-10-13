@@ -25,6 +25,12 @@
 //     tries again.
 //   * Every run reads the most urgent first (soonest target), so a cap on
 //     what one run reads never starves a breach (runTicketSlaScan).
+//   * The clock STARTS at the paste of 20261195 (SLA_CLOCK_MIGRATION): until
+//     its column is there the scan sends nothing and only counts the open
+//     requests already past their target; the paste records that backlog as
+//     overdue without a notice each and tells each workspace's assignment
+//     queue once. So the first run after the deploy never mails the whole
+//     backlog, and a breach after the paste never waits behind it.
 //   * No new cron entry: one step in app/api/cron/maintenance/route.ts.
 //
 // The warn fraction is a named constant; making it org-configurable is a
@@ -43,6 +49,13 @@ import { formatRecordDate } from "@/lib/recordTime";
 
 /** GAP-106: the fraction of the SLA window at which the owner is warned. */
 export const SLA_WARN_FRACTION = 0.75;
+
+/** The migration that starts the clock (GAP-106 fix pass 2): it records the
+ *  backlog already past its target as overdue without a notice each, in the
+ *  same transaction that adds SLA_CLOCK_COLUMN — so the column being there
+ *  means the backlog was recorded, and the scan may send. */
+export const SLA_CLOCK_MIGRATION = "20261195";
+export const SLA_CLOCK_COLUMN = "outcome";
 
 const DAY_MS = 24 * 3600 * 1000;
 const TERMINAL: readonly string[] = ["CLOSED", "CANCELED"];
@@ -100,6 +113,24 @@ export function slaStage(t: SlaTicket, now: number, target: number | null): SlaS
   return "none";
 }
 
+/** The statuses at which the request waits on its REQUESTER (their review,
+ *  their acknowledgement) — nobody on the drafting side can move it. */
+const REQUESTER_STEP: Readonly<Record<string, string>> = {
+  PENDING_REVIEW: "the requester's review",
+  FINAL_DRAFT: "the requester's acknowledgement",
+};
+export function waitsOnRequester(status: TicketStatus | string): boolean {
+  return Object.prototype.hasOwnProperty.call(REQUESTER_STEP, String(status));
+}
+
+/** How much of its window the request has used at `now`, in whole percent
+ *  (floored), or null when the window is unknown or empty. */
+export function usedPercent(t: SlaTicket, target: number, now: number): number | null {
+  const created = ms(t.createdAt);
+  if (created === null || target <= created) return null;
+  return Math.max(0, Math.floor(((now - created) / (target - created)) * 100));
+}
+
 /** The person (if any) the ticket waits on in its current status. */
 export function waitingParty(t: SlaTicket): string[] {
   switch (t.status) {
@@ -136,11 +167,26 @@ export function slaRecipients(
   return uniq([...base, ...pools.queue, t.requesterId]);
 }
 
-export function slaNotice(t: SlaTicket, stage: Exclude<SlaStage, "none">, target: number, timeZone?: string | null): { title: string; body: string } {
+/**
+ * The notice's words (fix pass 2): the share of the window used is the one at
+ * `now` (a ticket found late — filed before the clock started, or reached
+ * after earlier-due ones — says how late, never a fixed 75 %), and a request
+ * that waits on its requester says so instead of asking anyone to reassign it.
+ */
+export function slaNotice(
+  t: SlaTicket, stage: Exclude<SlaStage, "none">, target: number, timeZone?: string | null, now: number = Date.now(),
+): { title: string; body: string } {
   const label = `${t.ticketId ?? ""} ${t.title ?? ""}`.trim() || "A drafting request";
   const due = formatRecordDate(new Date(target).toISOString(), timeZone ?? null);
-  return stage === "warn"
-    ? { title: `Due soon · ${label}`, body: `This request is due ${due} and has used ${Math.round(SLA_WARN_FRACTION * 100)}% of its time. It is waiting at ${t.status}.` }
+  const onRequester = waitsOnRequester(t.status) ? REQUESTER_STEP[String(t.status)] : null;
+  if (stage === "warn") {
+    const pct = usedPercent(t, target, now);
+    const used = pct === null ? "" : ` and has used ${Math.min(pct, 99)}% of its time`;
+    const where = onRequester ? `It is waiting at ${t.status}, on ${onRequester}.` : `It is waiting at ${t.status}.`;
+    return { title: `Due soon · ${label}`, body: `This request is due ${due}${used}. ${where}` };
+  }
+  return onRequester
+    ? { title: `Overdue · ${label}`, body: `This request was due ${due} and is waiting at ${t.status}, on ${onRequester}. Nothing needs reassigning: ${onRequester} moves it on.` }
     : { title: `Overdue · ${label}`, body: `This request was due ${due} and is still waiting at ${t.status}. Reassign it, or tell the requester when it will be done.` };
 }
 
@@ -178,6 +224,12 @@ export interface SlaScanDeps {
 }
 
 export interface SlaScanReport {
+  /** False until 20261195 is pasted (SLA_CLOCK_MIGRATION): nothing is sent,
+   *  and `overdueBeforeClock` counts the backlog the paste will record. */
+  clockStarted: boolean;
+  /** Before the paste only: open requests already past their target with no
+   *  breach recorded (counts only). */
+  overdueBeforeClock?: number;
   scanned: number;
   warned: number;
   breached: number;
@@ -239,7 +291,31 @@ export async function runTicketSlaScan(deps: SlaScanDeps): Promise<SlaScanReport
   const nowIso = new Date(now).toISOString();
   const pageSize = deps.pageSize ?? 500;
   const maxTickets = deps.maxTickets ?? 2000;
-  const report: SlaScanReport = { scanned: 0, warned: 0, breached: 0, noTarget: 0, unreached: 0, truncated: false, errors: [] };
+  const report: SlaScanReport = { clockStarted: false, scanned: 0, warned: 0, breached: 0, noTarget: 0, unreached: 0, truncated: false, errors: [] };
+
+  // ── (0) has the clock started? (GAP-106 fix pass 2) ──────────────────────
+  // Before 20261195 every open request past its target would get a breach
+  // notice on the first run, oldest first. Until the paste records that
+  // backlog, send nothing; count it (counts only) so the operator sees it.
+  const { error: clockErr } = await sb.from("tickets").select(SLA_CLOCK_COLUMN).limit(1);
+  if (clockErr) {
+    const code = (clockErr as { code?: string }).code;
+    const missing = (code === "42703" || code === "PGRST204") && (clockErr.message ?? "").includes(SLA_CLOCK_COLUMN);
+    if (!missing) {
+      report.errors.push(`ticket-sla: whether the SLA clock has started could not be read — no SLA notice was sent: ${clockErr.message}`);
+      return report;
+    }
+    const { count, error: countErr } = await sb.from("tickets")
+      .select("id", { count: "exact", head: true })
+      .not("status", "in", "(CLOSED,CANCELED)")
+      .is("archived_at", null)
+      .is("sla_breached_at", null)
+      .lt("target_completion_at", nowIso);
+    if (!countErr) report.overdueBeforeClock = count ?? 0;
+    report.errors.push(`ticket-sla: the SLA clock starts when ${SLA_CLOCK_MIGRATION} is pasted — nothing was sent. ${countErr ? `The open requests already past their target could not be counted (${countErr.message})` : `${count ?? 0} open request(s) are already past their target`}; the paste records them as overdue without a notice each and tells each workspace's assignment queue once.`);
+    return report;
+  }
+  report.clockStarted = true;
 
   const orgCtx = new Map<string, RoutingContext | null>();
   const zones = new Map<string, string | null>();
@@ -291,7 +367,7 @@ export async function runTicketSlaScan(deps: SlaScanDeps): Promise<SlaScanReport
     if (claimErr) { report.errors.push(`ticket-sla: ticket ${t.id} — the ${stage} could not be recorded, nothing was sent (retried on the next run): ${claimErr.message}`); return; }
     if (!claimed || (claimed as unknown[]).length === 0) return; // another run, or a transition, got there first
 
-    const notice = slaNotice(t, stage, target, await zoneOf(t.orgId));
+    const notice = slaNotice(t, stage, target, await zoneOf(t.orgId), now);
     // emit() addresses every resolved recipient on BOTH channels: the bell
     // row and the email (queued whatever the bell did). A stage counts as
     // delivered when emit resolved anyone; a bell that landed for nobody
@@ -360,6 +436,7 @@ export async function runTicketSlaScan(deps: SlaScanDeps): Promise<SlaScanReport
   }
 
   // ── (2) no target of their own: only where the org set sla_defaults ──────
+  if (pastDeadline()) { report.truncated = true; return report; }
   const { count: untargeted, error: countErr } = await sb.from("tickets")
     .select("id", { count: "exact", head: true })
     .not("status", "in", "(CLOSED,CANCELED)")

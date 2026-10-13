@@ -147,6 +147,15 @@ describe("20261195 — EDGE-4: the departure triggers", () => {
     expect(fn).toContain("      BEGIN\n        DELETE FROM document_intents WHERE ticket_id = v_t.id AND user_id = p_uid AND source = 'ticket';\n      EXCEPTION WHEN OTHERS THEN");
     // nothing in the function writes outside a handler except the mark and the read
     expect(fn.match(/EXCEPTION WHEN OTHERS THEN/g)).toHaveLength(4);
+    // fix pass 2: never a WAIT that the API's statement timeout could cancel —
+    // a row another write holds is skipped, one call is bounded, and what it
+    // leaves is counted in a WARNING (never silent, never a refusal)
+    expect(fn).toContain("     ORDER BY t.created_at, t.id\n     LIMIT v_max\n     FOR UPDATE SKIP LOCKED\n  LOOP");
+    expect(fn).toContain("  v_max      integer := 200;");
+    expect(fn).not.toMatch(/FOR UPDATE\s*\n\s*LOOP/);
+    expect(fn).toContain("  PERFORM set_config('app.ticket_departure', '', true);\n  -- What this call left on the departed member");
+    expect(fn).toContain("SELECT COUNT(*) INTO v_left");
+    expect(fn).toContain("RAISE WARNING 'return_departed_member_tickets: % ticket(s) of the departed member % in org % still name them");
     expect(fn).toContain("'ticket_status'");
     expect(fn).toContain("INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, details)\n      VALUES ('TICKET_RETURNED_ON_DEPARTURE'");
     // a history line in the 20261053 form, and the CAS token bumped
@@ -199,10 +208,18 @@ describe("20261195 — DEC-30 one-paste shape", () => {
     expect(M).toContain("AS ok,\n       NULL::text AS n");
   });
   it("the inventory is aggregate counts only — never a customer row", () => {
-    const inv = between(M, "CREATE TEMP TABLE df_round_g_195_before AS", "target_completion_at IS NULL;");
+    const inv = between(M, "CREATE TEMP TABLE df_round_g_195_before AS", "* 0.75 <= now();");
     const selects = inv.match(/SELECT \d+, '|SELECT 1 AS ord, '/g) ?? [];
-    expect(selects.length).toBe(6);
-    expect(inv.match(/COUNT\(\*\)::text/g)).toHaveLength(6);
+    expect(selects.length).toBe(7);
+    expect(inv.match(/COUNT\(\*\)::text/g)).toHaveLength(7);
+  });
+  it("the final SELECT carries 11 probes — and none that cannot fail (fix pass 2: the transaction-local departure mark read after COMMIT is gone; the function's own text is checked instead)", () => {
+    const commit = M.indexOf("\nCOMMIT;\n");
+    const tail = stripComments(M.slice(commit));
+    expect(tail.match(/\n\s*NULL(::text AS n)?\n/g)).toHaveLength(11);
+    expect(tail).not.toContain("COALESCE(current_setting('app.ticket_departure', true), '') = ''");
+    expect(tail).toContain("prosrc LIKE '%PERFORM set_config(''app.ticket_departure'', p_uid::text, true);%END LOOP;%PERFORM set_config(''app.ticket_departure'', '''', true);%'");
+    expect(M).toContain("-- Probes: ok = true × 11.");
   });
   it("the stragglers move with a history line and a bell row, and a probe checks none is left", () => {
     const moved = between(M, "-- (b) SM-6 / ROUTE-1", "END\n$$;");
@@ -212,15 +229,39 @@ describe("20261195 — DEC-30 one-paste shape", () => {
     expect(moved).toContain("INSERT INTO notifications");
     expect(M).toContain("SELECT 'SM-6 / ROUTE-1: no open REVISION_REQ ticket is left without a drafter',");
   });
-  it("the stranded backlog is handed back through the same function, and probes check none is left", () => {
+  it("the stranded backlog is handed back through the same function — repeated until a call hands back none (one call is bounded) — and probes check none is left", () => {
     const backlog = between(M, "-- (a) open tickets already held by a uid", "END\n$$;");
-    expect(backlog).toContain("PERFORM return_departed_member_tickets(r.org_id, r.uid,");
+    expect(backlog).toContain("v_n := return_departed_member_tickets(r.org_id, r.uid,");
+    expect(backlog).toContain("EXIT WHEN COALESCE(v_n, 0) = 0 OR v_pass >= 1000;");
     expect(M).toContain("SELECT 'EDGE-4: no open ticket is left on a drafter who is not an active member of its org',");
     expect(M).toContain("SELECT 'EDGE-4: no PENDING_ENG_TEAM / PENDING_FINAL_APPROVAL ticket waits on an engineer who is not an active member of its org',");
   });
   it("prosrc probes write an apostrophe inside a body's string literal as ''''", () => {
     expect(M).toContain("current_setting(''app.ticket_departure'', true) IN (OLD.assigned_drafter_id::text, OLD.assigned_engineer_id::text) THEN%'");
     expect(M).toContain("prosrc LIKE '%RAISE EXCEPTION ''tickets: the history log cannot shrink'';%'");
+  });
+  it("GAP-106 (fix pass 2): the SLA clock starts at the FIRST paste — the backlog past its target is stamped overdue without a notice each, and each workspace queue gets one summary bell row", () => {
+    // the first-paste marker is read BEFORE the transaction adds the column
+    const marker = M.indexOf("CREATE TEMP TABLE df_round_g_195_clock AS");
+    expect(marker).toBeGreaterThan(M.indexOf("RAISE EXCEPTION '20261195 needs 20261166"));
+    expect(marker).toBeLessThan(M.indexOf("\nBEGIN;\n"));
+    expect(M).toContain("SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns\n                    WHERE table_schema = 'public' AND table_name = 'tickets' AND column_name = 'outcome') AS first_paste;");
+    const clock = between(M, "-- ── 5. GAP-106 / EDGE-7: the SLA clock starts at this paste", "END\n$$;");
+    expect(clock.indexOf("\nCOMMIT;")).toBe(-1);
+    expect(M.indexOf("-- ── 5. GAP-106 / EDGE-7")).toBeLessThan(M.indexOf("\nCOMMIT;\n"));
+    expect(clock).toContain("IF NOT COALESCE((SELECT c.first_paste FROM df_round_g_195_clock c LIMIT 1), false) THEN\n    RETURN;");
+    expect(clock).toContain("SET sla_breached_at      = now(),\n           sla_breach_warned_at = COALESCE(t.sla_breach_warned_at, now())");
+    // the same "past its target" as lib/ticketSla.ts: its own target, else its org's sla_defaults window
+    expect(clock).toContain("t.created_at + make_interval(days => d.default_days) < now()");
+    expect(clock.match(/t\.target_completion_at < now\(\)/g)).toHaveLength(2);
+    // nothing per ticket: no history line, no per-ticket bell row — one row per queue member per workspace
+    expect(clock).not.toContain("history");
+    expect(clock).toContain("'/requests', NULL, NULL, 'System',");
+    expect(clock).toContain("jsonb_build_object('action', 'sla_clock_started', 'overdue', v_n)");
+    expect(clock.match(/INSERT INTO notifications/g)).toHaveLength(1);
+    // the app side: the scan sends nothing until this paste's column exists
+    expect(readFileSync(join(process.cwd(), "lib", "ticketSla.ts"), "utf8")).toContain('export const SLA_CLOCK_MIGRATION = "20261195";\nexport const SLA_CLOCK_COLUMN = "outcome";');
+    expect(M).toContain("SELECT 'GAP-106: the SLA clock started at the first paste");
   });
   it("the header states the paste and deploy order and names the merge obligations", () => {
     expect(M).toContain("DEPLOY THE DF-P3 APP FIRST, THEN\n-- PASTE THIS.");

@@ -354,23 +354,32 @@ async function handler(req: NextRequest) {
   //     escalates at its target, once each (stamped compare-and-set on the
   //     ticket), through emit() — bell + email under the "SLA warnings"
   //     preference, drained at 6c. Never throws; every failure is a line.
-  try {
-    const sla = await runTicketSlaScan({
-      client: sb,
-      emit: (input) => runWithServerClient(sb, () => emit(input)),
-      zoneOf: (orgId) => orgTimeZone(sb, orgId),
-      // At most TICKET_SLA_MS of the run: the compliance steps after it keep theirs.
-      deadlineAt: Math.min(Date.now() + TICKET_SLA_MS, runEnd),
-    });
-    const { errors: slaErrors, ...slaCounts } = sla;
-    result.ticketSla = slaCounts;
-    for (const line of slaErrors) { result.errors.push(line); console.error(`[cron/maintenance] ${line}`); }
-    // Not a resume point: the scan reads soonest-due first every run, so what
-    // this run did not reach is due no sooner than what it did, and a ticket
-    // leaves the scan once its breach is sent (lib/ticketSla.ts).
-    if (sla.truncated) result.errors.push("ticket-sla: this run stopped before every open request was read (its read cap or time ran out) — the next run starts again with the soonest-due; a request leaves the scan once its breach is sent");
-  } catch (e) {
-    result.errors.push(`ticket-sla: ${(e as Error).message}`);
+  //     Its time (fix pass 2): at most TICKET_SLA_MS, and it stops
+  //     TICKET_SLA_RESERVE_MS before the run's end — the compliance digest's
+  //     floor, the second drain's reserve and the embed drain's minimum — so
+  //     it never takes time the steps after it are guaranteed; with less than
+  //     TICKET_SLA_MIN_MS of its own it is not run, and says so.
+  const slaDeadlineAt = Math.min(Date.now() + TICKET_SLA_MS, runEnd - TICKET_SLA_RESERVE_MS);
+  if (slaDeadlineAt - Date.now() < TICKET_SLA_MIN_MS) {
+    result.errors.push(`ticket-sla: not run — ${Math.max(0, Math.round(left() / 1000))} s of the run were left, and it stops ${TICKET_SLA_RESERVE_MS / 1000} s before the run's end so the compliance digest, the second drain and the embed drain keep their time — the next run reads the soonest-due first`);
+  } else {
+    try {
+      const sla = await runTicketSlaScan({
+        client: sb,
+        emit: (input) => runWithServerClient(sb, () => emit(input)),
+        zoneOf: (orgId) => orgTimeZone(sb, orgId),
+        deadlineAt: slaDeadlineAt,
+      });
+      const { errors: slaErrors, ...slaCounts } = sla;
+      result.ticketSla = slaCounts;
+      for (const line of slaErrors) { result.errors.push(line); console.error(`[cron/maintenance] ${line}`); }
+      // Not a resume point: the scan reads soonest-due first every run, so what
+      // this run did not reach is due no sooner than what it did, and a ticket
+      // leaves the scan once its breach is sent (lib/ticketSla.ts).
+      if (sla.truncated) result.errors.push("ticket-sla: this run stopped before every open request was read (its read cap or time ran out) — the next run starts again with the soonest-due; a request leaves the scan once its breach is sent");
+    } catch (e) {
+      result.errors.push(`ticket-sla: ${(e as Error).message}`);
+    }
   }
 
   // 4b. Rebuild acl_index from each node's ACL + ancestor chain, dropping
@@ -823,6 +832,12 @@ const TICKET_SLA_MS = 30_000;
 const EMBED_DRAIN_MS = 100_000;
 /** Below this the embed drain only marks libraries starved. */
 const EMBED_DRAIN_MIN_MS = 20_000;
+/** GAP-106 (step 5b, fix pass 2): the scan stops this long before the run's
+ *  end — what the steps after it are guaranteed (the digest's floor, the
+ *  second drain's reserve, the embed drain's minimum). */
+const TICKET_SLA_RESERVE_MS = DIGEST_FLOOR_MS + AFTER_DIGEST_RESERVE_MS + EMBED_DRAIN_MIN_MS;
+/** Below this much time of its own the SLA scan is not run (it says so). */
+const TICKET_SLA_MIN_MS = 5_000;
 
 /** The digest's deadline: the run's end less the 6c reserve — and never less
  *  than DIGEST_FLOOR_MS from `now`, unless the run itself ends sooner. */

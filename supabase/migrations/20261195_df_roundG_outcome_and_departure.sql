@@ -58,7 +58,14 @@
 --       the departure pass) is a WARNING and a skipped ticket; the bell rows
 --       and the audit row are each written in their own sub-block, so a
 --       refused audit row never takes the bell rows with it, and either
---       failing is a WARNING.
+--       failing is a WARNING. A ticket another write holds row-locked is
+--       skipped, never waited on (FOR UPDATE SKIP LOCKED), and one removal
+--       hands back at most 200 tickets, so the work stays well inside the
+--       API's statement timeout; what it leaves (skipped, refused or past
+--       the bound) is counted in a WARNING and handed back by (4)(a) on a
+--       re-paste. The one case left in which a removal can still fail is a
+--       statement the server cancels (statement_timeout / lock_timeout:
+--       QUERY_CANCELED, which no handler can catch).
 --   (4) The backlog (DEC-30): open tickets ALREADY held by a uid that is not
 --       an active member of the ticket's org (the triggers cannot see past
 --       departures) are handed back by the same function; and the
@@ -66,23 +73,44 @@
 --       Questions" from engineering review used to land there, where nobody's
 --       queue matched) move to PENDING_ASSIGNMENT with a history line and a
 --       bell row to the queue (the 20261053 pattern).
+--   (5) GAP-106 / EDGE-7: THE SLA CLOCK STARTS AT THIS PASTE. On the FIRST
+--       paste only (tickets.outcome not there before it), every open ticket
+--       already past its target — its target_completion_at, or for a ticket
+--       with none the window its org set in sla_defaults — is recorded as
+--       overdue (sla_breached_at, and sla_breach_warned_at when unset)
+--       WITHOUT a notice each, and each workspace's assignment queue gets ONE
+--       bell row naming how many. The maintenance cron (lib/ticketSla.ts)
+--       sends nothing until tickets.outcome exists (it only counts this
+--       backlog), so the backlog is never mailed request by request and a
+--       breach after the paste never waits behind it. A re-paste stamps
+--       nothing: what is past its target then is the cron's to send.
 --
 -- NOT a widening: nobody gains authority; one column more is refused to a
 -- client, and the departure path writes only rows the departed member held.
 -- DEC-30 inventory (aggregate counts only, captured BEFORE the transaction):
 -- the stragglers, the stranded tickets by role, the requests that ended
--- with no outcome, and the open tickets the SLA clock (maintenance cron)
--- will notify about on its first run.
+-- with no outcome, the SLA backlog this paste records without a notice each,
+-- and the open tickets the SLA clock warns on its first run after the paste.
+--
+-- PRE-DEPLOY (optional, counts only — run it alone in the SQL editor to see
+-- the SLA backlog before you deploy; nothing is sent before this paste):
+--   SELECT COUNT(*) FILTER (WHERE target_completion_at < now()) AS past_target,
+--          COUNT(*) FILTER (WHERE target_completion_at >= now() AND sla_breach_warned_at IS NULL
+--                             AND created_at + (target_completion_at - created_at) * 0.75 <= now()) AS warn_due
+--     FROM tickets
+--    WHERE status NOT IN ('CLOSED', 'CANCELED') AND archived_at IS NULL AND sla_breached_at IS NULL;
 --
 -- HOW TO APPLY: after 20261166 (the first statement refuses to run,
 -- changing nothing, without its guard). DEPLOY THE DF-P3 APP FIRST, THEN
 -- PASTE THIS. Either app works with or without the paste: before it, the
 -- workflow route writes `outcome`, meets 42703 / PGRST204 and retries
 -- without the column (today's path — that request's outcome is not
--- recorded), and the analytics block counts it as not recorded. Deploy
--- first because the app before DF-P3 still lands "Return with Questions" in
--- a drafterless REVISION_REQ; this paste moves every straggler made before
--- it. Re-running is safe (idempotent).
+-- recorded), and the analytics block counts it as not recorded; the SLA
+-- clock sends nothing and reports the backlog as a count. Deploy first
+-- because the app before DF-P3 still lands "Return with Questions" in a
+-- drafterless REVISION_REQ; this paste moves every straggler made before
+-- it. Re-running is safe (idempotent; the SLA backlog is stamped by the
+-- first paste only).
 -- ⚠ DF-P4 / P6 / P7 / P8 re-create ticket_update_guard FROM THIS BODY (the
 -- newest, found by scanning); never re-paste 20261166 after this — it would
 -- drop `outcome` and the departure path, and a member removal would then be
@@ -101,6 +129,12 @@ BEGIN
   END IF;
 END
 $$;
+
+-- ── Is this the first paste? (GAP-106: the SLA clock starts at the first) ───
+DROP TABLE IF EXISTS df_round_g_195_clock;
+CREATE TEMP TABLE df_round_g_195_clock AS
+SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'tickets' AND column_name = 'outcome') AS first_paste;
 
 -- ── Pre-apply inventory (aggregate only; captured BEFORE the DDL) ───────────
 DROP TABLE IF EXISTS df_round_g_195_before;
@@ -126,16 +160,26 @@ SELECT 4, 'inventory (before apply): LEAK-9 — requests that already ended (CLO
        COUNT(*)::text
   FROM tickets WHERE status IN ('CLOSED', 'CANCELED')
 UNION ALL
-SELECT 5, 'inventory (before apply): GAP-106 — open tickets already past target_completion_at with no breach sent (the first maintenance-cron run after the DF-P3 deploy sends each one breach notice, once)',
+SELECT 5, 'inventory (before apply): GAP-106 — open tickets already past their target (target_completion_at, or their org''s sla_defaults window when they have none) with no breach recorded (FIRST paste: recorded as overdue WITHOUT a notice each, one summary bell row per workspace queue; a re-paste stamps nothing and the cron sends these)',
        COUNT(*)::text
-  FROM tickets
- WHERE status NOT IN ('CLOSED', 'CANCELED') AND archived_at IS NULL AND sla_breached_at IS NULL
-   AND target_completion_at IS NOT NULL AND target_completion_at < now()
+  FROM tickets t
+ WHERE t.status NOT IN ('CLOSED', 'CANCELED') AND t.archived_at IS NULL AND t.sla_breached_at IS NULL
+   AND (t.target_completion_at < now()
+        OR (t.target_completion_at IS NULL AND EXISTS (
+              SELECT 1 FROM sla_defaults d
+               WHERE d.org_id = t.org_id AND d.request_type = t.request_type AND d.default_days > 0
+                 AND t.created_at + make_interval(days => d.default_days) < now())))
 UNION ALL
 SELECT 6, 'inventory (before apply): GAP-106 — open tickets with no target_completion_at (the SLA clock skips them unless their org configured sla_defaults for their type)',
        COUNT(*)::text
   FROM tickets
- WHERE status NOT IN ('CLOSED', 'CANCELED') AND archived_at IS NULL AND target_completion_at IS NULL;
+ WHERE status NOT IN ('CLOSED', 'CANCELED') AND archived_at IS NULL AND target_completion_at IS NULL
+UNION ALL
+SELECT 7, 'inventory (before apply): GAP-106 — open tickets past 75 % of their window and not yet past their target, not yet warned (the first maintenance-cron run after this paste sends each one "due soon" notice)',
+       COUNT(*)::text
+  FROM tickets
+ WHERE status NOT IN ('CLOSED', 'CANCELED') AND archived_at IS NULL AND sla_breached_at IS NULL AND sla_breach_warned_at IS NULL
+   AND target_completion_at >= now() AND created_at + (target_completion_at - created_at) * 0.75 <= now();
 
 BEGIN;
 
@@ -325,6 +369,8 @@ DECLARE
   v_now      text := to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
   v_n        integer := 0;
   v_skipped  integer := 0;
+  v_left     integer := 0;
+  v_max      integer := 200;
 BEGIN
   IF p_org IS NULL OR p_uid IS NULL THEN
     RETURN 0;
@@ -353,6 +399,10 @@ BEGIN
   -- The mark ticket_update_guard honours (this transaction only).
   PERFORM set_config('app.ticket_departure', p_uid::text, true);
 
+  -- Never a wait that could cancel the removal: a ticket another write holds
+  -- is skipped (SKIP LOCKED), and one call hands back at most v_max tickets
+  -- (the removal runs inside the Admin's API request, under its statement
+  -- timeout). What is left is counted below and caught by 20261195 (4)(a).
   FOR v_t IN
     SELECT t.id, t.ticket_id, t.title, t.status, t.requester_id, t.assigned_drafter_id, t.assigned_engineer_id
       FROM tickets t
@@ -360,7 +410,8 @@ BEGIN
        AND (t.assigned_drafter_id = p_uid
             OR (t.assigned_engineer_id = p_uid AND t.status IN ('PENDING_ENG_TEAM', 'PENDING_FINAL_APPROVAL')))
      ORDER BY t.created_at, t.id
-     FOR UPDATE
+     LIMIT v_max
+     FOR UPDATE SKIP LOCKED
   LOOP
     v_drafter  := v_t.assigned_drafter_id IS NOT DISTINCT FROM p_uid;
     v_engineer := v_t.assigned_engineer_id IS NOT DISTINCT FROM p_uid
@@ -455,14 +506,21 @@ BEGIN
   END LOOP;
 
   PERFORM set_config('app.ticket_departure', '', true);
-  IF v_skipped > 0 THEN
-    RAISE WARNING 'return_departed_member_tickets: % ticket(s) of the departed member % in org % were not handed back (see the warnings above)', v_skipped, p_uid, p_org;
+  -- What this call left on the departed member: refused (v_skipped), held by
+  -- another write, or past the bound. Never silent; never a refusal.
+  SELECT COUNT(*) INTO v_left
+    FROM tickets t
+   WHERE t.org_id = p_org AND t.archived_at IS NULL AND t.status NOT IN ('CLOSED', 'CANCELED')
+     AND (t.assigned_drafter_id = p_uid
+          OR (t.assigned_engineer_id = p_uid AND t.status IN ('PENDING_ENG_TEAM', 'PENDING_FINAL_APPROVAL')));
+  IF v_left > 0 THEN
+    RAISE WARNING 'return_departed_member_tickets: % ticket(s) of the departed member % in org % still name them (% refused — see the warnings above; the rest held by another write or past this call''s bound of % tickets) — a re-paste of 20261195 hands them back', v_left, p_uid, p_org, v_skipped, v_max;
   END IF;
   RETURN v_n;
 END;
 $$;
 COMMENT ON FUNCTION return_departed_member_tickets(uuid, uuid, text) IS
-  'drafting-flow EDGE-4 (20261195): hands a departed member''s in-flight tickets in one org back — DRAFTING / REVISION_REQ and PENDING_ENG_TEAM to the assignment queue, PENDING_FINAL_APPROVAL to the requester''s review, any other open status with the drafter cleared — with a history line, a bell row and an audit row each. Answers 0 for a member who is still active. Run by the org_members departure triggers and by 20261195''s backlog move; service role only.';
+  'drafting-flow EDGE-4 (20261195): hands a departed member''s in-flight tickets in one org back — DRAFTING / REVISION_REQ and PENDING_ENG_TEAM to the assignment queue, PENDING_FINAL_APPROVAL to the requester''s review, any other open status with the drafter cleared — with a history line, a bell row and an audit row each; at most 200 per call, skipping a ticket another write holds (what it leaves is a WARNING). Answers how many it handed back, 0 for a member who is still active. Run by the org_members departure triggers and by 20261195''s backlog move (repeated until it answers 0); service role only.';
 -- DRLS-16: definer, search_path pinned; no client may call it.
 REVOKE ALL ON FUNCTION return_departed_member_tickets(uuid, uuid, text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION return_departed_member_tickets(uuid, uuid, text) TO service_role;
@@ -496,7 +554,10 @@ CREATE TRIGGER trg_org_member_departure_delete
 --     the ticket's org — handed back by the same function, labelled from the
 --     member row when one is left.
 DO $$
-DECLARE r record;
+DECLARE
+  r      record;
+  v_n    integer;
+  v_pass integer;
 BEGIN
   FOR r IN
     SELECT DISTINCT s.org_id, s.uid
@@ -508,9 +569,16 @@ BEGIN
                AND t.assigned_engineer_id IS NOT NULL) AS s
      WHERE NOT EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = s.org_id AND m.uid = s.uid AND m.status = 'active')
   LOOP
-    PERFORM return_departed_member_tickets(r.org_id, r.uid,
-      (SELECT COALESCE(NULLIF(btrim(m.display_name), ''), split_part(COALESCE(m.email, ''), '@', 1))
-         FROM org_members m WHERE m.org_id = r.org_id AND m.uid = r.uid LIMIT 1));
+    -- One call hands back at most 200; repeat until it hands back none (each
+    -- ticket it moves leaves its query, so this ends; 1000 passes is a guard).
+    v_pass := 0;
+    LOOP
+      v_n := return_departed_member_tickets(r.org_id, r.uid,
+        (SELECT COALESCE(NULLIF(btrim(m.display_name), ''), split_part(COALESCE(m.email, ''), '@', 1))
+           FROM org_members m WHERE m.org_id = r.org_id AND m.uid = r.uid LIMIT 1));
+      v_pass := v_pass + 1;
+      EXIT WHEN COALESCE(v_n, 0) = 0 OR v_pass >= 1000;
+    END LOOP;
   END LOOP;
 END
 $$;
@@ -564,10 +632,76 @@ BEGIN
 END
 $$;
 
+-- ── 5. GAP-106 / EDGE-7: the SLA clock starts at this paste (FIRST paste) ──
+-- The open tickets already past their target are recorded as overdue
+-- WITHOUT a notice each — the maintenance cron never mails the backlog — and
+-- each workspace's assignment queue (queuePool()'s rule, as (4)(b)) gets one
+-- bell row naming how many. A re-paste stamps nothing.
+DO $$
+DECLARE
+  r      record;
+  v_n    integer;
+  v_pool uuid[];
+  v_line text;
+BEGIN
+  IF NOT COALESCE((SELECT c.first_paste FROM df_round_g_195_clock c LIMIT 1), false) THEN
+    RETURN;
+  END IF;
+  FOR r IN
+    SELECT t.org_id
+      FROM tickets t
+     WHERE t.status NOT IN ('CLOSED', 'CANCELED') AND t.archived_at IS NULL AND t.sla_breached_at IS NULL
+       AND (t.target_completion_at < now()
+            OR (t.target_completion_at IS NULL AND EXISTS (
+                  SELECT 1 FROM sla_defaults d
+                   WHERE d.org_id = t.org_id AND d.request_type = t.request_type AND d.default_days > 0
+                     AND t.created_at + make_interval(days => d.default_days) < now())))
+     GROUP BY t.org_id
+  LOOP
+    UPDATE tickets t
+       SET sla_breached_at      = now(),
+           sla_breach_warned_at = COALESCE(t.sla_breach_warned_at, now())
+     WHERE t.org_id = r.org_id
+       AND t.status NOT IN ('CLOSED', 'CANCELED') AND t.archived_at IS NULL AND t.sla_breached_at IS NULL
+       AND (t.target_completion_at < now()
+            OR (t.target_completion_at IS NULL AND EXISTS (
+                  SELECT 1 FROM sla_defaults d
+                   WHERE d.org_id = t.org_id AND d.request_type = t.request_type AND d.default_days > 0
+                     AND t.created_at + make_interval(days => d.default_days) < now())));
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    CONTINUE WHEN v_n = 0;
+    SELECT CASE WHEN cardinality(s.sup) = 0 THEN s.adm
+                WHEN COALESCE((SELECT (c.data -> 'routing' -> 'adminsAlsoReceiveWhenSupervisorSet') = 'true'::jsonb
+                                 FROM org_configurations c WHERE c.org_id = r.org_id AND c.key = 'drafting' LIMIT 1), false)
+                  THEN s.sup || s.adm
+                ELSE s.sup END
+      INTO v_pool
+      FROM (SELECT
+              COALESCE((SELECT array_agg(DISTINCT m.uid) FROM org_members m
+                         WHERE m.org_id = r.org_id AND m.status = 'active' AND m.uid IS NOT NULL
+                           AND EXISTS (SELECT 1 FROM unnest(ARRAY[m.role] || COALESCE(m.roles, '{}'::text[])) AS h(x)
+                                        WHERE btrim(h.x) = 'DraftingSupervisor')), '{}'::uuid[]) AS sup,
+              COALESCE((SELECT array_agg(DISTINCT m.uid) FROM org_members m
+                         WHERE m.org_id = r.org_id AND m.status = 'active' AND m.uid IS NOT NULL
+                           AND EXISTS (SELECT 1 FROM unnest(ARRAY[m.role] || COALESCE(m.roles, '{}'::text[])) AS h(x)
+                                        WHERE btrim(h.x) = 'Admin')), '{}'::uuid[]) AS adm) AS s;
+    v_line := 'The request SLA clock started today. ' || v_n || ' open request(s) in this workspace were already past their target date; each is recorded as overdue without a notice of its own. Find them on Requests: reassign them, close them, or tell their requesters when they will be done. From now on a request is warned at 75 % of its time and escalated when it passes its target.';
+    IF cardinality(v_pool) > 0 THEN
+      INSERT INTO notifications (org_id, user_id, kind, title, body, link, resource_type, resource_id, actor_name, metadata)
+      SELECT r.org_id, u, 'ticket_status',
+             'SLA clock started · ' || v_n || ' request(s) already overdue',
+             v_line, '/requests', NULL, NULL, 'System',
+             jsonb_build_object('action', 'sla_clock_started', 'overdue', v_n)
+        FROM unnest(v_pool) AS x(u);
+    END IF;
+  END LOOP;
+END
+$$;
+
 COMMIT;
 
 -- ── Verification + inventory (the only result set the SQL editor shows) ──
--- Probes: ok = true × 10. Inventory rows: n = the aggregate count before the
+-- Probes: ok = true × 11. Inventory rows: n = the aggregate count before the
 -- apply. pg_proc.prosrc is verbatim (an apostrophe inside a body's string
 -- literal is '''' here).
 SELECT 'LEAK-9 / GAP-107: tickets.outcome exists, CHECKed to completed / withdrawn / duplicate / handled_out_of_band / rejected (or NULL)' AS check,
@@ -654,8 +788,22 @@ SELECT 'EDGE-4: no PENDING_ENG_TEAM / PENDING_FINAL_APPROVAL ticket waits on an 
                       AND NOT EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = t.org_id AND m.uid = t.assigned_engineer_id AND m.status = 'active')),
        NULL
 UNION ALL
-SELECT 'the departure path is not left marked after this paste (app.ticket_departure is empty in this session)',
-       COALESCE(current_setting('app.ticket_departure', true), '') = '',
+SELECT 'EDGE-4: return_departed_member_tickets marks the departure path for its own transaction only and clears it after its loop, never waits on a ticket another write holds (SKIP LOCKED), and hands back at most 200 tickets per call',
+       EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'return_departed_member_tickets'
+                  AND prosrc LIKE '%PERFORM set_config(''app.ticket_departure'', p_uid::text, true);%END LOOP;%PERFORM set_config(''app.ticket_departure'', '''', true);%'
+                  AND prosrc LIKE '%FOR UPDATE SKIP LOCKED%'
+                  AND prosrc LIKE '%v_max      integer := 200;%'),
+       NULL
+UNION ALL
+SELECT 'GAP-106: the SLA clock started at the first paste — no open ticket is left past its target (as of a minute ago: one passing it since is the cron''s) with no breach recorded (on a re-paste nothing is stamped and this row is true: the maintenance cron sends those)',
+       NOT COALESCE((SELECT c.first_paste FROM df_round_g_195_clock c LIMIT 1), false)
+       OR NOT EXISTS (SELECT 1 FROM tickets t
+                       WHERE t.status NOT IN ('CLOSED', 'CANCELED') AND t.archived_at IS NULL AND t.sla_breached_at IS NULL
+                         AND (t.target_completion_at < now() - interval '1 minute'
+                              OR (t.target_completion_at IS NULL AND EXISTS (
+                                    SELECT 1 FROM sla_defaults d
+                                     WHERE d.org_id = t.org_id AND d.request_type = t.request_type AND d.default_days > 0
+                                       AND t.created_at + make_interval(days => d.default_days) < now() - interval '1 minute')))),
        NULL
 UNION ALL
 SELECT inventory, NULL::boolean, n FROM (SELECT ord, inventory, n FROM df_round_g_195_before ORDER BY ord) AS i;

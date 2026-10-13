@@ -545,7 +545,7 @@ creation.
 
 **Related findings:** `FRIC-1`, `LEAK-1`, `LEAK-2`, `LIFE-9`.
 
-*Landed 2026-10-13 (drafting-flow Round G, DF-P3): acceptance 1 and 3 — `lib/ticketSla.ts` + step 5b of the maintenance cron warn the owner of the current status at 75 % of the window and escalate a breach to them, the assignment queue and the requester, once each, through `emit()` (bell + email). Acceptance 2 holds in that form (the breach reaches the queue that can reassign). Acceptance 4 (a collision ticket gets a due date) → DF-P2's create route. See [`DEC-44 (DF-P3)`](../DECISIONS.md#dec-44-df-p3), `EDGE-7`, `ROUTE-9`.*
+*Landed 2026-10-13 (drafting-flow Round G, DF-P3): acceptance 1 and 3 — `lib/ticketSla.ts` + step 5b of the maintenance cron warn the owner of the current status at 75 % of the window and escalate a breach to them, the assignment queue and the requester, once each, through `emit()` (bell + email). Acceptance 2 holds in that form (the breach reaches the queue that can reassign). Acceptance 4 (a collision ticket gets a due date) → DF-P2's create route. The clock starts at the first paste of `20261195`, which records the backlog already past its target without a notice each (fix pass 2). See [`DEC-44 (DF-P3)`](../DECISIONS.md#dec-44-df-p3), `EDGE-7`, `ROUTE-9`.*
 
 ---
 

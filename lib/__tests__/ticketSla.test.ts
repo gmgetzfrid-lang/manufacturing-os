@@ -14,8 +14,8 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  SLA_WARN_FRACTION, effectiveTarget, warnAt, slaStage, waitingParty, slaRecipients, slaNotice,
-  runTicketSlaScan, type SlaTicket, type SlaEmitInput,
+  SLA_WARN_FRACTION, SLA_CLOCK_COLUMN, effectiveTarget, warnAt, slaStage, waitingParty, slaRecipients, slaNotice,
+  usedPercent, waitsOnRequester, runTicketSlaScan, type SlaTicket, type SlaEmitInput,
 } from "@/lib/ticketSla";
 import type { RoutingClient } from "@/lib/ticketRouting";
 
@@ -85,10 +85,43 @@ describe("ROUTE-9 done-when 2 — who hears: the party the CURRENT status waits 
     expect(slaRecipients(tk({ status: "PENDING_ENG_TEAM", assignedEngineerId: null }), "warn", pools)).toEqual(["sup-1"]);
   });
   it("the notice names the date in the org's zone and says it was due", () => {
-    const n = slaNotice(tk(), "breach", T0 + 4 * DAY, "UTC");
+    const n = slaNotice(tk(), "breach", T0 + 4 * DAY, "UTC", T0 + 5 * DAY);
     expect(n.title).toBe("Overdue · REQ-1 Pump iso");
     expect(n.body).toMatch(/was due .*and is still waiting at DRAFTING/);
-    expect(slaNotice(tk(), "warn", T0 + 4 * DAY, "UTC").title).toBe("Due soon · REQ-1 Pump iso");
+    expect(slaNotice(tk(), "warn", T0 + 4 * DAY, "UTC", T0 + 3 * DAY).title).toBe("Due soon · REQ-1 Pump iso");
+  });
+});
+
+describe("GAP-106 fix pass 2 — the notice's words follow the status family and the time actually used", () => {
+  const target = T0 + 4 * DAY;
+  it("a breach waiting on the DRAFTING side asks for a reassignment (drafter, engineer, the queue)", () => {
+    for (const status of ["DRAFTING", "REVISION_REQ", "PENDING_IFC", "PENDING_ENG_TEAM", "PENDING_FINAL_APPROVAL", "PENDING_ASSIGNMENT"]) {
+      const n = slaNotice(tk({ status, assignedEngineerId: "e-1" }), "breach", target, "UTC", T0 + 5 * DAY);
+      expect(waitsOnRequester(status), status).toBe(false);
+      expect(n.body, status).toContain(`is still waiting at ${status}. Reassign it, or tell the requester when it will be done.`);
+    }
+  });
+  it("a breach waiting on the REQUESTER (their review, their acknowledgement) never asks anyone to reassign it, nor the requester to tell themselves", () => {
+    const review = slaNotice(tk({ status: "PENDING_REVIEW" }), "breach", target, "UTC", T0 + 5 * DAY);
+    expect(review.body).toContain("is waiting at PENDING_REVIEW, on the requester's review. Nothing needs reassigning: the requester's review moves it on.");
+    const ack = slaNotice(tk({ status: "FINAL_DRAFT" }), "breach", target, "UTC", T0 + 5 * DAY);
+    expect(ack.body).toContain("is waiting at FINAL_DRAFT, on the requester's acknowledgement.");
+    for (const n of [review, ack]) {
+      expect(n.body).not.toMatch(/Reassign/);
+      expect(n.body).not.toMatch(/tell the requester/);
+    }
+    expect(slaNotice(tk({ status: "FINAL_DRAFT" }), "warn", target, "UTC", T0 + 3 * DAY).body).toContain("It is waiting at FINAL_DRAFT, on the requester's acknowledgement.");
+  });
+  it("the warning says the share of the window used NOW — 75 % on time, 97 % when found late — never a fixed 75 %", () => {
+    expect(slaNotice(tk(), "warn", target, "UTC", T0 + 3 * DAY).body).toContain("has used 75% of its time");
+    expect(slaNotice(tk(), "warn", target, "UTC", T0 + 3.88 * DAY).body).toContain("has used 97% of its time");
+    // floored, and never "100 %" on a warning (it is not yet due)
+    expect(usedPercent(tk(), target, T0 + 3.999 * DAY)).toBe(99);
+    expect(slaNotice(tk(), "warn", target, "UTC", T0 + 3.9999 * DAY).body).toContain("has used 99% of its time");
+    // an unknown or empty window names no share at all
+    expect(usedPercent(tk({ createdAt: null }), target, T0 + 3 * DAY)).toBeNull();
+    expect(slaNotice(tk({ createdAt: null }), "warn", target, "UTC", T0 + 3 * DAY).body).toMatch(/^This request is due [^.]+\. It is waiting at DRAFTING\.$/);
+    expect(slaNotice(tk(), "warn", target, "UTC", T0 + 3 * DAY).body).not.toContain(String(Math.round(SLA_WARN_FRACTION * 100)) + "% of its time. It is waiting at DRAFTING. Reassign");
   });
 });
 
@@ -119,7 +152,7 @@ function logic(tree: string, mode: "or" | "and"): (r: RowT) => boolean {
   });
   return mode === "or" ? (r) => preds.some((p) => p(r)) : (r) => preds.every((p) => p(r));
 }
-function store(seed: Record<string, RowT[]>, opts: { failRead?: string } = {}) {
+function store(seed: Record<string, RowT[]>, opts: { failRead?: string; missingColumn?: string; failClockRead?: boolean } = {}) {
   const db: Record<string, RowT[]> = JSON.parse(JSON.stringify(seed));
   const writes: Array<{ table: string; patch: RowT; ids: string[] }> = [];
   const reads: string[] = [];
@@ -130,8 +163,13 @@ function store(seed: Record<string, RowT[]>, opts: { failRead?: string } = {}) {
     const order: string[] = [];
     let wantRows = false;
     let head = false;
+    let columns = "";
     const run = () => {
       if (opts.failRead === table && !patch) return { data: null, error: { message: `${table} unreadable` } };
+      if (!patch && opts.missingColumn && columns.split(",").map((c) => c.trim()).includes(opts.missingColumn)) {
+        return { data: null, error: { code: "42703", message: `column ${table}.${opts.missingColumn} does not exist` } };
+      }
+      if (!patch && opts.failClockRead && columns === SLA_CLOCK_COLUMN) return { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } };
       reads.push(table);
       let rows = (db[table] ?? []).filter((r) => filters.every((f) => f(r)));
       if (head) return { data: null, count: rows.length, error: null };
@@ -145,12 +183,13 @@ function store(seed: Record<string, RowT[]>, opts: { failRead?: string } = {}) {
       return { data: rows.map((r) => ({ ...r })), error: null };
     };
     const q: Record<string, unknown> = {
-      select: (_c?: string, o?: { head?: boolean }) => { wantRows = true; if (o?.head) head = true; return q; },
+      select: (c?: string, o?: { head?: boolean }) => { wantRows = true; columns = c ?? ""; if (o?.head) head = true; return q; },
       update: (p: RowT) => { patch = p; return q; },
       eq: (k: string, v: unknown) => { filters.push((r) => r[k] === v); return q; },
       is: (k: string, v: unknown) => { filters.push((r) => (r[k] ?? null) === v); return q; },
       gt: (k: string, v: unknown) => { filters.push((r) => String(r[k]) > String(v)); return q; },
       lte: (k: string, v: unknown) => { filters.push((r) => r[k] !== null && r[k] !== undefined && String(r[k]) <= String(v)); return q; },
+      lt: (k: string, v: unknown) => { filters.push((r) => r[k] !== null && r[k] !== undefined && String(r[k]) < String(v)); return q; },
       or: (tree: string) => { filters.push(logic(tree, "or")); return q; },
       not: (k: string, op: string, v: string | null) => {
         if (op === "in") { const set = String(v).replace(/[()]/g, "").split(","); filters.push((r) => !set.includes(String(r[k]))); }
@@ -270,7 +309,8 @@ describe("GAP-106 / ROUTE-9 done-when 1 + 3 — the scan: one notice per stage p
     let reads = 0;
     (s.client as unknown as { from: (t: string) => unknown }).from = (t: string) => {
       const q = realFrom(t);
-      if (t === "tickets" && reads++ === 0) {
+      // read 0 is the clock check (has 20261195 been pasted?); read 1 is the scan's page
+      if (t === "tickets" && reads++ === 1) {
         // after the scan's read, the ticket moves on
         const then = q.then as (ok: (v: unknown) => unknown) => Promise<unknown>;
         q.then = (ok: (v: unknown) => unknown) => then((v: unknown) => { s.db.tickets[0].status = "PENDING_REVIEW"; return ok(v); });
@@ -352,10 +392,60 @@ describe("GAP-106 / ROUTE-9 done-when 1 + 3 — the scan: one notice per stage p
     expect(e.sent.map((x) => x.resource.id).sort()).toEqual(["z0", "z1", "z2", "z3", "z4"]);
     expect(s.db.tickets.filter((t) => String(t.id).startsWith("a")).every((t) => t.sla_breached_at === null && t.sla_breach_warned_at === null)).toBe(true);
   });
+  it("the scan words the warning with the share used when it ran (a ticket reached late says so)", async () => {
+    const s = store({ tickets: [row()], org_members: members, org_configurations: [], sla_defaults: [] });
+    const e = emitter();
+    await runTicketSlaScan({ client: s.client, emit: e.emit, now: T0 + 3.6 * DAY });
+    expect(e.sent[0].body).toContain("has used 90% of its time");
+  });
+  it("a run past its deadline after the targeted pass does not start the sla_defaults pass", async () => {
+    const s = store({
+      tickets: [row({ id: "n1", target_completion_at: null, request_type: "MOC" })],
+      org_members: members, org_configurations: [], sla_defaults: [{ org_id: "o1", request_type: "MOC", default_days: 1 }],
+    });
+    const r = await runTicketSlaScan({ client: s.client, emit: emitter().emit, now: T0 + 5 * DAY, deadlineAt: Date.now() - 1 });
+    expect(r).toMatchObject({ truncated: true, breached: 0 });
+    expect(s.reads).not.toContain("sla_defaults");
+  });
   it("source: the scan orders soonest-due first and never restarts from the lowest id", () => {
     const src2 = src("lib/ticketSla.ts");
     expect(src2).toContain('.order("target_completion_at", { ascending: true }).order("id", { ascending: true })');
     expect(src2).toContain("target_completion_at.gt.${pgq(cursor.target)},and(target_completion_at.eq.${pgq(cursor.target)},id.gt.${cursor.id})");
+  });
+});
+
+describe("GAP-106 fix pass 2 — the clock starts at the paste of 20261195: before it the backlog is counted, never mailed", () => {
+  const backlog = () => [
+    row({ id: "old1", target_completion_at: iso(T0 - 300 * DAY), created_at: iso(T0 - 314 * DAY) }),
+    row({ id: "old2", status: "FINAL_DRAFT", target_completion_at: iso(T0 - 30 * DAY), created_at: iso(T0 - 44 * DAY) }),
+    row({ id: "soon", target_completion_at: iso(T0 + 9 * DAY) }),
+  ];
+  it("tickets.outcome not there yet (20261195 not pasted): nothing is sent or stamped — the open requests past their target are counted and the line says the paste starts the clock", async () => {
+    const s = store({ tickets: backlog(), org_members: members, org_configurations: [], sla_defaults: [] }, { missingColumn: "outcome" });
+    const e = emitter();
+    const r = await runTicketSlaScan({ client: s.client, emit: e.emit, now: T0 });
+    expect(e.sent).toHaveLength(0);
+    expect(s.writes).toHaveLength(0);
+    expect(r).toMatchObject({ clockStarted: false, overdueBeforeClock: 2, scanned: 0, warned: 0, breached: 0 });
+    expect(r.errors).toEqual(["ticket-sla: the SLA clock starts when 20261195 is pasted — nothing was sent. 2 open request(s) are already past their target; the paste records them as overdue without a notice each and tells each workspace's assignment queue once."]);
+    // no read of the members, the configuration or the defaults: the counts only
+    expect(s.reads.filter((t) => t !== "tickets")).toEqual([]);
+  });
+  it("after the paste (the column is there, the backlog stamped by it) the scan runs as before", async () => {
+    const stamped = backlog().map((t) => (t.id === "soon" ? t : { ...t, sla_breached_at: iso(T0 - 1), sla_breach_warned_at: iso(T0 - 1) }));
+    const s = store({ tickets: stamped, org_members: members, org_configurations: [], sla_defaults: [] });
+    const e = emitter();
+    const r = await runTicketSlaScan({ client: s.client, emit: e.emit, now: T0 + 7 * DAY });
+    expect(r.clockStarted).toBe(true);
+    expect(e.sent.map((x) => [x.resource.id, x.metadata.sla])).toEqual([["soon", "warn"]]);
+  });
+  it("whether the clock started cannot be read (any other error): nothing is sent, and it says so", async () => {
+    const s = store({ tickets: backlog(), org_members: members, org_configurations: [], sla_defaults: [] }, { failClockRead: true });
+    const e = emitter();
+    const r = await runTicketSlaScan({ client: s.client, emit: e.emit, now: T0 });
+    expect(e.sent).toHaveLength(0);
+    expect(r.clockStarted).toBe(false);
+    expect(r.errors.join(" ")).toMatch(/whether the SLA clock has started could not be read — no SLA notice was sent/);
   });
 });
 
@@ -369,7 +459,11 @@ describe("GAP-106 — the cron step (no new cron entry; one hunk in the maintena
     expect(r).toContain('import { runTicketSlaScan, type SlaScanReport } from "@/lib/ticketSla";');
     expect(r).toContain("const sla = await runTicketSlaScan({");
     expect(r).toContain("emit: (input) => runWithServerClient(sb, () => emit(input)),");
-    expect(r).toContain("deadlineAt: Math.min(Date.now() + TICKET_SLA_MS, runEnd),");
+    // fix pass 2: it stops before what the later steps are guaranteed
+    expect(r).toContain("const slaDeadlineAt = Math.min(Date.now() + TICKET_SLA_MS, runEnd - TICKET_SLA_RESERVE_MS);");
+    expect(r).toContain("const TICKET_SLA_RESERVE_MS = DIGEST_FLOOR_MS + AFTER_DIGEST_RESERVE_MS + EMBED_DRAIN_MIN_MS;");
+    expect(r).toContain("deadlineAt: slaDeadlineAt,");
+    expect(r).not.toContain("deadlineAt: Math.min(Date.now() + TICKET_SLA_MS, runEnd),");
     expect(r.match(/runTicketSlaScan\(/g)).toHaveLength(1);
     // before the compliance digest, so its emails ride the 6c drain
     expect(r.indexOf("const sla = await runTicketSlaScan({")).toBeLessThan(r.indexOf("result.complianceEmails = await queueComplianceDigests("));
