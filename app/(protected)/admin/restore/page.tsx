@@ -37,6 +37,7 @@ import {
   type BackupArchiveRead,
 } from "@/lib/dataRestore";
 import { restoreUploadRequest, isWorkspaceLogoKey } from "@/lib/storageKey";
+import { completeRestoreMembership, restoreMembershipSentence, type RestoreMembershipCheck } from "@/lib/restoreMembership";
 
 type ZipLike = {
   files: Record<string, { dir: boolean }>;
@@ -88,6 +89,8 @@ export default function RestorePage() {
 
   const [applyProgress, setApplyProgress] = useState<ApplyProgress>({ phase: "idle", rowsDone: 0, rowsTotal: 0, tablesDone: 0, tablesTotal: 0 });
   const [applyResult, setApplyResult] = useState<ChunkedRestoreResult | null>(null);
+  // NEDGE-16: the restore ends with the workspace's membership state.
+  const [membershipCheck, setMembershipCheck] = useState<RestoreMembershipCheck | null>(null);
   const [preview, setPreview] = useState<ChunkedRestorePreview | null>(null);
   const idRemapRef = useRef<RestorePlan["idRemap"] | null>(null);
 
@@ -120,7 +123,7 @@ export default function RestorePage() {
   // ── 1. Read + plan (all local — nothing is written) ───────────────────────
   const handleFiles = useCallback(async (dropped: File[]) => {
     if (!activeOrgId || dropped.length === 0) return;
-    setError(null); setPlan(null); setApplyResult(null); setPreview(null);
+    setError(null); setPlan(null); setApplyResult(null); setMembershipCheck(null); setPreview(null);
     setFileName(dropped.length === 1 ? dropped[0].name : `${dropped.length} files: ${dropped.map((f) => f.name).join(", ")}`);
     setApplyProgress({ phase: "idle", rowsDone: 0, rowsTotal: 0, tablesDone: 0, tablesTotal: 0 });
     setFilesProgress({ running: false, done: 0, total: 0, uploaded: 0, skipped: 0, offline: 0, failed: 0 });
@@ -228,6 +231,9 @@ export default function RestorePage() {
       idRemapRef.current = result.idRemap; // "Put the files back" follows the org remap
       setApplyProgress((p) => ({ ...p, phase: "done" }));
       setApplyResult(result);
+      // NEDGE-16: the completion step — who is active now (restored people
+      // are inactive and hear nothing until reactivated), shown and audited.
+      setMembershipCheck(await completeRestoreMembership(activeOrgId, post));
     } catch (e) {
       setApplyProgress((p) => ({ ...p, phase: "error" }));
       setError((e as Error).message);
@@ -494,7 +500,34 @@ export default function RestorePage() {
 
           {/* Apply / result */}
           {applyResult ? (
-            <RestoreResultPanel result={applyResult} />
+            <>
+              <RestoreResultPanel result={applyResult} />
+              {membershipCheck && (
+                <div
+                  role="status"
+                  data-testid="restore-membership-check"
+                  className={`mt-3 rounded-2xl border p-4 text-[11px] leading-relaxed ${
+                    !membershipCheck.ok || membershipCheck.summary.inactiveMembers > 0
+                      ? "border-amber-200 bg-amber-50 text-amber-900"
+                      : "border-emerald-200 bg-emerald-50 text-emerald-900"
+                  }`}
+                >
+                  {membershipCheck.ok ? (
+                    <>
+                      <b>Members:</b> {restoreMembershipSentence(membershipCheck.summary)}
+                      {membershipCheck.summary.inactiveMembers > 0 && (
+                        <> <Link href="/admin/users" className="font-bold underline">Open Users</Link>.</>
+                      )}
+                      {membershipCheck.auditError && (
+                        <div className="mt-1 text-rose-800">The membership check could not be written to the audit log: {membershipCheck.auditError}</div>
+                      )}
+                    </>
+                  ) : (
+                    <><b>Members:</b> {membershipCheck.error}</>
+                  )}
+                </div>
+              )}
+            </>
           ) : !applying && (
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
               <div className="flex items-start gap-3">
