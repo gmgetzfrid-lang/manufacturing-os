@@ -66,7 +66,11 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
   // looking at ONE task's steps, the chevron opens a small popover
   // right at the chip instead — no scatter, nothing disappears.
   const [showSubtasks, setShowSubtasks] = useState(false);
-  const [subPopover, setSubPopover] = useState<{ ms: Milestone; top: number; left: number } | null>(null);
+  // The sub-items popover is DAY-SPECIFIC: opened from a chip on a tile, it
+  // lists the steps scheduled on that day, with status and progress entry,
+  // and tucks the other days' steps behind a toggle.
+  const [subPopover, setSubPopover] = useState<{ ms: Milestone; top: number; left: number; dayKey: string } | null>(null);
+  const [popoverShowOthers, setPopoverShowOthers] = useState(false);
   const today = useMemo(() => startOfDayUTC(new Date(), tz), [tz]);
 
   const byId = useMemo(() => {
@@ -448,7 +452,8 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
                         isExpanded={subPopover?.ms.id === p.ms.id}
                         onToggleExpand={canExpand && p.ms.id ? (e) => {
                           const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                          setSubPopover((cur) => cur?.ms.id === p.ms.id ? null : { ms: p.ms, top: r.bottom + 4, left: Math.min(r.left, window.innerWidth - 320) });
+                          setPopoverShowOthers(false);
+                          setSubPopover((cur) => cur && cur.ms.id === p.ms.id && cur.dayKey === key ? null : { ms: p.ms, top: r.bottom + 4, left: Math.min(r.left, window.innerWidth - 320), dayKey: key });
                         } : undefined}
                         selectable={canEdit && p.dayIndex === 0}
                         selected={!!p.ms.id && selected.has(p.ms.id)}
@@ -509,49 +514,109 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
         </div>
       )}
 
-      {/* Sub-items popover — opens at the chip's chevron. Lists this
-          task's steps with date, status, and move buttons. Nothing
-          leaves the grid; this is the Outlook 'click → small window'. */}
-      {subPopover && (
-        <div className="fixed inset-0 z-[160]" onClick={() => setSubPopover(null)}>
-          <div
-            className="absolute w-[300px] max-w-[92vw] max-h-[60dvh] overflow-y-auto bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg animate-in fade-in zoom-in-95 duration-150"
-            style={{ top: subPopover.top, left: subPopover.left }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="px-3 py-2 border-b border-[var(--color-border)] bg-slate-50/60 flex items-center gap-2">
-              <Layers className="w-3.5 h-3.5 text-[var(--color-accent)] shrink-0" />
-              <span className="text-[12px] font-bold text-[var(--color-text)] truncate flex-1">{subPopover.ms.name}</span>
-              <button onClick={() => { onOpenDetail(subPopover.ms); setSubPopover(null); }} className="text-[10px] font-bold text-[var(--color-accent)] hover:underline shrink-0">Open</button>
-            </div>
-            <ul className="divide-y divide-[var(--color-border)]">
-              {leafDescendants(subPopover.ms).slice().sort((a, b) => startMs(a) - startMs(b)).map((leaf) => (
-                <li key={leaf.id} className="px-3 py-2 flex items-center gap-2">
-                  <span className="shrink-0" onClick={(e) => e.stopPropagation()}>
-                    <StatusControl
-                      status={leaf.status} size="sm" variant="dot" disabled={!canEdit || !onSetStatus || !leaf.id}
-                      onPick={(st, reason) => { if (leaf.id && onSetStatus) void onSetStatus(leaf.id, st, reason); }}
-                    />
-                  </span>
-                  <button onClick={() => { onOpenDetail(leaf); setSubPopover(null); }} className="flex-1 min-w-0 text-left">
-                    <span className={`block text-[12px] truncate ${leaf.status === "completed" ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{leaf.name}</span>
-                    <span className="block text-[9px] text-[var(--color-text-faint)] font-mono">{fmtInTz(leaf.plannedAt as string, tz, { month: "short", day: "numeric" })}</span>
+      {/* Sub-items popover — opens at the chip's chevron on a specific day
+          tile. Shows the steps scheduled on THAT day (status dot, time,
+          progress entry) and keeps the other days' steps behind a toggle,
+          so the tile answers "what is expected today" without the rest
+          of the task's history crowding in. Nothing leaves the grid. */}
+      {subPopover && (() => {
+        const dayKey = subPopover.dayKey;
+        const all = leafDescendants(subPopover.ms).slice().sort((a, b) => startMs(a) - startMs(b));
+        const coversDay = (l: Milestone) => {
+          const s0 = startMs(l), f0 = finishMs(l);
+          if (!Number.isFinite(s0) || !Number.isFinite(f0)) return false;
+          return ymd(new Date(s0), tz) <= dayKey && dayKey <= ymd(new Date(f0), tz);
+        };
+        const onDay = all.filter(coversDay);
+        const others = all.filter((l) => !coversDay(l));
+        const dayLabel = fmtInTz(ymdToDate(dayKey, tz), tz, { weekday: "short", month: "short", day: "numeric" });
+        const timeOf = (l: Milestone) => {
+          const s0 = startMs(l), f0 = finishMs(l);
+          const sameDayStart = ymd(new Date(s0), tz) === dayKey, sameDayEnd = ymd(new Date(f0), tz) === dayKey;
+          const a = sameDayStart ? (clockLabel(s0, tz) || "0:00") : "…";
+          const b = sameDayEnd ? (clockLabel(f0, tz) || "24:00") : "…";
+          return a === "…" && b === "…" ? "all day" : `${a}–${b}`;
+        };
+        const pctOf = (l: Milestone) => (l.id ? progress?.get(l.id)?.percent : undefined) ?? (l.percentComplete != null ? Math.round(l.percentComplete) : (l.status === "completed" ? 100 : 0));
+        const Row = ({ leaf, muted }: { leaf: Milestone; muted?: boolean }) => (
+          <li className={`px-3 py-2 flex items-center gap-2 ${muted ? "opacity-60" : ""}`}>
+            <span className="shrink-0" onClick={(e) => e.stopPropagation()}>
+              <StatusControl
+                status={leaf.status} size="sm" variant="dot" disabled={!canEdit || !onSetStatus || !leaf.id}
+                onPick={(st, reason) => { if (leaf.id && onSetStatus) void onSetStatus(leaf.id, st, reason); }}
+                percent={pctOf(leaf)}
+                onSetProgress={onSetProgress ? (v) => { if (leaf.id) onSetProgress(leaf.id, v); } : undefined}
+              />
+            </span>
+            <button onClick={() => { onOpenDetail(leaf); setSubPopover(null); }} className="flex-1 min-w-0 text-left">
+              <span className={`block text-[12px] truncate ${leaf.status === "completed" ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{leaf.name}</span>
+              <span className="block text-[9px] text-[var(--color-text-faint)] font-mono">
+                {muted ? fmtInTz(startMs(leaf), tz, { month: "short", day: "numeric" }) : timeOf(leaf)}
+              </span>
+            </button>
+            <span className="shrink-0 flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+              <ProgressControl
+                percent={pctOf(leaf)}
+                onPick={(v) => { if (leaf.id && onSetProgress) onSetProgress(leaf.id, v); }}
+                disabled={!canEdit || !onSetProgress || !leaf.id}
+                size="sm"
+              />
+              {canEdit && onMoveDays && leaf.id && (
+                <>
+                  <button onClick={() => onMoveDays(leaf.id!, -1)} title="1 day earlier" className="w-5 h-5 inline-flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)] transition-colors"><ChevronLeft className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => onMoveDays(leaf.id!, 1)} title="1 day later" className="w-5 h-5 inline-flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)] transition-colors"><ChevronRight className="w-3.5 h-3.5" /></button>
+                </>
+              )}
+            </span>
+          </li>
+        );
+        return (
+          <div className="fixed inset-0 z-[160]" onClick={() => setSubPopover(null)}>
+            <div
+              className="absolute w-[340px] max-w-[92vw] max-h-[60dvh] overflow-y-auto bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)] ring-1 ring-black/5 rounded-xl shadow-lg animate-in fade-in zoom-in-95 duration-150"
+              style={{ top: subPopover.top, left: subPopover.left }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="px-3 py-2 border-b border-[var(--color-border)] bg-slate-50/60">
+                <div className="flex items-center gap-2">
+                  <Layers className="w-3.5 h-3.5 text-[var(--color-accent)] shrink-0" />
+                  <span className="text-[12px] font-bold text-[var(--color-text)] truncate flex-1">{subPopover.ms.name}</span>
+                  <button onClick={() => { onOpenDetail(subPopover.ms); setSubPopover(null); }} className="text-[10px] font-bold text-[var(--color-accent)] hover:underline shrink-0">Open</button>
+                </div>
+                <div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">
+                  <b className="text-[var(--color-text)]">{dayLabel}</b> · {onDay.length} of {all.length} step{all.length === 1 ? "" : "s"} scheduled this day
+                </div>
+              </div>
+              {onDay.length === 0 ? (
+                <div className="px-3 py-3 text-[11px] text-[var(--color-text-faint)]">Nothing under this task is scheduled on {dayLabel}.</div>
+              ) : (
+                <ul className="divide-y divide-[var(--color-border)]">
+                  {onDay.map((leaf) => <Row key={leaf.id} leaf={leaf} />)}
+                </ul>
+              )}
+              {others.length > 0 && (
+                <div className="border-t border-[var(--color-border)]">
+                  <button
+                    onClick={() => setPopoverShowOthers((v) => !v)}
+                    className="w-full px-3 py-1.5 text-left text-[10px] font-bold text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-2)] inline-flex items-center gap-1"
+                  >
+                    <ChevronRight className={`w-3 h-3 transition-transform ${popoverShowOthers ? "rotate-90" : ""}`} />
+                    {others.length} step{others.length === 1 ? "" : "s"} on other days
                   </button>
-                  {canEdit && onMoveDays && leaf.id && (
-                    <span className="shrink-0 flex items-center gap-0.5">
-                      <button onClick={() => onMoveDays(leaf.id!, -1)} title="1 day earlier" className="w-5 h-5 inline-flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)] transition-colors"><ChevronLeft className="w-3.5 h-3.5" /></button>
-                      <button onClick={() => onMoveDays(leaf.id!, 1)} title="1 day later" className="w-5 h-5 inline-flex items-center justify-center rounded text-[var(--color-text-faint)] hover:text-[var(--color-accent)] hover:bg-[var(--color-accent-soft)] transition-colors"><ChevronRight className="w-3.5 h-3.5" /></button>
-                    </span>
+                  {popoverShowOthers && (
+                    <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
+                      {others.map((leaf) => <Row key={leaf.id} leaf={leaf} muted />)}
+                    </ul>
                   )}
-                </li>
-              ))}
-            </ul>
-            <div className="px-3 py-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-text-faint)]">
-              Dot = set status · ◀ ▶ = move this step a day (others stay put; the parent span follows).
+                </div>
+              )}
+              <div className="px-3 py-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-text-faint)]">
+                Dot = status · % = progress · ◀ ▶ = move this step a day (others stay put; the parent span follows).
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Floating ghost that follows the finger during a touch drag. */}
       {touchDrag && (
