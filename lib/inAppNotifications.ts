@@ -29,8 +29,14 @@ export type NotificationKind =
   | "hold_opened"             // a hold was opened on a doc the user owns / is on the project for
   | "hold_released"           // a hold was released
   | "markup_request"          // a markup request on a document: you were asked for markups, or markups were shared to its thread
-  | "doc_superseded"          // a doc the user has open was superseded
-  | "checkout_released"       // the user's checkout was force-released / auto-expired
+  | "doc_superseded"          // a doc the user has open / follows was superseded: a new revision was published (one meaning since N9 — PROD-13 / TAX-13)
+  | "doc_recalled"            // your downloaded copy of a document is out of date, or the document was retired — destroy old prints (lib/staleCopies.ts; was doc_superseded + metadata.recall)
+  | "doc_upstream_changed"    // a document connected to work you have checked out was revised (lib/revisionImpact.ts; was doc_superseded)
+  | "package_doc_stale"       // a document pinned in your work package moved past its pin (lib/workPackages.ts; was doc_superseded + metadata.workPackageId)
+  | "package_doc_retired"     // a document pinned in your work package was superseded / voided (lib/postPublish.ts; was doc_superseded + metadata.retirement)
+  | "checkout_released"       // (to Admin/DocCtrl) a checkout has been held for weeks — review it (the maintenance cron's stale-checkout escalation; until N9 it also meant the two below)
+  | "checkout_force_released" // your checkout was force-released by someone else (lib/checkoutEpisodes.ts; was checkout_released)
+  | "checkout_auto_released"  // your ad-hoc checkout expired and was released automatically (lib/projects.ts; was checkout_released + metadata.autoReleasedSessionId)
   | "overlap_advisory"        // two people hold live edit intents on the same doc
   | "branch_open"             // an unreconciled revision branch was opened
   | "branch_resolved"         // a revision branch was merged / withdrawn
@@ -49,7 +55,7 @@ export type NotificationKind =
   | "ack_complete"            // (to owner) every assignee has acknowledged a revision
   | "ack_overdue"             // (to owner/Admin/DocCtrl) an assignee is long overdue to acknowledge
   | "ack_unsatisfiable"       // (to owner/Admin/DocCtrl) an ack policy resolved to nobody / has gaps
-  | "review_requested"        // you're asked to review & sign off an in-review draft before it publishes
+  | "review_requested"        // you're asked to review & sign off an in-review draft before it publishes (one meaning since N9: the intake notices have their own kinds)
   | "review_signed"           // (to owner/publisher) a reviewer signed off on the draft
   | "review_invalidated"      // the draft you approved changed — your sign-off was voided, please re-review
   | "review_complete"         // (to owner/publisher) all reviewers signed — the rev can publish
@@ -72,6 +78,9 @@ export type NotificationKind =
   | "milestone_assigned"         // you were made responsible for a schedule task (lib/milestones.ts — PROD-11)
   | "milestone_slipped"          // (to the project owner) a move pushed baselined tasks past their baseline (lib/milestones.ts — PROD-11)
   | "access_request_pending"     // (to Admin/DocCtrl) someone asked to join the workspace (app/api/auth/request-access — PROD-2)
+  | "intake_quote"               // a contractor submitted a quote through a project's intake link (app/api/intake/upload/route.ts; was review_requested — DEC-90 A13)
+  | "intake_submission"          // a contractor submission awaits review, or the intake digest of folded submissions (app/api/intake/upload/route.ts, lib/intakeRateLimit.ts; was review_requested — DEC-90 A13)
+  | "transmittal_issued"         // a controlled copy of a document you own / a library you follow was issued to an outside party (lib/transmittals.ts — PROD-12)
   | "transmittal_unstampable";   // (to the issuer) the portal refused to stamp an issued PDF (TRX-15, app/api/transmittal/route.ts)
 
 export interface NotificationInput {

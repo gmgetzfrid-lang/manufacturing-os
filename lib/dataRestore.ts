@@ -147,7 +147,14 @@ const SKIP_TABLES: Record<string, string> = {
   // (admin/settings) makes any failed row sendable again with its address
   // and body unchanged. So no row of the queue is ever written by a restore.
   email_notifications: "the outbound mail queue — a restored message would be sent again, to whatever address the backup names; delivery state is never restored",
-  subscriptions: "billing state is owned by the payment provider — re-subscribe, never copy",
+  // NEDGE-8 (notifications Round G, N9): `subscriptions` is NOT billing state
+  // (that lives on the orgs row — lib/subscription.ts); it is the watch/follow
+  // table (lib/subscriptions.ts) every `followers: true` notice resolves
+  // through. It used to be skipped here under a billing reason, so a restore
+  // threw away every document / project / asset / library follow while
+  // reporting it as deliberate. It is restored now (RESTORE_TABLE_ORDER),
+  // its user_id remapped like every uid and its resource bounded to the
+  // target workspace (RESTORE_POLYMORPHIC_PARENTS).
   push_subscriptions: "device push registrations are machine-specific — re-established per device",
   // admin-and-org P1 (fix pass 4): service-role only (20260916). The only
   // writer, POST /api/ai/usage, is controller-gated, bounds a cap to
@@ -338,6 +345,36 @@ export const RESTORE_PARENT_RULES: Readonly<Record<string, ReadonlyArray<Restore
   work_package_documents: fkRules("package_id>work_packages document_id>documents pinned_version_id>document_versions"),
   work_package_prints: fkRules("package_id>work_packages"),
 };
+
+/** NEDGE-8 (notifications Round G, N9): restorable tables that name what they
+ *  are about by a (type, id) PAIR rather than a foreign key — the watch/follow
+ *  table. No foreign key means no RESTORE_PARENT_RULES entry, so the pointer
+ *  is bounded here instead, the same way: the resource must be a row of the
+ *  TARGET workspace (`.in("id", …).eq("org_id", …)`, read before the write —
+ *  RESTORE_TABLE_ORDER restores every resource table first). A row naming a
+ *  resource elsewhere, a missing one, or a type with no table here is refused
+ *  (`parent_outside_workspace`) and never written, so a restored follow can
+ *  never point into another tenant. lib/subscriptions.ts WatchResourceType
+ *  and lib/notify/recipients.ts (tickets) are the types written today. */
+export const RESTORE_POLYMORPHIC_PARENTS: Readonly<Record<string, { typeColumn: string; idColumn: string; parents: Readonly<Record<string, string>> }>> = {
+  subscriptions: {
+    typeColumn: "resource_type",
+    idColumn: "resource_id",
+    parents: { document: "documents", project: "projects", asset: "assets", library: "libraries", ticket: "tickets" },
+  },
+};
+
+/** The (type, id) pointer `table`'s restored rows must honour, if any. */
+export function restorePolymorphicParentFor(table: string): { typeColumn: string; idColumn: string; parents: Readonly<Record<string, string>> } | null {
+  return has(RESTORE_POLYMORPHIC_PARENTS, table) ? RESTORE_POLYMORPHIC_PARENTS[table] : null;
+}
+
+/** The parent table a polymorphic pointer of `row` names, or null when its
+ *  type is not one a restore can bound. */
+function polymorphicParentOf(poly: { typeColumn: string; parents: Readonly<Record<string, string>> }, row: Record<string, unknown>): string | null {
+  const t = row[poly.typeColumn];
+  return typeof t === "string" && has(poly.parents, t) ? poly.parents[t] : null;
+}
 
 /** Parents WITHOUT an org_id column that a restorable foreign key names, and
  *  why no workspace check applies (the census test requires an entry here for
@@ -900,6 +937,9 @@ export const RESTORE_TABLE_ORDER: string[] = [
   "markup_requests",
   "document_markups", // GAP-7: after documents + document_versions (FKs); the author uid is remapped like any user column
   "notes", "download_audits",
+  // NEDGE-8 (N9): the watch/follow rows after every resource they can name
+  // (documents, projects, assets, libraries, tickets — all above).
+  "subscriptions",
   "audit_logs", "notifications", "email_notifications",
   "table_views", "sla_defaults", "org_configurations",
   "export_destinations", "export_runs", "ai_usage_events",
@@ -937,6 +977,11 @@ export const CONFLICT_TARGETS: Record<string, string> = {
   document_equipment_suggestions: "org_id,document_id", // 20260928
   recently_viewed_docs: "user_id,document_id",        // 20260806
   library_numbering: "library_id",                    // 20260806
+  // NEDGE-8 (N9): one follow per (person, resource) — the unique index
+  // subscriptions_user_resource_uniq (20260622 / 20260723), the key
+  // lib/subscriptions.ts watch() upserts on. A follow the person already
+  // holds here is kept as it is (counted existing), never refused 23505.
+  subscriptions: "user_id,resource_type,resource_id",
 };
 
 /** The ON CONFLICT target to use when additively restoring `table`. */
@@ -1370,9 +1415,10 @@ export async function applyRestoreChunk(
   // bounding parent is required (BKP-3 Done-when 3). A `clearWhenMissing`
   // pointer is cleared instead of refusing the row.
   const rules = restoreParentRulesFor(table);
+  const poly = restorePolymorphicParentFor(table);
   const inWorkspace = new Map<string, Set<string>>();
   const newHere = new Set<string>();
-  if (rules.length && mapped.length) {
+  if ((rules.length || poly) && mapped.length) {
     const wanted = new Map<string, Set<string>>();
     for (const r of mapped) {
       for (const rule of rules) {
@@ -1380,6 +1426,13 @@ export async function applyRestoreChunk(
         if (typeof v !== "string" || !v) continue;
         if (!wanted.has(rule.parent)) wanted.set(rule.parent, new Set());
         wanted.get(rule.parent)!.add(v);
+      }
+      // NEDGE-8 (N9): a (type, id) pointer is read in its type's table.
+      const pp = poly ? polymorphicParentOf(poly, r) : null;
+      const pv = poly ? r[poly.idColumn] : null;
+      if (pp && typeof pv === "string" && pv) {
+        if (!wanted.has(pp)) wanted.set(pp, new Set());
+        wanted.get(pp)!.add(pv);
       }
     }
     for (const [parent, ids] of wanted) {
@@ -1420,6 +1473,20 @@ export async function applyRestoreChunk(
         code: "parent_outside_workspace",
         message: `${rule.column} ${typeof v === "string" ? v : "(none)"} is not a ${rule.parent} row of this workspace`,
       };
+    }
+    if (poly) {
+      // NEDGE-8 (N9): the resource a follow names is a row of this workspace.
+      const pp = polymorphicParentOf(poly, r);
+      const pv = r[poly.idColumn];
+      if (!pp || typeof pv !== "string" || !pv || !inWorkspace.get(pp)?.has(pv)) {
+        return {
+          id: label(r),
+          code: "parent_outside_workspace",
+          message: pp
+            ? `${poly.idColumn} ${typeof pv === "string" && pv ? pv : "(none)"} is not a ${pp} row of this workspace`
+            : `${poly.typeColumn} "${String(r[poly.typeColumn] ?? "")}" is not a resource a restore can bound to this workspace`,
+        };
+      }
     }
     // Fix pass 6: an unmapped backup member first — the row would name the
     // raw backup uid, which also has no profile here, and only this refusal

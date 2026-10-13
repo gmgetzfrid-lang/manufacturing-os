@@ -970,7 +970,7 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
    *  publish or replacement the link never announces itself (it went quiet)
    *  gets the maintenance cron's digest (flushFoldedIntakeNotices). */
   const notifyTeam = async (n: {
-    kind: "review_requested" | "doc_superseded"; title: string; body: string; link: string;
+    kind: "intake_quote" | "intake_submission" | "doc_superseded"; title: string; body: string; link: string;
     resource: { type: "document" | "project"; id: string }; followers: boolean; extraInvolved?: string[];
     metadata: Record<string, unknown>; force?: "published" | "displaced";
   }) => {
@@ -1102,7 +1102,7 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
     const quoteId = String((qdoc as { id: string }).id);
 
     await notifyTeam({
-      kind: "review_requested",
+      kind: "intake_quote",   // DEC-90 A13 (notifications N9): its own kind, section Projects
       title: `Quote received: ${company}${rfqGroup ? ` — ${rfqGroup}` : ""}`,
       body: `${company} submitted a quote through their intake link.${changeNote ? ` Note: ${changeNote}` : ""} Run the AI read from the project's Costs tab to tabulate it.`,
       link: `/projects/${projectId}?tab=costs`,
@@ -1875,7 +1875,7 @@ async function door(req: NextRequest, ref: string, staged: { key: string | null 
       }
     }
     await notifyTeam({
-      kind: "review_requested",
+      kind: "intake_submission",   // DEC-90 A13 (notifications N9): its own kind, section Projects
       title: `Intake submission awaiting review: ${label} (${company})`,
       body: `${company} submitted ${docId ? `Rev ${revLabel}` : "a new document"} on the project — review and approve it from the project's Intake tab.` +
         (autoWithheld ? ` (Auto-publish was withheld: ${autoWithheld}.)` : "") + displacedNote,

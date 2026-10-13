@@ -757,7 +757,9 @@ export async function forceReleaseDocument(input: {
     orgId: input.orgId,
     documentId: input.documentId,
     episodeId: episode?.id ?? null,
-    text: `SYSTEM ALERT: checkout force-released by ${input.actorName}. All sessions ended.`,
+    // TAX-3 dw2 (N9): one wording for the event — the thread line and the
+    // holder's notification title both say "Checkout force-released".
+    text: `Checkout force-released by ${input.actorName}. All sessions ended.`,
   });
 
   // Personal interrupt (signal-ladder top rung): each affected holder gets a
@@ -772,8 +774,10 @@ export async function forceReleaseDocument(input: {
       await emit({
         orgId: input.orgId,
         category: "status",
-        kind: "checkout_released",
-        title: "Your checkout was force-released",
+        // PROD-13 / TAX-13 (N9): its own kind — "checkout_released" now
+        // carries only the cron's stale-checkout escalation to controllers.
+        kind: "checkout_force_released",
+        title: `Checkout force-released by ${input.actorName}`,
         body: `${input.actorName} force-released the checkout${input.reason ? `: "${input.reason}"` : ""}. Your session has ended — any unpublished work on your machine is now based on a released lock, so coordinate before publishing.`,
         resource: { type: "document", id: input.documentId },
         actorUserId: input.actorUserId,

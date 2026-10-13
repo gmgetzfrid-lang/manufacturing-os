@@ -135,7 +135,8 @@ export async function notifyConnectedWork(input: {
       await emit({
         orgId: input.orgId,
         category: "watched",
-        kind: "doc_superseded",
+        // PROD-13 / TAX-13 (N9): an upstream advisory is its own kind.
+        kind: "doc_upstream_changed",
         title: `Upstream change: ${input.docLabel} is now Rev ${input.newRev}`,
         body:
           `${input.actorName} published Rev ${input.newRev} of ${input.docLabel}, which is connected to work you have checked out: ` +

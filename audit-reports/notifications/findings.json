@@ -12,18 +12,18 @@
     "audit-reports/notifications/08-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 119,
+    "findings": 123,
     "gaps": 7,
     "by_severity": {
       "CRITICAL": 2,
       "HIGH": 17,
       "MEDIUM": 77,
-      "LOW": 23
+      "LOW": 27
     },
     "by_status": {
       "REFUTED": 3,
-      "RESOLVED": 53,
-      "OPEN": 63
+      "RESOLVED": 66,
+      "OPEN": 54
     }
   },
   "status_vocabulary": [
@@ -784,7 +784,7 @@
       "id": "DELIV-15",
       "title": "The transmittal portal route queues the issuer's emails without reading any preference",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (N1's final review, read from `app/api/transmittal/route.ts` on the integration branch at the N1 merge)",
       "blast_radius": null,
@@ -946,7 +946,7 @@
       "id": "NEDGE-11",
       "title": "The transmittal portal link mailed to external recipients is built from window.location.origin, the exact anti-pattern lib/publicOrigin.ts exists to prevent",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1149,7 +1149,7 @@
       "id": "OS-6",
       "title": "The one working person-to-person nudge guards against repeats with component-local React state that a page refresh erases",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1250,7 +1250,7 @@
       "id": "OS-12",
       "title": "sectionCounts.other is computed but rendered nowhere — roughly thirty notification kinds badge no sidebar section at all",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1332,7 +1332,7 @@
       "id": "PROD-5",
       "title": "CSV document import creates library documents without notifying subscribers, while the staged-upload path does",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1437,7 +1437,7 @@
       "id": "PROD-9",
       "title": "Holds never notify the document owner, contradicting the union's own contract comment",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1515,7 +1515,7 @@
       "id": "PROD-12",
       "title": "Transmittal issue writes no internal notification; manual acknowledgment is silent while the portal path emits ack_complete",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1649,7 +1649,7 @@
       "id": "RT-6",
       "title": "Roughly half of all notification kinds map to sidebar sections that no nav item renders — the bell counts them, nothing badges them, and the trail never starts",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2101,7 +2101,7 @@
       "id": "TAX-3",
       "title": "Force-releasing a checkout emits five signals under two different names, and the tone of every one of them disagrees with the feed's own severity",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2213,7 +2213,7 @@
       "id": "TAX-8",
       "title": "Dismissals are not remembered, and one indicator actively un-dismisses itself when new work arrives - contradicting its own comment",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2350,7 +2350,7 @@
       "id": "TAX-13",
       "title": "Single kinds carry contradictory meanings: `checkout_released` means both \"yours was taken\" and \"someone else's is stale\"; `doc_superseded` means three different things",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2435,7 +2435,7 @@
       "id": "TRAIL-4",
       "title": "Nothing marks a document or project notification read when you visit the thing — only /requests/[id] does, so the Documents badge never decays",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2712,6 +2712,29 @@
       "report": "audit-reports/notifications/08-edges-and-invariants.md"
     },
     {
+      "id": "NEDGE-21",
+      "title": "`lib/subscription.ts` (billing) and `lib/subscriptions.ts` (watch / follow) differ by one letter — the collision that hid `NEDGE-8`",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/subscription.ts",
+        "lib/subscriptions.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": null,
+      "area": "notifications",
+      "report": "audit-reports/notifications/08-edges-and-invariants.md"
+    },
+    {
       "id": "OS-5",
       "title": "The bell has no animation of any kind — the owner's 'bell spinning while the badge pulses and counts up' has nothing to build on there",
       "severity": "LOW",
@@ -2789,6 +2812,30 @@
       "report": "audit-reports/notifications/07-os-notifications-and-nudges.md"
     },
     {
+      "id": "OS-13",
+      "title": "The /checkouts nudge cooldown is enforced only by the browser module; the database still accepts a repeat nudge from any client that calls notifyMany directly",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/checkoutNudge.ts:104-160",
+        "supabase/migrations/20261160_notif_roundG_write_rails.sql",
+        "supabase/migrations/20261191_notif_roundG_kind_split.sql"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "adversarial",
+      "challenges": [
+        "adversarial"
+      ],
+      "refuted": false,
+      "summary": "A member opens /checkouts in a tab loaded before the N9 deploy and clicks Nudge repeatedly after a refresh: each click writes a fresh checkoutconflict row to the same colleague; the N9 tab's \"Already nudged\" refusal never applies.",
+      "area": "notifications",
+      "report": "audit-reports/notifications/07-os-notifications-and-nudges.md"
+    },
+    {
       "id": "PROD-15",
       "title": "A DocCtrl told of an access request cannot open the list the notice links to",
       "severity": "LOW",
@@ -2834,6 +2881,30 @@
       ],
       "refuted": false,
       "summary": "A script at the public door fires requests in parallel past the cap. Each pool member can get one burst row and one toast per request that lands in the same instant, not one in all. The count is bounded by how many requests overlap, not by the request rate. Every request is still recorded and listed on Admin → Users, and the per-IP limiter still applies.",
+      "area": "notifications",
+      "report": "audit-reports/notifications/01-producer-census.md"
+    },
+    {
+      "id": "PROD-17",
+      "title": "A document's followers are not told when a checkout on it is force-released or when it is retired",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/checkoutEpisodes.ts:775-790",
+        "lib/staleCopies.ts:300-320",
+        "lib/postPublish.ts:270-290"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "adversarial",
+      "challenges": [
+        "adversarial"
+      ],
+      "refuted": false,
+      "summary": "A DocCtrl watches a critical P&ID. A Supervisor force-releases a stale checkout on it, or it is voided; the watcher's bell says nothing.",
       "area": "notifications",
       "report": "audit-reports/notifications/01-producer-census.md"
     },
@@ -3046,7 +3117,7 @@
       "id": "TAX-16",
       "title": "A heads-up's sender sees \"Heads-up sent\" only in the browser they sent it from",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (read on the N7 branch)",
       "blast_radius": null,
@@ -3063,6 +3134,29 @@
       ],
       "refuted": false,
       "summary": "A user sends a heads-up from their laptop, then opens the same document on a tablet. The tablet offers \"Send heads-up\" again. Sending it re-notifies the colleagues, who receive a second, identical advisory.",
+      "area": "notifications",
+      "report": "audit-reports/notifications/03-taxonomy.md"
+    },
+    {
+      "id": "TAX-17",
+      "title": "The stale-checkout escalation still carries the old overloaded name `checkout_released`",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/api/cron/maintenance/route.ts",
+        "lib/notificationKinds.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "adversarial",
+      "challenges": [
+        "adversarial"
+      ],
+      "refuted": false,
+      "summary": null,
       "area": "notifications",
       "report": "audit-reports/notifications/03-taxonomy.md"
     },

@@ -1272,8 +1272,82 @@ export async function issueTransmittal(
       ...(accepted && accepted.length > 0 ? { unstampableAccepted: accepted.map((c) => ({ documentId: c.documentId, number: c.number, verdict: c.verdict })) } : {}),
     },
   });
+  // PROD-12 dw2 (notifications N9): a controlled copy left the building —
+  // the documents' owners and the libraries' followers hear it. Started, not
+  // awaited: the issue is done, and a notice never fails or delays it.
+  void notifyTransmittalIssued(t, actor);
   const email = await sendTransmittalEmail(t, actor);
   return { transmittal: t, email, portal: t.portalToken ? "ready" : "missing", auditError };
+}
+
+/** PROD-12 dw2 (notifications Round G, N9): the internal notice of an issue.
+ *  For each library the transmittal's documents live in, ONE notice
+ *  (kind transmittal_issued, category 'watched', in-app and email) to the
+ *  library's followers and to each of those documents' accountable owners
+ *  (lib/ownership.ts effectiveOwnerForDocument — the one chain; no explicit
+ *  owner means the controllers, who run the register already). The issuer is
+ *  the actor and is never told of their own act. Links to /transmittals.
+ *  Best-effort: answers how many notices were started, never throws. */
+export async function notifyTransmittalIssued(t: Transmittal, actor: TransmittalActor): Promise<number> {
+  try {
+    const docIds = [...new Set((t.items ?? []).map((i) => i.documentId).filter((d): d is string => !!d))];
+    if (docIds.length === 0) return 0;
+    const { data: docs, error } = await supabase
+      .from("documents")
+      .select("id, library_id, collection_id, owner_user_id, owner_name")
+      .in("id", docIds);
+    if (error) { console.warn("[transmittals] the issue notice could not read its documents (non-blocking)", error.message); return 0; }
+    const byLibrary = new Map<string, Array<Record<string, unknown>>>();
+    for (const d of (docs as Array<Record<string, unknown>> | null) ?? []) {
+      const lib = (d.library_id as string | null) ?? null;
+      if (!lib) continue;
+      (byLibrary.get(lib) ?? byLibrary.set(lib, []).get(lib)!).push(d);
+    }
+    if (byLibrary.size === 0) return 0;
+    const [{ emit }, { effectiveOwnerForDocument }] = await Promise.all([
+      import("@/lib/notify/dispatch"),
+      import("@/lib/ownership"),
+    ]);
+    const labelOf = new Map((t.items ?? []).map((i) => [i.documentId, `${i.number}${i.rev ? ` Rev ${i.rev}` : ""}`] as const));
+    const to = [t.recipientName?.trim(), t.recipientCompany?.trim()].filter(Boolean).join(", ") || "an outside party";
+    let started = 0;
+    for (const [libraryId, rows] of byLibrary) {
+      const owners = new Set<string>();
+      for (const d of rows) {
+        try {
+          const eff = await effectiveOwnerForDocument({
+            ownerUserId: (d.owner_user_id as string | null) ?? null,
+            ownerName: (d.owner_name as string | null) ?? null,
+            collectionId: (d.collection_id as string | null) ?? null,
+            libraryId, orgId: t.orgId,
+          });
+          if (eff.userId) owners.add(eff.userId);
+        } catch { /* an unresolved owner leaves the followers' notice standing */ }
+      }
+      const labels = rows.map((d) => labelOf.get(d.id as string) ?? "a document");
+      const what = labels.length === 1 ? labels[0] : `${labels.length} documents`;
+      await emit({
+        orgId: t.orgId,
+        category: "watched",
+        kind: "transmittal_issued",
+        title: `Transmittal ${t.number} issued: ${what} to ${to}`,
+        body: `${actor.actorName || "A member of your workspace"} issued transmittal ${t.number}${t.purpose ? ` (${t.purpose})` : ""} to ${to}: ` +
+          `${labels.slice(0, 5).join(", ")}${labels.length > 5 ? ` and ${labels.length - 5} more` : ""}. ` +
+          "A controlled copy is now outside the organization; its receipt is tracked on the transmittal register.",
+        link: "/transmittals",
+        resource: { type: "library", id: libraryId },
+        actorUserId: actor.actorUserId,
+        actorName: actor.actorName,
+        audience: { involved: [...owners], followers: true },
+        metadata: { transmittalId: t.id },
+      });
+      started += 1;
+    }
+    return started;
+  } catch (e) {
+    console.warn("[transmittals] the issue notice failed (non-blocking)", e);
+    return 0;
+  }
 }
 
 /** Record recipient receipt on their behalf (issued → acknowledged) — e.g. a

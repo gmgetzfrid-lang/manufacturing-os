@@ -569,7 +569,8 @@ const DEDUPE_READS: Record<string, Array<{ marks: string; keys?: string[]; kinds
   "app/api/transmittal/route.ts": [{ marks: '.eq("kind", UNSTAMPABLE_NOTICE_KIND)', kinds: ["transmittal_unstampable"] }],
   // ackRequest (the nag's watermark) is written by browsers by design — a manual request or
   // re-nudge counts as the nag (the scan's own comment); only the escalation's key is server-only
-  "lib/distributionAcks.ts": [{ marks: '.in("kind", ["ack_requested", "ack_overdue", "doc_superseded"])', keys: ["ackEscalation"] }],
+  // N9 (PROD-13 / TAX-13): the manual distribution-ack requests write ack_requested now (were doc_superseded)
+  "lib/distributionAcks.ts": [{ marks: '.in("kind", ["ack_requested", "ack_overdue"])', keys: ["ackEscalation"] }],
   "lib/holds.ts": [{ marks: '.contains("metadata", { staleHoldId: h.id, staleFor })', keys: ["staleHoldId"] }],
   "lib/intakeRateLimit.ts": [{ marks: '.contains("metadata", { reviewHealthDay: input.day })', keys: ["reviewHealthDay"] }],
   "lib/storageAlerts.ts": [{ marks: '.eq("kind", "storage_alert")', kinds: ["storage_alert"] }],
@@ -1275,6 +1276,7 @@ const ACTOR_PASS_THROUGHS = [
   "lib/changeOrders.ts#notifyApproval(actorId)",
   "lib/changeOrders.ts#notifyChangeOrder(actorId)",               // N8 (PROD-6)
   "lib/checkoutEpisodes.ts#forceReleaseDocument(input.actorUserId)",
+  "lib/checkoutNudge.ts#sendCheckoutNudge(input.actorUserId)",        // N9 (OS-6): the /checkouts nudge, moved off the page
   "lib/costDocs.ts#notifyAward(actor.uid)",
   "lib/distributionAcks.ts#renudgeUnacked(input.actorUserId)",
   "lib/distributionAcks.ts#requestAcks(input.actorUserId)",
@@ -1294,6 +1296,7 @@ const ACTOR_PASS_THROUGHS = [
   "lib/projects.ts#addMember(input.actorUserId)",
   "lib/projects.ts#notifyProjectAudience(input.actorUserId)",
   "lib/projects.ts#removeMember(input.actorUserId)",
+  "lib/transmittals.ts#notifyTransmittalIssued(actor.actorUserId)",   // N9 (PROD-12): issueTransmittal's own actor
   "lib/projects.ts#transferOwnership(input.actorUserId)",
   "lib/retention.ts#notifyHold(actorId)",
   "lib/reviewControl.ts#activateAlternate(input.actorId)",
@@ -1548,6 +1551,7 @@ const ACTOR_CALLER_PASS_THROUGHS = [
   "lib/revisions.ts#revertToVersion(input.actorUserId)",
   "lib/revisions.ts#submitForReview(input.actorUserId)",
   "lib/revisions.ts#supersedeDocument(input.actorUserId)",
+  "lib/transmittals.ts#issueTransmittal(actor.actorUserId)",          // N9 (PROD-12): the transmittals page's actor (RoleContext's uid)
   "lib/turnover.ts#reviewTurnoverItem(input.actor.uid)",              // N8 (MON-11)
 ];
 function actorSources(file: string, census: ActorCensus): { calls: number; sessions: number; passThroughs: string[]; offenders: string[] } {
@@ -1599,7 +1603,11 @@ describe("rule 1's obligation on the producers — a browser row names the signe
     expect(calls).toBeGreaterThan(50);
     expect(offenders).toEqual([]);
     // each traced to RoleContext's uid: directly, or through a prop / parameter every caller fills with it
-    expect(sessions).toBeGreaterThanOrEqual(9);
+    // (N9: two direct calls moved one hop up — the /checkouts nudge into
+    // lib/checkoutNudge.ts sendCheckoutNudge and the library page's staged-
+    // upload notice into lib/libraryNotify.ts notifyLibraryDocsAdded; their
+    // pages pass RoleContext's uid, judged by the one-hop census below)
+    expect(sessions).toBeGreaterThanOrEqual(7);
     expect([...pass].sort()).toEqual([...ACTOR_PASS_THROUGHS].sort());
   }, 60_000); // a whole-repo AST census: given room under a loaded full-suite run (integrator, N5 merge)
 

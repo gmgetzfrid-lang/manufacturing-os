@@ -76,6 +76,8 @@ import RevertConfirmModal from "@/components/documents/RevertConfirmModal";
 import BulkCheckoutToProjectModal from "@/components/documents/BulkCheckoutToProjectModal";
 import BulkEditModal from "@/components/documents/BulkEditModal";
 import CsvImportModal from "@/components/documents/CsvImportModal";
+import { markResourceNotificationsRead } from "@/lib/notificationTrail";
+import { notifyLibraryDocsAdded } from "@/lib/libraryNotify";
 import RouteLoader from "@/components/ui/RouteLoader";
 import { listItems as listCollectionItems } from "@/lib/collections";
 import { buildAclIndexFromChain } from "@/lib/acl";
@@ -1339,6 +1341,9 @@ export default function LibraryExplorerPage() {
   // address bar before the readers have applied it. Cleared in every terminal
   // branch so it can never wedge the writer.
   const deepLinkPending = useRef(false);
+  // TRAIL-4 (notifications N9): the document a ?doc= link opened whose
+  // notifications were last marked read — once per document per visit.
+  const trailMarkedDoc = useRef<string | null>(null);
   useEffect(() => {
     const docId = searchParams.get("doc");
     if (!docId) return;
@@ -1350,6 +1355,14 @@ export default function LibraryExplorerPage() {
     if (target) {
       deepLinkPending.current = false;
       setSelectedDoc(target);
+      // TRAIL-4: opening the document is reviewing its activity — mark this
+      // member's unread notifications about it read, as opening a ticket
+      // does (requests/[id]). The bell and the Documents badge drop on the
+      // UPDATE. Best-effort; never blocks the open.
+      if (uid && trailMarkedDoc.current !== docId) {
+        trailMarkedDoc.current = docId;
+        void markResourceNotificationsRead({ uid, resourceType: "document", resourceId: docId });
+      }
       if (wantFull && autoFullScreenedDoc.current !== docId) {
         autoFullScreenedDoc.current = docId;
         setShowFullScreen(true);
@@ -1375,7 +1388,7 @@ export default function LibraryExplorerPage() {
       if (data) setCurrentFolderId((data.collection_id as string | null) ?? null);
       else deepLinkPending.current = false;
     })();
-  }, [searchParams, documents]);
+  }, [searchParams, documents, uid]);
 
   // Deep-link via ?book=<curatedCollectionId> — open that collection as a book.
   // The book's documents can live in any folder, so we resolve the collection's
@@ -2430,21 +2443,17 @@ export default function LibraryExplorerPage() {
   //    8 files don't take 8× one-file time.
   const UPLOAD_CONCURRENCY = 4;
   const handleStagedUpload = async (items: StagedItem[], signal?: AbortSignal) => {
+    // PROD-5 dw2 (notifications N9): the one helper every insert path uses
+    // (lib/libraryNotify.ts — the CSV import calls it too), so a third path
+    // has one call to make. The same words (the uploader named by their
+    // email); in-app only (PROD-7 dw3 — a bulk upload is chatty: a follower's
+    // bell carries it, their inbox does not). Never throws.
     const notifyLibrarySubscribers = (count: number, firstName: string) => {
       if (!activeOrgId || !uid || count === 0) return;
-      void import("@/lib/notify/dispatch").then((m) =>
-        m.emit({
-          orgId: activeOrgId,
-          category: "watched",
-          kind: "library_doc_added",
-          title: count === 1 ? `New document: ${firstName}` : `${count} new documents added`,
-          body: `${userEmail ?? "Someone"} added ${count === 1 ? firstName : `${count} documents`} to a library you subscribe to.`,
-          link: `/documents/${libraryId}`,
-          resource: { type: "library", id: libraryId },
-          actorUserId: uid,
-          actorName: userEmail ?? "someone",
-          audience: { followers: true },
-        })).catch(() => undefined);
+      void notifyLibraryDocsAdded({
+        orgId: activeOrgId, libraryId, count, firstLabel: firstName,
+        actorUserId: uid, actorName: userEmail ?? null,
+      });
     };
     if (!activeOrgId || !uid || !library) return;
     setLoadingUpload(true);
@@ -3449,6 +3458,7 @@ export default function LibraryExplorerPage() {
           orgId={activeOrgId}
           collectionId={currentFolderId}
           actorUserId={uid}
+          actorName={userEmail ?? undefined}
           onImported={() => {
             setShowCsvImport(false);
             setDocsRefreshTick((t) => t + 1);

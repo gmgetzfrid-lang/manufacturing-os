@@ -261,6 +261,50 @@ describe("HLD-10 / HLD-5 — releaseHold: reason required, DB-written audit not 
     expect(e.audience.followers).toBe(true);
     expect(e.audience.roles).toBeUndefined();
   });
+  it("PROD-9 (notifications N9): the hold notice also reaches the document's effective owner and its LIVE projects' teams — the union's own contract", async () => {
+    state.rows.document_holds = [openHoldRow()];
+    state.rows.documents = [{ id: DOC, org_id: "o1", document_number: "P-100", library_id: "lib1", collection_id: null, owner_user_id: "doc-owner", owner_name: "Dora" }];
+    state.rows.libraries = [{ id: "lib1", org_id: "o1", owner_user_id: null, owner_team_id: null }];
+    state.rows.org_members = [
+      { uid: "adm", role: "Admin", roles: ["Admin"], org_id: "o1", status: "active" },
+      { uid: "doc-owner", role: "Engineer", roles: ["Engineer"], org_id: "o1", status: "active" },
+    ];
+    // most recently seen first (the read orders by last_seen_at desc)
+    state.rows.project_documents = [
+      { project_id: "p-live", document_id: DOC, last_seen_at: "2026-10-05T00:00:00Z" },
+      { project_id: "p-other", document_id: DOC, last_seen_at: "2026-10-01T00:00:00Z" },
+      { project_id: "p-closed", document_id: DOC, last_seen_at: "2026-09-01T00:00:00Z" },
+    ];
+    state.rows.projects = [
+      { id: "p-live", org_id: "o1", status: "active" },
+      { id: "p-other", org_id: "o1", status: "planning" },
+      { id: "p-closed", org_id: "o1", status: "completed" },
+    ];
+    state.rows.project_members = [
+      { project_id: "p-other", user_id: "other-pm" },
+      { project_id: "p-closed", user_id: "closed-pm" },
+    ];
+    await release();
+    // the owner chain and the projects module load on first use: give them room under a loaded run
+    await vi.waitFor(() => expect(dispatch.emit).toHaveBeenCalledTimes(1), { timeout: 20_000 });
+    const e = dispatch.emit.mock.calls[0][0] as { audience: { involved?: string[]; followers?: boolean; projectId?: string } };
+    expect(e.audience.followers).toBe(true);
+    expect(e.audience.projectId).toBe("p-live");              // the dispatcher resolves its members
+    expect(e.audience.involved).toEqual(expect.arrayContaining(["opener", "adm", "doc-owner", "other-pm"]));
+    expect(e.audience.involved).not.toContain("closed-pm");   // a closed project is not working from it
+  }, 30_000);
+  it("PROD-9: an unreadable project link leaves the notice to the audience it always had (logged, never thrown)", async () => {
+    state.rows.document_holds = [openHoldRow()];
+    state.rows.org_members = [{ uid: "adm", role: "Admin", roles: ["Admin"], org_id: "o1", status: "active" }];
+    state.readErrors = { project_documents: "timeout" };
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await release();
+    await vi.waitFor(() => expect(dispatch.emit).toHaveBeenCalledTimes(1));
+    const e = dispatch.emit.mock.calls[0][0] as { audience: { involved?: string[]; projectId?: string } };
+    expect(e.audience.projectId).toBeUndefined();
+    expect(e.audience.involved).toEqual(expect.arrayContaining(["opener", "adm"]));
+    expect(String((warnSpy as ReturnType<typeof vi.spyOn>).mock.calls[0][0])).toMatch(/projects could not be read for the hold notice/);
+  });
   it("VFY-6 (P15): the app's HOLD_RELEASED row carries the hold's notes beside its unchanged reason, so a custom (Other) hold is named by its description", async () => {
     state.rows.document_holds = [openHoldRow({ reason: "Other", notes: "waiting on vendor weld map" })];
     await release();

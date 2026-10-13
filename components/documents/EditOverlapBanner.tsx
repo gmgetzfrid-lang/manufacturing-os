@@ -17,12 +17,9 @@
 //     edit intent; the latest of those — `overlapFormedAt`). Anything this
 //     banner remembers about an overlap counts only if it happened after the
 //     overlap formed. A new person joining is a new overlap; so is the same
-//     people overlapping again after it dissolved — but only once the lapsed
-//     intent rows are gone (the daily maintenance cron prunes expired rows).
-//     Until then a re-declared intent reuses its row: lib/intents'
-//     recordIntent upserts on (document_id, user_id, kind, source) and keeps
-//     created_at, so the overlap re-forms with its old formed time, and a
-//     dismissal or "Heads-up sent" from before still covers it.
+//     people overlapping again after it dissolved (since N9 — see the TAX-8
+//     note at the end: a re-declared EXPIRED intent gets a fresh row, so the
+//     overlap re-forms with a new formed time).
 //   - "Dismiss for now" sticks for THIS overlap across a remount and a reload
 //     (hooks/useDismissed, stamped with the overlap it dismissed).
 //   - "Heads-up sent" survives a remount. It is derived from the
@@ -38,12 +35,24 @@
 //     a server timestamp — never the browser's clock. "Formed" comes from
 //     document_intents.created_at; comparing it with a Date.now() stamp
 //     lost every dismissal and send made on a PC whose clock runs behind.
+//   - TAX-16 (notifications N9): this person's own heads-up is read from the
+//     server too — the overlap_advisory rows they wrote (lib/sentNotices.ts,
+//     notifications_i_sent, 20261191): one about the document, to every
+//     other person in the overlap now, sent after the overlap formed and
+//     inside the window, shows "Heads-up sent" on every device. The browser's
+//     own mark stays as a cache, and is the whole answer before 20261191 is
+//     pasted.
+//   - A re-formed overlap (the same people again, after the edit intents
+//     lapsed) has a fresh formed time: lib/intents.ts recordIntent replaces
+//     an EXPIRED intent row rather than reviving it (TAX-8 done-when 3, N9),
+//     so an old mark or an old heads-up never covers it.
 
 import React, { useEffect, useState } from "react";
 import { Users, X, BellRing } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { listOrgEditOverlaps, type DocumentIntent } from "@/lib/intents";
 import { notifyMany } from "@/lib/inAppNotifications";
+import { readNoticesISent } from "@/lib/sentNotices";
 import { useDismissedSet } from "@/hooks/useDismissed";
 
 /** How far back a received heads-up still counts as "sent" for an overlap. */
@@ -88,6 +97,24 @@ export function overlapMarkAt(formed: number, now: number = Date.now()): number 
   return Number.isFinite(formed) ? formed : now;
 }
 
+/**
+ * TAX-16: whether `sender` sent a heads-up about this overlap's document to
+ * EVERY other person in it now, after the overlap formed — read from the
+ * rows the sender wrote (`sent`: recipient, document, epoch ms). Pure.
+ */
+export function sentToEveryoneSince(
+  sent: ReadonlyArray<{ userId: string; resourceId: string | null; at: number }>,
+  documentId: string,
+  intents: Array<{ userId: string; createdAt?: string | null }>,
+  sender: string,
+): boolean {
+  const formed = overlapFormedAt(intents);
+  if (!Number.isFinite(formed)) return false;
+  const others = [...new Set(intents.map((i) => i.userId))].filter((u) => u !== sender);
+  if (others.length === 0) return false;
+  return others.every((u) => sent.some((s) => s.userId === u && s.resourceId === documentId && s.at >= formed));
+}
+
 /** The latest moment `key` was marked among `values` (-Infinity: never). */
 export function latestOverlapMark(values: readonly string[], key: string): number {
   const prefix = `${key}@`;
@@ -128,6 +155,9 @@ export default function EditOverlapBanner({
   const sent = useDismissedSet("overlap-headsup-sent", scope);
   // Heads-ups this person RECEIVED about a document, by overlap key → sender.
   const [received, setReceived] = useState<Map<string, string>>(new Map());
+  // TAX-16: overlap keys this person's OWN heads-up covers, read from the
+  // server (the rows they wrote) — the same answer on every device.
+  const [sentFromServer, setSentFromServer] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!orgId || !currentUserId) return;
@@ -171,6 +201,17 @@ export default function EditOverlapBanner({
           .eq("resource_type", "document")
           .in("resource_id", ids)
           .gte("created_at", since);
+        // TAX-16: this person's own heads-ups, from the rows they wrote —
+        // best-effort; unavailable before 20261191 (the browser's mark
+        // answers alone then).
+        const mineSent = await readNoticesISent({ orgId, kind: "overlap_advisory", since, resourceType: "document" });
+        if (alive && mineSent.available) {
+          const covered = new Set<string>();
+          for (const o of mine) {
+            if (sentToEveryoneSince(mineSent.rows, o.documentId, o.intents, currentUserId)) covered.add(overlapKey(o.documentId, o.intents));
+          }
+          setSentFromServer(covered);
+        }
         if (!alive || advErr) return;
         const got = new Map<string, string>();
         for (const o of mine) {
@@ -227,7 +268,7 @@ export default function EditOverlapBanner({
       {visible.map((row) => {
         const key = overlapKey(row.documentId, row.intents);
         const receivedFrom = received.get(key) ?? null;
-        const headsUpSent = latestOverlapMark(sent.values, key) >= overlapFormedAt(row.intents) || receivedFrom !== null;
+        const headsUpSent = latestOverlapMark(sent.values, key) >= overlapFormedAt(row.intents) || sentFromServer.has(key) || receivedFrom !== null;
         const others = row.intents.filter((i) => i.userId !== currentUserId);
         const otherNames = [...new Set(others.map((i) => i.userName || "someone"))];
         const sourcesByUser = others.map((i) =>

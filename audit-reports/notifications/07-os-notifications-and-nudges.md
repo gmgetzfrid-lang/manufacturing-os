@@ -338,7 +338,7 @@ components/navigation/Sidebar.tsx:508 (the ONLY meaningful pulse, and it means a
 ## OS-6 · The one working person-to-person nudge guards against repeats with component-local React state that a page refresh erases
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/checkouts/page.tsx:483-492`, `app/(protected)/checkouts/page.tsx:508-518`, `app/(protected)/checkouts/page.tsx:242-269`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. The title claim is true — `nudged` is component-local and a refresh erases it, and repeat inserts are unbounded (see OS-1). But the summary's specific mechanism is FALSE: `overlaps` is independent state set from findCheckoutOverlaps (page.tsx:113 `setOverlaps(ov)`), not derived from `filtered` (page.tsx:128-139), and the key is a stable index, so changing the user filter does NOT remount OverlapCard or reset `nudged`. The real cheap reset paths are a page refresh, collapsing/reopening the 'Coordination signals' panel (`{isOpen && ...}` unmounts the cards), and the index-keying itself, which mis-carries a `nudged=true` onto a different overlap if refresh() reorders the list.
@@ -372,6 +372,22 @@ app/(protected)/checkouts/page.tsx:256 (the write, client-side, no server route)
 - [ ] The nudge's cooldown is derived from persisted state, not component state — the pattern at lib/distributionAcks.ts:224-238 (query notifications for recent rows of this kind carrying a metadata marker, within a cooldown window) already exists and is reusable verbatim
 - [ ] The button's disabled/'already sent' state survives a refresh because it is computed from that query
 - [ ] A second nudge inside the window is refused by the writer, not merely hidden by the UI
+
+
+**Resolution (2026-10-07, notifications Round G).** Package N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT, branch `fleet/N9-dc-producers-kind-split`, commits `d48617c` (the read) and `9f9443d` (the writer and the page). **Reproduced first** on `b154823`: `app/(protected)/checkouts/page.tsx` held `nudged` in the overlap card's React state (:499) and disabled the button on it (:526); the write (`notifyMany`, :266) checked nothing, and a refresh offered the nudge again.
+
+**What landed.** The cooldown is 24 hours per (sender, recipient, document) — the integrator's ruling under the user's delegation (2026-10-07).
+- `lib/checkoutNudge.ts` (new): a nudge is a `checkout_conflict` row carrying `metadata.nudge`, about the document the person holds in the overlap (it named the bare "checkout" type before). `recentNudges` (:62) reads the sender's own nudge rows of the window through `notifications_i_sent` (`20261191`, `lib/sentNotices.ts` — the read `OS-6`'s cited distributionAcks pattern cannot do from a browser, because `notifications_own_select` hides sent rows); `nudgeState` (:79) says whether every person in the overlap was nudged and when the next nudge is possible; `sendCheckoutNudge` (:104) nudges only the people not nudged about their document in the window and REFUSES when nobody is left, with the sentence "You already nudged <names> about this in the last 24 hours — you can nudge again after <time>." Before the paste the read is unavailable and today's path holds (the card's own state; the write goes out). A read that FAILS for any other reason is not "never sent": the writer refuses with "Couldn't check whether you already nudged them — try again in a moment.", writes nothing, and the page keeps the button (integrator fix pass, 2026-10-08 — the first cut re-nudged everyone on that path). `20261160`'s caps stay the backstop for a writer that skips the module.
+- The page loads the member's nudges once overlaps are found, shows "Heads-up sent" from them on every device (`nudgeState`), toasts the writer's refusal ("Already nudged …"), and keys each card by its overlap's identity.
+- Tests: `lib/__tests__/checkoutNudgeCooldown.test.ts` (12 — the read's arguments and its unavailable answers, with the reason; targets, state and the next-nudge time; a partial nudge naming each recipient's document; the refusal's sentence with no write; an expired nudge not holding; the pre-paste path; a failed read refusing with nothing written; the page's wiring). On PostgreSQL 16 the read answered the sender's one nudge in the window and nothing else.
+- Verified (loop on `fleet/N9-dc-producers-kind-split` after the review fix, 2026-10-08): `npx tsc --noEmit` exit 0; `npx eslint` on the changed `.ts` files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 460 files, 10039 passed, 8 expected fail (10047; the eighth is the compliance-digest tripwire). `next build` is the integrator's.
+
+**Done-when.**
+- ✓ The cooldown is derived from persisted state — the notification rows the sender wrote, read back through `notifications_i_sent`.
+- ✓ The button's "already sent" state survives a refresh, computed from that read.
+- ✓ A second nudge inside the window is refused by the writer (`sendCheckoutNudge`), with the reason, not merely hidden by the UI.
+
+**Scope / residual.** Takes effect once `20261191` is pasted (the page keeps today's per-card state until then). The writer is the browser module; a client that bypasses it (a tab loaded before the N9 deploy, a script calling `notifyMany`) is bounded by `20261160`'s per-recipient caps, not by the 24-hour rule — raised to a finding with an owner, `OS-13` (a rule in `enforce_notification_insert`, notifications N12 / N14).
 
 ---
 
@@ -608,7 +624,7 @@ lib/dataRestore.ts:92 —
 ## OS-12 · sectionCounts.other is computed but rendered nowhere — roughly thirty notification kinds badge no sidebar section at all
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** the user (ratify `DEC-81` §3, the bell-only list including `ai_cap_changed` and `transmittal_unstampable`, or place those kinds on a badged row) — by the integrator, 2026-10-01 (N2 merge; fleet plan `userHeld`). *Ratified by the integrator under the user's delegation, 2026-10-07 (DEC-90), with one change: `transmittal_unstampable` badges Documents, because it reports a controlled copy released without its UNCONTROLLED marking, a document-control integrity event the issuer may need to act on (ISO 9001 §7.5.3); the other eight kinds stay bell-only, and notifications N9 makes the one-line move.*
 - **Assigned:** notifications N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT — by the integrator, 2026-10-07 (DEC-90; fleet plan `audit-reports/fleet-plans/notifications.json`, N9).
 - **Verification:** CONFIRMED
@@ -669,5 +685,40 @@ hooks/useTicketNotifications.ts:302 —
 **Scope / residual.** The bell and the rail now disagree only by the bell-only kinds, by design and on the record. Stays OPEN for done-when 1 until the user ratifies `DEC-81` §3 (or `ai_cap_changed` and `transmittal_unstampable` are placed on a badged row); then record RESOLVED.
 
 **Integrator note (2026-10-07, DEC-90 A12, A13).** *Ratified by the integrator under the user's delegation, 2026-10-07 (DEC-90), with one change: `transmittal_unstampable` badges Documents, because it reports a controlled copy released without its UNCONTROLLED marking, a document-control integrity event the issuer may need to act on (ISO 9001 §7.5.3); the other eight kinds stay bell-only, and notifications N9 makes the one-line move.* Status stays OPEN until N9 makes the move: `lib/notificationKinds.ts` gives `transmittal_unstampable` `section: "documents"` (one line), and the bell-only list in `lib/__tests__/notificationKinds.test.ts` drops it. Then done-when 1 holds — every kind maps to a row the Sidebar badges or to the ratified bell-only list of eight, owned by the header bell — and this finding RESOLVES, as its record directs ("record it RESOLVED — when the user ratifies §3, or when those two kinds are placed on a badged row"). The `review_requested` overload, recorded with §3: *Ratified as an interim only by the integrator under the user's delegation, 2026-10-07 (DEC-90), and the split ordered: one name per concept — a project notice must not light the Documents badge or ride the PSM sign-off kind that A11 will make action-required; notifications N9 gives the contractor-quote, intake-submission and folded-digest notices kinds of their own in section `projects`, with a migration re-creating `notification_kinds()` from its newest body, coordinated with projects-joint J16.* No status here depends on it. `userHeld.OS-12` is removed.
+
+
+**Resolution (2026-10-07, notifications Round G).** Package N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT, branch `fleet/N9-dc-producers-kind-split`, commit `d48617c` — the move the integrator's note names: `transmittal_unstampable` badges Documents (`lib/notificationKinds.ts`, `section: "documents"`), and the bell-only list in `lib/__tests__/notificationKinds.test.ts` is the ratified eight (`DEC-90` A12). The `review_requested` overload is split as `DEC-90` A13 ordered: the contractor quote, the intake submission and the folded digest write `intake_quote` / `intake_submission`, section Projects (`TAX-13`).
+- Verified (loop on `fleet/N9-dc-producers-kind-split` after the review fix, 2026-10-08): `npx tsc --noEmit` exit 0; `npx eslint` on the changed `.ts` files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 460 files, 10039 passed, 8 expected fail (10047; the eighth is the compliance-digest tripwire). `next build` is the integrator's.
+
+**Done-when.**
+- ✓ Every `NotificationKind` maps to a section whose sidebar row badges it, or to the ratified bell-only list owned by the header bell.
+- ✓ A test enumerates the union and asserts `sectionForKind` never returns a section no surface renders (N2).
+- ✓ The compliance kinds badge Documents (N2); the intake notices that rode `review_requested` badge Projects.
+
+**Scope / residual.** None in this finding.
+
+---
+
+<a id="os-13"></a>
+
+## OS-13 · The /checkouts nudge cooldown is enforced only by the browser module; the database still accepts a repeat nudge from any client that calls notifyMany directly
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** notifications N12 NUDGES — by the integrator, 2026-10-13 (N9 merge, DEC-31; fleet plans `audit-reports/fleet-plans/`).
+- **Verification:** CONFIRMED
+- **Locations:** `lib/checkoutNudge.ts:104-160`, `supabase/migrations/20261160_notif_roundG_write_rails.sql` (`enforce_notification_insert`), `supabase/migrations/20261191_notif_roundG_kind_split.sql` (`notifications_i_sent`)
+- **Opened:** 2026-10-08, notifications Round G, package N9's review fix — the residual `OS-6`'s Scope line recorded, raised to a finding with an owner.
+
+**Mechanism.** `sendCheckoutNudge` refuses a repeat per (sender, recipient, document) inside 24 hours by reading the sender's own `checkout_conflict` rows through `notifications_i_sent`; the write it guards is an ordinary `notifyMany` insert. `20261160`'s insert rail (`enforce_notification_insert`) knows nothing of `metadata.nudge` or the window: it checks the actor, the recipient's membership, the kind, the link and the generic per-actor rate cap. So a script, a tab built before N9, or any caller of `notifyMany` can re-nudge the same person every minute up to the generic caps (60 same-notice rows a minute).
+
+**Failure scenario.** A member opens /checkouts in a tab loaded before the N9 deploy and clicks Nudge repeatedly after a refresh: each click writes a fresh `checkout_conflict` row to the same colleague; the N9 tab's "Already nudged" refusal never applies.
+
+**Done when.**
+
+- [ ] `enforce_notification_insert`, re-created from its NEWEST body (`20261160`; lineDiff-pinned by a shape test), refuses (22023, a legible message) a browser-written `checkout_conflict` row carrying `metadata ? 'nudge'` when the same `actor_user_id` wrote one to the same `user_id` and `resource_id` within 24 hours; service-role writes pass as before.
+- [ ] The browser module's refusal sentence and the rail's message agree, and a test drives a second insert inside the window against the rail's text.
+
+**Closer:** notifications N12 NUDGES or N14 (the integrator names one).
 
 ---

@@ -686,7 +686,8 @@ export async function notifyPackagesOfRevUp(input: {
       void emit({
         orgId: input.orgId,
         category: "watched",
-        kind: "doc_superseded",
+        // PROD-13 / TAX-13 (N9): a package's pin drift is its own kind.
+        kind: "package_doc_stale",
         title: `Work package "${p.name}" went stale`,
         body: `${input.docLabel} advanced to Rev ${input.newRev} — the package still pins the older revision. Review the change, then refresh the pack (or swap the print set) before execution.`,
         link: `/packages`,

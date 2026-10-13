@@ -259,7 +259,8 @@ describe("DCK-5 — forceReleaseDocument writes the audit row itself, after the 
     // and the release itself still happens: episode sealed, alert posted, victim told
     expect(writesTo("checkout_episodes", "update")[0].payload).toMatchObject({ status: "closed", close_reason: "force_released" });
     expect(messages().some((t) => t.includes("force-released by ctl"))).toBe(true);
-    expect(state.emits[0]).toMatchObject({ kind: "checkout_released", audience: { involved: ["vic"] } });
+    // PROD-13 / TAX-13 (notifications N9): the holder's notice has its own kind
+    expect(state.emits[0]).toMatchObject({ kind: "checkout_force_released", audience: { involved: ["vic"] } });
   });
 
   it("a successful RPC whose audit INSERT is refused: the release stands, and the caller is told the row is missing", async () => {
@@ -275,7 +276,7 @@ describe("DCK-5 — forceReleaseDocument writes the audit row itself, after the 
     // the act itself is not undone by a lost record: sealed, alerted, victim told
     expect(writesTo("checkout_episodes", "update")[0].payload).toMatchObject({ status: "closed", close_reason: "force_released" });
     expect(messages().some((t) => t.includes("force-released by ctl"))).toBe(true);
-    expect(state.emits[0]).toMatchObject({ kind: "checkout_released" });
+    expect(state.emits[0]).toMatchObject({ kind: "checkout_force_released" });
   });
 
   it("a recorded audit row answers auditRecorded: true", async () => {
@@ -432,7 +433,7 @@ describe("DCK-7 — the browser sweep is the caller's own, select-driven, and lo
     expect(writesTo("notifications", "insert")).toHaveLength(1);
     const notes = writesTo("notifications", "insert").flatMap((w) => [w.payload].flat()) as Array<Record<string, unknown>>;
     expect(notes).toHaveLength(1);
-    expect(notes[0]).toMatchObject({ user_id: "u1", resource_id: "d1", kind: "checkout_released", actor_name: "System", metadata: { autoReleasedSessionId: "s1" } });
+    expect(notes[0]).toMatchObject({ user_id: "u1", resource_id: "d1", kind: "checkout_auto_released", actor_name: "System", metadata: { autoReleasedSessionId: "s1" } }); // N9: its own kind
     const audits = writesTo("audit_logs", "insert")[0].payload as Array<Record<string, unknown>>;
     expect(audits).toHaveLength(1);
     expect(audits[0]).toMatchObject({ action: "CHECK_IN", resource_id: "d1", org_id: "o1", user_id: "u1" });

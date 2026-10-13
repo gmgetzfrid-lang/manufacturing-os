@@ -940,7 +940,7 @@ export type NotifChannel = "inapp" | "email";
 ## DELIV-15 · The transmittal portal route queues the issuer's emails without reading any preference
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** notifications N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT — by the integrator, 2026-10-01 (N1 merge; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED (N1's final review, read from `app/api/transmittal/route.ts` on the integration branch at the N1 merge)
 - **Locations:** `app/api/transmittal/route.ts` (the receipt email to the issuer, `event_type: "watcher_activity"`, :798-808; the unstamped / refused-PDF notice, :418-427)
@@ -962,6 +962,22 @@ export type NotifChannel = "inapp" | "email";
 **Closer:** notifications N9 (assigned at the N1 merge, 2026-10-01).
 
 **Integrator note (2026-10-07, DEC-90 A10).** *Ratified by the integrator under the user's delegation, 2026-10-07 (DEC-90): a safety-critical alert must not be suppressible by a convenience preference (OSHA 1910.119(l)(3): affected employees are informed of a change before start-up), so drawing recalls and PSM alerts stay non-suppressible and GAP-203 acceptance 2 reads "…from any path, except drawing recalls and PSM alerts".* For N9, the recommended answer to done-when 2: exempt the issuer's unstamped / refused-PDF notice too (`transmittal_unstamped` / `transmittal_refused` — a controlled-copy integrity event, like a recall), so it joins `PREFERENCE_EXEMPT_EVENT_TYPES` and `email_gate()`'s list together and the settings page names it beside recalls and safety notices. The receipt email (`watcher_activity`) stays preference-gated (done-when 1). Status stays OPEN for N9.
+
+
+**Resolution (2026-10-07, notifications Round G).** Package N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT, branch `fleet/N9-dc-producers-kind-split`, commits `d48617c` (the gate), `d05b368` (the route) and `bb0bb1c` (the real-module test). **Reproduced first** on `b154823`: `app/api/transmittal/route.ts` queued the receipt email by a raw `email_notifications` insert as the service role (:802-811, event `watcher_activity`) and the unstamped / refused-PDF email the same way (:421) — neither read any preference.
+
+**What landed.**
+- Done-when 1 — the receipt email goes through `queueEmail` run as the service role (`lib/transmittalReceiptNotice.ts` `tellIssuerOfReceipt`, under `runWithServerClient(admin)`): `email_gate()` reads the issuer's row (or, before `20261148` is pasted, the same rule — `emailAllowedByPrefs` — on the service-role client, which sees every row). Event `watcher_activity`, so "Activity on things I watch" governs it. The bell row is always written. The register's receipt route (`PROD-12`) uses the same helper.
+- Done-when 2 — the unstamped / refused-PDF notice is exempt, as `DEC-90` A10 recommends: `transmittal_unstamped` and `transmittal_refused` join `PREFERENCE_EXEMPT_EVENT_TYPES` (`lib/notificationPrefs.ts`, a file of N3's — one list) and `email_gate()`'s list together (`20261191` re-creates it from `20261148` with the two added — the only code change, lineDiff-pinned; a test pins the two lists equal). The settings page names it beside recalls and safety notices (the master switch and the cadence copy).
+- Tests: `lib/__tests__/transmittalReceiptGate.test.ts` (4, through the REAL `queueEmail`, `lib/supabase.ts` and `lib/serverClientScope.ts` — only the service-role client is a stand-in: `email_gate` answering no → the bell row, no email row; before the paste, the issuer's row read with email off → the same; the watched-activity toggle off → the same; email on → one queued `watcher_activity` row); `lib/__tests__/notificationPrefs.test.ts` (the exempt list, read against the NEWEST `email_gate()` in the sequence); `lib/__tests__/notificationSettingsPage.test.ts` (the copy); `lib/__tests__/notifKindSplitMigration.test.ts`; `lib/__tests__/transmittalNoticesN9.test.ts`. `20261191` was exercised on a throwaway PostgreSQL 16: `email_gate` as the service role answered false for `watcher_activity` with the issuer's email off and true for `transmittal_unstamped` / `transmittal_refused` / `safety_recall`.
+- Verified (loop on `fleet/N9-dc-producers-kind-split` after the review fix, 2026-10-08): `npx tsc --noEmit` exit 0; `npx eslint` on the changed `.ts` files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 460 files, 10039 passed, 8 expected fail (10047; the eighth is the compliance-digest tripwire). `next build` is the integrator's.
+
+**Done-when.**
+- ✓ The receipt email is gated by the same rule as every other event email (`email_gate()` as the service role; `emailAllowedByPrefs` on the service-role read before the paste). The bell row is still written.
+- ✓ The unstamped / refused-PDF notice is recorded as deliberately exempt: it joins `PREFERENCE_EXEMPT_EVENT_TYPES` and `email_gate()`'s list together, and the settings page names it.
+- ✓ A test drives the receipt with the issuer's email off and asserts no email row and the bell row written.
+
+**Scope / residual.** Until `20261191` is pasted the database still gates the unstamped notice's event types like any other — but the route writes that email directly, as before, so nothing changes for it; after the paste a caller of `email_gate()` and `isPreferenceExempt` agree. The paste order is in `99-fix-sequencing.md`.
 
 ---
 

@@ -64,6 +64,7 @@ import { Modal, ModalHeader } from "@/components/ui/Modal";
 import { supabase } from "@/lib/supabase";
 import { userFacingCaughtError } from "@/lib/userFacingError";
 import { applyEmailLookup } from "@/lib/identity";
+import { markResourceNotificationsRead } from "@/lib/notificationTrail";
 import type {
   Project, ProjectMember, ProjectMemberRole, CheckoutSession, ProjectStatus, Timestamp,
 } from "@/types/schema";
@@ -266,6 +267,18 @@ export default function ProjectDetailPage() {
   }, [pendingStatus, projectId, gatesTry]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  // TRAIL-4 dw2 (notifications N9): opening a project you can read marks your
+  // unread notifications about it read — status changes, comments, members,
+  // change orders, schedule and intake notices (resource 'project') — as
+  // opening a ticket does. Once per project per visit, after the project has
+  // loaded (a project you cannot read marks nothing). Best-effort.
+  const trailMarkedProject = React.useRef<string | null>(null);
+  useEffect(() => {
+    if (!uid || !project?.id || project.id !== projectId || trailMarkedProject.current === projectId) return;
+    trailMarkedProject.current = projectId;
+    void markResourceNotificationsRead({ uid, resourceType: "project", resourceId: projectId });
+  }, [uid, project?.id, projectId]);
 
   // PERF-8: the timeline is fetched when the Activity tab is shown (and again
   // after a write marks it stale) — opening Documents never fetches it. A

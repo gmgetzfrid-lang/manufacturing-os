@@ -103,7 +103,7 @@
   },
   {
    "name": "N4 FEED-PROVIDER-AND-REALTIME — one subscription per tab, reconcile on return, a true count, and the publication/replica-identity gaps",
-   "findings": ["RT-3", "TRAIL-8", "RT-1", "RT-8", "RT-4", "RT-12", "TAX-6", "DELIV-10", "TRAIL-7", "PROD-7", "TRAIL-9", "TRAIL-12", "NEDGE-18 (opened by the integrator 2026-10-07 at the drafting-flow DF-P1 merge, DEC-31: after 20261161 the attention hook's browser-side metadata.superseded_at mark is refused by the read_at-only trigger, so a stale workflow alert the route missed stays in the 50-row unread window; move the reconcile's mark — and any browser-side retirement this package adds (TRAIL-9) — to a server path that sets only metadata.superseded_at on the caller's own unread workflow rows; drop the hook from METADATA_UPDATES in lib/__tests__/notificationWriteRails.test.ts)", "DEC-81 §2 (ratified 2026-10-07): flip each PSM kind to action-required in the same change that clears its row on discharge", "RT-10 (remaining limb assigned by the integrator 2026-10-08 at the N3 merge: per-category toast toggles — a category on KIND_META mirroring the email_on_* categories, toast_on_* columns by one DEC-30 migration, the settings rows, and the listener honouring them; the master toast switch is N3's and stays)"],
+   "findings": ["RT-3", "TRAIL-8", "RT-1", "RT-8", "RT-4", "RT-12", "TAX-6", "DELIV-10", "TRAIL-7", "PROD-7", "TRAIL-9", "TRAIL-12", "NEDGE-18 (opened by the integrator 2026-10-07 at the drafting-flow DF-P1 merge, DEC-31: after 20261161 the attention hook's browser-side metadata.superseded_at mark is refused by the read_at-only trigger, so a stale workflow alert the route missed stays in the 50-row unread window; move the reconcile's mark — and any browser-side retirement this package adds (TRAIL-9) — to a server path that sets only metadata.superseded_at on the caller's own unread workflow rows; drop the hook from METADATA_UPDATES in lib/__tests__/notificationWriteRails.test.ts)", "DEC-81 §2 (ratified 2026-10-07): flip each PSM kind to action-required in the same change that clears its row on discharge", "RT-10 (remaining limb assigned by the integrator 2026-10-08 at the N3 merge: per-category toast toggles — a category on KIND_META mirroring the email_on_* categories, toast_on_* columns by one DEC-30 migration, the settings rows, and the listener honouring them; the master toast switch is N3's and stays)", "PROD-13 done-when 3 (assigned by the integrator 2026-10-13 at the N9 merge, DEC-31: the feed's action classification — actionKinds / KIND_META.actionRequired — includes every kind that demands a user action, N9's split kinds among them, so 'Action needed' is truthful)"],
    "severityMix": "1 HIGH, 8 MEDIUM, 3 LOW",
    "files": [
     "new components/providers/AttentionProvider.tsx (the hook's state and its ONE realtime channel hoisted; fetchAll debounced 300-600ms trailing per components/projects/ScheduleTab.tsx:112-116; .subscribe((status) => …) re-runs fetchAll on every SUBSCRIBED after the first; visibilitychange + focus + a 60s visible-only interval per app/(protected)/inbox/page.tsx:117-127; CHANNEL_ERROR/TIMED_OUT expose stale:true; the reconcile pass records the ids it just wrote and ignores their echo (RT-8) and runs once per tab; ticket select lists the attention columns only, not select('*'))",
@@ -374,7 +374,7 @@
   },
   {
    "name": "N12 NUDGES — the login nudge with the bell animation, and the person-to-person nudge recorded on the ticket (GAP-204 + GAP-206)",
-   "findings": ["OS-8", "OS-5"],
+   "findings": ["OS-8", "OS-5", "OS-13 (assigned by the integrator 2026-10-13 at the N9 merge, DEC-31: the /checkouts nudge cooldown is enforced by the database, not only the browser module — a repeat nudge inside the cooldown from any client is refused; one migration, DEC-30, DRLS-16)"],
    "severityMix": "2 LOW (+ GAP-204, GAP-206 build specs)",
    "files": [
     "new migration 2026NNNN_notification_seen_and_nudge.sql (notification_preferences.notifications_seen_at TIMESTAMPTZ and nudge_dismissed_until TIMESTAMPTZ — own-row RLS already fits; no new table — OS-8 dw1/dw3; DEC-30 paste)",
@@ -451,6 +451,32 @@
    "alreadyResolvedElsewhere": [
     "STACK-10 (RESOLVED at N7 on DEC-85 item 4's ratified reading)"
    ]
+  },
+  {
+    "name": "N15 RECIPIENT VISIBILITY AND NAMES — document-scoped notices reach only people who may discover the document; followers hear a force-release and a retirement; the last overloaded name and the one-letter module collision go (N9 remainders)",
+    "findings": [
+      "NEDGE-6 done-when 3, the wiring (assigned by the integrator 2026-10-13 at the N9 merge, DEC-31: lib/notify/dispatch.ts emit / resolveRecipients drops a follower who may not DISCOVER the document — lib/documentDiscoverers.ts discoverersOfDocument on the server, its route from the browser; controllers are never dropped (DEC-43); regression: every recipient with access still gets exactly one row)",
+      "TAX-4 done-when 3 (assigned by the integrator 2026-10-13 at the N9 merge, DEC-31: lib/activityThread.ts notifyCheckoutActivity filters its participants, session holders and watchers through discoverersOfDocument before the bell row and its 140-character snippet)",
+      "PROD-4 done-whens 1 and 4 (assigned by the integrator 2026-10-13 at the N9 merge, DEC-31; DEC-100 item 2 ratified: superseded for the personal kinds — the follower notice for the document-scoped events is PROD-17's; a test asserts a subscriptions row on a document puts that user in resolveRecipients for every non-personal document-scoped kind)",
+      "PROD-17 (assigned by the integrator 2026-10-13 at the N9 merge, DEC-31: a document's followers are told when a checkout on it is force-released and when it is retired — followers: true on those emits, behind NEDGE-6's discover filter)",
+      "TAX-17 (assigned by the integrator 2026-10-13 at the N9 merge, DEC-31: the stale-checkout escalation stops writing the overloaded checkout_released; it takes its own kind — prefer an existing one that means it; a new kind re-creates notification_kinds() from its NEWEST body, pasted before the deploy that writes it)",
+      "NEDGE-21 and NEDGE-8 done-when 2 (assigned by the integrator 2026-10-13 at the N9 merge, DEC-31: lib/subscription.ts (billing) and lib/subscriptions.ts (watch / follow) are renamed apart — e.g. lib/billing.ts and lib/watches.ts — every importer moved, each header naming its table; no behaviour change)"
+    ],
+    "files": [
+      "lib/notify/dispatch.ts, lib/notify/recipients.ts (the discover filter)",
+      "lib/activityThread.ts (notifyCheckoutActivity)",
+      "lib/checkoutEpisodes.ts, lib/postPublish.ts (followers: true on the force-release and retirement emits)",
+      "app/api/cron/maintenance/route.ts (the escalation's kind)",
+      "lib/subscription.ts → lib/billing.ts, lib/subscriptions.ts → lib/watches.ts and every importer",
+      "at most one migration (notification_kinds() only if TAX-17 needs a new kind)"
+    ],
+    "migrationsLikely": 1,
+    "dependsOn": [
+      "N9 merged (DEC-100; discoverersOfDocument, the split kinds)",
+      "N14 merged (the dispatcher's raw-insert tail and the cron's notify hunks)",
+      "admin-and-org P4 merged (lib/subscription.ts — DEC-98)"
+    ],
+    "sequencingNotes": "Added by the integrator 2026-10-13 at the N9 merge (DEC-31): every remainder N9 recorded as 'N14 (or as the integrator routes it)' that is not in N14's brief. Runs after N14."
   }
  ],
  "crossAreaFileOverlaps": [

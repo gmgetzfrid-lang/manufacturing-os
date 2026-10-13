@@ -303,7 +303,8 @@ export async function recallRetiredDocument(input: {
     await emit({
       orgId: input.orgId,
       category: "recall",
-      kind: "doc_superseded",
+      // PROD-13 / TAX-13 (N9): a recall is its own kind, not a supersede notice.
+      kind: "doc_recalled",
       title: `${input.docLabel} is now ${input.newStatus} — your copy is dead paper`,
       body:
         `This document was retired (${input.newStatus.toLowerCase()}); there is no current revision to work from. ` +
@@ -389,7 +390,8 @@ export async function nudgeStaleHolders(input: {
   await emit({
     orgId: input.orgId,
     category: "recall",
-    kind: "doc_superseded",
+    // PROD-13 / TAX-13 (N9): a recall is its own kind, not a supersede notice.
+    kind: "doc_recalled",
     title: `Your copy of ${input.docLabel} is out of date`,
     body: `The current revision is Rev ${input.currentRev ?? "?"}. You downloaded an older one — re-download before doing any work from it, and destroy old prints.`,
     link: input.libraryId ? `/documents/${input.libraryId}?doc=${input.documentId}` : undefined,
