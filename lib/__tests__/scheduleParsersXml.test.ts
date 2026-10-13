@@ -26,6 +26,14 @@ const MSPROJECT_XML = `<?xml version="1.0" encoding="UTF-8"?>
   </ExtendedAttributes>
   <Tasks>
     <Task>
+      <UID>0</UID>
+      <Name>Unit 200 Turnaround</Name>
+      <Start>2026-06-01T08:00:00</Start>
+      <Finish>2026-06-04T17:00:00</Finish>
+      <OutlineLevel>0</OutlineLevel>
+      <Summary>1</Summary>
+    </Task>
+    <Task>
       <UID>1</UID>
       <Name>Mobilize crew</Name>
       <Start>2026-06-01T08:00:00</Start>
@@ -57,6 +65,14 @@ const MSPROJECT_XML = `<?xml version="1.0" encoding="UTF-8"?>
 describe("MS Project XML ingestion", () => {
   const result = parseScheduleFile("turnaround.xml", MSPROJECT_XML);
   const byName = (n: string) => result.rows.find((r) => r.name === n);
+
+  it("does not import the project summary row (UID 0) as a task", () => {
+    expect(byName("Unit 200 Turnaround")).toBeUndefined();
+    expect(result.rows.map((r) => r.externalRef)).not.toContain("msp-uid:0");
+    expect(result.rows).toHaveLength(2);
+    // Real top-level tasks keep their level and have no phantom parent.
+    expect(byName("Mobilize crew")!.parentExternalRef).toBeNull();
+  });
 
   it("detects the format and parses both tasks", () => {
     expect(result.format).toBe("msproject-xml");
