@@ -29,6 +29,15 @@
 // cannot print in a form it prints (lib/stamping.ts stampText) and never
 // fails on it, so such a label is stampable — the P22 test that pinned it
 // `unloadable` is rewritten to the new rule.
+//
+// document-control P24 (TRX-17): the route RECORDS its verdicts on the draft
+// (transmittals.stamp_check, 20261199) — the draft's updated_at as read, who,
+// when, and each document's verdict with the version it was decided on —
+// only on the draft as read (an updated_at match). Before 20261199 (a
+// missing column) it answers as before, unrecorded; any other failure to
+// record is a 503 and a draft saved meanwhile a 409 (each reads, in the
+// browser, as a check that could not run). An unchecked verdict now asks
+// the issuer (unstampableItems includes it).
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
@@ -50,6 +59,9 @@ const st = vi.hoisted(() => ({
   chunksRead: 0,
   destroyed: 0,
   writes: [] as Array<{ table: string; op: string }>,
+  /** TRX-17: the route's record write — its payload and filters, and what the database answers. */
+  recordWrites: [] as Array<{ payload: unknown; eqs: Record<string, unknown> }>,
+  updateAnswer: { data: [{ id: "t1" }], error: null } as { data: unknown; error: unknown },
   user: { id: "u-dc" } as { id: string } | null,
   transmittal: null as Row | null,
   authority: { allowed: true, member: { role: "DocCtrl", roles: ["DocCtrl"], email: "dc@a" } } as Row,
@@ -61,11 +73,18 @@ const st = vi.hoisted(() => ({
 function chain(table: string) {
   const eqs: Record<string, unknown> = {};
   const c: Row = {};
+  let update: { payload: unknown } | null = null;
   const h: ProxyHandler<Row> = {
     get(_t, prop: string) {
-      if (prop === "then") return (res: (v: unknown) => void) => res({ data: [], error: null });
+      if (prop === "then") {
+        return (res: (v: unknown) => void) => {
+          if (update) { st.recordWrites.push({ payload: update.payload, eqs: { ...eqs } }); return res(st.updateAnswer); }
+          return res({ data: [], error: null });
+        };
+      }
       return (...args: unknown[]) => {
         if (prop === "eq") eqs[String(args[0])] = args[1];
+        if (prop === "update") update = { payload: args[0] };
         if (prop === "insert" || prop === "update" || prop === "upsert" || prop === "delete") st.writes.push({ table, op: prop });
         if (prop === "maybeSingle" || prop === "single") {
           if (st.readErrors[table]) return Promise.resolve({ data: null, error: st.readErrors[table] });
@@ -189,6 +208,7 @@ const item = (doc: string, number = doc.toUpperCase()): TransmittalItem => ({ do
 beforeEach(async () => {
   if (!GOOD) await fixtures();
   st.docs = {}; st.versions = {}; st.readErrors = {}; st.objects = {}; st.fetched = []; st.heads = []; st.ranges = []; st.chunksRead = 0; st.destroyed = 0; st.writes = [];
+  st.recordWrites = []; st.updateAnswer = { data: [{ id: "t1" }], error: null };
   st.user = { id: "u-dc" };
   st.transmittal = null;
   st.stamps = [];
@@ -404,7 +424,8 @@ describe("TRX-16 (P15 final review fix) — oversize by the object's own length;
       ["n2", "stampable", undefined],
     ]);
     expect(st.destroyed).toBeGreaterThanOrEqual(1); // n1's body released unread
-    expect(unstampableItems(out)).toEqual([]);
+    // TRX-17: an undecided file is no longer passed silently — the issuer is asked
+    expect(unstampableItems(out).map((c) => c.documentId)).toEqual(["n1"]);
   });
   it("a PDF that loads and stamps but whose save() throws is unloadable — the route's save is inside its stamp try", async () => {
     file("v1");
@@ -534,7 +555,7 @@ describe("TRX-15 (P22 review fix) — the check stamps the text the download sta
 
   it("the route passes the transmittal's number; the check reads the current file's label", async () => {
     const route = readFileSync(join(process.cwd(), "app/api/transmittal/stamp-check/route.ts"), "utf8");
-    expect(route).toContain("checkItemsStampable(supabaseAdmin, { orgId: t.orgId, items: t.items, transmittalNumber: t.number })");
+    expect(route).toContain("checkItemsStampableWithFiles(supabaseAdmin, { orgId: t.orgId, items: t.items, transmittalNumber: t.number })");
     const lib = readFileSync(join(process.cwd(), "lib/transmittalStampCheck.ts"), "utf8");
     expect(lib).toContain("await applyStampToPdfDoc(pdfDoc, { ...text, timestamp: new Date() });");
     expect(lib).not.toContain("stamp-check.invalid");
@@ -572,16 +593,76 @@ describe("TRX-16 — /api/transmittal/stamp-check", () => {
       method: "POST", headers: auth ? { authorization: auth, "content-type": "application/json" } : { "content-type": "application/json" }, body: JSON.stringify(body),
     }));
   };
-  const draft = (over: Row = {}): Row => ({ id: "t1", org_id: ORG, seq: 1, number: "TR-0001", status: "draft", recipient_name: "Acme", items: [{ documentId: "d1", number: "P-101" }, { documentId: "d2", number: "VDS-7" }], ...over });
+  const UPDATED_AT = "2026-10-13T09:15:02.123456+00:00";
+  const draft = (over: Row = {}): Row => ({ id: "t1", org_id: ORG, seq: 1, number: "TR-0001", status: "draft", recipient_name: "Acme", updated_at: UPDATED_AT, items: [{ documentId: "d1", number: "P-101" }, { documentId: "d2", number: "VDS-7" }], ...over });
 
-  it("answers each item's verdict for a draft, to a transmit authority — no-store, nothing written", async () => {
+  it("answers each item's verdict for a draft, to a transmit authority — no-store; TRX-17: its one write records the verdicts on the draft as read", async () => {
     file("d1"); file("d2", { bytes: ENCRYPTED });
     st.transmittal = draft();
     const res = await post({ transmittalId: "t1" });
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBe("no-store");
-    expect((await res.json()).items.map((c: Row) => [c.number, c.verdict])).toEqual([["P-101", "stampable"], ["VDS-7", "unloadable"]]);
-    expect(st.writes).toEqual([]);
+    const body = await res.json();
+    expect(body.items.map((c: Row) => [c.number, c.verdict])).toEqual([["P-101", "stampable"], ["VDS-7", "unloadable"]]);
+    expect(body.recorded).toBe(true);
+    expect(st.writes).toEqual([{ table: "transmittals", op: "update" }]);
+    expect(st.recordWrites).toHaveLength(1);
+    const { payload, eqs } = st.recordWrites[0];
+    expect(eqs).toEqual({ id: "t1", status: "draft", updated_at: UPDATED_AT });
+    const rec = (payload as { stamp_check: Record<string, unknown> }).stamp_check;
+    expect(Object.keys(payload as Row)).toEqual(["stamp_check"]);
+    expect(rec).toMatchObject({ draftUpdatedAt: UPDATED_AT, checkedBy: "u-dc" });
+    expect(typeof rec.checkedAt).toBe("string");
+    expect(rec.items).toEqual([
+      { documentId: "d1", versionId: "d1-v", verdict: "stampable" },
+      { documentId: "d2", versionId: "d2-v", verdict: "unloadable", detail: "encrypted (permission-restricted) PDF" },
+    ]);
+  });
+  it("TRX-17: an undecided file is recorded with the version it found (or none) and its reason", async () => {
+    file("d1");
+    st.docs.d2 = { id: "d2", current_version_id: null };
+    st.transmittal = draft();
+    expect((await post({ transmittalId: "t1" })).status).toBe(200);
+    const rec = (st.recordWrites[0].payload as { stamp_check: { items: unknown[] } }).stamp_check;
+    expect(rec.items).toEqual([
+      { documentId: "d1", versionId: "d1-v", verdict: "stampable" },
+      { documentId: "d2", versionId: null, verdict: "unchecked", detail: "no published file to check" },
+    ]);
+  });
+  it("TRX-17: before 20261199 (the column is missing — PGRST204 / 42703) the check is answered as before, unrecorded", async () => {
+    file("d1"); file("d2");
+    st.transmittal = draft();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      for (const e of [{ code: "PGRST204", message: "Could not find the 'stamp_check' column of 'transmittals' in the schema cache" }, { code: "42703", message: 'column "stamp_check" of relation "transmittals" does not exist' }]) {
+        st.updateAnswer = { data: null, error: e };
+        const res = await post({ transmittalId: "t1" });
+        expect(res.status).toBe(200);
+        const body = await res.json();
+        expect(body.items.map((c: Row) => c.verdict)).toEqual(["stampable", "stampable"]);
+        expect(body.recorded).toBe(false);
+      }
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/apply 20261199/));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+  it("TRX-17: a record that cannot be written for another reason is 503; a draft saved during the check (no row matched) is 409 — never an answer the database will not honour", async () => {
+    file("d1"); file("d2");
+    st.transmittal = draft();
+    st.updateAnswer = { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } };
+    const res = await post({ transmittalId: "t1" });
+    expect(res.status).toBe(503);
+    expect((await res.json()).error).toMatch(/^The check ran, but its result could not be recorded \(canceling statement due to statement timeout\)\. Issue again, or issue anyway — your yes is recorded\.$/);
+    st.updateAnswer = { data: [], error: null };
+    const res2 = await post({ transmittalId: "t1" });
+    expect(res2.status).toBe(409);
+    expect((await res2.json()).error).toBe("TR-0001 was saved while its files were being checked — the check was not recorded. Open the draft, check it and issue again.");
+    // a draft row with no save time cannot be bound: 503, nothing written
+    st.recordWrites = [];
+    st.transmittal = draft({ updated_at: null });
+    expect((await post({ transmittalId: "t1" })).status).toBe(503);
+    expect(st.recordWrites).toEqual([]);
   });
   it("refuses: no session 401; not a member 404 (no oracle); no transmit authority 403; not a draft 409; unknown 404; a policy that cannot be read 503", async () => {
     st.transmittal = draft();
@@ -602,5 +683,6 @@ describe("TRX-16 — /api/transmittal/stamp-check", () => {
     expect((await post({ transmittalId: "t1" })).status).toBe(404);
     expect((await post({})).status).toBe(400);
     expect(st.fetched).toEqual([]);
+    expect(st.recordWrites).toEqual([]); // a refused caller records nothing
   });
 });

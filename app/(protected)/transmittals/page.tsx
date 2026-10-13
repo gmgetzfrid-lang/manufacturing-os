@@ -44,10 +44,10 @@ import {
   acknowledgeTransmittal, voidTransmittal, deleteTransmittal, openTransmittalSheet,
   revokeTransmittalLink, transmittalStatusMeta, isTransmittalIssuable, TRANSMITTAL_PURPOSES,
   transmittalPortalUrl, portalOriginConfigured, portalLinkAvailable, portalLinkState, mayTransmit, mayDeleteDraft, itemIssueBlocker,
-  legalHoldNotice, PORTAL_LINK_DAYS, UnstampableItemsError,
+  legalHoldNotice, PORTAL_LINK_DAYS, UnstampableItemsError, unstampableConfirmTitle, unstampableDeclinedMessage,
   type Transmittal, type TransmittalItem, type IssueFacts, type IssueOutcome, type IssuePhase,
 } from "@/lib/transmittals";
-import { loadCapabilityPolicy, type CapabilityPolicy } from "@/lib/capabilityPolicy";
+import { loadCapabilityPolicyEntry, type CapabilityPolicy } from "@/lib/capabilityPolicy";
 import { isControllerPrincipal } from "@/lib/permissions";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { holdReasonLabel } from "@/lib/holdGate";
@@ -66,6 +66,12 @@ interface DocHit {
   rev: string | null;
   versionId: string | null;
 }
+
+/** AUTHZ-15 (DEC-89 item 3, ratified DEC-90 A26): what the register says when
+ *  the capability policy could not be read and there is no last good entry —
+ *  the controls that depend on it are not drawn from the shipped defaults;
+ *  they are held back (fail closed) and this says why. */
+const POLICY_FAULT_NOTICE = "Permissions could not be read, so issuing, voiding, revoking a portal link and recording a receipt are not offered until they can be. Saving and editing your drafts still works.";
 
 /** TRX-14: what the issuer does when no portal link can be built — no public
  *  origin is configured (P22: a browser never falls back to its own address,
@@ -109,14 +115,28 @@ export default function TransmittalsPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   // TRX-1: the capability policy (null until read) and each live item's
   // library — the resource the capability is evaluated against (DEC-13).
+  // AUTHZ-15 (DEC-90 A26): a read that fails with no last good entry
+  // (`unreadable`) — or that throws — leaves the policy null, so every
+  // control it decides stays held back (fail closed) instead of being drawn
+  // from the shipped defaults, and `policyFault` says why on the page. A
+  // `stale` answer is the org's last good policy and is drawn as before.
   const [policy, setPolicy] = useState<CapabilityPolicy | null>(null);
+  const [policyFault, setPolicyFault] = useState<string | null>(null);
+  const [policyTry, setPolicyTry] = useState(0);
   const [libOf, setLibOf] = useState<Map<string, string | null>>(new Map());
   useEffect(() => {
     if (!activeOrgId) return;
     let alive = true;
-    void loadCapabilityPolicy(activeOrgId).then((p) => { if (alive) setPolicy(p); }).catch(() => { if (alive) setPolicy({}); });
+    void loadCapabilityPolicyEntry(activeOrgId).then((e) => {
+      if (!alive) return;
+      if (e.unreadable) { setPolicy(null); setPolicyFault(e.unreadable); return; }
+      setPolicy(e.policy); setPolicyFault(null);
+    }).catch((err: unknown) => {
+      if (!alive) return;
+      setPolicy(null); setPolicyFault((err as Error)?.message || "the capability policy could not be read");
+    });
     return () => { alive = false; };
-  }, [activeOrgId]);
+  }, [activeOrgId, policyTry]);
   const principal = useMemo<Principal>(() => ({ role: activeRole ?? null, roles: (roles ?? []) as string[], uid: uid ?? null }), [activeRole, roles, uid]);
   // SESS-6: no role known stays null — never turned back into a "Viewer".
   const isController = useMemo(() => isControllerPrincipal({ role: activeRole, roles: (roles ?? []) as Role[] }), [activeRole, roles]);
@@ -322,6 +342,19 @@ export default function TransmittalsPage() {
           }
         />
 
+        {policyFault && (
+          <div role="alert" data-testid="transmittal-policy-fault" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 text-amber-800 p-3 text-xs flex items-start gap-2">
+            <Lock className="w-4 h-4 mt-0.5 shrink-0" />
+            <div className="flex-1">
+              <div className="font-bold">Permissions could not be read</div>
+              <div className="mt-0.5">{POLICY_FAULT_NOTICE}</div>
+            </div>
+            <button onClick={() => setPolicyTry((n) => n + 1)} className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-amber-300 bg-white/60 font-bold hover:bg-white">
+              <RefreshCw className="w-3 h-3" /> Try again
+            </button>
+          </div>
+        )}
+
         {error && (
           <div className={`mb-4 rounded-xl border p-3 text-xs flex items-start gap-2 ${needsMigration ? "border-amber-200 bg-amber-50 text-amber-800" : "border-red-200 bg-red-50 text-red-800"}`}>
             <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
@@ -459,6 +492,7 @@ export default function TransmittalsPage() {
           preloadDoc={preloadDoc}
           actor={actor}
           policy={policy}
+          policyFault={policyFault}
           principal={principal}
           onClose={() => { setComposerOpen(false); setEditing(null); setPreloadDoc(null); }}
           onSaved={async (result) => {
@@ -495,13 +529,15 @@ interface ComposerProps {
   preloadDoc: TransmittalItem | null;
   actor: { orgId: string; actorUserId: string; actorName?: string; actorRole?: string };
   policy: CapabilityPolicy | null;
+  /** AUTHZ-15: the policy could not be read — Issue is held back, and says why. */
+  policyFault?: string | null;
   principal: Principal;
   onClose: () => void;
   onSaved: (result: ComposerResult) => void | Promise<void>;
   onError: (msg: string) => void;
 }
 
-function TransmittalComposer({ orgId, editing, preloadDoc, actor, policy, principal, onClose, onSaved, onError }: ComposerProps) {
+function TransmittalComposer({ orgId, editing, preloadDoc, actor, policy, policyFault, principal, onClose, onSaved, onError }: ComposerProps) {
   const [subject, setSubject] = useState(editing?.subject ?? "");
   const [recipientName, setRecipientName] = useState(editing?.recipientName ?? "");
   const [recipientCompany, setRecipientCompany] = useState(editing?.recipientCompany ?? "");
@@ -649,11 +685,13 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, policy, princi
     : !basicsReady ? "Add a document + recipient to issue"
     : !facts ? "Checking the documents…"
     : blockers.length > 0 ? blockers[0].why!
+    : !canIssue && policyFault ? "Permissions could not be read, so issuing is not offered until they can be — your draft can still be saved."
     : !canIssue ? "Saving a draft is open to everyone; issuing needs transmit authority (the \"Issue transmittals\" capability) — a Document Controller can issue your draft."
     : `Ready to issue — the recipient's portal link will work for ${PORTAL_LINK_DAYS} days`;
 
   const save = async (issue: boolean) => {
     if (issue && !issuable) { onError(blockers[0]?.why ?? "Add at least one document and a recipient before issuing."); return; }
+    if (issue && !canIssue && policyFault) { onError("Permissions could not be read, so this cannot be issued now — save the draft and try again shortly."); return; }
     if (issue && !canIssue) { onError("You do not hold transmit authority for these documents — save the draft and ask a Document Controller to issue it."); return; }
     if (issue && facts) {
       // TRX-3 dw2: a legal hold does not block — it asks for a deliberate yes.
@@ -693,8 +731,10 @@ function TransmittalComposer({ orgId, editing, preloadDoc, actor, policy, princi
         // recorded so; the acceptance goes on the TRANSMITTAL_ISSUED row).
         // TRX-15: the check they answered still arms the files it found
         // stampable (e.checked), so only the accepted ones go out unmarked.
-        if (!(await appConfirm({ title: "Files the portal cannot mark", message: <span className="whitespace-pre-line">{e.message}</span>, confirmLabel: "Issue anyway" }))) {
-          await onSaved({ kind: "issue-failed", draft, error: "Not issued — fix the file(s) the portal cannot mark, then issue again." });
+        // TRX-17: a file the check could not decide — or every file, when it
+        // could not run — asks the same yes, recorded on the item.
+        if (!(await appConfirm({ title: unstampableConfirmTitle(e.items), message: <span className="whitespace-pre-line">{e.message}</span>, confirmLabel: "Issue anyway" }))) {
+          await onSaved({ kind: "issue-failed", draft, error: unstampableDeclinedMessage(e.items) });
           return;
         }
         outcome = await issueTransmittal(draft.id, actor, { acceptedUnstampable: e.items, checked: e.checked, onPhase: setIssuePhase });
