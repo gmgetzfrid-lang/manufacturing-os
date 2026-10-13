@@ -561,7 +561,7 @@ lib/notifications.ts:59-61  `    if (prefs?.email_enabled === false) return;\n  
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
-- **Assigned:** notifications N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT — by the integrator, 2026-10-07, at the N6 merge (DEC-31): done-when 1's remaining limb, the transmittal acknowledgment receipt (`app/api/transmittal/route.ts`, N9's file) reads the recipient's master switch before it is queued (DEC-90 A10).
+- **Assigned:** notifications N15 RECIPIENT VISIBILITY AND NAMES (done-when 1's transmittal receipt limb: verify the gate and record it) — by the integrator, 2026-10-13 (N9 merge, DEC-31; fleet plan `audit-reports/fleet-plans/notifications.json`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/notifications/send-queued/route.ts:145-153`, `lib/notify/dispatch.ts:116-127`, `app/api/tickets/comment/route.ts:308-311`, `lib/notifications.ts:168-183`
 - **Re-verified:** hardening pass — **SURVIVES**, by census. `grep -c 'unsubscribe\|List-Unsubscribe'` returns **0** in both `lib/notify/dispatch.ts` and `app/api/notifications/send-queued/route.ts`.
@@ -660,6 +660,7 @@ transmittals.ts:278  `  const portalUrl = transmittalPortalUrl(t.portalToken);`
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** notifications N15 RECIPIENT VISIBILITY AND NAMES (done-when 1's transmittal receipt time) and admin-and-org P8 (done-when 3, through `NEDGE-19`) — by the integrator, 2026-10-13 (N9 merge, DEC-31; fleet plan `audit-reports/fleet-plans/notifications.json`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/transmittal/route.ts:169`, `app/api/cron/maintenance/route.ts:348`, `app/api/cron/maintenance/route.ts:411`, `vercel.json:8-11`
 - **Re-verified:** hardening pass — **SURVIVES**. `new Date(now).toLocaleString()` (`transmittal/route.ts:169`) and `new Date(row.started_at).toLocaleDateString()` (`maintenance/route.ts:348`) both execute server-side, so every recipient reads the server's locale and timezone rather than their own.
