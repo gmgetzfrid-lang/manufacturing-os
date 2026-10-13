@@ -41,6 +41,7 @@ import { assignGroupColors, type GroupColor } from "@/lib/scheduleColors";
 import SchedulePulse from "@/components/projects/SchedulePulse";
 import TaskDetailPanel from "@/components/projects/TaskDetailPanel";
 import ScheduleCalendarTileView from "@/components/projects/ScheduleCalendarTileView";
+import ShiftReportView from "@/components/projects/ShiftReportView";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import { addDays as addDaysTz, dayDiff as dayDiffTz, dayOfWeek, fmtInTz, startOfDay as startOfDayTz, wallClock } from "@/lib/scheduleTz";
 import StatusControl from "@/components/projects/StatusControl";
@@ -59,6 +60,8 @@ interface Props {
   canEdit: boolean;
   orgId: string;
   projectId: string;
+  /** Printed on the shift report header. */
+  projectName?: string;
   userId: string;
   userName?: string;
   userEmail?: string;
@@ -94,7 +97,7 @@ interface FlatRow {
 }
 
 export default function ExecutionView({
-  milestones, canEdit, orgId, projectId, userId, userName, userEmail, userRole,
+  milestones, canEdit, orgId, projectId, projectName, userId, userName, userEmail, userRole,
   onRefresh, onMoveMany, onSetStatus, onSetProgress,
 }: Props) {
   const tz = useScheduleTz();
@@ -111,7 +114,7 @@ export default function ExecutionView({
   // manual multiplier on the fitted width (1 = fit, >1 = zoomed in).
   const [zoomFactor, setZoomFactor] = useState<number | null>(null);
   const [drag, setDrag] = useState<{ id: string; deltaDays: number } | null>(null);
-  const [layout, setLayout] = useState<"timeline" | "calendar" | "report">("timeline");
+  const [layout, setLayout] = useState<"timeline" | "calendar" | "report" | "shift">("timeline");
   const [detailId, setDetailId] = useState<string | null>(null);
   // Keyboard navigation: the currently keyboard-focused timeline row.
   const [focusedId, setFocusedId] = useState<string | null>(null);
@@ -713,7 +716,7 @@ export default function ExecutionView({
 
       <div className="flex items-center gap-2 flex-wrap">
         <div className="inline-flex items-center bg-[var(--color-surface-2)] rounded-lg p-0.5 gap-0.5">
-          {([["timeline", "Timeline"], ["calendar", "Calendar"], ["report", "Report"]] as const).map(([id, label]) => (
+          {([["timeline", "Timeline"], ["calendar", "Calendar"], ["shift", "Shift report"], ["report", "Report"]] as const).map(([id, label]) => (
             <button
               key={id}
               onClick={() => setLayout(id)}
@@ -765,6 +768,8 @@ export default function ExecutionView({
 
       {layout === "report" ? (
         <ExecutionReportView milestones={items} />
+      ) : layout === "shift" ? (
+        <ShiftReportView milestones={items} progress={progressIndex} criticalIds={critical.ids} projectId={projectId} projectName={projectName} />
       ) : layout === "calendar" ? (
         <ScheduleCalendarTileView
           milestones={visibleItems}

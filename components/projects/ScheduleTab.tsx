@@ -359,6 +359,7 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
           canEdit={canEdit}
           orgId={orgId}
           projectId={projectId}
+          projectName={projectName}
           userId={userId}
           userName={userName}
           userEmail={userEmail}
