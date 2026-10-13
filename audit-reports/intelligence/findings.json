@@ -25,16 +25,16 @@
     "audit-reports/intelligence/21-edges-and-invariants.md"
   ],
   "totals": {
-    "findings": 266,
+    "findings": 267,
     "gaps": 15,
     "by_severity": {
       "CRITICAL": 9,
       "HIGH": 59,
       "MEDIUM": 148,
-      "LOW": 50
+      "LOW": 51
     },
     "by_status": {
-      "RESOLVED": 209,
+      "RESOLVED": 210,
       "OPEN": 51,
       "REFUTED": 2,
       "WONTFIX": 3,
@@ -6690,7 +6690,7 @@
       "id": "IRLS-14",
       "title": "The graph shows an unbuilt or failed mention index as an empty map",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -6699,6 +6699,29 @@
         "app/(protected)/graph/page.tsx",
         "lib/orgGraph.ts",
         "lib/mentions.ts"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "adversarial",
+      "challenges": [
+        "adversarial"
+      ],
+      "refuted": false,
+      "summary": null,
+      "area": "intelligence",
+      "report": "audit-reports/intelligence/16-persistence-rls.md"
+    },
+    {
+      "id": "IRLS-16",
+      "title": "A per-document mention rebuild is not recorded in the mention index's run state",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": null,
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "app/api/graph/mentions/route.ts",
+        "lib/mentionRunState.ts"
       ],
       "has_verifier_correction": false,
       "verified_by": "adversarial",

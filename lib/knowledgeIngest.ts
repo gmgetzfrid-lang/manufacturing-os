@@ -60,6 +60,9 @@ import {
 } from "@/lib/ai/usageServer";
 import { GovernedCallError, isAiUsageUnavailable } from "@/lib/ai/gateError";
 import { loadOrgInstructionsBlock } from "@/lib/aiInstructionsServer";
+import {
+  startMentionRun, finishMentionRun, clearStandingFailure, recordMentionFailure,
+} from "@/lib/mentionRunState";
 
 export const PAGE_BATCH = 50;
 
@@ -1084,21 +1087,47 @@ export function visionRetryMessage(pages: number[], cause: string | null, noVisi
  *  a document's machine mentions, so they are rebuilt wherever it becomes
  *  'ready' again — the interactive route, the cron drain, an accepted
  *  partial index. Best-effort with a hard time cap: a slow scan never fails
- *  or stalls ingestion. */
+ *  or stalls ingestion.
+ *
+ *  IRLS-14 (intelligence Round G I-23): the pass is recorded in the mention
+ *  index's run state (lib/mentionRunState.ts, source 'ingest') — its start,
+ *  then its outcome: a failure with this document and its error in plain
+ *  words, so the graph can name a build that failed here (it used to be
+ *  swallowed by `catch {}`). A success clears this document's own standing
+ *  failure. The start is written beside the build, never before it, and the
+ *  outcome when the build settles, even after the cap has let the batch go
+ *  on; a pass that could not start is recorded within the same cap. The
+ *  batch waits for none of it past the cap, and recording never throws;
+ *  with the run state not installed (20261194 not pasted) nothing is
+ *  recorded, as before. */
 export async function rebuildDocumentMentions(
   doc: { id: string; org_id: string; source_document_id?: string | null },
   capMs = 8_000,
 ): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const capped = (work: Promise<unknown>) => {
+    if (timer) clearTimeout(timer);
+    return Promise.race([work, new Promise((r) => { timer = setTimeout(r, capMs); })]);
+  };
   try {
     const { loadAliasDictionary, indexDocumentMentions } = await import("@/lib/mentionIndexer");
     const dict = await loadAliasDictionary(doc.org_id);
     if (dict.length === 0) return;
-    await Promise.race([
-      indexDocumentMentions(doc.org_id, doc.id, dict, doc.source_document_id ?? null),
-      new Promise((r) => { timer = setTimeout(r, capMs); }),
-    ]);
-  } catch { /* mention edges are a bonus — never block ingestion */ }
+    const started = startMentionRun(supabaseAdmin, doc.org_id, "ingest", doc.id);
+    const build = indexDocumentMentions(doc.org_id, doc.id, dict, doc.source_document_id ?? null).then(
+      async () => {
+        const run = await started;
+        if (run.standingFailure?.documentId === doc.id) await clearStandingFailure(supabaseAdmin, run);
+        await finishMentionRun(supabaseAdmin, run, { outcome: "succeeded" });
+      },
+      async (e: unknown) => { await finishMentionRun(supabaseAdmin, await started, { outcome: "failed", error: e }); },
+    );
+    await capped(build);
+  } catch (e) {
+    // Mention edges are a bonus — never block ingestion. The pass could not
+    // even start (its engine did not load): recorded like a failed build.
+    await capped(recordMentionFailure(supabaseAdmin, doc.org_id, "ingest", doc.id, e));
+  }
   finally { if (timer) clearTimeout(timer); }
 }
 

@@ -12,7 +12,9 @@
 //     unit identity (GPV-7 / AREA-10);
 //   * the keyboard's walk over the map (GPV-13), and the per-node-set
 //     memos the page and the renderers keep (fix pass 3);
-//   * what the map says when it draws no mention links (IRLS-14);
+//   * what the map says when it draws no mention links (IRLS-14), and what
+//     the mention index's run state adds — the last build that failed, a
+//     build that never reported, a rebuild that stopped (I-23);
 //   * the rate at which the view is written to the URL (GPV-11 — the
 //     History API throws past a browser's budget; clock and timer injected).
 //
@@ -25,6 +27,9 @@ import type {
 } from "@/lib/orgGraph";
 import { buildAdjacency, neighborhood } from "@/lib/graphSim";
 import type { GraphSettings } from "@/lib/graphSettings";
+import {
+  BUILD_STALE_MS, REBUILD_ALIVE_MS, readBackfillPlace, type MentionRunSource, type MentionRunState,
+} from "@/lib/mentionRunState";
 
 export interface GraphViewSlice {
   nodes: GraphNode[];
@@ -250,15 +255,54 @@ export function nodeIndexer(): (nodes: readonly GraphNode[]) => Map<string, Grap
 
 // ── IRLS-14: no mention links, and why ──────────────────────────────────
 
-export interface MentionNotice { text: string; canRebuild: boolean }
+export interface MentionNotice {
+  text: string;
+  canRebuild: boolean;
+  /** I-23: a rebuild from the map stopped (its time limit, a failure, or cut
+   *  off) and is not too old; the next press continues after the last
+   *  document it finished. Set only then — never while a rebuild runs. */
+  canContinue?: boolean;
+}
 
 /** With zero mention links drawn, the sentence that says which case it is
  *  and the next step. What the read can tell (lib/orgGraph.ts
  *  MentionCoverage): not installed; installed with no row this reader can
  *  see; rows read but none on this map. It cannot tell "never built" from
- *  "built, nothing named" — so it says both — and the indexer keeps no run
- *  state, so a failed build elsewhere is not something it can name. */
-export function mentionNotice(cov: MentionCoverage | undefined | null, equipmentOnMap: number): MentionNotice | null {
+ *  "built, nothing named" — so it says both.
+ *
+ *  I-23: the mention index's run state (lib/mentionRunState.ts, read by the
+ *  page as the member; `readAt` is when) adds what the coverage cannot
+ *  tell: the last build that FAILED — where it ran (ingest or this map),
+ *  when, and its error in plain words — a build that never reported how it
+ *  ended, a rebuild from this map that is running now, and one that stopped
+ *  (offered to continue unless it is too old). It is said beside the
+ *  coverage's sentence, and also when links ARE drawn (some may be
+ *  missing) — never on a map whose index is not installed or that has no
+ *  equipment on it (equipmentOnMap 0), where no document could be linked.
+ *  With no run state (none read, 20261194 not pasted) or nothing to add (the
+ *  last build succeeded, or an ingest-time build is running), the notice is
+ *  exactly what it was. */
+export function mentionNotice(
+  cov: MentionCoverage | undefined | null, equipmentOnMap: number,
+  run?: MentionRunState | null, readAt?: number,
+): MentionNotice | null {
+  const base = coverageNotice(cov, equipmentOnMap);
+  if (!cov || !cov.installed || equipmentOnMap === 0) return base;
+  const notes = mentionRunNotes(run, readAt ?? Date.now());
+  if (!notes) return base;
+  // While a rebuild from this map runs, the running reading wins: no button
+  // is offered, not even the coverage's own — a press would continue the
+  // running press's place in parallel with it.
+  const canRebuild = notes.running ? false : (base?.canRebuild ?? false) || notes.canRebuild;
+  const extra = notes.canContinue ? { canContinue: true } : {};
+  if (!base) {
+    return { text: `Some “mentioned in the text” links may be missing from this map. ${notes.text}`, canRebuild, ...extra };
+  }
+  return { text: `${base.text} ${notes.text}`, canRebuild, ...extra };
+}
+
+/** The coverage's own sentence (IRLS-14 as I-14 shipped it). */
+function coverageNotice(cov: MentionCoverage | undefined | null, equipmentOnMap: number): MentionNotice | null {
   if (!cov || cov.drawn > 0) return null;
   if (!cov.installed) {
     return {
@@ -279,6 +323,80 @@ export function mentionNotice(cov: MentionCoverage | undefined | null, equipment
     text: "No “mentioned in the text” links on this map. Either the mention index has not been built for these documents, or it found none of this registry's equipment named in the documents you can see — the map cannot tell which. Each document is indexed when it finishes reading; an admin, document controller, manager or supervisor can rebuild the whole index from this map.",
     canRebuild: true,
   };
+}
+
+/** A run's time as the map says it (the reader's locale and zone). */
+export function formatRunTime(iso: string): string {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "an unknown time";
+  return new Date(t).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" });
+}
+
+const RUN_WHERE: Record<MentionRunSource, string> = {
+  ingest: "at ingest (when a document finished indexing)",
+  map: "from this map (a rebuild of the whole index)",
+};
+
+/** The sentences the run state adds, or null when it has nothing to add —
+ *  no row, a last build that succeeded (or an ingest-time build still
+ *  running), no failure standing and no rebuild unfinished. `now` decides
+ *  whether a build or a rebuild is still running, was cut off, or is too
+ *  old to continue (lib/mentionRunState.ts readBackfillPlace).
+ *  `canRebuild` offers the rebuild for what it says (a failure, a cut-off
+ *  build, an unfinished rebuild) — never while a rebuild from this map is
+ *  running, which `running` says so that mentionNotice offers no button at
+ *  all then; `canContinue` only for a rebuild the next press continues. */
+export function mentionRunNotes(
+  state: MentionRunState | null | undefined, now: number,
+): { text: string; canContinue: boolean; canRebuild: boolean; running?: true } | null {
+  if (!state) return null;
+  const lines: string[] = [];
+  let offer = false;
+  let canContinue = false;
+  const f = state.lastFailure;
+  if (f) {
+    lines.push(`The last mention build that failed ran ${RUN_WHERE[f.source]}, on ${formatRunTime(f.at)}. ${f.error}`);
+    offer = true;
+  }
+  const r = state.lastRun;
+  const started = r ? Date.parse(r.startedAt) : NaN;
+  const b = state.backfill;
+  const place = readBackfillPlace(b, now);
+  const docs = (n: number) => `${n.toLocaleString("en-US")} document${n === 1 ? "" : "s"}`;
+  const since = b?.startedAt ? ` (started ${formatRunTime(b.startedAt)})` : "";
+  // A rebuild from this map is reading now: its place says so (saved within
+  // REBUILD_ALIVE_MS), or the last build is one that started that recently.
+  const mapRunning = r !== null && r.source === "map" && r.outcome === "running"
+    && Number.isFinite(started) && now - started <= REBUILD_ALIVE_MS;
+  if (place?.kind === "running" || mapRunning) {
+    const from = place?.kind === "running" && b?.startedAt ? b.startedAt : r?.startedAt ?? null;
+    const read = place?.kind === "running" && b && b.documents > 0 ? `, ${docs(b.documents)} read so far` : "";
+    lines.push(`A rebuild of the whole index from this map is running now${from ? ` (started ${formatRunTime(from)}${read})` : ""}.`);
+    return { text: lines.join(" "), canContinue: false, canRebuild: false, running: true };
+  }
+  if (place?.kind === "continue" && b) {
+    const n = docs(b.documents);
+    lines.push(
+      place.why === "time_limit"
+        ? `The last rebuild from this map${since} stopped at its time limit after ${n}; the rest have not been read yet — continue it to pick up where it stopped.`
+        : place.why === "failed"
+          ? `The last rebuild from this map${since} stopped on a failure after ${n}; continue it to try that document again and read the rest.`
+          : `The last rebuild from this map${since} was cut off after ${n} without reporting how it ended; continue it to pick up where it last saved its place.`,
+    );
+    offer = true;
+    canContinue = true;
+  } else if (place?.kind === "expired" && b) {
+    lines.push(`The last rebuild from this map${since} stopped after ${docs(b.documents)} and is too old to continue — a rebuild reads every document again.`);
+    offer = true;
+  }
+  // A build that never reported: an ingest-time build, or a rebuild from this
+  // map whose place does not already say it was cut off.
+  const placeSaid = place?.kind === "continue" || place?.kind === "expired";
+  if (r && r.outcome === "running" && Number.isFinite(started) && now - started > BUILD_STALE_MS && !(r.source === "map" && placeSaid)) {
+    lines.push(`The last mention build, ${RUN_WHERE[r.source]}, started on ${formatRunTime(r.startedAt)} and never reported how it ended — it may have been cut off before it finished.`);
+    offer = true;
+  }
+  return lines.length > 0 ? { text: lines.join(" "), canContinue, canRebuild: offer } : null;
 }
 
 // ── GPV-11: writing the view to the URL within the History API's budget ──

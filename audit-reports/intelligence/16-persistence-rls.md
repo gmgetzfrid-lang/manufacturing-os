@@ -1,6 +1,6 @@
 # 16 · Persistence & RLS across the layer
 
-**15 findings** — 1 CRITICAL · 4 HIGH · 7 MEDIUM · 3 LOW (`IRLS-13`, `IRLS-14` and `IRLS-15` opened by intelligence Round G package I-08, 2026-09-30).
+**16 findings** — 1 CRITICAL · 4 HIGH · 7 MEDIUM · 4 LOW (`IRLS-13`, `IRLS-14` and `IRLS-15` opened by intelligence Round G package I-08, 2026-09-30; `IRLS-16` opened by I-23, 2026-10-07).
 
 Table by table: who can write what, and which writes carry authority.
 
@@ -603,7 +603,7 @@ Tests: `lib/__tests__/orchestratorSkills.test.ts` (the route returns the packs f
 ## IRLS-14 · The graph shows an unbuilt or failed mention index as an empty map
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-14 GRAPH PAGE, LENSES & RENDERERS (the `lib/orgGraph.ts` half coordinates with I-13) — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 - **Assigned:** intelligence I-23 MENTION INDEX RUN STATE (done-when 1's remainder: a build that failed elsewhere is named on the map; plus the backfill's missing cursor) — by the integrator, 2026-10-07 (at the I-14 merge: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/intelligence.json`).
 - **Verification:** CONFIRMED
@@ -630,6 +630,93 @@ Tests: `graphView.test.ts` "IRLS-14 — no mention links, and which case"; `grap
 1. Partly. ✓ The graph reads the coverage, says which case, and gives the next step: run the indexer, from the map. A run's failure is shown when the run is started from the map. **Not met:** a build that failed ELSEWHERE cannot be named. The ingest-time pass (`lib/knowledgeIngest.ts` `rebuildDocumentMentions`) swallows its errors (`catch {}`), and the indexer keeps no run state. So "the last build failed" is indistinguishable from "never built", and the map does not claim either.
 
 **Scope / residual.** "See the failure" needs an index-run state: a last run, its outcome and its error, written by `lib/mentionIndexer.ts` and `lib/knowledgeIngest.ts`'s pass, plus a migration to hold it. Neither file is this package's: `lib/knowledgeIngest.ts` is I-06b / I-20's, and the plan expects no migration here. Noted for the owner: the org-wide backfill (`backfillOrgMentions`) restarts at the first document on each POST (no cursor). A rebuild that hits its time limit says so ("the rest were not reached this run"), and a second press does not continue where it stopped.
+
+**Resolution (2026-10-07, intelligence Round G).** I-23 (MENTION INDEX RUN STATE) closes done-when 1's remainder: a build that failed elsewhere is now named on the map, and a rebuild that stops at its time limit is continued by the next press, with the dictionary it read with.
+
+Reproduced on HEAD `95775da` first (DEC-29), against the real engine and the in-memory database:
+- An ingest-time build whose cleanup was refused left no trace anywhere. `rebuildDocumentMentions` swallowed it (`catch {}`), and only the indexer's own server-log line remained.
+- Two presses of a rebuild with a deadline that stops after two documents both read k1 and k2. The second press restarted at the first document and never reached k3.
+
+What landed:
+- **The run state.** New file `lib/mentionRunState.ts`. It takes the caller's client and imports none. It owns one row per org in `mention_index_runs` (`20261194`), holding three things:
+  - the last build: where it ran (`ingest` or `map`), when it started, and how it ended (`running`, `succeeded`, `failed`, or `stopped` at its time limit). A build's end is written only while it is still the last build, a compare on its own run id; `finishMentionRun` answers whether the end landed, and a build superseded by a later one is answered `false` deliberately, not logged as a refusal;
+  - the last failed build: where, when, which knowledge document, and its error in plain words. `plainBuildError` gives the step that failed and why, from `classifyDbError`. It never shows a table, column or policy name, and anything unknown is said as unexpected. The raw text stays in the server log;
+  - a rebuild's place, from its start to its end: its state (`running` while a press reads; `time_limit` or `failed` when the press stopped), the last knowledge document it finished (by id), when the rebuild began, how many documents it has read, when the place was saved, and a fingerprint of the equipment dictionary it reads with. `readBackfillPlace` reads it the same way for the map: running (saved within `REBUILD_ALIVE_MS`, 2 min), continue (by why it stopped: time limit, failure, or cut off), too old (`BACKFILL_RESUME_MAX_MS`, 24 h), or nothing to continue.
+  - A success clears the failure that stood when it started, through a compare on its time, so a newer failure is never cleared. Every writer and the reader take PGRST205 / 42P01 / 42703 / PGRST204 as "not installed". Nothing is then recorded or read, and the log says so once. Any other refusal is logged and never thrown.
+  - Every UPDATE goes through `checkedWrite` on a `supabase` chain, so SAF-18's census (`lib/__tests__/checkedWrite.test.ts`) judges the file; the two upserts check the rows they return.
+- **The ingest-time pass.** `lib/knowledgeIngest.ts` `rebuildDocumentMentions` records its start (source `ingest`, the document), then its outcome.
+  - A failure is recorded instead of `catch {}`. The batch still never sees it, and the outcome is written when the build settles, even after the 8 s cap let the batch go on.
+  - The start is written beside the build, not before it, and a pass that could not start (its engine or its dictionary read failed) is recorded within the same cap: the batch waits no longer than the cap for the run state.
+  - A success clears this document's own standing failure.
+  - An empty equipment dictionary builds and records nothing, as before.
+  - Every I-05 / I-06b / I-18 / I-22 limb in the file is untouched (the MERGE notes in `99-fix-sequencing.md`).
+- **The rebuild from the map.** `lib/mentionIndexer.ts` `backfillOrgMentions` records each rebuild (source `map`).
+  - It reads the ready documents in id order, 500 at a time (keyset). It claims its place as `running` from its start, re-saves it every 10 s, and marks it `time_limit` or `failed` when it stops.
+  - The next press continues after the last document finished (after a failure, that document is tried again first) only when the equipment dictionary's fingerprint (`dictionaryFingerprint`: every asset id, alias and origin, sorted, sha256) is the one the place was saved with, and the rebuild began less than 24 h ago. Otherwise it reads from the first document, overwrites the place, and answers `startedOver: "equipment_changed" | "too_old"`; the page says so.
+  - A rebuild that reads to the end clears the place, and the failure that stood before it began. A continued press that reads to the end also clears a failure naming no document (only a press whose window listing was refused writes one; the ingest pass always names its document) that stood when that press began — before the integrator fix pass such a failure stayed named on the map after the whole corpus had been read across the presses.
+  - It answers `resumable` (a stopped press whose place is saved), `continued` / `passDocuments` (a press that continued one) and `startedOver`, only where the run state is recorded. Otherwise the answer has exactly the keys it had before.
+  - A failure still throws the same error, so the route's 500 is unchanged.
+  - Side effect of the windowed read: a corpus larger than one PostgREST page is read whole. Before, one unbounded select could stop at the server's row cap and report a complete rebuild.
+- **The map.** `lib/graphView.ts` `mentionNotice(cov, equipmentOnMap, run?, readAt?)` keeps the coverage's sentence exactly (now `coverageNotice`). `mentionRunNotes` adds what the run state says, beside it, and also where links ARE drawn ("Some “mentioned in the text” links may be missing from this map."):
+  - the last build that failed: where it ran (at ingest, or from this map), when (`formatRunTime`), and its error in plain words;
+  - a rebuild from this map that is running now (its place saved within 2 min, or a map build started that recently): said as running, with no button at all — `mentionRunNotes` answers `running`, and `mentionNotice` then offers neither "Continue" nor the coverage's own "Rebuild the mention index" (integrator fix pass: before it, the "cannot tell" coverage's offer still rendered beside "is running now", and a press would have continued the running press's place in parallel with it). Once the place is older than 2 min the press reads as cut off and the offer is back;
+  - a rebuild that stopped, by why: at its time limit, on a failure ("stopped on a failure after N documents; continue it to try that document again"), or cut off without reporting; each with `canContinue`. One that began more than 24 h ago is said too old to continue, and the rebuild is offered instead;
+  - a build that never reported how it ended, once it is older than `BUILD_STALE_MS` (15 min) and the place does not already say it.
+  - Nothing is added on a map whose index is not installed, or that has no equipment on it (`equipmentOnMap` 0).
+  - `app/(protected)/graph/page.tsx` reads the run state as the member (`readMentionRunState(supabase, …)`, the member columns only, re-read after a rebuild). The rebuild button reads "Continue the rebuild" when the notice offers to continue; it sends the same request. The press's message says a stopped press's place is saved, when a press continued an unfinished rebuild, and when it started again from the first document and why.
+  - A failure from a press on the map is said exactly as before ("The mention index could not be rebuilt: …", the route's reason verbatim).
+
+**Fix pass (2026-10-07, review of I-23).** The review found two blockers and five minors; each is fixed above, and the claims they made untrue are corrected in place:
+- *Corrected:* a saved place was continued by every later press, whatever had changed since, and the page then said the index was rebuilt — so a press days later, after equipment was added, never read the documents before the place for the new tags. The place now carries the dictionary's fingerprint and its age; a press continues it only with the same dictionary within 24 h (test "reproduction of the review's blocker: stop after 2 documents, add equipment, press again — the read starts at k1").
+- *Corrected:* any saved place was said as "stopped at its time limit" and offered "Continue", including a rebuild still running (saved every 10 s) and one that failed. The place now records its state, written as `running` from the press's start and as `time_limit` / `failed` only when it stops; the map says each as what it is.
+- *Corrected:* "nothing is added on a map that has no equipment" held only when no rows were read either; the guard is now `equipmentOnMap === 0`, as the sentence says.
+- *Corrected:* the member read handed every active member the knowledge-document ids on the row (including mirrors KACL-7 hides) and the cursor. `20261194` now grants SELECT on twelve member columns only; the reader selects exactly those (`MENTION_RUN_MEMBER_COLUMNS`); the ids, the cursor, the run id and the fingerprint stay the service role's.
+- The run-state writes were invisible to SAF-18's census (a `client` parameter); they are now `checkedWrite` calls on a `supabase` chain, and `finishMentionRun`'s deliberate zero-row tolerance is its return value.
+- The ingest pass awaited the run state's start, and the catch's failure record, outside its 8 s cap; both are now inside it.
+
+**Integrator fix pass (2026-10-08, re-review of I-23).** Two minors, each fixed and its claim corrected in place:
+- *Corrected:* "a rebuild that reads to the end clears … the failure that stood before it began" compared only against the FIRST press's start, and the per-document clear matched only a failure naming a document — so a press whose window listing was refused (a failure naming no document, recorded after the first press began) stayed named on the map after the next press continued to the end. The end-of-corpus clear now also clears a failure naming no document that stood when this press began; one recorded after it began stands (test "integrator fix pass: a press whose document listing is refused …").
+- *Corrected:* "no rebuild offered by the note" was the note's answer only; `mentionNotice` OR-ed it with the coverage's own offer, so the "cannot tell" map showed "Rebuild the mention index" beside "is running now". The running reading now wins (`running` from `mentionRunNotes`); no button is offered while the place says running within `REBUILD_ALIVE_MS`.
+
+**Pending migration:** `supabase/migrations/20261194_intel_roundG_mention_run_state.sql` (DEC-30). It creates `mention_index_runs`:
+- one row per org, `org_id` the key, `ON DELETE CASCADE`; 18 columns (the place's state, save time and fingerprint added in the fix pass);
+- seven CHECKs: the sources, the outcome, the count, the error's length, the place's state, the fingerprint's length;
+- RLS on, with one policy, `mention_index_runs_member_read`: SELECT for `authenticated`, an active member of the row's org;
+- every privilege revoked from anon and authenticated (which also revokes any column privilege, so a re-paste starts clean), SELECT granted back to authenticated on the twelve member columns only, and the service role writes. No write policy and no function, so there is no SECURITY DEFINER body for DRLS-16.
+
+It is a narrow widening: every active member may read their own org's row, column by column — when the last build ran, from where and how it ended; when and where the last failure was and its plain-words error; a rebuild's state, when it began and was saved, and how many documents it has read. No document id, name or text, no person. The TEMP inventory before the transaction gives counts only: whether the table already existed (a re-run), orgs, active members (who gain the read), mention rows, and ready knowledge documents. One final SELECT carries eight probes and an after-count. Apply after `20260929`; it is independent of every other pending file. The app may deploy before or after the paste and keeps working unpasted: nothing is recorded, the map says what it said before, and every press starts at the first document.
+
+Verified on a throwaway PostgreSQL 16 with stub `orgs` / `org_members` / `knowledge_documents` / `entity_mentions`, Supabase's roles and default grants, and `auth.uid()` from the JWT claim (first build, and again in the fix pass on a fresh cluster):
+- First paste, a re-paste, and a paste over the first build's table (table-wide SELECT granted, a row with a cursor): every probe true (8/8 in the fix pass), the inventory saying 1 = a re-run. The paste over the first build's table withdrew its table-wide SELECT and a stray column grant on `backfill_cursor` (the table-level REVOKE), and kept the row's cursor and count.
+- The service role upserted the last-build columns, then the failure columns, then wrote the place. Each kept the others'.
+- A compare on the failure time as PostgREST returns it (`"…:01.456+00:00"`) cleared it; a stale time matched nothing.
+- Each CHECK refused a source, an outcome, a count, a place state and a fingerprint outside the vocabulary.
+- An active member of A read A's row only, through the twelve member columns; `SELECT *`, the cursor, each document id, the run id and the fingerprint were each refused (permission denied), and their INSERT / UPDATE / DELETE were refused. A removed member of A and a session with no user read nothing; an active member of B read B's row only; anon was refused. The row went with its org.
+- Each cluster was stopped and deleted.
+
+Tests:
+- `lib/__tests__/intelRoundGMentionRunState.test.ts`: the two reproductions (a failed ingest-time build recorded, the batch unaffected; a stopped rebuild continued by the second press, reading k3–k5 only); a failed map-started build (the route's 500 exactly as today, the failure recorded with the place marked `failed`, the next press retrying that document first); the regressions (a successful build's mention rows identical with and without the table; a whole rebuild answering the same keys; the table absent, where every press starts at k1 and nothing is written); the 8 s cap; place saves; the failure compare; plain words; and `mentionNotice` (every coverage shape identical with no run state or a succeeded one or a running ingest-time build; failed at ingest named; links drawn; stopped → continue; stale → named). Fix pass: the review's blocker reproduced (stop after 2, add equipment, the next press reads from k1 and answers `startedOver`); a changed alias; a place older than 24 h; the place claimed `running` from a press's start; a rebuild failing on its first document leaving nothing to continue; the fingerprint; the map's running / failed / cut-off / too-old sentences; `readBackfillPlace`; the census statement rule over `lib/mentionRunState.ts`; `finishMentionRun`'s answer for a superseded build; the cap holding against a gated start and a gated failure record; the member read's columns.
+- `lib/__tests__/graphPageRender.test.ts` "IRLS-14 (I-23)": a failed ingest-time build named on the rendered map (a Viewer sees it, without the button), read through the member columns; "Continue the rebuild" sending `{ orgId }` and saying it continued; a stopped press's message; a failed map-started build named as today; PGRST205 / 42P01 / a denial / a succeeded run / no row, each rendering exactly the old notice and button. Fix pass: a running rebuild said as running, with no button where links are drawn; a failed rebuild with its place saved said as stopped on a failure, with "Continue the rebuild"; a press that started over says why. Integrator fix pass: a running rebuild on the "cannot tell" map, said as running with no button and no request sent.
+- `lib/__tests__/intelRoundGMentionRunStateMigration.test.ts`: the one-paste shape, the columns equal to `MENTION_RUN_COLUMNS`, the CHECK vocabularies, the policy and grants (the column grant equal to `MENTION_RUN_MEMBER_COLUMNS`, no id among them), no function / trigger / view, the header, and the tolerance in the code.
+
+**Done-when.**
+1. ✓ The graph reads `mentionCoverage` and, with zero mention edges, says which case it is, with the next step: run the indexer (offered to controllers; "Continue the rebuild" for a stopped one that is not too old, never while one is running), or see the failure. The last failed build is named wherever it ran, at ingest or from the map, with when and its error in plain words. A continued rebuild reads with the same equipment dictionary as the presses before it; after a change, or past 24 h, the press reads every document and says why. This holds once `20261194` is pasted; until then the map says what I-14 shipped.
+
+**Scope / residual.**
+- The per-document rebuild (`POST /api/graph/mentions { documentId }`, no UI caller) is not recorded. The route is not this package's file → opened `IRLS-16` (DEC-31).
+- No "Start over" control: a press continues a stopped rebuild whenever it may (same dictionary, under 24 h). Offering one beside "Continue" needs the route to accept a flag (`app/api/graph/mentions/route.ts`, not this package's file); noted for the integrator, not opened as a finding.
+- Builds that ran before the paste are not recorded retroactively.
+- A failure names the knowledge document by id on the row, never on the map, and a member's read cannot see the id (the column grant).
+- "Never built" and "built, nothing named" still read alike after a build that succeeded. The notice is kept exactly as it was there (the regression rule).
+- Two rebuilds pressed at once: each saves its whole place, and the last save wins. The map offers no button while the place says running (saved within 2 min), but the route itself does not refuse a concurrent press (a map read before the place was saved, one older than 2 min, or a direct call): that press continues the running one's place (same dictionary) or starts over — duplicate work, never a skipped document. The map's "running" reading uses the reader's clock against the server's save time, so a badly skewed clock can misread a running rebuild as cut off (or the reverse); the server's decision does not depend on it.
+- On a database without `20261194`, each ingest-time build still makes one refused run-state round trip (now within the cap); a per-process "not installed" cache was not added.
+- Noted for the owners, not this finding's:
+  - `backfillOrgMentions` indexes each document without its mirror id (`document_id` NULL), where the ingest pass passes `source_document_id`. The graph still draws those rows through the mirror (`lib/orgGraph.ts` `mirrorOf`), but readers by `document_id` (`lib/mentions.ts` `mentionsForDocument`) miss them until the document is next indexed at ingest. Its `assetsTouched` is always 0. Both are unchanged here (the regression rule).
+  - `lib/orgGraph.ts`'s `MentionCoverage` comment still says the indexer keeps no run state (I-15's file).
+- The integrator adds at merge:
+  - the `lib/schemaExpectations.ts` row `{ table: "mention_index_runs", migration: "20261194_intel_roundG_mention_run_state.sql" }`;
+  - the `lib/exportTables.ts` `EXPORT_EXCLUDED_TABLES` entry (AO-P4's file). Proposed reason: "the mention index's run state (last build, last failure, a rebuild's place; 20261194) — operational, re-derived by the next build, names knowledge-document ids a restore re-keys; a restore starts with none".
+  - Until those rows land, the two tripwires carry the table as awaiting its row at merge: `ROW_AT_MERGE` in `lib/__tests__/schemaExpectations.test.ts`, `DECISION_AT_MERGE` in `lib/__tests__/exportCoverage.test.ts`. Each fails once the real row exists, so the integrator removes the entry in the same commit that adds the row, and may delete the two (then empty) mechanisms.
 
 ---
 
@@ -668,5 +755,29 @@ Tests: `lib/__tests__/linkProposalsRoundG.test.ts` ("fix pass 5 (IRLS-15): appli
 **Scope / residual.** Provable drafts queued for review while `20261126` was not applied stay in the queue after it is (they are already pending, so the next run does not re-derive them); a reviewer approves each. `listBacklinks` (the older backlinks read) is narrowed by the same policy; its own code is unchanged.
 
 **Integration correction (2026-10-01, at the I-08 merge).** An independent verification of fix pass 5 confirmed the endpoints read policy on PG16 (a member denied one endpoint reads none of that pair's links or evidence; members who can read both, controllers and the service role are unaffected; the app's add / unpin / approve writes still work). One overstatement is corrected here: queuing the provable drafts before 20261126 does not keep their evidence out of a member-readable table — `proposed_links` gains its own endpoint read policy in the same migration, so until 20261126 lands the queued evidence is as exposed as any other proposal; what the 42P10 branch guarantees is that nothing is APPLIED before then. Also at merge: the row-by-row fallback now runs only for a constraint failure (SQLSTATE class 23); any other batch failure (transport, PostgREST, permission) queues the whole batch and says so as an error (`lib/linkProposerServer.ts`; test "a batch failure that is not a constraint error … queues the batch" in `lib/__tests__/linkProposalsRoundG.test.ts`). The intake door now passes its service-role client to `runPostPublishSideEffects`, so the proposal sweep runs in-process there (`app/api/intake/upload/route.ts`; pinned in `lib/__tests__/intakeUploadRoute.test.ts`).
+
+---
+
+<a id="irls-16"></a>
+
+## IRLS-16 · A per-document mention rebuild is not recorded in the mention index's run state
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** intelligence I-15 GRAPH SERVER ASSEMBLY (it edits the graph's routes; no package in the plan owned `app/api/graph/mentions/route.ts`) — by the integrator, 2026-10-13 (I-23 merge, DEC-31). Opened 2026-10-07 by intelligence Round G I-23.
+- **Verification:** CONFIRMED
+- **Locations:** `app/api/graph/mentions/route.ts` (the `body.documentId` branch), `lib/mentionRunState.ts`
+- **Opened 2026-10-07 (intelligence Round G, I-23)** as the remainder of `IRLS-14` (`DEC-31`): the route is not this package's file.
+
+**Mechanism.** Since I-23 the mention index records each build in `mention_index_runs` (`20261194`, `lib/mentionRunState.ts`). The ingest-time pass records with source `ingest`, and a rebuild from the map (`backfillOrgMentions`) with source `map`. `POST /api/graph/mentions { orgId, documentId }` re-indexes one knowledge document by calling `indexDocumentMentions` directly, so that build is not recorded:
+- a failure is returned to its caller as a 500 but does not become the map's "last mention build that failed";
+- a success does not clear that document's standing failure.
+
+No page calls this branch today (the graph posts `{ orgId }` only), so nothing a person sees depends on it yet.
+
+**Done when.**
+
+- [ ] The `documentId` branch wraps its build like `rebuildDocumentMentions`: `startMentionRun(supabaseAdmin, orgId, "map", documentId)` before the build; after it, `clearStandingFailure` when the standing failure is this document's, then `finishMentionRun(…, { outcome: "succeeded" })`; on a throw, `finishMentionRun(…, { outcome: "failed", error })` before the route answers the error exactly as today.
+- [ ] A route test: a failed per-document rebuild is recorded (source `map`, the document, plain words) and still answers the same 500; a success clears that document's standing failure; with `mention_index_runs` absent the route answers exactly as before.
 
 ---

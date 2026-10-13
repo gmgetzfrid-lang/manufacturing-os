@@ -127,6 +127,7 @@ export const EXPECTED_TABLES: readonly TableExpectation[] = [
   { table: "library_views", migration: "20260602_documents_library_super.sql" },
   { table: "link_rules", migration: "20261015_connection_skills.sql" },
   { table: "markup_requests", migration: "20260527_projects_and_collaboration.sql" },
+  { table: "mention_index_runs", migration: "20261194_intel_roundG_mention_run_state.sql" },
   { table: "metadata_templates", migration: "schema.sql (base schema)" },
   { table: "milestone_baseline_history", migration: "20261099_prj_roundG_baseline_authority.sql" },
   { table: "milestone_notes", migration: "20260705_milestones_execution_richdata.sql" },

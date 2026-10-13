@@ -126,10 +126,10 @@ export interface GraphEdge {
  *  and says how many rows were read and drawn. It does NOT tell "never
  *  built" from "built, nothing named" from "built, but every row out of
  *  view": with installed: true and rows: 0 those three look the same here.
- *  Nor does it carry a failed build: the indexer (lib/mentionIndexer.ts)
- *  keeps no run state — a failure is logged and thrown to its caller — so
- *  "see the failure" needs an index-run state this assembly has nowhere to
- *  read (IRLS-14's remainder, I-14's). */
+ *  Nor does it carry a failed build: that is the mention index's run state
+ *  (mention_index_runs, 20261194; lib/mentionRunState.ts, intelligence
+ *  I-23), which the graph page reads beside this coverage and lib/graphView.ts
+ *  words — this assembly does not read it. */
 export interface MentionCoverage {
   /** false: entity_mentions does not exist (the mention migration is not applied). */
   installed: boolean;
