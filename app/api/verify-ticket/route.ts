@@ -19,9 +19,11 @@
 // latest issue?" The verdict — current / revision_in_progress / superseded /
 // draft_copy / withdrawn / unknown — is drafting-flow's and lives in
 // lib/verifyTicketVerdict.ts (EDGE-2: a canceled request, or one that ended
-// with no issued deliverable, is "withdrawn", never current; WF-21 / DEC-15:
-// a reopened ticket reads revision_in_progress, never current). The rev on
-// the QR is the printed FILE's own revision (PHYS-2), not the ticket's.
+// on a review label with no issue anywhere, is "withdrawn", never current; a
+// closed ticket with no revision record answers "cannot confirm"; WF-21 /
+// DEC-15 and EDGE-2: a reopened ticket, or one sent back for rework on its
+// issued label, reads revision_in_progress, never current). The rev on the
+// QR is the printed FILE's own revision (PHYS-2), not the ticket's.
 //
 // The door (public-surfaces PS-VERIFY; the verdict above is drafting-flow's):
 // every answered scan leaves a verify_scans row and counts toward a generous

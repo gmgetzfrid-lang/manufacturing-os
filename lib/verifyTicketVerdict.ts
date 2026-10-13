@@ -15,13 +15,21 @@
 //   superseded           a newer revision has been ISSUED — do not use
 //   draft_copy           the printed rev is a review draft (1A / 2B) that was
 //                        never an issued deliverable
-//   withdrawn            the request was CANCELED, or it ended (CLOSED) with
-//                        no issued deliverable on it — drafting-flow EDGE-2:
+//   withdrawn            the request was CANCELED, or it ended (CLOSED) on a
+//                        review label with no issue anywhere — neither on the
+//                        row nor in its history — drafting-flow EDGE-2:
 //                        never current, whatever the rev arithmetic says
 //   unknown              the copy names no revision (a file from before
 //                        per-file revisions, a source file), the ticket
-//                        carries no revision record for it, or the ticket is
+//                        carries no revision record for it (closed before
+//                        revisions were recorded, an RFI), or the ticket is
 //                        an archived stub — "cannot confirm"
+//
+// A CLOSED ticket with an issue on it — its issued label, or the history
+// line of one after a reopen or a force close — keeps the ordinary ladder:
+// the last issue reads current, older issues superseded. A live ticket sent
+// back for rework while it carries an issued label (reject_final →
+// REVISION_REQ) is in review: the last issue reads revision_in_progress.
 //
 // WF-21 / DEC-15: a REOPENED ticket starts a new revision cycle — the
 // workflow nulls deliverable_rev and bumps revision_count, so the row no
@@ -67,6 +75,8 @@ export interface TicketVerdictResult {
 export const TICKET_REV_RE = /^\d+[A-Z]{0,3}$/;
 
 const TERMINAL = new Set(["CLOSED", "CANCELED"]);
+/** Live statuses where an issued label is being re-worked (reject_final). */
+const REWORK = new Set(["REVISION_REQ", "DRAFTING"]);
 const ISSUED_LINE = /\bissued Rev (\d+)\b/;
 const cycleOf = (rev: string): number => parseInt(rev, 10);
 export const isIssuedTicketRev = (rev: string | null | undefined): rev is string => typeof rev === "string" && /^\d+$/.test(rev);
@@ -95,37 +105,72 @@ export function ticketVerdict(row: VerifyTicketRowFacts, printedRev: string): Ti
   const currentRev = row.deliverable_rev;
   const status = row.status ?? null;
   const terminal = !!status && TERMINAL.has(status);
+  const issuedLabel = isIssuedTicketRev(currentRev);
+  const letterLabel = !!currentRev && !issuedLabel;
+  // The EVIDENCE of an issue: the history line every approval writes.
+  const issuedInHistory = lastIssuedFromHistory(row.history);
 
-  // EDGE-2: a request that was withdrawn, or that ended without an issued
-  // deliverable on it, never answers current, superseded or draft — the
-  // whole request is off. (A CLOSED request whose label is an issued number
-  // closed on that issue: it keeps the ordinary ladder below.)
-  if (status === "CANCELED" || (terminal && !isIssuedTicketRev(currentRev))) {
-    return {
-      verdict: "withdrawn",
-      currentRev,
-      latestIssuedRev: isIssuedTicketRev(currentRev) ? currentRev : null,
-      inReview: false,
-    };
+  // EDGE-2: a CANCELED request is withdrawn whatever the rev arithmetic —
+  // never current, superseded or draft, even for a QR with no revision.
+  if (status === "CANCELED") {
+    return { verdict: "withdrawn", currentRev, latestIssuedRev: issuedLabel ? currentRev : issuedInHistory, inReview: false };
   }
 
-  // WF-21: reopened = no label on the row, a live status, and EVIDENCE that
-  // a deliverable was once issued (the approval's history line).
-  const issuedBefore = !currentRev ? lastIssuedFromHistory(row.history) : null;
-  const reopened = !currentRev && !!issuedBefore && !!status && !terminal;
-  const inReview = (!!currentRev && !isIssuedTicketRev(currentRev)) || reopened;
-  // The latest ISSUED number: the current rev itself when issued, else the
-  // cycle before the one now in review (2A in review → latest issue is 1);
-  // on a reopened ticket, the last issue its history records.
-  const latestIssued = currentRev
-    ? isIssuedTicketRev(currentRev)
-      ? currentRev
+  // The last issue before a review label (2A in review → Rev 1): the history
+  // when the row has one (a reject before any issue bumps the cycle too, so
+  // cycle − 1 alone would report a phantom issue); cycle − 1 only for a row
+  // that carries no history at all.
+  const hasHistory = Array.isArray(row.history) && row.history.length > 0;
+  const issueBeforeLetter = letterLabel
+    ? hasHistory
+      ? issuedInHistory
       : cycleOf(currentRev) > 1 ? String(cycleOf(currentRev) - 1) : null
-    : reopened ? issuedBefore : null;
+    : null;
+
+  let latestIssued: string | null;
+  let inReview: boolean;
+  let noRecord = false; // the ticket holds no revision record to compare against
+  let withdrawn = false;
+  if (terminal) {
+    // CLOSED. Closed on an issue (issued label), or closed after one (a
+    // reopen nulls the label; a force close can land on a review label): the
+    // last issue is the one in force, an older print superseded.
+    latestIssued = issuedLabel ? currentRev : letterLabel ? issueBeforeLetter : issuedInHistory;
+    inReview = false;
+    if (!latestIssued) {
+      // EDGE-2: ended on a review label with no issue anywhere — the request
+      // used the revision scheme and issued nothing: withdrawn. With no label
+      // and no issue line (closed before revisions were recorded —
+      // 20260827 — or an RFI closed by close_rfi) nothing proves either way:
+      // "cannot confirm", never a false "withdrawn".
+      if (letterLabel) withdrawn = true;
+      else noRecord = true;
+    }
+  } else if (issuedLabel) {
+    // A live issued label. Sent back for rework (reject_final at FINAL_DRAFT
+    // → REVISION_REQ keeps the label and bumps the cycle): the issue is still
+    // the latest, but the drawing is being re-worked — never "current".
+    latestIssued = currentRev;
+    inReview = REWORK.has(status ?? "");
+  } else if (letterLabel) {
+    latestIssued = issueBeforeLetter;
+    inReview = true;
+  } else if (issuedInHistory && !!status) {
+    // WF-21: reopened = no label on the row, a live status, and EVIDENCE
+    // that a deliverable was once issued (the approval's history line).
+    latestIssued = issuedInHistory;
+    inReview = true;
+  } else {
+    latestIssued = null;
+    inReview = false;
+    noRecord = true;
+  }
 
   let verdict: TicketVerdict;
-  if (!printedRev || (!currentRev && !reopened)) {
+  if (!printedRev || noRecord) {
     verdict = "unknown";
+  } else if (withdrawn) {
+    verdict = "withdrawn";
   } else if (!isIssuedTicketRev(printedRev)) {
     // A letter rev (1A) on paper was a review draft — never an issued deliverable.
     verdict = "draft_copy";
@@ -142,6 +187,25 @@ export function ticketVerdict(row: VerifyTicketRowFacts, printedRev: string): Ti
     verdict = "unknown";
   }
   return { verdict, currentRev, latestIssuedRev: latestIssued, inReview };
+}
+
+/** The right-hand cell of the landing page's facts card (EDGE-2 done-when 2):
+ *  the coarse state the verdict carries, never a label that contradicts the
+ *  headline — a withdrawn or unconfirmable copy shows no "Latest issue". */
+export function ticketFactsState(r: Pick<TicketVerdictResult, "verdict" | "currentRev" | "latestIssuedRev" | "inReview">): { label: string; value: string } {
+  if (r.verdict === "withdrawn") return { label: "Request", value: "Withdrawn" };
+  if (r.verdict === "unknown") return { label: "Revision status", value: "Cannot confirm" };
+  if (r.inReview) {
+    const inReviewRev = ticketRevInReview(r);
+    return { label: "In review now", value: inReviewRev ? `Rev ${inReviewRev}` : "New revision" };
+  }
+  return { label: "Latest issue", value: `Rev ${r.latestIssuedRev ?? r.currentRev ?? "?"}` };
+}
+
+/** The review label being worked, when the row names one — not the issued
+ *  label a reworked ticket still carries (reject_final keeps it). */
+export function ticketRevInReview(r: Pick<TicketVerdictResult, "currentRev" | "latestIssuedRev" | "inReview">): string | null {
+  return r.inReview && r.currentRev && !isIssuedTicketRev(r.currentRev) ? r.currentRev : null;
 }
 
 /** The QR link for a print of one ticket file. `rev` is the FILE's own

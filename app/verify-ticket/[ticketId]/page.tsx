@@ -17,6 +17,7 @@
 import React, { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { CheckCircle2, XCircle, AlertTriangle, Loader2, ShieldQuestion, RefreshCw } from "lucide-react";
+import { ticketFactsState, ticketRevInReview } from "@/lib/verifyTicketVerdict";
 
 interface VerifyTicketResult {
   ticketNumber: string | null;
@@ -38,7 +39,10 @@ const VERDICT_UI: Record<VerifyTicketResult["verdict"], {
   },
   revision_in_progress: {
     bg: "bg-amber-500", icon: "warn", headline: "REVISION UNDERWAY",
-    sub: (r) => `This copy (Rev ${r.printedRev}) is the latest issue, but ${r.currentRev ? `Rev ${r.currentRev}` : "a new revision"} is in drafting/review right now. Confirm with the requester before starting new work.`,
+    sub: (r) => {
+      const inReviewRev = ticketRevInReview(r);
+      return `This copy (Rev ${r.printedRev}) is the latest issue, but ${inReviewRev ? `Rev ${inReviewRev}` : "a new revision"} is in drafting/review right now. Confirm with the requester before starting new work.`;
+    },
   },
   superseded: {
     bg: "bg-red-600", icon: "stop", headline: "DO NOT USE",
@@ -53,7 +57,8 @@ const VERDICT_UI: Record<VerifyTicketResult["verdict"], {
         : `Rev ${r.printedRev ?? "?"} is a review draft, not an issued deliverable. Only issued revisions (Rev ${r.latestIssuedRev ?? "1"}, without a letter) are approved for use.`;
     },
   },
-  // EDGE-2: a canceled request, or one that ended with nothing issued.
+  // EDGE-2: a canceled request, or one that ended on a review label with
+  // nothing ever issued.
   withdrawn: {
     bg: "bg-red-600", icon: "stop", headline: "WITHDRAWN — DO NOT USE",
     sub: () => "This request was withdrawn or closed without an issued deliverable. Do not work from this copy — contact the requester.",
@@ -102,6 +107,7 @@ export default function VerifyTicketPage() {
 
   // A verdict this page does not know is never painted green.
   const ui = result ? VERDICT_UI[result.verdict] ?? VERDICT_UI.unknown : null;
+  const facts = result ? ticketFactsState({ ...result, verdict: ui === VERDICT_UI.unknown ? "unknown" : result.verdict }) : null;
 
   return (
     <div className={`min-h-dvh flex flex-col items-center justify-center p-6 transition-colors duration-500 ${
@@ -155,11 +161,11 @@ export default function VerifyTicketPage() {
                     Rev {result.printedRev ?? "?"}
                   </div>
                 </div>
+                {/* EDGE-2: the coarse state the verdict carries — a withdrawn
+                    or unconfirmable copy never shows "Latest issue". */}
                 <div>
-                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                    {result.inReview ? "In review now" : "Latest issue"}
-                  </div>
-                  <div className="text-lg font-black text-slate-900">Rev {result.currentRev ?? "?"}</div>
+                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">{facts?.label}</div>
+                  <div className="text-lg font-black text-slate-900">{facts?.value}</div>
                 </div>
               </div>
               {result.verdict !== "current" && (
