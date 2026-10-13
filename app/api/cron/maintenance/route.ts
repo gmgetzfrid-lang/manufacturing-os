@@ -898,6 +898,23 @@ function digestThrough(row: { created_at?: unknown; metadata?: unknown }): numbe
   return Number.isFinite(c) ? c : null;
 }
 
+/** NEDGE-20: a digest row the cron wrote ends its window (`through`, the
+ *  run's `asOf`) no later than it was queued, give or take the clock margin;
+ *  one that ends later was not written by a digest run, and is not trusted
+ *  as the recipient's last digest. A row with no `through` (before N6 fix
+ *  pass 2) is trusted, as before. */
+function digestTrusted(row: { created_at?: unknown; metadata?: unknown }): boolean {
+  const through = (row.metadata as { through?: unknown } | null)?.through;
+  const t = typeof through === "string" ? Date.parse(through) : NaN;
+  const c = typeof row.created_at === "string" ? Date.parse(row.created_at) : NaN;
+  return !Number.isFinite(t) || !Number.isFinite(c) || t <= c + DIGEST_CLOCK_OVERLAP_MS;
+}
+
+/** email_notifications.queued_by is not there yet (20261183 unpasted). */
+function isMissingQueuedBy(e: { code?: string; message?: string }): boolean {
+  return e.code === "42703" || e.code === "PGRST204" || /queued_by/.test(e.message ?? "") && /does not exist|schema cache/i.test(e.message ?? "");
+}
+
 /** The ids a recipient's last digest counted in its last
  *  DIGEST_CLOCK_OVERLAP_MS (metadata.tail) — uuids only, at most
  *  DIGEST_TAIL_IDS: anything else (a row from before the integrator's fix
@@ -1065,6 +1082,9 @@ async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: s
   };
 
   let queued = 0;
+  /** NEDGE-20 (notifications N14): whether email_notifications.queued_by
+   *  (20261183) can be read — false after the first 42703, for the run. */
+  let queuedByKnown = true;
   /** Offer one member their digest. `owe(fromMs)`: what a later run's search
    *  for them must start from, when this one held something back. */
   const one = async (m: Member, windowMs: number, oldestMs: number, owe: (fromMs: number) => void) => {
@@ -1082,17 +1102,33 @@ async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: s
     let sinceMs = windowMs;
     let readFromMs = windowMs;
     let tail: string[] = [];
-    const { data: last, error: lastErr } = await sb
-      .from("email_notifications").select("created_at, metadata")
-      .eq("org_id", m.org_id)
-      .eq("to_user_id", m.uid)
-      .eq("event_type", "compliance_digest")
-      .order("created_at", { ascending: false })
-      .limit(1);
+    // NEDGE-20 (notifications N14): only a digest row the SERVER queued is
+    // trusted as their last one — queued_by IS NULL once 20261183 is pasted
+    // (a signed-in member's row is stamped with its queuer; 20261197 also
+    // refuses one at the door). Before that paste (42703) today's read runs.
+    const lastDigest = (serverOnly: boolean) => {
+      let q = sb
+        .from("email_notifications").select("created_at, metadata")
+        .eq("org_id", m.org_id)
+        .eq("to_user_id", m.uid)
+        .eq("event_type", "compliance_digest");
+      if (serverOnly) q = q.is("queued_by", null);
+      return q.order("created_at", { ascending: false }).limit(1);
+    };
+    const serverOnly = queuedByKnown;
+    let { data: last, error: lastErr } = await lastDigest(serverOnly);
+    if (lastErr && serverOnly && isMissingQueuedBy(lastErr)) {
+      queuedByKnown = false;
+      ({ data: last, error: lastErr } = await lastDigest(false));
+    }
     if (lastErr) {
       say(`${m.org_id}/${m.uid}: their last digest could not be read — sent anyway, listing from ${iso(windowMs)}: ${lastErr.message}`);
     } else {
-      const row = ((last as Array<{ created_at?: unknown; metadata?: unknown }> | null) ?? [])[0];
+      const found = ((last as Array<{ created_at?: unknown; metadata?: unknown }> | null) ?? [])[0];
+      // …and never one whose window ends after it was queued (plus the clock
+      // margin): a forged `through` would silence the digests until it.
+      const row = found && digestTrusted(found) ? found : undefined;
+      if (found && !row) say(`${m.org_id}/${m.uid}: their newest digest row ends its window after it was queued — not trusted; listing from ${iso(windowMs)}`);
       if (row) {
         const through = digestThrough(row);
         if ((row.metadata as { day?: unknown } | null)?.day === dayKey) {

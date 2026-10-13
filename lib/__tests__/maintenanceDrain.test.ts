@@ -67,6 +67,9 @@ const db = vi.hoisted(() => {
     rpcs: {} as Record<string, unknown>,
     /** Folded intake digests the flush hands to the cron's send. */
     folded: [] as Array<Record<string, unknown>>,
+    /** A column a migration adds, not yet pasted: a filter naming it answers
+     *  42703, as PostgREST does (NEDGE-20, N14: email_notifications.queued_by). */
+    missingColumn: {} as Record<string, string>,
   };
 });
 
@@ -89,11 +92,14 @@ function makeClient() {
     let payload: unknown = null;
     let onConflict: string | null = null;
     let ignoreDuplicates = false;
+    const named: string[] = [];
     const matching = () => (db.tables[table] ?? []).filter((r) => filters.every((f) => f(r)));
     const exec = (): { data: unknown; error: unknown; count?: number } => {
       db.calls.push({ table, op: `exec:${op}`, args: [] });
       db.onExec?.(table, op);
       if (op === "select") {
+        const gone = db.missingColumn[table];
+        if (gone && named.includes(gone)) return { data: null, error: { code: "42703", message: `column ${table}.${gone} does not exist` } };
         const err = db.readError[table];
         if (err) return { data: null, error: err };
         let rows = matching();
@@ -145,7 +151,7 @@ function makeClient() {
             case "eq": filters.push((r) => at(r, String(args[0])) === args[1]); break;
             case "neq": filters.push((r) => at(r, String(args[0])) !== args[1]); break;
             case "in": { const s = new Set(args[1] as unknown[]); filters.push((r) => s.has(at(r, String(args[0])))); break; }
-            case "is": filters.push((r) => (args[1] === null ? at(r, String(args[0])) == null : at(r, String(args[0])) === args[1])); break;
+            case "is": named.push(String(args[0])); filters.push((r) => (args[1] === null ? at(r, String(args[0])) == null : at(r, String(args[0])) === args[1])); break;
             case "gt": filters.push((r) => String(at(r, String(args[0]))) > String(args[1])); break;
             case "gte": filters.push((r) => String(at(r, String(args[0]))) >= String(args[1])); break;
             case "lt": filters.push((r) => String(at(r, String(args[0]))) < String(args[1])); break;
@@ -275,7 +281,7 @@ const savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(() => {
   db.tables = { orgs: [{ id: ORG_A, name: "Org A" }, { id: ORG_B, name: "Org B" }] };
-  db.calls = []; db.readError = {}; db.writeError = {}; db.seq = 0; db.maxRows = null; db.onExec = null; db.rpcs = {}; db.folded = [];
+  db.calls = []; db.readError = {}; db.writeError = {}; db.seq = 0; db.maxRows = null; db.onExec = null; db.rpcs = {}; db.folded = []; db.missingColumn = {};
   drainAnswers = []; drainCalls = 0; resendBodies = []; resendStatus = []; drainTakesMs = 0; drainHangs = 0;
   vi.mocked(emit).mockReset();
   vi.mocked(emit).mockImplementation(async () => ({ recipients: 0 }));
@@ -1294,6 +1300,75 @@ describe("NEDGE-9 — the digest honours the member's preferences and lists unre
   });
 });
 
+describe("NEDGE-20 (notifications N14) — a forged compliance_digest row does not silence a colleague's next digest", () => {
+  const seed = () => {
+    db.tables.org_members = [member(ORG_A, U(1)), member(ORG_A, U(2))];
+    db.tables.notifications = [
+      notice(ORG_A, U(1), "review_due", "Due A", minutesAgo(30)),
+      notice(ORG_A, U(2), "review_due", "Due B", minutesAgo(30)),
+    ];
+  };
+  const MONTH_AHEAD = new Date(Date.now() + 30 * 86_400_000).toISOString();
+  /** The digest this run queued for `uid` (not a seeded row). */
+  const fresh = (uid: string) => digests().find((d) => d.to_user_id === uid && !["forged", "g1", "g2"].includes(String(d.id)));
+  const yesterday = () => new Date(Date.now() - 86_400_000).toISOString();
+  /** The colleague's forged row: queued by U(2) from a browser, today, with a window a month ahead. */
+  const forged = (over: Row = {}) => ({
+    id: "forged", org_id: ORG_A, to_user_id: U(1), event_type: "compliance_digest", status: "sent",
+    created_at: minutesAgo(60), metadata: { day: "1999-01-01", through: MONTH_AHEAD }, ...over,
+  });
+
+  it("the reproduction's shape: a row with a future `through` (whoever queued it) is not trusted — the digest lists the item, and says why", async () => {
+    seed();
+    db.tables.email_notifications = [forged()];
+    const r = await runCron();
+    expect(String(fresh(U(1))!.body_text)).toContain("Due A");
+    expect(r.errors).toContain(`compliance-digest: ${ORG_A}/${U(1)}: their newest digest row ends its window after it was queued — not trusted; listing from ${String((fresh(U(1))!.metadata as Row).since)}`);
+    // the colleague's digest is unaffected
+    expect(String(fresh(U(2))!.body_text)).toContain("Due B");
+  });
+
+  it("after 20261183: a row a signed-in member queued (queued_by set) is never their last digest — even with a plausible `through` and today's day", async () => {
+    seed();
+    const today = new Date().toISOString().slice(0, 10);
+    db.tables.email_notifications = [forged({ queued_by: U(2), created_at: minutesAgo(5), metadata: { day: today, through: minutesAgo(5) } })];
+    await runCron();
+    expect(String(fresh(U(1))!.body_text)).toContain("Due A");
+    const reads = db.calls.filter((c) => c.table === "email_notifications" && c.op === "is").map((c) => c.args);
+    expect(reads).toContainEqual(["queued_by", null]);
+  });
+
+  it("REGRESSION: a genuine digest row behaves exactly as today — today's means no second digest; yesterday's starts the window where it stopped", async () => {
+    seed();
+    const today = new Date().toISOString().slice(0, 10);
+    // the server's own rows carry no queued_by (the service role is stamped NULL)
+    db.tables.email_notifications = [
+      { id: "g1", org_id: ORG_A, to_user_id: U(1), event_type: "compliance_digest", status: "sent", created_at: minutesAgo(10), metadata: { day: today, through: minutesAgo(11) } },
+      { id: "g2", org_id: ORG_A, to_user_id: U(2), event_type: "compliance_digest", status: "sent", created_at: minutesAgo(19), metadata: { day: yesterday().slice(0, 10), through: minutesAgo(20) } },
+    ];
+    const r = await runCron();
+    expect(fresh(U(1))).toBeUndefined();
+    // U(2)'s window starts where their last digest stopped: Due B (30 min ago) is before it
+    expect(fresh(U(2))).toBeUndefined();
+    expect(r.errors.filter((e) => /not trusted/.test(e))).toEqual([]);
+  });
+
+  it("before 20261183 (42703 on queued_by): today's read runs — the filter is dropped for the rest of the run — and the `through` check still holds", async () => {
+    seed();
+    db.missingColumn.email_notifications = "queued_by";
+    db.tables.email_notifications = [forged()];
+    const r = await runCron();
+    expect(String(fresh(U(1))!.body_text)).toContain("Due A");
+    expect(String(fresh(U(2))!.body_text)).toContain("Due B");
+    expect(r.errors.filter((e) => /their last digest could not be read/.test(e))).toEqual([]);
+    // the 42703 is met by the reads already in flight (here: both recipients),
+    // and each falls back to today's read; a later run's reads try the column again
+    const filtered = db.calls.filter((c) => c.table === "email_notifications" && c.op === "is" && c.args[0] === "queued_by");
+    expect(filtered.length).toBeGreaterThanOrEqual(1);
+    expect(filtered.length).toBeLessThanOrEqual(2);
+  });
+});
+
 describe("NEDGE-4 / NEDGE-12 — the digest links the Inbox, absolute, and is named for when it was composed", () => {
   it("every href is absolute; the Inbox link rides the row; the body names the window's end with its zone (UTC)", async () => {
     db.tables.org_members = [member(ORG_A, U(1))];
@@ -1729,10 +1804,17 @@ describe("20261183 — DELIV-1 dw3: who queued an email, in the DEC-30 one-paste
     expect(code).toContain("p.prosrc LIKE '%(to_jsonb(NEW) - ''status'' - ''attempt_count'' - ''updated_at'')%IS DISTINCT FROM (to_jsonb(OLD) - ''status'' - ''attempt_count'' - ''updated_at'')%'");
   });
 
-  it("the app never reads or writes queued_by (works before and after the paste); the schema health card names the file", () => {
-    for (const f of ["lib/notifications.ts", "lib/notify/dispatch.ts", "app/api/cron/maintenance/route.ts", "app/api/tickets/comment/route.ts", "app/api/tickets/workflow-action/route.ts", "app/api/notifications/send-queued/route.ts"]) {
+  it("the app never writes queued_by, and reads it only 42703-tolerantly (works before and after the paste); the schema health card names the file", () => {
+    for (const f of ["lib/notifications.ts", "lib/notify/dispatch.ts", "app/api/tickets/comment/route.ts", "app/api/tickets/workflow-action/route.ts", "app/api/notifications/send-queued/route.ts"]) {
       expect(src(f), f).not.toContain("queued_by");
     }
+    // NEDGE-20 (notifications N14): the digest's last-digest read filters on
+    // it, and falls back to today's read on 42703 — never a write
+    const cron = src("app/api/cron/maintenance/route.ts");
+    expect(cron.match(/queued_by/g)?.length).toBeGreaterThan(0);
+    expect(cron).not.toMatch(/queued_by:/);
+    expect(cron).toContain('if (serverOnly) q = q.is("queued_by", null);');
+    expect(cron).toMatch(/if \(lastErr && serverOnly && isMissingQueuedBy\(lastErr\)\) \{\s+queuedByKnown = false;\s+\(\{ data: last, error: lastErr \} = await lastDigest\(false\)\);/);
     expect(src("lib/schemaExpectations.ts")).toContain('{ table: "email_notifications", column: "queued_by", migration: "20261183_notif_roundG_email_attribution.sql"');
   });
 });
