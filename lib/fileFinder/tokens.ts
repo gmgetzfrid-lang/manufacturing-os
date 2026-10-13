@@ -49,14 +49,15 @@ export function bigrams(ws: string[]): string[] {
 const YEAR_MIN = 1980;
 const YEAR_MAX = 2039;
 
-/** Every plausible year in a piece of text: bare 4-digit years, and the year
- *  inside dates written 2019-01-15, 01-15-2019, 01/15/19, 2019_01_15. */
+/** Every plausible year in a piece of text: bare 4-digit years, the year
+ *  inside dates written 2019-01-15, 01-15-2019, 2019_01_15, and a two-digit
+ *  year ONLY in slash dates (01/15/19). "10-1-15" with dashes is a code far
+ *  more often than a date, so it is never read as 2015 here. */
 export function years(text: string): number[] {
   const out = new Set<number>();
   const add = (y: number) => { if (y >= YEAR_MIN && y <= YEAR_MAX) out.add(y); };
   for (const m of text.matchAll(/(?<![0-9])((?:19|20)\d{2})(?![0-9])/g)) add(Number(m[1]));
-  // dd-mm-yy / mm-dd-yy with a two-digit year, only when it is clearly a date.
-  for (const m of text.matchAll(/(?<![0-9])\d{1,2}[-/._]\d{1,2}[-/._](\d{2})(?![0-9])/g)) {
+  for (const m of text.matchAll(/(?<![0-9])\d{1,2}\/\d{1,2}\/(\d{2})(?![0-9])/g)) {
     const yy = Number(m[1]);
     add(yy >= 80 ? 1900 + yy : 2000 + yy);
   }

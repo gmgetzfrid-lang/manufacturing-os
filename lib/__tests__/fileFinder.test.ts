@@ -177,7 +177,7 @@ describe("ranking", () => {
     const [top, tmx, dead] = hits;
     expect(top.verdict).toBe("strong");
     expect(top.evidence.map((e) => e.label)).toEqual(expect.arrayContaining([
-      expect.stringMatching(/Name says U-1A/),
+      expect.stringMatching(/Name says U1-A/),
       expect.stringMatching(/Lives under Crude Unit \(via alias\)/),
       expect.stringMatching(/one year off/),
       expect.stringMatching(/Same bytes in 2 places/),
@@ -197,5 +197,57 @@ describe("ranking", () => {
     expect(hit.entry.source).toBe("listing");
     expect(hit.evidence.map((e) => e.label)).toContain("Listed on Thor drive, not in the system");
     expect(hit.verdict).toBe("strong");
+  });
+});
+
+describe("thinking like a person who has never seen the drive", () => {
+  const folders = new Map([["f", { id: "f", libraryId: "L", parentId: null, name: "Crude" }]]);
+  const libraries = new Map([["L", { id: "L", name: "Engineering" }]]);
+  const ctx = { folders, libraries };
+  const mk = (id: string, name: string, number?: string) =>
+    entryFromDocument({ id, library_id: "L", collection_id: "f", name, document_number: number ?? null }, ctx);
+  const ep = mk("ep", "EP10-1-15 pilot valve.pdf");
+  const pid = mk("pid", "100-PID-001_R7.pdf", "100-PID-001");
+  const f101 = mk("f101", "F-101 heater datasheet.pdf");
+  const other = mk("other", "Alky pump curve.pdf");
+
+  it("finds EP10-1-15 when the EP is left off, and says what was missing", () => {
+    const hits = rankEntries([ep, pid, f101, other], parseQuery("10-1-15"), {});
+    expect(hits.map((h) => h.entry.id)).toEqual(["doc:ep"]);
+    expect(hits[0].verdict).not.toBe("weak");
+    expect(hits[0].evidence[0].label).toMatch(/EP-?10115|EP10-1-15/i);
+    expect(hits[0].evidence[0].label).toMatch(/contains 10-1-15/);
+    expect(hits[0].evidence[0].label).toMatch(/missing the EP prefix/);
+  });
+  it("still ranks the exact spelling above the partial one", () => {
+    const exact = rankEntries([ep], parseQuery("EP10-1-15"), {})[0];
+    const partial = rankEntries([ep], parseQuery("10-1-15"), {})[0];
+    expect(exact.score).toBeGreaterThan(partial.score);
+    expect(exact.verdict).toBe("strong");
+  });
+  it("does not read 10-1-15 as the year 2015", () => {
+    const q = parseQuery("10-1-15");
+    expect(q.years).toEqual([]);
+    expect(q.identifiers.map((c) => c.label)).toEqual(["10-1-15"]);
+  });
+  it("finds a drawing by the tail of its number", () => {
+    const hits = rankEntries([ep, pid, f101, other], parseQuery("PID-001"), {});
+    expect(hits[0].entry.id).toBe("doc:pid");
+    expect(hits[0].evidence[0].tier).toBe("contains");
+  });
+  it("forgives a typo and says so", () => {
+    const hits = rankEntries([ep, pid, f101, other], parseQuery("EP10-1-51 heatr"), {});
+    const byId = Object.fromEntries(hits.map((h) => [h.entry.id.replace("doc:", ""), h]));
+    expect(byId.ep.evidence[0]).toMatchObject({ tier: "close" });
+    expect(byId.ep.evidence[0].label).toMatch(/2 characters off/);
+    expect(byId.f101.evidence.map((e) => e.label)).toEqual(expect.arrayContaining([expect.stringMatching(/"heater", close to "heatr"/)]));
+  });
+  it("suggests the same number under a different prefix", () => {
+    const hits = rankEntries([ep, pid, f101, other], parseQuery("P-101"), {});
+    expect(hits[0].entry.id).toBe("doc:f101");
+    expect(hits[0].evidence[0]).toMatchObject({ tier: "number" });
+  });
+  it("comes back empty only when nothing is near", () => {
+    expect(rankEntries([ep, pid, f101, other], parseQuery("ZZ-9999 compressor"), {})).toEqual([]);
   });
 });

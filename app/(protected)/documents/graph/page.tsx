@@ -21,7 +21,9 @@ import {
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
-import FileGraph, { type FileGraphNode, type FileGraphLight } from "@/components/documents/FileGraph";
+import FileGraph, { type FileGraphNode, type FileGraphLight, type FileGraphHandle } from "@/components/documents/FileGraph";
+import { FileTypeIcon } from "@/components/documents/fileGraphIcons";
+import { fileTypeOf, CONTAINER_TYPES } from "@/lib/fileFinder/fileTypes";
 import {
   parseQuery, fromChips, rankEntries, clusterByHash, entriesFromListing, parseDirectoryListing,
   aliasConfidence, tagVariants,
@@ -69,6 +71,7 @@ function GraphPageInner() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [panel, setPanel] = useState<"search" | "drives" | "aliases">("search");
+  const graphRef = useRef<FileGraphHandle | null>(null);
 
   const refresh = useCallback(async () => {
     if (!activeOrgId) return;
@@ -109,10 +112,10 @@ function GraphPageInner() {
     const folderParent = (f: { parentId: string | null; libraryId: string }) => (f.parentId && data.folders.has(f.parentId) ? `folder:${f.parentId}` : `lib:${f.libraryId}`);
     for (const f of data.folders.values()) bump(folderParent(f));
     for (const e of data.entries) bump(e.folderId && data.folders.has(e.folderId) ? `folder:${e.folderId}` : `lib:${e.libraryId}`);
-    for (const l of data.libraries) out.push({ id: `lib:${l.id}`, kind: "library", label: l.name, parentId: null, childCount: counts.get(`lib:${l.id}`) ?? 0 });
-    for (const f of data.folders.values()) out.push({ id: `folder:${f.id}`, kind: "folder", label: f.name, parentId: folderParent(f), childCount: counts.get(`folder:${f.id}`) ?? 0 });
+    for (const l of data.libraries) out.push({ id: `lib:${l.id}`, kind: "library", label: l.name, parentId: null, childCount: counts.get(`lib:${l.id}`) ?? 0, type: CONTAINER_TYPES.library });
+    for (const f of data.folders.values()) out.push({ id: `folder:${f.id}`, kind: "folder", label: f.name, parentId: folderParent(f), childCount: counts.get(`folder:${f.id}`) ?? 0, type: CONTAINER_TYPES.folder });
     for (const e of data.entries) {
-      out.push({ id: e.id, kind: "file", label: e.name, parentId: e.folderId && data.folders.has(e.folderId) ? `folder:${e.folderId}` : `lib:${e.libraryId}`, childCount: 0 });
+      out.push({ id: e.id, kind: "file", label: e.name, parentId: e.folderId && data.folders.has(e.folderId) ? `folder:${e.folderId}` : `lib:${e.libraryId}`, childCount: 0, type: fileTypeOf(e.name) });
     }
     for (const l of listings) {
       const drive = `drive:${l.id}`;
@@ -130,12 +133,12 @@ function GraphPageInner() {
       };
       for (const fid of folderIds) { const p = parentOf(fid); fcount.set(p, (fcount.get(p) ?? 0) + 1); }
       for (const e of le) { const p = e.pathIds.length ? e.pathIds[e.pathIds.length - 1] : drive; fcount.set(p, (fcount.get(p) ?? 0) + 1); }
-      out.push({ id: drive, kind: "drive", label: l.name, parentId: null, childCount: fcount.get(drive) ?? 0 });
+      out.push({ id: drive, kind: "drive", label: l.name, parentId: null, childCount: fcount.get(drive) ?? 0, type: CONTAINER_TYPES.drive });
       for (const fid of folderIds) {
         const rel = fid.slice(`extf:${l.id}:`.length);
-        out.push({ id: fid, kind: "extfolder", label: rel.split("/").pop() ?? rel, parentId: parentOf(fid), childCount: fcount.get(fid) ?? 0 });
+        out.push({ id: fid, kind: "extfolder", label: rel.split("/").pop() ?? rel, parentId: parentOf(fid), childCount: fcount.get(fid) ?? 0, type: { ...CONTAINER_TYPES.folder, color: "#0d9488" } });
       }
-      for (const e of le) out.push({ id: e.id, kind: "extfile", label: e.name, parentId: e.pathIds.length ? e.pathIds[e.pathIds.length - 1] : drive, childCount: 0 });
+      for (const e of le) out.push({ id: e.id, kind: "extfile", label: e.name, parentId: e.pathIds.length ? e.pathIds[e.pathIds.length - 1] : drive, childCount: 0, type: fileTypeOf(e.name) });
     }
     return out;
   }, [data, listings, listingEntries]);
@@ -203,6 +206,8 @@ function GraphPageInner() {
   const reveal = (id: string) => {
     setSelectedId(id);
     setExpanded((prev) => { const n = new Set(prev); for (const a of ancestorsOf(id)) n.add(a); return n; });
+    // Let the layout settle on the new expansion before the camera moves.
+    window.setTimeout(() => graphRef.current?.focus(id), 60);
   };
   const toggle = (id: string) => setExpanded((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const collapseAll = () => setExpanded(new Set(data?.libraries.map((l) => `lib:${l.id}`) ?? []));
@@ -281,9 +286,9 @@ function GraphPageInner() {
 
                 <div className="text-xs text-[var(--color-text-muted)] space-y-1 pt-2 border-t border-[var(--color-border)]">
                   <div className="font-bold text-[var(--color-text)]">How it ranks</div>
-                  <div>Tags, words and phrases in the name count most. The folder chain counts less.</div>
+                  <div>Codes, words and phrases in the name count most; the folder chain counts less.</div>
+                  <div>Exact beats contained beats close: &ldquo;10-1-15&rdquo; still finds EP10-1-15 and says the EP was missing; a typo finds the real one and says how far off it was.</div>
                   <div>A folder naming a <em>different</em> codebook unit is ranked down. A year off is a nudge, not a wall. Empty files and OS junk are ditched.</div>
-                  <div>Dashed red links join files with identical bytes.</div>
                 </div>
                 {data?.truncations.map((t, i) => <div key={i} className="text-[11px] text-amber-700">{t}</div>)}
               </>
@@ -306,7 +311,7 @@ function GraphPageInner() {
               <span className="inline-flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Reading the estate…</span>
             </div>
           ) : (
-            <FileGraph nodes={nodes} expanded={expanded} sameBytes={sameBytesById} lit={lit} selectedId={selectedId} onSelect={setSelectedId} onToggle={toggle} />
+            <FileGraph ref={graphRef} nodes={nodes} expanded={expanded} sameBytes={sameBytesById} lit={lit} selectedId={selectedId} onSelect={setSelectedId} onToggle={toggle} />
           )}
           <div className="absolute top-3 left-3 flex items-center gap-2 text-[11px]">
             <span className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-2">
@@ -314,13 +319,18 @@ function GraphPageInner() {
               {data ? `${data.libraries.length} libraries · ${data.folders.size} folders · ${data.entries.length} files` : "…"}
               {listingEntries.length > 0 && ` · ${listingEntries.length} on drives`}
             </span>
+            <button onClick={() => graphRef.current?.fit()} className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1"><Maximize2 className="w-3 h-3" /> Fit</button>
             <button onClick={collapseAll} className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1"><Minus className="w-3 h-3" /> Collapse</button>
-            <button onClick={() => setExpanded(new Set(nodes.filter((n) => n.kind !== "file" && n.kind !== "extfile").map((n) => n.id)))} className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1"><Maximize2 className="w-3 h-3" /> Expand all</button>
+            <button onClick={() => { setExpanded(new Set(nodes.filter((n) => n.kind !== "file" && n.kind !== "extfile").map((n) => n.id))); window.setTimeout(() => graphRef.current?.fit(), 80); }} className="rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-2 py-1 inline-flex items-center gap-1"><FolderOpen className="w-3 h-3" /> Expand all</button>
           </div>
-          <div className="absolute bottom-3 left-3 flex flex-wrap gap-2 text-[11px]">
-            {([["#7c3aed", "Library"], ["#f59e0b", "Folder"], ["#3b82f6", "File"], ["#0f766e", "Drive listing"], ["#16a34a", "Strong"], ["#eab308", "Possible"], ["#ef4444", "Ditch"]] as const).map(([c, l]) => (
-              <span key={l} className="inline-flex items-center gap-1 rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-1.5 py-0.5"><span className="w-2.5 h-2.5 rounded-full" style={{ background: c }} /> {l}</span>
+          <div className="absolute bottom-3 left-3 flex flex-wrap gap-1.5 text-[11px]">
+            {[CONTAINER_TYPES.library, CONTAINER_TYPES.folder, CONTAINER_TYPES.drive, fileTypeOf("x.pdf"), fileTypeOf("x.dwg"), fileTypeOf("x.xlsx"), fileTypeOf("x.docx"), fileTypeOf("x.xml"), fileTypeOf("x.png")].map((t) => (
+              <span key={t.key + t.ext} className="inline-flex items-center gap-1 rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-1.5 py-0.5"><FileTypeIcon type={t} className="w-3.5 h-3.5" /> {t.label}</span>
             ))}
+            {([["#16a34a", "Strong"], ["#eab308", "Possible"], ["#94a3b8", "Weak"], ["#ef4444", "Ditch"]] as const).map(([c, l]) => (
+              <span key={l} className="inline-flex items-center gap-1 rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-1.5 py-0.5"><span className="w-2.5 h-2.5 rounded-full border-2" style={{ borderColor: c }} /> {l}</span>
+            ))}
+            <span className="inline-flex items-center gap-1 rounded-md bg-[var(--color-surface)]/90 border border-[var(--color-border)] px-1.5 py-0.5"><span className="w-4 border-t-2 border-dashed border-red-600" /> Same bytes</span>
           </div>
           <div className="absolute bottom-3 right-3 text-[11px] text-[var(--color-text-muted)]">Click a folder to open it · drag to pan · scroll to zoom</div>
         </main>
@@ -411,6 +421,7 @@ function HitCard({ hit, active, onReveal, onOpen }: { hit: RankedHit; active: bo
         <button onClick={onReveal} className="flex-1 text-left min-w-0">
           <div className="flex items-center gap-1.5">
             <span className={`shrink-0 rounded-full border px-1.5 py-px text-[10px] font-bold ${VERDICT_STYLE[hit.verdict]}`}>{VERDICT_LABEL[hit.verdict]} · {hit.score}</span>
+            <FileTypeIcon type={fileTypeOf(e.name)} className="w-4 h-4 shrink-0" />
             <span className="text-sm font-semibold truncate">{e.name}</span>
           </div>
           {e.title && e.title !== e.name && <div className="text-[11px] text-[var(--color-text-muted)] truncate">{e.title}</div>}
@@ -434,7 +445,8 @@ function SelectedCard({ entry, hit, sameBytes, onClose, onReveal, onOpen }: {
     <div className="p-3 border-b border-[var(--color-border)] bg-sky-50/30">
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-bold truncate">{entry.name}</div>
+          <div className="text-sm font-bold truncate flex items-center gap-1.5"><FileTypeIcon type={fileTypeOf(entry.name)} className="w-4 h-4 shrink-0" /> <span className="truncate">{entry.name}</span></div>
+          <div className="text-[11px] text-[var(--color-text-muted)]">{fileTypeOf(entry.name).label}</div>
           {entry.title && entry.title !== entry.name && <div className="text-xs text-[var(--color-text-muted)] truncate">{entry.title}</div>}
           <PathCrumbs entry={entry} />
           <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-[var(--color-text-muted)]">

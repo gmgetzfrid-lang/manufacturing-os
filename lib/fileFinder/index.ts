@@ -5,3 +5,4 @@ export * from "./queryParse";
 export * from "./dirTree";
 export * from "./fileIndex";
 export * from "./rank";
+export * from "./fuzzy";

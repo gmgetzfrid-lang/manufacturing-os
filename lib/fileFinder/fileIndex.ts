@@ -27,8 +27,13 @@ export interface IndexEntry {
   /** Folder names from the library (or listing) root down to the parent folder. */
   path: string[];
   pathIds: string[];
-  /** Canonical identifiers found in the name/number/title/tags. */
+  /** Canonical codes found in the name/number/title/tags. */
   idents: string[];
+  /** The whole file name (no extension) and document number, canonical —
+   *  for "what you typed sits inside this name" matching when the code
+   *  extraction cut differently than the person did. */
+  nameCanon: string;
+  numberCanon: string;
   /** Canonical identifiers found in the folder chain. */
   pathIdents: string[];
   words: string[];
@@ -131,6 +136,8 @@ export function entryFromDocument(
     path: chain.map((f) => f.name),
     pathIds: chain.map((f) => f.id),
     idents: findIdentifiers(nameText + " " + meta),
+    nameCanon: canonicalForm(name.replace(/\.[A-Za-z0-9]{1,5}$/, "")),
+    numberCanon: canonicalForm(d.document_number ?? ""),
     pathIdents: findIdentifiers(pathText),
     words: [...new Set(words(nameText + " " + meta))],
     pathWords: [...new Set(words(pathText))],
@@ -159,6 +166,8 @@ export function entriesFromListing(
       path: f.path,
       pathIds: f.path.map((_, k) => `extf:${listing.id}:${f.path.slice(0, k + 1).join("/")}`),
       idents: findIdentifiers(f.name),
+      nameCanon: canonicalForm(f.name.replace(/\.[A-Za-z0-9]{1,5}$/, "")),
+      numberCanon: "",
       pathIdents: findIdentifiers(pathText),
       words: [...new Set(words(f.name))],
       pathWords: [...new Set(words(pathText))],

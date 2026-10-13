@@ -6,7 +6,7 @@
 // ranker does downstream is justified by one of these chips, so a bad parse
 // is visible instead of silently producing bad results.
 
-import { canonicalForm, findIdentifiers, tagVariants } from "./tagForms";
+import { canonicalForm, findCodes, tagVariants } from "./tagForms";
 import { words, bigrams, years } from "./tokens";
 import { aliasConfidence, type FinderAlias } from "./aliasTypes";
 
@@ -64,10 +64,13 @@ export function parseQuery(
     chips.push(c);
   };
 
-  // 1. Identifiers — before words, so "u1-a" is never also a word.
-  const idents = findIdentifiers(raw);
-  for (const id of idents) {
-    push({ kind: "identifier", value: id, label: tagVariants(id)[1] ?? id, via: "typed", confidence: 1 });
+  // 1. Codes — before words, so "u1-a" is never also a word. The label keeps
+  //    the spelling the person used ("EP10-1-15", "10-1-15"), the value is
+  //    the canonical form the matcher compares.
+  const codes = findCodes(raw);
+  const idents = codes.map((c) => c.canon);
+  for (const c of codes) {
+    push({ kind: "identifier", value: c.canon, label: c.raw.toUpperCase(), via: "typed", confidence: 1 });
   }
   const identWords = new Set(idents.map((i) => i.toLowerCase()));
 
