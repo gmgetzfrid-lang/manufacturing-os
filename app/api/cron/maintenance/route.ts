@@ -120,7 +120,17 @@ async function handler(req: NextRequest) {
     storageAlerts: number;
     prunedIntents: number;
     staleEscalations: number;
+    /** The rows (roster rows, documents, libraries) the step-6 scans sent
+     *  notices for this run — ATTEMPTED, a row whose notice was dead-lettered
+     *  included (DELIV-7). How many bell notices LANDED is
+     *  complianceBellNotices. */
     complianceNotices: number;
+    /** The step-6 scans' bell notices, one by one: attempted, delivered (the
+     *  row landed) and dead-lettered (re-sent on the next run). Counted by
+     *  lib/complianceNotify for the scans that write through it; the
+     *  distribution-ack and hold-aging scans (notifications N9's files) are
+     *  not counted here yet. */
+    complianceBellNotices: { attempted: number; delivered: number; deadLettered: number };
     complianceOrgs: number;
     complianceEmails: number;
     folderTrashPurged?: number;
@@ -149,6 +159,7 @@ async function handler(req: NextRequest) {
     prunedIntents: 0,
     staleEscalations: 0,
     complianceNotices: 0,
+    complianceBellNotices: { attempted: 0, delivered: 0, deadLettered: 0 },
     complianceOrgs: 0,
     complianceEmails: 0,
     errors: [],
@@ -385,8 +396,8 @@ async function handler(req: NextRequest) {
       result.complianceOrgs += 1;
       for (const [name, fn] of scans) {
         try {
-          // DELIV-7 dw1 / DELIV-16 (notifications N14): the scan's dead-lettered notices are a line in errors; no retry past the digest's time
-          result.complianceNotices += await runComplianceScan(`${name}@${org.id}`, () => fn(org.id), result.errors, runEnd - DIGEST_FLOOR_MS - AFTER_DIGEST_RESERVE_MS);
+          // DELIV-7 dw1 / DELIV-16 (notifications N14): the scan's dead-lettered notices are a line in errors; no retry past the digest's time; its bell notices tallied
+          result.complianceNotices += await runComplianceScan(`${name}@${org.id}`, () => fn(org.id), result.errors, runEnd - DIGEST_FLOOR_MS - AFTER_DIGEST_RESERVE_MS, result.complianceBellNotices);
         } catch (e) {
           // Loud, per-scan, per-org — a permanently failing scan must be
           // distinguishable from a clean one.

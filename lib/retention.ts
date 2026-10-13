@@ -14,6 +14,7 @@ import { supabase } from "@/lib/supabase";
 // document-control obligations — notify(), retried and dead-lettered when
 // it does not land (lib/complianceNotify.ts).
 import { notifyCompliance as notify } from "@/lib/complianceNotify";
+import { loadScanRetryPlan, noteComplianceScan } from "@/lib/complianceNotify";
 import { logAuditAction } from "@/lib/audit";
 import { effectiveOwnerForDocument, getOrgControllers, isEffectiveOwnerOfDocument } from "@/lib/ownership";
 import { resolveActorPrincipal } from "@/lib/principal";
@@ -275,7 +276,7 @@ export async function scanRetention(orgId: string, opts?: { renudgeDays?: number
   const renudgeDays = opts?.renudgeDays ?? 30;
   const renudgeCutoff = new Date(Date.now() - renudgeDays * 86_400_000).toISOString();
   const { data, error: scanErr } = await supabase.from("documents")
-    .select("id, library_id, collection_id, document_number, title, name, retention_until, retention_policy, owner_user_id, owner_name")
+    .select("id, library_id, collection_id, document_number, title, name, retention_until, retention_policy, retention_notified_at, owner_user_id, owner_name")
     .eq("org_id", orgId)
     .not("legal_hold", "is", true)
     .neq("disposition_state", "disposed")
@@ -301,10 +302,13 @@ export async function scanRetention(orgId: string, opts?: { renudgeDays?: number
   }
   const libPol = new Map(((libRows ?? []) as Array<{ id: string; retention_policy: RetentionPolicy | null }>).map((l) => [l.id, l.retention_policy ?? null]));
   const colPol = new Map(((colRows ?? []) as Array<{ id: string; retention_policy: RetentionPolicy | null }>).map((c) => [c.id, c.retention_policy ?? null]));
+  // DELIV-7 dw1 (notifications N14 integrator pass): what the last run lost
+  const plan = await loadScanRetryPlan(orgId, "retention", renudgeDays * 86_400_000);
   let n = 0;
   const failures: string[] = [];
   for (const d of docs) {
     const docId = d.id as string;
+    const priorStamp = (d.retention_notified_at as string | null) ?? null;
     // RET-5: a refused flag write must not be notified as "eligible" — the
     // record would read as pending review while the row still says nothing.
     const { error: flagErr } = await supabase.from("documents").update({ disposition_state: "eligible", retention_notified_at: new Date().toISOString() }).eq("id", docId);
@@ -322,14 +326,24 @@ export async function scanRetention(orgId: string, opts?: { renudgeDays?: number
       collectionId: (d.collection_id as string | null) ?? null, libraryId: d.library_id as string,
     });
     const targets = uniq([...(owner.userId ? [owner.userId] : []), ...controllers]);
-    await Promise.all(targets.map((uid) =>
+    // A record whose last run dead-lettered a notice tells only that recipient now.
+    const retryKey = `retention:${docId}`;
+    const wants = plan.only(retryKey, priorStamp);
+    const landed = await Promise.all(targets.filter((uid) => wants("retention_eligible", uid)).map((uid) =>
       notify({
         orgId, userId: uid, kind: "retention_eligible",
         title: `Retention reached: ${label} — scheduled to ${scheduled}`,
         body: `This record has passed its retention date (${(d.retention_until as string).slice(0, 10)}). Its retention schedule calls for: ${scheduled}. Disposition is an explicit, logged controller action — nothing happens automatically.`,
         link, resourceType: "document", resourceId: docId,
-      })
+      }, { retryKey })
     ));
+    // DELIV-7 dw1: the stamp rides the flag write above (RET-5); a notice that
+    // was dead-lettered puts the stamp back, so the next run sends it again —
+    // to its recipient only. The flag itself stays.
+    if (!landed.every(Boolean)) {
+      const { data: back, error: unstampErr } = await supabase.from("documents").update({ retention_notified_at: priorStamp }).eq("id", docId).select("id");
+      if (unstampErr || !back?.length) noteComplianceScan(`a lost retention notice on ${docId} will not be sent again before the ${renudgeDays}-day re-nudge — its stamp could not be put back (${unstampErr?.message ?? "no row was updated"})`);
+    }
     n++;
   }
   if (failures.length) {

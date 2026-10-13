@@ -971,6 +971,7 @@ There is no status predicate and no membership filter on `recipients`. `20261160
 - The same member's `watcher_activity` row was admitted.
 - A service-role `compliance_digest` row landed.
 - The deparsed `with_check` carries `(event_type <> 'compliance_digest'::text)` beside the three conditions it had.
+- *Integrator fix pass (2026-10-13, the re-review's minor 1):* the paste's policy probe now checks the EXACT set on `email_notifications` — three policies in all, and the three names. A permissive policy is OR'd with `email_notif_insert`, so a fourth permissive INSERT or ALL policy re-admits a member's `compliance_digest` row. On PostgreSQL 16 a stray `FOR ALL` policy made the new probe read `false`, the old probe's text still read `true`, and the forged row was admitted (case B under `PROD-16`). **The rail arm of this resolution holds only on a database where that probe reads `true`.** A `false` names a policy to remove before NEDGE-20's rail is closed there; the reader half (`digestTrusted`, `queued_by`) is unaffected.
 
 **Tests.**
 - `lib/__tests__/maintenanceDrain.test.ts` "NEDGE-20 (notifications N14) — …" (5 cases):

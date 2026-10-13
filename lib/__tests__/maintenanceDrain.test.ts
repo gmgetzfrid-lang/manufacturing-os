@@ -1405,6 +1405,8 @@ describe("DELIV-7 dw1 / DELIV-16 (notifications N14) — a compliance notice a s
     })]);
     // the scan's count still adds up; the other org's scans report nothing
     expect(r.errors.filter((e) => /compliance notice\(s\) were not written/.test(e))).toHaveLength(1);
+    // integrator pass (DELIV-7 counting): the bell notices, labelled apart from the rows attempted
+    expect(r.complianceBellNotices).toEqual({ attempted: 1, delivered: 0, deadLettered: 1 });
   });
 
   it("REGRESSION: a scan whose notices land adds no line", async () => {
@@ -1415,6 +1417,7 @@ describe("DELIV-7 dw1 / DELIV-16 (notifications N14) — a compliance notice a s
     const r = await runCron();
     expect(r.errors.filter((e) => /compliance notice\(s\) were not written/.test(e))).toEqual([]);
     expect(rows("notifications").filter((n) => n.kind === "review_due")).toHaveLength(1);
+    expect(r.complianceBellNotices).toEqual({ attempted: 1, delivered: 1, deadLettered: 0 });
   });
 });
 

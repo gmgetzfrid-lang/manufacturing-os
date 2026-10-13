@@ -17,6 +17,7 @@ import { normalizeRoles } from "@/lib/roleCapabilities";
 // document-control obligations — notify(), retried and dead-lettered when
 // it does not land (lib/complianceNotify.ts).
 import { notifyCompliance as notify } from "@/lib/complianceNotify";
+import { loadScanRetryPlan } from "@/lib/complianceNotify";
 import { resolveEffectiveOwner, teamSupervisorMap } from "@/lib/ownership";
 import type { ReviewPolicy } from "@/types/schema";
 
@@ -498,6 +499,8 @@ export async function scanAndNotifyReviews(orgId: string, opts?: { leadDays?: nu
 
   const now = Date.now();
   const cooldownMs = cooldownDays * 86_400_000;
+  // DELIV-7 dw1 (notifications N14 integrator pass): what the last run lost
+  const plan = await loadScanRetryPlan(orgId, "review-cycles", cooldownMs);
   let notified = 0;
 
   for (const doc of due) {
@@ -522,30 +525,37 @@ export async function scanAndNotifyReviews(orgId: string, opts?: { leadDays?: nu
     const overdue = days < 0;
     const label = doc.document_number || doc.title || doc.name || "Document";
     const link = `/documents/${doc.library_id}?doc=${doc.id}`;
-    await Promise.all([...recipients].map((uid) =>
+    // A document whose last run dead-lettered a notice sends only that notice now.
+    const retryKey = `review-cycles:${doc.id}`;
+    const wants = plan.only(retryKey, doc.review_notified_at);
+    const landed: boolean[] = await Promise.all([...recipients].filter((uid) => wants("review_due", uid)).map((uid) =>
       notify({
         orgId, userId: uid, kind: "review_due",
         title: overdue ? `Review overdue: ${label}` : `Review due: ${label}`,
         body: overdue ? `This document's review was due ${doc.next_review_date}.` : `This document is due for review on ${doc.next_review_date}.`,
         link, resourceType: "document", resourceId: doc.id,
-      })
+      }, { retryKey })
     ));
 
     // Escalation: a delegated owner who's let it slide past the grace window gets
     // flagged to Admin/DocCtrl so responsibility is delegated, not abandoned.
     if (owner.userId && overdue && -days > graceDays) {
       const escalateTo = controllers.filter((c) => c !== owner.userId);
-      await Promise.all(escalateTo.map((uid) =>
+      landed.push(...await Promise.all(escalateTo.filter((uid) => wants("owner_behind", uid)).map((uid) =>
         notify({
           orgId, userId: uid, kind: "owner_behind",
           title: `Owner behind on review: ${label}`,
           body: `${owner.name || "The owner"} hasn't kept ${label} current — its review is ${-days} days overdue.`,
           link, resourceType: "document", resourceId: doc.id,
-        })
-      ));
+        }, { retryKey })
+      )));
     }
 
-    await supabase.from("documents").update({ review_notified_at: new Date().toISOString() }).eq("id", doc.id);
+    // DELIV-7 dw1: stamped only when every notice landed (a lost one is sent
+    // again on the next run, to its recipient only).
+    if (landed.every(Boolean)) {
+      await supabase.from("documents").update({ review_notified_at: new Date().toISOString() }).eq("id", doc.id);
+    }
     notified++;
   }
   return notified;

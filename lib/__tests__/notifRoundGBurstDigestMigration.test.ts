@@ -78,8 +78,23 @@ describe("20261197 — one paste for the SQL editor (DEC-30)", () => {
     expect(statements).toHaveLength(1);
     expect(tail).toMatch(/AS check,[\s\S]*?AS ok,\s*NULL::text AS n/);
     expect(tail).toMatch(/SELECT inventory, NULL::boolean, n FROM \(SELECT inventory, n FROM notif_round_g_197_before ORDER BY ord\) b;\s*$/);
-    // five probes, each a boolean with n NULL — the "no row changed" probe compares counts
+    // four boolean probes (n NULL), then ONE information row (ok NULL) — integrator
+    // fix pass, re-review minor 2: no boolean compares a live count read before
+    // BEGIN with one read after COMMIT (live traffic moves it between the two)
     expect(tail.match(/^SELECT '/gm)).toHaveLength(5);
+    expect(SQL).toMatch(/Expect: ok = true × 4; then ONE "AFTER" count \(ok NULL/);
+    const after = tail.slice(tail.indexOf("SELECT 'AFTER:"));
+    expect(after).toMatch(/^SELECT 'AFTER: [^']*information, not a check[^']*',\s+NULL::boolean,/);
+    expect(tail).not.toMatch(/no row was changed/);
+    expect(tail).not.toMatch(/=\s*\(SELECT n FROM notif_round_g_197_before/);
+  });
+
+  it("re-review minor 1: the policy probe checks the EXACT set on email_notifications — three policies in all, and those three names", () => {
+    const tail = CODE.slice(CODE.indexOf("COMMIT;"));
+    const probe = tail.slice(tail.indexOf("SELECT 'email_notifications has exactly three policies"), tail.indexOf("SELECT 'AFTER:"));
+    expect(probe).toMatch(/\(SELECT COUNT\(\*\) = 3\s+AND COUNT\(\*\) FILTER \(WHERE policyname IN \('email_notif_insert', 'email_notif_select_own_or_admin', 'email_notif_update_admin_requeue'\)\) = 3\s+FROM pg_policies\s+WHERE schemaname = 'public' AND tablename = 'email_notifications'\),/);
+    // the count runs over EVERY policy on the table — no name filter in its WHERE
+    expect(probe).not.toMatch(/WHERE schemaname = 'public' AND tablename = 'email_notifications'\s+AND policyname IN/);
   });
 
   it("the inventory is aggregate counts only — never a customer row", () => {

@@ -956,6 +956,19 @@ lib/inAppNotifications.ts:26 —
 - After one member read theirs, the next claim answered `{"told": 1, "already": 1}`.
 - `authenticated` and `anon` were refused ("permission denied for function claim_access_request_burst").
 
+**Integrator fix pass (2026-10-13, the re-review's minors 1 and 2) — the paste's probes say only what they check.** `20261197` is not pasted yet; it was edited in place, keeping the DEC-30 one-paste shape (counts-only inventory in a TEMP table before the one `BEGIN … COMMIT`, ONE final SELECT), the lineDiff test against the newest `email_notif_insert` and DRLS-16. The function and the policy are unchanged; only the final SELECT changed.
+- Probe 4 said `email_notifications` keeps "exactly" its three policies but only checked that the three names exist, so a fourth permissive INSERT or ALL policy — OR'd with `email_notif_insert` — passed it while re-admitting a member's `compliance_digest` row. It now checks the exact set: every policy on the table counted (`COUNT(*) = 3`) AND those three names among them. Its label says what a `false` means.
+- Probe 5 ("no row was changed") compared a live count read before `BEGIN` with one read after `COMMIT`; a burst written, or one marked read, in between made a correct paste read `false`. It is no longer a check: the same count is an `AFTER:` information row (ok NULL) to read beside inventory row 1, labelled as moving under live traffic. That the file writes no row stays pinned by its shape (no INSERT / UPDATE / DELETE outside the function body).
+- Expected result now: **`ok = true` × 4**, then the `AFTER:` count, then the 4 inventory counts.
+- Pinned in `lib/__tests__/notifRoundGBurstDigestMigration.test.ts` (12 cases; the two changed ones failed on `4dea72e` first).
+- **Exercised on PostgreSQL 16.13** (throwaway cluster under `/var/lib/postgresql`, stub schema with `20261047` §4's three policies verbatim; deleted afterwards):
+  - A — clean paste: `ok = true` × 4, AFTER 1, inventory 1 / 0 / 0 / 0. Re-run: the same.
+  - A — after the paste, a signed-in member's `compliance_digest` row for a colleague was refused ("new row violates row-level security policy"); their `ack_requested` row was admitted.
+  - B — a stray `FOR ALL TO authenticated USING (true) WITH CHECK (true)` policy added: the new probe 4 read `false`; the old probe 4's text read `true` on the same database; and that database admitted the forged `compliance_digest` row.
+  - C — `email_notif_update_admin_requeue` replaced by another name (three policies, two of the names): probe 4 read `false`.
+  - D — live traffic between the inventory and the final SELECT (one session; another session wrote two burst rows and marked one read): the old probe 5's expression read `false`; the new final SELECT read `ok = true` × 4, with AFTER 2 beside BEFORE 1.
+  - E — `service_role` claimed `{"told": 1, "already": 1}` (one active member already holding a row; a non-member skipped), then `{"told": 0, "already": 1}`; `authenticated` was refused.
+
 **Tests.**
 - `lib/__tests__/producersRoutes.test.ts` "PROD-16 — …" (3 cases). The fake service role transcribes the function, including its per-org lock:
   - After the paste, ONE call with the org, the pool and the words, and the app neither reads nor inserts `notifications` itself.

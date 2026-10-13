@@ -44,7 +44,8 @@
 --     service role, which RLS does not bind). Every other line is the same;
 --     lib/__tests__/notifRoundGBurstDigestMigration.test.ts diffs it against
 --     the newest earlier definition found by scanning supabase/migrations.
---   · Nothing else: no row is changed, no other policy or function touched.
+--   · Nothing else: no row is changed (no INSERT, UPDATE or DELETE outside the
+--     function's body), no other policy or function touched.
 --
 -- Not widening (DEC-30): nobody may do more after this file — the function is
 -- the service role's alone, and the policy only narrows. The inventory below
@@ -153,7 +154,18 @@ CREATE POLICY email_notif_insert ON email_notifications
 
 COMMIT;
 
--- ── Verification + inventory (ONE result set): expect ok = true × 5 ─────────
+-- ── Verification + inventory (ONE result set) ───────────────────────────────
+-- Expect: ok = true × 4; then ONE "AFTER" count (ok NULL — read it beside
+-- inventory row 1); then the 4 BEFORE inventory counts (ok NULL).
+-- Integrator fix pass (re-review minors 1, 2): probe 4 checks the EXACT set of
+-- policies on email_notifications (a fourth permissive INSERT / ALL policy
+-- would be OR'd with email_notif_insert and re-admit a member's digest row);
+-- the "no row was changed" boolean is gone — it compared a live count taken
+-- before BEGIN with one taken after COMMIT, which a burst written or read in
+-- between moves under live traffic. That this file writes no row is pinned
+-- by its shape (no INSERT / UPDATE / DELETE outside the function body —
+-- lib/__tests__/notifRoundGBurstDigestMigration.test.ts); the count stays as
+-- information, never as a pass / fail.
 SELECT 'claim_access_request_burst(uuid, uuid[], text, text) returns jsonb, is SECURITY DEFINER with search_path pinned, and takes the per-org advisory lock before it reads or writes' AS check,
        EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
                 WHERE ns.nspname = 'public' AND p.proname = 'claim_access_request_burst'
@@ -184,17 +196,17 @@ SELECT 'email_notif_insert refuses a signed-in writer''s compliance_digest row, 
                   WHERE schemaname = 'public' AND tablename = 'email_notifications' AND policyname = 'email_notif_insert'), false),
        NULL
 UNION ALL
-SELECT 'email_notifications keeps exactly its three policies (insert, select own-or-admin, update admin-requeue)',
-       (SELECT COUNT(*) = 3 FROM pg_policies
-         WHERE schemaname = 'public' AND tablename = 'email_notifications'
-           AND policyname IN ('email_notif_insert', 'email_notif_select_own_or_admin', 'email_notif_update_admin_requeue')),
+SELECT 'email_notifications has exactly three policies and no other: email_notif_insert, email_notif_select_own_or_admin, email_notif_update_admin_requeue (false: list pg_policies for the table — a fourth permissive INSERT or ALL policy is OR''d with email_notif_insert and re-admits a member''s compliance_digest row)',
+       (SELECT COUNT(*) = 3
+               AND COUNT(*) FILTER (WHERE policyname IN ('email_notif_insert', 'email_notif_select_own_or_admin', 'email_notif_update_admin_requeue')) = 3
+          FROM pg_policies
+         WHERE schemaname = 'public' AND tablename = 'email_notifications'),
        NULL
 UNION ALL
-SELECT 'no row was changed: the unread server burst notices are as many as before',
+SELECT 'AFTER: unread server burst notices now — information, not a check: read it beside BEFORE row 1; under live traffic a burst written or marked read between the two reads moves it (this file writes no row)',
+       NULL::boolean,
        (SELECT COUNT(*) FROM notifications
          WHERE kind = 'access_request_pending' AND resource_type = 'org'
            AND read_at IS NULL AND actor_user_id IS NULL)::text
-         = (SELECT n FROM notif_round_g_197_before WHERE ord = 1),
-       NULL
 UNION ALL
 SELECT inventory, NULL::boolean, n FROM (SELECT inventory, n FROM notif_round_g_197_before ORDER BY ord) b;

@@ -571,6 +571,11 @@ const DEDUPE_READS: Record<string, Array<{ marks: string; keys?: string[]; kinds
   "app/api/transmittal/route.ts": [{ marks: '.eq("kind", UNSTAMPABLE_NOTICE_KIND)', kinds: ["transmittal_unstampable"] }],
   // ackRequest (the nag's watermark) is written by browsers by design — a manual request or
   // re-nudge counts as the nag (the scan's own comment); only the escalation's key is server-only
+  // notifications N14 integrator pass (re-review minor 3): before it retries a failed compliance
+  // notice, notifyCompliance reads back whether the row landed after all (a lost answer). Inside the
+  // cron (the service role) it takes only a row with the notice's own actor — none for the scans'
+  // notices — so a row a member forged from a browser (the rail stamps its writer) never stops a retry.
+  "lib/complianceNotify.ts": [{ marks: '.eq("title", input.title)', actorNull: "the compliance retry's read-back takes only a server row (actor_user_id IS NULL) for a notice that names no actor — every cron scan notice; a member's browser row is stamped with its writer, so it cannot stand in for the notice and stop its retry. In a browser it reads only the signed-in member's own row, whose actor the rail stamps as that member" }],
   "lib/distributionAcks.ts": [{ marks: '.in("kind", ["ack_requested", "ack_overdue", "doc_superseded"])', keys: ["ackEscalation"] }],
   "lib/holds.ts": [{ marks: '.contains("metadata", { staleHoldId: h.id, staleFor })', keys: ["staleHoldId"] }],
   "lib/intakeRateLimit.ts": [{ marks: '.contains("metadata", { reviewHealthDay: input.day })', keys: ["reviewHealthDay"] }],
