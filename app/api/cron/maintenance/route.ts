@@ -73,6 +73,7 @@ import { runWithServerClient } from "@/lib/serverClientScope";
 import { sweepIntakeStaging } from "@/lib/intakeStaging";
 import { emit, type EmitResult } from "@/lib/notify/dispatch";
 import { notifyBatchWithReason } from "@/lib/inAppNotifications";
+import { drainComplianceShortfall, COMPLIANCE_NOTIFY_ATTEMPTS } from "@/lib/complianceNotify";
 import { KIND_META } from "@/lib/notificationKinds";
 import { emailAllowedByPrefs } from "@/lib/notificationPrefs";
 import { renderNotificationEmail } from "@/lib/emailRender";
@@ -380,6 +381,7 @@ async function handler(req: NextRequest) {
       // here because a third vercel.json cron entry fails deployment (step 10).
       ["hold-aging", scanStaleHolds],
     ];
+    drainComplianceShortfall(); // what other work on this instance left: not this run's
     for (const org of (orgRows as Array<{ id: string }>) ?? []) {
       result.complianceOrgs += 1;
       for (const [name, fn] of scans) {
@@ -389,6 +391,13 @@ async function handler(req: NextRequest) {
           // Loud, per-scan, per-org — a permanently failing scan must be
           // distinguishable from a clean one.
           result.errors.push(`${name}@${org.id}: ${(e as Error).message}`);
+        }
+        // DELIV-7 dw1 / DELIV-16 (notifications N14): a notice the scan could
+        // not write after its retries is reported here, never a silent success
+        // (each is also a NOTIFICATION_DEAD_LETTER audit row).
+        const lost = drainComplianceShortfall();
+        if (lost.length > 0) {
+          result.errors.push(`${name}@${org.id}: ${lost.length} compliance notice(s) were not written after ${COMPLIANCE_NOTIFY_ATTEMPTS} attempts (dead-lettered to the audit log) — e.g. ${lost[0].kind} to ${lost[0].userId}: ${lost[0].error}`);
         }
       }
     }

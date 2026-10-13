@@ -15,7 +15,10 @@
 // upload + draft-version creation live in lib/revisions.ts (submitForReview).
 
 import { supabase } from "@/lib/supabase";
-import { notify } from "@/lib/inAppNotifications";
+// DELIV-16 / DELIV-7 dw1 (notifications N14): the bell notices here carry
+// document-control obligations — notify(), retried and dead-lettered when
+// it does not land (lib/complianceNotify.ts).
+import { notifyCompliance as notify } from "@/lib/complianceNotify";
 import { logAuditAction } from "@/lib/audit";
 import { recordSignature, type SigningCredential } from "@/lib/eSignatures";
 import { effectiveOwnerForDocument, resolveEffectiveOwner, getOrgControllers, teamSupervisorMap, type LibraryOwnerCols, type TeamSupervisorLookup } from "@/lib/ownership";

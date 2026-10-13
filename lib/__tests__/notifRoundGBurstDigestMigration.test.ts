@@ -18,6 +18,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { KIND_META } from "@/lib/notificationKinds";
 
 const ROOT = process.cwd();
 const DIR = join(ROOT, "supabase", "migrations");
@@ -131,6 +132,9 @@ describe("20261197 — PROD-16: the burst slot claimed under one per-org lock", 
     expect(route).toMatch(/if \(!isMissingFunction\(claim\.error\)\) \{[\s\S]*?no notice was written for this request`\);\s+return;\s+\}/);
     expect(route).toMatch(/kind: "access_request_pending" as const,\s+\.\.\.notice,\s+link: "\/admin\/users",\s+resourceType: ACCESS_REQUEST_BURST_RESOURCE_TYPE,\s+resourceId: orgId,\s+metadata: \{ accessRequestBurst: true \},/);
     expect(readFileSync(join(ROOT, "lib/accessRequestOutcome.ts"), "utf8")).toContain('export const ACCESS_REQUEST_BURST_RESOURCE_TYPE = "org";');
+    // the one kind the database writes here is a registered kind (TAX-11: no kind outside the registry)
+    expect(Object.keys(KIND_META)).toContain("access_request_pending");
+    expect([...body.matchAll(/'([a-z_]+_pending)'/g)].map((m) => m[1])).toEqual(["access_request_pending", "access_request_pending", "access_request_pending"]);
   });
 });
 

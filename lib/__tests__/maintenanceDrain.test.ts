@@ -196,7 +196,7 @@ vi.mock("@/lib/supabase", () => ({
 }));
 vi.mock("@/lib/projects", () => ({ autoReleaseExpiredAdHoc: async () => 0 }));
 vi.mock("@/lib/storageAlerts", () => ({ runStorageAlerts: async () => ({ alerts: 0 }) }));
-vi.mock("@/lib/reviewCycles", () => ({ scanAndNotifyReviews: async () => 0 }));
+vi.mock("@/lib/reviewCycles", () => ({ scanAndNotifyReviews: vi.fn(async () => 0) }));
 vi.mock("@/lib/acknowledgments", () => ({ scanAndNotifyAcks: async () => 0 }));
 vi.mock("@/lib/reviewControl", () => ({ scanReviews: async () => 0 }));
 vi.mock("@/lib/effectiveDate", () => ({ scanEffectiveDates: async () => 0 }));
@@ -248,6 +248,8 @@ import { GET as unsubGET, POST as unsubPOST } from "@/app/api/notifications/unsu
 import { GET as purgeGET, POST as purgePOST } from "@/app/api/admin/purge/route";
 import { signUnsubscribe } from "@/lib/unsubscribeToken";
 import { emit } from "@/lib/notify/dispatch";
+import { scanAndNotifyReviews } from "@/lib/reviewCycles";
+import { notifyCompliance, __setComplianceRetrySleep } from "@/lib/complianceNotify";
 
 const ROOT = process.cwd();
 const src = (p: string) => readFileSync(join(ROOT, p), "utf8");
@@ -1366,6 +1368,36 @@ describe("NEDGE-20 (notifications N14) — a forged compliance_digest row does n
     const filtered = db.calls.filter((c) => c.table === "email_notifications" && c.op === "is" && c.args[0] === "queued_by");
     expect(filtered.length).toBeGreaterThanOrEqual(1);
     expect(filtered.length).toBeLessThanOrEqual(2);
+  });
+});
+
+describe("DELIV-7 dw1 / DELIV-16 (notifications N14) — a compliance notice a scan could not write is a line in the run's errors", () => {
+  it("the scan's notice fails every attempt: the run says which scan and org, how many, the kind, the recipient and the error — and the dead letter is in the audit log", async () => {
+    __setComplianceRetrySleep(async () => undefined);
+    db.writeError.notifications = { message: "insert refused" };
+    vi.mocked(scanAndNotifyReviews).mockImplementationOnce(async (orgId: string) => {
+      await notifyCompliance({ orgId, userId: U(3), kind: "review_due", title: "Review due: P-1", link: "/documents/l1?doc=d1", resourceType: "document", resourceId: "d1" });
+      return 1;
+    });
+    const r = await runCron();
+    __setComplianceRetrySleep(null);
+    expect(r.errors).toContain(`review-cycles@${ORG_A}: 1 compliance notice(s) were not written after 3 attempts (dead-lettered to the audit log) — e.g. review_due to ${U(3)}: insert refused`);
+    expect(rows("audit_logs").filter((a) => a.action === "NOTIFICATION_DEAD_LETTER")).toEqual([expect.objectContaining({
+      org_id: ORG_A, resource_type: "document", resource_id: "d1", user_id: null,
+      details: expect.objectContaining({ kind: "review_due", recipient: U(3), error: "insert refused", attempts: 3 }),
+    })]);
+    // the scan's count still adds up; the other org's scans report nothing
+    expect(r.errors.filter((e) => /compliance notice\(s\) were not written/.test(e))).toHaveLength(1);
+  });
+
+  it("REGRESSION: a scan whose notices land adds no line", async () => {
+    vi.mocked(scanAndNotifyReviews).mockImplementationOnce(async (orgId: string) => {
+      await notifyCompliance({ orgId, userId: U(3), kind: "review_due", title: "Review due: P-1" });
+      return 1;
+    });
+    const r = await runCron();
+    expect(r.errors.filter((e) => /compliance notice\(s\) were not written/.test(e))).toEqual([]);
+    expect(rows("notifications").filter((n) => n.kind === "review_due")).toHaveLength(1);
   });
 });
 

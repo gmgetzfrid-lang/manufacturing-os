@@ -8,7 +8,10 @@
 // owner + acknowledgment assignees are told it's now in force.
 
 import { supabase } from "@/lib/supabase";
-import { notify } from "@/lib/inAppNotifications";
+// DELIV-16 / DELIV-7 dw1 (notifications N14): the bell notices here carry
+// document-control obligations — notify(), retried and dead-lettered when
+// it does not land (lib/complianceNotify.ts).
+import { notifyCompliance as notify } from "@/lib/complianceNotify";
 import { effectiveOwnerForDocument, getOrgControllers } from "@/lib/ownership";
 
 export type EffectiveStatus = "none" | "pending" | "effective";

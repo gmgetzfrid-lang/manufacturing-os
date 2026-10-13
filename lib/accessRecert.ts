@@ -15,7 +15,10 @@
 
 import { supabase } from "@/lib/supabase";
 import { normalizeRoles } from "@/lib/roleCapabilities";
-import { notify } from "@/lib/inAppNotifications";
+// DELIV-16 / DELIV-7 dw1 (notifications N14): the bell notices here carry
+// document-control obligations — notify(), retried and dead-lettered when
+// it does not land (lib/complianceNotify.ts).
+import { notifyCompliance as notify } from "@/lib/complianceNotify";
 import { logAuditAction } from "@/lib/audit";
 import { getOrgControllers } from "@/lib/ownership";
 import type { RecertPolicy, AccessControl, AccessRule } from "@/types/schema";

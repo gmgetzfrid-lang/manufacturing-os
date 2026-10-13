@@ -10,7 +10,10 @@
 //     retention. Enforced in the app's delete/dispose paths (see isLegalHold).
 
 import { supabase } from "@/lib/supabase";
-import { notify } from "@/lib/inAppNotifications";
+// DELIV-16 / DELIV-7 dw1 (notifications N14): the bell notices here carry
+// document-control obligations — notify(), retried and dead-lettered when
+// it does not land (lib/complianceNotify.ts).
+import { notifyCompliance as notify } from "@/lib/complianceNotify";
 import { logAuditAction } from "@/lib/audit";
 import { effectiveOwnerForDocument, getOrgControllers, isEffectiveOwnerOfDocument } from "@/lib/ownership";
 import { resolveActorPrincipal } from "@/lib/principal";
