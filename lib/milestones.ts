@@ -584,6 +584,37 @@ export async function deleteMilestone(id: string, actorUserId: string): Promise<
   });
 }
 
+/** Delete EVERY milestone on a project (notes cascade with them) so the
+ *  schedule can be rebuilt from a fresh import. Audited with the count.
+ *  Irreversible — callers confirm first. */
+export async function clearProjectSchedule(input: {
+  orgId: string; projectId: string;
+  actorUserId: string; actorUserEmail?: string; actorUserRole?: string;
+}): Promise<{ deleted: number }> {
+  const { count, error: countErr } = await supabase
+    .from("milestones")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", input.orgId)
+    .eq("project_id", input.projectId);
+  if (countErr) throw new Error(countErr.message);
+  const deleted = count ?? 0;
+  if (deleted === 0) return { deleted: 0 };
+  const { error } = await supabase
+    .from("milestones")
+    .delete()
+    .eq("org_id", input.orgId)
+    .eq("project_id", input.projectId);
+  if (error) throw new Error(error.message);
+  await logAuditAction({
+    action: "SCHEDULE_CLEARED",
+    resourceId: input.projectId, resourceType: "project",
+    orgId: input.orgId, userId: input.actorUserId,
+    userEmail: input.actorUserEmail, userRole: input.actorUserRole,
+    details: { deleted },
+  });
+  return { deleted };
+}
+
 // ─── Reads ──────────────────────────────────────────────────────
 
 export interface ListMilestonesParams {

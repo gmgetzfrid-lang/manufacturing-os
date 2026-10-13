@@ -21,9 +21,9 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Flag, Plus, Loader2, AlertTriangle, Check, X, Calendar, ChevronDown, Upload, ArrowRight, Eye, EyeOff, Layers, Clock } from "lucide-react";
+import { Flag, Plus, Loader2, AlertTriangle, Check, X, Calendar, ChevronDown, Upload, ArrowRight, Eye, EyeOff, Layers, Clock, Trash2 } from "lucide-react";
 import {
-  listMilestones, createMilestone, setMilestoneStatus, setMilestoneProgress, deleteMilestone,
+  listMilestones, createMilestone, setMilestoneStatus, setMilestoneProgress, deleteMilestone, clearProjectSchedule,
   applyMilestoneMoves, computeScheduleMetrics, setBaseline,
 } from "@/lib/milestones";
 import { supabase } from "@/lib/supabase";
@@ -193,6 +193,23 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
     finally { setBusy(false); }
   };
 
+  // Wipe the whole schedule so it can be rebuilt from a fresh import.
+  const [clearing, setClearing] = useState(false);
+  const onClearSchedule = async () => {
+    const n = milestones.length;
+    const ok = await appConfirm({
+      message: `Delete all ${n} task${n === 1 ? "" : "s"} on this project's schedule? Notes on them go too. This can't be undone — import the schedule file again afterwards to rebuild it. This action is audited.`,
+      tone: "danger",
+    });
+    if (!ok) return;
+    setClearing(true); setError(null);
+    try {
+      await clearProjectSchedule({ orgId, projectId, actorUserId: userId, actorUserEmail: userEmail, actorUserRole: userRole });
+      await refresh();
+    } catch (e) { setError((e as Error).message); }
+    finally { setClearing(false); }
+  };
+
   const onDelete = async (id: string) => {
     if (!(await appConfirm({ message: "Delete this milestone? This action is audited.", tone: "danger" }))) return;
     setBusy(true);
@@ -284,6 +301,16 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
               >
                 <Upload className="w-3.5 h-3.5" /> Import schedule
               </button>
+              {milestones.length > 0 && (
+                <button
+                  onClick={() => void onClearSchedule()}
+                  disabled={busy || clearing}
+                  title="Delete every task on this schedule so you can import the file again from scratch"
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-700 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-200 px-2.5 py-1.5 rounded-lg shadow-sm transition-colors disabled:opacity-50"
+                >
+                  {clearing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} Clear schedule
+                </button>
+              )}
               {milestones.length > 0 && (
                 <button
                   onClick={() => setRebaseOpen(true)}
@@ -477,6 +504,9 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
           projectStatus={projectStatus}
           userId={userId}
           userName={userName}
+          userEmail={userEmail}
+          userRole={userRole}
+          existingCount={milestones.length}
           onClose={() => setImportOpen(false)}
           onDone={() => { setImportOpen(false); void refresh(); }}
         />
