@@ -15,7 +15,11 @@
 
 import { supabase } from "@/lib/supabase";
 import { normalizeRoles } from "@/lib/roleCapabilities";
-import { notify } from "@/lib/inAppNotifications";
+// DELIV-16 / DELIV-7 dw1 (notifications N14): the bell notices here carry
+// document-control obligations — notify(), retried and dead-lettered when
+// it does not land (lib/complianceNotify.ts).
+import { notifyCompliance as notify } from "@/lib/complianceNotify";
+import { loadScanRetryPlan } from "@/lib/complianceNotify";
 import { logAuditAction } from "@/lib/audit";
 import { getOrgControllers } from "@/lib/ownership";
 import type { RecertPolicy, AccessControl, AccessRule } from "@/types/schema";
@@ -385,6 +389,8 @@ export async function scanAccessRecerts(orgId: string, opts?: { leadDays?: numbe
   const controllers = await getOrgControllers(orgId);
   const now = Date.now();
   const cooldownMs = cooldownDays * 86_400_000;
+  // DELIV-7 dw1 (notifications N14 integrator pass): what the last run lost
+  const plan = await loadScanRetryPlan(orgId, "access-recert", cooldownMs);
   let n = 0;
   for (const l of libs) {
     if (l.recert_notified_at && now - new Date(l.recert_notified_at as string).getTime() < cooldownMs) continue;
@@ -393,10 +399,16 @@ export async function scanAccessRecerts(orgId: string, opts?: { leadDays?: numbe
     const targets = uniq([...(ownerId ? [ownerId] : []), ...controllers]);
     const name = (l.name as string) || "a library";
     const link = `/documents/${l.id as string}`;
-    await Promise.all(targets.map((uid) =>
-      notify({ orgId, userId: uid, kind: "access_recert_due", title: overdue ? `Access recert overdue: ${name}` : `Access recert due: ${name}`, body: "Review who has access to this library and recertify it.", link, resourceType: "library", resourceId: l.id as string })
+    // A library whose last run dead-lettered a notice sends only that notice now.
+    const retryKey = `access-recert:${l.id as string}`;
+    const wants = plan.only(retryKey, l.recert_notified_at as string | null);
+    const landed = await Promise.all(targets.filter((uid) => wants("access_recert_due", uid)).map((uid) =>
+      notify({ orgId, userId: uid, kind: "access_recert_due", title: overdue ? `Access recert overdue: ${name}` : `Access recert due: ${name}`, body: "Review who has access to this library and recertify it.", link, resourceType: "library", resourceId: l.id as string }, { retryKey })
     ));
-    await supabase.from("libraries").update({ recert_notified_at: new Date().toISOString() }).eq("id", l.id as string);
+    // DELIV-7 dw1: stamped only when every notice landed.
+    if (landed.every(Boolean)) {
+      await supabase.from("libraries").update({ recert_notified_at: new Date().toISOString() }).eq("id", l.id as string);
+    }
     n++;
   }
   return n;

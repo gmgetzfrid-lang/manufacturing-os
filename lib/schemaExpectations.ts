@@ -395,4 +395,11 @@ export const EXPECTED_FUNCTIONS: readonly FunctionExpectation[] = [
     migration: "20261178_intel_roundG_codebook_lifecycle.sql",
     feature: "Renaming a Site Codebook code in place, every filing moved with it (/admin/codebook; CB-5)",
   },
+  {
+    signature: "claim_access_request_burst(uuid, uuid[], text, text)",
+    fn: "claim_access_request_burst",
+    probeArgs: { p_org: "schema-health-probe", p_recipients: [], p_title: "x", p_body: "x" },
+    migration: "20261197_notif_roundG_burst_claim_digest_rail.sql",
+    feature: "The access-request door's 'more requests are waiting' notice, claimed once per Admin / DocCtrl under a per-org lock (PROD-16)",
+  },
 ];

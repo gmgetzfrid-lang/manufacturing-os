@@ -72,6 +72,8 @@ import {
 import { runWithServerClient } from "@/lib/serverClientScope";
 import { sweepIntakeStaging } from "@/lib/intakeStaging";
 import { emit, type EmitResult } from "@/lib/notify/dispatch";
+import { notifyBatchWithReason } from "@/lib/inAppNotifications";
+import { runComplianceScan } from "@/lib/complianceNotifyScope";
 import { KIND_META } from "@/lib/notificationKinds";
 import { emailAllowedByPrefs } from "@/lib/notificationPrefs";
 import { renderNotificationEmail } from "@/lib/emailRender";
@@ -118,7 +120,17 @@ async function handler(req: NextRequest) {
     storageAlerts: number;
     prunedIntents: number;
     staleEscalations: number;
+    /** The rows (roster rows, documents, libraries) the step-6 scans sent
+     *  notices for this run — ATTEMPTED, a row whose notice was dead-lettered
+     *  included (DELIV-7). How many bell notices LANDED is
+     *  complianceBellNotices. */
     complianceNotices: number;
+    /** The step-6 scans' bell notices, one by one: attempted, delivered (the
+     *  row landed) and dead-lettered (re-sent on the next run). Counted by
+     *  lib/complianceNotify for the scans that write through it; the
+     *  distribution-ack and hold-aging scans (notifications N9's files) are
+     *  not counted here yet. */
+    complianceBellNotices: { attempted: number; delivered: number; deadLettered: number };
     complianceOrgs: number;
     complianceEmails: number;
     folderTrashPurged?: number;
@@ -147,6 +159,7 @@ async function handler(req: NextRequest) {
     prunedIntents: 0,
     staleEscalations: 0,
     complianceNotices: 0,
+    complianceBellNotices: { attempted: 0, delivered: 0, deadLettered: 0 },
     complianceOrgs: 0,
     complianceEmails: 0,
     errors: [],
@@ -386,7 +399,8 @@ async function handler(req: NextRequest) {
       result.complianceOrgs += 1;
       for (const [name, fn] of scans) {
         try {
-          result.complianceNotices += await fn(org.id);
+          // DELIV-7 dw1 / DELIV-16 (notifications N14): the scan's dead-lettered notices are a line in errors; no retry past the digest's time; its bell notices tallied
+          result.complianceNotices += await runComplianceScan(`${name}@${org.id}`, () => fn(org.id), result.errors, runEnd - DIGEST_FLOOR_MS - AFTER_DIGEST_RESERVE_MS, result.complianceBellNotices);
         } catch (e) {
           // Loud, per-scan, per-org — a permanently failing scan must be
           // distinguishable from a clean one.
@@ -660,9 +674,9 @@ async function drainEmailQueue(origin: string, maxBatches: number, label: string
 
 const STALE_ESCALATION_DAYS = 14;
 
-// The escalation's raw insert stays here until notifications N14 (TAX-11's
-// tail) routes it through notify(); DELIV-7 / NEDGE-12 (N6) report its
-// failures and label its date.
+// The escalation writes through the typed sink (notifications N14, TAX-11's
+// tail — ONE statement on the cron's client, as the raw insert was);
+// DELIV-7 / NEDGE-12 (N6) report its failures and label its date.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function escalateStaleCheckouts(sb: SupabaseClient<any>, errors: string[]): Promise<number> {
   const cutoff = new Date(Date.now() - STALE_ESCALATION_DAYS * 24 * 3600 * 1000).toISOString();
@@ -712,22 +726,21 @@ async function escalateStaleCheckouts(sb: SupabaseClient<any>, errors: string[])
 
     const days = Math.floor((Date.now() - Date.parse(row.started_at)) / (24 * 3600 * 1000));
     const since = formatRecordDate(row.started_at, await zoneOf(row.org_id));
-    const inserts = recipients.map((uid) => ({
-      org_id: row.org_id,
-      user_id: uid,
-      kind: "checkout_released",
+    const { error: insErr } = await notifyBatchWithReason(recipients.map((uid) => ({
+      orgId: row.org_id,
+      userId: uid,
+      kind: "checkout_released" as const,
       title: `Checkout held ${days} days — review needed`,
       body: `${row.user_name || "A user"} has had a document checked out since ${since}${row.purpose ? ` (${row.purpose})` : ""}. Nudge them or force-release if the work is done.`,
       link: row.library_id ? `/documents/${row.library_id}?doc=${row.document_id}` : "/checkouts",
-      resource_type: "document",
-      resource_id: row.document_id,
-      actor_name: "System",
+      resourceType: "document",
+      resourceId: row.document_id,
+      actorName: "System",
       metadata: { staleSessionId: row.id, escalation: true },
-    }));
-    const { error: insErr } = await sb.from("notifications").insert(inserts);
+    })), sb);
     if (insErr) {
       // DELIV-7 dw3: reported, never only a counter that did not move.
-      errors.push(`stale-escalation: session ${row.id} — the controllers' notice was not written (retried on the next run): ${insErr.message}`);
+      errors.push(`stale-escalation: session ${row.id} — the controllers' notice was not written (retried on the next run): ${insErr}`);
       continue;
     }
     escalated += 1;
@@ -904,6 +917,27 @@ function digestThrough(row: { created_at?: unknown; metadata?: unknown }): numbe
   return Number.isFinite(c) ? c : null;
 }
 
+/** NEDGE-20: a digest row the cron wrote ends its window (`through`, the
+ *  run's `asOf`) no later than it was queued, give or take the clock margin;
+ *  one that ends later was not written by a digest run, and is not trusted
+ *  as the recipient's last digest. A row with no `through` (before N6 fix
+ *  pass 2) is trusted, as before. */
+function digestTrusted(row: { created_at?: unknown; metadata?: unknown }): boolean {
+  const through = (row.metadata as { through?: unknown } | null)?.through;
+  const t = typeof through === "string" ? Date.parse(through) : NaN;
+  const c = typeof row.created_at === "string" ? Date.parse(row.created_at) : NaN;
+  return !Number.isFinite(t) || !Number.isFinite(c) || t <= c + DIGEST_CLOCK_OVERLAP_MS;
+}
+
+/** NEDGE-20: the recipient's last digest rows read, newest first — the
+ *  newest of them that digestTrusted() passes is their last digest. */
+const DIGEST_LAST_ROWS = 10;
+
+/** email_notifications.queued_by is not there yet (20261183 unpasted). */
+function isMissingQueuedBy(e: { code?: string; message?: string }): boolean {
+  return e.code === "42703" || e.code === "PGRST204" || /queued_by/.test(e.message ?? "") && /does not exist|schema cache/i.test(e.message ?? "");
+}
+
 /** The ids a recipient's last digest counted in its last
  *  DIGEST_CLOCK_OVERLAP_MS (metadata.tail) — uuids only, at most
  *  DIGEST_TAIL_IDS: anything else (a row from before the integrator's fix
@@ -1071,6 +1105,9 @@ async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: s
   };
 
   let queued = 0;
+  /** NEDGE-20 (notifications N14): whether email_notifications.queued_by
+   *  (20261183) can be read — false after the first 42703, for the run. */
+  let queuedByKnown = true;
   /** Offer one member their digest. `owe(fromMs)`: what a later run's search
    *  for them must start from, when this one held something back. */
   const one = async (m: Member, windowMs: number, oldestMs: number, owe: (fromMs: number) => void) => {
@@ -1088,17 +1125,36 @@ async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: s
     let sinceMs = windowMs;
     let readFromMs = windowMs;
     let tail: string[] = [];
-    const { data: last, error: lastErr } = await sb
-      .from("email_notifications").select("created_at, metadata")
-      .eq("org_id", m.org_id)
-      .eq("to_user_id", m.uid)
-      .eq("event_type", "compliance_digest")
-      .order("created_at", { ascending: false })
-      .limit(1);
+    // NEDGE-20 (notifications N14): only a digest row the SERVER queued is
+    // trusted as their last one — queued_by IS NULL once 20261183 is pasted
+    // (a signed-in member's row is stamped with its queuer; 20261197 also
+    // refuses one at the door). Before that paste (42703) today's read runs.
+    const lastDigest = (serverOnly: boolean) => {
+      let q = sb
+        .from("email_notifications").select("created_at, metadata")
+        .eq("org_id", m.org_id)
+        .eq("to_user_id", m.uid)
+        .eq("event_type", "compliance_digest");
+      if (serverOnly) q = q.is("queued_by", null);
+      return q.order("created_at", { ascending: false }).limit(DIGEST_LAST_ROWS);
+    };
+    const serverOnly = queuedByKnown;
+    let { data: last, error: lastErr } = await lastDigest(serverOnly);
+    if (lastErr && serverOnly && isMissingQueuedBy(lastErr)) {
+      queuedByKnown = false;
+      ({ data: last, error: lastErr } = await lastDigest(false));
+    }
     if (lastErr) {
       say(`${m.org_id}/${m.uid}: their last digest could not be read — sent anyway, listing from ${iso(windowMs)}: ${lastErr.message}`);
     } else {
-      const row = ((last as Array<{ created_at?: unknown; metadata?: unknown }> | null) ?? [])[0];
+      const recent = (last as Array<{ created_at?: unknown; metadata?: unknown }> | null) ?? [];
+      // …and never one whose window ends after it was queued (plus the clock
+      // margin): a forged `through` would silence the digests until it. The
+      // newest TRUSTED row of the last few is their last digest, so a forged
+      // newer row neither hides it nor widens their window.
+      const row = recent.find(digestTrusted);
+      const skipped = row ? recent.indexOf(row) : recent.length;
+      if (skipped > 0) say(`${m.org_id}/${m.uid}: ${skipped} newer digest row(s) end their window after they were queued — not trusted; ${row ? "their newest trusted digest row is their last digest" : `listing from ${iso(windowMs)}`}`);
       if (row) {
         const through = digestThrough(row);
         if ((row.metadata as { day?: unknown } | null)?.day === dayKey) {

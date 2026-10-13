@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { HeadObjectCommand } from "@aws-sdk/client-s3";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { notifyBatchWithReason } from "@/lib/inAppNotifications";
 import { WorkflowEngine, ticketResource, decisiveGrants } from "@/lib/workflow";
 import { loadCapabilityPolicyStrict, policyAllows, scopedTokensFor } from "@/lib/capabilityPolicy";
 import { r2, R2_BUCKET } from "@/lib/r2";
@@ -1054,22 +1055,24 @@ async function fanOut(params: {
   if (activity) {
     if (audience.length === 0) return;
     // DELIV-7 dw3: a refused insert is logged, never silently dropped.
-    const { error: activityErr } = await supabaseAdmin.from("notifications").insert(
+    // TAX-11 (N14): the typed sink, ONE statement on the service role.
+    const { error: activityErr } = await notifyBatchWithReason(
       audience.map((uid) => ({
-        org_id: ticket.orgId,
-        user_id: uid,
-        kind: "ticket_comment",
+        orgId: ticket.orgId,
+        userId: uid,
+        kind: "ticket_comment" as const,
         title: `File added · ${ticketLabel}`,
         body: comment || "A file was added to this request",
         link,
-        resource_type: "ticket",
-        resource_id: ticketId,
-        actor_user_id: actorUid,
-        actor_name: actorName,
+        resourceType: "ticket",
+        resourceId: ticketId,
+        actorUserId: actorUid,
+        actorName,
         metadata: { activity: action.type, status: newStatus },
       })),
+      supabaseAdmin,
     );
-    if (activityErr) console.error("[workflow-action] activity bell rows were not written (transition committed):", activityErr.message);
+    if (activityErr) console.error("[workflow-action] activity bell rows were not written (transition committed):", activityErr);
     return;
   }
 
@@ -1108,22 +1111,23 @@ async function fanOut(params: {
   // 1) In-app bell rows — to the active audience only (NEDGE-14). The stale
   //    alerts above are retired whoever is left to tell.
   if (audience.length === 0) return;
-  const { error: bellErr } = await supabaseAdmin.from("notifications").insert(
+  const { error: bellErr } = await notifyBatchWithReason(
     audience.map((uid) => ({
-      org_id: ticket.orgId,
-      user_id: uid,
+      orgId: ticket.orgId,
+      userId: uid,
       kind: cls.inAppKind,
       title: cls.inAppTitle,
       body: comment || `Status: ${newStatus}`,
       link,
-      resource_type: "ticket",
-      resource_id: ticketId,
-      actor_user_id: actorUid,
-      actor_name: actorName,
+      resourceType: "ticket",
+      resourceId: ticketId,
+      actorUserId: actorUid,
+      actorName,
       metadata: { action: action.type, status: newStatus },
     })),
+    supabaseAdmin,
   );
-  if (bellErr) console.error("[workflow-action] bell rows were not written (transition committed):", bellErr.message);
+  if (bellErr) console.error("[workflow-action] bell rows were not written (transition committed):", bellErr);
 
   // 2) Email queue — preference-aware (defaults all-on when no prefs row).
   const [{ data: prefs }, { data: orgRow }] = await Promise.all([

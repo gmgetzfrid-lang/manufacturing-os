@@ -63,6 +63,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { notifyBatchWithReason } from "@/lib/inAppNotifications";
 import {
   getMonthUsage, getMonthUsageByUser, getCapUsd, DEFAULT_MONTHLY_CAP_USD, capIsLocked, displayCapUsd, LOCKED_CAP_USD,
   AiUsageUnavailableError, type MonthUsage,
@@ -295,24 +296,29 @@ async function notifyCapChange(orgId: string, auth: Auth, others: Roster, change
       : `${auth.name} changed ${what} from ${fmt(change.previousCapUsd)} to ${fmt(change.capUsd)}${held}.`;
   const title = (uid: string) => change.holdKept ? "A monthly AI cap is still held"
     : uid === change.targetUserId ? "Your monthly AI cap changed" : "A monthly AI cap changed";
-  await supabaseAdmin.from("notifications").insert([...recipients].map((uid) => ({
-    org_id: orgId,
-    user_id: uid,
-    kind: "ai_cap_changed",
+  // TAX-11 done-when 2 (notifications Round G, N14): the typed sink, ONE
+  // statement on the service role as before — the kind is checked by the
+  // compiler and a refusal is logged with its reason (DELIV-7 dw3), never
+  // swallowed. Still best-effort: the change and its audit row stand.
+  const { error } = await notifyBatchWithReason([...recipients].map((uid) => ({
+    orgId,
+    userId: uid,
+    kind: "ai_cap_changed" as const,
     title: title(uid),
     body,
     link: "/intelligence/setup",
-    resource_type: "ai_usage_limit",
-    resource_id: orgId,
-    actor_user_id: auth.userId,
-    actor_name: auth.name,
+    resourceType: "ai_usage_limit",
+    resourceId: orgId,
+    actorUserId: auth.userId,
+    actorName: auth.name,
     metadata: {
       targetUserId: change.targetUserId, capUsd: change.capUsd, previousCapUsd: change.previousCapUsd,
       ...(change.holdKept ? { holdKept: change.holdKept } : {}),
       ...(change.pinnedAtDefault ? { pinnedAtDefault: true } : {}),
       ...(typeof change.heldSelfAtUsd === "number" ? { heldSelfAtUsd: change.heldSelfAtUsd } : {}),
     },
-  }))).then(() => undefined, () => undefined);
+  })), supabaseAdmin);
+  if (error) console.warn(`[ai-usage] the cap-change notice to ${recipients.size} member(s) was not written (the change stands): ${error}`);
 }
 
 export async function POST(req: NextRequest) {

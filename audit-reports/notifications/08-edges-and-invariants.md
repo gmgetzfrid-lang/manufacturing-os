@@ -706,7 +706,7 @@ vercel.json:9-10  `      "path": "/api/cron/maintenance",\n      "schedule": "0 
 ## NEDGE-13 · Two declared digest kinds have full consumer support and no producer anywhere, while a live producer emits a kind that is not in the union at all
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** notifications N14 RAW-INSERT TAIL — by the integrator, 2026-10-07, at the N6 merge (DEC-31): done-when 3 is `TAX-11` done-when 2, which N14 owns.
 - **Verification:** CONFIRMED
 - **Locations:** `lib/inAppNotifications.ts:33-36`, `components/notifications/NotificationBell.tsx:41`, `hooks/useTicketNotifications.ts:80-83`, `lib/storageAlerts.ts:60-61`, `app/api/data-export/run/route.ts:54-58`
@@ -750,6 +750,17 @@ storageAlerts.ts:60-61  `      await sb.from("notifications").insert({\n        
 **Scope / residual.** Stays OPEN for done-when 3 only (as `TAX-11` done-when 2); record RESOLVED when the eleven raw inserts route through `notify()`, or on the integrator's ratification of the census as the ban. A legacy row of a retired kind still renders, bell-only and FYI — where its unrendered bucket left it. The only digest remains the cron's compliance email (N6).
 
 *Cross-note (integrator, at the admin-and-org P3 merge, 2026-10-02).* The location `app/api/data-export/run/route.ts:54-58` no longer holds the insert. Admin-and-org P3 moved the `security_export` bell rows into `lib/exportAlerts.ts` (`alertControllers`): still one raw service-role insert, now with a kind declared in the registry and links inside the app. The raw-insert census (`lib/__tests__/notificationKinds.test.ts` `RAW_SITES`) pins it there, and the link census (`notificationWriteRails.test.ts`) judges its two links. The finding itself is unchanged.
+
+**Resolution (2026-10-13, notifications Round G).** Package N14 RAW-INSERT TAIL. Done-when 3 is `TAX-11` done-when 2, and that work closes it (see `TAX-11`'s Resolution, commit `855152f`).
+
+**Reproduced first** on `5378ccb`: six raw insert calls remained, in five files (`RAW_SITES`). They now write through the typed sink on the client each held. `RAW_SITES` is empty, and the census fails on any new raw call.
+
+**Done-when.**
+- ✓ (Round G N2) `morning_digest` and `task_overdue_digest` are deleted from the union, the icon map and `sectionForKind`.
+- ✓ (Round G N2) `storage_alert` is in the union and is written through the typed sink.
+- ✓ Raw `.from("notifications").insert` call sites are migrated onto the typed sink (`notify()`'s module: `notifyWithReason` / `notifyBatchWithReason` for the server writers), so `kind` is type-checked at every producer. None is left outside `lib/inAppNotifications.ts`. The census in `lib/__tests__/notificationKinds.test.ts` is the ban's test arm.
+
+**Scope / residual.** None. A legacy row of a retired kind still renders bell-only, as recorded in N2's Partial.
 
 ---
 
@@ -964,7 +975,7 @@ There is no status predicate and no membership filter on `recipients`. `20261160
 ## NEDGE-20 · A member can queue a forged "compliance digest" email row for a colleague whose `metadata.through` silences that colleague's next digests
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** notifications N14 RAW-INSERT TAIL — by the integrator, 2026-10-07, at the N6 merge (DEC-31; the remaining notifications write-rail package).
 - **Verification:** CONFIRMED by reading at the N6 merge (N6 integrator fix pass `30bb540`, which reported it as out of scope): the digest reads a recipient's last digest by `org_id`, `to_user_id` and `event_type = 'compliance_digest'` only (`app/api/cron/maintenance/route.ts:1085-1091`), and trusts its `metadata.through` (`digestThrough`, `:893-899`); the `email_notif_insert` policy (`20261047`, `:208-209`) lets any active member of the org queue a row.
 - **Locations:** `app/api/cron/maintenance/route.ts` (`digestThrough` :893, the last-digest read :1085), `supabase/migrations/20261047_*.sql` (`email_notif_insert` :209), `20261183` (`email_notifications.queued_by`, pending paste)
@@ -981,6 +992,49 @@ There is no status predicate and no membership filter on `recipients`. `20261160
 - [ ] A test: a forged row with a future `through` does not silence the next digest; a genuine digest row behaves exactly as today.
 
 **Closer:** notifications N14 RAW-INSERT TAIL.
+
+**Resolution (2026-10-13, notifications Round G).** Package N14 RAW-INSERT TAIL (commit `fed6288`). Both arms landed: the reader trusts only a server-queued row, and the insert rail refuses the row.
+
+**Reproduced first** on `5378ccb`. Against the committed `app/api/cron/maintenance/route.ts`, the new tests failed in three ways:
+- A `compliance_digest` row addressed to U1 with `metadata.through` a month ahead silenced U1's digest.
+- A row a signed-in member queued, carrying today's `day`, silenced it the same way.
+- The same held with `queued_by` absent.
+
+`email_notif_insert` (`20261047` §4, its newest definition) admitted such a row from any active member.
+
+**What landed.**
+- Reader (`app/api/cron/maintenance/route.ts` `queueComplianceDigests`):
+  - The last-digest read (`lastDigest`, :1118) adds `.is("queued_by", null)`. A signed-in writer's row is stamped with its queuer by `20261183`, so only a row the server queued counts.
+  - On 42703 / PGRST204, or a "queued_by does not exist" message (`isMissingQueuedBy`, :923: `20261183` not pasted), the read is retried without the filter. That is today's read, and the filter is dropped for the rest of the run.
+  - A row whose `metadata.through` runs more than `DIGEST_CLOCK_OVERLAP_MS` (5 min) past its own `created_at` is never trusted as a last digest (`digestTrusted`, :915). The read takes the recipient's last `DIGEST_LAST_ROWS` (10) rows, newest first, and the newest TRUSTED one is their last digest (N14 fix pass: the first landing read only the newest row and, when it was untrusted, dropped all history — so a forged newer row hid a genuine digest from today and the colleague got a second digest the same day). With no trusted row among them the list starts from the window's start. Either way the run says how many newer rows it did not trust in a `compliance-digest:` line.
+  - A genuine digest row writes `through` = the run's `asOf`, before it is queued, so it always passes.
+- Insert rail (`20261197`): `email_notif_insert` is re-created from `20261047`'s body, adding exactly one line, `AND event_type <> 'compliance_digest'`. The cron queues the digest on the service role, which RLS does not bind; no app path queues the event type from a browser (pinned).
+
+**Exercised on PostgreSQL 16** (the run recorded under `PROD-16`).
+- An `authenticated` member's `compliance_digest` row was refused: "new row violates row-level security policy".
+- The same member's `watcher_activity` row was admitted.
+- A service-role `compliance_digest` row landed.
+- The deparsed `with_check` carries `(event_type <> 'compliance_digest'::text)` beside the three conditions it had.
+- *Integrator fix pass (2026-10-13, the re-review's minor 1):* the paste's policy probe now checks the EXACT set on `email_notifications` — three policies in all, and the three names. A permissive policy is OR'd with `email_notif_insert`, so a fourth permissive INSERT or ALL policy re-admits a member's `compliance_digest` row. On PostgreSQL 16 a stray `FOR ALL` policy made the new probe read `false`, the old probe's text still read `true`, and the forged row was admitted (case B under `PROD-16`). **The rail arm of this resolution holds only on a database where that probe reads `true`.** A `false` names a policy to remove before NEDGE-20's rail is closed there; the reader half (`digestTrusted`, `queued_by`) is unaffected.
+
+**Tests.**
+- `lib/__tests__/maintenanceDrain.test.ts` "NEDGE-20 (notifications N14) — …" (5 cases):
+  - A forged future `through` does not silence the next digest, and the line says why.
+  - (fix pass) A genuine digest from today behind a forged newer row (before `20261183`) still means no second digest today; the read takes the last 10 rows.
+  - After `20261183`, a member-queued row is never the last digest, even with a plausible `through` and today's `day`.
+  - REGRESSION: a genuine row behaves exactly as today. Today's means no second digest; yesterday's starts the window where it stopped.
+  - Before `20261183` (42703), today's read runs, and the `through` check still holds.
+- N6's `20261183` test now pins that the cron reads `queued_by` only 42703-tolerantly and never writes it. The harness gained a "column not pasted" switch.
+- `lib/__tests__/notifRoundGBurstDigestMigration.test.ts` diffs the policy against the newest earlier definition, found by scanning `supabase/migrations`: no line removed, and exactly that one line added.
+
+**Done-when.**
+- ✓ The digest trusts only a row the server queued: `queued_by` set is ignored once `20261183` is pasted, and 42703 is tolerated while it is not. A `through` later than the row's `created_at` plus the clock margin is not trusted.
+- ✓ The email insert rail refuses a signed-in writer's `compliance_digest` row. It is re-created from the newest definition, with a lineDiff test.
+- ✓ A test shows a forged row with a future `through` does not silence the next digest, and a genuine digest row behaves exactly as today.
+
+**Scope / residual.** One window remains until either `20261183` or `20261197` is pasted. A member could still queue a row for a colleague with a plausible `through` (no later than its `created_at` plus 5 min) and today's `day`. That suppresses the colleague's digest for that one day; the bell is unaffected. In the same window, ten or more forged far-future rows queued after a genuine one push it out of the 10-row read, so the recipient is listed from the window's start (a wider list, never a silenced one). Either paste closes both.
+
+Paste and deploy order: either order is safe, and `20261183` and `20261197` are independent.
 
 ---
 
