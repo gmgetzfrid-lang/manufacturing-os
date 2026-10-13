@@ -66,9 +66,9 @@ export function isSafeStorageKey(key: string): boolean {
 // every member sees. The sub-folders branding/covers/ and
 // branding/backgrounds/ are a folder's or library's cover and page
 // background (components/documents/CustomizeNodeModal.tsx), written by
-// whoever customizes that node — they are NOT the logo area and keep the
-// membership rule. Pure (no server imports): the logo modal reads the same
-// allow-list and cap for its pre-check.
+// whoever customizes that node — they are NOT the logo area; their rule is
+// the node editor's (ORG-16, below). Pure (no server imports): the logo
+// modal reads the same allow-list and cap for its pre-check.
 
 /** The image types a logo may be stored as. SVG is refused: it can carry
  *  script, and a presigned PUT never passes its bytes through the server, so
@@ -128,6 +128,43 @@ export function sniffImageType(head: Uint8Array | null | undefined): string | nu
   return null;
 }
 
+// ── admin-and-org ORG-16: a folder's or library's cover and background ─────
+// CustomizeNodeModal uploads a node's cover to orgs/<org>/branding/covers/
+// <uuid>.<ext> and its page background to …/branding/backgrounds/<uuid>.<ext>
+// (the prefix handed in by app/(protected)/documents/page.tsx and
+// documents/[libraryId]/page.tsx). Those bytes are what every member who can
+// see the node is shown, so writing them is held to the authority that opens
+// the node editor, and to image types (ORG-5's rule on the smaller surface).
+
+/** True when `key` is under orgs/<uuid>/branding/covers/ or
+ *  …/branding/backgrounds/ (any depth: the app mints one level, a hand-made
+ *  deeper key is held to the same rule). */
+export function isNodeImageKey(key: string): boolean {
+  return /^orgs\/[0-9a-fA-F-]{36}\/branding\/(?:covers|backgrounds)\/.+$/.test(key);
+}
+
+/** Who may write a node's cover or background bytes: the node editor's gate.
+ *  Both places that open CustomizeNodeModal offer it only when
+ *  `hasAnyRole(["Admin", "DocCtrl"])` (the controller tier, by the full role
+ *  collection: documents/page.tsx `isController` → LibraryAdminMenu
+ *  onCustomize; documents/[libraryId]/page.tsx `isController` → the folder
+ *  tree's onCustomize). A test pins both gates to this list, so the two
+ *  cannot drift. */
+export const NODE_CUSTOMIZE_ROLES: readonly string[] = ["Admin", "DocCtrl"];
+
+/** The image types a cover or background may be stored as: the raster
+ *  formats every current browser draws. SVG is refused, as for the logo
+ *  (it can carry script and a presigned PUT never passes the server); so is
+ *  any non-image type (an HTML page at a cover key). Exact strings: the PUT
+ *  must send the type the server signs. No size cap (a phone photo is fine). */
+export const NODE_IMAGE_CONTENT_TYPES: readonly string[] = ["image/png", "image/jpeg", "image/webp", "image/gif", "image/avif"];
+
+/** Why a cover / background upload of this type is refused (415), or null. */
+export function nodeImageUploadProblem(contentType: unknown): { status: 415; error: string } | null {
+  if (typeof contentType === "string" && NODE_IMAGE_CONTENT_TYPES.includes(contentType)) return null;
+  return { status: 415, error: "A cover or background image must be a PNG, JPEG, WebP, GIF or AVIF image (SVG is not accepted)." };
+}
+
 // ── Putting a backup's files back (ORG-5, fix pass) ──────────────────────────
 // The restore page (app/(protected)/admin/restore/page.tsx, "Put the files
 // back") re-uploads every file a Full ZIP carries through
@@ -139,10 +176,13 @@ export function sniffImageType(head: Uint8Array | null | undefined): string | nu
 // and the test that drives upload-url with the page's body cannot drift.
 
 /** The Content-Type a backup file is put back with, by its key's extension
- *  (the restore page's table, unchanged). */
+ *  (the restore page's table; ORG-16 adds jfif and avif, so a cover or
+ *  background stored under either — the modal names a key after the file —
+ *  is put back as the image type upload-url now requires, not as
+ *  application/octet-stream). */
 const RESTORE_CONTENT_TYPES: Record<string, string> = {
-  pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
-  gif: "image/gif", svg: "image/svg+xml", webp: "image/webp", txt: "text/plain",
+  pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", jfif: "image/jpeg",
+  gif: "image/gif", svg: "image/svg+xml", webp: "image/webp", avif: "image/avif", txt: "text/plain",
   csv: "text/csv", zip: "application/zip", dxf: "image/vnd.dxf", dwg: "application/acad",
   doc: "application/msword", xls: "application/vnd.ms-excel",
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",

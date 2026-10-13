@@ -573,8 +573,18 @@ const DEDUPE_READS: Record<string, Array<{ marks: string; keys?: string[]; kinds
   "lib/distributionAcks.ts": [{ marks: '.in("kind", ["ack_requested", "ack_overdue"])', keys: ["ackEscalation"] }],
   "lib/holds.ts": [{ marks: '.contains("metadata", { staleHoldId: h.id, staleFor })', keys: ["staleHoldId"] }],
   "lib/intakeRateLimit.ts": [{ marks: '.contains("metadata", { reviewHealthDay: input.day })', keys: ["reviewHealthDay"] }],
-  "lib/storageAlerts.ts": [{ marks: '.eq("kind", "storage_alert")', kinds: ["storage_alert"] }],
-  "lib/storageUsage.ts": [{ marks: '.eq("kind", alert.kind)', kinds: ["storage_platform_r2", "storage_platform_db"] }],
+  "lib/storageAlerts.ts": [
+    { marks: '.eq("kind", "storage_alert")', kinds: ["storage_alert"] },
+    // admin-and-org BILL-15 (Round G, P10): on a single-workspace server the quota bell is not sent the
+    // same UTC day as an R2 plan bell (storage_platform_r2, server-only) — read by that kind
+    { marks: '.eq("kind", "storage_platform_r2")', kinds: ["storage_platform_r2"] },
+  ],
+  "lib/storageUsage.ts": [
+    // admin-and-org BILL-15 (Round G, P10): on a single-workspace server the R2 bell counts a quota bell
+    // (storage_alert, server-only) that already stated the bucket running hot — read by that kind
+    { marks: '.eq("kind", "storage_alert")', kinds: ["storage_alert"] },
+    { marks: '.eq("kind", alert.kind)', kinds: ["storage_platform_r2", "storage_platform_db"] },
+  ],
 };
 /** The recipient's own rows, read under RLS — the bell, the inbox count, the dashboard. */
 // components/documents/EditOverlapBanner.tsx (notifications N7, TAX-8 — merged after this
@@ -676,7 +686,11 @@ describe("20261160 — the server's dedupe watermarks: a browser can neither wri
       // The storage purge (notifications N6, DELIV-8 dw3) names the server-only kinds to
       // KEEP their rows out of a purge — a filter, not a write; maintenanceDrain.test.ts
       // pins its lists to this function's.
-      expect(where.filter((f) => f !== "lib/inAppNotifications.ts" && f !== "app/api/admin/purge/route.ts"), token).toEqual([w.file]);
+      // admin-and-org BILL-15 (Round G, P10): the two storage steps each name the other's kind in one
+      // read (DEDUPE_READS above) — a filter, not a write; each kind's writer is still its one function.
+      const readsOnly = (f: string) =>
+        (token === "storage_alert" && f === "lib/storageUsage.ts") || (token === "storage_platform_r2" && f === "lib/storageAlerts.ts");
+      expect(where.filter((f) => f !== "lib/inAppNotifications.ts" && f !== "app/api/admin/purge/route.ts" && !readsOnly(f)), token).toEqual([w.file]);
       const src = files.find(([f]) => f === w.file)![1];
       if (w.file.startsWith("app/api/")) continue;
       // in a lib file: every occurrence sits inside the named function, and only the cron calls it

@@ -24,7 +24,10 @@
 // single-workspace deployment, the platform operators on a shared one. A
 // shared deployment with no operator to tell is never silent: each
 // workspace's Admins get a notice that carries no figures, and the cron
-// reports it in its errors (BILL-5 fix pass).
+// reports it in its errors (BILL-5 fix pass). On a single-workspace
+// deployment the quota alert states the R2 figure too and stands in for the
+// R2 bell (BILL-15), so its Admin / DocCtrl get one storage bell, not two
+// different percentages for the same files.
 //
 // admin-and-org BILL-5 / BILL-12 (Round G, P6; DEC-99): the plan
 // ceilings and the bucket walk are DEPLOYMENT facts — one bucket, one
@@ -103,17 +106,25 @@ export async function readPlatformOperators(sb: SupabaseClient): Promise<{ uids:
   }
 }
 
+/** The id of the ONE workspace on this deployment, or null when there are
+ *  none or several. Fails closed: an unreadable orgs table is null ("not
+ *  sole"). */
+export async function soleTenantId(sb: SupabaseClient): Promise<string | null> {
+  try {
+    const { data, error } = await sb.from("orgs").select("id").limit(2);
+    if (error || !Array.isArray(data) || data.length !== 1) return null;
+    const id = (data[0] as { id?: unknown }).id;
+    return typeof id === "string" && id ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 /** True only when `orgId` is the ONE workspace on this deployment — then the
  *  deployment's figures are that workspace's own. Fails closed: an
  *  unreadable orgs table is "not sole". */
 export async function isSoleTenant(sb: SupabaseClient, orgId: string): Promise<boolean> {
-  try {
-    const { data, error } = await sb.from("orgs").select("id").limit(2);
-    if (error || !Array.isArray(data)) return false;
-    return data.length === 1 && (data[0] as { id?: string }).id === orgId;
-  } catch {
-    return false;
-  }
+  return (await soleTenantId(sb)) === orgId;
 }
 
 export type StorageScope = "deployment" | "workspace";
@@ -333,18 +344,24 @@ export interface PlatformStorageStatus {
  *  for every step, and the meaning-index drain after this one takes 100 s. */
 export const PLATFORM_WALK_BUDGET_MS = 60_000;
 
+/** The whole bucket's band against the R2 plan ceiling. A truncated walk
+ *  measured a FLOOR, not the total. Reporting "ok" from a number we know is
+ *  incomplete is the failure mode that lets a bucket sail past its ceiling
+ *  while the dashboard stays green — never band a truncated measurement
+ *  below "warn". Shared by the platform watchdog and, on a single-workspace
+ *  server, the quota alert that states this figure too (BILL-15). */
+export function r2PlanBand(bytes: number, truncated: boolean, limitBytes: number): { pct: number; band: AlertBand } {
+  const r = alertBand(bytes, limitBytes);
+  return truncated && r.band === "ok" ? { pct: r.pct, band: "warn" } : r;
+}
+
 export async function measurePlatformStorage(sb: SupabaseClient, opts: { deadlineMs?: number } = {}): Promise<PlatformStorageStatus> {
   const [r2Usage, dbBytes, limits] = await Promise.all([
     measureR2Usage({ deadlineMs: opts.deadlineMs ?? Date.now() + PLATFORM_WALK_BUDGET_MS }),
     measureDbBytes(sb),
     loadPlatformLimits(sb),
   ]);
-  const r2Band = alertBand(r2Usage.bytes, limits.r2Bytes);
-  // A truncated walk measured a FLOOR, not the total. Reporting "ok" from a
-  // number we know is incomplete is the failure mode that lets a bucket sail
-  // past its ceiling while the dashboard stays green — never band a
-  // truncated measurement below "warn".
-  if (r2Usage.truncated && r2Band.band === "ok") r2Band.band = "warn";
+  const r2Band = r2PlanBand(r2Usage.bytes, r2Usage.truncated, limits.r2Bytes);
   const dbBand = alertBand(dbBytes ?? 0, limits.dbBytes);
   return {
     r2: { ...r2Usage, limitBytes: limits.r2Bytes, pct: r2Band.pct, band: r2Band.band },
@@ -497,6 +514,24 @@ export async function runPlatformStorageAlerts(sb: SupabaseClient): Promise<{
   const sevenDaysAgo = new Date(Date.now() - 7 * 86400 * 1000).toISOString();
   for (const t of targets) {
     for (const alert of hot) {
+      // BILL-15 (DEC-99 §3): on a single-workspace server the workspace's
+      // files ARE nearly the whole bucket, and the quota alert (the cron's
+      // earlier step, lib/storageAlerts.ts runStorageAlerts) goes to these
+      // same people. When it fires there it states BOTH figures — the files
+      // against the limit an admin set, and the whole bucket against this R2
+      // plan ceiling — so it is this bell too: a quota bell from this week
+      // that stated the bucket running hot counts as the R2 bell, on the
+      // R2 bell's own week, and the person never gets a second percentage
+      // for the same files that day. A shared server keeps both (different
+      // people). A read that fails skips nothing: the R2 bell goes.
+      if (route === "sole-workspace" && alert.kind === "storage_platform_r2") {
+        const { data: filesBells } = await sb
+          .from("notifications").select("metadata")
+          .eq("org_id", t.orgId).eq("user_id", t.uid)
+          .eq("kind", "storage_alert").gte("created_at", sevenDaysAgo);
+        if (((filesBells as Array<{ metadata?: { r2PlanBand?: unknown } | null }> | null) ?? [])
+          .some((b) => b.metadata?.r2PlanBand === "warn" || b.metadata?.r2PlanBand === "crit")) continue;
+      }
       // Deduped per person per resource per week — but a blind (no-figures)
       // bell never stands in for the figures: an Admin belled blind on day 1
       // and registered as operator on day 2 gets the percentage on day 2,

@@ -5,8 +5,11 @@
 // only as a PNG / JPEG / WebP of at most 5 MB, with the type and the length
 // SIGNED into the PUT, and only after an audit row naming the actor lands.
 // The multipart route refuses the logo area outright. Every other key — a
-// document, a folder's cover or page background under branding/covers/ and
-// branding/backgrounds/ — is signed exactly as before.
+// document, a ticket attachment — is signed exactly as before. (A folder's
+// cover or page background under branding/covers/ and branding/backgrounds/
+// was member-writable here until admin-and-org ORG-16, Round G P10: it is now
+// held to the node editor's authority and an image type —
+// lib/__tests__/aoRoundGStorageFollowups.test.ts.)
 //
 // Fix pass: the restore page's "Put the files back" is the second direct
 // caller of upload-url. It builds its request with the same helper the test
@@ -193,10 +196,15 @@ describe("REGRESSION — every other upload is signed exactly as before", () => 
     expect(state.inserts).toEqual([]);
   });
 
-  it("a folder cover and a page background under branding/ sub-folders stay member-writable, any image type", async () => {
+  it("ORG-16 (P10) supersedes the member rule for covers and backgrounds: a Drafter is refused; a controller is signed, type signed, no audit row", async () => {
+    for (const p of [`orgs/${ORG}/branding/covers/c1.gif`, `orgs/${ORG}/branding/backgrounds/b1.svg`]) {
+      expect((await post({ path: p, contentType: "image/gif" })).status, p).toBe(403);
+    }
+    state.member = { uid: "u1", role: "DocCtrl", roles: ["DocCtrl"] };
     for (const p of [`orgs/${ORG}/branding/covers/c1.gif`, `orgs/${ORG}/branding/backgrounds/b1.svg`]) {
       const res = await post({ path: p, contentType: "image/gif" });
       expect(res.status, p).toBe(200);
+      expect(signedHeaders((await res.json()).url), p).toEqual(expect.arrayContaining(["content-type", "host"]));
     }
     expect(state.inserts).toEqual([]);
   });
@@ -285,8 +293,8 @@ describe("ORG-5 fix pass — a backup restore puts the workspace logo back (app/
     expect(state.inserts).toEqual([]);
   });
 
-  it("every other backup file is unaffected: a document, a cover GIF, a background SVG — no logo problem, signed as before", async () => {
-    for (const key of [`orgs/${ORG}/libraries/l1/1-a.pdf`, `orgs/${ORG}/branding/covers/c1.gif`, `orgs/${ORG}/branding/backgrounds/b1.svg`, `orgs/${ORG}/tickets/t1/x.unknownext`]) {
+  it("every other backup file is unaffected: a document, a ticket file — no logo problem, signed as before (covers and backgrounds: ORG-16, P10's test)", async () => {
+    for (const key of [`orgs/${ORG}/libraries/l1/1-a.pdf`, `orgs/${ORG}/tickets/t1/x.unknownext`]) {
       const req = restoreUploadRequest(key, 99);
       expect(req.logoProblem, key).toBeNull();
       expect(req.body.contentType, key).toBe(contentTypeForKey(key));
@@ -325,13 +333,20 @@ describe("ORG-5 fix pass 2 — a logo's type is its bytes' and its signed type's
   const WEBP = new Uint8Array([0x52, 0x49, 0x46, 0x46, 1, 2, 3, 4, 0x57, 0x45, 0x42, 0x50]);
   const GIF = bytes(0x47, 0x49, 0x46, 0x38, 0x39, 0x61);
 
-  it("REPRODUCED: a real JPEG uploaded as 'Company Logo.jfif' (signed as image/jpeg) did not restore — by its extension it is octet-stream, 415", async () => {
+  it("REPRODUCED: a real JPEG uploaded as 'Company Logo.jfif' (signed as image/jpeg) did not restore — by its extension it was octet-stream, 415 (until P10 named .jfif)", async () => {
     state.member = ADMIN;
     // how it got there: the modal's old key took the NAME's extension, and upload-url signed the declared type
     expect((await post({ path: key("jfif"), contentType: "image/jpeg", size: 4096 })).status).toBe(200);
+    // admin-and-org ORG-16 (Round G, P10): the restore's extension table now
+    // names .jfif (a JPEG), so a cover stored under it is put back as an
+    // image; without its bytes such a logo now restores as a JPEG too.
+    // An unnamed extension still falls back to octet-stream and is refused.
     const byName = restoreUploadRequest(key("jfif"), 4096);
-    expect(byName.contentType).toBe("application/octet-stream");
-    expect(byName.logoProblem).toBe("A workspace logo must be a PNG, JPEG or WebP image (SVG is not accepted).");
+    expect(byName.contentType).toBe("image/jpeg");
+    expect(byName.logoProblem).toBeNull();
+    const unnamed = restoreUploadRequest(key("companylogo"), 4096);
+    expect(unnamed.contentType).toBe("application/octet-stream");
+    expect(unnamed.logoProblem).toBe("A workspace logo must be a PNG, JPEG or WebP image (SVG is not accepted).");
   });
 
   it("with its first bytes, that logo — and one with no real extension ('CompanyLogo') — restores as what it is, signed and audited", async () => {

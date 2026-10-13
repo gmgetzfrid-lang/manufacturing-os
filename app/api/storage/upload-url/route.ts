@@ -3,7 +3,10 @@ import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { assertSafeStorageKey, isWorkspaceLogoKey, logoUploadProblem } from "@/lib/storageKey";
+import {
+  assertSafeStorageKey, isWorkspaceLogoKey, logoUploadProblem,
+  isNodeImageKey, NODE_CUSTOMIZE_ROLES, nodeImageUploadProblem,
+} from "@/lib/storageKey";
 import { memberHoldsAny } from "@/lib/roleHeld";
 
 export async function POST(req: NextRequest) {
@@ -39,6 +42,14 @@ export async function POST(req: NextRequest) {
   // only as a PNG / JPEG / WebP of at most 5 MB, the type and length signed
   // into the PUT so the upload cannot swap them.
   const logo = isWorkspaceLogoKey(path);
+  // ORG-16: a folder's or library's cover image and page background
+  // (orgs/<org>/branding/covers/ and …/backgrounds/, lib/storageKey.ts
+  // isNodeImageKey) are what every member who can see the node is shown.
+  // Writing them is held to the authority that opens the node editor
+  // (CustomizeNodeModal: the controller tier, NODE_CUSTOMIZE_ROLES, by the
+  // full role collection), and only as an image type the server signs into
+  // the PUT — ORG-5's rule on the smaller surface. No size cap.
+  const nodeImage = isNodeImageKey(path);
   if (orgMatch) {
     const { data: member } = await supabaseAdmin
       .from("org_members")
@@ -53,9 +64,19 @@ export async function POST(req: NextRequest) {
     if (logo && !memberHoldsAny(member as { role?: unknown; roles?: unknown }, ["Admin"])) {
       return NextResponse.json({ error: "Only an Admin can change the workspace logo." }, { status: 403 });
     }
+    if (nodeImage && !memberHoldsAny(member as { role?: unknown; roles?: unknown }, NODE_CUSTOMIZE_ROLES)) {
+      return NextResponse.json(
+        { error: "Only an Admin or a Document Controller can change a folder's or library's cover image or background." },
+        { status: 403 },
+      );
+    }
   }
   if (logo) {
     const problem = logoUploadProblem(contentType, size);
+    if (problem) return NextResponse.json({ error: problem.error }, { status: problem.status });
+  }
+  if (nodeImage) {
+    const problem = nodeImageUploadProblem(contentType);
     if (problem) return NextResponse.json({ error: problem.error }, { status: problem.status });
   }
 
@@ -118,8 +139,10 @@ export async function POST(req: NextRequest) {
 
   // A logo's Content-Type is signed too (the presigner leaves it unsigned by
   // default), and its Content-Length is signed because it is set: a PUT with
-  // another type or another byte count is refused by storage.
-  const url = await getSignedUrl(r2, command, logo
+  // another type or another byte count is refused by storage. A cover's or
+  // background's Content-Type is signed the same way (ORG-16), so the PUT
+  // cannot store an HTML page under the image type the route allowed.
+  const url = await getSignedUrl(r2, command, logo || nodeImage
     ? { expiresIn: 900, signableHeaders: new Set(["content-type"]) }
     : { expiresIn: 900 }); // 15 min
 
