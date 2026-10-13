@@ -311,6 +311,19 @@ lib/ticketTransitions.ts:130-132 —
 
 **Scope / residual.** Stays OPEN on done-whens 1 and 4 until the integrator rules on `DEC-100` item 2 (ratified: both are superseded for the personal kinds and `PROD-17` carries the follower notice), and on done-when 3 (drafting-flow).
 
+**Partial (2026-10-13, notifications Round G).** Package N15 RECIPIENT VISIBILITY AND NAMES, branch `fleet/N15-recipient-visibility` (base `89c9aaa`) — done-whens 1 and 4 as `DEC-100` item 2 (ratified) narrows them.
+
+- Done-when 1, superseded for the personal kinds (`DEC-100` item 2, ratified): every non-personal document-scoped emit already passes `followers: true` (the supersede notice, the hold pair). The follower notice for a force-release and a retirement is `PROD-17`'s, landed here.
+- Done-when 4: `lib/__tests__/recipientDiscovery.test.ts` "PROD-4 done-whens 1 and 4" censuses, from the source, every `emit()` in `app/` and `lib/` that passes `followers: true` on a `document` resource, by kind (`doc_superseded`, `hold_opened`, `hold_released`, `checkout_message`, `doc_recalled`). For each kind it asserts that a `subscriptions` row on the document puts the watcher in `resolveRecipients`, with the discover check registered and passing.
+
+**Done-when.**
+- ✓ 1, as `DEC-100` item 2 narrows it.
+- ✓ 2 (N9).
+- Done-when 3 is not met: `lib/ticketTransitions.ts`, drafting-flow DF-P9.
+- ✓ 4, as narrowed: every non-personal document-scoped kind.
+
+**Scope / residual.** Stays OPEN on done-when 3 only (owner drafting-flow DF-P9).
+
 ---
 
 <a id="prod-5"></a>
@@ -1087,5 +1100,33 @@ lib/inAppNotifications.ts:26 —
 - [ ] A test asserts a subscriptions row on the document puts the watcher in that notice's recipients.
 
 **Closer:** notifications N14 (or as the integrator routes it).
+
+**Partial (2026-10-13, notifications Round G).** Package N15 RECIPIENT VISIBILITY AND NAMES, branch `fleet/N15-recipient-visibility` (base `89c9aaa`).
+
+**Reproduced first** on `89c9aaa`: `forceReleaseDocument` emitted `checkout_force_released` to the holders only, and `recallRetiredDocument` emitted `doc_recalled` to the copy holders only. A watcher was told neither.
+
+**What landed.**
+- `lib/checkoutEpisodes.ts` `forceReleaseDocument`: after the holders' notice, a second `emit()` to `audience: { followers: true, exclude: <the holders told> }`.
+  - Title "<doc> was force-released by <actor>"; the reason in the body only, never the title (NEDGE-6).
+  - Kind `checkout_message`, category `watched`: the checkout thread's own system line, told to its watchers (FYI).
+- `lib/staleCopies.ts` `recallRetiredDocument`: before the copy-holder recall, an `emit()` to `audience: { followers: true, exclude: <the copy holders> }`.
+  - Title "<doc> was retired (<status>)"; the body says who retired it and any replacement note, and never "your copy".
+  - Kind `doc_recalled`, whose meaning per `DEC-100` item 1 is "the document was retired", on the `watched` category, so the watcher's own email toggle governs it.
+  - Sent even when nobody holds a copy.
+- Both go through the dispatcher's discover filter (`NEDGE-6`): a watcher who may not discover the document is dropped.
+- `lib/notify/dispatch.ts`: `audience.exclude`.
+
+**Tests.**
+- `lib/__tests__/checkoutRoundF.test.ts` "PROD-17": the follower notice's audience, words, reason placement and kind.
+- `lib/__tests__/staleCopiesRecall.test.ts` "PROD-17": the retirement notice; the recall and its audit row unchanged.
+- `lib/__tests__/recipientDiscovery.test.ts`: a subscriptions row puts the watcher in `resolveRecipients` for these kinds.
+
+**Done-when.**
+- Done-when 1 is met for a force-release and for a retirement by SUPERSEDE (`lib/revisions.ts` `supersedeDocument` → `recallRetiredDocument`). **Not met** for a retirement through the other doors, which never call `recallRetiredDocument`, so no recall and no follower notice go out today:
+  - a Void / Archived status change (`lib/revisions.ts` `changeDocumentStatus`, document-control P23's this round);
+  - a split or merge retiring its sources (`lib/documentLifecycle/split.ts`, `merge.ts`).
+- ✓ Done-when 2: a test asserts a subscriptions row puts the watcher in the notice's recipients.
+
+**Scope / residual.** Stays OPEN on done-when 1's other retirement doors. Owner: document-control (P23 holds `changeDocumentStatus`; the integrator routes split / merge). One call fixes each door: `lib/staleCopies.ts` `recallRetiredDocument({ … newStatus })`, which now carries the follower notice.
 
 ---

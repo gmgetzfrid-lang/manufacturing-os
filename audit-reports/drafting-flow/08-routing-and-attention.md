@@ -212,6 +212,23 @@ self.addEventListener("push", (event) => {
 
 **Scope / residual.** Stays OPEN on (a) and (c), each with the owner named above.
 
+**Partial (2026-10-13, notifications Round G).** Package N15 RECIPIENT VISIBILITY AND NAMES, branch `fleet/N15-recipient-visibility` (base `89c9aaa`) — limb (a).
+
+**Re-verified** on `89c9aaa`: the two ticket routes fold `tickets.watchers` themselves. But `resolveFollowers`' ticket branch is NOT dead: the intake door's redline notice (`app/api/intake/upload/route.ts`, `resource: { type: "ticket" }`, `audience: { involved, followers: true }`) walks it. Removing the branch would drop that notice's watchers, so the done-when's other arm was taken.
+
+**What landed.**
+- `lib/notify/recipients.ts`: the header's "folding together EVERY follow/subscribe mechanism" claim is gone. It now says the two ticket routes (`comment`, `workflow-action`) do NOT walk the resolver — they fold `tickets.watchers` into their own fan-out — and that the branch's only consumer is the intake door's redline notice. A ticket emit adding `followers: true` beside them would double-supply the watchers.
+- The comment on the branch says the same.
+
+**Tests.** `lib/__tests__/recipientDiscovery.test.ts` "ROUTE-3 (a)": the header's words; the redline notice is the branch's consumer; neither ticket route passes `followers: true` or calls `resolveFollowers`; the redline notice still reaches a ticket watcher (REGRESSION).
+
+**Done-when.**
+- ✓ 1: the "EVERY follow/subscribe mechanism" claim is removed and the header names the ticket routes as folding watchers themselves. The branch stays, for its one real consumer.
+- ✓ 2 (DF-P3).
+- Done-when 3 is not met: `TAX-12`, notifications N10.
+
+**Scope / residual.** Stays OPEN on (c) only (`TAX-12`, N10).
+
 ---
 
 <a id="route-4"></a>

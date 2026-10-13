@@ -535,6 +535,35 @@ export async function notify(input: NotificationInput): Promise<void> {
 - The other producers' owners are as listed under `DELIV-16`.
 - Residual of the integrator fix pass, recorded (no owner needed — each is the scan's behaviour before this pass, at worst): a dead letter that falls out of the plan's lookback (the cron down for longer than the scan's cooldown, or a run with more than 5000 dead letters in an org) is no longer told apart, and its row sends every notice again; a retry plan that cannot be read is a line in the run's errors, and every due row then sends every notice. A retry run sends only the lost notices and then stamps, so a notice that became due only since (an escalation past its grace) waits for the next cooldown, at most one day later than before.
 
+**Partial (2026-10-13, notifications Round G).** Package N15 RECIPIENT VISIBILITY AND NAMES, branch `fleet/N15-recipient-visibility` (base `89c9aaa`) — done-when 1's last two scans (the integrator's ruling of 2026-10-13).
+
+**Reproduced first** on `89c9aaa`:
+- `lib/distributionAcks.ts` `scanDistributionAcks` called `notify()` (one attempt, answer ignored).
+- `lib/holds.ts` `scanStaleHolds` called `emit()` (its in-app leg `notifyMany`, one attempt). Its dedupe was "any row for this hold and expectation", so a nudge that reached one pool member and dead-lettered for another was never sent again to the second.
+- Neither scan appeared in `result.complianceBellNotices`.
+
+**What landed.**
+- `scanDistributionAcks` takes `notifyCompliance` with one import line (`import { notifyCompliance as notify }`). Each nudge carries its row's retry key (`distribution-acks:<ack id>`) and each escalation its own (`distribution-acks:escalation:<requester>:<doc>`).
+  - Its cooldown watermark IS the notifications rows, per (recipient, document). A dead-lettered nudge leaves no row, so nothing marks it sent, and the next run nudges that recipient again (and only them).
+  - `n` stays the rows attempted.
+- `scanStaleHolds`: the nudge's bell rows go through `emit()`'s new `inappRetry: { retryKey: "hold-aging:<hold>:<expectation>" }`, which routes them through `notifyCompliance` (the hold kinds are not compliance kinds).
+  - The dedupe is now per recipient: once a hold's nudge has rows, the scan reads its dead letters (`loadScanRetryPlan`, 7 days; `ScanRetryPlan.has` new) and sends again only to the recipients its latest run lost who still have no row, bell only.
+  - A pool member who joined since is not nudged about an old miss, as before.
+- Both scans run inside `runComplianceScan` (the cron's step 6, unchanged). Their bell notices are now counted attempted / delivered / dead-lettered in `result.complianceBellNotices`, and their shortfall is reported in the run's errors.
+
+**Tests.**
+- `lib/__tests__/n15EmitRouting.test.ts` "scanDistributionAcks": retry keys; a dead-lettered nudge is sent again next run to that recipient only.
+- `lib/__tests__/holds.test.ts` "DELIV-7 dw1 (notifications N15)": the retry key; the lost recipient re-sent bell-only; nobody else; no dead letter means no re-send (REGRESSION).
+- `lib/__tests__/n15EmitRouting.test.ts`: `emit()`'s routing.
+
+**Done-when.**
+- ✓ 1, now for all eight step-6 scans.
+- Done-when 2 → `DELIV-16`, which stays OPEN on drafting-flow DF-P4's `CheckInPanel` limb.
+- ✓ 3.
+- ✓ 4.
+
+**Scope / residual.** Stays OPEN on done-when 2 only, through `DELIV-16`.
+
 ---
 
 <a id="deliv-8"></a>
@@ -1090,5 +1119,43 @@ export type NotifChannel = "inapp" | "email";
 - The read-back can miss a row whose insert is still executing on the server when its answer was lost (it commits after the read), and then the retry writes a second copy. Recorded in `DEC-102` Risk; no owner — closing it needs an idempotency key the table does not have (a migration and a unique index, which the notifications census forbids an upsert against).
 - A cron scan's dead-lettered notice is now sent again on the next run, to its recipient only (`DELIV-7`, integrator fix pass); the scan no longer stamps its cooldown over it.
 - A notice refused while the breaker is open, or past the cron's deadline, is not retried; it is still dead-lettered, and its error says why it was not retried.
+
+**Partial (2026-10-13, notifications Round G).** Package N15 RECIPIENT VISIBILITY AND NAMES, branch `fleet/N15-recipient-visibility` (base `89c9aaa`); migration `20261206` (`notification_i_wrote`).
+
+**Reproduced first** on `89c9aaa`, the gaps the N14 Partial lists:
+- `emit()`'s in-app leg wrote every kind through `notifyMany`, a single attempt.
+- `lib/postPublish.ts` `notifyPackagesOfRetirement` and `lib/distributionAcks.ts` `scanDistributionAcks` wrote directly, once.
+- A browser notice to another member was dead-lettered without a retry.
+
+**What landed.**
+- `lib/notify/dispatch.ts` `emit()`: a COMPLIANCE kind's bell rows (`KIND_META`), and any row a producer passes `inappRetry` for, go through `lib/complianceNotify.ts` `notifyCompliance`, one per recipient, with the producer's retry key. Every other kind goes through `notifyMany`, unchanged. This covers every compliance `emit()` in:
+  - `lib/distributionAcks.ts` (requests, re-nudges), `lib/postPublish.ts` (`doc_superseded`), `lib/staleCopies.ts` (`doc_recalled`), `lib/revisionImpact.ts` (`doc_upstream_changed`), `lib/workPackages.ts` (`package_doc_stale`);
+  - the intake door's notices (`app/api/intake/upload/route.ts` — `intake_submission` / `intake_quote`, the former `review_requested`, and `doc_superseded`).
+  - `lib/holds.ts` passes `inappRetry` for its stop-work hold notice and its aging nudge.
+- Direct writers: `lib/distributionAcks.ts` imports `notifyCompliance as notify`; `lib/postPublish.ts` `notifyPackagesOfRetirement` writes `package_doc_retired` through it, without telling the actor of their own act.
+- **The browser writer learns whether its own notice to another member landed.** `20261206` adds `notification_i_wrote(p_org, p_user, p_kind, p_title, p_resource_id, p_since)`:
+  - STABLE SECURITY DEFINER, `search_path` pinned, EXECUTE to `authenticated` only;
+  - a boolean, never a row: did a row the CALLER wrote (`actor_user_id = auth.uid()`, which the insert rail stamps) land, for an active member of the org, of a declared kind, at most an hour back.
+  - `lib/complianceNotify.ts` asks it before each retry and before the dead letter, and retries on its answer. Before the paste (PGRST202 / 42883), or when the read fails, today's path holds: no retry, a dead letter that says why.
+- **A server writer with no scan scope and no session** (a route on the service role — the intake door) now reads its row back from the table and retries. The service role sees every row. An unbound server client is the anon key, whose insert RLS refuses deterministically.
+
+**Exercised on PostgreSQL 16** (with `TAX-17`'s cases):
+- the writer's own row to another member → true;
+- a wrong title, a window after the row, a row older than the one-hour clamp, another member asking about it, a suspended member, another org, an undeclared kind, no signed-in caller → false;
+- anon → permission denied.
+
+**Tests.**
+- `lib/__tests__/complianceRetryN15.test.ts`: the browser's transient failure retried to ONE row; a lost answer found with no second copy; before the paste, no retry and the dead letter says why; REGRESSION, a landed notice is written once with no read-back; a browser with no session not retried; the server writer's retry and lost answer.
+- `lib/__tests__/n15EmitRouting.test.ts`: the in-app leg's routing, the counts, `inappRetry`'s key, REGRESSION for non-compliance kinds, and the producers' source pins.
+- `lib/__tests__/notifStaleEscalationMigration.test.ts`: the function's shape.
+- `lib/__tests__/complianceNotify.test.ts`: two cases updated for the new read-backs.
+
+**Done-when.**
+- Done-when 1 is met for every compliance producer above, and for a browser notice to another member once `20261206` is pasted. **Not done:** `components/documents/CheckInPanel.tsx`'s `review_requested` (drafting-flow DF-P4's, assigned at the DF-P2 merge).
+- ✓ Done-when 2 (N14).
+
+**Scope / residual.**
+- Stays OPEN on DF-P4's limb. `DEC-102` Risk (b) is unchanged, no owner: the read-back can miss a row whose insert is still executing.
+- **Pending migration:** `20261206` (deploy first, then paste; the app works before and after).
 
 ---

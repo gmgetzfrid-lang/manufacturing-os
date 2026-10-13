@@ -6165,6 +6165,8 @@ Shape: `lib/__tests__/prjRoundGJ16DoorIdentity.test.ts`. Origin: `lib/__tests__/
 
 **Risk:** low. `20261191` must be pasted BEFORE the deploy that writes the new kinds: once `20261160` is live, a browser's row of a kind the live allow-list does not name is refused and only logged (the server-written intake kinds are unaffected). Paste it IMMEDIATELY BEFORE the N9 deploy — the one whose `KIND_META` carries the nine kinds and whose cron derives `COMPLIANCE_KINDS` from it (N6 merged first). A deploy carrying N6's derivation alone is not enough: it derives from a `KIND_META` without the six split compliance kinds, so the derived list equals the cron's hand-kept list, and the paste's re-files move the already-written recall / package / intake rows out of it. A digest that fires between the paste and the N9 deploy omits the rows the paste re-filed (its 25 h window) — every recall, package, upstream and intake line written in the preceding day, the escalation rung the census calls the one reliable delivery path — so schedule the paste outside the digest hour (integrator fix pass, 2026-10-08). Binding order (`99-fix-sequencing.md`, the N9 hand-off): merge N6 before N9, or apply N6's one-line derivation in its file at the N9 merge; `lib/__tests__/notificationKinds.test.ts` holds the parity assertion as an `it.fails` tripwire that flips the moment the derivation lands, with a gap pin naming the six. The browser-module nudge cooldown has no database rule yet (`OS-13`, opened for N12 / N14). A follower of a project now gets the same email a member gets (as before, since both were named). A restore now writes follows a skipped table used to drop.
 
+*Landed 2026-10-13 (notifications Round G, N15): item 8 is wired. The dispatcher drops a document's non-discovering, non-controller follower through `lib/notify/recipients.ts` `discoveringAmong`, and the checkout thread's notice filters its whole audience the same way (`NEDGE-6` / `TAX-4`). Item 1's last rename is done: the stale-checkout escalation writes `checkout_stale_escalation`, and `checkout_released` is legacy-only (`TAX-17`, `20261206`). Item 2's follower notice for a force-release and a supersede retirement is in (`PROD-17`). Item 7's module rename is done: `lib/billing.ts` / `lib/watches.ts` (`NEDGE-21`). See `DEC-44 (N15-recipient-visibility)`.*
+
 <a id="dec-101"></a>
 ## DEC-101 · Ticket creation: the unit at intake, when a request number is spent, and where attachments wait
 
@@ -6230,6 +6232,8 @@ Shape: `lib/__tests__/prjRoundGJ16DoorIdentity.test.ts`. Origin: `lib/__tests__/
 
 *Amended 2026-10-13 (notifications Round G, N14 integrator fix pass, the re-review's minors 3-5): item 1 gains the read-back before a retry and the per-workspace breaker; item 2 the scans' retry key, stamp-only-when-landed and the labelled tally; Risk restated.*
 
+*Landed 2026-10-13 (notifications Round G, N15): item 1's "a browser notice to another member is dead-lettered without a retry" is closed once `20261206` is pasted. `notification_i_wrote` answers the writer, for a row it wrote, whether it landed, and the retry is made on that answer; before the paste, today's path. A server writer with no scan scope and no session (the service role) also reads back and retries. `emit()`'s in-app leg writes every compliance kind (and any `inappRetry` row) through `notifyCompliance`, and the last two step-6 scans adopt it (`DELIV-7` / `DELIV-16`). Risk (b) is unchanged.*
+
 <a id="dec-103"></a>
 ## DEC-103 · A departing member's in-flight requests, the SLA clock's thresholds and who it escalates to, and how a request ended
 
@@ -6256,3 +6260,44 @@ Shape: `lib/__tests__/prjRoundGJ16DoorIdentity.test.ts`. Origin: `lib/__tests__/
 **Risk:** low. 1 changes what a removal does to requests (it used to do nothing); the request page shows the history line; a hand-back the database refuses is a WARNING and a skipped request, never a refused removal. Until the request page sends the category, a cancel from the UI records no outcome ("Not recorded", outside the leak rate), and the audit row says the category was not named (`LEAK-9`, DF-P9) — so until the picker ships the leak rate is withheld ("not measured yet") wherever a cancel named no category and none named one (fix pass 3; it used to read 0 % there). The SLA clock sends nothing between the deploy and the paste (it reports the backlog as a count); the first paste records the requests already past their target as overdue without a notice each and tells each queue once, so nobody is mailed the backlog, and the first run after it warns only requests past 75 % and not yet due (`20261195`'s inventory row 7 counts them). *(Corrected at fix pass 2: this said the first runs after the deploy would send breach notices to the backlog, as many per run as 30 s allowed, with inventory row 5 counting them — a count taken after the deploy, which could not warn in advance.)* A removal can still fail when the server cancels its statement (above).
 
 *Amended 2026-10-13 (drafting-flow Round G, DF-P3 integrator fix pass 3 — the third adversarial review): item 1 and Acceptance 1 said no request is left on a uid that cannot sign in; what a removal left (row-locked, refused, past 200) waited for a hand re-paste. The maintenance cron now hands it back every run (step 5b(i), `departed_member_ticket_holders` → the same function), and both lines say what holds. The departure's notices are one summary row per queue owner per call (the per-ticket form tripped the notification rail's actor cap on a large hand-back). Item 2: the workflow route retires the clock's notices only on an exit (the bell's client reconcile on a status change is DF-P9's remainder), and `ticket_insert_integrity` clears the SLA stamps and `outcome` on a client insert. Item 3: the leak rate is withheld, not 0 %, while no cancel names a category. `20261195` is still pending paste and now returns 13 × true. See drafting-flow `EDGE-4`, `EDGE-7`, `ROUTE-6`, `LEAK-9`.*
+
+<a id="dec-44-n15"></a>
+## DEC-44 (N15-recipient-visibility) · Who a document's notice may reach, what a check that cannot run does, and the follower's own notices
+
+*Minted by notifications Round G, package N15 RECIPIENT VISIBILITY AND NAMES (2026-10-13), as a provisional "DEC-44 (N15-recipient-visibility)" — distinct from the download-record DEC-44 and every other provisional DEC-44; the integrator renumbers it at merge. It takes the fleet plan's defaults and `DEC-90`'s fail-safe rule. References: `NEDGE-6`, `TAX-4`, `PROD-4`, `PROD-17`, `TAX-17`, `NEDGE-21`, `NEDGE-8`, `NEDGE-10`, `NEDGE-12`, `DELIV-7`, `DELIV-16`, `ROUTE-3`, `NEDGE-22`, `DEC-43`, `DEC-90`, `DEC-100`, `DEC-102`.*
+
+**Decision.**
+1. **The discover filter is the follower's, on a document (`NEDGE-6` dw3).** A recipient reached ONLY through the follow list of a document-scoped event is kept only while they may discover the document. Discovery is the full library → folders → document chain, the effective owner, and the controller tier, which never drops anyone (`DEC-43`). Named people, role pools and project rosters are the producer's choice and are not filtered. The checkout thread's notice is all followers by nature (participants, session holders, watchers), so its whole audience is filtered (`TAX-4`).
+2. **A check that runs and fails keeps only the controllers; a context with no check keeps everyone.** A failed read, a 404 or a thrown fetch is fail closed (`DEC-90`): a notice names the document, so it does not go to someone who may not know the document exists. A server entry that never loaded the check is code that predates the filter, so it keeps today's path and logs it. The one such entry that emits document follower notices, the intake door, loads it (pinned).
+3. **The server check registers itself; the browser asks the route.** `lib/documentDiscoverers.ts` (service role) registers into `lib/notify/recipients.ts` when it is loaded, so the browser bundle never imports a server module. The browser calls `POST /api/documents/discoverers` with the member's own token.
+4. **A watcher's notice is in a watcher's words, on existing kinds (`PROD-17`).**
+   - Force-release: `checkout_message`, the checkout thread's own system line told to its watchers.
+   - Retirement: `doc_recalled`, whose meaning "the document was retired" is `DEC-100` item 1's, on the `watched` category, so the watcher's own toggle governs its email.
+   - Both minus the people the personal notice told (`audience.exclude`). No new kind was needed for them.
+5. **The stale-checkout escalation's own kind (`TAX-17`).** `checkout_stale_escalation`, with `checkout_released`'s flags. The dedupe reads both kinds; `checkout_released` is legacy-only. `20261206` is pasted AFTER the deploy that writes the new kind: it is written on the service role, which the rail passes, and the old cron would re-escalate the re-filed rows.
+6. **A writer that can read its own write back retries (`DELIV-16`).** `notification_i_wrote` (`20261206`) answers a boolean, only for rows whose actor is the caller, for at most an hour back. It is in the same file as `TAX-17`'s re-create, because the package has one migration number. A server writer with no session reads the table as the service role.
+7. **A follower-ticket emit walks `tickets.watchers` (`ROUTE-3` (a)).** The branch stays for the intake door's redline notice. The two ticket routes fold watchers themselves, and the header says so.
+
+**Rationale.** A notice's title is a disclosure: it names the document and, for a hold, a reason. The follower list is the one audience the producer did not choose person by person, so it is where an ACL change can leave a stale reader. A check that cannot answer must not widen who learns a hidden document exists. Delivery to the people the producer named is never put at risk by it.
+
+**Implementation.**
+- `lib/notify/recipients.ts` (`discoveringAmong`, `__registerServerDiscoverCheck`, the header), `lib/notify/dispatch.ts` (`resolveRecipients`, `audience.exclude`, `inappRetry` and the compliance in-app leg), `lib/documentDiscoverers.ts` (registration), `app/api/intake/upload/route.ts` (one import), `lib/activityThread.ts`.
+- `lib/checkoutEpisodes.ts`, `lib/staleCopies.ts`; `app/api/cron/maintenance/route.ts`, `lib/notificationKinds.ts` (one line), `lib/inAppNotifications.ts` (the union).
+- `lib/complianceNotify.ts` (the read-back strategy, `ScanRetryPlan.has`), `lib/distributionAcks.ts`, `lib/holds.ts`, `lib/postPublish.ts`; `lib/transmittalReceiptNotice.ts`, `app/api/notifications/unsubscribe/route.ts` (copy).
+- `lib/billing.ts` / `lib/watches.ts` (renamed).
+- `supabase/migrations/20261206_notif_roundG_stale_escalation_kind.sql`.
+
+**Acceptance.** `lib/__tests__/recipientDiscovery.test.ts`, `complianceRetryN15.test.ts`, `n15EmitRouting.test.ts`, `n15TransmittalReceipt.test.ts`, `notifStaleEscalationMigration.test.ts`, `moduleNamesApart.test.ts`, `holds.test.ts`, `checkoutRoundF.test.ts`, `staleCopiesRecall.test.ts`, `maintenanceDrain.test.ts`, `notificationKinds.test.ts`; `20261206` exercised on a throwaway PostgreSQL 16.
+
+**Reversal.**
+- (1) Remove the `discoveringAmong` block in `resolveRecipients` / `notifyCheckoutActivity`.
+- (2) The failure branch in `discoveringAmong`.
+- (4) The two follower `emit()` calls.
+- (5) The kind string and `STALE_ESCALATION_KINDS`. A re-create of `notification_kinds()` without the row needs the rows re-filed back first.
+- (6) Dropping `notification_i_wrote` returns the browser to "no retry". The app treats a missing function as today's path.
+
+**Risk:** low.
+- A transient route failure keeps a document follower's FYI from them, the controllers excepted (logged).
+- Every checkout-thread post and every document follower emit from the browser now makes one extra request.
+- A retirement through a void / archive status change or a split / merge still tells no watcher (`PROD-17` residual, owner document-control).
+- A library-scoped notice is not discover-checked (`NEDGE-22`).

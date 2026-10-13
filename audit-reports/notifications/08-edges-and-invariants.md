@@ -326,7 +326,7 @@ Tests: `lib/__tests__/notificationCenterScope.test.ts` — "is named with its co
 ## NEDGE-6 · Notification titles broadcast document numbers and free-text hold reasons to every Admin and DocCtrl and out through Resend, with no ACL consultation anywhere on the notify path — defeating the 'hidden' node visibility the ACL layer implements
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** notifications N15 RECIPIENT VISIBILITY AND NAMES (done-when 3, the dispatcher wiring) — by the integrator, 2026-10-13 (N9 merge, DEC-31; fleet plans `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/holds.ts:238-252`, `lib/branches.ts:141-148`, `lib/notify/dispatch.ts:120`, `lib/notify/recipients.ts:48-62`, `types/schema.ts:81`, `lib/acl.ts:207`, `app/api/cron/maintenance/route.ts:421-426`
@@ -382,6 +382,29 @@ types/schema.ts:81  `export type NodeVisibility = "normal" | "hidden" | "private
 - Verified (loop on `fleet/N9-dc-producers-kind-split` after the review fix, 2026-10-08): `npx tsc --noEmit` exit 0; `npx eslint` on the changed `.ts` files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 0 — 460 files, 10039 passed, 8 expected fail (10047; the eighth is the compliance-digest tripwire). `next build` is the integrator's.
 
 **Not done — the wiring.** Dropping the non-discovering, non-controller recipients of a document-scoped event is the dispatcher's (`lib/notify/dispatch.ts` `emit` / `resolveRecipients`, notifications N6's file in this round): call `discoverersOfDocument` on the server and the route from the browser, for followers (and, by the plan's narrowing, never for controllers). Owner: notifications N14 (after N6). Stays OPEN.
+
+**Resolution (2026-10-13, notifications Round G).** Package N15 RECIPIENT VISIBILITY AND NAMES, branch `fleet/N15-recipient-visibility` (base `89c9aaa`) — done-when 3, the wiring (the part the fleet plan left open; done-when 1 and 2 as N5 recorded them).
+
+**Reproduced first** on `89c9aaa`: `lib/notify/dispatch.ts` `resolveRecipients` added every `resolveFollowers` uid with no discover check, so a follower of a hidden document, or one taken off its ACL, got the bell row and the email body (`lib/__tests__/recipientDiscovery.test.ts` "reproduced on HEAD's behaviour (no check)").
+
+**What landed.**
+- `lib/notify/recipients.ts` `discoveringAmong(orgId, documentId, uids)`: who among `uids` may DISCOVER the document. On the server it calls the check `lib/documentDiscoverers.ts` registers when it is loaded (`__registerServerDiscoverCheck` — `discoverersOfDocument`, the service role). `recipients.ts` is bundled for the browser, so it never imports that module. In the browser it calls `POST /api/documents/discoverers` with the member's own token. Asked in chunks of 500 (the route's `DISCOVERERS_MAX_UIDS`).
+  - A check that RUNS and FAILS (a read error, a 404 because the caller cannot read the document, a thrown fetch): only the org's controllers among the people are kept. This is fail closed (`DEC-90`), logged.
+  - A context with NO check (a server entry that never loaded `lib/documentDiscoverers.ts`): everyone is kept, as before the filter, and it is logged. The one server entry that emits document follower notices, the intake door (`app/api/intake/upload/route.ts`, through `lib/postPublish.ts`), loads it (`import "@/lib/documentDiscoverers"`). A test pins that import.
+- `lib/notify/dispatch.ts` `resolveRecipients`: a follower reached ONLY through the follow list of a DOCUMENT-scoped event is kept only if `discoveringAmong` keeps them. Someone the producer names in `involved`, a role pool and a project roster are the producer's choice and are not filtered. Controllers are never dropped: `canDiscover` passes the controller tier (`DEC-43`), and the failure path keeps them. Dedupe and the active-member filter are unchanged, so every recipient with access still gets exactly one row.
+- `EmitInput.audience.exclude` (new, optional): people left out whatever source reached them (PROD-17).
+
+**Tests.** `lib/__tests__/recipientDiscovery.test.ts` (20 tests): the hidden document drops the non-discovering follower and keeps the granted one and both controllers (headline and additive); a named person is not filtered; REGRESSION, a document every member may discover — every follower gets exactly one row and one email; a failed or thrown check keeps only the controllers; a library-scoped event is not checked; chunks of 500; the browser path's request (`/api/documents/discoverers`, `Bearer` token, body); a 404 is a failure; no check means everyone is kept and logged; the registration and the intake door's import are pinned, and `recipients.ts` imports no server module.
+
+**Done-when.**
+- Done-when 1: not met as written. It holds as the plan narrowed it (N5's record, `DEC-43`): a controller reading a hold's title in the bell is the unscoped controller tier. Nothing changed here.
+- ✓ Done-when 2 (N5): free-text reasons never enter a broadcast subject line (`broadcastSubject`, `REASON_IN_TITLE`).
+- ✓ Done-when 3, as narrowed by the plan (non-controller followers, the node-visibility / ACL discover check): `resolveRecipients` filters a document-scoped event's follower-only recipients through `discoverersOfDocument` (server) or its route (browser), honouring `hidden` / `private` and every ACL on the library → folders → document chain.
+
+**Scope / residual.**
+- Role pools and named people are not filtered (the plan's narrowing). A hold's release pool is resolved from the policy's roles and passed as `involved`.
+- A LIBRARY-scoped follower notice (`library_doc_added`, `library_doc_revised`, `transmittal_issued`) names a document to the library's followers and is not discover-checked. Opened as `NEDGE-22`.
+- A server entry that emits a document follower notice and does not load `lib/documentDiscoverers.ts` keeps today's unfiltered path, and logs it. Today the intake door is the only such entry, and it loads the module.
 
 ---
 
@@ -461,7 +484,7 @@ The scratch cluster was deleted afterwards.
 ## NEDGE-8 · Restoring an org silently destroys every watch/follow relationship, because the restore skip-list mistakes the watch table for Stripe billing state
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** notifications N15 RECIPIENT VISIBILITY AND NAMES (done-when 2, through `NEDGE-21`) — by the integrator, 2026-10-13 (N9 merge, DEC-31; fleet plans `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/dataRestore.ts:85-93`, `lib/subscriptions.ts:1-5`, `lib/subscription.ts:3-5`, `supabase/migrations/20260622_subscriptions.sql:13`, `supabase/migrations/20260723_notifications_unify.sql:55`, `lib/exportTables.ts:159`
@@ -504,6 +527,15 @@ dispatch.ts:84  `  if (recipients.length === 0) return;`
 - ✓ A restore test asserts a non-zero subscriptions row count in the target org afterwards.
 
 **Scope / residual.** Stays OPEN for done-when 2 only (`NEDGE-21`, owner notifications N14). `push_subscriptions` (device registrations) stays skipped — a different table.
+
+**Resolution (2026-10-13, notifications Round G).** Package N15 RECIPIENT VISIBILITY AND NAMES, branch `fleet/N15-recipient-visibility` (base `89c9aaa`) — done-when 2, through `NEDGE-21`: `lib/billing.ts` and `lib/watches.ts`, each header naming its table (`lib/__tests__/moduleNamesApart.test.ts`).
+
+**Done-when.**
+- ✓ 1 (N9).
+- ✓ 2: renamed apart (N15, `NEDGE-21`).
+- ✓ 3 (N9, `lib/__tests__/restoreSubscriptions.test.ts`).
+
+**Scope / residual.** As N9 recorded: `push_subscriptions` stays skipped (a different table).
 
 ---
 
@@ -560,7 +592,7 @@ lib/notifications.ts:59-61  `    if (prefs?.email_enabled === false) return;\n  
 ## NEDGE-10 · No email the system sends carries an unsubscribe affordance, and mention markup leaks raw into email bodies
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** notifications N15 RECIPIENT VISIBILITY AND NAMES (done-when 1's transmittal receipt limb: verify the gate and record it) — by the integrator, 2026-10-13 (N9 merge, DEC-31; fleet plan `audit-reports/fleet-plans/notifications.json`).
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/notifications/send-queued/route.ts:145-153`, `lib/notify/dispatch.ts:116-127`, `app/api/tickets/comment/route.ts:308-311`, `lib/notifications.ts:168-183`
@@ -602,6 +634,28 @@ notifications.ts:169-170  `// Mentions are stored in comment text as @[Display N
 3. ✓ The unsubscribe target works: it saves a row the `digest_frequency` CHECK accepts (N1's `NEDGE-2` fix; the upsert writes `email_enabled` and `updated_at` only, every other column at its default).
 
 **Scope / residual.** The key: a deployment may set `EMAIL_UNSUBSCRIBE_SECRET`; until then the service-role key signs (rotating it voids old links, which then answer "not valid" and change nothing). Mail clients show the one-click control only for authenticated senders; that is the deployment's DKIM/SPF, not code. A member whose membership address differs from their profile address (they changed their sign-in address) gets mail without the header until the two agree; the footer's settings link still works. Not done here: (a) the transmittal route's two service-role inserts (`app/api/transmittal/route.ts` :418 unstamped / refused, :798 the acknowledgment receipt, notifications N9's) do not consult the recipient's preferences — pointer handed to N9 in `99-fix-sequencing.md`; the drain leaves the header off the first two and off anything reaching a member whose switch is already off, but not off the acknowledgment receipt while the issuer's switch is on (done-when 1, ◐; `DEC-90` A10 rules the receipt preference-gated), and the unsubscribe page names them; (b) narrowing `email_notif_insert` so `to_email` must be `to_user_id`'s own address (the review's optional, non-widening follow-up) — the drain and the route no longer depend on it, and it would refuse rows the app queues today where a membership address and a profile address differ (DEC-31).
+
+**Resolution (2026-10-13, notifications Round G).** Package N15 RECIPIENT VISIBILITY AND NAMES, branch `fleet/N15-recipient-visibility` (base `89c9aaa`) — done-when 1's transmittal limb, verified and recorded.
+
+**Verified** at `89c9aaa`, after N9:
+- The issuer's acknowledgment receipt is queued by `lib/transmittalReceiptNotice.ts` `tellIssuerOfReceipt` through `queueEmail` (`lib/notifications.ts`), under `runWithServerClient(admin)`, as event `watcher_activity`.
+- `queueEmail` asks `email_gate()`, whose NEWEST body (`20261191`) stops every event but `safety_recall` / `safety_alert` / `transmittal_unstamped` / `transmittal_refused` on `v_prefs.email_enabled IS FALSE`. Before `20261148` is pasted, the service-role fallback applies the same rule (`emailAllowedByPrefs`).
+- So the master switch the one-click link sets does stop the receipt, and the link it carries (`send-queued/route.ts` `listUnsubscribeFor`; `watcher_activity` is not in `NO_OPT_OUT_EVENT_TYPES`) tells the truth.
+
+**Changed:** the unsubscribe page (`app/api/notifications/unsubscribe/route.ts` `SAFETY_NOTE`) no longer lists "a recipient's acknowledgment" among the mail that still arrives. It names only the unstamped / refused-PDF notices, which are exempt.
+
+**Tests.** `lib/__tests__/n15TransmittalReceipt.test.ts` "NEDGE-10 dw1":
+- the receipt goes through `queueEmail`, on the bound service-role client, as the issuer's `watcher_activity` mail;
+- `watcher_activity` is not preference-exempt, and the master switch off or `never` stops it;
+- the newest `email_gate()` (found by scanning) stops it on the master switch;
+- the drain's no-opt-out list and the page copy agree.
+
+**Done-when.**
+- ✓ 1: every queued member email is rendered, carries a one-click opt-out the switch honours, and the transmittal receipt is gated by the issuer's master switch (`lib/transmittalReceiptNotice.ts` → `lib/notifications.ts` `queueEmail` → `email_gate`).
+- ✓ 2 (N6).
+- ✓ 3 (N6).
+
+**Scope / residual.** As N6 recorded: (b) narrowing `email_notif_insert` stays a DEC-31 non-change. The unstamped / refused-PDF notices are preference-exempt by `DEC-90` A10.
 
 ---
 
@@ -698,6 +752,23 @@ vercel.json:9-10  `      "path": "/api/cron/maintenance",\n      "schedule": "0 
 3. ✗ No org-level timezone setting exists. Opened as `NEDGE-19` (the plan's decision: recorded as a new finding, not built here). `orgTimeZone` already reads the key such a setting would write.
 
 **Scope / residual.** Owners: done-when 1's transmittal line → notifications N9; done-when 3 → `NEDGE-19` (admin-and-org P8, assigned by the integrator at the N6 merge).
+
+**Partial (2026-10-13, notifications Round G).** Package N15 RECIPIENT VISIBILITY AND NAMES, branch `fleet/N15-recipient-visibility` (base `89c9aaa`) — done-when 1's transmittal limb.
+
+**Reproduced first** on `89c9aaa`: `lib/transmittalReceiptNotice.ts:75` `const when = new Date(input.at).toLocaleString();`.
+
+**What landed.** `receiptEmailText(input, timeZone?)` prints the time with `lib/recordTime.ts` `formatRecordTime`, ISO-8601 with its offset and the zone named. `tellIssuerOfReceipt` reads the org's zone (`orgTimeZone(admin, orgId)`) and falls back to UTC, labelled. The 6:15 pm Central case reads `2026-03-20T18:15:15-05:00 (America/Chicago)`, the same calendar day.
+
+**Tests.**
+- `lib/__tests__/n15TransmittalReceipt.test.ts` "NEDGE-12 dw1": UTC labelled; the configured zone; the zone read by `tellIssuerOfReceipt`; no bare `toLocale*String()` left in the module.
+- `lib/__tests__/transmittalNoticesN9.test.ts`: the receipt bodies, word for word but the time.
+
+**Done-when.**
+- ✓ 1: every server-composed notification and email body uses the one helper (the cron, N6; the transmittal receipt, here).
+- ✓ 2 (N6).
+- Done-when 3 is not met: no org-level timezone setting exists yet (`NEDGE-19`, admin-and-org P8).
+
+**Scope / residual.** Stays OPEN on done-when 3 only (owner admin-and-org P8, through `NEDGE-19`).
 
 ---
 
@@ -1043,7 +1114,7 @@ Paste and deploy order: either order is safe, and `20261183` and `20261197` are 
 ## NEDGE-21 · `lib/subscription.ts` (billing) and `lib/subscriptions.ts` (watch / follow) differ by one letter — the collision that hid `NEDGE-8`
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** notifications N15 RECIPIENT VISIBILITY AND NAMES (the rename) — by the integrator, 2026-10-13 (N9 merge, DEC-31; fleet plans `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/subscription.ts`, `lib/subscriptions.ts`, their importers
@@ -1057,3 +1128,48 @@ Paste and deploy order: either order is safe, and `20261183` and `20261197` are 
 - [ ] Each module's header names the table it is about.
 
 **Closer:** notifications N14 (or as the integrator routes it — the billing module's owner, admin-and-org, edits the importers too).
+
+**Resolution (2026-10-13, notifications Round G).** Package N15 RECIPIENT VISIBILITY AND NAMES, branch `fleet/N15-recipient-visibility` (base `89c9aaa`), one commit.
+
+**Reproduced first** on `89c9aaa`: `lib/subscription.ts` (billing) and `lib/subscriptions.ts` (watch / follow) both existed.
+
+**What landed.**
+- `git mv lib/subscription.ts lib/billing.ts` and `lib/subscriptions.ts lib/watches.ts`. No behaviour change: the exports are identical.
+- Every importer moved, with nothing left on the old names:
+  - `components/providers/SubscriptionProvider.tsx`, `components/subscription/TrialBanner.tsx`, `components/subscription/SubscriptionGate.tsx`;
+  - `app/(protected)/admin/billing/page.tsx`, `app/api/stripe/webhook/route.ts`;
+  - `lib/exportEntitlement.ts`, `lib/stripe.ts`, `lib/serverAuth.ts`, `components/ui/WatchButton.tsx`;
+  - the tests' imports and mocks. The checked-write census follows the file to `lib/watches.ts`.
+- Each header names its table: `lib/billing.ts` "TABLE: public.orgs … NOT the watch / follow list"; `lib/watches.ts` "TABLE: public.subscriptions … NOT billing".
+
+**Tests.** `lib/__tests__/moduleNamesApart.test.ts`: the old files are gone; no source imports either old name; each header names its table; the exports are unchanged.
+
+**Done-when.**
+- ✓ 1: renamed apart, every importer moved, no file keeps the old name.
+- ✓ 2: each module's header names its table.
+
+**Scope / residual.** Comments in `lib/dataRestore.ts` (intelligence I-01's file this round) still cite the old file names in prose (:151-152, :357, :982). They are not importers; I-01 or the integrator updates them at the merge. Admin-and-org P5 (queued after) rebases `SubscriptionGate.tsx` / `serverAuth.ts` on `@/lib/billing`.
+
+
+---
+
+<a id="nedge-22"></a>
+
+## NEDGE-22 · A library's follower is told a document's number and title in that library with no discover check — the library-scoped half of `NEDGE-6`
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Verification:** CONFIRMED by reading the code at `89c9aaa` + N15.
+- **Locations:** `lib/notify/dispatch.ts` (`resolveRecipients` — the discover filter runs for a `document` resource only), `lib/postPublish.ts` (`notifySuperseded`'s `library_doc_revised`), `lib/libraryNotify.ts` (`library_doc_added`), `lib/transmittals.ts` (`notifyTransmittalIssued`, `transmittal_issued` to a library's followers)
+- **Opened:** 2026-10-13, notifications Round G, package N15 — the remainder of `NEDGE-6` done-when 3 (DEC-31). That done-when names document-scoped resources, and N15 wired it for them.
+
+**Mechanism.** Since N15 the dispatcher drops a document's follower who may not discover the document. A library-scoped notice is not filtered. `library_doc_revised`, `library_doc_added` and `transmittal_issued` reach every follower of a LIBRARY and name a document in it ("P-4412 → Rev C"). So a member who follows a library but cannot discover a hidden or private document in it (a document-level ACL inside an open library) reads that document's number and title in the bell and the email body.
+
+**Done when.**
+
+- [ ] A library-scoped notice that names a document is discover-checked against that document (`lib/notify/recipients.ts` `discoveringAmong`, the producer passing the document id), or names no document to a follower who cannot discover it.
+- [ ] A test: a library follower outside a hidden document's ACL gets no row naming it; one inside does (REGRESSION).
+
+**Closer:** notifications (the integrator routes it). Small: the three producers pass the named document's id, and the dispatcher filters the library's followers through the same check.
+
+---
