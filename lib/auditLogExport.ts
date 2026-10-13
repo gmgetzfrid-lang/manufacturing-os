@@ -69,6 +69,12 @@ export interface AuditExportRow {
 
 export const AUDIT_EXPORT_ROW_CEILING = 50_000;
 export const AUDIT_EXPORT_PAGE = 1_000;
+/** P7 review — a recorded change of file shape: before ALOG-6 the column
+ *  header was line 1; the file now opens with its bounds (12 rows) and a
+ *  blank line, so the header is line AUDIT_CSV_LINES_BEFORE_HEADER + 1. An
+ *  import that reads row 1 as column names must skip these lines; the
+ *  /admin/audit export button and its done note say so. */
+export const AUDIT_CSV_LINES_BEFORE_HEADER = 13;
 
 const RANGE_MS: Record<Exclude<AuditRange, "all">, number> = { "24h": 86_400_000, "7d": 7 * 86_400_000, "30d": 30 * 86_400_000 };
 
@@ -213,7 +219,8 @@ export interface AuditExportBounds {
   datedAfterStart?: number;
 }
 
-/** The file: a bounds block, a blank line, then the header and the rows. */
+/** The file: a bounds block, a blank line, then the header and the rows
+ *  (the header on line AUDIT_CSV_LINES_BEFORE_HEADER + 1). */
 export function buildAuditCsv(
   rows: readonly AuditExportRow[],
   docMeta: Map<string, { documentNumber: string | null; title: string | null }>,

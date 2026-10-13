@@ -17,12 +17,31 @@ import { join } from "node:path";
 import {
   AUDIT_ACTIONS, AUDIT_ACTION_FAMILIES, AUDIT_RESOURCE_TYPES, DESTRUCTIVE_AUDIT_ACTIONS, auditActionDef,
   auditActionFilterOptions, auditActionFilterQuery, pairTicketAttempts, isDestructiveAuditAction, auditActorNote, foldTicketFeed,
+  auditFamilyLikePattern,
 } from "@/lib/auditActions";
 
 const root = process.cwd();
 const src = (p: string) => readFileSync(join(root, p), "utf8");
 const walk = (d: string): string[] => readdirSync(join(root, d), { withFileTypes: true }).flatMap((e) =>
   e.isDirectory() ? (e.name === "__tests__" || e.name === "node_modules" ? [] : walk(join(d, e.name))) : /\.(ts|tsx)$/.test(e.name) ? [join(d, e.name)] : []);
+
+/** The 1-based line of `marker` in lib/auditActions.ts (named in a census
+ *  failure so the integrator knows where to register a new action). */
+const registryLine = (marker: string) => src("lib/auditActions.ts").split("\n").findIndex((l) => l.includes(marker)) + 1;
+
+/** PostgreSQL LIKE with its default backslash escape: `%` any run, `_` one
+ *  character, `\x` the literal x. */
+function likeMatches(pattern: string, value: string): boolean {
+  let re = "";
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i];
+    if (c === "\\") { i++; re += (pattern[i] ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+    else if (c === "%") re += "[\\s\\S]*";
+    else if (c === "_") re += "[\\s\\S]";
+    else re += c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${re}$`).test(value);
+}
 
 /** Every action name a writer spells: `action: "X"` in app/lib/components/hooks
  *  (the file must touch audit), the helpers' `type:` unions in lib/audit.ts,
@@ -50,8 +69,11 @@ function writtenActions(): Map<string, string> {
 describe("ALOG-11 — one registry the viewers read", () => {
   it("every action a writer spells is registered (or in a family), so it is filterable the day it ships", () => {
     expect(writtenActions().size).toBeGreaterThan(150); // the census walks the writers (not vacuous)
+    for (const m of ["const BY_CATEGORY", "export const AUDIT_ACTION_FAMILIES", "export const AUDIT_RESOURCE_TYPES"]) expect(registryLine(m), m).toBeGreaterThan(0);
     const missing = [...writtenActions()].filter(([a]) => !auditActionDef(a)).map(([a, where]) => `${a} (${where})`);
-    expect(missing).toEqual([]);
+    // P7 review: a package merging after P7 that writes a new action lands
+    // here — the message names the file and the line to add it at.
+    expect(missing, `Unregistered audit action(s). Add each to lib/auditActions.ts BY_CATEGORY (line ${registryLine("const BY_CATEGORY")}, in the category it belongs to) or, for a dynamic name, AUDIT_ACTION_FAMILIES (line ${registryLine("export const AUDIT_ACTION_FAMILIES")})`).toEqual([]);
   });
 
   it("every icon / verb the two viewers carry is a registered action (no second vocabulary drifts)", () => {
@@ -83,7 +105,9 @@ describe("ALOG-11 — one registry the viewers read", () => {
     for (const p of ["app", "lib", "components", "hooks"].flatMap(walk)) {
       const s = src(p);
       if (!/audit/i.test(s) || p === join("lib", "auditActions.ts")) continue;
-      for (const m of s.matchAll(/\bresource_?[tT]ype\s*:\s*["']([a-z_]+)["']/g)) expect(types.has(m[1]), `${p}: ${m[1]}`).toBe(true);
+      for (const m of s.matchAll(/\bresource_?[tT]ype\s*:\s*["']([a-z_]+)["']/g)) {
+        expect(types.has(m[1]), `${p}: resource_type "${m[1]}" is not registered — add it to lib/auditActions.ts AUDIT_RESOURCE_TYPES (line ${registryLine("export const AUDIT_RESOURCE_TYPES")})`).toBe(true);
+      }
     }
   });
 
@@ -103,11 +127,28 @@ describe("ALOG-11 — one registry the viewers read", () => {
 
   it("a ticket action filter brings its EVID-12 follow-ups; a family filters by prefix", () => {
     expect(auditActionFilterQuery("TICKET_CLOSE")).toEqual({ kind: "in", actions: ["TICKET_CLOSE", "TICKET_CLOSE_NOT_APPLIED", "TICKET_CLOSE_HOLDS_NOT_RELEASED"] });
-    expect(auditActionFilterQuery("family:TICKET_")).toEqual({ kind: "family", like: "TICKET_%" });
+    expect(auditActionFilterQuery("family:TICKET_")).toEqual({ kind: "family", like: "TICKET\\_%" });
     expect(auditActionFilterQuery("DATA_PURGE")).toEqual({ kind: "in", actions: ["DATA_PURGE"] });
     expect(auditActionFilterQuery("ALL")).toBeNull();
     expect(AUDIT_ACTION_FAMILIES.some((f) => f.prefix === "TICKET_")).toBe(true);
     expect(new Set(AUDIT_ACTIONS.map((d) => d.action)).size).toBe(AUDIT_ACTIONS.length);
+  });
+
+  it("P7 review: a family's prefix is taken literally — `_` is not a wildcard, so TICKETX_FOO is not a TICKET_ row", () => {
+    const like = (auditActionFilterQuery("family:TICKET_") as { like: string }).like;
+    expect(likeMatches(like, "TICKET_CLOSE")).toBe(true);
+    expect(likeMatches(like, "TICKET_CLOSE_NOT_APPLIED")).toBe(true);
+    expect(likeMatches(like, "TICKETX_FOO")).toBe(false);
+    expect(likeMatches(like, "TICKETS_FOO")).toBe(false);
+    // The unescaped form the review found would have matched it.
+    expect(likeMatches("TICKET_%", "TICKETX_FOO")).toBe(true);
+    // Every registered family escapes its own `_` / `%`, and still matches its members.
+    for (const f of AUDIT_ACTION_FAMILIES) {
+      const l = auditFamilyLikePattern(f.prefix);
+      expect(likeMatches(l, `${f.prefix}SOMETHING`), f.prefix).toBe(true);
+      if (f.prefix.includes("_")) expect(likeMatches(l, `${f.prefix.replace("_", "X")}SOMETHING`), f.prefix).toBe(false);
+    }
+    expect(auditFamilyLikePattern("A%B\\C_")).toBe("A\\%B\\\\C\\_%");
   });
 });
 
@@ -152,12 +193,53 @@ describe("drafting-flow EVID-12 — the viewers pair a ticket attempt with the r
 });
 
 describe("ALOG-5 — /activity states who can read what, and that the database applies it", () => {
-  it("names the member rule, the Audit log permission rule and (P7 second review) the project scoping of SEC-20 / SEC-21", () => {
-    const page = src("app/(protected)/activity/page.tsx");
-    expect(page).toMatch(/every member reads the workspace&apos;s document-level history/);
-    expect(page).toMatch(/shown only to people with the Audit log permission/);
-    expect(page).toMatch(/rows about a project \(its costs, checklists, milestones and intake\) are shown only to people who can see that project/);
-    expect(page).toMatch(/The database applies this rule, not this page\./);
+  // P7 third review: the stated rule says only what is enforced today.
+  const page = () => src("app/(protected)/activity/page.tsx");
+  /** The newest migration that re-creates the overlay, and its org-level set. */
+  const overlay = () => {
+    const dir = join(root, "supabase", "migrations");
+    const files = readdirSync(dir).filter((f) => /^\d{8}.*\.sql$/.test(f)).sort()
+      .filter((f) => readFileSync(join(dir, f), "utf8").includes("CREATE POLICY audit_logs_admin_trail"));
+    const s = readFileSync(join(dir, files[files.length - 1]), "utf8");
+    const body = s.slice(s.indexOf("CREATE POLICY audit_logs_admin_trail"));
+    const orgLevel = body.slice(0, body.indexOf("-- SEC-20") > 0 ? body.indexOf("-- SEC-20") : body.indexOf(");"));
+    return {
+      types: [...(/COALESCE\(resource_type, ''\) IN \(([^)]*)\)/.exec(orgLevel)![1].matchAll(/'([a-z_]+)'/g))].map((m) => m[1]),
+      prefixes: [...orgLevel.matchAll(/action LIKE '([A-Z_]+)%'/g)].map((m) => m[1].replace(/_$/, "")),
+    };
+  };
+
+  it("names the Audit log permission rule and the member rule, and that the database applies it", () => {
+    const p = page();
+    expect(p).toMatch(/workspace-level authority events \(capability policy and workspace settings, members and roles, teams, export destinations and exports, security events, and workspace restores and purges\) are shown only to people with the Audit log permission/);
+    expect(p).toMatch(/Every member reads the workspace&apos;s document-level history/);
+    expect(p).toMatch(/The database applies this rule, not this page\./);
+  });
+
+  it("says permission (ACL), ownership and recertification changes on a library, folder or document are document-level — the overlay does not cover them", () => {
+    const p = page();
+    expect(p).toMatch(/that includes permission \(access list\), ownership and recertification changes made on a library, folder or document/);
+    // ...and that is what the database does: the newest overlay's org-level set
+    // matches none of these rows (types library / collection / document; no prefix).
+    const o = overlay();
+    expect(o.types).toEqual(expect.arrayContaining(["org", "member", "team", "capability_policy", "org_configuration", "export_destination"]));
+    expect(o.prefixes.length).toBeGreaterThan(5); // the parse found the action list (not vacuous)
+    for (const t of ["library", "collection", "document"]) expect(o.types).not.toContain(t);
+    for (const a of ["NODE_ACL_CHANGED", "OWNER_ASSIGNED", "OWNER_CLEARED", "OWNER_TEAM_ASSIGNED", "ACCESS_RECERTIFIED"]) {
+      expect(o.prefixes.some((pre) => a.startsWith(pre)), a).toBe(false);
+    }
+    expect(src("components/permissions/PermissionDrawer.tsx")).toMatch(/action: "NODE_ACL_CHANGED"/);
+    // The header comment names the overlay's whole org-level set.
+    for (const t of o.types) expect(p, t).toContain(t);
+    for (const pre of o.prefixes) expect(p, pre).toContain(pre);
+  });
+
+  it("does not claim the SEC-20 / SEC-21 project scoping (20261142 / 20261157 not confirmed pasted)", () => {
+    const p = page();
+    expect(p).not.toMatch(/shown only to people who can see that project/);
+    const screen = /Who can read this feed:([^<]*)/.exec(p)![1];
+    expect(screen).not.toMatch(/project/i);
+    expect(p).toMatch(/20261142 and 20261157, neither confirmed pasted/);
   });
 });
 
@@ -174,7 +256,7 @@ describe("ALOG-7 — the viewer says whose word a row's identity is", () => {
 // ── ALOG-6: the export ─────────────────────────────────────────────────────
 import {
   applyAuditFilters, buildAuditCsv, fetchAuditRowsForExport, filterByLibrary, userEmailPattern, rangeStartIso,
-  AUDIT_EXPORT_ROW_CEILING, type AuditExportRow,
+  AUDIT_EXPORT_ROW_CEILING, AUDIT_CSV_LINES_BEFORE_HEADER, type AuditExportRow,
 } from "@/lib/auditLogExport";
 
 /** A PostgREST stand-in for audit_logs that records each call and honours the
@@ -361,7 +443,7 @@ describe("ALOG-6 — the export holds every row the filters select, says its bou
     expect(userEmailPattern("  ")).toBeNull();
     const fam = pager(1);
     applyAuditFilters(fam.start() as never, { range: "all", action: "family:TICKET_", resource: "ALL" }, 0);
-    expect(fam.calls).toEqual([["like", ["action", "TICKET_%"]]]);
+    expect(fam.calls).toEqual([["like", ["action", "TICKET\\_%"]]]);
   });
   it("the file opens with its bounds and carries User ID, Actor kind and Metadata JSON", async () => {
     const got = await fetchAuditRowsForExport(pager(2).start, F, Date.now());
@@ -376,6 +458,13 @@ describe("ALOG-6 — the export holds every row the filters select, says its bou
     expect(csv).toContain('Rows dated after the export began,"0 (included, listed first');
     expect(csv).toMatch(/Complete,Yes — every row the filters select that you may read/);
     expect(lines).toContain("Timestamp,Action,Action code,Resource Type,Resource ID,Resource Label,User ID,User Email,User Role,Actor kind,Details JSON,Metadata JSON");
+    // P7 review: the recorded shape change — the header is on line
+    // AUDIT_CSV_LINES_BEFORE_HEADER + 1 (13 lines of bounds come first), and
+    // the page tells whoever imports the file.
+    expect(AUDIT_CSV_LINES_BEFORE_HEADER).toBe(13);
+    expect(lines[AUDIT_CSV_LINES_BEFORE_HEADER]).toMatch(/^Timestamp,Action,Action code,/);
+    expect(lines[AUDIT_CSV_LINES_BEFORE_HEADER - 1]).toBe("");
+    expect(lines.slice(0, AUDIT_CSV_LINES_BEFORE_HEADER).filter((l) => l.startsWith("Timestamp,"))).toEqual([]);
     expect(csv).toContain("P-101 · P&ID");
     expect(csv).toContain("(before 20261201: as sent)");
     expect(csv).toContain('"{""asserted"":{""user_role"":""Admin""}}"');

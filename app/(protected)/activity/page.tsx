@@ -11,16 +11,22 @@
 // Reads the same audit_logs table — the back-end is shared — but
 // renders for humans, not auditors.
 //
-// admin-and-org ALOG-5 (P7): the page states its authority rule. Every active
-// member reads the workspace's document-level history; the org-level
-// authority trail (permission, membership, role, team, export, restore and
-// purge rows) is readable only by holders of the admin.audit_view capability
-// (the Audit log permission). Rows about a project — the project, its costs,
-// checklists and turnover, its intake links, INTAKE_ and MILESTONE_ rows —
-// are shown only to people who can see that project (SEC-20 / SEC-21,
-// 20261157's audit_logs_admin_trail). The DATABASE enforces all of it —
-// audit_logs_org_access plus the RESTRICTIVE audit_logs_admin_trail overlay
-// (DEC-17, SURF-9, ROLE-5; 20261063 and its re-creations) — so this page shows
+// admin-and-org ALOG-5 (P7): the page states its authority rule — only what
+// the database enforces today. The org-level authority trail is readable
+// only by holders of the admin.audit_view capability (the Audit log
+// permission): rows typed org / member / team / capability_policy /
+// org_configuration / export_destination, and CAPABILITY_ / MEMBER_ / ROLE_ /
+// EXPORT_ / SECURITY_ / TEAM_ / DATA_EXPORT / RESTORE_ / PURGE_ actions
+// (audit_logs_admin_trail, 20261063 — DEC-17, SURF-9, ROLE-5). The
+// document-level history every active member reads INCLUDES permission
+// (NODE_ACL_CHANGED), ownership (OWNER_*) and recertification
+// (ACCESS_RECERTIFIED) changes made on a library, folder or document: they
+// are typed library / collection / document, so the overlay does not cover
+// them. Project scoping (SEC-20 / SEC-21: a project's rows only to those who
+// can see it) lives in 20261142 and 20261157, neither confirmed pasted when
+// P7 landed, so the page neither claims nor denies it; add it to the stated
+// rule once MIGRATION-PASTE-ORDER.md marks both live. The DATABASE applies the rule
+// (audit_logs_org_access plus the RESTRICTIVE overlay), so this page shows
 // each reader only the rows they may read; it adds no gate of its own.
 // drafting-flow EVID-12: a TICKET_<ACTION> attempt row is read together with
 // the _NOT_APPLIED / _HOLDS_NOT_RELEASED row that names it (lib/auditActions.ts
@@ -234,7 +240,7 @@ export default function ActivityFeedPage() {
           title="Activity Feed"
           subtitle={<>What&apos;s been happening in the workspace, in plain language. For raw event detail, see the Audit Log.{" "}
             <span className="block mt-1 text-[11px] text-[var(--color-text-faint)]">
-              Who can read this feed: every member reads the workspace&apos;s document-level history; workspace authority events (permissions, members and roles, teams, exports, restores and purges) are shown only to people with the Audit log permission; rows about a project (its costs, checklists, milestones and intake) are shown only to people who can see that project. The database applies this rule, not this page.
+              Who can read this feed: workspace-level authority events (capability policy and workspace settings, members and roles, teams, export destinations and exports, security events, and workspace restores and purges) are shown only to people with the Audit log permission. Every member reads the workspace&apos;s document-level history, and that includes permission (access list), ownership and recertification changes made on a library, folder or document. The database applies this rule, not this page.
             </span></>}
           actions={
             <Button variant="secondary" size="sm" onClick={refresh} disabled={loading}>

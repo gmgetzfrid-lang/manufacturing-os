@@ -215,11 +215,20 @@ export function auditActionFilterOptions(seen: Iterable<string> = []): Array<{ v
   return out.sort((a, b) => (a.group === b.group ? a.label.localeCompare(b.label) : a.group.localeCompare(b.group)));
 }
 
+/** A LIKE pattern matching every action that starts with `prefix`, the
+ *  prefix taken literally: `_`, `%` and `\` are escaped (PostgreSQL LIKE's
+ *  default escape is the backslash, as lib/auditLogExport.ts userEmailPattern
+ *  uses), so `TICKET_%` cannot match `TICKETX_FOO` — a family filter, and the
+ *  "complete" export built on it, select only the family they name. */
+export function auditFamilyLikePattern(prefix: string): string {
+  return `${prefix.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+}
+
 /** How an action filter is applied to a query: one action (a ticket action
  *  brings its EVID-12 follow-ups, so a pair is never split), or a family. */
 export function auditActionFilterQuery(value: string): { kind: "family"; like: string } | { kind: "in"; actions: string[] } | null {
   if (!value || value === "ALL") return null;
-  if (value.startsWith(FAMILY_FILTER_PREFIX)) return { kind: "family", like: `${value.slice(FAMILY_FILTER_PREFIX.length)}%` };
+  if (value.startsWith(FAMILY_FILTER_PREFIX)) return { kind: "family", like: auditFamilyLikePattern(value.slice(FAMILY_FILTER_PREFIX.length)) };
   if (value.startsWith("TICKET_") && !TICKET_FOLLOW_UP_SUFFIXES.some((s) => value.endsWith(s))) {
     return { kind: "in", actions: [value, ...TICKET_FOLLOW_UP_SUFFIXES.map((s) => value + s)] };
   }

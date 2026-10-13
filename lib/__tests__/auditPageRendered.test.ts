@@ -135,6 +135,9 @@ describe("/admin/audit (rendered)", () => {
     })]);
     expect(h.order).toEqual(["audit", "download"]);
     expect(host!.textContent).toMatch(/Exported 4 row\(s\) — every row the filters select/);
+    // P7 review: the file's shape change is told to whoever imports it.
+    expect(host!.textContent).toMatch(/The file opens with 13 lines of bounds before the column header \(line 14\); skip them when importing\./);
+    expect(exportBtn().getAttribute("title")).toMatch(/opens with 13 lines of bounds before the column header/);
   });
 
   it("P7 second review (ALOG-6): a row dated after the export began, which the screen shows, is in the file, listed first and counted", async () => {

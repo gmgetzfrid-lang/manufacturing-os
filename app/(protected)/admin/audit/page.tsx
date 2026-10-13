@@ -36,7 +36,7 @@ import {
   pairTicketAttempts, prettyAuditAction, ticketAttemptNote, DESTRUCTIVE_AUDIT_ACTIONS, type TicketAttemptOutcome,
 } from "@/lib/auditActions";
 import {
-  applyAuditFilters, buildAuditCsv, fetchAuditRowsForExport, filterByLibrary, AUDIT_EXPORT_ROW_CEILING,
+  applyAuditFilters, buildAuditCsv, fetchAuditRowsForExport, filterByLibrary, AUDIT_EXPORT_ROW_CEILING, AUDIT_CSV_LINES_BEFORE_HEADER,
   type AuditQuery, type AuditRange,
 } from "@/lib/auditLogExport";
 
@@ -260,9 +260,10 @@ export default function AuditLogPage() {
         datedAfterStart,
       });
       downloadCsv(csv);
-      setExportNote(got.complete
+      setExportNote((got.complete
         ? `Exported ${out.length} row(s) — every row the filters select.`
-        : `Exported the newest ${out.length} row(s): the export stops at ${AUDIT_EXPORT_ROW_CEILING} rows, and the file says so. Narrow the date range or filters for the rest.`);
+        : `Exported the newest ${out.length} row(s): the export stops at ${AUDIT_EXPORT_ROW_CEILING} rows, and the file says so. Narrow the date range or filters for the rest.`)
+        + ` ${CSV_SHAPE_NOTE}`);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -305,7 +306,7 @@ export default function AuditLogPage() {
                 size="sm"
                 onClick={() => void exportAll()}
                 disabled={exporting || !activeOrgId}
-                title={`Download EVERY row the filters select (not only the rows on screen), up to ${AUDIT_EXPORT_ROW_CEILING.toLocaleString()} — the file states its own bounds. The export itself is recorded in the audit log.`}
+                title={`Download EVERY row the filters select (not only the rows on screen), up to ${AUDIT_EXPORT_ROW_CEILING.toLocaleString()} — the file states its own bounds. ${CSV_SHAPE_NOTE} The export itself is recorded in the audit log.`}
               >
                 <Download className="w-3.5 h-3.5" /> {exporting ? "Exporting…" : "Export CSV"}
               </Button>
@@ -526,6 +527,10 @@ function AuditRowItem({ row, docMeta, attempt, namesAttempt }: AuditRowItemProps
     </li>
   );
 }
+
+// ALOG-6 changed the file's shape (P7 review): the column header is no longer
+// line 1. Say so wherever the file is offered, so an import is told.
+const CSV_SHAPE_NOTE = `The file opens with ${AUDIT_CSV_LINES_BEFORE_HEADER} lines of bounds before the column header (line ${AUDIT_CSV_LINES_BEFORE_HEADER + 1}); skip them when importing.`;
 
 // ─── CSV download ────────────────────────────────────────────────────
 // The file is built by lib/auditLogExport.ts buildAuditCsv (every cell
