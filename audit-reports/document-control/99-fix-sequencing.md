@@ -801,10 +801,12 @@ added these limbs; keep each when rebasing (each is pinned by a test):
 - `components/documents/MetadataEditor.tsx`: the entry-into-force note's
   new text and the refusal suffix's `isIssueRefusal(message)` for an
   entry into force.
-- `app/(protected)/documents/[libraryId]/page.tsx` (two call-site edits):
-  `pageSawIssue` also counts `isUnguardedEntryIntoForce`; the `reissued`
-  sentence branches on `outcome.entryIntoForce` (P25 review fix); the
-  un-archive `onSuccess(restoredStatus)` shows the restored status.
+- `app/(protected)/documents/[libraryId]/page.tsx` (three call-site edits):
+  `pageSawIssue` (~2799) also counts `isUnguardedEntryIntoForce`; the
+  `reissued` sentence's `outcome.entryIntoForce` branch (~2827, P25 review
+  fix); the un-archive `ArchiveConfirmModal` `onSuccess(restoredStatus)`
+  (~3417) shows the restored status. (Plus the `isUnguardedEntryIntoForce`
+  import the first edit needs.)
 - Also: `lib/documentLifecycle/common.ts` (`markSupersededAndLink`'s NULL
   prior status and its compensation's rollback note, `Compensation.run`'s
   optional note and `withCompensation`'s "Rollback note:" suffix,

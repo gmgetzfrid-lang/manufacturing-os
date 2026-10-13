@@ -81,8 +81,10 @@
 -- Minor / Correction publish — or revert (revertToVersion writes
 -- 'Correction') — of a document in such a status under a require policy,
 -- with no reviewed revision, admitted before, is refused. The rev-up flow
--- sends it to review first (P25); a revert has no up-front check and meets
--- the database's sentence, as a revert of a Draft does since 20261144.
+-- sends it to review first (P25); a revert is refused up front by
+-- revertToVersion (firstIssueGateForRevUp), naming the revert's route,
+-- nothing written — this block refuses the same write at the database
+-- should the app's gate be bypassed (an app before P25, another caller).
 -- Document Control's rev-up and revert of it, and every rev-up / revert of
 -- an Issued or Locked document, land exactly as before.
 -- Single paste: prerequisite check → temp-table inventory →

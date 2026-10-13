@@ -230,6 +230,8 @@ describe("20261193 — the one-paste shape", () => {
     expect(head).toMatch(/⚠ Never re-paste 20261185, 20261182, 20261174, 20261165, 20261164,\n-- 20261159, 20261151, 20261144, 20261139, 20261105 or any earlier guard\n-- migration after this one/);
     expect(head).toMatch(/DEPLOY ORDER: the app carrying P25 is deployed BEFORE this paste/);
     expect(head).toMatch(/ONE APP RESULT CHANGES, and only as decided/);
+    expect(head).toMatch(/a revert is refused up front by\n-- revertToVersion \(firstIssueGateForRevUp\), naming the revert's route,\n-- nothing written — this block refuses the same write at the database\n-- should the app's gate be bypassed/);
+    expect(head).not.toMatch(/a revert has no up-front check/);
     expect(head).toMatch(/NOT a widening/);
     expect(head).toMatch(/RE-CREATED FROM THE NEWEST BODY/);
   });
