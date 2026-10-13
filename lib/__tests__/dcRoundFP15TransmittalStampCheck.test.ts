@@ -651,9 +651,22 @@ describe("TRX-16 — /api/transmittal/stamp-check", () => {
     file("d1"); file("d2");
     st.transmittal = draft();
     st.updateAnswer = { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } };
-    const res = await post({ transmittalId: "t1" });
-    expect(res.status).toBe(503);
-    expect((await res.json()).error).toMatch(/^The check ran, but its result could not be recorded \(canceling statement due to statement timeout\)\. Issue again, or issue anyway — your yes is recorded\.$/);
+    // P24 review fix (REL-3): the database's own text is logged, never shown;
+    // the 503 says a yes after it sends every file unarmed (TRX-17 residual).
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const errLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    let said: string;
+    try {
+      const res = await post({ transmittalId: "t1" });
+      expect(res.status).toBe(503);
+      said = (await res.json()).error;
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/could not be recorded/), "canceling statement due to statement timeout");
+    } finally {
+      warn.mockRestore();
+      errLog.mockRestore();
+    }
+    expect(said).toBe("The check ran, but its result could not be recorded (The database took too long to answer — try again). Issue again to re-run it — if you issue anyway, every file goes out on your yes alone, without the portal's refusal to release an unmarked copy.");
+    expect(said).not.toMatch(/canceling statement/);
     st.updateAnswer = { data: [], error: null };
     const res2 = await post({ transmittalId: "t1" });
     expect(res2.status).toBe(409);

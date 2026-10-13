@@ -35,8 +35,9 @@ vi.mock("@/lib/holds", () => ({ listActiveHoldsForDocument: vi.fn(async () => []
 vi.mock("@/lib/transmittals", () => ({ listTransmittalsForDocument: vi.fn(async () => []) }));
 vi.mock("@/lib/branches", () => ({ listOpenBranchesForDocument: vi.fn(async () => []) }));
 vi.mock("@/lib/ownership", () => ({ effectiveOwnerForDocument: vi.fn(async () => ({ userId: null })), requestDeletion: vi.fn() }));
-vi.mock("@/lib/capabilityPolicy", () => ({ loadCapabilityPolicy: vi.fn(async () => ({})) }));
-vi.mock("@/lib/checkoutAffordances", () => ({ holdAffordances: () => ({ canOpen: false, canRelease: false }) }));
+// P24 (AUTHZ-15): the panel reads loadCapabilityPolicyEntry and its fault marker.
+vi.mock("@/lib/capabilityPolicy", () => ({ loadCapabilityPolicyEntry: vi.fn(async () => ({ policy: {}, version: null })) }));
+vi.mock("@/lib/checkoutAffordances", () => ({ holdAffordances: () => ({ canOpen: false, canRelease: false }), affordancePolicyFault: () => null }));
 vi.mock("@/lib/documentGuards", () => ({ isDocumentCheckedOut: () => false }));
 vi.mock("@/lib/documentTags", () => ({ collectTagGroups: () => [] }));
 vi.mock("@/lib/evidencePack", () => ({ openEvidencePack: vi.fn() }));

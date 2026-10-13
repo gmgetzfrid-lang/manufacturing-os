@@ -48,6 +48,7 @@ import {
   type Transmittal, type TransmittalItem, type IssueFacts, type IssueOutcome, type IssuePhase,
 } from "@/lib/transmittals";
 import { loadCapabilityPolicyEntry, type CapabilityPolicy } from "@/lib/capabilityPolicy";
+import { affordancePolicyFault } from "@/lib/checkoutAffordances";
 import { isControllerPrincipal } from "@/lib/permissions";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { holdReasonLabel } from "@/lib/holdGate";
@@ -68,9 +69,10 @@ interface DocHit {
 }
 
 /** AUTHZ-15 (DEC-89 item 3, ratified DEC-90 A26): what the register says when
- *  the capability policy could not be read and there is no last good entry —
- *  the controls that depend on it are not drawn from the shipped defaults;
- *  they are held back (fail closed) and this says why. */
+ *  the capability policy could not be read — no last good entry, or only the
+ *  cached last good copy because the refresh failed — the controls that
+ *  depend on it are drawn neither from the shipped defaults nor from the
+ *  cache; they are held back (fail closed) and this says why. */
 const POLICY_FAULT_NOTICE = "Permissions could not be read, so issuing, voiding, revoking a portal link and recording a receipt are not offered until they can be. Saving and editing your drafts still works.";
 
 /** TRX-14: what the issuer does when no portal link can be built — no public
@@ -115,11 +117,13 @@ export default function TransmittalsPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   // TRX-1: the capability policy (null until read) and each live item's
   // library — the resource the capability is evaluated against (DEC-13).
-  // AUTHZ-15 (DEC-90 A26): a read that fails with no last good entry
-  // (`unreadable`) — or that throws — leaves the policy null, so every
-  // control it decides stays held back (fail closed) instead of being drawn
-  // from the shipped defaults, and `policyFault` says why on the page. A
-  // `stale` answer is the org's last good policy and is drawn as before.
+  // AUTHZ-15 (DEC-90 A26; the integrator's rule for P24: "an affordance
+  // drawn from a cache during a database fault must fail closed"): a read
+  // that fails with no last good entry (`unreadable`), a refresh that fails
+  // and is answered from the cached last good copy (`stale`), or a read that
+  // throws, leaves the policy null, so every control it decides stays held
+  // back instead of being drawn from the shipped defaults or the cache, and
+  // `policyFault` says why on the page.
   const [policy, setPolicy] = useState<CapabilityPolicy | null>(null);
   const [policyFault, setPolicyFault] = useState<string | null>(null);
   const [policyTry, setPolicyTry] = useState(0);
@@ -129,7 +133,8 @@ export default function TransmittalsPage() {
     let alive = true;
     void loadCapabilityPolicyEntry(activeOrgId).then((e) => {
       if (!alive) return;
-      if (e.unreadable) { setPolicy(null); setPolicyFault(e.unreadable); return; }
+      const fault = affordancePolicyFault(e);
+      if (fault) { setPolicy(null); setPolicyFault(fault); return; }
       setPolicy(e.policy); setPolicyFault(null);
     }).catch((err: unknown) => {
       if (!alive) return;

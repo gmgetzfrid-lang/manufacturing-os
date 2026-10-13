@@ -84,8 +84,12 @@ describe("the controller vocabulary is spelled once (DCK-13 done-when 3)", () =>
     expect(guards).toMatch(/lives only in the publish_revision RPC/);
 
     const cell = src("components/documents/CheckoutStatusCell.tsx");
-    expect(cell).toMatch(/useForceReleaseAllowed\(docRecord\.orgId/);
-    expect(cell).toMatch(/canForceReleaseCheckout\(policy, role, roles, uid\)/);
+    // P24 (AUTHZ-15): the popover reads the hook that also carries the fault;
+    // useForceReleaseAllowed (the Inspector's) is its boolean form.
+    expect(cell).toMatch(/useForceReleasePolicy\(docRecord\.orgId/);
+    expect(cell).toMatch(/return useForceReleasePolicy\(orgId, role, roles, uid, retryKey\)\.allowed;/);
+    expect(cell).toMatch(/canForceReleaseCheckout\(mine\?\.policy \?\? null, role, roles, uid\)/);
+    expect(cell).toMatch(/if \(mine\?\.fault\) return \{ allowed: false, fault: mine\.fault \};/);
     expect(cell).not.toMatch(/r === 'Admin' \|\| r === 'DocCtrl'/);
     // DCK-5: no FORCE_RELEASE pre-write on the surface; the reason is collected
     expect(cell).not.toMatch(/type: "FORCE_RELEASE"/);

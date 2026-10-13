@@ -26,13 +26,19 @@
 // (the older trigger does not ask for it). A record that cannot be written
 // for any other reason answers 503, and a draft saved while it was being
 // checked answers 409 — both read as a check that could not run, so the
-// issuer is asked for a yes on every file.
+// issuer is asked for a yes on every file. Known degradation (TRX-17
+// residual): the issue trigger arms a file from the RECORDED verdict alone,
+// so a yes given after a 503 sends every file unarmed — even one this check
+// found stampable; the 503 says so and asks the issuer to issue again first.
+// The database's own text is never shown (REL-3: userFacingError); it is
+// logged here.
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { evaluateTransmitAuthority, rowToTransmittal } from "@/lib/transmittals";
 import { checkItemsStampableWithFiles } from "@/lib/transmittalStampCheck";
 import { isMissingSchemaError } from "@/lib/checkedWrite";
+import { userFacingError } from "@/lib/userFacingError";
 
 export const runtime = "nodejs";
 // The check reads each file once (up to the portal's stamping bound) within
@@ -103,7 +109,8 @@ export async function POST(req: NextRequest) {
       console.warn("[stamp-check] transmittals.stamp_check is missing (apply 20261199) — the check is answered unrecorded");
       return NextResponse.json({ items, recorded: false }, noStore);
     }
-    return bad(`The check ran, but its result could not be recorded (${recErr.message}). Issue again, or issue anyway — your yes is recorded.`, 503);
+    console.warn(`[stamp-check] the verdicts for ${t.number} could not be recorded:`, recErr.message);
+    return bad(`The check ran, but its result could not be recorded (${userFacingError(recErr, { context: "stamp-check", clause: true })}). Issue again to re-run it — if you issue anyway, every file goes out on your yes alone, without the portal's refusal to release an unmarked copy.`, 503);
   }
   if (!Array.isArray(wrote) || wrote.length === 0) {
     return bad(`${t.number} was saved while its files were being checked — the check was not recorded. Open the draft, check it and issue again.`, 409);

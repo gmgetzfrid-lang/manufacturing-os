@@ -826,28 +826,55 @@ The affordance surfaces read `loadCapabilityPolicy`, which returns the policy al
 - Each surface listed above, during a policy-read fault with no last good entry, either labels its policy-dependent controls as the shipped defaults or draws them disabled with the reason.
 - A rendered test per owning package drives the `unreadable` case.
 
-**Partial (2026-10-13, document-control Round F wave 3).** Package P24 TRANSMITTAL ISSUE VERDICT, for the transmittals surface only (its assigned share). Reproduced on `49cd27e`: `app/(protected)/transmittals/page.tsx:117` read `loadCapabilityPolicy` and, on a rejected read, `setPolicy({})`, which is the shipped defaults. During a fault with no last good entry, a DocCtrl (who holds `transmittal.issue` under the defaults) was offered Receipt, Revoke, Void and Issue with nothing on screen, whatever the org's stored narrowing. What landed (the integrator's rule for this package: an affordance drawn during a database fault fails closed, DEC-90 A26):
-- The page reads `loadCapabilityPolicyEntry`. On `unreadable`, or a read that throws, the policy stays `null`, so every control it decides is held back:
-  - Receipt, Revoke and Void on the register rows;
-  - the transmit-authority arm of Edit;
-  - Issue in the composer, whose footer and refusal now say "Permissions could not be read, so issuing is not offered until they can be — your draft can still be saved."
-- The page shows an alert, "Permissions could not be read — issuing, voiding, revoking a portal link and recording a receipt are not offered until they can be. Saving and editing your drafts still works.", with a Try again that re-reads.
-- A `stale` answer (the org's last good policy) is drawn as before, with no notice.
-- Arms that do not come from the policy are unchanged: a draft's author still edits and deletes it, a controller still edits, and the author still copies the portal link.
-- Rendered test, `lib/__tests__/dcRoundFP24TransmittalsPolicyFault.test.ts` (jsdom, the real page):
-  - unreadable: no Receipt / Revoke / Void for a DocCtrl, and the alert names the fault;
-  - a thrown read is the same fault, and Try again re-reads and, once readable, draws the controls;
-  - **regression:** a healthy read draws the DocCtrl's controls with no notice;
-  - **regression:** a stale read draws the last good policy, including a narrowed one that hides them;
-  - **regression:** an Engineer sees no controls and no notice.
-- `dcRoundFTransmittals.test.ts`'s source pin now names `loadCapabilityPolicyEntry`. `aoRoundGP0Records.test.ts`'s loader census already lists the page.
+**Partial (2026-10-13, document-control Round F wave 3).** Package P24 TRANSMITTAL ISSUE VERDICT, for document-control's share: all five document-control surfaces. *(Corrected at P24's review fix. As first landed this block covered the transmittals page only and drew `stale` as healthy. It also said the holds and checkout surfaces had "no package", although the integrator's 2026-10-13 note in P24's brief reads: "Your entry also carries AUTHZ-15's document-control surfaces (read its Assigned line in audit-reports/drafting-flow — transmittals among them): an affordance drawn from a cache during a database fault must fail closed.")*
 
-**Done-when (transmittals surface).**
-1. ✓ for `app/(protected)/transmittals/page.tsx`. During a policy-read fault with no last good entry, its policy-dependent controls are drawn disabled or withheld, with the reason on screen (the stricter of the two options the remediation offers).
-2. ✓ for document-control's transmittals share: a rendered test drives the `unreadable` case.
+The rule applied is the integrator's rule for this package, quoted verbatim: "an affordance drawn from a cache during a database fault must fail closed" (DEC-90 A26). It is stricter than this finding's Remediation, which says "`stale` needs no label: it is the last good policy". A `stale` answer is exactly a policy drawn from a cache during a database fault: the refresh failed and the cached last good copy was served (`lib/capabilityPolicy.ts` `loadCapabilityPolicyEntry`'s `failed`). So P24 holds the controls back on `stale` too. **For the integrator:** the two instructions conflict. The package-specific rule was followed. Reverting is a one-line change in `affordancePolicyFault` plus its tests, should the Remediation be preferred.
 
-**Stays OPEN, with owners:**
-- the request surfaces (`app/(protected)/requests/page.tsx`, `app/(protected)/requests/[id]/page.tsx`, `hooks/useTicketNotifications.ts`): drafting-flow **DF-P9 TICKET-PAGE**, as assigned;
-- the holds and checkout surfaces (`components/documents/HoldStrip.tsx`, `app/(protected)/admin/holds/page.tsx`, `components/documents/InspectorPanel.tsx`, `components/documents/CheckoutStatusCell.tsx`): not in P24's brief, and no document-control package lists them yet. **Owner: the integrator, to name the document-control package that takes them (DEC-31).**
+Each defect was reproduced on `49cd27e` by reading. Each surface read `loadCapabilityPolicy`, which returns no marker and serves the shipped defaults on a failed read with no last good entry:
+- `app/(protected)/transmittals/page.tsx:117`: `.catch(() => setPolicy({}))`.
+- `components/documents/HoldStrip.tsx:107-109`: the same.
+- `app/(protected)/admin/holds/page.tsx:52-54`: the same.
+- `components/documents/InspectorPanel.tsx:185` and `components/documents/CheckoutStatusCell.tsx:66`: `.catch(() => undefined)`, which leaves the policy `null`. A `null` policy evaluates the shipped defaults (`lib/checkoutAffordances.ts`).
+
+Under the defaults, holds.open and holds.release admit everyone, and checkout.force_release admits Admin and DocCtrl. So this finding's failure scenario held as written: a Drafter was offered Release.
+
+What landed:
+- **`lib/checkoutAffordances.ts` `affordancePolicyFault(entry)`** (new, pure) says which `loadCapabilityPolicyEntry` answers must hold an affordance back. It returns the fault's words for `unreadable` (no last good entry) or `stale` (the cached copy, refresh failed). It returns null for a good read, which includes a cache hit within the TTL, since that carries no marker. Each surface:
+  - reads `loadCapabilityPolicyEntry`;
+  - on a fault, or a read that throws, keeps its policy `null` and forces its policy-dependent controls off (never `null` into `policyAllows`, which would evaluate the defaults);
+  - shows a `role="alert"` notice with a **Try again** that re-reads.
+- **Transmittals register** (`app/(protected)/transmittals/page.tsx:134-143`, notice `transmittal-policy-fault`): Receipt, Revoke and Void; the transmit-authority arm of Edit; Issue, whose footer and refusal say permissions could not be read. Unchanged from the first landing except that `stale` is now a fault.
+- **`components/documents/HoldStrip.tsx:114-125`** (notice `hold-policy-fault`): Place hold, Release and Re-date. The notice shows only where the caller would draw controls (`canEdit`). A read-only strip offers nothing to explain.
+- **`app/(protected)/admin/holds/page.tsx:60-71`** (notice `holds-policy-fault`): Release and Re-date on the queue.
+- **`components/documents/CheckoutStatusCell.tsx`**:
+  - the new `useForceReleasePolicy(orgId, role, roles, uid, retryKey)` (`:62-87`) answers `{ allowed: false, fault }` on a fault;
+  - `useForceReleaseAllowed` is its boolean form, with an optional `retryKey`;
+  - the popover holds Admin Force Release back, with notice `checkout-policy-fault` and its own Try again.
+  - Until the first read lands, the shipped default applies, as before (DCK-13).
+- **`components/documents/InspectorPanel.tsx:186-207`**:
+  - the hold controls are forced off on a fault: the place-a-first-hold section, and the active-hold strip's `canEdit={canReleaseHold}`;
+  - Force Release Lock follows `useForceReleaseAllowed`, which now fails closed;
+  - the ALERTS zone shows `inspector-policy-fault`. Its Try again re-reads the panel's policy and re-keys the force-release hook.
+  - Until the first read lands, the shipped defaults apply, as before.
+- Arms that do not come from the policy are unchanged. On the register, a draft's author still edits and deletes it, and copies the portal link. On the cell, Check Out, Quick hold and "Release my checkout" are unchanged. The hold list itself still lists.
+
+Rendered tests (jsdom; each drives `unreadable`, `stale` and a thrown read; Try again; regressions):
+- `lib/__tests__/dcRoundFP24TransmittalsPolicyFault.test.ts`: the real transmittals page. The former "stale drawn as before" pin is rewritten to expect the fault and is labelled so. Regressions: a healthy read draws the DocCtrl's controls; a healthy narrowed read hides them with no notice; an Engineer sees nothing.
+- `lib/__tests__/dcRoundFP24HoldCheckoutPolicyFault.test.ts`: the real `HoldStrip`, `/admin/holds` and `CheckoutStatusCell` (popover opened), plus `affordancePolicyFault` itself. Regressions: a healthy read draws Place hold, Release and Re-date, or a DocCtrl's Admin Force Release, under the defaults with no notice; a narrowed policy hides them; a Drafter is not offered force release; a read-only strip explains nothing.
+- `lib/__tests__/dcRoundFP24InspectorPolicyFault.test.ts`: the real `InspectorPanel`, with children stubbed. With no fault the place-a-first-hold section is drawn for a Drafter under the defaults and hidden under a narrowed policy. On a fault it is hidden and the alert names the fault. Try again re-reads and re-keys the force-release hook.
+- Mutation-checked by hand: with `stale` not treated as a fault, five of these tests fail. With the Inspector's fault override removed, three fail.
+- Pins changed in place:
+  - `checkoutAffordances.test.ts` (the cell now reads `useForceReleasePolicy`);
+  - `dcRoundFP15InspectorStaleRendered.test.ts` (its mocks provide `loadCapabilityPolicyEntry` and `affordancePolicyFault`);
+  - `dcRoundFTransmittals.test.ts` (names `loadCapabilityPolicyEntry`).
+- `aoRoundGP0Records.test.ts`'s loader census already lists all five files.
+
+**Done-when (document-control's share).**
+1. ✓ for all five document-control surfaces (`app/(protected)/transmittals/page.tsx`, `components/documents/HoldStrip.tsx`, `app/(protected)/admin/holds/page.tsx`, `components/documents/InspectorPanel.tsx`, `components/documents/CheckoutStatusCell.tsx`). During a policy-read fault with no last good entry, their policy-dependent controls are withheld, with the reason on screen; this is the stricter of the two options the remediation offers. Under the integrator's rule they are also withheld during a fault served from the cache (`stale`).
+2. ✓ for document-control: rendered tests drive `unreadable` on every surface.
+
+**Scope / residual.** `lib/capabilityPolicy.ts`'s comment on `loadCapabilityPolicy` still names these five surfaces among its non-authoritative readers. They now read `loadCapabilityPolicyEntry`. The comment is in a shared module P24 does not own, so it is left for the integrator, or for DF-P9 when the request surfaces move, to restate.
+
+**Stays OPEN, with its owner:** the request surfaces (`app/(protected)/requests/page.tsx`, `app/(protected)/requests/[id]/page.tsx`, `hooks/useTicketNotifications.ts`) belong to drafting-flow **DF-P9 TICKET-PAGE**, as assigned. They may reuse `affordancePolicyFault`. They should apply the same `stale` rule unless the integrator settles the conflict above the other way.
 
 ---

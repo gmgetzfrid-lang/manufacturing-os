@@ -781,6 +781,10 @@ it**, or the verdict rule is dropped.
   the old issue writes no yes. Every issue from the register is then refused
   with the TRX-17 sentence until the app deploys. This fails closed (nothing
   leaves unchecked), but keep that window at zero.
+- **Browser tabs left open across the deploy** run the old register code.
+  After the paste their issues are refused with the TRX-17 sentence (fail
+  closed) until the tab is refreshed. Say so in the deploy note. *(Added at
+  P24's review fix, at the reviewer's suggestion.)*
 - **The result set's inventory** counts the issued / acknowledged
   transmittals (none carries a server verdict, and none is changed), their
   armed and unmarked items, and the drafts that from now on need a recorded

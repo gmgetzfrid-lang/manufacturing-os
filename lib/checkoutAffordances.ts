@@ -18,7 +18,7 @@
 // it in; a null policy means "not loaded yet", which evaluates the shipped
 // defaults — byte-identical to the old literal pairs for an unconfigured org.
 
-import { policyAllows, type CapabilityPolicy } from "@/lib/capabilityPolicy";
+import { policyAllows, type CapabilityPolicy, type LoadedCapabilityPolicy } from "@/lib/capabilityPolicy";
 
 /** May this member force-release another user's checkout? The database
  *  (enforce_checkout_release_guard, trg_checkout_session_guard, the
@@ -54,4 +54,24 @@ export function holdAffordances(
     canOpen: policyAllows(policy, "holds.open", role ?? null, extra, uid ?? null),
     canRelease: policyAllows(policy, "holds.release", role ?? null, extra, uid ?? null),
   };
+}
+
+/** drafting-flow AUTHZ-15 (DEC-89 item 3, ratified DEC-90 A26; the
+ *  integrator's rule for document-control P24: "an affordance drawn from a
+ *  cache during a database fault must fail closed"). Reads a
+ *  loadCapabilityPolicyEntry answer for an AFFORDANCE surface: the fault's
+ *  words when the controls the policy decides must be held back, else null.
+ *  - `unreadable`: no last good entry — `policy` is the shipped defaults;
+ *  - `stale`: the refresh failed and the cached last good copy was served —
+ *    a control drawn from it during the fault is held back too.
+ *  A good read (fresh, or within the cache's TTL with no marker) is null.
+ *  The surface then keeps its policy null AND forces its policy-dependent
+ *  controls off (a null policy evaluates the shipped defaults in
+ *  policyAllows), and says why on screen with a way to read again. */
+export function affordancePolicyFault(
+  entry: Partial<LoadedCapabilityPolicy>,
+): string | null {
+  if (typeof entry.unreadable === "string") return entry.unreadable || "the capability policy could not be read";
+  if (entry.stale) return entry.staleError || "the capability policy could not be refreshed";
+  return null;
 }
