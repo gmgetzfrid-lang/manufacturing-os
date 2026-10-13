@@ -18,6 +18,18 @@
 --     · trg_teams_org_move_rail (BEFORE UPDATE OF org_id on teams): a team
 --       that has members cannot be moved to another org — its rows would
 --       break the rail from the other side. No writer moves a team today.
+--     · trg_teams_supervisor_member_rail (BEFORE INSERT OR UPDATE OF
+--       supervisor_user_id, org_id on teams; review fix, done-when 3): a
+--       person's write that SETS or CHANGES a team's supervisor (or moves a
+--       supervised team) names an ACTIVE member of the team's own workspace,
+--       or is refused (check_violation). The supervisor becomes the effective
+--       owner of every library the team owns, and lib/teams.ts's check ran
+--       in the browser only — a direct PATCH of supervisor_user_id passed.
+--       A write that leaves the supervisor as it was (a rename) is not
+--       re-judged, so a team whose supervisor was later suspended can still
+--       be renamed; clearing to NULL always passes (revoke_member does it);
+--       writes with no auth.uid() (restore, service jobs) pass. Existing
+--       teams are counted, not changed.
 --     · Rows that ALREADY break it are counted before the transaction and
 --       removed inside it, one machine audit row each (TEAM_MEMBER_REMOVED,
 --       reason cross_org_team_member, user_id NULL). They can only have been
@@ -63,8 +75,10 @@
 -- deploy. ⚠ APPLIED BY HAND (DEC-30). One script; re-running is safe.
 --
 -- ROLLBACK: DROP TRIGGER trg_team_members_org_rail ON team_members;
---   DROP TRIGGER trg_teams_org_move_rail ON teams; DROP FUNCTION
---   enforce_team_member_org(), enforce_team_org_move(); re-paste 20261041's
+--   DROP TRIGGER trg_teams_org_move_rail ON teams; DROP TRIGGER
+--   trg_teams_supervisor_member_rail ON teams; DROP FUNCTION
+--   enforce_team_member_org(), enforce_team_org_move(),
+--   enforce_team_supervisor_member(); re-paste 20261041's
 --   node_visible and 20260818's three org_config_key_writes_* policies;
 --   ALTER FUNCTION acl_subject_in_bucket(jsonb, text, text, text[]) RESET
 --   search_path. The removed cross-org rows are named in their audit rows.
@@ -78,6 +92,11 @@ SELECT 'before: team_members rows', COUNT(*) FROM team_members
 UNION ALL
 SELECT 'before: team_members rows whose org_id is not their team''s org (removed by this paste, one audit row each)',
        COUNT(*) FROM team_members tm JOIN teams t ON t.id = tm.team_id WHERE tm.org_id IS DISTINCT FROM t.org_id
+UNION ALL
+SELECT 'before: teams whose supervisor is not an active member of the team''s workspace (counted, not changed; a new or changed supervisor must be one)',
+       COUNT(*) FROM teams t
+ WHERE t.supervisor_user_id IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = t.org_id AND m.uid = t.supervisor_user_id AND m.status = 'active')
 UNION ALL
 SELECT 'before: workspace time-zone rows (org_configurations key timezone)',
        COUNT(*) FROM org_configurations WHERE key = 'timezone';
@@ -133,6 +152,35 @@ DROP TRIGGER IF EXISTS trg_teams_org_move_rail ON teams;
 CREATE TRIGGER trg_teams_org_move_rail
   BEFORE UPDATE OF org_id ON teams
   FOR EACH ROW EXECUTE FUNCTION enforce_team_org_move();
+
+-- ORG-13 done-when 3 (review fix): a supervisor a person sets is an ACTIVE
+-- member of the team's own workspace. Read as the definer, so a membership
+-- row RLS hides from the caller is still found.
+CREATE OR REPLACE FUNCTION enforce_team_supervisor_member()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  IF auth.uid() IS NULL OR NEW.supervisor_user_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+  IF TG_OP = 'UPDATE'
+     AND NEW.supervisor_user_id IS NOT DISTINCT FROM OLD.supervisor_user_id
+     AND NEW.org_id IS NOT DISTINCT FROM OLD.org_id THEN
+    RETURN NEW;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM org_members m
+                  WHERE m.org_id = NEW.org_id AND m.uid = NEW.supervisor_user_id AND m.status = 'active') THEN
+    RAISE EXCEPTION 'A team''s supervisor must be an active member of the team''s own workspace.'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION enforce_team_supervisor_member() FROM PUBLIC, anon, authenticated;
+
+DROP TRIGGER IF EXISTS trg_teams_supervisor_member_rail ON teams;
+CREATE TRIGGER trg_teams_supervisor_member_rail
+  BEFORE INSERT OR UPDATE OF supervisor_user_id, org_id ON teams
+  FOR EACH ROW EXECUTE FUNCTION enforce_team_supervisor_member();
 
 -- ── 3. ORG-13 done-when 2: node_visible's team lookup is org-scoped ─────────
 -- Body from 20261041 (its newest definition) with one line changed — the
@@ -259,6 +307,19 @@ SELECT 'trg_teams_org_move_rail: BEFORE UPDATE on teams, enabled; SECURITY DEFIN
                   AND NOT tg.tgisinternal AND tg.tgenabled = 'O' AND (tg.tgtype & 2) = 2 AND (tg.tgtype & 16) = 16
                   AND p.proname = 'enforce_team_org_move' AND p.prosecdef
                   AND p.proconfig @> ARRAY['search_path=public']),
+       NULL
+UNION ALL
+SELECT 'trg_teams_supervisor_member_rail: BEFORE INSERT OR UPDATE on teams, enabled; SECURITY DEFINER, search_path pinned; judges only a person''s new or changed supervisor against an ACTIVE membership of the team''s org (ORG-13 dw3)',
+       EXISTS (SELECT 1 FROM pg_trigger tg JOIN pg_proc p ON p.oid = tg.tgfoid
+                WHERE tg.tgrelid = 'public.teams'::regclass AND tg.tgname = 'trg_teams_supervisor_member_rail'
+                  AND NOT tg.tgisinternal AND tg.tgenabled = 'O'
+                  AND (tg.tgtype & 1) = 1 AND (tg.tgtype & 2) = 2 AND (tg.tgtype & 4) = 4 AND (tg.tgtype & 16) = 16
+                  AND p.proname = 'enforce_team_supervisor_member' AND p.prosecdef
+                  AND p.proconfig @> ARRAY['search_path=public']
+                  AND p.prosrc LIKE '%IF auth.uid() IS NULL OR NEW.supervisor_user_id IS NULL THEN%'
+                  AND p.prosrc LIKE '%m.uid = NEW.supervisor_user_id AND m.status = ''active''%')
+       AND NOT has_function_privilege('anon', 'enforce_team_supervisor_member()', 'EXECUTE')
+       AND NOT has_function_privilege('authenticated', 'enforce_team_supervisor_member()', 'EXECUTE'),
        NULL
 UNION ALL
 SELECT 'no team_members row names a team of another workspace',

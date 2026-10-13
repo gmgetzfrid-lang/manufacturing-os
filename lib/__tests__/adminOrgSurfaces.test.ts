@@ -39,9 +39,13 @@ const s = vi.hoisted(() => ({
   appConfirm: vi.fn(async (..._a: unknown[]) => true),
   role: { activeRole: "Admin", roles: ["Admin"], uid: "a1", userEmail: "admin@x.io", activeOrgId: "o1" } as Record<string, unknown>,
   caller: { id: "a1", email: "admin@x.io" } as { id: string; email: string } | null,
+  // ORG-7 review fix: the browser client's rpc, set only by the tests that drive it
+  rpc: null as null | ((fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: { code?: string; message: string } | null }>),
 }));
 
-vi.mock("@/lib/supabase", () => ({ get supabase() { return makeFakeSupabase(s.db); } }));
+vi.mock("@/lib/supabase", () => ({
+  get supabase() { const c = makeFakeSupabase(s.db); return s.rpc ? Object.assign(c, { rpc: s.rpc }) : c; },
+}));
 vi.mock("@/lib/supabaseAdmin", () => ({
   get supabaseAdmin() {
     return {
@@ -108,6 +112,7 @@ beforeEach(() => {
   s.appConfirm.mockClear();
   s.role = { activeRole: "Admin", roles: ["Admin"], uid: "a1", userEmail: "admin@x.io", activeOrgId: "o1" };
   s.caller = { id: "a1", email: "admin@x.io" };
+  s.rpc = null;
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(console, "warn").mockImplementation(() => {});
   host = document.createElement("div");
@@ -363,6 +368,38 @@ describe("ALOG-4 / ORG-15 — /admin/users", () => {
     expect(s.appAlert).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringMatching(/^The roles were saved, but the audit record could not be written/) }));
   });
 
+  it("ORG-7 (review fix): after a removal the page clears the person's inherited acl_index entries in bounded chunks until the database says done", async () => {
+    seedMembers();
+    const calls: Array<Record<string, unknown>> = [];
+    let left = 2500;
+    s.rpc = async (fn, args) => {
+      expect(fn).toBe("prune_removed_member_acl_index");
+      calls.push(args);
+      const n = Math.min(left, args.p_limit as number);
+      left -= n;
+      return { data: { pruned: n, done: n < (args.p_limit as number) }, error: null };
+    };
+    await mountUsers();
+    await click(host.querySelector('button[title="Remove from workspace (clears what they own)"]:not([disabled])'));
+    expect(s.appConfirm).toHaveBeenCalled();
+    expect(calls).toEqual([1, 2, 3].map(() => ({ p_org_id: "o1", p_uid: "u1", p_limit: 1000 })));
+    expect(left).toBe(0);
+    expect(host.textContent).not.toMatch(/Pat/);
+    expect(s.appAlert).not.toHaveBeenCalled(); // finished: nothing to say
+  });
+
+  it("ORG-7 (review fix): a clean-up call that fails is said — the removal itself stands", async () => {
+    seedMembers();
+    s.rpc = async () => ({ data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } });
+    await mountUsers();
+    await click(host.querySelector('button[title="Remove from workspace (clears what they own)"]:not([disabled])'));
+    expect(host.textContent).not.toMatch(/Pat/);
+    expect(s.appAlert).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.stringMatching(/^Pat was removed, but the access their grants left in the document index could not be cleared yet \(canceling statement due to statement timeout\)/),
+      tone: "danger",
+    }));
+  });
+
   it("ORG-15: a failed members read shows an error with a retry, never an empty roster", async () => {
     seedMembers();
     s.db.selectErrors = { org_members: { message: "JWT expired" } };
@@ -542,6 +579,22 @@ describe("ORG-11 — the org palette is validated on the way in and on the way t
     const row = (s.db.tables.org_configurations ?? []).find((c) => c.key === "branding");
     expect((row?.data as { logoPath?: string }).logoPath).toBe("orgs/o1/branding/logo-1.png");
     await expect(saveOrgBranding("o1", { palette: { id: "c", name: "C", primary: "red", secondary: "#aabbcc" }, logoPath: "orgs/o1/branding/logo-1.png" }, { uid: "a1" })).rejects.toThrow(/#RRGGBB/);
+  });
+
+  it("review fix: a failed read of the stored branding is never 'nothing stored' — a valid save goes through with the before marked unknown; an invalid palette is refused naming the read failure", async () => {
+    const stale = { primary: "#abc" } as unknown as { id: string; name: string; primary: string; secondary: string };
+    s.db.tables.org_configurations = [{ id: "cfg1", org_id: "o1", key: "branding", data: { palette: { id: "c", name: "C", primary: "#112233", secondary: "#aabbcc" } } }];
+    s.db.selectErrors = { org_configurations: (cols: string) => (cols === "data" ? { message: "upstream timeout" } : null) };
+    // valid palette: saved, and the audit row does not claim there was no branding before
+    const r = await saveOrgBranding("o1", { palette: { id: "c", name: "C", primary: "#112233", secondary: "#aabbcc" }, logoPath: "orgs/o1/branding/logo-2.png" }, { uid: "a1" });
+    expect(r).toEqual({ auditError: null });
+    expect(((s.db.tables.org_configurations ?? []).find((c) => c.key === "branding")?.data as { logoPath?: string }).logoPath).toBe("orgs/o1/branding/logo-2.png");
+    const row = audits("BRANDING_CHANGED").at(-1)!;
+    expect(row.details).toMatchObject({ before: null, beforeUnknown: true, beforeReadError: "upstream timeout", after: { logoPath: "orgs/o1/branding/logo-2.png" } });
+    // an invalid palette cannot be told apart from a stored one: refused, in words, nothing written
+    await expect(saveOrgBranding("o1", { palette: stale, logoPath: "orgs/o1/branding/logo-3.png" }, { uid: "a1" }))
+      .rejects.toThrow(/^Couldn't read the stored branding \(upstream timeout\), so this palette can't be checked against it: The palette must be two colours/);
+    expect(((s.db.tables.org_configurations ?? []).find((c) => c.key === "branding")?.data as { logoPath?: string }).logoPath).toBe("orgs/o1/branding/logo-2.png");
   });
 });
 

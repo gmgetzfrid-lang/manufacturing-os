@@ -38,6 +38,16 @@
 --       with the counts when anything was pruned. Suspend and restore are
 --       unchanged (a suspended member keeps their grants for their return;
 --       every evaluator refuses a non-active member).
+--       Review fix: the in-statement prune rewrites only the nodes whose OWN
+--       acl (or template) carries the person's rule — bounded by the grants
+--       a person was given. The descendants that merely INHERIT it in their
+--       chain-resolved acl_index are stripped after the removal, in bounded
+--       chunks, by prune_removed_member_acl_index(org, uid, limit) — Admin
+--       or service_role only, never for someone who is still a member —
+--       which the members page loops over (and the nightly rebuild, DEC-10,
+--       backstops). Rewriting a grant indexed into ~40k+ documents inside
+--       revoke_member's one statement hit authenticated's statement_timeout
+--       (57014), so a removal that works today would have failed.
 --     · Grants that ALREADY name someone with no membership in the node's
 --       workspace (removed before this paste) are pruned once here, inside
 --       the transaction, counted before it, one machine audit row per
@@ -80,7 +90,9 @@
 -- finds nothing the second time).
 --
 -- ROLLBACK: re-paste 20261161's revoke_member (its § 4) — the removal path
--- returns exactly; DROP TRIGGER trg_library_delete_audit ON libraries; DROP
+-- returns exactly; DROP FUNCTION prune_removed_member_acl_index(uuid, uuid,
+-- integer) (the members page treats a missing function as "nothing to
+-- do"); DROP TRIGGER trg_library_delete_audit ON libraries; DROP
 -- FUNCTION audit_library_delete(); the helpers may stay (nothing else calls
 -- them). Pruned grants are named, per workspace, in their audit rows.
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -224,7 +236,6 @@ DECLARE
   v_acl_docs int := 0;
   v_acl_sets int := 0;
   v_rule_probe jsonb;
-  v_bucket_probe jsonpath;
   r         record;
 BEGIN
   IF v_actor IS NULL THEN
@@ -342,53 +353,56 @@ BEGIN
   GET DIAGNOSTICS v_grants = ROW_COUNT;
 
   -- ORG-7 (admin-and-org Round G, 20261204): per-person ACL ALLOW rules
-  -- naming the removed member are pruned in this transaction — from each
-  -- node's own `acl`, from its chain-resolved `acl_index` allow buckets (the
-  -- exact image of the rebuild: allow and deny buckets are built
-  -- independently, so dropping this uid's allow rules drops it from every
-  -- allow user list and from nothing else), and from a library's template
-  -- for new nodes. DENY rules naming them are KEPT: a block outlives the
-  -- membership, so a re-added person is still refused where they were.
-  -- Grants by role, team or org are not touched.
-  -- Each scan is narrowed BEFORE the exact check by two binary jsonb tests,
-  -- built once here (no text cast of any row, no per-row construction):
-  -- containment for a rule naming the uid, and a jsonpath for an allow
-  -- bucket naming it. Both are supersets of the exact check
-  -- (acl_allow_user_ids), so nothing is missed. The cost is set by the rows
-  -- REWRITTEN, not by the scan: should a removal exceed the caller's
-  -- statement_timeout (a personal grant indexed into tens of thousands of
-  -- descendants), the whole call rolls back (57014) — the member stays,
-  -- nothing is half-pruned, and the Admin sees the error (ORG-7 record).
+  -- naming the removed member are pruned in this transaction from the nodes
+  -- that CARRY them — each node's own `acl` (and that same node's
+  -- `acl_index`), and a library's template for new nodes. DENY rules naming
+  -- them are KEPT: a block outlives the membership, so a re-added person is
+  -- still refused where they were. Grants by role, team or org are not
+  -- touched.
+  -- Review fix: the nodes that only INHERIT the grant (descendants whose
+  -- chain-resolved acl_index names the uid) are NOT rewritten here — a
+  -- library grant can be indexed into tens of thousands of documents, and
+  -- rewriting them all inside this one statement exceeded authenticated's
+  -- statement_timeout (57014), so a removal that works today would have
+  -- failed. They are stripped in bounded chunks after the removal by
+  -- prune_removed_member_acl_index (below), which the members page loops
+  -- over; the nightly acl_index rebuild (DEC-10) drops them too, since the
+  -- rule is gone from the chain. Nothing leaks meanwhile: with the
+  -- org_members row gone every RLS path refuses a non-member. The scan here
+  -- is bounded by the rules a person was given, not by the size of what
+  -- inherits them.
+  -- Each scan is narrowed BEFORE the exact check by one binary containment
+  -- test, built once here (no text cast of any row): a rule naming the uid
+  -- (any effect — the exact check then keeps allows only).
   v_rule_probe := jsonb_build_object('rules', jsonb_build_array(jsonb_build_object('subject', jsonb_build_object('type', 'user', 'id', v_member.uid::text))));
-  v_bucket_probe := format('$.allow.users.*[*] ? (@ == "%s")', v_member.uid::text)::jsonpath;
   UPDATE libraries
      SET acl = acl_without_user_allow(acl, ARRAY[v_member.uid::text]),
          acl_index = acl_index_without_user_allow(acl_index, ARRAY[v_member.uid::text]),
          default_new_acl = acl_without_user_allow(default_new_acl, ARRAY[v_member.uid::text])
    WHERE org_id = v_member.org_id
-     AND (acl @> v_rule_probe OR default_new_acl @> v_rule_probe OR acl_index @? v_bucket_probe)
-     AND v_member.uid::text = ANY(acl_allow_user_ids(acl, acl_index) || acl_allow_user_ids(default_new_acl, NULL));
+     AND (acl @> v_rule_probe OR default_new_acl @> v_rule_probe)
+     AND v_member.uid::text = ANY(acl_allow_user_ids(acl, NULL) || acl_allow_user_ids(default_new_acl, NULL));
   GET DIAGNOSTICS v_acl_libs = ROW_COUNT;
   UPDATE collections
      SET acl = acl_without_user_allow(acl, ARRAY[v_member.uid::text]),
          acl_index = acl_index_without_user_allow(acl_index, ARRAY[v_member.uid::text])
    WHERE org_id = v_member.org_id
-     AND (acl @> v_rule_probe OR acl_index @? v_bucket_probe)
-     AND v_member.uid::text = ANY(acl_allow_user_ids(acl, acl_index));
+     AND acl @> v_rule_probe
+     AND v_member.uid::text = ANY(acl_allow_user_ids(acl, NULL));
   GET DIAGNOSTICS v_acl_cols = ROW_COUNT;
   UPDATE documents
      SET acl = acl_without_user_allow(acl, ARRAY[v_member.uid::text]),
          acl_index = acl_index_without_user_allow(acl_index, ARRAY[v_member.uid::text])
    WHERE org_id = v_member.org_id
-     AND (acl @> v_rule_probe OR acl_index @? v_bucket_probe)
-     AND v_member.uid::text = ANY(acl_allow_user_ids(acl, acl_index));
+     AND acl @> v_rule_probe
+     AND v_member.uid::text = ANY(acl_allow_user_ids(acl, NULL));
   GET DIAGNOSTICS v_acl_docs = ROW_COUNT;
   UPDATE document_sets
      SET acl = acl_without_user_allow(acl, ARRAY[v_member.uid::text]),
          acl_index = acl_index_without_user_allow(acl_index, ARRAY[v_member.uid::text])
    WHERE org_id = v_member.org_id
-     AND (acl @> v_rule_probe OR acl_index @? v_bucket_probe)
-     AND v_member.uid::text = ANY(acl_allow_user_ids(acl, acl_index));
+     AND acl @> v_rule_probe
+     AND v_member.uid::text = ANY(acl_allow_user_ids(acl, NULL));
   GET DIAGNOSTICS v_acl_sets = ROW_COUNT;
   IF v_acl_libs + v_acl_cols + v_acl_docs + v_acl_sets > 0 THEN
     INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, user_email, details)
@@ -435,6 +449,94 @@ $$;
 
 REVOKE ALL ON FUNCTION revoke_member(uuid, text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION revoke_member(uuid, text) TO authenticated;
+
+-- ── 2b. ORG-7 (review fix): the inherited index entries, in bounded chunks ──
+-- After revoke_member removed someone, the descendants whose chain-resolved
+-- acl_index still names them (an ancestor's grant, now gone from the chain)
+-- are stripped here, at most p_limit nodes per call, each call its own
+-- statement — so no removal, however widely a grant was indexed, runs into
+-- the statement_timeout. The members page calls it until `done`; the
+-- nightly rebuild (DEC-10) is the backstop when a run is cut short.
+-- Authority: an ACTIVE Admin of p_org_id (the remove bar, by the role
+-- COLLECTION), or the server (auth.role() = 'service_role' — a server job
+-- may finish a run the page could not). It only ever strips someone with NO
+-- membership row in p_org_id — never a current member's access.
+-- One MEMBER_ACL_GRANTS_PRUNED row per call that pruned anything
+-- (phase acl_index, with the per-table counts).
+CREATE OR REPLACE FUNCTION prune_removed_member_acl_index(p_org_id uuid, p_uid uuid, p_limit integer DEFAULT 1000)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_actor uuid := auth.uid();
+  v_actor_email text;
+  v_left  int := LEAST(GREATEST(COALESCE(p_limit, 1000), 1), 5000);
+  v_limit int;
+  v_probe jsonpath;
+  v_docs  int := 0;
+  v_cols  int := 0;
+  v_sets  int := 0;
+  v_libs  int := 0;
+BEGIN
+  IF p_org_id IS NULL OR p_uid IS NULL THEN
+    RAISE EXCEPTION 'prune_removed_member_acl_index: org and member are required';
+  END IF;
+  IF v_actor IS NULL THEN
+    IF COALESCE(auth.role(), '') <> 'service_role' THEN
+      RAISE EXCEPTION 'prune_removed_member_acl_index: must be called by a signed-in Admin' USING ERRCODE = '42501';
+    END IF;
+  ELSIF NOT EXISTS (SELECT 1 FROM org_members me WHERE me.uid = v_actor AND me.org_id = p_org_id
+                      AND me.status = 'active' AND (me.role = 'Admin' OR me.roles && ARRAY['Admin']::text[])) THEN
+    RAISE EXCEPTION 'Only an Admin can clear a removed member''s access.' USING ERRCODE = '42501';
+  END IF;
+  IF EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = p_org_id AND m.uid = p_uid) THEN
+    RAISE EXCEPTION 'prune_removed_member_acl_index: this person is still a member of the workspace — nothing was changed.' USING ERRCODE = '42501';
+  END IF;
+  v_limit := v_left;
+  v_probe := format('$.allow.users.*[*] ? (@ == "%s")', p_uid::text)::jsonpath;
+
+  UPDATE documents SET acl_index = acl_index_without_user_allow(acl_index, ARRAY[p_uid::text])
+   WHERE id IN (SELECT id FROM documents WHERE org_id = p_org_id AND acl_index @? v_probe LIMIT v_left);
+  GET DIAGNOSTICS v_docs = ROW_COUNT;
+  v_left := v_left - v_docs;
+  IF v_left > 0 THEN
+    UPDATE collections SET acl_index = acl_index_without_user_allow(acl_index, ARRAY[p_uid::text])
+     WHERE id IN (SELECT id FROM collections WHERE org_id = p_org_id AND acl_index @? v_probe LIMIT v_left);
+    GET DIAGNOSTICS v_cols = ROW_COUNT;
+    v_left := v_left - v_cols;
+  END IF;
+  IF v_left > 0 THEN
+    UPDATE document_sets SET acl_index = acl_index_without_user_allow(acl_index, ARRAY[p_uid::text])
+     WHERE id IN (SELECT id FROM document_sets WHERE org_id = p_org_id AND acl_index @? v_probe LIMIT v_left);
+    GET DIAGNOSTICS v_sets = ROW_COUNT;
+    v_left := v_left - v_sets;
+  END IF;
+  IF v_left > 0 THEN
+    UPDATE libraries SET acl_index = acl_index_without_user_allow(acl_index, ARRAY[p_uid::text])
+     WHERE id IN (SELECT id FROM libraries WHERE org_id = p_org_id AND acl_index @? v_probe LIMIT v_left);
+    GET DIAGNOSTICS v_libs = ROW_COUNT;
+    v_left := v_left - v_libs;
+  END IF;
+
+  IF v_docs + v_cols + v_sets + v_libs > 0 THEN
+    IF v_actor IS NOT NULL THEN
+      SELECT email INTO v_actor_email FROM org_members WHERE uid = v_actor AND org_id = p_org_id LIMIT 1;
+    END IF;
+    INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, user_email, details)
+    VALUES ('MEMBER_ACL_GRANTS_PRUNED', p_uid::text, 'member', p_org_id, v_actor,
+            CASE WHEN v_actor IS NULL THEN 'system:member-acl-prune' ELSE v_actor_email END,
+            jsonb_build_object('reason', 'member_removed', 'phase', 'acl_index',
+                               'libraries', v_libs, 'collections', v_cols,
+                               'documents', v_docs, 'documentSets', v_sets,
+                               'done', v_left > 0));
+  END IF;
+  -- Fewer rows than the limit were found: nothing that names them is left.
+  RETURN jsonb_build_object('pruned', v_docs + v_cols + v_sets + v_libs,
+                            'documents', v_docs, 'collections', v_cols, 'documentSets', v_sets, 'libraries', v_libs,
+                            'limit', v_limit, 'done', v_left > 0);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION prune_removed_member_acl_index(uuid, uuid, integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION prune_removed_member_acl_index(uuid, uuid, integer) TO authenticated, service_role;
 
 -- ── 3. ORG-7: grants that already name someone with no membership ───────────
 -- One pass per table; one machine audit row per workspace with the counts.
@@ -580,6 +682,21 @@ UNION ALL
 SELECT 'revoke_member: REMOVE prunes per-user ALLOW rules on all four node tables, after the grant strip and before the membership delete (ORG-7)',
        EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'revoke_member'
                   AND prosrc LIKE '%GET DIAGNOSTICS v_grants = ROW_COUNT;%UPDATE libraries%acl_without_user_allow(acl, ARRAY[v_member.uid::text])%UPDATE collections%UPDATE documents%UPDATE document_sets%MEMBER_ACL_GRANTS_PRUNED%DELETE FROM org_members WHERE id = p_member_id;%'),
+       NULL
+UNION ALL
+SELECT 'revoke_member: the in-statement prune is bounded by the rules a person was given — no acl_index scan of inheriting descendants (review fix: no 57014 on a widely indexed grant)',
+       EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'revoke_member' AND prosrc LIKE '%v_rule_probe%')
+       AND NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'revoke_member' AND prosrc LIKE '%acl_index @?%'),
+       NULL
+UNION ALL
+SELECT 'prune_removed_member_acl_index: SECURITY DEFINER, search_path pinned, Admin or server only, refuses a current member, chunked by a LIMIT; anon cannot execute it, authenticated can (ORG-7)',
+       EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'prune_removed_member_acl_index' AND prosecdef
+                  AND proconfig @> ARRAY['search_path=public']
+                  AND prosrc LIKE '%auth.role()%service_role%'
+                  AND prosrc LIKE '%still a member of the workspace%'
+                  AND prosrc LIKE '%acl_index @? v_probe LIMIT v_left%')
+       AND NOT has_function_privilege('anon', 'prune_removed_member_acl_index(uuid, uuid, integer)', 'EXECUTE')
+       AND has_function_privilege('authenticated', 'prune_removed_member_acl_index(uuid, uuid, integer)', 'EXECUTE'),
        NULL
 UNION ALL
 SELECT 'revoke_member: anon and PUBLIC cannot execute it, authenticated can',

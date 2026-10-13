@@ -31,6 +31,20 @@ export async function getOrgBranding(orgId: string): Promise<OrgBranding | null>
   return (data.data as OrgBranding) ?? null;
 }
 
+/** The stored branding, read CHECKED: "no row" (`branding: null`) is told
+ *  apart from "the read failed" (`ok: false`) — the save below decides and
+ *  audits from it, so a failure must never pass for "nothing stored". */
+export async function readOrgBrandingChecked(orgId: string): Promise<{ ok: true; branding: OrgBranding | null } | { ok: false; error: string }> {
+  const { data, error } = await supabase
+    .from("org_configurations")
+    .select("data")
+    .eq("org_id", orgId)
+    .eq("key", KEY)
+    .maybeSingle();
+  if (error) return { ok: false, error: error.message ?? "read failed" };
+  return { ok: true, branding: ((data?.data as OrgBranding | undefined) ?? null) };
+}
+
 /** ORG-11: a palette is two "#RRGGBB" colours — the shape the branding
  *  page's colour inputs emit and the theme accepts. */
 export function brandingPaletteProblem(p: unknown): string | null {
@@ -56,10 +70,22 @@ export async function saveOrgBranding(
   branding: OrgBranding,
   actor?: { uid: string | null; email?: string | null },
 ): Promise<{ auditError: string | null }> {
-  const before = await getOrgBranding(orgId);
-  const paletteChanged = JSON.stringify(branding.palette ?? null) !== JSON.stringify(before?.palette ?? null);
+  // Review fix: a failed read of the stored branding is not "nothing
+  // stored". The palette check then cannot tell a changed palette from one
+  // carried along: a valid palette saves as before, an invalid one is
+  // refused naming the read failure (it may be a stored pre-ORG-11 palette —
+  // try again once the read works). The audit row says the "before" is
+  // unknown (beforeReadError), never that there was no branding.
+  const stored = await readOrgBrandingChecked(orgId);
+  const before = stored.ok ? stored.branding : null;
+  const beforeReadError = stored.ok ? null : stored.error;
+  const paletteChanged = !stored.ok || JSON.stringify(branding.palette ?? null) !== JSON.stringify(before?.palette ?? null);
   const problem = paletteChanged ? brandingPaletteProblem(branding.palette) : null;
-  if (problem) throw new Error(problem);
+  if (problem) {
+    throw new Error(beforeReadError
+      ? `Couldn't read the stored branding (${beforeReadError}), so this palette can't be checked against it: ${problem} Nothing was saved — try again.`
+      : problem);
+  }
   const payload = { ...branding, updatedAt: new Date().toISOString() };
   const res = await checkedWrite(supabase
     .from("org_configurations")
@@ -71,7 +97,9 @@ export async function saveOrgBranding(
   const audit = await logAuditAction({
     action: "BRANDING_CHANGED", resourceType: "org_branding", resourceId: orgId, orgId,
     userId: actor.uid, userEmail: actor.email ?? undefined, userRole: "Admin",
-    details: { before: pick(before), after: pick(payload) },
+    details: beforeReadError
+      ? { before: null, beforeUnknown: true, beforeReadError, after: pick(payload) }
+      : { before: pick(before), after: pick(payload) },
   });
   return { auditError: audit.ok ? null : (audit.error ?? "audit insert refused") };
 }

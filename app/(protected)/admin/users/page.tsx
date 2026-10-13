@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
 import { revokeMember } from '@/lib/members';
+import { pruneRemovedMemberAclIndex } from '@/lib/memberAclIndexPrune';
 import type { Role } from '@/types/schema';
 import { capabilitiesAdded, primaryRole, CAPABILITY_LABELS, isDormantRole, roleDisplayNote, DORMANT_ROLE_NOTE, pickerRoster, pickerNote } from '@/lib/roleCapabilities';
 import { holdsReadOnlyRole, READ_ONLY_ROLES } from '@/lib/roleHeld';
@@ -317,6 +318,20 @@ export default function AdminUsersPage() {
       // re-reads the policy at once (a display refresh — every server-side
       // decision already reads it fresh).
       invalidateCapabilityPolicy(activeOrgId);
+      // ORG-7 (admin-and-org Round G, review fix): revoke_member pruned the
+      // rules naming them; the nodes that only inherited a grant still list
+      // them in their acl_index and are cleared here in bounded chunks (one
+      // statement each — never one statement big enough to time out). Not
+      // awaited: nothing leaks meanwhile (a non-member is refused
+      // everywhere), and the nightly re-index finishes a run cut short.
+      const prunedUid = member.uid;
+      if (prunedUid) void pruneRemovedMemberAclIndex(supabase, activeOrgId, prunedUid, { deadlineMs: 120_000 }).then(async (p) => {
+        if (!p.ok) {
+          await appAlert({ message: `${who} was removed, but the access their grants left in the document index could not be cleared yet (${p.error}). They can't open anything as a non-member; tonight's re-index finishes the clean-up.`, tone: 'danger' });
+        } else if (!p.done) {
+          await appAlert(`${who} was removed. ${p.pruned.toLocaleString()} indexed item${p.pruned === 1 ? '' : 's'} no longer list them; tonight's re-index clears the rest.`);
+        }
+      });
       const c = result.cleared;
       const total = c ? c.libraries.length + c.collections.length + c.documents.length + c.teams.length : 0;
       if (total > 0) {

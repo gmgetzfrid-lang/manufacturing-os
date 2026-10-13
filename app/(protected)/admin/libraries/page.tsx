@@ -12,20 +12,11 @@ import { appAlert } from "@/components/providers/DialogProvider";
 import { setOwner as assignLibraryOwner } from "@/lib/ownership";
 import { buildAclIndex, mergeWizardLibraryAcl } from "@/lib/acl";
 import type { LibraryDeleteImpact } from "@/lib/libraryDeleteImpact";
+import { postLibraryDelete } from "@/lib/libraryDeleteClient";
 
-/** ALOG-3: the one door for a library delete — counts, deletes as the
- *  caller, records LIBRARY_DELETED (app/api/admin/libraries/delete). */
-async function postLibraryDelete(body: Record<string, unknown>): Promise<{ ok: boolean; status: number; body: Record<string, unknown> }> {
-  const { data: { session } } = await supabase.auth.getSession();
-  const res = await fetch("/api/admin/libraries/delete", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}) },
-    body: JSON.stringify(body),
-  });
-  let json: Record<string, unknown> = {};
-  try { json = (await res.json()) as Record<string, unknown>; } catch { /* a body that is not JSON is said by the status */ }
-  return { ok: res.ok, status: res.status, body: json };
-}
+// ALOG-3: the delete door — counts, deletes as the caller, records
+// LIBRARY_DELETED (app/api/admin/libraries/delete). The fetch is shared with
+// the library tile menu on /documents (lib/libraryDeleteClient.ts).
 
 export default function LibraryAdminPage() {
   const router = useRouter();

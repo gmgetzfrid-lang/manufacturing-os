@@ -165,9 +165,14 @@ describe("DRLS-14 — the doors that delete a document, and the ones that never 
   });
 
   it("a library delete on /documents shows the database's sentence too", () => {
+    // ALOG-3 (admin-and-org Round G, review fix): the tile menu's delete runs
+    // through the same route as /admin/libraries (run as the caller, the
+    // database's sentence relayed); driven rendered in
+    // aoRoundGP8DocumentsLibraryDelete.test.ts.
     const page = src("app/(protected)/documents/page.tsx");
-    expect(page).toContain('const { error } = await supabase.from("libraries").delete().eq("id", lib._id!);');
-    expect(page).toContain("if (error) { await appAlert({ message: `Delete failed: ${error.message}`, tone: \"danger\" }); return; }");
+    expect(page).not.toContain('supabase.from("libraries").delete()');
+    expect(page).toContain("const r = await postLibraryDelete({ orgId: activeOrgId, libraryId: lib._id, expected: deleteImpact ?? undefined });");
+    expect(page).toContain('await appAlert({ message: `Delete failed: ${libraryDeleteError(r, "the library was not deleted")}`, tone: "danger" });');
   });
 
   it("P14 final review — a library delete on /admin/libraries shows the database's sentence too, and a delete that matched no row is a refusal (driven rendered in dcRoundFLibraryDeleteRefusal.test.ts)", () => {

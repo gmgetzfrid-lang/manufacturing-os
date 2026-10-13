@@ -150,6 +150,20 @@ describe("20261203 — ORG-13 rail, node_visible org-scoped, ORG-6 pin, timezone
     expect(A).toMatch(/REVOKE ALL ON FUNCTION enforce_team_member_org\(\) FROM PUBLIC, anon, authenticated;/);
   });
 
+  it("ORG-13 dw3 (review fix): the database refuses a person's new or changed supervisor who is not an ACTIVE member of the team's workspace; a rename, a clear and a no-uid write pass", () => {
+    const fn = A.slice(A.indexOf("CREATE OR REPLACE FUNCTION enforce_team_supervisor_member()"), A.indexOf("REVOKE ALL ON FUNCTION enforce_team_supervisor_member()"));
+    expect(fn).toMatch(/RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS \$\$/);
+    expect(fn).toMatch(/IF auth\.uid\(\) IS NULL OR NEW\.supervisor_user_id IS NULL THEN\n    RETURN NEW;/);
+    expect(fn).toMatch(/IF TG_OP = 'UPDATE'\n     AND NEW\.supervisor_user_id IS NOT DISTINCT FROM OLD\.supervisor_user_id\n     AND NEW\.org_id IS NOT DISTINCT FROM OLD\.org_id THEN\n    RETURN NEW;/);
+    expect(fn).toMatch(/WHERE m\.org_id = NEW\.org_id AND m\.uid = NEW\.supervisor_user_id AND m\.status = 'active'\) THEN\n    RAISE EXCEPTION '[^']*(?:''[^']*)*'\n      USING ERRCODE = 'check_violation';/);
+    expect(A).toContain("REVOKE ALL ON FUNCTION enforce_team_supervisor_member() FROM PUBLIC, anon, authenticated;");
+    expect(A).toMatch(/CREATE TRIGGER trg_teams_supervisor_member_rail\n  BEFORE INSERT OR UPDATE OF supervisor_user_id, org_id ON teams\n  FOR EACH ROW EXECUTE FUNCTION enforce_team_supervisor_member\(\);/);
+    // existing teams are counted, never changed
+    expect(A).not.toMatch(/UPDATE teams/);
+    const inv = A.slice(A.indexOf("INSERT INTO ao_p8_20261203_inventory"), A.indexOf("\nBEGIN;"));
+    expect(inv).toMatch(/teams whose supervisor is not an active member/);
+  });
+
   it("rows that already break the rail are audited (machine rows) and removed INSIDE the transaction, audit first", () => {
     const tx = A.slice(A.indexOf("\nBEGIN;"), A.indexOf("\nCOMMIT;"));
     const audit = tx.indexOf("'TEAM_MEMBER_REMOVED', tm.team_id::text, 'team', tm.org_id, NULL");
@@ -191,7 +205,7 @@ describe("20261204 — revoke_member from its NEWEST body + ALOG-15 + ORG-7; ALO
     const prune = next.slice(pruneStart, pruneEnd);
     const allowed = new Set([
       "  v_acl_libs int := 0;", "  v_acl_cols int := 0;", "  v_acl_docs int := 0;", "  v_acl_sets int := 0;",
-      "  v_rule_probe jsonb;", "  v_bucket_probe jsonpath;",
+      "  v_rule_probe jsonb;",
       "  -- ALOG-15 (admin-and-org Round G, 20261204): the strip stamps updated_at,",
       "  -- so the policy route's compare-and-set sees it and answers 409 to a save",
       "  -- built from a policy that still held this member's grant.",
@@ -216,14 +230,38 @@ describe("20261204 — revoke_member from its NEWEST body + ALOG-15 + ORG-7; ALO
     }
     expect(next).toMatch(/default_new_acl = acl_without_user_allow\(default_new_acl, ARRAY\[v_member\.uid::text\]\)/);
     expect(at("MEMBER_ACL_GRANTS_PRUNED")).toBeLessThan(at("DELETE FROM subscriptions WHERE org_id = v_member.org_id"));
-    // fix pass: each scan is narrowed by binary jsonb tests built once — no
+    // fix pass: each scan is narrowed by a binary jsonb test built once — no
     // text cast of any row — before the exact acl_allow_user_ids check
     expect(next).not.toMatch(/strpos\(|acl::text|acl_index::text/);
     expect(next).toMatch(/v_rule_probe := jsonb_build_object\('rules', jsonb_build_array\(jsonb_build_object\('subject', jsonb_build_object\('type', 'user', 'id', v_member\.uid::text\)\)\)\);/);
-    expect(next).toMatch(/v_bucket_probe := format\('\$\.allow\.users\.\*\[\*\] \? \(@ == "%s"\)', v_member\.uid::text\)::jsonpath;/);
-    expect(next).toMatch(/AND \(acl @> v_rule_probe OR default_new_acl @> v_rule_probe OR acl_index @\? v_bucket_probe\)\n     AND v_member\.uid::text = ANY\(acl_allow_user_ids\(acl, acl_index\) \|\| acl_allow_user_ids\(default_new_acl, NULL\)\);/);
-    expect(next.match(/AND \(acl @> v_rule_probe OR acl_index @\? v_bucket_probe\)\n     AND v_member\.uid::text = ANY\(acl_allow_user_ids\(acl, acl_index\)\);/g)).toHaveLength(3);
+    // review fix (57014): the in-statement prune rewrites only the nodes
+    // whose OWN acl / template carries the rule — never a scan of the
+    // inheriting descendants' acl_index (that moved to the chunked RPC)
+    expect(next).not.toMatch(/acl_index @\?|v_bucket_probe/);
+    expect(next).toMatch(/AND \(acl @> v_rule_probe OR default_new_acl @> v_rule_probe\)\n     AND v_member\.uid::text = ANY\(acl_allow_user_ids\(acl, NULL\) \|\| acl_allow_user_ids\(default_new_acl, NULL\)\);/);
+    expect(next.match(/AND acl @> v_rule_probe\n     AND v_member\.uid::text = ANY\(acl_allow_user_ids\(acl, NULL\)\);/g)).toHaveLength(3);
     expect(at("DELETE FROM subscriptions WHERE org_id = v_member.org_id")).toBeLessThan(at("DELETE FROM org_members WHERE id = p_member_id;"));
+  });
+
+  it("review fix (57014): the inherited acl_index entries are stripped by a chunked RPC — Admin or server only, never a current member, LIMIT-bounded per statement, audited per chunk", () => {
+    const fn = definitions("prune_removed_member_acl_index", [B_FILE])[0][1];
+    expect(fn).toMatch(/^CREATE OR REPLACE FUNCTION prune_removed_member_acl_index\(p_org_id uuid, p_uid uuid, p_limit integer DEFAULT 1000\)\nRETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS \$\$/);
+    expect(fn).toContain("v_left  int := LEAST(GREATEST(COALESCE(p_limit, 1000), 1), 5000);");
+    // authority: an active Admin of the org by the role collection, or the server
+    expect(fn).toMatch(/IF v_actor IS NULL THEN\n    IF COALESCE\(auth\.role\(\), ''\) <> 'service_role' THEN\n      RAISE EXCEPTION/);
+    expect(fn).toContain("me.status = 'active' AND (me.role = 'Admin' OR me.roles && ARRAY['Admin']::text[])");
+    // never strips a current member's access
+    expect(fn).toMatch(/IF EXISTS \(SELECT 1 FROM org_members m WHERE m\.org_id = p_org_id AND m\.uid = p_uid\) THEN\n    RAISE EXCEPTION/);
+    // every table: one LIMIT-bounded UPDATE of acl_index only, the allow-bucket strip
+    for (const t of ["documents", "collections", "document_sets", "libraries"]) {
+      expect(fn).toMatch(new RegExp(`UPDATE ${t} SET acl_index = acl_index_without_user_allow\\(acl_index, ARRAY\\[p_uid::text\\]\\)\\n\\s+WHERE id IN \\(SELECT id FROM ${t} WHERE org_id = p_org_id AND acl_index @\\? v_probe LIMIT v_left\\);`));
+    }
+    expect(fn).not.toMatch(/SET acl = /);
+    expect(fn).toMatch(/'MEMBER_ACL_GRANTS_PRUNED'[\s\S]*'phase', 'acl_index'/);
+    expect(fn).toMatch(/RETURN jsonb_build_object\('pruned', v_docs \+ v_cols \+ v_sets \+ v_libs,[\s\S]*'done', v_left > 0\);/);
+    expect(B).toMatch(/REVOKE ALL ON FUNCTION prune_removed_member_acl_index\(uuid, uuid, integer\) FROM PUBLIC, anon;\nGRANT EXECUTE ON FUNCTION prune_removed_member_acl_index\(uuid, uuid, integer\) TO authenticated, service_role;/);
+    // the probe the paste shows
+    expect(B).toContain("AND NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'revoke_member' AND prosrc LIKE '%acl_index @?%'),");
   });
 
   it("keeps the newest body's rails: SECURITY DEFINER, pinned search_path, NULL uid refused, EXECUTE for authenticated only (DRLS-16)", () => {
