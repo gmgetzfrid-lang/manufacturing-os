@@ -6,6 +6,7 @@ import {
   normalizeCompanyName, matchCompanyByName, isoCurrency, fieldCurrency, effectiveWeights,
   MANPOWER_MAX_COMPOSITE_SWING, bidCurrency, parseTypedAmount, withHumanTotal,
   companyCandidatesByName, barredCompanyFor, MIN_CORROBORATING_STATEMENTS, HOURS_PLAUSIBILITY_RATIO,
+  companyKeyLeads, companiesNamedAlike, leadsOnly,
   type ParsedQuote,
 } from "@/lib/bidTab";
 import { buildCostSeries, computeForecast, plannedCrewAverage, scheduleSpanFromMilestones } from "@/lib/costSeries";
@@ -254,6 +255,90 @@ describe("bidTab honesty (Round G, DEC-48)", () => {
     expect(barredCompanyFor("Totally Different", "apex-inc", registry)?.id).toBe("apex-inc");
     // Nothing barred among the candidates → nothing flagged.
     expect(barredCompanyFor("Apex Co.", null, [sibling, { id: "a2", name: "Apex LLC", status: "inactive" }])).toBeNull();
+  });
+
+  // ── projects Round G J17 BARRED LOOK-ALIKE (COST-3 residual 2; DEC-90 A21, the Apex ruling) ──
+  it("COST-3 / DEC-90 A21: a do-not-use registry name whose normalised words LEAD the vendor's flags the bid — 'Apex Industrial' against 'Apex Industrial Services, LLC' — and never binds it", () => {
+    const apex = { id: "c-apex", name: "Apex Industrial", status: "do_not_use" };
+    // the record's own failure scenario: flagged by the gate…
+    expect(barredCompanyFor("Apex Industrial Services, LLC", null, [apex])?.id).toBe("c-apex");
+    expect(companyCandidatesByName("Apex Industrial Services, LLC", [apex]).map((c) => c.id)).toEqual(["c-apex"]);
+    // …never bound: the binding stays exact / normalised (matchCompanyByName, companiesNamedAlike)
+    expect(matchCompanyByName("Apex Industrial Services, LLC", [apex])).toBeNull();
+    expect(companiesNamedAlike("Apex Industrial Services, LLC", [apex])).toEqual([]);
+    // a partial match is said to be one; an equal name key is not partial
+    expect(leadsOnly("Apex Industrial Services, LLC", "Apex Industrial")).toBe(true);
+    expect(leadsOnly("Apex Industrial, Inc.", "Apex Industrial")).toBe(false);
+    expect(leadsOnly("Bayline Scaffold", "Apex Industrial")).toBe(false);
+    expect(leadsOnly(null, "Apex Industrial")).toBe(false);
+    // a person's link still decides — to the active real company, nothing is flagged
+    expect(barredCompanyFor("Apex Industrial Services, LLC", "c-real", [apex, { id: "c-real", name: "Apex Industrial Services", status: "active" }])).toBeNull();
+    // an ACTIVE or INACTIVE leading row is a candidate but never the do-not-use gate's answer (DEC-48: do-not-use look-alikes only)
+    expect(barredCompanyFor("Apex Industrial Services, LLC", null, [{ ...apex, status: "active" }])).toBeNull();
+    expect(barredCompanyFor("Apex Industrial Services, LLC", null, [{ ...apex, status: "inactive" }])).toBeNull();
+  });
+
+  it("COST-3 / DEC-90 A21: whole words only, in one direction — the registry name must LEAD the vendor's", () => {
+    expect(companyKeyLeads("apex industrial", "apex industrial services")).toBe(true);
+    expect(companyKeyLeads("apex industrial", "apex industrial")).toBe(true);          // an equal key leads
+    expect(companyKeyLeads("apex ind", "apex industrial")).toBe(false);               // never part of a word
+    expect(companyKeyLeads("ace", "acme")).toBe(false);
+    expect(companyKeyLeads("industrial services", "apex industrial services")).toBe(false); // never a later word
+    expect(companyKeyLeads("apex industrial services", "apex industrial")).toBe(false);     // a longer registry name never leads a shorter vendor's
+    expect(companyKeyLeads("", "apex")).toBe(false);                                   // an empty key leads nothing
+    expect(companyKeyLeads("", "")).toBe(false);
+    const reg = [
+      { id: "1", name: "Apex Ind", status: "do_not_use" },
+      { id: "2", name: "Industrial Services", status: "do_not_use" },
+      { id: "3", name: "Apex Industrial Services Group", status: "do_not_use" },
+      { id: "4", name: "Ace", status: "do_not_use" },
+    ];
+    expect(barredCompanyFor("Apex Industrial Services, LLC", null, reg)).toBeNull();
+    expect(barredCompanyFor("Acme Corp", null, reg)).toBeNull();
+    // the vendor's normalisation applies first: legal suffixes and a leading "the" never decide
+    expect(barredCompanyFor("The Apex Industrial Services Co.", null, [{ id: "a", name: "Apex Industrial, Inc.", status: "do_not_use" }])?.id).toBe("a");
+    expect(barredCompanyFor("Apex & Sons Industrial", null, [{ id: "a", name: "Apex and Sons", status: "do_not_use" }])?.id).toBe("a");
+  });
+
+  it("COST-3 / DEC-90 A21: a ONE-word registry name flags broadly — every vendor whose name begins with that word — an acknowledgement, never a binding", () => {
+    const apex = { id: "c-apex", name: "Apex, LLC", status: "do_not_use" };
+    for (const v of ["Apex Industrial Services, LLC", "Apex Plumbing", "APEX  Rigging Inc.", "Apex"]) {
+      expect(barredCompanyFor(v, null, [apex])?.id, v).toBe("c-apex");
+      expect(matchCompanyByName(v, [apex]), v).toBe(v === "Apex" ? apex : null);
+    }
+    for (const v of ["Apexion Ltd", "Big Apex Rigging", "Ape X Industrial"]) expect(barredCompanyFor(v, null, [apex]), v).toBeNull();
+  });
+
+  it("COST-3 / DEC-90 A21 regression: the order names the closest company — the exact name, then the LONGEST leading name (an equal key first), then the id — so every case that flagged before names the same company as before", () => {
+    const sameKey = { id: "z-same", name: "Apex Industrial Services", status: "do_not_use" };
+    const twoWords = { id: "m-two", name: "Apex Industrial", status: "do_not_use" };
+    const oneWord = { id: "a-one", name: "Apex", status: "do_not_use" };
+    // an equal key outranks a leading one whatever the ids (before J17 only the equal key flagged — it is still named)
+    expect(barredCompanyFor("Apex Industrial Services, LLC", null, [oneWord, twoWords, sameKey])?.id).toBe("z-same");
+    expect(barredCompanyFor("Apex Industrial Services, LLC", null, [sameKey, twoWords, oneWord].reverse())?.id).toBe("z-same");
+    // with no equal key, the longest leading name
+    expect(barredCompanyFor("Apex Industrial Services, LLC", null, [oneWord, twoWords])?.id).toBe("m-two");
+    expect(barredCompanyFor("Apex Industrial Services, LLC", null, [twoWords, oneWord])?.id).toBe("m-two");
+    // the exact name first, still (spaces trimmed only, case aside)
+    expect(barredCompanyFor("  apex ", null, [{ id: "b-apex-inc", name: "Apex Inc", status: "do_not_use" }, { id: "c-exact", name: "Apex", status: "do_not_use" }])?.id).toBe("c-exact");
+    // two leading names of one length: the lower id
+    expect(barredCompanyFor("Apex Industrial Services", null, [{ id: "y", name: "Apex Industrial, Inc.", status: "do_not_use" }, { id: "x", name: "Apex Industrial", status: "do_not_use" }])?.id).toBe("x");
+  });
+
+  it("COST-3 / DEC-90 A21 regression: the binding and the display's ambiguity are exactly as before — exact name, else ONE normalised row; never a leading name", () => {
+    const registry = [{ id: "g", name: "Gulf Mechanical" }, { id: "a", name: "Apex Industrial" }, { id: "a2", name: "Apex Industrial Services" }];
+    // the gate's candidates widen…
+    expect(companyCandidatesByName("Apex Industrial Services, LLC", registry).map((c) => c.id).sort()).toEqual(["a", "a2"]);
+    // …the binding's do not
+    expect(companiesNamedAlike("Apex Industrial Services, LLC", registry).map((c) => c.id)).toEqual(["a2"]);
+    expect(matchCompanyByName("Apex Industrial Services, LLC", registry)?.id).toBe("a2");
+    expect(matchCompanyByName("Apex Industrial Services Group", registry)).toBeNull();
+    expect(matchCompanyByName("Gulf Mechanical, Inc.", registry)?.id).toBe("g");
+    expect(matchCompanyByName("Gulf Mechanical Contractors", registry)).toBeNull();
+    // two rows normalising alike are still ambiguous to the binding, and only those count
+    expect(companiesNamedAlike("Gulf Mechanical, Inc.", [...registry, { id: "dup", name: "Gulf Mechanical LLC" }]).map((c) => c.id)).toEqual(["g", "dup"]);
+    expect(companiesNamedAlike("", registry)).toEqual([]);
+    expect(companiesNamedAlike(null, registry)).toEqual([]);
   });
 
   it("COST-5 / DEC-48 (recorded for ratification): once three bids state plausible hours, silence scores 0, so stating them is worth up to 100 × the manpower share; the 5-point cap binds hours against hours only", () => {

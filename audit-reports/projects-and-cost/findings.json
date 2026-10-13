@@ -18,8 +18,8 @@
       "LOW": 14
     },
     "by_status": {
-      "RESOLVED": 74,
-      "OPEN": 3
+      "RESOLVED": 75,
+      "OPEN": 2
     }
   },
   "status_vocabulary": [
@@ -724,7 +724,7 @@
       "id": "COST-3",
       "title": "A vendor's do-not-use flag and quality-manual score are advisory only, depend on exact string equality with an AI-read letterhead, and the score is derived from at most 10 pages",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

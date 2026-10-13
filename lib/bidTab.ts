@@ -628,21 +628,61 @@ export function normalizeCompanyName(s: string): string {
 
 const exactName = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
 
-/** EVERY registry row a vendor name could be — normalised equality, no
- *  uniqueness required. For GATING, never for binding (BID-12 / MON-12):
- *  when two rows normalise alike neither binds, but if either is flagged
- *  do-not-use the bid is flagged too. */
-export function companyCandidatesByName<T extends { name: string }>(vendorName: string | null | undefined, companies: T[]): T[] {
+/** COST-3 / DEC-90 A21 (the Apex ruling): a registry name's KEY leads a
+ *  vendor name's key when its words are the vendor's first words — whole
+ *  words, in that order ("apex industrial" leads "apex industrial services";
+ *  an equal key leads too). Never part of a word ("apex ind" does not lead
+ *  "apex industrial", "ace" not "acme"), never a later word, never a longer
+ *  registry name; an empty key leads nothing. Both keys are
+ *  `normalizeCompanyName`'s, so legal suffixes and a leading "the" never
+ *  decide. For the do-not-use GATE only — it never binds a bid to a row.
+ *  20261190's `cost_doc_company_barred` / `cost_doc_companies_barred` read
+ *  the same rule in SQL (`n.k = v_key OR starts_with(v_key, n.k || ' ')`). */
+export function companyKeyLeads(registryKey: string, vendorKey: string): boolean {
+  return registryKey !== "" && (vendorKey === registryKey || vendorKey.startsWith(`${registryKey} `));
+}
+
+/** Every registry row whose name normalises EXACTLY as the vendor's — the
+ *  rows a vendor name can BIND among (`matchCompanyByName`) and the bid
+ *  row's "ambiguous — link to registry" display. Never a leading name. */
+export function companiesNamedAlike<T extends { name: string }>(vendorName: string | null | undefined, companies: T[]): T[] {
   if (!vendorName) return [];
   const key = normalizeCompanyName(vendorName);
   if (!key) return [];
   return companies.filter((c) => normalizeCompanyName(c.name) === key);
 }
 
+/** EVERY registry row a vendor name could be — normalised equality, or
+ *  (COST-3 / DEC-90 A21, the Apex ruling) a row whose normalised name LEADS
+ *  the vendor's (`companyKeyLeads`: "Apex Industrial" for "Apex Industrial
+ *  Services, LLC"), no uniqueness required. For GATING, never for binding
+ *  (BID-12 / MON-12): when two rows normalise alike neither binds, but if
+ *  either is flagged do-not-use the bid is flagged too; a leading name never
+ *  binds (`companiesNamedAlike` is the binding's set) but flags the bid for a
+ *  person to dispose of. A ONE-word registry name leads every vendor name
+ *  that begins with that word — broad, and accepted for a typed
+ *  acknowledgement or override, never a refusal without a reason path. */
+export function companyCandidatesByName<T extends { name: string }>(vendorName: string | null | undefined, companies: T[]): T[] {
+  if (!vendorName) return [];
+  const key = normalizeCompanyName(vendorName);
+  if (!key) return [];
+  return companies.filter((c) => companyKeyLeads(normalizeCompanyName(c.name), key));
+}
+
+/** A PARTIAL match (DEC-90 A21): `companyName`'s normalised name leads the
+ *  vendor name's but is not the same name ("Apex Industrial" for "Apex
+ *  Industrial Services, LLC") — the prompts and the audit rows say so. */
+export function leadsOnly(vendorName: string | null | undefined, companyName: string): boolean {
+  const vendorKey = normalizeCompanyName(vendorName ?? "");
+  const registryKey = normalizeCompanyName(companyName);
+  return registryKey !== vendorKey && companyKeyLeads(registryKey, vendorKey);
+}
+
 /** The registry row a vendor name BINDS to for display: an exact
  *  (trimmed, case-insensitive) name hit first, else the one row it
  *  normalises to — null when none or more than one matches (ambiguity
- *  never auto-binds). The do-not-use gate reads `companyCandidatesByName`,
+ *  never auto-binds). Never a leading name (DEC-90 A21 is the gate's, not
+ *  the binding's). The do-not-use gate reads `companyCandidatesByName`,
  *  not this. */
 export function matchCompanyByName<T extends { name: string }>(vendorName: string | null | undefined, companies: T[]): T | null {
   if (!vendorName) return null;
@@ -652,17 +692,22 @@ export function matchCompanyByName<T extends { name: string }>(vendorName: strin
     if (hits.length === 1) return hits[0];
     if (hits.length > 1) return null;
   }
-  const hits = companyCandidatesByName(vendorName, companies);
+  const hits = companiesNamedAlike(vendorName, companies);
   return hits.length === 1 ? hits[0] : null;
 }
 
 /** The do-not-use row a bid must answer for (MON-12 / COST-3): the
  *  explicitly linked company when there is a link (a human chose it);
- *  otherwise ANY registry row the vendor name could be. Fails toward the
- *  flag — ambiguity never clears it. Of several, the exact name first
- *  (`lower(name) = lower(btrim(vendor))` — spaces trimmed only), then the
- *  id in byte order: the look-alike order of 20261157
- *  `cost_doc_company_barred` and of lib/costDocs.ts `flaggedLookAlike`.
+ *  otherwise ANY registry row the vendor name could be — one it normalises
+ *  to, or one whose normalised name leads it (`companyCandidatesByName`;
+ *  DEC-90 A21, the Apex ruling). Fails toward the flag — ambiguity never
+ *  clears it. Of several, the exact name first (`lower(name) =
+ *  lower(btrim(vendor))` — spaces trimmed only), then the LONGEST name key
+ *  (an equal key before any leading one, so every bid that was flagged
+ *  before J17 names the same company; then the closest leading name), then
+ *  the id in byte order: the look-alike order of 20261190
+ *  `cost_doc_company_barred` / `cost_doc_companies_barred` and of
+ *  lib/costDocs.ts `flaggedLookAlike`.
  *  It is not the whole gate an award applies — the database and the lib
  *  also read the contractor's company and the bound company's own
  *  `inactive` flag — and it answers for whatever name it is given, so the
@@ -690,8 +735,9 @@ export function barredCompanyFor<T extends { id: string; name: string; status: s
   if (boundId) return registry.find((c) => c.id === boundId && c.status === "do_not_use") ?? null;
   const exact = (vendorName ?? "").replace(/^ +| +$/g, "").toLowerCase();
   const isExact = (c: T) => Number(c.name.toLowerCase() === exact);
+  const keyLength = (c: T) => normalizeCompanyName(c.name).length;
   return companyCandidatesByName(vendorName, registry).filter((c) => c.status === "do_not_use")
-    .sort((a, b) => isExact(b) - isExact(a) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0] ?? null;
+    .sort((a, b) => isExact(b) - isExact(a) || keyLength(b) - keyLength(a) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0] ?? null;
 }
 
 // ── Read extent (COST-13) ─────────────────────────────────────────────────

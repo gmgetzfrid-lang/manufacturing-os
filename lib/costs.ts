@@ -28,7 +28,7 @@
 import { supabase } from "@/lib/supabase";
 import { userFacingError, userFacingReadError, userFacingCaughtError } from "@/lib/userFacingError";
 import { listBarredCompanies } from "@/lib/companies";
-import { barredCompanyFor, companyCandidatesByName } from "@/lib/bidTab";
+import { barredCompanyFor, companyCandidatesByName, leadsOnly } from "@/lib/bidTab";
 
 export type CostEntryType = "commitment" | "actual" | "adjustment";
 
@@ -173,11 +173,22 @@ export async function listParties(orgId: string, projectId: string): Promise<Cos
 
 /** A contractor's company link may need a stated reason: returned when the
  *  link was refused only for want of one (the caller asks and retries). */
-export interface PartyLinkOverrideNeeded { companyId: string; company: string }
+export interface PartyLinkOverrideNeeded {
+  companyId: string; company: string;
+  /** The registry name only LEADS the contractor's ("Apex Industrial" for
+   *  "Apex Industrial Services"): a partial match, flagged for an explicit
+   *  acknowledgement (COST-3 residual 2, DEC-90 A21 extended to the
+   *  contractor link, 2026-10-08). Absent for an equal name. */
+  partialMatch?: true;
+}
 
 /** What an unreadable registry refusal says did NOT happen, per path. */
 const REGISTRY_UNREAD_NOT_ADDED = "the contractor was not added; try again, or add it with no company link";
 const REGISTRY_UNREAD_NOT_LINKED = "nothing was linked";
+/** The partial-match words, the bid gate's family (QuotesPanel `partialNote`):
+ *  the registry name leads the contractor's, and only that. */
+const partialMatchNote = (registryName: string, contractorName: string) =>
+  ` (a partial match — the registry name "${registryName}" leads "${contractorName}")`;
 
 /**
  * The do-not-use rule for a contractor's Known Companies link (COST-12 /
@@ -191,6 +202,15 @@ const REGISTRY_UNREAD_NOT_LINKED = "nothing was linked";
  * them `barredCompanyFor` names first: that company is flagged, and a
  * flagged contractor company answers for itself at the award
  * (`cost_doc_company_barred`'s contractor branch; `companyBehind`'s).
+ *
+ * A do-not-use name that only LEADS the contractor's, whole words in order
+ * ("Apex Industrial" for "Apex Industrial Services, LLC" — lib/bidTab
+ * `companyKeyLeads`, the bid gate's rule, DEC-90 A21), is a partial match:
+ * the link is flagged for the same typed, recorded reason, the refusal and
+ * the audit row say so (`partialMatch`), and it never binds. An equal name
+ * is refused with the words it had before, and a name no registry row leads
+ * sees no question. The ruling: DEC-48's J17 line, extended to the
+ * contractor link by the integrator under the user's delegation, 2026-10-08.
  *
  * An unreadable registry refuses the write the check guards, so the refusal
  * says what did NOT happen on that path (`unreadOutcome`): on the Costs
@@ -209,12 +229,15 @@ async function partyLinkCheck(orgId: string, name: string, companyId: string, ov
     linksToALookAlike = companyCandidatesByName(name, barredRows).some((c) => c.id === companyId && c.status === "do_not_use");
   } catch (e) { return { refused: { error: `Couldn't check the company registry (${userFacingCaughtError(e, { action: "read", context: "partyLinkCheck" }).replace(/\.$/, "")}) — ${unreadOutcome}.` } }; }
   if (!barred || linksToALookAlike) return { refused: null, overrideDoNotUse: null };
-  if (overrideReason) return { refused: null, overrideDoNotUse: { companyId: barred.id, company: barred.name, reason: overrideReason } };
+  const partial = leadsOnly(name, barred.name);
+  const needs: PartyLinkOverrideNeeded = { companyId: barred.id, company: barred.name, ...(partial ? { partialMatch: true as const } : {}) };
+  if (overrideReason) return { refused: null, overrideDoNotUse: { ...needs, reason: overrideReason } };
   return { refused: {
-    error: `"${name}" could be ${barred.name}, flagged DO NOT USE in the registry. Linking it to another company needs a reason, which goes on the record.`,
-    needsOverride: { companyId: barred.id, company: barred.name },
+    error: `"${name}" could be ${barred.name}, flagged DO NOT USE in the registry${partial ? partialMatchNote(barred.name, name) : ""}. Linking it to another company needs a reason, which goes on the record.`,
+    needsOverride: needs,
   } };
 }
+
 
 /**
  * The same rule for a link written WITHOUT a way to ask for a reason — the
@@ -223,7 +246,11 @@ async function partyLinkCheck(orgId: string, name: string, companyId: string, ov
  * one the registry could not be read to check, is not written: the caller
  * adds the contractor unlinked and shows the note, and the link is made
  * later on the Costs tab, where the reason is asked for. This is an
- * app-level rule (DEC-76 item 3) — the database does not enforce it.
+ * app-level rule (DEC-76 item 3) — the database does not enforce it. That
+ * note IS the wizard's acknowledgement path: a flagged link, a partial
+ * match included (said in the note's words), is acknowledged with the typed
+ * reason on the Costs tab, where it is recorded; the wizard itself never
+ * asks, never binds, and never stops.
  */
 export async function checkPartyCompanyLink(orgId: string, name: string, companyId: string): Promise<{ ok: true } | { ok: false; note: string }> {
   const chk = await partyLinkCheck(orgId, name, companyId, null);
@@ -232,7 +259,7 @@ export async function checkPartyCompanyLink(orgId: string, name: string, company
   return {
     ok: false,
     note: barred
-      ? `"${name}" was added without a company link: the name could be ${barred.company}, flagged DO NOT USE in the registry. Link it on the project's Costs tab, where the link records a reason.`
+      ? `"${name}" was added without a company link: the name could be ${barred.company}, flagged DO NOT USE in the registry${barred.partialMatch ? partialMatchNote(barred.company, name) : ""}. Link it on the project's Costs tab, where the link records a reason.`
       : `"${name}" was added without a company link: ${chk.refused.error.replace(/ — nothing was linked\.$/, "")}. Link it on the project's Costs tab.`,
   };
 }

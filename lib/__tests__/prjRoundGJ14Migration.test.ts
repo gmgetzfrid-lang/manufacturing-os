@@ -163,9 +163,10 @@ describe("award_quote — re-created from its NEWEST definition with two argumen
 });
 
 describe("section 1 — cost_doc_companies_barred, beside an UNCHANGED cost_doc_company_barred", () => {
-  it("cost_doc_company_barred is not re-created: its newest definition is still 20261157's", () => {
+  it("cost_doc_company_barred is not re-created: its newest definition up to this file is still 20261157's (projects Round G J17's 20261190, pasted after this file, re-creates it — and this file's list — with the leading-name look-alike: prjRoundGJ17Migration.test.ts)", () => {
     const ds = numbered().filter((f) => /CREATE OR REPLACE FUNCTION public\.cost_doc_company_barred\(/.test(mig(f)));
-    expect(ds[ds.length - 1]).toBe("20261157_prj_roundG_server_remainders.sql");
+    expect(ds.filter((f) => f <= FILE).at(-1)).toBe("20261157_prj_roundG_server_remainders.sql");
+    expect(ds.filter((f) => f > FILE)).toEqual(["20261190_prj_roundG_barred_look_alike.sql"]);
     expect(C).not.toMatch(/CREATE OR REPLACE FUNCTION public\.cost_doc_company_(barred|behind)\(/);
   });
 
