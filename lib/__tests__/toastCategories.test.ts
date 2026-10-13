@@ -89,6 +89,12 @@ describe("toastAllowed — the master switch, then the kind's category", () => {
     expect(toastAllowed(noMentions, "ticket_mention")).toBe(false);
     expect(toastAllowed(noMentions, "ticket_comment")).toBe(true);
     expect(toastAllowed(noMentions, "task_nudge")).toBe(true);
+    // a drawing recall is a safety message: no per-category switch mutes its pop-up (the master switch still does)
+    const noStatus = { enabled: true, categories: { ...allOn().categories, status_change: false } };
+    expect(KIND_META.doc_recalled.category).toBe("status_change");
+    expect(toastAllowed(noStatus, "doc_recalled")).toBe(true);
+    expect(toastAllowed(noStatus, "doc_superseded")).toBe(false);
+    expect(toastAllowed({ ...noStatus, enabled: false }, "doc_recalled")).toBe(false);
     expect(normalizeToastPreference(false)).toEqual({ ...allOn(), enabled: false });
     expect(normalizeToastPreference(true)).toEqual(allOn());
   });

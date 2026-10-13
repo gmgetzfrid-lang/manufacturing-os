@@ -249,11 +249,28 @@ export function normalizeToastPreference(p: boolean | ToastPreference): ToastPre
   return p;
 }
 
+/** Kinds no per-category pop-up switch silences (the master switch still
+ *  does): a drawing recall is a safety message, which the email side sends
+ *  whatever the toggles say (lib/notify/dispatch.ts categoryToEventType
+ *  "recall" → safety_recall, DIST-13). Its KIND_META category
+ *  (status_change) would otherwise let "Pop-ups for status changes" mute it. */
+export const TOAST_CATEGORY_EXEMPT_KINDS: ReadonlySet<string> = new Set(["doc_recalled"]);
+
 /** Whether a row of this kind toasts under this preference: the master switch,
  *  then the kind's category (KIND_META.category). A legacy kind no union
- *  declares has no category and follows the master switch alone. */
+ *  declares has no category and follows the master switch alone, as does a
+ *  TOAST_CATEGORY_EXEMPT_KINDS kind.
+ *
+ *  The category is the KIND's, one per kind — not the category each emit()
+ *  call passed for the email, which the row does not carry. Where a producer
+ *  emails a kind under another category the two differ (RT-10 Resolution
+ *  names them: hold_opened's overdue-hold nudge is "sla" by email and
+ *  status_change here; markup_request, milestone_slipped, orchestrator_message,
+ *  doc_superseded, package_doc_stale, and the check-in panel's PSM
+ *  request_pending_approval, "safety" by email). */
 export function toastAllowed(pref: ToastPreference, kind: string): boolean {
   if (!pref.enabled) return false;
+  if (TOAST_CATEGORY_EXEMPT_KINDS.has(kind)) return true;
   const cat = kindMeta(kind)?.category;
   return cat ? pref.categories[cat] !== false : true;
 }

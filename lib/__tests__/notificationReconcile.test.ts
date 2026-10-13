@@ -73,8 +73,11 @@ const ORG = "33333333-3333-4333-8333-333333333333";
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const notif = (n: number, over: Row): Row => ({
   id: id(n), org_id: ORG, user_id: U, kind: "ticket_status", resource_type: "ticket", resource_id: null,
-  metadata: null, read_at: null, ...over,
+  metadata: null, read_at: null, created_at: "2026-10-13T11:00:00.000Z", ...over,
 });
+/** An hour after notif()'s created_at — past the review grace period. */
+const NOW = new Date("2026-10-13T12:00:00.000Z");
+const AT = "2026-10-13T11:00:00.000Z";
 
 beforeEach(() => {
   db.tables = {};
@@ -98,6 +101,9 @@ describe("reconcileClassOf — which condition retires which row", () => {
     expect(r("access_recert_due", "library", "l", null)).toBe("recert");
     expect(r("ack_overdue", "document", "d", null)).toBe("ack_escalation");
     expect(r("review_overdue", "document", "d", null)).toBe("review_escalation");
+    // the cron's daily review-health nudge reuses review_overdue — never reconciled (it stays until read)
+    expect(r("review_overdue", "document", "d", { reviewHealth: true, reviewHealthDay: "2026-10-13", orphanedInReview: 1, pendingOnRetired: 0 })).toBe(null);
+    expect(r("review_overdue", "document", "d", { reviewHealthDay: "2026-10-13" })).toBe(null);
     // everything else: no condition retires it (it stays until read)
     for (const k of ["ticket_comment", "ticket_mention", "hold_released", "branch_resolved", "doc_superseded", "effective_now", "checkout_conflict", "overlap_advisory"]) {
       expect(r(k, "document", "d", null), k).toBe(null);
@@ -238,9 +244,9 @@ describe("retireStaleAlerts — the server re-checks, then marks only the gone o
     const { retireStaleAlerts } = await import("@/lib/notificationReconcileServer");
     const D_OWED = id(701), D_SIGNED = id(702), D_PUBLISHED = id(703), L_DUE = id(801), L_CURRENT = id(802);
     db.tables.document_review_signoffs = [
-      { org_id: ORG, reviewer_user_id: U, document_id: D_OWED, document_version_id: "draft-1", status: "pending" },
-      { org_id: ORG, reviewer_user_id: U, document_id: D_SIGNED, document_version_id: "draft-2", status: "signed" },
-      { org_id: ORG, reviewer_user_id: U, document_id: D_PUBLISHED, document_version_id: "draft-3", status: "pending" }, // its draft is gone
+      { org_id: ORG, reviewer_user_id: U, document_id: D_OWED, document_version_id: "draft-1", status: "pending", assigned_at: AT, notified_at: AT, updated_at: AT },
+      { org_id: ORG, reviewer_user_id: U, document_id: D_SIGNED, document_version_id: "draft-2", status: "signed", assigned_at: AT, notified_at: AT, updated_at: "2026-10-13T11:40:00.000Z" },
+      { org_id: ORG, reviewer_user_id: U, document_id: D_PUBLISHED, document_version_id: "draft-3", status: "pending", assigned_at: AT, notified_at: AT, updated_at: AT }, // its draft is gone
     ];
     db.tables.documents = [
       { id: D_OWED, org_id: ORG, pending_version_id: "draft-1" },
@@ -260,9 +266,56 @@ describe("retireStaleAlerts — the server re-checks, then marks only the gone o
       notif(4, { kind: "access_recert_due", resource_type: "library", resource_id: L_DUE }),
       notif(5, { kind: "access_recert_due", resource_type: "library", resource_id: L_CURRENT }),
     ];
-    const a = await retireStaleAlerts(fakeDb, { orgId: ORG, uid: U, ids: [1, 2, 3, 4, 5].map(id) });
+    const a = await retireStaleAlerts(fakeDb, { orgId: ORG, uid: U, ids: [1, 2, 3, 4, 5].map(id), now: NOW });
     expect(a.retired.sort()).toEqual([id(2), id(3), id(5)]);
     expect(a.kept).toBe(2);
+  });
+
+  it("review: the check-in panel's 'Change proposed to …' notice (review_requested, no roster behind it) is KEPT — even for an owner who reviewed an earlier draft", async () => {
+    const { retireStaleAlerts } = await import("@/lib/notificationReconcileServer");
+    const D_NOROSTER = id(711), D_OLDROSTER = id(712);
+    // The owner signed a draft of D_OLDROSTER months ago (an owner slot); no draft is in review now.
+    db.tables.document_review_signoffs = [
+      { org_id: ORG, reviewer_user_id: U, document_id: D_OLDROSTER, document_version_id: "v-old", status: "signed", assigned_at: "2026-06-01T09:00:00.000Z", notified_at: "2026-06-01T09:00:00.000Z", updated_at: "2026-06-02T09:00:00.000Z" },
+    ];
+    db.tables.documents = [
+      { id: D_NOROSTER, org_id: ORG, pending_version_id: null },
+      { id: D_OLDROSTER, org_id: ORG, pending_version_id: null },
+    ];
+    // CheckInPanel's emit(): kind review_requested, resource { type: 'document', id }, no metadata.
+    const checkIn = (n: number, d: string) => notif(n, {
+      kind: "review_requested", resource_type: "document", resource_id: d, metadata: null,
+      title: "Change proposed to DOC-1", actor_user_id: OTHER,
+    });
+    db.tables.notifications = [checkIn(1, D_NOROSTER), checkIn(2, D_OLDROSTER)];
+    const a = await retireStaleAlerts(fakeDb, { orgId: ORG, uid: U, ids: [id(1), id(2)], now: NOW });
+    expect(a).toEqual({ retired: [], kept: 2, failed: 0 });
+    expect(db.updates).toEqual([]);
+  });
+
+  it("review: a row younger than REVIEW_RECONCILE_GRACE_MS is kept — the voided-approval notice precedes the new draft's roster", async () => {
+    const { retireStaleAlerts } = await import("@/lib/notificationReconcileServer");
+    const { REVIEW_RECONCILE_GRACE_MS } = await import("@/lib/notificationReconcile");
+    const D = id(721);
+    const sent = "2026-10-13T11:59:30.000Z";
+    // invalidateDraftSignoffs: the old draft's signed row is now 'invalidated' (updated just before the notice);
+    // the new draft (pending_version_id) has no roster row yet.
+    db.tables.document_review_signoffs = [
+      { org_id: ORG, reviewer_user_id: U, document_id: D, document_version_id: "draft-A", status: "invalidated", assigned_at: AT, notified_at: AT, updated_at: "2026-10-13T11:59:29.000Z" },
+    ];
+    db.tables.documents = [{ id: D, org_id: ORG, pending_version_id: "draft-B" }];
+    db.tables.notifications = [notif(1, { kind: "review_invalidated", resource_type: "document", resource_id: D, created_at: sent })];
+    expect(REVIEW_RECONCILE_GRACE_MS).toBe(120_000);
+    let a = await retireStaleAlerts(fakeDb, { orgId: ORG, uid: U, ids: [id(1)], now: NOW });
+    expect(a).toEqual({ retired: [], kept: 1, failed: 0 });
+    // The new roster lands; past the grace period the notice is still owed → kept.
+    db.tables.document_review_signoffs.push({ org_id: ORG, reviewer_user_id: U, document_id: D, document_version_id: "draft-B", status: "pending", assigned_at: "2026-10-13T11:59:40.000Z", notified_at: "2026-10-13T11:59:40.000Z", updated_at: "2026-10-13T11:59:40.000Z" });
+    a = await retireStaleAlerts(fakeDb, { orgId: ORG, uid: U, ids: [id(1)], now: new Date("2026-10-13T12:05:00.000Z") });
+    expect(a).toEqual({ retired: [], kept: 1, failed: 0 });
+    // They sign the new draft: discharged → retired.
+    db.tables.document_review_signoffs[1].status = "signed";
+    a = await retireStaleAlerts(fakeDb, { orgId: ORG, uid: U, ids: [id(1)], now: new Date("2026-10-13T12:10:00.000Z") });
+    expect(a.retired).toEqual([id(1)]);
   });
 
   it("DEC-81 §2: an ack_overdue copy is retired once NOBODY owes on the document; a review_overdue copy once no draft is in review", async () => {
@@ -294,6 +347,22 @@ describe("retireStaleAlerts — the server re-checks, then marks only the gone o
     expect(a.retired.sort()).toEqual([id(2), id(5)]);
     expect(a.kept).toBe(3);
     expect(a.failed).toBe(1);
+  });
+
+  it("the cron's review-health nudge (review_overdue on an example document with NO draft — the orphaned case it reports) is kept", async () => {
+    const { retireStaleAlerts } = await import("@/lib/notificationReconcileServer");
+    const D_EXAMPLE = id(951);
+    db.tables.documents = [{ id: D_EXAMPLE, org_id: ORG, current_version_id: "v1", status: "Issued", pending_version_id: null }];
+    // app/api/cron/maintenance/route.ts → lib/intakeRateLimit.ts nudgeReviewHealth: emit({ kind: REVIEW_HEALTH_KIND,
+    // resource: { type: 'document', id: exampleDocumentId }, metadata: { reviewHealth, reviewHealthDay, … } })
+    db.tables.notifications = [notif(1, {
+      kind: "review_overdue", resource_type: "document", resource_id: D_EXAMPLE,
+      title: "Review health: 1 in-review version no document points at",
+      metadata: { reviewHealth: true, reviewHealthDay: "2026-10-13", orphanedInReview: 1, pendingOnRetired: 0 },
+    })];
+    const a = await retireStaleAlerts(fakeDb, { orgId: ORG, uid: U, ids: [id(1)], now: NOW });
+    expect(a).toEqual({ retired: [], kept: 1, failed: 0 });
+    expect(db.updates).toEqual([]);
   });
 
   it("rows no condition retires are counted kept and untouched; at most RECONCILE_MAX_IDS ids are read", async () => {

@@ -479,10 +479,12 @@ N9, N10, N14, the integrator):*
   `subscriptions` (`NEDGE-8`), bounded to the target workspace's resources.*
 
 *Hand-off (2026-10-13, notifications Round G, N4 FEED-PROVIDER-AND-REALTIME →
-the integrator, drafting-flow, N13, `lib/tableViews.ts`'s holder):*
-- *Paste `20261200` (`REPLICA IDENTITY FULL` on documents, checkout_sessions,
-  libraries, collections; milestones re-asserted in `supabase_realtime`; five
-  `notification_preferences.toast_on_*` columns) any time, after `20261148`.
+the integrator, drafting-flow, document-control, N13, `lib/tableViews.ts`'s holder):*
+- *Paste `20261200` (milestones re-asserted in `supabase_realtime`; five
+  `notification_preferences.toast_on_*` columns; NO replica identity change —
+  the review fix pass dropped the first draft's `REPLICA IDENTITY FULL`
+  statements, which would not make a filtered DELETE listener hear anything
+  under Supabase's documented behaviour) any time, after `20261148`.
   The app works before it: the settings page saves without the per-category
   switches and says so; the listener reads the master switch alone. Nothing
   in the reconcile route needs a migration.*
@@ -495,11 +497,25 @@ the integrator, drafting-flow, N13, `lib/tableViews.ts`'s holder):*
   `POST /api/notifications/reconcile` (service role, the caller's own rows,
   `metadata.superseded_at` only). A new obligation kind made action-required
   lands with a discharge check in `lib/notificationReconcileServer.ts`
-  (`DEC-81` §2, `DEC-44 (N4-feed-provider)`).*
-- *drafting-flow (the requests portal): `RT-4` stays OPEN for one line —
-  `app/(protected)/requests/page.tsx`'s tickets channel needs the unfiltered
-  `DELETE` companion (`lib/__tests__/realtimePublication.test.ts`
-  `RT4_PENDING` names it; drop the entry when it lands).*
+  (`DEC-81` §2, `DEC-44 (N4-feed-provider)`). A kind is not proof of its
+  producer: the sign-off check applies only to a row a roster provably wrote,
+  and the cron's review-health nudge is never reconciled. `PROD-18` (opened by
+  the review) lists the nine kinds that ask for an action and stay FYI until
+  each has its discharge check — the integrator assigns it.*
+- *drafting-flow (`components/documents/CheckInPanel.tsx`): the "notify
+  owner" outcome writes `review_requested` ("Change proposed to …"), the PSM
+  sign-off kind, with no roster behind it. Since N4 it turns red as an action
+  (and the reconcile pass keeps it — no roster evidence), so it stays until
+  read. Give it its own kind (a DEC-31 remainder of `PROD-13`; still
+  `review_requested` on `fleet/DF-P2-ticket-create` and `fleet/DF-P3-routing`).*
+- *drafting-flow (the requests portal) and document-control (the library
+  page): `RT-4` stays OPEN for two lines — `app/(protected)/requests/page.tsx`'s
+  tickets channel and `app/(protected)/documents/[libraryId]/page.tsx`'s
+  documents channel each need an unfiltered `DELETE` companion, acting only on
+  a row the page holds (Supabase sends every tenant's DELETEs to an unfiltered
+  listener — the attention feed's tickets companion is the pattern).
+  `lib/__tests__/realtimePublication.test.ts` `RT4_PENDING` names both; drop
+  an entry when its companion lands.*
 - *`lib/tableViews.ts`'s holder: `RT-12` stays OPEN for `table_views` —
   not published, because a DELETE event would carry its composite id
   (workspace, person, library) to every subscriber (`DEC-44 (N4-feed-provider)`

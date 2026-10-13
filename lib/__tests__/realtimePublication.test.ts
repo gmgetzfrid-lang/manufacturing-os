@@ -7,9 +7,13 @@
 //     supabase/ — or is a named exception with its reason. A subscription to
 //     an unpublished table succeeds and never fires (RT-12), so this fails the
 //     moment one is added without its publication statement.
-//   * Every table with a DELETE-capable subscription filtered on a non-key
-//     column is REPLICA IDENTITY FULL somewhere in the sequence, or carries an
-//     unfiltered DELETE companion listener (RT-4).
+//   * Every filtered subscription that can see DELETEs ('*' / 'DELETE') has an
+//     unfiltered DELETE companion listener in its own file, filters on the
+//     key, is on a table no application path hard-deletes (named, and checked
+//     against the code), or is a named remainder with its owner (RT-4).
+//     REPLICA IDENTITY FULL does NOT count: Supabase does not filter DELETE
+//     events, and under row-level security the old record is the primary key
+//     alone even with FULL (DEC-44 (N4-feed-provider) §4).
 //   * The migration is one DEC-30 paste: the counts-only inventory before the
 //     transaction, BEGIN / COMMIT, one final (check, ok, n) SELECT.
 
@@ -38,7 +42,8 @@ function subscriptions(): Array<{ file: string; table: string; event: string; fi
   for (const dir of ["app", "lib", "components", "hooks"]) {
     for (const f of walk(join(ROOT, dir))) {
       const s = readFileSync(f, "utf8");
-      for (const m of s.matchAll(/["']postgres_changes["']\s*,\s*(\{[^}]*\})/g)) {
+      // (a line comment may sit between the event name and its config — lib/libraryCollections.ts's companion)
+      for (const m of s.matchAll(/["']postgres_changes["']\s*,\s*(?:\/\/[^\n]*\n\s*)*(\{[^}]*\})/g)) {
         const cfg = m[1];
         const lit = cfg.match(/table:\s*["']([a-z_0-9]+)["']/);
         let table = lit?.[1];
@@ -73,15 +78,9 @@ function published(): Set<string> {
   return set;
 }
 
-/** Every table some SQL file sets REPLICA IDENTITY FULL. */
-function fullIdentity(): Set<string> {
-  const set = new Set<string>();
-  for (const f of readdirSync(join(ROOT, "supabase/migrations"))) {
-    if (!f.endsWith(".sql")) continue;
-    const s = readFileSync(join(ROOT, "supabase/migrations", f), "utf8").replace(/--[^\n]*/g, "");
-    for (const m of s.matchAll(/ALTER TABLE\s+(?:public\.)?([a-z_0-9]+)\s+REPLICA IDENTITY FULL/gi)) set.add(m[1]);
-  }
-  return set;
+/** Every app source file (app / lib / components / hooks, tests excluded). */
+function appSources(): string[] {
+  return ["app", "lib", "components", "hooks"].flatMap((d) => walk(join(ROOT, d)));
 }
 
 /** A subscribed table deliberately NOT published, with its reason. */
@@ -120,33 +119,65 @@ describe("RT-12 dw3 — every realtime-subscribed table has its publication stat
   });
 });
 
-/** A filtered subscription on a default-identity table that has no DELETE
- *  companion in its own file yet — RT-4's remainder, with its owner. */
+/** A filtered subscription with no DELETE companion in its own file yet —
+ *  RT-4's remainder, with its owner (DEC-31). */
 const RT4_PENDING: Record<string, string> = {
-  // The requests portal's tickets channel (org filter). tickets keeps the
-  // default identity (DEC-44 (N4-feed-provider) §4) and no app path
+  // The requests portal's tickets channel (org filter). No app path
   // hard-deletes a ticket; the companion listener is one line in a file
   // notifications N4 does not hold (RT-4 Partial, owner: drafting-flow).
   "app/(protected)/requests/page.tsx:tickets": "drafting-flow: add the unfiltered tickets DELETE companion (RT-4)",
+  // The library page's documents channel (library_id filter). A document IS
+  // hard-deleted from that page (and by the intake route's roll-back), so a
+  // viewer in another session keeps the deleted row until reload (RT-4's own
+  // failure scenario). A file notifications N4 does not hold.
+  "app/(protected)/documents/[libraryId]/page.tsx:documents": "document-control (the library page's holder): add the unfiltered documents DELETE companion, acting on a document the page lists (RT-4)",
 };
 
-describe("RT-4 — a filtered subscription that can see DELETEs can match them", () => {
-  it("every filtered '*' / 'DELETE' subscription is on a REPLICA IDENTITY FULL table, filters on the key, or has an unfiltered DELETE companion in its own file", () => {
+/** A table no application path hard-deletes a row of: its rows go only when
+ *  a parent row is deleted (ON DELETE CASCADE from the document, the org or
+ *  the person). A filtered listener on it misses nothing the app does — the
+ *  soft-delete route, RT-4 done-when 3, for these tables. The test below
+ *  fails the moment app code deletes one directly. */
+const NO_APP_HARD_DELETE: Record<string, string> = {
+  checkout_sessions: "a session ends by status (checked in / released) — an UPDATE the filtered listeners hear; only its document's delete cascades",
+  checkout_messages: "a message is never deleted by the app; only its document's delete cascades",
+  checkout_episodes: "an episode is sealed, never deleted by the app (20261075); only its document's delete cascades",
+  notifications: "a notification is read, superseded or tombstoned (20261161) — UPDATEs; only an org or person delete cascades",
+};
+
+describe("RT-4 — a filtered subscription that can see DELETEs hears them", () => {
+  it("every filtered '*' / 'DELETE' subscription has an unfiltered DELETE companion, filters on the key, is on a table the app never hard-deletes, or is a named remainder — REPLICA IDENTITY FULL is not accepted", () => {
     const subs = subscriptions();
-    const full = fullIdentity();
     const keyFiltered = (file: string, table: string) =>
       new RegExp(`table:\\s*(?:["']${table}["']|TABLE)\\s*,\\s*filter:\\s*\`id=eq\\.`).test(src(file));
     const offenders: string[] = [];
     for (const sub of subs.filter((x) => x.filtered && (x.event === "*" || x.event === "DELETE"))) {
-      if (full.has(sub.table) || sub.table in NOT_PUBLISHED) continue;
+      if (sub.table in NOT_PUBLISHED || sub.table in NO_APP_HARD_DELETE) continue;
       const companion = subs.some((x) => x.file === sub.file && x.table === sub.table && x.event === "DELETE" && !x.filtered);
       if (companion || keyFiltered(sub.file, sub.table)) continue;
       offenders.push(`${sub.file}:${sub.table}`);
     }
     expect([...new Set(offenders)].sort()).toEqual(Object.keys(RT4_PENDING).sort());
-    for (const t of ["documents", "checkout_sessions", "libraries", "collections", "notifications"]) expect(full.has(t), t).toBe(true);
-    expect(full.has("tickets")).toBe(false);
+    // the attention feed carries the tickets companion
     expect(subs.some((x) => x.file === "hooks/useTicketNotifications.ts" && x.table === "tickets" && x.event === "DELETE" && !x.filtered)).toBe(true);
+    // 20261200 does not set REPLICA IDENTITY FULL (it would not make a filtered DELETE listener hear anything)
+    expect(src(MIGRATION).replace(/--[^\n]*/g, "")).not.toMatch(/REPLICA IDENTITY/i);
+  });
+
+  it("the tables named as never hard-deleted are not deleted by any app code", () => {
+    const deleting: string[] = [];
+    for (const f of appSources()) {
+      const s = readFileSync(f, "utf8");
+      for (const t of Object.keys(NO_APP_HARD_DELETE)) {
+        if (new RegExp(`from\\(\\s*["']${t}["']\\s*\\)\\s*\\.delete\\(`).test(s)) deleting.push(`${relative(ROOT, f)}:${t}`);
+      }
+    }
+    expect(deleting).toEqual([]);
+  });
+
+  it("the attention feed's tickets companion acts only on a ticket the feed holds (Supabase sends every tenant's DELETEs to an unfiltered listener)", () => {
+    const hook = src("hooks/useTicketNotifications.ts");
+    expect(hook).toMatch(/event: 'DELETE', schema: 'public', table: 'tickets' \},\s*\(payload\) => \{[\s\S]{0,300}?ticketIdsRef\.current\.has\(gone\)\) schedule\(\);/);
   });
 });
 
@@ -172,10 +203,9 @@ describe("20261200 — one DEC-30 paste", () => {
     for (const sel of inv.matchAll(/\(SELECT ([^()]*?)(?:\(|FROM)/g)) expect(sel[1].trim()).toMatch(/^COUNT/);
   });
 
-  it("RT-4: REPLICA IDENTITY FULL on documents, checkout_sessions, libraries, collections — and not on tickets", () => {
-    const tx = code.slice(begin, commit);
-    for (const t of ["documents", "checkout_sessions", "libraries", "collections"]) expect(tx).toContain(`ALTER TABLE ${t} REPLICA IDENTITY FULL;`);
-    expect(tx).not.toMatch(/ALTER TABLE tickets REPLICA IDENTITY/);
+  it("RT-4: no replica identity change (FULL would cost WAL on every documents UPDATE and match no filtered DELETE)", () => {
+    expect(code).not.toMatch(/REPLICA IDENTITY/i);
+    expect(code).not.toMatch(/relreplident/);
   });
 
   it("RT-12: milestones re-asserted with 20261106's guard; table_views is not added", () => {

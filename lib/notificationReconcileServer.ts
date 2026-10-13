@@ -31,16 +31,30 @@
 //                  retired — lib/distributionAcks.ts ackStillBinds' rule)
 //   review         the recipient has no pending sign-off on the document's
 //                  draft in review (document_review_signoffs 'pending' for
-//                  documents.pending_version_id)
+//                  documents.pending_version_id) — checked only for a row
+//                  the roster provably wrote: one of the recipient's roster
+//                  rows on the document was assigned, notified or updated
+//                  within REVIEW_ROSTER_WINDOW_MS of the row's created_at
+//                  (openReviewRoster, the reminder scan and
+//                  invalidateDraftSignoffs each stamp the roster row in the
+//                  call that writes the notice). A review_requested row with
+//                  no such roster row — the check-in panel's "Change proposed
+//                  to …" notice to the owner — is kept, as is any row younger
+//                  than REVIEW_RECONCILE_GRACE_MS (a voided approval's notice
+//                  precedes the new draft's roster).
 //   recert         the library's next recertification is no longer due
 //                  (lib/accessRecert.ts recertStatusFor: 'current' or 'none')
 //   ack_escalation an ack_overdue copy: NOBODY owes an acknowledgment on the
 //                  document any more (no pending roster row, no binding
 //                  distribution confirmation, whoever the assignee)
 //   review_escalation a review_overdue copy: the document has no draft in
-//                  review (documents.pending_version_id is null)
+//                  review (documents.pending_version_id is null); never the
+//                  cron's review-health nudge (reconcileClassOf leaves it out)
 
-import { reconcileClassOf, RECONCILE_MAX_IDS, type ReconcileAnswer, type ReconcileClass } from "@/lib/notificationReconcile";
+import {
+  reconcileClassOf, RECONCILE_MAX_IDS, REVIEW_RECONCILE_GRACE_MS, REVIEW_ROSTER_WINDOW_MS,
+  type ReconcileAnswer, type ReconcileClass,
+} from "@/lib/notificationReconcile";
 import { recertStatusFor } from "@/lib/accessRecert";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -55,6 +69,7 @@ interface Row {
   resource_type: string | null;
   resource_id: string | null;
   metadata: Record<string, unknown> | null;
+  created_at?: string | null;
 }
 
 type Read<T> = { ok: true; data: T } | { ok: false };
@@ -73,7 +88,7 @@ const uniq = <T,>(xs: T[]): T[] => Array.from(new Set(xs));
 
 /** The checks, one batched read per class. Answers, per row id, true (gone —
  *  retire), false (live — keep) or null (unreadable — keep). */
-async function evaluate(db: ReconcileDb, orgId: string, uid: string, rows: Array<Row & { cls: ReconcileClass }>): Promise<Map<string, boolean | null>> {
+async function evaluate(db: ReconcileDb, orgId: string, uid: string, rows: Array<Row & { cls: ReconcileClass }>, nowMs: number): Promise<Map<string, boolean | null>> {
   const verdict = new Map<string, boolean | null>();
   const of = (cls: ReconcileClass) => rows.filter((r) => r.cls === cls);
 
@@ -169,27 +184,42 @@ async function evaluate(db: ReconcileDb, orgId: string, uid: string, rows: Array
     }
   }
 
-  // review — a pending sign-off on the draft in review
+  // review — a pending sign-off on the draft in review, for a row the
+  // roster provably wrote (see the header)
   const reviews = of("review");
   if (reviews.length > 0) {
+    type Signoff = { document_id: string; document_version_id: string | null; status: string | null; assigned_at: string | null; notified_at: string | null; updated_at: string | null };
     const docIds = uniq(reviews.map((r) => r.resource_id as string).filter(isUuid));
     const [signoffs, docs] = docIds.length > 0
       ? await Promise.all([
-          read<{ document_id: string; document_version_id: string | null }>(db.from("document_review_signoffs").select("document_id, document_version_id").eq("org_id", orgId).eq("reviewer_user_id", uid).eq("status", "pending").in("document_id", docIds)),
+          read<Signoff>(db.from("document_review_signoffs").select("document_id, document_version_id, status, assigned_at, notified_at, updated_at").eq("org_id", orgId).eq("reviewer_user_id", uid).in("document_id", docIds)),
           read<{ id: string; pending_version_id: string | null }>(db.from("documents").select("id, pending_version_id").eq("org_id", orgId).in("id", docIds)),
         ])
-      : [{ ok: true as const, data: [] }, { ok: true as const, data: [] }];
+      : [{ ok: true as const, data: [] as Signoff[] }, { ok: true as const, data: [] }];
     const readable = signoffs.ok && docs.ok;
     const owed = new Set<string>();
+    const rosterByDoc = new Map<string, Signoff[]>();
     if (readable) {
       const draft = new Map(docs.data.map((d) => [d.id, d.pending_version_id]));
       for (const s of signoffs.data) {
+        rosterByDoc.set(s.document_id, [...(rosterByDoc.get(s.document_id) ?? []), s]);
         const pending = draft.get(s.document_id);
-        if (pending && s.document_version_id === pending) owed.add(s.document_id);
+        if (s.status === "pending" && pending && s.document_version_id === pending) owed.add(s.document_id);
       }
     }
+    const ms = (t: string | null | undefined) => (t ? Date.parse(t) : NaN);
     for (const r of reviews) {
       if (!readable || !isUuid(r.resource_id)) { verdict.set(r.id, null); continue; }
+      const created = ms(r.created_at);
+      // Too young (or no creation time to judge by): kept — never "gone".
+      if (!Number.isFinite(created) || nowMs - created < REVIEW_RECONCILE_GRACE_MS) { verdict.set(r.id, false); continue; }
+      const fromRoster = (rosterByDoc.get(r.resource_id) ?? []).some((s) =>
+        [s.assigned_at, s.notified_at, s.updated_at].some((t) => {
+          const at = ms(t);
+          return Number.isFinite(at) && Math.abs(at - created) <= REVIEW_ROSTER_WINDOW_MS;
+        }));
+      // Not a roster's notice (the check-in panel's proposed change): kept.
+      if (!fromRoster) { verdict.set(r.id, false); continue; }
       verdict.set(r.id, !owed.has(r.resource_id));
     }
   }
@@ -266,7 +296,7 @@ export async function retireStaleAlerts(
   if (ids.length === 0) return { retired: [], kept: 0, failed: 0 };
   const rowsRes = await read<Row>(
     db.from("notifications")
-      .select("id, kind, resource_type, resource_id, metadata")
+      .select("id, kind, resource_type, resource_id, metadata, created_at")
       .eq("org_id", input.orgId)
       .eq("user_id", input.uid)
       .is("read_at", null)
@@ -280,8 +310,9 @@ export async function retireStaleAlerts(
     const cls = reconcileClassOf({ kind: r.kind, resourceType: r.resource_type, resourceId: r.resource_id, metadata: r.metadata });
     if (cls) rows.push({ ...r, cls }); else kept += 1;
   }
-  const verdict = await evaluate(db, input.orgId, input.uid, rows);
-  const supersededAt = (input.now ?? new Date()).toISOString();
+  const now = input.now ?? new Date();
+  const verdict = await evaluate(db, input.orgId, input.uid, rows, now.getTime());
+  const supersededAt = now.toISOString();
   const retired: string[] = [];
   let failed = 0;
   for (const r of rows) {

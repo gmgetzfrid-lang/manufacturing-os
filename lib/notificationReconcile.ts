@@ -37,7 +37,14 @@ export type ReconcileClass =
    *  document (DEC-81 §2 — the obligation is discharged). */
   | "ack"
   /** review_requested / review_invalidated: retired once the recipient owes
-   *  no sign-off on the document's draft in review (DEC-81 §2). */
+   *  no sign-off on the document's draft in review (DEC-81 §2) — and only a
+   *  row the server can tie to a sign-off roster: the kind alone is not
+   *  proof, because the check-in panel's "Change proposed to …" notice to a
+   *  document's owner is a review_requested row with no roster behind it
+   *  (components/documents/CheckInPanel.tsx). lib/notificationReconcileServer.ts
+   *  keeps any row with no roster evidence, and any row younger than
+   *  REVIEW_RECONCILE_GRACE_MS (the voided-approval notice is written before
+   *  the new roster is). */
   | "review"
   /** access_recert_due: retired once the library's recertification is no
    *  longer due (DEC-81 §2). */
@@ -46,7 +53,11 @@ export type ReconcileClass =
    *  once NOBODY owes an acknowledgment on the document any more (DEC-81 §2). */
   | "ack_escalation"
   /** review_overdue, the escalation copy to the owner and controllers: retired
-   *  once the document has no draft in review (DEC-81 §2). */
+   *  once the document has no draft in review (DEC-81 §2). NOT the
+   *  maintenance cron's daily review-health nudge (metadata.reviewHealth /
+   *  reviewHealthDay — lib/intakeRateLimit.ts nudgeReviewHealth): its example
+   *  document is one whose draft is orphaned, so "no draft in review" is the
+   *  condition it reports, never its discharge. That row stays until read. */
   | "review_escalation";
 
 /** The columns of a notification row the classification reads. */
@@ -81,15 +92,32 @@ export function reconcileClassOf(row: ReconcilableRow): ReconcileClass | null {
     case "ack_overdue":
       return row.resourceId && row.resourceType === "document" ? "ack_escalation" : null;
     case "review_overdue":
+      // The review-health nudge reuses this kind; nothing on its example
+      // document says it is resolved (it repeats daily until the counts are 0).
+      if (meta && (meta.reviewHealth != null || meta.reviewHealthDay != null)) return null;
       return row.resourceId && row.resourceType === "document" ? "review_escalation" : null;
     default:
       return null;
   }
 }
 
-/** The most ids one request may carry (the feed sends at most its loaded
- *  window's candidates). */
+/** The most ids one request may carry (the feed sends its loaded window's
+ *  candidates first, then those among the rows below the window). */
 export const RECONCILE_MAX_IDS = 200;
+
+/** A review_requested / review_invalidated row younger than this is never
+ *  retired: invalidateDraftSignoffs (lib/reviewControl.ts) tells a prior
+ *  signer their approval was voided BEFORE the new draft's roster is written,
+ *  so in that gap the recipient owes nothing yet and the notice would read
+ *  "discharged". */
+export const REVIEW_RECONCILE_GRACE_MS = 2 * 60_000;
+
+/** How close a sign-off roster row's assigned_at / notified_at / updated_at
+ *  must lie to a review row's created_at for the row to count as that
+ *  roster's notice (lib/reviewControl.ts stamps the roster row and writes the
+ *  notice in the same call; the assigned_at of a browser-opened roster is the
+ *  browser's clock, hence the margin). */
+export const REVIEW_ROSTER_WINDOW_MS = 10 * 60_000;
 
 /** What the route answers. */
 export interface ReconcileAnswer {

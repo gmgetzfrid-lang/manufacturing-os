@@ -853,7 +853,7 @@ app/api/transmittal/route.ts:148-157 (the path that DOES notify) —
 ## PROD-13 · doc_superseded is overloaded across eight semantically distinct events — the kind carries no information
 
 - **Severity:** MEDIUM
-- **Status:** RESOLVED
+- **Status:** OPEN
 - **Assigned:** notifications N4 FEED-PROVIDER-AND-REALTIME (done-when 3) — by the integrator, 2026-10-13 (N9 merge, DEC-31; fleet plans `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/postPublish.ts:39`, `lib/postPublish.ts:177`, `lib/distributionAcks.ts:138`, `lib/distributionAcks.ts:322`, `lib/staleCopies.ts:198`, `lib/revisionImpact.ts:138`, `lib/workPackages.ts:279`, `app/api/intake/upload/route.ts:351`
@@ -905,21 +905,23 @@ hooks/useTicketNotifications.ts:279 —
 
 **Scope / residual.** Stays OPEN for done-when 3, owner notifications N4. Rows written before N9 with no discriminator keep `doc_superseded` (an upstream advisory carried none); `20261191`'s inventory counts them. The daily compliance digest's hand-kept `COMPLIANCE_KINDS` (the cron, N6's file) lacks the four split document kinds and the two intake kinds until N6's derivation lands — a binding merge order with a test tripwire (`TAX-13` Scope, `99-fix-sequencing.md`, `DEC-100` Risk).
 
-**Resolution (2026-10-13, notifications Round G — done-when 3).** Package N4 FEED-PROVIDER-AND-REALTIME, branch `fleet/N4-feed-provider`. **Reproduced** on `6503ea7`: the feed's action flag is `KIND_META.actionRequired` (`hooks/useTicketNotifications.ts:353`; the toast's at `components/providers/NotificationListener.tsx:86-88`), and every PSM obligation was `false` (`lib/notificationKinds.ts`, `DEC-81` §2's deferral), so "Action needed" was missing on an acknowledgment request, a sign-off request and a recertification due.
+**Partial (2026-10-13, notifications Round G — done-when 3).** Package N4 FEED-PROVIDER-AND-REALTIME, branch `fleet/N4-feed-provider`. **Reproduced** on `6503ea7`: the feed's action flag is `KIND_META.actionRequired` (`hooks/useTicketNotifications.ts:353`; the toast's at `components/providers/NotificationListener.tsx:86-88`), and every PSM obligation was `false` (`lib/notificationKinds.ts`, `DEC-81` §2's deferral), so "Action needed" was missing on an acknowledgment request, a sign-off request and a recertification due.
 
 What landed — `DEC-81` §2 as `DEC-90` A11 ratified it ("each PSM kind flips to action-required in the same change that clears its row on discharge"):
 - **The flips.** `ack_requested`, `review_requested`, `review_invalidated`, `access_recert_due`, `ack_overdue`, `review_overdue` → `actionRequired: true` in `KIND_META`. The split kinds of N9 inherit their parents' flags as before (`checkout_force_released`, `checkout_auto_released` stay actions; `doc_recalled` and the package / upstream kinds stay FYI — none asks the recipient to do something). `effective_now` stays FYI ("now in effect" — nothing to do).
 - **The clearing, in the same change.** The reconcile pass (`lib/notificationReconcile.ts`, `POST /api/notifications/reconcile`, `lib/notificationReconcileServer.ts`) retires each once discharged: `ack_requested` when the recipient owes no acknowledgment on the document (no pending `document_acknowledgments` row, no unacknowledged `distribution_acks` row that still binds — the current version of a document that is not retired); `review_requested` / `review_invalidated` when the recipient owes no sign-off on the document's draft in review (`document_review_signoffs` pending for `documents.pending_version_id`); `access_recert_due` when the library's recertification is no longer due (`recertStatusFor`); `ack_overdue` when nobody owes an acknowledgment on the document; `review_overdue` when the document has no draft in review.
+- **Fix pass (review): a kind is not proof of its producer.** Two producers write these kinds for something that is not a roster obligation, and the first draft retired both as soon as the recipient's feed loaded. (1) The check-in panel's "notify owner" outcome (`components/documents/CheckInPanel.tsx:445`, not N4's file) writes `review_requested` — "Change proposed to <doc> … review and release it" — to the owner or the controllers, with no sign-off roster behind it. The sign-off check now applies only to a row a roster provably wrote: one of the recipient's `document_review_signoffs` rows on the document was assigned, notified or updated within `REVIEW_ROSTER_WINDOW_MS` (10 minutes) of the row's `created_at` (`openReviewRoster`, the reminder scan and `invalidateDraftSignoffs` each stamp the roster row in the call that writes the notice); any other `review_requested` row is kept, as before N4 — including for an owner who signed an earlier draft. And no review row younger than `REVIEW_RECONCILE_GRACE_MS` (2 minutes) is retired: `invalidateDraftSignoffs` sends the voided-approval notice before the new draft's roster is written. (2) The maintenance cron's daily review-health nudge (`lib/intakeRateLimit.ts` `nudgeReviewHealth`) writes `review_overdue` on an example document whose draft is orphaned — "no draft in review" is the condition it reports. `reconcileClassOf` now leaves any `review_overdue` carrying `metadata.reviewHealth` / `reviewHealthDay` alone; it stays until read. (3) The rows below the loaded window, which count in the badges and the action count, are now sent for reconcile too (after the window's, within the 200-id cap), so a discharged obligation below the window no longer keeps a badge red.
 - **One classification.** The feed, the badges, the toast and the Center all read `KIND_META.actionRequired` — no hand list exists (`lib/__tests__/notificationKinds.test.ts` pins the set and that each flipped kind has a discharge check).
-- Tests: `lib/__tests__/notificationKinds.test.ts` (`PSM_FLIPPED_BY_N4`; "N4: each PSM obligation flipped to action-required has a discharge check that clears its row"; the toast tone and the counts follow); `lib/__tests__/notificationReconcile.test.ts` (the discharge cases for all six); `lib/__tests__/notificationCenterScope.test.ts` and `lib/__tests__/notificationListener.test.ts` (FYI examples moved off `ack_requested`).
+- Tests: `lib/__tests__/notificationKinds.test.ts` (`PSM_FLIPPED_BY_N4`; "N4: each PSM obligation flipped to action-required has a discharge check that clears its row"; the toast tone and the counts follow); `lib/__tests__/notificationReconcile.test.ts` (the discharge cases for all six; fix pass: the check-in panel's payload kept, with and without an owner's earlier sign-off; the review-health nudge's payload kept and unclassified; the grace period across an invalidation and its new roster); `lib/__tests__/attentionProvider.test.ts` ("the action rows BELOW the window are sent for reconcile too"); `lib/__tests__/notificationCenterScope.test.ts` and `lib/__tests__/notificationListener.test.ts` (FYI examples moved off `ack_requested`).
 - Verified: loop on `fleet/N4-feed-provider`: `npx tsc --noEmit` exit 0; `npx eslint` on the 24 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 1 — 514 files, 11,352 passed, 10 expected fail, 4 failed, every one "Test timed out in 5000ms" in a file this package does not touch (`dcRoundFOwnerStamp`, `dcRoundFShareInventory`, `exportContractRoundTrip`, `notificationDispatchMembership`; load average 18–29 on the shared box), each exit 0 when rerun alone. `next build` is the integrator's.
 
 **Done-when.**
 - ✓ (N9) distributionAcks uses `ack_requested` / `ack_overdue`.
 - ✓ (N9) staleCopies, revisionImpact and workPackages use their own kinds.
-- ✓ The action classification includes every kind that demands a user action — the conflict class, N9's split kinds that inherit it, and the six PSM obligations above — derived from `KIND_META.actionRequired`, never a hand list; each flipped obligation clears once discharged, so "Action needed" is truthful.
+- **Partial** — "actionKinds includes every kind that demands a user action". Met for the limb `DEC-81` §2 names: the conflict class, N9's split kinds that inherit it, and the six PSM obligations above, each clearing once discharged, all derived from `KIND_META.actionRequired` (no hand list). **Not met as written:** kinds whose own text asks the recipient to act stay FYI because nothing clears their row on discharge yet, and `DEC-90` A11 forbids an action flag that cannot clear — `markup_request`, `deletion_requested`, `access_request_pending`, `intake_submission`, `request_pending_approval`, `owner_behind`, `ack_unsatisfiable`, `review_alternate_activated`, `milestone_assigned`. Opened as `PROD-18` (below), one discharge check per kind, owner: the integrator to assign (the next holder of `lib/notificationReconcileServer.ts` / `lib/notificationKinds.ts`). (The first draft of this block checked done-when 3 outright; the review narrowed it.)
+- Verified (review fix pass): loop on `fleet/N4-feed-provider`: `npx tsc --noEmit` exit 0; `npx eslint` on the 24 changed code and test files of the branch `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 1 — 514 files, 11,342 passed, 10 expected fail, 21 failed in 9 files this package does not touch (8 "Test timed out in 5000ms" — `customSkillRunner`, `dcRoundFOwnerStamp`, `dcRoundFShareInventory`, `dependencies`, `exportContractRoundTrip`, `notificationDispatchMembership`, `restoreArchiveRoundTrip`, `searchPathPin` — and 13 in `cornerDock` reading a DOM node that had not rendered; load average 23–28 on the shared box); each of the nine exits 0 when rerun alone. `next build` is the integrator's.
 
-**Scope / residual.** A discharged obligation clears on the recipient's next feed pass (load, tab return, every visible minute), not instantly; a row below the loaded window clears as it pages in.
+**Scope / residual.** Stays OPEN for `PROD-18`. A discharged obligation clears on the recipient's next feed pass (load, tab return, every visible minute), not instantly. The check-in panel's proposed-change notice still uses the PSM kind `review_requested`, so it turns red as an action and stays until read; giving it its own FYI or action kind is drafting-flow's (the file's holder) — a DEC-31 remainder, recorded in `99-fix-sequencing.md`. A sign-off notice whose roster row was stamped more than 10 minutes from it (a badly skewed browser clock; a re-opened roster whose upsert left the old row unstamped) is not proven a roster notice and stays until read.
 
 ---
 
@@ -1061,5 +1063,41 @@ lib/inAppNotifications.ts:26 —
 - [ ] A test asserts a subscriptions row on the document puts the watcher in that notice's recipients.
 
 **Closer:** notifications N14 (or as the integrator routes it).
+
+---
+
+<a id="prod-18"></a>
+
+## PROD-18 · Notices that ask the recipient to act still read as FYI, because nothing clears their row when the action is done
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** the integrator to assign — the next holder of `lib/notificationReconcileServer.ts` and `lib/notificationKinds.ts` (notifications). Opened as the DEC-31 remainder of `PROD-13` done-when 3.
+- **Verification:** CONFIRMED by reading (`fleet/N4-feed-provider`, review fix pass, 2026-10-13).
+- **Locations:** `lib/notificationKinds.ts` (`KIND_META[...].actionRequired: false` for each kind below); `lib/notificationReconcile.ts` `reconcileClassOf` and `lib/notificationReconcileServer.ts` (no discharge check for them).
+- **Opened:** 2026-10-13, notifications Round G, N4 review fix pass.
+
+**Mechanism.** `DEC-90` A11 (ratifying `DEC-81` §2) lets a kind be action-required only in the change that clears its row once the action is done — an "Action needed" that never clears trains people to ignore it. N4 did that for the six PSM obligations. These kinds ask the recipient to do something in their own words, but nothing retires their row on discharge, so they stay FYI Activity:
+
+| Kind | Producer | Discharged when |
+|---|---|---|
+| `markup_request` | `lib/markupRequests.ts` | the markup request is answered or closed (`markup_requests.status` no longer `open`) |
+| `deletion_requested` | `lib/ownership.ts` | the deletion request is approved, refused or withdrawn |
+| `access_request_pending` | `app/api/auth/request-access/route.ts` | the access request is decided (`lib/accessRequestOutcome.ts`) |
+| `intake_submission` | `app/api/intake/upload/route.ts`, `lib/intakeRateLimit.ts` | the submission is reviewed (its `review_state` leaves pending) |
+| `request_pending_approval` | `app/(protected)/requests/new/page.tsx`, `lib/transitionIn.ts`, `components/documents/CheckInPanel.tsx` | the request leaves pending approval (the ticket's status) |
+| `owner_behind` | `lib/reviewCycles.ts` | the periodic review is no longer overdue |
+| `ack_unsatisfiable` | `lib/acknowledgments.ts` | the acknowledgment roster can be satisfied again (or is cancelled) |
+| `review_alternate_activated` | `lib/reviewControl.ts` `activateAlternate` | the alternate's sign-off is given, or the draft leaves review |
+| `milestone_assigned` | `lib/milestones.ts` | the milestone is completed or reassigned |
+
+**Failure scenario.** An Admin's `access_request_pending` ("approve this access request") or an approver's `deletion_requested` shows under Activity, with no "Action needed" and no red badge, beside the PSM obligations that do — so the most direct requests in the bell are the ones that look optional.
+
+**Done when.**
+
+- [ ] For each kind above, `reconcileClassOf` names a condition and `lib/notificationReconcileServer.ts` checks it (scoped to the org, retiring nothing on an unreadable read), with a test that the row clears once the action is done and is kept while it is not.
+- [ ] Only then, in the same change, the kind's `KIND_META.actionRequired` becomes true (`lib/__tests__/notificationKinds.test.ts` pins that every action kind has a discharge check).
+
+**Closer:** the integrator names one (notifications).
 
 ---

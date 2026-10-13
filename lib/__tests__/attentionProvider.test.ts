@@ -33,7 +33,9 @@ const fx = vi.hoisted(() => ({
   listCalls: [] as Array<Record<string, unknown>>,
   listFails: false,
   total: 0,
-  beyond: [] as Array<{ kind: string; resourceId: string | null }>,
+  beyond: [] as Array<Record<string, unknown>>,
+  beyondCalls: [] as unknown[],
+  ticketsFail: false,
   reconcileCalls: [] as Array<{ orgId: string; ids: string[] }>,
   retire: [] as string[],
   channels: [] as Array<{ name: string; ons: Array<{ cfg: Record<string, unknown>; cb: (p: unknown) => void }>; status?: (s: string) => void }>,
@@ -51,7 +53,7 @@ vi.mock("@/lib/supabase", () => {
     q.maybeSingle = async () => ({ data: null, error: null });
     q.then = (ok: (v: unknown) => unknown, ko?: (e: unknown) => unknown) => {
       const result = isUpdate ? { data: null, error: null }
-        : table === "tickets" ? { data: fx.tickets, error: null, count: fx.ticketCount }
+        : table === "tickets" ? (fx.ticketsFail ? { data: null, error: { message: "tickets down" }, count: null } : { data: fx.tickets, error: null, count: fx.ticketCount })
         : table === "documents" ? { data: fx.documents, error: null }
         : { data: [], error: null, count: 0 };
       return Promise.resolve(result).then(ok, ko);
@@ -84,11 +86,12 @@ vi.mock("@/lib/inAppNotifications", async (importOriginal) => ({
   listMyNotifications: async (opts: Record<string, unknown>) => {
     fx.listCalls.push(opts);
     if (fx.listFails) throw new Error("connection reset");
-    const page = opts.before ? fx.pages.findIndex((p) => p.length > 0 && String(p[0].createdAt) < String(opts.before)) : 0;
+    const before = opts.before && typeof opts.before === "object" ? (opts.before as { createdAt: string }).createdAt : opts.before;
+    const page = before ? fx.pages.findIndex((p) => p.length > 0 && String(p[0].createdAt) < String(before)) : 0;
     return page < 0 ? [] : (fx.pages[page] ?? []);
   },
   countUnread: async () => fx.total,
-  listUnreadKindsBeyond: async () => fx.beyond,
+  listUnreadKindsBeyond: async (...args: unknown[]) => { fx.beyondCalls.push(args); return fx.beyond; },
   markRead: async () => {},
   markAllRead: async () => {},
 }));
@@ -139,7 +142,8 @@ beforeEach(() => {
   root = createRoot(host);
   seen.length = 0; statuses.length = 0;
   fx.calls = []; fx.tickets = []; fx.ticketCount = null; fx.documents = [];
-  fx.pages = [[]]; fx.listCalls = []; fx.listFails = false; fx.total = 0; fx.beyond = [];
+  fx.pages = [[]]; fx.listCalls = []; fx.listFails = false; fx.total = 0; fx.beyond = []; fx.beyondCalls = []; fx.ticketsFail = false;
+  fx.role = { roles: ["Viewer"], activeOrgId: "o1", uid: "u1", membershipState: "member" };
   fx.reconcileCalls = []; fx.retire = []; fx.channels = [];
 });
 afterEach(() => { act(() => root.unmount()); host.remove(); });
@@ -168,7 +172,8 @@ describe("RT-3 / TRAIL-8 — one subscription and one fetch per tab", () => {
     expect(ticketFetches()).toBe(2);
   });
 
-  it("the ticket read selects the attention columns only (never comments / history), with an exact count; a DELETE companion hears tickets deletes", async () => {
+  it("the ticket read selects the attention columns only (never comments / history), with an exact count; a DELETE companion hears tickets deletes — of tickets the feed holds only", async () => {
+    fx.tickets = [{ id: "t-held", status: "DRAFTING" }];
     await mount(withProvider(1));
     const select = fx.calls.find((c: Call) => c.table === "tickets" && c.method === "select")!;
     expect(select.args[0]).toBe(TICKET_ATTENTION_COLUMNS);
@@ -177,7 +182,12 @@ describe("RT-3 / TRAIL-8 — one subscription and one fetch per tab", () => {
     for (const col of ["status", "request_type", "unit", "requester_role", "assigned_drafter_id", "assigned_engineer_id", "attachments", "unread_by"]) expect(TICKET_ATTENTION_COLUMNS).toContain(col);
     const companion = fx.channels[0].ons.find((o) => o.cfg.table === "tickets" && o.cfg.event === "DELETE");
     expect(companion?.cfg.filter).toBeUndefined();
+    // Supabase sends every tenant's tickets DELETEs to the unfiltered companion: one this feed does not hold is no refetch
+    act(() => companion!.cb({ eventType: "DELETE", old: { id: "another-tenants-ticket" } }));
     act(() => companion!.cb({}));
+    await wait(FETCH_DEBOUNCE_MS + 150);
+    expect(ticketFetches()).toBe(1);
+    act(() => companion!.cb({ eventType: "DELETE", old: { id: "t-held" } }));
     await wait(FETCH_DEBOUNCE_MS + 150);
     expect(ticketFetches()).toBe(2);
   });
@@ -218,8 +228,8 @@ describe("TAX-6 / DELIV-10 / TRAIL-7 / PROD-7 — a true count, older pages, a f
     fx.pages = [page(0, 50), page(100, 50), page(200, 20)];
     fx.total = 120;
     fx.beyond = [
-      ...Array.from({ length: 10 }, (_, i) => ({ kind: "ack_requested", resourceId: `old-${i}` })),
-      ...Array.from({ length: 60 }, (_, i) => ({ kind: "library_doc_added", resourceId: `old2-${i}` })),
+      ...Array.from({ length: 10 }, (_, i) => ({ id: `b${i}`, kind: "ack_requested", resourceType: "document", resourceId: `old-${i}`, metadata: { ackRequest: true }, createdAt: "2026-10-01T00:00:00Z" })),
+      ...Array.from({ length: 60 }, (_, i) => ({ id: `c${i}`, kind: "library_doc_added", resourceType: "document", resourceId: `old2-${i}`, metadata: null, createdAt: "2026-10-01T00:00:00Z" })),
     ];
     await mount(withProvider(1));
     expect(last().items.length).toBe(50);
@@ -227,6 +237,24 @@ describe("TAX-6 / DELIV-10 / TRAIL-7 / PROD-7 — a true count, older pages, a f
     expect(last().counts).toEqual({ all: 120, action: 10, activity: 110, notifications: 120 });
     expect(last().sectionCounts.documents).toEqual({ total: 120, actionRequired: 10 });
     expect(lastStatus()).toMatchObject({ notificationsShown: 50, notificationsTotal: 120, hasMoreNotifications: true });
+    // the tally reads after the window's last row by the (created_at, id) keyset — never an offset
+    expect(fx.beyondCalls[0]).toEqual(["o1", { createdAt: fx.pages[0][49].createdAt, id: fx.pages[0][49].id }, 1000]);
+  });
+
+  it("the action rows BELOW the window are sent for reconcile too; a discharged one leaves the badge and the action count", async () => {
+    fx.pages = [page(0, 50)];
+    fx.total = 53;
+    fx.beyond = [
+      { id: "b1", kind: "ack_requested", resourceType: "document", resourceId: "d-1", metadata: { ackRequest: true }, createdAt: "2026-10-01T00:00:00Z" },
+      { id: "b2", kind: "ack_requested", resourceType: "document", resourceId: "d-2", metadata: { ackRequest: true }, createdAt: "2026-10-01T00:00:00Z" },
+      { id: "b3", kind: "library_doc_added", resourceType: "document", resourceId: "d-3", metadata: null, createdAt: "2026-10-01T00:00:00Z" },
+    ];
+    fx.retire = ["b1"];
+    await mount(withProvider(1));
+    expect(fx.reconcileCalls[0].ids).toEqual(["b1", "b2"]);
+    expect(last().count).toBe(52);
+    expect(last().counts.action).toBe(1);
+    expect(last().sectionCounts.documents).toEqual({ total: 52, actionRequired: 1 });
   });
 
   it("'Load older' pages the created_at cursor; marking one read moves the badge down by one", async () => {
@@ -236,7 +264,8 @@ describe("TAX-6 / DELIV-10 / TRAIL-7 / PROD-7 — a true count, older pages, a f
     act(() => lastStatus().loadMoreNotifications());
     await wait(50);
     const second = fx.listCalls[fx.listCalls.length - 1];
-    expect(second.before).toBe(fx.pages[0][49].createdAt);
+    // a (created_at, id) cursor: a row sharing the last row's created_at is not skipped
+    expect(second.before).toEqual({ createdAt: fx.pages[0][49].createdAt, id: fx.pages[0][49].id });
     expect(last().items.length).toBe(100);
     expect(last().count).toBe(120);
     fx.total = 119;
@@ -255,6 +284,35 @@ describe("TAX-6 / DELIV-10 / TRAIL-7 / PROD-7 — a true count, older pages, a f
     await wait(FETCH_DEBOUNCE_MS + 150);
     expect(last().items.length).toBe(3);
     expect(lastStatus().error).toMatch(/could not be loaded/);
+  });
+
+  it("a workspace switch clears the feed: a failed read in the new workspace shows nothing of the old one", async () => {
+    fx.tickets = [{ id: "t-a", ticket_id: "A-1", title: "Org A ticket", status: "DRAFTING", unread_by: ["u1"] }];
+    fx.pages = [page(0, 3)];
+    fx.total = 3;
+    await mount(withProvider(1));
+    expect(last().items.length).toBe(4);
+    expect(last().count).toBe(4);
+    // RoleContext.setActiveOrgId: activeOrgId changes, membershipState stays 'member'
+    fx.role = { ...fx.role, activeOrgId: "o2" };
+    fx.listFails = true;
+    fx.ticketsFail = true;
+    fx.total = 0;
+    await mount(withProvider(1));
+    await wait(50);
+    expect(last().items).toEqual([]);
+    expect(last().count).toBe(0);
+    expect(last().items.some((i) => i.title.includes("Org A"))).toBe(false);
+    expect(lastStatus().error).toMatch(/could not be loaded/);
+    // a refetch within the same workspace still keeps its own last good read
+    fx.listFails = false; fx.ticketsFail = false; fx.tickets = []; fx.pages = [page(10, 2)]; fx.total = 2;
+    act(() => { document.dispatchEvent(new Event("visibilitychange")); });
+    await wait(FETCH_DEBOUNCE_MS + 150);
+    expect(last().items.length).toBe(2);
+    fx.listFails = true;
+    act(() => { document.dispatchEvent(new Event("visibilitychange")); });
+    await wait(FETCH_DEBOUNCE_MS + 150);
+    expect(last().items.length).toBe(2);
   });
 
   it("first-load failure: the feed surface says nothing could be loaded instead of 'You're all caught up'", async () => {

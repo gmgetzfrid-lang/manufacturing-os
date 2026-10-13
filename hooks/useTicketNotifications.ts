@@ -4,9 +4,9 @@ import { useRole } from '@/components/providers/RoleContext';
 import { Ticket } from '@/types/schema';
 import {
   listMyNotifications, countUnread, listUnreadKindsBeyond, markRead, markAllRead,
-  NOTIFICATION_PAGE_SIZE, type NotificationRow,
+  NOTIFICATION_PAGE_SIZE, type NotificationRow, type NotificationCursor, type UnreadBeyondRow,
 } from '@/lib/inAppNotifications';
-import { reconcileClassOf, requestReconcile } from '@/lib/notificationReconcile';
+import { reconcileClassOf, requestReconcile, RECONCILE_MAX_IDS } from '@/lib/notificationReconcile';
 import {
   isActionRequired, attentionLabel, isQueueViewer, isEngineerRole,
 } from '@/lib/ticketAttention';
@@ -44,10 +44,15 @@ import {
 //
 // Its numbers are true (TAX-6 / DELIV-10 / TRAIL-7 / PROD-7): the feed lists
 // the newest NOTIFICATION_PAGE_SIZE unread rows and pages older ones on
-// request (a created_at cursor), while the count comes from an exact head
-// count (countUnread) and the rows below the loaded window are tallied by
-// kind into the section badges and the action count. A read that fails is an
-// error the surfaces show, never an empty "all caught up".
+// request (a (created_at, id) keyset cursor), while the count comes from an
+// exact head count (countUnread) and the rows below the loaded window are
+// tallied by kind into the section badges and the action count — and the
+// reconcilable ones among them are sent for reconcile too, so a discharged
+// obligation below the window does not keep a badge red. A read that fails is
+// an error the surfaces show, never an empty "all caught up"; what stays on
+// screen then is the last good read OF THIS WORKSPACE — switching workspace
+// (or person) clears the feed before the first read, so a failed read there
+// shows nothing of the one left behind.
 //
 // Both the ticket feed AND the notification rows are scoped to the active
 // workspace. A stale ticket workflow alert (its ticket has moved on) is left
@@ -309,7 +314,14 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
   const rawRef = useRef<NotificationRow[]>([]);
   const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set<string>());
   const [notifTotal, setNotifTotal] = useState<number | null>(null);
-  const [remainder, setRemainder] = useState<Array<{ kind: string; resourceId: string | null }>>([]);
+  const [remainder, setRemainder] = useState<UnreadBeyondRow[]>([]);
+  const remainderRef = useRef<UnreadBeyondRow[]>([]);
+  // The ids of the tickets the feed holds — a tickets DELETE is acted on only
+  // when it is one of these (the unfiltered companion hears every tenant's).
+  const ticketIdsRef = useRef<ReadonlySet<string>>(new Set<string>());
+  // Whose feed the state holds (`${uid}:${activeOrgId}`): the last good read
+  // is kept across refetches of the SAME feed only (DELIV-10 dw5).
+  const feedKeyRef = useRef<string | null>(null);
   const [remainderRead, setRemainderRead] = useState(true);
   const [docLibrary, setDocLibrary] = useState<Record<string, string>>({});
   const [ticketTotal, setTicketTotal] = useState<number | null>(null);
@@ -380,7 +392,8 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
     if (!uid || !activeOrgId || membershipState !== 'member') {
       void (async () => {
         if (alive) {
-          rawRef.current = [];
+          feedKeyRef.current = null;
+          rawRef.current = []; remainderRef.current = []; ticketIdsRef.current = new Set();
           setTickets([]); setRawNotifs([]); setHidden(new Set()); setNotifTotal(null); setRemainder([]);
           setTicketTotal(null); setLoadError(null); setLoading(false);
         }
@@ -388,15 +401,35 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
       return () => { alive = false; };
     }
 
+    // A different person or workspace than the state holds (RoleContext's
+    // setActiveOrgId changes activeOrgId alone — membershipState stays
+    // 'member' — so the guard above does not reset a workspace switch): clear
+    // everything the previous feed showed BEFORE the first read, so a read
+    // that fails here keeps nothing of the workspace left behind. A refetch
+    // of the same feed (a role change, a rejoin) keeps its last good read.
+    const feedKey = `${uid}:${activeOrgId}`;
+    if (feedKeyRef.current !== feedKey) {
+      void (async () => {
+        if (!alive) return;
+        feedKeyRef.current = feedKey;
+        rawRef.current = []; remainderRef.current = []; ticketIdsRef.current = new Set();
+        pagesRef.current = 1;
+        keptAtRef.current.clear(); echoRef.current.clear();
+        setTickets([]); setRawNotifs([]); setHidden(new Set()); setNotifTotal(null);
+        setRemainder([]); setRemainderRead(true); setTicketTotal(null); setDocLibrary({});
+        setLoadError(null); setLoading(true);
+      })();
+    }
+
     /** The reconcile pass — after the read, never inside it (RT-8 dw3): send
      *  the candidates to the server, which re-checks and marks the gone ones;
      *  drop what it retired. One pass in flight per feed. */
-    const reconcile = async (rows: NotificationRow[], staleWorkflow: ReadonlySet<string>) => {
+    const reconcile = async (rows: NotificationRow[], staleWorkflow: ReadonlySet<string>, below: UnreadBeyondRow[]) => {
       if (reconcilingRef.current) return;
       const now = Date.now();
       const kept = keptAtRef.current;
       for (const [id, at] of kept) if (now - at > RECONCILE_KEEP_MS) kept.delete(id);
-      const ids = rows
+      const fromWindow = rows
         .filter((r) => {
           const cls = reconcileClassOf(r);
           if (!cls) return false;
@@ -405,6 +438,17 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
           return !kept.has(r.id);
         })
         .map((r) => r.id);
+      // The rows below the window count in the badges, so their discharged
+      // obligations are sent too (after the window's, within the request's
+      // cap). A workflow alert there is not: the feed has not checked its
+      // ticket (it is not an action either).
+      const fromBelow = below
+        .filter((r) => {
+          const cls = reconcileClassOf(r);
+          return !!cls && cls !== 'workflow' && !kept.has(r.id);
+        })
+        .map((r) => r.id);
+      const ids = [...fromWindow, ...fromBelow].slice(0, RECONCILE_MAX_IDS);
       if (ids.length === 0) return;
       reconcilingRef.current = true;
       try {
@@ -421,11 +465,20 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
         for (const id of retired) echoRef.current.set(id, at + RECONCILE_ECHO_MS);
         const current = rawRef.current;
         const gone = current.filter((r) => retired.has(r.id)).length;
+        const goneBelow = remainderRef.current.filter((r) => retired.has(r.id)).length;
+        if (goneBelow > 0) {
+          const nextBelow = remainderRef.current.filter((r) => !retired.has(r.id));
+          remainderRef.current = nextBelow;
+          setRemainder(nextBelow);
+        }
         if (gone > 0) {
           const next = current.filter((r) => !retired.has(r.id));
           rawRef.current = next;
           setRawNotifs(next);
-          setNotifTotal((t) => (t === null ? t : Math.max(next.length, t - gone)));
+        }
+        if (gone + goneBelow > 0) {
+          const loaded = rawRef.current.length;
+          setNotifTotal((t) => (t === null ? t : Math.max(loaded, t - gone - goneBelow)));
         }
         setHidden((prev) => {
           if (![...prev].some((id) => retired.has(id))) return prev;
@@ -474,13 +527,14 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
         //    A failed read is an error the surfaces show (DELIV-10 dw5) and
         //    keeps the last good window — never an empty "all caught up".
         let n: NotificationRow[] | null = [];
-        let cursor: string | null = null;
+        let cursor: NotificationCursor | null = null;
         try {
           for (let page = 0; page < pagesRef.current; page++) {
             const got = await listMyNotifications({ onlyUnread: true, limit: NOTIFICATION_PAGE_SIZE, orgId: activeOrgId, before: cursor });
             n.push(...got);
             if (got.length < NOTIFICATION_PAGE_SIZE) break;
-            cursor = got[got.length - 1].createdAt;
+            const tail = got[got.length - 1];
+            cursor = { createdAt: tail.createdAt, id: tail.id };
           }
         } catch {
           n = null;
@@ -534,11 +588,14 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
 
         // 4) The rows below the window, tallied by kind into the badges
         //    (TAX-6 dw1) — only when the count says there are any.
-        let beyond: Array<{ kind: string; resourceId: string | null }> = [];
+        let beyond: UnreadBeyondRow[] = [];
         let beyondRead = true;
         if (rawWindow && unreadTotal !== null && unreadTotal > rawWindow.length) {
+          // After the window's last row, by the same keyset — never an
+          // offset, which a row sharing a created_at could straddle.
+          const tail = rawWindow[rawWindow.length - 1];
           try {
-            beyond = await listUnreadKindsBeyond(activeOrgId, rawWindow.length, REMAINDER_TALLY_CAP);
+            beyond = await listUnreadKindsBeyond(activeOrgId, tail ? { createdAt: tail.createdAt, id: tail.id } : null, REMAINDER_TALLY_CAP);
           } catch {
             beyondRead = false;
           }
@@ -559,12 +616,16 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
         }
 
         if (alive) {
-          if (list !== null) { setTickets(list); setTicketTotal(total); }
+          if (list !== null) {
+            ticketIdsRef.current = new Set(list.map((t) => t.id).filter((x): x is string => !!x));
+            setTickets(list); setTicketTotal(total);
+          }
           if (rawWindow !== null) {
             rawRef.current = rawWindow;
             setRawNotifs(rawWindow);
             setHidden(staleSet);
             setNotifTotal(unreadTotal === null ? null : Math.max(unreadTotal, rawWindow.length));
+            remainderRef.current = beyond;
             setRemainder(beyond);
             setRemainderRead(beyondRead);
           } else if (unreadTotal !== null) {
@@ -574,7 +635,7 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
           setLoadError(failure);
           setLoading(false);
         }
-        if (alive && rawWindow) void reconcile(rawWindow, staleSet);
+        if (alive && rawWindow) void reconcile(rawWindow, staleSet, beyond);
       } catch (e) {
         console.error('Attention feed fetch failed', e);
         if (alive) { setLoadError('The attention feed could not be loaded.'); setLoading(false); }
@@ -622,14 +683,19 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
       .channel(`attention-${activeOrgId}-${channelId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tickets', filter: `org_id=eq.${activeOrgId}` },
         () => { if (alive) schedule(); })
-      // RT-4: tickets keeps the default replica identity (its rows carry the
-      // comments / history / attachments JSON — FULL would log all of it on
-      // every write), so a DELETE's old record holds the id alone and can
-      // never match the org filter above. This companion hears every tickets
-      // DELETE (an id, nothing else — lib/libraryCollections.ts's pattern)
-      // and refetches; no app path hard-deletes a ticket, so it is rare.
+      // RT-4: Supabase does not filter DELETE events, so the org filter above
+      // never hears one. This unfiltered companion (lib/libraryCollections.ts's
+      // pattern) hears EVERY tenant's tickets DELETEs — the old record's
+      // primary key alone — so, unlike that one, it acts only on a ticket
+      // this feed holds: a bulk delete elsewhere is not a refetch for
+      // everyone online. No app path hard-deletes a ticket, so it is rare
+      // (DEC-44 (N4-feed-provider) §4 records the id exposure).
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'tickets' },
-        () => { if (alive) schedule(); })
+        (payload) => {
+          if (!alive) return;
+          const gone = (payload as { old?: { id?: string } | null } | undefined)?.old?.id;
+          if (gone && ticketIdsRef.current.has(gone)) schedule();
+        })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `user_id=eq.${uid}` },
         (payload) => onNotification(payload as unknown as { eventType?: string; new?: { id?: string } | null }))
       // RT-1: the channel's status is watched. Every join after the first is a
