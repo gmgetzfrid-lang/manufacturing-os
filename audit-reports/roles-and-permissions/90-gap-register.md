@@ -563,7 +563,7 @@ refresh on `/requests/new` destroys the only copy.
 
 **Verdict: BUILD_NARROW** · Effort: **S** · Depends on: `LIFE-4`
 
-**Status: OPEN — partial (2026-10-07, drafting-flow Round G, DF-P2 CREATE).** Acceptance 1 and 3 are met; 2 is not.
+**Status: RESOLVED (2026-10-13, drafting-flow Round G, DF-P4 LIBRARY).** Acceptance 1 and 3 were met by DF-P2; 2 by DF-P4 (below). *(Was: OPEN — partial (2026-10-07, DF-P2 CREATE).)*
 - **Assigned:** drafting-flow DF-P4 LIBRARY (acceptance 2: the `assign` intent bridge in `app/api/tickets/workflow-action/route.ts` registers a `document_intents` row for every sheet in `parseSourceDocuments(metadata)`, org-scoped per SM-14) — by the integrator, 2026-10-13 (at the DF-P2 merge, DEC-31: DF-P2 has merged and named these limbs in drafting-flow `99-fix-sequencing.md`, "Hand-offs from DF-P2"; fleet plan updated).
 
 **Partial (2026-10-07, drafting-flow Round G).** `metadata.source_documents` exists. `/api/tickets/create` (`app/api/tickets/create/route.ts`) writes every source sheet a request names: the primary as the singular `metadata.source_document` (the same canonical shape, now with `version_id`), and — when there is more than one — every sheet, primary first, as `metadata.source_documents` (each a `buildSourceDocumentRef` row; `parseSourceDocuments` reads both back). The request form passes every sheet a book-viewer hand-off stashed, up to `MAX_SOURCE_DOCUMENTS` (200, `capSourceDocuments` — the same cap the route keeps); sheets past it are named after filing, never a refusal (`DEC-101` item 5). *(Corrected at DF-P2's second review fix, 2026-10-07: the route first refused more than 25 sheets with a 400 after every file had uploaded, and the form had no way past it.)* The Impact panel reads both: `lib/impact.ts` `getDocumentImpact` runs the singular read and a `.contains("metadata->source_documents", …)` read, then merges and de-duplicates.
@@ -574,6 +574,10 @@ refresh on `/requests/new` destroys the only copy.
 - ✓ (3) A single-source ticket is written and read as before: no `source_documents` key is written for one sheet, and the Impact test still lists a single-source ticket by the singular read.
 
 **Scope / residual.** (2) → proposed **DF-P4**, whose brief edits the same route's `assign` hunk: the bridge iterates `parseSourceDocuments(metadata)` with `SM-14`'s org scope (drafting-flow `99-fix-sequencing.md`, "Hand-offs from DF-P2").
+
+**Resolution (2026-10-13, drafting-flow Round G).** DF-P4 LIBRARY — acceptance 2. The ticket ⇄ intent bridge in `app/api/tickets/workflow-action/route.ts:1081` iterates `parseSourceDocuments(ticket.metadata)` — the singular `source_document` first, then each entry of `metadata.source_documents`, de-duplicated — instead of the singular source only: each sheet is read **in the ticket's org** (`SM-14`'s `.eq("org_id", ticket.orgId)`), a sheet from another workspace registers nothing, and each registers its own `document_intents` row (`onConflict: document_id,user_id,kind,source`); the reassignment retire and the terminal clear run per sheet too. A single-source ticket is a list of one and issues exactly the calls it did (the DF-P0 / Round E pins on the delete legs still hold). Test: `lib/__tests__/dfRoundG_P4_library.test.ts` ("roles-and-permissions GAP-8 acceptance 2": a three-sheet request registers doc-1 and doc-2 for the drafter; the foreign sheet nothing).
+
+**Acceptance.** ✓ (1) Unchanged. ✓ (2) Assigning a drafter produces a `document_intents` row for every sheet the request names (in its org). ✓ (3) Unchanged.
 
 ### Scope
 

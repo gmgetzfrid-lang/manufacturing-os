@@ -501,6 +501,18 @@ vercel.json (only two crons; neither scans tickets)
 
 **Scope / residual.** As above. The columns are `20260529`'s; the clock starts at the first paste of `supabase/migrations/20261195_df_roundG_outcome_and_departure.sql` (§5), which records the backlog already past its target without a notice each — until then step 5b sends nothing and reports the backlog as a count (*corrected at fix pass 2:* this said the first runs after the deploy would send breach notices to that backlog, as many as fit in 30 s, and that inventory row 5 counted them; the count was taken after the deploy and could not warn). The first run after the paste warns the open tickets past 75 % of their window and not yet due (inventory row 7). Residual: an `sla_defaults` row added later for a type gives that type's old untargeted tickets a window at once, so they breach on the next run (no editor exists yet — done-when 2's owner).
 
+**Partial (2026-10-13, drafting-flow Round G).** DF-P4 LIBRARY — done-when 2's creation half (re-owned from the merged DF-P2).
+- `/api/tickets/create` stamps `target_completion_at` from the requester's date when they gave one, else the org's `sla_defaults` row for the type (`default_days` from now, at 17:00 — the shape every creation path stamps, `lib/notifications.ts` `slaTargetDateInDays`), else the built-in `DEFAULT_SLA_DAYS` (`app/api/tickets/create/route.ts:607-623`). A read that fails falls back to the built-in window and is logged (a due date carries no authority). The "first fallback" comment above `DEFAULT_SLA_DAYS` now says what the code does.
+- The create route (service role — `ticket_insert_integrity` does not run for it) writes none of `sla_breached_at`, `sla_breach_warned_at`, `outcome` (pinned: no row key of that name, and no ticket from any of the three doors carries one).
+- Tests: `lib/__tests__/ticketCreateRoute.test.ts` ("DF-P4 — EDGE-7 done-when 2 / ROUTE-9 done-when 4": the org's window, the requester's own date wins, no row → 14 days for ISO, an unreadable `sla_defaults` → the built-in window; the three columns never written).
+
+**Done-when.**
+1. ✓ Unchanged (DF-P3).
+2. ✗ in part — `sla_defaults` is read at creation (✓) and by the clock (DF-P3 ✓), but no admin UI edits it. **Owner:** admin-and-org (the settings surface), as recorded.
+3. ✗ Unchanged — DF-P9.
+
+**Scope / residual.** As above.
+
 ---
 
 <a id="edge-8"></a>
@@ -560,6 +572,10 @@ app/api/tickets/workflow-action/route.ts:24-25 (the standard this violates)
 - ✓ A recipient still receives the `request_pending_approval` bell row and email when the submitting tab closes right after the response: both are written before the response, and nothing is left for the tab to do (the same route test reads them with no further client step).
 
 **Scope / residual.** The check-in's PSM escalation for an undocumented field change is the route's too (second review fix): `escalatePsm` (`:1109`) sends it on the `safety` category to the workspace's controllers other than the reporter, after the creation notice and before the answer, and stamps `metadata.psm_escalated_at`; a check-in that resumes the ticket sends it only while that stamp is missing (`lib/__tests__/ticketCreateRoute.test.ts`, "LIFE-7 / LEAK-6 — the PSM escalation is the route's: sent once, stamped, and resumed only when it never went out"). The owner-review notice (`review_requested`) still `emit()`s from the browser after the route answers (`components/documents/CheckInPanel.tsx`, the review-requested block); it is not the creation notice, and DF-P2's brief does not move it — a proposed hand-off in `99-fix-sequencing.md`, "Hand-offs from DF-P2". A request-form or intake-collision request answered `notified: false` has no automatic resend. Only a check-in resumes, so only a check-in's retry sends a missing notice. The requester is told to tell their supervisor, and the ticket is in the queue regardless. **Owner:** DF-P4 (proposed), which owns the queue: a sweep, or a triage-side reader, for `PENDING_ASSIGNMENT` tickets without `metadata.created_notice_at` (`99-fix-sequencing.md`, "Hand-offs from DF-P2").
+
+**Follow-up (2026-10-13, drafting-flow Round G, DF-P4 LIBRARY) — the two residual limbs handed on at the DF-P2 merge. The finding stays RESOLVED; neither limb is a done-when of it.**
+- *A creation notice nobody received, outside a check-in.* `/api/tickets/create` now marks every request it files `metadata.created_notice_owed = true` (`app/api/tickets/create/route.ts:648`); `created_notice_at` (stamped once a queue recipient's bell has the notice) settles it, and `lib/ticketLibrary.ts` `creationNoticeOwed(status, metadata)` is the reader: true only for a marked, unstamped request still in `PENDING_ASSIGNMENT` — a request filed before the mark existed is never counted, because it cannot be told apart from an announced one. Tests: `ticketCreateRoute.test.ts` ("DF-P4 — EDGE-8": announced → owed and stamped; nobody to tell → owed and not stamped), `dfRoundG_P4_library.test.ts` ("creationNoticeOwed"). **Not mounted:** the queue chip ("not announced") is `app/(protected)/requests/page.tsx` (**DF-P9**), and a resend sweep would be a step of `app/api/cron/maintenance/route.ts` (notifications N15's file in this round) — one call of `creationNoticeOwed` each.
+- *The check-in's owner-review notice (`review_requested`).* Reproduced: it is **not** part of ticket creation. It is the `notify_owner` outcome of the check-in (`components/documents/CheckInPanel.tsx:455-484`), which files no ticket at all — it never reaches `/api/tickets/create`, so "a stamped server leg in /api/tickets/create" has no request to ride on. Moving it server-side is a check-in route's (a notice of the check-in episode, stamped on the episode) → **document-control** (P23 owns `CheckInPanel.tsx` this round). Not done here.
 
 ---
 

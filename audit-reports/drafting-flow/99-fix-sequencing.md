@@ -468,6 +468,24 @@ DF-P3 ROUTING resolved `LEAK-1`, `ROUTE-5`, `ROUTE-6` and `SM-6` and left `ROUTE
 
 *Re-verified after DF-P3 ROUTING (drafting-flow Round G, 2026-10-13): every EDGE-11 row above holds — the compare-and-set legs, the archived-stub refusal, the service-role preference reads and the PGRST202-only comment fallback are untouched (`dfRoundG_P1_rails.test.ts`, `dfRoundG_P0.test.ts` green); attention stays engine-derived (the drafterless `assign` is an engine action, so the badge and the page agree by construction).*
 
+## Hand-offs from DF-P4 (Round G) that no package brief carries yet
+
+DF-P4 LIBRARY resolved `DCW-5`, `AUTHZ-10`, `AUTHZ-3`, `PERS-5`, `ROUTE-9` and roles-and-permissions `GAP-8`, recorded `DCW-3` WONTFIX by design, and left `DCW-1`, `DCW-4`, `DCW-7`, `PERS-6`, `EDGE-7` and `SM-9` OPEN with a `Partial` block each (`EDGE-8` stays RESOLVED with a follow-up note). Migrations `20261208` (the ticket's library, the guard re-creations, `tickets_org_insert` dropped) and `20261209` (the drafting-config writers) are PASTE pending. The integrator appends each row to the owner's brief, or re-owns it.
+
+| Finding | Owner | What the owner must add |
+|---|---|---|
+| `DCW-1` done-when 3, `DCW-7` (triage UI) | DF-P9 (owns the assign modal) | Mount `components/requests/LibraryPicker.tsx` in the assign modal — `<LibraryPicker orgId={ticket.orgId} value={libraryId} onChange={setLibraryId} />` — and send `libraryId` (and, beside it, a `unit` field from `unitOptionsFor`) with `assign` / `request_eng_review` at `PENDING_ASSIGNMENT`. The route validates both (`app/api/tickets/workflow-action/route.ts`, the triage branch); neither is ever required. |
+| `EDGE-8` (a creation notice nobody received) | DF-P9 (the queue) or notifications (the maintenance cron) | `lib/ticketLibrary.ts` `creationNoticeOwed(status, metadata)` is the reader (`/api/tickets/create` marks `created_notice_owed`; `created_notice_at` settles it). Either a "not announced" chip on the queue row, or a maintenance-cron step that resends and stamps — one call each. |
+| `EDGE-8` (the check-in's owner-review notice) | document-control (owns `components/documents/CheckInPanel.tsx`) | The `review_requested` notice is the check-in's `notify_owner` outcome, which files no ticket (`CheckInPanel.tsx:455-484`), so it cannot ride `/api/tickets/create`. Move it to a server route of the check-in (stamped on the episode). |
+| `DCW-4` (publish as a new document) | document-control (owns `lib/revisions.ts`) with DF-P9 / DF-P10 (the ticket page) | `createDocumentWithFile` takes `relatedTicketId` and writes `related_ticket_id` on the first version (as `revUpDocument` does); the ticket page offers "Publish as a new document in <library>" for a ticket with a library and no source document; `/api/tickets/handback` accepts a version of a NEW document in the ticket's library carrying the ticket. |
+| `PERS-6` done-when 3 | DF-P9 / DF-P10 | The request pages' `fromRow` stop casting `row.unit as string` (`Ticket.unit` is now `string \| null`). |
+| `DCW-5` (the page's label) | DF-P9 | The ticket page labels a source document the viewer cannot open ("restricted — triage can open it"). |
+| `EDGE-7` done-when 2 (editor) | admin-and-org | An admin editor for `sla_defaults` (the create route and the clock both read it now). |
+| `ticket_update_guard` / `ticket_insert_integrity` | every later re-creator (DF-P5 / P6 / P7 / P8) | Their NEWEST bodies are now `20261208`'s (found by scanning): `library_id` is workflow-owned (the library's own deletion passes) and a client insert is born with no library and the member's own name. Re-create from them; never re-paste `20261195`, `20261166` or `20261038` after `20261208` (`20261166` would also restore `tickets_org_insert`). |
+| `org_config_key_writes_*` | any later re-creator | NEWEST body `20261209` (`'drafting'` → `caller_holds_any_role(org_id, ARRAY['Admin','DocCtrl','DraftingSupervisor'])`, pinned equal to `lib/adminSurfaces.ts` `DRAFTING_CONFIG_EDITORS`). Never re-paste `20261203` or `20260818` after it. |
+
+*Re-verified after DF-P4 LIBRARY (drafting-flow Round G, 2026-10-13): every EDGE-11 row holds — the workflow route's compare-and-set legs (the triage library / unit ride the same write), the archived-stub refusal, the service-role preference reads, the comment route's PGRST202-only fallback and the numbering RPC are untouched (`dfRoundG_P0.test.ts`, `dfRoundG_P1_rails.test.ts`, `ticketCreateRoute.test.ts` green); the hand-back route's null token is now its own leg too.*
+
 ## Verification you cannot skip
 
 **No live database and no browser.** The state machine, capability defaults and

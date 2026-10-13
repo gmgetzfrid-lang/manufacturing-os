@@ -58,6 +58,22 @@ not exist on the ticket.
 3. For a new-document request it is chosen from the libraries the requester can
    see — or deferred to triage, which is a step that already exists.
 
+**Partial (2026-10-13, drafting-flow Round G).** DF-P4 LIBRARY (`GAP-105`), base `0a3150a`. Reproduced first: no ticket column, type field or route names a library (`types/schema.ts` `Ticket`, `app/api/tickets/create/route.ts` row, `supabase/migrations/*` — no `tickets.library_id`).
+- **The column.** `tickets.library_id UUID REFERENCES libraries(id) ON DELETE SET NULL` + `tickets_library_idx` (`20261208:118-119`), backfilled from the singular source document **in the ticket's own org** (SM-14), only rows still NULL (`20261208:126-133`). Workflow-owned: `ticket_update_guard` re-created from its newest body (`20261195`, found by scanning, lineDiff-pinned) with the library rule (`20261208:215-219`) — the library's own deletion passes; `ticket_insert_integrity` re-created from `20261195` so a client insert is born with none (`20261208:335`). **Pending migration:** `supabase/migrations/20261208_df_roundG_ticket_library.sql` (`DEC-30`: one paste, not a widening; after `20261195` — its first statement refuses otherwise — and after the DF-P2 app deploy (the create route), never before it). The app works before and after the paste: without the column the create route retries the same number without `library_id` (`missingLibraryColumn`, 42703 / PGRST204) and the workflow route applies the triage action without it and says so (`warning`). The database half is not closed in any database until it is pasted.
+- **Derived at intake, never asked for.** `app/api/tickets/create/route.ts:702-703` sets `library_id` to the primary source document's own library (`documents.library_id`, read as the requester — `readSourceDocuments`, `:232`, so a document they cannot see lends nothing; the library is the root of the one container chain, `lib/containerChain.ts` `loadContainerChain`'s `libraryId` — DEC-36, no second walk). With no source document the ticket files with no library, exactly as before.
+- **Set or corrected at triage.** `assign` / `request_eng_review` at `PENDING_ASSIGNMENT` take `body.libraryId` (`app/api/tickets/workflow-action/route.ts:546-570`): a library of the ticket's org (400 otherwise, nothing written; 503 when it cannot be read), applied by `computeTransition`'s triage step on the same compare-and-set with a "Triage details set" history line (`lib/ticketTransitions.ts:420-454`). Never required: `DEC-44 (DF-P4)` item 2 (a ticket with no library reaches every status as today).
+- **The picker.** `components/requests/LibraryPicker.tsx` (new) offers only libraries the caller may discover (`lib/ticketLibrary.ts` `offerableLibraries` → `lib/permissions` `canDiscover`), with "No library — decide later" first and default. Mounted by DF-P9 in the assign modal (one line, in the component's header).
+- The restore bounds the new pointer (ORG-1's census): `lib/dataRestore.ts` `RESTORE_PARENT_RULES.tickets = library_id>libraries` — a restored ticket naming a library that is not in the target workspace is refused, not cleared (a library-scoped rule may be narrower than the base list). File outside the plan (admin-and-org P1's module), one line.
+- `lib/workflow.ts` `ticketResource` carries `libraryId` when known (DEC-13's key, already in `RESOURCE_KEYS`): a `when.libraryId` rule can now match a ticket; a ticket with no library presents the same resource object as before.
+- Tests: `lib/__tests__/dfRoundG_P4_library.test.ts` (36 — triage on the route and in `computeTransition`, the pre-paste path, `ticketResource`, the 20261208 lineDiffs and shape), `lib/__tests__/ticketCreateRoute.test.ts` ("DF-P4 — GAP-105 / DCW-1", 4). Exercised on a throwaway PostgreSQL 16 (initdb in a scratch directory, deleted afterwards), the file sent as ONE string as the SQL editor sends it, over the real bodies of `20261195` (guard, insert integrity), `20261166` (the per-verb ticket policies), `20261045` / `20261046` / `20260818` (the role helpers) and `20261203` (the config policies): first paste 6 × true with the inventory 5 / 2 / 2 / 1 / 1 / 1 / 1; re-paste 6 × true (idempotent); an own-org source document backfilled (two tickets), a foreign-org source, a non-UUID id and a source-less ticket left NULL; a member's `UPDATE … SET library_id` refused ("library_id are workflow-owned"), a member setting it NULL while the library exists refused, a member's priority write passes; the service role sets it; a member deleting a library nulls `library_id` on its tickets through the guard (ON DELETE SET NULL inside the delete's trigger); a member's insert refused by RLS (no INSERT policy left); with `tickets_org_insert` put back by hand (a re-paste of `20261166` simulated) a member's insert carrying a library, a forged name, `sla_breached_at`, `outcome` and `CLOSED` lands with no library, the member's own name ("Dee" from the display name; the email's local part when the display name is blank), `PENDING_ASSIGNMENT`, no stamps and no outcome; a service-role insert keeps its library and name. On a database without `20261195`'s guard the file raised "20261208 needs 20261195 … nothing was changed" and left no `library_id` column and `tickets_org_insert` in place.
+
+**Done-when.**
+1. ✓ (after the paste) A ticket carries a target library, set at intake (derived) or at triage (the route).
+2. ✓ Derived automatically when a source document is attached (and visible to the requester).
+3. ✗ in part — deferred to triage: the triage action takes it (server ✓), but no screen sends it until DF-P9 mounts `LibraryPicker` in the assign modal and passes `libraryId` (one line; the brief's split). Requester-side choice at intake is deliberately not offered (99-fix-sequencing Phase 2 item 1).
+
+**Scope / residual.** The picker's mount and the `libraryId` it sends → **DF-P9** (assign modal). Paste `20261208` (see the paste row in DF-P4's report). DF-P5 / DF-P6 read `tickets.library_id` for routing and the roster.
+
 ---
 
 ## DCW-2 · Document Control is not a party to the drafting flow at any state
@@ -119,7 +135,7 @@ the model and the flow never implemented it.**
 ## DCW-3 · No drawing-type dimension exists to route on
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** WONTFIX
 - **Verification:** CONFIRMED
 - **Blast radius:** compliance / friction
 - **Locations:**
@@ -155,6 +171,15 @@ optional narrowing** — not the other way round.
 
 **Done when.** A release-routing rule can be expressed once per library and
 inherited, without maintaining a separate drawing-type taxonomy.
+
+**WONTFIX (2026-10-13, drafting-flow Round G).** DF-P4 LIBRARY. Recorded by design once `tickets.library_id` exists (`DCW-1`, `20261208`), as the fleet plan's dependency and `99-fix-sequencing.md` "Do not do these" require: *"Build a drawing-type taxonomy — The library is the better routing proxy and already inherits. `DCW-3`."* The dimension the routing rule needs is now on the ticket — the library, derived from the source document or set at triage — and every library-scoped policy already resolves document → folder → library (`lib/containerChain.ts`, DEC-36).
+- **Cost of building it:** a second classification (drawing type) to keep in sync with the library tree on every document and ticket, a new vocabulary per org, and a field the requester often cannot answer (the "required field they cannot answer" the sequencing file forbids).
+- **Rejected alternative:** a per-drawing-type enum on the ticket (or validated `request_type` values per type). `request_type` stays the org's free list (WF-15 validates it against the configured options).
+- **What would change the answer:** an org whose libraries do not separate the drawing types it routes differently (P&IDs and sketches in one library) and that cannot reorganise them — then `GAP-104`'s "drawing type as an optional narrowing" on top of the library rule is the shape, not a taxonomy replacing it.
+
+**Done-when.** ✓ (by design) A release-routing rule can be expressed once per library and inherited: the ticket carries the library (`DCW-1`), and the rule itself is `GAP-104` (DF-P6).
+
+**Scope / residual.** None for this finding.
 
 ---
 
@@ -213,12 +238,22 @@ every issued deliverable, or visibly knows it does not.
 
 **Scope / residual.** Tickets with no source document → **DF-P4** (`GAP-105`, fleet plan).
 
+**Partial (2026-10-13, drafting-flow Round G).** DF-P4 LIBRARY — the source-less limb handed on by DF-P0 / DF-P1.
+- A request with **no source document but a target library** (`GAP-105`) that closes without a published deliverable now closes visibly not in the register: `metadata.deliverable = { state: "not_in_register", document_id: null, library_id, … }` (`lib/ticketHandback.ts` `noteDeliverableNotInLibrary`; `deliverableStateOf` reads the shape), a "Closed — deliverable not in the register" history line naming the library and the note in the close notice (`app/api/tickets/workflow-action/route.ts:840-856`). A request with neither a source document nor a library closes exactly as before (no metadata written) — `lib/__tests__/dfRoundG_P4_library.test.ts`, "DCW-4 (DF-P4 limb)".
+- **Not built: "Publish as a new document in <library>".** It cannot go through the same path (DEC-22): `RevUpModal` / `revUpDocument` revise an EXISTING document, and the new-document path (`lib/revisions.ts:820` `createDocumentWithFile`) takes no `relatedTicketId`, so no new document's first version can carry the ticket as its provenance — the proof `/api/tickets/handback` checks. `lib/revisions.ts` is document-control P23's file (do-not-edit for this package), and the offer itself sits on the ticket page (`app/(protected)/requests/[id]/page.tsx`, DF-P9 / DF-P10).
+
+**Done-when.**
+- ✗ (in part) See `LIFE-1` / `GAP-6` (unchanged).
+- ✗ (in part) "The register knows about every issued deliverable, or visibly knows it does not" now holds for tickets with a source document (DF-P1) and for tickets with a library (this limb, after `20261208`); a ticket with neither still ends at an attachment with no register-side trace (it names no place in the register to be missing from).
+
+**Scope / residual.** (a) `createDocumentWithFile` writes `related_ticket_id` (a `relatedTicketId` input, as `revUpDocument` has) → **document-control** (P23's successor on `lib/revisions.ts`); (b) the ticket page offers "Publish as a new document in <library>" through that path and `/api/tickets/handback` accepts a version of a NEW document in the ticket's library carrying the ticket → **DF-P9 / DF-P10** with (a); (c) a source-less, library-less request → triage sets a library (`DCW-1`).
+
 ---
 
 ## DCW-5 · A request cannot be filed against a document the requester cannot see
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED — the mechanism is confirmed; the frequency in practice was not observed
 - **Blast radius:** friction / adoption
 - **Locations:**
@@ -257,6 +292,16 @@ exists; the request form does not use it.
 1. A requester can name a document they cannot open, and the resulting ticket
    carries a real `source_document.id`.
 2. Doing so does not disclose the document's content.
+
+**Resolution (2026-10-13, drafting-flow Round G).** DF-P4 LIBRARY. **Reproduced first, with a private library (by reading the live bodies):** `documents_acl_select` is `AS RESTRICTIVE FOR SELECT USING (node_visible(…))` (`20261037:110-111`), and `node_visible`'s newest body (`20261203`) lets a row through for controllers, the effective owner, and **any allow grant of any action** — "Any allow grant (any action) lets the row through; finer read-vs-discover distinctions stay in the app layer" (`20261203:243-249`). So the finding's mechanism holds only in part on HEAD: (a) a requester with **no** grant on a private library is not shown the document at all — the correct ACL outcome (they may not know it exists; the independent pass agreed), and the create route, which reads source documents as the requester (DEC-101 item 5, `app/api/tickets/create/route.ts:230`), drops such an id with a warning; (b) a requester holding a **discover-only** grant IS returned the row by the database and the route links it — but the request form offered no way to name a document except arriving from the viewer with `?sourceDocId`, and the viewer serves no content to a discover-only grant (`lib/permissions.ts` `canServeContent`). (b) is what reproduced.
+- `app/(protected)/requests/new/page.tsx`: with no hand-off, "Document this request is about (optional)" — a number / title search through the requester's own session (`.from('documents').select('id, document_number, title, rev')`, `:138`; the text made safe for the PostgREST filter by `lib/ticketLibrary.ts` `linkableDocumentQuery` / `linkableDocumentFilter`). A pick is sent as the primary source document (`:365`), so the route re-reads it as the requester, captures its version, derives the request's library (`DCW-1`) and its unit. The card says "Linked by number only — no file is attached and none of the document's content is copied into the request".
+- Tests: `lib/__tests__/dfRoundG_P4_library.test.ts` ("linkableDocumentQuery", the source pins on the form); the route's caller-scoped read of a document the requester cannot see is pinned by `ticketCreateRoute.test.ts` ("a source document the requester cannot see lends no library").
+
+**Done-when.**
+1. ✓ A requester can name a document they cannot open — any document the database lets them discover (a discover grant, ownership, a normal library) — and the ticket carries its real `source_document.id`. One they may not even discover stays unnameable by design.
+2. ✓ No content is disclosed: the search selects number, title and revision only (what a discover grant shows in a listing), no file is attached, and the route reads nothing more than the hand-off always did.
+
+**Scope / residual.** The ticket page's "restricted — triage can open it" label for a source the viewer cannot open is the page's (DF-P9). `DEC-44 (DF-P4)` item 4.
 
 ---
 
@@ -335,6 +380,13 @@ the unconfigured case is visibly a setup gap rather than a free-text field.
 **Done-when.** ✓ `unit` resolves against the org's codebook (or configured list) where one exists. ✗ (in part) The unconfigured case is visibly a setup gap, but it is still a free-text field: removing it would discard what a requester knows with no list to pick from (`DEC-101` item 1 keeps it, reversible in one line). And the "triage assigns" half has no action yet: nothing at triage sets the unit on a "Unit unknown" ticket.
 
 **Scope / residual.** A triage `unit` (on `assign` / `request_eng_review` at `PENDING_ASSIGNMENT`, validated against `unitOptionsFor`, clearing `unit_unknown` / `unit_unlisted`) → proposed **DF-P4**, whose brief already adds a `libraryId` to those actions; the free-text box is the user's to keep or remove. Both in `99-fix-sequencing.md`, "Hand-offs from DF-P2".
+
+**Partial (2026-10-13, drafting-flow Round G).** DF-P4 LIBRARY — the "triage assigns" half (`DEC-101` item 1).
+- `assign` / `request_eng_review` at `PENDING_ASSIGNMENT` take `body.unit` (`app/api/tickets/workflow-action/route.ts:570-592`), resolved against the SAME list the form offers and the create route checks (`lib/ticketCreate.ts` `unitOptionsFor` / `resolveUnit`: the saved units, else the Site Codebook's): not on the list → 400 `field: "unit"`, nothing written; no list → the free text kept (DEC-101 item 1); a codebook that is there but cannot be read → 503 (`unitListReadFailure`), never an unchecked unit. `computeTransition` writes it on the same compare-and-set, removes `metadata.unit_unknown` / `unit_unlisted` / `unit_unchecked`, and writes "Triage details set — Unit: X (was unknown)" (`lib/ticketTransitions.ts:420-454`). Tests: `lib/__tests__/dfRoundG_P4_library.test.ts` (the route: on the list, off the list, no list, unreadable; `computeTransition`: marks cleared, history line, REGRESSION with no input).
+
+**Done-when.** ✓ `unit` resolves against the org's codebook (or configured list) where one exists — at intake (DF-P2) and now at triage. ✗ (in part) The unconfigured case is visibly a setup gap but still a free-text field (`DEC-101` item 1 keeps it); and no screen sends the triage `unit` until the assign modal does (DF-P9).
+
+**Scope / residual.** The assign modal's unit field (beside `LibraryPicker`) → **DF-P9**; the free-text box stays by `DEC-101` item 1.
 
 ---
 

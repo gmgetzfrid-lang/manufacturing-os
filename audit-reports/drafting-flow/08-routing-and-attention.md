@@ -508,7 +508,7 @@ contrast components/requests/EngineerPickerModal.tsx:77-89 —
 ## ROUTE-9 · The drafting-request SLA clock has no server-side reader — nothing ever fires an SLA warning, while the settings page promises one
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** drafting-flow DF-P4 LIBRARY (done-when 4: the create route stamps `target_completion_at` — re-owned from the merged DF-P2) — by the integrator, 2026-10-13 (at the DF-P3 merge, DEC-31; DF-P3 named these in drafting-flow `99-fix-sequencing.md`, "Hand-offs from DF-P3"; fleet plans updated).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/notifications.ts:216`, `lib/notifications.ts:224`, `lib/notifications.ts:245`, `lib/notify/dispatch.ts:56`, `app/(protected)/settings/notifications/page.tsx:143`, `app/api/cron/maintenance/route.ts:159`, `vercel.json:4`
@@ -568,6 +568,16 @@ const scans: Array<[string, (orgId: string) => Promise<number>]> = [
 4. ✗ in part — the scan reads `sla_defaults` for a ticket with no target, but creation does not seed from it and `lib/notifications.ts:321`'s "first fallback when an org hasn't configured sla_defaults rows" comment still describes a lookup creation never makes. **Owner: DF-P2** (the create route stamps from `sla_defaults` first, and corrects the comment).
 
 **Scope / residual.** Done-when 4 → DF-P2 (see `EDGE-7`). *Fix pass 2:* the clock starts at the first paste of `20261195`, which records the backlog already past its target without a notice each (one summary to each queue); before the paste the scan sends nothing and counts that backlog; step 5b stops 120 s before the run's end; a request waiting on its requester is worded as such (see `EDGE-7`).
+
+**Resolution (2026-10-13, drafting-flow Round G).** DF-P4 LIBRARY — done-when 4 (re-owned from the merged DF-P2). The create route seeds the due date from the org's `sla_defaults` row for the type before `DEFAULT_SLA_DAYS` (`app/api/tickets/create/route.ts:607-623`, recorded in full on `EDGE-7`), and the comment above `DEFAULT_SLA_DAYS` (`lib/notifications.ts`) now says the create route reads `sla_defaults` first and the clock never applies the built-in window retroactively. Tests: `lib/__tests__/ticketCreateRoute.test.ts` ("DF-P4 — EDGE-7 done-when 2 / ROUTE-9 done-when 4").
+
+**Done-when.**
+1. ✓ Unchanged (DF-P3) — the clock starts at the first paste of `20261195` (pending), as recorded.
+2. ✓ Unchanged.
+3. ✓ Unchanged.
+4. ✓ `sla_defaults` is read to seed per-org SLA windows — at creation (this package) and by the scan (DF-P3) — and the comment no longer describes a lookup the code does not make.
+
+**Scope / residual.** An admin editor for `sla_defaults` is `EDGE-7` done-when 2's remainder (admin-and-org); it is not a done-when of this finding.
 
 ---
 
