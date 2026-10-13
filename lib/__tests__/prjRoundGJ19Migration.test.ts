@@ -66,6 +66,15 @@ describe("the one-paste protocol (DEC-30)", () => {
     expect(inv).not.toMatch(/cost_doc_compan(y|ies)_barred\(/);
   });
 
+  it("the inventory says what it does not cover: row 2's already-moved rows are SEC-24's, row 5 is a lower bound of limb (b)", () => {
+    const inv = between(C, "CREATE TEMP TABLE prj_g_j19_inventory AS", "\nBEGIN;");
+    const parts = inv.split(/\nUNION ALL\n/);
+    expect(parts[1]).toContain("restoring the moved ones is projects-tab SEC-24");
+    expect(parts[4]).toContain("registry-linked flagged contractors");
+    expect(parts[4]).toContain("a LOWER BOUND: contractors whose quote answers for a flagged company by vendor name or a do-not-use look-alike are refused too and not counted here");
+    expect(M).toContain("Restoring them is projects-tab\n-- SEC-24 (owner projects-joint).");
+  });
+
   it("is not a widening: nothing is granted; HOW TO APPLY, PASTE ORDER and DEPLOY ORDER are stated", () => {
     expect(C).not.toMatch(/\bGRANT\b/);
     expect(M).toContain("NOT a widening: both sections refuse writes RLS allowed and grant nothing.");

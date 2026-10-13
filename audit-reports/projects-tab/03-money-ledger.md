@@ -1058,7 +1058,7 @@ explicit override that captures a reason and writes an audit row. Decide what
 - ✓ A signed-in direct delete of a flagged contractor named by an open quote is refused (limb (a), and limb (b) for every status); the project's own delete and purge still pass.
 - ✓ A scratch run shows both (above), and a shape test pins the rail (DRLS-16).
 
-**Scope / residual.** Wider than the finding by the brief's limb (a): a contractor named by an open quote is refused whether or not it is flagged (no app path deletes a contractor, so no flow changes). The inventory counts the contractors each limb now protects. A service-role delete still nulls the quotes' `party_id` (an operator action, as 20261179 §3 lets the service role move a quote). Paste row: after `20261179` (which is after `20261157`, HOLD); deploy order either.
+**Scope / residual.** Wider than the finding by the brief's limb (a): a contractor named by an open quote is refused whether or not it is flagged (no app path deletes a contractor, so no flow changes). The inventory counts limb (a)'s contractors exactly, and limb (b)'s as a lower bound: its row counts contractors whose `company_id` links a flagged registry company, while the rail (through `cost_doc_companies_barred`) also refuses a contractor whose quote answers for a flagged company by vendor name or a do-not-use look-alike (a set-based count of those would call the registry function per row, which the inventory avoids). A service-role delete still nulls the quotes' `party_id` (an operator action, as 20261179 §3 lets the service role move a quote). Paste row: after `20261179` (which is after `20261157`, HOLD); deploy order either.
 
 
 ---

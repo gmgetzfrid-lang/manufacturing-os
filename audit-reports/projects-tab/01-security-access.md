@@ -1161,7 +1161,7 @@ Tests — `lib/__tests__/prjRoundGJ11Migrations.test.ts`: "no other migration re
 
 **Scope / residual.** Residual 3 (owner above). Residuals 2 and 4: decided, above. Residual 1: as recorded (the inventory counts its rows). Pending migration: `20261157` (HOLD).
 
-**Partial (2026-10-13, projects Round G — J19 PROJECTS REMAINDERS).** Residual 3, the item the J14 merge owed here, is closed in both halves the J14 Partial named (the import's match scope, then a rail on `milestones.project_id`). The finding stays OPEN only on exceptions that are accepted, not owed (below); closing it is a record decision.
+**Partial (2026-10-13, projects Round G — J19 PROJECTS REMAINDERS).** Residual 3, the item the J14 merge owed here, is closed in both halves the J14 Partial named (the import's match scope, then a rail on `milestones.project_id`), for every move from the paste on. The finding stays OPEN on two exceptions proposed as accepted (below), which are the integrator's to rule under `DEC-90`, and on the rows the old import already moved off their projects, opened as `SEC-24` with an owner.
 - **Reproduced on HEAD first.** `lib/__tests__/scheduleImportWriters.test.ts` "SEC-21 residual 3 …": a schedule imported onto a project with a document, then re-imported with the document alone, moved every matched row to `project_id` NULL (the test fails against the HEAD `lib/milestones.ts`). On a scratch PostgreSQL 16 without the migration, a Viewer moved a milestone off its project, onto a project, and onto another org's project.
 - **The import keeps each matched row's own project** (`lib/milestones.ts`). The existing-row read now selects `project_id` (`EXISTING_READ_BASE`, `:1839`; `ExistingImportRow.project_id`, `:1744`). The upsert writes the matched row's own `project_id` instead of the import's scope (`upsertPayload`, `:2181`). The match itself is unchanged: a document-only import still finds the document's rows by `document_id`, because `milestones_external_ref_per_document_uniq` (20260704) makes the document their identity. A read limited to `project_id IS NULL` would instead have refused every such row with 23505. A project import matches only its project's rows, so it writes the same value it always did. The per-row fallback (`update(updateFields(p))`) carries no scope column, as before.
 - **The rail: `20261198` §1 (pending paste, DEC-30).** `enforce_milestone_project_move` is a BEFORE UPDATE OF `project_id` trigger on `milestones`, per row, `WHEN (OLD.project_id IS DISTINCT FROM NEW.project_id)`. It is SECURITY DEFINER with `search_path` pinned, and EXECUTE is revoked from PUBLIC, anon and authenticated (DRLS-16). A signed-in move onto, off or between projects is refused (42501) in each of these cases:
@@ -1185,12 +1185,13 @@ Tests — `lib/__tests__/prjRoundGJ11Migrations.test.ts`: "no other migration re
   - `prjRoundGJ19Migration.test.ts` covers §1: the trigger's event and WHEN; the order of the passes and refusals; the authority being 20261098's predicate; the app half (the read, the upsert, a per-row fallback with no scope column, and `PATCH_COLUMN` with no `project_id`); and every probe fragment.
 
 **Done-when.**
-- ◐ Done-when 1 holds for every signed-in caller from the paste on (residual 3 closed): no signed-in write can now carry a milestone, or the history it wrote, onto or off a private project. It is not ✓ as written, because two exceptions remain, both accepted here on the pattern of the J14 decision on residual 4, and neither is owed:
+- ◐ Done-when 1 holds for every signed-in caller from the paste on (residual 3 closed): no signed-in write can now carry a milestone, or the history it wrote, onto or off a private project. It is not ✓ as written, because two exceptions remain. Both are proposed as accepted exceptions (not owed), on the pattern of the J14 decision on residual 4, for the integrator's `DEC-90` ruling at the J19 merge; this package does not accept them:
   - (i) a move by the service role (an operator in the SQL editor, a restore), which the rail passes so a restore keeps its rows as written;
   - (ii) milestones already moved onto a private project before the paste, whose earlier rows keep the reach they had. Which ones these are cannot be told apart from the database (the inventory counts the candidate rows), and back-filling their audit rows would rewrite append-only history, as residual 2 was decided.
+  - Not an exception, and owed: milestones the pre-J19 document-only re-import already moved OFF their project (inventory row 2's candidates). They stay at `project_id` NULL, missing from the project's schedule, and a re-import onto that project with the same document fails on them with 23505. The fix stops new moves only. Opened as `SEC-24` (owner projects-joint; the integrator names the package at the J19 merge or rules it under `DEC-90`).
 - ◐ (unchanged) Done-when 2: residuals 2 and 4 stay accepted exceptions (J14).
 
-**Scope / residual.** What is left is the accepted exceptions: residual 2, residual 4, and (i) and (ii) above. None is owed. Owner of the status: the integrator. Resolving SEC-21 on these accepted exceptions is a record decision (DEC-90's form), and no package is needed for it. Residual 1 is as recorded. Pending migrations: `20261157` (HOLD), `20261198` (after `20261179`).
+**Scope / residual.** What is left: residuals 2 and 4 (accepted at J14), (i) and (ii) above (proposed as accepted, not owed, for the integrator's `DEC-90` ruling at the J19 merge), and the rows already moved off their projects (`SEC-24`, owed, owner projects-joint). Owner of the status: the integrator. Once (i) and (ii) are ruled and `SEC-24` is resolved or ruled, resolving SEC-21 is a record decision (DEC-90's form). Residual 1 is as recorded. Pending migrations: `20261157` (HOLD), `20261198` (after `20261179`).
 
 
 ---
@@ -1296,6 +1297,37 @@ The same INSERT, in a transaction that first drops `document_versions_insert_int
 
 ---
 
+## SEC-24 · Milestones a document-only re-import already moved off their project before J19 stay off it, and a re-import onto that project then fails on them
+
+*Numbered SEC-24 on this branch (opened by projects-joint J19 PROJECTS REMAINDERS's review fix pass, 2026-10-13, from `SEC-21` residual 3's leftover rows, per `DEC-31`). If the number collides at merge the integrator renumbers.*
+
+- **Severity:** MEDIUM
+- **Severity qualifier:** per affected schedule; how many rows were moved is not known until `20261198`'s inventory row 2 is read and the candidates are told apart (below)
+- **Status:** OPEN
+- **Assigned:** projects-joint, the owner of `lib/milestones.ts` and the schedule rails. Proposed by projects-joint J19 PROJECTS REMAINDERS, 2026-10-13, in its review's fix pass (DEC-31). The integrator names the package at the J19 merge, or rules the rows an accepted exception under `DEC-90` instead.
+- **Verification:** READ (base `49cd27e` plus J19; the move itself reproduced by J19's `scheduleImportWriters.test.ts` "SEC-21 residual 3" against the pre-J19 `lib/milestones.ts`; the stranded rows' re-import collision found by reading, not run)
+- **Blast radius:** schedule integrity: a project's schedule, EVM and reports miss the moved tasks; a re-import onto the project fails on them
+- **Locations:**
+  - Pre-J19 `lib/milestones.ts` import upsert: a document-only re-import matched the document's rows by `document_id` and wrote `project_id: input.projectId ?? null` onto each, moving every matched row off its project (`SEC-21` residual 3; fixed by J19: a matched row keeps its own project).
+  - `lib/milestones.ts:1867` (`fetchExistingImportRows`): a project import matches only `project_id = P`, so it never finds the stranded rows.
+  - `supabase/migrations/20260704_milestones_project_scoped_unique.sql:27`: `milestones_external_ref_per_document_uniq` on `(org_id, document_id, source, external_ref)` — the import's insert of the same refs on the same document collides with the stranded rows (23505).
+  - `supabase/migrations/20261198_prj_roundG_milestone_project_and_party_delete.sql` §1: a signed-in move of `milestones.project_id` now needs schedule authority on every project it touches, and any move onto a private project is refused; `PATCH_COLUMN` has no `project_id`. So no app path can put them back.
+- **Related:** `SEC-21` (residual 3, closed by J19), `DEC-69`, `DEC-90`
+- **Independently verified:** — (`author`: raised by J19's reviewer; recorded by J19's fix pass; not yet challenged)
+
+**Mechanism.** J19 stops the move from happening again (the import keeps each row's own project; `20261198` §1 rails a signed-in move). It does not undo moves made before it is deployed. A row the old import moved has `project_id` NULL and keeps its `document_id`; nothing in the row says which project it left. `20261198`'s inventory row 2 counts imported document-only milestones, the candidates, without telling the moved ones from rows that were always document-only.
+
+**Failure scenario.** Before J19 is deployed, a schedule was imported onto project P with document D, then re-imported with document D alone. Every matched row moved to `project_id` NULL. After J19 those tasks are still missing from P's schedule, EVM and reports. When P's owner re-imports onto P with D, `fetchExistingImportRows` does not see the stranded rows and the insert of each `(org, D, source, ref)` fails with 23505.
+
+**Remediation.** (1) Tell the moved rows apart: from the `MILESTONE_*` audit rows that carry `details.projectId` (`20261157` §6 / §9, rows written from its paste on), and any milestone event rows written while the row sat on P. Whether the pre-J19 import wrote an audit row naming the project is to be established (not found by reading the import path). (2) Re-attach them through a controlled path that writes an audit row per row: an Admin-only definer RPC (checking `can_edit_project_schedule` on the target, and deciding the private-project case explicitly, since `20261198` §1 refuses a signed-in move onto one), or a reviewed service-role script. (3) Or put the rows to the integrator as an accepted exception under `DEC-90`, with the import's 23505 said to the user in words. In every case the re-import onto P must stop failing silently on them.
+
+**Done when.**
+- The rows a pre-J19 re-import moved off a project are identified (a counts query the user can paste), or ruled an accepted exception under `DEC-90`.
+- Identified rows are back on their project through an audited path, and a re-import onto that project with the same document updates them instead of failing with 23505.
+- A test pins the repair path, and a scratch run shows a stranded row restored and re-imported.
+
+---
+
 ## Report progress
 
 | ID | Severity | Status |
@@ -1323,3 +1355,4 @@ The same INSERT, in a transaction that first drops `document_versions_insert_int
 | SEC-21 | LOW | OPEN |
 | SEC-22 | LOW | OPEN |
 | SEC-23 | HIGH | OPEN |
+| SEC-24 | MEDIUM | OPEN |

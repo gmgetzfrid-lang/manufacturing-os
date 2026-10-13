@@ -2829,20 +2829,39 @@ describe("SAF-20 — the quote door's success sentence follows the link's contac
     expect(db.tables.cost_documents).toHaveLength(1);
   });
 
-  it("a link with NO contact never promises contact: it points at the portal", async () => {
-    seed({ link: { purpose: "quote", contact_email: null } });
+  it("a link with NO contact and an expiry points at the portal only while the link stays open, then at the team", async () => {
+    seed({ link: { purpose: "quote", contact_email: null, expires_at: "2099-01-14T12:00:00Z" } });
     const body = await (await upload({})).json();
     expect(body).toMatchObject({ ok: true, status: "quote_received" });
-    expect(body.message).toBe("Your quote is in — Unit 4's team has been notified. The decision will be shown on this page — check back here.");
+    expect(body.message).toBe("Your quote is in — Unit 4's team has been notified. The decision will be shown on this page while this link stays open (until Jan 14, 2099 at the latest); after that, ask Unit 4's team.");
     expect(body.message).not.toMatch(/contacted/);
     // the quote is filed exactly as before — only the sentence differs
     expect(db.tables.cost_documents).toHaveLength(1);
   });
 
+  it("a link with NO contact and no expiry (an older link) names no date, and still says who to ask once it closes", async () => {
+    seed({ link: { purpose: "quote", contact_email: null, expires_at: null } });
+    const body = await (await upload({})).json();
+    expect(body.message).toBe("Your quote is in — Unit 4's team has been notified. The decision will be shown on this page while this link stays open; after that, ask Unit 4's team.");
+    expect(body.message).not.toMatch(/contacted|until/);
+    expect(db.tables.cost_documents).toHaveLength(1);
+  });
+
+  it("why the window: the portal answers a revoked or expired link, or a closed project, before it reads any quote", () => {
+    const resolve = readFileSync(join(process.cwd(), "app/api/intake/resolve/route.ts"), "utf8");
+    const quotes = resolve.indexOf('.from("cost_documents")');
+    expect(quotes).toBeGreaterThan(-1);
+    for (const answer of ['{ error: "revoked" }', '{ error: "expired" }', '{ error: "project_closed" }']) {
+      const at = resolve.indexOf(answer);
+      expect(at, answer).toBeGreaterThan(-1);
+      expect(at, answer).toBeLessThan(quotes);
+    }
+  });
+
   it("a blank contact is no contact (the outcome notice trims it and answers no_contact)", async () => {
     seed({ link: { purpose: "quote", contact_email: "   " } });
     const body = await (await upload({})).json();
-    expect(body.message).toMatch(/check back here\.$/);
+    expect(body.message).toMatch(/while this link stays open; after that, ask Unit 4's team\.$/);
     expect(body.message).not.toMatch(/contacted/);
     const notice = readFileSync(join(process.cwd(), "app/api/intake/outcome-notice/route.ts"), "utf8");
     expect(notice).toContain('const to = (l.contact_email ?? "").trim();');

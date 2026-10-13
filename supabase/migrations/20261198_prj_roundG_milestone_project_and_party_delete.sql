@@ -56,7 +56,12 @@
 --
 -- NOT a widening: both sections refuse writes RLS allowed and grant nothing.
 -- The DEC-30 inventory (aggregate COUNTs only, never rows) is captured
--- BEFORE the transaction and returned with the probes.
+-- BEFORE the transaction and returned with the probes. Inventory row 2
+-- (imported document-only milestones) holds the candidates a pre-J19
+-- document-only re-import already moved OFF their project: this file stops
+-- further moves and does not move any back. Restoring them is projects-tab
+-- SEC-24 (owner projects-joint). Row 5 is a lower bound of section 2 limb
+-- (b): it counts only registry-linked flagged contractors.
 --
 -- HOW TO APPLY: paste the whole file into the Supabase SQL editor and run it
 -- once (idempotent). The final SELECT is the only result set shown — probe
@@ -91,7 +96,7 @@ SELECT 'inventory: imported milestones on a project that also carry a document (
        (SELECT COUNT(*) FROM milestones
          WHERE project_id IS NOT NULL AND document_id IS NOT NULL AND external_ref IS NOT NULL)::text AS n
 UNION ALL
-SELECT 'inventory: imported milestones on a document and no project (a re-import may already have moved some off a project; not told apart here — the rail stops further moves)',
+SELECT 'inventory: imported milestones on a document and no project (a re-import may already have moved some off a project; not told apart here — the rail stops further moves; restoring the moved ones is projects-tab SEC-24)',
        (SELECT COUNT(*) FROM milestones
          WHERE project_id IS NULL AND document_id IS NOT NULL AND external_ref IS NOT NULL)::text
 UNION ALL
@@ -103,7 +108,7 @@ SELECT 'inventory: contractors named by an open quote (draft / parsed) — a sig
        (SELECT COUNT(DISTINCT d.party_id) FROM cost_documents d
          WHERE d.kind = 'quote' AND d.status IN ('draft', 'parsed') AND d.party_id IS NOT NULL)::text
 UNION ALL
-SELECT 'inventory: contractors linked to a flagged registry company (inactive / DO NOT USE) and named by a quote in any status — a signed-in delete is refused while the quote would stop answering for the flag',
+SELECT 'inventory: registry-linked flagged contractors (company_id on an inactive / DO NOT USE company) named by a quote in any status — a LOWER BOUND: contractors whose quote answers for a flagged company by vendor name or a do-not-use look-alike are refused too and not counted here',
        (SELECT COUNT(DISTINCT pp.id) FROM project_parties pp
           JOIN companies c ON c.id = pp.company_id
          WHERE c.status IN ('inactive', 'do_not_use')
