@@ -16,6 +16,12 @@
 //   5. Stale-checkout escalation: checkouts held past 14 days notify the
 //      org's DocCtrl/Admin pool (a stale lock stops being the holder's
 //      private secret).
+//   5b. Drafting-request SLA clock (drafting-flow GAP-106 / EDGE-7 /
+//      ROUTE-9): an open request at 75 % of its window warns whoever it is
+//      waiting on; one past its target escalates to them, the assignment
+//      queue and the requester — once each, stamped on the ticket
+//      (lib/ticketSla.ts runTicketSlaScan). Escalation notifies; it never
+//      advances, closes or reassigns a request.
 //   6. Compliance clocks per org — including the hold aging sweep (HLD-14):
 //      a hold past its expected release, or open past HOLD_AGING_DAYS with
 //      no date, nudges its opener and the release pool once.
@@ -77,6 +83,7 @@ import { emailAllowedByPrefs } from "@/lib/notificationPrefs";
 import { renderNotificationEmail } from "@/lib/emailRender";
 import { publicOrigin } from "@/lib/publicOrigin";
 import { formatRecordDate, formatRecordTime, orgTimeZone } from "@/lib/recordTime";
+import { runTicketSlaScan, type SlaScanReport } from "@/lib/ticketSla";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -135,6 +142,8 @@ async function handler(req: NextRequest) {
     intakeStagingSwept?: number;
     reviewHealthNudges?: number;
     verifyScansPruned?: number;
+    /** GAP-106: the drafting-request SLA step (5b). */
+    ticketSla?: Omit<SlaScanReport, "errors">;
     /** DELIV-11: what the drain did — an empty queue, a batch that failed, and
      *  unconfigured email are three different answers here. */
     emailDrain?: DrainReport;
@@ -337,6 +346,28 @@ async function handler(req: NextRequest) {
     result.staleEscalations = await escalateStaleCheckouts(sb, result.errors);
   } catch (e) {
     result.errors.push(`stale-escalation: ${(e as Error).message}`);
+  }
+
+  // 5b. DRAFTING-REQUEST SLA CLOCK (drafting-flow GAP-106 / EDGE-7 /
+  //     ROUTE-9) — one step on this cron (a third vercel.json entry fails
+  //     deployment; see step 10). Warns at 75 % of a request's window,
+  //     escalates at its target, once each (stamped compare-and-set on the
+  //     ticket), through emit() — bell + email under the "SLA warnings"
+  //     preference, drained at 6c. Never throws; every failure is a line.
+  try {
+    const sla = await runTicketSlaScan({
+      client: sb,
+      emit: (input) => runWithServerClient(sb, () => emit(input)),
+      zoneOf: (orgId) => orgTimeZone(sb, orgId),
+      // At most TICKET_SLA_MS of the run: the compliance steps after it keep theirs.
+      deadlineAt: Math.min(Date.now() + TICKET_SLA_MS, runEnd),
+    });
+    const { errors: slaErrors, ...slaCounts } = sla;
+    result.ticketSla = slaCounts;
+    for (const line of slaErrors) { result.errors.push(line); console.error(`[cron/maintenance] ${line}`); }
+    if (sla.truncated) result.errors.push("ticket-sla: more open requests than one run reads — the next run continues");
+  } catch (e) {
+    result.errors.push(`ticket-sla: ${(e as Error).message}`);
   }
 
   // 4b. Rebuild acl_index from each node's ACL + ancestor chain, dropping
@@ -784,6 +815,8 @@ const INGEST_MS = 40_000;
 /** Room after the ingest's deadline for its last batch to commit. */
 const INGEST_COMMIT_MS = 15_000;
 const STORAGE_WALK_MS = 15_000;
+/** GAP-106 (step 5b): the drafting-request SLA scan's share of the run. */
+const TICKET_SLA_MS = 30_000;
 const EMBED_DRAIN_MS = 100_000;
 /** Below this the embed drain only marks libraries starved. */
 const EMBED_DRAIN_MIN_MS = 20_000;

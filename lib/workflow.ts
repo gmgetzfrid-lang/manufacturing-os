@@ -1,6 +1,7 @@
 import { Role, TicketStatus, Ticket } from "@/types/schema";
 import { policyAllows, scopedTokensFor, grantActive, type CapabilityPolicy, type CapabilityResource, type UserGrant } from "@/lib/capabilityPolicy";
 import { isManagementRole } from "@/lib/managementRoles";
+import { CANCEL_OUTCOMES, type TicketOutcome } from "@/lib/ticketOutcome";
 
 export interface WorkflowAction {
   label: string;
@@ -22,6 +23,12 @@ export interface WorkflowAction {
    *  engine and ignores optional actions, so the badge and the ticket page
    *  agree by construction. */
   optional?: boolean;
+  /** LEAK-9 / GAP-107 (DF-P3): the action ends the request and must say HOW
+   *  — one of `outcomes` (lib/ticketOutcome.ts), beside the comment that
+   *  carries the free text. The workflow route validates it. */
+  requiresOutcome?: boolean;
+  /** The outcomes this action may record (with `requiresOutcome`). */
+  outcomes?: readonly TicketOutcome[];
 }
 
 /** Optional evaluation context for getActions (WF-7, GAP-2, WF-15).
@@ -256,6 +263,10 @@ export const WorkflowEngine = {
           action: 'cancel_request',
           variant: 'destructive',
           requiresComment: true,
+          // LEAK-9 / GAP-107: the category (withdrawn, duplicate, handled
+          // outside the app, rejected) rides beside the reason.
+          requiresOutcome: true,
+          outcomes: CANCEL_OUTCOMES,
           optional: true,
           description: 'Withdraw this request. Your reason is recorded; the request is closed as canceled and cannot be reopened.',
         });
@@ -337,6 +348,20 @@ export const WorkflowEngine = {
       case 'DRAFTING':
       case 'REVISION_REQ':
         if (ticket.status === 'DRAFTING') cancelRequest();
+        // SM-6 / ROUTE-1 (DF-P3): drafting work with NO drafter (one who left
+        // the workspace — EDGE-4 — or a revision returned before any drafter
+        // was assigned) can always be re-owned by the assignment queue, and
+        // is the queue's action item until it is. (The route's transitions no
+        // longer produce it; this is the backstop.)
+        if (!ticket.assignedDrafterId && allows('ticket.assign')) {
+          actions.push({
+            label: 'Assign Drafter',
+            action: 'assign',
+            variant: 'default',
+            description: 'This request has no drafter. Select a drafter to take it on.',
+            ...(engineeringFirstPending ? { disabledReason: ENG_FIRST_REASON } : {}),
+          });
+        }
         if (canActAsDrafter) {
           actions.push({
             label: 'Save Progress (Stage Files)',

@@ -703,8 +703,11 @@ describe("WF-19 — the assignment pool is told on every (re-)entry into PENDING
     expect(out.map((m) => m.uid)).toEqual(["mgr-sup"]);
     expect(seen).toEqual(expect.arrayContaining(["org_members", "org_configurations"]));
     const r = src("app/api/tickets/workflow-action/route.ts");
-    expect(r).toContain('await resolveTicketRecipients(ticket.orgId, "PENDING_ASSIGNMENT", caller.id, supabaseAdmin)');
-    expect(r).toContain('if (newStatus === "PENDING_ASSIGNMENT" && ticket.status !== "PENDING_ASSIGNMENT") {');
+    // drafting-flow DF-P3 (LEAK-1): every ENTRY into a routed status routes —
+    // PENDING_ASSIGNMENT as before, PENDING_IFC and a drafterless revision too
+    // (dfRoundG_P3_routing.test.ts drives them).
+    expect(r).toContain('await resolveTicketRecipients(ticket.orgId, newStatus, caller.id, supabaseAdmin, { assignedDrafterId: drafterAfter, assignedEngineerId: engineerAfter })');
+    expect(r).toContain('if (newStatus !== ticket.status && isRoutedStatus(newStatus, { assignedDrafterId: drafterAfter })) {');
     expect(src("lib/ticketRouting.ts")).not.toContain("PENDING_ENG_INITIAL");
   });
   it("done-when 3: the post-action drain falls back to the caller's session token when CRON_SECRET ships blank", () => {

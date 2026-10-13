@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { Ticket, DocumentRecord } from '@/types/schema';
 import { isTerminalTicketStatus } from '@/lib/ticketShed';
+import { summarizeOutcomes, OUTCOME_LABEL, TICKET_OUTCOMES } from '@/lib/ticketOutcome';
 import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
 import UserAvatar from '@/components/ui/UserAvatar';
 
@@ -133,6 +134,8 @@ export default function AnalyticsPage() {
           comments: r.comments ?? [], history: r.history ?? [],
           createdAt: r.created_at, lastModified: r.last_modified,
           archivedAt: r.archived_at ?? null, metadata: r.metadata ?? null,
+          // LEAK-9 / GAP-107: how the request ended (absent before 20261195).
+          outcome: r.outcome ?? null,
         } as Ticket)));
 
         setDocuments((docsData || []).map(r => ({
@@ -304,6 +307,13 @@ export default function AnalyticsPage() {
   }, [tickets, documents, timeRange]);
 
   const selectedTickets = selectedReason ? metrics.drillDownMap.get(selectedReason) || [] : [];
+
+  // LEAK-9 / GAP-107 (drafting-flow DF-P3): how requests ENDED — the only
+  // instrument that says whether work is leaving the app. Read-only.
+  const outcomes = useMemo(
+    () => summarizeOutcomes(tickets.map((t) => ({ status: t.status, outcome: t.outcome ?? null, requestType: t.requestType }))),
+    [tickets],
+  );
 
   // --- USER PROFILE COMPUTATION ---
   const userProfile = useMemo(() => {
@@ -576,6 +586,49 @@ export default function AnalyticsPage() {
           <p className="text-xs text-[var(--color-text-muted)]">Active tickets untouched for &gt;7 days.</p>
         </div>
       </div>
+
+      {/* LEAK ACCOUNTING (LEAK-9 / GAP-107): how requests ended, per request type */}
+      <section aria-labelledby="request-outcomes-heading" className="bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] shadow-sm p-6">
+        <div className="flex flex-wrap items-baseline justify-between gap-2 mb-4">
+          <h3 id="request-outcomes-heading" className="font-bold text-[var(--color-text)] flex items-center"><ArrowUpRight className="w-5 h-5 mr-2 text-[var(--color-text-faint)]" /> How Requests Ended</h3>
+          <p className="text-xs text-[var(--color-text-muted)]">
+            Leak rate (withdrawn or handled outside the app):{' '}
+            <span className="font-bold text-[var(--color-text)]" data-testid="leak-rate">{outcomes.leakRate === null ? '—' : formatPercent(outcomes.leakRate)}</span>
+            {' '}of {outcomes.ended - outcomes.byOutcome.unrecorded} ended request{outcomes.ended - outcomes.byOutcome.unrecorded === 1 ? '' : 's'} with a recorded outcome
+          </p>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
+          {[...TICKET_OUTCOMES, 'unrecorded' as const].map((o) => (
+            <div key={o} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3">
+              <p className="text-[10px] font-bold text-[var(--color-text-faint)] uppercase tracking-wider">{o === 'unrecorded' ? 'Not recorded' : OUTCOME_LABEL[o]}</p>
+              <p className="text-xl font-black text-[var(--color-text)]">{outcomes.byOutcome[o]}</p>
+            </div>
+          ))}
+        </div>
+        {outcomes.byType.length > 0 && (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">
+                <th className="py-1 pr-4 font-bold">Request type</th>
+                <th className="py-1 pr-4 font-bold">Ended</th>
+                <th className="py-1 pr-4 font-bold">Left the app</th>
+                <th className="py-1 font-bold">Leak rate</th>
+              </tr>
+            </thead>
+            <tbody>
+              {outcomes.byType.map((row) => (
+                <tr key={row.requestType} className="border-t border-[var(--color-border)]">
+                  <td className="py-1.5 pr-4 font-medium text-[var(--color-text)]">{row.requestType}</td>
+                  <td className="py-1.5 pr-4 text-[var(--color-text-muted)]">{row.ended}</td>
+                  <td className="py-1.5 pr-4 text-[var(--color-text-muted)]">{row.leaked}</td>
+                  <td className="py-1.5 text-[var(--color-text-muted)]">{row.leakRate === null ? '—' : formatPercent(row.leakRate)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <p className="mt-3 text-xs text-[var(--color-text-muted)]">&ldquo;Not recorded&rdquo; counts requests that ended before outcomes were recorded, and force closes that named none.</p>
+      </section>
 
       {/* SECTION 2: CHARTS & LISTS */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
