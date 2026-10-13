@@ -227,7 +227,8 @@ describe("REV-19 (P17) — the bulk editor's issuing rows start the clocks and a
     const items = Array.from(box.querySelectorAll("li")).map((li) => li.textContent ?? "");
     expect(items).toHaveLength(1);
     expect(items[0]).toMatch(/^E1 — The status was changed, but it was not recorded as an issue/);
-    expect(items[0]).toContain("no review clock or acknowledgment roster was started and no issue record was written");
+    // P23 (REV-19 (a)): "no issue record" is said of this editor — since 20261205 the database records the issue itself.
+    expect(items[0]).toContain("no review clock or acknowledgment roster was started and this editor wrote no issue record (since database update 20261205 the database records the issue itself, if it was one)");
     // P17 integrator fix: a failed read keeps the "start its clocks" advice — nothing was recorded
     expect(items[0]).toContain("its status before the change could not be read");
     expect(items[0]).toContain("start its clocks from the document");
@@ -377,5 +378,71 @@ describe("REV-19 (P17) — REGRESSION: every bulk edit that issues nothing is wr
       door: "bulk", fromStatus: "IFC", toStatus: "Issued", putBack: false, entryIntoForce: true,
       complianceClocksStarted: false, reviewClockReset: false, acknowledgmentRosterOpened: true,
     });
+  });
+});
+
+// ── document-control P23 DIRECT-WRITE ISSUE RECORD: REV-19 (b) ─────────────
+// The rows routed through changeDocumentStatus are no longer picked from the
+// page's copy: every row written TO an issue status takes it, and the row it
+// reads first decides — as the metadata editor's save does (identity IS-P1).
+describe("REV-19 (b) (P23) — the bulk editor routes each issue-status write from the database row, not the page's copy", () => {
+  const unseenBox = () => host.querySelector('[data-testid="bulk-unseen-issue-rows"]');
+
+  it("the stale copy: a row the page shows Issued, which another change moved back to Draft, is issued by this change WITH its clocks and record, and named", async () => {
+    const d = seedDoc("s1", { status: "Draft" });
+    await applyStatus([asRecord({ ...d, status: "Issued" })], "Issued");
+    expect(docRow("s1").status).toBe("Issued");
+    expect(state.updatePayloads).toHaveLength(1);
+    expect(issuedRecords()).toHaveLength(1);
+    expect(issuedRecords()[0].details).toMatchObject({ door: "bulk", fromStatus: "Draft", toStatus: "Issued", putBack: false });
+    expect(onDocumentIssued).toHaveBeenCalledTimes(1);
+    expect(onDocumentIssuedAck).toHaveBeenCalledTimes(1);
+    expect(unseenBox()?.textContent).toContain("S1 — it was issued by this change: another change after this page loaded had moved it out of issue (or given it its first revision), and this change sets Issued — the issue is recorded on its history like any other.");
+    expect(host.querySelector('[data-testid="bulk-issue-follow-ups"]')).toBeNull();
+    expect(host.querySelector('[data-testid="bulk-not-issued-rows"]')).toBeNull();
+  });
+
+  it("the stale copy into force: a row the page shows Issued, which another change moved to IFC, is put in force by this change — recorded as an entry into force, the review clock left as it was", async () => {
+    const d = seedDoc("s2", { status: "IFC" });
+    await applyStatus([asRecord({ ...d, status: "Issued" })], "Issued");
+    expect(docRow("s2").status).toBe("Issued");
+    expect(issuedRecords()).toHaveLength(1);
+    expect(issuedRecords()[0].details).toMatchObject({ door: "bulk", fromStatus: "IFC", toStatus: "Issued", putBack: false, entryIntoForce: true, reviewClockReset: false });
+    expect(onDocumentIssued).not.toHaveBeenCalled();
+    expect(onDocumentIssuedAck).toHaveBeenCalledTimes(1);
+    expect(unseenBox()?.textContent).toContain("S2 — it was put in force by this change");
+  });
+
+  it("regression — a row the page shows Issued that is still Issued: a plain success, one UPDATE with the same payload, no record, no box", async () => {
+    const d = seedDoc("s3", { status: "Issued" });
+    await applyStatus([asRecord(d)], "Issued");
+    expect(host.textContent).toMatch(/Applied to 1 document\./);
+    expect(state.updatePayloads).toHaveLength(1);
+    expect(Object.keys(state.updatePayloads[0].payload).sort()).toEqual(["status", "updated_at", "updated_by"]);
+    expect(issuedRecords()).toEqual([]);
+    expect(onDocumentIssued).not.toHaveBeenCalled();
+    expect(unseenBox()).toBeNull();
+    expect(host.querySelector('[data-testid="bulk-not-issued-rows"]')).toBeNull();
+  });
+
+  it("a row the page shows Issued whose state before the write cannot be read: said as unknown ('check its history'), never the 'start its clocks' advice", async () => {
+    const d = seedDoc("s4", { status: "Issued" });
+    state.failRead.add("s4");
+    await applyStatus([asRecord(d)], "Issued");
+    expect(docRow("s4").status).toBe("Issued");
+    expect(issuedRecords()).toEqual([]);
+    expect(unseenBox()?.textContent).toContain("S4 — it was changed, but its state just before the change could not be read, so whether this change issued it is unknown");
+    expect(host.textContent).not.toMatch(/start its clocks from the document/);
+  });
+
+  it("a stale row the issue rule refuses is named \"not issued:\" in the database's words, the others applied", async () => {
+    const d = seedDoc("s5", { status: "Draft" });
+    const ok = seedDoc("s6", { status: "Issued" });
+    state.refuse.s5 = HOLD;
+    await applyStatus([asRecord({ ...d, status: "Issued" }), asRecord(ok)], "Issued");
+    const items = Array.from(host.querySelectorAll('[data-testid="bulk-refused-rows"] li')).map((li) => li.textContent);
+    expect(items).toEqual([`S5 — not issued: ${HOLD}`]);
+    expect(docRow("s5").status).toBe("Draft");
+    expect(issuedRecords()).toEqual([]);
   });
 });

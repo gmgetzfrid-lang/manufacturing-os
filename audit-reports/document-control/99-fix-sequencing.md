@@ -818,6 +818,41 @@ added these limbs; keep each when rebasing (each is pinned by a test):
   `components/documents/ArchiveConfirmModal.tsx` and
   `components/documents/lifecycle/ReverseConfirmModal.tsx`.
 
+⚠ **Paste order — P23 DIRECT-WRITE ISSUE RECORD (2026-10-13).** One one-paste
+migration, `20261205_dc_roundF_direct_write_issue_record.sql` (`REV-19` (a);
+projects-tab `SEC-23` folded in as its §2 — the one number this package
+holds; the integrator may split §2 into its own number, it depends on
+nothing in §1):
+1. **Deploy the app carrying P23 first.** It works on every database: it
+   asks `document_status_issue_recorded_by_database()` after each
+   status-change issue and, while that function is missing (PGRST202 /
+   42883), answers false or cannot be asked, writes `DOCUMENT_ISSUED`
+   itself — today's path. Its doors also send the `x-mos-issue-door` header,
+   which a database before the paste ignores.
+2. **Then paste `20261205`.** It needs `20261144` (`is_controlled_issue_status`,
+   the retirement stamp) and `20261037` (`doc_is_visible`, the policy): its
+   first statement refuses to run, changing nothing, without them. It
+   re-creates no guard and no function, so it is independent of
+   `20261185`, `20261192` and `20261193` (it reads the predicates the
+   newest guard reads; pasted before or after them it records exactly what
+   the guard in place admitted). After it, the database writes the one
+   `DOCUMENT_ISSUED` per status-change issue (an app door's row names the
+   door; a direct write's says `direct` and that no clock was started), and
+   a member's `document_versions` insert is judged by the policy's own
+   limbs instead of failing with 42P17.
+- **What goes wrong if the order is reversed:** pasted before the P23
+  deploy, today's app and the trigger each write a row for an app door's
+  issue — two rows, never none — until the deploy lands. Nothing is
+  refused that the app does today.
+- **Operator step (SEC-23 done-when 1):** send back the paste's result set
+  (its first inventory row says whether the live policy carried the
+  recursive first-version read) and upload one revision from a library page
+  as Document Control.
+- **Probe for `lib/schemaExpectations.ts`** (not edited here; for the
+  integrator): the function `document_status_issue_recorded_by_database()`
+  (no arguments, returns boolean; `authenticated` may call it), and
+  `document_has_versions(uuid)`.
+
 ⚠ **Deploy note — P12 (operators, public-surfaces `SHR-11`).** Before
 deploying the app carrying P12, a self-hosted deployment (the Docker image,
 `next start`) must set `NEXT_PUBLIC_SITE_URL` to its public address — a
