@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRole } from '@/components/providers/RoleContext';
 import { revokeMember } from '@/lib/members';
-import { pruneRemovedMemberAclIndex } from '@/lib/memberAclIndexPrune';
+import { pruneRemovedMemberAclIndex, aclIndexScopeOf } from '@/lib/memberAclIndexPrune';
 import type { Role } from '@/types/schema';
 import { capabilitiesAdded, primaryRole, CAPABILITY_LABELS, isDormantRole, roleDisplayNote, DORMANT_ROLE_NOTE, pickerRoster, pickerNote } from '@/lib/roleCapabilities';
 import { holdsReadOnlyRole, READ_ONLY_ROLES } from '@/lib/roleHeld';
@@ -72,6 +72,11 @@ const ROLE_OPTIONS: { value: string; label: string }[] = [
   { value: 'Contractor', label: 'Contractor (reduced navigation)' },
   { value: 'Auditor', label: 'Auditor (read-only + audit log)' },
 ];
+
+// drafting-flow EDGE-4 / DEC-103: a departure hands the member's in-flight
+// drafting requests back (20261195's org_members triggers — suspend and
+// remove alike; a restore does not move them back). The confirm says so.
+const DRAFTING_HANDBACK_NOTE = "Drafting requests assigned to them are taken off them and handed back: to the assignment queue, or to the requester when one was waiting on their approval. Restoring them later does not give those back.";
 
 export default function AdminUsersPage() {
   const { activeRole, activeOrgId, uid, userEmail, hasAnyRole } = useRole();
@@ -279,7 +284,7 @@ export default function AdminUsersPage() {
     if (!!uid && member.uid === uid) { await appAlert("You can't suspend yourself."); return; }
     if (!activeOrgId) return;
     const who = member.display_name || member.email || 'this member';
-    if (!(await appConfirm({ message: `Suspend ${who}? They lose access immediately but keep their membership record, roles, and ownership — you can restore them later.`, tone: 'danger' }))) return;
+    if (!(await appConfirm({ message: `Suspend ${who}? They lose access immediately but keep their membership record, roles, and ownership — you can restore them later. ${DRAFTING_HANDBACK_NOTE}`, tone: 'danger' }))) return;
     setRemovingId(member.id);
     try {
       await revokeMember({ memberId: member.id, mode: 'suspend', orgId: activeOrgId, actorUserId: uid ?? '', actorName: userEmailForAudit, memberLabel: who });
@@ -307,7 +312,7 @@ export default function AdminUsersPage() {
     }
     if (!activeOrgId) return;
     const who = member.display_name || member.email || 'this member';
-    if (!(await appConfirm({ message: `Remove ${who} from this workspace? They lose access immediately, everything they own becomes UNOWNED (cleared and audited — never silently reassigned), their open checkouts end, and their personal grants are revoked. This does not delete their login account. Prefer Suspend if this may be temporary.`, tone: 'danger' }))) {
+    if (!(await appConfirm({ message: `Remove ${who} from this workspace? They lose access immediately, everything they own becomes UNOWNED (cleared and audited — never silently reassigned), their open checkouts end, and their personal grants are revoked. ${DRAFTING_HANDBACK_NOTE} This does not delete their login account. Prefer Suspend if this may be temporary.`, tone: 'danger' }))) {
       return;
     }
     setRemovingId(member.id);
@@ -321,17 +326,23 @@ export default function AdminUsersPage() {
       // ORG-7 (admin-and-org Round G, review fix): revoke_member pruned the
       // rules naming them; the nodes that only inherited a grant still list
       // them in their acl_index and are cleared here in bounded chunks (one
-      // statement each — never one statement big enough to time out). Not
-      // awaited: nothing leaks meanwhile (a non-member is refused
+      // statement each — never one statement big enough to time out). Fix
+      // pass 3: only under the libraries / folders whose own acl carried the
+      // grant (revoke_member's aclIndexScope) — a member who held no such
+      // grant makes no call at all. Not awaited, and never a failure of the
+      // removal: nothing leaks meanwhile (a non-member is refused
       // everywhere), and the nightly re-index finishes a run cut short.
       const prunedUid = member.uid;
-      if (prunedUid) void pruneRemovedMemberAclIndex(supabase, activeOrgId, prunedUid, { deadlineMs: 120_000 }).then(async (p) => {
-        if (!p.ok) {
-          await appAlert({ message: `${who} was removed, but the access their grants left in the document index could not be cleared yet (${p.error}). They can't open anything as a non-member; tonight's re-index finishes the clean-up.`, tone: 'danger' });
-        } else if (!p.done) {
-          await appAlert(`${who} was removed. ${p.pruned.toLocaleString()} indexed item${p.pruned === 1 ? '' : 's'} no longer list them; tonight's re-index clears the rest.`);
-        }
-      });
+      const scope = aclIndexScopeOf(result);
+      if (prunedUid && scope && (scope.libraries.length > 0 || scope.collections.length > 0)) {
+        void pruneRemovedMemberAclIndex(supabase, activeOrgId, prunedUid, scope, { deadlineMs: 120_000 }).then(async (p) => {
+          if (!p.ok) {
+            await appAlert(`${who} was removed. The access their grants left in the document index is not cleared yet (${p.error}); they can't open anything as a non-member, and tonight's re-index finishes the clean-up.`);
+          } else if (!p.done) {
+            await appAlert(`${who} was removed. ${p.pruned.toLocaleString()} indexed item${p.pruned === 1 ? '' : 's'} no longer list them; tonight's re-index clears the rest.`);
+          }
+        });
+      }
       const c = result.cleared;
       const total = c ? c.libraries.length + c.collections.length + c.documents.length + c.teams.length : 0;
       if (total > 0) {

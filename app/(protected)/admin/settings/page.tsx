@@ -17,13 +17,13 @@ import Link from "next/link";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
 import { kickEmailDrain } from "@/lib/notifications";
-import { formatTicketNumber, getTicketNumberConfig, TICKET_NUMBER_DEFAULTS, type TicketNumberConfig } from "@/lib/ticketNumber";
+import { formatTicketNumber, ticketNumberConfigFromRow, TICKET_NUMBER_DEFAULTS, type TicketNumberConfig } from "@/lib/ticketNumber";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Spinner } from "@/components/ui/Spinner";
 import { appAlert } from "@/components/providers/DialogProvider";
 import { checkedWrite } from "@/lib/checkedWrite";
 import { logAuditAction } from "@/lib/audit";
-import { readWorkspaceTimeZone, saveWorkspaceTimeZone, knownTimeZones } from "@/lib/workspaceTimeZone";
+import { readWorkspaceTimeZone, saveWorkspaceTimeZone, knownTimeZones, timeZoneOptions } from "@/lib/workspaceTimeZone";
 
 // DEC-17: this page's main action (schema health) is an Admin-only API — the
 // client gate now says the same thing instead of admitting DocCtrl to a 403.
@@ -56,19 +56,36 @@ export default function WorkspaceSettingsPage() {
   const [numbering, setNumbering] = useState<TicketNumberConfig>(TICKET_NUMBER_DEFAULTS);
   const [savingNum, setSavingNum] = useState(false);
   const [numSaved, setNumSaved] = useState(false);
-  // The numbering as stored — the audit row's "before" (ALOG-4).
-  const [numberingStored, setNumberingStored] = useState<TicketNumberConfig>(TICKET_NUMBER_DEFAULTS);
+  // The numbering as stored — the audit row's "before" (ALOG-4). null =
+  // not read (the read failed): the fields then show the defaults, not what
+  // is stored, so Save is off and no audit row can state a guessed "before"
+  // (fix pass 3, DEC-90).
+  const [numberingStored, setNumberingStored] = useState<TicketNumberConfig | null>(null);
+  const [numberingReadError, setNumberingReadError] = useState<string | null>(null);
+
+  // The orgs row — the workspace summary and the stored numbering — read
+  // CHECKED: a failed read is said, never shown as the defaults.
+  const readOrgRow = React.useCallback(async (orgId: string) => {
+    const { data, error } = await supabase.from("orgs").select("*").eq("id", orgId).single();
+    if (error || !data) {
+      setNumberingStored(null);
+      setNumberingReadError(error?.message ?? "the workspace row was not returned");
+      return;
+    }
+    setOrg(data as OrgSummary);
+    const storedNumbering = ticketNumberConfigFromRow(data as Record<string, unknown>);
+    setNumbering(storedNumbering);
+    setNumberingStored(storedNumbering);
+    setNumberingReadError(null);
+    setNumSaved(false);
+  }, []);
 
   useEffect(() => {
     if (!activeOrgId) return;
     (async () => {
       setLoading(true);
       try {
-        const { data } = await supabase.from("orgs").select("*").eq("id", activeOrgId).single();
-        setOrg(data as OrgSummary);
-        const storedNumbering = await getTicketNumberConfig(activeOrgId);
-        setNumbering(storedNumbering);
-        setNumberingStored(storedNumbering);
+        await readOrgRow(activeOrgId);
         const [{ count: members }, { count: libs }] = await Promise.all([
           supabase.from("org_members").select("*", { count: "exact", head: true }).eq("org_id", activeOrgId).eq("status", "active"),
           supabase.from("libraries").select("*", { count: "exact", head: true }).eq("org_id", activeOrgId),
@@ -89,7 +106,7 @@ export default function WorkspaceSettingsPage() {
         } catch { /* leave unknown */ }
       } finally { setLoading(false); }
     })();
-  }, [activeOrgId]);
+  }, [activeOrgId, readOrgRow]);
 
   // The dead-letter count — failed AND past the auto-retry cap (5 attempts).
   // A read that fails leaves the count unknown (null) and says why; it is
@@ -137,7 +154,7 @@ export default function WorkspaceSettingsPage() {
   };
 
   const saveNumbering = async () => {
-    if (!activeOrgId || savingNum) return;
+    if (!activeOrgId || savingNum || !numberingStored) return;
     setSavingNum(true);
     setNumSaved(false);
     try {
@@ -155,6 +172,7 @@ export default function WorkspaceSettingsPage() {
         throw new Error(res.code === "refused" ? "the database saved nothing — only an Admin can change request numbering. Nothing was changed." : res.error);
       }
       setNumSaved(true);
+      // Read from the orgs row this page loaded (Save is off until it is).
       const before = {
         ticket_prefix: numberingStored.prefix.trim() || null,
         ticket_record_code: numberingStored.recordCode,
@@ -224,6 +242,12 @@ export default function WorkspaceSettingsPage() {
           <p className="text-xs text-[var(--color-text-muted)] mb-4">
             How new request numbers are built. The sequence is allocated atomically and resets each year, so every number is unique — no collisions even under simultaneous submissions.
           </p>
+          {numberingReadError && (
+            <div role="alert" data-testid="numbering-read-error" className="mb-3 text-xs text-rose-700 inline-flex items-center gap-2">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> The stored numbering could not be read ({numberingReadError}). The fields below show the defaults, not what is stored, so it cannot be saved until it is read.
+              <button type="button" onClick={() => { if (activeOrgId) void readOrgRow(activeOrgId); }} className="font-bold underline">Retry</button>
+            </div>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <label className="block">
               <span className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">Workspace code</span>
@@ -262,7 +286,7 @@ export default function WorkspaceSettingsPage() {
             </div>
             <button
               onClick={() => void saveNumbering()}
-              disabled={savingNum}
+              disabled={savingNum || !numberingStored}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 disabled:opacity-50"
             >
               {savingNum ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : numSaved ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
@@ -475,8 +499,10 @@ function WorkspaceTimeZoneCard({ orgId, uid, userEmail }: { orgId: string | null
     const r = await readWorkspaceTimeZone(supabase, orgId);
     if (!r.ok) { setReadError(r.error); setLoaded(false); return; }
     setReadError(null);
-    setStored(r.timeZone);
-    setChoice(r.timeZone ?? "");
+    // The value as read, valid here or not (fix pass 3): the picker shows it
+    // and a change's audit row names it as "before".
+    setStored(r.stored);
+    setChoice(r.stored ?? "");
     setLoaded(true);
   }, [orgId]);
   useEffect(() => { void load(); }, [load]);
@@ -518,7 +544,7 @@ function WorkspaceTimeZoneCard({ orgId, uid, userEmail }: { orgId: string | null
             className="flex-1 px-3 py-2 bg-[var(--color-surface-2)] border border-[var(--color-border)] rounded-lg text-sm font-bold outline-none"
           >
             <option value="">Not set (UTC)</option>
-            {zones.filter((z) => z !== "UTC").map((z) => <option key={z} value={z}>{z}</option>)}
+            {timeZoneOptions(zones, stored).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
           <button
             type="button"

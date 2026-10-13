@@ -41,6 +41,8 @@ const s = vi.hoisted(() => ({
   caller: { id: "a1", email: "admin@x.io" } as { id: string; email: string } | null,
   // ORG-7 review fix: the browser client's rpc, set only by the tests that drive it
   rpc: null as null | ((fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: { code?: string; message: string } | null }>),
+  // what the mocked revokeMember answers (fix pass 3: revoke_member's aclIndexScope)
+  revokeResult: { mode: "remove", cleared: null } as Record<string, unknown>,
 }));
 
 vi.mock("@/lib/supabase", () => ({
@@ -76,13 +78,14 @@ vi.mock("@/components/providers/DialogProvider", () => ({
   appAlert: (...a: unknown[]) => s.appAlert(...a),
   appConfirm: (...a: unknown[]) => s.appConfirm(...a),
 }));
-vi.mock("@/lib/members", () => ({ revokeMember: vi.fn(async () => ({ mode: "remove", cleared: null })) }));
+vi.mock("@/lib/members", () => ({ revokeMember: vi.fn(async (input: { mode: string }) => ({ ...s.revokeResult, mode: input.mode })) }));
 vi.mock("@/lib/capabilityPolicy", () => ({ invalidateCapabilityPolicy: vi.fn() }));
 vi.mock("@/components/ui/UserAvatar", () => ({ default: () => null }));
 vi.mock("@/lib/notifications", () => ({ kickEmailDrain: vi.fn(async () => null) }));
-vi.mock("@/lib/ticketNumber", () => ({
+vi.mock("@/lib/ticketNumber", async () => ({
   formatTicketNumber: () => "DDRT-2026-0001",
   getTicketNumberConfig: async () => ({ prefix: "", recordCode: "DDRT", pad: 4 }),
+  ticketNumberConfigFromRow: (await vi.importActual<typeof import("@/lib/ticketNumber")>("@/lib/ticketNumber")).ticketNumberConfigFromRow,
   TICKET_NUMBER_DEFAULTS: { prefix: "", recordCode: "DDRT", pad: 4 },
 }));
 vi.mock("next/link", () => ({
@@ -98,7 +101,7 @@ import { countLibraryDeleteImpact, impactChanged, LIBRARY_DELETE_COUNT_CONCURREN
 import { sanitizeOrgPalette, PALETTE_PRESETS } from "@/components/providers/ThemeProvider";
 import { saveOrgBranding, brandingPaletteProblem } from "@/lib/orgBranding";
 import { assertSupervisorIsActiveMember, setTeamSupervisor } from "@/lib/teams";
-import { saveWorkspaceTimeZone, readWorkspaceTimeZone } from "@/lib/workspaceTimeZone";
+import { saveWorkspaceTimeZone, readWorkspaceTimeZone, timeZoneOptions } from "@/lib/workspaceTimeZone";
 import { orgTimeZone, formatRecordTime } from "@/lib/recordTime";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -113,6 +116,7 @@ beforeEach(() => {
   s.role = { activeRole: "Admin", roles: ["Admin"], uid: "a1", userEmail: "admin@x.io", activeOrgId: "o1" };
   s.caller = { id: "a1", email: "admin@x.io" };
   s.rpc = null;
+  s.revokeResult = { mode: "remove", cleared: null };
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(console, "warn").mockImplementation(() => {});
   host = document.createElement("div");
@@ -368,36 +372,83 @@ describe("ALOG-4 / ORG-15 — /admin/users", () => {
     expect(s.appAlert).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringMatching(/^The roles were saved, but the audit record could not be written/) }));
   });
 
-  it("ORG-7 (review fix): after a removal the page clears the person's inherited acl_index entries in bounded chunks until the database says done", async () => {
+  it("ORG-7 (fix pass 3): after a removal the page walks only the scope revoke_member returned, by the keyset cursor, until the database says done", async () => {
     seedMembers();
+    s.revokeResult = { mode: "remove", cleared: null, aclIndexScope: { libraries: ["L1"], collections: ["C9"] } };
+    // a server with 2,500 documents, 30 folders and no sets under the scope
+    const rows: Record<string, number> = { documents: 2500, collections: 30, document_sets: 0 };
+    const next: Record<string, string | null> = { documents: "collections", collections: "document_sets", document_sets: null };
     const calls: Array<Record<string, unknown>> = [];
-    let left = 2500;
     s.rpc = async (fn, args) => {
       expect(fn).toBe("prune_removed_member_acl_index");
       calls.push(args);
-      const n = Math.min(left, args.p_limit as number);
-      left -= n;
-      return { data: { pruned: n, done: n < (args.p_limit as number) }, error: null };
+      const phase = args.p_phase as string;
+      const start = args.p_after === null ? 0 : Number(String(args.p_after).slice(1));
+      const n = Math.min(rows[phase] - start, args.p_limit as number);
+      const full = n === args.p_limit;
+      const after = full ? `x${start + n}` : null;
+      const nextPhase = full ? phase : next[phase];
+      return { data: { pruned: n, examined: n, phase: nextPhase, after, limit: args.p_limit, done: nextPhase === null }, error: null };
     };
     await mountUsers();
     await click(host.querySelector('button[title="Remove from workspace (clears what they own)"]:not([disabled])'));
     expect(s.appConfirm).toHaveBeenCalled();
-    expect(calls).toEqual([1, 2, 3].map(() => ({ p_org_id: "o1", p_uid: "u1", p_limit: 1000 })));
-    expect(left).toBe(0);
+    const base = { p_org_id: "o1", p_uid: "u1", p_library_ids: ["L1"], p_collection_ids: ["C9"], p_limit: 1000 };
+    expect(calls).toEqual([
+      { ...base, p_phase: "documents", p_after: null },
+      { ...base, p_phase: "documents", p_after: "x1000" },
+      { ...base, p_phase: "documents", p_after: "x2000" },
+      { ...base, p_phase: "collections", p_after: null },
+      { ...base, p_phase: "document_sets", p_after: null },
+    ]);
     expect(host.textContent).not.toMatch(/Pat/);
     expect(s.appAlert).not.toHaveBeenCalled(); // finished: nothing to say
   });
 
-  it("ORG-7 (review fix): a clean-up call that fails is said — the removal itself stands", async () => {
+  it("ORG-7 (fix pass 3): a member whose own grants nothing inherited — or a database before 20261204 — makes no clean-up call and raises no alert", async () => {
+    for (const result of [
+      { mode: "remove", cleared: null, aclIndexScope: { libraries: [], collections: [] } },
+      { mode: "remove", cleared: null },
+    ]) {
+      seedMembers();
+      s.revokeResult = result;
+      const calls: unknown[] = [];
+      s.rpc = async (_fn, args) => { calls.push(args); return { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } }; };
+      s.appAlert.mockClear();
+      act(() => root.unmount());
+      root = createRoot(host);
+      await mountUsers();
+      await click(host.querySelector('button[title="Remove from workspace (clears what they own)"]:not([disabled])'));
+      expect(host.textContent).not.toMatch(/Pat/);
+      expect(calls).toEqual([]);
+      expect(s.appAlert).not.toHaveBeenCalled();
+    }
+  });
+
+  it("ORG-7 (fix pass 3): a clean-up call that fails is said plainly — the removal itself stands, and it is not shown as a failed removal", async () => {
     seedMembers();
+    s.revokeResult = { mode: "remove", cleared: null, aclIndexScope: { libraries: ["L1"], collections: [] } };
     s.rpc = async () => ({ data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } });
     await mountUsers();
     await click(host.querySelector('button[title="Remove from workspace (clears what they own)"]:not([disabled])'));
     expect(host.textContent).not.toMatch(/Pat/);
-    expect(s.appAlert).toHaveBeenCalledWith(expect.objectContaining({
-      message: expect.stringMatching(/^Pat was removed, but the access their grants left in the document index could not be cleared yet \(canceling statement due to statement timeout\)/),
-      tone: "danger",
-    }));
+    expect(s.appAlert).toHaveBeenCalledWith(expect.stringMatching(/^Pat was removed\. The access their grants left in the document index is not cleared yet \(canceling statement due to statement timeout\); they can't open anything as a non-member, and tonight's re-index finishes the clean-up\.$/));
+    expect(s.appAlert).not.toHaveBeenCalledWith(expect.objectContaining({ tone: "danger" }));
+  });
+
+  it("drafting-flow EDGE-4 (DEC-103): the remove and suspend confirms say the member's in-flight drafting requests are handed back to the queue or the requester", async () => {
+    const note = /Drafting requests assigned to them are taken off them and handed back: to the assignment queue, or to the requester when one was waiting on their approval\. Restoring them later does not give those back\./;
+    seedMembers();
+    s.appConfirm.mockImplementation(async () => false);
+    await mountUsers();
+    await click(host.querySelector('button[title="Remove from workspace (clears what they own)"]:not([disabled])'));
+    expect(s.appConfirm).toHaveBeenLastCalledWith(expect.objectContaining({ message: expect.stringMatching(/^Remove Pat from this workspace\?/) }));
+    expect((s.appConfirm.mock.calls.at(-1)![0] as { message: string }).message).toMatch(note);
+    await click(host.querySelector('button[title="Suspend (keeps the record; restorable)"]:not([disabled])'));
+    expect(s.appConfirm).toHaveBeenLastCalledWith(expect.objectContaining({ message: expect.stringMatching(/^Suspend Pat\?/) }));
+    expect((s.appConfirm.mock.calls.at(-1)![0] as { message: string }).message).toMatch(note);
+    expect(host.textContent).toMatch(/Pat/); // declined: nothing happened
+    s.appConfirm.mockImplementation(async () => true);
   });
 
   it("ORG-15: a failed members read shows an error with a retry, never an empty roster", async () => {
@@ -514,6 +565,35 @@ describe("ORG-4 / ALOG-4 dw2 — request numbering: a checked save, audited", ()
   });
 });
 
+describe("ALOG-4 (fix pass 3) — the numbering's audit 'before' is only ever what was read", () => {
+  it("a failed read of the stored numbering is said, Save is off, and no audit row is written; Retry reads it and the row's before is the stored scheme", async () => {
+    seedSettings();
+    s.db.tables.orgs[0] = { ...s.db.tables.orgs[0], ticket_prefix: "KE", ticket_record_code: "DWG", ticket_number_pad: 5 };
+    s.db.selectErrors = { orgs: { message: "upstream timeout" } };
+    await mountSettings();
+    expect(host.querySelector('[data-testid="numbering-read-error"]')?.textContent).toMatch(/The stored numbering could not be read \(upstream timeout\)\. The fields below show the defaults, not what is stored, so it cannot be saved until it is read\./);
+    expect(button(/^Save$/)!.disabled).toBe(true);
+    await click(button(/^Save$/));
+    expect(audits("TICKET_NUMBERING_CHANGED")).toEqual([]);
+    expect(s.db.tables.orgs[0].ticket_prefix).toBe("KE");
+    s.db.selectErrors = {};
+    await click(button(/^Retry$/));
+    expect(host.querySelector('[data-testid="numbering-read-error"]')).toBeNull();
+    expect((host.querySelector('input[placeholder="e.g. KE"]') as HTMLInputElement).value).toBe("KE");
+    expect(button(/^Save$/)!.disabled).toBe(false);
+    const prefix = host.querySelector('input[placeholder="e.g. KE"]') as HTMLInputElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(prefix, "KX");
+      prefix.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(button(/^Save$/));
+    expect(audits("TICKET_NUMBERING_CHANGED")[0].details).toEqual({
+      before: { ticket_prefix: "KE", ticket_record_code: "DWG", ticket_number_pad: 5 },
+      after: { ticket_prefix: "KX", ticket_record_code: "DWG", ticket_number_pad: 5 },
+    });
+  });
+});
+
 describe("NEDGE-19 / VFY-15 — the workspace time zone", () => {
   it("the settings card saves an IANA zone as org_configurations key timezone, audited; recordTime reads it", async () => {
     seedSettings();
@@ -536,6 +616,34 @@ describe("NEDGE-19 / VFY-15 — the workspace time zone", () => {
     const tz = await orgTimeZone(makeFakeSupabase(s.db), "o1");
     expect(tz).toBe("America/Chicago");
     expect(formatRecordTime("2026-03-20T23:15:15Z", tz)).toBe("2026-03-20T18:15:15-05:00 (America/Chicago)");
+  });
+
+  it("fix pass 3: a stored zone this browser's list omits is shown as stored (never 'Not set'), Save stays off until it changes, and the change's audit row names it as before", async () => {
+    seedSettings();
+    s.db.tables.org_configurations = [{ id: "cfg1", org_id: "o1", key: "timezone", data: { timeZone: "US/Central" } }];
+    await mountSettings();
+    const card = host.querySelector('[data-testid="workspace-timezone-card"]')!;
+    const select = card.querySelector("select") as HTMLSelectElement;
+    expect(select.value).toBe("US/Central");
+    expect(select.selectedOptions[0].textContent).toBe("US/Central (stored)");
+    expect(button(/Save time zone/)!.disabled).toBe(true);
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(select, "America/Chicago");
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await click(button(/Save time zone/));
+    expect(audits("WORKSPACE_TIMEZONE_CHANGED")[0].details).toEqual({ before: "US/Central", after: "America/Chicago" });
+  });
+
+  it("fix pass 3: timeZoneOptions keeps the list as it is when the stored zone is in it, and puts a stored zone it omits first — valid or not; the read returns the value exactly as stored", async () => {
+    const zones = ["UTC", "America/Chicago", "Europe/London"];
+    expect(timeZoneOptions(zones, null).map((o) => o.value)).toEqual(["America/Chicago", "Europe/London"]);
+    expect(timeZoneOptions(zones, "Europe/London").map((o) => o.value)).toEqual(["America/Chicago", "Europe/London"]);
+    expect(timeZoneOptions(zones, "Asia/Calcutta")[0]).toEqual({ value: "Asia/Calcutta", label: "Asia/Calcutta (stored)" });
+    expect(timeZoneOptions(zones, "UTC")[0]).toEqual({ value: "UTC", label: "UTC (stored)" });
+    expect(timeZoneOptions(zones, "Mars/Olympus")[0]).toEqual({ value: "Mars/Olympus", label: "Mars/Olympus (stored — not a zone this browser knows)" });
+    s.db.tables.org_configurations = [{ id: "cfg1", org_id: "o1", key: "timezone", data: { timeZone: "Mars/Olympus" } }];
+    expect(await readWorkspaceTimeZone(makeFakeSupabase(s.db), "o1")).toEqual({ ok: true, timeZone: null, stored: "Mars/Olympus" });
   });
 
   it("an unknown zone is refused before anything is written; a refused write is said; clearing an unset zone is not a refusal", async () => {

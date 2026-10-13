@@ -30,6 +30,8 @@ const A_FILE = "20261203_ao_roundG_team_members_org_rail.sql";
 const B_FILE = "20261204_ao_roundG_revoke_member_acl_prune.sql";
 const A = read(A_FILE);
 const B = read(B_FILE);
+// fix pass 3 (ALOG-4): the removal row's rolesBefore line, exactly
+const ROLES_BEFORE = "                             'rolesBefore', to_jsonb(CASE WHEN v_member.role IS NULL OR v_member.role = ANY(COALESCE(v_member.roles, '{}'::text[])) THEN COALESCE(v_member.roles, '{}'::text[]) ELSE array_append(COALESCE(v_member.roles, '{}'::text[]), v_member.role) END), 'rolesAfter', '[]'::jsonb,";
 
 function lineDiff(a: string, b: string) {
   const AL = a.split("\n"), BL = b.split("\n");
@@ -199,6 +201,7 @@ describe("20261204 — revoke_member from its NEWEST body + ALOG-15 + ORG-7; ALO
     expect(onlyInA).toEqual([
       "     SET data = jsonb_set(data, '{grants}',",
       "                             'endedCheckouts', v_checkouts, 'revokedGrants', v_grants));",
+      "    'endedCheckouts', v_checkouts, 'revokedGrants', v_grants",
     ]);
     const pruneStart = next.indexOf("  -- ORG-7 (admin-and-org Round G, 20261204)");
     const pruneEnd = next.indexOf("  -- Team and project rosters");
@@ -206,28 +209,70 @@ describe("20261204 — revoke_member from its NEWEST body + ALOG-15 + ORG-7; ALO
     const allowed = new Set([
       "  v_acl_libs int := 0;", "  v_acl_cols int := 0;", "  v_acl_docs int := 0;", "  v_acl_sets int := 0;",
       "  v_rule_probe jsonb;",
+      "  v_scope_libs uuid[] := '{}'::uuid[];", "  v_scope_cols uuid[] := '{}'::uuid[];",
       "  -- ALOG-15 (admin-and-org Round G, 20261204): the strip stamps updated_at,",
       "  -- so the policy route's compare-and-set sees it and answers 409 to a save",
       "  -- built from a policy that still held this member's grant.",
       "     SET updated_at = NOW(), data = jsonb_set(data, '{grants}',",
       "                             'endedCheckouts', v_checkouts, 'revokedGrants', v_grants,",
       "                             -- ALOG-4 (20261204): the removal names the roles it ended.",
-      "                             'rolesBefore', to_jsonb(COALESCE(v_member.roles, ARRAY[v_member.role])), 'rolesAfter', '[]'::jsonb,",
+      "                             -- Fix pass 3: the collection and the headline role together (the",
+      "                             -- headline is appended when the collection lacks it — an empty",
+      "                             -- collection still names the role the member held).",
+      ROLES_BEFORE,
       "                             'prunedAclGrants', v_acl_libs + v_acl_cols + v_acl_docs + v_acl_sets));",
+      // fix pass 3 (ORG-7): the answer names where inherited entries can be
+      "    'endedCheckouts', v_checkouts, 'revokedGrants', v_grants,",
+      "    -- Fix pass 3 (ORG-7): where inherited index entries can be — the members",
+      "    -- page passes this to prune_removed_member_acl_index, and skips it when",
+      "    -- both lists are empty.",
+      "    'aclIndexScope', jsonb_build_object('libraries', to_jsonb(v_scope_libs), 'collections', to_jsonb(v_scope_cols))",
       ...prune.split("\n"),
     ]);
     for (const l of onlyInB) expect(allowed.has(l), `unexpected added line: ${l}`).toBe(true);
     expect(onlyInB).toContain("     SET updated_at = NOW(), data = jsonb_set(data, '{grants}',");
-    expect(next).toMatch(/'MEMBER_REMOVED'[\s\S]*'rolesBefore', to_jsonb\(COALESCE\(v_member\.roles, ARRAY\[v_member\.role\]\)\), 'rolesAfter', '\[\]'::jsonb/);
+    expect(next.slice(next.indexOf("'MEMBER_REMOVED'"))).toContain(ROLES_BEFORE);
+  });
+
+  it("fix pass 3 (ALOG-4): rolesBefore is the role collection with the headline appended when the collection lacks it — an empty collection still names the role held", () => {
+    expect(next).not.toContain("COALESCE(v_member.roles, ARRAY[v_member.role])");
+    expect(ROLES_BEFORE).toContain("CASE WHEN v_member.role IS NULL OR v_member.role = ANY(COALESCE(v_member.roles, '{}'::text[])) THEN COALESCE(v_member.roles, '{}'::text[]) ELSE array_append(COALESCE(v_member.roles, '{}'::text[]), v_member.role) END");
+    // the same rule, in TypeScript, over the cases the review named
+    const rolesBefore = (role: string | null, roles: string[] | null) =>
+      role === null || (roles ?? []).includes(role) ? (roles ?? []) : [...(roles ?? []), role];
+    expect(rolesBefore("Engineer-3", [])).toEqual(["Engineer-3"]); // the create-user seed that did not land
+    expect(rolesBefore("Drafter", ["Viewer", "Drafter"])).toEqual(["Viewer", "Drafter"]);
+    expect(rolesBefore("Admin", ["Viewer"])).toEqual(["Viewer", "Admin"]);
+  });
+
+  it("fix pass 3 (ORG-7): revoke_member returns aclIndexScope — the libraries and folders whose OWN acl carried the grant — and nothing else changes in the prune", () => {
+    // libraries: read before the UPDATE (the template alone is not inherited)
+    expect(next).toMatch(/SELECT COALESCE\(array_agg\(id\), '\{\}'::uuid\[\]\) INTO v_scope_libs FROM libraries\n   WHERE org_id = v_member\.org_id\n     AND acl @> v_rule_probe\n     AND v_member\.uid::text = ANY\(acl_allow_user_ids\(acl, NULL\)\);\n  UPDATE libraries/);
+    // folders: the ids the prune itself rewrote (RETURNING id), counted the same
+    expect(next).toMatch(/WITH pruned_cols AS \(\n    UPDATE collections[\s\S]*?RETURNING id\n  \)\n  SELECT COUNT\(\*\), COALESCE\(array_agg\(id\), '\{\}'::uuid\[\]\) INTO v_acl_cols, v_scope_cols FROM pruned_cols;/);
+    expect(next).toMatch(/'aclIndexScope', jsonb_build_object\('libraries', to_jsonb\(v_scope_libs\), 'collections', to_jsonb\(v_scope_cols\)\)\n  \);\nEND;/);
+  });
+
+  it("MERGE (drafting-flow DF-P3, DEC-103): revoke_member's body carries no departure path — 20261195's org_members AFTER triggers do it — and the paste checks both triggers when 20261195 is in", () => {
+    expect(next).not.toMatch(/return_departed_member_tickets|app\.ticket_departure|DROP TRIGGER[^;]*org_member_departure/);
+    expect(B).not.toMatch(/org_member_departure_returns_tickets\(\)\s*(RETURNS|IS)|DROP TRIGGER IF EXISTS trg_org_member_departure/);
+    expect(B).toContain("NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'revoke_member' AND prosrc LIKE '%return_departed_member_tickets%')");
+    expect(B).toMatch(/tg\.tgname IN \('trg_org_member_departure_status', 'trg_org_member_departure_delete'\)/);
+    // the triggers 20261195 creates are exactly the two the probe names, on org_members
+    const df = read("20261195_df_roundG_outcome_and_departure.sql");
+    expect(df).toMatch(/CREATE TRIGGER trg_org_member_departure_status\n  AFTER UPDATE OF status ON org_members/);
+    expect(df).toMatch(/CREATE TRIGGER trg_org_member_departure_delete\n  AFTER DELETE ON org_members/);
   });
 
   it("the prune runs on REMOVE only, after the grant strip and before the roster deletes and the membership delete — one transaction", () => {
     const at = (s: string) => next.indexOf(s);
     expect(at("IF p_mode = 'suspend' THEN")).toBeLessThan(at("UPDATE libraries\n     SET acl = acl_without_user_allow"));
     expect(at("GET DIAGNOSTICS v_grants = ROW_COUNT;")).toBeLessThan(at("UPDATE libraries\n     SET acl = acl_without_user_allow"));
-    for (const t of ["collections", "documents", "document_sets"]) {
+    for (const t of ["documents", "document_sets"]) {
       expect(next).toMatch(new RegExp(`UPDATE ${t}\\n     SET acl = acl_without_user_allow\\(acl, ARRAY\\[v_member\\.uid::text\\]\\),\\n         acl_index = acl_index_without_user_allow\\(acl_index, ARRAY\\[v_member\\.uid::text\\]\\)\\n   WHERE org_id = v_member\\.org_id`));
     }
+    // fix pass 3: the folder prune is the same UPDATE inside a CTE that returns the ids it rewrote
+    expect(next).toMatch(/UPDATE collections\n       SET acl = acl_without_user_allow\(acl, ARRAY\[v_member\.uid::text\]\),\n           acl_index = acl_index_without_user_allow\(acl_index, ARRAY\[v_member\.uid::text\]\)\n     WHERE org_id = v_member\.org_id\n       AND acl @> v_rule_probe\n       AND v_member\.uid::text = ANY\(acl_allow_user_ids\(acl, NULL\)\)\n    RETURNING id/);
     expect(next).toMatch(/default_new_acl = acl_without_user_allow\(default_new_acl, ARRAY\[v_member\.uid::text\]\)/);
     expect(at("MEMBER_ACL_GRANTS_PRUNED")).toBeLessThan(at("DELETE FROM subscriptions WHERE org_id = v_member.org_id"));
     // fix pass: each scan is narrowed by a binary jsonb test built once — no
@@ -243,25 +288,45 @@ describe("20261204 — revoke_member from its NEWEST body + ALOG-15 + ORG-7; ALO
     expect(at("DELETE FROM subscriptions WHERE org_id = v_member.org_id")).toBeLessThan(at("DELETE FROM org_members WHERE id = p_member_id;"));
   });
 
-  it("review fix (57014): the inherited acl_index entries are stripped by a chunked RPC — Admin or server only, never a current member, LIMIT-bounded per statement, audited per chunk", () => {
+  it("review fix (57014) + fix pass 3: the inherited acl_index entries are stripped by a chunked RPC keyed on the carriers — Admin or server only, never a current member, a keyset LIMIT per statement, no workspace-wide scan, audited per chunk", () => {
     const fn = definitions("prune_removed_member_acl_index", [B_FILE])[0][1];
-    expect(fn).toMatch(/^CREATE OR REPLACE FUNCTION prune_removed_member_acl_index\(p_org_id uuid, p_uid uuid, p_limit integer DEFAULT 1000\)\nRETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS \$\$/);
-    expect(fn).toContain("v_left  int := LEAST(GREATEST(COALESCE(p_limit, 1000), 1), 5000);");
+    expect(fn).toMatch(/^CREATE OR REPLACE FUNCTION prune_removed_member_acl_index\(p_org_id uuid, p_uid uuid, p_library_ids uuid\[\], p_collection_ids uuid\[\], p_phase text DEFAULT 'documents', p_after uuid DEFAULT NULL, p_limit integer DEFAULT 1000\)\nRETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS \$\$/);
+    expect(B).toContain("DROP FUNCTION IF EXISTS prune_removed_member_acl_index(uuid, uuid, integer);");
+    expect(fn).toContain("v_limit int := LEAST(GREATEST(COALESCE(p_limit, 1000), 1), 5000);");
     // authority: an active Admin of the org by the role collection, or the server
     expect(fn).toMatch(/IF v_actor IS NULL THEN\n    IF COALESCE\(auth\.role\(\), ''\) <> 'service_role' THEN\n      RAISE EXCEPTION/);
     expect(fn).toContain("me.status = 'active' AND (me.role = 'Admin' OR me.roles && ARRAY['Admin']::text[])");
     // never strips a current member's access
     expect(fn).toMatch(/IF EXISTS \(SELECT 1 FROM org_members m WHERE m\.org_id = p_org_id AND m\.uid = p_uid\) THEN\n    RAISE EXCEPTION/);
-    // every table: one LIMIT-bounded UPDATE of acl_index only, the allow-bucket strip
-    for (const t of ["documents", "collections", "document_sets", "libraries"]) {
-      expect(fn).toMatch(new RegExp(`UPDATE ${t} SET acl_index = acl_index_without_user_allow\\(acl_index, ARRAY\\[p_uid::text\\]\\)\\n\\s+WHERE id IN \\(SELECT id FROM ${t} WHERE org_id = p_org_id AND acl_index @\\? v_probe LIMIT v_left\\);`));
+    // the scope is kept to the workspace; an empty scope returns before any node table is read
+    expect(fn).toMatch(/INTO v_libs FROM libraries\n   WHERE org_id = p_org_id AND id = ANY\(COALESCE\(p_library_ids, '\{\}'::uuid\[\]\)\);/);
+    expect(fn).toMatch(/INTO v_cols FROM collections\n   WHERE org_id = p_org_id AND id = ANY\(COALESCE\(p_collection_ids, '\{\}'::uuid\[\]\)\);/);
+    const emptyReturn = fn.indexOf("IF cardinality(v_libs) = 0 AND cardinality(v_cols) = 0 THEN");
+    expect(emptyReturn).toBeGreaterThan(0);
+    expect(fn.slice(emptyReturn, fn.indexOf("END IF;", emptyReturn))).toMatch(/RETURN jsonb_build_object\('pruned', 0, 'examined', 0, 'phase', NULL, 'after', NULL, 'limit', v_limit, 'done', true\);/);
+    for (const t of ["documents", "collections", "document_sets"]) expect(fn.indexOf(`SELECT id FROM ${t}\n`)).toBeGreaterThan(emptyReturn);
+    expect(fn.indexOf("v_folders FROM collections")).toBeGreaterThan(emptyReturn);
+    // every candidate read is keyed on the scope's indexed columns and a keyset cursor, LIMIT-bounded
+    expect(fn).toMatch(/SELECT id FROM documents\n       WHERE org_id = p_org_id AND \(library_id = ANY\(v_libs\) OR collection_id = ANY\(v_folders\)\)\n         AND \(p_after IS NULL OR id > p_after\)\n       ORDER BY id LIMIT v_limit\) c;/);
+    expect(fn).toMatch(/WHERE org_id = p_org_id AND \(id = ANY\(v_cols\) OR path_ids && v_cols\);/);
+    expect(fn).toMatch(/SELECT id FROM collections\n       WHERE org_id = p_org_id AND \(library_id = ANY\(v_libs\) OR path_ids && v_cols\)\n         AND \(p_after IS NULL OR id > p_after\)\n       ORDER BY id LIMIT v_limit\) c;/);
+    expect(fn).toMatch(/SELECT id FROM document_sets\n       WHERE org_id = p_org_id AND library_id = ANY\(v_libs\)\n         AND \(p_after IS NULL OR id > p_after\)\n       ORDER BY id LIMIT v_limit\) c;/);
+    // no read of a node table is unkeyed: every "FROM <node table>" is a scope, a carrier or a candidate read
+    expect(fn).not.toMatch(/WHERE org_id = p_org_id AND acl_index @\?/);
+    // the write: only the examined rows that still list the person, acl_index only
+    for (const t of ["documents", "collections", "document_sets"]) {
+      expect(fn).toMatch(new RegExp(`UPDATE ${t} SET acl_index = acl_index_without_user_allow\\(acl_index, ARRAY\\[p_uid::text\\]\\)\\n\\s+WHERE id = ANY\\(COALESCE\\(v_ids, '\\{\\}'::uuid\\[\\]\\)\\) AND acl_index @\\? v_probe;`));
     }
-    expect(fn).not.toMatch(/SET acl = /);
+    expect(fn).not.toMatch(/SET acl = |UPDATE libraries/);
+    // the cursor: a full page resumes after its last row, a short page moves to the next phase
+    expect(fn).toMatch(/IF v_examined = v_limit THEN\n    v_next_phase := v_phase;\n    v_after := v_ids\[v_examined\];/);
+    expect(fn).toContain("v_next_phase := CASE v_phase WHEN 'documents' THEN 'collections' WHEN 'collections' THEN 'document_sets' ELSE NULL END;");
     expect(fn).toMatch(/'MEMBER_ACL_GRANTS_PRUNED'[\s\S]*'phase', 'acl_index'/);
-    expect(fn).toMatch(/RETURN jsonb_build_object\('pruned', v_docs \+ v_cols \+ v_sets \+ v_libs,[\s\S]*'done', v_left > 0\);/);
-    expect(B).toMatch(/REVOKE ALL ON FUNCTION prune_removed_member_acl_index\(uuid, uuid, integer\) FROM PUBLIC, anon;\nGRANT EXECUTE ON FUNCTION prune_removed_member_acl_index\(uuid, uuid, integer\) TO authenticated, service_role;/);
-    // the probe the paste shows
+    expect(fn).toMatch(/RETURN jsonb_build_object\('pruned', v_pruned, 'examined', v_examined,\n\s+'phase', v_next_phase, 'after', v_after,\n\s+'limit', v_limit, 'done', v_next_phase IS NULL\);/);
+    expect(B).toMatch(/REVOKE ALL ON FUNCTION prune_removed_member_acl_index\(uuid, uuid, uuid\[\], uuid\[\], text, uuid, integer\) FROM PUBLIC, anon;\nGRANT EXECUTE ON FUNCTION prune_removed_member_acl_index\(uuid, uuid, uuid\[\], uuid\[\], text, uuid, integer\) TO authenticated, service_role;/);
+    // the probes the paste shows
     expect(B).toContain("AND NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'revoke_member' AND prosrc LIKE '%acl_index @?%'),");
+    expect(B).toContain("AND (SELECT COUNT(*) = 1 FROM pg_proc WHERE proname = 'prune_removed_member_acl_index')");
   });
 
   it("keeps the newest body's rails: SECURITY DEFINER, pinned search_path, NULL uid refused, EXECUTE for authenticated only (DRLS-16)", () => {

@@ -32,19 +32,37 @@ export function knownTimeZones(): string[] {
   return ["UTC", "America/Chicago", "America/New_York", "America/Denver", "America/Los_Angeles", "Europe/London", "Australia/Perth"];
 }
 
+/** The picker's options: every zone this runtime lists except UTC (the
+ *  "Not set" option stands for it), with the STORED zone first when the
+ *  list omits it — a stored "UTC", an alias (US/Central), a zone this browser's ICU names
+ *  differently (Asia/Calcutta for Asia/Kolkata), or a value this browser
+ *  does not know at all. The select must show what the database holds,
+ *  never "Not set" over a stored zone (fix pass 3). */
+export function timeZoneOptions(zones: string[], stored: string | null): Array<{ value: string; label: string }> {
+  const listed = zones.filter((z) => z !== "UTC").map((z) => ({ value: z, label: z }));
+  if (!stored || listed.some((o) => o.value === stored)) return listed;
+  const label = isValidTimeZone(stored) ? `${stored} (stored)` : `${stored} (stored — not a zone this browser knows)`;
+  return [{ value: stored, label }, ...listed];
+}
+
 type Sb = {
   from: (t: string) => any; // eslint-disable-line @typescript-eslint/no-explicit-any
 };
 
-export type TimeZoneRead = { ok: true; timeZone: string | null } | { ok: false; error: string };
+export type TimeZoneRead = { ok: true; timeZone: string | null; stored: string | null } | { ok: false; error: string };
 
-/** The stored zone (null = none set: bodies read UTC). A read error is said. */
+/** The stored zone (null = none set: bodies read UTC). A read error is said.
+ *  `timeZone` is the stored zone when this runtime accepts it (what
+ *  orgTimeZone writes bodies in); `stored` is the value exactly as read,
+ *  valid or not — what the picker shows and an audit row's "before" names
+ *  (an audit row never states a value it did not read). */
 export async function readWorkspaceTimeZone(sb: Sb, orgId: string): Promise<TimeZoneRead> {
   try {
     const { data, error } = await sb.from("org_configurations").select("data").eq("org_id", orgId).eq("key", WORKSPACE_TIMEZONE_KEY).maybeSingle();
     if (error) return { ok: false, error: error.message ?? "the workspace time zone could not be read" };
-    const tz = ((data as { data?: { timeZone?: unknown } } | null)?.data?.timeZone ?? null) as string | null;
-    return { ok: true, timeZone: isValidTimeZone(tz) ? tz : null };
+    const raw = (data as { data?: { timeZone?: unknown } } | null)?.data?.timeZone ?? null;
+    const stored = raw === null ? null : typeof raw === "string" ? raw : JSON.stringify(raw);
+    return { ok: true, timeZone: typeof raw === "string" && isValidTimeZone(raw) ? raw : null, stored };
   } catch (e) {
     return { ok: false, error: (e as Error)?.message ?? String(e) };
   }
