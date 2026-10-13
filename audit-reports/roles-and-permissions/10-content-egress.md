@@ -276,6 +276,8 @@ inventing a second answer.
 
 *Cross-area note (2026-09-30, intelligence Round G): re-verified for intelligence `KACL-2` — KACL-2's criteria 1 and 3 hold (a folder-level deny now proven through the real seam, `lib/__tests__/intelRoundGRecords.test.ts`), and its criteria 2 and 4 hold only outside the seam's read failures; the fail-closed limb does not hold when the seam's own `libraries` / `collections` read errors (`lib/knowledgeAccess.ts` `loadDcLandscape` swallows it) or its `team_members` read errors (`loadPrincipal` builds a principal with no teams, so a team deny is dropped). Opened as intelligence `KACL-12` (owner I-12); KACL-2 stays OPEN on it and intelligence `IEDGE-2` (whose criterion 2 is that limb) is re-opened on it. This record's own Resolution ("Everything fails CLOSED: if the readable set cannot be computed nothing controlled is readable") and its criterion 1 do not hold inside the seam either (KACL-12); the status is left to roles-and-permissions.*
 
+*Cross-note (2026-10-13, intelligence Round G, I-01 phase B): intelligence `KACL-2` is re-verified on `596d34e`. The tool-layer filters this finding landed hold. `KACL-2` stays OPEN only on `KACL-12`, the seam's own reads failing open, owned by intelligence I-12.*
+
 ---
 
 ## EGRESS-4 · `knowledge_chunks` is readable by every member, bypassing the ACL-aware ask pipeline

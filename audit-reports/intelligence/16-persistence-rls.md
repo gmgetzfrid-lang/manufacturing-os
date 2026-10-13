@@ -523,7 +523,7 @@ Tests: `lib/__tests__/processFlowsLib.test.ts` ("resolveAssetEndpoints — IRLS-
 ## IRLS-12 · schema-health is blind to answer_skills, link_rules, process_flows and knowledge_line_traces — three live features can be entirely missing and the panel reports green
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/schemaExpectations.ts:1-13`, `lib/schemaExpectations.ts:29-113`, `supabase/migrations/20261015_connection_skills.sql:16`, `supabase/migrations/20261016_reasoning_skills.sql:14`, `supabase/migrations/20261017_process_flows.sql:14`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. The core claim holds for answer_skills, link_rules and process_flows. The fourth name is wrong: knowledge_line_traces is a RETIRED feature, not a live one — supabase/migrations/20261007_retire_line_traces.sql:9 `DROP TABLE IF EXISTS knowledge_line_traces;` and the only remaining reference is lib/exportTables.ts:177, so its absence from EXPECTED_TABLES is correct, not a gap. Severity unchanged; the finding should say three tables, not four. (Also unprobed but outside the claim: change_orders, checklist_items, companies, company_events, project_checklists, punch_items, turnover_items.)
@@ -549,6 +549,18 @@ lib/schemaExpectations.ts:11-13 — `// Generated from supabase/migrations (CREA
 *Cross-note (2026-10-01, admin-and-org Round G, P2): criteria 1 and 2 ✓ by admin-and-org `BKP-14` (RESOLVED). The three tables are listed with their files, `knowledge_line_traces` is recorded as retired, and the grandfather set is empty. Criterion 3 (42P01 vs an empty result in what the libs show) remains I-08's and I-09's.*
 
 *Pointer (2026-10-01, intelligence Round G, I-09 — criterion 3's `lib/processFlows.ts` limb).* `listProcessFlows` / `listProcessFlowsPaged` answer null ("process flows aren't installed yet") only for a missing TABLE (42P01 / PGRST205 / "relation … does not exist" / "could not find the table"). A missing column, or any other read error, is thrown and shown, never "not installed". Before, `/does not exist/` matched a missing column too. Test: `lib/__tests__/processFlowsLib.test.ts` ("IRLS-12 limb …"). No status change: criterion 1 is A&O P2's, and the other two libs are I-08's.
+
+**Resolution (2026-10-13, intelligence Round G).** Package I-01 phase B, closed by pointer and re-verified on base `596d34e`.
+- Criteria 1 and 2: admin-and-org `BKP-14` (RESOLVED, the cross-note above). `lib/schemaExpectations.ts` lists `answer_skills`, `link_rules` and `process_flows` with their files and records `knowledge_line_traces` as retired. `lib/__tests__/schemaExpectations.test.ts` checks both directions with an empty grandfather set.
+- Criterion 3, every limb. `lib/processFlows.ts` (I-09, the pointer above; `missingTable`, `:49-55`, used at `:84`). `lib/linkRules.ts` (`missing`, `:45-46`; `listLinkRules` answers null for a missing table and `[]` for an empty shelf, `:92-95`). `lib/answerSkills.ts` (`:37-38`, `:81-84`), the I-08 limb. The screens say "not installed" only for null: `components/intelligence/ConnectionSkillsPanel.tsx:380-381`, `:411-412`; `app/(protected)/intelligence/skills/page.tsx:116`, `:148`.
+- Test, new on this pass: `lib/__tests__/intelRoundGLifecycleRecords.test.ts`, "IRLS-12 criterion 3". For both skill libraries, a 42P01 is null, an empty shelf is `[]`, and any other read error is thrown. Mutation-checked: answering `[]` for a missing table fails it. `processFlowsLib.test.ts` pins the flows limb.
+
+**Done-when.**
+1. ✓ — `BKP-14`.
+2. ✓ — `BKP-14`.
+3. ✓ — all three libraries.
+
+**Scope / residual.** None that a criterion names. One note for the skill libraries' owner: their `missing` test also matches a missing COLUMN ("column … does not exist"), which `lib/processFlows.ts` was tightened against. No shelf read reaches it on today's schema. The page reads name only columns `20261015` / `20261016` created (`20261015_connection_skills.sql:21-33`, `20261016_reasoning_skills.sql:24-25`), and the later columns are read in the share-request read, which has its own missing-column fallback (`readSkillShelf`, `lib/skillAuthority.ts`).
 
 ---
 

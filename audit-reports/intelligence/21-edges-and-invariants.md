@@ -449,7 +449,7 @@ supabase/migrations/20261017_process_flows.sql:26-28 — `-- Where the AI read i
 ## IEDGE-10 · Manager can export the org's entire knowledge corpus — including chunk text of ACL-restricted mirrored documents — through /api/data-export with no ACL filter anywhere in the pipeline
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/data-export/structured/route.ts:52-58`, `lib/exportTables.ts:134-141`, `lib/dataExport.ts:1-363`, `lib/knowledgeAccess.ts:43`
 - **Re-verified:** hardening pass — **SURVIVES**. `knowledge_documents` and `knowledge_chunks` are both in `ORG_SCOPED_TABLES` (`exportTables.ts:138-139`), and the export gate admits `["Admin", "Manager", "DocCtrl"]` (`structured/route.ts:55`). Chunk text is document prose, so the whole corpus leaves through a role that never had document-level read.
@@ -472,6 +472,13 @@ app/api/data-export/structured/route.ts:56-58 — `if (!["Admin", "Manager", "Do
 - [ ] The audit_logs entry for an export records which role ran it and whether it was ACL-filtered
 
 **Partial (2026-09-30, intelligence Round G).** Pointer — re-verified at HEAD `1b71ca1`: no criterion has landed. `/api/data-export/structured` still admits Admin / Manager / DocCtrl (`app/api/data-export/structured/route.ts:56`, by the role collection), `/api/data-export/run` the same (`run/route.ts:18`, `:76`); `knowledge_documents` and `knowledge_chunks` are still dumped by org id with no ACL filter (`lib/exportTables.ts:142-143`); the `DATA_EXPORT` row records counts only (`lib/dataExport.ts:189-196`). Landed neighbour, not one of these criteria: document-control `EGR-7` (P10) redacts bearer-token columns from every dump (`DEC-45`). Owner: admin-and-org **P3** (`BKP-8` — Admin-only full export; ACL-restricted content excluded, or the export refused, for a role that cannot read it all); the same fix closes `DACL-7` and `ILIFE-7`. Cross-note on `BKP-8`.
+
+**Resolution (2026-10-13, intelligence Round G).** Package I-01 phase B, closed by pointer to admin-and-org `BKP-8` (RESOLVED, package P3), with one line added here for criterion 3. Re-verified on base `596d34e`.
+1. ✓ — the export is Admin-only (`lib/adminSurfaces.ts:103`, every `/api/data-export/*` route through `authorizeAdminSurface`; see `ILIFE-7`), a role inside the ACL controller definition (`loadPrincipal`'s `isController`, `lib/knowledgeAccess.ts:48`). Manager no longer reaches the knowledge corpus through it. Pinned by `lib/__tests__/intelRoundGLifecycleRecords.test.ts` "DACL-7 criterion 3".
+2. ✓ — the full-fidelity backup is the data-export surface: Admin-only, and audited by a `DATA_EXPORT` row and `DATA_EXPORT_FILES` rows (`BKP-8`, `BKP-13`). No Manager-facing whole-workspace pull remains: `/admin/storage`'s two export buttons render only for the surface's entry set (admin-and-org P6, `lib/__tests__/aoRoundGStoragePage.test.ts`).
+3. ✓ — the `DATA_EXPORT` row records the role that ran it (`user_role`, `lib/dataExport.ts:1061`). Added by this package: `details.aclFiltered: false` (`:1178`). An export is never ACL-filtered, and the row now says so instead of leaving it implied by the role. Test: `lib/__tests__/intelRoundGChunkExport.test.ts` "IEDGE-10 criterion 3".
+
+**Scope / residual.** None here. The row's details gain one key. Its readers match details by key (`dataExportRoutes.test.ts:289`, `toMatchObject`), and none breaks.
 
 ---
 

@@ -1991,6 +1991,8 @@ safe side for a credential.
 
 *Landed 2026-10-01 (admin-and-org Round G, P3): "people … re-enter credentials" is now enforced, not only implied. A destination's credentials must be present, stored or in the same request, before it can fire: both access keys for an s3 / r2 row, the signing secret for a webhook. Otherwise the answer is 409, and for a webhook it asks the Admin to check the URL. Three acts are held to this (`lib/exportRunner.ts destinationCredentialGap`): turning a disabled destination on (`PATCH /api/data-export/destinations/[id]`), re-pointing an enabled one (its type, endpoint, bucket, prefix or webhook URL changes; added at the review fix pass), and running a disabled one by hand ("Run Now", `POST /api/data-export/run`; review fix pass). A restored destination therefore cannot fire until a person re-enters what the backup never carried. An enabled webhook an Admin created here may stay unsigned, since the secret is optional at create. A plain edit that moves nothing is not re-checked. See `BKP-11` Done-when 3.*
 
+*Landed 2026-10-13 (intelligence Round G, I-01 phase B; `ILIFE-11`): a sibling rule for a DERIVED column. `knowledge_chunks.embedding` is left out of every export: it is not nulled, it is absent from every row. It is declared in `lib/exportTables.ts EXPORT_OMITTED_COLUMNS` with the explicit column list the table is read by, named in `manifest.omittedColumns` and a manifest note, and rebuilt after a restore by the embed drain. `lib/__tests__/exportCoverage.test.ts` holds the list to the census less the omitted column, so a new column cannot be dropped silently. A database without a listed column yet falls back to today's `select("*")` read and still drops the vector.*
+
 <a id="dec-46"></a>
 ## DEC-46 · External share links: who mints, how long, what serves, what is recorded
 
@@ -5561,6 +5563,8 @@ Before such a modal starts an upload, once the run's cards clear, and whenever n
 
 *Landed 2026-10-02 (admin-and-org Round G): A&O P6 took Risk's first item. `/admin/storage`'s Full ZIP and JSON buttons render only for a member holding the data-export surface's entry (`hasAnyRole(adminSurface("data-export").entry)`, the full collection). Manager and DocCtrl read the surface's denial sentence and "Ask an Admin to take a full backup." instead of a 403. See `BKP-8`'s residual and `DEC-99`.*
 
+*Landed 2026-10-13 (intelligence Round G, I-01 phase B; `IEDGE-10`): the `DATA_EXPORT` row's details also say `aclFiltered: false`. A whole-workspace export is never filtered by the document ACL: it is a full-fidelity backup taken by an Admin, an ACL controller. A test pins every role in the data-export entry set as a controller (`isControllerRole`), so the export set cannot drift outside the controller tier (`DACL-7`).*
+
 <a id="dec-88"></a>
 ## DEC-88 · The graph's view: lenses named for what they show, direction drawn, and what lives in the URL
 
@@ -5682,6 +5686,8 @@ Before such a modal starts an upload, once the run's cards clear, and whenever n
 - *The snapshot carried one review date for every row. One row was stale: the ACL drawer, which also admits an owner or a Manage Permissions grant holder in delegation mode.*
 
 *Both are now corrected. Every live ticket row is pinned per role column to `WorkflowEngine.getActions`, for the defaults and for a narrowed policy. Only the eight snapshot rows checked against the code carry the date; the other 23 say NOT RE-CHECKED. Nobody's authority changed. See `ALOG-14`.*
+
+*Landed 2026-10-13 (intelligence Round G, I-01 phase B): the package's three stated defaults, taken under this delegation. (1) `DACL-8` / `DACL-3`: for a private or hidden document, a public verify route answers the verdict without the number or title. Handed to public-surfaces `VFY-16` (Assigned to I-12) and not built here. (2) `ILIFE-10`: a restore pre-filters duplicates on the real unique keys, with no new unique index. It is not built: admin-and-org P1 merged without it. Its `is_explicit` limb needs a ruling first, because keeping a backup's explicit link on a live re-indexed row changes an existing row, which `DEC-75` §5 forbids. Recorded on the finding, with the proposed owner admin-and-org P10. (3) `WIRE-9`: INVALID by `DEC-23`, already recorded at I-01 phase A.*
 
 <a id="dec-91"></a>
 ## DEC-91 · No role known is null, never a placeholder: what an audit row says, what a consumer allows, and what a browser keeps after sign-out

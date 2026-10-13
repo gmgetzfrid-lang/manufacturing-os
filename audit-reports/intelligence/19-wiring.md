@@ -337,6 +337,12 @@ types/schema.ts:1112 `unit: string;` on Ticket; supabase/schema.sql:403 `unit TE
 - Criterion 1 (tickets gain a codebook-checked `unit_code` and an optional equipment list) **is `GAP-312`** (the drafting request gets an equipment field, `90-gap-register.md`), handed to the **drafting-flow fleet**: it edits the same form as `GAP-110` / `GAP-111` (drafting-flow `DF-P6`, which owns `app/(protected)/requests/new/page.tsx` for the declaration) and must ship with them or the form is edited twice (`99-fix-sequencing.md` Phase 5). Prerequisites on the intelligence side: `GAP-311` (tag lookup — I-10, merged) and `GAP-304` (the Bridge writes the relation — I-11). No drafting-flow package lists `GAP-312` today; the integrator adds it to `DF-P6` or schedules it directly after (reverse pointer added on `GAP-312`, `90-gap-register.md`).
 - Criteria 2 (holds and work packages listed by operating area) and 3 (`milestone.location` resolving to an asset or unit; scheduled work on the asset hub) ride the same relation (`GAP-304` → `document_assets`, one unit identity from `GAP-305`) and are in no fleet plan; they stay here.
 
+**Partial (2026-10-13, intelligence Round G).** Package I-01 phase B, re-verified on base `596d34e`: unchanged, and no criterion holds. `Ticket.unit` is still an unconstrained string (`types/schema.ts:1175`). The request form still has no equipment field: `app/(protected)/requests/new/page.tsx` imports the unit list (`:12-13`) and nothing for tags or assets. Holds, checkouts and work packages carry no unit or asset reference. `Milestone.location` is still only round-tripped (`lib/milestones.ts:61`, `:112`).
+
+**Remaining / owner.**
+- Criterion 1 (with `GAP-312`): drafting-flow **DF-P6** (queued). It edits the same form for `GAP-110` / `GAP-111`, and `99-fix-sequencing.md` Phase 5 says they ship together. Its prerequisites have merged: `GAP-311` (I-10) and `GAP-304` (I-11).
+- Criteria 2 and 3: proposed intelligence **I-26** BRIDGE REMAINDERS (queued; the remainders of I-11's `document_assets` relation, beside `GAP-305`'s one unit identity from I-13), for the integrator to assign.
+
 ---
 
 <a id="wire-8"></a>
