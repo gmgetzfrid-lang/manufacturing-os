@@ -123,17 +123,19 @@ export const KIND_META = {
   // (lib/activityThread.ts — PROD-8), which used to collapse into checkout_message.
   checkout_handoff:         { section: "documents", actionRequired: false, compliance: false, icon: "Lock", tone: "indigo", group: "locks" },
   checkout_message:         { section: "documents", actionRequired: false, compliance: false, icon: "MessageSquare", tone: "blue", group: "mentions" },
-  // checkout_released: since N9 only the maintenance cron's stale-checkout
-  // escalation to the controllers writes it ("Checkout held N days — review
-  // needed"; app/api/cron/maintenance/route.ts, N6's file — the rename to
-  // checkout_stale_escalation is TAX-17, N14). The holder's own notices have
-  // their own kinds, both actions as before:
+  // checkout_released: declared for LEGACY rows only (TAX-17, notifications
+  // N15). Since N15 the maintenance cron's stale-checkout escalation to the
+  // controllers ("Checkout held N days — review needed") writes
+  // checkout_stale_escalation, and 20261206 re-filed the escalations written
+  // before; nothing writes checkout_released any more. The holder's own
+  // notices have their own kinds, both actions as before:
   //   checkout_force_released: someone force-released YOUR checkout
   //     (lib/checkoutEpisodes.ts forceReleaseDocument);
   //   checkout_auto_released: your ad-hoc checkout expired and was released
   //     (lib/projects.ts autoReleaseExpiredAdHoc — the browser sweep and the
   //     cron).
   checkout_released:        { section: "documents", actionRequired: true, compliance: false, icon: "Lock", tone: "indigo", group: "locks" },
+  checkout_stale_escalation: { section: "documents", actionRequired: true, compliance: false, icon: "Lock", tone: "indigo", group: "locks" },
   checkout_force_released:  { section: "documents", actionRequired: true, compliance: false, icon: "Lock", tone: "indigo", group: "locks" },
   checkout_auto_released:   { section: "documents", actionRequired: true, compliance: false, icon: "Lock", tone: "indigo", group: "locks" },
   overlap_advisory:         { section: "documents", actionRequired: true, compliance: false, icon: "AlertOctagon", tone: "slate", group: "other" },

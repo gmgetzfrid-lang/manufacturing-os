@@ -101,8 +101,10 @@ describe("recallRetiredDocument (DIST-1)", () => {
       actorUserId: "actor", actorName: "doccontrol",
     });
     expect(n).toBe(2);
-    expect(state.emits).toHaveLength(1);
-    const e = state.emits[0] as { audience: { involved: string[] }; title: string; body: string };
+    // PROD-17 (N15): the watchers' FYI first, then the one recall
+    const recalls = state.emits.filter((x) => x.category === "recall");
+    expect(recalls).toHaveLength(1);
+    const e = recalls[0] as { audience: { involved: string[] }; title: string; body: string };
     expect(e.audience.involved.sort()).toEqual(["u1", "u2"]);
     expect(e.title).toContain("Superseded");
     expect(e.body).toContain("Replaced by P-101A.");
@@ -115,8 +117,29 @@ describe("recallRetiredDocument (DIST-1)", () => {
       newStatus: "Void", actorUserId: "actor",
     });
     expect(n).toBe(0);
-    expect(state.emits).toHaveLength(0);
+    // no recall (nobody holds a copy) and no recall audit row — only PROD-17's watcher FYI (N15)
+    expect(state.emits.filter((x) => x.category === "recall")).toHaveLength(0);
+    expect(state.emits).toHaveLength(1);
     expect(state.audits).toHaveLength(0);
+  });
+
+  it("PROD-17 (notifications N15): the document's followers are told it was retired, in a watcher's words, minus the copy holders the recall tells", async () => {
+    state.tables.download_audits = [{ user_id: "u1" }, { user_id: "actor" }];
+    await recallRetiredDocument({
+      orgId: "org1", documentId: "d1", libraryId: "lib1", docLabel: "P-101",
+      newStatus: "Void", replacementNote: "Replaced by P-101A.", actorUserId: "actor", actorName: "doccontrol",
+    });
+    const f = state.emits.find((x) => (x.audience as { followers?: boolean }).followers) as Record<string, unknown>;
+    expect(f).toMatchObject({
+      kind: "doc_recalled", category: "watched",
+      title: "P-101 was retired (Void)",
+      resource: { type: "document", id: "d1" }, actorUserId: "actor",
+      audience: { followers: true, exclude: ["u1"] },
+      metadata: { retirement: true, followerNotice: true, newStatus: "Void" },
+    });
+    expect(String(f.body)).toContain("doccontrol retired P-101 (void)");
+    expect(String(f.body)).not.toMatch(/your copy/i);
+    expect(String(f.body)).toContain("Replaced by P-101A.");
   });
 
   it("puts the retirement recall on the audit trail (DIST-10)", async () => {

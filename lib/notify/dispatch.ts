@@ -11,8 +11,10 @@ import { notifyMany, notifyBatchWithReason, type NotificationKind } from "@/lib/
 import { queueEmail } from "@/lib/notifications";
 import { supabase } from "@/lib/supabase";
 import { renderNotificationEmail, requireEmailOrigin } from "@/lib/emailRender";
+import { KIND_META } from "@/lib/notificationKinds";
 import {
   activeMembersOf,
+  discoveringAmong,
   resolveFollowers,
   resolveRoleRecipients,
   resolveProjectMembers,
@@ -45,6 +47,10 @@ export interface EmitInput {
     followers?: boolean;   // walk resolveFollowers(resource)
     roles?: string[];      // a role pool in the org
     projectId?: string;    // members of a project
+    /** People left out whatever source reached them — the ones a personal
+     *  notice of the same event already told (PROD-17: a follower's FYI
+     *  beside the holder's own notice). */
+    exclude?: string[];
   };
   /** Defaults to both channels (in-app and email). Pass a subset to
    *  force-limit a noisy event. */
@@ -61,6 +67,14 @@ export interface EmitInput {
    *  member) does not sink it; a cap refusal (P0001) refuses the whole
    *  statement, and is logged. */
   inappOneStatement?: boolean;
+  /** DELIV-16 (notifications N15): write each bell row through
+   *  lib/complianceNotify.ts notifyCompliance — retried where a read-back is
+   *  authoritative, dead-lettered when it never lands (DEC-102) — even for a
+   *  kind the registry does not flag compliance (a hold's stop-work notice,
+   *  the hold-aging nudge). A compliance kind (KIND_META) always is. A
+   *  scan's notice passes its `retryKey` (`<scan>:<row id>`) so its dead
+   *  letter is sent again by the scan's next run (loadScanRetryPlan). */
+  inappRetry?: { retryKey?: string };
   /** An explicit subject / body is sent as given, to everyone. Without one,
    *  the subject is decided per recipient (emailSubjectFor): the title for
    *  someone the producer named, broadcastSubject(category, resource.type)
@@ -178,12 +192,29 @@ export async function resolveRecipients(input: EmitInput): Promise<string[]> {
   (input.audience.involved ?? []).forEach((u) => u && ids.add(u));
 
   const tasks: Promise<string[]>[] = [];
-  if (input.audience.followers) tasks.push(resolveFollowers(input.resource, input.orgId));
   if (input.audience.roles?.length) tasks.push(resolveRoleRecipients(input.orgId, input.audience.roles));
   if (input.audience.projectId) tasks.push(resolveProjectMembers(input.audience.projectId));
-  for (const list of await Promise.all(tasks)) list.forEach((u) => u && ids.add(u));
+  const [followers, ...lists] = await Promise.all([
+    input.audience.followers ? resolveFollowers(input.resource, input.orgId) : Promise.resolve([] as string[]),
+    ...tasks,
+  ]);
+  for (const list of lists) list.forEach((u) => u && ids.add(u));
+
+  // NEDGE-6 done-when 3 (N15): a follower reached ONLY through the follow
+  // list of a DOCUMENT is kept only while they may discover it — a hidden or
+  // private document, or an ACL that no longer includes them, takes them out
+  // (discoveringAmong; controllers are never dropped, DEC-43). Someone the
+  // producer named, a role pool and a project roster are the producer's
+  // choice and are not filtered here.
+  const followerOnly = followers.filter((u) => u && !ids.has(u) && u !== input.actorUserId);
+  followers.forEach((u) => u && ids.add(u));
+  if (input.resource.type === "document" && followerOnly.length > 0) {
+    const kept = new Set((await discoveringAmong(input.orgId, input.resource.id, followerOnly)).uids);
+    followerOnly.forEach((u) => { if (!kept.has(u)) ids.delete(u); });
+  }
 
   if (input.actorUserId) ids.delete(input.actorUserId);
+  (input.audience.exclude ?? []).forEach((u) => ids.delete(u));
   return activeMembersOf(input.orgId, Array.from(ids));
 }
 
@@ -235,6 +266,29 @@ export async function emit(input: EmitInput): Promise<EmitResult> {
     })));
     if (error) console.warn(`[notify] the ${input.kind} notice reached none of its ${recipients.length} recipient(s): ${error}`);
     result.inapp = { sent: landed, failed: recipients.length - landed };
+  } else if (channels.includes("inapp") && (KIND_META[input.kind]?.compliance || input.inappRetry)) {
+    // DELIV-16 (N15): a compliance kind's bell row (and any row the producer
+    // asks to be retried) goes through notifyCompliance, one row per
+    // recipient as notifyMany writes them — the same typed row first, a
+    // bounded retry where the writer can read it back, a dead letter when it
+    // never lands. The answer counts what landed, as before.
+    const { notifyCompliance } = await import("@/lib/complianceNotify");
+    const opts = input.inappRetry?.retryKey ? { retryKey: input.inappRetry.retryKey } : undefined;
+    const landed = await Promise.all(recipients.map((uid) => notifyCompliance({
+      orgId: input.orgId,
+      userId: uid,
+      kind: input.kind,
+      title: input.title,
+      body: input.body,
+      link: input.link,
+      resourceType: input.resource.type,
+      resourceId: input.resource.id,
+      actorUserId: input.actorUserId,
+      actorName: input.actorName,
+      metadata: input.metadata,
+    }, opts)));
+    const sent = landed.filter(Boolean).length;
+    result.inapp = { sent, failed: landed.length - sent };
   } else if (channels.includes("inapp")) {
     result.inapp = await notifyMany({
       orgId: input.orgId,

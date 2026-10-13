@@ -236,11 +236,23 @@ describe("RT-2 / TAX-4 — one checkout-thread post: one toast per participant, 
     bus.tables.subscriptions = [{ user_id: "uW", resource_type: "document", resource_id: "d1" }];
     bus.tables.checkout_sessions = [];
     for (const uid of ["uA", "uP", "uW", "uU"]) await mountListener(uid);
+    // TAX-4 dw3 (notifications N15): the thread's notice asks who may discover
+    // the document (POST /api/documents/discoverers, the author's token) —
+    // here a document both may discover
+    const { supabase } = await import("@/lib/supabase");
+    const auth = (supabase as unknown as { auth?: unknown }).auth;
+    (supabase as unknown as { auth: unknown }).auth = { getSession: async () => ({ data: { session: { access_token: "tok-A" } } }) };
+    const discover = vi.fn(async (_u: string, init: { body: string }) => ({ ok: true, status: 200, json: async () => ({ discover: (JSON.parse(init.body) as { uids: string[] }).uids }) }));
+    vi.stubGlobal("fetch", discover);
 
     await act(async () => {
       await postActivity({ orgId: "o1", documentId: "d1", episodeId: "e1", text: "pressure relief sizing looks wrong on sheet 3", userId: "uA", userName: "Alice" });
     });
     await flush();
+    vi.unstubAllGlobals();
+    (supabase as unknown as { auth: unknown }).auth = auth;
+    expect(discover).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(discover.mock.calls[0][1].body)).toMatchObject({ orgId: "o1", documentId: "d1" });
 
     // The post itself landed (the thread line) — and nothing listens to that table any more.
     expect((bus.tables.checkout_messages ?? []).length).toBe(2);

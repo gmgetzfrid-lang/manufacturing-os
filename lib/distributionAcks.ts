@@ -12,7 +12,9 @@
 // applied.
 
 import { supabase } from "@/lib/supabase";
-import { notify } from "@/lib/inAppNotifications";
+// DELIV-16 / DELIV-7 dw1 (notifications N15): the scan's notices retry and
+// dead-letter (DEC-102) — one import line, every call site unchanged.
+import { notifyCompliance as notify } from "@/lib/complianceNotify";
 import { emit } from "@/lib/notify/dispatch";
 import { assertNotOnHold } from "@/lib/holdGate";
 
@@ -376,7 +378,13 @@ export async function scanDistributionAcks(orgId: string, opts?: {
   const binding = rows.filter((r) => ackStillBinds(r, docs.get(r.document_id as string)));
 
   let n = 0;
-  const sends: Array<() => Promise<unknown>> = [];   // notify() answers whether its row landed (DELIV-7, N6); the nag ignores it as before
+  // notifyCompliance answers whether its row landed (DELIV-7 dw1, N15). The
+  // watermark above IS the notifications rows, per (recipient, document): a
+  // notice that dead-lettered leaves no row, so nothing marks that reminder
+  // sent and the next run nudges that recipient again (its retry key says so
+  // in the run's line). The cron's scope counts delivered apart from
+  // attempted (result.complianceBellNotices); `n` stays the rows attempted.
+  const sends: Array<() => Promise<unknown>> = [];
   const escalations = new Map<string, { requesterId: string; docId: string; names: string[] }>();
   for (const r of binding) {
     const docId = r.document_id as string;
@@ -395,7 +403,7 @@ export async function scanDistributionAcks(orgId: string, opts?: {
         resourceId: docId,
         actorName: "System",
         metadata: { ackRequest: true, autoNag: true, versionId: r.version_id as string },
-      }));
+      }, { retryKey: `distribution-acks:${r.id as string}` }));
       n += 1;
     }
 
@@ -422,7 +430,7 @@ export async function scanDistributionAcks(orgId: string, opts?: {
       resourceId: e.docId,
       actorName: "System",
       metadata: { ackEscalation: true },
-    }));
+    }, { retryKey: `distribution-acks:escalation:${e.requesterId}:${e.docId}` }));
     n += 1;
   }
   // Chunked parallel sends — per-row awaits were the cron's dominant cost.

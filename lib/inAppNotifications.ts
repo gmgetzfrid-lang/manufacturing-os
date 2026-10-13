@@ -34,7 +34,8 @@ export type NotificationKind =
   | "doc_upstream_changed"    // a document connected to work you have checked out was revised (lib/revisionImpact.ts; was doc_superseded)
   | "package_doc_stale"       // a document pinned in your work package moved past its pin (lib/workPackages.ts; was doc_superseded + metadata.workPackageId)
   | "package_doc_retired"     // a document pinned in your work package was superseded / voided (lib/postPublish.ts; was doc_superseded + metadata.retirement)
-  | "checkout_released"       // (to Admin/DocCtrl) a checkout has been held for weeks — review it (the maintenance cron's stale-checkout escalation; until N9 it also meant the two below)
+  | "checkout_released"       // LEGACY rows only (TAX-17, N15): what the stale-checkout escalation was written as before 20261206 re-filed it; nothing writes it now
+  | "checkout_stale_escalation" // (to Admin/DocCtrl) a checkout has been held for weeks — review it (the maintenance cron's stale-checkout escalation; was checkout_released — TAX-17)
   | "checkout_force_released" // your checkout was force-released by someone else (lib/checkoutEpisodes.ts; was checkout_released)
   | "checkout_auto_released"  // your ad-hoc checkout expired and was released automatically (lib/projects.ts; was checkout_released + metadata.autoReleasedSessionId)
   | "overlap_advisory"        // two people hold live edit intents on the same doc

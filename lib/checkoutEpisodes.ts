@@ -788,6 +788,35 @@ export async function forceReleaseDocument(input: {
       console.warn("[forceRelease] victim notify failed (non-blocking)", e);
     }
   }
+
+  // PROD-17 (notifications N15): the document's WATCHERS hear it too — in
+  // their own words (the holder's "your session has ended" is false for
+  // them), minus the holders the notice above already told. An FYI on the
+  // document's checkout thread (checkout_message — the thread's own system
+  // line, told to its watchers); the dispatcher drops a watcher who may not
+  // discover the document (NEDGE-6). The reason stays in the body.
+  try {
+    const { emit } = await import("@/lib/notify/dispatch");
+    const { data: doc } = await supabase.from("documents").select("document_number, title, name, library_id")
+      .eq("id", input.documentId).maybeSingle();
+    const d = (doc ?? null) as { document_number?: string | null; title?: string | null; name?: string | null; library_id?: string | null } | null;
+    const label = d?.document_number || d?.title || d?.name || "a document you follow";
+    await emit({
+      orgId: input.orgId,
+      category: "watched",
+      kind: "checkout_message",
+      title: `${label} was force-released by ${input.actorName}`,
+      body: `${input.actorName} force-released the checkout on ${label}${input.reason ? `: "${input.reason}"` : ""}. Every session on it has ended; the document can be checked out again.`,
+      link: d?.library_id ? `/documents/${d.library_id}?doc=${input.documentId}` : undefined,
+      resource: { type: "document", id: input.documentId },
+      actorUserId: input.actorUserId,
+      actorName: input.actorName,
+      audience: { followers: true, exclude: victims },
+      metadata: { forceRelease: true, followerNotice: true },
+    });
+  } catch (e) {
+    console.warn("[forceRelease] follower notify failed (non-blocking)", e);
+  }
   return { auditRecorded: !auditError, auditError };
 }
 

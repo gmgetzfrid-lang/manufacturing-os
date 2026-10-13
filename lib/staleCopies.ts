@@ -299,6 +299,31 @@ export async function recallRetiredDocument(input: {
         .map((r) => r.user_id)
         .filter((u): u is string => !!u && u !== input.actorUserId),
     )];
+    // PROD-17 (notifications N15): the document's WATCHERS are told it was
+    // retired, in their own words ("your copy is dead paper" is false for a
+    // watcher who holds none), minus the copy holders the recall below
+    // tells. Its kind is doc_recalled — the kind whose meaning is "the
+    // document was retired" (DEC-100 item 1) — on the 'watched' category, so
+    // the watcher's email toggle governs its email (the copy holders' recall
+    // below is the safety category); the dispatcher drops a watcher who may
+    // not discover the document (NEDGE-6). Sent whether or not anyone holds a
+    // copy.
+    try {
+      await emit({
+        orgId: input.orgId,
+        category: "watched",
+        kind: "doc_recalled",
+        title: `${input.docLabel} was retired (${input.newStatus})`,
+        body: `${input.actorName || "Someone"} retired ${input.docLabel} (${input.newStatus.toLowerCase()}); there is no current revision to work from.` +
+          (input.replacementNote ? ` ${input.replacementNote}` : ""),
+        link: input.libraryId ? `/documents/${input.libraryId}?doc=${input.documentId}` : undefined,
+        resource: { type: "document", id: input.documentId },
+        actorUserId: input.actorUserId,
+        actorName: input.actorName ?? undefined,
+        audience: { followers: true, exclude: holders },
+        metadata: { retirement: true, followerNotice: true, newStatus: input.newStatus },
+      });
+    } catch { /* the recall below still goes out */ }
     if (holders.length === 0) return 0;
     await emit({
       orgId: input.orgId,

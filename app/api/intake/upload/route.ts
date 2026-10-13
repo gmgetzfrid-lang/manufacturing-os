@@ -137,6 +137,11 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { memberHoldsAny, roleFilter } from "@/lib/roleHeld";
 import { runWithServerClient } from "@/lib/serverClientScope";
+// NEDGE-6 done-when 3 (notifications N15): loading this module registers the
+// dispatcher's server-side discover check, so a published revision's
+// document followers (lib/postPublish.ts, through this door) are filtered by
+// who may discover the document, as they are from the browser.
+import "@/lib/documentDiscoverers";
 import { readActiveHolds, decideHoldGate } from "@/lib/holdGate";
 import { matchCompanyByName } from "@/lib/bidTab";
 import { validateIntakeFile, type IntakeBranch } from "@/lib/fileSniff";

@@ -111,6 +111,10 @@ describe("recall email routing (DIST-13, source pins)", () => {
   it("both recall emitters use the recall category, never ticket-status", () => {
     const src = readFileSync(join(process.cwd(), "lib", "staleCopies.ts"), "utf8");
     const categories = src.match(/category: "(\w+)"/g) ?? [];
-    expect(categories).toEqual(['category: "recall"', 'category: "recall"']);
+    // the first is PROD-17's (notifications N15) FYI to the document's
+    // watchers on a retirement — the 'watched' category on purpose: it is not
+    // a recall of anything they hold, so their email toggle governs it. The
+    // two recalls to copy holders keep the recall category.
+    expect(categories).toEqual(['category: "watched"', 'category: "recall"', 'category: "recall"']);
   });
 });

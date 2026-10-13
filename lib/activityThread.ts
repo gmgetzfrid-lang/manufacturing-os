@@ -11,6 +11,7 @@
 import { supabase } from "@/lib/supabase";
 import { notifyMany, type NotificationKind } from "@/lib/inAppNotifications";
 import { getActiveEpisode, isMissingEpisodeSchema } from "@/lib/checkoutEpisodes";
+import { discoveringAmong } from "@/lib/notify/recipients";
 
 export type ActivityKind =
   | "chat"
@@ -108,7 +109,8 @@ export async function postActivity(input: PostInput): Promise<ActivityMessage | 
 /**
  * Notify everyone with a stake in THIS checkout's thread when someone posts:
  * the episode's participants (not people from long-closed checkouts), every
- * active session holder, and anyone watching the document — minus the author.
+ * active session holder, and anyone watching the document — minus the author,
+ * and minus anyone who may not discover the document (TAX-4 dw3).
  * Writes durable rows to the notifications inbox (bell + feed), so a
  * recipient who wasn't online still sees it.
  */
@@ -140,7 +142,15 @@ async function notifyCheckoutActivity(input: PostInput): Promise<void> {
     recipients.delete(actor);
     recipients.delete("system");
     for (const u of input.notifyExclude ?? []) recipients.delete(u);
-    const userIds = Array.from(recipients).filter((u): u is string => !!u);
+    const candidates = Array.from(recipients).filter((u): u is string => !!u);
+    if (candidates.length === 0) return;
+    // TAX-4 done-when 3 / NEDGE-6 (notifications N15): the row names the
+    // document and carries the post's text, and it is the toast too — so
+    // only people who may DISCOVER the document get it. A participant, a
+    // session holder or a watcher later taken off the document's ACL (or a
+    // hidden / private document they cannot find) is left out; controllers
+    // never are (DEC-43). A check that fails keeps only the controllers.
+    const userIds = (await discoveringAmong(input.orgId, input.documentId, candidates)).uids;
     if (userIds.length === 0) return;
 
     const doc = docRes.data as { library_id?: string; document_number?: string; title?: string } | null;
