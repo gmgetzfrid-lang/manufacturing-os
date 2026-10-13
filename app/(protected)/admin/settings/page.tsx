@@ -504,7 +504,7 @@ function WorkspaceTimeZoneCard({ orgId, uid, userEmail }: { orgId: string | null
       </p>
       {readError ? (
         <div role="alert" className="text-xs text-rose-700 inline-flex items-center gap-2">
-          <AlertTriangle className="w-3.5 h-3.5" /> Couldn&apos;t read the workspace time zone ({readError}).
+          <AlertTriangle className="w-3.5 h-3.5" /> The workspace time zone could not be loaded ({readError}), so it cannot be changed here until it is.
           <button type="button" onClick={() => void load()} className="font-bold underline">Retry</button>
         </div>
       ) : (

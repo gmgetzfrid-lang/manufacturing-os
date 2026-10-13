@@ -584,7 +584,8 @@ describe("ALOG-14 — the permissions explorer tells the truth", () => {
   });
   it("removing a member is Admin only (revoke_member 'remove', newest body 20261161); suspend / restore stays Admin + Manager with the Admin-row rule said", () => {
     const newest = newestDefining(/CREATE OR REPLACE FUNCTION (public\.)?revoke_member\(/);
-    expect(newest).toBe("20261161_notif_roundG_read_scope.sql");
+    // 20261161 or a later re-creation from it (admin-and-org P8's 20261204 keeps these rules verbatim)
+    expect(newest >= "20261161_notif_roundG_read_scope.sql", newest).toBe(true);
     const fn = src(`supabase/migrations/${newest}`);
     expect(fn).toMatch(/IF p_mode = 'remove' THEN\s+IF NOT EXISTS \(SELECT 1 FROM org_members me WHERE me\.uid = v_actor AND me\.org_id = v_member\.org_id\s+AND me\.status = 'active' AND \(me\.role = 'Admin' OR me\.roles && ARRAY\['Admin'\]::text\[\]\)\) THEN\s+RAISE EXCEPTION 'Only an Admin can remove a member from the workspace\.';/);
     expect(fn).toMatch(/IF NOT is_org_admin_or_manager\(v_member\.org_id\) THEN\s+RAISE EXCEPTION 'Only an Admin or Manager can suspend or restore a member\.';/);
