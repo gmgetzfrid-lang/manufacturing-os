@@ -752,7 +752,7 @@ describe("WF-21 / DEC-15 — a reopen starts a new revision cycle, and the QR en
       { actionType: "approve_minor_correction", actionLabel: "Approve with Minor Correction", comment: "typo", actor: admin, now: NOW });
     expect(review.updates.engineer_approved_at).toBeUndefined();
   });
-  it("/api/verify-ticket: a reopened ticket reads revision_in_progress for the last issue, superseded for older, never current; closed-without-issue stays unknown", async () => {
+  it("/api/verify-ticket: a reopened ticket reads revision_in_progress for the last issue, superseded for older, never current; closed-without-issue is withdrawn (EDGE-2, DF-P10)", async () => {
     const { GET } = await import("@/app/api/verify-ticket/route");
     const T = "11111111-1111-1111-1111-111111111111";
     const verify = async (r: string) => {
@@ -768,7 +768,9 @@ describe("WF-21 / DEC-15 — a reopen starts a new revision cycle, and the QR en
     expect((await verify("1")).verdict).toBe("superseded");
     expect((await verify("2A")).verdict).toBe("draft_copy");
     state.rows.tickets = [row({ status: "CLOSED" })]; // closed again with no new issue
-    expect((await verify("2")).verdict).toBe("unknown");
+    // drafting-flow EDGE-2 (DF-P10): a request that ENDED with no issued deliverable on it is
+    // "withdrawn" (red, do not use) — it was "unknown" (grey) before; never current either way.
+    expect((await verify("2")).verdict).toBe("withdrawn");
     state.rows.tickets = [row({ status: "PENDING_IFC", deliverable_rev: "2", revision_count: 1 })]; // an ordinary issue is still current
     expect((await verify("2")).verdict).toBe("current");
     state.rows.tickets = [row({ status: "PENDING_REVIEW", deliverable_rev: "3A", revision_count: 2 })]; // the resubmission after the reopen

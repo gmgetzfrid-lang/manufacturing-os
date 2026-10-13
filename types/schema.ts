@@ -1107,6 +1107,15 @@ export interface TicketAttachment {
   size?: string;
   uploadedBy?: string;
   uploadedAt?: Timestamp;
+  /** public-surfaces PHYS-2 (drafting-flow DF-P10): the deliverable revision
+   *  THIS file is — stamped server-side by lib/ticketTransitions.ts when the
+   *  file joins the ticket or is submitted (a Draft: its review label, "1A";
+   *  a Final: the issued number in force, "1"). The print / download QR and
+   *  footer read it, never tickets.deliverable_rev. `null` = joined with no
+   *  label yet (a Final added before its issue — the issue stamps it);
+   *  absent = a file from before revisions were recorded per file, which
+   *  prints "cannot confirm which printing" and a QR with no ?r=. */
+  rev?: string | null;
 }
 
 export interface TicketComment {

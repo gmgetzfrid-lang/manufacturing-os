@@ -182,7 +182,9 @@ describe("VFY-12 — migration 20261134 (one-paste protocol, service role only)"
 describe("VFY-14 — verify-ticket selects only what it reads (headers / select / limits only — the verdict is drafting-flow's)", () => {
   it("revision_count is gone from the select and the row type", () => {
     const s = src("app/api/verify-ticket/route.ts");
-    expect(s).toContain('.select("id, ticket_id, title, unit, status, deliverable_rev, last_modified, history")');
+    // drafting-flow AUTHZ-12 (DF-P10): unit and last_modified left the payload, so they left the select;
+    // archived_at joined it (an archived stub answers "cannot confirm").
+    expect(s).toContain('.select("id, ticket_id, title, status, deliverable_rev, history, archived_at")');
     expect(s).not.toContain("revision_count: number");
   });
   it("the read's error is checked: an outage is 503 + an 'error' scan row, never 'Unknown ticket' (behaviour: verifyTicketRead.test.ts)", () => {

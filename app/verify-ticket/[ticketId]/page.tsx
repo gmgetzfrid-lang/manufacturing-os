@@ -9,7 +9,10 @@
 // Same design rules as /verify: mobile-first, zero login, one giant
 // verdict, details second. Green = latest issue. Amber = heads-up (a
 // revision is being worked right now, or this paper was a review draft).
-// Red = a newer revision has been issued — stop.
+// Red = a newer revision has been issued, or the request was withdrawn —
+// stop. Grey = this copy cannot be confirmed (it names no revision, or the
+// ticket is archived). The answer carries revision-status facts only
+// (drafting-flow AUTHZ-12): no workflow status, no unit, no activity time.
 
 import React, { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
@@ -18,14 +21,11 @@ import { CheckCircle2, XCircle, AlertTriangle, Loader2, ShieldQuestion, RefreshC
 interface VerifyTicketResult {
   ticketNumber: string | null;
   title: string | null;
-  unit: string | null;
   printedRev: string | null;
   currentRev: string | null;
   latestIssuedRev: string | null;
   inReview: boolean;
-  ticketStatus: string | null;
-  lastActivityAt: string | null;
-  verdict: "current" | "revision_in_progress" | "superseded" | "draft_copy" | "unknown";
+  verdict: "current" | "revision_in_progress" | "superseded" | "draft_copy" | "withdrawn" | "unknown";
   checkedAt: string;
 }
 
@@ -38,7 +38,7 @@ const VERDICT_UI: Record<VerifyTicketResult["verdict"], {
   },
   revision_in_progress: {
     bg: "bg-amber-500", icon: "warn", headline: "REVISION UNDERWAY",
-    sub: (r) => `This copy (Rev ${r.printedRev}) is the latest issue, but Rev ${r.currentRev} is in drafting/review right now. Confirm with the requester before starting new work.`,
+    sub: (r) => `This copy (Rev ${r.printedRev}) is the latest issue, but ${r.currentRev ? `Rev ${r.currentRev}` : "a new revision"} is in drafting/review right now. Confirm with the requester before starting new work.`,
   },
   superseded: {
     bg: "bg-red-600", icon: "stop", headline: "DO NOT USE",
@@ -53,9 +53,19 @@ const VERDICT_UI: Record<VerifyTicketResult["verdict"], {
         : `Rev ${r.printedRev ?? "?"} is a review draft, not an issued deliverable. Only issued revisions (Rev ${r.latestIssuedRev ?? "1"}, without a letter) are approved for use.`;
     },
   },
+  // EDGE-2: a canceled request, or one that ended with nothing issued.
+  withdrawn: {
+    bg: "bg-red-600", icon: "stop", headline: "WITHDRAWN — DO NOT USE",
+    sub: () => "This request was withdrawn or closed without an issued deliverable. Do not work from this copy — contact the requester.",
+  },
+  // PHYS-2: a copy whose QR names no revision (a file printed before
+  // revisions were recorded per file, or a source file) — the scan cannot
+  // tell which printing it is.
   unknown: {
     bg: "bg-slate-700", icon: "warn", headline: "CANNOT CONFIRM",
-    sub: () => "This ticket has no revision record for this copy. Confirm with the requester before use.",
+    sub: (r) => r.printedRev
+      ? "This ticket has no revision record for this copy. Confirm with the requester before use."
+      : "This copy does not say which revision it is, so the scan cannot confirm which printing you hold. Confirm with the requester before use.",
   },
 };
 
@@ -90,9 +100,8 @@ export default function VerifyTicketPage() {
 
   useEffect(() => { void check(); }, [check]);
 
-  const ui = result ? VERDICT_UI[result.verdict] : null;
-  const fmt = (iso: string | null) =>
-    iso ? new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "—";
+  // A verdict this page does not know is never painted green.
+  const ui = result ? VERDICT_UI[result.verdict] ?? VERDICT_UI.unknown : null;
 
   return (
     <div className={`min-h-dvh flex flex-col items-center justify-center p-6 transition-colors duration-500 ${
@@ -138,12 +147,11 @@ export default function VerifyTicketPage() {
                 <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Drafting ticket</div>
                 <div className="text-sm font-bold text-slate-900">{result.ticketNumber ?? "—"}</div>
                 {result.title && <div className="text-xs text-slate-500 mt-0.5">{result.title}</div>}
-                {result.unit && <div className="text-[10px] text-slate-400 mt-0.5">Unit {result.unit}</div>}
               </div>
               <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-100">
                 <div>
                   <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">This copy</div>
-                  <div className={`text-lg font-black ${result.verdict === "current" ? "text-emerald-600" : result.verdict === "superseded" ? "text-red-600" : "text-amber-600"}`}>
+                  <div className={`text-lg font-black ${result.verdict === "current" ? "text-emerald-600" : result.verdict === "superseded" || result.verdict === "withdrawn" ? "text-red-600" : "text-amber-600"}`}>
                     Rev {result.printedRev ?? "?"}
                   </div>
                 </div>
@@ -152,14 +160,15 @@ export default function VerifyTicketPage() {
                     {result.inReview ? "In review now" : "Latest issue"}
                   </div>
                   <div className="text-lg font-black text-slate-900">Rev {result.currentRev ?? "?"}</div>
-                  <div className="text-[10px] text-slate-400">activity {fmt(result.lastActivityAt)}</div>
                 </div>
               </div>
               {result.verdict !== "current" && (
                 <div className="pt-2 border-t border-slate-100 text-xs text-slate-600 leading-relaxed">
                   {result.verdict === "superseded"
                     ? "Get the current issued deliverable from the ticket requester before performing any work from this copy. Mark it “SUPERSEDED” or destroy it."
-                    : "Check with the ticket requester or project manager before relying on this copy."}
+                    : result.verdict === "withdrawn"
+                      ? "The request behind this copy is withdrawn. Do not perform any work from it; mark it “WITHDRAWN” or destroy it, and contact the requester."
+                      : "Check with the ticket requester or project manager before relying on this copy."}
                 </div>
               )}
             </div>
