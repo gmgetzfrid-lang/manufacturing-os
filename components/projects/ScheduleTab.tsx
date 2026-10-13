@@ -21,9 +21,9 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Flag, Plus, Loader2, AlertTriangle, Check, X, Calendar, ChevronDown, Upload, ArrowRight, Eye, EyeOff, Layers, Clock, Trash2 } from "lucide-react";
+import { Flag, Plus, Loader2, AlertTriangle, Check, X, Calendar, ChevronDown, Upload, ArrowRight, Eye, EyeOff, Layers, Clock, Trash2, RotateCcw } from "lucide-react";
 import {
-  listMilestones, createMilestone, setMilestoneStatus, setMilestoneProgress, deleteMilestone, clearProjectSchedule,
+  listMilestones, createMilestone, setMilestoneStatus, setMilestoneProgress, deleteMilestone, clearProjectSchedule, resetProjectProgress,
   applyMilestoneMoves, computeScheduleMetrics, setBaseline,
 } from "@/lib/milestones";
 import { supabase } from "@/lib/supabase";
@@ -210,6 +210,24 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
     finally { setClearing(false); }
   };
 
+  // Start the real run clean after a rehearsal: every task back to 0 % /
+  // planned with its actual stamps cleared. Dates and notes stay.
+  const [resetting, setResetting] = useState(false);
+  const onResetProgress = async () => {
+    const n = milestones.length;
+    const ok = await appConfirm({
+      message: `Reset progress on all ${n} task${n === 1 ? "" : "s"}? Every task goes back to 0% and "planned", and its actual start / completion stamps are cleared, so the real outage starts clean after testing. Planned dates, the baseline, dependencies and notes stay (status-change notes from the rehearsal are removed). This action is audited.`,
+      tone: "danger",
+    });
+    if (!ok) return;
+    setResetting(true); setError(null);
+    try {
+      await resetProjectProgress({ orgId, projectId, actorUserId: userId, actorUserEmail: userEmail, actorUserRole: userRole });
+      await refresh();
+    } catch (e) { setError((e as Error).message); }
+    finally { setResetting(false); }
+  };
+
   const onDelete = async (id: string) => {
     if (!(await appConfirm({ message: "Delete this milestone? This action is audited.", tone: "danger" }))) return;
     setBusy(true);
@@ -301,6 +319,16 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
               >
                 <Upload className="w-3.5 h-3.5" /> Import schedule
               </button>
+              {milestones.length > 0 && (
+                <button
+                  onClick={() => void onResetProgress()}
+                  disabled={busy || resetting}
+                  title="Start the real run clean: every task back to 0% / planned, actual start and completion stamps cleared. Dates and notes stay."
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 hover:text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-2.5 py-1.5 rounded-lg shadow-sm transition-colors disabled:opacity-50"
+                >
+                  {resetting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />} Reset progress
+                </button>
+              )}
               {milestones.length > 0 && (
                 <button
                   onClick={() => void onClearSchedule()}
