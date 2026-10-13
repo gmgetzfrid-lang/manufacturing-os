@@ -17,12 +17,28 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-const s = vi.hoisted(() => ({ session: { access_token: "tok" } as null | { access_token: string } }));
-vi.mock("@/lib/supabase", () => ({
-  supabase: { auth: { getSession: async () => ({ data: { session: s.session } }) } },
+const s = vi.hoisted(() => ({
+  session: { access_token: "tok" } as null | { access_token: string },
+  /** What the codebook_entries read answers (loadCodebookUnitList). */
+  codebook: { data: [] as unknown, error: null as null | { code?: string; message: string } } as { data: unknown; error: null | { code?: string; message: string } } | "throw",
+  codebookFilters: [] as Array<[string, unknown]>,
 }));
+vi.mock("@/lib/supabase", () => {
+  const chain: Record<string, unknown> = {};
+  chain.select = () => chain;
+  chain.eq = (c: string, v: unknown) => { s.codebookFilters.push([c, v]); return chain; };
+  chain.order = () => chain;
+  chain.then = (ok: (v: unknown) => unknown, bad?: (e: unknown) => unknown) => {
+    if (s.codebook === "throw") return Promise.reject(new TypeError("Failed to fetch")).then(ok, bad);
+    return Promise.resolve(s.codebook).then(ok, bad);
+  };
+  return { supabase: { auth: { getSession: async () => ({ data: { session: s.session } }) }, from: () => chain } };
+});
 
-import { resumeCheckinTicket, submitTicketCreate, discardStagedFiles, psmEscalationPending, DISCARD_BATCH, type ResumeRead } from "@/lib/ticketCreateClient";
+import {
+  resumeCheckinTicket, submitTicketCreate, discardStagedFiles, psmEscalationPending, creationNoticePending, queueNotNotifiedLine, loadCodebookUnitList,
+  DISCARD_BATCH, type ResumeRead,
+} from "@/lib/ticketCreateClient";
 import {
   ticketStagingFolder, ticketStagingPrefix, isStagedKeyOf, finalAttachmentKey, resolveUnit, resolveDerivedUnit, unitOptionsFor, checkinMocLine,
   contractLimitRefusal, clipToLimit, parseTicketCreateBody, MAX_ATTACHMENTS, MAX_DESCRIPTION, MAX_TITLE, UNIT_UNKNOWN_LABEL,
@@ -74,7 +90,7 @@ describe("LEAK-6 — resumeCheckinTicket: never a second ticket from a failed or
   it("the panel awaits it before creating, and the route resumes by episode for this requester", () => {
     const c = readFileSync(join(process.cwd(), "components/documents/CheckInPanel.tsx"), "utf8");
     expect(c).toContain("const found = done.ticket ? null : await resumedTicket();");
-    expect(c).toContain("?? (found && !found.escalationPending ? { id: found.id, number: found.number } : null)");
+    expect(c).toContain("?? (found && !found.escalationPending && !found.noticePending ? { id: found.id, number: found.number } : null)");
     expect(c).toContain("?? await createDraftingTicket(selected, { resuming: !!found });");
     // the lookup reads its own error
     expect(c).toMatch(/if \(error\) return \{ ticket: null, error: error\.message \|\| "the lookup failed" \};/);
@@ -151,6 +167,54 @@ describe("submitTicketCreate", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ok: true, id: "t1", ticketNumber: "N-1", resumed: false, warnings: ["w1", 7] }), { status: 201 })));
     expect(await submitTicketCreate({ orgId: "o", title: "t", description: "d", requestType: "ISO", origin: { kind: "portal" } }))
       .toEqual({ ok: true, id: "t1", ticketNumber: "N-1", resumed: false, warnings: ["w1"] });
+  });
+});
+
+describe("EDGE-8 — a request filed but not announced is carried back and said", () => {
+  beforeEach(() => { s.session = { access_token: "tok" }; vi.unstubAllGlobals(); });
+
+  it("notified: false travels with its reason; a reason without notified: false does not", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ok: true, id: "t1", ticketNumber: "N-1", resumed: false, notified: false, notifyReason: "the notice could not be written" }), { status: 201 })));
+    expect(await submitTicketCreate({ orgId: "o", title: "t", description: "d", requestType: "ISO", origin: { kind: "portal" } }))
+      .toEqual({ ok: true, id: "t1", ticketNumber: "N-1", resumed: false, notified: false, notifyReason: "the notice could not be written" });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ok: true, id: "t1", ticketNumber: "N-1", resumed: false, notified: true, notifyReason: "x" }), { status: 201 })));
+    expect(await submitTicketCreate({ orgId: "o", title: "t", description: "d", requestType: "ISO", origin: { kind: "portal" } }))
+      .toEqual({ ok: true, id: "t1", ticketNumber: "N-1", resumed: false, notified: true });
+  });
+
+  it("queueNotNotifiedLine: a sentence only when the route said the queue was not told", () => {
+    expect(queueNotNotifiedLine({ ticketNumber: "N-1", notified: true })).toBeNull();
+    expect(queueNotNotifiedLine({ ticketNumber: "N-1" })).toBeNull();
+    expect(queueNotNotifiedLine({ ticketNumber: "N-1", notified: false, notifyReason: "nobody to notify" }))
+      .toBe("N-1 is filed, but the assignment queue was not notified (nobody to notify) — tell your supervisor it is waiting.");
+    expect(queueNotNotifiedLine({ ticketNumber: "N-1", notified: false })).toContain("(the notice could not be sent)");
+  });
+
+  it("creationNoticePending: still in the queue and never stamped", () => {
+    expect(creationNoticePending("PENDING_ASSIGNMENT", {})).toBe(true);
+    expect(creationNoticePending("PENDING_ASSIGNMENT", null)).toBe(true);
+    expect(creationNoticePending("PENDING_ASSIGNMENT", { created_notice_at: "2026-10-07T08:00:00Z" })).toBe(false);
+    expect(creationNoticePending("DRAFTING", {})).toBe(false);
+    expect(creationNoticePending(undefined, {})).toBe(false);
+  });
+});
+
+describe("DCW-7 / FRIC-3 — loadCodebookUnitList: the form's unit read, its failure classed as the route classes its own", () => {
+  beforeEach(() => { s.codebookFilters = []; });
+
+  it("answered: the units, kind 'unit', in this workspace", async () => {
+    s.codebook = { data: [{ code: "20", label: "Crude" }, { code: "", label: "blank" }, { code: "30", label: null }], error: null };
+    expect(await loadCodebookUnitList("o")).toEqual({ units: [{ code: "20", label: "Crude" }, { code: "30", label: null }], failure: "none" });
+    expect(s.codebookFilters).toEqual([["org_id", "o"], ["kind", "unit"]]);
+  });
+
+  it("not there yet: missing (no list); there but unreadable, or a thrown read: unreadable — never an empty list that looks answered", async () => {
+    s.codebook = { data: null, error: { code: "42P01", message: 'relation "codebook_entries" does not exist' } };
+    expect(await loadCodebookUnitList("o")).toEqual({ units: [], failure: "missing" });
+    s.codebook = { data: null, error: { code: "57014", message: "statement timeout" } };
+    expect(await loadCodebookUnitList("o")).toEqual({ units: [], failure: "unreadable" });
+    s.codebook = "throw";
+    expect(await loadCodebookUnitList("o")).toEqual({ units: [], failure: "unreadable" });
   });
 });
 

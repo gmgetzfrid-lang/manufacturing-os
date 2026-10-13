@@ -17,7 +17,7 @@ import { memberHoldsAny } from "@/lib/roleHeld";
 import { logAuditAction } from "@/lib/audit";
 import { buildSourceDocumentRef, unitOfDocumentMetadata, type SourceDocumentRefRow } from "@/lib/sourceDocRef";
 import {
-  parseTicketCreateBody, unitOptionsFor, resolveUnit, resolveDerivedUnit, requestTypeAllowed, missingRequiredCustomField,
+  parseTicketCreateBody, unitOptionsFor, unitListReadFailure, resolveUnit, resolveDerivedUnit, requestTypeAllowed, missingRequiredCustomField,
   stampedRequesterRole, stampedRequesterName, openingHistory, creationNotice, insertFailureKind,
   isStagedKeyOf, finalAttachmentKey, attachmentSizeLabel, requestNumberYear, checkinNoteOf, psmAlertNotice,
   type CreatorMember, type TicketCreateInput, type TicketCreateAttachment, type TicketCreateOrigin, type CheckinMoc,
@@ -35,8 +35,15 @@ import type { OrgDraftingSettings, TicketAttachment } from "@/types/schema";
 //   2. validates the contract against the workspace's own rules — the
 //      configured request types, the required custom fields (the request
 //      form's origin), the unit list (FRIC-8 / FRIC-3 / DCW-7: the one list
-//      the form offers, lib/ticketCreate.ts unitOptionsFor), the staged
-//      attachments (under the caller's own pending prefix, in storage), and
+//      the form offers, lib/ticketCreate.ts unitOptionsFor — a list that is
+//      there but could not be read fails CLOSED: the unit given is not
+//      checked, the request files as "Unit unknown" with the unit given kept
+//      on the record, metadata.unit_unchecked, and the answer says so), the
+//      staged attachments (under the caller's own pending prefix, in
+//      storage), the library references (under this workspace's prefix, an
+//      http(s) URL, or a legacy non-org-prefixed key — which
+//      storage/upload-url still admits — that a document version of this
+//      workspace carries), and
 //      the origin's own facts (a check-in names a checkout of the document by
 //      this requester; a collision names an intake sheet in the project's
 //      intake folder, and that project's intake link) — BEFORE anything is
@@ -44,12 +51,14 @@ import type { OrgDraftingSettings, TicketAttachment } from "@/types/schema";
 //      document ACL (documents_acl_select) applies: one they cannot see is
 //      treated exactly like one that is not in the workspace. A hand-off the
 //      route cannot use (a source document since removed or not visible, a
-//      library reference outside this workspace, sheets past
+//      library reference the workspace does not hold, sheets past
 //      MAX_SOURCE_DOCUMENTS) is dropped with a warning, never a refusal;
 //   3. for a check-in, resumes the ticket the same check-in episode already
 //      filed for this requester instead of filing a second (LEAK-6) — and
-//      sends that ticket's PSM escalation if it never went out (no
-//      metadata.psm_escalated_at stamp);
+//      sends that ticket's creation notice if it never went out (no
+//      metadata.created_notice_at stamp: the first attempt ended between the
+//      insert and the notice, or the notice failed) and its PSM escalation if
+//      that never went out (no metadata.psm_escalated_at stamp);
 //   4. allocates the request number only now (EDGE-13: a refused submit
 //      never spends one), in the requester's calendar year when it is a year
 //      in force somewhere right now (requestNumberYear), and gives it back
@@ -70,7 +79,11 @@ import type { OrgDraftingSettings, TicketAttachment } from "@/types/schema";
 //      visible — EDGE-1, EDGE-12), both carrying metadata.action/status so
 //      the workflow route's supersede and the badge's reconcile retire them
 //      once the ticket moves on (ROUTE-11), from one door for all three
-//      creators (ROUTE-4); then, for a check-in that reports an undocumented
+//      creators (ROUTE-4) — stamped metadata.created_notice_at once sent, so
+//      a retry that resumes this ticket sends it only if it never went out; a
+//      notice that fails, or has nobody to go to, is ANSWERED (notified:
+//      false, notifyReason), never swallowed into a 201 that looks told; then,
+//      for a check-in that reports an undocumented
 //      field change, the PSM escalation to the controllers (LIFE-7, safety
 //      category), stamped metadata.psm_escalated_at once sent — so a retry
 //      that resumes the ticket sends it only if it never went out;
@@ -81,7 +94,11 @@ import type { OrgDraftingSettings, TicketAttachment } from "@/types/schema";
 //
 // DELETE /api/tickets/create — discards files a requester staged for a
 // submit that never reached POST (an upload that failed part-way). Only keys
-// under the caller's own pending prefix that no ticket names.
+// under the caller's own pending prefix that no ticket names; the answer
+// counts each key exactly once: deleted; kept (the caller's own, but a
+// ticket names it); unchecked (the caller's own, but the reference check
+// could not be made — the orphan sweep reclaims it); foreign (not the
+// caller's own staged file — never touched).
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -138,21 +155,23 @@ async function deleteObjects(keys: string[]): Promise<void> {
 /** EDGE-13: delete staged keys that no ticket names — the one guard every
  *  discard of staged files goes through (a refusal, a parse failure, a
  *  resumed check-in, DELETE). A staged key a ticket's attachments name (a
- *  re-key that did not complete) is that record's file, never a leftover; a
- *  key whose check cannot be made is left for the orphan sweep, which works
- *  by reference (lib/storageOrphans). */
-async function discardUnreferencedStaged(orgId: string, keys: string[]): Promise<{ deleted: number; unchecked: boolean }> {
+ *  re-key that did not complete) is that record's file, never a leftover
+ *  (`kept`); a key whose check cannot be made (`unchecked`) is left for the
+ *  orphan sweep, which works by reference (lib/storageOrphans). */
+async function discardUnreferencedStaged(orgId: string, keys: string[]): Promise<{ deleted: number; kept: number; unchecked: number }> {
   const discard: string[] = [];
-  let unchecked = false;
+  let kept = 0;
+  let unchecked = 0;
   await eachLimited(keys, 8, async (key) => {
     const { data, error } = await supabaseAdmin
       .from("tickets").select("id").eq("org_id", orgId)
       .contains("attachments", JSON.stringify([{ url: key }])).limit(1);
-    if (error) { unchecked = true; return; }
+    if (error) { unchecked++; return; }
     if (!data || (data as unknown[]).length === 0) discard.push(key);
+    else kept++;
   });
   await deleteObjects(discard);
-  return { deleted: discard.length, unchecked };
+  return { deleted: discard.length, kept, unchecked };
 }
 
 async function authenticate(req: NextRequest): Promise<{ id: string; email: string | null; token: string } | null> {
@@ -246,14 +265,35 @@ async function capturedVersion(doc: SourceRow, named: { versionId: string | null
   return null;
 }
 
-/** A library hand-off the route can attach as a Source: a key in this
- *  workspace, or an http(s) URL (a version whose file_url is a URL — the
- *  viewers resolve both), kept as it came, as the form always did. */
-function usableSourceReference(key: string, orgId: string): boolean {
+/** A library hand-off the route can attach as a Source, kept as it came, as
+ *  the form always did: an http(s) URL (a version whose file_url is a URL —
+ *  the viewers resolve both); a key under THIS workspace's prefix; or a
+ *  legacy key from before the orgs/ prefix (which storage/upload-url still
+ *  admits) that the register carries — a document_versions row's file_url
+ *  or source_file_key, looked up by exact equality as upload-url does — for
+ *  a document in this workspace. Both reads are the CALLER's
+ *  (document_versions_acl_select, documents_acl_select): no other
+ *  workspace's register, and no document the caller cannot open, is ever
+ *  read for it. A key under another workspace's prefix, or one the caller's
+ *  register does not carry, is not usable. "error": the register could not
+ *  be read. */
+async function sourceReferenceUsable(key: string, orgId: string, callerClient: SupabaseClient): Promise<boolean | "error"> {
   if (/^https?:\/\//i.test(key)) {
     try { return /^https?:$/.test(new URL(key).protocol); } catch { return false; }
   }
-  return isSafeStorageKey(key) && key.startsWith(`orgs/${orgId}/`);
+  if (!isSafeStorageKey(key)) return false;
+  if (key.startsWith(`orgs/${orgId}/`)) return true;
+  if (/^orgs\//i.test(key)) return false;
+  const docIds = new Set<string>();
+  for (const col of ["file_url", "source_file_key"] as const) {
+    const { data, error } = await callerClient.from("document_versions").select("record_id").eq(col, key).limit(20);
+    if (error) return "error";
+    for (const v of (data ?? []) as Array<{ record_id?: string | null }>) if (typeof v.record_id === "string") docIds.add(v.record_id);
+  }
+  if (docIds.size === 0) return false;
+  const { data: docs, error } = await callerClient.from("documents").select("id").eq("org_id", orgId).in("id", [...docIds]).limit(1);
+  if (error) return "error";
+  return ((docs ?? []) as unknown[]).length > 0;
 }
 
 export async function POST(req: NextRequest) {
@@ -301,7 +341,11 @@ type Created = {
   id: string;
   ticketNumber: string;
   resumed: boolean;
-  notified?: boolean;
+  /** Whether the assignment queue was told (EDGE-8): false when the notice
+   *  failed or had nobody to go to — `notifyReason` says which. A resumed
+   *  ticket answers true when its notice had already gone out. */
+  notified: boolean;
+  notifyReason?: string;
   /** A check-in's PSM escalation, when this request sent (or tried to send)
    *  one — absent when there was none to send or it had already gone. */
   psmAlert?: PsmAlertOutcome;
@@ -344,14 +388,20 @@ async function create(
   }
 
   // The unit list — the SAME resolver the form calls (unitOptionsFor): the
-  // saved units, else the codebook's, else none.
+  // saved units, else the codebook's, else none. A codebook that is not
+  // there (20260928 not pasted) is "no list" — free text, as the form shows;
+  // a codebook that IS there but could not be read is a list the unit cannot
+  // be checked against (unitListUnreadable, applied once the unit is settled
+  // below) — the form says the same when its own read fails
+  // (unitListReadFailure classes both reads).
   let codebookUnits: Array<{ code: string; label: string | null }> = [];
+  let unitListUnreadable = false;
   if (!((cfg?.units?.options?.length ?? 0) > 0)) {
     const { data: cb, error: cbErr } = await supabaseAdmin
       .from("codebook_entries").select("code, label").eq("org_id", orgId).eq("kind", "unit");
-    // The codebook is optional (it may not exist yet): an unreadable one is
-    // "no list", and the unit is taken as typed — as the form does.
-    if (!cbErr) codebookUnits = ((cb ?? []) as Array<{ code: string; label: string | null }>).filter((u) => !!u.code);
+    const failure = unitListReadFailure(cbErr);
+    if (failure === "unreadable") unitListUnreadable = true;
+    else if (failure === "none") codebookUnits = ((cb ?? []) as Array<{ code: string; label: string | null }>).filter((u) => !!u.code);
   }
   const unitOptions = unitOptionsFor(cfg, codebookUnits);
   let unit = resolveUnit(input.unit, unitOptions);
@@ -359,11 +409,18 @@ async function create(
     return { status: 400, field: "unit", error: `"${input.unit}" is not on this workspace's unit list — pick one, or "Unit unknown".` };
   }
 
+  // The caller's own client: the library references and the source
+  // documents are read with it (the document ACL applies), and the request
+  // number is allocated with it.
+  const caller_client = callerScopedClient(req);
+  if ("error" in caller_client) return { status: caller_client.status, error: caller_client.error };
+
   // Attachments: a staged file is the caller's own, under their pending
   // prefix, and is in storage (checked a few at a time); a Source reference
-  // names a file in this workspace, or a URL — one that does neither is
-  // dropped with a warning (a stale hand-off never blocks the request).
-  // Checked before a number is spent.
+  // names a file in this workspace (its prefix, or a legacy key the register
+  // carries), or a URL — one that does neither is dropped with a warning (a
+  // stale hand-off never blocks the request). Checked before a number is
+  // spent.
   const kept: TicketCreateAttachment[] = [];
   const staged: TicketCreateAttachment[] = [];
   for (const a of input.attachments) {
@@ -373,11 +430,12 @@ async function create(
       }
       staged.push(a);
       kept.push(a);
-    } else if (usableSourceReference(a.key, orgId)) {
-      kept.push(a);
-    } else {
-      warnings.push(`"${a.name}" was not attached: it is not a file in this workspace.`);
+      continue;
     }
+    const usable = await sourceReferenceUsable(a.key, orgId, caller_client);
+    if (usable === "error") return { status: 503, error: `Couldn't check the attached library file "${a.name}" against the register — try again in a moment.` };
+    if (usable) kept.push(a);
+    else warnings.push(`"${a.name}" was not attached: it is not a file in this workspace.`);
   }
   const stagedSizes = new Map<string, number | null>();
   const missingFiles: string[] = [];
@@ -396,11 +454,6 @@ async function create(
     return { status: 400, field: "attachments", error: `"${missingFiles[0]}" did not finish uploading — attach it again.` };
   }
   if (storageFault) return { status: 503, error: "Couldn't check the attached files in storage — try again in a moment." };
-
-  // The caller's own client: the source documents are read with it (the
-  // document ACL applies), and the request number is allocated with it.
-  const caller_client = callerScopedClient(req);
-  if ("error" in caller_client) return { status: caller_client.status, error: caller_client.error };
 
   // Source documents: in THIS workspace and visible to the caller (a foreign
   // id is never stored — SM-14's input; a restricted one never lends its
@@ -448,20 +501,35 @@ async function create(
     const doc = byId.get(primary.id)!;
     unit = resolveDerivedUnit([unitOfDocumentMetadata(doc.metadata), typeof doc.unit_code === "string" ? doc.unit_code : null], unitOptions);
   }
+  // DCW-7 / FRIC-3: the list exists but could not be read, so a unit — typed
+  // or derived — cannot be checked against it. Fail closed, consistently with
+  // the form's own answer: the request files as "Unit unknown" (triage
+  // assigns it), the unit given stays on the record (metadata.unit_unchecked)
+  // and the answer says so — never refused, never admitted unchecked.
+  let unitUnchecked: string | null = null;
+  if (unitListUnreadable && unit.unit != null) {
+    unitUnchecked = unit.unit;
+    unit = { kind: "none", unit: null };
+    warnings.push(`The unit "${unitUnchecked}" could not be checked against this workspace's unit list — the request was filed as "Unit unknown" (triage assigns it); the unit given is on the record.`);
+  }
 
   const reporter = stampedRequesterName(member, caller.email);
   const email = member.email || caller.email;
 
   // 3. LEAK-6: a check-in that already filed its ticket resumes it — keyed on
   //    the check-in episode, for this requester, while the ticket is open.
+  //    EDGE-8: if that ticket's creation notice never went out (no
+  //    created_notice_at stamp — the first attempt ended between the insert
+  //    and the notice, or the notice failed) and the ticket is still waiting
+  //    in the queue (PENDING_ASSIGNMENT), it is sent now, once.
   //    LIFE-7: if that ticket records an undocumented field change whose PSM
   //    escalation never went out (no psm_escalated_at stamp — the first
   //    attempt's answer said it failed, or the attempt ended before it was
   //    sent), it is sent now; a ticket already escalated is never escalated
-  //    twice. The escalation follows the TICKET's record, as first filed.
+  //    twice. Both follow the TICKET's record, as first filed.
   if (origin.kind === "checkin" && origin.episodeId) {
     const { data: prior, error: priorErr } = await supabaseAdmin
-      .from("tickets").select("id, ticket_id, description, metadata, last_modified")
+      .from("tickets").select("id, ticket_id, status, title, description, request_type, priority, unit, metadata, last_modified")
       .eq("org_id", orgId)
       .eq("requester_id", caller.id)
       .eq("metadata->checkin->>episodeId", origin.episodeId)
@@ -470,8 +538,27 @@ async function create(
     if (priorErr) return { status: 503, error: "Couldn't check whether this check-in already filed its request — try again in a moment." };
     if (prior) {
       await discardUnreferencedStaged(orgId, staged.map((a) => a.key));
-      const p = prior as { id: string; ticket_id: string; description?: string | null; metadata?: Record<string, unknown> | null; last_modified?: string | null };
-      const meta = p.metadata ?? {};
+      const p = prior as {
+        id: string; ticket_id: string; status?: string | null; title?: string | null; description?: string | null; request_type?: string | null;
+        priority?: number | null; unit?: string | null; metadata?: Record<string, unknown> | null; last_modified?: string | null;
+      };
+      let known: RowKnown | null = p.last_modified ? { metadata: p.metadata ?? {}, lastModified: String(p.last_modified) } : null;
+      let meta = p.metadata ?? {};
+      // The notice asks the queue to pick the ticket up: one already off
+      // PENDING_ASSIGNMENT was picked up, and a creation alert for it would
+      // be stale (the badge's reconcile retires it, ROUTE-11) — none owed.
+      let notice: Announced = { ok: true };
+      if (!meta.created_notice_at && p.status === "PENDING_ASSIGNMENT") {
+        notice = await announce({
+          req, orgId, ticketId: p.id, title: String(p.title ?? ""), origin,
+          requestType: String(p.request_type ?? ""), priority: Number(p.priority ?? 0),
+          unit: typeof p.unit === "string" ? p.unit : null, callerId: caller.id, email,
+        });
+        if (notice.ok) {
+          const stamped = await stampCreationNotice(p.id, p.ticket_id, known);
+          if (stamped) { known = stamped; meta = stamped.metadata; }
+        }
+      }
       let psmAlert: PsmAlertOutcome | undefined;
       if (meta.undocumented_change === true && !meta.psm_escalated_at) {
         const m = (meta.moc && typeof meta.moc === "object" ? meta.moc : null) as { status?: unknown; number?: unknown } | null;
@@ -482,10 +569,14 @@ async function create(
           req, orgId, ticketId: p.id, callerId: caller.id, reporter, email,
           docLabel: primary ? documentLabel(byId.get(primary.id)!) : "Document",
           note: checkinNoteOf(String(p.description ?? ""), priorMoc),
-          known: p.last_modified ? { metadata: meta, lastModified: String(p.last_modified) } : null,
+          known,
         });
       }
-      return { ok: true, id: p.id, ticketNumber: p.ticket_id, resumed: true, ...(psmAlert ? { psmAlert } : {}) };
+      return {
+        ok: true, id: p.id, ticketNumber: p.ticket_id, resumed: true,
+        notified: notice.ok, ...(notice.ok ? {} : { notifyReason: notice.reason }),
+        ...(psmAlert ? { psmAlert } : {}),
+      };
     }
   }
 
@@ -528,6 +619,7 @@ async function create(
   if (refs.length > 1) metadata.source_documents = refs;           // GAP-8
   if (unit.unit == null) metadata.unit_unknown = true;              // FRIC-3: the explicit answer
   else if (unit.kind === "unmatched") metadata.unit_unlisted = true; // DCW-7: kept as derived, not on the list
+  if (unitUnchecked) metadata.unit_unchecked = unitUnchecked;        // DCW-7: given, but the list could not be read
   if (origin.kind === "checkin") {
     const o = origin;
     metadata.checkin = { episodeId: o.episodeId, checkoutNumber: o.checkoutNumber, purpose: o.purpose, outcome: o.outcome };
@@ -611,23 +703,32 @@ async function create(
   }
 
   // 6. The new-request notice, from here (EDGE-8), awaited — before any file
-  //    is moved, so a slow copy can never cost the queue its notice.
-  const notified = await announce({ req, orgId, ticketId, title: input.title, input, origin, unit: unit.unit, callerId: caller.id, email });
+  //    is moved, so a slow copy can never cost the queue its notice — and
+  //    stamped metadata.created_notice_at once it is out, so a retry that
+  //    resumes this ticket sends it only if this attempt did not. A notice
+  //    that fails, or has nobody to go to, is answered (notified: false with
+  //    the reason), never swallowed.
+  const notice = await announce({
+    req, orgId, ticketId, title: input.title, origin, requestType: input.requestType, priority: input.priority,
+    unit: unit.unit, callerId: caller.id, email,
+  });
+  let known: RowKnown = { metadata, lastModified: now };
+  if (notice.ok) {
+    const stamped = await stampCreationNotice(ticketId, ticketNumber, known);
+    if (stamped) known = stamped;
+  }
 
   //    LIFE-7: a check-in reporting an undocumented field change escalates
   //    to the controllers from here too — durable (it does not depend on the
   //    browser getting this answer) and stamped once sent, so a retry that
   //    resumes this ticket never sends it twice.
   let psmAlert: PsmAlertOutcome | undefined;
-  let rowToken = now;
   if (origin.kind === "checkin" && origin.undocumentedChange) {
-    const known = { metadata, lastModified: now };
     psmAlert = await escalatePsm({
       req, orgId, ticketId, callerId: caller.id, reporter, email,
       docLabel: primary ? documentLabel(byId.get(primary.id)!) : "Document",
       note: checkinNoteOf(input.description, origin.moc),
       known,
-      onStamped: (token) => { rowToken = token; },
     });
   }
 
@@ -638,10 +739,9 @@ async function create(
   //    correct row.
   const stagedIds = new Set(attachments.filter((_, i) => kept[i].kind === "staged").map((a) => a.id));
   if (stagedIds.size > 0) {
-    const token = rowToken;
     after(async () => {
       try {
-        const unmoved = await rekeyAttachments(orgId, ticketId, ticketNumber, attachments, stagedIds, token, {
+        const unmoved = await rekeyAttachments(orgId, ticketId, ticketNumber, attachments, stagedIds, {
           startBy: startedAt + REKEY_START_BY_MS,
           abortAt: startedAt + REKEY_ABORT_AT_MS,
         });
@@ -662,7 +762,8 @@ async function create(
   });
 
   return {
-    ok: true, id: ticketId, ticketNumber, resumed: false, notified,
+    ok: true, id: ticketId, ticketNumber, resumed: false,
+    notified: notice.ok, ...(notice.ok ? {} : { notifyReason: notice.reason }),
     ...(psmAlert ? { psmAlert } : {}),
     ...(warnings.length > 0 ? { warnings } : {}),
   };
@@ -714,9 +815,22 @@ async function checkOrigin(
       .eq("document_id", primary.id).eq("user_id", callerId)
       .order("started_at", { ascending: false }).limit(20);
     if (sErr) return { status: 503, error: "Couldn't confirm the checkout this check-in closes — try again in a moment." };
-    const held = ((sessions ?? []) as Array<{ episode_id?: string | null; status?: string | null }>)
-      .some((s) => (o.episodeId != null && s.episode_id === o.episodeId) || s.status === "active");
-    if (!held) return { status: 400, field: "origin", error: "Only the person who checked this document out can file its check-in request." };
+    const own = (sessions ?? []) as Array<{ episode_id?: string | null; status?: string | null }>;
+    const held = own.some((s) => (o.episodeId != null && s.episode_id === o.episodeId) || s.status === "active");
+    if (!held) {
+      // A legacy check-in (no episode to resume by) retried after its
+      // checkout closed: the caller DID check the document out — say what
+      // happened, not who may file. The ownership refusal is for a caller
+      // with no checkout of the document at all, or one in someone else's
+      // episode.
+      if (o.episodeId == null && own.length > 0) {
+        return {
+          status: 400, field: "origin",
+          error: "Your checkout of this document is already closed, so this check-in cannot file its request again. If the request was filed, it is in the queue; otherwise file it from the request form.",
+        };
+      }
+      return { status: 400, field: "origin", error: "Only the person who checked this document out can file its check-in request." };
+    }
     return { origin: o, warnings: [] };
   }
   if (o.kind === "intake_collision") {
@@ -800,15 +914,16 @@ async function settleFailedInsert(p: {
 
 /** Copy each staged file under orgs/<org>/tickets/<number>/ (a few at a
  *  time; none started after `deadlines.startBy`, a running one abandoned at
- *  `deadlines.abortAt`), point the row at the copies (compare-and-set on the
- *  row's last_modified, which it bumps so a concurrent writer that read the
- *  staged keys loses its own compare-and-set), then delete the staged
- *  originals. A file that is not moved keeps its staged key on the row — it
- *  is never left unreferenced. Returns how many stayed where they were
- *  staged. */
+ *  `deadlines.abortAt`), point the row at the copies (the row read FRESH
+ *  first — the notice and PSM stamps, or another writer, have moved it on
+ *  since the insert — then compare-and-set on its last_modified, which it
+ *  bumps so a concurrent writer that read the staged keys loses its own
+ *  compare-and-set), then delete the staged originals. A file that is not
+ *  moved keeps its staged key on the row — it is never left unreferenced.
+ *  Returns how many stayed where they were staged. */
 async function rekeyAttachments(
   orgId: string, ticketId: string, ticketNumber: string, attachments: TicketAttachment[],
-  stagedIds: Set<string>, insertedAt: string, deadlines: { startBy: number; abortAt: number },
+  stagedIds: Set<string>, deadlines: { startBy: number; abortAt: number },
 ): Promise<number> {
   const staged = attachments.filter((a) => stagedIds.has(a.id));
   if (staged.length === 0) return 0;
@@ -832,9 +947,14 @@ async function rekeyAttachments(
   if (moves.size === 0) return staged.length;
 
   const stagedKeyOf = new Map(staged.map((a) => [a.id, a.url]));
-  let token = insertedAt;
-  let current = attachments;
   for (let attempt = 0; attempt < 2; attempt++) {
+    // The row as it is now (a second time when someone wrote it in between):
+    // the same files are moved on top of whatever it holds.
+    const { data: fresh, error } = await supabaseAdmin
+      .from("tickets").select("attachments, last_modified").eq("id", ticketId).maybeSingle();
+    if (error || !fresh) break;
+    const token = String((fresh as { last_modified: string }).last_modified);
+    const current = ((fresh as { attachments?: TicketAttachment[] | null }).attachments ?? []);
     // Only an entry that still names its staged key is pointed at the copy.
     const next = current.map((a) => (moves.has(a.id) && a.url === stagedKeyOf.get(a.id) ? { ...a, url: moves.get(a.id)! } : a));
     const w = await checkedWrite(supabaseAdmin.from("tickets")
@@ -845,35 +965,41 @@ async function rekeyAttachments(
       await deleteObjects([...moves.keys()].map((id) => stagedKeyOf.get(id)!));
       return staged.length - moves.size;
     }
-    // Someone wrote the row in between: re-read it once and move the same
-    // files on top of what they wrote.
-    const { data: fresh, error } = await supabaseAdmin
-      .from("tickets").select("attachments, last_modified").eq("id", ticketId).maybeSingle();
-    if (error || !fresh) break;
-    token = String((fresh as { last_modified: string }).last_modified);
-    current = ((fresh as { attachments?: TicketAttachment[] | null }).attachments ?? []);
   }
   // The row still names the staged keys: drop the copies, keep the originals.
   await deleteObjects([...moves.values()]);
   return staged.length;
 }
 
-/** The new-request notice to the assignment queue: bell + preference-aware
- *  email through emit(), as the service role (lib/serverClientScope), with
- *  metadata.action / status (ROUTE-11). Returns whether it ran. */
 /** EDGE-9's convention: a link in an EMAIL is absolute — the configured
  *  public origin, else the origin this request arrived on. */
 function emailLinkFor(req: NextRequest, link: string): string {
   return `${(publicOrigin() || new URL(req.url).origin).replace(/\/+$/, "")}${link}`;
 }
 
+/** What became of the creation notice: sent to the assignment pool, or not —
+ *  with the reason the answer carries. */
+type Announced = { ok: true } | { ok: false; reason: string };
+
+/** The new-request notice to the assignment queue: bell + preference-aware
+ *  email through emit(), as the service role (lib/serverClientScope), with
+ *  metadata.action / status (ROUTE-11). Not ok when the pool is empty (no
+ *  active Drafting Supervisor or Admin other than the requester could be
+ *  found — nobody was told, and the answer must not say otherwise), when
+ *  emit() throws, or when no creation bell row for the ticket is there
+ *  afterwards (notify() logs and swallows a refused bell insert, so the
+ *  route reads the queue's side back rather than trusting emit()'s silence);
+ *  the caller stamps the ticket only when it is ok. */
 async function announce(p: {
-  req: NextRequest; orgId: string; ticketId: string; title: string; input: TicketCreateInput; origin: TicketCreateOrigin;
-  unit: string | null; callerId: string; email: string | null;
-}): Promise<boolean> {
+  req: NextRequest; orgId: string; ticketId: string; title: string; origin: TicketCreateOrigin;
+  requestType: string; priority: number; unit: string | null; callerId: string; email: string | null;
+}): Promise<Announced> {
   try {
     const recipients = await resolveTicketRecipients(p.orgId, "PENDING_ASSIGNMENT", p.callerId, supabaseAdmin);
-    if (recipients.length === 0) return true;
+    if (recipients.length === 0) {
+      console.warn(`[tickets/create] new-request notice for ${p.ticketId}: nobody to notify (no active Drafting Supervisor or Admin other than the requester)`);
+      return { ok: false, reason: "nobody to notify — no active Drafting Supervisor or Admin other than you was found" };
+    }
     const notice = creationNotice(p.origin, p.title);
     const link = `/requests/${p.ticketId}`;
     const emailLink = emailLinkFor(p.req, link);
@@ -895,27 +1021,49 @@ async function announce(p: {
       metadata: {
         action: "created",
         status: "PENDING_ASSIGNMENT",
-        request_type: p.input.requestType,
-        priority: p.input.priority,
+        request_type: p.requestType,
+        priority: p.priority,
         unit: p.unit,
       },
     }));
-    return true;
+    // The queue's side, read back: a creation bell row for this ticket in a
+    // recipient's bell (this attempt's, or an earlier attempt's that was
+    // never stamped — either way someone in the queue was told). Whoever
+    // wrote such a row, it IS in a queue member's bell; the requester's own
+    // bell never counts.
+    const { data: rows, error: readErr } = await supabaseAdmin
+      .from("notifications").select("id")
+      .eq("org_id", p.orgId).eq("resource_type", "ticket").eq("resource_id", p.ticketId)
+      .eq("metadata->>action", "created").in("user_id", recipients.map((m) => m.uid)).limit(1);
+    if (readErr) {
+      console.error(`[tickets/create] new-request notice for ${p.ticketId}: could not confirm the bell rows:`, readErr.message);
+      return { ok: false, reason: "the notice could not be confirmed" };
+    }
+    if (((rows ?? []) as unknown[]).length === 0) {
+      console.error(`[tickets/create] new-request notice for ${p.ticketId}: no bell row was written (the request is filed)`);
+      return { ok: false, reason: "the notice could not be written" };
+    }
+    return { ok: true };
   } catch (e) {
     console.error(`[tickets/create] new-request notice for ${p.ticketId} failed (the request is filed):`, e);
-    return false;
+    return { ok: false, reason: "the notice could not be written" };
   }
 }
+
+/** A ticket row as a writer last saw it: its metadata and the last_modified
+ *  its next compare-and-set must match. */
+type RowKnown = { metadata: Record<string, unknown> | null; lastModified: string };
 
 /** Merge `patch` into a ticket's metadata — compare-and-set on
  *  last_modified (which it bumps, so a writer that read the old metadata
  *  loses its own compare-and-set instead of erasing the stamp). `known` is
  *  the row as the caller already holds it; a lost race re-reads once.
- *  Returns the new last_modified, or null when the stamp was not written. */
+ *  Returns the row as written (the merged metadata and the new
+ *  last_modified — what the next stamp must build on), or null when the
+ *  stamp was not written. */
 async function stampTicketMetadata(
-  ticketId: string, patch: Record<string, unknown>,
-  known: { metadata: Record<string, unknown> | null; lastModified: string } | null,
-): Promise<string | null> {
+  ticketId: string, patch: Record<string, unknown>, known: RowKnown | null,
+): Promise<{ metadata: Record<string, unknown>; lastModified: string } | null> {
   let cur = known;
   for (let attempt = 0; attempt < 2; attempt++) {
     if (!cur) {
@@ -925,14 +1073,25 @@ async function stampTicketMetadata(
       cur = { metadata: row.metadata ?? null, lastModified: String(row.last_modified ?? "") };
     }
     const token = new Date().toISOString();
+    const merged = { ...(cur.metadata ?? {}), ...patch };
     const w = await checkedWrite(supabaseAdmin.from("tickets")
-      .update({ metadata: { ...(cur.metadata ?? {}), ...patch }, last_modified: token })
+      .update({ metadata: merged, last_modified: token })
       .eq("id", ticketId).eq("last_modified", cur.lastModified)
       .select("id"));
-    if (w.ok) return token;
+    if (w.ok) return { metadata: merged, lastModified: token };
     cur = null;
   }
   return null;
+}
+
+/** EDGE-8: stamp metadata.created_notice_at once the creation notice is out
+ *  — the mark a resumed check-in reads, so the notice goes out once. A stamp
+ *  that cannot be written means a later resume may send it once more: a
+ *  second notice, never a lost one. */
+async function stampCreationNotice(ticketId: string, ticketNumber: string, known: RowKnown | null): Promise<{ metadata: Record<string, unknown>; lastModified: string } | null> {
+  const stamped = await stampTicketMetadata(ticketId, { created_notice_at: new Date().toISOString() }, known);
+  if (!stamped) console.error(`[tickets/create] the creation notice of ${ticketNumber} was sent but not stamped; a resumed check-in may send it again`);
+  return stamped;
 }
 
 /** LIFE-7: the PSM escalation for a check-in that reports an undocumented
@@ -950,8 +1109,7 @@ async function stampTicketMetadata(
 async function escalatePsm(p: {
   req: NextRequest; orgId: string; ticketId: string; callerId: string; reporter: string; email: string | null;
   docLabel: string; note: string;
-  known: { metadata: Record<string, unknown> | null; lastModified: string } | null;
-  onStamped?: (token: string) => void;
+  known: RowKnown | null;
 }): Promise<PsmAlertOutcome> {
   const notice = psmAlertNotice({ reporter: p.reporter, docLabel: p.docLabel, note: p.note });
   try {
@@ -991,9 +1149,8 @@ async function escalatePsm(p: {
     console.error(`[tickets/create] PSM escalation for ${p.ticketId} failed; not stamped — the next attempt sends it:`, e);
     return "failed";
   }
-  const token = await stampTicketMetadata(p.ticketId, { psm_escalated_at: new Date().toISOString() }, p.known);
-  if (token) p.onStamped?.(token);
-  else console.error(`[tickets/create] PSM escalation for ${p.ticketId} was sent but not stamped; a resumed check-in may send it again`);
+  const stamped = await stampTicketMetadata(p.ticketId, { psm_escalated_at: new Date().toISOString() }, p.known);
+  if (!stamped) console.error(`[tickets/create] PSM escalation for ${p.ticketId} was sent but not stamped; a resumed check-in may send it again`);
   return "sent";
 }
 
@@ -1004,12 +1161,16 @@ export async function DELETE(req: NextRequest) {
   try { raw = await req.json(); } catch { return json(400, { error: "Invalid JSON body" }); }
   const r = (raw ?? {}) as { orgId?: unknown; keys?: unknown };
   const orgId = typeof r.orgId === "string" ? r.orgId : "";
-  const keys = Array.isArray(r.keys) ? r.keys.filter((k): k is string => typeof k === "string") : [];
+  const keys = Array.isArray(r.keys) ? [...new Set(r.keys.filter((k): k is string => typeof k === "string"))] : [];
   if (!orgId || keys.length === 0 || keys.length > 50) return json(400, { error: "orgId and up to 50 keys are required" });
   const own = keys.filter((k) => isSafeStorageKey(k) && isStagedKeyOf(k, orgId, caller.id));
   // A staged key a ticket already names (a re-key that did not complete) is
-  // a record's file, not a leftover: never deleted here.
+  // a record's file, not a leftover: never deleted here (`kept`). A key that
+  // is not the caller's own staged file is `foreign`; one whose reference
+  // check could not be made is `unchecked` (the orphan sweep reclaims it).
+  // Each key is counted once (a key named twice is one key).
   const done = await discardUnreferencedStaged(orgId, own);
-  if (done.unchecked) return json(503, { error: "Couldn't check the files against the requests — try again.", deleted: done.deleted });
-  return json(200, { ok: true, deleted: done.deleted, refused: keys.length - done.deleted });
+  const counts = { deleted: done.deleted, kept: done.kept, unchecked: done.unchecked, foreign: keys.length - own.length };
+  if (done.unchecked > 0) return json(503, { error: "Couldn't check the files against the requests — try again.", ...counts });
+  return json(200, { ok: true, ...counts });
 }

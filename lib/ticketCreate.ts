@@ -485,6 +485,25 @@ export function insertFailureKind(err: { code?: unknown } | null | undefined): "
   return "ambiguous";
 }
 
+/** DCW-7 / FRIC-3: what a failed read of the Site Codebook's units
+ *  (`codebook_entries`, kind "unit") means — the one classification the
+ *  request form and the create route both apply, so they fail the same way:
+ *   none        — the read answered;
+ *   missing     — the codebook is not there yet (20260928 not pasted): no
+ *                 list, the free-text box — a setup gap, not a fault;
+ *   unreadable  — the codebook is there but could not be read: a list the
+ *                 unit cannot be checked against. The route then files the
+ *                 request as "Unit unknown" with the unit given kept on the
+ *                 record (metadata.unit_unchecked) and says so; the form says
+ *                 the list could not be loaded. Never a silent admission. */
+export function unitListReadFailure(err: { code?: unknown; message?: unknown } | null | undefined): "none" | "missing" | "unreadable" {
+  if (!err) return "none";
+  const code = typeof err.code === "string" ? err.code : "";
+  const msg = typeof err.message === "string" ? err.message : "";
+  if (code === "42P01" || code === "PGRST205" || /codebook_entries.*(does not exist|schema cache)/i.test(msg)) return "missing";
+  return "unreadable";
+}
+
 /** 20261038 ticket_insert_integrity's request-type rule, verbatim: a
  *  workspace with a configured list accepts its values and the built-in
  *  check-in / transition-in vocabulary; one with no list accepts any type. */

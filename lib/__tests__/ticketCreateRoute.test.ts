@@ -780,7 +780,8 @@ describe("ROUTE-11 — the creation notice is retired like every workflow alert"
 
 describe("LEAK-6 — a check-in resumes the ticket its episode already filed", () => {
   it("an open ticket for this episode and requester: 200 resumed, nothing allocated, inserted or announced, the staged file discarded", async () => {
-    s.tables.tickets.push({ id: "t-old", org_id: ORG, ticket_id: "KE-DDRT-26-0042", requester_id: REQ, status: "PENDING_ASSIGNMENT", created_at: "2026-10-01", metadata: { checkin: { episodeId: EPISODE } } });
+    // its creation notice went out (stamped) — the resume owes nothing
+    s.tables.tickets.push({ id: "t-old", org_id: ORG, ticket_id: "KE-DDRT-26-0042", requester_id: REQ, status: "PENDING_ASSIGNMENT", created_at: "2026-10-01", metadata: { checkin: { episodeId: EPISODE }, created_notice_at: "2026-10-01T00:00:01.000Z" } });
     s.objects.set(staged("photo.jpg"), 10);
     const res = await POST(req(checkin({ attachments: [{ kind: "staged", key: staged("photo.jpg"), name: "photo.jpg" }] })));
     expect(res.status).toBe(200);
@@ -1267,7 +1268,7 @@ describe("LIFE-7 / LEAK-6 — the PSM escalation is the route's: sent once, stam
   it("a controller read that fails: 'failed', not stamped — the check-in's next attempt resumes the ticket and sends it", async () => {
     s.tables.tickets.push({
       id: "t-old", org_id: ORG, ticket_id: "KE-DDRT-26-0042", requester_id: REQ, status: "PENDING_ASSIGNMENT", created_at: "2026-10-01", last_modified: "2026-10-01T00:00:00.000Z",
-      description: "Old note.", metadata: { checkin: { episodeId: EPISODE }, undocumented_change: true },
+      description: "Old note.", metadata: { checkin: { episodeId: EPISODE }, undocumented_change: true, created_notice_at: "2026-10-01T00:00:01.000Z" },
     });
     // the membership read answers; the controller read does not
     s.errors["org_members.select"] = [null, { code: "57014", message: "statement timeout" }];
@@ -1503,7 +1504,7 @@ describe("DELETE — discarding files staged for a submit that never reached the
     for (const k of [mine, named, theirs]) s.objects.set(k, 1);
     s.tables.tickets.push({ id: "t1", org_id: ORG, attachments: [{ id: "x", url: named }] });
     const res = await DELETE(req({ orgId: ORG, keys: [mine, named, theirs] }, "tok-req", "DELETE"));
-    expect(await res.json()).toMatchObject({ ok: true, deleted: 1, refused: 2 });
+    expect(await res.json()).toEqual({ ok: true, deleted: 1, kept: 1, unchecked: 0, foreign: 1 });
     expect(s.objects.has(mine)).toBe(false);
     expect(s.objects.has(named)).toBe(true);
     expect(s.objects.has(theirs)).toBe(true);
@@ -1512,5 +1513,194 @@ describe("DELETE — discarding files staged for a submit that never reached the
   it("needs a session", async () => {
     expect((await DELETE(req({ orgId: ORG, keys: [staged("a.pdf")] }, "nope", "DELETE"))).status).toBe(401);
     expect((await POST(req(portal(), "nope"))).status).toBe(401);
+  });
+});
+
+// ── Third review of DF-P2 ────────────────────────────────────────────────
+describe("EDGE-8 / LEAK-6 — the creation notice is stamped, and a resume sends it only when it never went out", () => {
+  const noticeStamp = (i = 0) => (tickets()[i].metadata as Row).created_notice_at;
+  /** A ticket as the route inserts it, whose attempt then ended before the
+   *  notice (a platform timeout, a crash): no bell row, no stamp. */
+  const died = (over: Row = {}) => ({
+    id: "t-died", org_id: ORG, ticket_id: "KE-DDRT-26-0042", requester_id: REQ, status: "PENDING_ASSIGNMENT", title: "As-Built Discrepancy: Flare header",
+    request_type: "ASBUILT", priority: 1, unit: "200", created_at: "2026-10-01", last_modified: "2026-10-01T00:00:00.000Z",
+    description: "Valve moved.", metadata: { checkin: { episodeId: EPISODE } }, ...over,
+  });
+
+  it("a new request is answered notified: true and its ticket stamped created_notice_at", async () => {
+    const res = await POST(req(portal()));
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.notified).toBe(true);
+    expect(body.notifyReason).toBeUndefined();
+    expect(typeof noticeStamp()).toBe("string");
+    expect(creationBell()).toHaveLength(2);
+  });
+
+  it("a first attempt that died after the insert: the retry resumes and announces once", async () => {
+    s.tables.tickets.push(died());
+    const retry = await POST(req(checkin({ sourceDocuments: [{ id: DOC, documentNumber: "P-101", title: "Flare header", rev: "4", versionId: V4 }] }, { undocumentedChange: false, moc: null })));
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toMatchObject({ id: "t-died", resumed: true, notified: true });
+    expect(creationBell().map((n) => n.user_id).sort()).toEqual([SUP, SUP2].sort());
+    expect(creationBell().every((n) => n.resource_id === "t-died" && (n.metadata as Row).status === "PENDING_ASSIGNMENT")).toBe(true);
+    expect(typeof noticeStamp()).toBe("string");
+    const third = await POST(req(checkin({}, { undocumentedChange: false, moc: null })));
+    expect(third.status).toBe(200);
+    expect(creationBell()).toHaveLength(2);
+    expect(nextTicketRpc()).toHaveLength(0);
+  });
+
+  it("a ticket already taken off the queue is not announced again on resume", async () => {
+    s.tables.tickets.push(died({ status: "DRAFTING" }));
+    const retry = await POST(req(checkin({}, { undocumentedChange: false, moc: null })));
+    expect(await retry.json()).toMatchObject({ id: "t-died", resumed: true, notified: true });
+    expect(creationBell()).toHaveLength(0);
+  });
+
+  it("a notice whose bell rows are all refused is answered notified: false with the reason, not stamped — and the check-in's retry sends it, once", async () => {
+    const refused = { code: "42501", message: "new row violates row-level security policy" };
+    s.errors["notifications.insert"] = [refused, refused];
+    const first = await POST(req(checkin({}, { undocumentedChange: false, moc: null })));
+    expect(first.status).toBe(201);
+    expect(await first.json()).toMatchObject({ notified: false, notifyReason: "the notice could not be written" });
+    expect(creationBell()).toHaveLength(0);
+    expect(noticeStamp()).toBeUndefined();
+    const retry = await POST(req(checkin({}, { undocumentedChange: false, moc: null })));
+    expect(await retry.json()).toMatchObject({ resumed: true, notified: true });
+    expect(creationBell()).toHaveLength(2);
+    expect(typeof noticeStamp()).toBe("string");
+    await POST(req(checkin({}, { undocumentedChange: false, moc: null })));
+    expect(creationBell()).toHaveLength(2);
+  });
+
+  it("nobody to notify (no supervisor or admin but the requester) is answered notified: false — never a 201 that looks told", async () => {
+    s.tables.org_members = s.tables.org_members.filter((m) => m.uid === REQ);
+    const res = await POST(req(portal()));
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.notified).toBe(false);
+    expect(body.notifyReason).toMatch(/^nobody to notify/);
+    expect(noticeStamp()).toBeUndefined();
+  });
+});
+
+describe("FRIC-8 / DEC-44 (DF-P2) item 5 — a legacy library key the register carries is attached", () => {
+  const LEGACY = "libraries/l1/legacy-p101.pdf";
+  const handoff = (key: string) => portal({ sourceDocuments: [], attachments: [{ kind: "source_reference", key, name: "p101.pdf" }] });
+
+  it("a key from before the orgs/ prefix that a version of a document in this workspace carries: attached as the Source", async () => {
+    s.tables.document_versions.push({ id: "v-legacy", record_id: DOC, revision_label: "4", file_url: LEGACY });
+    const res = await POST(req(handoff(LEGACY)));
+    expect(res.status).toBe(201);
+    expect((await res.json()).warnings).toBeUndefined();
+    expect((tickets()[0].attachments as Row[])[0]).toMatchObject({ url: LEGACY, type: "Source" });
+  });
+
+  it("the native source key (source_file_key) counts too", async () => {
+    s.tables.document_versions.push({ id: "v-legacy", record_id: DOC, revision_label: "4", source_file_key: LEGACY });
+    expect(((await (await POST(req(handoff(LEGACY)))).json()).warnings)).toBeUndefined();
+  });
+
+  it("a legacy key no version carries, one of another workspace's document, or of a document the caller cannot open: dropped with the warning", async () => {
+    const drop = '"p101.pdf" was not attached: it is not a file in this workspace.';
+    expect((await (await POST(req(handoff(LEGACY)))).json()).warnings).toEqual([drop]);
+    s.tables.document_versions.push({ id: "v-x", record_id: DOC_FOREIGN, revision_label: "1", file_url: LEGACY });
+    expect((await (await POST(req(handoff(LEGACY)))).json()).warnings).toEqual([drop]);
+    s.tables.document_versions.push({ id: "v-legacy", record_id: DOC, revision_label: "4", file_url: LEGACY });
+    s.tables.documents[0].visible_to = [SUP];
+    expect((await (await POST(req(handoff(LEGACY)))).json()).warnings).toEqual([drop]);
+    expect(tickets().every((t) => (t.attachments as Row[]).length === 0)).toBe(true);
+  });
+
+  it("another workspace's prefixed key is never looked up in the register; the register is read as the caller", async () => {
+    const reads: string[] = [];
+    s.hooks.push((table) => { if (table === "document_versions") reads.push(table); });
+    await POST(req(handoff(`orgs/${OTHER_ORG}/libraries/l9/x.pdf`)));
+    expect(reads).toEqual([]);
+    const route = readFileSync(join(process.cwd(), "app/api/tickets/create/route.ts"), "utf8");
+    expect(route).toMatch(/callerClient\.from\("document_versions"\)/);
+    expect(route).not.toMatch(/supabaseAdmin\.from\("document_versions"\)/);
+  });
+
+  it("a register that cannot be read is a 503 before a number is spent", async () => {
+    s.errors["document_versions.select"] = [{ code: "57014", message: "statement timeout" }];
+    expect((await POST(req(handoff(LEGACY)))).status).toBe(503);
+    expect(nextTicketRpc()).toHaveLength(0);
+  });
+});
+
+describe("DCW-7 / FRIC-3 — a unit list that cannot be read fails visibly, and the same way as the form", () => {
+  beforeEach(() => {
+    (s.tables.org_configurations[0].data as Row).units = { label: "Unit", enabled: true, options: [] };
+    s.tables.codebook_entries = [{ org_id: ORG, kind: "unit", code: "20", label: "Crude" }];
+  });
+
+  it("the codebook is there but unreadable: the unit given is not admitted unchecked — filed as Unit unknown, kept as unit_unchecked, and the answer says so", async () => {
+    s.errors["codebook_entries.select"] = [{ code: "57014", message: "statement timeout" }];
+    const res = await POST(req(portal({ unit: "99", sourceDocuments: [], attachments: [] })));
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(tickets()[0].unit).toBeNull();
+    expect(tickets()[0].metadata).toMatchObject({ unit_unknown: true, unit_unchecked: "99" });
+    expect((tickets()[0].metadata as Row).unit_unlisted).toBeUndefined();
+    expect(body.warnings).toEqual(['The unit "99" could not be checked against this workspace\'s unit list — the request was filed as "Unit unknown" (triage assigns it); the unit given is on the record.']);
+  });
+
+  it("the codebook is not there yet (20260928 not pasted): no list — the unit is free text, as the form's box takes it", async () => {
+    s.errors["codebook_entries.select"] = [{ code: "42P01", message: 'relation "codebook_entries" does not exist' }];
+    const res = await POST(req(portal({ unit: "99", sourceDocuments: [], attachments: [] })));
+    expect(res.status).toBe(201);
+    expect(tickets()[0].unit).toBe("99");
+    expect((tickets()[0].metadata as Row).unit_unchecked).toBeUndefined();
+  });
+
+  it("unitListReadFailure classes both sides' reads alike", async () => {
+    const { unitListReadFailure } = await import("@/lib/ticketCreate");
+    expect(unitListReadFailure(null)).toBe("none");
+    expect(unitListReadFailure({ code: "42P01", message: "x" })).toBe("missing");
+    expect(unitListReadFailure({ code: "PGRST205", message: "Could not find the table 'public.codebook_entries' in the schema cache" })).toBe("missing");
+    expect(unitListReadFailure({ code: "57014", message: "statement timeout" })).toBe("unreadable");
+    expect(unitListReadFailure({ message: "TypeError: fetch failed" })).toBe("unreadable");
+  });
+});
+
+describe("EDGE-13 — DELETE says what became of each key", () => {
+  it("own and referenced is kept, not refused; another's is foreign; each counted once", async () => {
+    const named = staged("b.pdf");
+    const theirs = staged("c.pdf", SUP);
+    for (const k of [named, theirs]) s.objects.set(k, 1);
+    s.tables.tickets.push({ id: "t1", org_id: ORG, attachments: [{ id: "x", url: named }] });
+    const res = await DELETE(req({ orgId: ORG, keys: [named, named, theirs] }, "tok-req", "DELETE"));
+    expect(await res.json()).toEqual({ ok: true, deleted: 0, kept: 1, unchecked: 0, foreign: 1 });
+  });
+
+  it("a reference check that fails: 503, the key counted unchecked and left in place", async () => {
+    const mine = staged("a.pdf");
+    s.objects.set(mine, 1);
+    s.errors["tickets.select"] = [{ code: "57014", message: "statement timeout" }];
+    const res = await DELETE(req({ orgId: ORG, keys: [mine] }, "tok-req", "DELETE"));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ deleted: 0, kept: 0, unchecked: 1, foreign: 0 });
+    expect(s.objects.has(mine)).toBe(true);
+  });
+});
+
+describe("FRIC-8 / LEAK-6 — a legacy check-in retried after its checkout closed is told what happened", () => {
+  it("the caller's own checkout of the document, closed, no episode: 400 saying the checkout is closed — not the ownership refusal", async () => {
+    s.tables.checkout_sessions[0].status = "completed";
+    const res = await POST(req(checkin({}, { episodeId: null })));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.field).toBe("origin");
+    expect(body.error).toMatch(/^Your checkout of this document is already closed/);
+    expect(body.error).not.toMatch(/Only the person who checked this document out/);
+    expect(nextTicketRpc()).toHaveLength(0);
+  });
+
+  it("a caller with no checkout of the document at all still gets the ownership refusal", async () => {
+    s.tables.checkout_sessions = s.tables.checkout_sessions.filter((x) => x.document_id !== DOC);
+    const res = await POST(req(checkin({}, { episodeId: null })));
+    expect((await res.json()).error).toBe("Only the person who checked this document out can file its check-in request.");
   });
 });

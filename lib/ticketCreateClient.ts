@@ -7,7 +7,7 @@
 // request number or sends a notification: the route does all three.
 
 import { supabase } from "@/lib/supabase";
-import type { TicketCreateAttachment, TicketCreateOrigin, TicketCreateSourceDoc } from "@/lib/ticketCreate";
+import { unitListReadFailure, type TicketCreateAttachment, type TicketCreateOrigin, type TicketCreateSourceDoc } from "@/lib/ticketCreate";
 
 /** The body the route reads (lib/ticketCreate.ts parseTicketCreateBody). */
 export interface TicketCreateBody {
@@ -34,9 +34,50 @@ export interface TicketCreateBody {
  *  or it had already gone. */
 export type PsmAlertOutcome = "sent" | "unrouted" | "failed";
 
+/** EDGE-8: `notified` is whether the route told the assignment queue — false
+ *  when the notice failed or had nobody to go to, with `notifyReason` saying
+ *  which. The request is filed either way; a resumed check-in sends the
+ *  notice the first attempt did not. */
 export type TicketCreateResult =
-  | { ok: true; id: string; ticketNumber: string; resumed: boolean; notified?: boolean; psmAlert?: PsmAlertOutcome; warnings?: string[] }
+  | { ok: true; id: string; ticketNumber: string; resumed: boolean; notified?: boolean; notifyReason?: string; psmAlert?: PsmAlertOutcome; warnings?: string[] }
   | { ok: false; status: number; error: string; field?: string };
+
+/** EDGE-8: the sentence a creator shows (the request form) or records (the
+ *  check-in panel, the intake collision) when the route filed the request
+ *  but could not tell the assignment queue. Nothing when the queue was told,
+ *  or when the answer does not say. */
+export function queueNotNotifiedLine(res: { ticketNumber: string; notified?: boolean; notifyReason?: string }): string | null {
+  if (res.notified !== false) return null;
+  return `${res.ticketNumber} is filed, but the assignment queue was not notified (${res.notifyReason || "the notice could not be sent"}) — tell your supervisor it is waiting.`;
+}
+
+/** DCW-7 / FRIC-3: the Site Codebook's units as the request form offers them
+ *  — the read the create route makes (codebook_entries, kind "unit"), with
+ *  its failure classed the same way (lib/ticketCreate.ts
+ *  unitListReadFailure): "missing" (the codebook is not there yet) is no
+ *  list, the free-text box; "unreadable" is a list the form cannot show, so
+ *  it offers no unit at all (the request files as "Unit unknown") and says
+ *  so — never a free-text box the route would refuse, or a silent empty
+ *  list. lib/codebook loadCodebook answers an empty codebook for both, so the
+ *  form does not use it for the unit list. */
+export async function loadCodebookUnitList(orgId: string): Promise<{
+  units: Array<{ code: string; label: string | null }>;
+  failure: "none" | "missing" | "unreadable";
+}> {
+  try {
+    const { data, error } = await supabase
+      .from("codebook_entries").select("code, label").eq("org_id", orgId).eq("kind", "unit")
+      .order("sort").order("code");
+    const failure = unitListReadFailure(error);
+    if (failure !== "none") return { units: [], failure };
+    const units = ((data ?? []) as Array<{ code?: unknown; label?: unknown }>)
+      .filter((u): u is { code: string; label: unknown } => typeof u.code === "string" && u.code !== "")
+      .map((u) => ({ code: u.code, label: typeof u.label === "string" ? u.label : null }));
+    return { units, failure };
+  } catch {
+    return { units: [], failure: "unreadable" };
+  }
+}
 
 async function bearer(): Promise<string | null> {
   try {
@@ -82,6 +123,7 @@ export async function submitTicketCreate(body: TicketCreateBody): Promise<Ticket
     ticketNumber: j.ticketNumber,
     resumed: j.resumed === true,
     ...(typeof j.notified === "boolean" ? { notified: j.notified } : {}),
+    ...(j.notified === false && typeof j.notifyReason === "string" && j.notifyReason ? { notifyReason: j.notifyReason } : {}),
     ...(j.psmAlert === "sent" || j.psmAlert === "unrouted" || j.psmAlert === "failed" ? { psmAlert: j.psmAlert } : {}),
     ...(Array.isArray(j.warnings) && j.warnings.length > 0 ? { warnings: j.warnings.filter((w): w is string => typeof w === "string") } : {}),
   };
@@ -92,8 +134,9 @@ export const DISCARD_BATCH = 50;
 
 /** Best-effort: discard files staged for a submit that never reached the
  *  route (an upload that failed part-way), DISCARD_BATCH keys per call. The
- *  route refuses any key that is not the caller's own staged file, or that a
- *  ticket names. Never called after a submit whose answer did not arrive
+ *  route deletes only the caller's own staged keys that no ticket names, and
+ *  answers each key as deleted, kept (a ticket names it), unchecked or
+ *  foreign. Never called after a submit whose answer did not arrive
  *  (status 0): the route may still be filing those files — the orphan sweep,
  *  which works by reference, reclaims them if it did not. */
 export async function discardStagedFiles(orgId: string, keys: string[]): Promise<void> {
@@ -114,11 +157,13 @@ export async function discardStagedFiles(orgId: string, keys: string[]): Promise
 /** LEAK-6: what a check-in's mount-time read of "the ticket this episode
  *  already filed" answered. `escalationPending`: the ticket records an
  *  undocumented field change and carries no psm_escalated_at stamp — the
- *  PSM escalation never went out, so the panel hands the check-in to the
- *  route (which resumes the ticket and sends it) instead of reusing the
- *  ticket silently. */
+ *  PSM escalation never went out. `noticePending` (EDGE-8): the ticket is
+ *  still waiting in the queue and carries no created_notice_at stamp — the
+ *  creation notice never went out. Either way the panel hands the check-in
+ *  to the route (which resumes the ticket and sends what is missing, once)
+ *  instead of reusing the ticket silently. */
 export interface ResumeRead {
-  ticket: { id: string; number: string; escalationPending?: boolean } | null;
+  ticket: { id: string; number: string; escalationPending?: boolean; noticePending?: boolean } | null;
   error: string | null;
 }
 
@@ -127,6 +172,14 @@ export interface ResumeRead {
 export function psmEscalationPending(metadata: unknown): boolean {
   const m = (metadata && typeof metadata === "object" ? metadata : {}) as Record<string, unknown>;
   return m.undocumented_change === true && !m.psm_escalated_at;
+}
+
+/** EDGE-8: true when a ticket is still waiting for assignment and its
+ *  creation notice was never stamped as sent (the route stamps
+ *  metadata.created_notice_at once the queue is told). */
+export function creationNoticePending(status: unknown, metadata: unknown): boolean {
+  const m = (metadata && typeof metadata === "object" ? metadata : {}) as Record<string, unknown>;
+  return status === "PENDING_ASSIGNMENT" && !m.created_notice_at;
 }
 
 /** LEAK-6: the ticket a check-in resumes, decided BEFORE anything is filed.
@@ -138,7 +191,7 @@ export function psmEscalationPending(metadata: unknown): boolean {
 export async function resumeCheckinTicket(
   pending: Promise<ResumeRead> | null,
   reread: () => Promise<ResumeRead>,
-): Promise<{ id: string; number: string; escalationPending?: boolean } | null> {
+): Promise<{ id: string; number: string; escalationPending?: boolean; noticePending?: boolean } | null> {
   if (!pending) return null;
   const first = await pending;
   if (!first.error) return first.ticket;

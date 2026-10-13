@@ -21,7 +21,7 @@
 import { supabase } from "@/lib/supabase";
 import { userFacingReadError, userFacingCaughtError } from "@/lib/userFacingError";
 import { normalizeTag } from "@/lib/assets";
-import { submitTicketCreate } from "@/lib/ticketCreateClient";
+import { submitTicketCreate, queueNotNotifiedLine } from "@/lib/ticketCreateClient";
 import { clipToLimit, MAX_DESCRIPTION, MAX_TITLE } from "@/lib/ticketCreate";
 import { completeUniquenessKey, numberIsTheKey, uniquenessTuple } from "@/lib/intakeLinks";
 
@@ -644,7 +644,7 @@ export interface FlagCollisionInput {
  *  contractor's portal can request redlines against the ticket. */
 export async function flagCollisionToDrafting(
   input: FlagCollisionInput,
-): Promise<{ ok: boolean; ticketNumber?: string; error?: string }> {
+): Promise<{ ok: boolean; ticketNumber?: string; error?: string; warning?: string }> {
   const { orgId, projectId, candidate, impact } = input;
 
   // Which intake link authored this sheet (if any) — lets the contractor's
@@ -706,6 +706,11 @@ export async function flagCollisionToDrafting(
       },
     });
     if (!res.ok) return { ok: false, error: res.error };
+    // EDGE-8: the route filed the request but could not tell the assignment
+    // queue — handed back to the flagger as `warning` (IntakePanel shows it)
+    // and on the console, never swallowed; the flag itself stands.
+    const notTold = queueNotNotifiedLine(res);
+    if (notTold) console.warn(`[transitionIn] ${notTold}`);
     const ticketNumber = res.ticketNumber;
     const row = { id: res.id };
 
@@ -720,7 +725,7 @@ export async function flagCollisionToDrafting(
       },
     }).then(() => undefined, () => undefined);
 
-    return { ok: true, ticketNumber };
+    return { ok: true, ticketNumber, ...(notTold ? { warning: notTold } : {}) };
   } catch (e) {
     return { ok: false, error: userFacingCaughtError(e, { context: "flagCollisionToDrafting" }) };
   }

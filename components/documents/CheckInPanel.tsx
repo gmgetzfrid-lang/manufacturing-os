@@ -50,7 +50,7 @@ import type { CheckoutSession, DocumentRecord, DocumentVersion } from "@/types/s
 // (LIFE-7, DF-P2 review fix): sent once, stamped on the ticket, and sent by a
 // resumed check-in only if it never went out.
 import { checkinMocLine, clipToLimit, contractLimitRefusal, MAX_TITLE, ticketStagingFolder, type CheckinMoc } from "@/lib/ticketCreate";
-import { submitTicketCreate, discardStagedFiles, resumeCheckinTicket, psmEscalationPending, type ResumeRead, type PsmAlertOutcome } from "@/lib/ticketCreateClient";
+import { submitTicketCreate, discardStagedFiles, resumeCheckinTicket, psmEscalationPending, creationNoticePending, queueNotNotifiedLine, type ResumeRead, type PsmAlertOutcome } from "@/lib/ticketCreateClient";
 
 /** LIFE-14 / LEAK-6: the open ticket this check-in episode already filed for
  *  this requester, if any. The read's error is part of the answer — "could
@@ -58,13 +58,17 @@ import { submitTicketCreate, discardStagedFiles, resumeCheckinTicket, psmEscalat
 async function lookupResumeTicket(orgId: string, episodeId: string, uid: string): Promise<ResumeRead> {
   try {
     const { data, error } = await supabase
-      .from("tickets").select("id, ticket_id, metadata")
+      .from("tickets").select("id, ticket_id, status, metadata")
       .eq("org_id", orgId).eq("requester_id", uid).eq("metadata->checkin->>episodeId", episodeId)
       .not("status", "in", '("CLOSED","CANCELED")').order("created_at", { ascending: false }).limit(1).maybeSingle();
     if (error) return { ticket: null, error: error.message || "the lookup failed" };
-    const row = data as { id: string; ticket_id: string; metadata?: unknown } | null;
+    const row = data as { id: string; ticket_id: string; status?: unknown; metadata?: unknown } | null;
     return {
-      ticket: row ? { id: row.id, number: row.ticket_id, escalationPending: psmEscalationPending(row.metadata) } : null,
+      ticket: row ? {
+        id: row.id, number: row.ticket_id,
+        escalationPending: psmEscalationPending(row.metadata),
+        noticePending: creationNoticePending(row.status, row.metadata),
+      } : null,
       error: null,
     };
   } catch (e) {
@@ -340,6 +344,15 @@ export default function CheckInPanel({
       },
     });
     if (!res.ok) throw new Error(res.error || "Couldn't create the drafting request.");
+    // EDGE-8: the route filed the request but could not tell the assignment
+    // queue (the notice failed, or nobody holds the queue) — said to the
+    // reporter and recorded, never swallowed; the check-in goes on, and the
+    // next submission of this check-in resumes the ticket and sends it.
+    const notTold = queueNotNotifiedLine(res);
+    if (notTold) {
+      console.warn(`[checkin] ${notTold}`);
+      showToast({ type: "warning", title: "Request filed, queue not notified", message: notTold });
+    }
     // LIFE-7: the PSM escalation is the route's — for a new ticket, and for a
     // resumed one whose escalation never went out (LEAK-6: a lost first
     // answer, a first attempt that ended before sending it). Exactly once:
@@ -400,11 +413,12 @@ export default function CheckInPanel({
           // Idempotent: a retry after a failed session-close reuses the ticket
           // already created — never a second ticket, upload set, or PSM alert.
           // A ticket the panel's own read found is reused as it is — unless
-          // its PSM escalation never went out: then the route is asked (no
-          // files), which resumes it and sends the escalation once.
+          // its PSM escalation or its creation notice (EDGE-8) never went
+          // out: then the route is asked (no files), which resumes it and
+          // sends what is missing, once.
           const found = done.ticket ? null : await resumedTicket();
           const ticket = done.ticket
-            ?? (found && !found.escalationPending ? { id: found.id, number: found.number } : null)
+            ?? (found && !found.escalationPending && !found.noticePending ? { id: found.id, number: found.number } : null)
             ?? await createDraftingTicket(selected, { resuming: !!found });
           done.ticket = ticket;
           if (alsoHold && selected.allowHoldOffer && !done.hold) {

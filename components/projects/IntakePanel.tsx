@@ -502,6 +502,12 @@ export default function IntakePanel({ orgId, projectId, canManage, uid, userEmai
       orgId, projectId, candidate, impact,
       actorId: uid, actorEmail: userEmail ?? null, actorRole: null,
     });
+    // EDGE-8: filed, but the assignment queue could not be told — said, not
+    // a green "in the queue" that looks told.
+    if (res.ok && res.warning) {
+      setMsg(`${candidate.label} flagged to drafting — ${res.warning}`, "info");
+      return;
+    }
     setMsg(res.ok
       ? `${candidate.label} flagged to drafting — ticket ${res.ticketNumber} is in the assignment queue.`
       : (res.error ?? "Couldn't flag the collision."),

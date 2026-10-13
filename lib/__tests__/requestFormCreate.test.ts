@@ -39,6 +39,9 @@ const s = vi.hoisted(() => ({
   configError: null as null | { message: string },
   configReads: 0,
   codebook: [] as Array<{ code: string; label: string }>,
+  /** How the codebook read fails, when it does (lib/ticketCreate.ts unitListReadFailure). */
+  codebookFailure: "none" as "none" | "missing" | "unreadable",
+  codebookReads: 0,
   submit: vi.fn(),
   discard: vi.fn(),
   upload: vi.fn(),
@@ -73,9 +76,14 @@ vi.mock("@/lib/draftHandoff", () => ({
 }));
 vi.mock("@/components/providers/DialogProvider", () => ({ appAlert: (...a: unknown[]) => s.alert(...a) }));
 vi.mock("@/components/ui/IsoGuidance", () => ({ default: () => null }));
-vi.mock("@/lib/ticketCreateClient", () => ({
+vi.mock("@/lib/ticketCreateClient", async (orig) => ({
+  ...(await orig<typeof import("@/lib/ticketCreateClient")>()),
   submitTicketCreate: (...a: unknown[]) => s.submit(...a),
   discardStagedFiles: (...a: unknown[]) => s.discard(...a),
+  loadCodebookUnitList: async () => {
+    s.codebookReads++;
+    return s.codebookFailure === "none" ? { units: s.codebook, failure: "none" } : { units: [], failure: s.codebookFailure };
+  },
 }));
 
 import NewTicketPage from "@/app/(protected)/requests/new/page";
@@ -98,6 +106,8 @@ beforeEach(() => {
   s.configError = null;
   s.configReads = 0;
   s.codebook = [];
+  s.codebookFailure = "none";
+  s.codebookReads = 0;
   s.config = CONFIG([{ label: "Unit 100", value: "100" }, { label: "Unit 200", value: "200" }]);
   s.alert.mockResolvedValue(undefined);
   s.discardDraft.mockResolvedValue(undefined);
@@ -330,6 +340,71 @@ describe("DCW-7 — the form offers the route's unit list, never a built-in one"
     expect(s.configReads).toBe(reads + 1);
     expect(host!.querySelector('[role="alert"]')).toBeNull();
     expect(el<HTMLSelectElement>("#request-unit").options).toHaveLength(3);
+  });
+});
+
+describe("DCW-7 / FRIC-3 — a unit list that cannot be read is said, and the form and the route agree", () => {
+  it("the Site Codebook is there but unreadable: said on the page with a retry; no free-text box the route would check against a list the page could not show; the request files with no unit", async () => {
+    s.config = null;
+    s.codebook = [{ code: "20", label: "Crude" }];
+    s.codebookFailure = "unreadable";
+    await mount();
+    const banner = el<HTMLDivElement>("#request-unit-unreadable");
+    expect(banner?.getAttribute("role")).toBe("alert");
+    expect(banner.textContent).toContain("Couldn't load this workspace's unit list");
+    expect(host!.querySelector("input#request-unit")).toBeNull();
+    expect(host!.textContent).not.toContain("This workspace has no unit list yet");
+    await fillBasics();
+    await submit();
+    expect(s.submit.mock.calls[0][0].unit).toBeNull();
+    // the retry reads again and, answered, offers the list
+    s.codebookFailure = "none";
+    const reads = s.codebookReads;
+    await act(async () => { [...banner.querySelectorAll("button")].find((b) => b.textContent === "Try again")!.click(); });
+    await flush();
+    await flush();
+    expect(s.codebookReads).toBe(reads + 1);
+    expect(host!.querySelector("#request-unit-unreadable")).toBeNull();
+    expect([...el<HTMLSelectElement>("#request-unit").options].map((o) => o.textContent)).toEqual(["Unit unknown — triage assigns", "20 — Crude"]);
+  });
+
+  it("the Site Codebook is not there yet: no list — the free-text box, said to be a setup gap (the route takes the unit as typed)", async () => {
+    s.config = null;
+    s.codebookFailure = "missing";
+    await mount();
+    expect(el<HTMLInputElement>("#request-unit").tagName).toBe("INPUT");
+    expect(host!.querySelector("#request-unit-unreadable")).toBeNull();
+    expect(host!.textContent).toContain("This workspace has no unit list yet");
+  });
+
+  it("the page reads the unit list through the classifying reader, not loadCodebook (which answers an empty codebook for a failed read)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const page = readFileSync(join(process.cwd(), "app/(protected)/requests/new/page.tsx"), "utf8");
+    expect(page).toContain("await loadCodebookUnitList(activeOrgId)");
+    expect(page).not.toMatch(/loadCodebook\(/);
+  });
+});
+
+describe("EDGE-8 — a request filed but not announced is said, never a 'Done!' that looks told", () => {
+  it("notified: false — the alert names the number and the reason; the redirect follows", async () => {
+    s.submit.mockResolvedValue({ ok: true, id: "t-1", ticketNumber: "KE-DDRT-26-0001", resumed: false, notified: false, notifyReason: "nobody to notify — no active Drafting Supervisor or Admin other than you was found" });
+    await mount();
+    await fillBasics();
+    await submit();
+    expect(s.alert).toHaveBeenCalledWith({
+      title: "Filed KE-DDRT-26-0001",
+      message: "KE-DDRT-26-0001 is filed, but the assignment queue was not notified (nobody to notify — no active Drafting Supervisor or Admin other than you was found) — tell your supervisor it is waiting.",
+    });
+    expect(s.push).toHaveBeenCalledWith("/requests");
+  });
+
+  it("notified: true — no alert", async () => {
+    await mount();
+    await fillBasics();
+    await submit();
+    expect(s.alert).not.toHaveBeenCalled();
+    expect(s.push).toHaveBeenCalledWith("/requests");
   });
 });
 

@@ -553,6 +553,9 @@ const DEDUPE_READS: Record<string, Array<{ marks: string; keys?: string[]; kinds
   // drafting-flow DF-P1 (EVID-13; classified by the integrator at the DF-P1 merge): the route
   // reads a ticket's unread workflow alerts only to mark them superseded, on the service role.
   "app/api/tickets/workflow-action/route.ts": [{ marks: '.is("metadata->>superseded_at", null)', none: "not a dedupe: the workflow route reads a ticket's unread workflow alerts (metadata.action set, not yet superseded) to mark them metadata.superseded_at on the service role (DF-P1 EVID-13); it decides no send" }],
+  // drafting-flow DF-P2 third review fix (EDGE-8): the create route reads back whether the
+  // creation notice reached a recipient's bell, because notify() swallows a refused insert.
+  "app/api/tickets/create/route.ts": [{ marks: '.eq("metadata->>action", "created").in("user_id", recipients.map((m) => m.uid))', none: "not a dedupe: after emit(), the create route reads whether a creation bell row (metadata.action 'created') for the new ticket is in a queue recipient's bell — notify() logs and swallows a refused insert — to answer notified: false and leave metadata.created_notice_at unstamped when none is. A row a browser wrote there is in a recipient's bell all the same, so it cannot make a notice nobody received read as received; the requester's own bell is not read" }],
   "app/api/transmittal/route.ts": [{ marks: '.eq("kind", UNSTAMPABLE_NOTICE_KIND)', kinds: ["transmittal_unstampable"] }],
   // ackRequest (the nag's watermark) is written by browsers by design — a manual request or
   // re-nudge counts as the nag (the scan's own comment); only the escalation's key is server-only

@@ -267,6 +267,36 @@ describe("LIFE-7 — the PSM escalation is the route's; the panel says what need
     expect(s.push).toHaveBeenCalledWith("/requests/t-old");
   });
 
+  it("EDGE-8: a found ticket still in the queue whose creation notice never went out is handed to the route — which resumes it and sends the notice", async () => {
+    s.lookups.push(async () => ({ data: { id: "t-old", ticket_id: "KE-DDRT-26-0042", status: "PENDING_ASSIGNMENT", metadata: {} }, error: null }));
+    s.submit.mockResolvedValue({ ok: true, id: "t-old", ticketNumber: "KE-DDRT-26-0042", resumed: true, notified: true });
+    await mount();
+    await reportDiscrepancy();
+    expect(s.submit).toHaveBeenCalledTimes(1);
+    expect(s.submit.mock.calls[0][0]).toMatchObject({ attachments: [], origin: { episodeId: EPISODE } });
+    expect(s.push).toHaveBeenCalledWith("/requests/t-old");
+  });
+
+  it("EDGE-8: a found ticket whose notice is stamped, or that has left the queue, is reused — nothing posted", async () => {
+    s.lookups.push(async () => ({ data: { id: "t-old", ticket_id: "KE-DDRT-26-0042", status: "PENDING_ASSIGNMENT", metadata: { created_notice_at: "2026-10-07T08:00:00Z" } }, error: null }));
+    await mount();
+    await reportDiscrepancy();
+    expect(s.submit).not.toHaveBeenCalled();
+  });
+
+  it("EDGE-8: filed but the assignment queue was not told — the reporter sees a warning saying so; the check-in still completes", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    s.submit.mockResolvedValue({ ok: true, id: "t-new", ticketNumber: "KE-DDRT-26-0009", resumed: false, notified: false, notifyReason: "the notice could not be written", psmAlert: "sent" });
+    await mount();
+    await reportDiscrepancy();
+    expect(s.showToast).toHaveBeenCalledWith({
+      type: "warning", title: "Request filed, queue not notified",
+      message: "KE-DDRT-26-0009 is filed, but the assignment queue was not notified (the notice could not be written) — tell your supervisor it is waiting.",
+    });
+    expect(s.finish).toHaveBeenCalled();
+    expect(s.push).toHaveBeenCalledWith("/requests/t-new");
+  });
+
   it("the panel holds no escalation of its own (source)", async () => {
     const { readFileSync } = await import("node:fs");
     const { join } = await import("node:path");

@@ -27,7 +27,10 @@ vi.mock("@/lib/supabase", () => {
   };
   return { supabase: { from } };
 });
-vi.mock("@/lib/ticketCreateClient", () => ({ submitTicketCreate: (...a: unknown[]) => s.submit(...a) }));
+vi.mock("@/lib/ticketCreateClient", async (orig) => ({
+  ...(await orig<typeof import("@/lib/ticketCreateClient")>()),
+  submitTicketCreate: (...a: unknown[]) => s.submit(...a),
+}));
 
 import { flagCollisionToDrafting, type TransitionCandidate, type TransitionImpact } from "@/lib/transitionIn";
 import { MAX_DESCRIPTION } from "@/lib/ticketCreate";
@@ -67,6 +70,17 @@ describe("flagCollisionToDrafting → /api/tickets/create", () => {
       action: "INTAKE_COLLISION_FLAGGED", resource_id: "doc-new", org_id: ORG, user_id: "u-1",
       details: expect.objectContaining({ ticketNumber: "KE-DDRT-26-0009", ticketRef: "t-9", intakeLinkId: "link-1", projectId: PROJECT }),
     });
+  });
+
+  it("EDGE-8: filed but the assignment queue was not told — the flag stands and hands the flagger a warning saying so", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    s.submit.mockResolvedValue({ ok: true, id: "t-9", ticketNumber: "KE-DDRT-26-0009", resumed: false, notified: false, notifyReason: "the notice could not be written" });
+    const res = await flagCollisionToDrafting({ orgId: ORG, projectId: PROJECT, candidate, impact, actorId: "u-1", actorEmail: null, actorRole: null });
+    expect(res).toEqual({
+      ok: true, ticketNumber: "KE-DDRT-26-0009",
+      warning: "KE-DDRT-26-0009 is filed, but the assignment queue was not notified (the notice could not be written) — tell your supervisor it is waiting.",
+    });
+    expect(s.inserts.map((i) => i.table)).toEqual(["audit_logs"]);
   });
 
   it("a sheet overlapping hundreds of drawings still files: the written description is clipped to the contract's limit, never refused", async () => {

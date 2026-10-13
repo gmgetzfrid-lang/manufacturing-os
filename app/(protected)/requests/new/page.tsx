@@ -10,8 +10,7 @@ import { readDraft, discardDraft } from '@/lib/draftHandoff';
 // DF-P2: the request is filed by /api/tickets/create — it validates, numbers,
 // inserts and notifies server-side. This page stages the files and posts.
 import { capSourceDocuments, contractLimitRefusal, droppedSourceDocumentsWarning, missingRequiredCustomField, ticketStagingFolder, unitOptionsFor, UNIT_UNKNOWN_LABEL, type TicketCreateAttachment, type TicketCreateSourceDoc } from '@/lib/ticketCreate';
-import { submitTicketCreate, discardStagedFiles } from '@/lib/ticketCreateClient';
-import { loadCodebook } from '@/lib/codebook';
+import { submitTicketCreate, discardStagedFiles, loadCodebookUnitList, queueNotNotifiedLine } from '@/lib/ticketCreateClient';
 import IsoGuidance from '@/components/ui/IsoGuidance';
 import { PageShell, PageHeaderBar } from '@/components/ui/PageShell';
 import { Input, Select } from '@/components/ui/Field';
@@ -87,6 +86,11 @@ export default function NewTicketPage() {
   // The workspace's settings could not be read: the form shows the built-in
   // lists, which the server may refuse — said on the page, with a retry.
   const [configError, setConfigError] = useState(false);
+  // DCW-7 / FRIC-3: the Site Codebook's unit list exists but could not be
+  // read — the form offers no unit (the request files as "Unit unknown") and
+  // says so, as the route does when ITS read fails: never a free-text box
+  // the route would check against a list this page could not show.
+  const [unitListError, setUnitListError] = useState(false);
   const [configAttempt, setConfigAttempt] = useState(0);
 
   // Form State
@@ -178,12 +182,18 @@ export default function NewTicketPage() {
         // unitOptionsFor(saved settings, Site Codebook units): the saved units,
         // else the codebook's (taught once in Admin → Site Codebook, spoken
         // here too), else none (free text).
+        // The codebook read is classed as the route classes its own
+        // (unitListReadFailure): not there yet → no list (free text); there
+        // but unreadable → no unit offered, said on the page.
         let codebookUnits: Array<{ code: string; label: string | null }> = [];
+        let unitsUnreadable = false;
         if (!((saved?.units?.options?.length ?? 0) > 0)) {
-          try {
-            codebookUnits = (await loadCodebook(activeOrgId)).units.map((u) => ({ code: u.code, label: u.label }));
-          } catch { /* codebook optional — free-text unit input remains */ }
+          const read = await loadCodebookUnitList(activeOrgId);
+          codebookUnits = read.units;
+          unitsUnreadable = read.failure === 'unreadable';
         }
+        setUnitListError(unitsUnreadable);
+        if (unitsUnreadable) setUnit('');
         cfg.units = {
           label: saved?.units?.label ?? DEFAULT_SETTINGS.units.label,
           enabled: saved?.units?.enabled ?? true,
@@ -339,7 +349,7 @@ export default function NewTicketPage() {
       title, description,
       requestType,
       priority,
-      unit: unit || null,
+      unit: unitListError ? null : (unit || null),
       targetCompletionAt: targetDate ? new Date(targetDate).toISOString() : null,
       // ADD-3: the role that decides approval routing is chosen by
       // relevance (an engineer tier held anywhere waives the engineer
@@ -363,13 +373,18 @@ export default function NewTicketPage() {
     // A hand-off the route could not use (a source document since removed or
     // not visible to you, a file outside this workspace, sheets past the
     // cap) was dropped, not refused — say what.
-    const warnings = [...formWarnings, ...(res.warnings ?? [])];
+    // EDGE-8: the route filed the request but could not tell the assignment
+    // queue (the notice failed, or nobody holds the queue) — said here, never
+    // a 'Done!' that looks told.
+    const notTold = queueNotNotifiedLine(res);
+    const warnings = [...formWarnings, ...(res.warnings ?? []), ...(notTold ? [notTold] : [])];
     if (warnings.length > 0) {
       await appAlert({ title: `Filed ${res.ticketNumber}`, message: warnings.join(' ') });
     }
 
-    // EDGE-8: the route filed AND notified before it answered — nothing is
-    // left for this tab to finish, so the redirect waits on nothing.
+    // EDGE-8: the route filed (and notified, or said it could not) before it
+    // answered — nothing is left for this tab to finish, so the redirect
+    // waits on nothing.
     setUploadStatus('Done!');
     router.push('/requests');
   };
@@ -472,7 +487,21 @@ export default function NewTicketPage() {
                 <label className="block text-sm font-bold text-[var(--color-text)] mb-2">
                   {config.units.label} <span className="text-[var(--color-text-faint)] font-normal text-xs">(optional)</span>
                 </label>
-                {config.units.options.length > 0 ? (
+                {unitListError ? (
+                  <div role="alert" id="request-unit-unreadable" className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-3 text-xs text-amber-900">
+                    <span className="flex-1">
+                      Couldn&apos;t load this workspace&apos;s unit list — retry, or file the request with no unit
+                      (&ldquo;{UNIT_UNKNOWN_LABEL}&rdquo;).
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setConfigAttempt((n) => n + 1)}
+                      className="px-3 py-1.5 rounded-lg border border-amber-300 bg-[var(--color-surface)] font-bold hover:bg-amber-100"
+                    >
+                      Try again
+                    </button>
+                  </div>
+                ) : config.units.options.length > 0 ? (
                   <Select
                     id="request-unit"
                     className="font-medium"
