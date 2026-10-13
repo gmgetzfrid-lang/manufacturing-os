@@ -195,8 +195,6 @@ export default function ActivityFeedPage() {
     const map = new Map<string, ActivityRow[]>();
     for (const r of rows) {
       if (SCOPE_STAMP_ACTIONS.has(r.action)) continue; // SEC-21: the database's stamp, not an event (its MILESTONE_DELETED row is)
-      const attempt = pairing.followUps.get(r.id);
-      if (attempt && pairing.attempts.has(attempt)) continue; // EVID-12: said on its attempt's line
       const day = new Date(r.timestamp).toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" });
       const list = map.get(day) || [];
       list.push(r);
@@ -204,7 +202,13 @@ export default function ActivityFeedPage() {
     }
     for (const [day, list] of map) out.push({ day, rows: list });
     return out;
-  }, [rows, pairing]);
+  }, [rows]);
+
+  // EVID-12: the feed as shown — a follow-up row whose attempt is loaded is
+  // said on its attempt's line, not again on its own (a day left empty goes).
+  const feedGroups = useMemo(() => grouped
+    .map((g) => ({ day: g.day, rows: g.rows.filter((r) => { const attempt = pairing.followUps.get(r.id); return !(attempt && pairing.attempts.has(attempt)); }) }))
+    .filter((g) => g.rows.length > 0), [grouped, pairing]);
 
   // Top-of-feed "pulse" widget: at-a-glance counts so Activity reads like a
   // dashboard, not a raw log. Buckets the loaded window by category + today.
@@ -280,7 +284,7 @@ export default function ActivityFeedPage() {
           <div className="rounded-2xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] p-12 text-center text-sm italic text-[var(--color-text-faint)]">No activity recorded yet.</div>
         ) : (
           <div className="space-y-6">
-            {grouped.map((group) => (
+            {feedGroups.map((group) => (
               <div key={group.day}>
                 <div className="sticky top-0 bg-[var(--color-canvas)]/80 backdrop-blur z-10 py-2 mb-2 text-xs font-black text-[var(--color-text-muted)] uppercase tracking-widest border-b border-[var(--color-border)]">
                   {group.day}

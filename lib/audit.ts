@@ -10,13 +10,18 @@ export interface AuditEntry {
   userRole?: string;
   details?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
-  /** ALOG-7: written when given. A signed-in caller's own row is clocked by
-   *  the database (20261201 audit_logs_stamp_identity: "timestamp" = now(),
-   *  a differing value kept under metadata.asserted); a service-role write's
-   *  value stands. Readers that build an AuditEntry from a stored row
-   *  (HistoryDrawer, InspectorPanel) carry the stored time here. */
+  /** The STORED row's time, for readers that build an AuditEntry from a row
+   *  (HistoryDrawer, InspectorPanel). A writer never sets it: logAuditAction
+   *  takes an AuditWriteEntry, which has no timestamp — the database clocks
+   *  every row (DEFAULT now(); for a signed-in caller's own row
+   *  20261201's audit_logs_stamp_identity, ALOG-7). */
   timestamp?: string;
 }
+
+/** What a writer hands logAuditAction: an AuditEntry without the stored
+ *  time (admin-and-org ALOG-7 done-when 3 — the field is not the writer's).
+ *  Every existing call is unchanged: none passed a timestamp. */
+export type AuditWriteEntry = Omit<AuditEntry, "timestamp">;
 
 /** The stand-ins call sites pass when there is no member to name (a cron
  *  pass, a signed-out page): never a uid, so never sent into the UUID column. */
@@ -36,7 +41,7 @@ const AUDIT_ACTOR_SENTINELS: ReadonlySet<string> = new Set(["", "unknown", "syst
  *  the routes) that row lands; under a browser session the insert policy
  *  (user_id = auth.uid()) refuses it, and the refusal is returned, not
  *  swallowed. */
-export async function logAuditAction(entry: AuditEntry): Promise<{ error: string | null; ok: boolean }> {
+export async function logAuditAction(entry: AuditWriteEntry): Promise<{ error: string | null; ok: boolean }> {
   try {
     // ALOG-10 (admin-and-org P7): a row with no workspace is readable by no
     // signed-in reader (every SELECT policy and both viewers read org_id), so
@@ -63,7 +68,6 @@ export async function logAuditAction(entry: AuditEntry): Promise<{ error: string
       user_role: entry.userRole || null,
       details: entry.details || null,
       metadata,
-      ...(entry.timestamp ? { timestamp: entry.timestamp } : {}),
     });
     if (error) {
       console.error(`Failed to write audit log (${entry.action}):`, error.message);

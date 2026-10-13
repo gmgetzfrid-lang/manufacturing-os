@@ -201,7 +201,7 @@ describe("lib/audit.ts logAuditAction — ALOG-10 done-when 2 and ALOG-7 done-wh
     } finally { err.mockRestore(); }
   });
 
-  it("regression: a normal entry is written exactly as before (no timestamp key unless one is given)", async () => {
+  it("regression: a normal entry is written exactly as before (no timestamp key — the database clocks the row)", async () => {
     const { logAuditAction } = await import("@/lib/audit");
     const r = await logAuditAction({ action: "VIEW", resourceId: "d1", resourceType: "document", orgId: "o1", userId: "u1", userEmail: "a@b.c", userRole: "Drafter", details: { fileName: "x.pdf" } });
     expect(r).toEqual({ error: null, ok: true });
@@ -211,10 +211,12 @@ describe("lib/audit.ts logAuditAction — ALOG-10 done-when 2 and ALOG-7 done-wh
     }]);
   });
 
-  it("AuditEntry.timestamp is written when given (the database clocks a signed-in caller's own row; a server's value stands)", async () => {
-    const { logAuditAction } = await import("@/lib/audit");
-    await logAuditAction({ action: "VIEW", resourceId: "d1", resourceType: "document", orgId: "o1", userId: "u1", timestamp: "2026-01-01T00:00:00Z" });
-    expect(h.inserts[0].timestamp).toBe("2026-01-01T00:00:00Z");
+  it("ALOG-7 done-when 3: the writer's entry has no timestamp (AuditWriteEntry); the stored time stays the readers' field", () => {
+    const audit = readFileSync(join(root, "lib/audit.ts"), "utf8");
+    expect(audit).toContain('export type AuditWriteEntry = Omit<AuditEntry, "timestamp">;');
+    expect(audit).toMatch(/export async function logAuditAction\(entry: AuditWriteEntry\)/);
+    const body = audit.slice(audit.indexOf("export async function logAuditAction("), audit.indexOf("\n}\n", audit.indexOf("export async function logAuditAction(")));
+    expect(body).not.toMatch(/timestamp/);
   });
 
   it("the DF-P1 stand-in rule is unchanged: a sentinel actor writes user_id NULL with metadata.actor_kind system", async () => {

@@ -679,7 +679,7 @@ lib/ticketTransitions.ts:247-252 —
 
 Landed: `lib/auditActions.ts pairTicketAttempts` (`:239`) — an attempt row (`TICKET_<ACTION>`, `details.recordedBeforeApply`) is "applied" unless a `_NOT_APPLIED` row in the loaded rows names it in `details.attempt` ("not applied"); a `_HOLDS_NOT_RELEASED` row naming it marks it "applied, but its holds were not released". The viewers load newest first, so a loaded attempt's follow-up (written after it) is loaded too.
 - `/admin/audit`: the attempt row shows its outcome; the follow-up row says which attempt it names; filtering on a ticket action brings its follow-ups with it (`auditActionFilterQuery`), and a `TICKET_…` family filter is offered.
-- `/activity`: the attempt line says the outcome ("… (not applied)", "… (applied — its holds were not released)") and its follow-up line folds into it.
+- `/activity`: the attempt line says the outcome ("… (not applied)", "… (applied — its holds were not released)") and its follow-up line folds into it (`feedGroups`, a memo after the day grouping, so the SEC-21 `grouped` memo is unchanged).
 
 Tests: `lib/__tests__/auditViewers.test.ts` "drafting-flow EVID-12 — …" (the three outcomes; a pre-DF-P1 row with no marker is not an attempt; both viewers use the pairing); `lib/__tests__/auditPageRendered.test.ts` (rendered: the attempt shows "Not applied …", the follow-up names it).
 
