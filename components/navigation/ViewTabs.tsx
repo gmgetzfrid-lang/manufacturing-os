@@ -18,6 +18,8 @@ export interface ViewTab {
   badge?: number;
   /** Match the active state by exact path or by prefix (default: prefix). */
   exact?: boolean;
+  /** Prefixes that must NOT count as this tab, for a sibling tab nested under it. */
+  exclude?: string[];
 }
 
 export default function ViewTabs({
@@ -34,8 +36,10 @@ export default function ViewTabs({
   right?: React.ReactNode;
 }) {
   const pathname = usePathname() ?? "";
-  const isActive = (t: ViewTab) =>
-    t.exact ? pathname === t.href : pathname === t.href || pathname.startsWith(t.href + "/") || pathname.startsWith(t.href + "?");
+  const isActive = (t: ViewTab) => {
+    if (t.exclude?.some((x) => pathname === x || pathname.startsWith(x + "/"))) return false;
+    return t.exact ? pathname === t.href : pathname === t.href || pathname.startsWith(t.href + "/") || pathname.startsWith(t.href + "?");
+  };
 
   const dark = variant === "dark";
   return (
@@ -78,7 +82,8 @@ export default function ViewTabs({
 import { Table, Lock, AlertOctagon, Map as MapIcon, List, Activity as ActivityIcon, ScrollText, Inbox as InboxIcon, Network, Send, Package, ClipboardList, Gauge, Bot, BookOpen, Waypoints, GitPullRequest, Settings2, Puzzle } from "lucide-react";
 
 export const DOCUMENT_VIEWS: ViewTab[] = [
-  { label: "Table", href: "/documents", icon: Table },
+  { label: "Table", href: "/documents", icon: Table, exclude: ["/documents/graph"] },
+  { label: "Graph", href: "/documents/graph", icon: Waypoints },
   { label: "Register", href: "/register", icon: ClipboardList },
   { label: "Checkouts", href: "/checkouts", icon: Lock },
   { label: "Packages", href: "/packages", icon: Package },

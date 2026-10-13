@@ -1,0 +1,201 @@
+// The finder's whole value is behaving like a careful person in a messy
+// drive. These tests pin the scenario it was designed around: "U1-A for the
+// born heater pilot valve in 2018" against a share where the file is in a
+// transmix folder it doesn't belong in, an AFE project folder dated a year
+// late, and an empty 0 KB copy.
+
+import { describe, it, expect } from "vitest";
+import {
+  canonicalForm, tagVariants, findIdentifiers, isLooserIdentifier,
+  parseQuery, parseDirectoryListing, entriesFromListing, entryFromDocument,
+  clusterByHash, rankEntries, type FinderAlias, type IndexEntry,
+} from "@/lib/fileFinder";
+
+const UNITS = [
+  { code: "20", label: "Crude Unit" },
+  { code: "45", label: "Transmix" },
+  { code: "30", label: "Alky" },
+];
+
+const bornAlias: FinderAlias = {
+  id: "a1", orgId: "o", term: "born", termCanonical: "BORN", means: "crude", meansCanonical: "CRUDE",
+  kind: "unit", origin: "human", hits: 0, misses: 0, note: null, createdByName: "DC", createdAt: "",
+};
+
+describe("tag forms", () => {
+  it("collapses every spelling of U1-A to one identity", () => {
+    for (const s of ["U1-A", "U1A", "U-1A", "u 1 a", "U-1-A", "u1a"]) expect(canonicalForm(s)).toBe("U1A");
+  });
+  it("offers the spellings a person might have used", () => {
+    expect(tagVariants("U1A")).toEqual(expect.arrayContaining(["U1A", "U-1A", "U1-A", "U-1-A"]));
+  });
+  it("finds identifiers in filenames and ignores revision stubs", () => {
+    expect(findIdentifiers("born-u1a_R7.pdf")).toEqual(["U1A"]);
+    expect(findIdentifiers("AFE200155/Crude/E-101 datasheet rev3")).toEqual(expect.arrayContaining(["AFE200155", "E101"]));
+    const plumbing = findIdentifiers("100-PID-001_SHT01_R38.pdf");
+    expect(plumbing).not.toContain("SHT01");
+    expect(plumbing).not.toContain("R38");
+    expect(findIdentifiers("U-1-A and PSV-2001A")).toEqual(["U1A", "PSV2001A"]);
+  });
+  it("knows U1 is a looser form of U1A, not the other way round", () => {
+    expect(isLooserIdentifier("U1", "U1A")).toBe(true);
+    expect(isLooserIdentifier("U1A", "U1")).toBe(false);
+    expect(isLooserIdentifier("E1", "EA1")).toBe(false);
+  });
+});
+
+describe("query parsing", () => {
+  it("turns the sentence into chips a person can check", () => {
+    const q = parseQuery("U1-A for the born heater pilot valve in 2018", { units: UNITS, aliases: [bornAlias] });
+    expect(q.identifiers.map((c) => c.value)).toEqual(["U1A"]);
+    expect(q.years.map((c) => c.value)).toEqual(["2018"]);
+    expect(q.words.map((c) => c.value)).toEqual(expect.arrayContaining(["born", "heater", "pilot", "valve"]));
+    expect(q.phrases.map((c) => c.value)).toEqual(expect.arrayContaining(["pilot valve", "born heater"]));
+    const unit = q.units.find((c) => c.value === "20");
+    expect(unit?.via).toBe("alias");
+    expect(unit?.aliasId).toBe("a1");
+  });
+  it("names a unit straight from the codebook without an alias", () => {
+    const q = parseQuery("crude heater", { units: UNITS });
+    expect(q.units[0]).toMatchObject({ value: "20", via: "codebook" });
+  });
+  it("never treats the identifier as a word too", () => {
+    const q = parseQuery("u1a datasheet", { units: UNITS });
+    expect(q.words.map((c) => c.value)).toEqual(["datasheet"]);
+  });
+});
+
+describe("directory listings", () => {
+  it("reads one full path per line", () => {
+    const out = parseDirectoryListing([
+      "\\\\thor\\eng\\Crude\\Heaters\\born-u1a.pdf",
+      "T:\\Transmix\\misc\\U1A.pdf",
+      "T:\\Transmix\\misc\\",
+    ].join("\n"));
+    expect(out.format).toBe("paths");
+    expect(out.files).toHaveLength(2);
+    expect(out.files[0]).toMatchObject({ path: ["thor", "eng", "Crude", "Heaters"], name: "born-u1a.pdf" });
+    expect(out.files[1].path).toEqual(["Transmix", "misc"]);
+    expect(out.folders).toContain("Transmix/misc");
+  });
+  it("reads dir /s output with sizes and dates", () => {
+    const out = parseDirectoryListing(`
+ Volume in drive T is THOR
+ Directory of T:\\Crude\\Heaters
+
+01/15/2019  03:22 PM    <DIR>          .
+01/15/2019  03:22 PM    <DIR>          ..
+01/15/2019  03:22 PM         1,234,567 U1A.pdf
+01/15/2019  03:22 PM                 0 U1A - Copy.pdf
+               2 File(s)      1,234,567 bytes
+
+ Directory of T:\\Crude\\Heaters\\old
+
+12/02/2016  09:00 AM            88,000 u1-a_2016.pdf
+`);
+    expect(out.format).toBe("dir");
+    expect(out.files).toHaveLength(3);
+    expect(out.files[0]).toMatchObject({ path: ["Crude", "Heaters"], name: "U1A.pdf", sizeBytes: 1234567, date: "2019-01-15" });
+    expect(out.files[1].sizeBytes).toBe(0);
+    expect(out.files[2].path).toEqual(["Crude", "Heaters", "old"]);
+  });
+  it("reads windows tree /f output", () => {
+    const out = parseDirectoryListing(`Folder PATH listing
+Volume serial number is 1234-ABCD
+T:.
+├───Crude
+│   │   index.xlsx
+│   └───Heaters
+│           born-u1a.pdf
+└───Transmix
+        U1A.pdf
+`);
+    expect(out.format).toBe("tree-win");
+    expect(out.files).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: ["Crude"], name: "index.xlsx" }),
+      expect.objectContaining({ path: ["Crude", "Heaters"], name: "born-u1a.pdf" }),
+      expect.objectContaining({ path: ["Transmix"], name: "U1A.pdf" }),
+    ]));
+  });
+  it("reads unix tree output", () => {
+    const out = parseDirectoryListing(`thor
+├── Crude
+│   └── Heaters
+│       └── born-u1a.pdf
+└── Transmix
+    └── U1A.pdf
+
+3 directories, 2 files
+`);
+    expect(out.format).toBe("tree-unix");
+    expect(out.files).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: ["Crude", "Heaters"], name: "born-u1a.pdf" }),
+      expect.objectContaining({ path: ["Transmix"], name: "U1A.pdf" }),
+    ]));
+  });
+});
+
+describe("ranking", () => {
+  const folders = new Map([
+    ["f-afe", { id: "f-afe", libraryId: "L", parentId: null, name: "AFE200155" }],
+    ["f-crude", { id: "f-crude", libraryId: "L", parentId: "f-afe", name: "Crude" }],
+    ["f-born", { id: "f-born", libraryId: "L", parentId: "f-crude", name: "Born" }],
+    ["f-tmx", { id: "f-tmx", libraryId: "L", parentId: null, name: "Transmix" }],
+    ["f-rand", { id: "f-rand", libraryId: "L", parentId: null, name: "random" }],
+  ]);
+  const libraries = new Map([["L", { id: "L", name: "Engineering" }]]);
+  const ctx = { folders, libraries };
+
+  const good = entryFromDocument(
+    { id: "d1", library_id: "L", collection_id: "f-born", name: "u1a.pdf", title: "U1-A heater pilot valve", effective_date: "2019-03-01", created_at: "2019-03-02" },
+    { ...ctx, version: { fileHash: "h1", fileSize: 500_000 } },
+  );
+  const transmix = entryFromDocument(
+    { id: "d2", library_id: "L", collection_id: "f-tmx", name: "U1A heater.pdf", effective_date: "2018-06-01" },
+    { ...ctx, version: { fileHash: "h1", fileSize: 500_000 } },
+  );
+  const empty = entryFromDocument(
+    { id: "d3", library_id: "L", collection_id: "f-rand", name: "born-u1.pdf", effective_date: "2018-01-01" },
+    { ...ctx, version: { fileHash: "h3", fileSize: 0 } },
+  );
+  const unrelated = entryFromDocument(
+    { id: "d4", library_id: "L", collection_id: "f-crude", name: "E-101 datasheet.pdf" },
+    { ...ctx, version: { fileSize: 100 } },
+  );
+
+  it("indexes the folder chain, identifiers and years", () => {
+    expect(good.path).toEqual(["AFE200155", "Crude", "Born"]);
+    expect(good.pathIdents).toContain("AFE200155");
+    expect(good.idents).toContain("U1A");
+    expect(good.years).toEqual([2019]);
+  });
+
+  it("ranks the AFE copy above the transmix copy, rejects the empty one, drops the unrelated one", () => {
+    const q = parseQuery("U1-A for the born heater pilot valve in 2018", { units: UNITS, aliases: [bornAlias] });
+    const hits = rankEntries([transmix, empty, good, unrelated], q, { units: UNITS, sameBytes: clusterByHash([good, transmix]) });
+    expect(hits.map((h) => h.entry.id)).toEqual(["doc:d1", "doc:d2", "doc:d3"]);
+    const [top, tmx, dead] = hits;
+    expect(top.verdict).toBe("strong");
+    expect(top.evidence.map((e) => e.label)).toEqual(expect.arrayContaining([
+      expect.stringMatching(/Name says U-1A/),
+      expect.stringMatching(/Lives under Crude Unit \(via alias\)/),
+      expect.stringMatching(/one year off/),
+      expect.stringMatching(/Same bytes in 2 places/),
+    ]));
+    expect(tmx.evidence.map((e) => e.label)).toContain("Folder says Transmix, a different unit");
+    expect(tmx.score).toBeLessThan(top.score);
+    expect(dead.verdict).toBe("rejected");
+    expect(dead.evidence.map((e) => e.label)).toContain("0 KB — empty file");
+  });
+
+  it("reports a drive listing hit as a prospect outside the system", () => {
+    const listing = entriesFromListing({ id: "thor", name: "Thor drive", files: [
+      { path: ["eng", "Crude", "Heaters"], name: "born-u1a.pdf", date: "2018-05-01" },
+    ] });
+    const q = parseQuery("U1A born heater", { units: UNITS, aliases: [bornAlias] });
+    const [hit] = rankEntries(listing as IndexEntry[], q, { units: UNITS });
+    expect(hit.entry.source).toBe("listing");
+    expect(hit.evidence.map((e) => e.label)).toContain("Listed on Thor drive, not in the system");
+    expect(hit.verdict).toBe("strong");
+  });
+});
