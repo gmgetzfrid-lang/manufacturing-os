@@ -156,7 +156,8 @@ describe("runPlatformStorageAlerts — the plan ceilings (lib/storageUsage.ts)",
     expect(alerts).toBe(2);
     const rows = world.inserts.filter((i) => i.table === "notifications");
     expect(rows.map((r) => r.kind)).toEqual(["storage_platform_r2", "storage_platform_r2"]);
-    expect(rows[0]).toMatchObject({ org_id: "o1", user_id: "a1", link: "/admin/storage", title: "File storage critical — 96% of plan", metadata: null });
+    // a single-workspace world: the R2 bell records the band it stated (BILL-15's same-day key, DEC-99 §3)
+    expect(rows[0]).toMatchObject({ org_id: "o1", user_id: "a1", link: "/admin/storage", title: "File storage critical — 96% of plan", metadata: { r2PlanBand: "crit" } });
     expect(world.calls).toContainEqual({ table: "notifications", op: "eq", args: ["kind", "storage_platform_r2"] });
   });
 

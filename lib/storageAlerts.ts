@@ -8,6 +8,8 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { notifyChecked, type NotificationInput } from "@/lib/inAppNotifications";
+// Type only (erased): storageUsage imports this module at run time.
+import type { QuotaBellRow } from "@/lib/storageUsage";
 
 export type AlertBand = "ok" | "warn" | "crit";
 
@@ -93,7 +95,7 @@ export async function runStorageAlerts(sb: SupabaseClient, opts: { budgetMs?: nu
 }> {
   // Lazy: storageUsage imports this module (alertBand), and the bucket client
   // it carries is needed only here.
-  const { measureR2Usage, orgStoragePrefix, soleTenantId, loadPlatformLimits, r2PlanBand } = await import("@/lib/storageUsage");
+  const { measureR2Usage, orgStoragePrefix, soleTenantId, loadPlatformLimits, r2PlanBand, sameDayBellHolds } = await import("@/lib/storageUsage");
   const deadlineMs = Date.now() + (opts.budgetMs ?? QUOTA_WALK_BUDGET_MS);
 
   const { data: settings } = await sb
@@ -113,8 +115,11 @@ export async function runStorageAlerts(sb: SupabaseClient, opts: { budgetMs?: nu
   // Admin / DocCtrl. There the bell states both figures, each with what it
   // measured and against which limit, and the R2 step counts it as its own
   // bell when its plan figure was complete and not below the band the R2
-  // step measures; any storage bell sent today (a floor, or a quota-only
-  // bell) holds the R2 bell to the next day. The quota figure is the
+  // step measures. The two steps share a per-day key (sameDayBellHolds): a
+  // bell earlier the same UTC day holds the other step's bell to the next
+  // day only when it stated a plan band at or above the band the later bell
+  // would state; a worse figure, a critical one above all, goes the same
+  // run (the integrator's ruling, DEC-90 practice). The quota figure is the
   // workspace prefix walk's, exactly as on a shared server (a whole-bucket
   // walk would list root-level and other top-level keys first, and could
   // stop before the workspace's own);
@@ -149,8 +154,9 @@ export async function runStorageAlerts(sb: SupabaseClient, opts: { budgetMs?: nu
     // Sole: the whole bucket against the R2 plan ceiling, banded exactly as
     // the platform watchdog bands a walk (a partial walk is never below
     // warn). A walk that cannot run, or limits that cannot be read: the
-    // quota-only bell, as before, and the R2 step sends its own the next day
-    // (one storage percentage per person per day, BILL-15).
+    // quota-only bell, as before, and the R2 step sends its own the same run
+    // when the plan runs hot: this bell stated no plan figure, so the R2
+    // bell repeats nothing (BILL-15, the integrator's ruling 2).
     // `measuredBand` is the band of the figure itself, before r2PlanBand
     // lifts a floor to warn: the "upgrade the plan" advice rests on it, never
     // on a band the walk's early stop forced (BILL-15 review fix).
@@ -178,6 +184,8 @@ export async function runStorageAlerts(sb: SupabaseClient, opts: { budgetMs?: nu
     }
     const planAtLeast = plan?.truncated ? "at least " : "";
     const crit = band === "crit" || plan?.band === "crit";
+    // The band this bell states at its head ("critical" when either figure is).
+    const bellBand: AlertBand = crit ? "crit" : "warn";
 
     const { data: admins } = await sb
       .from("org_members").select("uid")
@@ -189,15 +197,18 @@ export async function runStorageAlerts(sb: SupabaseClient, opts: { budgetMs?: nu
       if ((count ?? 0) > 0) continue;
       if (sole) {
         // BILL-15, the shared per-day key: a person the R2 step already
-        // belled with the plan's figure TODAY (UTC; a second cron run the
-        // same day) is not sent a second percentage for the same files now —
-        // whether this bell would state the plan figure or (its walk failed)
-        // only the quota's. The next day's run sends it. (A server-only kind
-        // once 20261160 is live; see below.)
-        const { count: planToday } = await sb
-          .from("notifications").select("id", { count: "exact", head: true })
+        // belled TODAY (UTC; a second cron run the same day) at a band at or
+        // above this bell's is not sent a second percentage for the same
+        // files now — whether this bell would state the plan figure or (its
+        // walk failed) only the quota's. The next day's run sends it. A bell
+        // that would be worse than the R2 bell's stated band (a critical
+        // bell after a warn R2 bell) goes now: a critical figure is never
+        // held. A failed read holds nothing (fails open: data is null). (A
+        // server-only kind once 20261160 is live; see below.)
+        const { data: planToday } = await sb
+          .from("notifications").select("metadata, created_at")
           .eq("org_id", s.org_id).eq("user_id", a.uid).eq("kind", "storage_platform_r2").gte("created_at", utcDayStart);
-        if ((planToday ?? 0) > 0) continue;
+        if (sameDayBellHolds(planToday as QuotaBellRow[] | null, bellBand, utcDayStart)) continue;
       }
       // BILL-15: on a sole server one bell, both figures, each named by what
       // it measured and against which limit. metadata.r2PlanBand /
@@ -221,8 +232,8 @@ export async function runStorageAlerts(sb: SupabaseClient, opts: { budgetMs?: nu
             (plan.measuredBand !== "ok" ? "Upgrade the R2 plan, or take" : "Take") +
             " a full backup and free up space from Admin → Storage (archive superseded revisions or closed tickets, delete orphaned files).",
           // r2PlanTruncated: the plan figure was a floor (the walk stopped
-          // early); the R2 step never counts such a bell for its week (only
-          // for today: one percentage a day).
+          // early); the R2 step never counts such a bell for its week, only
+          // for today and only against an R2 band no worse than r2PlanBand.
           metadata: { r2PlanBand: plan.band, r2PlanPct: plan.pct, r2PlanTruncated: plan.truncated },
         }
         : {

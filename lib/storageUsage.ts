@@ -26,9 +26,11 @@
 // workspace's Admins get a notice that carries no figures, and the cron
 // reports it in its errors (BILL-5 fix pass). On a single-workspace
 // deployment the quota alert states the R2 figure too and, when that figure
-// was measured in full, stands in for the R2 bell (BILL-15); any quota bell
-// sent today holds the R2 bell to the next day, so its Admin / DocCtrl never
-// get two different percentages for the same files on the same day.
+// was measured in full, stands in for the R2 bell (BILL-15); a quota bell
+// sent today holds the R2 bell to the next day only when it already stated
+// the plan at that band or higher, so its Admin / DocCtrl get a second
+// percentage the same day only when it is worse news (or a dedupe read
+// failed: both go).
 //
 // admin-and-org BILL-5 / BILL-12 (Round G, P6; DEC-99): the plan
 // ceilings and the bucket walk are DEPLOYMENT facts — one bucket, one
@@ -468,30 +470,62 @@ export function timestampMs(value: unknown): number {
   return Date.parse(iso);
 }
 
+/** The plan band a storage bell stated (`metadata.r2PlanBand`), or null when
+ *  it stated none: a quota-only bell, a row written before the band was
+ *  recorded, or anything unreadable. Both storage bells carry it on a
+ *  single-workspace server (BILL-15): the both-figures `storage_alert` bell
+ *  (complete or a floor) and the sole workspace's `storage_platform_r2`
+ *  bell. */
+export function statedPlanBand(row: QuotaBellRow): AlertBand | null {
+  const stated = row.metadata?.r2PlanBand;
+  return stated === "ok" || stated === "warn" || stated === "crit" ? stated : null;
+}
+
+/** BILL-15 (DEC-99 §3), single-workspace server — the shared per-day key,
+ *  used by both storage steps: does a storage bell the other step sent
+ *  earlier TODAY (UTC, at or after `dayStartIso`, compared as instants) hold
+ *  back the bell this step would send now at `band`?
+ *  It does only when the earlier bell stated a plan band (complete or a
+ *  floor) that ranks at or above `band` (ok < warn < crit): the new bell
+ *  would repeat what the person was told today. A bell that carries new,
+ *  worse information is never held (the integrator's ruling, DEC-90
+ *  practice: never drop or delay a worse alert to avoid a duplicate) — a
+ *  critical figure after a same-day floor or quota-only bell goes the same
+ *  run. A row that states no band (a quota-only bell, an older row) holds
+ *  nothing, and an unreadable read (`rows` null) holds nothing: the bell
+ *  goes (fails open). */
+export function sameDayBellHolds(rows: readonly QuotaBellRow[] | null | undefined, band: AlertBand, dayStartIso: string): boolean {
+  const dayStart = timestampMs(dayStartIso);
+  if (!Number.isFinite(dayStart)) return false;
+  for (const r of rows ?? []) {
+    const at = timestampMs(r.created_at);
+    if (!Number.isFinite(at) || at < dayStart) continue;
+    const stated = statedPlanBand(r);
+    if (stated !== null && BAND_RANK[stated] >= BAND_RANK[band]) return true;
+  }
+  return false;
+}
+
 /** BILL-15 (DEC-99 §3), single-workspace server: does a this-week quota
  *  bell (`storage_alert`) stand in for, or hold back, the R2 bell the
  *  platform step would send now at `measured`?
- *  - Any quota bell that went out TODAY (UTC, at or after `dayStartIso`)
- *    holds the R2 bell to the next day, whatever it stated — a complete
- *    plan figure, a floor ("at least N%"), or none (its plan walk failed):
- *    the person has had a storage percentage today, and a second, different
- *    one for the same files is what the finding rules out. The next day the
- *    R2 bell goes unless the rule below covers it.
- *  - A bell whose plan figure was COMPLETE (metadata.r2PlanTruncated ===
- *    false) covers the R2 bell's week when the band it stated ranks at or
- *    above `measured` (ok < warn < crit). A floor (banded warn because the
- *    walk stopped early) or a quota-only bell never covers the week, so it
- *    delays a measured plan figure by at most a day and never hides it. */
+ *  - TODAY (sameDayBellHolds): a quota bell earlier the same UTC day holds
+ *    the R2 bell to the next day only when the plan band it stated — a
+ *    complete figure or a floor ("at least N%") — ranks at or above
+ *    `measured`. A quota-only bell (its plan walk failed) states none, so
+ *    the R2 bell goes; a crit R2 figure after a floor or a bell that stated
+ *    warn goes the same run (the integrator's ruling: a critical figure is
+ *    never held).
+ *  - THE WEEK: a bell whose plan figure was COMPLETE (metadata.r2PlanTruncated
+ *    === false) covers the R2 bell's week when the band it stated ranks at
+ *    or above `measured`. A floor (banded warn because the walk stopped
+ *    early) or a quota-only bell never covers the week. */
 export function quotaBellCoversR2Bell(rows: readonly QuotaBellRow[] | null | undefined, measured: AlertBand, dayStartIso: string): boolean {
-  const dayStart = timestampMs(dayStartIso);
+  if (sameDayBellHolds(rows, measured, dayStartIso)) return true;
   for (const r of rows ?? []) {
-    const at = timestampMs(r.created_at);
-    if (Number.isFinite(at) && Number.isFinite(dayStart) && at >= dayStart) return true;
-    const m = r.metadata;
-    if (!m || m.r2PlanTruncated !== false) continue;
-    const stated = m.r2PlanBand;
-    if (stated !== "ok" && stated !== "warn" && stated !== "crit") continue;
-    if (BAND_RANK[stated] >= BAND_RANK[measured]) return true;
+    if (r.metadata?.r2PlanTruncated !== false) continue;
+    const stated = statedPlanBand(r);
+    if (stated !== null && BAND_RANK[stated] >= BAND_RANK[measured]) return true;
   }
   return false;
 }
@@ -571,9 +605,11 @@ export async function runPlatformStorageAlerts(sb: SupabaseClient): Promise<{
       // against the limit an admin set, and the whole bucket against this R2
       // plan ceiling — so it can be this bell too (quotaBellCoversR2Bell:
       // only a COMPLETE plan figure, stated at or above the band measured
-      // now, covers this bell's week; any quota bell sent earlier today — a
-      // floor or a quota-only one included — holds it to the next day). A
-      // shared server keeps both (different people). A read
+      // now, covers this bell's week; a quota bell sent earlier today holds
+      // it to the next day only when the plan band it stated — complete or a
+      // floor — ranks at or above the band measured now, so a worse figure,
+      // a critical one above all, goes the same run). A shared server keeps
+      // both (different people). A read
       // that fails skips nothing: the R2 bell goes. storage_alert is a
       // server-only kind once 20261160 is live (rule 2); before that paste
       // a forged row could feed this read, as each kind's own weekly dedupe
@@ -604,6 +640,10 @@ export async function runPlatformStorageAlerts(sb: SupabaseClient): Promise<{
         body: blind ? alert.blindBody : alert.body,
         link: "/admin/storage",
         ...(blind ? { metadata: { withoutFigures: true } } : {}),
+        // BILL-15: on a single-workspace server the R2 bell records the band
+        // it stated, so the quota step's same-day read (sameDayBellHolds)
+        // can tell a repeat from a worse figure.
+        ...(route === "sole-workspace" && alert.kind === "storage_platform_r2" ? { metadata: { r2PlanBand: alert.band } } : {}),
       });
       if (sent) alerts++;
     }

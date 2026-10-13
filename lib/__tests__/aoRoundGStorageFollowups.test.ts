@@ -51,10 +51,12 @@ function chain(table: string) {
   const filters: Array<(r: Row) => boolean> = [];
   let op = "select";
   let head = false;
+  let kind: unknown = undefined;
   let limit = Number.POSITIVE_INFINITY;
   const rows = () => (state.rows[table] ?? []).filter((r) => filters.every((f) => f(r))).slice(0, limit);
   const result = () => {
-    const err = state.errors[`${table}.${op}`];
+    // `${table}.${op}`, or one kind's read alone: `${table}.${op}.${kind}`
+    const err = state.errors[`${table}.${op}`] ?? (kind === undefined ? undefined : state.errors[`${table}.${op}.${String(kind)}`]);
     if (err) return { data: null, error: err, count: null };
     if (op !== "select") return { data: null, error: null, count: null };
     return head ? { data: null, error: null, count: rows().length } : { data: rows(), error: null, count: rows().length };
@@ -71,6 +73,7 @@ function chain(table: string) {
         }
         if (prop === "select" && (args[1] as { head?: boolean } | undefined)?.head) head = true;
         if (prop === "eq") filters.push((r) => r[String(args[0])] === args[1]);
+        if (prop === "eq" && args[0] === "kind") kind = args[1];
         if (prop === "neq") filters.push((r) => r[String(args[0])] !== args[1]);
         if (prop === "in") filters.push((r) => (args[1] as unknown[]).includes(r[String(args[0])]));
         if (prop === "gte") filters.push((r) => String(r[String(args[0])] ?? "") >= String(args[1]));
@@ -152,7 +155,7 @@ vi.mock("@/lib/r2", async () => {
 import { runStorageAlerts } from "@/lib/storageAlerts";
 import {
   runPlatformStorageAlerts, PLATFORM_OPERATORS_KEY, STORAGE_LIMITS_KEY, r2PlanBand, soleTenantId, isSoleTenant, quotaBellCoversR2Bell,
-  timestampMs,
+  timestampMs, sameDayBellHolds, statedPlanBand,
 } from "@/lib/storageUsage";
 import { POST as uploadUrl } from "@/app/api/storage/upload-url/route";
 import { POST as multipart } from "@/app/api/storage/multipart/route";
@@ -247,20 +250,37 @@ describe("BILL-15 — one storage bell per day on a single-workspace server", ()
     expect(bells()).toHaveLength(1); // yesterday's, nothing new today
   });
 
-  it("the shared per-day key, the other way round: an R2 bell sent TODAY (a second cron run the same day) holds the quota bell to the next day, when it states both", async () => {
+  it("the shared per-day key, the other way round: an R2 bell sent TODAY (a second cron run the same day) holds a quota bell that would state no worse band to the next day", async () => {
     state.rows.orgs = [{ id: O1 }];
     state.rows.platform_settings = [planCeiling(10_000)];
-    state.rows.archive_settings = [{ org_id: O1, quota_bytes: 5_000 }];
+    state.rows.archive_settings = [{ org_id: O1, quota_bytes: 9_000 }]; // 79%: warn
     state.rows.org_members = [{ org_id: O1, uid: "admin", role: "Admin", roles: ["Admin"], status: "active" }];
     state.objects = [{ Key: `orgs/${O1}/a`, Size: 7_100 }, { Key: "root", Size: 100 }];
-    // run 1 (quota then under its limit): the R2 bell went out this morning
-    state.rows.notifications = [{ org_id: O1, user_id: "admin", kind: "storage_platform_r2", title: "File storage high — 72% of plan", metadata: null, created_at: new Date().toISOString() }];
-    await cronStorageSteps(); // run 2, the same day: the quota has crossed
-    expect(bells()).toHaveLength(1); // no second percentage today
+    // run 1 (quota then under its limit): the R2 bell went out this morning, stating warn
+    const r2Bell = { org_id: O1, user_id: "admin", kind: "storage_platform_r2", title: "File storage high — 72% of plan", metadata: { r2PlanBand: "warn" } };
+    state.rows.notifications = [{ ...r2Bell, created_at: new Date().toISOString() }];
+    await cronStorageSteps(); // run 2, the same day: the quota has crossed into warn, the plan is still warn
+    expect(bells()).toHaveLength(1); // a repeat of the band stated today: held
     // the next day (yesterday's R2 bell): the quota bell goes, naming both; the R2 step stays quiet (its week)
-    state.rows.notifications = [{ org_id: O1, user_id: "admin", kind: "storage_platform_r2", title: "File storage high — 72% of plan", metadata: null, created_at: new Date(Date.now() - 86_400_000).toISOString() }];
+    state.rows.notifications = [{ ...r2Bell, created_at: new Date(Date.now() - 86_400_000).toISOString() }];
     await cronStorageSteps();
+    expect(bells().slice(1).map((b) => [b.kind, b.title])).toEqual([["storage_alert", "Storage high — 79% of the set limit, 72% of plan"]]);
+  });
+
+  it("integrator ruling 2, the other way round: a CRITICAL quota bell is never held behind a same-day R2 bell that stated warn — it goes the same run; one behind an R2 bell that stated crit is held", async () => {
+    state.rows.orgs = [{ id: O1 }];
+    state.rows.platform_settings = [planCeiling(10_000)];
+    state.rows.archive_settings = [{ org_id: O1, quota_bytes: 5_000 }]; // 142%: crit
+    state.rows.org_members = [{ org_id: O1, uid: "admin", role: "Admin", roles: ["Admin"], status: "active" }];
+    state.objects = [{ Key: `orgs/${O1}/a`, Size: 7_100 }, { Key: "root", Size: 100 }];
+    const r2Bell = (band: string) => ({ org_id: O1, user_id: "admin", kind: "storage_platform_r2", title: "File storage high — 72% of plan", metadata: { r2PlanBand: band }, created_at: new Date().toISOString() });
+    state.rows.notifications = [r2Bell("warn")];
+    await cronStorageSteps();
+    // the critical bell goes; the R2 step then counts it (it stated the plan at warn, complete)
     expect(bells().slice(1).map((b) => [b.kind, b.title])).toEqual([["storage_alert", "Storage critical — 142% of the set limit, 72% of plan"]]);
+    state.rows.notifications = [r2Bell("crit")];
+    await cronStorageSteps();
+    expect(bells()).toHaveLength(1); // a critical bell was already sent today: held to the next day
   });
 
   it("the storage steps each read the other's kind once — a filter, never a write", () => {
@@ -292,7 +312,8 @@ describe("BILL-15 — one storage bell per day on a single-workspace server", ()
     state.rows.org_members = [{ org_id: O1, uid: "admin", role: "Admin", roles: ["Admin"], status: "active" }];
     state.objects = [{ Key: `orgs/${O1}/a`, Size: 9_600 }];
     await cronStorageSteps();
-    expect(bells().map((b) => [b.kind, b.title, b.metadata])).toEqual([["storage_platform_r2", "File storage critical — 96% of plan", null]]);
+    // the sole workspace's R2 bell records the band it stated, for the quota step's same-day read
+    expect(bells().map((b) => [b.kind, b.title, b.metadata])).toEqual([["storage_platform_r2", "File storage critical — 96% of plan", { r2PlanBand: "crit" }]]);
   });
 
   it("a MULTI-workspace server keeps both: the operator who is also this workspace's Admin gets the quota bell AND the R2 bell (different limits, different people in general)", async () => {
@@ -310,8 +331,9 @@ describe("BILL-15 — one storage bell per day on a single-workspace server", ()
       ["tenant-admin", "storage_alert", "Storage critical — 90% full"],
       [OP, "storage_platform_r2", "File storage critical — 96% of plan"],
     ]);
-    // the quota bell is today's (no plan figure, no metadata), measured under the workspace's prefix
+    // the quota bell is today's (no plan figure, no metadata), measured under the workspace's prefix; the operator's R2 bell is as before (no metadata)
     expect(bells()[0].metadata).toBeNull();
+    expect(bells()[2].metadata).toBeNull();
     expect(state.r2Sends.filter((c) => c.name === "ListObjectsV2Command")[0].input.Prefix).toBe(`orgs/${O1}/`);
   });
 
@@ -343,7 +365,7 @@ describe("BILL-15 — one storage bell per day on a single-workspace server", ()
     expect(r2PlanBand(95, true, 100)).toEqual({ pct: 95, band: "crit" });
   });
 
-  it("review fix (major), fix pass 2: the quota step's plan walk stops early (a floor, banded warn) while the R2 step's walk finishes at crit — the R2 bell goes the NEXT day (never two percentages in one day), and the floor never hides it", async () => {
+  it("integrator ruling 2 (the review's minor on fix pass 2): the quota step's plan walk stops early (a floor, banded warn) while the R2 step's walk finishes at crit — the critical R2 bell goes the SAME run (a critical figure is never held), and the floor never hides it", async () => {
     // keys outside the workspace sort before orgs/: the quota step's whole walk lists "a-root" and runs out of time
     state.rows.orgs = [{ id: O1 }];
     state.rows.platform_settings = [planCeiling(10_000)];
@@ -361,8 +383,8 @@ describe("BILL-15 — one storage bell per day on a single-workspace server", ()
     }
     // the quota figure is the prefix walk's — exact, measured, although the whole walk never reached orgs/
     expect(quota).toEqual({ alerts: 1, orgsChecked: 1, unmeasured: 0 });
-    // today: the one bell — the floor: the workspace's 900 plus the 3,000 the whole walk saw outside it — 39%, never banded below warn
-    expect(bells().map((b) => [b.kind, b.title, b.metadata])).toEqual([
+    // step 3's bell — the floor: the workspace's 900 plus the 3,000 the whole walk saw outside it — 39%, never banded below warn
+    expect(bells().slice(0, 1).map((b) => [b.kind, b.title, b.metadata])).toEqual([
       ["storage_alert", "Storage critical — 90% of the set limit, at least 39% of plan", { r2PlanBand: "warn", r2PlanPct: 39, r2PlanTruncated: true }],
     ]);
     expect(String(bells()[0].body)).toContain("This workspace's files are at 90% of the storage limit an admin set");
@@ -370,10 +392,9 @@ describe("BILL-15 — one storage bell per day on a single-workspace server", ()
     // review fix (issue 2): a floor below 70% (lifted to warn only because the walk stopped) never advises buying a plan
     expect(String(bells()[0].body)).not.toContain("Upgrade the R2 plan");
     expect(String(bells()[0].body)).toContain("Take a full backup");
-    // the next day: the floor does not cover the R2 bell's week (first review's major), so the measured crit goes
-    bells()[0].created_at = new Date(Date.now() - 86_400_000).toISOString();
-    await cronStorageSteps();
-    expect(bells().slice(1).map((b) => [b.kind, b.title, b.metadata])).toEqual([["storage_platform_r2", "File storage critical — 95% of plan", null]]);
+    // the same run: the floor stated warn, the R2 step measured crit — new, worse information, sent now
+    // (before the ruling, fix pass 2 held it to the next day behind a bell implying the plan was under 40%)
+    expect(bells().slice(1).map((b) => [b.kind, b.title, b.metadata])).toEqual([["storage_platform_r2", "File storage critical — 95% of plan", { r2PlanBand: "crit" }]]);
   });
 
   it("review fix (issue 2): the 'upgrade the plan' line follows the MEASURED plan figure — a floor that itself reads 70% or more still says it", async () => {
@@ -391,22 +412,53 @@ describe("BILL-15 — one storage bell per day on a single-workspace server", ()
     expect(String(bells()[0].body)).toContain("Upgrade the R2 plan, or take a full backup");
   });
 
-  it("review fix: a complete plan figure stated below the band the R2 step measures does not cover its week — but one stated earlier TODAY holds the R2 bell to the next day (one measured plan percentage a day)", async () => {
+  it("integrator ruling 2: a complete plan figure stated earlier TODAY below the band the R2 step measures neither covers its week nor holds it — the worse R2 figure goes the same run", async () => {
     state.rows.orgs = [{ id: O1 }];
     state.rows.platform_settings = [planCeiling(10_000)];
     state.rows.archive_settings = [{ org_id: O1, quota_bytes: 100_000 }]; // the quota step has nothing to say now
     state.rows.org_members = [{ org_id: O1, uid: "admin", role: "Admin", roles: ["Admin"], status: "active" }];
     state.objects = [{ Key: `orgs/${O1}/a`, Size: 7_000 }]; // 70%: warn, uploads since the 69% quota bell
-    const earlier = { org_id: O1, user_id: "admin", kind: "storage_alert", title: "Storage high — 92% of the set limit, 69% of plan", metadata: { r2PlanBand: "ok", r2PlanPct: 69, r2PlanTruncated: false } };
-    state.rows.notifications = [{ ...earlier, created_at: new Date().toISOString() }];
+    state.rows.notifications = [{
+      org_id: O1, user_id: "admin", kind: "storage_alert", title: "Storage high — 92% of the set limit, 69% of plan",
+      metadata: { r2PlanBand: "ok", r2PlanPct: 69, r2PlanTruncated: false }, created_at: new Date().toISOString(),
+    }];
     await cronStorageSteps();
-    expect(bells()).toHaveLength(1); // not "70% of plan" the same day as "69% of plan"
-    state.rows.notifications = [{ ...earlier, created_at: new Date(Date.now() - 86_400_000).toISOString() }];
-    await cronStorageSteps();
+    // before the ruling (fix pass 2): held to the next day
     expect(bells().slice(1).map((b) => [b.kind, b.title])).toEqual([["storage_platform_r2", "File storage high — 70% of plan"]]);
   });
 
-  it("fix pass 2: a floor stated earlier today holds the R2 bell to the next day (one percentage a day); the next day the measured figure goes (a floor never covers the week)", async () => {
+  it("integrator ruling 2: a warn R2 figure after a same-day both-figures bell that stated warn is a repeat — held (that bell also covers its week)", async () => {
+    state.rows.orgs = [{ id: O1 }];
+    state.rows.platform_settings = [planCeiling(10_000)];
+    state.rows.archive_settings = [{ org_id: O1, quota_bytes: 100_000 }];
+    state.rows.org_members = [{ org_id: O1, uid: "admin", role: "Admin", roles: ["Admin"], status: "active" }];
+    state.objects = [{ Key: `orgs/${O1}/a`, Size: 7_500 }]; // 75%: warn
+    state.rows.notifications = [{
+      org_id: O1, user_id: "admin", kind: "storage_alert", title: "Storage critical — 142% of the set limit, 72% of plan",
+      metadata: { r2PlanBand: "warn", r2PlanPct: 72, r2PlanTruncated: false }, created_at: new Date().toISOString(),
+    }];
+    await cronStorageSteps();
+    expect(bells()).toHaveLength(1);
+  });
+
+  it("integrator ruling 2: a crit R2 figure after a same-day bell that already stated crit (a floor at 'at least 91%') is a repeat — held to the next day, which sends it (a floor never covers the week)", async () => {
+    state.rows.orgs = [{ id: O1 }];
+    state.rows.platform_settings = [planCeiling(10_000)];
+    state.rows.archive_settings = [{ org_id: O1, quota_bytes: 100_000 }];
+    state.rows.org_members = [{ org_id: O1, uid: "admin", role: "Admin", roles: ["Admin"], status: "active" }];
+    state.objects = [{ Key: `orgs/${O1}/a`, Size: 9_500 }]; // 95%: crit
+    state.rows.notifications = [{
+      org_id: O1, user_id: "admin", kind: "storage_alert", title: "Storage critical — 95% of the set limit, at least 91% of plan",
+      metadata: { r2PlanBand: "crit", r2PlanPct: 91, r2PlanTruncated: true }, created_at: new Date().toISOString(),
+    }];
+    await cronStorageSteps();
+    expect(bells()).toHaveLength(1);
+    bells()[0].created_at = new Date(Date.now() - 86_400_000).toISOString();
+    await cronStorageSteps();
+    expect(bells().slice(1).map((b) => [b.kind, b.title])).toEqual([["storage_platform_r2", "File storage critical — 95% of plan"]]);
+  });
+
+  it("fix pass 2, kept by ruling 2: a floor stated earlier today at warn holds a warn R2 bell to the next day (the same band: a repeat); the next day the measured figure goes (a floor never covers the week)", async () => {
     state.rows.orgs = [{ id: O1 }];
     state.rows.platform_settings = [planCeiling(10_000)];
     state.rows.archive_settings = [{ org_id: O1, quota_bytes: 100_000 }];
@@ -423,7 +475,7 @@ describe("BILL-15 — one storage bell per day on a single-workspace server", ()
     expect(bells().slice(1).map((b) => [b.kind, b.title])).toEqual([["storage_platform_r2", "File storage high — 75% of plan"]]);
   });
 
-  it("fix pass 2: the plan walk fails outright: the quota bell alone today (no plan figure); the R2 step holds its bell to the next day, then sends it", async () => {
+  it("integrator ruling 2: the plan walk fails outright: the quota-only bell states no plan figure, so the R2 bell is not a repeat — it goes the same run", async () => {
     state.rows.orgs = [{ id: O1 }];
     state.rows.platform_settings = [planCeiling(10_000)];
     state.rows.archive_settings = [{ org_id: O1, quota_bytes: 5_000 }];
@@ -431,59 +483,118 @@ describe("BILL-15 — one storage bell per day on a single-workspace server", ()
     state.objects = [{ Key: `orgs/${O1}/a`, Size: 7_100 }, { Key: "root", Size: 100 }];
     state.failWholeWalk = 1;
     await cronStorageSteps();
-    // before fix pass 2: "142% full" and "72% of plan" the same day (the review's second exception)
-    expect(bells().map((b) => [b.kind, b.title, b.metadata])).toEqual([["storage_alert", "Storage critical — 142% full", null]]);
-    bells()[0].created_at = new Date(Date.now() - 86_400_000).toISOString();
-    await cronStorageSteps();
-    expect(bells().slice(1).map((b) => [b.kind, b.title, b.metadata])).toEqual([["storage_platform_r2", "File storage high — 72% of plan", null]]);
+    // before the ruling (fix pass 2): the R2 bell was held to the next day behind a bell that never stated the plan
+    expect(bells().map((b) => [b.kind, b.title, b.metadata])).toEqual([
+      ["storage_alert", "Storage critical — 142% full", null],
+      ["storage_platform_r2", "File storage high — 72% of plan", { r2PlanBand: "warn" }],
+    ]);
   });
 
-  it("fix pass 2: an R2 bell sent earlier today holds the quota bell even when the plan walk fails (no quota-only bell the same day either)", async () => {
+  it("fix pass 2, kept by ruling 2: an R2 bell sent earlier today holds a quota-only bell of no worse band even when the plan walk fails; an R2 row that states no band holds nothing", async () => {
     state.rows.orgs = [{ id: O1 }];
     state.rows.platform_settings = [planCeiling(10_000)];
-    state.rows.archive_settings = [{ org_id: O1, quota_bytes: 5_000 }];
+    state.rows.archive_settings = [{ org_id: O1, quota_bytes: 9_000 }]; // 79%: warn
     state.rows.org_members = [{ org_id: O1, uid: "admin", role: "Admin", roles: ["Admin"], status: "active" }];
     state.objects = [{ Key: `orgs/${O1}/a`, Size: 7_100 }, { Key: "root", Size: 100 }];
-    state.rows.notifications = [{ org_id: O1, user_id: "admin", kind: "storage_platform_r2", title: "File storage high — 72% of plan", metadata: null, created_at: new Date().toISOString() }];
+    const r2Bell = (metadata: Row | null) => ({ org_id: O1, user_id: "admin", kind: "storage_platform_r2", title: "File storage high — 72% of plan", metadata, created_at: new Date().toISOString() });
+    state.rows.notifications = [r2Bell({ r2PlanBand: "warn" })];
     state.failWholeWalk = 1;
-    await cronStorageSteps();
-    expect(bells()).toHaveLength(1);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await runStorageAlerts(sb as never);
+      expect(bells()).toHaveLength(1);
+      // a row written before the band was recorded (deploy day): nothing to compare against — the bell goes (fails open)
+      state.rows.notifications = [r2Bell(null)];
+      state.wholeWalks = 0;
+      await runStorageAlerts(sb as never);
+    } finally {
+      warn.mockRestore();
+    }
+    expect(bells().slice(1).map((b) => [b.kind, b.title])).toEqual([["storage_alert", "Storage high — 79% full"]]);
   });
 
-  it("quotaBellCoversR2Bell: any quota bell today holds the R2 bell to the next day; only a complete plan figure at or above the measured band covers the week", () => {
+  it("integrator ruling 1: a failed de-duplicating read fails OPEN — the R2 step's read of the quota bell errors, so both bells go the same run", async () => {
+    // the record's 7.2 GB server, which otherwise gives one bell (the first test)
+    state.rows.orgs = [{ id: O1 }];
+    state.rows.platform_settings = [planCeiling(10 * KB)];
+    state.rows.archive_settings = [{ org_id: O1, quota_bytes: 5 * KB }];
+    state.rows.org_members = [{ org_id: O1, uid: "admin", role: "Admin", roles: ["Admin"], status: "active" }];
+    state.objects = [{ Key: `orgs/${O1}/libraries/l/a.pdf`, Size: Math.round(7.1 * KB) }, { Key: "legacy-root.bin", Size: Math.round(0.1 * KB) }];
+    state.errors["notifications.select.storage_alert"] = { message: "statement timeout" };
+    await cronStorageSteps();
+    expect(bells().map((b) => [b.kind, b.title])).toEqual([
+      ["storage_alert", "Storage critical — 142% of the set limit, 72% of plan"],
+      ["storage_platform_r2", "File storage high — 72% of plan"],
+    ]);
+  });
+
+  it("integrator ruling 1: a failed de-duplicating read fails OPEN — the quota step's read of today's R2 bell errors, so the quota bell goes although an R2 bell stating the same band went this morning", async () => {
+    state.rows.orgs = [{ id: O1 }];
+    state.rows.platform_settings = [planCeiling(10_000)];
+    state.rows.archive_settings = [{ org_id: O1, quota_bytes: 9_000 }]; // 79%: warn
+    state.rows.org_members = [{ org_id: O1, uid: "admin", role: "Admin", roles: ["Admin"], status: "active" }];
+    state.objects = [{ Key: `orgs/${O1}/a`, Size: 7_100 }, { Key: "root", Size: 100 }];
+    state.rows.notifications = [{ org_id: O1, user_id: "admin", kind: "storage_platform_r2", title: "File storage high — 72% of plan", metadata: { r2PlanBand: "warn" }, created_at: new Date().toISOString() }];
+    // the same setup holds the bell when the read succeeds (the per-day key test above)
+    state.errors["notifications.select.storage_platform_r2"] = { message: "statement timeout" };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try { await runStorageAlerts(sb as never); } finally { warn.mockRestore(); }
+    expect(bells().slice(1).map((b) => [b.kind, b.title])).toEqual([["storage_alert", "Storage high — 79% of the set limit, 72% of plan"]]);
+  });
+
+  it("quotaBellCoversR2Bell / sameDayBellHolds (ruling 2): a bell today holds only a repeat — a stated band (complete or a floor) at or above the band measured; only a complete plan figure at or above it covers the week", () => {
     const today = new Date(Math.floor(Date.now() / 86_400_000) * 86_400_000).toISOString();
     const now = new Date().toISOString();
     const yesterday = new Date(Date.now() - 86_400_000).toISOString();
     const row = (band: string, truncated: unknown, at = yesterday) => ({ metadata: { r2PlanBand: band, r2PlanPct: 1, r2PlanTruncated: truncated }, created_at: at });
+    // the week
     expect(quotaBellCoversR2Bell([row("warn", false)], "warn", today)).toBe(true);
     expect(quotaBellCoversR2Bell([row("crit", false)], "warn", today)).toBe(true);
     expect(quotaBellCoversR2Bell([row("warn", false)], "crit", today)).toBe(false);
-    expect(quotaBellCoversR2Bell([row("warn", false, now)], "crit", today)).toBe(true); // held to the next day
-    expect(quotaBellCoversR2Bell([row("ok", false, now)], "warn", today)).toBe(true);
     expect(quotaBellCoversR2Bell([row("crit", true)], "warn", today)).toBe(false); // a floor never covers the week
     expect(quotaBellCoversR2Bell([row("warn", undefined)], "warn", today)).toBe(false); // no flag: not known complete
     expect(quotaBellCoversR2Bell([{ metadata: null, created_at: yesterday }], "warn", today)).toBe(false); // a quota-only bell
-    // fix pass 2: TODAY any quota bell holds the R2 bell to the next day — a floor, a quota-only bell, anything
-    expect(quotaBellCoversR2Bell([row("warn", true, now)], "crit", today)).toBe(true);
-    expect(quotaBellCoversR2Bell([{ metadata: null, created_at: now }], "warn", today)).toBe(true);
-    expect(quotaBellCoversR2Bell([row("hot", false, now)], "warn", today)).toBe(true);
     expect(quotaBellCoversR2Bell([row("hot", false)], "warn", today)).toBe(false);
+    // today: a worse figure is never held — crit after warn (complete or a floor), warn after ok, anything after a quota-only bell
+    expect(quotaBellCoversR2Bell([row("warn", false, now)], "crit", today)).toBe(false);
+    expect(quotaBellCoversR2Bell([row("warn", true, now)], "crit", today)).toBe(false);
+    expect(quotaBellCoversR2Bell([row("ok", false, now)], "warn", today)).toBe(false);
+    expect(quotaBellCoversR2Bell([{ metadata: null, created_at: now }], "warn", today)).toBe(false);
+    expect(quotaBellCoversR2Bell([{ metadata: null, created_at: now }], "crit", today)).toBe(false);
+    expect(quotaBellCoversR2Bell([row("hot", false, now)], "warn", today)).toBe(false);
+    // today: a repeat is held — the same or a lower band than one already stated, a floor included
+    expect(quotaBellCoversR2Bell([row("warn", true, now)], "warn", today)).toBe(true);
+    expect(quotaBellCoversR2Bell([row("crit", true, now)], "crit", today)).toBe(true);
+    expect(quotaBellCoversR2Bell([row("crit", true, now)], "warn", today)).toBe(true);
+    // a failed read (null) holds nothing: the bell goes
     expect(quotaBellCoversR2Bell(null, "warn", today)).toBe(false);
+    // the shared key, as the quota step uses it on the R2 bell's stated band (no week rule there)
+    expect(sameDayBellHolds([{ metadata: { r2PlanBand: "warn" }, created_at: now }], "warn", today)).toBe(true);
+    expect(sameDayBellHolds([{ metadata: { r2PlanBand: "warn" }, created_at: now }], "crit", today)).toBe(false);
+    expect(sameDayBellHolds([{ metadata: { r2PlanBand: "crit" }, created_at: now }], "crit", today)).toBe(true);
+    expect(sameDayBellHolds([{ metadata: { r2PlanBand: "crit" }, created_at: yesterday }], "warn", today)).toBe(false);
+    expect(sameDayBellHolds([{ metadata: null, created_at: now }], "warn", today)).toBe(false);
+    expect(sameDayBellHolds(null, "warn", today)).toBe(false);
+    expect(sameDayBellHolds([{ metadata: { r2PlanBand: "crit" }, created_at: now }], "warn", "not a time")).toBe(false);
+    expect(statedPlanBand({ metadata: { r2PlanBand: "crit" } })).toBe("crit");
+    expect(statedPlanBand({ metadata: { r2PlanBand: "hot" } })).toBeNull();
+    expect(statedPlanBand({ metadata: null })).toBeNull();
   });
 
   it("review fix (issue 4): 'sent today' compares instants, not strings — a '+00:00' timestamp at midnight, a non-UTC offset, psql's shape", () => {
     const day = "2026-10-13T00:00:00.000Z";
-    const quotaOnly = (at: string) => [{ metadata: null, created_at: at }];
+    // a floor stating crit: it holds a crit R2 bell only on its own day (it never covers the week), so the day decides
+    const floorAt = (at: string) => [{ metadata: { r2PlanBand: "crit", r2PlanPct: 91, r2PlanTruncated: true }, created_at: at }];
     // midnight with no fraction: '+' sorts before '.' as text, but it is the same instant
-    expect(quotaBellCoversR2Bell(quotaOnly("2026-10-13T00:00:00+00:00"), "warn", day)).toBe(true);
+    expect(quotaBellCoversR2Bell(floorAt("2026-10-13T00:00:00+00:00"), "crit", day)).toBe(true);
     // a database in America/Chicago: 19:30 -05:00 on the 12th is 00:30 UTC on the 13th — today
-    expect(quotaBellCoversR2Bell(quotaOnly("2026-10-12T19:30:00-05:00"), "warn", day)).toBe(true);
+    expect(quotaBellCoversR2Bell(floorAt("2026-10-12T19:30:00-05:00"), "crit", day)).toBe(true);
     // and 18:30 -05:00 is 23:30 UTC on the 12th — yesterday
-    expect(quotaBellCoversR2Bell(quotaOnly("2026-10-12T18:30:00-05:00"), "warn", day)).toBe(false);
-    expect(quotaBellCoversR2Bell(quotaOnly("2026-10-13 05:30:00+05"), "warn", day)).toBe(true);
-    expect(quotaBellCoversR2Bell(quotaOnly("2026-10-13T05:29:59.999999+05:30"), "warn", day)).toBe(false);
+    expect(quotaBellCoversR2Bell(floorAt("2026-10-12T18:30:00-05:00"), "crit", day)).toBe(false);
+    expect(quotaBellCoversR2Bell(floorAt("2026-10-13 05:30:00+05"), "crit", day)).toBe(true);
+    expect(quotaBellCoversR2Bell(floorAt("2026-10-13T05:29:59.999999+05:30"), "crit", day)).toBe(false);
     // an unreadable timestamp never counts as today (the week rule still applies)
-    expect(quotaBellCoversR2Bell(quotaOnly("yesterday-ish"), "warn", day)).toBe(false);
+    expect(quotaBellCoversR2Bell(floorAt("yesterday-ish"), "crit", day)).toBe(false);
     expect(timestampMs("2026-10-13T00:00:00+00:00")).toBe(Date.parse(day));
     expect(timestampMs("2026-10-13 00:00:00+00")).toBe(Date.parse(day));
     expect(timestampMs(null)).toBeNaN();
