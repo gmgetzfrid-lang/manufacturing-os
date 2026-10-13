@@ -923,7 +923,10 @@
       "findings": [
         "GAP-313 (remainder re-owned by the integrator 2026-10-01, orphan sweep: Whole spec unbuilt: one route assembles the graph (and a scoped graph) under the caller's own document visibility, the page loads one payload and says when a cached snapshot was skipped, and the page comment matches the real …)",
         "GM-7 residual (assigned by the integrator 2026-10-07 at the I-14 merge: the keyset read of pending proposals, lib/linkProposals.ts readPendingProposalPairs, orders created_at desc then id desc, and proposed_links_org_status_idx holds no id, so inside one Find-connections run's single upsert every window reads the run's remaining rows — measured on PG16 at 9,000 then 8,000 for a 9,000-row run; CREATE INDEX IF NOT EXISTS on proposed_links (org_id, status, created_at DESC, id DESC), keeping the reader's order; one migration, DEC-30 counts-only inventory, one paste)",
-        "PHYS-13 graph limb (assigned by the integrator 2026-10-07 at the identity-and-session IS-P1 merge, DEC-31: app/(protected)/graph/page.tsx's Copy link builds on window.location.origin — added by I-14 after PHYS-13's last pass; build it on lib/publicOrigin.ts publicOrigin(), as the library page's /d/ copies now do)"
+        "PHYS-13 graph limb (assigned by the integrator 2026-10-07 at the identity-and-session IS-P1 merge, DEC-31: app/(protected)/graph/page.tsx's Copy link builds on window.location.origin — added by I-14 after PHYS-13's last pass; build it on lib/publicOrigin.ts publicOrigin(), as the library page's /d/ copies now do)",
+        "GM-14 limb 2 (assigned by the integrator 2026-10-13 at the I-11 merge, DEC-31: lib/orgGraph.ts reads document_assets as id, document_id, asset_id — the doc↔asset edge carries sheet_label and pages, and a title block read off an AI transcription carries the 'AI-read, unconfirmed' mark (model set), as the sweep, hub, ⌘K and coverage report already do)",
+        "GAP-303 graph limb (assigned by the integrator 2026-10-13 at the I-11 merge, DEC-31: the graph's doc↔asset edge is styled by asserted_by — a machine reading is distinguishable from a person's assertion)",
+        "AREA-2 graph limb (assigned by the integrator 2026-10-13 at the I-11 merge, DEC-31: app/(protected)/graph/page.tsx Connect inserts into document_assets with no role check; gate the Connect affordance on the writer tier 20261170's policy admits, and on a pair a 'drawing' row holds route the link through POST /api/equipment-bridge action 'adopt' instead of an insert that 23505s)"
       ],
       "files": [
         "new app/api/graph/route.ts (per-caller assembly through loadPrincipal + readableControlledDocIds — never one cached payload shared across callers)",
@@ -964,7 +967,8 @@
       "findings": [
         "AREA-1 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'done-when 3 asks for a test that refuses a Viewer's JWT at runtime, and a static census plus a scratch-database spot check is not that test.' Plus 'Apply 20261128.')",
         "IRLS-6 (remainder re-owned by the integrator 2026-10-01, orphan sweep: a fresh-database replay of the numbered migrations in filename order with zero errors, and /api/admin/schema-health against that fresh install — automated here in the harness instead of an operator run)",
-        "projects-and-cost INTK-14 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'A sweep of every SECURITY DEFINER function added since 20260902 — not done: ... 59 such functions, 48 with no explicit REVOKE/GRANT ... 19 are not [trigger functions] ... Each needs its own reasoned decision.')"
+        "projects-and-cost INTK-14 (remainder re-owned by the integrator 2026-10-01, orphan sweep: 'A sweep of every SECURITY DEFINER function added since 20260902 — not done: ... 59 such functions, 48 with no explicit REVOKE/GRANT ... 19 are not [trigger functions] ... Each needs its own reasoned decision.')",
+        "CB-2 limb 3 (assigned by the integrator 2026-10-13 at the I-11 merge, DEC-31: an in-suite runtime test that a Viewer's direct INSERT/UPDATE on document_equipment_suggestions is refused and a controller's lands, under 20261128's policy — today only the static census and a manual scratch PostgreSQL 16 case exist)"
       ],
       "files": [
         "vitest setup for an in-process Postgres (e.g. @electric-sql/pglite) or a local PostgreSQL 16 started for the run, replaying supabase/schema.sql + every numbered migration with stubbed auth.uid() / role helpers",
@@ -1137,6 +1141,34 @@
         "I-22 merged (it edits the ask route's DRAWING FACTS)"
       ],
       "sequencingNotes": "Added by the integrator 2026-10-07 under the user's delegation (DEC-90 A17). Runs after I-12 and I-22, which both edit the ask route; coordinate with I-16 if it still edits the route."
+    },
+    {
+      "name": "I-26 BRIDGE REMAINDERS — the Operating Areas checklist step, the drawing viewer's provenance, a relation for knowledge uploads, the other unit-decode doors, the drawing audit's sheet mark, and the asset_tags index (I-11 remainders)",
+      "findings": [
+        "AREA-4 limbs 2 and 3 (assigned by the integrator 2026-10-13 at the I-11 merge, DEC-31: components/assets/AreaKnowledgePanel.tsx gains the step 'populate this area's equipment from its drawings' with the live count of pending document_equipment_suggestions rows for the area's watched libraries, and the sweep (components/documents/EquipmentSweepModal.tsx, mountable on its own) launched in place, opt-in and first review included)",
+        "GAP-303 drawing viewer limb (assigned by the integrator 2026-10-13 at the I-11 merge, DEC-31: the drawing viewer's tag overlay distinguishes a machine reading ('read from drawing' / 'AI-read' with model and revision) from a person's assertion, as the asset hub does)",
+        "GAP-307 limb 3 (assigned by the integrator 2026-10-13 at the I-11 merge, DEC-31: a knowledge upload gets a relation of its own. Integrator default, best practice — a second table knowledge_document_assets(org_id, knowledge_document_id, asset_id, sheet_label, pages, asserted_by, model, source_revision, ...) mirroring document_assets' provenance columns, its FK to the knowledge document and its read policy keyed on the knowledge library's readers, rather than loosening document_assets.document_id's FK; the coverage report reads it instead of the working list. One migration, DEC-30 counts-only inventory, one paste; the package may argue the other shape in its DEC)",
+        "GAP-314 acceptance 1, the other doors (assigned by the integrator 2026-10-13 at the I-11 merge, DEC-31: each calls requestUnitCodeDecode after its write — the library page's uploadOne and saveInlineDocNumber, the intake door, the transitionIn adoption; and the console-only doors (the link picker, GenerateModal's unitCodeNote) say a decode that did not run to the person)",
+        "GOV-9 criterion 4, the remaining consumers (assigned by the integrator 2026-10-13 at the I-11 merge, DEC-31: the drawing audit and title-block reading (I-07's PR-11 surface) and the drawing route's equipment table sheet name show a title block read off an AI transcription as 'AI-read, unconfirmed', never as an identity)",
+        "WIRE-8 done-when 3 (assigned by the integrator 2026-10-13 at the I-11 merge, DEC-31: CREATE INDEX CONCURRENTLY IF NOT EXISTS documents_asset_tags_gin ON documents USING GIN (asset_tags jsonb_path_ops) — its own migration and its own paste, the only statement in it (CONCURRENTLY cannot run in a transaction; it does not lock writes on documents); the hub's .contains read then uses it; the record says an INVALID index left by a failed build is dropped and the paste re-run)"
+      ],
+      "files": [
+        "components/assets/AreaKnowledgePanel.tsx (the checklist step, the pending count, the sweep mounted in place)",
+        "the drawing viewer's tag overlay (provenance mark)",
+        "lib/bridgeCoverage.ts, lib/equipmentBridgeServer.ts (the knowledge-upload relation)",
+        "app/(protected)/documents/[libraryId]/page.tsx (uploadOne, saveInlineDocNumber decode calls) — edited after I-12 merges",
+        "app/api/intake/upload/route.ts, lib/transitionIn.ts (decode calls) — edited after projects J19 merges",
+        "components/documents/GenerateModal.tsx and the link picker (the decode note shown)",
+        "the drawing audit / title-block surfaces and the drawing route's equipment table (the AI-read mark)",
+        "two migrations: the knowledge_document_assets relation (one paste) and the documents.asset_tags GIN index built CONCURRENTLY (its own paste, alone)"
+      ],
+      "migrationsLikely": 2,
+      "dependsOn": [
+        "I-11 merged (DEC-96; 20261170, 20261171)",
+        "I-12 merged (the library page)",
+        "projects J19 merged (lib/transitionIn.ts)"
+      ],
+      "sequencingNotes": "Added by the integrator 2026-10-13 at the I-11 merge (DEC-31): every limb I-11 recorded as handed to 'the next package that edits' a file it did not own. Runs after I-12 and J19. The index paste is independent of the relation paste and can go any time."
     }
   ],
   "crossAreaFileOverlaps": [

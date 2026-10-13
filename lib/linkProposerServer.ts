@@ -16,7 +16,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { extractDrawingRefs } from "@/lib/drawingText";
-import { normalizeTag } from "@/lib/codebook";
+import { normalizeTag, tagKey } from "@/lib/codebook";
 import {
   proposeOpcContinuity, proposeSharedEquipment, customSkillDrafts,
   proposeCoCitations, compileSkillPatterns, mergeDrafts, filterDrafts,
@@ -286,6 +286,16 @@ async function readPaged<T>(
   }
 }
 
+/** GAP-310: the alias a document reached an asset by — compared by the ONE
+ *  tag grammar (tagKey, the registry's identity key), so "North Furnace" and
+ *  "NORTH-FURNACE" are one alias. Undefined when it reached the asset by its
+ *  canonical tag (or by an empty spelling). Exported for the awkward-input
+ *  agreement table (lib/__tests__/codebook.test.ts). */
+export function aliasReachedVia(tagText: string | null | undefined, canonical: string, aliases: ReadonlyArray<string>): string | undefined {
+  const viaKey = tagKey(tagText ?? "");
+  return viaKey && viaKey !== tagKey(canonical) ? aliases.find((a) => tagKey(a) === viaKey) : undefined;
+}
+
 export async function runLinkProposers(
   admin: SupabaseClient,
   orgId: string,
@@ -492,12 +502,11 @@ export async function runLinkProposers(
     const canonical = assetTag.get(l.asset_id);
     if (!canonical) continue;
     // Did this document reach the asset by its canonical tag, or only
-    // because someone taught the system a nickname?
-    const viaTag = normalizeTag(l.tag_text ?? "");
-    const aliases = aliasByAsset.get(l.asset_id) ?? [];
-    const matchedAlias = viaTag && viaTag !== canonical
-      ? aliases.find((a) => normalizeTag(a) === viaTag)
-      : undefined;
+    // because someone taught the system a nickname? Compared by the ONE tag
+    // grammar (GAP-310: tagKey, the registry's identity key — punctuation-
+    // blind, so "North Furnace" and "NORTH-FURNACE" are the same alias); the
+    // display spelling (`canonical`) is only what the proposal shows.
+    const matchedAlias = aliasReachedVia(l.tag_text, canonical, aliasByAsset.get(l.asset_id) ?? []);
     tagOccurrences.push({
       documentId: l.document_id,
       tag: canonical,

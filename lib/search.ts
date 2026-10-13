@@ -106,8 +106,15 @@ export interface TagLookupHit {
   via: "tag" | "code" | "alias";
   /** The operating area it is filed under, with the codebook's name. */
   unit: { code: string; label: string | null } | null;
-  /** Documents the asset appears on (the document↔equipment relation). */
-  documents: Array<{ id: string; library_id: string; document_number: string | null; title: string | null }>;
+  /** Documents the asset appears on (the document↔equipment relation), with
+   *  the sheet address the relation carries (GAP-301 — "2002-D-10001 SHT 4"),
+   *  whether a machine read it off the drawing (GAP-303), whether that
+   *  reading came from an AI transcription (GOV-9: the sheet address is then
+   *  unconfirmed), and whether a person also tagged the document with it. */
+  documents: Array<{
+    id: string; library_id: string; document_number: string | null; title: string | null;
+    sheetLabel?: string | null; fromDrawing?: boolean; aiRead?: boolean; personTagged?: boolean;
+  }>;
 }
 
 /** GAP-311 — "FV-2201 is leaking": the asset, its unit and the drawings it
@@ -151,32 +158,71 @@ export async function lookupTag(orgId: string, query: string, opts: { documentsP
     }
 
     const ids = live.map((f) => f.row.id);
-    const { data: links } = await supabase.from("document_assets").select("asset_id, document_id")
+    // GAP-311: the sheet each link names (20261170's sheet_label) and, GOV-9,
+    // the model that transcribed the page it was read off (20261171); a
+    // database without a column answers the links as before. The narrower
+    // read is tried only when a COLUMN is missing: any other failure (a
+    // timeout, a refused read) is carried up — a retry without `model` would
+    // drop the "(AI-read, unconfirmed)" mark and read as a plain link.
+    const linkRead = (cols: string) => supabase.from("document_assets").select(cols)
       .in("asset_id", ids).limit(perAsset * ids.length * 4);
+    let linkRes: { data: unknown; error: { code?: string; message?: string } | null } = await linkRead("asset_id, document_id, sheet_label, source, model");
+    if (linkRes.error && missingColumn(linkRes.error)) linkRes = await linkRead("asset_id, document_id, sheet_label, source");
+    if (linkRes.error && missingColumn(linkRes.error)) linkRes = await linkRead("asset_id, document_id");
+    if (linkRes.error) throw new TagLookupReadError(`The drawings ${live.map((f) => f.row.tag).join(", ")} ${live.length === 1 ? "is" : "are"} on could not be read: ${linkRes.error.message ?? "read failed"}`);
+    const links = linkRes.data;
     const docIdsByAsset = new Map<string, string[]>();
-    for (const l of ((links ?? []) as Array<{ asset_id: string; document_id: string }>)) {
+    const linkMeta = new Map<string, { sheetLabel: string | null; fromDrawing: boolean; aiRead: boolean }>(); // `${asset}:${doc}`
+    for (const l of ((links ?? []) as Array<{ asset_id: string; document_id: string; sheet_label?: string | null; source?: string | null; model?: string | null }>)) {
       const list = docIdsByAsset.get(l.asset_id) ?? [];
       if (!list.includes(l.document_id) && list.length < perAsset) list.push(l.document_id);
       docIdsByAsset.set(l.asset_id, list);
+      linkMeta.set(`${l.asset_id}:${l.document_id}`, { sheetLabel: l.sheet_label ?? null, fromDrawing: l.source === "drawing", aiRead: !!l.model });
     }
     const allDocIds = [...new Set([...docIdsByAsset.values()].flat())];
-    const docs = new Map<string, TagLookupHit["documents"][number]>();
+    type DocRow = TagLookupHit["documents"][number] & { asset_tags?: unknown };
+    const docs = new Map<string, DocRow>();
     if (allDocIds.length > 0) {
       // RLS decides which of them this person may see — an unreadable drawing
-      // simply does not come back.
-      const { data } = await supabase.from("documents").select("id, library_id, document_number, title")
+      // simply does not come back. asset_tags: whether a person tagged it.
+      const { data } = await supabase.from("documents").select("id, library_id, document_number, title, asset_tags")
         .eq("org_id", orgId).in("id", allDocIds);
-      for (const d of ((data ?? []) as Array<TagLookupHit["documents"][number]>)) docs.set(d.id, d);
+      for (const d of ((data ?? []) as DocRow[])) docs.set(d.id, d);
     }
+    const typedOn = (d: DocRow, assetTag: string) => Array.isArray(d.asset_tags)
+      && (d.asset_tags as Array<Record<string, unknown> | null>).some((e) => !!e && typeof e.tag === "string" && tagKey(e.tag) === tagKey(assetTag));
     return live.map(({ row, via }) => ({
       asset: { id: row.id, tag: row.tag, description: row.description, unit_code: row.unit_code ?? null, code: row.code ?? null },
       via,
       unit: row.unit_code ? { code: row.unit_code, label: labels.get(row.unit_code) ?? null } : null,
-      documents: (docIdsByAsset.get(row.id) ?? []).map((id) => docs.get(id)).filter((d): d is TagLookupHit["documents"][number] => !!d),
+      documents: (docIdsByAsset.get(row.id) ?? [])
+        .flatMap((id): TagLookupHit["documents"] => {
+          const doc = docs.get(id);
+          if (!doc) return [];
+          const { asset_tags: _tags, ...d } = doc;
+          void _tags;
+          const meta = linkMeta.get(`${row.id}:${id}`);
+          return [{
+            ...d, sheetLabel: meta?.sheetLabel ?? null, fromDrawing: meta?.fromDrawing ?? false,
+            aiRead: meta?.aiRead ?? false, personTagged: typedOn(doc, row.tag),
+          }];
+        }),
     }));
-  } catch {
+  } catch (e) {
+    // A failed link read is said (globalSearch settles it as no exact answer
+    // — the fuzzy asset hit still lists the asset); anything else as before.
+    if (e instanceof TagLookupReadError) throw e;
     return [];
   }
+}
+
+/** lookupTag found the asset but could not read the drawings it is on. */
+export class TagLookupReadError extends Error {}
+
+/** A column the database does not have yet (before 20261170 / 20261171) —
+ *  the one error a narrower read answers. */
+function missingColumn(e: { code?: string; message?: string }): boolean {
+  return e.code === "42703" || e.code === "PGRST204" || /column .* does not exist|could not find the .* column/i.test(e.message ?? "");
 }
 
 /** Apply full-text search with refinery synonym expansion, falling back to

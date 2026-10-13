@@ -290,7 +290,14 @@ describe("SEC-17 / PM-8 — project_documents", () => {
   it("has no FOR ALL policy; SELECT is visibility-gated; an attach or an upsert's update needs a project manager or a controller in a project the caller can see; a detach the owner or a controller", () => {
     const ps = final.get("project_documents")!;
     expect([...ps.values()].filter((p) => p.cmd === "ALL")).toEqual([]);
-    expect([...ps.keys()].sort()).toEqual(["project_documents_delete", "project_documents_insert", "project_documents_select", "project_documents_update"]);
+    expect([...ps.entries()].filter(([, p]) => p.permissive).map(([n]) => n).sort()).toEqual(["project_documents_delete", "project_documents_insert", "project_documents_select", "project_documents_update"]);
+    // DACL-11 (intelligence Round G, 20261170): one RESTRICTIVE read rail —
+    // a link row is visible only while its document is readable. It narrows
+    // every permissive read; it grants nothing.
+    const restrictive = [...ps.entries()].filter(([, p]) => !p.permissive);
+    expect(restrictive.map(([n]) => n)).toEqual(["project_documents_document_readable"]);
+    expect(restrictive[0][1].cmd).toBe("SELECT");
+    expect(restrictive[0][1].body).toMatch(/USING \(EXISTS \(SELECT 1 FROM documents d WHERE d\.id = project_documents\.document_id\)\)/);
     expect(ps.get("project_documents_select")!.body).toMatch(/USING \(project_visible_to_me\(project_id\)\)/);
     for (const w of ["project_documents_insert", "project_documents_update"]) {
       expect(ps.get(w)!.body, w).toMatch(/is_org_controller\(org_id\) OR can_manage_project\(project_id\)/);

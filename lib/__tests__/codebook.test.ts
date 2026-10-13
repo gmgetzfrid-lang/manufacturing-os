@@ -14,6 +14,8 @@ import {
 import { normalizeTag as registryKey } from "@/lib/assets";
 import { normalizeTag as documentTagKey } from "@/lib/documentTags";
 import { normalizeTag as traceKey } from "@/lib/pidTrace";
+import { assetNorm as bridgeKey } from "@/lib/equipmentBridgeServer";
+import { aliasReachedVia } from "@/lib/linkProposerServer";
 
 const repoSrc = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
 
@@ -247,23 +249,26 @@ describe("GAP-310 — the one tag grammar", () => {
   });
 
   it("every call site agrees on the awkward-input table (acceptance 3)", () => {
-    const bridge = repoSrc("lib/equipmentBridgeServer.ts");
-    // The Bridge's local copy is I-11's file; until it imports tagKey its
-    // body must stay byte-identical to the grammar (it is transcribed here).
-    const bridgeImports = /import \{[^}]*\btagKey\b[^}]*\} from "@\/lib\/codebook"/.test(bridge);
-    if (!bridgeImports) {
-      expect(bridge).toContain('const assetNorm = (tag: string) => tag.toLowerCase().replace(/[^a-z0-9]+/g, "");');
-    }
-    const bridgeNorm = (tag: string) => tag.toLowerCase().replace(/[^a-z0-9]+/g, "");
     expect(repoSrc("supabase/migrations/20260609_phase1_normalization.sql")).toContain(SQL_NORMALIZE_TAG);
     for (const x of AWKWARD) {
       const k = tagKey(x);
       expect(registryKey(x), x).toBe(k);
       expect(documentTagKey(x), x).toBe(k);
-      expect(bridgeNorm(x), x).toBe(k);
+      // The Bridge's own key, imported (intelligence Round G, I-11).
+      expect(bridgeKey(x), x).toBe(k);
       expect(sqlNormalizeTag(x), x).toBe(k);
       // the line-trace key is deliberately uppercase — same identity modulo case
       expect(traceKey(x).toLowerCase(), x).toBe(k);
+      // The link proposer's "reached via an alias": a document that reached
+      // the asset by any spelling of an alias sharing the key finds that
+      // alias; by a spelling of the canonical tag, or an empty key, none.
+      if (k) {
+        expect(aliasReachedVia(k, "CANONICAL-1", [x]), x).toBe(x);
+        expect(aliasReachedVia(x, "CANONICAL-1", ["unrelated", x.toUpperCase()]), x).toBe(x.toUpperCase());
+        expect(aliasReachedVia(x, x, [x]), x).toBeUndefined();
+      } else {
+        expect(aliasReachedVia(x, "CANONICAL-1", [x]), JSON.stringify(x)).toBeUndefined();
+      }
     }
   });
 

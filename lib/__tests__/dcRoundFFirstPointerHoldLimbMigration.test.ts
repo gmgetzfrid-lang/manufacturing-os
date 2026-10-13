@@ -243,7 +243,11 @@ describe("20261182 — the guard re-created from its NEWEST earlier body (found 
     expect(found.sort()).toEqual([
       // the two read-only shapes: an object handed to a reader, a map entry copied from a read row — neither reaches a write
       "app/(protected)/documents/[libraryId]/page.tsx: newVersion.id",
+      // intelligence I-11 (DEC-96): revision truth reads the pointer into a Map / a list it compares against — a type key and two copies, no write
+      "app/api/equipment/sheets/route.ts: (d.current_version_id as string | null) ?? null",
+      "app/api/equipment/sheets/route.ts: string | null; library_id: string | null; document_number: string | null; status: string | null",
       "app/api/knowledge/drawing/route.ts: r.current_version_id ?? null",
+      "lib/bridgeCoverage.ts: (d.current_version_id as string | null) ?? null",
       "lib/documentLifecycle/common.ts: versionId",
       "lib/documentShares.ts: (data.current_version_id as string | null) ?? null",
       "lib/reviewControl.ts: pendingId",
@@ -256,6 +260,14 @@ describe("20261182 — the guard re-created from its NEWEST earlier body (found 
     // …and the two read-only shapes stay where they are read
     expect(contexts["lib/documentShares.ts: (data.current_version_id as string | null) ?? null"]).toMatch(/resolveServedVersion\(supabase, \{\s*id: documentId,$/);
     expect(contexts["app/api/knowledge/drawing/route.ts: r.current_version_id ?? null"]).toMatch(/ctrlById\.set\(r\.id, \{ rev: String\(r\.rev \?\? ""\),$/);
+    // …and I-11's three never sit in a write's payload
+    for (const k of [
+      "app/api/equipment/sheets/route.ts: (d.current_version_id as string | null) ?? null",
+      "app/api/equipment/sheets/route.ts: string | null; library_id: string | null; document_number: string | null; status: string | null",
+      "lib/bridgeCoverage.ts: (d.current_version_id as string | null) ?? null",
+    ]) {
+      expect(contexts[k], k).not.toMatch(/\.(update|insert|upsert)\(\{?\s*$/);
+    }
   });
 
   it("DRLS-16: the guard is executable by no client role; SECURITY DEFINER with its search_path pinned; nothing dropped, nothing else created", () => {

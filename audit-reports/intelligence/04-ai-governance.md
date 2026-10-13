@@ -693,7 +693,7 @@ Tests: `askRouteUnits.test.ts` "GOV-8: a refusal and an empty answer throw AiCal
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
-- **Assigned:** intelligence I-03 THE ASK ROUTE and I-11 THE BRIDGE & THE MEMORY — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
+- **Assigned:** intelligence I-26 BRIDGE REMAINDERS (criterion 4's remaining consumers: the drawing audit and the drawing route's sheet name) — by the integrator, 2026-10-13 (I-11 merge, DEC-31: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/knowledgeVision.ts:32-54`, `lib/knowledgeVision.ts:84-94`, `app/api/knowledge/ask/route.ts:1627-1650`, `supabase/migrations/20260922_vision_pages.sql:13`, `lib/knowledgeIngest.ts:458-470`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by repo-wide search: no migration adds any per-chunk source/vision column (only `section` in 20260914 and `tsv` in 20261007 touch knowledge_chunks), so there is nowhere to record that a given chunk came from lib/knowledgeVision.ts's haiku-tier OCR (VISION_MODEL at :26-30). The transcript flows into the normal chunk pipeline and is rendered identically to text-layer extraction.
@@ -767,6 +767,27 @@ Tests: `askRouteHonesty.test.ts` "GOV-9 — …" ("a vision chunk → AI TRANSCR
 4. Partly. ✓ The ask route's DRAWING FACTS never treat a vision-read title block as a confirmed identity. ✗ The other consumers of `self` rows — the drawing audit and title-block reading (I-07, `PR-11`), the sheet address (I-11, `GAP-301`) — and the equipment table's sheet name (it shows the declared title block, with "AI-read" beside a transcribed sheet) still use a vision-read identity without a human confirming it.
 
 **Scope / residual.** OPEN on criterion 4's other consumers (I-07, I-11). Chunks written before `20261122` read `'text'`. After a failed provenance read, a text-layer passage of a document with some vision-read pages is marked as possibly transcribed — every passage, when the roster failed too: the warning errs toward caution for that one ask (since I-03 fix pass 7 a failed roster refuses the ask instead, `KACL-4`). A 42703 (Postgres's undefined column) still means "a database without the column" whichever column it names, as `sourceColumnMissing` reads it: the selects name only the columns a migration adds.
+
+**Partial (2026-10-02, intelligence Round G, I-11).** I-11's limb of criterion 4: the sheet address. The Bridge reads each page's title block as the sheet address (GAP-301) and asks `knowledge_chunks.source = 'vision'` which pages an AI model transcribed. A missing column (before 20261122) means nothing is recorded; any other read failure fails toward the warning, and every page is then treated as AI-read.
+
+A title block read off a transcribed page is never an identity:
+- Its sheet is shown "(AI-read, unconfirmed)" in the sweep's chips and in `/api/equipment/sheets` (the hub's "Also read on").
+- The relation it writes carries the transcribing `model` (20261171), and the asset hub marks that link "AI-read", with "check it against the sheet".
+- A copy whose text layer declares the same page is preferred over a transcribed one.
+- Nothing in the Bridge takes identity from a title block: the unit comes from the controlled document's own `document_number` (CB-1), never from a `self` row. The sheet address is a label on a machine reading.
+
+**Done-when.**
+4. Partly. ✓ (I-03, 2026-10-01) The ask route's DRAWING FACTS. ✓ The sheet address (I-11): `lib/__tests__/equipmentBridge.test.ts` "GOV-9: a title block read off an AI transcription is shown as unconfirmed, never as an identity" and "GAP-301 end to end: … an AI-transcribed page is marked"; `lib/__tests__/equipmentBridgeRoutes.test.ts` "… an AI-read title block is marked". ✗ Still open: the drawing audit and title-block reading (I-07, `PR-11`) and the drawing route's equipment table sheet name.
+
+**Scope / residual.** OPEN on criterion 4's remaining consumers (I-07). The relation's stored `sheet_label` is a plain label. Its machine-and-model provenance sits beside it on the row (`asserted_by`, `model`), and every surface that shows the label shows that mark.
+
+**Fix pass 2 (2026-10-02, intelligence Round G, I-11 review).** The residual's "every surface that shows the label shows that mark" was false when written. ⌘K (`lookupTag` selected only `sheet_label` and `source`), the sweep's vanished delta, and the coverage report's relation rows showed a title-block address read off an AI transcription as fact. Each now marks it:
+- `lib/search.ts` `lookupTag` selects `model` (falling back without it) and carries `aiRead`, and `lib/globalSearch.ts` writes "<sheet> (AI-read, unconfirmed)".
+- The vanished line in `components/documents/EquipmentSweepModal.tsx` does the same.
+- `lib/bridgeCoverage.ts` reads the relation's `model`, and `components/assets/CoverageReport.tsx` marks the sheet.
+- The asset hub marks the sheet chip itself when no "AI-read" badge stands beside it (a pair a person also tagged).
+
+Tests: `lib/__tests__/globalSearchTags.test.ts`, `equipmentSweepModalRender.test.ts`, `bridgeCoverage.test.ts`, `coverageReportRender.test.ts` and `assetHubRelation.test.ts`; each new case fails on the fix-pass-1 files. The statement now holds for every surface I-11 owns that shows the relation's label: the sweep, the asset hub, ⌘K and the coverage report. The graph (`lib/orgGraph.ts`, I-15) does not show the label yet; when it does, it carries the mark with it (handed with GM-14).
 
 ---
 

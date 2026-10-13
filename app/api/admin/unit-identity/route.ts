@@ -138,6 +138,41 @@ function assetChunks(groups: Array<[string, string[]]>, codeOfUnit: Map<string, 
   return { chunks, unplaceable };
 }
 
+/** GAP-314 acceptance 2 (I-11): how stale the decode is, cheaply — the
+ *  last finished run (its UNIT_IDENTITY_BACKFILL "finished" audit row) and
+ *  how many numbered documents carry no decode and were created or changed
+ *  since (or ever, when the decode never ran). The Bridge decodes a drawing
+ *  at ingest and document control at creation and renumber; this is what
+ *  neither door reached — the next run's work, visible before anyone runs it.
+ *  Head counts only; the scope writer tier, as the decode itself. */
+export async function GET(req: NextRequest) {
+  const authHeader = req.headers.get("authorization");
+  if (!authHeader?.startsWith("Bearer ")) return bad("Not authenticated", 401);
+  const { data: { user }, error: authErr } = await supabaseAdmin.auth.getUser(authHeader.slice(7));
+  if (authErr || !user) return bad("Not authenticated", 401);
+  const orgId = req.nextUrl.searchParams.get("orgId") ?? "";
+  if (!orgId) return bad("orgId required");
+  const { data: member } = await supabaseAdmin
+    .from("org_members").select("role, roles").eq("org_id", orgId).eq("uid", user.id)
+    .eq("status", "active").maybeSingle();
+  const writers = adminSurface("scope")?.writes ?? [];
+  if (!member || !memberHoldsAny(member, writers)) {
+    return bad("Only the roles that edit the operational scope can see the decode's state.", 403);
+  }
+  const { data: runs, error: runErr } = await supabaseAdmin.from("audit_logs")
+    .select("created_at, details").eq("org_id", orgId).eq("action", "UNIT_IDENTITY_BACKFILL")
+    .order("created_at", { ascending: false }).limit(50);
+  if (runErr) return bad(`The decode's history could not be read: ${runErr.message}`, 500);
+  const lastRunAt = ((runs ?? []) as Array<{ created_at: string; details: { phase?: string } | null }>)
+    .find((r) => r.details?.phase === "finished")?.created_at ?? null;
+  let q = supabaseAdmin.from("documents").select("id", { count: "exact", head: true })
+    .eq("org_id", orgId).is("unit_code", null).not("document_number", "is", null);
+  if (lastRunAt) q = q.or(`created_at.gt.${lastRunAt},updated_at.gt.${lastRunAt}`);
+  const { count, error } = await q;
+  if (error) return isMissingColumn(error) ? bad(NOT_APPLIED, 409) : bad(`Documents could not be counted: ${error.message}`, 500);
+  return NextResponse.json({ lastRunAt, undecodedSince: count ?? 0 }, { headers: { "Cache-Control": "no-store" } });
+}
+
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) return bad("Not authenticated", 401);

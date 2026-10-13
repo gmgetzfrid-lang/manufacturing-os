@@ -24,7 +24,7 @@ import { supabase } from "@/lib/supabase";
 import {
   listAssets, listAssetTypes, getPhotoCounts, getCoverPhotoUrls, createAsset, createAssetType,
   updateAsset, deleteAsset, archiveAsset, restoreAsset, listAssetPhotos, deletePhoto, updatePhoto,
-  invalidateAssetCache, photoAgeCategory, listAssetIdentities, getAsset,
+  invalidateAssetCache, photoAgeCategory, listAssetIdentities, getAsset, unlinkDocumentFromAsset,
   type Asset, type AssetType, type AssetPhoto, type PhotoStatus, type AssetIdentity,
 } from "@/lib/assets";
 import {
@@ -44,6 +44,7 @@ import AssetPhotoCarousel from "@/components/assets/AssetPhotoCarousel";
 import { CategorizeBanner, FlowPanel, FlowReviewQueue } from "@/components/assets/UnitOpsPanels";
 import { countAssetFlows, assetDeleteFlowNote } from "@/lib/processFlows";
 import { AreaKnowledgePanel } from "@/components/assets/AreaKnowledgePanel";
+import CoverageReport from "@/components/assets/CoverageReport";
 import DocumentLinkPicker from "@/components/documents/DocumentLinkPicker";
 import AssetPhotoUploader from "@/components/assets/AssetPhotoUploader";
 import AssetCsvImportModal from "@/components/assets/AssetCsvImportModal";
@@ -101,8 +102,11 @@ function AssetsPageInner() {
   const [typeFilter, setTypeFilter] = useState<string>("");
   const [filterMode, setFilterMode] = useState<"all" | "with_photos" | "no_photos">("all");
   // BR-8: provenance is a filter — equipment the drawings created, awaiting
-  // a person to vouch for it.
-  const [discoveredOnly, setDiscoveredOnly] = useState(false);
+  // a person to vouch for it. The equipment sweep links here with
+  // ?discovered=1, landing with the filter on.
+  const [discoveredOnly, setDiscoveredOnly] = useState(() => searchParams.get("discovered") === "1");
+  // GAP-308: the unit's coverage report, opened on demand.
+  const [showCoverage, setShowCoverage] = useState(false);
   // IRLS-5: archive is reversible — the archived equipment has a list of its
   // own (it is not in the grid), where the writer tier restores it.
   const [showArchived, setShowArchived] = useState(false);
@@ -470,6 +474,24 @@ function AssetsPageInner() {
             unit={{ code: currentUnit.code, label: currentUnit.label || `Unit ${currentUnit.code}` }}
             unitAssetIds={areaAssetIds}
           />
+        )}
+
+        {/* GAP-308: this unit's coverage — what its drawings and the equipment
+            list agree on, and the to-do lists where they do not. Opened on
+            demand (it reads every relation and sheet tag of the org). */}
+        {currentUnit && !loading && uid && activeOrgId && isAdmin && (
+          <div className="mb-4">
+            <button type="button" onClick={() => setShowCoverage((v) => !v)}
+              className="text-[11px] font-black text-violet-700 hover:text-violet-600 underline">
+              {showCoverage ? "Hide coverage" : "Coverage — drawings vs. the equipment list"}
+            </button>
+            {showCoverage && (
+              <div className="mt-2">
+                <CoverageReport orgId={activeOrgId} units={book.units.map((u) => ({ code: u.code, label: u.label }))}
+                  initialUnitCode={currentUnit.code} />
+              </div>
+            )}
+          </div>
         )}
 
         {/* The Site Codebook already knows the taxonomy — put it to work. */}
@@ -1852,6 +1874,23 @@ function AssetEditDrawer({
       tag_text: asset.tag, source: "manual",
     });
     if (e && e.code !== "23505") { setError(e.message); return; }
+    if (e) {
+      // 23505: the pair is already linked. When the equipment sweep read it
+      // off the drawing (a 'drawing' row a person cannot write), the link
+      // becomes this person's — otherwise a later Dismiss of the drawing's
+      // reading would take the person's link with it (GAP-302).
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const res = await fetch("/api/equipment-bridge", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${session?.access_token ?? ""}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "adopt", orgId, documentId, assetId: asset.id }),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) { setError(json.error ?? `The link could not be made yours (HTTP ${res.status}).`); return; }
+        if (json.auditError) setError(String(json.auditError));
+      } catch (err) { setError((err as Error).message); return; }
+    }
     setDocPickerOpen(false);
     refreshDocs();
   };
@@ -1864,8 +1903,12 @@ function AssetEditDrawer({
       confirmLabel: "Unlink",
     });
     if (!ok) return;
-    await supabase.from("document_assets").delete()
-      .eq("document_id", documentId).eq("asset_id", asset.id);
+    // AREA-2 (20261170): the link is read first and what was found is said —
+    // a drawing link (the sweep's, not deletable from here) sends the person
+    // to the sweep; a refused delete names the role or document access; a
+    // link already gone just refreshes (lib/assets.ts unlinkDocumentFromAsset).
+    const res = await unlinkDocumentFromAsset(documentId, asset.id);
+    if (res.message) setError(res.message);
     refreshDocs();
   };
 

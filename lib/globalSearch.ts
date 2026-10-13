@@ -98,7 +98,11 @@ export async function globalSearch({ orgId, query, perKindLimit = 5 }: GlobalSea
           id: d.id,
           kind: "document",
           title: d.document_number || d.title || "Untitled",
-          subtitle: `${t.asset.tag} appears on this drawing${d.title && d.document_number ? ` · ${d.title}` : ""}`,
+          // GAP-311: the sheet it is on, when the relation carries it; GOV-9:
+          // a sheet address read off an AI transcription is unconfirmed;
+          // GAP-303: who said so — the drawing, a person, or both.
+          subtitle: `${t.asset.tag} appears on ${d.sheetLabel ? `${d.sheetLabel}${d.aiRead ? " (AI-read, unconfirmed)" : ""}` : "this drawing"}${
+            d.fromDrawing ? (d.personTagged ? " (tagged, and read from the drawing)" : " (read from the drawing)") : ""}${d.title && d.document_number ? ` · ${d.title}` : ""}`,
           href: `/documents/${d.library_id}?doc=${d.id}`,
           exact: true,
         });

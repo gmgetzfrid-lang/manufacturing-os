@@ -46,7 +46,7 @@ Four contract changes a consumer must know about:
 ## CB-1 · The Bridge decodes an operating unit out of arbitrary filenames and never checks the unit exists — mis-filed assets are written permanently
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/equipmentBridgeServer.ts:93-100`, `lib/equipmentBridgeServer.ts:117`, `lib/equipmentBridgeServer.ts:211-212`, `lib/codebook.ts:227-233`, `components/documents/EquipmentSweepModal.tsx:239-250`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The mechanism is real and I re-derived the decode by hand against the repo's own fixture (codebook.test.ts:37-43 segments unit(2)/drawing_type(2)/size(1)/iterable/sheet): "2024-VESSEL-LIST.PDF" yields unitCode "20", size "V", then the iterable finds no digits and returns early — so a filename becomes an operating unit, unvalidated. Severity is overstated at HIGH: it is a data-quality defect with no attacker, it needs a configured drawing-number decoder AND a document whose document_number fails to parse, and "permanently" is wrong — admin/assets/page.tsx:1307 and :1383 (`unit_code: unitCode || null`) let a human re-file any asset, and page.tsx:240-244 surfaces phantom units in the unknownUnits bucket rather than hiding them.
@@ -72,6 +72,16 @@ lib/equipmentBridgeServer.ts:96-100 — `for (const cand of numberCandidates) { 
 - [ ] EquipmentSweepModal renders the decoded unit code AND its codebook label per document, with an explicit warning when the code is not in the codebook
 - [ ] a test covers `computeForKnowledgeDoc` with a blank document_number and a filename like "2024-Vessel-List.pdf" and asserts unitCode is null (or the library default), not "20"
 
+**Resolution (2026-10-02, intelligence Round G).** `locateUnit` (`lib/equipmentBridgeServer.ts`) decides a controlled document's unit from its own `document_number` only. The filename, the title and the name are not drawing numbers and are never decoded. A decoded unit is used only when the Site Codebook holds it. A decoded code the codebook does not hold is reported (`unitRejected`) and files to no unit, or to the library's configured default when the codebook holds that default (a default it does not hold is refused too). The modal renders, per document, the decoded unit with its codebook label and where it came from (document number / library default), or an amber warning: "decodes to unit 12, which the Site Codebook does not hold — filed to no unit".
+
+**Done-when.**
+1. ✓ A parsed unit code not present in `book.units` is rejected before use (`heldUnit`).
+2. ✓ The candidate list is `document_number` alone.
+3. ✓ EquipmentSweepModal renders the decoded unit and its codebook label per document, with an explicit warning when the code is not in the codebook.
+4. ✓ Tests in `lib/__tests__/equipmentBridge.test.ts`: "CB-1: a blank document number is NOT decoded from the filename '2024-Vessel-List.pdf' (which would read unit 20)" (end to end through the compute), plus "decodes the document number to a unit the codebook holds", "reports a decoded unit the codebook does not hold and files to no unit (or to a held library default)" and "a blank number never falls through to a filename".
+
+**Scope / residual.** Assets mis-filed by the old decode keep their unit; they are re-filed by a person (the drawer) or the identity review (DEC-53 item 4). The Bridge never rewrites a filing.
+
 ---
 
 <a id="cb-2"></a>
@@ -80,7 +90,7 @@ lib/equipmentBridgeServer.ts:96-100 — `for (const cand of numberCandidates) { 
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
-- **Assigned:** intelligence I-11 THE BRIDGE & THE MEMORY — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
+- **Assigned:** intelligence I-17 DATABASE HARNESS (limb 3: the in-suite runtime refusal test) — by the integrator, 2026-10-13 (I-11 merge, DEC-31: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260928_site_codebook.sql:108-111`, `lib/equipmentBridgeServer.ts:175-180`, `lib/equipmentBridgeServer.ts:278-285`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The write/delete authority claim is exactly right — any active member, Viewer included, can rewrite or DELETE the proposal and the applied ledger, and applyForDocument trusts the row. One sub-claim in the summary is wrong: the automatic post-ingest path is NOT a clean trigger, because computeForKnowledgeDoc recomputes and upserts `suggested` at line 124 immediately before calling applyForDocument at :130, destroying the injection. The real vector is the confused deputy in app/api/equipment-bridge/route.ts:128-141, where a WRITER_ROLES user's Apply reads the poisoned row with no recompute.
@@ -113,6 +123,17 @@ supabase/migrations/20260928_site_codebook.sql:108-111 — `CREATE POLICY doc_eq
 3. Proved by static census; runtime test pending. The policy census in `lib/__tests__/intelRoundGRegistry.test.ts` shows the only write policy is controller-only and that nothing later re-opens it, but no database runs in the suite, so no test refuses a Viewer's JWT at runtime. (Supplementary, not a repo test: in the review-fix pass `20261128` was applied to a scratch Postgres 16 with stubbed auth and role helpers; there a Viewer's and a Manager's asset DELETE affected 0 rows, an Admin's deleted the row and wrote `ASSET_DELETED`, and a Viewer's INSERT into `document_equipment_suggestions` was refused with 42501.)
 
 **Scope / residual.** Limb 2 is handed to I-11 (`lib/equipmentBridgeServer.ts`). A runtime refusal test waits for a database in the test suite.
+
+**Partial (2026-10-02, intelligence Round G).** The two limbs handed to I-11 by the 2026-09-30 partial (first recorded as a Resolution; restated as a Partial in the review-fix pass because done-when 3 is not met as written):
+- **Re-derived, never trusted.** `applyForDocument` no longer reads `unitCode` or `code` from the stored `suggested` payload. The unit is the stored proposal's unit only when the Site Codebook holds it (`heldUnit`); an unknown one is dropped. The code is always re-derived from the tag and that unit through the codebook (`tagToCode`). A forged code or an unknown unit on the row is never written to an asset.
+- **The runtime refusal.** Exercised on a scratch PostgreSQL 16 with 20261128's ledger policy verbatim: a Viewer's direct INSERT into `document_equipment_suggestions` (a forged `suggested` with `unitCode` 99 and `code` 9999.1) is refused; a controller's lands. Recorded with 20261170's cases (`GAP-302`'s record, case 11).
+
+**Done-when.**
+1. ✓ (2026-09-30) Write restricted to the controller tier by collection, plus the service role (20261128).
+2. ✓ `applyForDocument` re-derives `code` from tag and held unit (`lib/__tests__/equipmentBridge.test.ts` "CB-2: a forged code and an unknown unit on the stored proposal are never written — re-derived from tag + a held unit").
+3. Not met as written. The done-when asks for a test; no repo test refuses a Viewer's write at runtime, because the vitest suite runs no database. What exists: the static policy census in `lib/__tests__/intelRoundGRegistry.test.ts` (the only write policy is controller-only and nothing later re-opens it) and the scratch PostgreSQL 16 case above (a Viewer's INSERT refused, a controller's landing), which is a manual run, not a test.
+
+**Scope / residual.** Pending migration (unchanged): `supabase/migrations/20261128_intel_roundG_registry_authority.sql`. Limb 2 holds without it. Stays OPEN for limb 3: an in-suite runtime refusal test needs a database in the test suite, which no package in this round provides.
 
 ---
 

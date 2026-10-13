@@ -25,6 +25,7 @@ import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { getAssetByTag, listAssetPhotos, type Asset, type AssetPhoto } from "@/lib/assets";
+import { tagKey } from "@/lib/codebook";
 import { assetSignInHref, watchForNoSession, type NoSessionAnswer } from "@/lib/assetSignIn";
 import AliasPanel from "@/components/assets/AliasPanel";
 import MentionsPanel from "@/components/assets/MentionsPanel";
@@ -33,6 +34,69 @@ import { stateStyle, documentState } from "@/lib/stateColors";
 interface HubDoc {
   id: string; number: string; title: string; rev: string | null;
   status: string | null; libraryId: string | null; checkedOutByName: string | null;
+  /** WIRE-1 / GAP-304: how the document↔equipment link was made, from the
+   *  relation (document_assets). Absent for a document found only by its
+   *  asset_tags (an unregistered tag). */
+  link?: {
+    source: string;                 // jsonb_sync | manual | drawing
+    sheetLabel: string | null;      // GAP-301: "2002-D-10001 SHT 4"
+    pages: number[];
+    machine: boolean;               // GAP-303: a machine read it off the sheet — and no person said so
+    /** GAP-303: a person also tagged the document with it (its asset_tags
+     *  name the tag) — the link is theirs as much as the drawing's: while a
+     *  'drawing' row holds the pair, the tag sync's own row is skipped, so
+     *  the relation alone cannot say so. */
+    personTagged: boolean;
+    model: string | null;           // the AI model, when a page was transcribed
+    sourceRevision: string | null;  // the revision it was read from
+    vanished: boolean;              // GAP-309: not read on the current revision
+    superseded: boolean;            // read from an earlier revision
+  };
+}
+
+/** Extracted, not applied (or a knowledge upload) — /api/equipment/sheets. */
+interface ExtractedSheet {
+  knowledgeDocumentId: string; documentId: string | null; name: string; libraryId: string | null;
+  pages: number[]; sheets: string[];
+}
+
+type LinkRow = {
+  document_id: string; source?: string | null; sheet_label?: string | null; pages?: number[] | null;
+  asserted_by?: string | null; model?: string | null; source_revision?: string | null;
+  vanished_at?: string | null; superseded_at?: string | null;
+};
+
+/** Ids per `.in()` request: the request line carries every id, and a longer
+ *  list goes past the gateway's URL limit (lib/projects.ts IN_FILTER_CHUNK). */
+const IN_CHUNK = 100;
+/** The most links the relation read returns, and the most documents the
+ *  asset_tags containment read returns. A read that reaches its cap may have
+ *  left documents out — said on the page, never a silent cut. */
+const HUB_LINK_CAP = 1000;
+const HUB_TAGGED_CAP = 500;
+/** A hold read that returns this many rows may have been cut at PostgREST's
+ *  max-rows (no error): its documents count as not checked. */
+const HOLD_ROWS_CAP = 1000;
+
+/** WIRE-1 / WIRE-8: the asset's documents come from the relation
+ *  (document_assets — every source: the tags typed on a document, manual
+ *  links, and the drawings the Bridge read it on), read under the viewer's
+ *  RLS. The columns a database may not have yet (20261170 / 20261171) are
+ *  dropped one step at a time, never a failed page. */
+async function readAssetLinks(assetId: string): Promise<{ rows: LinkRow[]; error: string | null }> {
+  const attempts = [
+    "document_id, source, sheet_label, pages, asserted_by, model, source_revision, vanished_at, superseded_at",
+    "document_id, source, sheet_label, pages",
+    "document_id, source",
+  ];
+  let last: string | null = null;
+  for (const cols of attempts) {
+    const { data, error } = await supabase.from("document_assets").select(cols).eq("asset_id", assetId).limit(HUB_LINK_CAP);
+    if (!error) return { rows: (data ?? []) as unknown as LinkRow[], error: null };
+    last = error.message;
+    if (!(error.code === "42703" || error.code === "PGRST204" || /column/i.test(error.message ?? ""))) break;
+  }
+  return { rows: [], error: last };
 }
 
 export default function AssetHubPage() {
@@ -66,7 +130,13 @@ export default function AssetHubPage() {
   const [asset, setAsset] = useState<Asset | null>(null);
   const [docs, setDocs] = useState<HubDoc[]>([]);
   const [holdsByDoc, setHoldsByDoc] = useState<Map<string, number>>(new Map());
+  // Documents whose holds could not be read (a failed or cut read) — the
+  // page says so, never "0 on hold" (fail closed), and the reason.
+  const [holdsUnchecked, setHoldsUnchecked] = useState<{ ids: Set<string>; why: string } | null>(null);
+  // A read that reached its cap — documents may be missing from the list.
+  const [listCut, setListCut] = useState<string[]>([]);
   const [photos, setPhotos] = useState<AssetPhoto[]>([]);
+  const [extracted, setExtracted] = useState<ExtractedSheet[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -144,37 +214,108 @@ export default function AssetHubPage() {
       const a = await getAssetByTag(activeOrgId, tag).catch(() => null);
       setAsset(a);
 
-      // Every controlled document tagged to this asset (JSONB containment).
+      // WIRE-1 / BR-2: every controlled document the RELATION links to this
+      // asset (document_assets, under the viewer's RLS) — so a drawing the
+      // Bridge read the tag on is listed with its sheet. The asset_tags
+      // containment read is kept beside it: it is the only answer for an
+      // unregistered tag, and no document listed before disappears.
+      // asset_tags: whether a person tagged the document with it (GAP-303).
+      const docCols = "id, document_number, title, name, rev, status, library_id, checked_out_by_name, asset_tags";
+      const keys = new Set([tagKey(tag), ...(a?.tag ? [tagKey(a.tag)] : [])].filter(Boolean));
+      const typedOn = (r: Record<string, unknown>) => Array.isArray(r.asset_tags)
+        && (r.asset_tags as Array<Record<string, unknown> | null>).some((e) => !!e && typeof e.tag === "string" && keys.has(tagKey(e.tag)));
+      const links = a?.id ? await readAssetLinks(a.id) : { rows: [] as LinkRow[], error: null };
+      if (links.error) throw new Error(links.error);
+      const linkByDoc = new Map<string, LinkRow>();
+      for (const l of links.rows) linkByDoc.set(String(l.document_id), l);
+      const rowsById = new Map<string, Record<string, unknown>>();
+      const linkedIds = [...linkByDoc.keys()];
+      for (let i = 0; i < linkedIds.length; i += IN_CHUNK) {
+        const { data, error: le } = await supabase.from("documents").select(docCols)
+          .eq("org_id", activeOrgId).in("id", linkedIds.slice(i, i + IN_CHUNK)).neq("status", "Archived");
+        if (le) throw new Error(le.message);
+        for (const r of (data ?? []) as Array<Record<string, unknown>>) rowsById.set(String(r.id), r);
+      }
       const { data: docRows, error: de } = await supabase
         .from("documents")
-        .select("id, document_number, title, name, rev, status, library_id, checked_out_by_name")
+        .select(docCols)
         .eq("org_id", activeOrgId)
         .contains("asset_tags", [{ tag }])
         .neq("status", "Archived")
-        .limit(500);
+        .limit(HUB_TAGGED_CAP);
       if (de) throw new Error(de.message);
-      const mapped: HubDoc[] = (docRows ?? []).map((r) => ({
-        id: String((r as Record<string, unknown>).id),
-        number: String((r as Record<string, unknown>).document_number || (r as Record<string, unknown>).title || (r as Record<string, unknown>).name || "—"),
-        title: String((r as Record<string, unknown>).title || ""),
-        rev: ((r as Record<string, unknown>).rev as string) ?? null,
-        status: ((r as Record<string, unknown>).status as string) ?? null,
-        libraryId: ((r as Record<string, unknown>).library_id as string) ?? null,
-        checkedOutByName: ((r as Record<string, unknown>).checked_out_by_name as string) ?? null,
-      }));
+      const cut: string[] = [];
+      if (links.rows.length >= HUB_LINK_CAP) cut.push(`the first ${HUB_LINK_CAP} links to ${tag}`);
+      if ((docRows ?? []).length >= HUB_TAGGED_CAP) cut.push(`the first ${HUB_TAGGED_CAP} documents whose equipment tags name ${tag}`);
+      setListCut(cut);
+      for (const r of (docRows ?? []) as Array<Record<string, unknown>>) if (!rowsById.has(String(r.id))) rowsById.set(String(r.id), r);
+      const mapped: HubDoc[] = [...rowsById.values()].map((r) => {
+        const l = linkByDoc.get(String(r.id));
+        const personTagged = typedOn(r);
+        return {
+          id: String(r.id),
+          number: String(r.document_number || r.title || r.name || "—"),
+          title: String(r.title || ""),
+          rev: (r.rev as string) ?? null,
+          status: (r.status as string) ?? null,
+          libraryId: (r.library_id as string) ?? null,
+          checkedOutByName: (r.checked_out_by_name as string) ?? null,
+          link: l ? {
+            source: String(l.source ?? "jsonb_sync"),
+            sheetLabel: l.sheet_label ?? null,
+            pages: Array.isArray(l.pages) ? l.pages : [],
+            machine: (l.asserted_by ? l.asserted_by === "machine" : l.source === "drawing") && !personTagged,
+            personTagged,
+            model: l.model ?? null,
+            sourceRevision: l.source_revision ?? null,
+            vanished: !!l.vanished_at,
+            superseded: !!l.superseded_at,
+          } : undefined,
+        };
+      }).sort((x, y) => x.number.localeCompare(y.number, undefined, { numeric: true }));
       setDocs(mapped);
 
-      // Open holds on those documents.
+      // GM-14: sheets whose indexed copy carries the tag but where no link
+      // was recorded yet — served by the route (the entity index stays
+      // service-role only), filtered to what this viewer can open.
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const res = await fetch(`/api/equipment/sheets?orgId=${encodeURIComponent(activeOrgId)}&tag=${encodeURIComponent(tag)}`, {
+          headers: { Authorization: `Bearer ${session?.access_token ?? ""}` },
+        });
+        const json = await res.json().catch(() => ({}));
+        setExtracted(res.ok ? ((json.extracted as ExtractedSheet[]) ?? []) : []);
+        // The route's read reached its ceiling: the "Also read on" list may
+        // be incomplete, said with the other cuts (never silently).
+        if (res.ok && json.extractedCut === true) {
+          cut.push(`the first ${typeof json.extractedCap === "number" ? `${json.extractedCap} ` : ""}indexed pages naming ${tag}`);
+          setListCut([...cut]);
+        }
+      } catch { setExtracted([]); }
+
+      // Open holds on those documents — in batches of IN_CHUNK ids (the list
+      // grows with every drawing the relation links), each read checked. A
+      // batch that fails, or comes back at the max-rows cap, leaves its
+      // documents NOT CHECKED: the page says so instead of "0 on hold" — the
+      // equipment QR code opens this page in the field.
       const ids = mapped.map((d) => d.id);
       const hold = new Map<string, number>();
-      if (ids.length > 0) {
-        const { data: holdRows } = await supabase
-          .from("document_holds").select("document_id").in("document_id", ids).is("released_at", null);
-        for (const h of (holdRows ?? []) as Array<{ document_id: string }>) {
-          hold.set(h.document_id, (hold.get(h.document_id) ?? 0) + 1);
+      const unchecked = new Set<string>();
+      let why: string | null = null;
+      for (let i = 0; i < ids.length; i += IN_CHUNK) {
+        const batch = ids.slice(i, i + IN_CHUNK);
+        const { data: holdRows, error: he } = await supabase
+          .from("document_holds").select("document_id").in("document_id", batch).is("released_at", null);
+        const rows = (holdRows ?? []) as Array<{ document_id: string }>;
+        if (he || rows.length >= HOLD_ROWS_CAP) {
+          for (const id of batch) unchecked.add(id);
+          why ??= he ? (he.message || "the read failed") : "too many open holds to read in one request";
+          continue;
         }
+        for (const h of rows) hold.set(h.document_id, (hold.get(h.document_id) ?? 0) + 1);
       }
       setHoldsByDoc(hold);
+      setHoldsUnchecked(unchecked.size > 0 ? { ids: unchecked, why: why ?? "the read failed" } : null);
 
       if (a?.id) setPhotos(await listAssetPhotos(a.id).catch(() => []));
       else setPhotos([]);
@@ -285,10 +426,22 @@ export default function AssetHubPage() {
 
         {error && <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800">{error}</div>}
 
+        {holdsUnchecked && (
+          <div role="alert" data-testid="holds-unchecked" className="mb-4 rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-800">
+            Holds could not be checked for {holdsUnchecked.ids.size === docs.length ? "these documents" : `${holdsUnchecked.ids.size} of these documents`} ({holdsUnchecked.why}).
+            Treat {holdsUnchecked.ids.size === 1 ? "it" : "them"} as possibly on hold, and Refresh before you work from {holdsUnchecked.ids.size === 1 ? "it" : "them"}.
+          </div>
+        )}
+        {listCut.length > 0 && (
+          <div data-testid="list-cut" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+            Only {listCut.join(" and ")} were read — some documents may not be listed here. Search the register for {tag} to see them all.
+          </div>
+        )}
+
         {/* Stat strip */}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-5">
           <Stat icon={FileText} tone="blue" label="Controlled documents" value={docCount} />
-          <Stat icon={AlertOctagon} tone="rose" label="On hold" value={heldCount} />
+          <Stat icon={AlertOctagon} tone="rose" label="On hold" value={holdsUnchecked ? (heldCount > 0 ? `${heldCount}+` : "not checked") : heldCount} />
           <Stat icon={ImageIcon} tone="violet" label="Photos" value={photos.length} />
         </div>
 
@@ -303,9 +456,30 @@ export default function AssetHubPage() {
                 <li key={d.id}>
                   <Link href={d.libraryId ? `/documents/${d.libraryId}?doc=${d.id}` : "/documents"} className="flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-surface-2)] transition-colors">
                     <span className="font-mono text-xs font-bold text-[var(--color-text)] truncate flex-1">{d.number}{d.title && d.title !== d.number ? <span className="font-sans font-normal text-[var(--color-text-muted)]"> — {d.title}</span> : ""}</span>
+                    {/* GAP-301: the sheet the tag is on; GAP-303: who said so. */}
+                    {/* GOV-9: a sheet address read off an AI transcription is unconfirmed — said here
+                        when no "AI-read" badge stands beside it. */}
+                    {d.link?.sheetLabel && <span className="text-[10px] font-bold font-mono text-[var(--color-text)] bg-[var(--color-surface-2)] px-1.5 py-0.5 rounded shrink-0">{d.link.sheetLabel}{d.link.model && !d.link.machine ? " (AI-read, unconfirmed)" : ""}</span>}
+                    {d.link?.personTagged && d.link.source === "drawing" && (
+                      <span className="text-[10px] font-bold text-[var(--color-text-muted)] bg-[var(--color-surface-2)] border border-[var(--color-border)] px-1.5 py-0.5 rounded shrink-0"
+                        title={`Tagged on this document by a person (its equipment tags). The equipment sweep also read it off the drawing${d.link.model ? ` from an AI transcription (${d.link.model})` : ""}${d.link.sourceRevision ? `, Rev ${d.link.sourceRevision}` : ""}.`}>
+                        tagged · also on drawing
+                      </span>
+                    )}
+                    {d.link?.machine && (
+                      <span className="text-[10px] font-bold text-violet-700 bg-violet-50 border border-violet-200 px-1.5 py-0.5 rounded shrink-0"
+                        title={`Read off the drawing by the equipment sweep${d.link.model ? ` from an AI transcription (${d.link.model}) — check it against the sheet` : " from the drawing's own text"}${d.link.sourceRevision ? `, Rev ${d.link.sourceRevision}` : ""}. Not typed by a person.`}>
+                        {d.link.model ? "AI-read" : "read from drawing"}
+                      </span>
+                    )}
+                    {d.link?.vanished && <span className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded shrink-0" title={d.link.personTagged
+                      ? "The current revision's drawing no longer shows this tag. The document's own equipment tags still name it, so the link stays whatever the sweep's review decides."
+                      : "The current revision no longer shows this tag — waiting for a person to confirm in the equipment sweep."}>not on current rev</span>}
+                    {d.link?.superseded && !d.link.vanished && <span className="text-[10px] font-bold text-[var(--color-text-muted)] shrink-0" title="Read from an earlier revision; the next sweep refreshes it.">earlier rev</span>}
                     {d.rev && <span className="text-[10px] font-bold bg-[var(--color-surface-2)] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded shrink-0">Rev {d.rev}</span>}
                     {d.status && <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded border shrink-0 ${stateStyle(documentState(d.status)).pill}`}>{d.status}</span>}
                     {(holdsByDoc.get(d.id) ?? 0) > 0 && <span className="text-[10px] font-bold text-rose-700 inline-flex items-center gap-0.5 shrink-0"><AlertOctagon className="w-3 h-3" /> hold</span>}
+                    {holdsUnchecked?.ids.has(d.id) && <span className="text-[10px] font-bold text-rose-700 border border-rose-300 px-1 rounded inline-flex items-center gap-0.5 shrink-0" title="This document's holds could not be read — it may be on hold."><AlertOctagon className="w-3 h-3" /> hold not checked</span>}
                     {d.checkedOutByName && <span className="text-[10px] font-bold text-blue-700 inline-flex items-center gap-0.5 shrink-0"><Lock className="w-3 h-3" />{d.checkedOutByName}</span>}
                   </Link>
                 </li>
@@ -313,6 +487,26 @@ export default function AssetHubPage() {
             </ul>
           )}
         </div>
+
+        {/* GM-14: read on these sheets, not linked yet (the sweep has not
+            applied it, or the P&ID was uploaded straight into a knowledge
+            library). Proposals, never presented as links. */}
+        {extracted.length > 0 && (
+          <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm overflow-hidden mb-5" data-testid="extracted-sheets">
+            <div className="px-4 py-3 border-b border-[var(--color-border)] text-sm font-black text-[var(--color-text)]">Also read on (not linked yet)</div>
+            <ul className="divide-y divide-[var(--color-border)]">
+              {extracted.map((x) => (
+                <li key={x.knowledgeDocumentId} className="px-4 py-2 text-xs flex items-center gap-2">
+                  {x.documentId && x.libraryId
+                    ? <Link href={`/documents/${x.libraryId}?doc=${x.documentId}`} className="font-mono font-bold hover:underline">{x.name}</Link>
+                    : <span className="font-mono font-bold">{x.name}</span>}
+                  <span className="text-[var(--color-text-muted)]">{x.sheets.join("; ")}</span>
+                  <span className="ml-auto text-[10px] text-[var(--color-text-faint)]">{x.documentId ? "apply it from the equipment sweep" : "knowledge upload — see the coverage report"}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {/* Every document that TALKS about this equipment, whether or not
             anyone remembered to tag it. Derived from the indexed text, with
@@ -349,7 +543,7 @@ export default function AssetHubPage() {
   );
 }
 
-function Stat({ icon: Icon, label, value, tone }: { icon: React.ComponentType<{ className?: string }>; label: string; value: number; tone: "blue" | "rose" | "violet" }) {
+function Stat({ icon: Icon, label, value, tone }: { icon: React.ComponentType<{ className?: string }>; label: string; value: number | string; tone: "blue" | "rose" | "violet" }) {
   const tones = { blue: "text-blue-700 bg-blue-50 border-blue-200", rose: "text-rose-700 bg-rose-50 border-rose-200", violet: "text-violet-700 bg-violet-50 border-violet-200" };
   return (
     <div className={`rounded-2xl border p-3 ${tones[tone]}`}>

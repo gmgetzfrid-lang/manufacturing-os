@@ -33,7 +33,7 @@
 ## BR-1 · /api/equipment-bridge authorizes on org role only — no library ACL check, and it ignores the additive roles[] column every other route honors
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/equipment-bridge/route.ts:26`, `app/api/equipment-bridge/route.ts:32-42`, `lib/knowledgeAccess.ts:31-46`, `app/(protected)/documents/[libraryId]/page.tsx:3769-3777`, `lib/permissions.ts:18-20`, `supabase/migrations/20260722_member_roles_collection.sql:13`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The security claim holds and is not merely a UI/server mismatch: the route writes through supabaseAdmin, so it bypasses the DB-level ACL guards that catch the equivalent client write (supabase/migrations/20260901_db_hard_enforcement.sql:152-162 `documents_deny_write_guard ... AS RESTRICTIVE FOR UPDATE ... auth.uid() IS NULL OR ...` — service role is exempt) and 20260708_acl_rls_enforcement.sql:85-87 `documents_acl_select`. One clause of the title is overstated: `roles[]` is NOT honored by 'every other route' — app/api/codebook/import/route.ts:192, app/api/graph/mentions/route.ts:43, lib/serverAuth.ts:51, lib/projects.ts:589, lib/reviewCycles.ts:234 and lib/accessRecert.ts:160 all select only `role`. That clause is inert anyway (ignoring roles[] under-grants, it does not leak).
@@ -57,6 +57,31 @@ app/api/equipment-bridge/route.ts:37-40 — `const { data: member } = await supa
 - [ ] the API's permitted role set and the UI's isController gate agree, or the divergence is deliberate and documented
 - [ ] an API-authorization test covers a Manager applying to an ACL-restricted library
 
+**Resolution (2026-10-02, intelligence Round G).** `app/api/equipment-bridge/route.ts` `authWriter` reads `role, roles` and admits the registry writer tier (Admin, DocCtrl, Manager, Supervisor) by the collection (`memberHoldsAny`, ADD-1), then loads the caller's ACL principal (`loadPrincipal`). Every action that reads or writes a document asks `readableControlledDocIds` first, failing closed (a failed ACL read is no readable document):
+- GET lists only the readable documents' proposals and relations, and says how many it left out (`unreadable`).
+- The sweep counts an unreadable document and never computes it.
+- Apply skips and counts one.
+- Dismiss and the vanished review refuse one (403).
+- Settings refuses a library of another workspace (404).
+
+Decision (DEC-96 item 1): skip and report, never widen. The writes stay on the service role (registry rows and 'drawing' relation rows are service-role writes), and only for documents the caller may read.
+
+**Fix pass (2026-10-02, review).** The first resolution overstated "every action evaluates the caller's ACL": `readableControlledDocIds` evaluates a document's chain, not its org — it returns every id it is handed for a controller, and default-allows a foreign document whose library is not in a writer's landscape — so a controller of their own org could send another workspace's document id to `dismiss` / `vanished` and the service role removed (or un-marked) that workspace's 'drawing' rows, with the audit row landing in the caller's org. Now:
+- `inOrgDocIds` (route) confirms every caller-supplied document id is a document of `orgId` before anything else: `dismiss`, `vanished` and the new `adopt` return 404 for another workspace's id; `apply` skips it as `not_found` and counts it (`notFound`).
+- `lib/equipmentBridgeServer.ts` names `org_id` on every `document_assets` read, update and delete (`syncDrawingRelations`, `markRevisionTruth`, `removeDrawingRelations`, `reviewVanished`, `adoptDrawingRelation`), so the library itself cannot touch another workspace's rows whatever its caller passes.
+- `libraryGate` (route): GET and settings read the library by id AND `org_id` (404 otherwise) and require the caller to read it (`containerReadable` on the library ACL; controllers excepted; fails closed) — 403 otherwise. GET no longer returns another workspace's mapping or `autoApplyBy` / `reviewedBy` uids, and a Manager who cannot read a restricted library can no longer turn its auto-apply on.
+- Tests: `lib/__tests__/equipmentBridgeRoutes.test.ts` "reproduction → fix: a controller of org A sending org B's document id gets a 404 on dismiss / vanished (remove and keep); org B's rows are untouched; no audit row is written", "apply skips another workspace's document as not found; adopt refuses it", "GET and settings refuse another workspace's library (404) …", "a Manager who cannot read a library can neither read its configuration nor turn its auto-apply on (403)"; `lib/__tests__/equipmentBridge.test.ts` "reproduction → fix: a review sent with another org's id never touches this org's rows (remove, keep, dismiss)" and "the library's every document_assets read, update and delete names org_id". Each fails on the pre-fix route / library.
+
+**Done-when.**
+1. ✓ `authWriter` merges `roles[]` with `role` (`memberHoldsAny` over the collection).
+2. ✓ Sweep and apply evaluate the caller's ACL per document (`loadPrincipal` + `readableControlledDocIds`) and skip what the caller cannot read, counting it — after the workspace check (fix pass), which the ACL engine does not make.
+3. ✓ The divergence is deliberate and documented (route header; DEC-96 item 1). The library page offers the sweep to the controller tier (`isController` in `app/(protected)/documents/[libraryId]/page.tsx`, not this package's file, unchanged). The API admits the registry writer tier (DEC-53 item 1). The per-document ACL is what keeps a Manager off a library they cannot read.
+4. ✓ `lib/__tests__/equipmentBridgeRoutes.test.ts` "reproduction → fix: a Manager applying to an ACL-restricted document writes nothing to it; the readable one is applied; the skip is counted". Also: a Viewer refused and a DocCtrl held additively admitted; GET lists only readable documents; dismiss / vanished on an unreadable document refused.
+
+**Scope / residual.** The page's button gate belongs to the library page (edited next by IS-P1 / I-12); nothing here depends on it.
+
+**Fix pass 2 (2026-10-02, review).** The sweep skipped `libraryGate`: a Manager who cannot read a restricted library could post `action "sweep"` with its id and learn its live document count (`counts.unreadable`). The sweep branch now calls `libraryGate(orgId, libraryId, auth.principal)` first, as GET and settings do: 404 for another workspace's library, 403 for one the caller cannot read, before any document is listed. The settings save also refuses (500) when the stored configuration cannot be read, instead of rebuilding it without the library's review mark (`loadBridgeConfig` now returns its read error). Test: `lib/__tests__/equipmentBridgeRoutes.test.ts` "sweep goes through the same library gate (fix pass 2): another workspace's library is 404, an unreadable one 403 — no counts of its documents leave it" (fails on the fix-pass-1 route).
+
 ---
 
 <a id="br-2"></a>
@@ -64,7 +89,7 @@ app/api/equipment-bridge/route.ts:37-40 — `const { data: member } = await supa
 ## BR-2 · The Bridge writes a display column, not a link: applied tags never reach document_assets or the asset hub
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/equipmentBridgeServer.ts:261-276`, `supabase/migrations/20260609_phase1_normalization.sql:85-120`, `app/(protected)/assets/[tag]/page.tsx:51-57`, `components/assets/AreaKnowledgePanel.tsx:124-127`, `components/assets/AreaKnowledgePanel.tsx:346-349`, `lib/operationalGraph.ts:317-330`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Repo-wide grep for `asset_tags` writers finds only lib/documentLifecycle/common.ts:179 and merge.ts:150 (split/merge) — nothing in the bridge path writes asset_tags, so neither the trigger nor the assets-INSERT backfill (migration :122-135) ever fires for bridge-applied tags. Confirmed.
@@ -88,6 +113,29 @@ equipmentBridgeServer.ts:272-274 — `.update({ metadata: { ...metadata, [target
 - [ ] AreaKnowledgePanel Step 4 flips to done after a sweep, without any manual + Link document
 - [ ] a regression test asserts that after applyForDocument, a document_assets row exists for (documentId, assetId)
 
+**Resolution (2026-10-02, intelligence Round G).** Reproduced first (DEC-29): with the base files (`e5de803`) swapped back in, seven of the new cases fail (no `document_assets` row after apply; AREA-4's throw "No equipment column mapped for this library…"; no sheets on a suggestion; BR-3's bare `null`; three asset-hub cases), while the regression pin (an unregistered tag still listed by its `asset_tags` containment on the hub) passes on both.
+
+`applyForDocument` (`lib/equipmentBridgeServer.ts`, `syncDrawingRelations`) writes one `document_assets` row per applied tag that resolves to a registry asset. The row carries `source 'drawing'`, the sheet address (`sheet_label`) and `pages`; with 20261171 it also carries `asserted_by 'machine'`, the transcribing `model`, and `source_revision` / `source_version_id`. The metadata column write is kept, because the library's chips render from it. A pair a person already linked (`manual` or `jsonb_sync`) is left as it is: a human assertion stands. Nothing is routed through `documents.asset_tags` (GAP-302's do-not). Every recompute refreshes the relation of every applied tag still read on the current revision, which also backfills tags applied before the relation existed (GAP-304). The asset hub reads the relation (WIRE-1).
+
+**Done-when.**
+1. ✓ The second branch: `document_assets` rows are written directly with the distinct source `'drawing'`. They are not in one transaction with the metadata write, because PostgREST has none. Each write is checked. A refused relation is said ("The document↔equipment relation was not recorded: the database does not have migration 20261170 yet."), and the column write still lands (today's behaviour).
+2. ✓ `/assets/[tag]` lists every drawing the relation links, with its sheet (`lib/__tests__/assetHubRelation.test.ts`).
+3. ✓ By construction. Step 4 of `components/assets/AreaKnowledgePanel.tsx` is `docLinkCount > 0` over `document_assets` for the unit's assets (read, not edited), so it counts the rows a sweep's apply writes. Not rendered in a test here; the panel's own end-to-end step is AREA-4's residual.
+4. ✓ `lib/__tests__/equipmentBridge.test.ts` "reproduction → fix: after apply a document_assets row exists for (document, asset), source 'drawing', with the sheet and provenance", and "re-running the sweep and the apply is idempotent".
+
+**Scope / residual.** **Pending migrations:** `supabase/migrations/20261170_intel_roundG_document_assets_source.sql`, then `supabase/migrations/20261171_intel_roundG_provenance.sql` (hand-applied, in that order). The app deploys in either order: before 20261170 the Bridge says the relation was not recorded and keeps its column write; before 20261171 it writes the relation without the provenance columns and says so. The relation is written for tags that resolve to an asset. A discovered asset is created first, then related. A held tag (BR-13) is neither.
+
+**Fix pass 3 (2026-10-02, review).** The residual's clause "before 20261171 it writes the relation without the provenance columns and says so" has been false since fix pass 2. Before 20261171 the Bridge writes NO 'drawing' row: `notRecorded` names 20261171, the column write still lands, and the first recompute after the paste relates the applied tags with their provenance (`GAP-304`'s fix pass 2).
+
+The compute's relation refresh (the GAP-304 backfill of tags applied before the relation existed) used to discard its outcome. A refused or unrecorded refresh during a sweep went unsaid. `computeForDocument` now returns it as `ComputeResult.relations`, merged with its automatic apply's outcome. The sweep sums it into `outcomes` (`relationsWritten`, `relationsRefreshed`, `relationsKeptHuman`, `relationsNotRecorded` and the first `relationNote`), and the sweep modal's progress line shows the links recorded and the documents whose links were not recorded, with the reason. Tests:
+- `lib/__tests__/equipmentBridge.test.ts` "GAP-304: the compute returns its relation refresh's outcome — …";
+- `lib/__tests__/equipmentBridgeRoutes.test.ts` "a relation refresh that records nothing is counted with its reason";
+- `lib/__tests__/equipmentSweepModalRender.test.ts` "column dismissals, recorded links, an unrecorded relation and refused audit rows are shown, summed over the pages".
+
+Each fails on the fix-pass-2 files.
+
+**Scope / residual (corrected).** Pending migrations: `20261170`, then `20261171`, in that order. The app deploys in either order. Before either is pasted, the Bridge writes no 'drawing' row, says the relation was not recorded (naming the file it needs), and keeps its column write. At ingest, the outcome is returned to a fire-and-forget caller (`lib/knowledgeIngest.ts` `onDocumentReady`, I-18's file) that reads nothing; the next sweep of the library reports it.
+
 ---
 
 <a id="br-3"></a>
@@ -95,7 +143,7 @@ equipmentBridgeServer.ts:272-274 — `.update({ metadata: { ...metadata, [target
 ## BR-3 · source_document_id gate silently voids the Bridge for every upload-origin knowledge document, with no UI signal
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/equipmentBridgeServer.ts:55-59`, `lib/knowledge.ts:363-367`, `lib/knowledgeSourceSync.ts:235`, `app/api/equipment-bridge/route.ts:107-126`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. The mechanism is exactly as described and there is no compensating path. Severity lowered because the scenario's premise is wrong: the Area wizard does NOT train uploading — AreaKnowledgePanel.tsx:169/476 and UnitOpsPanels.tsx:342 all call `addKnowledgeSources(...)` (DC folder/document links), which go through knowledgeSourceSync and DO get source_document_id. The voided path is only a direct drag-drop into a knowledge library (app/(protected)/knowledge/[id]/page.tsx:1525 `addKnowledgeDocument`), and that screen never promises the registry (no 'registry'/'asset' string in the whole file). The column half of the bridge is also genuinely impossible there — only the registry-discovery half is lost.
@@ -117,6 +165,23 @@ lib/equipmentBridgeServer.ts:59 — `if (!kdoc?.source_document_id) return null;
 - [ ] an upload-origin knowledge document with equipment entities either feeds the registry (discovery only, no column populate) or tells the user in the knowledge library UI why it cannot
 - [ ] the sweep can enumerate upload-origin knowledge documents in a library and report them as 'entities extracted, no controlled document to feed'
 - [ ] the null return at line 59 is distinguishable in the UI from 'swept, nothing found'
+
+**Resolution (2026-10-02, intelligence Round G).** `computeForKnowledgeDoc` no longer returns a bare `null` for an upload-origin knowledge document. It answers `reason: "upload_origin"` with the knowledge document's id. That is distinct from `no_entities` ("swept, nothing found"), `no_twin`, `twin_not_ready`, `twin_stale` and `not_found`, and the sweep's counts carry each reason.
+
+The sweep modal says how many indexed documents were uploaded straight into a knowledge library ("there is no controlled document for the Bridge to feed"), and points to the coverage report (GAP-308). Its "On a sheet, in no list" bucket lists their tags with door `knowledge`. There a writer picks tags, and Discover creates them as registry assets (`discoverFromKnowledge`, `POST action "discover"`):
+- discovery only, with no column (there is no controlled document);
+- unit-less, because there is no decodable number (reported);
+- provenance `discovered_from: { knowledgeDocumentId, pages, door: "knowledge" }`;
+- audited as `EQUIPMENT_BRIDGE_DISCOVERED`.
+
+A copy of a controlled document is refused there. Its tags go through the sweep, which records the relation.
+
+**Done-when.**
+1. ✓ An upload-origin knowledge document with equipment entities feeds the registry through the knowledge door: discovery only, no column populate, on a person's pick. Never automatically (no confidence auto-accept).
+2. ✓ The sweep reports them, and the coverage report lists them with their tags. The count is org-wide, because an upload belongs to a knowledge library, not to the doc-control library being swept.
+3. ✓ `reason: "upload_origin"` is distinguishable from `no_entities`. Tests in `lib/__tests__/equipmentBridge.test.ts`: "BR-3: an upload-origin knowledge document is said, distinguishable from 'swept, nothing found'" and, under GAP-307, "named tags on the document become discovered assets with door 'knowledge' provenance".
+
+**Scope / residual.** The knowledge library page (`app/(protected)/knowledge/**`, not this package's file) still says nothing about the registry; the signal lives in the sweep and the coverage report. Knowledge uploads are org-readable by design (DEC-83 item 1), so the coverage report lists them to any writer.
 
 ---
 
@@ -166,7 +231,7 @@ AssetCsvImportModal.tsx:130-133 — `await createAsset({ orgId, tag, description
 ## BR-5 · Auto-apply resurrects tags a human deleted — the module's stated idempotency invariant is not implemented in apply
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/equipmentBridgeServer.ts:15-18`, `lib/equipmentBridgeServer.ts:126-134`, `lib/equipmentBridgeServer.ts:180-183`, `lib/equipmentBridgeServer.ts:261-276`, `lib/knowledgeIngest.ts:448-456`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The trigger is real and automatic: lib/knowledgeIngest.ts:452-454 `void import("@/lib/equipmentBridgeServer").then((m) => m.computeForKnowledgeDoc(supabaseAdmin, doc.id))` fires on every completed (re-)index, and computeForKnowledgeDoc:128-131 then calls `applyForDocument(admin, { orgId, documentId, userId: null })` with no `tags`, so `wanted` is the full suggestion set. upsertSuggestions:145-152 preserves `applied` but that only affects the status label, not what apply re-writes.
@@ -189,6 +254,42 @@ lib/equipmentBridgeServer.ts:181-182 — `const wanted = suggested.filter((s) =>
 - [ ] a tag removed by a human from the target column is never re-added by a later auto-apply
 - [ ] the `applied` list records removals (or a `rejected` list exists) so the diff base survives re-index
 - [ ] a test re-runs applyForDocument after simulating a manual column deletion and asserts the tag stays gone
+
+**Resolution (2026-10-02, intelligence Round G).** Reproduced by the test below: on the base file the re-index's auto-apply wrote the removed chip back. `applyForDocument` now skips every tag already in `applied` and every dismissed or held tag, unless the caller names it (`tags`). An automatic apply therefore never re-writes a tag a person has already seen. A tag a person removed from the mapped column stays removed. The diff base survives re-index: `applied` is preserved by every recompute, and a person's rejections are kept in their own list (`document_equipment_suggestions.dismissed`, 20261171; BR-9). A dismissal lapses only when a LATER revision brings the tag back, and it is then re-proposed, never re-applied silently (DEC-96 item 4).
+
+**Done-when.**
+1. ✓ `applyForDocument` skips tags already in `applied` unless the caller explicitly re-requests them by name.
+2. ✓ A tag removed by a person from the target column is never re-added by a later auto-apply — to the column, and (fix pass) to the relation: the first resolution held this for the display column only, while every recompute refreshed (and the GAP-304 backfill created) a 'drawing' row for the removed tag.
+3. ✓ A `dismissed` list exists (who, when, the revision, absent-since) and `applied` is preserved across recomputes, so the diff base survives re-index. **Fix pass:** a person taking an applied tag out of the column the Bridge wrote it into is now recorded as a dismissal (`via: 'column'`, `by: null` — who removed the chip is not known; audited `EQUIPMENT_BRIDGE_DISMISSED` with `via: 'column'`), and its 'drawing' relation is removed (audited `EQUIPMENT_BRIDGE_RELATION_REMOVED`, `via: 'column'`). The re-map worry the first resolution named is answered by recording the column: `applyForDocument` stores `appliedColumn` on each applied suggestion and every recompute carries it (`planColumnRemovals`); a tag applied before that was recorded counts only against the library's mapped column and only when the document holds that column at all; a tag applied with no column mapped is never column-dismissed.
+4. ✓ `lib/__tests__/equipmentBridge.test.ts` "reproduction → fix: apply, delete CL chip by hand, re-index with auto-apply on — the column keeps the deletion" — now also asserting no `document_assets` row for P-7 after the recompute, the column dismissal, both audit rows, and that a person naming it again restores column and relation; plus "GAP-304 backfill: a tag applied before the relation existed (no column recorded) and since removed from the column is never related", "a column the document never held is a re-mapping, not a removal; …" and "with no column mapped, a later mapping does not dismiss what was applied before it".
+
+**Scope / residual.** Before 20261171 the ledger has no `dismissed` column. Dismiss still removes the relation and audits the decision, and says that the ledger cannot remember it across a recompute ("before 20261171 the ledger cannot remember it across a recompute — said, not silently dropped"); a column dismissal is likewise not remembered then, but the column check re-finds it on every recompute. A person putting a column-dismissed chip back by hand does not lift the dismissal; naming the tag in the sweep does.
+
+**Fix pass 2 (2026-10-02, review).** Done-when 3's fix-pass claim ("without a re-map reading as mass removals") was overstated, and so was DEC-96 item 4. Three shapes still turned a re-map or a missed reading into column dismissals (`by: null`, relation removed, never re-applied):
+- (a) Tags applied before this deploy carry no recorded column. Once the library re-mapped onto a column the document holds (one apply, or a person typing a value), every historical tag counted against the new column.
+- (b) The recorded column lived only on the suggestion, which every recompute rebuilds from the tags read now. A tag missing from one reading lost it and fell back to (a).
+- (c) With the column recorded, a document whose metadata no longer held that key read every applied tag as removed (the fix-pass-1 table accepted this shape).
+
+Now:
+- The applied column is kept per tag in the ledger's own map, `document_equipment_suggestions.applied_columns` (added to `20261171`; `{}` default; probed; re-run on scratch PostgreSQL 16). Every apply writes it and every recompute carries it, whether or not the tag is read. The suggestion's `appliedColumn` stays as the fallback (before 20261171, and rows written before the map existed).
+- `planColumnRemovals` returns `{ removed, columns }`. A tag counts as removed only when it is absent from EVERY tag column the document holds: the library's tag-type columns (`loadBridgeConfig` now also reads `custom_columns`: type tags / multi, or pill), the mapped column, the recorded columns, and any array-valued metadata key. It never counts when the recorded column's key is gone from the document.
+- A historical tag (no record) is stamped with the column it is found in, the mapped one first. Found nowhere while the document holds a tag column, it was removed, so the GAP-304 backfill protection holds. On a document holding no tag column, it is left as it is.
+- A tag a person moved into another tag column is not a removal; its record follows it.
+- Tests in `lib/__tests__/equipmentBridge.test.ts`: "a tag is removed only when it is in NO tag column the document holds — never on a re-map, a dropped key, or a move to another column (fix pass 2)", "(a) tags applied before the column was recorded, the library re-mapped onto a column the document now holds: …", "(b) a tag missing from one reading keeps its recorded column — …", "(c) the recorded column's key gone from the document is not a removal". Each fails on the fix-pass-1 library. The regression guard "a person's real removal still is one: out of every tag column, with the key still there" passes on both.
+
+Done-when 3 (restated): ✓ the dismissed list and the preserved `applied`; ✓ a column removal becomes a dismissal; ✓ (fix pass 2) a re-map onto a column the document holds, a dropped column key, a move to another tag column and a tag missing from one reading never read as removals. Residual: a historical tag on a document whose only tag column a person deleted outright (the key gone, not emptied) is not dismissed, because nothing says where it was. The backfill relates it, and a person removes it with Dismiss.
+
+**Fix pass 3 (2026-10-02, review).** A column removal could fail half-way and leave its 'drawing' rows standing for good.
+- **Order.** `computeForDocument` saved the 'column' dismissals (`upsertSuggestions`) BEFORE it removed the relations. A removal that threw left the tags dismissed, so the next compute's `planColumnRemovals` skipped them and never retried. Their 'drawing' rows stayed on the hub, the graph and the impact scan, against the recorded decision. The relations are now removed FIRST. A removal that fails throws before anything is saved, and the next compute plans the same removal again. The `EQUIPMENT_BRIDGE_DISMISSED` audit is written after the ledger lands.
+- **Batches.** `removeDrawingRelations` read the pairs' assets (`.in("id", assetIds)`) and deleted the rows (`.delete().in("id", …)`) in one request each. A person clearing a column of more than about 200 tags overflowed the request line. Both now run in batches of 100.
+- **Counted.** Column dismissals are counted in the sweep's results (`outcomes.columnDismissed`) and shown on its progress line ("N applied tags were no longer in any tag column — dismissed …"). DEC-96's Risk said they were, and nothing had counted them.
+
+Tests:
+- `lib/__tests__/equipmentBridge.test.ts` "BR-5: a column removal whose relation delete fails saves nothing — the next compute plans it again and removes the link …";
+- `lib/__tests__/equipmentBridge.test.ts` "a person clearing a large tag column (250 tags) removes every link, in batches under the URL limit";
+- `lib/__tests__/equipmentBridgeRoutes.test.ts` "DEC-96 Risk: a first sweep's column dismissals and the relation backfill are counted in the sweep's results".
+
+Each fails on the fix-pass-2 files. The in-memory stand-in gained `maxInList` (an `.in()` past it fails as the gateway does) and `selectErrors`.
 
 ---
 
@@ -236,7 +337,7 @@ components/assets/AssetCsvImportModal.tsx:130-137 — `await createAsset({ orgId
 ## BR-7 · Code backfill is gated on unit_code being NULL, so an asset that has a unit but no site code never gets one
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/equipmentBridgeServer.ts:240-258`, `lib/assetCategorize.ts:48-56`, `app/(protected)/admin/assets/page.tsx:1016-1019`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The gate is exactly as described, but two of the finding's supporting claims are false. (1) The cited 'admin drawer that set only the unit' does NOT exist: app/(protected)/admin/assets/page.tsx:1311-1315 `useEffect(() => { if (asset?.code) return; const derived = unitCode ? tagToCode(tag, unitCode, book) : null; setSiteCode(derived ?? ""); }, ...)` auto-derives the code whenever a unit is set. (2) 'keeps code NULL forever' is refuted by that same drawer, which is a working per-asset remedy. lib/assetCategorize.ts:117-121 only sets unit_code, but its precondition (`!a.unit_code && a.code`) guarantees code is already present. The realistic residual path is narrow — a bridge-discovered asset whose tagToCode returned null because the codebook lacked the prefix at discovery time.
@@ -259,6 +360,15 @@ lib/equipmentBridgeServer.ts:245-253 — `const { data: blankRows } = await admi
 - [ ] the two backfills (unit_code and code) are independent conditions, each guarded by its own IS NULL
 - [ ] a test covers the unit-set-code-null asset
 
+**Resolution (2026-10-02, intelligence Round G).** The two backfills on apply are independent. For a matched asset with no unit, the unit is filed, with the code when the asset has none; that UPDATE is guarded by `unit_code IS NULL`. For a matched asset that has a unit but no code, the code alone is filled; that UPDATE is guarded by `code IS NULL`. The code is derived through the codebook (`tagToCode`) from the tag and the unit the asset ends up filed to: its own unit when it has one, otherwise the document's held unit. It is never read back from the stored proposal (CB-2). A person's filing is never changed.
+
+**Done-when.**
+1. ✓ An asset with a unit but a NULL code receives the code its own filing derives.
+2. ✓ The unit and code backfills are independent conditions, each guarded by its own IS NULL.
+3. ✓ `lib/__tests__/equipmentBridge.test.ts` "BR-7: an asset with a unit but no code gets the code its own filing derives; filing a unit-less asset fills both".
+
+**Scope / residual.** None.
+
 ---
 
 <a id="br-8"></a>
@@ -266,7 +376,7 @@ lib/equipmentBridgeServer.ts:245-253 — `const { data: blankRows } = await admi
 ## BR-8 · Discovered assets are invisible as discovered: origin and discovered_from have no readers anywhere, and cleanup is one asset at a time
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** intelligence I-11 THE BRIDGE & THE MEMORY — by the integrator, 2026-10-01 (orphan sweep: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/equipmentBridgeServer.ts:200-233`, `lib/assets.ts:43-47`, `app/(protected)/admin/assets/page.tsx:1397-1411`, `app/(protected)/admin/assets/page.tsx:115`, `components/documents/EquipmentSweepModal.tsx:262-264`
@@ -301,6 +411,22 @@ lib/equipmentBridgeServer.ts:213-215 — `origin: "drawing", discovered_from: { 
 
 **Scope / residual.** Limbs 3 and 4 are handed to I-11.
 
+**Resolution (2026-10-02, intelligence Round G).** The two limbs handed to I-11 by the 2026-09-30 partial:
+- **An accountable creator.** A discovered asset's `created_by` is resolved in order, and the nil UUID is the last resort only when none is known (DEC-96 item 8):
+  1. the person who applied;
+  2. on the automatic path, the person who turned auto-apply on (`libraries.equipment_bridge.autoApplyBy`, recorded by the settings action);
+  3. otherwise the person who filed the drawing (`documents.created_by`).
+  Every automatic apply also writes its `EQUIPMENT_BRIDGE_APPLIED` audit row.
+- **The modal links to the surface.** EquipmentSweepModal's "provenance recorded" copy links to `/admin/assets?discovered=1`. The registry page reads `?discovered=1` and lands with its Discovered filter on.
+
+**Done-when.**
+1. ✓ (2026-09-30) Filter to origin='drawing' with a visible badge, its source drawing and pages.
+2. ✓ (2026-09-30) Bulk confirm or reject from one screen.
+3. ✓ The automatic path records a resolvable person. `lib/__tests__/equipmentBridge.test.ts` "BR-8: an automatic apply's discovered asset names the person who turned auto-apply on (else who filed the drawing) — never the nil UUID when known"; `lib/__tests__/equipmentBridgeRoutes.test.ts` "turning auto-apply on records the caller; the first review stays".
+4. ✓ The modal's copy links to `/admin/assets?discovered=1` ("review discovered equipment"), which opens with the Discovered filter on.
+
+**Scope / residual.** A library whose auto-apply was turned on before this deploy has no `autoApplyBy`. Its automatic discoveries name the drawing's filer until someone saves the library's settings again.
+
 ---
 
 <a id="br-9"></a>
@@ -308,7 +434,7 @@ lib/equipmentBridgeServer.ts:213-215 — `origin: "drawing", discovered_from: { 
 ## BR-9 · Review is all-or-nothing per document: the server supports a tag subset and a 'dismissed' status, and the client sends neither
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `components/documents/EquipmentSweepModal.tsx:106-123`, `components/documents/EquipmentSweepModal.tsx:234-254`, `lib/equipmentBridgeServer.ts:170-172`, `lib/equipmentBridgeServer.ts:181-183`, `supabase/migrations/20260928_site_codebook.sql:103`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: no code anywhere writes status 'dismissed' to document_equipment_suggestions (grep for 'dismissed' hits only processFlows, linkProposals and unrelated UI state), and the chip renderer at :236-253 is a plain <span> with no click handler — there is no per-tag selection affordance at all.
@@ -329,6 +455,32 @@ components/documents/EquipmentSweepModal.tsx:113 — `body: JSON.stringify({ act
 - [ ] a per-tag or per-document reject writes status='dismissed' and keeps the rejected tags out of future recomputes
 - [ ] auto-apply can be scoped to high-confidence tags only, or is off by default until a library has been reviewed once
 
+**Resolution (2026-10-02, intelligence Round G).** In the sweep modal, chips are selectable. Apply sends the selected tags (`tags`), and Dismiss sends a per-tag rejection (`POST action "dismiss"`, `dismissForDocument`). Selecting nothing and pressing Apply all applies every tag that is not applied, dismissed or held.
+
+A dismissal is remembered on the ledger (`dismissed`: tag, who, when, the revision it was dismissed on; 20261171). It keeps the tag out of every later apply and recompute while the tag is still read. If the tag was applied, its 'drawing' relation is removed and the decision audited (`EQUIPMENT_BRIDGE_DISMISSED`, `EQUIPMENT_BRIDGE_RELATION_REMOVED`, with the sheet, pages and revision the machine reading carried). When every proposed tag is dismissed, the row's status is `'dismissed'`.
+
+A dismissal lapses only when a LATER revision brings the tag back; the tag is then re-proposed. Read again on the revision it went missing on, it stays dismissed (an extraction miss is not a new revision), per DEC-96 item 4.
+
+Auto-apply stays off by default (opt-in, as before). A tag whose prefix the Site Codebook does not know is held and never auto-applied (BR-13). With no column mapped, an automatic apply waits until a person has applied or dismissed in that library once (`reviewedAt`). No confidence score gates anything.
+
+**Done-when.**
+1. ✓ Chips are selectable and Apply sends the selected tags (`lib/__tests__/equipmentBridgeRoutes.test.ts` "apply with tags applies only those; dismiss writes the dismissal").
+2. ✓ A per-tag reject writes the dismissal (and status `'dismissed'` when every tag is dismissed) and keeps the rejected tags out of future recomputes. Tests in `lib/__tests__/equipmentBridge.test.ts`: "dismissing an applied tag removes its drawing relation, records the decision, and keeps it out of every later apply", "status 'dismissed' is written when every proposed tag is dismissed", and "a tag still read stays dismissed; …" / "brought back by a LATER revision → re-proposed; …".
+3. ✓ Auto-apply is off by default. It never applies a held (unknown-prefix) tag. Without a mapped column it waits for the library's first review ("auto-apply with no column waits for a person's first review (reviewed once), then acts"). The scope is the codebook's vocabulary, not a confidence number (GAP-303's do-not).
+
+**Scope / residual.** With a mapped column, an opted-in auto-apply acts before any review, as it always did; turning it on is the review decision. Before 20261171 a dismissal is not remembered across a recompute, and the route says so.
+
+**Fix pass 2 (2026-10-02, review).** Done-when 1–2 did not hold on the documents where they matter most. On a fully-applied document (status 'applied', nothing fresh; every document after "Apply all"), the modal rendered only the green "applied" label, so a picked chip offered no button:
+- a misread machine link could not be dismissed;
+- a dismissed chip's "pick it and apply to take it back" had no Apply;
+- the registry drawer's Unlink message (a drawing link "is removed by dismissing the tag in that library's Equipment sweep") pointed at an action that was not there.
+
+The first resolution's evidence for done-when 1 was a route test, not a render of chip selection.
+
+Now `components/documents/EquipmentSweepModal.tsx` renders "Apply N picked" and "Dismiss N" whenever chips are picked, whatever the document's status, with the "applied" label beside them. Failed documents, and an apply's or a correction's `auditError`, stay on screen after the re-read (the refresh cleared the error line first). Test: `lib/__tests__/equipmentSweepModalRender.test.ts` (jsdom) "picking an applied chip offers Dismiss beside the 'applied' label, and Dismiss posts action 'dismiss' with that tag", "picking a dismissed chip offers Apply ('pick it and apply to take it back'), which posts the tag", "an apply or a dismissal whose audit row was refused stays on screen after the re-read". All fail on the fix-pass-1 modal.
+
+Done-when evidence (corrected): 1 ✓ the render cases above (chip selection; Apply sends the picked `tags`), with the route test as the server half. 2 ✓ the render case above (Dismiss posts the picked tags), with the lib tests as listed.
+
 ---
 
 <a id="br-10"></a>
@@ -336,7 +488,7 @@ components/documents/EquipmentSweepModal.tsx:113 — `body: JSON.stringify({ act
 ## BR-10 · Sheet numbers are never captured on the equipment side — BridgeSuggestion.pages is a PDF page index, and the parsed drawing sheet segment is never joined to a tag
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/equipmentBridgeServer.ts:28-34`, `lib/equipmentBridgeServer.ts:64-78`, `lib/equipmentBridgeServer.ts:214`, `supabase/migrations/20260921_drawing_entities.sql:25-30`, `lib/codebook.ts:251-257`, `lib/knowledgeIngest.ts:281-293`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The technical claim is true, but 'has no data to answer from' is false. knowledge_page_entities rows carry (document_id, page), and lib/drawingText.ts:559-582 `equipmentRegisterCsv` already emits a `["Tag", "Category", "Occurrences", "Sheets", "First page"]` register keyed by documentName — reachable in the product via lib/knowledge.ts:983 `action=export` and :769 `action=census`, and the ask route's show-me guarantee (app/api/knowledge/ask/route.ts:1665-1680) mints per-sheet citations from the same table. On a one-sheet-per-document library the document IS the sheet, so the owner's question is answered; the 'self' rows also make the sheet number recoverable per page by a join nobody has written yet. Real gap, but a missing enrichment rather than missing data.
@@ -360,6 +512,22 @@ lib/equipmentBridgeServer.ts:30 — `pages: number[];          // sheets/pages t
 - [ ] matched (not only newly discovered) assets accumulate per-sheet provenance on each apply
 - [ ] the tooltip and the stored field agree on whether a number is a sheet or a page
 
+**Resolution (2026-10-02, intelligence Round G).** Every suggestion carries `sheets[]`, one per PDF page the tag was read on. Each sheet is the page's own title block, read from its kind `'self'` entities (`sheetAddressForPage`): the drawing number, the sheet, the revision it declares, and the label `"2002-D-10001 SHT 4"`. When a page declared none, it falls back to the page, with that fact stated ("page 7 (no title block read)"). A title block on a page an AI model transcribed is marked "(AI-read, unconfirmed)" (GOV-9). `pages` keeps its meaning (PDF page numbers), documented as not sheet numbers.
+
+Every applied tag, matched or discovered, gets a relation row with `sheet_label` ("2002-D-10001 SHT 4, SHT 7") and `pages`, refreshed on each recompute. The asset hub lists them. `/api/equipment/sheets` also lists the sheets a tag was read on but not yet linked.
+
+**Done-when.**
+1. ✓ Each suggestion carries the sheet identity: the title-block sheet, falling back to the PDF page with that fact stated. `lib/__tests__/equipmentBridge.test.ts` "GAP-301 end to end: kind 'self' rows → each suggestion carries its sheets; an AI-transcribed page is marked".
+2. ✓ The asset page lists "2002-D-10001 SHT 4" (and SHT 7, …) for every drawing the relation links, not just the one that discovered it (`lib/__tests__/assetHubRelation.test.ts`).
+3. ✓ Matched assets get a relation row with the sheet on apply, refreshed on every recompute ("the stored sheet_label names every sheet once, in page order").
+4. ✓ The tooltip and the stored field agree. The chip's title (`chipTitle`) names the sheet address, or "page N (no title block read)", never a page number called a sheet. The relation stores sheets in `sheet_label` and PDF pages in `pages`.
+
+**Scope / residual.** **Pending migrations:** `supabase/migrations/20261170_intel_roundG_document_assets_source.sql`, then `supabase/migrations/20261171_intel_roundG_provenance.sql` (hand-applied, in that order). The app deploys in either order: before 20261170 the Bridge says the relation was not recorded and keeps its column write; before 20261171 it writes the relation without the provenance columns and says so.
+
+**Fix pass 3 (2026-10-02, review).** The residual's clause "before 20261171 it writes the relation without the provenance columns and says so" has been false since fix pass 2. Before 20261171 the Bridge writes NO 'drawing' row: `notRecorded` names 20261171, the column write still lands, and the first recompute after the paste relates the applied tags with their provenance (`GAP-304`'s fix pass 2).
+
+**Scope / residual (corrected).** Pending migrations: `20261170`, then `20261171`, in that order. The app deploys in either order. Before either is pasted, the suggestions still carry their sheets. No relation row (and so no `sheet_label` / `pages`) is written, and the Bridge says why.
+
 ---
 
 <a id="br-11"></a>
@@ -367,7 +535,7 @@ lib/equipmentBridgeServer.ts:30 — `pages: number[];          // sheets/pages t
 ## BR-11 · Sweep has no cursor and no budget: a sequential loop over up to 2000 documents' twins inside a 60-second function
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/equipment-bridge/route.ts:23-24`, `app/api/equipment-bridge/route.ts:107-126`, `lib/equipmentBridgeServer.ts:50-135`, `components/documents/EquipmentSweepModal.tsx:92-104`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: nothing persists a resume point, and `computed` is only returned on the success path, so a killed invocation reports nothing about how far it got. Re-sweep re-enters at document zero.
@@ -390,6 +558,24 @@ app/api/equipment-bridge/route.ts:121-123 — `for (const t of (twins ?? []) as 
 - [ ] a wall-clock deadline check stops cleanly and reports how far it got
 - [ ] the modal shows sweep progress and can resume
 - [ ] a library of 500+ documents can be fully swept
+
+**Resolution (2026-10-02, intelligence Round G).** `POST action "sweep"` takes an optional `cursor` and reads one page of the library's documents (`SWEEP_PAGE` = 150, keyset on `id`). It computes them one by one under a wall-clock budget (`SWEEP_BUDGET_MS` = 40 s, under the 60 s function limit) and stops cleanly at the budget. It returns `counts` by reason (computed, no_entities, upload_origin, no_twin, twin_not_ready, twin_stale, not_found, failed, unreadable), `nextCursor` (the last document done) and `done`. The modal loops the calls, shows progress ("N documents swept…") and resumes from the cursor it holds after an error or a stop. Every computed document's row is durable as it goes.
+
+**Done-when.**
+1. ✓ The sweep accepts a cursor and returns progress and a next cursor.
+2. ✓ A wall-clock deadline stops cleanly and says how far it got (`lib/__tests__/equipmentBridgeRoutes.test.ts` "a call that reaches its wall-clock budget stops cleanly, says how far it got, and the next call resumes from there").
+3. ✓ The modal shows sweep progress and can resume.
+4. ✓ A library of 520 documents is fully swept, each document computed exactly once ("520 documents: each call takes one page and returns the next cursor; every document is computed exactly once").
+
+**Fix pass (2026-10-02, review).** "Done" was decided from a short page (`page.ids.length < SWEEP_PAGE`), and GET stopped paging on a batch under 1000. PostgREST cuts a response at `db-max-rows` without an error, so on a project whose max-rows is below the page size a cut page read as the end and the rest of the library was never swept while the modal said "Swept." Now the sweep is done only on an EMPTY page (a short page hands back its last id and the next call finds out), and GET pages until an empty batch; the entity windows (`readWindows`) start each window where the rows read so far end, so a cut window skips nothing either. Test: `lib/__tests__/equipmentBridgeRoutes.test.ts` "a project whose PostgREST max-rows is below the page size: a cut page is not the end — the whole library is swept, and GET lists it whole" (fails on the pre-fix route); the 520-document and budget tests now count the closing empty page.
+
+**Scope / residual.** The cursor lives in the modal. A closed modal starts again at the head; a re-run recomputes idempotently.
+
+**Fix pass 2 (2026-10-02, review).** "GET lists it whole" held for the document list only. GET read each 100-document slice's 'drawing' relation rows in one request. That is GAP-309's only review source, and PostgREST's max-rows cut it without an error (100 applied P&IDs at about 30 tags each is about 3,000 rows). The same unpaged per-document read sat in `markRevisionTruth`, `removeDrawingRelations` and `reviewVanished`. Past 1,000 applied tags a Dismiss saved the dismissal but reported `relationsRemoved: 0` and left the link. Now:
+- GET pages each slice's relation rows by keyset (`drawingRelations`: order by id, `gt` the last id, until an EMPTY page; org-scoped).
+- `markRevisionTruth` pages the document's drawing rows the same way (`pageById`).
+- `removeDrawingRelations` and `reviewVanished` no longer read every drawing row of the document. `readDrawingRowsForTags` resolves the tags to their registry assets (`tag_normalized`) and filters `.in("asset_id", …)` at the database, plus `.in("tag_text", …)` for a row whose asset was renamed since. Each read is bounded by the pairs it names.
+- Tests: `lib/__tests__/equipmentBridgeRoutes.test.ts` "GET's relation rows (the GAP-309 review source) are paged too: a cut response is not the whole list (fix pass 2)" (150 rows under max-rows 100); `lib/__tests__/equipmentBridge.test.ts` "major 2 (fix pass 2) — the relation's per-document reads are never cut at PostgREST's max-rows" (Dismiss, "It left the sheet" and revision truth on a 12-row drawing under max-rows 5). Each fails on the fix-pass-1 files.
 
 ---
 
@@ -445,7 +631,7 @@ Tests:
 ## BR-13 · The Bridge's tag gate is looser than the extractor's — splitTag admits any LETTERS-DIGITS token, and the extractor's stop list is not re-applied at the registry boundary
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/equipmentBridgeServer.ts:71-78`, `lib/codebook.ts:124-128`, `lib/drawingText.ts:62-86`, `lib/equipmentBridgeServer.ts:200-233`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The consequence (CL-150 / SS-316 / CW-6 minting origin='drawing' assets with null type) is real, but the stated cause is largely inert: every row in knowledge_page_entities with kind='equipment' is written only by lib/knowledgeIngest.ts:217 and :246, both via `extractEquipmentTags`, so nothing reaches the bridge that failed the stop list — re-applying it at the registry boundary would filter out exactly zero tags, and splitTag being looser cannot admit anything the extractor rejected. What remains is a duplicate of the extractor's permissive prefix policy plus BR-8's inability to see or bulk-clean discovered assets, so LOW as a standalone finding.
@@ -468,6 +654,19 @@ lib/equipmentBridgeServer.ts:74 — `if (!splitTag(norm)) continue; // only thin
 - [ ] optionally, discovery is restricted to prefixes the Site Codebook knows, with unknown-prefix tags held for review rather than created
 - [ ] a tag whose prefix is neither known nor plausible surfaces as 'teach the codebook' instead of becoming a row
 
+**Resolution (2026-10-02, intelligence Round G).** Two gates at the registry boundary:
+- **The extractor's own vocabulary.** `passesExtractorGate` round-trips each tag through `lib/drawingText.ts` `extractEquipmentTags`, the shared module, so its stop list, drawing-number-middle guard and line-number grammar apply to everything that crosses. A tag it would not extract from its own text never crosses.
+- **The codebook's prefixes.** Once any Site Codebook equipment type declares tag prefixes, a NEW tag that no type claims is held (`held: "unknown_prefix"`). Apply all and auto-apply skip it and nothing is minted. A person can still name it to create it.
+
+The modal shows held chips in amber with "teach the codebook", and counts them ("N held — the Site Codebook knows no type for the prefix (teach it, or pick the tag to create it)"). An empty codebook has no opinion (today's behaviour: the tag is created untyped).
+
+**Done-when.**
+1. ✓ The Bridge applies the extractor's vocabulary, the stop list included, through the shared module before creating assets (`lib/__tests__/equipmentBridge.test.ts` "re-applies the extractor's stop list and drawing-number guard").
+2. ✓ Discovery is restricted to prefixes the Site Codebook knows; unknown-prefix tags are held for review ("holds a NEW tag whose prefix no equipment type claims — once the codebook knows prefixes at all"; "held on the proposal; Apply all skips it; naming it creates it").
+3. ✓ A tag whose prefix is not known surfaces as "teach the codebook", not as a row.
+
+**Scope / residual.** An org whose codebook declares no prefixes keeps today's behaviour, which DEC-53 item 2 leaves to the site.
+
 ---
 
 <a id="br-14"></a>
@@ -475,7 +674,7 @@ lib/equipmentBridgeServer.ts:74 — `if (!splitTag(norm)) continue; // only thin
 ## BR-14 · Two knowledge twins of one controlled document overwrite each other's suggestions — last writer wins on a single-row-per-document table
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/equipmentBridgeServer.ts:137-155`, `supabase/migrations/20260928_site_codebook.sql:95-107`, `supabase/migrations/20260919_knowledge_mirror_unique.sql:11-13`, `app/api/equipment-bridge/route.ts:117-124`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed end to end: two twins of one document exist legitimately, the sweep iterates them in unordered query order, and each overwrites the single (org_id, document_id) suggestion row. upsertSuggestions preserves only `applied` (line 145), so the 3-tag twin computing last both replaces the 40-tag proposal and flips status to 'applied' when newTags is empty (line 152).
@@ -497,5 +696,14 @@ supabase/migrations/20260928_site_codebook.sql:107 — `PRIMARY KEY (org_id, doc
 - [ ] suggestions from multiple twins of one controlled document are merged (union of tags, union of pages) rather than overwritten
 - [ ] the row records which knowledge_document(s) produced it
 - [ ] a twin that is still indexing cannot downgrade a complete computation to 'applied'
+
+**Resolution (2026-10-02, intelligence Round G).** `computeForDocument` gathers EVERY knowledge copy of the controlled document. It merges the tags and pages of each copy that is ready and at the document's current revision (union). A copy still indexing, or one left at an earlier revision (GAP-309), is recorded but not used. With no usable copy, the stored proposal is left exactly as it was: no recompute downgrades a complete computation. The row records which copies produced it (`document_equipment_suggestions.sources`: id, status, version, revision, used, and why not; 20261171). The sweep computes per controlled document, never per copy, so two copies no longer race on one row.
+
+**Done-when.**
+1. ✓ Suggestions from several copies are merged (union of tags, union of pages) (`lib/__tests__/equipmentBridge.test.ts` "reproduction → fix: the indexing copy's 1 tag never replaces the ready copy's 3; once ready, the tags are UNIONED").
+2. ✓ The row records which knowledge documents produced it (`sources`).
+3. ✓ A copy still indexing cannot downgrade a complete computation ("with only a copy still indexing, the stored proposal is left exactly as it was").
+
+**Scope / residual.** Before 20261171 the ledger has no `sources` column. The merge still happens; which copies produced the row is not recorded (the write retries without it).
 
 ---

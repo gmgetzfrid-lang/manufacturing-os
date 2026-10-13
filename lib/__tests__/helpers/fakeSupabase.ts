@@ -1,7 +1,7 @@
 // A small in-memory stand-in for the supabase-js query builder, for tests
 // that drive real data-layer functions end to end (intelligence Round G,
 // I-10). Supports the subset the registry / codebook / search modules use:
-// select (incl. head counts), eq / neq / in / is / ilike / or (col.op.value
+// select (incl. head counts), eq / neq / gt / gte / in / contains / is / ilike / or (col.op.value
 // terms), textSearch (substring over string columns), order, limit, range,
 // maybeSingle / single, insert / update / delete / upsert with returning
 // selects, not (is / eq), and(...) inside or, an insert's `{ count: "exact" }` (the rows it wrote), unique keys (23505) and an RLS switch that makes a table's writes
@@ -21,8 +21,14 @@ export interface FakeDb {
   calls: Array<{ table: string; method: string; args: unknown[] }>;
   /** Max rows a plain select returns (PostgREST max-rows); undefined = no cap. */
   maxRows?: number;
+  /** Max values one `.in()` may carry: a longer list is a request line past
+   *  the gateway's URL limit, and the statement fails (I-11 fix pass 3). */
+  maxInList?: number;
   /** table → a database error its DELETEs raise (a trigger's refusal). */
   deleteErrors?: Record<string, { code?: string; message: string }>;
+  /** table → an error its plain SELECTs return (a read that fails) — or a
+   *  function of the selected columns (a column the database lacks). */
+  selectErrors?: Record<string, { code?: string; message: string } | ((cols: string) => { code?: string; message: string } | null)>;
   /** table → a BEFORE INSERT row trigger, transcribed by the test: the row
    *  to insert (possibly rewritten), or null to drop it silently. It fires
    *  ahead of an upsert's ON CONFLICT check, as Postgres fires it. Throwing
@@ -35,7 +41,7 @@ export interface FakeDb {
 }
 
 export function newFakeDb(): FakeDb {
-  return { tables: {}, unique: {}, refuseWrites: new Set(), calls: [], deleteErrors: {}, beforeInsert: {}, beforeUpdate: {}, seq: 0 };
+  return { tables: {}, unique: {}, refuseWrites: new Set(), calls: [], deleteErrors: {}, selectErrors: {}, beforeInsert: {}, beforeUpdate: {}, seq: 0 };
 }
 
 /** A trigger's RAISE, as the statement's error. */
@@ -56,14 +62,30 @@ function orTerm(term: string): Filter {
   const and = term.match(/^and\((.*)\)$/i);
   if (and) { const inner = splitOr(and[1]).map(orTerm); return (r) => inner.every((t) => t(r)); }
   // col.op.value — value may itself contain dots (a site code "2030.22").
-  const m = term.match(/^([a-z_]+)\.(eq|ilike|like|in|is)\.(.*)$/i);
+  const m = term.match(/^([a-z_]+)\.(eq|ilike|like|in|is|gt|gte)\.(.*)$/i);
   if (!m) return () => false;
   const [, col, op, raw] = m;
   if (op === "eq") return (r) => String(r[col] ?? "") === raw;
+  if (op === "gt") return (r) => r[col] != null && String(r[col]) > raw;
+  if (op === "gte") return (r) => r[col] != null && String(r[col]) >= raw;
   if (op === "ilike" || op === "like") { const re = likeToRegex(raw); return (r) => re.test(String(r[col] ?? "")); }
   if (op === "is") return (r) => (raw === "null" ? r[col] == null : String(r[col]) === raw);
   const vals = raw.replace(/^\(|\)$/g, "").split(",").map((v) => v.replace(/^"|"$/g, ""));
   return (r) => vals.includes(String(r[col]));
+}
+
+/** JSONB containment (`@>`): every element / key of `want` is in `have`
+ *  (intelligence Round G, I-11 — the asset hub's asset_tags read). */
+function jsonContains(have: unknown, want: unknown): boolean {
+  if (typeof want === "string" && /^[[{]/.test(want.trim())) {
+    try { want = JSON.parse(want); } catch { /* a plain string */ }
+  }
+  if (Array.isArray(want)) return Array.isArray(have) && want.every((w) => have.some((h) => jsonContains(h, w)));
+  if (want && typeof want === "object") {
+    if (!have || typeof have !== "object") return false;
+    return Object.entries(want as Record<string, unknown>).every(([k, v]) => jsonContains((have as Record<string, unknown>)[k], v));
+  }
+  return have === want;
 }
 
 function splitOr(expr: string): string[] {
@@ -93,6 +115,8 @@ export function makeFakeSupabase(db: FakeDb) {
     const orderBy: Array<{ col: string; asc: boolean }> = [];
     let lim: number | null = null;
     let rng: [number, number] | null = null;
+    let inTooLong = false;
+    let selectCols = "*";
 
     const rowsOf = () => (db.tables[table] ??= []);
     const matches = () => rowsOf().filter((r) => filters.every((f) => f(r)));
@@ -110,6 +134,7 @@ export function makeFakeSupabase(db: FakeDb) {
     };
 
     const run = (): { data: unknown; error: unknown; count?: number } => {
+      if (inTooLong) return { data: null, error: { code: "", message: "414 Request-URI Too Large" } };
       if (op === "insert" || op === "upsert") {
         if (db.refuseWrites.has(table)) return { data: null, error: { code: "42501", message: "new row violates row-level security policy" } };
         const out: Row[] = [];
@@ -162,6 +187,9 @@ export function makeFakeSupabase(db: FakeDb) {
         db.tables[table] = rowsOf().filter((r) => !hit.includes(r));
         return { data: returning ? hit : null, error: null };
       }
+      const failWith = db.selectErrors?.[table];
+      const readErr = typeof failWith === "function" ? failWith(selectCols) : failWith;
+      if (readErr) return { data: null, error: readErr };
       let rows = matches();
       const count = rows.length;
       if (head) return { data: null, error: null, count };
@@ -190,6 +218,7 @@ export function makeFakeSupabase(db: FakeDb) {
           switch (prop) {
             case "select": {
               if (op !== "select") returning = true;
+              else selectCols = String(args[0] ?? "*");
               const o = args[1] as { head?: boolean; count?: string } | undefined;
               if (o?.head) head = true;
               if (o?.count) wantCount = true;
@@ -210,6 +239,10 @@ export function makeFakeSupabase(db: FakeDb) {
             case "delete": op = "delete"; return self;
             case "eq": { const [k, v] = args as [string, unknown]; filters.push((r) => r[k] === v); return self; }
             case "neq": { const [k, v] = args as [string, unknown]; filters.push((r) => r[k] !== v); return self; }
+            // Keyset paging (intelligence Round G, I-11): string order, as the
+            // stand-in's ids are strings.
+            case "gt": { const [k, v] = args as [string, unknown]; filters.push((r) => r[k] != null && String(r[k]) > String(v)); return self; }
+            case "gte": { const [k, v] = args as [string, unknown]; filters.push((r) => r[k] != null && String(r[k]) >= String(v)); return self; }
             case "not": {
               // .not(col, "is", null) / .not(col, "eq", v) — the two shapes the
               // intelligence modules use (I-08).
@@ -218,7 +251,13 @@ export function makeFakeSupabase(db: FakeDb) {
               else if (o === "eq") filters.push((r) => r[k] !== v);
               return self;
             }
-            case "in": { const [k, v] = args as [string, unknown[]]; filters.push((r) => v.includes(r[k])); return self; }
+            case "in": {
+              const [k, v] = args as [string, unknown[]];
+              if (db.maxInList != null && v.length > db.maxInList) inTooLong = true;
+              filters.push((r) => v.includes(r[k]));
+              return self;
+            }
+            case "contains": { const [k, v] = args as [string, unknown]; filters.push((r) => jsonContains(r[k], v)); return self; }
             case "is": { const [k, v] = args as [string, unknown]; filters.push((r) => (v === null ? r[k] == null : r[k] === v)); return self; }
             case "ilike": { const [k, p] = args as [string, string]; const re = likeToRegex(p); filters.push((r) => re.test(String(r[k] ?? ""))); return self; }
             case "or": { const terms = splitOr(String(args[0])).map(orTerm); filters.push((r) => terms.some((t) => t(r))); return self; }

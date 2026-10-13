@@ -114,3 +114,71 @@ describe("globalSearch — the exact answer ranks first and lands on the asset h
     expect(pal).toContain("if (h.exact) continue;");
   });
 });
+
+describe("GAP-311 remainder (I-11) — the sheet it is on, from the relation", () => {
+  it("a link the Bridge read off the drawing carries its sheet address into the lookup and the ⌘K subtitle; a hand link stays plain", async () => {
+    Object.assign(db.ref.tables.document_assets[0], { source: "drawing", sheet_label: "2002-D-10001 SHT 4" });
+    Object.assign(db.ref.tables.document_assets[1], { source: "manual", sheet_label: null });
+    const [hit] = await lookupTag("o1", "FV-2201");
+    expect(hit.documents.map((d) => [d.document_number, d.sheetLabel, d.fromDrawing])).toEqual([
+      ["2002-D-10001", "2002-D-10001 SHT 4", true],
+      ["2002-D-10002", null, false],
+    ]);
+    const docs = (await globalSearch({ orgId: "o1", query: "FV-2201" })).filter((h) => h.exact && h.kind === "document");
+    expect(docs[0].subtitle).toBe("FV-2201 appears on 2002-D-10001 SHT 4 (read from the drawing) · P&ID crude feed");
+    expect(docs[1].subtitle).toBe("FV-2201 appears on this drawing · P&ID crude feed sht 2");
+  });
+});
+
+describe("GOV-9 / GAP-303 (fix pass 2) — the ⌘K subtitle marks an AI-read sheet and a person's own tag", () => {
+  it("a sheet read off an AI transcription is '(AI-read, unconfirmed)'; a pair the document's asset_tags name says a person tagged it too", async () => {
+    Object.assign(db.ref.tables.document_assets[0], { source: "drawing", sheet_label: "2002-D-10001 SHT 4", model: "vision-model-x" });
+    Object.assign(db.ref.tables.document_assets[1], { source: "drawing", sheet_label: "2002-D-10002 SHT 1", model: null });
+    Object.assign(db.ref.tables.documents[1], { asset_tags: [{ tag: "fv 2201" }] });
+    const [hit] = await lookupTag("o1", "FV-2201");
+    expect(hit.documents.map((d) => [d.document_number, d.aiRead, d.personTagged])).toEqual([
+      ["2002-D-10001", true, false],
+      ["2002-D-10002", false, true],
+    ]);
+    expect(hit.documents[0]).not.toHaveProperty("asset_tags");
+    const docs = (await globalSearch({ orgId: "o1", query: "FV-2201" })).filter((h) => h.exact && h.kind === "document");
+    // Reproduction: the fix-pass-1 subtitle stated the transcribed title block as fact.
+    expect(docs[0].subtitle).toBe("FV-2201 appears on 2002-D-10001 SHT 4 (AI-read, unconfirmed) (read from the drawing) · P&ID crude feed");
+    expect(docs[1].subtitle).toBe("FV-2201 appears on 2002-D-10002 SHT 1 (tagged, and read from the drawing) · P&ID crude feed sht 2");
+  });
+});
+
+describe("I-11 integrator fix pass — lookupTag narrows the relation read only on a MISSING COLUMN", () => {
+  it("a database without `model` (before 20261171) still answers the sheet and the drawing mark from the narrower read", async () => {
+    Object.assign(db.ref.tables.document_assets[0], { source: "drawing", sheet_label: "2002-D-10001 SHT 4" });
+    db.ref.selectErrors = { document_assets: (cols) => (cols.includes("model") ? { code: "42703", message: "column document_assets.model does not exist" } : null) };
+    const [hit] = await lookupTag("o1", "FV-2201");
+    expect(hit.documents.map((d) => [d.document_number, d.sheetLabel, d.fromDrawing, d.aiRead])).toEqual([
+      ["2002-D-10001", "2002-D-10001 SHT 4", true, false],
+      ["2002-D-10002", null, false, false],
+    ]);
+    const reads = db.ref.calls.filter((c) => c.table === "document_assets" && c.method === "select").map((c) => String(c.args[0]));
+    expect(reads).toEqual(["asset_id, document_id, sheet_label, source, model", "asset_id, document_id, sheet_label, source"]);
+  });
+  it("a transient failure of the full read is NOT retried narrower — the AI-read mark is never silently dropped; the failure is carried up and ⌘K keeps the fuzzy asset hit", async () => {
+    Object.assign(db.ref.tables.document_assets[0], { source: "drawing", sheet_label: "2002-D-10001 SHT 4", model: "vision-model-x" });
+    let first = true;
+    db.ref.selectErrors = { document_assets: (cols) => {
+      // The five-column read times out once; a narrower retry would succeed.
+      if (cols.includes("model") && first) { first = false; return { code: "57014", message: "canceling statement due to statement timeout" }; }
+      return null;
+    } };
+    // Reproduction: fix pass 3 retried with four columns and answered the AI-read sheet as a plain "appears on this drawing".
+    await expect(lookupTag("o1", "FV-2201")).rejects.toThrow(/The drawings FV-2201 is on could not be read: canceling statement/);
+    const reads = db.ref.calls.filter((c) => c.table === "document_assets" && c.method === "select").map((c) => String(c.args[0]));
+    expect(reads).toEqual(["asset_id, document_id, sheet_label, source, model"]);
+    first = true;
+    db.ref.calls.length = 0;
+    const hits = await globalSearch({ orgId: "o1", query: "FV-2201" });
+    expect(hits.filter((h) => h.exact)).toEqual([]);
+    expect(hits.some((h) => h.kind === "asset" && h.id === "a-fv")).toBe(true);
+    // The retry (the next keystroke) reads the marks whole.
+    const [hit] = await lookupTag("o1", "FV-2201");
+    expect(hit.documents[0]).toMatchObject({ sheetLabel: "2002-D-10001 SHT 4", fromDrawing: true, aiRead: true });
+  });
+});

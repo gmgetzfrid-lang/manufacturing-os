@@ -846,6 +846,7 @@ Tests: `lib/__tests__/orgGraph.test.ts` GM-13 block — 8,003 supersessions / cu
 
 - **Severity:** LOW
 - **Status:** OPEN
+- **Assigned:** intelligence I-15 GRAPH SERVER ASSEMBLY (limb 2: the doc↔asset edge carries the sheet and its AI-read mark) — by the integrator, 2026-10-13 (I-11 merge, DEC-31: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260921_drawing_entities.sql:15-38`, `lib/orgGraph.ts:20`, `lib/orgGraph.ts:96-144`, `app/(protected)/graph/page.tsx:115`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. Every factual assertion checks out — the REVOKE is real, the graph is 100% client-assembled, and a sheet edge type added to buildOrgGraph would silently return nothing. But this is a deliberate, documented ACL decision (the table mirrors per-document ACLs the anon client cannot evaluate), and no shipped feature is broken by it — the finding describes a hypothetical future feature. That is a design constraint to note, not a MEDIUM defect: LOW.
@@ -882,5 +883,18 @@ No amount of edge-type work in orgGraph.ts can surface it: the client cannot SEL
 - [ ] Graph assembly runs server-side under supabaseAdmin with explicit per-caller ACL filtering equivalent to node_visible(), or a dedicated route supplies the service-role-only edges
 - [ ] A `sheet` edge (document ↔ asset, carrying page number) is drawn from knowledge_page_entities
 - [ ] The client-side buildOrgGraph either is removed or documents in its header that it can only ever see `authenticated`-readable tables
+
+**Partial (2026-10-02, intelligence Round G).** A dedicated route now serves the per-sheet equipment data per caller. `GET /api/equipment/sheets?orgId&tag` (`app/api/equipment/sheets/route.ts`) returns two things:
+- The tag's relation rows, read with the caller's own client, so RLS applies (the 20261170 read rail included).
+- The sheets whose indexed copy carries the tag but where no link was recorded yet. These come from `knowledge_page_entities`, which stays service-role only. They are filtered to copies of documents the caller can read (`readableControlledDocIds`, fail closed) and at the current revision, plus knowledge uploads (org-readable, DEC-83 item 1). Each carries its sheet address from the page's title block, and an AI-transcribed one is marked unconfirmed.
+
+The asset hub shows them as "Also read on (not linked yet)", labelled as proposals, never as links. No client reads the entity table. Separately, the Bridge's 'drawing' rows in `document_assets` carry the sheet (`sheet_label`) and `pages` read from `knowledge_page_entities`. That table is `authenticated`-readable, so a client-side graph can see sheet membership through the relation without touching the entity index.
+
+**Done-when.**
+1. ◐ A dedicated route supplies the service-role-only per-sheet data per caller (`lib/__tests__/equipmentBridgeRoutes.test.ts` "relations come from the caller's own reads; extracted sheets are filtered by the ACL and the revision; an AI-read title block is marked" and "the entity index stays service-role only: no client reads knowledge_page_entities"). The graph does not call it: server-side assembly is GAP-313 (I-15).
+2. ✗ Not done here. The graph's doc↔asset edge does not carry the sheet or page yet: `lib/orgGraph.ts` reads `document_assets` as `id, document_id, asset_id`. Selecting `sheet_label, pages` there (or drawing from the route) is the graph owner's (I-15, server assembly).
+3. ✗ Not done here. `lib/orgGraph.ts`'s header is I-15's file.
+
+**Scope / residual.** Handed to I-15 (`lib/orgGraph.ts` server entry, GAP-313): carry `sheet_label` / `pages` on the tag edge from the relation, and say in the client builder's header that it sees only `authenticated`-readable tables. The sheet stays on the relation, never a node (GAP-301's do-not).
 
 ---

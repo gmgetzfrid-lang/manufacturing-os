@@ -74,6 +74,7 @@ supabase/migrations/20260605_rls_policies_new_tables.sql:26-29 — `CREATE POLIC
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** intelligence I-15 GRAPH SERVER ASSEMBLY (the graph's Connect gate) and projects J19 (the `lib/transitionIn.ts` adopt hand-off) — by the integrator, 2026-10-13 (I-11 merge, DEC-31: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260609_phase1_normalization.sql:186-190`, `app/(protected)/admin/assets/page.tsx:1345-1354`, `app/(protected)/graph/page.tsx:356-362`, `lib/operationalGraph.ts:372-377`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **HIGH → MEDIUM** by this pass. Confirmed — and worse than stated in one respect: the graph's Connect button has no role check at all, so link creation by a Contractor needs no console. Severity trimmed to MEDIUM because most of this table is machine-regenerable: the `documents_resync_assets` trigger (same migration, :85-119) rebuilds every `source='jsonb_sync'` row on any touch of `documents.asset_tags`, and `assets_backfill_documents` (:127-140) re-links on asset insert; only `source='manual'` rows are unrecoverable, so "permanently delete every link" overstates the blast radius.
@@ -93,6 +94,42 @@ supabase/migrations/20260609_phase1_normalization.sql:187-190 — `CREATE POLICY
 - [ ] document_assets gets SELECT-for-members plus writer-gated INSERT/UPDATE/DELETE, matching whatever bar the sweep and the drawer claim.
 - [ ] app/(protected)/graph/page.tsx gates Connect mode on the same authority (it currently reads uid and activeOrgId from useRole but never activeRole).
 - [ ] Deleting a link that the Bridge applied is either blocked or recorded, so `document_equipment_suggestions.applied` and the real link set cannot drift apart unnoticed.
+
+**Partial (2026-10-02, intelligence Round G).** The database half. `20261170` drops `document_assets_member_all` and writes:
+- `document_assets_select` for active members;
+- `document_assets_insert`: a `manual` row only, by the registry writer tier through the role collection (`caller_holds_any_role(org_id, ARRAY['Admin','DocCtrl','Manager','Supervisor'])`), on an in-org document the caller can read and an in-org asset;
+- `document_assets_update`: a non-'drawing' row only, by the writer tier, landing `manual` on readable in-org rows;
+- `document_assets_delete`: a non-'drawing' row only, by the writer tier;
+- plus DACL-11's RESTRICTIVE read rail.
+
+The trigger-maintained `jsonb_sync` rows keep flowing for every member who edits `asset_tags`, through the two sync functions, now SECURITY DEFINER with `search_path` pinned and EXECUTE revoked. A 'drawing' row (the Bridge's) is never a person's to update or delete. It is removed only by Dismiss or the vanished review, which go through the service role, record the machine reading that was removed, and audit the decision (BR-9 / GAP-309). The registry drawer's Unlink reads the link before deleting and says what it found: a drawing link is the sweep's to dismiss, a delete the policy refuses names the writer role or the document's access, and a link already gone just refreshes (`lib/assets.ts` `unlinkDocumentFromAsset`, integrator fix pass; before it, every 0-row delete was attributed to the sweep). Exercised on a scratch PostgreSQL 16; the cases are in `GAP-302`'s record.
+
+**Done-when.**
+1. ✓ `document_assets` has member SELECT plus writer-gated INSERT / UPDATE / DELETE: the registry writer tier (DEC-53 item 1), the bar the sweep (BR-1) and the drawer use. Pinned by `lib/__tests__/intelRoundGBridgeMigrations.test.ts` (the policy census, and "the registry drawer's Unlink reads the link first and says what it found…"; the outcomes in `lib/__tests__/registryUnlink.test.ts`) and by the scratch-database cases 3–8.
+2. ✗ Not done here. Gating the graph's Connect mode on the same authority is `app/(protected)/graph/page.tsx`, I-14's file (`components/graph/GraphShapeWizard.tsx` likewise). The database now refuses a non-writer's insert from either, so the gap is an affordance that fails with the database's refusal, not a write that lands.
+3. ✓ Deleting a link the Bridge applied is blocked for a person at the database. The Bridge's own removal records it: audit rows `EQUIPMENT_BRIDGE_RELATION_REMOVED` / `EQUIPMENT_BRIDGE_VANISHED_REMOVED` name the tag, sheet, pages, revision and model, and the ledger's `applied` / `dismissed` change with it, so the two cannot drift apart unnoticed.
+
+**Scope / residual.** Handed to I-14: Connect (and the shape wizard's link writer) shown only to the registry writer tier. Pending migration: `supabase/migrations/20261170_intel_roundG_document_assets_source.sql`. Members outside the writer tier lose writing manual links and deleting any link; the paste's inventory counts them.
+
+**Fix pass (2026-10-02, review).** A writer's manual link onto a pair the drawing already relates is refused 23505 (the 'drawing' row holds the pair, and a person cannot write it); a later Dismiss of the drawing's reading then took the person's intended link with it. `POST /api/equipment-bridge` `action "adopt"` (`adoptDrawingRelation`; workspace-checked, writer tier, the caller must read the document, the asset must be in the workspace) makes that row the person's — source `manual`, `asserted_by` human, their uid, the sheet kept — and audits `EQUIPMENT_BRIDGE_RELATION_ADOPTED`; Dismiss and the vanished review never remove a manual row. The registry drawer's Link (`app/(protected)/admin/assets/page.tsx`) calls it on 23505. Also handed to I-14: the graph's Connect and `components/graph/GraphShapeWizard.tsx` treat 23505 as "already linked" and should call the same action. A person's `asset_tags` link on such a pair is kept by the Bridge itself (`GAP-302`'s fix pass). Done-when 3 is unchanged: a person still cannot delete or rewrite a 'drawing' row from the client (scratch PG16 case F5).
+
+**Fix pass 2 (2026-10-02, review): a second 23505-class door, handed to projects.** `lib/transitionIn.ts` links a transition-in document's matched equipment as source 'manual' with an upsert `ON CONFLICT (document_id, asset_id) DO NOTHING` (`ignoreDuplicates: true`). On a pair a 'drawing' row already holds, it writes nothing, silently. If that drawing row is later dismissed, the controller's assertion is lost. This is the same class as the graph's Connect (I-14), but it was not listed. Handed to projects (owner of `lib/transitionIn.ts`): when the pair is a drawing row, route the link through `POST /api/equipment-bridge` `action "adopt"` (or `adoptDrawingRelation` on the server), which makes the row the controller's. Recorded in the 20261170 header and in DEC-96's Risk; not edited here.
+
+**Fix pass 3 (2026-10-02, review): transition-in's door, closed here.** `lib/transitionIn.ts` is not on this package's parallel do-not-edit list, so fix pass 2's hand-off to projects is withdrawn and the change is made here. `adoptDocument` links the matched equipment through `linkAdoptedEquipment`:
+1. The insert stays `ON CONFLICT DO NOTHING`. A DO UPDATE onto a pair a person's `asset_tags` already link (`jsonb_sync`), or onto a 'drawing' row, is refused by 20261170's per-verb policies and would fail every link in the batch.
+2. Its error is now checked: a refused write is said, never swallowed.
+3. It reads which of the pairs a 'drawing' row holds and sends each one through `POST /api/equipment-bridge` `action "adopt"`, the registry drawer's path. The row becomes the controller's (source `manual`, asserted by them), and a later Dismiss or "It left the sheet" no longer deletes it.
+4. A refused link or adopt comes back as `equipmentNote` on the result.
+
+Tests in `lib/__tests__/transitionIn.test.ts`:
+- "the drawing-held pair goes through the Bridge's 'adopt' (the other is inserted as the controller's link)";
+- "a refused link write is said, never swallowed";
+- "an adopt the Bridge refuses is said: the tag is still the sweep's reading";
+- "no drawing-held pair: nothing is adopted and nothing is said".
+
+The first three fail on the fix-pass-2 file.
+
+Residual: `components/projects/TransitionInPanel.tsx` (on the do-not-edit list, projects J12) shows `note` only. Showing `equipmentNote` is handed to projects; the panel's bulk path counts a `note` as "adopted without a uniqueness key", so the new sentence is not folded into `note`. AREA-2 stays OPEN on done-when 2: the graph's Connect and `components/graph/GraphShapeWizard.tsx` are I-14's.
 
 ---
 
@@ -148,6 +185,7 @@ Tests: `lib/__tests__/flowsRead.test.ts` ("new, already confirmed, awaiting revi
 
 - **Severity:** HIGH
 - **Status:** OPEN
+- **Assigned:** intelligence I-26 BRIDGE REMAINDERS (limbs 2 and 3: the checklist step on AreaKnowledgePanel) — by the integrator, 2026-10-13 (I-11 merge, DEC-31: the package that left this remainder has merged; fleet plan `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/equipmentBridgeServer.ts:189-193`, `lib/equipmentBridgeServer.ts:198-234`, `app/(protected)/documents/[libraryId]/page.tsx:4685`, `components/documents/EquipmentSweepModal.tsx:157`, `app/(protected)/admin/assets/page.tsx:1-50`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed end to end, including the unreachability: AreaKnowledgePanel's four-step order-of-operations (:314-350) links to /documents, /plot-plans and the knowledge wizard, and its Step 4 is "Link equipment files to assets — Open any asset below" — it never mentions the equipment column mapping, and nothing on /admin/assets renders or links to EquipmentSweepModal. A P&ID bound to an area creates zero assets until someone finds the sweep dialog on the library page.
@@ -167,6 +205,17 @@ lib/equipmentBridgeServer.ts:190-193 — `const targetKey = bridge?.targetColumn
 - [ ] Registry discovery is separated from column population: unmatched tags become assets even when no target column is mapped (or the mapping requirement is stated on the area page, not buried in a library modal).
 - [ ] The AreaKnowledgePanel checklist gains a real step between 'connect the knowledge' and 'deep read' — 'populate this area's equipment from its drawings' — showing the live count of document_equipment_suggestions rows pending for the area's watched libraries and launching the sweep in place.
 - [ ] A P&ID bound to an area and indexed produces registry assets end to end without the user visiting /documents/[libraryId].
+
+**Partial (2026-10-02, intelligence Round G).** Reproduced first (DEC-29): with the base files (`e5de803`) swapped back in, seven of the new cases fail (no `document_assets` row after apply; AREA-4's throw "No equipment column mapped for this library…"; no sheets on a suggestion; BR-3's bare `null`; three asset-hub cases), while the regression pin (an unregistered tag still listed by its `asset_tags` containment on the hub) passes on both.
+
+Registry discovery is separated from column population. `applyForDocument` resolves, discovers (origin 'drawing', provenance) and relates every wanted tag whether or not a column is mapped, and populates the column only when one is mapped. The throw is gone. An automatic apply with no column mapped acts once a person has reviewed the library once (`reviewedAt`, set by their first apply or dismiss — BR-9). With a column mapped, it acts as before. The sweep modal says when no column is mapped: "No equipment column is mapped. Applying still files each tag in the equipment registry and records which sheets carry it … tags go into a document column only once you pick one."  Discovery is independent of the column; the do-not on moving discovery without the throw is honoured.
+
+**Done-when.**
+1. ✓ Unmatched tags become assets, and the relation is written, with no target column mapped. `lib/__tests__/equipmentBridge.test.ts` "AREA-4: with NO column mapped, discovery still creates the assets and the relation is written — nothing throws".
+2. ✗ Not done here. A checklist step on the Operating Areas page ("populate this area's equipment from its drawings", with the live count of pending proposals for the area's libraries and the sweep launched in place) is `components/assets/AreaKnowledgePanel.tsx` (I-09's file, not in this package's brief).
+3. ✗ Not end to end. With auto-apply opted in on the P&ID library, an indexed P&ID now builds the registry and the relation at ingest with no column mapped, once the library was reviewed once. Opting in and the first review still happen in the sweep modal on `/documents/[libraryId]`; no Operating Areas surface launches them (limb 2).
+
+**Scope / residual.** The unit's page already opens the unit's coverage report (GAP-308), which lists what its drawings carry that its equipment list does not. Handed to the next package that edits `components/assets/AreaKnowledgePanel.tsx` (the Operating Areas checklist), which needs the step, the pending count (`document_equipment_suggestions` rows for the area's watched libraries), and the sweep mounted in place (`components/documents/EquipmentSweepModal.tsx`, mountable on its own).
 
 ---
 

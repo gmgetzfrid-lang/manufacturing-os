@@ -254,6 +254,19 @@ export const EXPECTED_COLUMNS: readonly ColumnExpectation[] = [
   // notifications N6 (DELIV-1 dw3): until it is pasted a queued email names
   // only its recipient. No app code reads or writes the column.
   { table: "email_notifications", column: "queued_by", migration: "20261183_notif_roundG_email_attribution.sql", feature: "Email queue — the member who queued each email is recorded by the database (DELIV-1)" },
+  // intelligence I-11 (DEC-96): the relation's sheet address and provenance.
+  { table: "document_assets", column: "sheet_label", migration: "20261170_intel_roundG_document_assets_source.sql", feature: "The sheet a vessel is on (asset hub, ⌘K, coverage report; GAP-301)" },
+  { table: "document_assets", column: "pages", migration: "20261170_intel_roundG_document_assets_source.sql", feature: "The pages a vessel is on (asset hub, coverage report; GAP-301)" },
+  { table: "document_assets", column: "asserted_by", migration: "20261171_intel_roundG_provenance.sql", feature: "Who asserted a document↔equipment link — a person or the drawing reading (GAP-303)" },
+  { table: "document_assets", column: "asserted_by_user", migration: "20261171_intel_roundG_provenance.sql", feature: "The person who asserted a link (GAP-303)" },
+  { table: "document_assets", column: "model", migration: "20261171_intel_roundG_provenance.sql", feature: "The AI model that read a title block, shown as AI-read (GOV-9)" },
+  { table: "document_assets", column: "source_revision", migration: "20261171_intel_roundG_provenance.sql", feature: "The revision a drawing link was read from (GAP-303)" },
+  { table: "document_assets", column: "source_version_id", migration: "20261171_intel_roundG_provenance.sql", feature: "The version a drawing link was read from (GAP-309)" },
+  { table: "document_assets", column: "presence_confirmed_on", migration: "20261171_intel_roundG_provenance.sql", feature: "Revision truth: the version that last confirmed a tag on its sheet (GAP-309)" },
+  { table: "document_assets", column: "superseded_at", migration: "20261171_intel_roundG_provenance.sql", feature: "Revision truth: a link superseded by a later revision (GAP-309)" },
+  { table: "document_assets", column: "vanished_at", migration: "20261171_intel_roundG_provenance.sql", feature: "Revision truth: a tag that left its sheet, for review (GAP-309)" },
+  { table: "document_equipment_suggestions", column: "applied_columns", migration: "20261171_intel_roundG_provenance.sql", feature: "The Bridge remembers which equipment columns it wrote on each document (BR-11)" },
+  { table: "document_equipment_suggestions", column: "dismissed", migration: "20261171_intel_roundG_provenance.sql", feature: "The Bridge remembers a dismissed tag (BR-9)" },
 ];
 
 export const EXPECTED_FUNCTIONS: readonly FunctionExpectation[] = [

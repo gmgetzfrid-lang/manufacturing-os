@@ -129,6 +129,22 @@ See `Do not`.
 3. A sheet address records which document revision it was read from.
 4. A test pins the `kind: 'self'` → sheet-address path end to end.
 
+**Resolution (2026-10-02, intelligence Round G, I-11).** Reproduced first (DEC-29): with the base files (`e5de803`) swapped back in, seven of the new cases fail (no `document_assets` row after apply; AREA-4's throw "No equipment column mapped for this library…"; no sheets on a suggestion; BR-3's bare `null`; three asset-hub cases), while the regression pin (an unregistered tag still listed by its `asset_tags` containment on the hub) passes on both.
+
+The Bridge reads the page's kind `'self'` entities on the same query as its equipment (`.in("kind", ["equipment", "self"])`). `lib/knowledgeEntityKinds.ts` was read first: `self` rows carry only a page's own title-block identity — its drawing number, and `<DWG>-SH<n>` with the raw line "DWG … SH … REV …"; the entity-kind guard test passes. `sheetAddressForPage(page, selfRows, aiRead)` returns the site sheet address: drawing number, sheet, the revision the title block declares, and the label `"2002-D-10001 SHT 4"`. When the page declared none, it falls back to the page, with that fact stated. Every suggestion carries `sheets[]`. Every relation row the Bridge writes carries `sheet_label` and `pages`, plus the revision and version it was read from (`source_revision`, `source_version_id`, 20261171). The sheet lives on the relation, never as a node or a document row. It is read from the title block, never parsed from a filename. A title block on an AI-transcribed page is marked unconfirmed (GOV-9).
+
+**Done-when.**
+1. ✓ Given a document and a page, the system returns the site sheet address (`lib/__tests__/equipmentBridge.test.ts` "given a page's self rows the system returns the site sheet address and the revision it declares").
+2. ✓ The Bridge's suggestions carry it, not just `pages`.
+3. ✓ A sheet address records the revision it was read from: the title block's declared `rev` on the suggestion, and `source_revision` / `source_version_id` on the relation.
+4. ✓ A test pins the `kind: 'self'` → sheet-address path end to end ("GAP-301 end to end: kind 'self' rows → each suggestion carries its sheets; an AI-transcribed page is marked"; "the stored sheet_label names every sheet once, in page order").
+
+**Scope / residual.** **Pending migrations:** `supabase/migrations/20261170_intel_roundG_document_assets_source.sql`, then `supabase/migrations/20261171_intel_roundG_provenance.sql` (hand-applied, in that order). The app deploys in either order: before 20261170 the Bridge says the relation was not recorded and keeps its column write; before 20261171 it writes the relation without the provenance columns and says so. Read both ways: open a vessel and see its sheets (the asset hub, ⌘K); open a sheet and see its equipment (the library's equipment column and the sweep's chips per document).
+
+**Fix pass 3 (2026-10-02, review).** The residual's clause "before 20261171 it writes the relation without the provenance columns and says so" has been false since fix pass 2. Before 20261171 the Bridge writes NO 'drawing' row: `notRecorded` names 20261171, the column write still lands, and the first recompute after the paste relates the applied tags with their provenance (`GAP-304`'s fix pass 2).
+
+**Scope / residual (corrected).** Pending migrations: `20261170`, then `20261171`, in that order. The app deploys in either order. Before either is pasted, the suggestions carry their sheet addresses, but no relation row is written, and the Bridge says why. The vessel-to-sheets direction (the asset hub, ⌘K) shows sheets once the relation is written.
+
 ---
 
 <a id="gap-302"></a>
@@ -181,6 +197,48 @@ CHECK to `('jsonb_sync','manual','drawing')` and adding `sheet_label TEXT`,
    pins exactly this.
 3. `sheet_label` and `pages` exist and are nullable.
 
+**Resolution (2026-10-02, intelligence Round G, I-11).** `supabase/migrations/20261170_intel_roundG_document_assets_source.sql`:
+- **The vocabulary.** The vocabulary CHECK — 20260609's inline `document_assets_source_check`, or any CHECK naming both `source` and `'jsonb_sync'` — is dropped (only it: the review-fix pass narrowed a loop that dropped every CHECK mentioning `source`), and `document_assets_source_check CHECK (source IN ('jsonb_sync','manual','drawing'))` is re-added NOT VALID, then VALIDATED only when nothing violates it (DEC-30; the inventory counts unexpected sources). It also adds `sheet_label TEXT` and `pages INTEGER[]`, both nullable.
+- **The triggers.** `documents_resync_assets()` and `assets_backfill_documents()` are re-created from their newest definition (20260609), byte-faithful except the header: SECURITY DEFINER, `SET search_path = public`, EXECUTE revoked from PUBLIC, anon and authenticated. The new write policies would otherwise refuse the trigger's own `jsonb_sync` writes for a member outside the writer tier. The resync DELETE stays `WHERE document_id = NEW.id AND source = 'jsonb_sync'`, so it cannot remove a 'drawing' or 'manual' row. `lib/__tests__/intelRoundGBridgeMigrations.test.ts` line-diffs both against 20260609.
+- **The authority and the read rail** (AREA-2, DACL-11): see those records.
+
+Nothing routes machine output through `documents.asset_tags`, and `AssetTag` gains no source field (the do-nots).
+
+Exercised on a scratch PostgreSQL 16 (stubbed Supabase roles, `auth.uid()` and role helpers; the cluster was deleted afterwards). Both files were pasted twice in order (20261170, 20261170, 20261171, 20261171); every probe was true each time, and the second paste changed nothing. That idempotence claim did not cover 20261170 re-pasted AFTER 20261171, which dropped 20261171's `document_assets_drawing_is_machine` while its probe stayed true — corrected in the fix pass below. Cases:
+- (1) The service role writes a 'drawing' row.
+- (2) A Drafter outside the writer tier edits `asset_tags` (two tags, then cleared, then re-tagged). The definer trigger re-derives the `jsonb_sync` rows each time and the 'drawing' row survives every edit.
+- (3) A Viewer's manual insert is refused, and a Viewer's delete affects 0 rows.
+- (4) A Manager's manual insert lands; a 'drawing' or 'jsonb_sync' insert by the Manager is refused.
+- (5) A Manager's update or delete of the 'drawing' row affects 0 rows; deleting a `jsonb_sync` row affects 1.
+- (6) An upsert onto the 'drawing' pair is refused ("(USING expression)").
+- (7) A Supervisor held only in `roles[]` links (additive).
+- (8) A writer's new asset backfills its `jsonb_sync` rows (the definer function).
+- (9) DACL-11: a Viewer sees only the normal document's rows in `document_assets` and in `project_documents`; an Admin sees both, the private one included. A Manager cannot link the private document.
+- (10) `anon` and `authenticated` calling either sync function get "permission denied".
+- (11) CB-2: a Viewer's insert into `document_equipment_suggestions` is refused (20261128's policy); an Admin's lands.
+
+20261171:
+- (P1) A Manager's manual insert claiming `asserted_by 'machine'`, a model, a revision and `vanished_at` is stamped `human`, with their uid, and no model, revision or vanished mark.
+- (P2) A service-role 'drawing' insert with no `asserted_by` lands `machine` and keeps its model and revision. A service-role 'drawing' insert claiming `human` lands `machine`. With the stamping trigger disabled, the CHECK refuses a 'drawing' row as `human`.
+- (P3) A person's upsert onto a 'drawing' pair is still refused.
+- (P4) A person's `asset_tags` edit re-derives `jsonb_sync` rows stamped `human` with the editor's uid.
+- (P5) With seqscan off, `EXPLAIN` uses `transmittals_items_path_gin` for `items @> …`, `tickets_metadata_path_gin` for `metadata @> …`, and `tickets_source_document_id_idx` for `metadata->'source_document'->>'id' = …`.
+
+Inventory on the seeded rows: the before and after counts matched the seed.
+
+**Done-when.**
+1. ✓ The CHECK admits `'drawing'`, and the trigger's DELETE cannot remove a non-`jsonb_sync` row (the probe checks the function body; the lineDiff test pins it).
+2. ✓ A `'drawing'` row survives an unrelated edit to `asset_tags`. `lib/__tests__/equipmentBridge.test.ts` "after the Bridge applies, a person edits asset_tags (another tag, then the same tag, then clears it) — the drawing rows stay", against the trigger transcribed from the SQL ("the transcription is the SQL's"), plus scratch-database case 2.
+3. ✓ `sheet_label` and `pages` exist and are nullable.
+
+**Scope / residual.** Pending migration: `supabase/migrations/20261170_intel_roundG_document_assets_source.sql` (first of the pair; then 20261171).
+
+**Fix pass (2026-10-02, review).**
+- **Re-paste after 20261171.** 20261170's drop loop now drops only the vocabulary CHECK (`conname = 'document_assets_source_check'` OR a definition naming `source` and `'jsonb_sync'`), and its probe counts only that CHECK. `lib/__tests__/intelRoundGBridgeMigrations.test.ts` "a re-paste after 20261171 drops ONLY the vocabulary CHECK — document_assets_drawing_is_machine survives …" evaluates the loop's predicate over the three CHECKs as PG16 deparses them.
+- **The regression top rule: a person's `asset_tags` link is never lost to a drawing row on the same pair.** While a 'drawing' row holds a (document, asset) pair, the resync trigger's `jsonb_sync` insert for a person's `asset_tags` tag hits `ON CONFLICT DO NOTHING`; removing the drawing row (Dismiss, "It left the sheet", a column removal) used to leave no row at all. `removeDrawingRelations` now reads the document's `asset_tags` and, for a pair it names (matched as the trigger matches: `normalize_tag(elem->>'tag')` = the asset's `tag_normalized`), turns the row into exactly the synced link the trigger would have written (`source 'jsonb_sync'`, the person's spelling, no sheet, no pages, provenance reset to a person's) instead of deleting it; the rest are deleted. The audit row names both. A person's manual Link refused 23505 on a drawing pair goes through `POST action "adopt"` (`adoptDrawingRelation`): the row becomes theirs (source `manual`, `asserted_by` human, their uid, the sheet kept), audited `EQUIPMENT_BRIDGE_RELATION_ADOPTED`; Dismiss and the vanished review never remove a manual row. The registry drawer's Link calls it; the graph's Connect and the shape wizard (I-14's files) do not yet.
+- Tests: `lib/__tests__/equipmentBridge.test.ts` "reproduction → fix: Dismiss of the drawing's E-22 leaves the person's synced link (jsonb_sync, their spelling), and says so", "'It left the sheet' keeps the person's synced link the same way", "a pair the person did not tag is removed outright", "a person's Link refused 23505 on the drawing's pair: adopt makes it theirs, and a later Dismiss leaves it"; route: "adopt: a person's Link refused 23505 on a drawing row makes the row theirs; …". Each fails on the pre-fix library.
+- Scratch PostgreSQL 16 (a new cluster, deleted afterwards), stub schema plus the real 20260609, 20261170 and 20261171: every probe true; after 20261170 → 20261171 → 20261170 → 20261171 the three CHECKs (`asserted_by_check`, `drawing_is_machine`, `source_check`) are all present and validated. Cases: (F1) the service role writes two 'drawing' rows; a Drafter types "e 22" into `asset_tags` and the trigger's insert is skipped (both rows stay 'drawing'). (F2) The lib's conversion as the service role turns the E-22 row into `jsonb_sync` "e 22", `asserted_by` human, no model; the stamping trigger keeps it as written; the Drafter's next `asset_tags` edit re-derives it (DELETE + insert) as `jsonb_sync`, stamped with the Drafter's uid, while V-101's drawing row stays. (F3) Adopt as the service role: V-101 becomes `manual`, human, the person's uid, the sheet label kept; the CHECKs hold. (F4) A drawing row's "still there" (`vanished_at` cleared, `presence_confirmed_on` set) stays `machine`. (F5) A person's direct UPDATE of a drawing row to `manual` still affects 0 rows (RLS).
+
 ---
 
 <a id="gap-303"></a>
@@ -228,6 +286,44 @@ Two places the distinction is lost outright:
    render, including the drawing viewer and the graph.
 3. A correction is recorded as a correction.
 4. Provenance survives export and restore.
+
+**Partial (2026-10-02, intelligence Round G, I-11).** `supabase/migrations/20261171_intel_roundG_provenance.sql` gives every relation row its source:
+- `asserted_by` (`machine` | `human`, NOT NULL, default `human`; every existing 'drawing' row backfilled `machine`; CHECK `document_assets_drawing_is_machine` validated: a 'drawing' row is always a machine's);
+- `asserted_by_user`;
+- `model` (the AI model that transcribed a page the tag was read on; NULL for a text layer);
+- `source_revision` / `source_version_id`;
+- `vanished_at` / `superseded_at` (GAP-309).
+
+A BEFORE INSERT OR UPDATE trigger (`document_assets_stamp_assertion`; not SECURITY DEFINER, `search_path` pinned) stamps a signed-in person's write as `human` with their uid and clears every machine field, so a person cannot forge a machine reading. A service-role write keeps what it says, so a restore round-trips, and a 'drawing' row always lands `machine`.
+
+Accept, edit and dismiss are events, not overwrites:
+- an apply writes `EQUIPMENT_BRIDGE_APPLIED`;
+- a discovery records `discovered_from` (with its door) and audits it;
+- a person's rejection of a machine reading writes `EQUIPMENT_BRIDGE_DISMISSED` and `EQUIPMENT_BRIDGE_RELATION_REMOVED`, naming what the reading was (tag, sheet, pages, revision, model);
+- the vanished review writes `EQUIPMENT_BRIDGE_VANISHED_REMOVED` / `_KEPT`.
+
+No confidence score is stored or shown. Nothing AI-derived drives a hold, an MOC or a compliance artifact: the Bridge writes none.
+
+**Done-when (acceptance).**
+1. ◐ The pieces of the story are recorded and shown per link, but there is no single view yet. The asset's `origin` / `discovered_from` (the registry's Discovered filter shows the source drawing). Each link's who / which sheet / which revision / which model (the asset hub row). Every decision's audit row.
+2. ◐ Distinguishable on the asset hub ("read from drawing" / "AI-read" with the model and revision), in ⌘K ("(read from the drawing)") and in the sweep (chips, "(AI-read, unconfirmed)"). ✗ Not done here: the drawing viewer and the graph (the graph is I-14's and I-15's; `lib/orgGraph.ts` reads the relation without `asserted_by`).
+3. ✓ A correction is recorded as a correction: the removal's audit row carries the machine reading it removed, and the ledger keeps the dismissal with who, when and the revision (`lib/__tests__/equipmentBridge.test.ts` "dismissing an applied tag removes its drawing relation, records the decision, …"). Fix pass: the correction audit inserts (`EQUIPMENT_BRIDGE_RELATION_REMOVED`, `_DISMISSED`, `_VANISHED_REMOVED`, `_VANISHED_KEPT`, `_RELATION_ADOPTED`, and the column dismissal's) were swallowed; a failed one is now returned to the caller as `auditError` and shown in the sweep ("a correction whose audit row cannot be written is reported to the caller, not swallowed"). A column removal is recorded too (`via: 'column'`, BR-5), and so is a person adopting a drawing row.
+4. ✓ Provenance survives export and restore. The export reads `document_assets` with `select("*")` (`lib/dataExport.ts`; the table is in `lib/exportTables.ts`). The restore writes with the service role (`app/api/admin/restore/apply-table`), which the stamping trigger leaves as written. Scratch-database case P2: a service-role row keeps its model and revision; a 'drawing' row lands `machine`.
+
+**Scope / residual.** Handed: the drawing viewer's tag overlay (the drawing surfaces' owner) and the graph's edge styling by `asserted_by` (I-14 / I-15). A single per-asset "how we came to believe this" view is not built. Pending migration: `supabase/migrations/20261171_intel_roundG_provenance.sql`, after 20261170.
+
+**Assigned (2026-10-13, integrator, I-11 merge, DEC-31).** intelligence I-15 GRAPH SERVER ASSEMBLY (the graph's edge styling by `asserted_by`) and I-26 BRIDGE REMAINDERS (the drawing viewer's tag overlay).
+
+**Fix pass 2 (2026-10-02, review).** Three gaps against this record:
+- **Order (99-fix-sequencing Phase 2; GAP-304 depends on this).** With 20261170 pasted and 20261171 not, `syncDrawingRelations` retried the 'drawing' insert without the provenance columns. A relation could then exist before its provenance: a backfill that cannot recover what it did not record. Now a missing provenance column means nothing is written. `notRecorded` says the relation needs 20261171 (paste 20261170, then 20261171), the column write still lands, and the first recompute after 20261171 relates every applied tag with its provenance. `provenanceDropped` is gone. Both migration headers say so. Test: `lib/__tests__/equipmentBridge.test.ts` "before 20261171 NO drawing row is written — a relation never exists before its provenance …" (fails on the fix-pass-1 library).
+- **Audited.** The `EQUIPMENT_BRIDGE_APPLIED` audit (an apply: registry assets and relations) and the `EQUIPMENT_BRIDGE_DISCOVERED` audit (the knowledge door) were still fire-and-forget. Both are checked now. A refused insert returns `auditError` (`ApplyResult.auditError`; the discover result's `auditError`), shown by the sweep modal and the coverage report. Tests: "the apply's audit row and the knowledge door's are checked: a refused insert is said to the caller"; `lib/__tests__/coverageReportRender.test.ts` "a discovery that landed but whose audit row was refused is said …"; `lib/__tests__/equipmentSweepModalRender.test.ts` "an apply or a dismissal whose audit row was refused stays on screen after the re-read".
+- **A person's assertion shown as one.** While a 'drawing' row holds a pair, the resync trigger skips the person's `jsonb_sync` row (confirmed on scratch PostgreSQL 16 by the review). The relation alone therefore said "machine, not typed by a person" for a tag a drafter had typed. The asset hub now reads the linked documents' `asset_tags`. A pair the document's own tags name is shown "tagged · also on drawing": no "Not typed by a person", and the vanished mark says the link stays because the document's tags name it. ⌘K says "(tagged, and read from the drawing)". Tests: `lib/__tests__/assetHubRelation.test.ts` "the drawing row holds the pair while the document's asset_tags name it: …" and `lib/__tests__/globalSearchTags.test.ts` "a sheet read off an AI transcription is '(AI-read, unconfirmed)'; a pair the document's asset_tags name says a person tagged it too". Both fail on the fix-pass-1 files.
+
+Acceptance 2 gains the ⌘K and coverage-report AI-read marks (GOV-9's fix pass 2). Acceptance 3: every Bridge write's and every correction's audit insert is now checked.
+
+**Fix pass 3 (2026-10-02, review).**
+- **What `asserted_by_user` records.** It was documented as "the person, when a person asserted it". For a `jsonb_sync` row it is not that. `documents_resync_assets` deletes and re-inserts every synced row of a document on each `asset_tags` edit, and the BEFORE INSERT stamp sets the uid of whoever made that edit, for all of the document's tags, including tags other people typed. `assets_backfill_documents` stamps the asset's creator on links to documents someone else tagged. The 20261171 header now states the semantics. For a 'manual' row it is the person who linked it, and a drawing pair a person made theirs through `adopt` records that person. For a 'jsonb_sync' row it is the person whose write last re-derived the row: the latest editor of that document's equipment tags, or the asset's creator, not necessarily who typed the tag. It is NULL on a 'drawing' row, and on a synced row the Bridge handed back to the person's tags. No screen shows the uid; export and restore carry it with that meaning. The SQL is unchanged.
+- **A person's assertion kept at transition-in.** `lib/transitionIn.ts` now sends a drawing-held pair through `adopt` (`AREA-2`'s fix pass 3), so a controller's link is recorded as theirs (`asserted_by` human).
 
 ---
 
@@ -282,6 +378,28 @@ Two more gates worth knowing before you touch this:
 2. Discovery works with no column mapping configured.
 3. A degraded insert reports what it dropped.
 4. Re-running a sweep is idempotent — a test pins it.
+
+**Resolution (2026-10-02, intelligence Round G, I-11).** Reproduced first (DEC-29): with the base files (`e5de803`) swapped back in, seven of the new cases fail (no `document_assets` row after apply; AREA-4's throw "No equipment column mapped for this library…"; no sheets on a suggestion; BR-3's bare `null`; three asset-hub cases), while the regression pin (an unregistered tag still listed by its `asset_tags` containment on the hub) passes on both.
+
+The relation is authoritative and the column is kept: see `BR-2` / `WIRE-1`. The `targetKey` throw is gone, and discovery runs with or without a mapped column (AREA-4). The strip-and-retry is no longer silent. A degraded insert reports which columns it dropped, per tag (`degraded` in the result, the modal and the `EQUIPMENT_BRIDGE_APPLIED` audit row). An insert that failed outright is reported (`failed`). A raced insert resolves to the winner. The backfill population is the tags applied before the relation existed. They are re-related on the library's next sweep: each recompute refreshes the relation of every applied tag still read on the current revision. The 20261170 inventory counts the documents whose library maps a Bridge column and have no relation row yet.
+
+**Done-when.**
+1. ✓ After a sweep, the asset hub shows the drawings (`lib/__tests__/assetHubRelation.test.ts`). The graph's tag edge and the impact scan see them by construction: `lib/orgGraph.ts`, `lib/impact.ts` and `lib/revisionImpact.ts` read `document_assets`.
+2. ✓ Discovery works with no column mapping ("AREA-4: with NO column mapped, discovery still creates the assets and the relation is written — nothing throws").
+3. ✓ A degraded insert reports what it dropped ("a degraded insert (a database before the registry columns) reports what it dropped").
+4. ✓ Re-running a sweep is idempotent ("re-running the sweep and the apply is idempotent — one row per pair, the column unchanged, nothing re-created").
+
+**Scope / residual.** **Pending migrations:** `supabase/migrations/20261170_intel_roundG_document_assets_source.sql`, then `supabase/migrations/20261171_intel_roundG_provenance.sql` (hand-applied, in that order). The app deploys in either order: before 20261170 the Bridge says the relation was not recorded and keeps its column write; before 20261171 it writes the relation without the provenance columns and says so. A library's backlog of applied tags is related on its next sweep (BR-11's resumable sweep), not by the migration: the paste writes no customer rows.
+
+**Fix pass (2026-10-02, review).** The backfill population was `applied`, not the column: every recompute re-related applied tags a person had since taken off the mapped column (before this deploy, the only way to reject a Bridge tag). Now an applied tag no longer in the column the Bridge wrote it into is recorded as a dismissal (`via: 'column'`) and its relation removed or never created (BR-5's fix-pass block: `appliedColumn`, `planColumnRemovals`). An apply stamps the revision of the CURRENT copy (`currentReading` now uses the compute's selection — ready and at the document's current revision — through a shared `classifyCopies` / `readingOf`), never a stale ready copy listed first ("currentReading — an apply stamps the revision of the CURRENT copy, never a stale one listed first"). Every relation read and write names `org_id` (BR-1's fix pass).
+
+**Fix pass 2 (2026-10-02, review).** The residual above was wrong in one clause: "before 20261171 it writes the relation without the provenance columns and says so". That let a relation exist before its provenance, against this finding's own "Depends on: GAP-303" and 99-fix-sequencing Phase 2. Now, before 20261171, the Bridge writes NO 'drawing' row and says the relation needs that file. The column write still lands, and the first recompute after the paste relates the applied tags with their provenance (GAP-303's fix pass 2).
+- The relation's per-document reads are paged, or filtered at the database (BR-11's fix pass 2).
+- A library configuration that cannot be read now stops the apply and the compute, and nothing is written (`loadBridgeConfig` returns `{ config, tagColumns, error }`). Before, a failed read was taken as "no column, discovery on": the apply created assets a library had opted out of (`createAssets: false`) and marked tags applied that never reached the mapped column. The compute throws rather than skipping only the auto-apply and the column plan, which is stricter than the review's ask: a proposal computed without the configuration would also lose the library's default unit. The sweep counts the document failed; ingest's call is already caught. Tests: "a library whose settings cannot be read: apply writes nothing …" and "…and a compute writes nothing: no proposal without the library's default unit, no column plan, no auto-apply".
+
+**Scope / residual (corrected).** Pending migrations: `20261170`, then `20261171`, in that order. The app deploys in either order. Before 20261170, and now also before 20261171, the Bridge says the relation was not recorded and keeps its column write.
+
+**Fix pass 3 (2026-10-02, review).** "The backlog is related by sweeps" could not be checked: the compute's relation refresh, which is that backfill, discarded its outcome. `computeForDocument` now returns it (`ComputeResult.relations`, merged with its automatic apply's). The sweep sums it into `outcomes` (`relationsWritten`, `relationsRefreshed`, `relationsKeptHuman`, `relationsNotRecorded`, `relationNote`), and the sweep modal shows the links recorded and, with the reason, the documents whose links were not recorded. A sweep now says whether the backfill was recorded. See `BR-2`'s fix pass 3 for the tests. At ingest the outcome goes to a fire-and-forget caller (I-18's `lib/knowledgeIngest.ts`); the next sweep reports it.
 
 ---
 
@@ -466,6 +584,19 @@ any door, and drives the same reconcile. The `source_document_id` gate moves fro
 2. An XLSX master list imports with unit and code, decoded by the codebook.
 3. All doors produce the same relation shape and distinguishable provenance.
 
+**Partial (2026-10-02, intelligence Round G, I-11).** The `source_document_id` gate moved from "may this run at all" to "is there a controlled document to relate to and a column to populate". A controlled P&ID builds the registry and the relation with or without a column (AREA-4). A P&ID uploaded straight into a knowledge library is reported as `upload_origin` (BR-3) and listed by the coverage report ("On a sheet, in no list", door `knowledge`). From there a writer picks its tags and Discover creates them (`discoverFromKnowledge`): origin 'drawing'; `discovered_from: { knowledgeDocumentId, pages, door: "knowledge" }`; unit-less, because there is no decodable number, and said; audited as `EQUIPMENT_BRIDGE_DISCOVERED`. It is a person's pick, never automatic (DEC-96 item 3). No second extraction engine: both doors read the same `knowledge_page_entities`.
+
+**Done-when (acceptance).**
+1. ✓ A P&ID uploaded to a knowledge library builds the registry through the knowledge door (`lib/__tests__/equipmentBridge.test.ts` "named tags on the document become discovered assets with door 'knowledge' provenance; an existing one is counted").
+2. ✓ By `BR-4` (resolved 2026-09-30): the master-list importer reads XLSX (`/api/assets/parse-workbook` → `lib/xlsxData.ts`) and files each row's unit and code through the codebook (`planAssetImport`).
+3. ◐ Distinguishable provenance ✓: `discovered_from.door` names the door, the controlled door's link is `source 'drawing'` with its sheet and revision, and the master list's rows are `origin 'manual'`. The same relation shape ✗ for the knowledge door: `document_assets.document_id` references a controlled document, and an upload has none. Its link appears once the drawing is filed in Document Control and swept.
+
+**Scope / residual.** Whether a knowledge upload gets a relation row of its own (a nullable `document_id` plus a `knowledge_document_id`, or a second table) is a schema decision left open. Until then the coverage report keeps the upload's sheets as a working list.
+
+**Assigned (2026-10-13, integrator, I-11 merge, DEC-31).** intelligence I-26 BRIDGE REMAINDERS (acceptance 3: a relation for knowledge uploads; the integrator's default shape is a second table, `knowledge_document_assets`, so `document_assets.document_id` keeps its FK).
+
+**Fix pass 2 (2026-10-02, review).** The knowledge door's `EQUIPMENT_BRIDGE_DISCOVERED` audit insert was fire-and-forget, though this record says the door is audited. It is checked now: a refused insert returns `auditError` with the discovery's result, and the coverage report shows it after its re-derive. Tests: `lib/__tests__/equipmentBridge.test.ts` "the apply's audit row and the knowledge door's are checked: a refused insert is said to the caller"; `lib/__tests__/coverageReportRender.test.ts` "a discovery that landed but whose audit row was refused is said (GAP-307 / GAP-303), not swallowed".
+
 ---
 
 <a id="gap-308"></a>
@@ -493,6 +624,25 @@ the correct intermediate state and the system should hold it honestly.**
    tags matching no asset.
 2. Each bucket is a working list, not a number.
 3. It is re-derivable, not a stored snapshot that drifts.
+
+**Resolution (2026-10-02, intelligence Round G, I-11).** `lib/bridgeCoverage.ts` `buildCoverage` (pure) and `loadCoverage` (reads, keyset-paged to a 50,000-row ceiling that is said when reached) produce the four working lists:
+- **agree:** an asset on at least one sheet, by relation or by extraction, with where;
+- **in the list, on no sheet;**
+- **on a sheet, in no list:** with each sheet, page and door, never a `self` row read as a tag;
+- **disagree:** the asset's unit against the units of the drawings it is read on.
+
+The totals are assets, on ≥1 sheet, on none, sheet tags matching no asset, and disagreements, org-wide or per unit (the unit's equipment, and the sheet-only tags of drawings decoded to it). A controlled document the caller cannot read, and its copies, never count (`readableControlledDocIds`, fail closed; said: "N documents you cannot read are left out"). Only the current-revision copy counts (GAP-309). Archived equipment is not listed. The report is re-derived from the rows on every read; no snapshot is stored.
+
+`components/assets/CoverageReport.tsx` renders the tabs and the unit selector, and lets a writer Discover sheet-only tags from knowledge uploads (GAP-307). It is opened in two places (`POST action "coverage"`, the registry writer tier): org-wide from the equipment sweep, and scoped to the unit from an operating unit's page (`/admin/assets?unit=…`, "Coverage — drawings vs. the equipment list", opened on demand). The selector still widens the unit view to org-wide.
+
+**Done-when (acceptance).**
+1. ✓ Per unit and org-wide: assets total, on ≥1 sheet, on none, sheet tags matching no asset (`lib/__tests__/bridgeCoverage.test.ts` "org-wide: totals and every bucket is a list of rows to act on", "per unit: …").
+2. ✓ Each bucket is a working list, not a number.
+3. ✓ It is re-derivable ("is re-derived — the same rows give the same report; a new relation moves an asset from list-only to agree").
+
+Placement: `lib/__tests__/coverageReportRender.test.ts` (opened with the unit it asks for that unit, and the selector widens it; the sweep's mount opens org-wide; the unit page mounts it for the writer tier).
+
+**Scope / residual.** Placement is the fleet plan's default (DEC-96 item 5): per unit on the Operating Areas page, org-wide from the sweep. Tags on knowledge uploads have no decoded unit and are listed org-wide only (said).
 
 ---
 
@@ -525,6 +675,36 @@ and keep feeding the census, the Bridge and asset discovery.
 2. Superseded-revision entities do not feed current-state surfaces.
 3. A derived fact displays the revision it was read from, and marks itself when
    that revision is no longer current.
+
+**Resolution (2026-10-02, intelligence Round G, I-11).**
+- **Only current copies feed the proposal.** A knowledge copy feeds the proposal only when it is ready and at the controlled document's current version (`source_version_id = current_version_id`). A copy at an earlier revision, or one still re-indexing after a rev-up, is recorded in `sources` with why, and never fed. `ING-3` (resolved) deletes a refreshed copy's entities, so a superseded revision's tags are gone at the source too.
+- **Marking.** On a complete reading (no slab at its ceiling, no page waiting on AI vision, drawing entities present), each 'drawing' relation whose tag the current revision no longer shows is marked `vanished_at`, and un-marked if the tag comes back. A row read from an earlier revision is marked `superseded_at` until the next refresh. Nothing is deleted on absence: an extraction miss and a real deletion look identical.
+- **Review.** The sweep lists vanished links per document for review. "It left the sheet" removes the link (service role), drops the tag from `applied` (a later return is proposed, not silently re-linked) and audits what was removed. "It is still there" clears the mark. Both are audited.
+- **Display.** The asset hub shows each link's revision and marks "not on current rev" / "earlier rev"; the sweep shows the superseded note.
+
+**Done-when (acceptance).**
+1. ✓ Re-extraction after a rev-up produces a reviewable delta. Vanished links are marked for review; tags that appeared come back as new proposals. `lib/__tests__/equipmentBridge.test.ts` "rev C no longer shows P-7: its relation is marked vanished (kept), the others refreshed to rev C", "an incomplete reading (pages waiting on AI vision) never marks anything vanished", "review: 'it left the sheet' removes the link and records it …; 'it is still there' clears the mark".
+2. ✓ Superseded-revision entities do not feed the Bridge, the coverage report or the hub's not-yet-linked sheets ("GAP-309: a copy at an earlier revision than its document never feeds the proposal"; `bridgeCoverage.test.ts` "only the current copy of a readable document and knowledge uploads count"), and the knowledge side deletes them on refresh (`ING-3`).
+3. ✓ A derived fact displays the revision it was read from and marks itself when that revision is no longer current (`lib/__tests__/assetHubRelation.test.ts` "a link the current revision no longer carries is marked, not hidden (GAP-309)").
+
+**Scope / residual.** Pending migration: `supabase/migrations/20261171_intel_roundG_provenance.sql`. Before it, revision truth is not recorded and the sweep says so ("20261171 not applied — revision truth is not recorded yet"). Never auto-removed (DEC-96 item 2).
+
+**Fix pass (2026-10-02, review).**
+- **A failed window is not a reading.** `computeForDocument` ignored the error of the windowed entity read: a later window that failed left the rows read so far looking complete, so applied tags in the unread windows were marked vanished and the stored proposal shrank. Now an entity-read error throws before anything is written (the stored proposal and every relation stay as they are; the sweep counts the document `failed`; ingest's fire-and-forget catches it), and a failed read of the AI-vision record makes the reading incomplete (nothing marked vanished). The stored proposal is no longer overwritten from an unread ledger either (a ledger read error throws). Each entity window now starts where the rows read so far end, so a window PostgREST cut at max-rows skips nothing. Tests: "a reading whose later window fails is not a reading: …", "a failed read of the AI-vision record makes the reading incomplete: …" (both fail on the pre-fix library).
+- **"It is still there" is remembered.** It cleared `vanished_at`, and the next complete recompute of the same revision marked it again — an endless review. 20261171 adds `document_assets.presence_confirmed_on` (UUID): the keep stores the revision (`source_version_id` of the current copy) it was made on, the audit row carries it, and `markRevisionTruth` does not re-mark a row on that revision; a later revision may ask again. Test: "'It is still there' is remembered for the revision it was made on: …".
+- **Checked writes.** A mark (vanished / back / superseded) is counted only when its update lands (`failed` counts the rest). "It left the sheet" writes the ledger's `applied` FIRST and throws if it cannot, so nothing is removed whose tag would stay applied and be re-linked silently. Tests: "a mark whose write is refused is not counted (checked writes)", "'It left the sheet' writes the ledger first: …".
+- Residual: a document whose copies carry no revision id cannot have its "still there" remembered (nothing to scope it to); the sweep asks again on the next complete reading.
+
+**Fix pass 2 (2026-10-02, review).**
+1. The review surface read its rows unpaged. GET's relation read and `markRevisionTruth` are now keyset-paged, and the review actions filter at the database (BR-11's fix pass 2), so a max-rows cut never drops a vanished or superseded mark.
+2. `readingOf` fell back to the document's `current_version_id` when no used copy carried a revision id. A legacy copy holding an earlier revision's text therefore stamped its reading as the current revision's, and the superseded mark could never fire for it. The revision is now null (not known) in that case. Test: "a copy that carries no revision id stamps NO revision — never the document's current one" (fails on the fix-pass-1 library).
+3. The vanished line marks a sheet read off an AI transcription "(AI-read, unconfirmed)" (GOV-9).
+
+**Fix pass 3 (2026-10-02, review).**
+1. **The review list is never hidden by a read error.** GET treated any failure of its full-column 'drawing' relation read as a missing migration. It retried with fewer columns and said "Revision marks need migration 20261171" (or, when that also failed, that 20261170 was not applied) on a database that had both. The vanished-review buttons disappeared, and the person was told the wrong cause. It now falls back only on a missing column (42703 / PGRST204). Any other error is said as what it is ("The drawing links could not be read (…) — the list of links the current revision no longer shows is incomplete …"). Tests in `lib/__tests__/equipmentBridgeRoutes.test.ts`:
+   - "GET: a relation read that fails for any reason but a missing column is said as a read failure — never as a missing migration" (fails on the fix-pass-2 route);
+   - "GET: a missing column still falls back — …" (the regression guard).
+2. **The vanished line.** The line was built in two halves, so a vanished row with no sheet label but a revision rendered "(, read from Rev B)". That is common: every relation written from a page with no title block has a null `sheet_label`. `vanishedWhere` now builds the parenthesis from the parts it has: "(was on SHT 4 (AI-read, unconfirmed), read from Rev B)", "(read from Rev B)", or nothing. Tests: `lib/__tests__/equipmentSweepModalRender.test.ts` "no sheet label, a revision: '(read from Rev B)' — never '(, read from Rev B)'" and "neither sheet nor revision: no parenthesis at all".
 
 ---
 
@@ -572,6 +752,19 @@ person types.**
 
 **Scope / residual.** Handed to I-08: switch `lib/linkProposerServer.ts`'s alias comparison (`canonical` / `viaTag` / `aliases.find(...)`) to `tagKey` from `lib/codebook.ts`, and add it to the awkward-input agreement table. Handed to I-11: the Bridge's `assetNorm` becomes an import of `tagKey` (behaviour-neutral). The column is fully in the grammar only after `20261127` is pasted.
 
+**Resolution (2026-10-02, intelligence Round G, I-11).** The two limbs left by the 2026-09-30 partial:
+- The Bridge's key is an import: `const assetNorm = (tag: string) => tagKey(tag);`. The local copy is gone. (As first recorded, "the agreement test's 'Bridge's copy' row now reads the import" was not true — `lib/__tests__/codebook.test.ts` still checked a locally transcribed copy; corrected in the fix pass below.)
+- `lib/linkProposerServer.ts` decides "reached via an alias" by `tagKey`. It compares `tagKey(l.tag_text)` against `tagKey(canonical)` and finds the alias with `tagKey(a) === viaKey`, so "North Furnace" and "NORTH-FURNACE" are one alias. The codebook's `normalizeTag` stays only as the display spelling the proposal shows.
+
+**Done-when (acceptance).**
+1. ✓ One exported normalizer (`tagKey`). `lib/assets.ts` and `lib/documentTags.ts` re-export it; the Bridge and the proposer import it (`lib/__tests__/equipmentBridge.test.ts` "assetNorm is tagKey" and "lib/linkProposerServer.ts decides 'reached via an alias' by tagKey — 'North Furnace' and 'NORTH-FURNACE' are one alias").
+2. ✓ (2026-09-30) Aliases resolve in ⌘K and on the old-tag URL path.
+3. ✓ (2026-09-30) The awkward-input agreement table; the proposer's comparison now uses the key that table pins.
+
+**Scope / residual.** The column is fully in the grammar only after `supabase/migrations/20261127_intel_roundG_one_tag_grammar.sql` is pasted (unchanged).
+
+**Fix pass (2026-10-02, review).** The awkward-input agreement table now imports both call sites rather than transcribing them: `lib/equipmentBridgeServer.ts` exports `assetNorm`, and `lib/linkProposerServer.ts` exports its alias comparison as `aliasReachedVia(tagText, canonical, aliases)` (the proposer's loop calls it). `lib/__tests__/codebook.test.ts` "every call site agrees on the awkward-input table (acceptance 3)" asserts `bridgeKey(x) === tagKey(x)` for every awkward input and adds a proposer row: an alias is found when the document reached the asset by any spelling sharing its key, never when it reached it by a spelling of the canonical tag, and never on an empty key. A future change to either comparison now fails that table.
+
 ---
 
 <a id="gap-311"></a>
@@ -604,6 +797,15 @@ Note `lib/globalSearch.ts:79` sends an asset hit to
 3. ✓ Aliases and every tag-format variant resolve (pinned by test).
 
 **Scope / residual.** Remaining limb: the sheet address, owned by I-11 (`GAP-301`, `GAP-304`). The search page (`app/(protected)/search/page.tsx`) groups the unit hit with Assets — no new hit kind was added, so that page is unchanged.
+
+**Resolution (2026-10-02, intelligence Round G, I-11).** The remaining limb, the sheet. `lookupTag` reads `sheet_label` and `source` from the relation (falling back to the plain link read on a database before 20261170). Each document hit carries `sheetLabel` and `fromDrawing`. ⌘K's drawing subtitle reads "FV-2201 appears on 2002-D-10001 SHT 4 (read from the drawing) · P&ID crude feed", or "appears on this drawing" for a hand link. Still no AI call: indexed equality reads only, as before.
+
+**Done-when (acceptance).**
+1. ✓ Typing a tag returns the asset, its unit and its sheets (with the sheet address once the Bridge wrote the relation), ranked first (`lib/__tests__/globalSearchTags.test.ts` "a link the Bridge read off the drawing carries its sheet address into the lookup and the ⌘K subtitle; a hand link stays plain").
+2. ✓ (2026-09-30) No AI call. Sub-second.
+3. ✓ (2026-09-30) Aliases and every tag-format variant.
+
+**Scope / residual.** Sheet labels appear for drawings the Bridge has related, after 20261170 and a sweep.
 
 ---
 
@@ -701,6 +903,19 @@ The org graph is assembled in the browser on every mount — about fourteen requ
 1. ◐ For the doors document-control owns — `createDocumentWithFile` (upload through the link picker, output templates), split / merge sheets, the CSV import, `renumberDocument`, `reverseRenumber` and the metadata editor's renumber — ✓, except that the link picker and the template filing report a decode that did not run only to the console (above — still owed). **Not done here (other packages' files):** the library page's bulk upload (`uploadOne`) and its inline document-number edit (`saveInlineDocNumber`) — `app/(protected)/documents/[libraryId]/page.tsx`, edited next by identity `IS-P1` / intelligence `I-12`: each should call `requestUnitCodeDecode` after its write (`"upload"` / `"renumber"`); the external intake door (`app/api/intake/upload/route.ts`, projects' file, service role — it can call `decodeDocumentUnitCodes` directly after its insert); the transition-in adoption that renumbers (`lib/transitionIn.ts`, projects'); and the Bridge at ingest (intelligence I-11, which reuses `lib/unitCodeDecode.ts`).
 2. ✗ Not this package's: the /admin/scope staleness count (how many documents are undecoded since the last run) is intelligence I-11's.
 3. ✓ `dcRoundFUnitCodeDecode.test.ts` creates and renumbers a document and asserts the decode.
+
+**Partial (2026-10-02, intelligence Round G, I-11).** I-11's two limbs:
+- **The Bridge at ingest.** When `computeForKnowledgeDoc` runs on an index completion (`trigger: "ingest"`), the Bridge asks document control's planner (`lib/unitCodeDecode.ts` `decodeDocumentUnitCodes({ orgId, documentIds: [documentId] })`) to decode the controlled document's own number. That is the codebook's parser through the backfill's guarded writes, recorded the planner's way. It is best effort: a decode that cannot run never fails the Bridge or ingest, and the staleness count finds the document. An on-demand sweep does not decode (the decode belongs to the number's birth or change, and the sweep is not one).
+- **Acceptance 2.** `GET /api/admin/unit-identity?orgId` answers `lastRunAt` (the last finished `UNIT_IDENTITY_BACKFILL` run) and `undecodedSince`: numbered documents with no `unit_code` created or changed since that run, or all of them when it never ran. Head counts only, for the scope writer tier. The /admin/scope Unit identity panel says it before anyone runs the decode: "Last decode run … — N numbered documents created or changed since carry no decode."
+
+**Acceptance.**
+1. ◐ The Bridge's door ✓ (`lib/__tests__/equipmentBridge.test.ts` "GAP-314: at ingest the Bridge decodes the document's own unit through document-control's helper; a sweep does not"). Still owed by their owners, unchanged: the library page's `uploadOne` / `saveInlineDocNumber`, the intake door, the `transitionIn` adoption, and the console-only doors (link picker, `GenerateModal`).
+2. ✓ The /admin/scope panel says how many documents are undecoded since the last run (`lib/__tests__/equipmentBridgeRoutes.test.ts` "counts numbered documents without a decode created or changed since the last finished run (all of them before any run)", "is refused to a member outside the scope writer tier").
+3. ✓ (2026-10-01, document-control P13).
+
+**Scope / residual.** OPEN on acceptance 1's other doors (listed above). A number the codebook cannot decode stays without a code and is counted, never guessed.
+
+**Assigned (2026-10-13, integrator, I-11 merge, DEC-31).** intelligence I-26 BRIDGE REMAINDERS (acceptance 1's other doors: the library page's `uploadOne` / `saveInlineDocNumber`, the intake door, the `transitionIn` adoption, and the console-only doors).
 
 ---
 

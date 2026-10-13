@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // A filter-aware PostgREST mock for the shared client (projects Round G J1:
 // the scan, the candidate list and adoption are exercised against rows).
@@ -12,6 +12,8 @@ const db = vi.hoisted(() => ({
   rpcCalls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
   /** INTK-16: an error for one read, by table and selected columns. */
   failSelect: null as null | ((table: string, columns: string) => { message: string; code?: string } | null),
+  /** I-11: the most ids one `.in()` takes — a longer list is the gateway's 414. */
+  maxInList: null as number | null,
 }));
 vi.mock("@/lib/supabase", () => {
   const chain = (table: string) => {
@@ -38,6 +40,9 @@ vi.mock("@/lib/supabase", () => {
     const run = () => {
       const hooked = !write ? db.failSelect?.(table, selected) ?? null : null;
       if (hooked) return { data: null, error: hooked };
+      if (db.maxInList != null && ops.some(([o, a]) => o === "in" && (a[1] as unknown[]).length > db.maxInList!)) {
+        return { data: null, error: { code: "", message: "414 Request-URI Too Large" } };
+      }
       const errs = db.errors[`${table}.${write ? write.method : "select"}`];
       const err = errs?.shift() ?? null;
       if (err) return { data: null, error: err };
@@ -64,6 +69,7 @@ vi.mock("@/lib/supabase", () => {
   return {
     supabase: {
       from: chain,
+      auth: { getSession: async () => ({ data: { session: { access_token: "t" } } }) },
       rpc: async (fn: string, args: Record<string, unknown>) => {
         db.rpcCalls.push({ fn, args });
         return db.rpc ? db.rpc(fn, args) : { data: null, error: { message: `Could not find the function public.${fn}`, code: "PGRST202" } };
@@ -588,5 +594,88 @@ describe("INTK-16 — adoption goes through adopt_intake_document", () => {
     expect(panel).not.toMatch(/from\("documents"\)\s*\.update/);
     const lib = readFileSync("lib/transitionIn.ts", "utf8");
     expect(lib).toMatch(/supabase\.rpc\("adopt_intake_document", \{/);
+  });
+});
+
+// ── intelligence Round G I-11 fix pass 3 — GAP-302 / AREA-2: the adoption's
+// equipment links are the controller's, even on a pair the sweep already read.
+describe("adoption's equipment links: a pair the equipment sweep holds becomes the controller's (adopt), and a refusal is said", () => {
+  const seed = () => {
+    db.tables.documents = [{ id: "sheet1", org_id: "o1", document_number: "D-25-1042", title: "Tie-in FE-201", rev: "A", status: "Issued", metadata: {}, library_id: "lib-intake", collection_id: INTAKE, current_version_id: "v1", pending_version_id: null }];
+    db.tables.document_versions = [{ record_id: "sheet1", review_state: "approved", intake_link_id: "l1", created_at: "1" }];
+    db.tables.libraries = [{ id: "lib-dest", org_id: "o1", uniqueness_keys: null }];
+    db.tables.assets = [];
+    // The sheet was indexed and auto-applied before adoption: the sweep's 'drawing' row holds (sheet1, FE-201).
+    db.tables.document_assets = [{ id: "r1", org_id: "o1", document_id: "sheet1", asset_id: "a1", tag_text: "FE-201", source: "drawing" }];
+  };
+  const posts: Array<Record<string, unknown>> = [];
+  let answer = { ok: true, status: 200 };
+  beforeEach(() => {
+    posts.length = 0;
+    answer = { ok: true, status: 200 };
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: { body?: string }) => {
+      posts.push(JSON.parse(String(init?.body ?? "{}")));
+      return { ok: answer.ok, status: answer.status, json: async () => ({ ok: answer.ok, adopted: answer.ok }) };
+    }));
+  });
+  afterEach(() => vi.unstubAllGlobals());
+  const adoptWith = () => adoptDocument({
+    orgId: "o1", projectId: "p1", docId: "sheet1", libraryId: "lib-dest", collectionId: null, newNumber: null,
+    linkAssets: [{ id: "a1", tag: "FE-201" }, { id: "a2", tag: "P-101" }], actorId: "u1", actorEmail: "u1@x",
+  });
+
+  it("the drawing-held pair goes through the Bridge's 'adopt' (the other is inserted as the controller's link)", async () => {
+    seed();
+    const res = await adoptWith();
+    // Reproduction: the base upserted ON CONFLICT DO NOTHING and stopped — the
+    // controller's link on (sheet1, FE-201) stayed the machine's row, which a later Dismiss deletes.
+    expect(res).toEqual({ ok: true });
+    expect(posts).toEqual([{ action: "adopt", orgId: "o1", documentId: "sheet1", assetId: "a1" }]);
+  });
+  it("a refused link write is said, never swallowed", async () => {
+    seed();
+    db.errors["document_assets.upsert"] = [{ message: "new row violates row-level security policy for table \"document_assets\"", code: "42501" }];
+    const res = await adoptWith();
+    expect(res.ok).toBe(true);
+    expect(res.equipmentNote).toMatch(/equipment links were not recorded/);
+    expect(res.equipmentNote).toContain("FE-201, P-101");
+    expect(posts).toEqual([]);
+  });
+  it("an adopt the Bridge refuses is said: the tag is still the sweep's reading", async () => {
+    seed();
+    answer = { ok: false, status: 403 };
+    const res = await adoptWith();
+    expect(res.equipmentNote).toMatch(/FE-201 is still the equipment sweep's reading, not your link/);
+  });
+  it("no drawing-held pair: nothing is adopted and nothing is said", async () => {
+    seed();
+    db.tables.document_assets = [];
+    expect(await adoptWith()).toEqual({ ok: true });
+    expect(posts).toEqual([]);
+  });
+  it("a unit overview sheet matching 250 assets: the drawing-held read goes in batches of 100 ids, under the URL limit, and every held pair is adopted (integrator fix pass)", async () => {
+    seed();
+    db.maxInList = 200;
+    const many = Array.from({ length: 250 }, (_, i) => ({ id: `a${i + 1}`, tag: `P-${i + 1}` }));
+    // The sweep holds three of them, one in each batch of 100.
+    db.tables.document_assets = ["a1", "a150", "a250"].map((id) => ({ id: `r-${id}`, org_id: "o1", document_id: "sheet1", asset_id: id, tag_text: id, source: "drawing" }));
+    try {
+      const res = await adoptDocument({
+        orgId: "o1", projectId: "p1", docId: "sheet1", libraryId: "lib-dest", collectionId: null, newNumber: null,
+        linkAssets: many, actorId: "u1", actorEmail: "u1@x",
+      });
+      // Reproduction: fix pass 3 sent all 250 ids in one `.in()` — 414 — and said the check could not be made, adopting nothing.
+      expect(res).toEqual({ ok: true });
+      expect(posts.map((p) => p.assetId)).toEqual(["a1", "a150", "a250"]);
+      const reads = db.queries.filter((q) => q.table === "document_assets" && q.ops.some(([o]) => o === "in"));
+      expect(reads.map((q) => (q.ops.find(([o]) => o === "in")![1][1] as unknown[]).length)).toEqual([100, 100, 50]);
+    } finally { db.maxInList = null; }
+  });
+  it("a batch of the drawing-held read that fails is said as 'could not be checked' (unchanged)", async () => {
+    seed();
+    db.errors["document_assets.select"] = [{ message: "canceling statement due to statement timeout", code: "57014" }];
+    const res = await adoptWith();
+    expect(res.equipmentNote).toMatch(/could not be checked/);
+    expect(posts).toEqual([]);
   });
 });
