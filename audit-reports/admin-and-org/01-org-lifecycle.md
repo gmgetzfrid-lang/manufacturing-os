@@ -828,7 +828,7 @@ Tests: `aoRoundGP9ConsoleRendered.test.ts` "ORG-14 (fix pass 2 / integrator fix 
 
 - **Severity:** LOW
 - **Severity rationale:** The author's estimate. It is `ORG-5`'s mechanism on a smaller surface. The images are a node's decoration, not the workspace's mark, and they are not stamped on controlled drawings. The tenant boundary holds: the org prefix gate refuses another workspace's member.
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** admin-and-org P10 STORAGE FOLLOW-UPS — by the integrator, 2026-10-13 (A&O P6 merge, DEC-31; fleet plan `audit-reports/fleet-plans/admin-and-org.json`).
 - **Verification:** CONFIRMED (by reading)
 - **Locations:**
@@ -852,5 +852,53 @@ Tests: `aoRoundGP9ConsoleRendered.test.ts` "ORG-14 (fix pass 2 / integrator fix 
 - A member without the node's customize authority cannot replace the bytes of a cover or background that a node points at.
 - A covers / backgrounds PUT carries a signed image Content-Type.
 - A route test shows a Viewer refused, and the node's customizer signed, for an existing cover key.
+
+
+**Resolution (2026-10-13, admin-and-org Round G).** Package P10 (STORAGE FOLLOW-UPS), no migration. Reproduced at base `6503ea7`: `app/api/storage/upload-url/route.ts` read the member as `uid, role, roles` but held only `isWorkspaceLogoKey` (files directly under `branding/`) to Admin, and signed every other org key for any active member, with the caller's Content-Type left unsigned. `lib/__tests__/aoRoundGLogoUpload.test.ts` pinned exactly that ("a folder cover and a page background under branding/ sub-folders stay member-writable, any image type"). The new test "REPRODUCED → fixed: a Viewer posting an existing cover key … is refused 403" fails against base (200).
+- **Whose authority (read from the node editor, not invented).** `components/documents/CustomizeNodeModal.tsx` has no gate of its own; it is opened in two places, and both offer it only to `isController = hasAnyRole(["Admin", "DocCtrl"])` (the controller tier, by the full role collection): `app/(protected)/documents/page.tsx:146` (the library tile's `LibraryAdminMenu`, drawn under `{isController && …}`, whose `onCustomize` opens the modal) and `app/(protected)/documents/[libraryId]/page.tsx:3154` (the folder tree's `onCustomize={isController ? … : undefined}`). Those are also the only two places that hand the modal its `storagePrefix` (`orgs/<org>/branding`), so the only members who can upload a cover or background in the app today are those controllers. `lib/storageKey.ts NODE_CUSTOMIZE_ROLES` is that list (Admin, DocCtrl), and a test reads both pages' gate lines and the two `storagePrefix` sites and pins them to it, so the route and the editor cannot drift. It is the set `is_org_controller` reads (role or roles holds Admin / DocCtrl).
+- **Done-when 1.** For a key under `orgs/<uuid>/branding/covers/` or `…/backgrounds/` (`lib/storageKey.ts isNodeImageKey`, any depth, so a hand-made deeper key is held too), upload-url refuses a member who holds neither role, by the collection (`memberHoldsAny`), 403 "Only an Admin or a Document Controller can change a folder's or library's cover image or background." (`upload-url/route.ts:52`, `:67-72`). `app/api/storage/multipart/route.ts` applies the same rule on every action for those keys (`:54-64`), so a picture over the client's 64 MB multipart threshold is not the way around it; its member read asks for `role, roles` only for those keys.
+- **Done-when 2.** The Content-Type must be one of `NODE_IMAGE_CONTENT_TYPES` — PNG, JPEG, WebP, GIF, AVIF, the raster types every current browser draws — else 415 "A cover or background image must be a PNG, JPEG, WebP, GIF or AVIF image (SVG is not accepted)." (`nodeImageUploadProblem`; `upload-url/route.ts:78-81`; the multipart create, `:65-68`). SVG is refused as for the logo (`DEC-99` §5: it can carry script and a presigned PUT never passes the server), and so is any non-image type (an HTML page). The type is SIGNED into the presigned PUT (`signableHeaders: content-type`, `:145`), so storage refuses a PUT that sends another type; the multipart upload carries it from `CreateMultipartUpload`. No size cap is added (a phone photo is a normal cover), so `content-length` is not signed.
+- **Regression.** Every member who can customise a node today still can: the modal PUTs with `file.type` (`uploadToPath(file, path, { contentType: file.type })`, pinned), the same string it asks upload-url to sign, and an Admin or DocCtrl (either held additively) is signed for an existing cover key. Documents, ticket files and the logo rule are unchanged (pinned). The backup restore (Admin-only) puts covers and backgrounds back: `lib/storageKey.ts contentTypeForKey`'s table gains `jfif` (image/jpeg) and `avif` (image/avif), because the modal names a key after the file and a cover stored as `….jfif` would otherwise be put back as octet-stream and refused.
+- Tests: `lib/__tests__/aoRoundGStorageFollowups.test.ts` ("ORG-16 — …"): a Viewer refused for an existing cover and background key (and with an HTML type); every role outside the gate refused; Admin, DocCtrl and Viewer-plus-DocCtrl signed with `content-type` in `X-Amz-SignedHeaders` (real presigner); each allowed type signed and SVG / HTML / octet-stream / none refused 415; a deeper key and a non-member refused; documents unchanged; the multipart route (Viewer 403 on every action before storage is touched; a controller's create 415 without an image type and carrying the type with one; a library scan still multiparts for any member); the two pages' gates and prefix sites pinned to `NODE_CUSTOMIZE_ROLES`; the key shapes; the restore helper's covers by extension. `aoRoundGLogoUpload.test.ts`: its covers / backgrounds pin now asserts this rule, and its ".jfif" reproduction notes that the extension table now names `.jfif`.
+
+**Done-when.**
+- ✓ A member without the node's customize authority cannot replace the bytes of a cover or background that a node points at, through upload-url or the multipart route. (The pointer side is a different authority: see Scope / residual and `ORG-17`.)
+- ✓ A covers / backgrounds PUT carries a signed image Content-Type.
+- ✓ A route test shows a Viewer refused, and the node's customizer (Admin, DocCtrl) signed, for an existing cover key.
+
+**Scope / residual.**
+- **A controller can still replace a cover's bytes in place** (they are the customizers). Fresh keys are what the modal mints; no audit row is written for a cover upload (the record does not ask for one; the logo's row is `ORG-5`'s).
+- **A cover or background already stored as SVG keeps rendering** (its pointer is unchanged); a new one cannot be uploaded as SVG, HEIC, TIFF or BMP. A browser that gives a picked file no type (`file.type` empty) is refused with the sentence above, where before it was stored as octet-stream.
+- **A backup's SVG, HEIC, TIFF or BMP cover or background, or one under an extension the restore table does not name, is not put back** (named residual, `DEC-31`): upload-url refuses it like any new upload of that type, and the restore page lists the route's reason with the file count. The restore reads a file's first bytes only for a logo key (`ORG-5`); covers are typed by extension. Re-upload from Customize.
+- **Who may point a node at a cover is not this finding.** At the database a folder's appearance is held to controller, owner or a manage grant (`collections_update_controllers`, `20261044`), but a library's appearance columns (`cover_image_url`, `page_config`) are writable by any member under `libraries_org_access` (`schema.sql:1098`; `enforce_library_sensitive_columns` does not list them). The editor is controllers-only, so no app flow changes. That pointer gap is opened as `ORG-17` (`DEC-31`), owner the integrator to route.
+- **A folder's owner or manage-grant holder who is not a controller** may set a folder's cover pointer at the database (`20261044`) but could not open the editor before and cannot upload new bytes now; their customize path in the app was already none.
+
+
+---
+
+## ORG-17 · Any member can repoint a library's cover image and page background: the appearance columns sit under the membership-wide `libraries_org_access`, and only the UI holds the node editor's authority
+
+- **Severity:** LOW
+- **Severity rationale:** The author's estimate. Decoration, not a controlled record: nothing about a document, a revision or an approval changes, and no other workspace is reached. The cost is that any member (a Viewer, a Contractor) can change what every member sees on a library's card and page, including pointing it at an external URL that every viewer's browser then loads.
+- **Status:** OPEN
+- **Assigned:** — Owner: the integrator, to route (opened by admin-and-org Round G P10 under `DEC-31` from `ORG-16`'s Scope / residual; the fix is a `libraries` UPDATE rail, so it likely belongs to the package that next re-creates `libraries` policies or `enforce_library_sensitive_columns`).
+- **Verification:** CONFIRMED (by reading)
+- **Locations:**
+  - `supabase/schema.sql:1098`: `CREATE POLICY "libraries_org_access" ON libraries FOR ALL USING (org_id IN (SELECT my_org_ids()))`, the only permissive policy on `libraries`; no UPDATE policy narrows it (the only restrictive one is `libraries_delete_controllers`, `20261036:70-72`).
+  - `supabase/migrations/20261077_dc_roundF_records_rails.sql` (`enforce_library_sensitive_columns`, newest): guards owner, ACL, visibility and policy columns, not `cover_image_url`, `cover_tint`, `color`, `icon`, `description` or `page_config` (whose `background.imagePath` is the page background).
+  - `app/(protected)/documents/page.tsx:123-142` (`saveLibraryAppearance`, a browser update of those columns) is reached only from the controller-gated editor (`:146`, `:446-453`).
+  - `components/documents/NodeCover.tsx:29`: a pointer that is an `http(s):` / `data:` URL is drawn directly; a storage key is signed.
+- **Related:** `ORG-16` (the bytes; resolved), `ORG-5`, roles-and-permissions `OWN-1` (the sensitive-column guard this extends)
+- **Independently verified:** — (`author`: opened 2026-10-13 at admin-and-org Round G P10, from `ORG-16`'s recon; not yet challenged)
+
+**Mechanism.** `ORG-16` held a cover's and a background's BYTES to the node editor's authority (Admin / DocCtrl). The library row's POINTERS to them are held to membership: `libraries_org_access` is `FOR ALL` with membership only, and the sensitive-column trigger lists ownership and policy columns, not appearance. Folders differ: `collections_update_controllers` (`20261044`) is a restrictive UPDATE policy (controller, owner or a manage grant).
+
+**Failure scenario.** A Viewer sends `PATCH /rest/v1/libraries?id=eq.<lib>` with `{ "cover_image_url": "https://example.net/pixel.png" }` (or another library's cover key, or `page_config` with a new `background.imagePath`). The update passes RLS and the trigger. Every member who opens the documents list now sees that image on the library's card, and their browser fetches the external URL. No audit row names who changed it.
+
+**Remediation.** Illustrative: add the appearance columns to `enforce_library_sensitive_columns` (or a restrictive `libraries` UPDATE policy) held to `is_org_controller(org_id)` — the editor's gate — re-created from its newest definition (`20261077`), with an inventory of rows whose appearance a non-controller last changed if that is recorded. A library owner or manage-grant holder could be admitted to match folders (`20261044`), which is a product call: today the editor is controllers-only for both.
+
+**Done when.**
+- A member who cannot open the node editor cannot change a library's `cover_image_url`, `cover_tint` or `page_config.background` at the database; a controller still can, from the editor.
+- A test or a probe shows a non-controller's update of those columns refused and a controller's applied.
 
 ---
