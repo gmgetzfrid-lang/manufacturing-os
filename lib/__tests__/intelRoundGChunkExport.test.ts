@@ -178,8 +178,9 @@ describe("ILIFE-11 criterion 1 — knowledge_chunks is exported by an explicit c
     expect(note).toMatch(/Nothing re-embeds them automatically/);
     expect(note).not.toMatch(/drain|rebuilt after a restore/);
     expect(/^[\x20-\x7e]*$/.test(note)).toBe(true);                // ASCII (total_bytes compares characters)
-    expect(env.manifest.notes.join("\n")).toMatch(/derived columns listed in manifest\.omittedColumns, which are left out \(the state columns that described them are exported at their defaults/);
-    expect(note).toMatch(/embedding retry state \(embed_attempts, embed_error, embed_claimed_until, embed_retry_after\) is exported reset to its default/);
+    expect(env.manifest.notes.join("\n")).toMatch(/derived columns listed in manifest\.omittedColumns, which are left out \(on a row that carried one, the state columns that described it are exported at their defaults/);
+    expect(note).toMatch(/embedded passage's embedding retry state \(embed_attempts, embed_error, embed_claimed_until, embed_retry_after\) is exported reset to its default/);
+    expect(note).toMatch(/a passage that never had a vector keeps its state, so one the provider refused stays refused with its reason/);
     expect(env.manifest.notes.join("\n")).not.toMatch(/preserved verbatim EXCEPT the credential columns listed in manifest\.redactedColumns, which are exported as null\. JSON keys/);
   });
 
@@ -326,6 +327,36 @@ describe("ILIFE-11 criterion 3 (chunk half) — a restore of a backup taken with
       expect(c.embed_claimed_until ?? null).toBeNull();            // claimable at once
       expect(c.embed_retry_after ?? null).toBeNull();
     }
+  });
+
+  it("a chunk that NEVER had a vector keeps its drain state: one refused for good stays refused, with its reason", async () => {
+    // The reset describes the vector left out, so it applies only to a row
+    // that carried one (embedding_model, which the writer sets with the
+    // vector and the Rebuild clears with it). A passage the provider refused
+    // at the attempt cap has neither; resetting it would bring it back as
+    // pending, lose the refusal, and spend up to EMBED_MAX_ATTEMPTS more
+    // provider calls on someone's key for a passage known to fail.
+    const future = new Date(Date.now() + 86_400_000).toISOString();
+    seedSource([
+      chunk(0, { embedding: null, embedding_model: null, embed_attempts: EMBED_MAX_ATTEMPTS, embed_error: "input too long" }),
+      chunk(1, { embedding: null, embedding_model: null, embed_attempts: 2, embed_error: "provider 503 (transient)", embed_retry_after: future }),
+      chunk(2, { embed_attempts: EMBED_MAX_ATTEMPTS - 1, embed_error: "provider 503 (transient)" }),
+    ]);
+    const env = await exportEnvelope();
+    const out = new Map((env.tables.knowledge_chunks as Row[]).map((r) => [String(r.id), r]));
+    expect(out.get("kc-0000")).toMatchObject({ embed_attempts: EMBED_MAX_ATTEMPTS, embed_error: "input too long", embedding_model: null });
+    expect(out.get("kc-0001")).toMatchObject({ embed_attempts: 2, embed_error: "provider 503 (transient)", embed_retry_after: future });
+    expect(out.get("kc-0002")).toMatchObject({ embed_attempts: 0, embed_error: null });   // embedded: reset, as above
+    for (const r of out.values()) expect(r).not.toHaveProperty("embedding");
+    seedTarget();
+    const envelope = env as unknown as RestoreEnvelopeLike;
+    const plan = planRestore(envelope, { orgId: TARGET, orgName: "Acme", members: [{ uid: "t-alice", email: "alice@acme.com" }] });
+    const result = await runChunkedRestore({ orgId: TARGET, envelope, plan, orgNameChoice: "current", post: routePost });
+    expect(result.stoppedAt).toBeNull();
+    expect(result.totalRefused).toBe(0);
+    const refused = rowsOf("knowledge_chunks").find((c) => c.id === "kc-0000")!;
+    expect(refused.embed_attempts).toBe(EMBED_MAX_ATTEMPTS);      // still out of embed_claim_batch's queue (attempts < max)
+    expect(refused.embed_error).toBe("input too long");           // the reason survives the round trip
   });
 
   it("the drain's pre-20261121 queue (no claim function yet) is `embedding IS NULL` too", () => {

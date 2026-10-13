@@ -808,7 +808,7 @@ grep -n "visibility" app/api/verify*/route.ts → no match
 **Owner.** Unassigned — the integrator assigns it (the verify routes are PS-VERIFY's files this round; this pass did not take it because the plan does not list it).
 - **Assigned:** intelligence I-12 DOCUMENT ACL BOUNDARY (the document-ACL visibility limb: one read predicate, applied to the three verify routes once PS-VERIFY has merged — I-12 runs last) — by the integrator, 2026-10-01 (fleet plan `audit-reports/fleet-plans/`).
 
-*Cross-note (2026-10-13, intelligence Round G, I-01 phase B): re-verified on `596d34e`: unchanged (`app/api/verify/route.ts:81`, `:212-213`; `app/api/verify-package/route.ts:236`; `app/api/verify-hold/route.ts:120`). Intelligence `DACL-8` criterion 1 and `DACL-3` criterion 3 stay OPEN pointing here, and `DACL-8` criteria 2 and 3 wait on a ruling recorded on that finding.*
+*Cross-note (2026-10-13, intelligence Round G, I-01 phase B): re-verified on `596d34e`: unchanged (`app/api/verify/route.ts:81`, `:212-213`; `app/api/verify-package/route.ts:236`; `app/api/verify-hold/route.ts:120`). Intelligence `DACL-8` criterion 1 and `DACL-3` criterion 3 stay OPEN pointing here, and `DACL-8` criteria 2 and 3 stay OPEN for I-12 beside `VFY-16`, on the fail-safe default recorded on that finding: `DEC-65` §2 does not stand in for a per-print token (corrected at the third review fix pass: this first said they "wait on a ruling").*
 
 ---
 

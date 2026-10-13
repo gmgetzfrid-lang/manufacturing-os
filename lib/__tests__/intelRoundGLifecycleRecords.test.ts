@@ -1,7 +1,8 @@
 // lib/__tests__/intelRoundGLifecycleRecords.test.ts
 //
 // intelligence Round G, package I-01 phase B — record pins for two closures
-// this package verified on the merged tree and found unpinned:
+// this package verified on the merged tree and found unpinned, and one
+// open residual:
 //
 //   DACL-7 criterion 3  the export role list and the ACL controller tier
 //                       cannot drift apart: every role the data-export
@@ -14,6 +15,15 @@
 //                       limb, pinned in processFlowsLib.test.ts). A missing
 //                       COLUMN is still read as "not installed" there: an
 //                       expected-fail tripwire pins that open residual.
+//   IEDGE-10 / DACL-7   criteria 1-2 stay OPEN (third review fix pass): a
+//                       destination a Manager configured before the surface
+//                       was Admin-only is only reported "unconfirmed" by
+//                       lib/exportAlerts.ts destinationConfirmation, never
+//                       refused, and run-scheduled pushes it either way
+//                       (DEC-87 §1; the run itself is pinned by
+//                       dataExportRoutes.test.ts "still RUNS"). When that
+//                       rule is bounded, this pin fails and the records
+//                       must be revisited.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Role } from "@/types/schema";
@@ -41,6 +51,8 @@ import { adminSurface } from "@/lib/adminSurfaces";
 import { isControllerRole } from "@/lib/permissions";
 import { listLinkRules } from "@/lib/linkRules";
 import { listAnswerSkills } from "@/lib/answerSkills";
+import { destinationConfirmation } from "@/lib/exportAlerts";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 beforeEach(() => { state.answer = null; });
 
@@ -55,6 +67,34 @@ describe("DACL-7 criterion 3 — the export role list and the ACL controller tie
   it("Manager — the role the finding named — is not admitted, and is not a controller", () => {
     expect(adminSurface("data-export")!.entry).not.toContain("Manager");
     expect(isControllerRole("Manager" as Role)).toBe(false);
+  });
+});
+
+describe("IEDGE-10 / DACL-7 open residual — a pre-P3 destination a Manager configured is reported unconfirmed, not refused (DEC-87 §1)", () => {
+  /** org_members read for the configurer, answered with `member`. */
+  const sbWith = (member: Record<string, unknown> | null) => {
+    const chain: Record<string, unknown> = {};
+    chain.select = () => chain;
+    chain.eq = () => chain;
+    chain.maybeSingle = async () => ({ data: member, error: null });
+    return { from: () => chain } as unknown as Pick<SupabaseClient, "from">;
+  };
+
+  it("a Manager configurer: unconfirmed (the nightly bell asks an Admin), with no refusal the sweep could act on", async () => {
+    const out = await destinationConfirmation(
+      sbWith({ role: "Manager", roles: ["Manager"], email: "mgr@acme.com" }),
+      { org_id: "org-1", created_by: "u-mgr", updated_by: "u-mgr" },
+    );
+    expect(out).toEqual({ unconfirmed: { by: "mgr@acme.com", holds: "Admin" } });
+    expect(isControllerRole("Manager" as Role)).toBe(false); // the push goes to a target a non-controller chose
+  });
+
+  it("an Admin configurer: confirmed", async () => {
+    const out = await destinationConfirmation(
+      sbWith({ role: "Admin", roles: ["Admin"], email: "admin@acme.com" }),
+      { org_id: "org-1", created_by: "u-a", updated_by: "u-a" },
+    );
+    expect(out).toEqual({});
   });
 });
 

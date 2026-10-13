@@ -236,15 +236,24 @@ export function exportOrderKey(table: string): readonly string[] {
  *  intelRoundGChunkExport.test.ts drives the drain over a restore).
  *
  *  `reset`: columns exported with a fixed value because they described the
- *  omitted one. The drain's state on a chunk (embed_attempts, embed_error,
+ *  omitted one, on a row that carried it. `resetWhenAny` names the columns
+ *  that say the row carried it: the reset applies only when one of them is
+ *  non-null on the row as read. For knowledge_chunks that is embedding_model
+ *  (read on both paths) or embedding (present on the select("*") fallback):
+ *  the embed writer sets both together (lib/knowledgeEmbedCore.ts writeBack)
+ *  and the Rebuild clears both together (app/api/knowledge/embed/route.ts).
+ *  The drain's state on an embedded chunk (embed_attempts, embed_error,
  *  embed_claimed_until, embed_retry_after) is about the vector that is left
  *  out: a chunk that embedded on its last allowed try would otherwise be
  *  restored with embed_attempts one short of the cap, and the next Build's
  *  first transient provider error would refuse it for good. Each is exported
  *  as the column's default (0 / NULL), so a restored chunk starts the queue
- *  fresh. Applied only to a column the row has (a database without it yet
- *  gains nothing). */
-export const EXPORT_OMITTED_COLUMNS: Record<string, { omit: readonly string[]; select: readonly string[]; reset: Readonly<Record<string, unknown>>; reason: string }> = {
+ *  fresh. A chunk that never had a vector keeps its state as it is: a
+ *  passage the provider refused for good (embed_attempts at the cap, with
+ *  its error) stays refused and keeps the reason, instead of coming back as
+ *  pending and spending more tries on someone's key. Applied only to a
+ *  column the row has (a database without it yet gains nothing). */
+export const EXPORT_OMITTED_COLUMNS: Record<string, { omit: readonly string[]; select: readonly string[]; reset: Readonly<Record<string, unknown>>; resetWhenAny: readonly string[]; reason: string }> = {
   knowledge_chunks: {
     omit: ["embedding"],
     select: [
@@ -253,12 +262,14 @@ export const EXPORT_OMITTED_COLUMNS: Record<string, { omit: readonly string[]; s
       "source", "source_model",
     ],
     reset: { embed_attempts: 0, embed_error: null, embed_claimed_until: null, embed_retry_after: null },
+    resetWhenAny: ["embedding_model", "embedding"],
     reason:
       "the semantic-search vector (1024 numbers per passage) is derived from the passage text and is not exported. " +
       "After a restore, keyword search works at once; meaning search stays off for the restored passages until someone starts a " +
       "meaning-index Build on each library, which re-embeds them on that person's own embedding key (their own AI spend). " +
-      "Nothing re-embeds them automatically. Each passage's embedding retry state (embed_attempts, embed_error, " +
-      "embed_claimed_until, embed_retry_after) is exported reset to its default, since it described the vector left out",
+      "Nothing re-embeds them automatically. Each embedded passage's embedding retry state (embed_attempts, embed_error, " +
+      "embed_claimed_until, embed_retry_after) is exported reset to its default, since it described the vector left out; " +
+      "a passage that never had a vector keeps its state, so one the provider refused stays refused with its reason",
   },
 };
 
@@ -268,18 +279,20 @@ export function exportSelectFor(table: string): string {
   return Object.prototype.hasOwnProperty.call(EXPORT_OMITTED_COLUMNS, table) ? EXPORT_OMITTED_COLUMNS[table].select.join(", ") : "*";
 }
 
-/** Drop every omitted column of a `table` row, and set each `reset` column
- *  the row has to its declared value (ILIFE-11). Pure; returns a new object,
- *  and leaves a table with no omissions byte-identical. Applied to every row
- *  read, so a row read `select("*")` (the fallback when the explicit list
- *  names a column the database does not have yet) carries no omitted value
- *  and no stale state either. */
+/** Drop every omitted column of a `table` row, and, on a row that carried
+ *  the omitted value (a `resetWhenAny` column non-null), set each `reset`
+ *  column the row has to its declared value (ILIFE-11). Pure; returns a new
+ *  object, and leaves a table with no omissions byte-identical. Applied to
+ *  every row read, so a row read `select("*")` (the fallback when the
+ *  explicit list names a column the database does not have yet) carries no
+ *  omitted value and no stale state either. */
 export function omitExportColumns(table: string, row: Record<string, unknown>): Record<string, unknown> {
   if (!Object.prototype.hasOwnProperty.call(EXPORT_OMITTED_COLUMNS, table)) return row;
   const entry = EXPORT_OMITTED_COLUMNS[table];
+  const carried = entry.resetWhenAny.some((c) => row[c] !== undefined && row[c] !== null);
   const out: Record<string, unknown> = { ...row };
   for (const c of entry.omit) delete out[c];
-  for (const [c, v] of Object.entries(entry.reset)) if (Object.prototype.hasOwnProperty.call(out, c)) out[c] = v;
+  if (carried) for (const [c, v] of Object.entries(entry.reset)) if (Object.prototype.hasOwnProperty.call(out, c)) out[c] = v;
   return out;
 }
 

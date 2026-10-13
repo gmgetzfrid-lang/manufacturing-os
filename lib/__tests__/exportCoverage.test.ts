@@ -342,6 +342,8 @@ describe("export column-list exception (ILIFE-11): an omitted column is declared
         expect(o.select, `${table}.${c}: a reset column must be one the export reads`).toContain(c);
         expect(o.omit.includes(c), `${table}.${c}: a reset column is not an omitted one`).toBe(false);
       }
+      if (Object.keys(o.reset).length > 0) expect(o.resetWhenAny.length, `${table}: a reset needs the columns that say the row carried the omitted value`).toBeGreaterThan(0);
+      for (const c of o.resetWhenAny) expect(cols.has(c), `${table}.${c} (resetWhenAny) is not a column`).toBe(true);
       expect(o.reason.length, `${table}: write the reason`).toBeGreaterThan(20);
     }
   });
@@ -359,6 +361,10 @@ describe("export column-list exception (ILIFE-11): an omitted column is declared
       embed_attempts: 0, embed_error: null, embed_claimed_until: null, embed_retry_after: null,
     });
     expect(EXPORT_OMITTED_COLUMNS.knowledge_chunks.reason).toMatch(/retry state .* is exported reset to its default/);
+    // Only on a row that carried a vector: the writer sets embedding and
+    // embedding_model together, and the Rebuild clears them together.
+    expect(EXPORT_OMITTED_COLUMNS.knowledge_chunks.resetWhenAny).toEqual(["embedding_model", "embedding"]);
+    expect(EXPORT_OMITTED_COLUMNS.knowledge_chunks.reason).toMatch(/never had a vector keeps its state/);
   });
 
   it("omitExportColumns drops exactly the omitted columns, and leaves other tables' rows byte-identical", () => {
@@ -370,6 +376,13 @@ describe("export column-list exception (ILIFE-11): an omitted column is declared
     const spent = { id: "c2", embedding: "[0.3]", embed_attempts: 4, embed_error: "provider 503", embed_claimed_until: "2099-01-01T00:00:00Z", embed_retry_after: "2099-01-01T00:00:00Z" };
     expect(omitExportColumns("knowledge_chunks", spent)).toEqual({ id: "c2", embed_attempts: 0, embed_error: null, embed_claimed_until: null, embed_retry_after: null });
     expect(spent.embed_attempts).toBe(4); // pure
+    // read by the explicit list (no embedding column): embedding_model says it carried one
+    expect(omitExportColumns("knowledge_chunks", { id: "c4", embedding_model: "m", embed_attempts: 4, embed_error: "x" }))
+      .toEqual({ id: "c4", embedding_model: "m", embed_attempts: 0, embed_error: null });
+    // never embedded (both NULL), at the attempt cap: kept as it is, refusal and reason
+    const refused = { id: "c5", embedding: null, embedding_model: null, embed_attempts: 5, embed_error: "input too long", embed_claimed_until: null, embed_retry_after: null };
+    expect(omitExportColumns("knowledge_chunks", refused)).toEqual({ id: "c5", embedding_model: null, embed_attempts: 5, embed_error: "input too long", embed_claimed_until: null, embed_retry_after: null });
+    expect(omitExportColumns("knowledge_chunks", { id: "c6", embedding_model: null, embed_attempts: 2 })).toEqual({ id: "c6", embedding_model: null, embed_attempts: 2 });
     expect(omitExportColumns("knowledge_chunks", { id: "c3", embedding: null })).toEqual({ id: "c3" });
     const doc = { id: "d1", embedding: "kept" };
     expect(omitExportColumns("documents", doc)).toBe(doc);
