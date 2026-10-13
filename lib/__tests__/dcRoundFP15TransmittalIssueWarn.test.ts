@@ -146,8 +146,11 @@ describe("TRX-16 — the issuer is warned at issue, before anything is written",
       const err = await issueTransmittal("t1", actor).catch((e) => e) as UnstampableItemsError;
       expect(err).toBeInstanceOf(UnstampableItemsError);
       expect(err.items.map((c) => [c.documentId, c.number, c.verdict])).toEqual([["d1", "P-101", "unchecked"], ["d2", "VDS-7", "unchecked"]]);
-      expect(err.items[0].detail).toMatch(/^the check could not run: /);
-      expect(err.message).toMatch(/^The issue-time check could not confirm that the recipient's portal can stamp these files as an UNCONTROLLED copy/);
+      // P24 integrator fix pass: the run's reason rides once on the error, never on each file
+      expect(err.items.map((c) => c.detail)).toEqual(["the check could not run", "the check could not run"]);
+      expect(typeof err.notRunReason).toBe("string");
+      expect(err.message).toMatch(/^The issue-time check gave no result this issue can rely on, so none of these 2 files is confirmed/);
+      expect(err.message).toContain("\nNot checked:\n• P-101\n• VDS-7\n");
       expect(updates()).toEqual([]);
       expect(db.audits).toEqual([]);
       expect(warn).toHaveBeenCalledWith(expect.stringMatching(/issue-time stamp check could not run for TR-0107 — asking the issuer/), expect.anything());
@@ -176,9 +179,38 @@ describe("TRX-16 — the issuer is warned at issue, before anything is written",
     expect(unstampableConfirmTitle([UNCHECKED])).toBe("Files the check could not confirm");
     expect(unstampableDeclinedMessage([ENCRYPTED])).toBe("Not issued — fix the file(s) the portal cannot mark, then issue again.");
     expect(unstampableDeclinedMessage([UNCHECKED])).toBe("Not issued — nothing was sent. Issue again to re-run the check.");
-    // the stand-in check names each document once
-    expect(checkNotRunItems([{ documentId: "d1", number: "P-101" }, { documentId: "d1", number: "P-101" }, { documentId: "d2", number: "" }], "down"))
-      .toEqual([{ documentId: "d1", number: "P-101", verdict: "unchecked", detail: "the check could not run: down" }, { documentId: "d2", number: "This document", verdict: "unchecked", detail: "the check could not run: down" }]);
+    // the stand-in check names each document once, with no copy of the run's reason (P24 integrator fix pass)
+    expect(checkNotRunItems([{ documentId: "d1", number: "P-101" }, { documentId: "d1", number: "P-101" }, { documentId: "d2", number: "" }]))
+      .toEqual([{ documentId: "d1", number: "P-101", verdict: "unchecked", detail: "the check could not run" }, { documentId: "d2", number: "This document", verdict: "unchecked", detail: "the check could not run" }]);
+  });
+  it("P24 integrator fix pass (re-review minor): when the check could not run, its reason is said ONCE above the files — each file named once, the route's sentence never repeated per file", async () => {
+    const REASON = "The check ran, but its result could not be recorded (the database is unavailable). Issue again to re-run it — if you issue anyway, every file goes out on your yes alone, without the portal's refusal to release an unmarked copy.";
+    const three = [{ documentId: "d1", number: "P-101" }, { documentId: "d2", number: "VDS-7" }, { documentId: "d3", number: "SET-9" }];
+    const msg = describeUnstampable(checkNotRunItems(three), REASON)!;
+    expect(msg.split(REASON).length - 1).toBe(1);
+    expect(msg).toBe(
+      "The issue-time check gave no result this issue can rely on, so none of these 3 files is confirmed: the recipient's portal may not be able to stamp them as an UNCONTROLLED copy, and any it cannot would be released WITHOUT the marking, the as-issued footer or the verify QR.\n"
+      + `What happened: ${REASON}\n`
+      + "Not checked:\n• P-101\n• VDS-7\n• SET-9\n"
+      + "Issue again later to re-run the check, or issue anyway — your yes is recorded with the transmittal.");
+    expect(msg).not.toContain("could not run: The check ran");
+    for (const n of ["P-101", "VDS-7", "SET-9"]) expect(msg.split(n).length - 1).toBe(1);
+    // one file; a reason with no closing stop gets one
+    expect(describeUnstampable(checkNotRunItems([three[0]]), "the check answered 500")).toBe(
+      "The issue-time check gave no result this issue can rely on, so this file is not confirmed: the recipient's portal may not be able to stamp it as an UNCONTROLLED copy, and if it cannot, it would be released WITHOUT the marking, the as-issued footer or the verify QR.\n"
+      + "What happened: the check answered 500.\nNot checked:\n• P-101\n"
+      + "Issue again later to re-run the check, or issue anyway — your yes is recorded with the transmittal.");
+    // through the issue path: the route's 503 sentence appears once in the confirm's text for the 2-file draft
+    stampAnswer = { status: 503, body: { error: REASON } };
+    const err = await issueTransmittal("t1", actor).catch((e) => e) as UnstampableItemsError;
+    expect(err).toBeInstanceOf(UnstampableItemsError);
+    expect(err.notRunReason).toBe(REASON);
+    expect(err.message.split(REASON).length - 1).toBe(1);
+    expect(err.items.every((c) => !String(c.detail).includes(REASON))).toBe(true);
+    expect(unstampableConfirmTitle(err.items)).toBe("Files the check could not confirm");
+    // REGRESSION: a decided check's undecided file still reads its own detail in its line, as before
+    expect(describeUnstampable([{ documentId: "d5", number: "Y", verdict: "unchecked", detail: "not checked — the check ran out of time" }]))
+      .toContain("• Y: the check could not tell whether the portal can mark it (not checked — the check ran out of time).");
   });
   it("REGRESSION (P22): an issuer-accepted re-issue with nothing to arm (no check to carry) sends status / time only, with no draft-version match", async () => {
     await issueTransmittal("t1", actor, { acceptedUnstampable: [ENCRYPTED] });

@@ -789,3 +789,29 @@ it**, or the verdict rule is dropped.
   transmittals (none carries a server verdict, and none is changed), their
   armed and unmarked items, and the drafts that from now on need a recorded
   check or a yes.
+- **Records (P24's integrator fix pass, 2026-10-13).** `TRX-17` is RESOLVED
+  for the code half. Its header now carries DEC-30's `Pending migration:`
+  line for `20261199`: paste after `20261133` and after the P24 app
+  deploys. Until then, done-when 2 holds in the file only. `TRX-15` is
+  restated: done-when 1's remainder is closed in code by P24, and the record
+  stays OPEN for its device check (`userHeld.TRX-15`).
+- **The confirm when the check could not run** now says the reason once,
+  above a list naming each file once (`describeUnstampable`'s
+  `notRunReason`). Before, the route's whole 503 / 409 sentence was copied
+  into every file's line.
+- **AUTHZ-15 under the integrator's ruling (2026-10-13, recorded under
+  DEC-89).** `stale` is the last good policy and is drawn as is, with no
+  label. Only `unreadable`, or a read that throws, holds the
+  policy-dependent controls back, with "Permissions could not be read — …"
+  and Try again. The integrator names P24 the owner of `HoldStrip`,
+  `/admin/holds`, `InspectorPanel` and `CheckoutStatusCell` (DEC-31), and
+  all five document-control surfaces follow the ruling. The Inspector
+  decides Force Release Lock, its hold controls and its notice from one
+  read. Only drafting-flow DF-P9's request surfaces stay open. This part of
+  P24 needs no migration.
+- **For the integrator at merge, not edited by P24:**
+  - the `20261199` row in `MIGRATION-PASTE-ORDER.md`;
+  - the optional `lib/schemaExpectations.ts` probe on
+    `transmittals.stamp_check`;
+  - restating `lib/capabilityPolicy.ts`'s `loadCapabilityPolicy` comment,
+    which still names these five surfaces as its readers.

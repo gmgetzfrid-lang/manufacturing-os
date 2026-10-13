@@ -85,7 +85,8 @@ describe("the controller vocabulary is spelled once (DCK-13 done-when 3)", () =>
 
     const cell = src("components/documents/CheckoutStatusCell.tsx");
     // P24 (AUTHZ-15): the popover reads the hook that also carries the fault;
-    // useForceReleaseAllowed (the Inspector's) is its boolean form.
+    // useForceReleaseAllowed is its boolean form (no caller since P24's
+    // integrator fix pass: the Inspector decides from its own single read).
     expect(cell).toMatch(/useForceReleasePolicy\(docRecord\.orgId/);
     expect(cell).toMatch(/return useForceReleasePolicy\(orgId, role, roles, uid, retryKey\)\.allowed;/);
     expect(cell).toMatch(/canForceReleaseCheckout\(mine\?\.policy \?\? null, role, roles, uid\)/);
@@ -98,6 +99,9 @@ describe("the controller vocabulary is spelled once (DCK-13 done-when 3)", () =>
 
     const inspector = src("components/documents/InspectorPanel.tsx");
     expect(inspector).toMatch(/\{canForceRelease && isCheckedOut && onForceUnlock && \(/);
+    // P24 integrator fix pass: one read decides Force Release Lock and the fault notice
+    expect(inspector).toMatch(/const canForceRelease = capFault\s*\n\s*\? false\s*\n\s*: canForceReleaseCheckout\(capPolicy, activeRole \?\? null, activeRoles \?\? null, uid \?\? null\);/);
+    expect(inspector).not.toMatch(/useForceReleaseAllowed\(/);
     expect(inspector).not.toMatch(/\{isController && isCheckedOut && onForceUnlock && \(/);
     // the strip that lists ACTIVE holds (Release buttons) follows holds.release
     // alone — a holds.open-only member is not drawn a Release the DB refuses

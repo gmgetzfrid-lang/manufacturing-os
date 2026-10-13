@@ -5,12 +5,14 @@
 // good entry (`loadCapabilityPolicyEntry` → `unreadable`), the register drew
 // its transmit-authority controls (Receipt, Revoke, Void, Issue) from the
 // shipped defaults with nothing on screen (`.catch(() => setPolicy({}))`).
-// DEC-90 A26 — authority decisions fail closed; and the integrator's rule
-// for this package, verbatim: "an affordance drawn from a cache during a
-// database fault must fail closed". So an `unreadable` answer AND a `stale`
-// one (the cached last good copy, served because the refresh failed) hold
-// the controls back and the page says why (P24 review fix: `stale` was drawn
-// as healthy). REGRESSION: a healthy read draws exactly what it drew before.
+// DEC-90 A26 — authority decisions fail closed. The integrator's ruling of
+// 2026-10-13 (recorded under DEC-89 and in AUTHZ-15): only `unreadable` (and
+// a read that throws) holds the controls back, labelled, with Try again; a
+// `stale` answer is the last good policy and is drawn as is, with no label —
+// the server and the database re-check every action it offers. (P24's first
+// review fix had made `stale` a fault too; the ruling narrows the package
+// brief's sentence back to `unreadable`, so the stale pin reads as first
+// landed.) REGRESSION: a healthy read draws exactly what it drew before.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -121,21 +123,21 @@ describe("AUTHZ-15 (transmittals) — an unreadable policy holds the transmit-au
     expect(button(/Revoke the portal link/)).toBeDefined();
     expect(button(/Void — issued in error/)).toBeDefined();
   });
-  it("a stale answer (the cached copy, served because the refresh failed) is a fault too — drawn from neither the cache nor the defaults, with the notice", async () => {
-    // P24 review fix: was a REGRESSION pin that drew the cached copy silently.
+  it("REGRESSION (integrator's ruling, 2026-10-13): a stale answer is the last good policy — drawn as is, with no notice", async () => {
+    // P24's first review fix flipped this pin to expect a fault; the ruling restores it.
     s.entry = { policy: {}, version: "v1", stale: true, staleError: "timeout" };
     await render();
-    expect(fault()).not.toBeNull();
-    expect(fault()!.textContent).toContain("Permissions could not be read");
-    expect(button(/Record recipient receipt/)).toBeUndefined();
-    expect(button(/Revoke the portal link/)).toBeUndefined();
-    expect(button(/Void — issued in error/)).toBeUndefined();
-    // Try again: once the read is good again, the controls come back
-    s.entry = { policy: {}, version: "v2" };
-    await act(async () => { button(/Try again/)!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-    for (let i = 0; i < 5; i++) await act(async () => { await Promise.resolve(); });
     expect(fault()).toBeNull();
+    expect(button(/Record recipient receipt/)).toBeDefined();
+    expect(button(/Revoke the portal link/)).toBeDefined();
     expect(button(/Void — issued in error/)).toBeDefined();
+  });
+  it("a stale NARROWED copy hides what it narrows — drawn from the cache, never the defaults — with no notice", async () => {
+    s.entry = { policy: { caps: { "transmittal.issue": ["Admin"] } }, version: "v1", stale: true, staleError: "timeout" };
+    await render();
+    expect(fault()).toBeNull();
+    expect(button(/Record recipient receipt/)).toBeUndefined();
+    expect(button(/Void — issued in error/)).toBeUndefined();
   });
   it("REGRESSION: a healthy read of a narrowed policy still hides the controls, with no notice", async () => {
     s.entry = { policy: { caps: { "transmittal.issue": ["Admin"] } }, version: "v1" };

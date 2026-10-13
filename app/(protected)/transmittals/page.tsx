@@ -117,13 +117,14 @@ export default function TransmittalsPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   // TRX-1: the capability policy (null until read) and each live item's
   // library — the resource the capability is evaluated against (DEC-13).
-  // AUTHZ-15 (DEC-90 A26; the integrator's rule for P24: "an affordance
-  // drawn from a cache during a database fault must fail closed"): a read
-  // that fails with no last good entry (`unreadable`), a refresh that fails
-  // and is answered from the cached last good copy (`stale`), or a read that
-  // throws, leaves the policy null, so every control it decides stays held
-  // back instead of being drawn from the shipped defaults or the cache, and
-  // `policyFault` says why on the page.
+  // AUTHZ-15 (DEC-90 A26; the integrator's ruling of 2026-10-13, DEC-89): a
+  // read that fails with no last good entry (`unreadable`) or a read that
+  // throws leaves the policy null, so every control it decides stays held
+  // back instead of being drawn from the shipped defaults, and `policyFault`
+  // says why on the page. A `stale` answer (the refresh failed; the last
+  // good policy was served) is the org's policy as last read and is drawn
+  // as is, with no label — the server and the database re-check every
+  // action it offers.
   const [policy, setPolicy] = useState<CapabilityPolicy | null>(null);
   const [policyFault, setPolicyFault] = useState<string | null>(null);
   const [policyTry, setPolicyTry] = useState(0);

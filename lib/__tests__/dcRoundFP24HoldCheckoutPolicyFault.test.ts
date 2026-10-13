@@ -1,25 +1,21 @@
 // @vitest-environment jsdom
 //
-// document-control Round F wave 3 — P24 review fix: drafting-flow AUTHZ-15,
-// the REST of document-control's surfaces (the integrator's note: "Your
-// entry also carries AUTHZ-15's document-control surfaces … transmittals
-// among them"), RENDERED. Each surface drew its controls from the shipped
-// defaults during a policy-read fault (`loadCapabilityPolicy` → `{}` with no
-// marker; `.catch(() => setPolicy({}))` / `.catch(() => undefined)` with a
-// null policy that evaluates the defaults):
+// document-control Round F wave 3 — P24: drafting-flow AUTHZ-15, the REST of
+// document-control's surfaces (the integrator names P24 their owner, DEC-31),
+// RENDERED. Each surface drew its controls from the shipped defaults during
+// a policy-read fault (`loadCapabilityPolicy` → `{}` with no marker;
+// `.catch(() => setPolicy({}))` / `.catch(() => undefined)` with a null
+// policy that evaluates the defaults):
 //   - components/documents/HoldStrip.tsx — Place hold / Release / Re-date;
 //   - app/(protected)/admin/holds/page.tsx — Release / Re-date;
-//   - components/documents/CheckoutStatusCell.tsx — Admin Force Release
-//     (and useForceReleaseAllowed, which the Inspector's button reads);
-//   - components/documents/InspectorPanel.tsx — the hold controls and Force
-//     Release Lock.
-// DEC-90 A26, and the integrator's rule for P24, verbatim: "an affordance
-// drawn from a cache during a database fault must fail closed". So
-// `unreadable`, `stale` (the cached last good copy, served because the
-// refresh failed) and a read that throws all hold the controls back, and
-// the surface says why with a Try again. REGRESSION: a healthy read draws
-// exactly what it drew before (the defaults for an unconfigured org; a
-// narrowed policy hides what it narrows).
+//   - components/documents/CheckoutStatusCell.tsx — Admin Force Release.
+// (The Inspector is dcRoundFP24InspectorPolicyFault.)
+// The integrator's ruling of 2026-10-13 (DEC-89; AUTHZ-15): `unreadable` (no
+// last good entry) and a read that throws hold the controls back, and the
+// surface says why with a Try again; `stale` (the last good policy, served
+// because the refresh failed) is drawn as is, with no label. REGRESSION: a
+// healthy read draws exactly what it drew before (the defaults for an
+// unconfigured org; a narrowed policy hides what it narrows), for every role.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -31,7 +27,6 @@ const s = vi.hoisted(() => ({
   holds: [] as Array<Record<string, unknown>>,
   roles: ["Drafter"] as string[],
   role: "Drafter",
-  forceArgs: [] as unknown[][],
 }));
 
 vi.mock("@/lib/supabase", () => {
@@ -105,7 +100,6 @@ beforeEach(() => {
   s.holds = [HOLD];
   s.role = "Drafter";
   s.roles = ["Drafter"];
-  s.forceArgs = [];
 });
 afterEach(() => {
   act(() => root.unmount());
@@ -126,10 +120,11 @@ const button = (text: RegExp) => buttons().find((b) => text.test(b.textContent ?
 const byTestId = (id: string) => host.querySelector(`[data-testid="${id}"]`);
 
 describe("affordancePolicyFault — which loadCapabilityPolicyEntry answers hold an affordance back", () => {
-  it("unreadable and stale are faults (with the read error's words); a good read is not", () => {
+  it("unreadable is a fault (with the read error's words); stale (the last good policy) and a good read are not", () => {
     expect(affordancePolicyFault(UNREADABLE)).toBe("connection refused");
-    expect(affordancePolicyFault(STALE)).toBe("timeout");
-    expect(affordancePolicyFault({ stale: true })).toBe("the capability policy could not be refreshed");
+    expect(affordancePolicyFault(STALE)).toBeNull();
+    expect(affordancePolicyFault({ stale: true })).toBeNull();
+    expect(affordancePolicyFault({ policy: NARROWED, version: "v1", stale: true, staleError: "timeout" })).toBeNull();
     expect(affordancePolicyFault({ unreadable: "" })).toBe("the capability policy could not be read");
     expect(affordancePolicyFault(HEALTHY)).toBeNull();
     expect(affordancePolicyFault({ policy: NARROWED, version: "v9" })).toBeNull();
@@ -144,18 +139,17 @@ describe("AUTHZ-15 — HoldStrip (rendered)", () => {
     expect(host.textContent).toContain("Client Review"); // the hold itself still lists
     expect(byTestId("hold-policy-fault")).not.toBeNull();
     expect(byTestId("hold-policy-fault")!.getAttribute("role")).toBe("alert");
-    expect(byTestId("hold-policy-fault")!.textContent).toContain("Permissions could not be read, so placing, releasing and re-dating holds are not offered until they can be.");
+    expect(byTestId("hold-policy-fault")!.textContent).toContain("Permissions could not be read — placing, releasing and re-dating holds are not offered until they can be.");
     expect(button(/^\s*Release\s*$/)).toBeUndefined();
     expect(button(/Re-date/)).toBeUndefined();
     expect(host.textContent).not.toContain("Place hold");
   });
-  it("stale (the cached copy, refresh failed) and a thrown read are the same fault; Try again re-reads and draws the controls once readable", async () => {
-    for (const e of [STALE, new Error("network down")]) {
-      s.entry = e;
-      await mount(strip());
-      expect(byTestId("hold-policy-fault")).not.toBeNull();
-      expect(button(/^\s*Release\s*$/)).toBeUndefined();
-    }
+  it("a thrown read is the same fault; Try again re-reads and draws the controls once readable", async () => {
+    s.entry = new Error("network down");
+    await mount(strip());
+    expect(byTestId("hold-policy-fault")).not.toBeNull();
+    expect(button(/^\s*Release\s*$/)).toBeUndefined();
+    expect(host.textContent).not.toContain("Place hold");
     const calls = s.entryCalls;
     s.entry = HEALTHY;
     await click(button(/Try again/));
@@ -178,6 +172,29 @@ describe("AUTHZ-15 — HoldStrip (rendered)", () => {
     expect(button(/^\s*Release\s*$/)).toBeUndefined();
     expect(host.textContent).not.toContain("Place hold");
   });
+  it("stale (the last good policy, refresh failed) is drawn as is with no notice: the defaults' controls appear; a stale narrowed copy hides them", async () => {
+    s.entry = STALE;
+    await mount(strip());
+    expect(byTestId("hold-policy-fault")).toBeNull();
+    expect(button(/^\s*Release\s*$/)).toBeDefined();
+    expect(button(/Re-date/)).toBeDefined();
+    expect(host.textContent).toContain("Place hold");
+    act(() => root.unmount());
+    root = createRoot(host);
+    s.entry = { ...STALE, policy: NARROWED };
+    await mount(strip());
+    expect(byTestId("hold-policy-fault")).toBeNull();
+    expect(button(/^\s*Release\s*$/)).toBeUndefined();
+    expect(host.textContent).not.toContain("Place hold");
+  });
+  it("REGRESSION: a DocCtrl under the narrowed policy (which admits DocCtrl) still gets every control, with no notice", async () => {
+    s.role = "DocCtrl"; s.roles = ["DocCtrl"];
+    s.entry = { policy: NARROWED, version: "v1" };
+    await mount(strip());
+    expect(byTestId("hold-policy-fault")).toBeNull();
+    expect(button(/^\s*Release\s*$/)).toBeDefined();
+    expect(host.textContent).toContain("Place hold");
+  });
   it("a read-only strip (canEdit false) offers nothing, so it explains nothing", async () => {
     s.entry = UNREADABLE;
     await mount(strip(false));
@@ -187,8 +204,8 @@ describe("AUTHZ-15 — HoldStrip (rendered)", () => {
 });
 
 describe("AUTHZ-15 — /admin/holds (rendered)", () => {
-  it("unreadable / stale / thrown: no Release or Re-date on the queue, and the page says why", async () => {
-    for (const e of [UNREADABLE, STALE, new Error("down")]) {
+  it("unreadable / thrown: no Release or Re-date on the queue, and the page says why", async () => {
+    for (const e of [UNREADABLE, new Error("down")]) {
       s.entry = e;
       await mount(React.createElement(HoldsPage));
       expect(host.textContent).toContain("Client Review");
@@ -218,6 +235,30 @@ describe("AUTHZ-15 — /admin/holds (rendered)", () => {
   });
 });
 
+describe("AUTHZ-15 — /admin/holds: stale and no-authority (rendered)", () => {
+  it("stale (the last good policy) is drawn as is with no notice; a stale narrowed copy hides Release for a Drafter", async () => {
+    s.entry = STALE;
+    await mount(React.createElement(HoldsPage));
+    expect(byTestId("holds-policy-fault")).toBeNull();
+    expect(button(/^\s*Release\s*$/)).toBeDefined();
+    expect(button(/Re-date/)).toBeDefined();
+    act(() => root.unmount());
+    root = createRoot(host);
+    s.entry = { ...STALE, policy: NARROWED };
+    await mount(React.createElement(HoldsPage));
+    expect(byTestId("holds-policy-fault")).toBeNull();
+    expect(button(/^\s*Release\s*$/)).toBeUndefined();
+  });
+  it("REGRESSION: under the narrowed policy a DocCtrl keeps Release / Re-date, with no notice", async () => {
+    s.role = "DocCtrl"; s.roles = ["DocCtrl"];
+    s.entry = { policy: NARROWED, version: "v1" };
+    await mount(React.createElement(HoldsPage));
+    expect(byTestId("holds-policy-fault")).toBeNull();
+    expect(button(/^\s*Release\s*$/)).toBeDefined();
+    expect(button(/Re-date/)).toBeDefined();
+  });
+});
+
 describe("AUTHZ-15 — CheckoutStatusCell's force release (rendered)", () => {
   const doc = { id: "d1", orgId: "org-a", libraryId: "lib1", checkedOutBy: "u-other", checkedOutByName: "Other", activeCollaborators: ["Other"] } as unknown as DocumentRecord;
   const cell = () => React.createElement(CheckoutStatusCell, { docRecord: doc, currentUserId: "u-1", userRole: s.role, userRoles: s.roles, onCheckout: () => undefined });
@@ -231,20 +272,18 @@ describe("AUTHZ-15 — CheckoutStatusCell's force release (rendered)", () => {
     await mount(cell());
     await openPopover();
     expect(byTestId("checkout-policy-fault")).not.toBeNull();
-    expect(byTestId("checkout-policy-fault")!.textContent).toContain("Permissions could not be read, so force release is not offered until they can be.");
+    expect(byTestId("checkout-policy-fault")!.textContent).toContain("Permissions could not be read — force release is not offered until it can be.");
     expect(button(/Admin Force Release/)).toBeUndefined();
   });
-  it("stale and thrown are the same fault; Try again re-reads and, once readable, offers it", async () => {
+  it("a thrown read is the same fault; Try again re-reads and, once readable, offers it", async () => {
     s.role = "DocCtrl"; s.roles = ["DocCtrl"];
-    for (const e of [STALE, new Error("down")]) {
-      s.entry = e;
-      await mount(cell());
-      await openPopover();
-      expect(byTestId("checkout-policy-fault")).not.toBeNull();
-      expect(button(/Admin Force Release/)).toBeUndefined();
-      act(() => root.unmount());
-      root = createRoot(host);
-    }
+    s.entry = new Error("down");
+    await mount(cell());
+    await openPopover();
+    expect(byTestId("checkout-policy-fault")).not.toBeNull();
+    expect(button(/Admin Force Release/)).toBeUndefined();
+    act(() => root.unmount());
+    root = createRoot(host);
     s.entry = UNREADABLE;
     await mount(cell());
     await openPopover();
@@ -252,6 +291,21 @@ describe("AUTHZ-15 — CheckoutStatusCell's force release (rendered)", () => {
     await click(button(/Try again/));
     expect(byTestId("checkout-policy-fault")).toBeNull();
     expect(button(/Admin Force Release/)).toBeDefined();
+  });
+  it("stale (the last good policy) is evaluated as is with no notice: a DocCtrl is offered it under the defaults' copy, not under a stale narrowed copy", async () => {
+    s.role = "DocCtrl"; s.roles = ["DocCtrl"];
+    s.entry = STALE;
+    await mount(cell());
+    await openPopover();
+    expect(byTestId("checkout-policy-fault")).toBeNull();
+    expect(button(/Admin Force Release/)).toBeDefined();
+    act(() => root.unmount());
+    root = createRoot(host);
+    s.entry = { ...STALE, policy: NARROWED };
+    await mount(cell());
+    await openPopover();
+    expect(byTestId("checkout-policy-fault")).toBeNull();
+    expect(button(/Admin Force Release/)).toBeUndefined();
   });
   it("REGRESSION: a healthy read offers a DocCtrl Admin Force Release with no notice; a narrowed policy or a Drafter is not offered it", async () => {
     s.role = "DocCtrl"; s.roles = ["DocCtrl"];

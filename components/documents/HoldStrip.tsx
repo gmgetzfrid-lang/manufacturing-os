@@ -103,12 +103,13 @@ export default function HoldStrip({
   const [policyTry, setPolicyTry] = useState(0);
 
   // HLD-8: the controls follow the policy. Until it is read nothing is
-  // offered (fail closed). AUTHZ-15 (DEC-90 A26): a read that cannot give
-  // the org's policy — no last good entry (`unreadable`), only the cached
-  // last good copy because the refresh failed (`stale`), or a read that
-  // throws — keeps the policy null, so Place / Release / Re-date stay held
-  // back instead of being drawn from the shipped defaults or the cache, and
-  // the strip says why with a Try again. The database still enforces.
+  // offered (fail closed). AUTHZ-15 (DEC-90 A26; the integrator's ruling of
+  // 2026-10-13, DEC-89): a read with no last good entry (`unreadable`) or a
+  // read that throws keeps the policy null, so Place / Release / Re-date
+  // stay held back instead of being drawn from the shipped defaults, and the
+  // strip says why with a Try again. A `stale` answer (the last good policy,
+  // served because the refresh failed) is drawn as is, with no label. The
+  // database still enforces.
   useEffect(() => {
     let alive = true;
     void loadCapabilityPolicyEntry(orgId)
@@ -226,7 +227,7 @@ export default function HoldStrip({
         // strip (canEdit false) offers nothing to explain.
         <div role="alert" data-testid="hold-policy-fault" className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 flex items-start gap-1.5">
           <Lock className="w-3 h-3 mt-0.5 shrink-0" />
-          <span className="flex-1">Permissions could not be read, so placing, releasing and re-dating holds are not offered until they can be.</span>
+          <span className="flex-1"><b>Permissions could not be read</b> — placing, releasing and re-dating holds are not offered until they can be.</span>
           <button onClick={() => setPolicyTry((n) => n + 1)} className="shrink-0 inline-flex items-center gap-1 font-bold hover:underline">
             <RefreshCw className="w-3 h-3" /> Try again
           </button>

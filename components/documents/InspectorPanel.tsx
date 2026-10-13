@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react";
 import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine, Archive, ArchiveRestore, Send, GitBranch, GitCompare, ShieldCheck, Wrench, StickyNote, PenLine, RefreshCw } from "lucide-react";
 import NextLink from "next/link";
 import SecureDocViewer from "@/components/viewers/SecureDocViewer";
-import CheckoutStatusCell, { useForceReleaseAllowed } from "@/components/documents/CheckoutStatusCell";
+import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
 import VersionHistoryPanel from "@/components/documents/VersionHistoryPanel";
 import HoldStrip from "@/components/documents/HoldStrip";
 import WatchButton from "@/components/ui/WatchButton";
@@ -44,7 +44,7 @@ import { supabase } from "@/lib/supabase";
 import { openEvidencePack } from "@/lib/evidencePack";
 import { isDocumentCheckedOut } from "@/lib/documentGuards";
 import { loadCapabilityPolicyEntry, type CapabilityPolicy } from "@/lib/capabilityPolicy";
-import { holdAffordances, affordancePolicyFault } from "@/lib/checkoutAffordances";
+import { holdAffordances, canForceReleaseCheckout, affordancePolicyFault } from "@/lib/checkoutAffordances";
 import { collectTagGroups } from "@/lib/documentTags";
 import type { DocumentRecord, DocumentVersion, LibraryCustomColumn } from "@/types/schema";
 import { AuditEntry } from "@/lib/audit";
@@ -176,15 +176,17 @@ export default function InspectorPanel({
   // holds.release) — role tokens, the additive collection AND live
   // per-person grants — exactly what the database enforces. A hardcoded
   // role list made a widened policy inert and a narrowed one a lie.
-  // AUTHZ-15 (DEC-90 A26): a read that cannot give the org's policy — no
-  // last good entry (`unreadable`), only the cached last good copy because
-  // the refresh failed (`stale`), or a read that throws — holds the hold
-  // controls and Force Release back (never the shipped defaults, which a
-  // null policy would evaluate, nor the cache) and the ALERTS zone says why,
-  // with a Try again that re-reads both. Until the first read lands, the
-  // shipped defaults apply, as before.
+  // AUTHZ-15 (DEC-90 A26; the integrator's ruling of 2026-10-13, DEC-89): a
+  // read with no last good entry (`unreadable`) or a read that throws holds
+  // the hold controls and Force Release Lock back (never the shipped
+  // defaults, which a null policy would evaluate) and the ALERTS zone says
+  // why, with a Try again that re-reads. A `stale` answer (the last good
+  // policy, served because the refresh failed) is drawn as is, with no
+  // label. ONE read decides all three controls and the notice (P24
+  // integrator fix pass: Force Release Lock read a second policy load whose
+  // fault the notice never saw, so it could vanish with nothing on screen).
+  // Until the first read lands, the shipped defaults apply, as before.
   const [policyTry, setPolicyTry] = useState(0);
-  const canForceRelease = useForceReleaseAllowed(selectedDoc?.orgId ?? null, activeRole ?? null, activeRoles ?? null, uid ?? null, policyTry);
   const [capLoaded, setCapLoaded] = useState<{ orgId: string; policy: CapabilityPolicy | null; fault: string | null } | null>(null);
   useEffect(() => {
     let alive = true;
@@ -205,6 +207,9 @@ export default function InspectorPanel({
   const { canOpen: canOpenHold, canRelease: canReleaseHold } = capFault
     ? { canOpen: false, canRelease: false }
     : holdAffordances(capPolicy, activeRole ?? null, activeRoles ?? null, uid ?? null);
+  const canForceRelease = capFault
+    ? false
+    : canForceReleaseCheckout(capPolicy, activeRole ?? null, activeRoles ?? null, uid ?? null);
 
   // Cheap per-selection counts: they let the ALERTS zone render only when
   // something is actually wrong, and give drawer headers honest summaries

@@ -37,7 +37,8 @@ vi.mock("@/lib/branches", () => ({ listOpenBranchesForDocument: vi.fn(async () =
 vi.mock("@/lib/ownership", () => ({ effectiveOwnerForDocument: vi.fn(async () => ({ userId: null })), requestDeletion: vi.fn() }));
 // P24 (AUTHZ-15): the panel reads loadCapabilityPolicyEntry and its fault marker.
 vi.mock("@/lib/capabilityPolicy", () => ({ loadCapabilityPolicyEntry: vi.fn(async () => ({ policy: {}, version: null })) }));
-vi.mock("@/lib/checkoutAffordances", () => ({ holdAffordances: () => ({ canOpen: false, canRelease: false }), affordancePolicyFault: () => null }));
+// P24 integrator fix pass: the Inspector draws Force Release Lock from its own read (canForceReleaseCheckout), no longer useForceReleaseAllowed.
+vi.mock("@/lib/checkoutAffordances", () => ({ holdAffordances: () => ({ canOpen: false, canRelease: false }), canForceReleaseCheckout: () => false, affordancePolicyFault: () => null }));
 vi.mock("@/lib/documentGuards", () => ({ isDocumentCheckedOut: () => false }));
 vi.mock("@/lib/documentTags", () => ({ collectTagGroups: () => [] }));
 vi.mock("@/lib/evidencePack", () => ({ openEvidencePack: vi.fn() }));
@@ -46,7 +47,7 @@ vi.mock("@/components/providers/DialogProvider", () => ({ appAlert: vi.fn(), app
 vi.mock("next/link", () => ({ default: (p: { children?: React.ReactNode }) => React.createElement("a", null, p.children) }));
 // The panel's children are not under test.
 vi.mock("@/components/viewers/SecureDocViewer", () => ({ default: () => null }));
-vi.mock("@/components/documents/CheckoutStatusCell", () => ({ default: () => null, useForceReleaseAllowed: () => false }));
+vi.mock("@/components/documents/CheckoutStatusCell", () => ({ default: () => null }));
 vi.mock("@/components/documents/VersionHistoryPanel", () => ({ default: () => null }));
 vi.mock("@/components/documents/HoldStrip", () => ({ default: () => null }));
 vi.mock("@/components/ui/WatchButton", () => ({ default: () => null }));

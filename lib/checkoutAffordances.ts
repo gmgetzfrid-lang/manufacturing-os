@@ -57,21 +57,24 @@ export function holdAffordances(
 }
 
 /** drafting-flow AUTHZ-15 (DEC-89 item 3, ratified DEC-90 A26; the
- *  integrator's rule for document-control P24: "an affordance drawn from a
- *  cache during a database fault must fail closed"). Reads a
- *  loadCapabilityPolicyEntry answer for an AFFORDANCE surface: the fault's
- *  words when the controls the policy decides must be held back, else null.
- *  - `unreadable`: no last good entry — `policy` is the shipped defaults;
- *  - `stale`: the refresh failed and the cached last good copy was served —
- *    a control drawn from it during the fault is held back too.
+ *  integrator's ruling of 2026-10-13 under the user's delegation, recorded
+ *  under DEC-89). Reads a loadCapabilityPolicyEntry answer for an AFFORDANCE
+ *  surface: the fault's words when the controls the policy decides must be
+ *  held back, else null.
+ *  - `unreadable`: no last good entry — `policy` is the shipped defaults, so
+ *    the policy-dependent controls are held back, labelled, with Try again;
+ *  - `stale`: the refresh failed and the last good policy was served — it IS
+ *    the org's policy as last read and is drawn as is, with no label
+ *    (AUTHZ-15's Remediation: "`stale` needs no label"); every action it
+ *    offers is re-checked by the server and the database. null.
  *  A good read (fresh, or within the cache's TTL with no marker) is null.
- *  The surface then keeps its policy null AND forces its policy-dependent
- *  controls off (a null policy evaluates the shipped defaults in
- *  policyAllows), and says why on screen with a way to read again. */
+ *  On a fault the surface keeps its policy null AND forces its
+ *  policy-dependent controls off (a null policy evaluates the shipped
+ *  defaults in policyAllows), and says why on screen with a way to read
+ *  again. A read that throws is handled by the caller as a fault too. */
 export function affordancePolicyFault(
   entry: Partial<LoadedCapabilityPolicy>,
 ): string | null {
   if (typeof entry.unreadable === "string") return entry.unreadable || "the capability policy could not be read";
-  if (entry.stale) return entry.staleError || "the capability policy could not be refreshed";
   return null;
 }

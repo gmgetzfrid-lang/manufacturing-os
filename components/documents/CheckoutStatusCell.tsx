@@ -50,15 +50,17 @@ function timeAgo(date: Date) {
 /** DCK-13: may this member force-release a checkout in this org? Reads the
  *  org's capability policy (browser-cached a minute) and evaluates it the
  *  way lib/holds.ts and the workflow route do — role tokens, additive
- *  roles[], live per-person grants. Exported so the Inspector drawer draws
- *  its "Force Release Lock" button from the same answer.
+ *  roles[], live per-person grants. The Inspector drawer's "Force Release
+ *  Lock" evaluates the same rule (canForceReleaseCheckout) on its own single
+ *  policy read, so its button and its fault notice never disagree.
  *
- *  AUTHZ-15 (DEC-90 A26): a read that cannot give the org's policy — no
- *  last good entry (`unreadable`), only the cached last good copy because
- *  the refresh failed (`stale`), or a read that throws — answers `allowed:
- *  false` with the fault's words, never the shipped defaults or the cache.
- *  Until the first read lands, the shipped default applies, as before.
- *  `retryKey` re-reads when the caller's Try again bumps it. */
+ *  AUTHZ-15 (DEC-90 A26; the integrator's ruling of 2026-10-13, DEC-89): a
+ *  read with no last good entry (`unreadable`) or a read that throws answers
+ *  `allowed: false` with the fault's words, never the shipped defaults. A
+ *  `stale` answer (the last good policy, served because the refresh failed)
+ *  is evaluated as is, with no fault. Until the first read lands, the
+ *  shipped default applies, as before. `retryKey` re-reads when the
+ *  caller's Try again bumps it. */
 export function useForceReleasePolicy(
   orgId: string | null,
   role: string | null,
@@ -86,7 +88,10 @@ export function useForceReleasePolicy(
   return { allowed: canForceReleaseCheckout(mine?.policy ?? null, role, roles, uid), fault: null };
 }
 
-/** The force-release answer alone (see useForceReleasePolicy). */
+/** The force-release answer alone (see useForceReleasePolicy). Since P24's
+ *  integrator fix pass the Inspector no longer calls it — it derives Force
+ *  Release Lock from its own single policy read, so a fault in a second read
+ *  can never hide the button without its notice; kept for its signature. */
 export function useForceReleaseAllowed(
   orgId: string | null,
   role: string | null,
@@ -406,7 +411,7 @@ const CheckoutInfoPopover = ({
         {policyFault && (
           <div role="alert" data-testid="checkout-policy-fault" className="pt-3 border-t border-[var(--color-border)] text-[11px] text-amber-800 flex items-start gap-1.5">
             <Lock className="w-3 h-3 mt-0.5 shrink-0" />
-            <span className="flex-1">Permissions could not be read, so force release is not offered until they can be.</span>
+            <span className="flex-1"><b>Permissions could not be read</b> — force release is not offered until it can be.</span>
             <button onClick={() => setPolicyTry((n) => n + 1)} className="shrink-0 inline-flex items-center gap-1 font-bold hover:underline">
               <RefreshCw className="w-3 h-3" /> Try again
             </button>

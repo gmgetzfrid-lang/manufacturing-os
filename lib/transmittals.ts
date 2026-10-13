@@ -1035,10 +1035,22 @@ export function unstampableItems(checks: readonly ItemStampCheck[]): ItemStampCh
 /** The issuer's warning, naming each item and the reason and remedy — null
  *  when every PDF can be marked. TRX-17: a file the check could not decide
  *  is named in its own paragraph (the portal MAY not mark it); when every
- *  named file is one the portal cannot mark, the text is as before. */
-export function describeUnstampable(checks: readonly ItemStampCheck[]): string | null {
+ *  named file is one the portal cannot mark, the text is as before.
+ *  `notRunReason` (P24 integrator fix pass): the check could not run at all,
+ *  so `checks` is the stand-in from `checkNotRunItems` — the run's reason is
+ *  said ONCE, above the files, each named once, instead of the reason being
+ *  copied into every file's line. */
+export function describeUnstampable(checks: readonly ItemStampCheck[], notRunReason?: string | null): string | null {
   const bad = unstampableItems(checks);
   if (bad.length === 0) return null;
+  if (notRunReason) {
+    const one = bad.length === 1;
+    const reason = notRunReason.trim();
+    return `The issue-time check gave no result this issue can rely on, so ${one ? "this file is not" : `none of these ${bad.length} files is`} confirmed: the recipient's portal may not be able to stamp ${one ? "it" : "them"} as an UNCONTROLLED copy, and ${one ? "if it cannot, it" : "any it cannot"} would be released WITHOUT the marking, the as-issued footer or the verify QR.\n`
+      + `What happened: ${reason}${/[.!?]$/.test(reason) ? "" : "."}\n`
+      + `Not checked:\n${bad.map((c) => `• ${c.number}`).join("\n")}\n`
+      + "Issue again later to re-run the check, or issue anyway — your yes is recorded with the transmittal.";
+  }
   const cannot = bad.filter((c) => c.verdict !== "unchecked");
   const unknown = bad.filter((c) => c.verdict === "unchecked");
   const mb = Math.round(PORTAL_STAMP_MAX_BYTES / (1024 * 1024));
@@ -1079,15 +1091,18 @@ export function unstampableDeclinedMessage(items: readonly ItemStampCheck[]): st
 
 /** TRX-17: the stand-in check when the issue-time check could not run at all
  *  (the route refused, errored or did not answer in time): every document on
- *  the draft, `unchecked`, with why — so the issue asks the issuer's yes for
- *  each file instead of going ahead unchecked. */
-export function checkNotRunItems(items: readonly TransmittalItem[], error: string): ItemStampCheck[] {
+ *  the draft, `unchecked` — so the issue asks the issuer's yes for each file
+ *  instead of going ahead unchecked. The run's reason is NOT copied onto
+ *  each file (P24 integrator fix pass: a 12-file draft read the route's whole
+ *  sentence twelve times); it rides once on the UnstampableItemsError
+ *  (`notRunReason`) and `describeUnstampable` says it once. */
+export function checkNotRunItems(items: readonly TransmittalItem[]): ItemStampCheck[] {
   const seen = new Set<string>();
   const out: ItemStampCheck[] = [];
   for (const it of items) {
     if (!it?.documentId || seen.has(it.documentId)) continue;
     seen.add(it.documentId);
-    out.push({ documentId: it.documentId, number: it.number || "This document", verdict: "unchecked", detail: `the check could not run: ${error}` });
+    out.push({ documentId: it.documentId, number: it.number || "This document", verdict: "unchecked", detail: "the check could not run" });
   }
   return out;
 }
@@ -1107,8 +1122,10 @@ export interface DraftStampCheck {
  *  refused if the draft was saved since that check. */
 export class UnstampableItemsError extends Error {
   readonly code = "unstampable_items" as const;
-  constructor(readonly items: ItemStampCheck[], readonly checked: DraftStampCheck | null = null) {
-    super(describeUnstampable(items) ?? "Some files cannot be stamped by the portal.");
+  /** `notRunReason`: set when the check could not run at all (TRX-17) — why,
+   *  said once in the message, never per file. */
+  constructor(readonly items: ItemStampCheck[], readonly checked: DraftStampCheck | null = null, readonly notRunReason: string | null = null) {
+    super(describeUnstampable(items, notRunReason) ?? "Some files cannot be stamped by the portal.");
     this.name = "UnstampableItemsError";
   }
 }
@@ -1282,8 +1299,8 @@ export async function issueTransmittal(
       // asked for a yes on every file (none was checked), never issued
       // unchecked with no warning. The stand-in check is bound to this read.
       console.warn(`[transmittals] the issue-time stamp check could not run for ${draft.number} — asking the issuer before issuing:`, check.error);
-      const notRun = checkNotRunItems(draft.items, check.error);
-      throw new UnstampableItemsError(notRun, { draftUpdatedAt: readAt, items: notRun });
+      const notRun = checkNotRunItems(draft.items);
+      throw new UnstampableItemsError(notRun, { draftUpdatedAt: readAt, items: notRun }, check.error);
     } else if (unstampableItems(check.items).length > 0) {
       throw new UnstampableItemsError(unstampableItems(check.items), { draftUpdatedAt: readAt, items: check.items });
     } else {

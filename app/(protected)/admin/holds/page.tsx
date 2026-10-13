@@ -44,13 +44,13 @@ export default function HoldsPage() {
   const { activeOrgId, activeRole, roles, uid, userEmail } = useRole();
   // HLD-8: the Release control follows the capability policy (role tokens,
   // the additive collection — never the headline alone — and live grants).
-  // Nothing is offered until the policy is read. AUTHZ-15 (DEC-90 A26): a
-  // read that cannot give the org's policy — no last good entry
-  // (`unreadable`), only the cached last good copy because the refresh
-  // failed (`stale`), or a read that throws — keeps the policy null, so
+  // Nothing is offered until the policy is read. AUTHZ-15 (DEC-90 A26; the
+  // integrator's ruling of 2026-10-13, DEC-89): a read with no last good
+  // entry (`unreadable`) or a read that throws keeps the policy null, so
   // Release / Re-date stay held back instead of being drawn from the shipped
-  // defaults or the cache, and the page says why with a Try again. The
-  // database enforces.
+  // defaults, and the page says why with a Try again. A `stale` answer (the
+  // last good policy, served because the refresh failed) is drawn as is,
+  // with no label. The database enforces.
   const [policy, setPolicy] = useState<CapabilityPolicy | null>(null);
   const [policyFault, setPolicyFault] = useState<string | null>(null);
   const [policyTry, setPolicyTry] = useState(0);
