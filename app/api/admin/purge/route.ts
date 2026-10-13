@@ -26,16 +26,20 @@
 //                          GOV-4 / GOV-10, intelligence Round G)
 // Everything is scoped to the caller's org and older than `days`
 // (min 7, default 90). Destructive, so it's gated tighter than the read-only
-// stats endpoint: Admin / DocCtrl only.
+// stats endpoint: the storage surface's writes set (Admin / DocCtrl), asked
+// of lib/adminGate.ts with the "write" intent — the registry is the only
+// place that set is spelled (roles-and-permissions SURF-19, admin-and-org P7).
+// The preview is held to the same set: it feeds an action only that set may
+// take (as the shed / orphan previews are). Both audit rows record the role
+// the surface admitted the actor by (DEC-87 §3).
 
 import { NextRequest, NextResponse } from "next/server";
-import { authorizeOrgRole } from "@/lib/serverAuth";
+import { authorizeAdminSurface } from "@/lib/adminGate";
 import { monthStartIso } from "@/lib/ai/usageServer";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 
-const PURGE_ROLES = ["Admin", "DocCtrl"];
 const MIN_DAYS = 7;
 const DEFAULT_DAYS = 90;
 
@@ -226,7 +230,7 @@ async function countTarget(
 export async function GET(req: NextRequest) {
   const orgId = req.nextUrl.searchParams.get("orgId") || "";
   const days = clampDays(req.nextUrl.searchParams.get("days"));
-  const actor = await authorizeOrgRole(req, orgId, PURGE_ROLES);
+  const actor = await authorizeAdminSurface(req, orgId, "storage", "write");
   if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
   const sb = actor.admin;
 
@@ -289,7 +293,7 @@ export async function POST(req: NextRequest) {
   try { body = await req.json(); } catch { return NextResponse.json({ error: "Invalid JSON" }, { status: 400 }); }
 
   const orgId = body.orgId || "";
-  const actor = await authorizeOrgRole(req, orgId, PURGE_ROLES);
+  const actor = await authorizeAdminSurface(req, orgId, "storage", "write");
   if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
   if (body.confirm !== true) {
     return NextResponse.json({ error: "Confirmation required: pass confirm:true to purge." }, { status: 400 });
@@ -325,6 +329,7 @@ export async function POST(req: NextRequest) {
           org_id: orgId,
           user_id: actor.userId,
           user_email: actor.email,
+          user_role: actor.admittedRole,
           details: { cutoffDays: days, cutoffIso: cut, rows, abandoned: abandoned ?? "the breakdown could not be read; the count is exact" },
         });
         if (recErr) throw new Error(`not purged — the record of what it holds could not be written first: ${recErr.message}`);
@@ -357,6 +362,7 @@ export async function POST(req: NextRequest) {
       org_id: orgId,
       user_id: actor.userId,
       user_email: actor.email,
+      user_role: actor.admittedRole,
       details: { cutoffDays: days, cutoffIso, deleted, totalDeleted },
     });
     if (error) auditError = error.message;

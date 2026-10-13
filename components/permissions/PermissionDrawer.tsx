@@ -287,6 +287,19 @@ export default function PermissionsDrawer(props: {
     try {
       const table = collectionNameFor(nodeType);
 
+      // admin-and-org ALOG-8 (P7): who is changing the permissions is resolved
+      // BEFORE anything is written. A permission change must always be
+      // reconstructable, so one that could not be recorded against a person
+      // and a workspace is refused, never saved unaudited.
+      const { data: authData } = await supabase.auth.getUser();
+      const actor = authData?.user ?? null;
+      if (!actor?.id) {
+        throw new Error("Permissions were NOT saved — your session could not be confirmed, so the change could not be recorded against you. Sign in again and retry.");
+      }
+      if (!activeOrgId) {
+        throw new Error("Permissions were NOT saved — no workspace is selected, so the change could not be recorded.");
+      }
+
       const nextAcl: AccessControl = {
         inherit,
         visibility,
@@ -319,21 +332,29 @@ export default function PermissionsDrawer(props: {
       }
 
       // Full before/after audit — a permission change must always be
-      // reconstructable. Best-effort: the save above already committed.
-      if (activeOrgId) {
-        const { data: auth } = await supabase.auth.getUser();
-        await supabase.from("audit_logs").insert({
-          action: "NODE_ACL_CHANGED",
-          resource_type: nodeType,
-          resource_id: nodeId,
-          org_id: activeOrgId,
-          user_id: auth.user?.id ?? null,
-          user_email: auth.user?.email ?? null,
-          details: {
-            before: { acl: props.acl ?? null, visibility: props.visibility ?? "normal" },
-            after: { acl: nextAcl, visibility },
-          },
-        }).then(() => undefined, () => undefined);
+      // reconstructable. ALOG-8 (P7): a checked write. The save above already
+      // committed, so a refused row cannot undo it: it is said out loud
+      // (never a quiet close), and the actor is the one resolved before the
+      // save, never a NULL.
+      const { error: auditErr } = await supabase.from("audit_logs").insert({
+        action: "NODE_ACL_CHANGED",
+        resource_type: nodeType,
+        resource_id: nodeId,
+        org_id: activeOrgId,
+        user_id: actor.id,
+        user_email: actor.email ?? null,
+        details: {
+          before: { acl: props.acl ?? null, visibility: props.visibility ?? "normal" },
+          after: { acl: nextAcl, visibility },
+        },
+      });
+      if (auditErr) {
+        console.error("[PermissionDrawer] NODE_ACL_CHANGED audit row was not written", auditErr.message);
+        await appAlert({
+          title: "Permissions saved — NOT recorded in the audit log",
+          message: `The permission change is saved, but its audit record could not be written (${auditErr.message}). Tell an Admin: this change will not appear in the audit log.`,
+          tone: "danger",
+        });
       }
       // OWN-20: a library / folder ACL change makes every descendant's stored
       // acl_index stale (it is chain-resolved at write time and the database
