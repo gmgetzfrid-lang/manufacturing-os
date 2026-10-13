@@ -8,16 +8,16 @@
     "audit-reports/admin-and-org/04-billing.md"
   ],
   "totals": {
-    "findings": 61,
+    "findings": 63,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 5,
       "HIGH": 17,
       "MEDIUM": 28,
-      "LOW": 11
+      "LOW": 13
     },
     "by_status": {
-      "RESOLVED": 38,
+      "RESOLVED": 40,
       "OPEN": 23
     }
   },
@@ -1463,7 +1463,7 @@
       "id": "BILL-15",
       "title": "On a single-workspace server the quota alert and the platform R2 alert can both fire on the same day, with two different percentages for nearly the same bytes",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (by construction: `BILL-12`'s resolution describes both paths)",
       "blast_radius": null,
@@ -1676,7 +1676,7 @@
       "id": "ORG-16",
       "title": "Any member can replace a folder's or library's cover image and page background: `branding/covers/` and `branding/backgrounds/` keys are signed for any member, any Content-Type",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (by reading)",
       "blast_radius": null,
@@ -1699,6 +1699,63 @@
       ],
       "refuted": false,
       "summary": "A Viewer or Contractor reads a library's coverImageUrl (or bgImagePath) key (orgs/<org>/branding/covers/<key>), posts it to /api/storage/upload-url with any contentType, and PUTs any image (or an HTML document) to the signed URL. Every member sees the replaced cover on the library's card the next time it loads. No audit row is written, and the node's customize authority is never consulted, because",
+      "area": "admin-and-org",
+      "report": "audit-reports/admin-and-org/01-org-lifecycle.md"
+    },
+    {
+      "id": "ORG-17",
+      "title": "Any member can repoint a library's cover image and page background: the appearance columns sit under the membership-wide `libraries_org_access`, and only the UI holds the node editor's authority",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by reading)",
+      "blast_radius": null,
+      "related": [
+        "ORG-16",
+        "ORG-5",
+        "OWN-1"
+      ],
+      "locations": [
+        "supabase/schema.sql:1098",
+        "supabase/migrations/20261077_dc_roundF_records_rails.sql",
+        "app/(protected)/documents/page.tsx:123-142",
+        "components/documents/NodeCover.tsx:29"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A Viewer sends PATCH /rest/v1/libraries?id=eq.<lib> with { \"coverimageurl\": \"https://example.net/pixel.png\" } (or another library's cover key, or pageconfig with a new background.imagePath). The update passes RLS and the trigger. Every member who opens the documents list now sees that image on the library's card, and their browser fetches the external URL. No audit row names who changed it.",
+      "area": "admin-and-org",
+      "report": "audit-reports/admin-and-org/01-org-lifecycle.md"
+    },
+    {
+      "id": "ORG-18",
+      "title": "A folder's or library's cover or background in a legacy format (SVG, HEIC, TIFF) can no longer be uploaded or restored, and the node keeps pointing at the missing image",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED (by reading and by test: `lib/__tests__/aoRoundGStorageFollowups.test.ts` \"review fix (issue 3): a legacy SVG / HEIC / TIFF cover or background is not asked for …\")",
+      "blast_radius": null,
+      "related": [
+        "ORG-16",
+        "ORG-5",
+        "ORG-17"
+      ],
+      "locations": [
+        "lib/storageKey.ts",
+        "app/(protected)/admin/restore/page.tsx",
+        "components/documents/NodeCover.tsx"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "An Admin restores a Full ZIP into a fresh workspace. A library's cover is orgs/<org>/branding/covers/<uuid>.svg, uploaded before ORG-16. The files panel says \"1 folder or library cover / background image(s) in this backup were not put back (covers/<uuid>.svg) …\". The library card renders without a cover, and the panel does not say which library, because the page knows only the key.",
       "area": "admin-and-org",
       "report": "audit-reports/admin-and-org/01-org-lifecycle.md"
     }
