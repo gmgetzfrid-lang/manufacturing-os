@@ -69,6 +69,7 @@ import RevUpModal from "@/components/documents/RevUpModal";
 import { loadMyMarkup, saveMyMarkup, myActiveSessionId, type DocumentMarkup } from "@/lib/markups";
 import { listVersions, changeDocumentStatus } from "@/lib/revisions";
 import { isIssueTransition, isControlledIssueStatus } from "@/lib/issueStatus";
+import { isUnguardedEntryIntoForce } from "@/lib/documentStatusOptions";
 import { publicOrigin } from "@/lib/publicOrigin";
 import SupersedeModal from "@/components/documents/SupersedeModal";
 import ArchiveConfirmModal from "@/components/documents/ArchiveConfirmModal";
@@ -2803,7 +2804,9 @@ export default function LibraryExplorerPage() {
     // write below, unchanged. `pageSawIssue` is only what the editor told the
     // person (its "issuing" note) — it picks the sentence, not the route.
     const toStatus = next.core?.status;
-    const pageSawIssue = toStatus !== undefined && isIssueTransition({ fromStatus: selectedDoc.status, toStatus, hasCurrentRevision: !!selectedDoc.currentVersionId });
+    // REV-26 (document-control P25): a move into force out of IFC is an issue the editor says it is (its entry-into-force note), recorded by changeDocumentStatus.
+    const pageSawIssue = toStatus !== undefined && (isIssueTransition({ fromStatus: selectedDoc.status, toStatus, hasCurrentRevision: !!selectedDoc.currentVersionId })
+      || isUnguardedEntryIntoForce({ fromStatus: selectedDoc.status, toStatus, hasCurrentRevision: !!selectedDoc.currentVersionId }));
     if (toStatus !== undefined && isControlledIssueStatus(toStatus)) {
       const orgId = selectedDoc.orgId || activeOrgId || library?.orgId || null;
       if (!uid || !orgId) {
@@ -2826,8 +2829,14 @@ export default function LibraryExplorerPage() {
       // The database row was issuable although this page saw nothing to
       // issue (it showed the document issued, or with no revision): this
       // save issued it — recorded, clocks handled — and the person is told.
+      // REV-26 (P25 review fix): an entry INTO FORCE is said as what it is —
+      // the row had been moved to a status no gate reads as in force (IFC),
+      // not out of issue; the roster opened and the review clock left as it
+      // was (changeDocumentStatus's entryIntoForce).
       const reissued = outcome.issued && !pageSawIssue
-        ? `${label} was issued by this save: another change after this page loaded had moved it out of issue (or given it its first revision), and this save carries its status as ${toStatus} — the issue is recorded on its history like any other.`
+        ? outcome.entryIntoForce
+          ? `${label} was put in force by this save: another change after this page loaded had moved it to a status no gate reads as in force (or given it its first revision), and this save carries its status as ${toStatus} — the entry into force is recorded on its history, the acknowledgment roster opened and the review clock left as it was.`
+          : `${label} was issued by this save: another change after this page loaded had moved it out of issue (or given it its first revision), and this save carries its status as ${toStatus} — the issue is recorded on its history like any other.`
         : null;
       const problems = outcome.issued
         ? [
@@ -3414,8 +3423,9 @@ export default function LibraryExplorerPage() {
           actorUserId={uid}
           actorEmail={userEmail || undefined}
           actorRole={activeRole ?? undefined}
-          onSuccess={() => {
-            const newStatus = selectedDoc.status === "Archived" ? "Issued" : "Archived";
+          onSuccess={(restoredStatus) => {
+            // REV-27 (P25): an un-archive passes the status it restored (Draft, In Review, the stamped IFC …), never assumed Issued.
+            const newStatus = selectedDoc.status === "Archived" ? (restoredStatus ?? "Issued") : "Archived";
             setSelectedDoc((prev) => prev ? { ...prev, status: newStatus as DocumentRecord["status"] } : prev);
             setVersionHistoryRefreshKey((k) => k + 1);
           }}

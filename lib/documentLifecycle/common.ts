@@ -15,6 +15,7 @@ import {
   writeSupersessionLineage,
   startIssuedDocumentClocks,
   putBackRetiredIssue,
+  describePutBackStatus,
   type CreationStatus,
 } from "@/lib/revisions";
 import type { AssetTag } from "@/types/schema";
@@ -39,7 +40,11 @@ export interface ActorContext {
 export interface Compensation {
   /** Human-readable label (surfaced if compensation itself fails). */
   describe: string;
-  run: () => Promise<void>;
+  /** REV-29 (P25 review fix): a compensation that LANDED, but not exactly as
+   *  a put-back of what was there (a NULL status put back as 'Issued' on an
+   *  older database body), answers a one-sentence NOTE, said in the thrown
+   *  error after the rollback sentence — never silently. A failure throws. */
+  run: () => Promise<void | string>;
 }
 
 /**
@@ -47,7 +52,8 @@ export interface Compensation {
  * makes durable changes. On any throw, compensations run in reverse order
  * (best-effort) before the original error is re-thrown. Compensation failures
  * are collected and appended to the thrown error so an operator can finish
- * the cleanup by hand if needed.
+ * the cleanup by hand if needed; a note a compensation answered is appended
+ * too ("Rollback note: …").
  */
 export async function withCompensation<T>(
   work: (register: (c: Compensation) => void) => Promise<T>,
@@ -58,20 +64,23 @@ export async function withCompensation<T>(
     return await work(register);
   } catch (err) {
     const failures: string[] = [];
+    const notes: string[] = [];
     for (let i = comps.length - 1; i >= 0; i--) {
       try {
-        await comps[i].run();
+        const note = await comps[i].run();
+        if (typeof note === "string" && note.trim()) notes.push(note.trim());
       } catch (compErr) {
         failures.push(`${comps[i].describe}: ${(compErr as Error).message}`);
       }
     }
     const base = (err as Error).message || String(err);
+    const noted = notes.length > 0 ? ` Rollback note: ${notes.join(" ")}` : "";
     if (failures.length > 0) {
       throw new Error(
-        `${base}\n\nThe operation was rolled back, but some cleanup steps failed and may need manual attention:\n- ${failures.join("\n- ")}`,
+        `${base}\n\nThe operation was rolled back, but some cleanup steps failed and may need manual attention:\n- ${failures.join("\n- ")}${noted}`,
       );
     }
-    throw new Error(`${base} (the operation was rolled back — no partial changes were kept).`);
+    throw new Error(`${base} (the operation was rolled back — no partial changes were kept).${noted}`);
   }
 }
 
@@ -126,14 +135,25 @@ export interface PriorSupersessionFields {
  *  (20261165) — the same write, run as the caller, recorded
  *  (REV_HOLD_OVERRIDDEN) when Document Control puts a held source it retired
  *  back into the issue the split / merge stamped, which the guard no longer
- *  admits bare — and the direct write only while the function is absent. */
+ *  admits bare — and the direct write only while the function is absent.
+ *
+ *  REV-29 (P25): `priorStatus` is what the source WAS, a NULL (or blank)
+ *  status included — put back as that, never as "Issued". On a database
+ *  whose put_back_retired_issue predates 20261192 (it refuses a NULL
+ *  status) a NULL is put back as "Issued", exactly as before P25 (an older
+ *  body takes today's path) — and SAID (P25 review fix): the status it was
+ *  put back as is answered when it is not the one asked for, so the saga
+ *  names it in its rollback note (markSupersededAndLink's compensation),
+ *  as undoFailedSupersede's sentence names it; with no function at all the
+ *  direct write puts back the NULL (the guard there judges it as it judged
+ *  'Issued'). Answers undefined when put back as asked. */
 export async function restoreSupersededSource(
   sourceDocId: string,
-  priorStatus: string,
+  priorStatus: string | null,
   replacementDocIds: string[],
   actor: ActorContext,
   prior: PriorSupersessionFields = {},
-): Promise<void> {
+): Promise<string | undefined> {
   const now = new Date().toISOString();
   // The rollback puts back the state from before the flip: it asks for the
   // pass — given only for the retirement this actor just made.
@@ -141,10 +161,12 @@ export async function restoreSupersededSource(
     documentId: sourceDocId, status: priorStatus, door: "lifecycle_rollback",
     reason: "A split or merge that retired this document did not complete; its rollback put the document back.",
     supersession: prior, forceHold: true,
+    ...(priorStatus === null ? { olderBodyStatus: "Issued" } : {}),
   });
   if (door.kind === "refused") {
-    throw new Error(`source ${sourceDocId} is still Superseded — restore it to ${priorStatus} (${door.reason})`);
+    throw new Error(`source ${sourceDocId} is still Superseded — restore it to ${describePutBackStatus(priorStatus)} (${door.reason})`);
   }
+  const putBackAs = door.kind === "landed" ? door.putBackAs : undefined;
   if (door.kind === "absent") {
     const { data: restored, error: restoreErr } = await supabase
       .from("documents")
@@ -160,7 +182,7 @@ export async function restoreSupersededSource(
       .eq("id", sourceDocId)
       .select("id");
     if (restoreErr || ((restored as unknown[] | null) ?? []).length === 0) {
-      throw new Error(`source ${sourceDocId} is still Superseded — restore it to ${priorStatus} (${restoreErr?.message ?? "the write was refused"})`);
+      throw new Error(`source ${sourceDocId} is still Superseded — restore it to ${describePutBackStatus(priorStatus)} (${restoreErr?.message ?? "the write was refused"})`);
     }
   }
   if (replacementDocIds.length > 0) {
@@ -180,6 +202,7 @@ export async function restoreSupersededSource(
       throw new Error(`${remaining || replacementDocIds.length} supersession link(s) from ${sourceDocId} could not be removed${delErr ? ` (${delErr.message})` : ""} — Document Control must delete them`);
     }
   }
+  return putBackAs;
 }
 
 export async function sha256Hex(file: File): Promise<string> {
@@ -413,8 +436,9 @@ export async function createNewDocWithFirstVersion(input: {
  *  retirement once nothing can roll back (completeSourceRetirement). */
 export interface SupersededSource {
   sourceDocId: string;
-  /** REV-12: the status the source held, read fresh. */
-  priorStatus: string;
+  /** REV-12: the status the source held, read fresh — REV-29 (P25): a NULL
+   *  one kept as NULL (recorded so, and put back so), never "Issued". */
+  priorStatus: string | null;
   /** REV-12: the operation's instant, recorded as `auditAt`. */
   auditAt: string;
 }
@@ -465,7 +489,11 @@ export async function markSupersededAndLink(input: {
   if (curErr || !cur) throw new Error(`Couldn't read the source document's status (${curErr?.message ?? "not found"}) — nothing was retired.`);
   // A copy, taken now: what the rollback puts back is the state BEFORE the flip.
   const prior: PriorSupersessionFields & { status?: string | null } = { ...(cur as PriorSupersessionFields & { status?: string | null }) };
-  const priorStatus = String(prior.status ?? "Issued");
+  // REV-29 (P25): what the source WAS — a NULL status kept as NULL, so the
+  // rollback puts it back as that and the DOC_SPLIT / DOC_MERGED event
+  // records it, and a reversal restores it (never "Issued", which put a
+  // document that had no status in force, unreviewed).
+  const priorStatus: string | null = prior.status ?? null;
 
   // The pairs that already exist are not this attempt's to remove.
   let preExisting = new Set<string>();
@@ -483,10 +511,15 @@ export async function markSupersededAndLink(input: {
     describe: `restore ${label} from Superseded`,
     run: async () => {
       if (!flipped) return; // the flip never landed — nothing to put back
-      await restoreSupersededSource(sourceDocId, priorStatus, addedPairs, actor, {
+      const putBackAs = await restoreSupersededSource(sourceDocId, priorStatus, addedPairs, actor, {
         superseded_at: prior.superseded_at, superseded_by_user: prior.superseded_by_user,
         supersession_reason: prior.supersession_reason, supersession_moc: prior.supersession_moc,
       });
+      // REV-29 (P25 review fix): landed, but as the older body's status —
+      // said in the saga's rollback note, never silently.
+      if (putBackAs !== undefined) {
+        return `${label} was put back as ${putBackAs}, not as ${describePutBackStatus(priorStatus)} — this database's put_back_retired_issue predates 20261192 and cannot put back no status.`;
+      }
     },
   });
 

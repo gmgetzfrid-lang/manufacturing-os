@@ -200,10 +200,14 @@ export default function MetadataEditor(props: {
   const issuing = isIssueTransition({ fromStatus: document.status, toStatus: status, hasCurrentRevision });
   // VFY-20 / DEC-77 review fix: out of a status the database already
   // counts as an issue but no gate reads as in force (an existing IFC row)
-  // into Issued / Locked — the change that puts the revision in force, which
-  // the database's guard does not see. Treated as an issue here: said before
-  // the save, and refused over an active hold (this editor is Document
-  // Control's only, so the publisher tier holds). REV-21 is the database limb.
+  // into Issued / Locked — the change that puts the revision in force.
+  // Treated as an issue here: said before the save, and refused over an
+  // active hold (this editor is Document Control's only, so the publisher
+  // tier holds). REV-21: since 20261185 the database judges it as an issue
+  // too (before that paste it does not see it). REV-26 (P25): the save
+  // records it as one (lib/revisions.ts changeDocumentStatus — the
+  // acknowledgment roster opens; the review clock is left as it is), and a
+  // database refusal of it is said as an issue refusal (the suffix below).
   const enteringForce = isUnguardedEntryIntoForce({ fromStatus: document.status, toStatus: status, hasCurrentRevision });
 
   const applyIngestion = () => {
@@ -243,8 +247,10 @@ export default function MetadataEditor(props: {
     } catch (e) {
       const message = (e as Error)?.message || "The save was refused — nothing was saved.";
       // REV-18: an issue the database refused names the rule and what to do;
-      // nothing else in the edit was saved either (one statement).
-      setSaveError((issuing && isIssueRefusal(message)) || (enteringForce && isHoldBlockedError(e))
+      // nothing else in the edit was saved either (one statement). REV-26
+      // (P25): so does the database's refusal of a move into force (20261185
+      // judges it as an issue), as this editor's own hold refusal did.
+      setSaveError((issuing && isIssueRefusal(message)) || (enteringForce && (isHoldBlockedError(e) || isIssueRefusal(message)))
         ? `${message} The status was not changed to ${status}, and nothing else in this edit was saved — change the status back to save the other fields.`
         : message);
     } finally {
@@ -484,10 +490,11 @@ export default function MetadataEditor(props: {
                   </p>
                 )}
                 {enteringForce && (
-                  // P15 review fix: an issue the database does not see — said
-                  // truthfully, and the hold is checked by this editor.
+                  // P15 review fix: an issue — said truthfully, and the hold is
+                  // checked by this editor. REV-26 (P25): what the database
+                  // does, true before and after 20261185, and the record.
                   <p data-testid="entry-into-force-note" className="text-[10px] text-amber-800 mt-1">
-                    Saving puts Rev {document.rev ?? "?"} in force as a controlled copy: the field pack will print it and a scan will read it as current. The database does not check this change (it already counts {document.status?.trim() ? <>&quot;{document.status}&quot;</> : "an empty status"} as an issue), so this editor checks the hold — the save is refused while the document is on hold. Its review is not checked: choose {status} only for a revision that was reviewed.
+                    Saving puts Rev {document.rev ?? "?"} in force as a controlled copy: the field pack will print it and a scan will read it as current. It is an issue and is recorded as one: the acknowledgment roster opens for this revision, and its review clock is left as it is. This editor checks the hold before it saves — the save is refused while the document is on hold — and since database update 20261185 the database refuses it over a hold too (before that update the database does not check this change: it counts {document.status?.trim() ? <>&quot;{document.status}&quot;</> : "an empty status"} as an issue already). Its review is not checked: choose {status} only for a revision that was reviewed.
                   </p>
                 )}
               </div>

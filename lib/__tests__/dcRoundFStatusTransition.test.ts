@@ -379,7 +379,13 @@ describe("20261144 — P13 review fixes: a NULL status meets the hold; the put-b
     expect(lines.map((l) => l.trim())).toEqual([
       '.select("current_version_id, retired_issue_status, retired_issue_version_id").eq("id", documentId).maybeSingle();',
       "const stampedVersion = (data.retired_issue_version_id as string | null) ?? null;",
+      // REV-27 (P25): the dialog's default reads what the stamp WAS (an in-force stamp, or one it restores as itself)
+      "const stamp = (data.retired_issue_status as string | null) ?? null;",
       "if (current && !stampedVersion && data.retired_issue_status === RETIRED_NOT_ISSUED_STAMP) return { status: \"Draft\", basis: \"not-issued\" };",
+      // REV-27 (P25): readArchiveStampedRestore — unarchiveDocument's select of the archive's own stamped status (the one restore it admits beside the three)
+      '.select("status, current_version_id, retired_issue_status, retired_issue_version_id").eq("id", documentId).maybeSingle();',
+      "retiredIssueStatus: (row.retired_issue_status as string | null) ?? null,",
+      "retiredIssueVersionId: (row.retired_issue_version_id as string | null) ?? null,",
       // REV-19 (P14): readStatusIssueBasis — a select("*") read, before a status change, of whether an exit puts back the stamped issue (putBackFromRetirementStamp: three-state — P14 review fix)
       "retiredIssueStatus: (row.retired_issue_status as string | null | undefined) ?? null,",
       "retiredIssueVersionId: (row.retired_issue_version_id as string | null | undefined) ?? null,",

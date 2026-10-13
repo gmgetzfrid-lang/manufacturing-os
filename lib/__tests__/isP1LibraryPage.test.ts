@@ -80,6 +80,7 @@ vi.mock("@/lib/reviewControl", async (importOriginal) => {
 import { supabase } from "@/lib/supabase";
 import { changeDocumentStatus } from "@/lib/revisions";
 import { isIssueTransition, isIssueRefusal, isControlledIssueStatus } from "@/lib/issueStatus";
+import { isUnguardedEntryIntoForce } from "@/lib/documentStatusOptions";
 import { computeUniquenessKey } from "@/lib/uniqueness";
 import { publicOrigin } from "@/lib/publicOrigin";
 import { onDocumentIssued } from "@/lib/reviewCycles";
@@ -237,10 +238,10 @@ describe("REV-19 — saveMetadata routes every save that writes an issue status 
   const issued = () => T("audit_logs").filter((a) => a.action === "DOCUMENT_ISSUED");
   function save(d: Row, opts: { activeRole?: string | null; uid?: string | null; pageSees?: Row } = {}) {
     const st = { error: null as string | null, alerts: [] as Array<{ title: string; message: string }> };
-    const fn = lift<(next: unknown) => Promise<void>>("saveMetadata", ["selectedDoc", "uid", "userEmail", "activeRole", "activeOrgId", "library", "supabase", "changeDocumentStatus", "isIssueTransition", "isControlledIssueStatus", "computeUniquenessKey", "setError", "appAlert"])({
+    const fn = lift<(next: unknown) => Promise<void>>("saveMetadata", ["selectedDoc", "uid", "userEmail", "activeRole", "activeOrgId", "library", "supabase", "changeDocumentStatus", "isIssueTransition", "isUnguardedEntryIntoForce", "isControlledIssueStatus", "computeUniquenessKey", "setError", "appAlert"])({
       selectedDoc: asDoc({ ...d, ...(opts.pageSees ?? {}) }), uid: opts.uid === undefined ? "ctl1" : opts.uid, userEmail: "ctl@example.com",
       activeRole: opts.activeRole === undefined ? "DocCtrl" : opts.activeRole, activeOrgId: ORG,
-      library: { orgId: ORG, uniquenessKeys: ["documentNumber"] }, supabase, changeDocumentStatus, isIssueTransition, isControlledIssueStatus, computeUniquenessKey,
+      library: { orgId: ORG, uniquenessKeys: ["documentNumber"] }, supabase, changeDocumentStatus, isIssueTransition, isUnguardedEntryIntoForce, isControlledIssueStatus, computeUniquenessKey,
       setError: (v: string | null) => { st.error = v; },
       appAlert: async (a: { title: string; message: string }) => { st.alerts.push(a); },
     });
@@ -350,6 +351,20 @@ describe("REV-19 — saveMetadata routes every save that writes an issue status 
     expect(st.alerts[0]?.title).toBe("Saved — follow-up steps did not complete");
   });
 
+  it("REV-26 (P25 review fix) — the stale copy's entry INTO FORCE: the page shows Issued, another change had moved the row to IFC; the save puts it in force (recorded as entryIntoForce, the roster opened, the review clock left as it was) and the page says THAT — never 'moved it out of issue'", async () => {
+    const d = seed("d14", { status: "IFC" });
+    const { st, fn } = save(d, { pageSees: { status: "Issued" } });
+    await fn({ metadata: {}, core: { title: "d14 (title fixed)", documentNumber: "D14", status: "Issued" } });
+    expect(T("documents")[0]).toMatchObject({ status: "Issued", title: "d14 (title fixed)" });
+    expect(issued()).toHaveLength(1);
+    expect(issued()[0].details).toMatchObject({ door: "metadata", fromStatus: "IFC", toStatus: "Issued", versionId: "d14-v2", putBack: false, entryIntoForce: true });
+    expect(onDocumentIssued).not.toHaveBeenCalled();
+    expect(onDocumentIssuedAck).toHaveBeenCalledTimes(1);
+    expect(st.error).toBe("D14 was put in force by this save: another change after this page loaded had moved it to a status no gate reads as in force (or given it its first revision), and this save carries its status as Issued — the entry into force is recorded on its history, the acknowledgment roster opened and the review clock left as it was.");
+    expect(st.error).not.toMatch(/out of issue/);
+    expect(st.alerts).toEqual([]);
+  });
+
   it("the opposite stale copy: the page shows Draft → Issued, the row was already issued by another change — the save issues nothing and says so (unchanged)", async () => {
     const d = seed("d11", { status: "Issued" });
     const { st, fn } = save(d, { pageSees: { status: "Draft" } });
@@ -384,6 +399,31 @@ describe("REV-19 — saveMetadata routes every save that writes an issue status 
     expect(st.error).toBeNull();
   });
 
+  it("REV-26 (document-control P25): IFC -> Issued in the metadata editor is recorded as an issue — a first entry into force: the acknowledgment roster opens, the review clock is left as it was — and the page says nothing misleading (no \"issued by this save\" sentence)", async () => {
+    const d = seed("d9", { status: "IFC" });
+    const { st, fn } = save(d);
+    await fn({ metadata: {}, core: { title: "d9", documentNumber: "D9", status: "Issued" } });
+    expect(updates()).toHaveLength(1);
+    expect(T("documents").find((r) => r.id === "d9")!.status).toBe("Issued");
+    expect(issued()).toHaveLength(1);
+    expect(issued()[0].details).toMatchObject({
+      door: "metadata", fromStatus: "IFC", toStatus: "Issued", putBack: false, entryIntoForce: true,
+      complianceClocksStarted: false, reviewClockReset: false, acknowledgmentRosterOpened: true,
+    });
+    expect(onDocumentIssued).not.toHaveBeenCalled();
+    expect(onDocumentIssuedAck).toHaveBeenCalledTimes(1);
+    expect(st.error).toBeNull();
+  });
+
+  it("REGRESSION (P25) — a metadata save that keeps IFC (the status untouched) records nothing and says nothing", async () => {
+    const d = seed("d10", { status: "IFC" });
+    const { st, fn } = save(d);
+    await fn({ metadata: {}, core: { title: "renamed", documentNumber: "D10", status: "IFC" } });
+    expect(updates()).toHaveLength(1);
+    expect(issued()).toEqual([]);
+    expect(st.error).toBeNull();
+  });
+
   it("source: the bare write and its checks are byte-for-byte the DRLS-15 ones; the issue route is the one changeDocumentStatus call", () => {
     const body = page.slice(page.indexOf("  const saveMetadata = async ("), page.indexOf("  const saveInlineDocNumber = async ("));
     expect(body.match(/changeDocumentStatus\(/g)).toHaveLength(1);
@@ -392,7 +432,8 @@ describe("REV-19 — saveMetadata routes every save that writes an issue status 
     expect(body).toContain("patch: payload,");
     // the route is chosen by the status WRITTEN, never by the page's copy of the status
     expect(body).toContain("if (toStatus !== undefined && isControlledIssueStatus(toStatus)) {");
-    expect(body).toContain("const pageSawIssue = toStatus !== undefined && isIssueTransition({ fromStatus: selectedDoc.status, toStatus, hasCurrentRevision: !!selectedDoc.currentVersionId });");
+    // REV-26 (document-control P25): the page's view counts a move into force out of IFC as an issue too (it picks the sentence only)
+    expect(body).toContain("const pageSawIssue = toStatus !== undefined && (isIssueTransition({ fromStatus: selectedDoc.status, toStatus, hasCurrentRevision: !!selectedDoc.currentVersionId })\n      || isUnguardedEntryIntoForce({ fromStatus: selectedDoc.status, toStatus, hasCurrentRevision: !!selectedDoc.currentVersionId }));");
     expect(body.match(/pageSawIssue/g)!.length).toBeGreaterThan(1);
     expect(body).not.toMatch(/if \(toStatus !== undefined && isIssueTransition\(/);
   });

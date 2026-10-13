@@ -289,6 +289,10 @@ describe("20261182 — the guard re-created from its NEWEST earlier body (found 
       "20261151_dc_roundF_promote_transaction_and_hold_override.sql",
       "20261164_dc_roundF_reversal_restore.sql",
       "20261165_dc_roundF_stamped_put_back.sql",
+      // REV-29 (P25): 20261192 re-creates 20261165's and 20261164's doors (the
+      // flag set on exactly the conditions each had) — pinned in
+      // dcRoundFNullPriorStatusMigration.test.ts.
+      "20261192_dc_roundF_null_prior_status_put_back.sql",
     ]);
     expect(stripComments(M)).toContain("current_setting('app.publish_hold_override', true)");
     // the only set_config this file names is inside a probe's LIKE pattern (a string literal), never a call

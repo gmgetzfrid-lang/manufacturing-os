@@ -21,12 +21,19 @@
 //
 // VFY-20 / DEC-77 review fix: a row whose status the database already
 // counts as an issue but no gate reads as in force (an existing IFC row)
-// moved to Issued / Locked is PUT IN FORCE by the write, and the database's
-// guard does not see it (isUnguardedEntryIntoForce). The modal names those
-// rows before the apply and checks each one's hold itself (lib/holdGate.ts,
-// fail closed) — a held row is refused and named; the publisher tier holds
-// (the Bulk Edit button is Document Control's only). REV-21 is the database
-// limb.
+// moved to Issued / Locked is PUT IN FORCE by the write
+// (isUnguardedEntryIntoForce). The modal names those rows before the apply
+// and checks each one's hold itself (lib/holdGate.ts, fail closed) — a held
+// row is refused and named; the publisher tier holds (the Bulk Edit button
+// is Document Control's only). REV-21: since 20261185 the database judges
+// the move as an issue too (before that paste it does not see it).
+//
+// REV-26 (document-control P25; DEC-77's REV-26 line): such a row is an
+// issue and is recorded as one — written through changeDocumentStatus like
+// an issuing row (the same checked UPDATE), which records DOCUMENT_ISSUED
+// and opens the acknowledgment roster, leaving the review clock as it was
+// (lib/revisions.ts isEntryIntoForce). A refusal of it by the database's
+// issue rule is marked "not issued:" like an issuing row's.
 //
 // REV-19 (P17): a row the status change ISSUES (isIssueTransition, the rows
 // the note above names) is written through lib/revisions.ts
@@ -106,8 +113,9 @@ export default function BulkEditModal({
   const issuingRows = target.kind === "status"
     ? docs.filter((d) => isIssueTransition({ fromStatus: d.status, toStatus: newValue, hasCurrentRevision: !!d.currentVersionId }))
     : [];
-  // P15 review fix: the selected rows this status change puts IN FORCE with
-  // no database check (an existing IFC row → Issued / Locked).
+  // P15 review fix: the selected rows this status change puts IN FORCE (an
+  // existing IFC row → Issued / Locked) — no database check before 20261185;
+  // since it, judged as an issue there too. REV-26 (P25): recorded as one.
   const enteringForceRows = target.kind === "status"
     ? docs.filter((d) => isUnguardedEntryIntoForce({ fromStatus: d.status, toStatus: newValue, hasCurrentRevision: !!d.currentVersionId }))
     : [];
@@ -154,10 +162,12 @@ export default function BulkEditModal({
               : (doc.metadata as Record<string, unknown> ?? {}),
           }, library.uniquenessKeys);
         }
-        if (target.kind === "status" && doc.id && issuingIds.has(doc.id)) {
+        if (target.kind === "status" && doc.id && (issuingIds.has(doc.id) || enteringForceIds.has(doc.id))) {
           // REV-19: an issuing row — the same checked write, then the clocks
           // and the DOCUMENT_ISSUED record (a refusal throws in the
-          // database's words, as the bare write's did).
+          // database's words, as the bare write's did). REV-26 (P25): a row
+          // put in force out of IFC too (recorded; the roster opened, the
+          // review clock left as it was).
           // changeDocumentStatus writes the status, updated_at and updated_by
           // itself; the recomputed uniqueness key rides in the same UPDATE.
           const patch: Record<string, unknown> = "uniqueness_key" in updates ? { uniqueness_key: updates.uniqueness_key } : {};
@@ -202,7 +212,7 @@ export default function BulkEditModal({
         ok += 1;
       } catch (e) {
         const reason = (e as Error).message;
-        failed.push({ doc: doc.documentNumber || doc.title || doc.id || "?", reason, issue: issuingIds.has(doc.id) && isIssueRefusal(reason) });
+        failed.push({ doc: doc.documentNumber || doc.title || doc.id || "?", reason, issue: (issuingIds.has(doc.id) || enteringForceIds.has(doc.id)) && isIssueRefusal(reason) });
       }
     }
     setResults({ ok, failed, followUps, notIssued });
@@ -289,9 +299,10 @@ export default function BulkEditModal({
           )}
 
           {!results && enteringForceRows.length > 0 && (
-            // P15 review fix: say which rows this puts in force with no database check.
+            // P15 review fix: say which rows this puts in force. REV-26 (P25):
+            // what the database does, true before and after 20261185, and the record.
             <div data-testid="bulk-entry-into-force-note" className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-900">
-              {enteringForceRows.length} of the selected row{enteringForceRows.length === 1 ? "" : "s"} ({enteringForceRows.slice(0, 5).map((d) => d.documentNumber || d.title || d.id).join(", ")}{enteringForceRows.length > 5 ? `, +${enteringForceRows.length - 5} more` : ""}) {enteringForceRows.length === 1 ? "has a status" : "have statuses"} no gate reads as in force ({[...new Set(enteringForceRows.map((d) => d.status?.trim() ? d.status : "empty"))].join(", ")}): setting {newValue} puts {enteringForceRows.length === 1 ? "its" : "their"} current revision in force — the field pack prints it and a scan reads it as current. The database does not check this change, so each row&apos;s hold is checked first and a held row is refused (named after the apply); the revision&apos;s review is not checked.
+              {enteringForceRows.length} of the selected row{enteringForceRows.length === 1 ? "" : "s"} ({enteringForceRows.slice(0, 5).map((d) => d.documentNumber || d.title || d.id).join(", ")}{enteringForceRows.length > 5 ? `, +${enteringForceRows.length - 5} more` : ""}) {enteringForceRows.length === 1 ? "has a status" : "have statuses"} no gate reads as in force ({[...new Set(enteringForceRows.map((d) => d.status?.trim() ? d.status : "empty"))].join(", ")}): setting {newValue} puts {enteringForceRows.length === 1 ? "its" : "their"} current revision in force — the field pack prints it and a scan reads it as current. Each is an issue and is recorded as one (its acknowledgment roster opens; its review clock is left as it is). Each row&apos;s hold is checked first and a held row is refused (named after the apply); since database update 20261185 the database refuses a held row too (before that update it does not check this change). The revision&apos;s review is not checked.
             </div>
           )}
 
