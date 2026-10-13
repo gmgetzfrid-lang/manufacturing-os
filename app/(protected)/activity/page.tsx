@@ -10,6 +10,19 @@
 //
 // Reads the same audit_logs table — the back-end is shared — but
 // renders for humans, not auditors.
+//
+// admin-and-org ALOG-5 (P7): the page states its authority rule. Every active
+// member reads the workspace's document-level history; the org-level
+// authority trail (permission, membership, role, team, export, restore and
+// purge rows) is readable only by holders of the admin.audit_view capability
+// (the Audit log permission). The DATABASE enforces it — audit_logs_org_access
+// plus the RESTRICTIVE audit_logs_admin_trail overlay (DEC-17, SURF-9,
+// ROLE-5; 20261063 and its re-creations) — so this page shows each reader only
+// the rows they may read; it adds no gate of its own.
+// drafting-flow EVID-12: a TICKET_<ACTION> attempt row is read together with
+// the _NOT_APPLIED / _HOLDS_NOT_RELEASED row that names it (lib/auditActions.ts
+// pairTicketAttempts): the attempt line says the outcome and the follow-up
+// line folds into it.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -23,6 +36,7 @@ import ViewTabs, { ACTIVITY_VIEWS } from "@/components/navigation/ViewTabs";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
 import { SCOPE_STAMP_ACTIONS, SCOPE_STAMPS_NOT_IN } from "@/lib/timeline";
+import { pairTicketAttempts } from "@/lib/auditActions";
 
 interface ActivityRow {
   id: string;
@@ -172,12 +186,17 @@ export default function ActivityFeedPage() {
 
   useEffect(() => { void refresh(); }, [refresh]);
 
+  // EVID-12: a follow-up row whose attempt is loaded folds into the attempt's line.
+  const pairing = useMemo(() => pairTicketAttempts(rows), [rows]);
+
   // Group rows by day for the timeline
   const grouped = useMemo(() => {
     const out: Array<{ day: string; rows: ActivityRow[] }> = [];
     const map = new Map<string, ActivityRow[]>();
     for (const r of rows) {
       if (SCOPE_STAMP_ACTIONS.has(r.action)) continue; // SEC-21: the database's stamp, not an event (its MILESTONE_DELETED row is)
+      const attempt = pairing.followUps.get(r.id);
+      if (attempt && pairing.attempts.has(attempt)) continue; // EVID-12: said on its attempt's line
       const day = new Date(r.timestamp).toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" });
       const list = map.get(day) || [];
       list.push(r);
@@ -185,7 +204,7 @@ export default function ActivityFeedPage() {
     }
     for (const [day, list] of map) out.push({ day, rows: list });
     return out;
-  }, [rows]);
+  }, [rows, pairing]);
 
   // Top-of-feed "pulse" widget: at-a-glance counts so Activity reads like a
   // dashboard, not a raw log. Buckets the loaded window by category + today.
@@ -213,7 +232,10 @@ export default function ActivityFeedPage() {
         <PageHeaderBar
           icon={Activity}
           title="Activity Feed"
-          subtitle={<>What&apos;s been happening in the workspace, in plain language. For raw event detail, see the Audit Log.</>}
+          subtitle={<>What&apos;s been happening in the workspace, in plain language. For raw event detail, see the Audit Log.{" "}
+            <span className="block mt-1 text-[11px] text-[var(--color-text-faint)]">
+              Who can read this feed: every member reads the workspace&apos;s document-level history; workspace authority events (permissions, members and roles, teams, exports, restores and purges) are shown only to people with the Audit log permission. The database applies this rule, not this page.
+            </span></>}
           actions={
             <Button variant="secondary" size="sm" onClick={refresh} disabled={loading}>
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
@@ -268,7 +290,9 @@ export default function ActivityFeedPage() {
                     const meta = ACTION_VERBS[r.action];
                     const Icon = meta?.icon ?? Activity;
                     const tone = TONE_BG[meta?.tone ?? "slate"];
-                    const verb = meta?.verb ?? r.action.toLowerCase().replace(/_/g, " ");
+                    const outcome = pairing.attempts.get(r.id)?.outcome;
+                    const verb = (meta?.verb ?? r.action.toLowerCase().replace(/_/g, " "))
+                      + (outcome === "not_applied" ? " (not applied)" : outcome === "holds_not_released" ? " (applied — its holds were not released)" : "");
                     const dm = r.resourceType === "document" ? docMeta.get(r.resourceId) : undefined;
                     const xm = !dm ? extraMeta.get(`${r.resourceType}:${r.resourceId}`) : undefined;
                     const resourceLabel = dm
