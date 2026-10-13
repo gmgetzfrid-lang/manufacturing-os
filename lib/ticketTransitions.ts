@@ -169,9 +169,14 @@ export function issueLabelFor(ticket: Pick<Ticket, "revisionCount" | "history">)
 //   a Final    — the issued number in force when it joins while the issued
 //                file is the current deliverable (PENDING_IFC, FINAL_DRAFT —
 //                submit_final's file, or one added there); a Final that joins
-//                at any other status is recorded `rev: null` and takes the
-//                label of the issue that follows (approve_draft_ifc,
-//                approve_minor_correction, engineer_approve_final);
+//                at any other status is recorded `rev: null` with the cycle
+//                it joined in (`revCycle`: revision_count then) and takes the
+//                label of the issue that closes THAT cycle (approve_draft_ifc,
+//                approve_minor_correction, engineer_approve_final). A cycle
+//                that ends in a request for revision, a reject or a reopen
+//                bumps revision_count, so a Final from a rejected round is
+//                never stamped by a later issue nobody reviewed it under: it
+//                keeps `rev: null` and prints "cannot confirm";
 //   any other  — `rev: null` (a source or reference file is no deliverable).
 //
 // A file recorded before this rule has no `rev` key at all and is never
@@ -190,11 +195,24 @@ export function joiningFileRev(ticket: Pick<Ticket, "status" | "deliverableRev">
   return null;
 }
 
-/** At an issue: every Final recorded `rev: null` (joined since, awaiting its
- *  issue) takes the issued label; a file with a label, or one recorded before
- *  per-file revisions (no key), is left exactly as it is. */
-export function stampIssuedFinals(files: TicketAttachment[], label: string): TicketAttachment[] {
-  return files.map((a) => (a.type === "Final" && a.rev === null ? { ...a, rev: label } : a));
+/** The server-decided revision fields of a file joining the ticket now:
+ *  `rev` (joiningFileRev) and, for a Final waiting for its issue, the cycle
+ *  it joined in. Whatever `rev` / `revCycle` the client sent is replaced. */
+export function joiningFileFields(
+  ticket: Pick<Ticket, "status" | "deliverableRev" | "revisionCount">,
+  file: Pick<TicketAttachment, "type">,
+): Pick<TicketAttachment, "rev" | "revCycle"> {
+  const rev = joiningFileRev(ticket, file);
+  return { rev, revCycle: rev === null && file.type === "Final" ? (ticket.revisionCount ?? 0) : undefined };
+}
+
+/** At an issue closing cycle `cycle` (the ticket's revision_count before the
+ *  issue): every Final recorded `rev: null` that joined IN that cycle takes
+ *  the issued label. A Final from an earlier, rejected round (another
+ *  revCycle, or none), a file with a label, or one recorded before per-file
+ *  revisions (no key) is left exactly as it is. */
+export function stampIssuedFinals(files: TicketAttachment[], label: string, cycle: number): TicketAttachment[] {
+  return files.map((a) => (a.type === "Final" && a.rev === null && a.revCycle === cycle ? { ...a, rev: label } : a));
 }
 
 /**
@@ -265,7 +283,7 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
 
   let currentAttachments = [...(ticket.attachments || [])];
   // PHYS-2: a redline is a reference file, never a deliverable revision.
-  if (input.redlineAttachment) currentAttachments = [...currentAttachments, { ...input.redlineAttachment, rev: null }];
+  if (input.redlineAttachment) currentAttachments = [...currentAttachments, { ...input.redlineAttachment, rev: null, revCycle: undefined }];
 
   // WF-9: set only by thread ACTIVITY (attach_file) — the people the activity
   // tells, as opposed to the readers a transition resets `unread_by` to.
@@ -301,7 +319,7 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       // reader whose earlier alert is merely outstanding keeps the marker
       // without being re-told.
       // PHYS-2: the file's revision is decided here, never taken from the client.
-      if (input.attachment) currentAttachments = [...currentAttachments, { ...input.attachment, rev: joiningFileRev(ticket, input.attachment) }];
+      if (input.attachment) currentAttachments = [...currentAttachments, { ...input.attachment, ...joiningFileFields(ticket, input.attachment) }];
       activityRecipients = Array.from(
         new Set(
           [ticket.requesterId, ticket.assignedDrafterId, ticket.assignedEngineerId, ...(ticket.watchers ?? [])].filter(
@@ -381,7 +399,7 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       updates.status = "PENDING_IFC";
       issueRev(); // SM-5: never a label the history already issued
       historyEntry.action = `${input.actionLabel} — issued Rev ${updates.deliverable_rev}`;
-      currentAttachments = stampIssuedFinals(currentAttachments, updates.deliverable_rev as string); // PHYS-2
+      currentAttachments = stampIssuedFinals(currentAttachments, updates.deliverable_rev as string, ticket.revisionCount ?? 0); // PHYS-2
       break;
     // "Fix this typo and it's approved" — the minor-correction fast path.
     // Approves the deliverable NOW (rev letter drops) with the correction
@@ -391,7 +409,7 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       updates.status = "PENDING_IFC";
       issueRev(); // SM-5: never a label the history already issued
       historyEntry.action = `Approved with minor correction — issued Rev ${updates.deliverable_rev}`;
-      currentAttachments = stampIssuedFinals(currentAttachments, updates.deliverable_rev as string); // PHYS-2
+      currentAttachments = stampIssuedFinals(currentAttachments, updates.deliverable_rev as string, ticket.revisionCount ?? 0); // PHYS-2
       // WF-21 / DEC-15: at the engineer sign-off stage this IS the engineer's
       // approval — stamp it, or the sign-off indicator stays "pending" forever.
       if (ticket.status === "PENDING_FINAL_APPROVAL") updates.engineer_approved_at = now;
@@ -414,7 +432,7 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       updates.engineer_approved_at = now;
       issueRev(); // SM-5: never a label the history already issued
       historyEntry.action = `${input.actionLabel} — issued Rev ${updates.deliverable_rev}`;
-      currentAttachments = stampIssuedFinals(currentAttachments, updates.deliverable_rev as string); // PHYS-2
+      currentAttachments = stampIssuedFinals(currentAttachments, updates.deliverable_rev as string, ticket.revisionCount ?? 0); // PHYS-2
       if (ticket.assignedDrafterId) updates.unread_by = [ticket.assignedDrafterId];
       break;
     case "engineer_request_revision":
@@ -446,7 +464,7 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
     case "submit_final":
       updates.status = "FINAL_DRAFT";
       // PHYS-2: the issued package is the label in force (PENDING_IFC), stamped here.
-      if (input.finalAttachment) currentAttachments = [...currentAttachments, { ...input.finalAttachment, rev: joiningFileRev(ticket, input.finalAttachment) }];
+      if (input.finalAttachment) currentAttachments = [...currentAttachments, { ...input.finalAttachment, ...joiningFileFields(ticket, input.finalAttachment) }];
       break;
     case "close_ticket":
     case "close_rfi":

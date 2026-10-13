@@ -12,7 +12,8 @@
 //            reopened legacy row (issued label at a review status) → in
 //            review; archived → "cannot confirm".
 //   SM-5 / PHYS-2 trust boundary: an "issued Rev N" history line above
-//            revision_count + 1 (a member's own append) never counts.
+//            revision_count + 1, or above the bound the row's own label
+//            proves (N − 1 under N<letters>, N under N), never counts.
 //   AUTHZ-12 the public answer carries revision-status facts only (no workflow
 //            status, no unit, no activity time); scans stay logged.
 //   EVID-5 / PHYS-8  the copy's record is awaited and checked, written in the
@@ -22,7 +23,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NextRequest } from "next/server";
-import { ticketVerdict, ticketVerifyUrl, lastIssuedFromHistory, ticketFactsState, ticketRevInReview } from "@/lib/verifyTicketVerdict";
+import { ticketVerdict, ticketVerifyUrl, lastIssuedFromHistory, ticketFactsState, ticketRevInReview, issueBoundFromLabel, issueOnRecord } from "@/lib/verifyTicketVerdict";
 import { ticketCopyPlan, ticketCopyControlState, ticketCopySource, recordTicketCopy, isMissingSourceColumn, ticketCopyStanding, type TicketCopyLiveFacts } from "@/lib/ticketDeliverableCopy";
 import { stampWatermark, withoutScanInstruction } from "@/lib/stamping";
 import type { TicketAttachment } from "@/types/schema";
@@ -103,6 +104,35 @@ describe("EDGE-2 — the verdict reads the request's state, not the label alone"
     expect(ticketCopyStanding("1", { status: "PENDING_REVIEW", deliverableRev: null, history: reopened.history, revisionCount: 1 })).toEqual({ kind: "in_progress" });
     // a review label's "last issue" is read under the same cap
     expect(ticketVerdict({ status: "PENDING_REVIEW", deliverable_rev: "2A", history: [issued(1), forged], revision_count: 1 }, "1").latestIssuedRev).toBe("1");
+  });
+  it("trust boundary: the row's own label bounds the history — a review label N<letters> proves issue N never happened", () => {
+    const forged = (n: number) => ({ action: `note — issued Rev ${n}`, user: "member@x.com" });
+    expect([issueBoundFromLabel("2A"), issueBoundFromLabel("1B"), issueBoundFromLabel("3"), issueBoundFromLabel(null), issueBoundFromLabel("x")]).toEqual([1, 0, 3, null, null]);
+    expect(issueOnRecord([issued(1), forged(2)], 1, "2A")).toBe("1");
+    expect(issueOnRecord([forged(1)], 0, "1A")).toBeNull();
+    expect(issueOnRecord([issued(1), forged(2)], 1, null)).toBe("2"); // no label: only the cycle cap applies
+    expect(issueOnRecord([issued(2), forged(3)], 2, "2")).toBe("2");
+    // probed row 1: 2A in review, real Rev 1, a member appends "issued Rev 2" (within revision_count + 1)
+    const review2A = { status: "PENDING_REVIEW", deliverable_rev: "2A", history: [issued(1), forged(2)], revision_count: 1 };
+    expect(ticketVerdict(review2A, "1")).toMatchObject({ verdict: "revision_in_progress", latestIssuedRev: "1", inReview: true });
+    expect(ticketVerdict(review2A, "1").verdict).not.toBe("superseded");
+    expect(ticketVerdict(review2A, "2").verdict).toBe("unknown"); // never a Rev 2 the label proves was not issued
+    // the copy footer agrees: the real latest issue is never stamped "SUPERSEDED by Rev 2"
+    const live2A: TicketCopyLiveFacts = { status: "PENDING_REVIEW", deliverableRev: "2A", history: review2A.history, revisionCount: 1 };
+    expect(ticketCopyStanding("1", live2A)).toEqual({ kind: "in_progress" });
+    expect(ticketCopyPlan({ file: { type: "Final", rev: "1" }, ticketNumber: "KE-1", ticketRowId: T, origin: ORIGIN, channel: "print", live: live2A }).footerNotice).not.toMatch(/SUPERSEDED/);
+    // probed row 2: CLOSED on 1A, never issued anything, a member appends "issued Rev 1" — still withdrawn, naming no issue
+    const closed1A = { status: "CLOSED", deliverable_rev: "1A", history: [forged(1)], revision_count: 0 };
+    for (const printed of ["1", "1A"]) {
+      expect(ticketVerdict(closed1A, printed), printed).toMatchObject({ verdict: "withdrawn", latestIssuedRev: null });
+    }
+    expect(ticketFactsState(ticketVerdict(closed1A, "1"))).toEqual({ label: "Request", value: "Withdrawn" });
+    // a CANCELED row names no issue its label rules out
+    expect(ticketVerdict({ status: "CANCELED", deliverable_rev: "1A", history: [forged(1)], revision_count: 0 }, "1").latestIssuedRev).toBeNull();
+    // an issued label N bounds the copy standing at N: a forged "issued Rev 2" never supersedes the Rev 1 in force
+    expect(ticketCopyStanding("1", { status: "FINAL_DRAFT", deliverableRev: "1", history: [issued(1), forged(2)], revisionCount: 1 })).toBeNull();
+    // a live review label with a set-aside issue line (forged, or a pre-Round-E collision): a print of it is "cannot confirm", never "review draft"
+    expect(ticketVerdict({ status: "PENDING_REVIEW", deliverable_rev: "1B", history: [issued(1)], revision_count: 0 }, "1")).toMatchObject({ verdict: "unknown", latestIssuedRev: null });
   });
   it("no phantom issue: a review label after a reject before any issue reports no latest issue when the history shows none", () => {
     // 1A rejected (cycle bumped, nothing issued) → resubmitted as 2A: cycle − 1 = 1 was never issued

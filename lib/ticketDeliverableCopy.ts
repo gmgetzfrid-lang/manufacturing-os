@@ -34,7 +34,7 @@
 
 import type { TicketAttachment } from "@/types/schema";
 import { stampWatermark, type StampControlState } from "@/lib/stamping";
-import { ticketVerifyUrl, ticketVerdict, lastIssuedFromHistory, isIssuedTicketRev } from "@/lib/verifyTicketVerdict";
+import { ticketVerifyUrl, ticketVerdict, issueOnRecord, isIssuedTicketRev } from "@/lib/verifyTicketVerdict";
 
 export type TicketCopyChannel = "print" | "download";
 
@@ -67,15 +67,18 @@ export interface TicketCopyLiveFacts {
   deliverableRev: string | null;
   history: unknown;
   /** The server-guarded cycle count: a history "issued Rev N" line above
-   *  revisionCount + 1 is not an approval's (any member may append history
-   *  in their own name) and never marks a file superseded. */
+   *  revisionCount + 1, or above the bound the live label proves (N − 1
+   *  under a review label N<letters>, N under an issued label N), is not an
+   *  approval's (any member may append history in their own name) and never
+   *  marks a file superseded. */
   revisionCount?: number | null;
 }
 
 /** Where an issued file stands against the ticket as the page holds it.
  *  Superseded: a later number is issued — on the row (deliverable_rev) or in
- *  the history's "issued Rev N" lines (only those at or below
- *  revisionCount + 1 — the trust boundary in lib/verifyTicketVerdict.ts),
+ *  the history's "issued Rev N" lines (only those within revisionCount + 1
+ *  and the live label's bound — issueOnRecord, the trust boundary in
+ *  lib/verifyTicketVerdict.ts),
  *  whichever is higher. In progress: the
  *  file IS the last issue and the verify ladder reads the ticket as being
  *  re-worked (ticketVerdict's revision_in_progress — reopened, sent back, or
@@ -84,7 +87,7 @@ export interface TicketCopyLiveFacts {
 export function ticketCopyStanding(rev: string | null, live: TicketCopyLiveFacts | null | undefined): TicketCopyStanding | null {
   if (!live || !isIssuedTicketRev(rev)) return null;
   const fromRow = isIssuedTicketRev(live.deliverableRev) ? parseInt(live.deliverableRev, 10) : null;
-  const fromHistory = lastIssuedFromHistory(live.history, live.revisionCount);
+  const fromHistory = issueOnRecord(live.history, live.revisionCount, live.deliverableRev);
   const latest = Math.max(fromRow ?? 0, fromHistory ? parseInt(fromHistory, 10) : 0);
   if (latest > parseInt(rev, 10)) return { kind: "superseded", by: String(latest) };
   const v = ticketVerdict({ status: live.status, deliverable_rev: live.deliverableRev, history: live.history, revision_count: live.revisionCount }, rev);

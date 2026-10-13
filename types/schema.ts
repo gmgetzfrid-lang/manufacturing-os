@@ -1116,6 +1116,11 @@ export interface TicketAttachment {
    *  absent = a file from before revisions were recorded per file, which
    *  prints "cannot confirm which printing" and a QR with no ?r=. */
   rev?: string | null;
+  /** drafting-flow DF-P10: on a Final recorded `rev: null`, the ticket's
+   *  revision_count when it joined — only the issue closing that cycle stamps
+   *  it (a Final from a rejected round is never stamped by a later issue).
+   *  Server-set by lib/ticketTransitions.ts; absent on every other file. */
+  revCycle?: number;
 }
 
 export interface TicketComment {

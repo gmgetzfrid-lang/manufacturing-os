@@ -302,7 +302,7 @@ components/viewers/SecureDocViewer.tsx:52-59 —
 3. ◐ The two ticket writes are awaited and checked (this pass); `MultiDocViewer` checks its insert (P8); `components/assets/FileReferenceModal.tsx:189` awaits but discards `{ error }`, and `components/viewers/SecureDocViewer.tsx:83-92` still fires the VIEW row with an un-awaited `.catch` — neither is in DF-P10's files.
 4. ◐ `lib/__tests__/downloadAudits.test.ts` pins the policy set by shape; no test runs a member session against a database (none in CI). `20261068`'s own probes check the live policy set at paste.
 
-**Scope / residual.** Remainders, for the integrator to own (DEC-31): the two viewer sites in done-when 3 (`FileReferenceModal.tsx:189`, `SecureDocViewer.tsx:83-92` — proposed owner: document-control, the viewer surfaces; no current package lists either file); done-when 1's server-side write (a design call: a server stamping route for ticket files); done-when 2 closes on the `20261068` paste.
+**Scope / residual.** Each remainder is opened as its own finding with a named owner (DEC-31; review fix pass 4 — the first passes left them "for the integrator to own", which is no owner): the two viewer sites in done-when 3 → [`EVID-15`](#evid-15) (owner: document-control, the viewer surfaces); done-when 1's record in the same server request → [`EVID-16`](#evid-16) (owner: DF-P10 follow-up, a server stamping route for ticket files); the ticket columns the distribution record lacks → public-surfaces [`PHYS-17`](../public-surfaces/03-physical-bridge.md#phys-17) (owner: DF-P10 follow-up, with a migration number from the integrator). Done-when 2 closes on the `20261068` paste. All three are listed for the integrator's scheduling in DF-P10's report.
 
 ---
 
@@ -790,5 +790,61 @@ lib/drawingAuditLog.ts:141-148 (no audited_at emitted) —
 - [ ] audited_at (and an actor/source column distinguishing engine-run from orchestrator-tool from human) is written on every upsert
 - [ ] The orchestrator's log_audit_completion cannot downgrade a more severe existing verdict without an explicit human confirmation that is itself recorded in audit_logs
 - [ ] A test proves re-recording the same (sheet, revision) preserves the earlier verdict and its findings
+
+---
+
+<a id="evid-15"></a>
+
+## EVID-15 · Two viewer copy / view records still discard their outcome — the linked-drawings print never reads the insert's `{ error }`, and the secure viewer's VIEW row is fired un-awaited
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** document-control (the viewer surfaces, `components/assets/FileReferenceModal.tsx` and `components/viewers/SecureDocViewer.tsx`; no current package lists either file) — named by drafting-flow Round G DF-P10, 2026-10-13, from `EVID-5` done-when 3 (DEC-31); the integrator schedules the package.
+- **Verification:** CONFIRMED on `596d34e` and on DF-P10's branch (neither file is changed by it).
+- **Locations:** `components/assets/FileReferenceModal.tsx:189`, `components/viewers/SecureDocViewer.tsx:83-92`
+- **Independently verified:** — opened 2026-10-13 by DF-P10's review fix pass 4 from `EVID-5`'s remainder; not yet challenged by a second party.
+
+**Mechanism.** `EVID-5` done-when 3 asks that no download or print record be written with `void` or a discarded promise. DF-P10 closed the ticket copy's two writes. Two sites outside its files remain: the linked-drawings print awaits its `download_audits` insert inside `try { … } catch`, but never destructures `{ error }`, so a refused insert (RLS, a missing column) passes as a success; the secure viewer fires `logAuditAction({ action: 'VIEW', … })` with only a `.catch` (not awaited, and a `{ ok: false }` result is ignored).
+
+**Failure scenario.** Before `20261068` is pasted, or under any policy refusal, a field user prints the linked drawings of a pump from its asset page: the copies leave and the distribution record has no row, with nothing said. A document opened in the secure viewer when the audit insert is refused leaves no VIEW row, again with nothing said.
+
+**Evidence.**
+
+```
+components/assets/FileReferenceModal.tsx:189 —
+  try { await supabase.from("download_audits").insert(rows); } catch (e) { console.error(e); }
+
+components/viewers/SecureDocViewer.tsx:83-92 —
+  logAuditAction({ action: 'VIEW', resourceId: documentId, … }).catch(e => console.error("Audit log failed", e));
+```
+
+**Done when.**
+
+- [ ] `FileReferenceModal`'s print reads the insert's `{ error }` and says a refusal in words after the copy (DEC-44's member-writer rule: a refused record never blocks the copy, it is said)
+- [ ] `SecureDocViewer`'s VIEW row is awaited and its result checked (logged as refused, never a silent success)
+- [ ] A test pins both sites (no un-checked insert, no fire-and-forget audit row)
+
+---
+
+<a id="evid-16"></a>
+
+## EVID-16 · A drafting-ticket copy is stamped and recorded in the browser, not in the server request that issues the stamped file — a client that skips the record still gets the copy
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** drafting-flow DF-P10 follow-up (DF-P10 owns the copy plan, `lib/ticketDeliverableCopy.ts`, and the ticket page's `FileViewerModal`) — opened by DF-P10's review fix pass 4, 2026-10-13, from `EVID-5` done-when 1 (DEC-31); the integrator schedules it.
+- **Verification:** CONFIRMED on DF-P10's branch.
+- **Locations:** `app/(protected)/requests/[id]/page.tsx` (`FileViewerModal`, the print and download paths), `lib/ticketDeliverableCopy.ts` (`recordTicketCopy`)
+- **Independently verified:** — opened 2026-10-13 by DF-P10; not yet challenged by a second party.
+
+**Mechanism.** The ticket file is fetched from a presigned URL, stamped in the browser (`stampPdf`), and only then recorded by `recordTicketCopy` from the same browser session. DF-P10 made the record awaited, checked and said when refused (`EVID-5`'s ticket half), but no server request issues the stamped file, so nothing ties the copy to its record: a modified client, or a direct fetch of the presigned URL, takes the file with no `download_audits` row and no `audit_logs` DOWNLOAD row.
+
+**Failure scenario.** A member with read access to a ticket copies the presigned URL from the network tab and downloads the Final unstamped; no distribution row exists, so a later recall of that revision cannot name the holder.
+
+**Done when.**
+
+- [ ] A server route issues the stamped ticket file (stamp server-side, as `/api/documents/[id]/download` does for register documents) and writes the distribution row and the audit row in the same request, refusing to issue when the record cannot be written, or recording the refusal (DEC-44)
+- [ ] The ticket page's print and download go through it; the presigned URL of a ticket Final is no longer handed to the browser for copying
+- [ ] A route test pins the record written in the same request as the bytes
 
 ---

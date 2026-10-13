@@ -707,10 +707,10 @@ app/api/verify-ticket/route.ts:9-10 (the claim) —
 
 **Done-when.**
 1. ✓ `ticketStatus` and `unit` are dropped (and `lastActivityAt` — internal activity, not a revision fact).
-2. ✓ as ruled. Per-IP: PS-VERIFY's limiter (`lib/verifyRateLimit.ts`, consumed, not forked). Per ticket id: not built — the ruling keeps the limit on PS-VERIFY's per-IP substrate; every scan of a ticket is a `verify_scans` row (target UUID, IP), so a per-ticket poller is visible. Archived tickets answer the generic "cannot confirm" with no live state ✓. Closed-long-ago tickets keep answering revision-status facts — by the ruling ("a scanned QR keeps answering forever"; the field must be able to scan an old print).
+2. Amended by the integrator's ruling — not ✓ as written (`DEC-29`): no per-ticket limit exists, and closed-long-ago tickets keep answering. Per-IP: PS-VERIFY's limiter (`lib/verifyRateLimit.ts`, consumed, not forked). Per ticket id: not built — the ruling keeps the limit on PS-VERIFY's per-IP substrate; every scan of a ticket is a `verify_scans` row (target UUID, IP), so a per-ticket poller is visible. Archived tickets answer the generic "cannot confirm" with no live state ✓. Closed-long-ago tickets keep answering revision-status facts — by the ruling ("a scanned QR keeps answering forever"; the field must be able to scan an old print).
 3. ✓ The route comment matches the payload field for field (pinned).
 
-**Scope / residual.** None. Reversal: a stated need for a per-ticket cap adds a target term to `checkVerifyRate` (public-surfaces' file).
+**Scope / residual.** None beyond the ruling's own amendment of done-when 2 (per-ticket limit and closed-long-ago answers, above). Reversal: a stated need for a per-ticket cap adds a target term to `checkVerifyRate` (public-surfaces' file).
 
 ---
 

@@ -58,7 +58,13 @@
 // "issued Rev N" line is evidence only up to the cycle the server-guarded
 // revision_count allows: a real issue N happens at revision_count N − 1 and
 // revision_count never goes down, so a line above revision_count + 1 was
-// not written by an approval and is ignored.
+// not written by an approval and is ignored. The row's own label proves a
+// tighter bound (issueOnRecord): a review label N<letters> means issue N has
+// not happened, so the last issue is at most N − 1; an issued label N means
+// it is N. A line above that bound is ignored too. What a forged line can
+// still do is a line AT or below the bound, which the row cannot tell from a
+// real issue: the guard limb refusing client-appended "issued Rev" entries
+// (proposed under SM-5) closes it.
 
 export type TicketVerdict =
   | "current"
@@ -119,6 +125,27 @@ export function lastIssuedFromHistory(history: unknown, revisionCount?: number |
   return best === null ? null : String(best);
 }
 
+/** The bound the row's own label puts on the last issue: N − 1 under a
+ *  review label N<letters> (0 = nothing can have been issued), N under an
+ *  issued label N, null with no label (only the cycle cap applies). */
+export function issueBoundFromLabel(rev: string | null | undefined): number | null {
+  if (typeof rev !== "string" || !TICKET_REV_RE.test(rev)) return null;
+  return isIssuedTicketRev(rev) ? cycleOf(rev) : cycleOf(rev) - 1;
+}
+
+/** The last issue the history proves, under BOTH trust caps: the cycle cap
+ *  (revision_count + 1) and the row's label (issueBoundFromLabel). null when
+ *  no issue line survives them. The verdict and the copy standing read this;
+ *  the SM-5 re-cycle does not (it must see a legacy collision AT the label). */
+export function issueOnRecord(history: unknown, revisionCount: number | null | undefined, deliverableRev: string | null | undefined): string | null {
+  const fromHistory = lastIssuedFromHistory(history, revisionCount);
+  if (fromHistory === null) return null;
+  const bound = issueBoundFromLabel(deliverableRev);
+  if (bound === null) return fromHistory;
+  const n = Math.min(parseInt(fromHistory, 10), bound);
+  return n >= 1 ? String(n) : null;
+}
+
 /** The verdict for a print of `printedRev` (already upper-cased and trimmed;
  *  "" when the QR names no revision) against the ticket as it stands. */
 export function ticketVerdict(row: VerifyTicketRowFacts, printedRev: string): TicketVerdictResult {
@@ -133,8 +160,14 @@ export function ticketVerdict(row: VerifyTicketRowFacts, printedRev: string): Ti
   const terminal = !!status && TERMINAL.has(status);
   const issuedLabel = isIssuedTicketRev(currentRev);
   const letterLabel = !!currentRev && !issuedLabel;
-  // The EVIDENCE of an issue: the history line every approval writes.
-  const issuedInHistory = lastIssuedFromHistory(row.history, row.revision_count);
+  // The EVIDENCE of an issue: the history line every approval writes, under
+  // the cycle cap and the label's own bound (the trust boundary above).
+  const issuedInHistory = issueOnRecord(row.history, row.revision_count, currentRev);
+  // A history issue line the label's bound set aside: forged, or a ticket
+  // reopened before Round E whose real Rev N collides with its review label
+  // N<letters> (LEAK-7) — the row cannot tell which, so a print of it is
+  // "cannot confirm", never a "review draft" verdict.
+  const issueLineSetAside = issuedInHistory !== lastIssuedFromHistory(row.history, row.revision_count);
 
   // EDGE-2: a CANCELED request is withdrawn whatever the rev arithmetic —
   // never current, superseded or draft, even for a QR with no revision.
@@ -210,8 +243,9 @@ export function ticketVerdict(row: VerifyTicketRowFacts, printedRev: string): Ti
   } else if (latestIssued && printedRev === latestIssued) {
     verdict = "current";
   } else if (inReview && !latestIssued) {
-    // Printed an issued number but nothing has ever been issued — stale data.
-    verdict = "draft_copy";
+    // Printed an issued number but nothing has ever been issued — stale data;
+    // "cannot confirm" when an issue line was set aside by the label's bound.
+    verdict = issueLineSetAside ? "unknown" : "draft_copy";
   } else {
     verdict = "unknown";
   }
