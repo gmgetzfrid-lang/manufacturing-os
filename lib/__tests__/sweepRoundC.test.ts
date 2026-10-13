@@ -28,14 +28,19 @@ const state = vi.hoisted(() => ({
 
 function chain(table: string) {
   const c: Record<string, unknown> = {};
+  // The trace's tag-index read pages by key (ING-10 / I-21): a page after
+  // the first carries a cursor (`.gte(...)`). Every seed here fits one page,
+  // so the page after it is empty, as PostgREST answers it.
+  let afterCursor = false;
   const handler: ProxyHandler<Record<string, unknown>> = {
     get(_t, prop: string) {
       if (prop === "then") {
         return (resolve: (v: unknown) => void) => resolve(state.errors[table]
           ? { data: null, error: state.errors[table] }
-          : { data: state.lists[table] ?? [], error: null });
+          : { data: afterCursor ? [] : state.lists[table] ?? [], error: null });
       }
       return (...args: unknown[]) => {
+        if (prop === "gte" && table === "knowledge_page_entities") afterCursor = true;
         if (prop === "or") state.orCalls.push({ table, list: String(args[0]) });
         if (prop === "insert") state.inserts.push({ table, row: args[0] as Record<string, unknown> });
         if (prop === "maybeSingle") return Promise.resolve({ data: state.single[table] ?? null, error: null });
@@ -240,8 +245,8 @@ describe("SURF-7 / EGRESS-3 — reads and acts are filtered through the caller",
   it("trace_pid_lines: a sheet the caller cannot read is neither walked nor named; a controller sees the same-sheet hit", async () => {
     seedMirrors();
     state.lists.knowledge_page_entities = [
-      { document_id: "k1", page: 1, kind: "equipment", tag: normalizeTag("E-101") },
-      { document_id: "k1", page: 1, kind: "equipment", tag: normalizeTag("P-201") },
+      { id: "e1", document_id: "k1", page: 1, kind: "equipment", tag: normalizeTag("E-101") },
+      { id: "e2", document_id: "k1", page: 1, kind: "equipment", tag: normalizeTag("P-201") },
     ];
     const denied = await run("trace_pid_lines", { start_tag: "E-101", end_tag: "P-201" }, ctxFor(["Viewer"]));
     expect((denied.data as { found: boolean }).found).toBe(false);
