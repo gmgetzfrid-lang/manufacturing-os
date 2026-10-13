@@ -545,6 +545,8 @@ creation.
 
 **Related findings:** `FRIC-1`, `LEAK-1`, `LEAK-2`, `LIFE-9`.
 
+*Landed 2026-10-13 (drafting-flow Round G, DF-P3): acceptance 1 and 3 — `lib/ticketSla.ts` + step 5b of the maintenance cron warn the owner of the current status at 75 % of the window and escalate a breach to them, the assignment queue and the requester, once each, through `emit()` (bell + email). Acceptance 2 holds in that form (the breach reaches the queue that can reassign). Acceptance 4 (a collision ticket gets a due date) → DF-P2's create route. See [`DEC-44 (DF-P3)`](../DECISIONS.md#dec-44-df-p3), `EDGE-7`, `ROUTE-9`.*
+
 ---
 
 <a id="gap-107"></a>
@@ -591,6 +593,8 @@ the flow.
 3. `CANCELED` is reachable (`DEC-14`).
 
 **Related findings:** `LEAK-9`, `WF-17`.
+
+*Landed 2026-10-13 (drafting-flow Round G, DF-P3): acceptance 2 and 3 — `tickets.outcome` (`20261195`, pending paste) and "How Requests Ended" on `/admin/analytics`. Acceptance 1 holds at the route; the request page's picker is DF-P9's. The list is the ratified five, in code and a CHECK; org-configurable later. See [`DEC-44 (DF-P3)`](../DECISIONS.md#dec-44-df-p3), `LEAK-9`.*
 
 ---
 

@@ -309,7 +309,7 @@ app/api/verify-ticket/route.ts:82-83 (verdict from deliverable_rev alone) —
 ## SM-6 · "Reject / Return to Requester" and "Return with Questions" both dump the ticket into REVISION_REQ, where a ticket with no assigned drafter has zero legal actions and appears on nobody's attention list
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/ticketTransitions.ts:273-279`, `lib/workflow.ts:102-108`, `lib/workflow.ts:126-131`, `lib/workflow.ts:166-194`, `lib/ticketAttention.ts:62-110`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The dead-end is real for the requester and REVISION_REQ is genuinely absent from every role-based attention rule, but two parts of the claim are wrong: 'zero legal actions' ignores that any member holding the Drafter role satisfies allows('ticket.draft_work') and gets Save Progress / Submit Draft there (plus Admin force-close, workflow.ts:345-349), and 'appears on nobody's attention list' ignores that the reject transition puts the requester in unread_by (ticketTransitions.ts:140), which produces a bell row, an email, and an unread item in the attention feed (useTicketNotifications.ts:254-255). LOW.
@@ -361,6 +361,16 @@ if (ticket.assignedDrafterId === uid) {
 - [ ] REVISION_REQ (and DRAFTING) with `assignedDrafterId == null` offers `assign` to `ticket.assign` holders, so the ticket can always be re-owned
 - [ ] `isActionRequired` returns true for management on a REVISION_REQ/DRAFTING ticket with no assigned drafter
 - [ ] A test enumerates every TicketStatus × (drafter assigned / not) and asserts at least one non-force-close action exists for someone
+
+**Resolution (2026-10-13, drafting-flow Round G).** DF-P3 ROUTING, base `5378ccb` (with `ROUTE-1`). `lib/ticketTransitions.ts:173`, `:346`, `:367`: a revision with no drafter returns to `PENDING_ASSIGNMENT` (a scope review from `PENDING_ENG_TEAM` does not advance the revision cycle — the chain reaction's mislabelled `2A`); `lib/workflow.ts:356`: a drafterless `REVISION_REQ` / `DRAFTING` offers `assign` to `ticket.assign` holders; `lib/ticketTransitions.ts:275`: assigning a drafter to a drafterless revision keeps it `REVISION_REQ`. The reason rides the required comment and the history line, as before. `supabase/migrations/20261195_df_roundG_outcome_and_departure.sql` moves the stragglers (pending paste).
+
+**Done-when.**
+1. ✓ `reject` from `PENDING_ENG_TEAM` (the only pre-assignment status left — DEC-14 retired `NEW` / `PENDING_ENG_INITIAL`) lands in `PENDING_ASSIGNMENT` with the reason recorded (`dfRoundG_P3_routing.test.ts`, route test "Return with Questions → PENDING_ASSIGNMENT").
+2. ✓ `REVISION_REQ` and `DRAFTING` with no drafter offer `assign` to `ticket.assign` holders.
+3. ✓ `isActionRequired` is true for management on both.
+4. ✓ A test enumerates every `TicketStatus` × (drafter / none) and asserts someone has a non-force-close action — `CANCELED` excepted: it is terminal by decision (DEC-14, and DEC-84: a canceled request is not reopened).
+
+**Scope / residual.** `ROUTE-1` done-when 2 (the attention label) → DF-P9. Pending migration: `supabase/migrations/20261195_df_roundG_outcome_and_departure.sql` (stragglers).
 
 ---
 

@@ -66,6 +66,20 @@ lib/ticketAttention.ts:67-70 (the only REVISION_REQ clause) —
 - [ ] Either "Return with Questions" from PENDING_ENG_TEAM routes to PENDING_ASSIGNMENT rather than REVISION_REQ, or the REVISION_REQ transition fans out to the assignment role pool.
 - [ ] A test asserts a REVISION_REQ ticket with `assignedDrafterId: null` is action-required for at least one role under every default-policy role.
 
+**Partial (2026-10-13, drafting-flow Round G).** DF-P3 ROUTING, base `5378ccb`. Reproduced: `reject` from `PENDING_ENG_TEAM` (no drafter yet) set `REVISION_REQ` (`lib/ticketTransitions.ts:339-345` on the base).
+- `lib/ticketTransitions.ts:173` / `:346` / `:367` — a revision with NO drafter (`reject`, `request_revision`, `reject_final`, `engineer_request_revision`) returns to `PENDING_ASSIGNMENT`; an engineering scope review is not a deliverable round, so it does not advance `revision_count`. With a drafter every revision lands in `REVISION_REQ` exactly as before.
+- `lib/workflow.ts:356` — a `REVISION_REQ` or `DRAFTING` ticket with no drafter offers `assign` (not optional) to `ticket.assign` holders; assigning keeps a revision a revision (`lib/ticketTransitions.ts:275`).
+- The route routes the queue on that entry (`LEAK-1`). `supabase/migrations/20261195_df_roundG_outcome_and_departure.sql` §4(b) moves the drafterless `REVISION_REQ` stragglers to `PENDING_ASSIGNMENT` with a history line and a bell row to the queue (pending paste).
+- Tests: `lib/__tests__/dfRoundG_P3_routing.test.ts` ("ROUTE-1 / SM-6").
+
+**Done-when.**
+1. ✓ A drafterless `REVISION_REQ` is action-required for management (the engine's `assign`) and for the Drafter claim pool (`canActAsDrafter`) — `isActionRequired` asserted for Admin, DraftingSupervisor, Manager and a pool Drafter.
+2. ✗ `attentionLabel(status)` still reads "Drafting in progress" for every `REVISION_REQ` — it takes no drafter. After this package no transition produces an ownerless `REVISION_REQ` and 20261195 moves those that exist, so the label describes an owned ticket in every path the app takes; the distinction itself is a one-line change in `lib/ticketAttention.ts`, which DF-P9 owns. **Owner: DF-P9** (`attentionLabel(status, hasDrafter)`, with GAP-108's "who it waits on").
+3. ✓ "Return with Questions" from `PENDING_ENG_TEAM` routes to `PENDING_ASSIGNMENT`, and that entry fans out to the assignment pool.
+4. ✓ A test asserts a drafterless `REVISION_REQ` is action-required for at least one role under the default policy (above).
+
+**Scope / residual.** Done-when 2 → DF-P9. Pending migration: `supabase/migrations/20261195_df_roundG_outcome_and_departure.sql` (the stragglers; until it is pasted they are action-required for the queue and the drafting pool through the engine, and the paste moves them).
+
 ---
 
 <a id="route-2"></a>
@@ -184,6 +198,18 @@ self.addEventListener("push", (event) => {
 - [ ] Either a code path writes PENDING_ENG_INITIAL, or that status, its routing case, its workflow case, its attention clauses and its tests are deleted together so no future reader mistakes them for live policy.
 - [ ] Either push subscription + a VAPID sender are implemented, or public/sw.js's push handler and the push_subscriptions migration's 'reach you even when the app is closed' claim are removed.
 
+**Partial (2026-10-13, drafting-flow Round G).** DF-P3 ROUTING, base `5378ccb`. Re-verified the three limbs.
+- (b) ✓ The engineer-initial branch is gone (DEC-14, Round E); `lib/ticketRouting.ts`'s header no longer describes it and names the routed statuses and their callers as they run.
+- (a) ✗ No ticket notice walks `lib/notify/recipients.ts` `resolveFollowers` — the two ticket routes fold `tickets.watchers` into their own fan-out (the transition's `unread_by`, now unconditional — `ROUTE-6`; the comment route's merge). `lib/ticketRouting.ts`'s header now says so. But the follower resolver's ticket branch and its "EVERY follow/subscribe mechanism" header (`lib/notify/recipients.ts:1-12`, `:72-80`) are unchanged: that file is not in this package's brief. **Owner: notifications** (the package that next edits `lib/notify/recipients.ts` — N14 or a later one; the integrator confirms): remove the ticket branch or say the ticket routes are its only consumers.
+- (c) ✗ Web push → notifications `TAX-12` (`03-taxonomy.md`, OPEN; package N10 PUSH builds the channel). Pointer only.
+
+**Done-when.**
+1. ✗ (above, owner notifications).
+2. ✓ No code path writes `PENDING_ENG_INITIAL`, and its routing case, workflow case, attention clauses and tests are gone (DEC-14; `lib/__tests__/ticketRouting.test.ts` "the retired PENDING_ENG_INITIAL entry stage has no routing branch").
+3. ✗ → notifications `TAX-12` (N10).
+
+**Scope / residual.** Stays OPEN on (a) and (c), each with the owner named above.
+
 ---
 
 <a id="route-4"></a>
@@ -239,7 +265,7 @@ contrast app/(protected)/requests/new/page.tsx:342-353 —
 ## ROUTE-5 · Role routing runs only at ticket creation — no state transition ever consults it, so a request re-entering the assignment queue is announced to nobody in that queue
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/ticketTransitions.ts:140`, `lib/ticketTransitions.ts:190`, `lib/ticketTransitions.ts:317`, `app/api/tickets/workflow-action/route.ts:148`, `app/api/tickets/workflow-action/route.ts:310`, `lib/ticketRouting.ts:64`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The mechanical claim is right — no transition ever consults lib/ticketRouting, so the DraftingSupervisor pool gets no bell row and no email when a ticket re-enters PENDING_ASSIGNMENT. But 'announced to nobody in that queue' overstates it: lib/ticketAttention.ts:84-93 makes PENDING_ASSIGNMENT action-required for every management/DraftingSupervisor role and :79 for every Drafter, so the ticket does appear in their sidebar badge and /inbox feed. Missing push, not missing visibility — LOW.
@@ -295,6 +321,15 @@ lib/ticketRouting.ts:64 (the policy that never runs) —
 
 **Scope / residual.** Handed on, binding (fleet plan): `PENDING_IFC` re-entry never routes → **DF-P3** (under `LEAK-1`: route on every entry into a routed status, add the originating engineer, correct the two comments).
 
+**Resolution (2026-10-13, drafting-flow Round G).** Closed with `LEAK-1` (DF-P3 ROUTING, base `5378ccb`): the route routes every entry into a routed status, `PENDING_IFC` included (`app/api/tickets/workflow-action/route.ts:563`; `lib/ticketRouting.ts` `routedPool()` `:149` — the queue's owners plus the originating engineer).
+
+**Done-when.**
+1. ✓ `PENDING_ASSIGNMENT` (since `WF-19`) and `PENDING_IFC` (now) union their pool into `unread_by` and the fan-out server-side — `lib/__tests__/dfRoundG_P3_routing.test.ts` ("approve → PENDING_IFC tells the supervisor pool and the originating engineer").
+2. ✓ Unchanged: `lib/__tests__/sweepRoundE_A.test.ts` "WF-19" drives `approve_team` with no drafter.
+3. ✓ The rule is wired, so both documents describe behaviour that runs: `lib/ticketRouting.ts`'s header and `resolveTicketRecipients` doc name the `PENDING_IFC` pool, and `lib/ticketAttention.ts:24-27` ("A supervisor is told about a PENDING_IFC package") is now true — no edit to that file (DF-P9's) was needed.
+
+**Scope / residual.** None.
+
 ---
 
 <a id="route-6"></a>
@@ -302,7 +337,7 @@ lib/ticketRouting.ts:64 (the policy that never runs) —
 ## ROUTE-6 · The Watch button on a ticket is silently defeated whenever the acting user is the only personal stakeholder — self-assignment is a completely silent transition
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/ticketTransitions.ts:296`, `lib/ticketTransitions.ts:300`, `lib/ticketTransitions.ts:317`, `app/api/tickets/workflow-action/route.ts:310`, `app/(protected)/requests/[id]/page.tsx:1774`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The general guard bug is real (a transition whose only stakeholder is the actor drops every watcher), but the headline scenario is false: on 'Pick Up Ticket' the drafter is not the requester, so unread_by = [requesterId], line 300 fires, and the watching supervisor is notified. The silent case is the narrow one where the actor is both requester and (non-)drafter — hence LOW.
@@ -349,6 +384,19 @@ app/api/tickets/workflow-action/route.ts:309-310 —
 - [ ] `self_assign` (and any other status-changing action) always produces a non-empty recipient set when watchers or a responsible role pool exist.
 - [ ] The stale-notification supersede in app/api/tickets/workflow-action/route.ts runs on every committed transition, not only when `recipients.length > 0` — move it above the early return.
 - [ ] A test asserts that a transition where the actor is the sole personal stakeholder still fans out to `ticket.watchers`.
+
+**Resolution (2026-10-13, drafting-flow Round G).** DF-P3 ROUTING, base `5378ccb`. Reproduced first: `computeTransition` folded watchers only when `unread_by` was already non-empty, and `fanOut` returned on an empty recipient list before the supersede step.
+- `lib/ticketTransitions.ts:405` — the watcher union is unconditional; the actor is still excluded.
+- `app/api/tickets/workflow-action/route.ts:1096` — only thread ACTIVITY (`attach_file`) with nobody to tell returns early; a transition always reaches the supersede step, even when it tells nobody, and then stops before the bell rows (`if (audience.length === 0) return;`, N6's line, unchanged).
+- Tests: `lib/__tests__/dfRoundG_P3_routing.test.ts` ("ROUTE-6"): a Drafter picking up their own request tells the people following it; the actor is never told; a self-assignment that tells nobody still retires the queue's "needs a drafter" alert (`metadata.superseded_by: "self_assign"`) and records `notified: 0`; an attachment with nobody to tell retires nothing (WF-9's rule kept).
+
+**Done-when.**
+1. ✓ The union is unconditional, actor excluded (`:405`).
+2. ✓ `self_assign` produces a non-empty recipient set whenever watchers exist, and every entry into a status with a responsible pool adds the pool (`LEAK-1`).
+3. ✓ The supersede runs on every committed transition, not only when `recipients.length > 0` (route `:1096`).
+4. ✓ Test: a transition where the actor is the sole personal stakeholder fans out to `ticket.watchers` (above).
+
+**Scope / residual.** None.
 
 ---
 
@@ -498,6 +546,16 @@ const scans: Array<[string, (orgId: string) => Promise<number>]> = [
 - [ ] The SLA recipient set is the role pool responsible for the ticket's CURRENT status (via a fixed resolveTicketRecipients), not just requester/drafter — an overdue PENDING_ASSIGNMENT ticket has no drafter to nag.
 - [ ] A test asserts that a ticket with `target_completion_at` in the past and status not in (CLOSED, CANCELED) produces exactly one notification per scan run per recipient (i.e. the scan is idempotent across daily runs).
 - [ ] Either `sla_defaults` is read to seed per-org SLA windows, or the table and the `DEFAULT_SLA_DAYS` comment referencing it (lib/notifications.ts:235) are reconciled so the code does not describe a configuration surface that does not exist.
+
+**Partial (2026-10-13, drafting-flow Round G).** DF-P3 ROUTING, base `5378ccb` — the build is `GAP-106`, recorded in full on `EDGE-7` (same root cause): `lib/ticketSla.ts` + step 5b of `app/api/cron/maintenance/route.ts:351`.
+
+**Done-when.**
+1. ✓ A server-side scan in the maintenance cron selects open tickets whose target is past or within the warn window (75 %) and emits with `category: "sla"`, so `email_on_sla_warning` gates something real (`lib/notify/dispatch.ts` maps `sla` → `sla_warning`; `lib/notificationPrefs.ts` honours it).
+2. ✓ The recipients are the party the CURRENT status waits on plus its routed pool (`LEAK-1`'s resolver), the queue when nobody is named — an overdue `PENDING_ASSIGNMENT` ticket goes to the queue, not a drafter (`lib/__tests__/ticketSla.test.ts`).
+3. ✓ A ticket past its target produces exactly one notice per recipient per stage across runs (stamped compare-and-set; `ticketSla.test.ts` "a second run the same day sends nothing", "later runs read nothing").
+4. ✗ in part — the scan reads `sla_defaults` for a ticket with no target, but creation does not seed from it and `lib/notifications.ts:321`'s "first fallback when an org hasn't configured sla_defaults rows" comment still describes a lookup creation never makes. **Owner: DF-P2** (the create route stamps from `sla_defaults` first, and corrects the comment).
+
+**Scope / residual.** Done-when 4 → DF-P2 (see `EDGE-7`).
 
 ---
 

@@ -417,6 +417,22 @@ DF-P1 RAILS closed 14 of its 26 ids (code half; migration `20261166` pending pas
 
 *DF-P1 fix pass 2 (2026-10-02): two rows are withdrawn. `DEC-89` item 2 now implements the fleet plan's default — the workflow route writes the audit row before anything is applied and refuses the transition (500 `audit_unwritable`, nothing applied) when it cannot — so it no longer awaits the user's ratification, and the request page needs no `applied: true` handling (DF-P9): a refused transition is a plain failure and a retry applies once. Before this pass the route let the transition stand and answered 500 `audit_unrecorded`, `applied: true`, which the page read as a failure, so a retried `attach_file` or `save_progress` applied twice.*
 
+## Hand-offs from DF-P3 (Round G) that no package brief carries yet
+
+DF-P3 ROUTING resolved `LEAK-1`, `ROUTE-5`, `ROUTE-6` and `SM-6` and left `ROUTE-1`, `ROUTE-3`, `EDGE-4`, `LEAK-9`, `EDGE-7` and `ROUTE-9` OPEN with a `Partial` block each (code half landed; migration `20261195` pending paste — deploy first, then paste). The rows below are the remainders whose owner's brief does not carry them. The integrator appends each to the owner's brief, or re-owns it.
+
+| Finding | Owner | What the owner must add |
+|---|---|---|
+| `LEAK-9` done-when 1 (the UI half) | DF-P9 (owns `app/(protected)/requests/[id]/page.tsx`) | The cancel dialog shows a category picker from the engine action's `outcomes` (`lib/workflow.ts`, `requiresOutcome`) and sends `outcome` to `/api/tickets/workflow-action`. Once it ships, the route's transitional default for a cancel with no category (`app/api/tickets/workflow-action/route.ts`, `outcomeDefaulted = true`) becomes a 400 — one line. A force close may offer the same picker (every outcome allowed). |
+| `ROUTE-1` done-when 2 | DF-P9 (owns `lib/ticketAttention.ts`) | `attentionLabel` distinguishes a revision with a drafter ("Drafting in progress") from one without ("Revision requested — needs a drafter"); after DF-P3 the second exists only for stragglers until `20261195` is pasted. |
+| `EDGE-7` done-when 3 | DF-P9 (owns `app/(protected)/requests/page.tsx`) | The workload board's overdue count (`:508`) uses `isPastDue` so CLOSED / CANCELED stop counting. |
+| `EDGE-7` done-when 2, `ROUTE-9` done-when 4 | DF-P2 (owns `lib/ticketCreate.ts`, the create route) | The server create route stamps `target_completion_at` from the org's `sla_defaults` row for the type when there is one, then `DEFAULT_SLA_DAYS`; the "first fallback" comment at `lib/notifications.ts:321` is corrected with it. `EDGE-7` also wants an admin editor for `sla_defaults` — admin-and-org (settings surface). |
+| `EDGE-4` done-when 1, and a MERGE obligation | admin-and-org P8 (owns `app/(protected)/admin/users/page.tsx`, re-creates `revoke_member`) | The remove / suspend confirm says the member's in-flight requests return to the assignment queue (optionally how many). P8's re-creation of `revoke_member` starts from `20261161` and must not drop `trg_org_member_departure_status` / `trg_org_member_departure_delete` or call around them (20261195's probe checks `revoke_member` does not carry the path; the triggers fire for any removal). |
+| `ROUTE-3` (a) | notifications (the next package that edits `lib/notify/recipients.ts`) | Remove `resolveFollowers`' ticket branch, or say in its header that the two ticket routes fold `tickets.watchers` themselves and no ticket notice walks it. (c) — web push — is `TAX-12`, N10. |
+| `ticket_update_guard` | every later re-creator (DF-P4 / P6 / P7 / P8) | Its NEWEST body is now `20261195`'s (found by scanning): it owns `outcome` and carries the member-departure pass. Re-create from it, never from `20261166`; re-pasting `20261166` after `20261195` would make a member removal fail whenever the member holds an open request. |
+
+*Re-verified after DF-P3 ROUTING (drafting-flow Round G, 2026-10-13): every EDGE-11 row above holds — the compare-and-set legs, the archived-stub refusal, the service-role preference reads and the PGRST202-only comment fallback are untouched (`dfRoundG_P1_rails.test.ts`, `dfRoundG_P0.test.ts` green); attention stays engine-derived (the drafterless `assign` is an engine action, so the badge and the page agree by construction).*
+
 ## Verification you cannot skip
 
 **No live database and no browser.** The state machine, capability defaults and
