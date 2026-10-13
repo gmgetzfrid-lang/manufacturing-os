@@ -10,6 +10,11 @@ export interface AuditEntry {
   userRole?: string;
   details?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
+  /** ALOG-7: written when given. A signed-in caller's own row is clocked by
+   *  the database (20261201 audit_logs_stamp_identity: "timestamp" = now(),
+   *  a differing value kept under metadata.asserted); a service-role write's
+   *  value stands. Readers that build an AuditEntry from a stored row
+   *  (HistoryDrawer, InspectorPanel) carry the stored time here. */
   timestamp?: string;
 }
 
@@ -33,6 +38,16 @@ const AUDIT_ACTOR_SENTINELS: ReadonlySet<string> = new Set(["", "unknown", "syst
  *  swallowed. */
 export async function logAuditAction(entry: AuditEntry): Promise<{ error: string | null; ok: boolean }> {
   try {
+    // ALOG-10 (admin-and-org P7): a row with no workspace is readable by no
+    // signed-in reader (every SELECT policy and both viewers read org_id), so
+    // it is refused here rather than written — 20261202 makes the database
+    // refuse it too. The refusal is returned and logged, never thrown.
+    const orgId = typeof entry.orgId === "string" ? entry.orgId.trim() : "";
+    if (!orgId) {
+      const msg = `no workspace named — the ${entry.action} audit row was not written (an audit row must name its workspace)`;
+      console.error(`Failed to write audit log (${entry.action}):`, msg);
+      return { error: msg, ok: false };
+    }
     const raw = typeof entry.userId === "string" ? entry.userId.trim() : "";
     const uid = AUDIT_ACTOR_SENTINELS.has(raw.toLowerCase()) ? null : raw;
     const metadata = uid === null
@@ -42,12 +57,13 @@ export async function logAuditAction(entry: AuditEntry): Promise<{ error: string
       action: entry.action,
       resource_id: entry.resourceId,
       resource_type: entry.resourceType,
-      org_id: entry.orgId || null,
+      org_id: orgId,
       user_id: uid,
       user_email: entry.userEmail || null,
       user_role: entry.userRole || null,
       details: entry.details || null,
       metadata,
+      ...(entry.timestamp ? { timestamp: entry.timestamp } : {}),
     });
     if (error) {
       console.error(`Failed to write audit log (${entry.action}):`, error.message);
