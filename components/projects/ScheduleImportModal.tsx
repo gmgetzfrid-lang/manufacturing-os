@@ -28,7 +28,7 @@ import {
   Columns3, ArrowRight, Link2,
 } from "lucide-react";
 import { parseScheduleFileFromBytes, type ParseResult, type ScheduleFormat } from "@/lib/scheduleParsers";
-import { importMilestonesFromParsed } from "@/lib/milestones";
+import { importMilestonesFromParsed, clearProjectSchedule } from "@/lib/milestones";
 import type { MilestoneSource } from "@/types/schema";
 import { Select } from "@/components/ui/Field";
 import Spinner from "@/components/ui/Spinner";
@@ -44,6 +44,11 @@ interface Props {
   projectStatus?: string;
   userId: string;
   userName?: string;
+  userEmail?: string;
+  userRole?: string;
+  /** Tasks already on the project — offers "replace the current
+   *  schedule" so a re-import starts from a clean slate. */
+  existingCount?: number;
   onClose: () => void;
   onDone: () => void;
 }
@@ -72,7 +77,7 @@ const FORMAT_TO_SOURCE: Record<ScheduleFormat, ImportSource> = {
 };
 
 export default function ScheduleImportModal({
-  orgId, projectId, projectName, projectStatus, userId, userName, onClose, onDone,
+  orgId, projectId, projectName, projectStatus, userId, userName, userEmail, userRole, existingCount, onClose, onDone,
 }: Props) {
   const tz = useScheduleTz();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -81,6 +86,8 @@ export default function ScheduleImportModal({
   const [parsing, setParsing] = useState(false);
   const [parseResult, setParseResult] = useState<ParseResult | null>(null);
   const [importing, setImporting] = useState(false);
+  // Wipe the project's current schedule before writing the file's rows.
+  const [replaceExisting, setReplaceExisting] = useState(false);
   const [importResult, setImportResult] = useState<{ inserted: number; updated: number; skipped: number; errors: string[] } | null>(null);
   // Per-column review config: include/exclude, rename, or map to a first-class
   // field. Lets the user shape ANY ingested column before the final import.
@@ -153,6 +160,9 @@ export default function ScheduleImportModal({
     if (!parseResult || parseResult.rows.length === 0) return;
     setImporting(true);
     try {
+      if (replaceExisting && (existingCount ?? 0) > 0) {
+        await clearProjectSchedule({ orgId, projectId, actorUserId: userId, actorUserEmail: userEmail, actorUserRole: userRole });
+      }
       const shaped = parseResult.rows.map(applyColConfig);
       const res = await importMilestonesFromParsed({
         orgId, projectId,
@@ -204,7 +214,7 @@ export default function ScheduleImportModal({
         setTimeout(() => onDone(), 800);
       }
     } finally { setImporting(false); }
-  }, [parseResult, orgId, projectId, userId, userName, onDone, applyColConfig, tz]);
+  }, [parseResult, orgId, projectId, userId, userName, userEmail, userRole, onDone, applyColConfig, tz, replaceExisting, existingCount]);
 
   const canSubmit = !!parseResult && parseResult.rows.length > 0 && !importing;
   const previewRows = parseResult?.rows.slice(0, 8) ?? [];
@@ -453,6 +463,16 @@ export default function ScheduleImportModal({
                 </div>
               )}
             </>
+          )}
+
+          {(existingCount ?? 0) > 0 && parseResult && parseResult.rows.length > 0 && !importResult && (
+            <label className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] text-rose-900">
+              <input type="checkbox" checked={replaceExisting} onChange={(e) => setReplaceExisting(e.target.checked)} className="mt-0.5" />
+              <span>
+                <b>Replace the current schedule</b> — delete the {existingCount} task{existingCount === 1 ? "" : "s"} already on this project first, then import the file from scratch.
+                Untick to merge instead (rows with the same ID are updated in place). Deleting is audited and can&apos;t be undone.
+              </span>
+            </label>
           )}
 
           {/* Tip strip — always visible. */}
