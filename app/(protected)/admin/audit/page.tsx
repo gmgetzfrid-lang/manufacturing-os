@@ -235,11 +235,14 @@ export default function AuditLogPage() {
       }
       let out = got.rows;
       let hidden = 0;
+      // Rows dated after the start lead the list (lib/auditLogExport.ts pass 0).
+      const datedAfter = new Set(got.rows.slice(0, got.datedAfterStart).map((r) => r.id));
       const library = libraryFilter !== "ALL" ? libraries.find((l) => l.id === libraryFilter) ?? { id: libraryFilter, name: libraryFilter } : null;
       if (library) {
         const f = filterByLibrary(out, library.id, (id) => meta.get(id)?.libraryId);
         out = f.kept; hidden = f.hidden;
       }
+      const datedAfterStart = out.filter((r) => datedAfter.has(r.id)).length;
       const exportedAtIso = new Date(nowMs).toISOString();
       const rec = await logAuditAction({
         action: "AUDIT_LOG_EXPORTED", resourceType: "org", resourceId: activeOrgId, orgId: activeOrgId,
@@ -247,12 +250,14 @@ export default function AuditLogPage() {
         details: {
           filters: { range, action: actionFilter, resource: resourceFilter, userQuery: userQuery.trim() || null, libraryId: library?.id ?? null },
           rows: out.length, complete: got.complete, ceiling: AUDIT_EXPORT_ROW_CEILING, exportedAt: exportedAtIso,
+          datedAfterStart,
         },
       });
       if (!rec.ok) throw new Error(`The export was not handed over: its own audit record could not be written (${rec.error}). Who took a copy of the audit log must be recorded.`);
       const csv = buildAuditCsv(out, meta, {
         orgId: activeOrgId, filters: { ...filters, library }, exportedAtIso, rows: out.length,
         complete: got.complete, ceiling: AUDIT_EXPORT_ROW_CEILING, libraryHidden: hidden,
+        datedAfterStart,
       });
       downloadCsv(csv);
       setExportNote(got.complete

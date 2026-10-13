@@ -271,6 +271,25 @@ export function ticketAttemptNote(outcome: TicketAttemptOutcome): string {
       : "Applied (no later row says otherwise)";
 }
 
+/** /activity's reading of the ticket trail (EVID-12), kept here so the page
+ *  stays at one call (its plan entry is rule copy only): pairs `rows`, drops
+ *  from each day every follow-up row whose attempt is loaded (it is said on
+ *  the attempt's line instead; a day left empty goes), and gives the suffix
+ *  an attempt's verb carries. */
+export function foldTicketFeed<T extends AuditRowLike>(
+  rows: readonly AuditRowLike[], groups: ReadonlyArray<{ day: string; rows: T[] }>,
+): { groups: Array<{ day: string; rows: T[] }>; verbSuffix: (id: string) => string } {
+  const { attempts, followUps } = pairTicketAttempts(rows);
+  const folded = (id: string) => { const a = followUps.get(id); return a !== undefined && attempts.has(a); };
+  return {
+    groups: groups.map((g) => ({ day: g.day, rows: g.rows.filter((r) => !folded(r.id)) })).filter((g) => g.rows.length > 0),
+    verbSuffix: (id) => {
+      const o = attempts.get(id)?.outcome;
+      return o === "not_applied" ? " (not applied)" : o === "holds_not_released" ? " (applied — its holds were not released)" : "";
+    },
+  };
+}
+
 // ── ALOG-7: whose word a row's identity is ──────────────────────────────────
 /** What the viewer says beside the actor (actor_kind, 20261201). */
 export function auditActorNote(actorKind: unknown): string {

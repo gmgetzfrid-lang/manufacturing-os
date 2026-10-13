@@ -15,14 +15,17 @@
 // member reads the workspace's document-level history; the org-level
 // authority trail (permission, membership, role, team, export, restore and
 // purge rows) is readable only by holders of the admin.audit_view capability
-// (the Audit log permission). The DATABASE enforces it — audit_logs_org_access
-// plus the RESTRICTIVE audit_logs_admin_trail overlay (DEC-17, SURF-9,
-// ROLE-5; 20261063 and its re-creations) — so this page shows each reader only
-// the rows they may read; it adds no gate of its own.
+// (the Audit log permission). Rows about a project — the project, its costs,
+// checklists and turnover, its intake links, INTAKE_ and MILESTONE_ rows —
+// are shown only to people who can see that project (SEC-20 / SEC-21,
+// 20261157's audit_logs_admin_trail). The DATABASE enforces all of it —
+// audit_logs_org_access plus the RESTRICTIVE audit_logs_admin_trail overlay
+// (DEC-17, SURF-9, ROLE-5; 20261063 and its re-creations) — so this page shows
+// each reader only the rows they may read; it adds no gate of its own.
 // drafting-flow EVID-12: a TICKET_<ACTION> attempt row is read together with
 // the _NOT_APPLIED / _HOLDS_NOT_RELEASED row that names it (lib/auditActions.ts
-// pairTicketAttempts): the attempt line says the outcome and the follow-up
-// line folds into it.
+// foldTicketFeed over pairTicketAttempts): the attempt line says the outcome
+// and the follow-up line folds into it.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -36,7 +39,7 @@ import ViewTabs, { ACTIVITY_VIEWS } from "@/components/navigation/ViewTabs";
 import DocThumb from "@/components/documents/DocThumb";
 import DocHoverPreview from "@/components/documents/DocHoverPreview";
 import { SCOPE_STAMP_ACTIONS, SCOPE_STAMPS_NOT_IN } from "@/lib/timeline";
-import { pairTicketAttempts } from "@/lib/auditActions";
+import { foldTicketFeed } from "@/lib/auditActions";
 
 interface ActivityRow {
   id: string;
@@ -186,9 +189,6 @@ export default function ActivityFeedPage() {
 
   useEffect(() => { void refresh(); }, [refresh]);
 
-  // EVID-12: a follow-up row whose attempt is loaded folds into the attempt's line.
-  const pairing = useMemo(() => pairTicketAttempts(rows), [rows]);
-
   // Group rows by day for the timeline
   const grouped = useMemo(() => {
     const out: Array<{ day: string; rows: ActivityRow[] }> = [];
@@ -204,11 +204,7 @@ export default function ActivityFeedPage() {
     return out;
   }, [rows]);
 
-  // EVID-12: the feed as shown — a follow-up row whose attempt is loaded is
-  // said on its attempt's line, not again on its own (a day left empty goes).
-  const feedGroups = useMemo(() => grouped
-    .map((g) => ({ day: g.day, rows: g.rows.filter((r) => { const attempt = pairing.followUps.get(r.id); return !(attempt && pairing.attempts.has(attempt)); }) }))
-    .filter((g) => g.rows.length > 0), [grouped, pairing]);
+  const feed = useMemo(() => foldTicketFeed(rows, grouped), [rows, grouped]); // EVID-12
 
   // Top-of-feed "pulse" widget: at-a-glance counts so Activity reads like a
   // dashboard, not a raw log. Buckets the loaded window by category + today.
@@ -238,7 +234,7 @@ export default function ActivityFeedPage() {
           title="Activity Feed"
           subtitle={<>What&apos;s been happening in the workspace, in plain language. For raw event detail, see the Audit Log.{" "}
             <span className="block mt-1 text-[11px] text-[var(--color-text-faint)]">
-              Who can read this feed: every member reads the workspace&apos;s document-level history; workspace authority events (permissions, members and roles, teams, exports, restores and purges) are shown only to people with the Audit log permission. The database applies this rule, not this page.
+              Who can read this feed: every member reads the workspace&apos;s document-level history; workspace authority events (permissions, members and roles, teams, exports, restores and purges) are shown only to people with the Audit log permission; rows about a project (its costs, checklists, milestones and intake) are shown only to people who can see that project. The database applies this rule, not this page.
             </span></>}
           actions={
             <Button variant="secondary" size="sm" onClick={refresh} disabled={loading}>
@@ -284,7 +280,7 @@ export default function ActivityFeedPage() {
           <div className="rounded-2xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] p-12 text-center text-sm italic text-[var(--color-text-faint)]">No activity recorded yet.</div>
         ) : (
           <div className="space-y-6">
-            {feedGroups.map((group) => (
+            {feed.groups.map((group) => (
               <div key={group.day}>
                 <div className="sticky top-0 bg-[var(--color-canvas)]/80 backdrop-blur z-10 py-2 mb-2 text-xs font-black text-[var(--color-text-muted)] uppercase tracking-widest border-b border-[var(--color-border)]">
                   {group.day}
@@ -294,9 +290,7 @@ export default function ActivityFeedPage() {
                     const meta = ACTION_VERBS[r.action];
                     const Icon = meta?.icon ?? Activity;
                     const tone = TONE_BG[meta?.tone ?? "slate"];
-                    const outcome = pairing.attempts.get(r.id)?.outcome;
-                    const verb = (meta?.verb ?? r.action.toLowerCase().replace(/_/g, " "))
-                      + (outcome === "not_applied" ? " (not applied)" : outcome === "holds_not_released" ? " (applied — its holds were not released)" : "");
+                    const verb = (meta?.verb ?? r.action.toLowerCase().replace(/_/g, " ")) + feed.verbSuffix(r.id);
                     const dm = r.resourceType === "document" ? docMeta.get(r.resourceId) : undefined;
                     const xm = !dm ? extraMeta.get(`${r.resourceType}:${r.resourceId}`) : undefined;
                     const resourceLabel = dm

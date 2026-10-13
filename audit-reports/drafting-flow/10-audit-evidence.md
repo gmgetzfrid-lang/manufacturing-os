@@ -679,13 +679,13 @@ lib/ticketTransitions.ts:247-252 —
 
 Landed: `lib/auditActions.ts pairTicketAttempts` (`:239`) — an attempt row (`TICKET_<ACTION>`, `details.recordedBeforeApply`) is "applied" unless a `_NOT_APPLIED` row in the loaded rows names it in `details.attempt` ("not applied"); a `_HOLDS_NOT_RELEASED` row naming it marks it "applied, but its holds were not released". The viewers load newest first, so a loaded attempt's follow-up (written after it) is loaded too.
 - `/admin/audit`: the attempt row shows its outcome; the follow-up row says which attempt it names; filtering on a ticket action brings its follow-ups with it (`auditActionFilterQuery`), and a `TICKET_…` family filter is offered.
-- `/activity`: the attempt line says the outcome ("… (not applied)", "… (applied — its holds were not released)") and its follow-up line folds into it (`feedGroups`, a memo after the day grouping, so the SEC-21 `grouped` memo is unchanged).
+- `/activity`: the attempt line says the outcome ("… (not applied)", "… (applied — its holds were not released)") and its follow-up line folds into it. *Moved at the P7 second review fix pass:* the fold is `lib/auditActions.ts foldTicketFeed` (`:279`), so the page holds one memo after the day grouping (`const feed = useMemo(() => foldTicketFeed(rows, grouped), …)`), `feed.groups.map` and `+ feed.verbSuffix(r.id)` on the verb line; the SEC-21 `grouped` memo is unchanged. The plan lists `/activity` for "rule copy only" and names both viewers for this reading rule, so the page's logic change is kept to those three expressions.
 
-Tests: `lib/__tests__/auditViewers.test.ts` "drafting-flow EVID-12 — …" (the three outcomes; a pre-DF-P1 row with no marker is not an attempt; both viewers use the pairing); `lib/__tests__/auditPageRendered.test.ts` (rendered: the attempt shows "Not applied …", the follow-up names it).
+Tests: `lib/__tests__/auditViewers.test.ts` "drafting-flow EVID-12 — …" (the three outcomes; a pre-DF-P1 row with no marker is not an attempt; both viewers use the pairing; *second review fix:* `foldTicketFeed` folds a loaded attempt's follow-up, drops a day left empty, keeps a follow-up whose attempt is not loaded, and gives each outcome's suffix); `lib/__tests__/auditPageRendered.test.ts` (rendered: the attempt shows "Not applied …", the follow-up names it).
 
 **Done-when.** This package's limb (the viewers' reading rule) holds. The record's four criteria are unchanged by it: the transaction form and the server-computed content hash (unowned, proposed with DF-P5) and the e-signature bound to the approved attachment (DF-P5) remain as DF-P1 recorded.
 
-**Scope / residual.** None for P7. Status stays OPEN for DF-P5.
+**Scope / residual.** None for P7. Status stays OPEN for DF-P5. **For the integrator (citation drift):** document-control `DCK-9` (RESOLVED, Round F; `01-checkout.md` Locations, the verifier correction and the Resolution) and `LIFE-*`'s FIELD_VERIFIED resolution in the same file cite `app/(protected)/activity/page.tsx:195` for the pulse's lock bucket. P7's header copy (ALOG-5's rule, this reading rule) and the one import moved that line to `:221`; the code there is unchanged (`lib/__tests__/timelineHolds.test.ts` still pins it by content). The citation is the only thing that moved; P7 does not edit DC records (DEC-31).
 
 ---
 

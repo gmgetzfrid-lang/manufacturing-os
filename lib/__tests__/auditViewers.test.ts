@@ -16,7 +16,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import {
   AUDIT_ACTIONS, AUDIT_ACTION_FAMILIES, AUDIT_RESOURCE_TYPES, DESTRUCTIVE_AUDIT_ACTIONS, auditActionDef,
-  auditActionFilterOptions, auditActionFilterQuery, pairTicketAttempts, isDestructiveAuditAction, auditActorNote,
+  auditActionFilterOptions, auditActionFilterQuery, pairTicketAttempts, isDestructiveAuditAction, auditActorNote, foldTicketFeed,
 } from "@/lib/auditActions";
 
 const root = process.cwd();
@@ -128,10 +128,36 @@ describe("drafting-flow EVID-12 — the viewers pair a ticket attempt with the r
     expect(attempts.has("old")).toBe(false);
     expect(followUps).toEqual(new Map([["n1", "a1"], ["h2", "a2"]]));
   });
-  it("both viewers use the pairing", () => {
-    for (const page of ["app/(protected)/admin/audit/page.tsx", "app/(protected)/activity/page.tsx"]) {
-      expect(src(page), page).toMatch(/pairTicketAttempts\(/);
-    }
+  it("both viewers use the pairing (/activity through foldTicketFeed, so the page stays at one call)", () => {
+    expect(src("app/(protected)/admin/audit/page.tsx")).toMatch(/pairTicketAttempts\(/);
+    const activity = src("app/(protected)/activity/page.tsx");
+    expect(activity).toMatch(/foldTicketFeed\(rows, grouped\)/);
+    expect(activity).toMatch(/feed\.groups\.map\(/);
+    expect(activity).toMatch(/\+ feed\.verbSuffix\(r\.id\)/);
+  });
+  it("P7 second review: foldTicketFeed folds a loaded attempt's follow-up into the attempt's line, drops a day left empty, and keeps an orphan follow-up", () => {
+    const all = [...rows, { id: "n9", action: "TICKET_CLOSE_NOT_APPLIED", details: { attempt: "not-loaded" } }];
+    const groups = [
+      { day: "Mon", rows: [all[0], all[1]] }, // n1 (follow-up of a1) and a1
+      { day: "Sun", rows: [all[2]] }, // h2 alone: its attempt a2 is loaded elsewhere
+      { day: "Sat", rows: [all[3], all[4], all[5], all[6]] },
+    ];
+    const f = foldTicketFeed(all, groups);
+    const ids = f.groups.map((g) => [g.day, g.rows.map((r) => r.id)]);
+    expect(ids).toEqual([["Mon", ["a1"]], ["Sat", ["a2", "a3", "old", "n9"]]]);
+    expect(f.verbSuffix("a1")).toBe(" (not applied)");
+    expect(f.verbSuffix("a2")).toBe(" (applied — its holds were not released)");
+    expect(f.verbSuffix("a3")).toBe("");
+  });
+});
+
+describe("ALOG-5 — /activity states who can read what, and that the database applies it", () => {
+  it("names the member rule, the Audit log permission rule and (P7 second review) the project scoping of SEC-20 / SEC-21", () => {
+    const page = src("app/(protected)/activity/page.tsx");
+    expect(page).toMatch(/every member reads the workspace&apos;s document-level history/);
+    expect(page).toMatch(/shown only to people with the Audit log permission/);
+    expect(page).toMatch(/rows about a project \(its costs, checklists, milestones and intake\) are shown only to people who can see that project/);
+    expect(page).toMatch(/The database applies this rule, not this page\./);
   });
 });
 
@@ -175,6 +201,7 @@ function pager(n: number, failAt?: number, opts: { tieEvery?: number; undated?: 
     const b: Record<string, unknown> = {};
     for (const m of ["gte", "eq", "in", "like", "ilike"]) b[m] = (...a: unknown[]) => { calls.push([m, a]); return b; };
     b.lte = (k: string, v: string) => { calls.push(["lte", [k, v]]); preds.push((r) => r[k] != null && String(r[k]) <= v); return b; };
+    b.gt = (k: string, v: string) => { calls.push(["gt", [k, v]]); preds.push((r) => r[k] != null && String(r[k]) > v); return b; };
     b.lt = (k: string, v: string) => { calls.push(["lt", [k, v]]); preds.push((r) => String(r[k]) < v); return b; };
     b.is = (k: string, v: null) => { calls.push(["is", [k, v]]); preds.push((r) => (r[k] ?? null) === v); return b; };
     b.or = (f: string) => {
@@ -211,8 +238,8 @@ describe("ALOG-6 — the export holds every row the filters select, says its bou
     const got = await fetchAuditRowsForExport(p.start, F, Date.now());
     expect(got).toMatchObject({ ok: true, complete: true });
     if (got.ok) expect(got.rows).toHaveLength(2345);
-    // three dated pages of up to 1000, then the (empty) undated pass of "all time"
-    expect(p.calls.filter(([m]) => m === "limit").map(([, a]) => a)).toEqual([[1000], [1000], [1000], [1000]]);
+    // the (empty) dated-after-start pass, three dated pages of up to 1000, then the (empty) undated pass of "all time"
+    expect(p.calls.filter(([m]) => m === "limit").map(([, a]) => a)).toEqual([[1000], [1000], [1000], [1000], [1000]]);
     expect(p.calls.filter(([m]) => m === "order").slice(0, 2)).toEqual([["order", ["timestamp", { ascending: false }]], ["order", ["id", { ascending: false }]]]);
   });
 
@@ -231,7 +258,7 @@ describe("ALOG-6 — the export holds every row the filters select, says its bou
     }
   });
 
-  it("P7 review: the export is a snapshot — a row written after it began (dated later) is not in it, and nothing shifts or repeats", async () => {
+  it("P7 review: a row inserted after the dated-after pass ran is not in the file, and nothing shifts or repeats", async () => {
     const p = pager(150);
     const startMs = Date.UTC(2026, 9, 2);
     let injected = false;
@@ -249,6 +276,41 @@ describe("ALOG-6 — the export holds every row the filters select, says its bou
     expect(ids).not.toContain("zz-late");
     expect(new Set(ids).size).toBe(150);
     expect(p.calls).toEqual(expect.arrayContaining([["lte", ["timestamp", new Date(startMs).toISOString()]]]));
+  });
+
+  it("P7 second review: a row DATED after the export began but written before it (a forged future timestamp, a browser clock behind the database) is in the file, listed first and counted", async () => {
+    const startMs = Date.UTC(2026, 9, 2);
+    const p = pager(120, undefined, { tieEvery: 4 });
+    // Three rows already in the log, dated 2027 and a few seconds after the start (ties included).
+    p.all.push({ ...p.all[5], id: "f-2027a", timestamp: "2027-03-01T00:00:00.000Z" });
+    p.all.push({ ...p.all[6], id: "f-2027b", timestamp: "2027-03-01T00:00:00.000Z" });
+    p.all.push({ ...p.all[7], id: "f-skew", timestamp: new Date(startMs + 3_000).toISOString() });
+    const got = await fetchAuditRowsForExport(p.start, F, startMs, { page: 2 });
+    expect(got).toMatchObject({ ok: true, complete: true, datedAfterStart: 3 });
+    const ids = (got as { rows: AuditExportRow[] }).rows.map((r) => r.id);
+    expect(ids).toHaveLength(123);
+    expect(new Set(ids).size).toBe(123);
+    expect(ids.slice(0, 3)).toEqual(["f-2027b", "f-2027a", "f-skew"]);
+    expect(p.calls).toEqual(expect.arrayContaining([["gt", ["timestamp", new Date(startMs).toISOString()]]]));
+    // A date range keeps them too (the screen filters on the lower bound only).
+    const ranged = await fetchAuditRowsForExport(p.start, { ...F, range: "30d" }, startMs, { page: 50 });
+    expect((ranged as { rows: AuditExportRow[] }).rows.slice(0, 3).map((r) => r.id)).toEqual(["f-2027b", "f-2027a", "f-skew"]);
+    // The file states the count and does not claim the dated-later rows were written later.
+    const csv = buildAuditCsv((got as { rows: AuditExportRow[] }).rows, new Map(), {
+      orgId: "o1", filters: F, exportedAtIso: new Date(startMs).toISOString(), rows: 123, complete: true, ceiling: 50_000, datedAfterStart: 3,
+    });
+    expect(csv).toContain('Rows dated after the export began,"3 (included, listed first');
+    expect(csv).not.toMatch(/written after the export began is not in this file/);
+    expect(csv).toMatch(/Complete,Yes/);
+  });
+
+  it("P7 second review: dated-after rows count toward the ceiling, and a stopped file counts only those it holds", async () => {
+    const startMs = Date.UTC(2026, 9, 2);
+    const p = pager(10);
+    for (let j = 0; j < 30; j++) p.all.push({ ...p.all[0], id: `f${String(j).padStart(3, "0")}`, timestamp: new Date(startMs + 1000 * (j + 1)).toISOString() });
+    const got = await fetchAuditRowsForExport(p.start, F, startMs, { ceiling: 25, page: 10 });
+    expect(got).toMatchObject({ ok: true, complete: false, datedAfterStart: 25 });
+    expect((got as { rows: AuditExportRow[] }).rows).toHaveLength(25);
   });
 
   it("the next page starts strictly after the last row read (keyset, never an offset)", async () => {
@@ -310,7 +372,8 @@ describe("ALOG-6 — the export holds every row the filters select, says its bou
     const lines = csv.split("\n");
     expect(lines[0]).toBe("Audit log export");
     expect(csv).toContain("Rows in this file,2");
-    expect(csv).toContain("Snapshot,rows dated at or before 2026-10-13T00:00:00.000Z; a row written after the export began is not in this file");
+    expect(csv).toContain('Snapshot,"every row that existed when the export began at 2026-10-13T00:00:00.000Z, newest first by its date; a row inserted while the export ran may or may not be in this file"');
+    expect(csv).toContain('Rows dated after the export began,"0 (included, listed first');
     expect(csv).toMatch(/Complete,Yes — every row the filters select that you may read/);
     expect(lines).toContain("Timestamp,Action,Action code,Resource Type,Resource ID,Resource Label,User ID,User Email,User Role,Actor kind,Details JSON,Metadata JSON");
     expect(csv).toContain("P-101 · P&ID");

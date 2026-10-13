@@ -23,6 +23,7 @@ const h = vi.hoisted(() => ({
   logged: [] as Array<Record<string, unknown>>,
   logResult: { ok: true, error: null } as { ok: boolean; error: string | null },
   downloads: 0,
+  blobs: [] as Blob[],
   order: [] as string[],
 }));
 
@@ -39,6 +40,7 @@ vi.mock("@/lib/supabase", () => {
       eq: (k: string, v: unknown) => { filters.push((r) => r[k] === v); return b; },
       in: (k: string, v: unknown[]) => { filters.push((r) => v.includes(r[k])); return b; },
       gte: () => b, like: () => b, ilike: () => b, or: () => b, lt: () => b,
+      gt: (k: string, v: string) => { filters.push((r) => r[k] != null && String(r[k]) > v); return b; },
       lte: (k: string, v: string) => { if (table === "audit_logs") h.lte.push(v); filters.push((r) => r[k] != null && String(r[k]) <= v); return b; },
       is: (k: string, v: unknown) => { filters.push((r) => (r[k] ?? null) === v); return b; },
       limit: (n: number) => { lim = n; if (table === "audit_logs") h.limits.push(n); return b; },
@@ -72,9 +74,9 @@ beforeEach(() => {
   ];
   h.libraries = [{ id: "L1", name: "Piping", org_id: "o1" }];
   h.documents = [{ id: "d1", document_number: "P-101", title: "P&ID", name: null, library_id: "L1" }];
-  h.limits = []; h.lte = []; h.logged = []; h.logResult = { ok: true, error: null }; h.downloads = 0; h.order = [];
+  h.limits = []; h.lte = []; h.logged = []; h.logResult = { ok: true, error: null }; h.downloads = 0; h.blobs = []; h.order = [];
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  (URL as unknown as { createObjectURL: () => string }).createObjectURL = () => { h.downloads++; h.order.push("download"); return "blob:x"; };
+  (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = (b: Blob) => { h.downloads++; h.blobs.push(b); h.order.push("download"); return "blob:x"; };
   (URL as unknown as { revokeObjectURL: () => void }).revokeObjectURL = () => undefined;
   vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
   host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
@@ -133,6 +135,22 @@ describe("/admin/audit (rendered)", () => {
     })]);
     expect(h.order).toEqual(["audit", "download"]);
     expect(host!.textContent).toMatch(/Exported 4 row\(s\) — every row the filters select/);
+  });
+
+  it("P7 second review (ALOG-6): a row dated after the export began, which the screen shows, is in the file, listed first and counted", async () => {
+    h.audit.push({ id: "f1", action: "VIEW", resource_type: "document", resource_id: "d1", org_id: "o1", user_id: "u9", user_email: "forger@x.io", user_role: "Admin", details: {}, metadata: null, timestamp: "2099-01-01T00:00:00.000Z" });
+    await render();
+    expect(host!.textContent).toContain("forger@x.io"); // on screen
+    await act(async () => { exportBtn().click(); });
+    await flush();
+    expect(h.downloads).toBe(1);
+    const csv = await new Promise<string>((res) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result)); fr.readAsText(h.blobs[0]); });
+    expect(csv).toContain('Rows dated after the export began,"1 (included, listed first');
+    const body = csv.split("\n");
+    const head = body.findIndex((l) => l.startsWith("Timestamp,"));
+    expect(body[head + 1]).toMatch(/^2099-01-01T00:00:00\.000Z,View,VIEW,document,d1,.*forger@x\.io/);
+    expect(csv).toMatch(/Complete,Yes/);
+    expect(h.logged[0]).toMatchObject({ details: expect.objectContaining({ rows: 5, datedAfterStart: 1 }) });
   });
 
   it("ALOG-6: a refused export record means no file, and it is said", async () => {

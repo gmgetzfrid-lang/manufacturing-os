@@ -54,6 +54,12 @@ describe("ALOG-7 — 20261201: the database names a signed-in caller on their ow
     expect(stripComments(sql)).not.toMatch(/DELETE\s+FROM\s+(public\.)?audit_logs/i);
   });
 
+  it("P7 second review: the 'untouched' probe reads >= the inventory count — a live insert between the inventory (before BEGIN) and the trigger only adds a NULL row, so a clean paste never reads false", () => {
+    const probe = sql.slice(sql.indexOf("'every row written before this paste is untouched"), sql.indexOf("UNION ALL SELECT 'audit_logs_stamp_identity is SECURITY DEFINER"));
+    expect(probe).toMatch(/\(SELECT COUNT\(\*\) FROM audit_logs WHERE actor_kind IS NULL\)\s+>= \(SELECT n::bigint FROM _ao_g201_before WHERE inventory LIKE 'inventory: audit_logs rows before%'\)/);
+    expect(probe).not.toMatch(/IS NULL\)\s+= \(SELECT/);
+  });
+
   it("the stamp is SECURITY DEFINER, search_path pinned, and nobody may call it (DRLS-16)", () => {
     expect(fnBody).toMatch(/RETURNS trigger\s+LANGUAGE plpgsql\s+SECURITY DEFINER\s+SET search_path = public/);
     for (const who of ["PUBLIC", "anon", "authenticated"]) {

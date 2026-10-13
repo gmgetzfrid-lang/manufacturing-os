@@ -8,8 +8,9 @@
 //     pages through every matching row — in the reader's own session, so the
 //     database's audit read policies decide what is in the file exactly as
 //     they decide what is on screen (no service-role read, nothing widened).
-//   * Keyset paging over a fixed snapshot (P7 review fix): every page is
-//     bounded above by the moment the export began ("timestamp" <= it), is
+//   * Keyset paging over a fixed snapshot (P7 review fix): every page of the
+//     main pass is bounded above by the moment the export began ("timestamp"
+//     <= it; the rows dated later are a pass of their own, below), is
 //     ordered by ("timestamp" DESC, id DESC) — id is the primary key, so the
 //     order is total even where many rows share one timestamp (a chunked
 //     ledger write, a definer function's several rows in one transaction,
@@ -21,6 +22,14 @@
 //     no timestamp (only an explicit NULL written by the service role can
 //     leave one) follow, by id, when the range is "all time" — the date
 //     filters exclude them on screen and in the file alike.
+//   * Rows DATED after the export began (P7 second review fix) are read
+//     first, by the same keyset, and counted in the file. A row's date is a
+//     clock's word, not the moment it was inserted: before 20261201 a member
+//     could send a future timestamp, and a browser clock behind the database
+//     dates the newest server-clocked rows after the export's start. The
+//     screen shows such rows (it filters only on the lower bound), so the
+//     file holds them too — "Complete: Yes" stays true for every row that
+//     existed when the export began.
 //   * It stops at AUDIT_EXPORT_ROW_CEILING rows; the file says so inside it.
 //   * The file opens with its bounds (workspace, filters, time of export, how
 //     many rows, complete or stopped at the ceiling, which filters were
@@ -110,6 +119,7 @@ export function mapAuditRow(r: Record<string, unknown>): AuditExportRow {
 type PageResult = PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>;
 type PageBuilder = AuditQuery & {
   lte(col: string, v: string): PageBuilder;
+  gt(col: string, v: string): PageBuilder;
   lt(col: string, v: string): PageBuilder;
   is(col: string, v: null): PageBuilder;
   or(filter: string): PageBuilder;
@@ -129,8 +139,9 @@ export function afterCursorFilter(ts: string, id: string): string {
 }
 
 /** Pages through every row the filters select, newest first, up to the
- *  ceiling, over the snapshot "dated at or before nowMs" (keyset paging —
- *  see the header). `start()` returns a fresh `.from("audit_logs").select(
+ *  ceiling: first the rows dated after nowMs (counted as datedAfterStart),
+ *  then the snapshot "dated at or before nowMs" (keyset paging — see the
+ *  header). `start()` returns a fresh `.from("audit_logs").select(
  *  "*").eq("org_id", …)` builder for each page. A read that fails stops the
  *  export with the error (never a partial file presented as whole). */
 export async function fetchAuditRowsForExport(
@@ -138,7 +149,7 @@ export async function fetchAuditRowsForExport(
   f: AuditFilters & { userQuery?: string },
   nowMs: number,
   opts: { ceiling?: number; page?: number } = {},
-): Promise<{ ok: true; rows: AuditExportRow[]; complete: boolean } | { ok: false; error: string }> {
+): Promise<{ ok: true; rows: AuditExportRow[]; complete: boolean; datedAfterStart: number } | { ok: false; error: string }> {
   const ceiling = opts.ceiling ?? AUDIT_EXPORT_ROW_CEILING;
   const page = opts.page ?? AUDIT_EXPORT_PAGE;
   const rows: AuditExportRow[] = [];
@@ -149,20 +160,26 @@ export async function fetchAuditRowsForExport(
     if (pattern) q = q.ilike("user_email", pattern) as PageBuilder;
     return q;
   };
-  // Pass 1: dated rows, ("timestamp" DESC, id DESC), at or before the start.
-  let cursor: { ts: string; id: string } | null = null;
-  for (;;) {
-    let q = base().lte("timestamp", upper);
-    if (cursor) q = q.or(afterCursorFilter(cursor.ts, cursor.id));
-    const want = Math.min(page, ceiling + 1 - rows.length);
-    const { data, error } = await q.order("timestamp", { ascending: false }).order("id", { ascending: false }).limit(want);
-    if (error) return { ok: false, error: error.message };
-    const got = (data ?? []) as Array<Record<string, unknown>>;
-    for (const r of got) rows.push(mapAuditRow(r));
-    if (rows.length > ceiling) return { ok: true, rows: rows.slice(0, ceiling), complete: false };
-    if (got.length < want) break;
-    const last = got[got.length - 1];
-    cursor = { ts: String(last.timestamp), id: String(last.id) };
+  let datedAfterStart = 0;
+  const stopped = () => ({ ok: true as const, rows: rows.slice(0, ceiling), complete: false, datedAfterStart: Math.min(datedAfterStart, ceiling) });
+  // Pass 0: rows dated AFTER the start; pass 1: dated at or before it. Both
+  // ("timestamp" DESC, id DESC), keyset.
+  for (const pass of ["after", "upTo"] as const) {
+    let cursor: { ts: string; id: string } | null = null;
+    for (;;) {
+      let q = pass === "after" ? base().gt("timestamp", upper) : base().lte("timestamp", upper);
+      if (cursor) q = q.or(afterCursorFilter(cursor.ts, cursor.id));
+      const want = Math.min(page, ceiling + 1 - rows.length);
+      const { data, error } = await q.order("timestamp", { ascending: false }).order("id", { ascending: false }).limit(want);
+      if (error) return { ok: false, error: error.message };
+      const got = (data ?? []) as Array<Record<string, unknown>>;
+      for (const r of got) rows.push(mapAuditRow(r));
+      if (pass === "after") datedAfterStart += got.length;
+      if (rows.length > ceiling) return stopped();
+      if (got.length < want) break;
+      const last = got[got.length - 1];
+      cursor = { ts: String(last.timestamp), id: String(last.id) };
+    }
   }
   // Pass 2 (all time only): rows with no timestamp, by id DESC.
   if (rangeStartIso(f.range, nowMs) === null) {
@@ -175,12 +192,12 @@ export async function fetchAuditRowsForExport(
       if (error) return { ok: false, error: error.message };
       const got = (data ?? []) as Array<Record<string, unknown>>;
       for (const r of got) rows.push(mapAuditRow(r));
-      if (rows.length > ceiling) return { ok: true, rows: rows.slice(0, ceiling), complete: false };
+      if (rows.length > ceiling) return stopped();
       if (got.length < want) break;
       lastId = String(got[got.length - 1].id);
     }
   }
-  return { ok: true, rows, complete: true };
+  return { ok: true, rows, complete: true, datedAfterStart };
 }
 
 export interface AuditExportBounds {
@@ -192,6 +209,8 @@ export interface AuditExportBounds {
   ceiling: number;
   /** Rows the library filter left out (it is applied after paging). */
   libraryHidden?: number;
+  /** Rows in the file dated after the export began (listed first). */
+  datedAfterStart?: number;
 }
 
 /** The file: a bounds block, a blank line, then the header and the rows. */
@@ -205,7 +224,8 @@ export function buildAuditCsv(
     ["Audit log export"],
     ["Workspace", b.orgId],
     ["Exported at (UTC)", b.exportedAtIso],
-    ["Snapshot", `rows dated at or before ${b.exportedAtIso}; a row written after the export began is not in this file`],
+    ["Snapshot", `every row that existed when the export began at ${b.exportedAtIso}, newest first by its date; a row inserted while the export ran may or may not be in this file`],
+    ["Rows dated after the export began", `${b.datedAfterStart ?? 0} (included, listed first — a row's date is the clock of whoever wrote it, so a row can be dated later than it was written)`],
     ["Date range", f.range === "all" ? "All time" : f.range],
     ["Action filter", f.action === "ALL" ? "All actions" : f.action],
     ["Resource filter", f.resource === "ALL" ? "Any resource" : f.resource],

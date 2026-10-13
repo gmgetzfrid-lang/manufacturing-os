@@ -302,9 +302,9 @@ UNION ALL SELECT 'actor_kind admits only member / server / system (or NULL)',
                 WHERE conrelid = 'public.audit_logs'::regclass AND conname = 'audit_logs_actor_kind_check'
                   AND pg_get_constraintdef(oid) LIKE '%member%' AND pg_get_constraintdef(oid) LIKE '%server%'
                   AND pg_get_constraintdef(oid) LIKE '%system%'), NULL
-UNION ALL SELECT 'every row written before this paste is untouched (actor_kind NULL on each of them)',
+UNION ALL SELECT 'every row written before this paste is untouched (actor_kind NULL on each of them; a row inserted between the inventory and the trigger only adds to the NULL count)',
        (SELECT COUNT(*) FROM audit_logs WHERE actor_kind IS NULL)
-         = (SELECT n::bigint FROM _ao_g201_before WHERE inventory LIKE 'inventory: audit_logs rows before%')
+         >= (SELECT n::bigint FROM _ao_g201_before WHERE inventory LIKE 'inventory: audit_logs rows before%')
        OR EXISTS (SELECT 1 FROM _ao_g201_before WHERE inventory LIKE 'inventory: actor_kind column present%' AND n = '1'), NULL
 UNION ALL SELECT 'audit_logs_stamp_identity is SECURITY DEFINER with search_path pinned to public',
        EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
