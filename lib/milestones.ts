@@ -943,6 +943,20 @@ export async function importMilestonesFromParsed(input: ImportParsedInput): Prom
   const refToId = new Map<string, string>();
   const tz = normalizeTimeZone(input.timeZone ?? DEFAULT_SCHEDULE_TZ);
 
+  // Earlier imports wrote MS Project's project-summary row (UID 0, the
+  // file's title) as a childless task spanning the whole schedule. The
+  // parser no longer emits it; drop a leftover one on re-import so the
+  // calendar stops carrying it on every day.
+  if (input.projectId && !input.rows.some((r) => r.externalRef === "msp-uid:0")) {
+    const { error: cleanupErr } = await supabase
+      .from("milestones")
+      .delete()
+      .eq("org_id", input.orgId)
+      .eq("project_id", input.projectId)
+      .eq("external_ref", "msp-uid:0");
+    if (cleanupErr) result.errors.push(`Couldn't remove the old project-summary row: ${cleanupErr.message}`);
+  }
+
   for (let i = 0; i < input.rows.length; i++) {
     const r = input.rows[i];
     const name = r.name?.trim();

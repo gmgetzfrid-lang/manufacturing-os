@@ -525,7 +525,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
               <button onClick={() => { onOpenDetail(subPopover.ms); setSubPopover(null); }} className="text-[10px] font-bold text-[var(--color-accent)] hover:underline shrink-0">Open</button>
             </div>
             <ul className="divide-y divide-[var(--color-border)]">
-              {leafDescendants(subPopover.ms).map((leaf) => (
+              {leafDescendants(subPopover.ms).slice().sort((a, b) => startMs(a) - startMs(b)).map((leaf) => (
                 <li key={leaf.id} className="px-3 py-2 flex items-center gap-2">
                   <span className="shrink-0" onClick={(e) => e.stopPropagation()}>
                     <StatusControl

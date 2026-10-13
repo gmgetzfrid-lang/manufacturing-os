@@ -235,6 +235,7 @@ function parseMsProjectXml(text: string, tz: string): { rows: ParsedMilestone[];
   // works for every well-formed file.
   const recentByLevel = new Map<number, string>(); // level → parent's externalRef
   let dropped = 0;
+  let projectSummarySkipped = false;
 
   for (const t of taskNodes) {
     const name = childText(t, "Name");
@@ -249,6 +250,12 @@ function parseMsProjectXml(text: string, tz: string): { rows: ParsedMilestone[];
 
     const plannedRaw = finish || start;
     if (!name || !plannedRaw) { dropped++; continue; }
+
+    // UID 0 / OutlineLevel 0 is MS Project's PROJECT SUMMARY row — the file's
+    // own title ("TMIX-1 TAR - OCT.26") spanning the whole schedule. It is
+    // not a task and never appears on a printed schedule; importing it made
+    // a childless row that covered every day of the calendar.
+    if (uid === "0" || outlineLevelRaw === "0") { projectSummarySkipped = true; continue; }
 
     const outlineLevel = Number(outlineLevelRaw) || 1;
     const externalRef = uid ? `msp-uid:${uid}` : null;
@@ -327,6 +334,7 @@ function parseMsProjectXml(text: string, tz: string): { rows: ParsedMilestone[];
   }
   if (resourcesFound > 0) warnings.push(`Resources mapped onto ${resourcesFound} task${resourcesFound === 1 ? "" : "s"}.`);
   if (dropped > 0) warnings.push(`${dropped} task${dropped === 1 ? "" : "s"} skipped (missing name or date).`);
+  if (projectSummarySkipped) warnings.push("The file's project summary row (its title) was not imported as a task.");
   const cleaned = dropPlaceholderLeaves(rows);
   if (cleaned.dropped > 0) warnings.push(`${cleaned.dropped} unnamed "<New Task>" placeholder row${cleaned.dropped === 1 ? "" : "s"} dropped.`);
   if (cleaned.rows.length === 0) warnings.push("No usable rows found in the MS Project XML.");
