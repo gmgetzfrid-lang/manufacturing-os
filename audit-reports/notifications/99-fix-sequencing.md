@@ -478,6 +478,43 @@ N9, N10, N14, the integrator):*
   follower's notice), and renumber `DEC-100`. The restore now writes
   `subscriptions` (`NEDGE-8`), bounded to the target workspace's resources.*
 
+*Hand-off (2026-10-13, notifications Round G, N4 FEED-PROVIDER-AND-REALTIME →
+the integrator, drafting-flow, N13, `lib/tableViews.ts`'s holder):*
+- *Paste `20261200` (`REPLICA IDENTITY FULL` on documents, checkout_sessions,
+  libraries, collections; milestones re-asserted in `supabase_realtime`; five
+  `notification_preferences.toast_on_*` columns) any time, after `20261148`.
+  The app works before it: the settings page saves without the per-category
+  switches and says so; the listener reads the master switch alone. Nothing
+  in the reconcile route needs a migration.*
+- *The attention feed is ONE per tab (`components/providers/AttentionProvider.tsx`,
+  mounted around `NotificationCenterProvider` in `app/(protected)/layout.tsx`).
+  A new surface reads `useTicketNotifications` (unchanged shape) and
+  `useAttentionStatus` (stale / error / "N of M" / load older) — it adds no
+  channel and no query. `GAP-202`'s in-page markers build on it.*
+- *Notification rows whose condition is gone are retired by
+  `POST /api/notifications/reconcile` (service role, the caller's own rows,
+  `metadata.superseded_at` only). A new obligation kind made action-required
+  lands with a discharge check in `lib/notificationReconcileServer.ts`
+  (`DEC-81` §2, `DEC-44 (N4-feed-provider)`).*
+- *drafting-flow (the requests portal): `RT-4` stays OPEN for one line —
+  `app/(protected)/requests/page.tsx`'s tickets channel needs the unfiltered
+  `DELETE` companion (`lib/__tests__/realtimePublication.test.ts`
+  `RT4_PENDING` names it; drop the entry when it lands).*
+- *`lib/tableViews.ts`'s holder: `RT-12` stays OPEN for `table_views` —
+  not published, because a DELETE event would carry its composite id
+  (workspace, person, library) to every subscriber (`DEC-44 (N4-feed-provider)`
+  §5). Replace the `postgres_changes` sync with a Broadcast message from the
+  saver, or give the table an opaque key; the tripwire's `NOT_PUBLISHED`
+  entry goes with it.*
+- *Whoever next holds `components/notifications/NotificationBell.tsx` /
+  `components/navigation/Sidebar.tsx`: the "reconnecting — counts may be out
+  of date" line shows in the feed surfaces (center, `/inbox`, the dashboard
+  widget); the bell and the rail can read `useAttentionStatus().stale` too.*
+- *Still open from N3's hand-off (not N4's to change): `markRead`,
+  `markManyRead` and `markAllRead` in `lib/inAppNotifications.ts` do not read
+  `{ error }` — several callers `void` them, so making them throw needs those
+  callers to catch first.*
+
 ---
 
 ## Phase 3 — The trail

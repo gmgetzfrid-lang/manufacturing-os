@@ -486,7 +486,7 @@ Producer sweep result (each subsystem's full file set grepped for any notificati
 ## PROD-7 · Exported notification API that no caller uses: countUnread, resolveRecipients, and the dispatcher's channels option
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/inAppNotifications.ts:176-185`, `lib/notify/dispatch.ts:65-79`, `lib/notify/dispatch.ts:42-43`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Two of three sub-claims are exactly right and the >50-unread undercount consequence is confirmed. One correction: `resolveRecipients` is not literally callerless — it has one internal caller at lib/notify/dispatch.ts:83 (`const recipients = await resolveRecipients(input)`); what is unused is its documented external 'preview whom-would-this-notify' purpose (dispatch.ts:65-66).
@@ -522,6 +522,18 @@ hooks/useTicketNotifications.ts:176 —
 
 
 **Partial (2026-10-07, notifications Round G).** Package N9 DC-OWNED-PRODUCERS-AND-KIND-SPLIT, branch `fleet/N9-dc-producers-kind-split`, commit `2ef1a4f`. Done-when 3's chatty-kind arm is met: `library_doc_added` — the one chatty kind left by the N2 scope note above — is written by both insert paths through `lib/libraryNotify.ts` `notifyLibraryDocsAdded` with `channels: ["inapp"]` (the library page's staged upload moved onto it, `PROD-5`). Done-whens 1, 2 and 3's doc-comment arm are untouched (N4). Stays OPEN.
+
+**Resolution (2026-10-13, notifications Round G).** Package N4 FEED-PROVIDER-AND-REALTIME, branch `fleet/N4-feed-provider`. **Reproduced** on `6503ea7`: `countUnread` (`lib/inAppNotifications.ts:282`) had no caller; the badge was `items.length` of a 50-row page.
+
+What landed: `countUnread` is the badge's source — the attention feed reads it on every fetch (`hooks/useTicketNotifications.ts`, `fetchAll`) and its count is the true unread total (`TAX-6`, `DELIV-10`, `TRAIL-7`). Done-when 2 and done-when 3's doc-comment arm already hold at `6503ea7` (verified, no code here): `resolveRecipients`'s comment says emit() is its only caller and that no preview exists yet (`lib/notify/dispatch.ts:171-175`, N5 / N6), and `channels` is documented as "Defaults to both channels (in-app and email)" (`lib/notify/dispatch.ts:49-50`). Done-when 3's chatty-kind arm was met by N9 (`library_doc_added` in-app only — the Partial above).
+- Tests: `lib/__tests__/attentionProvider.test.ts` (the count follows `countUnread`, not the page).
+
+**Done-when.**
+- ✓ `countUnread` is used as the badge source.
+- ✓ `resolveRecipients`' comment is corrected (`lib/notify/dispatch.ts:171-175`, at base).
+- ✓ The chatty kind is in-app only (N9), and the doc comment says "both channels" (`lib/notify/dispatch.ts:49`, at base).
+
+**Scope / residual.** None.
 
 ---
 
@@ -841,7 +853,7 @@ app/api/transmittal/route.ts:148-157 (the path that DOES notify) —
 ## PROD-13 · doc_superseded is overloaded across eight semantically distinct events — the kind carries no information
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** notifications N4 FEED-PROVIDER-AND-REALTIME (done-when 3) — by the integrator, 2026-10-13 (N9 merge, DEC-31; fleet plans `audit-reports/fleet-plans/`).
 - **Verification:** CONFIRMED
 - **Locations:** `lib/postPublish.ts:39`, `lib/postPublish.ts:177`, `lib/distributionAcks.ts:138`, `lib/distributionAcks.ts:322`, `lib/staleCopies.ts:198`, `lib/revisionImpact.ts:138`, `lib/workPackages.ts:279`, `app/api/intake/upload/route.ts:351`
@@ -892,6 +904,22 @@ hooks/useTicketNotifications.ts:279 —
 - **Not met — deferred by ratification:** "actionKinds includes every kind that demands a user action". `DEC-90` A11 ratified `DEC-81` §2's deferral: the PSM obligations stay FYI until their rows clear on discharge (notifications N4's per-kind flip). The split kinds follow their parents (FYI).
 
 **Scope / residual.** Stays OPEN for done-when 3, owner notifications N4. Rows written before N9 with no discriminator keep `doc_superseded` (an upstream advisory carried none); `20261191`'s inventory counts them. The daily compliance digest's hand-kept `COMPLIANCE_KINDS` (the cron, N6's file) lacks the four split document kinds and the two intake kinds until N6's derivation lands — a binding merge order with a test tripwire (`TAX-13` Scope, `99-fix-sequencing.md`, `DEC-100` Risk).
+
+**Resolution (2026-10-13, notifications Round G — done-when 3).** Package N4 FEED-PROVIDER-AND-REALTIME, branch `fleet/N4-feed-provider`. **Reproduced** on `6503ea7`: the feed's action flag is `KIND_META.actionRequired` (`hooks/useTicketNotifications.ts:353`; the toast's at `components/providers/NotificationListener.tsx:86-88`), and every PSM obligation was `false` (`lib/notificationKinds.ts`, `DEC-81` §2's deferral), so "Action needed" was missing on an acknowledgment request, a sign-off request and a recertification due.
+
+What landed — `DEC-81` §2 as `DEC-90` A11 ratified it ("each PSM kind flips to action-required in the same change that clears its row on discharge"):
+- **The flips.** `ack_requested`, `review_requested`, `review_invalidated`, `access_recert_due`, `ack_overdue`, `review_overdue` → `actionRequired: true` in `KIND_META`. The split kinds of N9 inherit their parents' flags as before (`checkout_force_released`, `checkout_auto_released` stay actions; `doc_recalled` and the package / upstream kinds stay FYI — none asks the recipient to do something). `effective_now` stays FYI ("now in effect" — nothing to do).
+- **The clearing, in the same change.** The reconcile pass (`lib/notificationReconcile.ts`, `POST /api/notifications/reconcile`, `lib/notificationReconcileServer.ts`) retires each once discharged: `ack_requested` when the recipient owes no acknowledgment on the document (no pending `document_acknowledgments` row, no unacknowledged `distribution_acks` row that still binds — the current version of a document that is not retired); `review_requested` / `review_invalidated` when the recipient owes no sign-off on the document's draft in review (`document_review_signoffs` pending for `documents.pending_version_id`); `access_recert_due` when the library's recertification is no longer due (`recertStatusFor`); `ack_overdue` when nobody owes an acknowledgment on the document; `review_overdue` when the document has no draft in review.
+- **One classification.** The feed, the badges, the toast and the Center all read `KIND_META.actionRequired` — no hand list exists (`lib/__tests__/notificationKinds.test.ts` pins the set and that each flipped kind has a discharge check).
+- Tests: `lib/__tests__/notificationKinds.test.ts` (`PSM_FLIPPED_BY_N4`; "N4: each PSM obligation flipped to action-required has a discharge check that clears its row"; the toast tone and the counts follow); `lib/__tests__/notificationReconcile.test.ts` (the discharge cases for all six); `lib/__tests__/notificationCenterScope.test.ts` and `lib/__tests__/notificationListener.test.ts` (FYI examples moved off `ack_requested`).
+- Verified: loop on `fleet/N4-feed-provider`: `npx tsc --noEmit` exit 0; `npx eslint` on the 24 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 1 — 514 files, 11,352 passed, 10 expected fail, 4 failed, every one "Test timed out in 5000ms" in a file this package does not touch (`dcRoundFOwnerStamp`, `dcRoundFShareInventory`, `exportContractRoundTrip`, `notificationDispatchMembership`; load average 18–29 on the shared box), each exit 0 when rerun alone. `next build` is the integrator's.
+
+**Done-when.**
+- ✓ (N9) distributionAcks uses `ack_requested` / `ack_overdue`.
+- ✓ (N9) staleCopies, revisionImpact and workPackages use their own kinds.
+- ✓ The action classification includes every kind that demands a user action — the conflict class, N9's split kinds that inherit it, and the six PSM obligations above — derived from `KIND_META.actionRequired`, never a hand list; each flipped obligation clears once discharged, so "Action needed" is truthful.
+
+**Scope / residual.** A discharged obligation clears on the recipient's next feed pass (load, tab return, every visible minute), not instantly; a row below the loaded window clears as it pages in.
 
 ---
 

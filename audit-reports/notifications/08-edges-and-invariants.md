@@ -916,7 +916,7 @@ There is no status predicate and no membership filter on `recipients`. `20261160
 ## NEDGE-18 · Once 20261161 is pasted, the attention feed's browser-side mark on a stale workflow alert is refused, so an alert the workflow route missed stays in the unread window
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** notifications N4 FEED-PROVIDER-AND-REALTIME (it owns `hooks/useTicketNotifications.ts` and its reconcile pass; TRAIL-9's retirements meet the same rail) — opened and assigned by the integrator, 2026-10-07, at the drafting-flow DF-P1 merge (DEC-31; fleet plan `audit-reports/fleet-plans/notifications.json`).
 - **Verification:** CONFIRMED by reading the two merged changes together: `20261161`'s `enforce_notification_update()` (`trg_notifications_read_at_only`) refuses a recipient's change to any column but `read_at` on their own row, and DF-P1's reconcile in `hooks/useTicketNotifications.ts` writes `metadata.superseded_at` on the recipient's own rows from the browser. The census in `lib/__tests__/notificationWriteRails.test.ts` ("every UPDATE writes read_at and nothing else … but the two classified metadata marks") names both writes.
 - **Locations:** `hooks/useTicketNotifications.ts:234-283` (the reconcile: stale workflow rows filtered from the feed, then `.update({ metadata: { …, superseded_at } })` on each, best-effort), `supabase/migrations/20261161_notif_roundG_read_scope.sql` (`enforce_notification_update`, the read_at-only trigger; the service role passes), `app/api/tickets/workflow-action/route.ts:1072-1088` (the route's own supersede, on the service role, unaffected), `lib/inAppNotifications.ts` (the unread list leaves superseded rows out)
@@ -931,6 +931,24 @@ There is no status predicate and no membership filter on `recipients`. `20261160
 - [ ] The same holds for any other browser-side retirement N4 adds (TRAIL-9's `hold_released` → `hold_opened`, `branch_resolved` → `branch_open`).
 - [ ] The census in `lib/__tests__/notificationWriteRails.test.ts` drops the hook from its `METADATA_UPDATES` list, and every browser UPDATE of notifications writes `read_at` only.
 - [ ] Regression: an alert the route supersedes is unchanged, and the feed shows exactly what it shows today.
+
+**Resolution (2026-10-13, notifications Round G).** Package N4 FEED-PROVIDER-AND-REALTIME, branch `fleet/N4-feed-provider`. **Reproduced** on `6503ea7`: the hook's `.update({ metadata: { …, superseded_at } })` on the recipient's own rows (`hooks/useTicketNotifications.ts:276-280`) — refused by `trg_notifications_read_at_only` once `20261161` is pasted (the trigger keys on `auth.uid()`, so a SECURITY DEFINER function acting on the caller's own row is refused too).
+
+What landed:
+- **A server route.** `POST /api/notifications/reconcile` (`app/api/notifications/reconcile/route.ts`, new): a signed-in, active member of the org; it calls `retireStaleAlerts` (`lib/notificationReconcileServer.ts`, new) on the service role, which reads each id back as the CALLER's own unread, unsuperseded row in that org (any other id is ignored), re-checks the condition (a workflow alert: its ticket's status no longer the recorded one, or the ticket not in the workspace), and writes ONLY `metadata.superseded_at`, guarded on `user_id` = caller, `org_id`, `read_at IS NULL` and `metadata->>superseded_at IS NULL`. A check it cannot read retires nothing. The service role passes the trigger, so it works before and after `20261161`; no migration (`DEC-44 (N4-feed-provider)` §2).
+- **The browser writes nothing.** The hook still leaves a stale workflow alert out of the feed as soon as it sees it (DF-P1's rule, unchanged) and sends its id to the route (`hooks/useTicketNotifications.ts`, `reconcile`). The `.update(` is gone from the hook.
+- **TRAIL-9's retirements** use the same route (hold, branch; and the `DEC-81` §2 obligations).
+- **The census.** `lib/__tests__/notificationWriteRails.test.ts` drops the hook from `METADATA_UPDATES`, lists the reconcile server's service-role mark in its place, and asserts the hook writes no notifications UPDATE; the reconcile server's read is classified a bell reader (it reads the caller's own rows by id; nothing is withheld because a row exists).
+- Tests: `lib/__tests__/notificationReconcile.test.ts` (each class; another person's / a read / a superseded / another org's row is never touched; an unreadable check retires nothing; the route's 401 / 400 / 403 / 503 and its answer); `lib/__tests__/dfRoundG_P1_hookSupersede.test.ts` (rewritten: stale rows left out and sent, no browser UPDATE; a failed ticket read leaves out and sends nothing); `lib/__tests__/dfRoundG_P1_rails.test.ts` (the EVID-13 pin moved to the server's mark).
+- Verified: loop on `fleet/N4-feed-provider`: `npx tsc --noEmit` exit 0; `npx eslint` on the 24 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 1 — 514 files, 11,352 passed, 10 expected fail, 4 failed, every one "Test timed out in 5000ms" in a file this package does not touch (`dcRoundFOwnerStamp`, `dcRoundFShareInventory`, `exportContractRoundTrip`, `notificationDispatchMembership`; load average 18–29 on the shared box), each exit 0 when rerun alone. `next build` is the integrator's.
+
+**Done-when.**
+- ✓ The supersede mark is made on a server path (a service-role route) that sets only `metadata.superseded_at` on the caller's own unread rows whose condition is gone, and refuses anything else.
+- ✓ The same holds for the browser-side retirements N4 adds (`TRAIL-9`, `DEC-81` §2) — all through the route.
+- ✓ The census drops the hook from `METADATA_UPDATES`; every browser UPDATE of notifications writes `read_at` only.
+- ✓ Regression: the workflow route's own supersede is untouched (`app/api/tickets/workflow-action/route.ts`, not edited), and the feed hides a stale workflow alert exactly as before. (The feed also stops listing rows `TRAIL-9` and `DEC-81` §2 retire — those findings' purpose.)
+
+**Scope / residual.** None.
 
 ---
 
