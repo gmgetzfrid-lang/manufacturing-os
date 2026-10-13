@@ -4596,6 +4596,8 @@ against.
 
 *Landed 2026-10-07 (projects Round G, J14): item 3's milestone residuals on projects-tab `SEC-21` are decided, with no SQL change. (2) The document-typed `MILESTONE_*` rows written before `20261157`'s paste are not back-filled, because append-only audit history is not rewritten. No reach rule is added for an unstamped row of a gone milestone, because reading its reach from its document would reopen the leak item 3 closes (a document can sit in several projects). Those rows are the audit roles' once their milestone is deleted — an accepted exception, counted by `20261157`'s inventory. (4) A service-role milestone delete (a restore, the cron, the SQL editor) records no scope, by design: no app path deletes a milestone as the service role, and §9's service pass keeps a restore's rows as written. Residual 3 stays open and is re-owned on `SEC-21`. Its premise that no app path moves a milestone's project is corrected: `lib/milestones.ts`'s document-scoped import upsert can.*
 
+*Landed 2026-10-13 (projects Round G, J19): item 3's last owed milestone residual on projects-tab `SEC-21` (residual 3) is closed. The schedule import keeps each matched row's own project (`lib/milestones.ts`). `20261198` §1 refuses a signed-in move of `milestones.project_id` without `can_edit_project_schedule` on every project it touches, refuses a move onto another org's project, and refuses any move onto or off a private project (a milestone's history keeps the reach it was written under). Two narrow exceptions are accepted and not owed: a service-role move, and moves made before the paste. Resolving `SEC-21` on its accepted exceptions is the integrator's record decision.*
+
 <a id="dec-70"></a>
 ## DEC-70 · The field pack: what may ride in, how big it may be, what its print record holds, and what a copy of a held or marked-up drawing is
 
@@ -5886,6 +5888,8 @@ Shape: `lib/__tests__/prjRoundGJ16DoorIdentity.test.ts`. Origin: `lib/__tests__/
 *Amended 2026-10-02 (intelligence Round G, I-11 review-fix pass 2): item 1's library gate covers the sweep too. Item 4's "a column re-map never reads as mass removals" was overstated. It now holds through the ledger's `applied_columns` map and the every-tag-column rule. Item 7 writes a relation only with its provenance and stops on an unread configuration. The Risk names the project register's disclosure and transition-in's adoption, both handed to projects.*
 
 *Amended 2026-10-02 (intelligence Round G, I-11 review-fix pass 3): the Risk's "counted in the sweep's results" is now true (the sweep returns and shows `outcomes.columnDismissed`; before, nothing counted it). Item 4's column removal now removes the relation before it saves the dismissal, so a removal that fails is planned again on the next compute. Item 6's "a person's manual Link refused 23505 on a drawing pair makes the row theirs" now covers transition-in's equipment links (`lib/transitionIn.ts`). Item 7's relation refresh returns its outcome, and the sweep counts it.*
+
+*Landed 2026-10-13 (projects Round G, J19): Risk (2) re-read on base `49cd27e`. `lib/transitionIn.ts` sends a drawing-held pair through `adopt` and returns a refused link as `equipmentNote` (fix pass 3; pinned by `transitionIn.test.ts`). Showing it in `components/projects/TransitionInPanel.tsx` is opened as projects-tab `UX-17` (projects-joint, after J17).*
 
 ---
 

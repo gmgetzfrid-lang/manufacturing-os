@@ -811,6 +811,34 @@ Tests — new `lib/__tests__/ux16EvidenceSweepOnArrival.test.ts`: "accepting an 
 
 ---
 
+## UX-17 · Transition-in tells nobody when the adopted sheet's equipment links were not recorded
+
+*Numbered UX-17 on this branch (opened by projects-joint J19 PROJECTS REMAINDERS, 2026-10-13, from intelligence `AREA-2`'s fix-pass-3 residual, which handed the panel to projects with no finding, per `DEC-31`). If the number collides at merge the integrator renumbers.*
+
+- **Severity:** LOW
+- **Status:** OPEN
+- **Assigned:** projects-joint, the owner of `components/projects/**`. Proposed by projects-joint J19 PROJECTS REMAINDERS, 2026-10-13 (DEC-31). It runs after projects J17, which is editing `components/projects/**` now. The integrator names the package at the J19 merge.
+- **Verification:** READ (base `49cd27e`; the lib half is pinned by `lib/__tests__/transitionIn.test.ts`; the panel was read, not rendered)
+- **Blast radius:** copy-truth / registry integrity
+- **Locations:**
+  - `lib/transitionIn.ts:584-604`: `adoptDocument` returns `equipmentNote` when the matched equipment could not be linked, or when a pair is still the equipment sweep's reading (`linkAdoptedEquipment`, `:618`).
+  - `components/projects/TransitionInPanel.tsx:158` (single adopt) shows `res.note` or "adopted into the controlled register". `:178` (bulk adopt) counts `res.note` as "adopted without a uniqueness key". Neither reads `equipmentNote`.
+- **Related:** intelligence `AREA-2` (fix passes 2 and 3), `DEC-96` item 6 and its Risk (2)
+- **Independently verified:** — (`author`: opened by J19 from `AREA-2`'s recorded residual; not yet challenged)
+
+**Mechanism.** Since intelligence I-11's fix pass 3, `lib/transitionIn.ts` makes a transition-in's equipment links the controller's. A pair the sweep's 'drawing' row holds goes through `POST /api/equipment-bridge` `action "adopt"`, and a refused link write or adopt is returned as `equipmentNote`. The panel never reads that field. So the sentence the lib composes ("… is still the equipment sweep's reading, not your link — Link it from the equipment registry …") reaches nobody.
+
+**Failure scenario.** A controller adopts a sheet whose matched tag FE-201 the sweep already read. The Bridge refuses the adopt (for example, the controller cannot read the document's library). The panel says "adopted into the controlled register". The link is still the machine's reading, so a later Dismiss of that reading removes it, and the controller never learns they had to Link it by hand.
+
+**Remediation.** Show `equipmentNote` after a single adopt, beside or after the adopt sentence. In the bulk path, collect the labels whose result carries one and say them in their own line, never folded into the unkeyed count. Add a rendered test for each path.
+
+**Done when.**
+- A single adopt whose result carries `equipmentNote` shows it.
+- A bulk adopt names the sheets whose equipment links need attention, apart from the unkeyed list.
+- A rendered test covers both, and a result without the note renders exactly as today.
+
+---
+
 ## Report progress
 
 | ID | Severity | Status |
@@ -831,3 +859,4 @@ Tests — new `lib/__tests__/ux16EvidenceSweepOnArrival.test.ts`: "accepting an 
 | UX-14 | MEDIUM | RESOLVED |
 | UX-15 | MEDIUM | OPEN |
 | UX-16 | MEDIUM | RESOLVED |
+| UX-17 | LOW | OPEN |
