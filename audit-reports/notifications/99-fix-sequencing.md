@@ -501,14 +501,17 @@ the integrator, drafting-flow, document-control, N13, `lib/tableViews.ts`'s hold
   producer: the sign-off check applies only to a row a roster provably wrote,
   and the cron's review-health nudge is never reconciled. `PROD-18` (opened by
   the review) lists the nine kinds that ask for an action and stay FYI until
-  each has its discharge check — the integrator assigns it.*
+  each has its discharge check — assigned to notifications N12 NUDGES by the
+  integrator, 2026-10-13 (N12 already edits `lib/notificationKinds.ts` and
+  the provider; it takes the reconcile files with them).*
 - *drafting-flow (`components/documents/CheckInPanel.tsx`): the "notify
   owner" outcome writes `review_requested` ("Change proposed to …"), the PSM
   sign-off kind, with no roster behind it. Since N4 it turns red as an action
   (and the reconcile pass keeps it — no roster evidence), so it stays until
   read. Give it its own kind (a DEC-31 remainder of `PROD-13`; still
   `review_requested` on `fleet/DF-P2-ticket-create` and `fleet/DF-P3-routing`).*
-- *drafting-flow (the requests portal) and document-control (the library
+- *drafting-flow DF-P9 TICKET-PAGE (the requests portal — assigned by the
+  integrator, 2026-10-13) and document-control (the library
   page): `RT-4` stays OPEN for two lines — `app/(protected)/requests/page.tsx`'s
   tickets channel and `app/(protected)/documents/[libraryId]/page.tsx`'s
   documents channel each need an unfiltered `DELETE` companion, acting only on
@@ -516,18 +519,21 @@ the integrator, drafting-flow, document-control, N13, `lib/tableViews.ts`'s hold
   listener — the attention feed's tickets companion is the pattern).
   `lib/__tests__/realtimePublication.test.ts` `RT4_PENDING` names both; drop
   an entry when its companion lands.*
-- *`lib/tableViews.ts`'s holder: `RT-12` stays OPEN for `table_views` —
+- *notifications N11 TRAIL (`lib/tableViews.ts`'s holder — assigned by the
+  integrator, 2026-10-13: N11 holds its one consumer, the library page):
+  `RT-12` stays OPEN for `table_views` —
   not published, because a DELETE event would carry its composite id
   (workspace, person, library) to every subscriber (`DEC-44 (N4-feed-provider)`
   §5). Replace the `postgres_changes` sync with a Broadcast message from the
   saver, or give the table an opaque key; the tripwire's `NOT_PUBLISHED`
   entry goes with it.*
-- *Whoever next holds `components/notifications/NotificationBell.tsx` /
-  `components/navigation/Sidebar.tsx`: `RT-1` is OPEN (Partial) for its
-  done-when 4 on these two — the "reconnecting — counts may be out of date"
-  state shows in the feed surfaces (center, `/inbox`, the dashboard widget)
-  only; the bell and the rail read `useAttentionStatus().stale` and show it
-  (the integrator assigns the holder).*
+- *notifications N11 TRAIL (assigned by the integrator, 2026-10-13 — it owns
+  the badge below the sidebar): `RT-1` is OPEN (Partial) for its done-when 4
+  on `components/notifications/NotificationBell.tsx` /
+  `components/navigation/Sidebar.tsx` — the "reconnecting — counts may be
+  out of date" state shows in the feed surfaces (center, `/inbox`, the
+  dashboard widget) only; the bell and the rail read
+  `useAttentionStatus().stale` and show it.*
 - *Integrator, at every merge that touches `lib/notificationKinds.ts` (N10,
   N12, N14 add kinds this round): `KindMeta.category` is required since N4,
   so a kind added in the old shape fails `tsc` at the `satisfies` check —
@@ -537,11 +543,25 @@ the integrator, drafting-flow, document-control, N13, `lib/tableViews.ts`'s hold
   row through `lib/notificationReconcile.ts` `isActionRow`.*
 - *`lib/reviewControl.ts`'s holder: the reconcile pass infers which
   `review_requested` / `review_invalidated` rows a sign-off roster wrote
-  from the notice's actor and the roster row's stamps (`rosterWrote`). A
-  metadata marker on the roster notices (`openReviewRoster`, the reminder
-  scan, `invalidateDraftSignoffs`) would replace the inference; the one
-  shape it still misreads is a check-in notice by the roster's own opener
-  within 10 minutes of opening it.*
+  from the notice's title, its actor and the roster row's stamps
+  (`rosterWrote`; integrator fix pass, 2026-10-13: an actor-less row counts
+  only under the title of the one server writer that sends it with no actor,
+  and an actor-bearing one only under `openReviewRoster`'s — so the check-in
+  notice by the roster's own opener no longer reads as the roster's, and a
+  legacy intake notice never does). The titles are pinned against this file
+  (`lib/notificationReconcile.ts` `REVIEW_NOTICE_TITLES`;
+  `lib/__tests__/notificationReconcile.test.ts` "the actor-less titles are
+  the producer's"): retitling one of these notices fails that test — move
+  the constant with it. A metadata marker on the roster notices would
+  replace the title inference.*
+- *drafting-flow DF-P3's hand-off, landed here (integrator fix pass,
+  2026-10-13; re-owned from DF-P9 to N4, which rebuilt the hook): the feed's
+  client reconcile keeps an SLA notice (`metadata.action` in
+  `lib/ticketSla.ts` `SLA_NOTICE_ACTIONS`) while its request is open — not
+  hidden, not sent — and the server's check keeps it too; only CLOSED /
+  CANCELED (or the ticket's absence) retires it
+  (`lib/notificationReconcile.ts` `workflowAlertGone`; drafting-flow
+  `EDGE-7`).*
 - *Still open from N3's hand-off (not N4's to change): `markRead`,
   `markManyRead` and `markAllRead` in `lib/inAppNotifications.ts` do not read
   `{ error }` — several callers `void` them, so making them throw needs those

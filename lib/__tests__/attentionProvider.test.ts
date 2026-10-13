@@ -368,6 +368,15 @@ describe("TAX-6 / DELIV-10 / TRAIL-7 / PROD-7 — a true count, older pages, a f
 
 describe("RT-8 / NEDGE-18 / TRAIL-9 — the reconcile pass: after the read, on the server, its echo ignored", () => {
   const wf = (n: number, ticket: string, status: string) => row(n, { kind: "ticket_status", resourceType: "ticket", resourceId: ticket, metadata: { action: "assign", status } });
+  /** The realtime UPDATE's new record for a row the feed holds: the row as the
+   *  database has it (snake_case), with `change` applied. */
+  const dbRow = (r: ReturnType<typeof row>, change: Record<string, unknown> = {}) => ({
+    id: r.id, org_id: r.orgId, user_id: r.userId, kind: r.kind, title: r.title, body: r.body, link: r.link,
+    resource_type: r.resourceType, resource_id: r.resourceId, actor_user_id: r.actorUserId, actor_name: r.actorName,
+    metadata: r.metadata, read_at: r.readAt, created_at: r.createdAt, ...change,
+  });
+  /** The reconcile route's mark: metadata.superseded_at (toISOString), nothing else. */
+  const serverMark = (r: ReturnType<typeof row>) => dbRow(r, { metadata: { ...((r.metadata as Record<string, unknown> | null) ?? {}), superseded_at: new Date().toISOString() } });
 
   it("stale workflow alerts are left out at once and sent with the other candidates; the browser writes nothing", async () => {
     fx.tickets = [{ id: "t-live", status: "DRAFTING" }, { id: "t-moved", status: "PENDING_REVIEW" }];
@@ -385,7 +394,8 @@ describe("RT-8 / NEDGE-18 / TRAIL-9 — the reconcile pass: after the read, on t
   });
 
   it("a row the server retired leaves the feed and the count; its realtime echo is not a refetch, another row's change is", async () => {
-    fx.pages = [[row(3, { kind: "hold_opened" }), row(6, { kind: "library_doc_revised" })]];
+    const n3 = row(3, { kind: "hold_opened" }), n6 = row(6, { kind: "library_doc_revised" });
+    fx.pages = [[n3, n6]];
     fx.total = 2;
     fx.retire = ["n3"];
     await mount(withProvider(1));
@@ -393,22 +403,23 @@ describe("RT-8 / NEDGE-18 / TRAIL-9 — the reconcile pass: after the read, on t
     expect(last().count).toBe(1);
     const notifs = fx.channels[0].ons.find((o) => o.cfg.table === "notifications")!;
     const before = ticketFetches();
-    act(() => notifs.cb({ eventType: "UPDATE", new: { id: "n3" } }));
+    act(() => notifs.cb({ eventType: "UPDATE", new: serverMark(n3) }));
     await wait(FETCH_DEBOUNCE_MS + 150);
     expect(ticketFetches()).toBe(before);
-    act(() => notifs.cb({ eventType: "UPDATE", new: { id: "n6" } }));
+    act(() => notifs.cb({ eventType: "UPDATE", new: dbRow(n6, { read_at: new Date().toISOString() }) }));
     await wait(FETCH_DEBOUNCE_MS + 150);
     expect(ticketFetches()).toBe(before + 1);
   });
 
-  it("RT-8 (third review fix): the echo of a mark that arrives BEFORE the reconcile answer is not a refetch; a kept candidate's later change is", async () => {
-    fx.pages = [[row(3, { kind: "hold_opened" }), row(5, { kind: "ack_requested" }), row(6, { kind: "library_doc_revised" })]];
+  it("RT-8 (third review fix): the server's mark that arrives BEFORE the reconcile answer is not a refetch; a kept candidate's later change is", async () => {
+    const n3 = row(3, { kind: "hold_opened" }), n5 = row(5, { kind: "ack_requested" }), n6 = row(6, { kind: "library_doc_revised" });
+    fx.pages = [[n3, n5, n6]];
     fx.total = 3;
     fx.retire = ["n3"];
     // The server writes before it answers: the UPDATE for n3 lands while the POST is still in flight.
     fx.onReconcile = () => {
       const notifs = fx.channels[0].ons.find((o) => o.cfg.table === "notifications")!;
-      notifs.cb({ eventType: "UPDATE", new: { id: "n3" } });
+      notifs.cb({ eventType: "UPDATE", new: serverMark(n3) });
     };
     await mount(withProvider(1));
     const before = ticketFetches();
@@ -416,11 +427,96 @@ describe("RT-8 / NEDGE-18 / TRAIL-9 — the reconcile pass: after the read, on t
     expect(fx.reconcileCalls[0].ids).toEqual(["n3", "n5"]);
     expect(ticketFetches()).toBe(before);
     expect(last().items.map((i) => i.notificationId)).toEqual(["n5", "n6"]);
-    // n5 was kept: it is no longer an expected echo, so its change refetches
+    // n5 was kept: its change refetches
     const notifs = fx.channels[0].ons.find((o) => o.cfg.table === "notifications")!;
-    act(() => notifs.cb({ eventType: "UPDATE", new: { id: "n5" } }));
+    act(() => notifs.cb({ eventType: "UPDATE", new: dbRow(n5, { title: "edited" }) }));
     await wait(FETCH_DEBOUNCE_MS + 150);
     expect(ticketFetches()).toBe(before + 1);
+  });
+
+  it("RT-8 (fourth review fix): the recipient's own mark-read on a candidate while the request is in flight refetches AT ONCE — it is never taken for the server's echo", async () => {
+    const n3 = row(3, { kind: "hold_opened" }), n5 = row(5, { kind: "ack_requested" });
+    fx.pages = [[n3, n5]];
+    fx.total = 2;
+    fx.retire = [];   // the server reads n5 as read and keeps it; n3 is still owed
+    let refetchesDuringFlight = -1;
+    fx.onReconcile = () => {
+      const notifs = fx.channels[0].ons.find((o) => o.cfg.table === "notifications")!;
+      // The bell's markRead changes read_at only — no local removal; the feed relies on this UPDATE.
+      notifs.cb({ eventType: "UPDATE", new: dbRow(n5, { read_at: new Date().toISOString() }) });
+      refetchesDuringFlight = ticketFetches();
+    };
+    await mount(withProvider(1));
+    const after = ticketFetches();
+    expect(refetchesDuringFlight).toBe(after);
+    // the refetch was scheduled by the UPDATE itself (the debounce), not by a poll or the next trigger
+    await wait(FETCH_DEBOUNCE_MS + 150);
+    expect(ticketFetches()).toBe(after + 1);
+  });
+
+  it("RT-8 (fourth review fix): only EXACTLY the reconcile's mark is passed over — the workflow route's mark (superseded_by), a mark with read_at, another field, or a mark on a row the server did not retire all refetch", async () => {
+    const n3 = row(3, { kind: "hold_opened", metadata: { staleHoldId: "h1" } }), n4 = row(4, { kind: "branch_open", metadata: { branchId: "b1" } }), n5 = row(5, { kind: "ack_requested" });
+    fx.pages = [[n3, n4, n5]];
+    fx.total = 3;
+    fx.retire = ["n3", "n4"];
+    const now = () => new Date().toISOString();
+    fx.onReconcile = () => {
+      const notifs = fx.channels[0].ons.find((o) => o.cfg.table === "notifications")!;
+      // n5: a mark of the reconcile's shape, but the server will NOT report retiring it — decided at the answer
+      notifs.cb({ eventType: "UPDATE", new: serverMark(n5) });
+    };
+    await mount(withProvider(1));
+    const base = ticketFetches();
+    await wait(FETCH_DEBOUNCE_MS + 150);
+    expect(ticketFetches()).toBe(base + 1);   // n5's held-back mark was not the server's: refetched
+    const notifs = fx.channels[0].ons.find((o) => o.cfg.table === "notifications")!;
+    const b = ticketFetches();
+    // n3 retired: an echo that also stamps another metadata key is not the reconcile's mark
+    act(() => notifs.cb({ eventType: "UPDATE", new: dbRow(n3, { metadata: { staleHoldId: "h1", superseded_at: now(), superseded_by: "close" } }) }));
+    await wait(FETCH_DEBOUNCE_MS + 150);
+    expect(ticketFetches()).toBe(b + 1);
+    // n4 retired: a mark that also sets read_at is the recipient's act too
+    act(() => notifs.cb({ eventType: "UPDATE", new: dbRow(n4, { metadata: { branchId: "b1", superseded_at: now() }, read_at: now() }) }));
+    await wait(FETCH_DEBOUNCE_MS + 150);
+    expect(ticketFetches()).toBe(b + 2);
+  });
+
+  it("RT-8 (fourth review fix): a retired row's echo is passed over once; a second UPDATE to it refetches", async () => {
+    const n3 = row(3, { kind: "hold_opened" });
+    fx.pages = [[n3]];
+    fx.total = 1;
+    fx.retire = ["n3"];
+    await mount(withProvider(1));
+    const notifs = fx.channels[0].ons.find((o) => o.cfg.table === "notifications")!;
+    const b = ticketFetches();
+    act(() => notifs.cb({ eventType: "UPDATE", new: serverMark(n3) }));
+    await wait(FETCH_DEBOUNCE_MS + 150);
+    expect(ticketFetches()).toBe(b);
+    act(() => notifs.cb({ eventType: "UPDATE", new: serverMark(n3) }));
+    await wait(FETCH_DEBOUNCE_MS + 150);
+    expect(ticketFetches()).toBe(b + 1);
+  });
+
+  it("DF-P3 EDGE-7 (fix pass 3 bell-rows limb, re-owned by N4): an SLA notice stays while its request is open — not hidden, not sent — and is retired only once it is CLOSED / CANCELED", async () => {
+    const sla = (n: number, ticket: string, action: string) => row(n, { kind: "ticket_status", resourceType: "ticket", resourceId: ticket, metadata: { action, status: "DRAFTING", sla: action === "sla_breach" ? "breach" : "warn" } });
+    fx.tickets = [
+      { id: "t-moved", status: "PENDING_REVIEW" },   // open-to-open: still late
+      { id: "t-closed", status: "CLOSED" },
+      { id: "t-canceled", status: "CANCELED" },
+      { id: "t-wf", status: "PENDING_REVIEW" },
+    ];
+    fx.pages = [[
+      sla(1, "t-moved", "sla_breach"), sla(2, "t-moved", "sla_warning"),
+      sla(3, "t-closed", "sla_breach"), sla(4, "t-canceled", "sla_warning"),
+      sla(5, "t-gone", "sla_breach"),                 // the ticket is not in the workspace any more
+      wf(6, "t-wf", "DRAFTING"),                      // an ordinary alert: moot once the status moved
+    ]];
+    fx.total = 6;
+    await mount(withProvider(1));
+    const shown = last().items.map((i) => i.notificationId).filter(Boolean);
+    expect(shown).toEqual(expect.arrayContaining(["n1", "n2"]));
+    for (const gone of ["n3", "n4", "n5", "n6"]) expect(shown).not.toContain(gone);
+    expect(fx.reconcileCalls[0].ids).toEqual(["n3", "n4", "n5", "n6"]);
   });
 
   it("a row the server kept is not re-sent on the next fetch (one pass, not one per refetch)", async () => {

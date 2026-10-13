@@ -18,7 +18,10 @@
 //
 // What "gone" means, per class (every read scoped to the org):
 //   workflow       the ticket's status is no longer the alert's recorded
-//                  status, or the ticket is not in the workspace any more
+//                  status, or the ticket is not in the workspace any more;
+//                  an SLA notice (lib/ticketSla.ts SLA_NOTICE_ACTIONS) only
+//                  once the ticket is CLOSED / CANCELED or gone
+//                  (workflowAlertGone — DF-P3 fix pass 3, EDGE-7)
 //   hold           a hold_opened row on a document: no open hold on it (an aging
 //                  nudge, metadata.staleHoldId: that hold is released)
 //   branch         the branch (metadata.branchId) is resolved
@@ -35,14 +38,16 @@
 //                  the roster provably wrote (rosterWrote below), tying the
 //                  notice's actor to the roster's and its time to the stamp
 //                  the writer put on the recipient's roster row in the same
-//                  call: openReviewRoster (actor = the roster's assigned_by,
-//                  at its assigned_at), the reminder scan (no actor, at the
-//                  notified_at it stamps after the notice — or, for every
-//                  earlier reminder, any time after the recipient's roster
-//                  row was opened: an actor-less review_requested is never
-//                  the check-in panel's notice) and
-//                  invalidateDraftSignoffs (no actor, on the row it turns
-//                  'invalidated'). updated_at is never evidence on a live row
+//                  call: openReviewRoster (its title; actor = the roster's
+//                  assigned_by, at its assigned_at; with no actor, at the
+//                  assigned_at of a row opened by nobody), the reminder scan
+//                  (no actor, its title, at the notified_at it stamps after
+//                  the notice — or, for every earlier reminder, any time
+//                  after the recipient's roster row was opened) and
+//                  invalidateDraftSignoffs (no actor, its title, on the row
+//                  it turns 'invalidated'); an actor-less row with any other
+//                  title (a legacy intake notice) is not the roster's.
+//                  updated_at is never evidence on a live row
 //                  — every sign-off and alternate activation moves it. A row
 //                  with no such evidence — the check-in panel's "Change
 //                  proposed to …" notice, whose actor is the person checking
@@ -59,10 +64,11 @@
 //                  cron's review-health nudge (reconcileClassOf leaves it out)
 
 import {
-  reconcileClassOf, RECONCILE_MAX_IDS, REVIEW_RECONCILE_GRACE_MS, REVIEW_ROSTER_WINDOW_MS,
-  type ReconcileAnswer, type ReconcileClass,
+  reconcileClassOf, workflowAlertGone, RECONCILE_MAX_IDS, REVIEW_NOTICE_TITLES, REVIEW_RECONCILE_GRACE_MS,
+  REVIEW_ROSTER_WINDOW_MS, type ReconcileAnswer, type ReconcileClass,
 } from "@/lib/notificationReconcile";
 import { recertStatusFor } from "@/lib/accessRecert";
+import { SLA_NOTICE_ACTIONS } from "@/lib/ticketSla";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type ReconcileDb = { from: (table: string) => any };
@@ -78,6 +84,7 @@ interface Row {
   metadata: Record<string, unknown> | null;
   created_at?: string | null;
   actor_user_id?: string | null;
+  title?: string | null;
 }
 
 /** A recipient's sign-off roster row, as the review check reads it. */
@@ -98,39 +105,59 @@ const near = (t: string | null | undefined, created: number) => {
 /** Whether a review_requested / review_invalidated row is provably the
  *  notice a sign-off roster's writer sent (lib/reviewControl.ts), from the
  *  recipient's roster rows on that document:
- *    * a notice WITH an actor: openReviewRoster's — the actor opened the
- *      roster (assigned_by) and the notice was written at its assigned_at.
- *      The check-in panel's notice carries the person checking in, who is
- *      not the roster's opener, so it never matches;
- *    * a notice with NO actor: the reminder scan's (written just before it
- *      stamps notified_at), an actor-less roster's (assigned_at =
- *      notified_at), or invalidateDraftSignoffs' review_invalidated (the
- *      row it turns 'invalidated', whose updated_at it stamps; an
- *      invalidated row moves no further);
- *    * an actor-less review_requested written at or after the recipient's
- *      roster row was opened (assigned_at − the window): every reminder the
- *      scan wrote, not only the latest — each scan moves notified_at
- *      forward, so the day-5 reminder lies near neither assigned_at (day 0)
- *      nor notified_at (day 10). The only other review_requested writer,
- *      the check-in panel's "Change proposed to …" notice, always carries
- *      the person checking in as its actor
- *      (components/documents/CheckInPanel.tsx), so an actor-less one is
- *      never that notice.
+ *    * a notice WITH an actor: openReviewRoster's — a review_requested
+ *      under its title ("Review requested: …"), whose actor opened the
+ *      roster (assigned_by), written at its assigned_at. The check-in
+ *      panel's notice ("Change proposed to …") never matches — not even
+ *      when the person checking in is the roster's opener, within minutes
+ *      of opening it (fourth review fix: the title closes the one shape the
+ *      actor-and-time rule left open);
+ *    * a notice with NO actor is the roster's only when it is the known
+ *      server writer's for its kind — it carries that writer's title
+ *      (REVIEW_NOTICE_TITLES) and lies at the stamp that writer puts on
+ *      the recipient's row:
+ *        - openReviewRoster with no actor ("Review requested: …"): a row
+ *          opened by nobody (assigned_by null), at its assigned_at;
+ *        - the reminder scan ("Reminder — review …"): at the notified_at
+ *          it stamps just after the notice, or at any time since the
+ *          recipient's row was opened (assigned_at − the window) — every
+ *          reminder the scan wrote, not only the latest: each scan moves
+ *          notified_at forward, so the day-5 reminder lies near neither
+ *          assigned_at (day 0) nor notified_at (day 10);
+ *        - invalidateDraftSignoffs' review_invalidated ("Re-review needed:
+ *          …"): the row it turns 'invalidated', at the updated_at it
+ *          stamps (an invalidated row moves no further).
+ *      An actor-less row with any other title — a legacy intake notice
+ *      ("Intake submission awaiting review: …", filed under
+ *      review_requested until 20261191), a future producer — is not the
+ *      roster's, whatever its time, and stays until read. The check-in
+ *      panel's "Change proposed to …" notice always carries the person
+ *      checking in as its actor (components/documents/CheckInPanel.tsx).
  *  updated_at on a live row is never evidence: each sign-off, invalidation
  *  and alternate activation moves it. Exported for the tests. */
-export function rosterWrote(row: Pick<Row, "kind" | "created_at" | "actor_user_id">, roster: RosterStamp[]): boolean {
+export function rosterWrote(row: Pick<Row, "kind" | "created_at" | "actor_user_id" | "title">, roster: RosterStamp[]): boolean {
   const created = ms(row.created_at);
   if (!Number.isFinite(created)) return false;
   const actor = row.actor_user_id ?? null;
-  return roster.some((s) => {
-    if (actor !== null) return s.assigned_by === actor && near(s.assigned_at, created);
-    if (near(s.assigned_at, created) || near(s.notified_at, created)) return true;
-    if (row.kind === "review_requested") {
+  const title = typeof row.title === "string" ? row.title : "";
+  if (actor !== null) {
+    return row.kind === "review_requested" && title.startsWith(REVIEW_NOTICE_TITLES.roster)
+      && roster.some((s) => s.assigned_by === actor && near(s.assigned_at, created));
+  }
+  if (row.kind === "review_requested" && title.startsWith(REVIEW_NOTICE_TITLES.reminder)) {
+    return roster.some((s) => {
+      if (near(s.notified_at, created)) return true;
       const opened = ms(s.assigned_at);
-      if (Number.isFinite(opened) && created >= opened - REVIEW_ROSTER_WINDOW_MS) return true;
-    }
-    return row.kind === "review_invalidated" && s.status === "invalidated" && near(s.updated_at, created);
-  });
+      return Number.isFinite(opened) && created >= opened - REVIEW_ROSTER_WINDOW_MS;
+    });
+  }
+  if (row.kind === "review_requested" && title.startsWith(REVIEW_NOTICE_TITLES.roster)) {
+    return roster.some((s) => (s.assigned_by ?? null) === null && near(s.assigned_at, created));
+  }
+  if (row.kind === "review_invalidated" && title.startsWith(REVIEW_NOTICE_TITLES.invalidated)) {
+    return roster.some((s) => s.status === "invalidated" && near(s.updated_at, created));
+  }
+  return false;
 }
 
 type Read<T> = { ok: true; data: T } | { ok: false };
@@ -164,7 +191,7 @@ async function evaluate(db: ReconcileDb, orgId: string, uid: string, rows: Array
     for (const r of wf) {
       // A resource id that is not a ticket id at all proves nothing.
       if (!res.ok || !isUuid(r.resource_id)) { verdict.set(r.id, null); continue; }
-      verdict.set(r.id, status.get(r.resource_id) !== (r.metadata?.status as string));
+      verdict.set(r.id, workflowAlertGone(r.metadata, status.get(r.resource_id), SLA_NOTICE_ACTIONS));
     }
   }
 
@@ -351,7 +378,7 @@ export async function retireStaleAlerts(
   if (ids.length === 0) return { retired: [], kept: 0, failed: 0 };
   const rowsRes = await read<Row>(
     db.from("notifications")
-      .select("id, kind, resource_type, resource_id, metadata, created_at, actor_user_id")
+      .select("id, kind, resource_type, resource_id, metadata, created_at, actor_user_id, title")
       .eq("org_id", input.orgId)
       .eq("user_id", input.uid)
       .is("read_at", null)

@@ -6,7 +6,11 @@ import {
   listMyNotifications, countUnread, listUnreadKindsBeyond, markRead, markAllRead,
   NOTIFICATION_PAGE_SIZE, type NotificationRow, type NotificationCursor, type UnreadBeyondRow,
 } from '@/lib/inAppNotifications';
-import { isActionRow, reconcileClassOf, requestReconcile, RECONCILE_MAX_IDS } from '@/lib/notificationReconcile';
+import {
+  isActionRow, isReconcileMark, reconcileClassOf, requestReconcile, workflowAlertGone, RECONCILE_MAX_IDS,
+  type HeldNotification,
+} from '@/lib/notificationReconcile';
+import { SLA_NOTICE_ACTIONS } from '@/lib/ticketSla';
 import { isTerminalTicketStatus, TERMINAL_TICKET_STATUSES } from '@/lib/ticketShed';
 import {
   isActionRequired, attentionLabel, isQueueViewer, isEngineerRole,
@@ -68,7 +72,14 @@ import {
 // (lib/notificationReconcile.ts; NEDGE-18, TRAIL-9, DEC-81 §2). Rows of any
 // other kind are not reconciled: they stay until their recipient reads them.
 // The browser writes no metadata, and the pass runs once per tab, after the
-// read (a fetch is never also a write); its echo is ignored (RT-8).
+// read (a fetch is never also a write). Its echo is ignored (RT-8), and only
+// its echo: an UPDATE is passed over only when it changes nothing but the
+// server's own metadata.superseded_at mark, on a row the server answered it
+// retired (or, while the request is in flight, a row it was asked about —
+// held until the answer says whose mark it was); a mark-read or any other
+// change refetches at once. An SLA notice ("Due soon" / "Overdue") is moot
+// only once its request is CLOSED / CANCELED, never because an open request
+// changed status (lib/ticketSla.ts SLA_NOTICE_ACTIONS; DF-P3, EDGE-7).
 //
 // Where a notification lands — its sidebar section, whether it is an action —
 // is read from ONE table, lib/notificationKinds.ts KIND_META (notifications
@@ -110,8 +121,9 @@ export const VISIBLE_POLL_MS = 60_000;
 export const REMAINDER_TALLY_CAP = 1000;
 /** A row the server checked and kept is not sent again for this long. */
 export const RECONCILE_KEEP_MS = 60_000;
-/** The realtime echo of a row the reconcile pass just marked is ignored for
- *  this long (RT-8 dw2). */
+/** The realtime echo of a row the reconcile pass answered it marked is
+ *  ignored for this long (RT-8 dw2) — and only an echo that is exactly that
+ *  mark (lib/notificationReconcile.ts isReconcileMark). */
 export const RECONCILE_ECHO_MS = 30_000;
 
 function fromDbTicket(row: Record<string, unknown>): Ticket {
@@ -353,10 +365,13 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
   const pagesRef = useRef(1);
   const requestNowRef = useRef<() => void>(() => {});
   // The reconcile pass's memory, for the life of the tab: rows the server
-  // kept (not re-sent for RECONCILE_KEEP_MS) and rows it just marked (their
-  // realtime echo is ignored — RT-8).
+  // kept (not re-sent for RECONCILE_KEEP_MS), rows it answered it marked
+  // (their realtime echo is ignored when it is exactly that mark — RT-8),
+  // and the request in flight (its candidates as the feed held them, and the
+  // candidates whose mark arrived before the answer).
   const keptAtRef = useRef(new Map<string, number>());
-  const echoRef = useRef(new Map<string, number>());
+  const echoRef = useRef(new Map<string, { until: number; window: { from: number; to: number }; held: HeldNotification }>());
+  const inFlightRef = useRef<null | { sentAt: number; held: Map<string, HeldNotification>; early: Set<string> }>(null);
   const reconcilingRef = useRef(false);
   // WF-24: "must act" is derived from the workflow engine under the org's
   // OWN capability policy — the same inputs the ticket page evaluates — so
@@ -435,7 +450,7 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
         feedKeyRef.current = feedKey;
         rawRef.current = []; remainderRef.current = []; ticketIdsRef.current = new Set();
         pagesRef.current = 1;
-        keptAtRef.current.clear(); echoRef.current.clear();
+        keptAtRef.current.clear(); echoRef.current.clear(); inFlightRef.current = null;
         setTickets([]); setRawNotifs([]); setHidden(new Set()); setNotifTotal(null);
         setRemainder([]); setRemainderRead(true); setTicketTotal(null); setDocLibrary({});
         setLoadError(null); setLoading(true);
@@ -472,27 +487,48 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
       const ids = [...fromWindow, ...fromBelow].slice(0, RECONCILE_MAX_IDS);
       if (ids.length === 0) return;
       reconcilingRef.current = true;
-      // The server marks each row BEFORE it answers, so a mark's realtime
-      // UPDATE can arrive while the request is still in flight: every
-      // candidate is registered as an expected echo first, and the ones the
-      // server did not retire are taken off once it answers (RT-8 dw2). An
-      // unrelated UPDATE to a candidate in that gap is absorbed once; the
-      // next trigger or the visible poll still reads it.
+      // RT-8 dw2: the server marks each row BEFORE it answers, so a mark's
+      // realtime UPDATE can arrive while the request is in flight. Nothing
+      // is pre-registered as an echo: the candidates are kept as the feed
+      // held them, and an UPDATE to one in that gap is held back (not a
+      // refetch) only when it changes nothing but a fresh
+      // metadata.superseded_at (isReconcileMark). Anything else — the
+      // recipient's own mark-read on a row they just clicked, any other
+      // edit — refetches at once, as before. Once the server answers, a
+      // held-back mark on a row it did NOT retire was someone else's, and
+      // refetches; the retired rows whose echo has not arrived yet are
+      // registered, by id, for RECONCILE_ECHO_MS.
       const echo = echoRef.current;
-      const sentAt = Date.now();
-      for (const id of ids) echo.set(id, sentAt + RECONCILE_ECHO_MS);
+      const held = new Map<string, HeldNotification>();
+      const byId = new Map<string, HeldNotification>();
+      for (const r of rows) byId.set(r.id, r);
+      for (const r of below) if (!byId.has(r.id)) byId.set(r.id, r);
+      for (const id of ids) { const h = byId.get(id); if (h) held.set(id, h); }
+      const flight = { sentAt: Date.now(), held, early: new Set<string>() };
+      inFlightRef.current = flight;
       try {
         const answer = await requestReconcile(activeOrgId, ids);
         const at = Date.now();
+        if (inFlightRef.current === flight) inFlightRef.current = null;
         // Not answered (offline, no session, a route not deployed): nothing
         // is retired and every row keeps showing; it is asked again after
-        // RECONCILE_KEEP_MS, not on every refetch.
-        if (!answer) { for (const id of ids) { kept.set(id, at); echo.delete(id); } return; }
+        // RECONCILE_KEEP_MS, not on every refetch. A mark held back meanwhile
+        // was not proven ours: refetch.
+        if (!answer) {
+          for (const id of ids) kept.set(id, at);
+          if (flight.early.size > 0 && alive) schedule();
+          return;
+        }
         if (!alive) return;
         const retired = new Set(answer.retired);
-        for (const id of ids) if (!retired.has(id)) { kept.set(id, at); echo.delete(id); }
+        for (const id of ids) if (!retired.has(id)) kept.set(id, at);
+        if ([...flight.early].some((id) => !retired.has(id))) schedule();
+        const window = { from: flight.sentAt, to: at };
+        for (const id of retired) {
+          const h = held.get(id);
+          if (h && !flight.early.has(id)) echo.set(id, { until: at + RECONCILE_ECHO_MS, window, held: h });
+        }
         if (retired.size === 0) return;
-        for (const id of retired) if (echo.has(id)) echo.set(id, at + RECONCILE_ECHO_MS);
         const current = rawRef.current;
         const gone = current.filter((r) => retired.has(r.id)).length;
         const goneBelow = remainderRef.current.filter((r) => retired.has(r.id)).length;
@@ -515,6 +551,7 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
           return new Set([...prev].filter((id) => !retired.has(id)));
         });
       } finally {
+        if (inFlightRef.current === flight) inFlightRef.current = null;
         reconcilingRef.current = false;
       }
     };
@@ -615,8 +652,13 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
             for (const row of (liveRows || []) as Array<{ id: string; status: string }>) {
               statusById.set(row.id, row.status);
             }
+            // An SLA notice stays while its request is open: only CLOSED /
+            // CANCELED (or the ticket's absence) retires it — the workflow
+            // route's rule (lib/ticketSla.ts SLA_NOTICE_ACTIONS; DF-P3 fix
+            // pass 3, EDGE-7). Every other alert is moot once its ticket
+            // left the recorded status.
             const staleRows = liveErr ? [] : workflowRows
-              .filter((r) => statusById.get(r.resourceId as string) !== (r.metadata!.status as string));
+              .filter((r) => workflowAlertGone(r.metadata, statusById.get(r.resourceId as string), SLA_NOTICE_ACTIONS));
             for (const r of staleRows) staleSet.add(r.id);
             if (staleSet.size > 0) n = n.filter((r) => !staleSet.has(r.id));
           }
@@ -702,15 +744,33 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
 
     void run();
 
-    /** A notifications event: the echo of a row the reconcile pass just
-     *  marked is not a reason to refetch (RT-8 dw2). */
-    const onNotification = (payload: { eventType?: string; new?: { id?: string } | null } | undefined) => {
+    /** A notifications event: the echo of the reconcile pass's own mark is
+     *  not a reason to refetch (RT-8 dw2) — and nothing else is passed over.
+     *  An UPDATE is held back only when it changes nothing but a fresh
+     *  metadata.superseded_at (isReconcileMark) on a row the server answered
+     *  it retired, or on a candidate of the request in flight (decided when
+     *  the answer comes); one echo per row. A mark-read, any other edit, an
+     *  INSERT or a DELETE refetches. */
+    const onNotification = (payload: { eventType?: string; new?: Record<string, unknown> | null } | undefined) => {
       if (!alive) return;
-      const id = payload?.new?.id;
+      const next = payload?.new ?? null;
+      const id = typeof next?.id === 'string' ? next.id : null;
       const echo = echoRef.current;
       const now = Date.now();
-      for (const [k, until] of echo) if (until < now) echo.delete(k);
-      if (payload?.eventType === 'UPDATE' && id && echo.has(id)) { echo.delete(id); return; }
+      for (const [k, e] of echo) if (e.until < now) echo.delete(k);
+      if (payload?.eventType === 'UPDATE' && id) {
+        const flight = inFlightRef.current;
+        if (flight && flight.held.has(id) && !flight.early.has(id)
+          && isReconcileMark(next, flight.held.get(id), { from: flight.sentAt, to: now })) {
+          flight.early.add(id);
+          return;
+        }
+        const e = echo.get(id);
+        if (e) {
+          echo.delete(id);
+          if (isReconcileMark(next, e.held, e.window)) return;
+        }
+      }
       schedule();
     };
 
@@ -733,7 +793,7 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
           if (gone && ticketIdsRef.current.has(gone)) schedule();
         })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `user_id=eq.${uid}` },
-        (payload) => onNotification(payload as unknown as { eventType?: string; new?: { id?: string } | null }))
+        (payload) => onNotification(payload as unknown as { eventType?: string; new?: Record<string, unknown> | null }))
       // RT-1: the channel's status is watched. Every join after the first is a
       // rejoin after a drop, and no event missed meanwhile is replayed — so a
       // rejoin reconciles the whole feed. An error, a timeout or a close says

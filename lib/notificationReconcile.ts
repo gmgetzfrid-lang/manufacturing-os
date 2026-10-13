@@ -20,6 +20,7 @@
 // at the end, which reads the session lazily.
 
 import { kindMeta } from "@/lib/notificationKinds";
+import { isTerminalTicketStatus } from "@/lib/ticketShed";
 
 /** The conditions a row can be retired on. */
 export type ReconcileClass =
@@ -46,11 +47,14 @@ export type ReconcileClass =
    *  document's owner is a review_requested row with no roster behind it
    *  (components/documents/CheckInPanel.tsx). lib/notificationReconcileServer.ts
    *  keeps any row with no roster evidence (its actor must be the roster's
-   *  opener, or none, and its time the stamp that writer put on the
-   *  recipient's roster row — for an actor-less review_requested, any time
-   *  since that row was opened), and any row younger than
-   *  REVIEW_RECONCILE_GRACE_MS (the voided-approval notice is written before
-   *  the new roster is). */
+   *  opener at its assigned_at, under openReviewRoster's title; an actor-less
+   *  row must carry the title of the one server writer that sends it with
+   *  no actor — REVIEW_NOTICE_TITLES — and lie at the stamp that writer put on the recipient's roster row, a
+   *  reminder at any time since that row was opened), and any row younger
+   *  than REVIEW_RECONCILE_GRACE_MS (the voided-approval notice is written
+   *  before the new roster is). A legacy intake notice (metadata.intake —
+   *  filed under review_requested until 20261191 re-files it) is never
+   *  reconciled: no roster stands behind it. */
   | "review"
   /** access_recert_due: retired once the library's recertification is no
    *  longer due (DEC-81 §2). */
@@ -96,6 +100,10 @@ export function reconcileClassOf(row: ReconcilableRow): ReconcileClass | null {
       return row.resourceId && row.resourceType === "document" ? "ack" : null;
     case "review_requested":
     case "review_invalidated":
+      // A legacy intake notice (a contractor submission awaiting review, filed
+      // under review_requested before 20261191 re-filed it as intake_*) has no
+      // sign-off roster behind it: owing no sign-off is not its discharge.
+      if (meta && meta.intake != null) return null;
       return row.resourceId && row.resourceType === "document" ? "review" : null;
     case "access_recert_due":
       return row.resourceId && row.resourceType === "library" ? "recert" : null;
@@ -142,13 +150,123 @@ export const REVIEW_RECONCILE_GRACE_MS = 2 * 60_000;
  *  updated_at only on the row invalidateDraftSignoffs turned 'invalidated')
  *  must lie to a review row's created_at for the row to count as that
  *  roster's notice — with the notice's actor matching the roster's opener
- *  (lib/notificationReconcileServer.ts rosterWrote). An actor-less
- *  review_requested needs only to be written no earlier than this before
- *  the recipient's roster row was opened (every reminder, not only the one
+ *  (lib/notificationReconcileServer.ts rosterWrote). An actor-less row
+ *  must also carry its writer's title (REVIEW_NOTICE_TITLES); the cron's
+ *  reminder needs only to be written no earlier than this before the
+ *  recipient's roster row was opened (every reminder, not only the one
  *  whose notified_at is current). lib/reviewControl.ts stamps the roster row
  *  and writes the notice in the same call; the assigned_at of a
  *  browser-opened roster is the browser's clock, hence the margin. */
 export const REVIEW_ROSTER_WINDOW_MS = 10 * 60_000;
+
+/** The titles lib/reviewControl.ts gives the sign-off notices it writes —
+ *  among them the only server writers of an actor-less review_requested /
+ *  review_invalidated. rosterWrote (lib/notificationReconcileServer.ts) ties
+ *  an actor-less row to a roster only when it carries its writer's title, so
+ *  an actor-less row from any other source (a legacy intake notice, a future
+ *  producer) is not treated as the roster's and stays until read. The census
+ *  in lib/__tests__/notificationReconcile.test.ts pins these against the
+ *  producer's source, so a retitled notice fails a test instead of silently
+ *  ceasing to clear. */
+export const REVIEW_NOTICE_TITLES = {
+  /** openReviewRoster: with its actor (the roster's assigned_by), or with
+   *  none (assigned_by null), at the roster row's assigned_at. The title is
+   *  required of an actor-bearing notice too, so the check-in panel's
+   *  "Change proposed to …" by the roster's own opener never matches. */
+  roster: "Review requested: ",
+  /** scanReviews, the cron's reminder: at the notified_at it stamps, or any
+   *  time since the recipient's roster row was opened (every reminder). */
+  reminder: "Reminder — review ",
+  /** invalidateDraftSignoffs: at the updated_at of the row it turns 'invalidated'. */
+  invalidated: "Re-review needed: ",
+} as const;
+
+/** Whether a ticket workflow alert is moot, given its ticket's live status
+ *  (undefined: the ticket is not in the workspace, or not readable as the
+ *  caller). An alert says "the ticket is in state X — act": it is moot once
+ *  the ticket left X. An SLA notice ("Due soon" / "Overdue" — its
+ *  metadata.action is in lib/ticketSla.ts SLA_NOTICE_ACTIONS, passed in by
+ *  the caller so this module stays free of the routing client) says the
+ *  request is LATE, which an open-to-open move does not change: only an exit
+ *  (CLOSED / CANCELED) or the ticket's absence retires it — the workflow
+ *  route's own supersede rule (drafting-flow DF-P3 fix pass 3, EDGE-7). Both
+ *  the feed (which rows it hides and sends) and the server's check read
+ *  this. */
+export function workflowAlertGone(
+  meta: Record<string, unknown> | null,
+  liveStatus: string | undefined,
+  slaNoticeActions: ReadonlySet<string>,
+): boolean {
+  if (liveStatus === undefined) return true;
+  if (slaNoticeActions.has(String(meta?.action ?? ""))) return isTerminalTicketStatus(liveStatus);
+  return liveStatus !== meta?.status;
+}
+
+/** How far a mark's superseded_at may lie from the browser's clock around
+ *  the request and still be read as the reconcile pass's own (RT-8). A
+ *  browser clock further off only costs a refetch — never a missed change. */
+export const RECONCILE_MARK_SKEW_MS = 5 * 60_000;
+
+/** The server's superseded_at: Date#toISOString (lib/notificationReconcileServer.ts). */
+const MARK_STAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+/** A notification row as the feed held it when it sent it for reconcile. */
+export interface HeldNotification {
+  kind: string;
+  resourceType: string | null;
+  resourceId: string | null;
+  metadata: Record<string, unknown> | null;
+  title?: string;
+  body?: string | null;
+  link?: string | null;
+  actorUserId?: string | null;
+}
+
+function sameJson(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  const ka = Object.keys(a as object).filter((k) => (a as Record<string, unknown>)[k] !== undefined).sort();
+  const kb = Object.keys(b as object).filter((k) => (b as Record<string, unknown>)[k] !== undefined).sort();
+  if (ka.length !== kb.length || ka.some((k, i) => k !== kb[i])) return false;
+  return ka.every((k) => sameJson((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));
+}
+
+/** RT-8: whether a realtime UPDATE's new row differs from the row the feed
+ *  held ONLY by the reconcile pass's own mark — read_at still null,
+ *  metadata.superseded_at newly set to a server timestamp of the
+ *  toISOString shape within RECONCILE_MARK_SKEW_MS of the request, and every
+ *  other metadata key, and every column the feed held, unchanged. The
+ *  workflow route's mark (it adds superseded_by), a recipient's mark-read
+ *  (read_at) or any other edit is not — the feed refetches for those. A
+ *  column the payload does not carry is not compared; read_at and metadata
+ *  must be there. Answers false when nothing was held (fail-safe: a
+ *  refetch). */
+export function isReconcileMark(
+  next: Record<string, unknown> | null | undefined,
+  held: HeldNotification | undefined,
+  window: { from: number; to: number },
+): boolean {
+  if (!next || !held) return false;
+  if (!("read_at" in next) || next.read_at !== null) return false;
+  const meta = next.metadata;
+  if (!meta || typeof meta !== "object" || Array.isArray(meta)) return false;
+  const { superseded_at: stamp, ...rest } = meta as Record<string, unknown>;
+  if (typeof stamp !== "string" || !MARK_STAMP_RE.test(stamp)) return false;
+  const at = Date.parse(stamp);
+  if (!Number.isFinite(at) || at < window.from - RECONCILE_MARK_SKEW_MS || at > window.to + RECONCILE_MARK_SKEW_MS) return false;
+  if (held.metadata && typeof held.metadata.superseded_at !== "undefined") return false;
+  if (!sameJson(rest, held.metadata ?? {})) return false;
+  const cols: Array<[string, unknown]> = [
+    ["kind", held.kind], ["resource_type", held.resourceType], ["resource_id", held.resourceId],
+    ["title", held.title], ["body", held.body], ["link", held.link], ["actor_user_id", held.actorUserId],
+  ];
+  for (const [col, was] of cols) {
+    if (was === undefined || !(col in next)) continue;
+    if ((next[col] ?? null) !== (was ?? null)) return false;
+  }
+  return true;
+}
 
 /** What the route answers. */
 export interface ReconcileAnswer {
