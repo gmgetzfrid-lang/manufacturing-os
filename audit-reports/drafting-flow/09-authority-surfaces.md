@@ -826,4 +826,28 @@ The affordance surfaces read `loadCapabilityPolicy`, which returns the policy al
 - Each surface listed above, during a policy-read fault with no last good entry, either labels its policy-dependent controls as the shipped defaults or draws them disabled with the reason.
 - A rendered test per owning package drives the `unreadable` case.
 
+**Partial (2026-10-13, document-control Round F wave 3).** Package P24 TRANSMITTAL ISSUE VERDICT, for the transmittals surface only (its assigned share). Reproduced on `49cd27e`: `app/(protected)/transmittals/page.tsx:117` read `loadCapabilityPolicy` and, on a rejected read, `setPolicy({})`, which is the shipped defaults. During a fault with no last good entry, a DocCtrl (who holds `transmittal.issue` under the defaults) was offered Receipt, Revoke, Void and Issue with nothing on screen, whatever the org's stored narrowing. What landed (the integrator's rule for this package: an affordance drawn during a database fault fails closed, DEC-90 A26):
+- The page reads `loadCapabilityPolicyEntry`. On `unreadable`, or a read that throws, the policy stays `null`, so every control it decides is held back:
+  - Receipt, Revoke and Void on the register rows;
+  - the transmit-authority arm of Edit;
+  - Issue in the composer, whose footer and refusal now say "Permissions could not be read, so issuing is not offered until they can be — your draft can still be saved."
+- The page shows an alert, "Permissions could not be read — issuing, voiding, revoking a portal link and recording a receipt are not offered until they can be. Saving and editing your drafts still works.", with a Try again that re-reads.
+- A `stale` answer (the org's last good policy) is drawn as before, with no notice.
+- Arms that do not come from the policy are unchanged: a draft's author still edits and deletes it, a controller still edits, and the author still copies the portal link.
+- Rendered test, `lib/__tests__/dcRoundFP24TransmittalsPolicyFault.test.ts` (jsdom, the real page):
+  - unreadable: no Receipt / Revoke / Void for a DocCtrl, and the alert names the fault;
+  - a thrown read is the same fault, and Try again re-reads and, once readable, draws the controls;
+  - **regression:** a healthy read draws the DocCtrl's controls with no notice;
+  - **regression:** a stale read draws the last good policy, including a narrowed one that hides them;
+  - **regression:** an Engineer sees no controls and no notice.
+- `dcRoundFTransmittals.test.ts`'s source pin now names `loadCapabilityPolicyEntry`. `aoRoundGP0Records.test.ts`'s loader census already lists the page.
+
+**Done-when (transmittals surface).**
+1. ✓ for `app/(protected)/transmittals/page.tsx`. During a policy-read fault with no last good entry, its policy-dependent controls are drawn disabled or withheld, with the reason on screen (the stricter of the two options the remediation offers).
+2. ✓ for document-control's transmittals share: a rendered test drives the `unreadable` case.
+
+**Stays OPEN, with owners:**
+- the request surfaces (`app/(protected)/requests/page.tsx`, `app/(protected)/requests/[id]/page.tsx`, `hooks/useTicketNotifications.ts`): drafting-flow **DF-P9 TICKET-PAGE**, as assigned;
+- the holds and checkout surfaces (`components/documents/HoldStrip.tsx`, `app/(protected)/admin/holds/page.tsx`, `components/documents/InspectorPanel.tsx`, `components/documents/CheckoutStatusCell.tsx`): not in P24's brief, and no document-control package lists them yet. **Owner: the integrator, to name the document-control package that takes them (DEC-31).**
+
 ---

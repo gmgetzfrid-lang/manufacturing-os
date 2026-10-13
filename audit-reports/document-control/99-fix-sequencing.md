@@ -767,3 +767,21 @@ before that paste the modal behaves as before and logs why (`SHR-14`).
 **Handoffs from admin-and-org Round G P2 (2026-10-01).** Two more byte-freeing checks were left unowned when P9 merged. Admin-and-org P2 could not land them: neither is in P2's brief. Both are handed off; the integrator assigns the owner at the P2 merge (proposed: admin-and-org P3, after document-control P14 merges). (This paragraph first said both were P14's; P14's brief lists neither.) Each is recorded with its exact hunk and test shape:
 1. **Intelligence `ILIFE-5`, the direct storage delete.** `app/api/storage/delete/route.ts` must refuse with 409 a key that a knowledge-library mirror still names, or that any other registered key column outside `document_versions` names. It must fail closed with 503 when the read errors. The check is `lib/storageKeyRegistry.ts keysReferencedOutside(supabaseAdmin, [path], ["document_versions.file_url", "document_versions.source_file_key"])`, placed after the hold / retention refusal and before the custody row. The hunk is in `audit-reports/intelligence/18-lifecycle.md`, `ILIFE-5`, "the second call site". The shed's two call sites have landed in A&O P2.
 2. **Intelligence `ILIFE-6` criterion 3, the purge side.** `lib/storageOrphans.ts deleteOrphans` must re-check each candidate key just before its `DeleteObjects` batch, against every registered key column: `keysReferencedOutside` for the plain columns, and one containment read per key for the JSON-embedded ones. Any key still named is kept, and a read error deletes nothing. The scan reads its reference set page by page, so a reference that moves behind the cursor can be missing from it. The hunk is on `ILIFE-6`. A&O P2 owns the collector half of that file (`collectReferencedKeys`, keyset-paged); the purge half was P9's (`RET-7`).
+
+⚠ **Deploy then paste — P24 TRANSMITTAL ISSUE VERDICT (2026-10-13, `TRX-17`).**
+One one-paste migration, `20261199_dc_roundF_transmittal_issue_verdict.sql`.
+It goes after `20261133`, which it re-creates `transmittals_guard` from (it
+raises and changes nothing without it). **Never re-paste `20261133` after
+it**, or the verdict rule is dropped.
+- **Deploy the P24 app FIRST, then paste.** The P24 app works before the
+  paste: the stamp-check route meets the missing `stamp_check` column and
+  answers as before, unrecorded. The issuer's yes for an undecided file is
+  written on the item, which the older trigger keeps as item JSON.
+- **Pasted ahead of the app**, the old stamp-check route records nothing and
+  the old issue writes no yes. Every issue from the register is then refused
+  with the TRX-17 sentence until the app deploys. This fails closed (nothing
+  leaves unchecked), but keep that window at zero.
+- **The result set's inventory** counts the issued / acknowledged
+  transmittals (none carries a server verdict, and none is changed), their
+  armed and unmarked items, and the drafts that from now on need a recorded
+  check or a yes.
