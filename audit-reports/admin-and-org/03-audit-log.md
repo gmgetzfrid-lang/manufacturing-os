@@ -279,7 +279,7 @@ app/(protected)/admin/users/page.tsx:134-137 — `const { error } = await supaba
 ## ALOG-5 · `/activity` renders the entire org audit log to every role with no gate of any kind, sitting in the same tab strip as /admin/audit's "Admin-class roles only" banner
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/activity/page.tsx:99-117`, `app/(protected)/admin/audit/page.tsx:27, 94, 196-208`, `components/navigation/ViewTabs.tsx:99-102`, `components/navigation/Sidebar.tsx:239, 245-249`, `supabase/schema.sql:1084-1085`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The only role filtering is cosmetic and does not cover the scenario: Sidebar.tsx:239 lists Activity in `workAll`, and :245-249 strips it only for `activeRole === 'Viewer' || activeRole === 'Contractor'` — a Maintenance, Operations, Safety, HR, Accounting or Drafter member keeps the link, and even Viewer/Contractor can reach /activity by URL since nothing server-side or in RLS stops the read.
@@ -304,6 +304,21 @@ app/(protected)/activity/page.tsx:102-105 — `const { data, error: qErr } = awa
 - [ ] The claim on /admin/audit ("Admin-class roles only") is either true or removed.
 - [ ] A member outside the audit-reading set cannot retrieve raw audit rows through either page or through PostgREST (SURF-9 #1).
 
+**Resolution (2026-10-13, admin-and-org Round G).** Package P7 — the residual the plan names ("ALOG-5 residual = /activity states its rule (pointer to SURF-9/ROLE-5/DEC-17)"); the PostgREST half closed elsewhere (the plan's `alreadyResolvedElsewhere`: "ALOG-5 PostgREST half ← DEC-17/SURF-9/ROLE-5"). Reproduced on base `6503ea7` (DEC-29): `app/(protected)/activity/page.tsx` read `audit_logs` with no role check and its header said only "Reads the same audit_logs table … renders for humans, not auditors" — no rule stated anywhere on the page.
+
+Landed:
+- `app/(protected)/activity/page.tsx`: the page states its rule, in its header comment and on screen under the title (`:237`): every member reads the workspace's document-level history; workspace authority events (permissions, members and roles, teams, exports, restores and purges) are shown only to holders of the Audit log permission (`admin.audit_view`); "The database applies this rule, not this page." The rule is the one the database enforces: `audit_logs_org_access` (schema.sql) plus the RESTRICTIVE `audit_logs_admin_trail` overlay reading `org_capability_allows(org_id, 'admin.audit_view', auth.uid())` for the org-level trail (`20261063`, LIVE; re-created by `20261142` / `20261157` with the project clauses, both pending).
+- `app/(protected)/admin/audit/page.tsx`: the header comment's "Admin-class only; non-admins see a permission notice" now says what holds — admission is the `admin.audit_view` capability, decided by the admin layout's server gate (`lib/adminGate.ts` via `/api/admin/gate`), whose denial is the registry's sentence ("The audit log is limited to management, document control and auditors …", `lib/adminSurfaces.ts`).
+
+Tests: `lib/__tests__/auditViewers.test.ts` (both viewers pair ticket rows — the activity page's only logic change); the on-screen rule is a copy change on a page whose render paths are unchanged.
+
+**Done-when.**
+1. ✓ `/activity` applies an explicit, stated rule (on screen), enforced by the database's audit read policies (`audit_logs_org_access` + `audit_logs_admin_trail`, `20261063`), not by the client.
+2. ✓ The claim on `/admin/audit` is true: the page is entered only through the server gate's `admin.audit_view` decision (SURF-9 / ROLE-5, Round E), and the org-level rows it shows are the overlay's; the stale "Admin-class only" comment is replaced.
+3. ✓ as DEC-17 scopes it (SURF-9 #1, RESOLVED): a member outside the audit-reading set cannot retrieve the org-level authority trail through either page or PostgREST (the RESTRICTIVE overlay); document-level history stays readable by every member by decision (DEC-17: "document-level history unchanged") — which is exactly what `/activity` now says.
+
+**Scope / residual.** None for this finding. `20261142` / `20261157` (pending pastes, projects' SEC-20 / SEC-21) narrow project-related rows further; the page's sentence stays true either side.
+
 ---
 
 <a id="alog-6"></a>
@@ -311,7 +326,7 @@ app/(protected)/activity/page.tsx:102-105 — `const { data, error: qErr } = awa
 ## ALOG-6 · "Export CSV" exports only the rows currently on screen — by default the last 7 days capped at 200 — with no truncation notice, and drops the `metadata` column entirely from the evidence file
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/admin/audit/page.tsx:107-108`, `app/(protected)/admin/audit/page.tsx:127-137`, `app/(protected)/admin/audit/page.tsx:226-234`, `app/(protected)/admin/audit/page.tsx:426-463`, `lib/audit.ts:11, 26`
 - **Independently verified:** ✓ **SURVIVES, corrected** — second independent adversarial pass. Severity **MEDIUM → LOW** by this pass. The scope half is true — the export serialises the in-memory `filtered` array only. But two mitigations the finding omits lower it: the button carries `title="Download the currently-visible audit rows as a CSV"` (:232) and the toolbar shows `Showing {filtered.length} of {rows.length}` beside a `Load 200 more` control (:294-297), so the truncation is disclosed in the UI even if not inside the file. More importantly the `metadata` half is vacuous: no writer in the repo ever populates it — lib/audit.ts:27 `metadata: entry.metadata || null` is the only assignment, zero callers of logAuditAction pass a `metadata` key, and none of the ~30 direct `from("audit_logs").insert(...)` sites set one — so the column is uniformly NULL and dropping it loses nothing. LOW.
@@ -334,6 +349,23 @@ app/(protected)/admin/audit/page.tsx:107-108 — `const [range, setRange] = useS
 - [ ] metadata is exported alongside details, or its omission is deliberate and recorded.
 - [ ] The export action itself is auditable, so "who took a copy of the audit log" is answerable.
 
+**Resolution (2026-10-13, admin-and-org Round G).** Package P7. Reproduced on base `6503ea7` (DEC-29): `exportAuditCsv(filtered, docMeta)` serialised the in-memory page (`.limit(limit)`, 200 by default, last 7 days), the header had no `metadata`, the file said nothing of its bounds, and nothing recorded the export.
+
+Decision applied as ruled (DEC-90, the integrator's ruling for this package): server-side paging, with the export audited.
+
+Landed:
+- `lib/auditLogExport.ts` (new): `applyAuditFilters` (the ONE filter both the list and the export apply on the server), `fetchAuditRowsForExport` (`:107`) pages every matching row with `.range()` in the reader's OWN session — the database's audit read policies decide what is in the file exactly as they decide what is on screen; no service-role read, nothing widened — up to `AUDIT_EXPORT_ROW_CEILING` (50,000, `:49`); a page that fails stops the export (never a partial file presented as whole); the user-email filter runs on the server (`ilike`, wildcards escaped). `buildAuditCsv` (`:142`) opens the file with its bounds — workspace, export time, every filter, rows in the file, and "Complete: Yes — every row the filters select that you may read" or "NO — stopped at 50000 rows …" — then columns including User ID, Actor kind (ALOG-7) and Metadata JSON.
+- `app/(protected)/admin/audit/page.tsx` `exportAll` (`:215`): runs the export, applies the library filter after paging (said in the file), then writes `AUDIT_LOG_EXPORTED` through `logAuditAction` (`:245`) — filters, row count, complete, ceiling — BEFORE the file is handed over; a record that cannot be written means no file, and the page says why. The button's tooltip says it exports every matching row, not the rows on screen.
+
+Tests: `lib/__tests__/auditViewers.test.ts` "ALOG-6 — …" (three .range() pages for 2,345 rows; the ceiling stops and says so; exactly the ceiling is complete; a failed page refuses; the same filters on the server, the email wildcards escaped; the bounds block and the columns; the library filter); `lib/__tests__/auditPageRendered.test.ts` (rendered: the export pages the server, records AUDIT_LOG_EXPORTED first, then downloads; a refused record means no file and is said).
+
+**Done-when.**
+1. ✓ Both: the CSV holds every row the chosen filters select (server-side paging), and states its bounds inside the file (and stops, saying so, at 50,000).
+2. ✓ `metadata` is exported (Metadata JSON), with `actor_kind` beside it.
+3. ✓ The export is audited (`AUDIT_LOG_EXPORTED`, registered in `lib/auditActions.ts`), before the file is handed over.
+
+**Scope / residual.** None. The row is a member's own (`logAuditAction`, the browser session), so once `20261201` is pasted the database names the exporter.
+
 ---
 
 <a id="alog-7"></a>
@@ -341,7 +373,7 @@ app/(protected)/admin/audit/page.tsx:107-108 — `const [range, setRange] = useS
 ## ALOG-7 · Audit rows record self-declared identity: `user_email` and `user_role` come from the caller, `timestamp` is client-settable, and the one field `AuditEntry` declares for it is never written
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/audit.ts:5-14`, `lib/audit.ts:17-31`, `supabase/schema.sql:781-793`, `supabase/migrations/20260813_acl_close_gaps_and_audit_scope.sql:84-90`, `app/(protected)/admin/audit/page.tsx:403`, `app/(protected)/admin/holds/page.tsx:94`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on every limb. The display side makes the forgery consequential: app/(protected)/admin/audit/page.tsx:403 renders `{row.userEmail || row.userId}{row.userRole ? ` (${row.userRole})` : ""}` — it prefers the self-declared email over the RLS-pinned user_id — and app/(protected)/admin/holds/page.tsx:94-98 shows the pattern of the caller handing its own `userEmail`/`activeRole` in as the recorded identity. Because nothing forces `timestamp`, a hand-rolled insert through the same permissive INSERT policy can backdate or postdate a row.
@@ -363,6 +395,32 @@ supabase/schema.sql:781-793 — `user_id UUID,` / `user_email TEXT,` / `user_rol
 - [ ] timestamp cannot be set by an authenticated client, or a stored-vs-received discrepancy is detectable.
 - [ ] user_email and user_role are either resolved server-side from org_members at write time or explicitly labelled in the UI as caller-asserted at the time of the event.
 - [ ] AuditEntry.timestamp is either written or removed.
+
+**Resolution (2026-10-13, admin-and-org Round G).** Package P7. Reproduced on base `6503ea7` (DEC-29): `audit_logs_insert` (`20260813:85-90`, its newest definition) checks only `user_id = auth.uid()` and an org of the caller's; the only BEFORE INSERT triggers on `audit_logs` (`20261157` §8 / §9, pending) touch three INTAKE_ actions and MILESTONE_ rows; `lib/audit.ts` copied `userEmail` / `userRole` from the caller and never wrote `AuditEntry.timestamp`; `/admin/audit` rendered `row.userEmail || row.userId` as identity.
+
+Decision applied as ruled (DEC-90, the integrator's ruling for this package): the database stamps `user_email` / `user_role` from `org_members` for a signed-in caller; the service role's rows keep what the server wrote; `actor_kind` says which; existing rows are untouched and counted.
+
+Landed:
+- `supabase/migrations/20261201_ao_roundG_audit_identity.sql` (DEC-30 one paste): `audit_logs.actor_kind` (`member` / `server` / `system`, CHECKed; NULL on every existing row) and `audit_logs_stamp_identity()`, BEFORE INSERT FOR EACH ROW (SECURITY DEFINER, `search_path = public`, EXECUTE revoked from PUBLIC / anon / authenticated — DRLS-16):
+  - no session uid (the service role — routes, cron, restore, the SQL editor): nothing is changed; `system` when `user_id` is NULL, else `server` — a machine row's `user_id` stays NULL, so both export ledgers hold (DEC-87 §3);
+  - a session and a row naming no one, or someone else: only a definer function can write it (the insert policy refuses a member) — kept as written, `system` / `server`;
+  - the caller's own row: `user_email` := the membership's email (else the sign-in email in `auth.users`); `user_role` := the role sent when the membership holds it (headline or collection — e.g. the role a surface admitted them by), else the headline; `"timestamp"` := `now()`; `member`. A sent value that differs is kept under `metadata.asserted` (`user_email` / `user_role` / `timestamp`), so a stored-vs-sent discrepancy is detectable.
+  - Counts-only inventory before the transaction (rows; machine rows; rows whose stored email is not the person's membership email; rows whose stored role the person does not hold today; future-dated rows; first apply or re-run) — kept, never rewritten. Twelve probes, two of them a self-test that inserts a forged member row and a machine row inside a sub-transaction and rolls both back.
+- `lib/audit.ts`: `AuditEntry.timestamp` is written when given (`:66`); the exported signature is unchanged and no writer changes.
+- `app/(protected)/admin/audit/page.tsx` (`:507`, `lib/auditActions.ts auditActorNote`): each row says whose word its identity is — "identity resolved by the database at write time", "recorded by the server", "system — no person", or, for a row written before `20261201`, "as sent by the writer (before identity was resolved by the database)" (amber).
+
+**Exercised on a throwaway PostgreSQL 16** (roles anon / authenticated / service_role, an `auth.uid()` reading `request.jwt.claims`, `org_members`, `audit_logs` with the schema.sql policies, and 20261157's intake trigger beside it): all twelve probes true, the self-test rows gone after the paste, a re-run idempotent. Cases: a Drafter sending `ceo@x.test` / `Admin` / a 200-day-old time → stored as their membership email, `Drafter`, now, `member`, with all three under `metadata.asserted`; an honest row (email differing only in case, no role) → no `asserted`; a Manager holding Admin in the collection sending `Admin` → `Admin` kept; a member with no membership email → the sign-in email; a member trying to set `actor_kind = 'server'` → `member`; naming someone else, a NULL uid, another org → refused (42501) as before; the intake trigger still refuses a signed-in INTAKE_OUTCOME_NOTIFIED; the service role's restored row (old email, `Engineer-3`, 2025 time) kept exactly, `server`; a machine ledger row kept with `user_id` NULL, `system`; a definer function's machine row (`system`), its row naming another person (`server`) and its row in another org (`server`) kept as written; existing rows' `actor_kind` NULL.
+
+Tests: `lib/__tests__/auditLog.test.ts` "ALOG-7 — 20261201 …" (the column and CHECK; no UPDATE / DELETE of audit rows; definer + pinned + revoked; the service pass returns before any stamp and nothing assigns `user_id`; the definer cases; the caller's own row; `metadata.asserted`; the trigger and no other definer of it; the DEC-30 shape) and the `logAuditAction` block (timestamp written when given; regression: a normal entry is written exactly as before); `lib/__tests__/auditViewers.test.ts` and `lib/__tests__/auditPageRendered.test.ts` (the viewer's actor note).
+
+**Paste and deploy order.** Either order; independent of every other pending file. Before the paste the column is absent (the app reads it with `select("*")`, so no 42703 / PGRST204 path) and every row is labelled as sent by the writer; after it, new rows carry `actor_kind`. Rollback in the file's header.
+
+**Done-when.**
+1. ✓ (pending the paste) `timestamp` cannot be set by an authenticated client on its own row — the database sets `now()`, and a sent time is kept under `metadata.asserted`, so a discrepancy is detectable. A service-role row keeps the server's time (a restore re-inserts history).
+2. ✓ Both forms: resolved server-side from `org_members` at write time for a signed-in caller's own row (pending the paste), and labelled in the UI for every other row — the server's word, a machine, or (before the paste) caller-sent.
+3. ✓ `AuditEntry.timestamp` is written (when given); its meaning is defined by the stamp. (Readers — `HistoryDrawer`, `InspectorPanel` — carry the stored time in it, which is why it was kept rather than removed.)
+
+**Scope / residual.** Existing rows are untouched (counted by the inventory). A row a SECURITY DEFINER function writes naming another person keeps that function's word (`server`). The `/activity` feed shows names only, so it carries no label. Pending migration: `supabase/migrations/20261201_ao_roundG_audit_identity.sql`.
 
 ---
 
@@ -411,6 +469,24 @@ The chunked path's equivalents stay, checked, in the same file:
 - the "ALOG-8 (fix pass 4)" block, "statement 1 accepted without a count, statement 2 refused: 500 with uncounted, and a RESTORE_CHUNK row records both".
 
 No chunked test covers a *refused* `RESTORE_CHUNK` insert: that row was already checked before P1 (document-control `XEDGE-3`). Of the nine sites, eight remain for P7 / R&P `WF-11`: the purge, both sheds, the ticket-shed restore, archive-cancel, orphans and the two permission writers. The restore site is gone, not fixed.
+
+**Partial (2026-10-13, admin-and-org Round G).** Package P7 — the plan's three sites (purge, archive-cancel, PermissionDrawer) and done-when 2 and 3 for them. Reproduced on base `6503ea7` (DEC-29):
+- `app/api/admin/purge/route.ts`: already checked since notifications N6 (`DATA_PURGE`'s `{ error }` answered as `auditError`, logged; `DATA_PURGE_ABANDONED_EMAIL` written before its delete, a refusal means no delete) — held; P7 adds the admitted role to both rows (`:332`, `:365`) and the gate (SURF-19).
+- `app/api/admin/archive-cancel/route.ts:64-71`: `try { await sb.from("audit_logs").insert(…) } catch { /* best-effort */ }` — dead against a resolved `{ error }`; its two unlinks, the two committed counts and the catalog delete were unchecked too (a failed count read as 0 dropped the catalog row of a real archive).
+- `components/permissions/PermissionDrawer.tsx:318-335`: `.then(() => undefined, () => undefined)` after the ACL write, with `user_id: auth.user?.id ?? null`.
+
+Landed:
+- `archive-cancel`: every write checked — a refused ticket unlink answers 500 "Nothing was changed"; a refused revision unlink answers 500 naming the tickets already unlinked; an unreadable committed count KEEPS the catalog row and says why; a refused catalog delete is said and recorded; the `ARCHIVE_PRODUCE_CANCELED` row is checked (`:84-101`) — the cancel has happened either way, so a refused row is in the answer (`auditError`) and logged, never a silent success (the purge's rule); the row records the admitted role.
+- `PermissionDrawer`: the actor is resolved BEFORE the ACL write (`:294`) — no signed-in user (or no workspace) means the change is refused and nothing is written, never saved unaudited and never a NULL `user_id`; the `NODE_ACL_CHANGED` insert is checked and a refusal is said out loud after the committed save ("Permissions saved — NOT recorded in the audit log", `:354`).
+
+Tests: `lib/__tests__/auditRoutesP7.test.ts` (purge: a refused DATA_PURGE row is in the answer and logged, regression with the admitted role; archive-cancel: reproduced — a refused row in the answer and logged; a refused unlink → 500 with nothing else changed; an unreadable count keeps the catalog row; a refused catalog delete is said and recorded; regression); `lib/__tests__/auditDrawerRendered.test.ts` (rendered: no signed-in user → no ACL update, no audit row, the refusal said; a refused NODE_ACL_CHANGED row is said; regression: a recorded save closes with no alert).
+
+**Done-when.**
+1. ✗ (in part) Of the nine sites: `restore/apply` is gone (P3 `ILIFE-4`); the policy writer is the capability-policy route since R&P `WF-11` (`app/api/admin/capability-policy/route.ts:269`, checked, a refusal answers 500); purge, archive-cancel and the drawer ✓ (above). Not done: `app/api/admin/shed/commit/route.ts:203-204`, `ticket-shed/commit/route.ts:232-233`, `ticket-shed/restore/route.ts:240-241` (each `try { await sb.from("audit_logs").insert(…) } catch`) and `orphans/route.ts:52` (an unchecked `await`). The plan routed them to document-control P9 RECORDS (`dependsOn`: "ALOG-8's shed/ticket-shed/orphans sites → DC P9"), which has merged without them; they are not P7's files.
+2. ✓ The drawer refuses to save a permission change it cannot record against a person (and a workspace).
+3. ✓ Tests prove a rejected audit insert on a purge, an archive cancel and an ACL change is observable.
+
+**Scope / residual.** The four sites above. **Proposed owner: the integrator re-routes them** (DC P9 RECORDS merged without them) — each is the archive-cancel pattern, a checked `{ error }` carried into the answer, in four files no other package lists this round. Separately, for the storage page's owner (not edited here, fleet rule): `app/(protected)/admin/storage/page.tsx` treats any 2xx from purge / archive-cancel as success and does not show their `auditError` — the route's answer carries it (done-when 1's "response body" form), the page could say it. Status stays OPEN for the four sites.
 
 ---
 
@@ -470,7 +546,7 @@ Tests: `lib/__tests__/aoRoundGP9PermissionsConsole.test.ts` "ALOG-9 — …" (de
 ## ALOG-10 · The audit INSERT policy explicitly admits `org_id IS NULL`, but the SELECT policy and both viewers can never return such a row — a write-only sink for audit evidence, reachable through optional-orgId signatures
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `supabase/migrations/20260813_acl_close_gaps_and_audit_scope.sql:86-90`, `supabase/schema.sql:1084-1085`, `lib/audit.ts:6, 20`, `lib/documentOrigin.ts:26-43`, `app/(protected)/admin/audit/page.tsx:129`, `app/(protected)/activity/page.tsx:103`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The write-only-sink mechanism is exactly as described. Worth flagging as the finding itself concedes: the one live caller does supply it — components/documents/OriginSection.tsx:48 passes `orgId` — so today this is a latent trap in the signature rather than an active data-loss bug, which is why MEDIUM (not higher) is the right level.
@@ -495,6 +571,29 @@ supabase/migrations/20260813_acl_close_gaps_and_audit_scope.sql:88 — `AND (org
 - [ ] AuditEntry.orgId is required, or a call with no orgId is rejected rather than written.
 - [ ] An inventory query counts existing NULL-org audit rows before the constraint is added (DEC-30).
 
+**Resolution (2026-10-13, admin-and-org Round G).** Package P7. Reproduced on base `6503ea7` (DEC-29): `audit_logs_insert` (`20260813:84-90`, the newest definition — no later file re-creates it) admits `org_id IS NULL OR org_id IN (SELECT my_org_ids())`; `audit_logs.org_id` is nullable (schema.sql); every SELECT policy reads `org_id IN (SELECT my_org_ids())`; `lib/audit.ts` wrote `org_id: entry.orgId || null`, and three call sites pass `orgId: activeOrgId || undefined` (`app/(protected)/requests/page.tsx:640`, `:667`, `:684`; also `admin/users/page.tsx:225`, `documents/[libraryId]/page.tsx:1734`) — so a row written while the workspace was unset was accepted and unreadable to every signed-in reader.
+
+Decision applied as ruled (DEC-90, the integrator's ruling for this package): `org_id` NOT NULL with the counts-only inventory first; if rows with no workspace exist the migration stops with the count, and the record says what the operator does; audit rows are never deleted.
+
+Landed:
+- `supabase/migrations/20261202_ao_roundG_audit_org_required.sql` (DEC-30 one paste): counts-only inventory (rows with no workspace; of them, a person's and machine rows; first apply or re-run); then the world from the rows — none → `ALTER COLUMN org_id SET NOT NULL`; some → the paste RAISES with the count and changes nothing, unless the operator opts to keep them (below), in which case `CHECK (org_id IS NOT NULL) NOT VALID` binds every new row and keeps the old ones; `audit_logs_insert` re-created from `20260813` with exactly the `org_id IS NULL OR` branch removed. Six probes, the inventory, and an "after" count.
+- `lib/audit.ts` `logAuditAction` (`:47`): an entry with no workspace is refused and logged (`{ ok: false, error: "no workspace named — …" }`), never written and never thrown — the app writes no such row before or after the paste; signature unchanged.
+
+**If the paste stops** ("ALOG-10 (20261202): N audit row(s) name no workspace … Nothing was changed and nothing was deleted"): the operator either (a) pastes the file again with `SET alog10.keep_unscoped_rows = 'on';` as its first line — the column stays nullable, the NOT VALID check refuses every new row with no workspace, the existing rows are kept and counted ("after: rows with no workspace"), readable only from the SQL editor — or (b) leaves the file unpasted (the app is unaffected either way). The rows are never deleted, and the record does not ask anyone to rewrite an audit row to attribute them.
+
+**Exercised on a throwaway PostgreSQL 16:** world B (two rows with no workspace): the paste raised with the count and changed nothing (column nullable, policy unchanged); with the opt-in line, all six probes true, the NOT VALID check present, both rows kept; then a member's insert with no workspace refused (42501), a service-role one refused (23514), a member's and a machine row with a workspace admitted; a re-run idempotent. World A (none): `SET NOT NULL`, all probes true; a service-role insert with no workspace refused (23502); a re-run idempotent; pasted before AND after `20261201` (either order).
+
+Tests: `lib/__tests__/auditLog.test.ts` "ALOG-10 — 20261202 …" (re-created from the NEWEST earlier definition, found by scanning, with exactly the NULL branch removed — a lineDiff; no later re-creation; the world choice, the stop and the opt-in, no DELETE / UPDATE of audit rows; the DEC-30 shape; the writer census: every SQL `INSERT INTO audit_logs` in the numbered migrations lists `org_id`, and every app file that inserts an audit row carries `org_id`) and the `logAuditAction` block (no workspace → refused and logged, never written; regression).
+
+**Paste and deploy order.** Deploy first (the app then refuses a no-workspace entry itself), then paste; independent of `20261201` and every other pending file (`20261163`'s RESTRICTIVE insert policy ANDs with this one and is untouched). Before the paste the database still admits such a row, but the app writes none; after it the database refuses one too. No 42703 / 42883 / PGRST20x path. Rollback in the file's header.
+
+**Done-when.**
+1. ✓ (pending the paste; world A) `org_id` is NOT NULL and the INSERT policy stops admitting NULL. In world B the paste stops; with the operator's opt-in, every new row must name a workspace (the NOT VALID check) and the policy stops admitting NULL, while the kept rows stay nullable and readable only to the service role (the first form holds for every new row, not for the kept ones).
+2. ✓ A call with no workspace is rejected rather than written (`lib/audit.ts`), signature unchanged.
+3. ✓ The inventory counts existing rows with no workspace before the constraint is added (DEC-30), and the paste stops on them.
+
+**Scope / residual.** None in code. Pending migration: `supabase/migrations/20261202_ao_roundG_audit_org_required.sql` — the world it takes depends on the live rows, said by its final SELECT (or its stop).
+
 ---
 
 <a id="alog-11"></a>
@@ -502,7 +601,7 @@ supabase/migrations/20260813_acl_close_gaps_and_audit_scope.sql:88 — `AND (org
 ## ALOG-11 · The audit viewer can filter 36 action types out of the 110 the app writes; every admin-authority action — permission changes, ACL changes, recertifications, purges, restores, e-signatures, folder deletes — is unreachable through any filter, and the compliance KPI miscounts in both directions
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/admin/audit/page.tsx:46-83`, `app/(protected)/admin/audit/page.tsx:271-281`, `app/(protected)/admin/audit/page.tsx:192`, `app/(protected)/admin/audit/page.tsx:172-178`, `lib/capabilityPolicy.ts:239`, `components/permissions/PermissionDrawer.tsx:292`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The counts are exact, not rhetorical: a scan of every action-name literal in the tree (`action:` plus the `type:` unions that lib/audit.ts's helpers forward) yields precisely 110 distinct actions against 36 filterable. The unreachable set includes CAPABILITY_POLICY_CHANGED (capabilityPolicy.ts:239), NODE_ACL_CHANGED (PermissionDrawer.tsx:292), ACCESS_RECERTIFIED, DATA_PURGE, DATA_RESTORE, ESIGNATURE_CAPTURED, FOLDER_DELETED and STORAGE_ORPHANS_PURGED. The KPI regex genuinely errs both ways — it misses DATA_PURGE (a real destruction) while counting TICKET_ARCHIVE_RESTORE and ARCHIVE_PRODUCE_CANCELED (a restore and a cancel) because both contain "ARCHIVE".
@@ -524,6 +623,24 @@ app/(protected)/admin/audit/page.tsx:271-274 — `<Select value={actionFilter} o
 - [ ] The action and resource filters are derived from the same registry the writers use, so a new action type is filterable the day it ships.
 - [ ] Selecting a library filter does not silently discard non-document rows without saying so.
 - [ ] The deletes KPI counts a stated, reviewable list of destructive actions rather than a substring regex.
+
+**Resolution (2026-10-13, admin-and-org Round G).** Package P7. Reproduced on base `6503ea7` (DEC-29): the action dropdown was `Object.keys(ACTION_STYLE)` (36 keys) while the app writes ~200 actions; the resource dropdown was five literals; the library filter `if (r.resourceType !== "document") return false;` dropped every other row silently; the KPI was `/DELET|ARCHIVE|REVERS|FORCE/`.
+
+Decision applied as ruled (DEC-90, the integrator's ruling for this package): a registry the viewer reads suffices for done-when 1 (writers untouched, DEC-31).
+
+Landed:
+- `lib/auditActions.ts` (new): `AUDIT_ACTIONS` (`:161`) — every action the app writes, by category, including P3's `DATA_EXPORT` / `DATA_EXPORT_FILES` / `DATA_EXPORT_UNDELIVERED`, P4's six `STRIPE_*`, P6's `BRANDING_LOGO_UPLOAD` / `STORAGE_QUOTA_CHANGED` / `ARCHIVE_SETTINGS_CHANGED` / `PLATFORM_STORAGE_LIMITS_CHANGED` (the hand-offs in `99-fix-sequencing.md`); `AUDIT_ACTION_FAMILIES` for the names built at run time (`TICKET_…`, `MARKUP_…`, …); `AUDIT_RESOURCE_TYPES` (`:182`, every `resource_type` a writer uses); `DESTRUCTIVE_AUDIT_ACTIONS` (`:143`, a stated list — deletes, purges, voids, reclaims, supersede / archive, reversals, forced overrides, link revocations, a restore); `auditActionFilterQuery` (`:220` — a ticket action brings its EVID-12 follow-ups; a family filters by prefix).
+- `app/(protected)/admin/audit/page.tsx`: the action filter offers the registry grouped by category, plus any action seen in the rows that nothing registers; the resource filter is the registry's; the library filter keeps the library's document rows and the library's own rows and SAYS how many other rows it hides (`:372`); the KPI is "Destructive / undo / force", counting `isDestructiveAuditAction` (`:279`), its tooltip listing the actions.
+- A census (`lib/__tests__/auditViewers.test.ts`) holds the registry to every `action: "…"` literal in `app/`, `lib/`, `components/`, `hooks/`, the helpers' unions in `lib/audit.ts` and every SQL `INSERT INTO audit_logs` action in the numbered migrations — a writer that spells an unregistered action fails the suite, so a new action is filterable the day it ships; it also holds both viewers' icon / verb maps to the registry and the resource filter to every `resource_type` written.
+
+Tests: `lib/__tests__/auditViewers.test.ts` "ALOG-11 — one registry the viewers read" (the census, non-vacuous; the named unreachable actions now choosable; the hand-offs' actions; the resource census; the destructive list — real destruction counts, a request / a restore / a cancel do not; the filter queries); `lib/__tests__/auditPageRendered.test.ts` (rendered: the grouped registry in the dropdown; the library filter's note).
+
+**Done-when.**
+1. ✓ as ruled: the action and resource filters are derived from the registry; the writers do not import it (DEC-31), and the census makes the registry hold every action a writer spells, so a new one is filterable the day it ships.
+2. ✓ The library filter says how many rows it hides (and keeps the library's own rows).
+3. ✓ The KPI counts a stated, reviewable list (`DESTRUCTIVE_AUDIT_ACTIONS`).
+
+**Scope / residual.** None. A "who took which drawing" view of a `DATA_EXPORT` row (`lib/dataExport.ts rebuildExportList`, P3's hand-off note) is not part of this finding's criteria and is not built; the registry names the actions and the export ledgers' machine rows are labelled `system` by ALOG-7.
 
 ---
 
@@ -695,7 +812,7 @@ Tripwire: `lib/__tests__/aoRoundGP0Records.test.ts`, `it.fails` "done-when 1: th
 
 - **Severity:** MEDIUM
 - **Status:** RESOLVED
-- **Partial (2026-10-08, the integrator's fix pass at the A&O P9 merge):** the 23 snapshot rows tagged NOT RE-CHECKED on screen (named under *Scope / residual*) are an explicit remainder with an owner — **admin-and-org P7** (the ACL / `PermissionDrawer` package); the integrator adds it to P7's plan entry at the merge. Each row is to be checked against the code and marked `checked: true` with a pinning test, or removed. The finding's three criteria hold; this remainder is outside them (DEC-31: a remainder needs a named owner, not "whoever next edits").
+- **Partial (2026-10-08, the integrator's fix pass at the A&O P9 merge):** the 23 snapshot rows tagged NOT RE-CHECKED on screen (named under *Scope / residual*) are an explicit remainder with an owner — **admin-and-org P7** (the ACL / `PermissionDrawer` package); the integrator adds it to P7's plan entry at the merge. Each row is to be checked against the code and marked `checked: true` with a pinning test, or removed. The finding's three criteria hold; this remainder is outside them (DEC-31: a remainder needs a named owner, not "whoever next edits"). *Closed 2026-10-13 by admin-and-org P7: every one of the 23 rows checked (21 pinned) or removed (2) — see the last block of this finding.*
 - **Verification:** CONFIRMED
 - **Locations:** `components/permissions/PermissionsExplorer.tsx:14-80`, `app/(protected)/admin/permissions/page.tsx:148`, `app/(protected)/admin/holds/page.tsx:32`, `app/(protected)/admin/scope/page.tsx:36`, `app/(protected)/admin/assets/page.tsx:56`, `app/api/admin/create-user/route.ts:62`, `app/(protected)/documents/[libraryId]/page.tsx:3372-3379`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Right, and the drift runs in both directions — DocCtrl is understated on four rows while Manager is overstated on user management. Only the row count is off: the array holds 51 rows, not 52, which is immaterial to the claim. The one hedge in the file, the `warn` field flagging known gaps, is used on exactly one row ("Create / edit / refresh work packages"), so none of the six drifted rows carries any warning.
@@ -809,6 +926,17 @@ Second review fix, tests:
 **Owner: admin-and-org P7** (the ACL / `PermissionDrawer` package), ruled by the integrator at the A&O P9 merge (2026-10-08, the fix pass; the integrator adds it to P7's plan entry at the merge): check each row against the code and mark it `checked: true` with a pinning test, or remove it. They are not part of this finding's three criteria; they are the explicit Partial in the header. *(This read "a documentation task for whoever next edits the snapshot" — no owner, which DEC-31 does not allow.)*
 
 *(Also at the integrator's fix pass, 2026-10-08 — `ORG-14`'s pre-paste truth on this panel.)* The derived *Sign off quality records* row asks the database once on mount (`probeQualitySignOffDecided`, `PermissionsExplorer.tsx`, shared with View-as) whether it decides quality sign-off yet (`quality_signoff_status`, which exists only from `20261136`). While it does not, a column the policy grants is ◐ — "Granted by the policy, but the database admits only Admin / Document Control and the project's owner until migration 20261136 is pasted — a policy grant of this capability is not read yet" — with ⚠ and a row note, never ✓; the controllers' ✓ stands; no other row reads the probe, and a probe that fails for another reason changes nothing. Tests: `aoRoundGP9PermissionsConsole.test.ts` "integrator fix pass — pre-paste truth on the explorer, no placeholder role, no stale gap"; `aoRoundGP9ConsoleRendered.test.ts` "integrator fix pass / ORG-14: before 20261136 is pasted the quality sign-off row shows a policy grant as ◐ …". The role model fold on the same page (`RoleModelTree.tsx`) no longer lists "the owner path is a known gap" under known gaps — the row above and DEL-6 say the owner can, and `20261188` admits exactly the owner or a controller (pending its paste).
+
+**Resolution of the remainder (2026-10-13, admin-and-org Round G).** Package P7 — the explicit Partial the integrator assigned at the A&O P9 merge (the 23 snapshot rows tagged NOT RE-CHECKED). Each row was checked against the enforcement point it now names — the database rule first (the newest migration that defines it, found by scanning), then the app gate where one narrows it:
+- **Corrected** (the old marks were wrong): *Place / release legal hold* — controllers only (`enforce_document_retention_guard`, `20261077`; the old row let a document's owner); *Revert to a prior revision* — the same people as publishing (`lib/revisions.ts revertToVersion`, the inspector's `canRevert={canPublishEff}`; the old row said controllers only); *Retention, disposition & purge* — a controller, the document's owner or a library publisher (`assertRetentionAuthority`, the same guard); *Edit equipment / asset tags* — Admin / DocCtrl / Manager / Supervisor by the collection (`document_assets` policies, `20261170`; the old row had DraftingSup "—" and Engineer / Drafter "y"); *Create / edit / refresh work packages* — anyone creates, only the owner or a controller edits (`20261143`; the old "No role differentiation today" warning is gone); *Create a drafting request* — every active member, Auditor and Viewer included (`tickets_org_insert`, `20261166`; no page or role gate narrows it); *Publish / rev-up*, *Publish over someone's checkout* and the Staff / Auditor / Viewer cells — the database's rule is ownership or a library grant for any role (`user_can_publish_doc`, `20261037`; `publish_revision` p_override_lock, `20261151`); *Browse & read*, *Upload / create folders*, *Download / print* — conditional for non-controllers (visibility, ACL; folders are controllers' only, `collections_insert_controllers`, `20261011`), with the hard read-&-understood gate pinned to `lib/downloads.ts`.
+- **Confirmed** (marks unchanged, now naming their rule): delete (controllers; legal hold and review evidence block everyone), request deletion (a non-controller owner, the inspector), force past a hold (a controller's recorded override, `20261185`), check out / in (`enforce_checkout_session_guard`, `20261029`), review policies (`20261072`, `20261077` §2), sign a review, acknowledge, confirm "I have this revision" (own row only, `20261070` / `20261047` / `20261033`), request distribution confirmations, projects (`20260906` / `20261102` / `20260913` / `20260818`).
+- **Removed** (no surface to describe): *Manage sets & binders* — `SetManager` is mounted by the library page but never opened (its flag is only set false); *Auto-publish as last review signer* — the last signature no longer publishes: it routes "Ready to publish" to the owner and the controllers, and the draft stays a draft until one of them publishes (`lib/reviewControl.ts`).
+
+Every snapshot row now carries `checked: true`; `SNAPSHOT_REVIEWED` is `2026-10-13` (the eight rows checked on 2026-10-07 still pass their pins). No authority changed — the explorer shows; it does not decide.
+
+Tests: `lib/__tests__/auditExplorerSnapshot.test.ts` (each of the 23 checked or removed, none NOT RE-CHECKED; each row pinned to its marks and to the rule text in the newest defining migration or source file); `aoRoundGP9PermissionsConsole.test.ts` and `aoRoundGP9ConsoleRendered.test.ts` updated where they pinned "exactly eight checked rows", the 2026-10-07 date and the "Manage sets & binders" example (said in place).
+
+**Scope / residual.** None for the remainder. One restated row carries a warning on screen: the database refuses no role an upload — a read-only one included — only an ACL deny does (the same breadth as `documents_org_access` on updates, the OWN-2 / OWN-19 class the *Edit document metadata* row already names). The publish rows describe `user_can_publish_doc` as it stands (a controller, the document's effective owner, or a library grant holder, whatever their role).
 
 ---
 

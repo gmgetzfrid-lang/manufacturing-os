@@ -737,6 +737,8 @@ defers it, it does not reject it.
 
 *Landed 2026-09-17 (roles-and-permissions Round E): the deferred consolidation. ONE server-enforced admin gate — `lib/adminSurfaces.ts` (the registry: entry by role collection, any-member, or a capability with grants), `lib/adminGate.ts` `authorizeAdminSurface` (fail closed on a policy-load error), `/api/admin/gate`, and `app/(protected)/admin/layout.tsx` asking it before any admin page renders. Every registry entry mirrors what its page admitted, pinned by test, with one deliberate narrowing — `/admin/storage` (entry = its stats API's Admin / Manager / DocCtrl set; the page never gated entry and is unusable without it) — and one presentation change (`/admin/libraries` / `/admin/requests` answer a non-controller with the denial screen instead of a redirect), both recorded in `SURF-9`'s resolution; `admin.audit_view` (`20261063`) makes the audit page policy-driven at the page and at the database. See `SURF-9`, `WF-20`, `ROLE-5`; the API-route conversion is split off as `SURF-19` (DEC-31).*
 
+*Landed 2026-10-13 (admin-and-org Round G, P7): `/activity` states the rule this decision set — every member reads document-level history; the org-level authority trail is the `admin.audit_view` holders' — on screen, and says the database applies it; `/admin/audit`'s stale "Admin-class only" comment now names the capability and the server gate. See `ALOG-5`.*
+
 <a id="dec-18"></a>
 ## DEC-18 · Is subscription state enforced server-side?
 
@@ -5552,6 +5554,8 @@ Before such a modal starts an upload, once the run's cards clear, and whenever n
 
 *Landed 2026-10-02 (admin-and-org Round G): A&O P6 took Risk's first item. `/admin/storage`'s Full ZIP and JSON buttons render only for a member holding the data-export surface's entry (`hasAnyRole(adminSurface("data-export").entry)`, the full collection). Manager and DocCtrl read the surface's denial sentence and "Ask an Admin to take a full backup." instead of a 403. See `BKP-8`'s residual and `DEC-99`.*
 
+*Landed 2026-10-13 (admin-and-org Round G, P7): §2's machine-row convention is now labelled by the database — `20261201`'s identity trigger marks a row naming no person `actor_kind = 'system'` and leaves a service-role row exactly as written, so `user_id` stays NULL on every ledger row and both export ledgers still hold (§3); a signed-in member's own row is stamped from `org_members` (`member`), so §3's "display hints until ALOG-7" no longer applies to rows written after the paste. `/api/admin/purge` and `/api/admin/archive-cancel` record the gate's `admittedRole` (SURF-19). See `ALOG-7`.*
+
 <a id="dec-88"></a>
 ## DEC-88 · The graph's view: lenses named for what they show, direction drawn, and what lives in the URL
 
@@ -5673,6 +5677,8 @@ Before such a modal starts an upload, once the run's cards clear, and whenever n
 - *The snapshot carried one review date for every row. One row was stale: the ACL drawer, which also admits an owner or a Manage Permissions grant holder in delegation mode.*
 
 *Both are now corrected. Every live ticket row is pinned per role column to `WorkflowEngine.getActions`, for the defaults and for a narrowed policy. Only the eight snapshot rows checked against the code carry the date; the other 23 say NOT RE-CHECKED. Nobody's authority changed. See `ALOG-14`.*
+
+*Landed 2026-10-13 (admin-and-org Round G, P7): the four rulings the integrator gave the package's brief under this delegation (fail-safe practice). `ALOG-7` — the database names a signed-in caller on their own audit row (email / role from `org_members`, the server's clock; a differing sent value kept under `metadata.asserted`), the service role's rows keep the server's word, and `audit_logs.actor_kind` says which; existing rows untouched and counted (`20261201`, PASTE pending). `ALOG-10` — `audit_logs.org_id` NOT NULL with the counts-only inventory first; with rows lacking a workspace the paste STOPS with their count and changes nothing (the operator may re-paste with `SET alog10.keep_unscoped_rows = 'on';` to keep them and bind every new row with a NOT VALID check); audit rows are never deleted (`20261202`, PASTE pending); `lib/audit.ts` refuses an entry with no workspace. `ALOG-11` — a registry the viewers read (`lib/auditActions.ts`), held to every action written by a census. `ALOG-6` — server-side paging in the reader's own session, the file's bounds inside it, and `AUDIT_LOG_EXPORTED` written before the file is handed over (a refused record means no file). See `ALOG-5`, `ALOG-6`, `ALOG-7`, `ALOG-8` (Partial), `ALOG-10`, `ALOG-11`, `ALOG-14` (remainder), drafting-flow `EVID-6` / `EVID-12` / `PERS-7` (Partials), roles-and-permissions `SURF-19` (Partial).*
 
 <a id="dec-91"></a>
 ## DEC-91 · No role known is null, never a placeholder: what an audit row says, what a consumer allows, and what a browser keeps after sign-out

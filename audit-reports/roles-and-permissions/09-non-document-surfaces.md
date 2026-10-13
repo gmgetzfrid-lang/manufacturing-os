@@ -900,6 +900,18 @@ What landed:
 - **The write intent is the conjunction** (entry AND writes). For storage, writes ⊂ entry, so it equals the writes set, as pinned. A future route on a surface whose `writes` is not inside its `entry` (teams: entry Admin / Manager, writes Admin / DocCtrl) would admit only the overlap. Its owner should check that before converting.
 - **The refusal message changed** for a refused caller of a converted route: from "Insufficient role" to the surface's sentence. The status (403) and the admitted set did not change.
 
+**Partial (2026-10-13, admin-and-org Round G).** Package P7 — the purge / archive-cancel limb (the integrator's split, 2026-10-02). Reproduced on base `6503ea7`: `app/api/admin/purge/route.ts` spelled `PURGE_ROLES = ["Admin", "DocCtrl"]` and `app/api/admin/archive-cancel/route.ts` `SHED_ROLES = ["Admin", "DocCtrl"]`, each through `authorizeOrgRole`.
+
+Landed: both routes call `authorizeAdminSurface(req, orgId, "storage", "write")` — purge's preview GET and POST (`:233`, `:296`) and archive-cancel's POST (`:34`); no role constant, no `authorizeOrgRole`. The preview is held to the writes set as P6 held the shed / orphan previews (it feeds an action only that set may take). Both routes' audit rows record the gate's `admittedRole` (DEC-87 §3). The "API routes behind a surface that STILL carry a constant" pin (`lib/__tests__/roundE_D_rolesAdmin.test.ts`) drops the two rows and the conversion pin gains them (purge ×2, archive-cancel ×1); only the stripe pair remains (A&O P5).
+
+Tests: `lib/__tests__/auditRoutesP7.test.ts` "SURF-19 (purge / archive-cancel limb) — …" (every handler, every role in `ALL_ROLES` and five collections, against the constant at base: exactly Admin / DocCtrl by the collection; a Manager refused with the writes sentence; a registry change moves both routes' answers and back).
+
+**Done-when.**
+1. Not done for two routes, done for the rest: `app/api/stripe/checkout` and `portal` still declare `ADMIN_ROLES` (A&O P5). Purge and archive-cancel now call the gate.
+2. ✓ for the converted routes (purge, archive-cancel included): the registry is the only place their set is spelled, and a route test proves a registry change moves the answer.
+
+**Scope / residual.** The stripe pair (A&O P5). Status stays OPEN for it.
+
 ---
 
 ## Verified sound — do not break

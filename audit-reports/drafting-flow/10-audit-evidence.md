@@ -353,6 +353,21 @@ lib/reviewControl.ts:386 —
 
 **Scope / residual.** The dead-letter / outbox and its drain → admin-and-org **P7** (`ALOG-8`); an `actor_kind` column and the audit identity trigger → admin-and-org **P7** (`ALOG-7`, which builds on this `lib/audit.ts` — fleet plan, DF-P1 `dependsOn`). The call-site stand-ins → the owning packages (the ticket-queue sites, DF-P9).
 
+**Partial (2026-10-13, admin-and-org Round G).** Package P7 — the two limbs the DF-P1 merge re-owned to it ("the dead-letter / outbox and its drain (ALOG-8); the actor_kind column and audit identity trigger (ALOG-7)"). Reproduced on base `6503ea7` (DEC-29): `lib/audit.ts` (DF-P1's shape) returns `{ ok, error }` and logs a refusal; a stand-in actor is written `user_id NULL` with `metadata.actor_kind = "system"` (a field in metadata, not a column); nothing dead-letters a refused row.
+
+Landed:
+- **The `actor_kind` column and the identity trigger** — `supabase/migrations/20261201_ao_roundG_audit_identity.sql` (admin-and-org `ALOG-7`, PASTE pending): `audit_logs.actor_kind` (`member` / `server` / `system`) set by a BEFORE INSERT trigger on every new row — `system` for a row naming no person (the stand-in rows `lib/audit.ts` writes, a cron pass, the export ledgers), `server` for the service role's or a database function's row naming a person, `member` for a signed-in caller's own row, whose email / role / time the database stamps from `org_members`. A null-actor cron path still lands its row (the service role passes the trigger untouched — exercised on PostgreSQL 16, ALOG-7's record). `lib/audit.ts` keeps `metadata.actor_kind` for rows written before the paste.
+- `lib/audit.ts` also refuses an entry with no workspace (admin-and-org `ALOG-10`) — returned and logged, never thrown, like a refused insert.
+
+**Not landed: the dead-letter / outbox and its drain.** `logAuditAction` reports a refusal (returned and logged) but neither throws nor writes a durable row the maintenance cron drains. Throwing would change every caller that ignores the result today (a regression the user's first rule forbids); a durable outbox needs a table (an export decision) and a drain step in `app/api/cron/maintenance/route.ts`, which drafting-flow DF-P2 / DF-P3 hold this round (P7's brief: do not edit). A client-side refusal (RLS) would refuse the outbox write for the same reason, so the outbox has to be a server route's.
+
+**Done-when.**
+- ✗ (in part) `{ error }` is inspected and reported (DF-P1) — no dead-letter / outbox or drain (above).
+- ✓ (pending `20261201`) No stand-in reaches `user_id` (DF-P1), and system-initiated rows are marked by a nullable `actor_kind` COLUMN, set by the database — the criterion's second form.
+- ✓ (DF-P1) tests: a `{ error }` insert is non-silent; a null-actor cron path produces a durable row. P7 adds `lib/__tests__/auditLog.test.ts` (the stand-in rule unchanged; a refused insert still returned).
+
+**Scope / residual.** The outbox and its drain. **Proposed owner: the integrator routes it** to the package that next holds `app/api/cron/maintenance/route.ts` (after DF-P2 / DF-P3 merge), with a server route that writes the dead-letter row as the service role after verifying the caller. The call-site stand-ins stay with their pages' owners (DF-P9, as DF-P1 recorded). Status stays OPEN.
+
 ---
 
 <a id="evid-7"></a>
@@ -659,6 +674,18 @@ lib/ticketTransitions.ts:247-252 —
 - ✗ Approval actions do not require a captured e-signature.
 
 **Scope / residual.** The e-signature bound to the approved attachment → **DF-P5** (`EVID-1`'s same limb). A server-computed content hash (sha256 at upload or at vetting) and the transaction form → unowned in the fleet plan; proposed with DF-P5, which binds the signature to exactly those bytes. Pairing attempt rows with their `_NOT_APPLIED` / `_HOLDS_NOT_RELEASED` rows in the audit viewers → admin-and-org P7 (`99-fix-sequencing.md`, "Hand-offs from DF-P1"). The `HOLD_RELEASED` / `HOLD_KEPT_ON_CLOSE` rows the close writes are still unchecked (`app/api/tickets/workflow-action/route.ts:840-855`); those call sites are the holds owners' (`EVID-6`'s call-site residual).
+
+**Partial (2026-10-13, admin-and-org Round G).** Package P7 — the reading rule handed to it at the DF-P1 merge ("both audit viewers pair a TICKET_<ACTION> attempt row with the _NOT_APPLIED / _HOLDS_NOT_RELEASED row that names it"). Reproduced on base `6503ea7`: both viewers listed the rows one by one.
+
+Landed: `lib/auditActions.ts pairTicketAttempts` (`:239`) — an attempt row (`TICKET_<ACTION>`, `details.recordedBeforeApply`) is "applied" unless a `_NOT_APPLIED` row in the loaded rows names it in `details.attempt` ("not applied"); a `_HOLDS_NOT_RELEASED` row naming it marks it "applied, but its holds were not released". The viewers load newest first, so a loaded attempt's follow-up (written after it) is loaded too.
+- `/admin/audit`: the attempt row shows its outcome; the follow-up row says which attempt it names; filtering on a ticket action brings its follow-ups with it (`auditActionFilterQuery`), and a `TICKET_…` family filter is offered.
+- `/activity`: the attempt line says the outcome ("… (not applied)", "… (applied — its holds were not released)") and its follow-up line folds into it.
+
+Tests: `lib/__tests__/auditViewers.test.ts` "drafting-flow EVID-12 — …" (the three outcomes; a pre-DF-P1 row with no marker is not an attempt; both viewers use the pairing); `lib/__tests__/auditPageRendered.test.ts` (rendered: the attempt shows "Not applied …", the follow-up names it).
+
+**Done-when.** This package's limb (the viewers' reading rule) holds. The record's four criteria are unchanged by it: the transaction form and the server-computed content hash (unowned, proposed with DF-P5) and the e-signature bound to the approved attachment (DF-P5) remain as DF-P1 recorded.
+
+**Scope / residual.** None for P7. Status stays OPEN for DF-P5.
 
 ---
 
