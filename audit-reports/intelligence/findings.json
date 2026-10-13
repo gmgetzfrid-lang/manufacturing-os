@@ -34,8 +34,8 @@
       "LOW": 51
     },
     "by_status": {
-      "RESOLVED": 213,
-      "OPEN": 48,
+      "RESOLVED": 214,
+      "OPEN": 47,
       "REFUTED": 2,
       "WONTFIX": 3,
       "INVALID": 1
@@ -2727,7 +2727,7 @@
       "id": "DACL-5",
       "title": "ACL rules addressed to a member's secondary role are inert everywhere except the download-deny check — grants silently do nothing, denies partially bite",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

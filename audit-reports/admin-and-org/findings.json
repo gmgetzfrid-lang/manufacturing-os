@@ -8,17 +8,18 @@
     "audit-reports/admin-and-org/04-billing.md"
   ],
   "totals": {
-    "findings": 63,
+    "findings": 64,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 5,
       "HIGH": 17,
-      "MEDIUM": 28,
+      "MEDIUM": 29,
       "LOW": 13
     },
     "by_status": {
-      "RESOLVED": 48,
-      "OPEN": 15
+      "RESOLVED": 52,
+      "OPEN *(set back from RESOLVED by the integrator at the A&O P7 merge, 2026-10-13, DEC-29: done-when 2's labelled form is not met on three readers — the Partial below)*": 1,
+      "OPEN": 11
     }
   },
   "status_vocabulary": [
@@ -262,7 +263,7 @@
       "id": "ALOG-5",
       "title": "`/activity` renders the entire org audit log to every role with no gate of any kind, sitting in the same tab strip as /admin/audit's \"Admin-class roles only\" banner",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -648,7 +649,7 @@
       "id": "ALOG-7",
       "title": "Audit rows record self-declared identity: `user_email` and `user_role` come from the caller, `timestamp` is client-settable, and the one field `AuditEntry` declares for it is never written",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "OPEN *(set back from RESOLVED by the integrator at the A&O P7 merge, 2026-10-13, DEC-29: done-when 2's labelled form is not met on three readers — the Partial below)*",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -733,7 +734,7 @@
       "id": "ALOG-10",
       "title": "The audit INSERT policy explicitly admits `org_id IS NULL`, but the SELECT policy and both viewers can never return such a row — a write-only sink for audit evidence, reachable through optional-orgId signatures",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "SUSPECTED",
       "verification_note": null,
       "blast_radius": null,
@@ -761,7 +762,7 @@
       "id": "ALOG-11",
       "title": "The audit viewer can filter 36 action types out of the 110 the app writes; every admin-authority action — permission changes, ACL changes, recertifications, purges, restores, e-signatures, folder deletes — is unreachable through any filter, and the compliance KPI miscounts in both directions",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -866,6 +867,36 @@
       ],
       "refuted": false,
       "summary": "An IT auditor is asked to produce the workspace's access-control matrix. They open /admin/permissions, screenshot the top panel, and hand it over. It says the audit log is restricted to five roles — a Drafter or a Safety staffer can read every row of it — and it says Doc Control cannot manage users, release stale checkouts, edit operational scope or edit the equipment registry, all four of which D",
+      "area": "admin-and-org",
+      "report": "audit-reports/admin-and-org/03-audit-log.md"
+    },
+    {
+      "id": "ALOG-16",
+      "title": "Node-level authority rows — a node's full ACL before and after a change, its owner assignments, its recertifications — are readable by every active member of the workspace",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": null,
+      "verification_note": "READ (P7's third-review reading of DEC-17's overlay and the action typing; not exercised against a live database)",
+      "blast_radius": "confidentiality inside a workspace / access control",
+      "related": [
+        "ALOG-5",
+        "DEC-17",
+        "SURF-9",
+        "ROLE-5"
+      ],
+      "locations": [
+        "components/permissions/PermissionDrawer.tsx",
+        "lib/ownership.ts",
+        "lib/accessRecert.ts",
+        "app/(protected)/activity/page.tsx"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "Document Control narrows a restricted library's ACL to three named engineers. Any other member of the workspace opens /activity (or queries auditlogs through the API) and reads the NODEACLCHANGED row, whose details carry the full before and after ACL: who held access, who keeps it, who was removed — for a library they cannot open.",
       "area": "admin-and-org",
       "report": "audit-reports/admin-and-org/03-audit-log.md"
     },
@@ -1410,7 +1441,7 @@
       "id": "ALOG-6",
       "title": "\"Export CSV\" exports only the rows currently on screen — by default the last 7 days capped at 200 — with no truncation notice, and drops the `metadata` column entirely from the evidence file",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
