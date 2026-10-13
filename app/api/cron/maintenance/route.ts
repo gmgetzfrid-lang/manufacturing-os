@@ -73,7 +73,7 @@ import { runWithServerClient } from "@/lib/serverClientScope";
 import { sweepIntakeStaging } from "@/lib/intakeStaging";
 import { emit, type EmitResult } from "@/lib/notify/dispatch";
 import { notifyBatchWithReason } from "@/lib/inAppNotifications";
-import { drainComplianceShortfall, COMPLIANCE_NOTIFY_ATTEMPTS } from "@/lib/complianceNotify";
+import { runComplianceScan } from "@/lib/complianceNotifyScope";
 import { KIND_META } from "@/lib/notificationKinds";
 import { emailAllowedByPrefs } from "@/lib/notificationPrefs";
 import { renderNotificationEmail } from "@/lib/emailRender";
@@ -381,23 +381,16 @@ async function handler(req: NextRequest) {
       // here because a third vercel.json cron entry fails deployment (step 10).
       ["hold-aging", scanStaleHolds],
     ];
-    drainComplianceShortfall(); // what other work on this instance left: not this run's
     for (const org of (orgRows as Array<{ id: string }>) ?? []) {
       result.complianceOrgs += 1;
       for (const [name, fn] of scans) {
         try {
-          result.complianceNotices += await fn(org.id);
+          // DELIV-7 dw1 / DELIV-16 (notifications N14): the scan's dead-lettered notices are a line in errors; no retry past the digest's time
+          result.complianceNotices += await runComplianceScan(`${name}@${org.id}`, () => fn(org.id), result.errors, runEnd - DIGEST_FLOOR_MS - AFTER_DIGEST_RESERVE_MS);
         } catch (e) {
           // Loud, per-scan, per-org — a permanently failing scan must be
           // distinguishable from a clean one.
           result.errors.push(`${name}@${org.id}: ${(e as Error).message}`);
-        }
-        // DELIV-7 dw1 / DELIV-16 (notifications N14): a notice the scan could
-        // not write after its retries is reported here, never a silent success
-        // (each is also a NOTIFICATION_DEAD_LETTER audit row).
-        const lost = drainComplianceShortfall();
-        if (lost.length > 0) {
-          result.errors.push(`${name}@${org.id}: ${lost.length} compliance notice(s) were not written after ${COMPLIANCE_NOTIFY_ATTEMPTS} attempts (dead-lettered to the audit log) — e.g. ${lost[0].kind} to ${lost[0].userId}: ${lost[0].error}`);
         }
       }
     }
@@ -919,6 +912,10 @@ function digestTrusted(row: { created_at?: unknown; metadata?: unknown }): boole
   return !Number.isFinite(t) || !Number.isFinite(c) || t <= c + DIGEST_CLOCK_OVERLAP_MS;
 }
 
+/** NEDGE-20: the recipient's last digest rows read, newest first — the
+ *  newest of them that digestTrusted() passes is their last digest. */
+const DIGEST_LAST_ROWS = 10;
+
 /** email_notifications.queued_by is not there yet (20261183 unpasted). */
 function isMissingQueuedBy(e: { code?: string; message?: string }): boolean {
   return e.code === "42703" || e.code === "PGRST204" || /queued_by/.test(e.message ?? "") && /does not exist|schema cache/i.test(e.message ?? "");
@@ -1122,7 +1119,7 @@ async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: s
         .eq("to_user_id", m.uid)
         .eq("event_type", "compliance_digest");
       if (serverOnly) q = q.is("queued_by", null);
-      return q.order("created_at", { ascending: false }).limit(1);
+      return q.order("created_at", { ascending: false }).limit(DIGEST_LAST_ROWS);
     };
     const serverOnly = queuedByKnown;
     let { data: last, error: lastErr } = await lastDigest(serverOnly);
@@ -1133,11 +1130,14 @@ async function queueComplianceDigests(sb: SupabaseClient<any>, opts: { origin: s
     if (lastErr) {
       say(`${m.org_id}/${m.uid}: their last digest could not be read — sent anyway, listing from ${iso(windowMs)}: ${lastErr.message}`);
     } else {
-      const found = ((last as Array<{ created_at?: unknown; metadata?: unknown }> | null) ?? [])[0];
+      const recent = (last as Array<{ created_at?: unknown; metadata?: unknown }> | null) ?? [];
       // …and never one whose window ends after it was queued (plus the clock
-      // margin): a forged `through` would silence the digests until it.
-      const row = found && digestTrusted(found) ? found : undefined;
-      if (found && !row) say(`${m.org_id}/${m.uid}: their newest digest row ends its window after it was queued — not trusted; listing from ${iso(windowMs)}`);
+      // margin): a forged `through` would silence the digests until it. The
+      // newest TRUSTED row of the last few is their last digest, so a forged
+      // newer row neither hides it nor widens their window.
+      const row = recent.find(digestTrusted);
+      const skipped = row ? recent.indexOf(row) : recent.length;
+      if (skipped > 0) say(`${m.org_id}/${m.uid}: ${skipped} newer digest row(s) end their window after they were queued — not trusted; ${row ? "their newest trusted digest row is their last digest" : `listing from ${iso(windowMs)}`}`);
       if (row) {
         const through = digestThrough(row);
         if ((row.metadata as { day?: unknown } | null)?.day === dayKey) {

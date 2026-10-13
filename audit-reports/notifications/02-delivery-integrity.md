@@ -511,7 +511,8 @@ export async function notify(input: NotificationInput): Promise<void> {
 
 **What landed.**
 - Those six scans' notices, and `lib/ownership.ts`'s, now go through `lib/complianceNotify.ts` `notifyCompliance` (see `DELIV-16`). A notice that does not land after three attempts is a warning line and a `NOTIFICATION_DEAD_LETTER` audit row.
-- The cron (`app/api/cron/maintenance/route.ts:384, :398`) reads each scan's shortfall into `result.errors`: `<scan>@<org>: N compliance notice(s) were not written after 3 attempts (dead-lettered to the audit log) — e.g. <kind> to <uid>: <error>`. It never reports a silent success. The scan's count is unchanged.
+- The cron runs each step-6 scan through `lib/complianceNotifyScope.ts` `runComplianceScan` (`app/api/cron/maintenance/route.ts:389`, one line), which reports the scan's dead-lettered notices into `result.errors`: `<scan>@<org>: N compliance notice(s) were not written (dead-lettered to the audit log; the scan's count still includes them) — e.g. <kind> to <uid>: <error>`. It never reports a silent success. (N14 fix pass: the first landing collected this in a module-global list, so a concurrent request on the same instance could be reported as the cron's, or drained away; the collector is now an AsyncLocalStorage bound to the scan's own async context.)
+- **What the scans themselves still do (N14 fix pass, corrected).** The surfacing is the dead letter and the cron's line; the scans still ignore `notifyCompliance`'s answer. `result.complianceNotices` counts ATTEMPTED notices, dead-lettered ones included. And each scan still stamps its cooldown (`document_acknowledgments.notified_at` in `lib/acknowledgments.ts`, `document_review_signoffs.notified_at` in `lib/reviewControl.ts`, `libraries.recert_notified_at` in `lib/accessRecert.ts`, and the like) after a notice was dead-lettered, so that reminder is re-sent only after the scan's full cooldown (3-7 days), not on the next run.
 - The last raw inserts moved onto the typed sink (`TAX-11`), which destructures `error` and logs it. The AI cap notice's refusal is now logged with its reason, and the cron's escalation still pushes into `result.errors`.
 - Tests: `lib/__tests__/maintenanceDrain.test.ts` "DELIV-7 dw1 / DELIV-16 (notifications N14)", `lib/__tests__/complianceNotify.test.ts`, and the `TAX-11` regression pins.
 
@@ -526,6 +527,7 @@ export async function notify(input: NotificationInput): Promise<void> {
 **Scope / residual.** Stays OPEN for done-when 1's last two scans and done-when 2's remaining producers.
 - Owner: **notifications N9** for `lib/distributionAcks.ts` / `lib/holds.ts`. Adopting `notifyCompliance` there is one import line; the dispatcher's in-app leg covers `emit()`.
 - The other producers' owners are as listed under `DELIV-16`.
+- Owner: **the integrator to assign** (the six scan files are `lib/reviewCycles.ts`, `lib/acknowledgments.ts`, `lib/reviewControl.ts`, `lib/effectiveDate.ts`, `lib/retention.ts`, `lib/accessRecert.ts`; `lib/distributionAcks.ts` / `lib/holds.ts` with N9), for the scans reading the answer: stamp a row's cooldown only when its notices landed (or re-nag a dead-lettered one on the next run) and count landed notices. It is a per-scan behaviour change across the six scan files (a multi-recipient row whose notices partly landed needs a rule), beyond this package's one-import-line edits to them.
 
 ---
 
@@ -1020,23 +1022,29 @@ export type NotifChannel = "inapp" | "email";
 **What landed.**
 - `lib/complianceNotify.ts` `notifyCompliance(input)`: the integrator's ruling for this package (a bounded in-process retry plus a dead letter, with no new table unless the done-when requires an outbox).
   - The first attempt IS `notify()`: the same typed row, on the same shared client (the browser's session, or the service role the cron binds). Nothing changes when it lands.
-  - If `notify()` answers `false`, the row is tried twice more after 250 ms and then 1 s, through `notifyWithReason`, which answers the refusal's text.
-  - When all three attempts fail, the notice is dead-lettered:
-    - ONE audit row (`NOTIFICATION_DEAD_LETTER`, `lib/audit.ts` `logAuditAction`) naming the kind, the recipient, the error, the attempts, the title, the link and the resource. It is written as the notice's writer (the signed-in member a browser producer names, else the system), never as the recipient.
-    - A warning line: `[compliance-notify] <kind> to <uid> in <org> was not written after 3 attempts — dead-lettered to the audit log: <error>`.
-    - An entry in a bounded shortfall list, which the cron drains after each step-6 scan (`DELIV-7`).
+  - If `notify()` answers `false`, the row is tried again at once through `notifyWithReason`, which answers the refusal's text, and once more after 1 s. (N14 fix pass: the first landing waited 250 ms and 1 s for every failure.)
+  - **The retry is bounded** (N14 fix pass). The first landing had no budget: a systematic refusal cost every notice 1.25 s, and the cron's step-6 scans walk documents one at a time (two waves per overdue acknowledgment row), so a few hundred overdue items could push the 300 s run past `maxDuration` and lose the digest (6b), the second drain (6c), the steps after them and the run's JSON. Now:
+    - (a) a refusal that cannot change on a retry (`DETERMINISTIC_REFUSAL`: RLS / grant refusals, the `20261160` rail's refusals and rate limits, a constraint, a malformed value) is dead-lettered after the immediate retry that reads it, with no wait;
+    - (b) a breaker: after `BREAKER_DEAD_LETTERS` (5) consecutive dead letters, each within `BREAKER_WINDOW_MS` (60 s) of the last, each notice gets its single `notify()` until a write lands (process-wide: the tab, or the server instance);
+    - (c) inside a cron scan no wait is slept past the run's retry deadline, `runEnd - DIGEST_FLOOR_MS - AFTER_DIGEST_RESERVE_MS` (190 s into a 300 s run), so the digest and the drain after it keep their time.
+  - When every attempt fails, the notice is dead-lettered:
+    - ONE audit row (`NOTIFICATION_DEAD_LETTER`, `lib/audit.ts` `logAuditAction`) naming the kind, the recipient, the error, the attempts, the title, the link and the resource. It is written as the actor the producer names; when it names none, as the SIGNED-IN member (`supabase.auth.getSession()`), else (the service role has no session: the cron, the routes) as the system — never as the recipient. (N14 fix pass: the first landing wrote an actor-less notice's dead letter as `"system"`, which `logAuditAction` sends as `user_id` NULL; under a browser session the audit insert policy, `user_id = auth.uid()`, refuses that, so `acknowledgments.ts`'s `ack_unsatisfiable` at publish and `reviewControl.ts`'s `review_overdue` in the reviewer contingency left only a console line in the publisher's browser.)
+    - A warning line: `[compliance-notify] <kind> to <uid> in <org> was not written after <n> attempts — dead-lettered to the audit log: <error>`.
+    - Inside a cron scan, an entry in that scan's collector (`lib/complianceNotifyScope.ts`), reported as one line in the run's errors (`DELIV-7`).
   - A row the insert rail skips for a non-member (DEC-86 §2, no error) is not retried. Nobody is notified who cannot read the row.
 - **No outbox, and no new table.** The done-when accepts a retry. The obligation each notice reports (the acknowledgment and review rosters, the retention flag, the recertification date) is already a durable row the daily scans re-read. What a failure loses is the signal, and the dead letter records that where an Admin looks.
 - The seven compliance producers N14 may edit take it with one import line each: `import { notifyCompliance as notify } from "@/lib/complianceNotify"`. The alias keeps every call site, and the actor census in `lib/__tests__/notificationWriteRails.test.ts`, unchanged. The seven: `lib/reviewCycles.ts` (`review_due`, `owner_behind`), `lib/acknowledgments.ts` (`ack_requested`, `ack_unsatisfiable`, `ack_overdue`, and `ack_complete` beside them), `lib/reviewControl.ts` (`review_*`), `lib/effectiveDate.ts` (`effective_now`), `lib/retention.ts` (`retention_eligible`, `legal_hold_*`), `lib/accessRecert.ts` (`access_recert_due`), `lib/ownership.ts` (`deletion_requested`, `owner_assigned`).
 - **REGRESSION.** A notice that lands first time is written exactly once, as before, with no wait. A notice that fails is now retried, and the same row lands on the retry.
 - Tests:
-  - `lib/__tests__/complianceNotify.test.ts` (8 cases):
+  - `lib/__tests__/complianceNotify.test.ts` (20 cases):
     - A row that lands first time is written once.
-    - **An insert failed once lands on the retry: the identical row, after the first backoff (the done-when).** Two failures, then the third attempt lands (250 ms, then 1 s).
-    - Every attempt fails: one dead-letter audit row (kind, recipient, error), the warning line, and one shortfall entry.
+    - **An insert failed once lands on the retry: the identical row (the done-when).** Two transient failures, then the third attempt lands after 1 s.
+    - Every attempt fails: one dead-letter audit row (kind, recipient, error), the warning line.
     - A cron notice dead-letters as the system, and a dead letter that fails too is logged, never thrown.
-    - The shortfall is bounded.
-    - The source pins: the seven producers' imports, and the cron's drain.
+    - (fix pass) A browser notice that names no actor dead-letters as the signed-in member; a named actor still wins; a landed notice never reads the session.
+    - (fix pass) Bounded retry under a fake clock: (a) a deterministic refusal is dead-lettered with no wait, and 100 of them wait 0 ms; (b) 100 transient failures wait at most 6 s (unbounded: 100 s) and a landed write closes the breaker; dead letters a window apart do not open it; (c) inside a scan no wait is slept past the deadline, and 100 failures past it wait 0 ms.
+    - (fix pass) The scan's collector: one line under its label with an exact count; a notice another request loses meanwhile is not attributed to the scan; a scan that throws still reports what it lost.
+    - The source pins: the seven producers' imports, and the cron's one-line scan call with its deadline.
   - `lib/__tests__/maintenanceDrain.test.ts` "DELIV-7 dw1 / DELIV-16 (notifications N14)": a scan whose notice fails every attempt is a line in the run's errors and a dead letter in the audit log; a scan whose notices land adds no line.
 
 **Done-when.**
@@ -1053,6 +1061,7 @@ export type NotifChannel = "inapp" | "email";
   - **notifications N9**: `lib/distributionAcks.ts`, `lib/postPublish.ts`, `lib/staleCopies.ts`, `lib/revisionImpact.ts`, `lib/workPackages.ts`, and the dispatcher's in-app leg for `emit()`'s compliance kinds (`lib/holds.ts`'s legal-hold emits included). N9 holds those files and `lib/inAppNotifications.ts` this round.
   - **drafting-flow DF-P2**: `components/documents/CheckInPanel.tsx`.
   - **The intake door's owner (projects)**: `app/api/intake/upload/route.ts`.
-- A browser tab closed during the 1.25 s of retries loses the retry. The obligation row stands, and the scans' re-nag still applies.
+- A browser tab closed during the retry (at most 1 s of waiting) loses it. The obligation row stands, and the scans' re-nag still applies — after the scan's cooldown, which each scan still stamps on a dead-lettered notice (`DELIV-7`'s Partial names the owner).
+- A notice refused while the breaker is open, or past the cron's deadline, is not retried; it is still dead-lettered, and its error says why it was not retried.
 
 ---

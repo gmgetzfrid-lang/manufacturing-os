@@ -249,7 +249,7 @@ import { GET as purgeGET, POST as purgePOST } from "@/app/api/admin/purge/route"
 import { signUnsubscribe } from "@/lib/unsubscribeToken";
 import { emit } from "@/lib/notify/dispatch";
 import { scanAndNotifyReviews } from "@/lib/reviewCycles";
-import { notifyCompliance, __setComplianceRetrySleep } from "@/lib/complianceNotify";
+import { notifyCompliance, __setComplianceRetrySleep, __resetComplianceBreaker } from "@/lib/complianceNotify";
 
 const ROOT = process.cwd();
 const src = (p: string) => readFileSync(join(ROOT, p), "utf8");
@@ -1325,9 +1325,25 @@ describe("NEDGE-20 (notifications N14) — a forged compliance_digest row does n
     db.tables.email_notifications = [forged()];
     const r = await runCron();
     expect(String(fresh(U(1))!.body_text)).toContain("Due A");
-    expect(r.errors).toContain(`compliance-digest: ${ORG_A}/${U(1)}: their newest digest row ends its window after it was queued — not trusted; listing from ${String((fresh(U(1))!.metadata as Row).since)}`);
+    expect(r.errors).toContain(`compliance-digest: ${ORG_A}/${U(1)}: 1 newer digest row(s) end their window after they were queued — not trusted; listing from ${String((fresh(U(1))!.metadata as Row).since)}`);
     // the colleague's digest is unaffected
     expect(String(fresh(U(2))!.body_text)).toContain("Due B");
+  });
+
+  it("fix pass (minor 2): a genuine digest from today BEHIND a forged newer row still means no second digest today — the newest TRUSTED row is their last digest", async () => {
+    seed();
+    const today = new Date().toISOString().slice(0, 10);
+    db.missingColumn.email_notifications = "queued_by";           // before 20261183: the forged row is read too
+    db.tables.email_notifications = [
+      { id: "g1", org_id: ORG_A, to_user_id: U(1), event_type: "compliance_digest", status: "sent", created_at: minutesAgo(20), metadata: { day: today, through: minutesAgo(21) } },
+      forged({ created_at: minutesAgo(5) }),
+    ];
+    const r = await runCron();
+    expect(fresh(U(1))).toBeUndefined();
+    expect(r.errors).toContain(`compliance-digest: ${ORG_A}/${U(1)}: 1 newer digest row(s) end their window after they were queued — not trusted; their newest trusted digest row is their last digest`);
+    // the read takes the last few rows, not only the newest
+    const limits = db.calls.filter((c) => c.table === "email_notifications" && c.op === "limit").map((c) => c.args[0]);
+    expect(limits).toContain(10);
   });
 
   it("after 20261183: a row a signed-in member queued (queued_by set) is never their last digest — even with a plausible `through` and today's day", async () => {
@@ -1374,6 +1390,7 @@ describe("NEDGE-20 (notifications N14) — a forged compliance_digest row does n
 describe("DELIV-7 dw1 / DELIV-16 (notifications N14) — a compliance notice a scan could not write is a line in the run's errors", () => {
   it("the scan's notice fails every attempt: the run says which scan and org, how many, the kind, the recipient and the error — and the dead letter is in the audit log", async () => {
     __setComplianceRetrySleep(async () => undefined);
+    __resetComplianceBreaker();
     db.writeError.notifications = { message: "insert refused" };
     vi.mocked(scanAndNotifyReviews).mockImplementationOnce(async (orgId: string) => {
       await notifyCompliance({ orgId, userId: U(3), kind: "review_due", title: "Review due: P-1", link: "/documents/l1?doc=d1", resourceType: "document", resourceId: "d1" });
@@ -1381,7 +1398,7 @@ describe("DELIV-7 dw1 / DELIV-16 (notifications N14) — a compliance notice a s
     });
     const r = await runCron();
     __setComplianceRetrySleep(null);
-    expect(r.errors).toContain(`review-cycles@${ORG_A}: 1 compliance notice(s) were not written after 3 attempts (dead-lettered to the audit log) — e.g. review_due to ${U(3)}: insert refused`);
+    expect(r.errors).toContain(`review-cycles@${ORG_A}: 1 compliance notice(s) were not written (dead-lettered to the audit log; the scan's count still includes them) — e.g. review_due to ${U(3)}: insert refused`);
     expect(rows("audit_logs").filter((a) => a.action === "NOTIFICATION_DEAD_LETTER")).toEqual([expect.objectContaining({
       org_id: ORG_A, resource_type: "document", resource_id: "d1", user_id: null,
       details: expect.objectContaining({ kind: "review_due", recipient: U(3), error: "insert refused", attempts: 3 }),

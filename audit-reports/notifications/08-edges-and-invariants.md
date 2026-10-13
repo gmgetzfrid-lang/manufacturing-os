@@ -962,7 +962,7 @@ There is no status predicate and no membership filter on `recipients`. `20261160
 - Reader (`app/api/cron/maintenance/route.ts` `queueComplianceDigests`):
   - The last-digest read (`lastDigest`, :1118) adds `.is("queued_by", null)`. A signed-in writer's row is stamped with its queuer by `20261183`, so only a row the server queued counts.
   - On 42703 / PGRST204, or a "queued_by does not exist" message (`isMissingQueuedBy`, :923: `20261183` not pasted), the read is retried without the filter. That is today's read, and the filter is dropped for the rest of the run.
-  - A row whose `metadata.through` runs more than `DIGEST_CLOCK_OVERLAP_MS` (5 min) past its own `created_at` is never trusted as a last digest (`digestTrusted`, :915). The recipient's list starts from the window's start, and the run says so in a `compliance-digest:` line.
+  - A row whose `metadata.through` runs more than `DIGEST_CLOCK_OVERLAP_MS` (5 min) past its own `created_at` is never trusted as a last digest (`digestTrusted`, :915). The read takes the recipient's last `DIGEST_LAST_ROWS` (10) rows, newest first, and the newest TRUSTED one is their last digest (N14 fix pass: the first landing read only the newest row and, when it was untrusted, dropped all history — so a forged newer row hid a genuine digest from today and the colleague got a second digest the same day). With no trusted row among them the list starts from the window's start. Either way the run says how many newer rows it did not trust in a `compliance-digest:` line.
   - A genuine digest row writes `through` = the run's `asOf`, before it is queued, so it always passes.
 - Insert rail (`20261197`): `email_notif_insert` is re-created from `20261047`'s body, adding exactly one line, `AND event_type <> 'compliance_digest'`. The cron queues the digest on the service role, which RLS does not bind; no app path queues the event type from a browser (pinned).
 
@@ -973,8 +973,9 @@ There is no status predicate and no membership filter on `recipients`. `20261160
 - The deparsed `with_check` carries `(event_type <> 'compliance_digest'::text)` beside the three conditions it had.
 
 **Tests.**
-- `lib/__tests__/maintenanceDrain.test.ts` "NEDGE-20 (notifications N14) — …" (4 cases):
+- `lib/__tests__/maintenanceDrain.test.ts` "NEDGE-20 (notifications N14) — …" (5 cases):
   - A forged future `through` does not silence the next digest, and the line says why.
+  - (fix pass) A genuine digest from today behind a forged newer row (before `20261183`) still means no second digest today; the read takes the last 10 rows.
   - After `20261183`, a member-queued row is never the last digest, even with a plausible `through` and today's `day`.
   - REGRESSION: a genuine row behaves exactly as today. Today's means no second digest; yesterday's starts the window where it stopped.
   - Before `20261183` (42703), today's read runs, and the `through` check still holds.
@@ -986,7 +987,7 @@ There is no status predicate and no membership filter on `recipients`. `20261160
 - ✓ The email insert rail refuses a signed-in writer's `compliance_digest` row. It is re-created from the newest definition, with a lineDiff test.
 - ✓ A test shows a forged row with a future `through` does not silence the next digest, and a genuine digest row behaves exactly as today.
 
-**Scope / residual.** One window remains until either `20261183` or `20261197` is pasted. A member could still queue a row for a colleague with a plausible `through` (no later than its `created_at` plus 5 min) and today's `day`. That suppresses the colleague's digest for that one day; the bell is unaffected. Either paste closes it.
+**Scope / residual.** One window remains until either `20261183` or `20261197` is pasted. A member could still queue a row for a colleague with a plausible `through` (no later than its `created_at` plus 5 min) and today's `day`. That suppresses the colleague's digest for that one day; the bell is unaffected. In the same window, ten or more forged far-future rows queued after a genuine one push it out of the 10-row read, so the recipient is listed from the window's start (a wider list, never a silenced one). Either paste closes both.
 
 Paste and deploy order: either order is safe, and `20261183` and `20261197` are independent.
 
