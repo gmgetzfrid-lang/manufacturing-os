@@ -482,7 +482,13 @@ the default's editor) and says the team view is unavailable
 - `process_flows_guard`, from `20261155` plus the CB-5 rename block;
 - `knowledge_library_save_ai_features`, from `20261121` plus the legend-id line.
 
-A later package that re-creates either starts from `20261178`'s body and keeps the added lines. Each has a lineDiff test that scans for the newest earlier definer (`intelRoundGCodebookLifecycleMigration.test.ts`). The setting `app.codebook_rename` is set by `rename_codebook_code` only, around its own writes, and that is pinned: no other migration may set it. It names the kind; `process_flows_guard`'s block reads it for a unit rename only, and `codebook_entries_version_stamp` reads it so a rename is one new version. A later re-creation of either keeps that read.
+A later package that re-creates either starts from `20261178`'s body and keeps the added lines. Each has a lineDiff test that scans for the newest earlier definer (`intelRoundGCodebookLifecycleMigration.test.ts`). The setting `app.codebook_rename` is set by `rename_codebook_code` only, around its own writes, and that is pinned: no other migration may set it. It names the kind; `process_flows_guard`'s block reads it for a unit rename only, and `codebook_entries_version_stamp` reads it so a rename is one new version. A later re-creation of either keeps that read. `codebook_entries_version_stamp` also owns `app.codebook_version_bumped` (the service role's one bump per org per transaction); no other migration names it (pinned).
+
+**Merge conflict point — I-16 with I-18 and I-13 (test censuses).** I-16 edits two test files outside its own list, one census line each, because `20261178` joins censuses that scan the whole migration sequence:
+- `lib/__tests__/embedDrain.test.ts` (I-18's area): the "20261121 is the last definer" for-loop drops `knowledge_library_save_ai_features`, and the BEFORE-trigger census names `trg_knowledge_libraries_embed_build_guard`. If I-18 also edits that for-loop line, keep both: I-18's names, without `knowledge_library_save_ai_features`. Or merge I-16 after I-18 and re-apply the two lines.
+- `lib/__tests__/intelRoundGUnitIdentity.test.ts` (I-13's census): the "every object it creates is new" scan reads earlier files only (`f < FILE`).
+
+The assertions those lines stopped covering for later files live in I-16's `intelRoundGCodebookLifecycleMigration.test.ts` ("censuses held for neighbouring migrations"). See CB-5, fix pass 3.
 
 ---
 

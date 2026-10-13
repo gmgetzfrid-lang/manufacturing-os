@@ -839,22 +839,9 @@ describe("20261138 — one paste, counts only, every object new", () => {
   });
 
   it("every object it creates is new — no earlier migration defines it, so nothing is re-created (no lineDiff owed)", () => {
-    // EARLIER files: nothing this file creates existed before it. (A later
-    // migration may USE the mapping — I-16's 20261178 rename carries
-    // units.codebook_code — and is held below to never re-create an object.)
+    // EARLIER files only (I-16's later 20261178 uses units.codebook_code; that it re-creates none of these is held in intelRoundGCodebookLifecycleMigration.test.ts)
     const others = readdirSync(MIG_DIR).filter((f) => /^\d{8}.*\.sql$/.test(f) && f < FILE)
       .map((f) => readFileSync(join(MIG_DIR, f), "utf8").replace(/--[^\n]*/g, ""));
-    const later = readdirSync(MIG_DIR).filter((f) => /^\d{8}.*\.sql$/.test(f) && f > FILE)
-      .map((f) => readFileSync(join(MIG_DIR, f), "utf8").replace(/--[^\n]*/g, ""));
-    for (const name of [
-      "documents_total_for_org", "documents_unit_code_guard", "trg_documents_unit_code_guard",
-      "units_codebook_code_guard", "trg_units_codebook_code_guard",
-      "assets_unit_id_follows_filing", "trg_assets_unit_id_follows_filing",
-      "units_codebook_code_follow", "trg_units_codebook_code_follow",
-    ]) {
-      expect(later.some((s) => new RegExp(`(FUNCTION|TRIGGER)\\s+(IF EXISTS\\s+)?${name}\\b`).test(s)), name).toBe(false);
-    }
-    expect(later.some((s) => /(CREATE|DROP)\s+(UNIQUE\s+)?INDEX[^;]*units_org_codebook_code_uniq/.test(s))).toBe(false);
     for (const name of [
       "documents_total_for_org", "documents_unit_code_guard", "trg_documents_unit_code_guard",
       "units_org_codebook_code_uniq", "documents_org_unit_code_idx", "codebook_code",

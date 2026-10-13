@@ -16,10 +16,16 @@
 //     the registry guards decide, as for the Identity review's per-asset
 //     accept today). At most REDECODE_WRITE_BUDGET rows per call; the rest
 //     is `remaining`, and the page previews and applies again. Audited
-//     (CODEBOOK_REDECODE, counts only) before and after the writes.
+//     (CODEBOOK_REDECODE, counts only) before and after the writes. A write
+//     that matched no row is re-read with the full view: an asset that still
+//     is what the preview read was REFUSED for the caller's session (RLS
+//     answers 0 rows and no error, e.g. a controller who also holds Viewer /
+//     Auditor under 20261045's assets UPDATE overlay); only an asset whose
+//     code or filing moved, or that is gone, counts as changed.
 //   * "rename-preview" / "rename" (CB-5) — 20261178's rename_codebook_code,
 //     called with the CALLER's session (the function refuses a NULL
-//     auth.uid() and anyone outside is_org_controller; one transaction
+//     auth.uid(), anyone outside is_org_controller, and a controller who
+//     also holds Viewer / Auditor — 403 with its sentence; one transaction
 //     rewrites the filing, the site codes, the process-flow unit ends and the
 //     operational-unit mapping, then removes the old code through 20261128's
 //     guard). The apply passes the preview's counts as p_expected, so the
@@ -56,6 +62,10 @@ export const maxDuration = 60;
 
 /** Writes in flight at once. */
 const WRITE_WAVE = 8;
+/** Assets re-read per request when a write matched no row (ids in the URL). */
+const RECHECK_CHUNK = 100;
+/** A write RLS filtered out while the asset still is what the preview read. */
+const RLS_REFUSED = "the registry refused the write for your session — the asset still carries the code the preview read, but row-level security let the write match no row (a writer role held together with Viewer or Auditor leaves the equipment registry read-only)";
 
 const REFUSED = "Only the roles that edit the Site Codebook can re-decode site codes or rename a code.";
 
@@ -168,6 +178,11 @@ export async function POST(req: NextRequest) {
 
     let written = 0, changed = 0, taken = 0, refused = 0;
     let firstError: string | null = null;
+    // A write that matched no row, with no error: the compare-and-set found
+    // the asset changed — OR the caller's RLS hid it (a controller who also
+    // holds Viewer / Auditor: 20261045's RESTRICTIVE assets UPDATE overlay).
+    // PostgREST answers both the same way; the re-check below tells them apart.
+    const unmatched: RedecodeRow[] = [];
     const now = new Date().toISOString();
     for (let i = 0; i < batch.length; i += WRITE_WAVE) {
       const wave = batch.slice(i, i + WRITE_WAVE);
@@ -177,13 +192,33 @@ export async function POST(req: NextRequest) {
         // compare-and-set: only while the asset still is what the preview read
         .eq("code", row.from).eq("unit_code", row.unitCode)
         .select("id")));
-      for (const { data, error } of results) {
+      results.forEach(({ data, error }, k) => {
         if (error) {
           if (error.code === "23505" || /assets_org_code_unique/.test(error.message ?? "")) taken += 1;
           else { refused += 1; firstError ??= error.message; }
-          continue;
+          return;
         }
-        if (Array.isArray(data) && data.length > 0) written += 1; else changed += 1;
+        if (Array.isArray(data) && data.length > 0) written += 1; else unmatched.push(wave[k]);
+      });
+    }
+    // Re-read the unmatched assets with the full view: still what the preview
+    // read means the write was refused for this session, not changed.
+    for (let i = 0; i < unmatched.length; i += RECHECK_CHUNK) {
+      const part = unmatched.slice(i, i + RECHECK_CHUNK);
+      const { data: fresh, error: readErr } = await supabaseAdmin.from("assets")
+        .select("id, code, unit_code").eq("org_id", orgId).in("id", part.map((r) => r.assetId));
+      if (readErr) {
+        refused += part.length;
+        firstError ??= `${part.length} write(s) did not land, and the registry could not be re-read to tell a refusal from a change (${readErr.message}) — preview again`;
+        continue;
+      }
+      const stored = new Map(((fresh ?? []) as Array<{ id: string; code: string | null; unit_code: string | null }>).map((a) => [String(a.id), a]));
+      for (const row of part) {
+        const a = stored.get(row.assetId);
+        if (a && a.code === row.from && a.unit_code === row.unitCode) {
+          refused += 1;
+          firstError ??= RLS_REFUSED;
+        } else changed += 1;
       }
     }
     const { error: endErr } = await supabaseAdmin.from("audit_logs").insert(auditRow("finished", { written, changed, taken, refused, remaining }));

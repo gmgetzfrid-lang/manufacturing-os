@@ -29,13 +29,23 @@
 --        whether it still derives).
 --      The service role never creates a codebook_config row here (an org
 --      restore inserts the backup's own row afterwards and must not find one
---      waiting); it bumps an existing row only.
+--      waiting); it bumps an existing row only, and at most ONCE per org per
+--      transaction (the transaction-local app.codebook_version_bumped): a
+--      restore statement of N entries is one new version, not N. A restore
+--      into an org with no codebook_config row yet (lib/dataRestore.ts
+--      restores codebook_entries BEFORE codebook_config) bumps nothing, and
+--      the config lands at the backup's own version.
 --   2. CB-5 — rename_codebook_code(p_org_id, p_kind, p_old_code, p_new_code,
 --      p_dry_run, p_expected): renames a unit or equipment-type code IN
 --      PLACE. SECURITY DEFINER (it writes rows the caller's RLS may hide, and
 --      must write all of them or none), search_path pinned. It refuses a NULL
 --      auth.uid() (anon and the service role: a rename is a person's act,
---      recorded under their name) and anyone outside is_org_controller.
+--      recorded under their name), anyone outside is_org_controller, and a
+--      controller who also holds a read-only role (Viewer / Auditor): the
+--      rename rewrites the equipment registry with definer rights, so it
+--      meets the registry's own subtraction rule — 20261045's RESTRICTIVE
+--      assets_write_roles_update, deny-if-any on Viewer / Auditor — exactly
+--      as that member's direct write of an asset would.
 --      EXECUTE is revoked from PUBLIC and anon and granted to authenticated
 --      only (DRLS-16). One transaction, serialized per org. Its writes run
 --      inside the transaction-local setting app.codebook_rename (org, kind,
@@ -110,7 +120,8 @@
 --     ends at the same Site Codebook unit, now spelled with its new code.
 --
 -- WIDENS: the controller tier gains renaming a code in place (counted
--- below). Nothing else gains: the version columns are written by triggers,
+-- below) — a controller who also holds Viewer or Auditor does not (the
+-- registry is read-only for them; counted below too). Nothing else gains: the version columns are written by triggers,
 -- and the legend rule narrows. Pre-apply inventory (DEC-30) is a TEMP TABLE
 -- captured BEFORE the transaction, aggregate counts only. Nothing existing
 -- is rewritten (the new columns start at their defaults; NULL on assets).
@@ -162,10 +173,17 @@ SELECT 'library legend ids (ai_features.legendDocIds) that name no knowledge doc
   CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(l.ai_features -> 'legendDocIds') = 'array' THEN l.ai_features -> 'legendDocIds' ELSE '[]'::jsonb END) e(v)
  WHERE NOT EXISTS (SELECT 1 FROM knowledge_documents k WHERE k.org_id = l.org_id AND k.id::text = lower(e.v #>> '{}'))
 UNION ALL
-SELECT 'active members in the controller tier (Admin / DocCtrl by role or roles) — they GAIN renaming a code in place', COUNT(*)
+SELECT 'active members in the controller tier (Admin / DocCtrl by role or roles) holding no read-only role — they GAIN renaming a code in place', COUNT(*)
   FROM org_members
  WHERE status = 'active'
-   AND (role IN ('Admin', 'DocCtrl') OR roles && ARRAY['Admin', 'DocCtrl']::text[]);
+   AND (role IN ('Admin', 'DocCtrl') OR roles && ARRAY['Admin', 'DocCtrl']::text[])
+   AND NOT (role IN ('Viewer', 'Auditor') OR COALESCE(roles && ARRAY['Viewer', 'Auditor']::text[], false))
+UNION ALL
+SELECT 'active members in the controller tier who also hold Viewer or Auditor — the rename refuses them (the registry is read-only for them under 20261045)', COUNT(*)
+  FROM org_members
+ WHERE status = 'active'
+   AND (role IN ('Admin', 'DocCtrl') OR roles && ARRAY['Admin', 'DocCtrl']::text[])
+   AND (role IN ('Viewer', 'Auditor') OR roles && ARRAY['Viewer', 'Auditor']::text[]);
 
 BEGIN;
 
@@ -259,13 +277,16 @@ CREATE TRIGGER trg_codebook_config_version_guard
 -- UPDATE, or skip (a restore's DO NOTHING), is decided in its UPDATE arm, or
 -- not at all. A person may create the org's codebook_config row (behaviour-
 -- neutral: every reader treats a default row as no row); the service role
--- bumps an existing row only.
+-- bumps an existing row only, once per org per transaction: a restore
+-- statement that adds N entries is ONE new version (each later row of the
+-- same transaction records the version the first one made).
 CREATE OR REPLACE FUNCTION codebook_entries_version_stamp()
 RETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$
 DECLARE
   v_org     uuid;
   v_version bigint;
   v_rename  text;
+  v_bumped  text;
 BEGIN
   IF TG_OP = 'UPDATE'
      AND NEW.code IS NOT DISTINCT FROM OLD.code
@@ -300,9 +321,19 @@ BEGIN
       ON CONFLICT (org_id) DO UPDATE SET codebook_version = c.codebook_version + 1
       RETURNING c.codebook_version INTO v_version;
     ELSE
-      UPDATE codebook_config c SET codebook_version = c.codebook_version + 1
-       WHERE c.org_id = v_org
-      RETURNING c.codebook_version INTO v_version;
+      -- The service role (an org restore, a fix in the SQL editor): ONE new
+      -- version per org per transaction, however many rows it writes.
+      v_bumped := COALESCE(current_setting('app.codebook_version_bumped', true), '');
+      IF position(v_org::text IN v_bumped) > 0 THEN
+        SELECT c.codebook_version INTO v_version FROM codebook_config c WHERE c.org_id = v_org;
+      ELSE
+        UPDATE codebook_config c SET codebook_version = c.codebook_version + 1
+         WHERE c.org_id = v_org
+        RETURNING c.codebook_version INTO v_version;
+        IF FOUND THEN
+          PERFORM set_config('app.codebook_version_bumped', v_bumped || v_org::text || ',', true);
+        END IF;
+      END IF;
     END IF;
   END IF;
   IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
@@ -531,6 +562,15 @@ BEGIN
   END IF;
   IF p_org_id IS NULL OR NOT is_org_controller(p_org_id) THEN
     RAISE EXCEPTION 'rename_codebook_code: only Admin or Document Control can rename a Site Codebook code'
+      USING ERRCODE = '42501';
+  END IF;
+  -- The rename rewrites the equipment registry with definer rights, so it
+  -- meets the registry's own subtraction rule: 20261045's RESTRICTIVE
+  -- assets_write_roles_update refuses a member holding Viewer or Auditor
+  -- (deny-if-any), controller or not. What they cannot write directly they
+  -- cannot rewrite through the rename.
+  IF caller_holds_any_role(p_org_id, ARRAY['Viewer','Auditor']::text[]) THEN
+    RAISE EXCEPTION 'rename_codebook_code: you also hold a read-only role (Viewer / Auditor), so the equipment registry is read-only for you and a rename, which rewrites it, is refused — remove that role first'
       USING ERRCODE = '42501';
   END IF;
   IF p_kind IS NULL OR p_kind NOT IN ('unit', 'equipment_type') THEN
@@ -821,7 +861,7 @@ SELECT 'trg_codebook_config_version_guard: the version moves only forward, a cod
               FROM pg_proc WHERE proname = 'codebook_config_version_guard'),
        NULL
 UNION ALL
-SELECT 'trg_codebook_entries_version_stamp: an entry added, removed, re-coded or re-prefixed is a new version (fires after 20261128''s guards), a rename is one; the service role never creates a config row',
+SELECT 'trg_codebook_entries_version_stamp: an entry added, removed, re-coded or re-prefixed is a new version (fires after 20261128''s guards), a rename is one; the service role never creates a config row and bumps at most once per org per transaction',
        EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_codebook_entries_version_stamp'
                 AND tgrelid = 'codebook_entries'::regclass AND NOT tgisinternal)
        AND 'trg_codebook_entries_version_stamp' COLLATE "C" > 'trg_codebook_entries_guard_in_use'
@@ -829,6 +869,7 @@ SELECT 'trg_codebook_entries_version_stamp: an entry added, removed, re-coded or
                    AND prosrc LIKE '%ON CONFLICT (org_id) DO UPDATE SET codebook_version = c.codebook_version + 1%'
                    AND prosrc LIKE '%IF auth.uid() IS NOT NULL THEN%'
                    AND prosrc LIKE '%AND (v_rename::jsonb ->> ''old'') = OLD.code THEN%'
+                   AND prosrc LIKE '%PERFORM set_config(''app.codebook_version_bumped'', v_bumped || v_org::text || '','', true);%'
                    AND NOT prosecdef
                    AND array_to_string(proconfig, ',') LIKE '%search_path=public%'
               FROM pg_proc WHERE proname = 'codebook_entries_version_stamp'),
@@ -846,11 +887,12 @@ SELECT 'trg_assets_codebook_version: every writer''s site code records the versi
               FROM pg_proc WHERE proname = 'assets_codebook_version_stamp'),
        NULL
 UNION ALL
-SELECT 'rename_codebook_code: SECURITY DEFINER, search_path pinned, refuses a NULL uid and anyone outside is_org_controller, one transaction, sets app.codebook_rename only around its own writes, refuses a code that would read two ways',
+SELECT 'rename_codebook_code: SECURITY DEFINER, search_path pinned, refuses a NULL uid, anyone outside is_org_controller and a controller holding Viewer / Auditor (20261045''s deny-if-any on the registry), one transaction, sets app.codebook_rename only around its own writes, refuses a code that would read two ways',
        (SELECT prosecdef
                AND array_to_string(proconfig, ',') LIKE '%search_path=public%'
                AND prosrc LIKE '%IF v_uid IS NULL THEN%'
                AND prosrc LIKE '%NOT is_org_controller(p_org_id)%'
+               AND prosrc LIKE '%IF caller_holds_any_role(p_org_id, ARRAY[''Viewer'',''Auditor'']::text[]) THEN%'
                AND prosrc LIKE '%PERFORM set_config(''app.codebook_rename'', '''', true);%'
                AND prosrc LIKE '%DELETE FROM codebook_entries WHERE id = v_old.id;%'
                AND prosrc LIKE '%would read, once renamed, both as%'

@@ -247,13 +247,49 @@ describe("CB-6 — the server re-decode: preview = apply", () => {
   });
   it("a row that changes between the plan and its write is counted and left; a code taken meanwhile is counted; a refusal says why", async () => {
     const preview = await (await call({ action: "redecode-preview" })).json();
-    st.updateHook = (row) => (row.id === "a1" ? "skip" : { code: "23505", message: 'duplicate key value violates unique constraint "assets_org_code_unique"' });
+    // a1 is re-coded by someone else between the plan and its write: the compare-and-set matches nothing
+    st.updateHook = (row) => {
+      if (row.id === "a1") { row.code = "2030.9022"; return "skip"; }
+      return { code: "23505", message: 'duplicate key value violates unique constraint "assets_org_code_unique"' };
+    };
     expect(await (await call({ action: "redecode-apply", token: preview.token })).json())
       .toEqual({ written: 0, changed: 1, taken: 1, refused: 0, firstError: null, remaining: 0 });
     seed();
     st.updateHook = () => ({ code: "42501", message: "Only Admin, Document Control, Manager or Supervisor can edit the asset registry." });
     expect(await (await call({ action: "redecode-apply", token: preview.token })).json())
       .toMatchObject({ written: 0, refused: 2, firstError: "Only Admin, Document Control, Manager or Supervisor can edit the asset registry." });
+  });
+  it("a write RLS filters out (0 rows, no error) while the asset still is what the preview read is REFUSED, never \"changed since the preview\"", async () => {
+    // A controller who also holds Viewer / Auditor: 20261045's RESTRICTIVE
+    // assets_write_roles_update hides the row from the caller's UPDATE, so
+    // PostgREST answers data [] and no error.
+    const preview = await (await call({ action: "redecode-preview" })).json();
+    st.updateHook = () => "skip";
+    const out = await (await call({ action: "redecode-apply", token: preview.token })).json();
+    expect(out).toMatchObject({ written: 0, changed: 0, refused: 2, remaining: 0 });
+    expect(out.firstError).toMatch(/the registry refused the write for your session/);
+    expect(out.firstError).toMatch(/Viewer or Auditor/);
+    expect(st.writes.filter((w) => w.table === "assets").every((w) => w.client === "caller")).toBe(true);
+    expect(st.tables.assets.find((a) => a.id === "a1")!.code).toBe("2030.22");
+    expect(st.tables.audit_logs[1]).toMatchObject({ details: { written: 0, changed: 0, refused: 2 } });
+    // a second preview shows the same rows — consistent with "refused", not "changed"
+    expect((await (await call({ action: "redecode-preview" })).json()).rows.map((r: Row) => r.assetId)).toEqual(["a1", "a2"]);
+  });
+  it("an asset that moved its filing, or is gone, after a 0-row write counts as changed; an unreadable re-check says it could not tell", async () => {
+    const preview = await (await call({ action: "redecode-preview" })).json();
+    st.updateHook = (row) => {
+      if (row.id === "a1") row.unit_code = "25";
+      else st.tables.assets = st.tables.assets.filter((a) => a.id !== "a2");
+      return "skip";
+    };
+    expect(await (await call({ action: "redecode-apply", token: preview.token })).json())
+      .toEqual({ written: 0, changed: 2, taken: 0, refused: 0, firstError: null, remaining: 0 });
+    seed();
+    // the plan's reads are done before the first write: only the re-check fails
+    st.updateHook = () => { st.readErrors.assets = { message: "read down" }; return "skip"; };
+    const out = await (await call({ action: "redecode-apply", token: preview.token })).json();
+    expect(out).toMatchObject({ written: 0, changed: 0, refused: 2 });
+    expect(out.firstError).toMatch(/could not be re-read to tell a refusal from a change \(read down\)/);
   });
   it("no token, no apply; an audit record that cannot be written writes nothing", async () => {
     expect((await call({ action: "redecode-apply" })).status).toBe(400);

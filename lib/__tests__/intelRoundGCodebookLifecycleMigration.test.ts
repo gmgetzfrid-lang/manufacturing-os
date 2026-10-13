@@ -18,7 +18,8 @@
 //   * a rename whose rewritten head would read as another unit and type is
 //     refused (named by the dry run first);
 //   * rename_codebook_code: SECURITY DEFINER, search_path pinned, refuses a
-//     NULL uid and anyone outside is_org_controller before it writes,
+//     NULL uid, anyone outside is_org_controller and a controller who also
+//     holds Viewer / Auditor (20261045's deny-if-any) before it writes,
 //     EXECUTE for authenticated only (DRLS-16), the order of its steps;
 //   * 20261128's in-use guard is not touched; every prosrc probe names text
 //     that is in the body it checks.
@@ -68,7 +69,7 @@ describe("DEC-30 — one paste: inventory before the transaction, one BEGIN / CO
     expect(code.indexOf("CREATE TEMP TABLE _intel_g78_before")).toBeLessThan(code.indexOf("\nBEGIN;"));
     expect(code).toContain("DROP TABLE IF EXISTS pg_temp._intel_g78_before;");
     const selects = inv.split(/\nUNION ALL\n/);
-    expect(selects.length).toBe(10);
+    expect(selects.length).toBe(11);
     for (const s of selects) expect(s, s.slice(0, 80)).toMatch(/COUNT\(\*\)/);
   });
   it("one BEGIN, one COMMIT, and exactly one statement after it: the SELECT of (check, ok, n)", () => {
@@ -173,6 +174,17 @@ describe("rename_codebook_code — DRLS-16, the controller tier, one transaction
     expect(r.indexOf("NOT is_org_controller(p_org_id)")).toBeLessThan(r.indexOf("INSERT INTO codebook_entries"));
     expect(r).not.toMatch(/'Admin'|'DocCtrl'/);
   });
+  it("a controller who also holds Viewer or Auditor is refused (42501) before anything is counted or written — the same deny-if-any 20261045's assets UPDATE overlay applies to their direct write", () => {
+    const check = "IF caller_holds_any_role(p_org_id, ARRAY['Viewer','Auditor']::text[]) THEN";
+    expect(r).toContain(check);
+    expect(r.slice(r.indexOf(check), r.indexOf("END IF;", r.indexOf(check)))).toContain("USING ERRCODE = '42501'");
+    expect(r.indexOf(check)).toBeGreaterThan(r.indexOf("NOT is_org_controller(p_org_id)"));
+    expect(r.indexOf(check)).toBeLessThan(r.indexOf("pg_advisory_xact_lock"));
+    // the overlay it mirrors: the read-only pair, deny-if-any
+    expect(text("20261045_rp_phase6_admin_gates_team_fk_reviewer_independence.sql"))
+      .toContain("NOT caller_holds_any_role(org_id, ARRAY[''Viewer'',''Auditor'']::text[])");
+    expect(m).toMatch(/controller who also holds a read-only role \(Viewer \/ Auditor\)/); // the header says so
+  });
   it("EXECUTE: revoked from PUBLIC and anon, granted to authenticated only", () => {
     expect(m).toContain("REVOKE ALL ON FUNCTION rename_codebook_code(uuid, text, text, text, boolean, jsonb) FROM PUBLIC, anon;");
     expect(m).toContain("GRANT EXECUTE ON FUNCTION rename_codebook_code(uuid, text, text, text, boolean, jsonb) TO authenticated;");
@@ -257,6 +269,13 @@ describe("CB-6 version triggers and ASK-8's rule", () => {
     const e = body("codebook_entries_version_stamp");
     expect(e).toContain("IF EXISTS (SELECT 1 FROM orgs WHERE id = v_org) THEN");
     expect(e).toMatch(/IF auth\.uid\(\) IS NOT NULL THEN\n\s+INSERT INTO codebook_config AS c[\s\S]*ELSE\n\s+UPDATE codebook_config c SET codebook_version = c\.codebook_version \+ 1/);
+    // a restore statement of N entries is ONE new version: the service-role
+    // arm bumps once per org per transaction (transaction-local setting)
+    const svc = e.slice(e.indexOf("ELSE\n      -- The service role"), e.indexOf("IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;"));
+    expect(svc).toContain("v_bumped := COALESCE(current_setting('app.codebook_version_bumped', true), '');");
+    expect(svc).toMatch(/IF position\(v_org::text IN v_bumped\) > 0 THEN\n\s+SELECT c\.codebook_version INTO v_version FROM codebook_config c WHERE c\.org_id = v_org;\n\s+ELSE\n\s+UPDATE codebook_config c SET codebook_version = c\.codebook_version \+ 1/);
+    expect(svc).toContain("IF FOUND THEN\n          PERFORM set_config('app.codebook_version_bumped', v_bumped || v_org::text || ',', true);");
+    for (const f of files.filter((x) => x !== FILE)) expect(text(f), f).not.toContain("app.codebook_version_bumped");
     // a label / link / binding edit is no new version
     expect(e).toContain("AND (NEW.meta -> 'tagPrefixes') IS NOT DISTINCT FROM (OLD.meta -> 'tagPrefixes') THEN");
   });
@@ -285,6 +304,34 @@ describe("CB-6 version triggers and ASK-8's rule", () => {
     expect(m).toMatch(/CREATE TRIGGER trg_knowledge_libraries_legend_guard\n  BEFORE INSERT OR UPDATE OF ai_features ON knowledge_libraries\n  FOR EACH ROW EXECUTE FUNCTION knowledge_libraries_legend_guard\(\);/);
     // 20261121's embedBuild guard is neither re-created nor dropped here
     expect(strip(m)).not.toMatch(/knowledge_libraries_embed_build_guard\s*\(|DROP TRIGGER[^;]*embed_build_guard/);
+  });
+});
+
+// The censuses two neighbouring packages' tests kept over the WHOLE sequence,
+// moved here when 20261178 joined it so those files change by one line each
+// (lib/__tests__/embedDrain.test.ts — I-18's; intelRoundGUnitIdentity.test.ts
+// — I-13's): a known integrator conflict point, recorded on CB-5 / 99.
+describe("censuses held for neighbouring migrations (20261121, 20261138)", () => {
+  const SEM = "20261121_intel_roundG_semantic_layer.sql";
+  const UNIT = "20261138_intel_roundG_unit_identity.sql";
+  const lastDefiner = (re: RegExp) => files.filter((f) => re.test(strip(text(f)))).pop();
+  it("20261178 is the newest definer of the toggles save; after 20261121 it is the only file adding a BEFORE trigger on knowledge_libraries; the embedBuild guard stays 20261121's", () => {
+    expect(lastDefiner(/CREATE (OR REPLACE )?FUNCTION knowledge_library_save_ai_features\(/)).toBe(FILE);
+    expect(files.filter((f) => f > SEM && /CREATE TRIGGER \w+\s+BEFORE [\w ,]*\bON knowledge_libraries\b/.test(strip(text(f))))).toEqual([FILE]);
+    expect(lastDefiner(/CREATE TRIGGER trg_knowledge_libraries_embed_build_guard\b/)).toBe(SEM);
+  });
+  it("no migration after 20261138 re-creates what 20261138 created (20261178 only uses units.codebook_code)", () => {
+    const later = files.filter((f) => f > UNIT).map((f) => strip(text(f)));
+    for (const name of [
+      "documents_total_for_org", "documents_unit_code_guard", "trg_documents_unit_code_guard",
+      "units_org_codebook_code_uniq", "documents_org_unit_code_idx",
+      "units_codebook_code_guard", "trg_units_codebook_code_guard",
+      "assets_unit_id_follows_filing", "trg_assets_unit_id_follows_filing",
+      "units_codebook_code_follow", "trg_units_codebook_code_follow",
+    ]) {
+      expect(later.some((s) => s.includes(name)), name).toBe(false);
+    }
+    expect(later.some((s) => /ADD COLUMN[^;]*\bcodebook_code\b|ALTER TABLE documents ADD COLUMN IF NOT EXISTS unit_code/.test(s))).toBe(false);
   });
 });
 
