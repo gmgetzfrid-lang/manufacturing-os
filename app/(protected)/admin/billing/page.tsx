@@ -9,6 +9,13 @@
 //
 // 'Manage subscription' opens the Stripe Customer Portal where the admin
 // can update card, view invoices, change plan, or cancel.
+//
+// admin-and-org P4 (BILL-8): a workspace that holds a subscription Stripe
+// still bills (past due, unpaid, a Stripe trial — holdsLiveSubscription) is
+// sent to the portal, not shown the plans grid: subscribing again would start
+// a second subscription beside it (the checkout route refuses it 409). A
+// paused subscription raises no invoice and the portal cannot resume it, so a
+// paused workspace still sees the plans.
 
 import React, { useState } from "react";
 import { useSearchParams } from "next/navigation";
@@ -18,7 +25,7 @@ import {
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { useSubscription } from "@/components/providers/SubscriptionProvider";
-import { trialDaysRemaining, isTrialExpired } from "@/lib/subscription";
+import { trialDaysRemaining, isTrialExpired, holdsLiveSubscription } from "@/lib/subscription";
 import { supabase } from "@/lib/supabase";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Spinner } from "@/components/ui/Spinner";
@@ -38,6 +45,7 @@ export default function BillingPage() {
 
   const days = trialDaysRemaining(info);
   const expired = isTrialExpired(info);
+  const liveSubscription = holdsLiveSubscription(info);
 
   const subscribe = async (plan: "starter" | "growth") => {
     if (!activeOrgId) return;
@@ -136,6 +144,15 @@ export default function BillingPage() {
               {info.trialEndsAt && (
                 <div className="text-xs text-[var(--color-text-muted)]">Trial ends {new Date(info.trialEndsAt).toLocaleDateString()}</div>
               )}
+              {liveSubscription && isAuthorized && (
+                <button
+                  onClick={openPortal} disabled={busyPortal}
+                  className="mt-3 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-xs font-bold transition-colors disabled:opacity-50"
+                >
+                  {busyPortal ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ExternalLink className="w-3.5 h-3.5" />}
+                  Manage subscription / payment
+                </button>
+              )}
             </div>
           ) : info.status === "active" || info.status === "past_due" ? (
             <div>
@@ -172,17 +189,35 @@ export default function BillingPage() {
                    expired ? "Trial Expired" : "Action Required"}
                 </div>
                 <div className="text-xs text-[var(--color-text-muted)] mt-0.5">
-                  {expired
-                    ? "Your free trial has ended. Pick a plan below to continue."
-                    : "Update your payment method to restore access."}
+                  {/* A live subscription wins over the app's own trial clock: the
+                      plans grid is hidden for it, so the sentence points at the
+                      portal, never at a grid that is not there. */}
+                  {liveSubscription
+                    ? expired
+                      ? "Manage your subscription in the billing portal."
+                      : "Update your payment method in the billing portal to restore access."
+                    : expired
+                      ? "Your free trial has ended. Pick a plan below to continue."
+                      : info.status === "paused"
+                      ? "Stripe raises no invoice on a paused subscription, and the billing portal cannot resume it. Pick a plan below to subscribe again, or ask support to resume it."
+                      : "Update your payment method to restore access."}
                 </div>
+                {liveSubscription && isAuthorized && (
+                  <button
+                    onClick={openPortal} disabled={busyPortal}
+                    className="mt-3 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-[var(--color-accent-fg)] text-xs font-bold transition-colors disabled:opacity-50"
+                  >
+                    {busyPortal ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ExternalLink className="w-3.5 h-3.5" />}
+                    Manage subscription / payment
+                  </button>
+                )}
               </div>
             </div>
           )}
         </div>
 
         {/* Plans grid */}
-        {isAuthorized && info?.status !== "active" && (
+        {isAuthorized && info?.status !== "active" && !liveSubscription && (
           <div className="mb-6">
             <h2 className="text-sm font-black text-[var(--color-text)] mb-3">Plans</h2>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

@@ -12,6 +12,7 @@
 // are added.
 
 import Stripe from "stripe";
+import { BILLED_STRIPE_STATUSES, holdsLiveSubscription, type SubscriptionStatus } from "@/lib/subscription";
 
 let client: Stripe | null = null;
 
@@ -85,4 +86,78 @@ export function planFromSubscription(sub: SubscriptionPlanSource): { plan: strin
   const fromMeta = (sub.metadata?.plan ?? "").trim();
   if (fromMeta) return { plan: fromMeta, source: "metadata" };
   return { plan: null, source: null };
+}
+
+// ── admin-and-org P4 (BILL-6 / BILL-8): whose customer, which subscription ──
+
+/** BILL-8 Done-when 3: the Stripe idempotency key for creating a workspace's
+ *  customer. Two Subscribe clicks (or a retry after the org row refused the
+ *  customer id) get the same customer back from Stripe for 24 hours instead
+ *  of minting a second one; a second admin's concurrent click with other
+ *  details is refused by Stripe rather than racing. */
+export function customerIdempotencyKey(orgId: string): string {
+  return `org-customer:${orgId}`;
+}
+
+type StripeRefusal = { status: number; error: string };
+const isStripeMissing = (e: unknown) =>
+  (e as { code?: string } | null)?.code === "resource_missing" || (e as { statusCode?: number } | null)?.statusCode === 404;
+
+/** BILL-6 Done-when 4: may a Customer Portal session be opened for
+ *  `customerId` on behalf of `orgId`? A customer whose metadata names another
+ *  workspace, a deleted customer or one Stripe does not know is refused (409);
+ *  a customer with no org metadata (made before checkout stamped it, or by
+ *  hand in the dashboard) is allowed, as before. Null when allowed. */
+export async function customerOwnershipRefusal(stripe: Stripe, customerId: string, orgId: string): Promise<StripeRefusal | null> {
+  let customer: Stripe.Customer | Stripe.DeletedCustomer;
+  try {
+    customer = await stripe.customers.retrieve(customerId);
+  } catch (e) {
+    if (isStripeMissing(e)) return { status: 409, error: "The Stripe customer on file for this workspace does not exist in Stripe, so the billing portal was not opened. Ask support to relink billing." };
+    return { status: 502, error: `Could not confirm this workspace's Stripe customer (${(e as Error).message}). Try again.` };
+  }
+  if ((customer as Stripe.DeletedCustomer).deleted) {
+    return { status: 409, error: "The Stripe customer on file for this workspace was deleted in Stripe, so the billing portal was not opened. Ask support to relink billing." };
+  }
+  const owner = (customer as Stripe.Customer).metadata?.org_id;
+  if (owner && owner !== orgId) {
+    return { status: 409, error: "The Stripe customer on file belongs to another workspace, so the billing portal was not opened. Ask support to relink billing." };
+  }
+  return null;
+}
+
+/** BILL-8 Done-when 1: the billed subscription a second checkout would sit
+ *  beside, or null. The org row is read first (no subscription id, or a
+ *  canceled or paused one: no Stripe call); a row that names a billed
+ *  subscription is confirmed with Stripe, so a stale row (a cancellation
+ *  whose event was lost, an incomplete subscription that never paid) does
+ *  not block a legitimate subscribe. A paused subscription raises no invoice
+ *  and the Customer Portal cannot resume it, so it does not block either
+ *  (BILLED_STRIPE_STATUSES). */
+export async function liveSubscriptionRefusal(
+  stripe: Stripe,
+  row: { stripe_subscription_id?: string | null; subscription_status?: string | null },
+): Promise<StripeRefusal | null> {
+  const subscriptionId = row.stripe_subscription_id ?? null;
+  if (!holdsLiveSubscription({ status: (row.subscription_status ?? "trialing") as SubscriptionStatus, stripeSubscriptionId: subscriptionId })) return null;
+  let sub: Stripe.Subscription;
+  try {
+    sub = await stripe.subscriptions.retrieve(subscriptionId!);
+  } catch (e) {
+    if (isStripeMissing(e)) return null;
+    return { status: 502, error: `Could not confirm this workspace's existing subscription with Stripe (${(e as Error).message}); nothing was started. Try again.` };
+  }
+  if (!BILLED_STRIPE_STATUSES.has(sub.status)) return null;
+  if (sub.status === "unpaid") {
+    // Stripe keeps an unpaid subscription and keeps raising its invoices, but
+    // charges none of them: "billed twice" would overstate it.
+    return {
+      status: 409,
+      error: `This workspace already has a subscription (unpaid): Stripe keeps it and keeps raising its invoices without charging them. Use "Manage subscription / payment" to update the card and pay the open invoice, or to cancel it — subscribing again would leave a second subscription beside it.`,
+    };
+  }
+  return {
+    status: 409,
+    error: `This workspace already has a subscription (${sub.status.replace(/_/g, " ")}). Use "Manage subscription / payment" to change plan or update the card — subscribing again would bill the workspace twice.`,
+  };
 }

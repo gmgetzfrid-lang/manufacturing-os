@@ -30,7 +30,7 @@ Including whether a lapsed org loses access to its own regulated records.
 ## BILL-1 · A Stripe subscription whose first payment never completed is written as 'trialing' with a paid plan — mapStripeStatus's default branch grants access for `incomplete` and for any future Stripe status
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/stripe/webhook/route.ts:148-162`, `app/api/stripe/webhook/route.ts:49-66`, `app/api/stripe/checkout/route.ts:78-81`, `app/api/data-export/destinations/route.ts:83-95`, `lib/subscription.ts:45-53`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed: an `incomplete` (failed-3DS/declined) subscription is persisted as trialing + subscribed_plan='growth', and the default branch also swallows any future Stripe status. One nuance the finding overstates: hasAccess() (lib/subscription.ts:51) still gates trialing on trial_ends_at, and the webhook never touches that column — but hasAccess has no live enforcement caller (see BILL-10), so the operative grant is the plan gate at destinations/route.ts:88, which the finding cites.
@@ -55,6 +55,61 @@ app/api/stripe/webhook/route.ts:161 — `default: return "trialing";` inside map
 - [ ] subscribed_plan is only written once the subscription reaches a paid status, and is derived from the price id rather than checkout metadata
 - [ ] A test covers each Stripe status string, including one unknown value, asserting the stored status
 
+**Resolution (2026-10-02, admin-and-org Round G).** Package P4. Reproduced on `f5073fc`: `app/api/stripe/webhook/route.ts:165` `default: return "trialing";`. An `incomplete` `customer.subscription.created` was stored `trialing` with `subscribed_plan` `growth`, and an unknown status was stored `trialing` too. The tests "incomplete (first payment never completed)…" and "an unknown future status…" failed against the base.
+
+Fix (`DEC-98` §1):
+- **One status map.** `lib/subscription.ts mapStripeStatus` (`:101`):
+  - `active` / `trialing` / `past_due` / `canceled` / `unpaid` / `paused` as before, and `incomplete_expired` → `canceled` as before;
+  - `incomplete` → `unpaid`;
+  - any status this code does not know → `unpaid` with `known: false`, logged and recorded on the audit row (`details.status_unknown`).
+
+  No status that means "no payment taken", and no unknown one, maps to `active` or `trialing`. Every value the map can store is one of the orgs CHECK's six (`20260601`; no later migration redefines it). Both are pinned.
+- **The plan is written only on a status that pays for it.** That is `active`, `trialing` or `past_due` (`PLAN_HOLDING_STRIPE_STATUSES`, route `:267`). The plan still comes from `XEDGE-14`'s `planFromSubscription`, kept as it is: the price id first, metadata only as its fallback for an unmapped price, and a null plan never written. An incomplete subscription's plan goes on the audit row as `plan_withheld` and is not written.
+- **An incomplete subscription's id is not written either** (`LIVE_STRIPE_STATUSES`, `:273`): Stripe will not bill it. So `BILL-8`'s checkout refusal does not block the admin's retry with another card, and its later `incomplete_expired` cannot take over a workspace that has since subscribed (`BILL-4`'s cross-subscription guard).
+- Files: `lib/subscription.ts`, `app/api/stripe/webhook/route.ts`.
+- Tests (`lib/__tests__/stripeWebhook.test.ts`):
+  - "BILL-1 — the status map": each status and an unknown one, the CHECK subset, and the sets against `hasAccess`;
+  - "through the webhook: Stripe %s is stored as %s": nine statuses through the real route, the stored status and plan;
+  - "an incomplete first checkout…": stored `unpaid` with no id and no plan; its first invoice's `payment_failed` is ignored; a second, paid subscription takes over; the old one's `incomplete_expired` is superseded. *(Corrected at the review fix pass, below: the first step is now `superseded`, and the app's trial is kept.)*
+
+*Review fix pass (2026-10-02, admin-and-org Round G, P4).* A declined first checkout no longer ends the app's own trial.
+- **The gap.** The first version applied a non-access status to a workspace on the subscription or on none. A subscription that never started is never written as the workspace's (no id), so on a workspace in the app's trial (no subscription id) `incomplete` set `unpaid`, and Stripe's `incomplete_expired` 23 hours later set `canceled`. The trial was lost for good, contrary to `DEC-98` §6. The residual below said the workspace read `unpaid` "until it pays or Stripe expires the attempt", which suggested it recovered.
+- **The fix.** A subscription that never started (`incomplete`, `incomplete_expired`: `lib/subscription.ts UNSTARTED_STRIPE_STATUSES`) or a status this code does not know now changes only a workspace already on that subscription (`app/api/stripe/webhook/route.ts:284`, guard `allowNone: false`). Otherwise the event is recorded `superseded`, and the trial goes on. The map is unchanged. On a workspace already on such a subscription (a row the old code wrote), `incomplete` and an unknown status are stored `unpaid`, and `incomplete_expired` is stored `canceled` with its plan cleared (`BILL-3`). An unknown status is now logged even when it is superseded.
+- **Tests** (`lib/__tests__/stripeWebhook.test.ts`), each failing on the reviewed head `6133d8a`:
+  - "a declined first checkout leaves the app's trial running…": `incomplete` superseded with the trial kept; then the retry that pays takes over; and, with no retry, `incomplete` then `incomplete_expired` leave the trial exactly as it was (`trial_ends_at` untouched, no audit row).
+  - "an unknown status for a subscription the workspace is not on changes nothing, and is logged".
+  - The per-status table ("through the webhook: Stripe %s is stored as %s") now runs on a workspace on the subscription, the case the map's value is stored in.
+
+*Second review fix pass (2026-10-02, admin-and-org Round G, P4).* Two gaps remained. Each was reproduced through the real route on the reviewed head `a23d537`, and each test below fails there.
+- **A workspace that had just paid read `unpaid` (blocker).**
+  - *How it happened.* Checkout creates the subscription `incomplete` and makes it `active` once the card is paid, usually within the same second (`event.created` has one-second resolution). Stripe does not order deliveries, and any failed first delivery of `created` (a 503 from the lock, a timeout, a 500) is retried after the `active` update. Handled last, the `created` (incomplete) passed the ordering read, which is strictly older. It also passed the guard above, because the workspace was now on that subscription. The workspace read `unpaid` until its next invoice, about a month later.
+  - *The fix.* Stripe never moves a subscription back to `incomplete`, and two rules now follow from that:
+    - On a workspace already on the subscription, an `incomplete` snapshot moves only the row the old code wrote for it (`trialing`) or an earlier incomplete snapshot's `unpaid` (`INCOMPLETE_MOVES`, `app/api/stripe/webhook/route.ts:100`; the guard's `fromStatuses`, `:291`). Otherwise it is recorded `superseded`. This holds before `20261175` is pasted too.
+    - With the ledger, an `incomplete` snapshot also counts a recorded subscription event of its own second as newer (`readLedger`, `:438`, `.gte`), and is recorded `stale` (`BILL-4`).
+- **A declined checkout's deletion ended the trial (major).**
+  - *How it happened.* `customer.subscription.deleted` applied `canceled` to a workspace on that subscription or on none, whatever the subscription's status. Suppose Stripe reports a declined checkout's expiry as a deletion (status `incomplete_expired`). Then the app's own trial was cancelled, against `DEC-98` §6. Whether Stripe sends that deletion could not be confirmed here (its documentation was not reachable), so the rule is defensive.
+  - *The fix.* The deleted branch now uses the update's rule (`:331`, `allowNone: !ownOnly`): a subscription that never started, or an unknown status, ends only a workspace already on it. A real cancellation (`canceled`) ends the workspace's subscription, or a workspace on none, as before. The deletion's audit row now names Stripe's status (`stripe_status`).
+  - *Correction.* This corrects the first review fix pass above. It said a declined first checkout's expiry leaves the trial untouched, but that held only when the expiry arrived as an update.
+- **Tests** (`lib/__tests__/stripeWebhook.test.ts`):
+  - "an incomplete snapshot never overwrites a workspace that moved on":
+    - `updated` (active, T) then `created` (incomplete, T) → active, and the snapshot is `stale`;
+    - the same with the paid invoice (T) between them;
+    - `created`'s first delivery answered 500, then retried after the active update → active;
+    - before `20261175` (no ledger), the row guard holds it: incomplete moves only `trialing` or `unpaid` on its subscription, never `active`, `past_due`, `paused` or `canceled`;
+    - an incomplete snapshot strictly newer than the last one recorded still applies to the legacy row.
+  - "a declined checkout's deletion leaves the app's trial as it was":
+    - `deleted` (incomplete_expired) for a subscription the app-trial workspace is not on → superseded, with `trial_ends_at` and `trialing` untouched and no audit row;
+    - an unknown status on a deletion is treated the same, and logged;
+    - regression: the legacy row on that subscription is still ended, and a real cancellation still ends a workspace on none.
+  - The per-status table's `incomplete` row now starts from the row the old code wrote (`trialing` on the subscription). That is the case in which an incomplete snapshot is stored.
+
+**Done-when.**
+- [x] `incomplete` maps to a non-access state and the default branch denies rather than granting 'trialing' ✓ (`unpaid`; `hasAccess` false). Stored on a workspace already on that subscription; on any other workspace the event changes nothing (review fix pass). On a workspace on it, it overwrites only the row the old code wrote, or an earlier `unpaid`: a workspace that has paid is never written back to `unpaid` (second review fix pass).
+- [x] subscribed_plan is only written once the subscription reaches a paid status, and is derived from the price id rather than checkout metadata ✓. The price map is `XEDGE-14`'s; metadata is read only as its documented fallback for a price the deployment has not mapped.
+- [x] A test covers each Stripe status string, including one unknown value, asserting the stored status ✓.
+
+**Scope / residual.** A workspace on the app's own trial whose card is declined at checkout keeps its trial: the attempt changes nothing on the workspace, and Stripe's expiry of it changes nothing either, whether the expiry arrives as an update or as a deletion (second review fix pass). *(Corrected at the review fix pass: this read "now reads `unpaid` … until the admin pays with another card, or Stripe expires the attempt (… then `canceled`)". The expiry then left the trial lost.)* The admin sees the decline in Stripe's checkout, not on the billing page. A row the old code wrote for an incomplete subscription (`trialing`, the plan and the subscription id) is moved by that subscription's next event: `unpaid` while it is incomplete, `canceled` with no plan when it expires. An incomplete snapshot moves only that row, or the `unpaid` an earlier one set. A workspace on the subscription in any other state is newer than the snapshot and is left alone. `trial_ends_at` is never touched.
+
 ---
 
 <a id="bill-2"></a>
@@ -62,7 +117,7 @@ app/api/stripe/webhook/route.ts:161 — `default: return "trialing";` inside map
 ## BILL-2 · Any org Admin can rewrite their own subscription state from the browser — the orgs UPDATE policy has no column restriction, so billing is enforced against a client-writable column
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/schema.sql:1042-1045`, `supabase/schema.sql:393-394 (contrast: archive_settings IS revoked; orgs is not)`, `app/(protected)/admin/settings/page.tsx:108-112`, `components/providers/SubscriptionProvider.tsx:39-53`, `supabase/migrations/20260601_billing.sql:13-20`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed by repo-wide search: no WITH CHECK clause, no column-level REVOKE on orgs, and no BEFORE UPDATE trigger on orgs anywhere in supabase/schema.sql or supabase/migrations/*.sql. SubscriptionProvider.tsx:39-53 reads those same columns straight from the client, so an org Admin can set subscription_status/subscribed_plan/trial_ends_at to anything the CHECK constraint in 20260601_billing.sql:14 permits.
@@ -87,6 +142,40 @@ supabase/schema.sql:1042 — `CREATE POLICY "orgs_admin_write" ON orgs FOR UPDAT
 - [ ] The orgs UPDATE policy carries an explicit WITH CHECK that pins the billing columns to their OLD values for non-service-role writers
 - [ ] A reconciliation path exists (scheduled or on-read) that re-derives subscription state from the Stripe API rather than trusting the row
 
+**Resolution (2026-10-02, admin-and-org Round G).** Package P4.
+
+**Reproduced.** No migration or `schema.sql` defines a trigger, a column grant or a RESTRICTIVE policy on orgs. `orgs_admin_write` (`20261046_rp_phase6_sweep_authority_by_collection.sql:136-138`, by `caller_holds_any_role`) is the only write policy. On PostgreSQL 16, with the real definitions it touches and before either paste, an Admin's member session updated `subscription_status`, `subscribed_plan` and `trial_ends_at` on its own workspace: 1 row.
+
+**Fix.** `supabase/migrations/20261176_ao_roundG_orgs_billing_columns_guard.sql` adds `trg_orgs_billing_columns_guard`, a BEFORE UPDATE trigger on orgs (`orgs_billing_columns_guard()`, `DEC-98` §5).
+- **What it refuses.** A change to any of the six billing columns, `42501`, unless the request's JWT role is `service_role` or absent (the SQL editor). That is the idiom of `20261121`'s guard.
+- **Pinned by refusal.** A forged write fails as a whole and says why; it is never silently reset.
+- **What passes.** A member's update that leaves the six as they are (the settings page's ticket-numbering save, the only orgs update made with a member's session) passes. So does one that names a billing column with its current value.
+- **What is unchanged.** `orgs_admin_write` is not re-created: who may update an org row is unchanged.
+- **Privileges.** SECURITY INVOKER, `search_path` pinned. EXECUTE is revoked from PUBLIC, anon and authenticated (the `DRLS-16` rule).
+- **The paste checks itself.** After COMMIT, a self-test that is always rolled back tries one billing change as an authenticated request (must be refused) and one update that leaves the billing columns alone (must pass). The inventory counts the shapes a self-grant leaves: active with no subscription id, a trial with no end, a plan on a canceled workspace. They are reported, never rewritten.
+
+**Census.** Every orgs write in `app/`, `lib/`, `components/` and `hooks/` is pinned: the settings page (member session, ticket columns only), restore/begin (service role, `name`), signup (service role: an insert and a delete), checkout (service role, `stripe_customer_id`) and the webhook (service role).
+
+**Files and tests.**
+- Files: `supabase/migrations/20261176_ao_roundG_orgs_billing_columns_guard.sql`.
+- `lib/__tests__/aoRoundGStripeBillingMigrations.test.ts`: the one-paste shape, the six columns equal to `20260601`'s, `orgs_admin_write`'s only definer is still `20261046`, the first trigger on orgs, `DRLS-16`, and the self-test.
+- `lib/__tests__/stripeWebhook.test.ts`: "every orgs write in the app — after 20261176 a member's own write still succeeds".
+- PostgreSQL 16, a scratch cluster with `schema.sql`'s orgs, `20260601`, `20261045`'s `caller_holds_any_role` and `20261046`'s policy:
+  - the paste: every probe true, the self-test refused and passed;
+  - a re-run is idempotent;
+  - an Admin's numbering save, and one naming unchanged billing columns, update 1 row each;
+  - a change to each of the six columns is refused `42501`;
+  - a Viewer still gets 0 rows (RLS, as before);
+  - the service role's billing write and the SQL editor's both update 1 row;
+  - on an empty orgs table the self-test reports n/a.
+
+**Done-when.**
+- [x] orgs has a BEFORE UPDATE trigger so `authenticated` cannot write subscription_status, subscribed_plan, trial_ends_at, current_period_end, stripe_customer_id or stripe_subscription_id; only the service role can ✓ — **pending the paste of 20261176**.
+- [x] The billing columns are pinned to their OLD values for non-service-role writers ✓, by the trigger rather than the policy's WITH CHECK. A WITH CHECK expression cannot read the old row in Postgres RLS. The plan chose the trigger and keeps `orgs_admin_write` as it is.
+- [ ] A reconciliation path that re-derives subscription state from the Stripe API — **not done: WONTFIX for now** (`DEC-98` §2; owner: the user). With the columns server-only (this migration), the webhook's checked, ledgered writes (`BILL-4`) and enforcement off (`DEC-18`), the row can drift from Stripe only through a lost delivery. Stripe retries a lost delivery for three days and its dashboard shows the failure. The one decision that bills, a second checkout, already asks Stripe (`BILL-8`).
+
+**Scope / residual.** **Pending migration:** `supabase/migrations/20261176_ao_roundG_orgs_billing_columns_guard.sql` (`DEC-30`; either order with the deploy and with `20261175`). Until it is pasted, an Admin can still write the billing columns. A SECURITY DEFINER function a member calls still carries their `authenticated` JWT role, so it is refused too: no such function writes orgs today (grep of the sequence). Reconciliation stays open as the user's decision.
+
 ---
 
 <a id="bill-3"></a>
@@ -94,7 +183,7 @@ supabase/schema.sql:1042 — `CREATE POLICY "orgs_admin_write" ON orgs FOR UPDAT
 ## BILL-3 · Plan entitlement is read from immutable checkout metadata and never cleared on cancellation — a Customer Portal downgrade keeps Growth features and a canceled org keeps them forever
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/stripe/webhook/route.ts:56`, `app/api/stripe/webhook/route.ts:84-87`, `app/api/stripe/checkout/route.ts:78-81`, `app/api/stripe/portal/route.ts:43-46`, `app/api/data-export/destinations/route.ts:81-95`, `app/api/data-export/run-scheduled/route.ts:63`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on both halves. portal/route.ts:43-46 creates a bare billingPortal session with no metadata sync, so a portal-driven plan change leaves subscription metadata (and therefore subscribed_plan) frozen at the original value; cancellation clears the status but not the plan, and the scheduled-push cron re-checks neither.
@@ -152,6 +241,31 @@ Fix:
 
 **Scope / residual.** OPEN for Done-when 1 and 2 (P4). Until P4 derives the plan from the price id, the plan column the disable reads can be stale (`XEDGE-14`). That is why the refusal, and now the disable, wait for the flag. *(A&O P3 fix pass 8.)* No leftover-bucket residual remains in the gates a stored destination meets. One wart of the create gate (`XEDGE-8`, on master, not behind the flag) is P4's, as this finding's owner: the data-export page's create form sends a bucket typed before its type was switched to webhook, and `POST /api/data-export/destinations` gates any bucket, so that webhook is 402 off plan until the field is cleared. The refusal direction only. The page's save could drop the bucket for a webhook, or the create gate could use `pushesToBucket` (`XEDGE-8`'s create test uses an s3 row; its PATCH test pins the type-blind rule, a bucket PATCHed onto a webhook-typed row being 402).
 
+**Resolution (2026-10-02, admin-and-org Round G).** Package P4: Done-when 1 and 2 (the webhook), and the create-form wart from the Scope / residual above. Done-when 3 is P3's (above).
+- **Done-when 1.** Reproduced as resolved: `XEDGE-14` (document-control Round F) already derives the plan from the price id (`lib/stripe.ts planFromSubscription`, `PRICE_ID_ENV_TO_PLAN`), and its tests stay green unchanged (`lib/__tests__/dcRoundFExportContract.test.ts`). P4 builds on it and does not undo it. The resolved plan is now written only on a status that pays for it (`BILL-1`), so an incomplete or unknown-status subscription writes no plan.
+- **Done-when 2.** Reproduced on `f5073fc`: `customer.subscription.deleted` set only `subscription_status` and `stripe_subscription_id` (`app/api/stripe/webhook/route.ts:88-91`). The test "subscription.deleted clears subscribed_plan" failed against the base. Now the deleted event writes `subscribed_plan: null` beside `canceled` and the cleared id (route `:337`), for the workspace's current subscription (or none). An old subscription's deletion leaves a workspace on its new one untouched (`BILL-4`). The audit row says `plan_cleared`.
+- **The create-form wart.** Reproduced on `f5073fc`: off plan, `POST /api/data-export/destinations` answered 402 to a webhook created with a bucket name typed before the type was switched (test "off plan, a webhook created with a leftover bucket name is 200…" failed with 402).
+  - The server gates only a row that pushes to a bucket: `pushesToBucket` (`lib/exportRunner.ts`), the rule PATCH, Run Now and the sweep already share (`app/api/data-export/destinations/route.ts:100-104`).
+  - A webhook's bucket is neither gated nor stored.
+  - The page's create form sends no bucket for a webhook (`app/(protected)/admin/data-export/page.tsx:600`). The edit form is unchanged; PATCH judges the row after the save.
+  - An s3 / r2 create with a bucket is 402 off plan as before (`XEDGE-8`'s create test unchanged).
+- Files: `app/api/stripe/webhook/route.ts`, `app/api/data-export/destinations/route.ts`, `app/(protected)/admin/data-export/page.tsx`.
+- Tests:
+  - `lib/__tests__/stripeWebhook.test.ts`: "BILL-3 — cancellation clears the plan", "cross-subscription…", and the portal-plan-change regression.
+  - `lib/__tests__/dataExportRoutes.test.ts`: "A&O P4 (BILL-3 Scope / residual…)" — a webhook with a leftover bucket is 200 off plan and stores none; s3 / r2 stay 402 and write nothing; an s3 create on Growth keeps its bucket; the form's line is pinned. Every earlier test in that file passes unchanged.
+
+*Review fix pass (2026-10-02, admin-and-org Round G, P4).* Three corrections.
+- **Done-when 1 was undone in one delivery order (the review's blocker).** The first ordering guard counted an applied invoice event as a barrier for every older event of its subscription. A portal plan change whose `customer.subscription.updated` was handled after the same change's `invoice.payment_succeeded` (Stripe does not order deliveries; or its first delivery answered 500 and was retried) was recorded `stale`, and the price-derived plan and period end were never written. Now a newer applied invoice event holds back only the older event's status; its plan, period end and subscription id are written (`BILL-4`'s review block). Test: "portal upgrade: invoice.payment_succeeded (T+2) applied first, then subscription.updated (T, Growth price) → growth…".
+- **Any event that ends a subscription clears the plan.** A `canceled` (or `incomplete_expired`) status that arrives through `customer.subscription.updated` withheld the plan but did not clear it. It now writes `subscribed_plan: null`, as the deleted event does (`app/api/stripe/webhook/route.ts:275`, `:298`; audit `plan_cleared`). Tests: "customer.subscription.updated with status canceled clears subscribed_plan"; "a legacy incomplete row (stored trialing + growth by the old code) that expires is canceled with no plan".
+- **The rows the old code left.** The residual said a workspace canceled before this deploy "clears on its next subscription event". A canceled workspace normally gets no further subscription event, so its plan, and with it the Growth bucket gate (`lib/exportEntitlement.ts cloudBucketAllowed(plan, status)` reads the plan alone), would have stayed indefinitely. `20261176` now clears the plan on every canceled workspace in its transaction, before the guard is created: `UPDATE orgs SET subscribed_plan = NULL WHERE subscription_status = 'canceled' AND subscribed_plan IS NOT NULL`. Its inventory counts the rows before, and a probe says none is left. A canceled workspace has no access and no subscription paying for a plan, so the value is unambiguous. On PostgreSQL 16 (scratch cluster, not production) the paste cleared two such workspaces, one with a subscription id and one without. The re-paste counted 0. Shape test: `lib/__tests__/aoRoundGStripeBillingMigrations.test.ts`, "BILL-3: inside the transaction, before the trigger…".
+
+**Done-when.**
+- [x] subscribed_plan is derived from the subscription's price id on every subscription.created/updated, not from metadata ✓ (`XEDGE-14`, kept; metadata only as its fallback for an unmapped price). This includes a subscription event handled after a newer invoice event for its subscription (review fix pass).
+- [x] customer.subscription.deleted clears subscribed_plan ✓, and so does a `customer.subscription.updated` whose status ends the subscription (review fix pass).
+- [x] run-scheduled re-checks entitlement before executing a cloud-bucket destination, and disables (not deletes) destinations whose plan lapsed ✓ (P3, above).
+
+**Scope / residual.** **Pending migration:** `20261176` clears the plan the old code left on canceled workspaces. Until it is pasted, those workspaces keep it, and with it the Growth bucket create gate. If it is pasted before the deploy, a workspace the old webhook cancels in between keeps its plan, so paste it again after the deploy (it is idempotent). *(Corrected at the review fix pass: this read "reported and never rewritten. Each clears on its next subscription event". A canceled workspace normally receives none.)* The leftover-bucket class is closed at every gate: create, PATCH, Run Now and the sweep.
+
 ---
 
 <a id="bill-4"></a>
@@ -159,7 +273,7 @@ Fix:
 ## BILL-4 · The Stripe webhook discards every write result and always returns 200, and there is no event ledger — a dropped update is invisible and out-of-order events resurrect canceled subscriptions
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/stripe/webhook/route.ts:61-66`, `app/api/stripe/webhook/route.ts:84-87`, `app/api/stripe/webhook/route.ts:97-106`, `app/api/stripe/webhook/route.ts:108-123`, `app/api/stripe/webhook/route.ts:134`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. supabase-js returns PostgREST failures as an `error` field rather than throwing, so a rejected update cannot reach the catch at :129 and the handler still answers 200. A repo-wide grep for a webhook event ledger (`stripe_events`, `stripe_webhook_events`, any store of `event.id`) returns nothing in supabase/, app/, or lib/ — there is no idempotency or ordering guard, so a late `updated` overwrites a `canceled` written by an earlier-processed `deleted`.
@@ -182,6 +296,81 @@ app/api/stripe/webhook/route.ts:102-104 — `await supabase.from("orgs").update(
 - [ ] A stripe_events table records processed event ids (unique) and the handler no-ops on a duplicate
 - [ ] Subscription-state writes are guarded by the event's created timestamp (or the Stripe object's version) so an older event cannot overwrite a newer state
 - [ ] invoice.payment_succeeded only promotes to 'active' when the invoice's subscription matches orgs.stripe_subscription_id
+
+**Resolution (2026-10-02, admin-and-org Round G).** Package P4. Reproduced on `f5073fc`: every `orgs` update was a bare await (`app/api/stripe/webhook/route.ts:65-70, :88-91, :106-108, :117-119`), `:138` answered 200 always, and nothing recorded an event id. The tests showed it: a refused update answered 200; the same event delivered twice wrote two audit rows; an older `updated` (active) after a `deleted` set the workspace back to active; and `invoice.payment_succeeded` for another subscription, or a one-off invoice, promoted `past_due` to `active`.
+
+Fix (`DEC-98` §3):
+- **Checked writes.** `writeOrg` (`:502`) destructures `{ error }`, and a refusal is a 500 so Stripe retries. So is a refused ledger read or write, or a failed workspace lookup.
+- **The ledger.** `stripe_events` (`20261175`) is keyed on Stripe's event id.
+  - `readLedger` (`:438`) answers a redelivered event `duplicate`, with no write of any kind.
+  - It refuses to apply an event older than the last one APPLIED for the same subscription (`event.created`, strictly older). Such an event is recorded `stale` and not applied. An event in the same second is applied. *(Corrected at the review fix pass, below: an applied invoice event now holds back only an older subscription event's status, and a superseded subscription event orders the subscription's older events too.)*
+  - Every handled event is recorded with its outcome: `applied`, `stale`, `unresolved`, `superseded` or `ignored` (`settle`, `:208`). It is recorded last, so a 500 earlier in the run is retried in full.
+- **Invoices move only the current subscription.** An invoice event changes the status only when the invoice's subscription is the workspace's `stripe_subscription_id` (`:354`). The write is guarded by the same equality. Done-when 4 names `payment_succeeded`; the same rule is applied to `payment_failed`. Otherwise the first invoice of an `incomplete` subscription (`BILL-1`) failing would hand out `past_due`, an access status. The subscription is read in both payload shapes (`invoiceSubscriptionId`, `:167`): `invoice.subscription`, and from Stripe's 2025-03 API on, `invoice.parent.subscription_details.subscription`. A workspace's renewals move exactly as before.
+- **A subscription the workspace is not on cannot take its access away.** A status that grants no access (canceled, unpaid, paused, including `subscription.deleted`) applies only while the workspace is on that subscription or on none (`:292`, `.or(stripe_subscription_id.is.null, …eq…)`). Otherwise it is recorded `superseded`. This is the cross-subscription case the ordering key cannot see. *(Review fix pass: a subscription that never started, or an unknown status, applies only while the workspace is on that subscription, never on none; see `BILL-1`.)*
+- **Before 20261175 is pasted.** With the table absent (PGRST205 / 42P01), every event is applied as before, without the duplicate and ordering guards (and, from the review fix pass, without the per-customer lock). That is logged, and the audit row's `details.ledger` is `absent`.
+- Files: `app/api/stripe/webhook/route.ts`, `supabase/migrations/20261175_ao_roundG_stripe_events_ledger.sql`.
+- Tests:
+  - `lib/__tests__/stripeWebhook.test.ts`: "BILL-4 — checked writes, a ledger and an ordering guard"; "the ledger in both worlds" (the recorded row, a duplicate with no write, stale with no write, the same second applied, the absent-table world in both spellings, other ledger failures 500, unresolved); "an invoice is correlated in either Stripe API shape"; "cross-subscription"; and the regression block (each event for the workspace's own subscription writes as before).
+  - `lib/__tests__/aoRoundGStripeBillingMigrations.test.ts`: `20261175`'s shape.
+  - PostgreSQL 16 (scratch cluster, not production): the paste, a re-run, a duplicate id `23505`, a bad outcome `23514`, members refused `42501`, and the webhook's ordering read.
+
+*Review fix pass (2026-10-02, admin-and-org Round G, P4).* The review found the ordering guard both too strong and too weak. Each case below was reproduced through the real route on the reviewed head `6133d8a`, and its test fails there.
+- **An invoice event no longer drops an older subscription snapshot (blocker).** `readLedger` (`app/api/stripe/webhook/route.ts:438`) counted any applied event as a barrier. An invoice event moves only the status, so a portal plan change or a renewal's period end, carried by a `customer.subscription.updated` handled after a newer `invoice.*` event of its subscription, was recorded `stale` and lost until the next subscription event, about a month later. That undid `XEDGE-14`'s price-derived plan in that delivery order (`BILL-3`). The read is now two queries:
+  - a newer `customer.subscription.*` event recorded for the subscription, applied or superseded, makes the event stale;
+  - a newer applied `invoice.*` event makes an invoice event stale, but makes a subscription event only hold back its status. Its plan, period end and subscription id are written, and its audit row says `status_held` (`:227`, `:279`).
+  An ended subscription's status is final, so `customer.subscription.deleted`, or an update to `canceled` / `incomplete_expired`, still applies in full behind an invoice event.
+  Tests: "portal upgrade: invoice.payment_succeeded (T+2) applied first, then subscription.updated (T, Growth price)…"; "renewal retried after a 500…"; "a newer SUBSCRIPTION event still makes an older one stale; an invoice event older than an applied subscription event is stale"; "an ended subscription's status is final…".
+- **A failed payment only demotes (major).** Stripe's last dunning step sends `invoice.payment_failed` beside the `customer.subscription.updated` that sets `unpaid`, usually in the same second. The guard is strictly older, and `unpaid` keeps its subscription id, so a same-second `payment_failed` handled second wrote `past_due` (an access status) over `unpaid`. The invoice write now names the statuses it may move from (`writeOrg`'s `fromStatuses`, `:362`). `payment_failed` moves only `active`, `trialing` or `past_due`. `payment_succeeded` moves anything but `canceled`, so a paid invoice never revives a canceled row that kept its subscription id. Otherwise the event is recorded `superseded`. Tests: the same-second pair in both orders; "payment_failed still demotes active and trialing; payment_succeeded still lifts unpaid, but never a canceled row".
+- **A superseded subscription event orders the subscription (minor).** Only applied rows were barriers. So after sub_A's deletion was superseded (the workspace on sub_B), an even older sub_A `updated` (active) re-pointed the workspace at sub_A, and sub_B's later `unpaid` was then superseded. Superseded `customer.subscription.*` rows now count (`ORDERING_OUTCOMES`, `:72`). The ordering index is now `stripe_events_subscription_order_idx … WHERE outcome IN ('applied', 'superseded')` in `20261175`. A superseded invoice event orders nothing. Tests: "on sub_B: sub_A deleted (T+20) superseded; a late sub_A updated (active, T+5) is stale…"; "a superseded INVOICE event orders nothing…".
+- **One event per Stripe customer at a time (minor).** The guard was check-then-act. Two deliveries Stripe makes at once, which is normal on serverless, both passed the ordering read before either was recorded. BILL-4's own scenario (deleted and a late `updated` active, delivered together) could still resurrect the workspace. `20261175` adds `stripe_event_locks` (`lock_for`, the customer the lock is for; `event_id`, the delivery holding it; `locked_at`). The column is not named `*_key`, so the storage-key census (`lib/__tests__/storageKeyRegistry.test.ts`) does not read it as a storage key. It is service role only, with RLS on and no policy.
+  - Each delivery first inserts its customer's row (`acquireLock`, `:395`; the subscription id if the event names no customer). A second delivery is refused `23505`. It waits 25 ms to 800 ms between tries, about 1.6 s in all, then answers 503 and Stripe retries it. *(Second review fix pass: up to 8 s, below.)*
+  - Each delivery deletes its own row when done (`releaseLock`, `:417`). A refused release is logged, and the lock lapses after 60 s.
+  - A row older than 60 s belongs to a run that died, and the next delivery deletes it.
+  - Before the paste the table is absent, and events run unserialised, as before.
+  Tests: "BILL-4's scenario delivered concurrently…" (both start orders end `canceled`; with only the lock removed it fails); "the lock is the customer's…"; "a lock another delivery holds is waited on, then 503…; a lapsed lock … is broken"; "a lock write refused for another reason answers 500…".
+- **PostgreSQL 16** (scratch cluster, not production). `20261175`: every probe true on a first paste and a re-run (the unique-index probe false only in the duplicates world, as before). Lock: a second insert `23505`; the lapsed delete removes a two-minute-old row and keeps a fresh one; a release names its own event; members are refused `42501`. The two ordering reads return what the route expects, and the planner uses the new index.
+
+*Second review fix pass (2026-10-02, admin-and-org Round G, P4).* Each case was reproduced through the real route on the reviewed head `a23d537`, and each test below fails there.
+- **Same-second snapshots (blocker, with `BILL-1`; and a minor).** Stripe's `event.created` has one-second resolution, and the barrier is strictly older. So two snapshots of the same second were applied in the order they were handled, and two such pairs broke Done-when 3:
+  - *Checkout.* A `created` (incomplete) handled after the same-second `updated` (active) wrote `unpaid` over a workspace that had paid. Stripe never moves a subscription back to incomplete. So an incomplete snapshot now counts a recorded subscription event of its own second as newer (`readLedger`, `app/api/stripe/webhook/route.ts:438`, `.gte`), and is recorded `stale`. The row guard in `BILL-1`'s block holds it without the ledger too.
+  - *Deletion.* A `deleted` (T) handled before a same-second `updated` (active, T) let the update re-point the workspace at the ended subscription, as `active`. That is this finding's own resurrection. Stripe never revives an ended subscription. So a `customer.subscription.deleted` recorded for the subscription (applied or superseded), at any time, now makes every snapshot of it that is not ended `stale` (`subscriptionDeleted`, `:232`). An ended snapshot still applies.
+  - *Reads.* Both new reads use the ordering index, unchanged (`stripe_events_subscription_order_idx`). On PostgreSQL 16 (scratch cluster, 20 000 rows) the planner uses it for both. The four ledger reads now run together (`Promise.all`), which is one round trip while the customer's lock is held.
+- **The lock wait (minor).**
+  - *The problem.* A delivery waited about 1.6 s, then answered 503. One event is about eight sequential round trips, up to about 1.5 s with the database a region away. So the third delivery in a checkout's burst could get a 503 and wait for Stripe's retry, and meanwhile the billing page showed the plans grid.
+  - *The fix.* The wait is now up to 8 s in all (`LOCK_WAIT_MS`, `:81`). It backs off from 50 ms to 800 ms, each pause jittered (`acquireLock`, `:395`). The route declares `maxDuration = 30` (`:87`). A third-party source puts Stripe's delivery timeout at about 20 s; Stripe's own documentation could not be reached from here.
+  - *Not done.* Moving the serialisation into one database transaction (an advisory-lock RPC) would add a new function to `20261175`. That is a larger change than this finding needs.
+- **An update that writes no row (minor).**
+  - *The problem.* With no guard, `writeOrg` reported success even when it matched 0 rows. So a subscription event whose `metadata.org_id` names a workspace that does not exist was recorded `applied`, with an audit row.
+  - *The fix.* Every orgs update now returns the rows it wrote (`writeOrg`, `:502`). With no guard, no row means no such workspace. The event is then recorded `unresolved` with no workspace, logged, and no audit row is written (`:303`).
+- **Tests** (`lib/__tests__/stripeWebhook.test.ts`):
+  - "Stripe never revives a subscription it deleted, whatever the second":
+    - deleted, then a same-second updated → stale, and the workspace stays canceled;
+    - the other order → canceled;
+    - a superseded deletion orders a same-second update of that subscription too;
+    - an ended snapshot after the deletion still applies, and another subscription's events are untouched.
+  - "an update that writes no row is never recorded applied".
+  - The lock wait:
+    - "a lock held for 3 s … is waited out and the delivery applies";
+    - the 503 test now shows the delivery still waiting at 7 s and answered by 9 s (fake timers);
+    - a source pin for `LOCK_WAIT_MS`, `maxDuration` and the single ledger round trip.
+  - `BILL-1`'s same-second incomplete tests.
+  - `lib/__tests__/aoRoundGStripeBillingMigrations.test.ts` pins the two new reads.
+  - `lib/__tests__/dcRoundFExportContract.test.ts` (`XEDGE-14`'s webhook block): its mock orgs update now returns the row it wrote. Its assertions are unchanged.
+- **20261175** changed only in its header comment (the two new reads, and the 8 s wait). It has not been pasted.
+
+**Done-when.**
+- [x] Every orgs update destructures `error` and a failed write returns a non-2xx so Stripe retries ✓.
+- [x] A stripe_events table records processed event ids (unique) and the handler no-ops on a duplicate ✓ — **pending the paste of 20261175**: until then the handler applies every event as before.
+- [x] Subscription-state writes are guarded by the event's created timestamp ✓, per subscription — pending the same paste. A newer subscription event recorded for it (applied or superseded) makes an older one stale. A newer applied invoice event makes an older invoice event stale and holds back only the status of an older subscription event. Deliveries for one customer are applied one at a time, so a concurrent pair is ordered too. *(Corrected at the review fix pass: this read "against the last applied event". That dropped the plan and period of a subscription event behind an invoice event, missed a superseded deletion, and was check-then-act under concurrent delivery.)* Within one second (Stripe's resolution), two snapshots apply in the order they are handled, with two exceptions. An incomplete snapshot is stale beside a recorded snapshot of its own second. Once a deletion is recorded, no snapshot of that subscription but an ended one applies, at any time. *(Corrected at the second review fix pass: the box was ticked while a same-second incomplete snapshot could overwrite a paid workspace, and a same-second update could undo a deletion.)*
+- [x] invoice.payment_succeeded only promotes to 'active' when the invoice's subscription matches orgs.stripe_subscription_id ✓ (and `payment_failed` likewise). A failed payment only demotes a workspace that has access, and a paid one never revives a canceled row (review fix pass).
+
+**Scope / residual.** **Pending migration:** `supabase/migrations/20261175_ao_roundG_stripe_events_ledger.sql` (`DEC-30`; either order with the deploy). Until it is pasted, there is no dedupe, no ordering guard and no lock, as before.
+- **Same second.** Stripe's `event.created` has one-second resolution. Two events about one subscription in the same second are applied in the order they are handled, one at a time, with two exceptions: a late incomplete snapshot never overwrites a later state, and a deletion is final. The dunning pair is safe in either order, because a failed payment only demotes. Any other same-second pair, such as two different live statuses in one second, applies in handling order. *(Corrected at the second review fix pass: this did not say that a same-second incomplete snapshot could overwrite a paid workspace, or that a same-second update could undo a deletion.)*
+- **Lock contention.** A delivery that finds its customer's lock held for 8 s answers 503. It is applied on Stripe's retry, and until then it shows as a failed delivery in Stripe's dashboard. *(Second review fix pass: the wait was about 1.6 s.)*
+- **Checkout before the webhook lands.** Until a checkout's activating event is applied (normally within seconds; after a 503, on Stripe's retry), the row still reads trial with no subscription id. The billing page shows the plans grid, and checkout makes no Stripe call, so a second Subscribe click could open a second subscription (`BILL-8`). The longer wait narrows that window. The review's optional step, listing the customer's Stripe subscriptions at checkout, was not added: it would add a Stripe call to every trial checkout and change `DEC-98` §7.
+- **Across subscriptions.** The ledger orders events per subscription. Suppose a workspace moved from an old subscription to a new one, and nothing newer is recorded for the old one. A late access-granting event for the old subscription still re-points the workspace at it, as before P4. BILL-8's checkout refusal makes a second live subscription rare.
+- A one-off invoice (no subscription) no longer moves the workspace's status in either direction.
+- Stripe reconciliation (`BILL-2` Done-when 3) is not built.
 
 ---
 
@@ -222,7 +411,7 @@ app/api/admin/storage-stats/route.ts:174-179 — `const { error } = await actor.
 ## BILL-6 · A Stripe customer id an org Admin can write is trusted to open a Customer Portal session and to route invoice webhooks
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** SUSPECTED
 - **Locations:** `app/api/stripe/portal/route.ts:30-46`, `app/api/stripe/checkout/route.ts:53-67`, `app/api/stripe/webhook/route.ts:138-146`, `supabase/schema.sql:1042-1045`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed — no uniqueness constraint and no server-side validation that the id belongs to this org. If anything MEDIUM is understated rather than overstated: beyond the denial path, a malicious Admin at org B who copies org A's cus_… gets a Stripe Customer Portal session for org A's customer and can view A's invoices/billing address and cancel A's subscription.
@@ -247,6 +436,36 @@ app/api/stripe/portal/route.ts:43-46 — `const session = await stripe.billingPo
 - [ ] A UNIQUE index exists on orgs(stripe_customer_id) WHERE NOT NULL
 - [ ] resolveOrgIdFromCustomer checks the error from maybeSingle and alerts on an ambiguous match rather than silently dropping the event
 - [ ] The portal route verifies the customer's metadata.org_id matches the requested org before creating a session
+
+**Resolution (2026-10-02, admin-and-org Round G).** Package P4.
+
+**Reproduced on `f5073fc`.**
+- `resolveOrgIdFromCustomer` read `{ data }` from `.maybeSingle()` and discarded the error (`app/api/stripe/webhook/route.ts:142-150`): two workspaces on one customer → PGRST116 → null → `break` → 200. The test "two workspaces claiming one customer…" failed.
+- The portal created a session for whatever customer the row named (`app/api/stripe/portal/route.ts:43-46`). The test "the portal refuses a customer whose metadata names another workspace" failed.
+- Only the non-unique `orgs_stripe_customer_idx` existed (`20260601_billing.sql:31`). On PostgreSQL 16, before the paste, a second workspace could take `cus_A`.
+
+**Fix.**
+- **The webhook's lookup.** `resolveOrgFromCustomer` (route `:478`) reads with `.limit(2)` and its error checked. More than one workspace answers **409**, naming the customer and the remedy, and nothing is written. Stripe retries, and its dashboard shows the failing delivery. A read error is a 500.
+- **The portal.** `lib/stripe.ts customerOwnershipRefusal` (`:111`) retrieves the customer first, called from `app/api/stripe/portal/route.ts:47`.
+  - A customer whose `metadata.org_id` names another workspace, a deleted customer, or one Stripe does not know: **409**, no session.
+  - A Stripe outage: 502.
+  - A customer with no org metadata (made before checkout stamped it, or by hand) opens as before.
+  - The org read is checked.
+- **Uniqueness.** `20261175` builds `orgs_stripe_customer_unique`, UNIQUE (stripe_customer_id) WHERE NOT NULL, in the world where no customer id is shared at paste time. Otherwise it builds nothing, rewrites nothing, and counts the duplicates.
+- **The column itself.** `20261176` makes `stripe_customer_id` service-role-only (`BILL-2`).
+- Files: `app/api/stripe/webhook/route.ts`, `app/api/stripe/portal/route.ts`, `lib/stripe.ts`, and both migrations.
+- Tests:
+  - `lib/__tests__/stripeWebhook.test.ts`: "BILL-6 — an ambiguous customer is surfaced…", and "the portal's ownership check, and its regressions" (no metadata opens; deleted or unknown 409; outage 502; no customer 400 with no Stripe call).
+  - `lib/__tests__/aoRoundGStripeBillingMigrations.test.ts`: the two-worlds index.
+  - PostgreSQL 16: index built (clean); not built, duplicate count 1 and 2 workspaces (duplicates world); built after the stray id was cleared and the file pasted again; a second workspace claiming a customer refused `23505`.
+
+**Done-when.**
+- [x] stripe_customer_id is not writable by any client role ✓ — pending `20261176` (`BILL-2`).
+- [x] A UNIQUE index exists on orgs(stripe_customer_id) WHERE NOT NULL ✓ — **pending the paste of 20261175**. It is built only where no duplicates exist; its final rows count them otherwise.
+- [x] resolveOrgIdFromCustomer checks the error and alerts on an ambiguous match rather than silently dropping the event ✓ (a 409, and a failing delivery in Stripe's dashboard).
+- [x] The portal verifies the customer's metadata.org_id matches the requested org before creating a session ✓. A customer with no org metadata is let through, as before.
+
+**Scope / residual.** **Pending migrations:** `20261175` and `20261176` (`DEC-30`; either order). A customer created outside checkout carries no org metadata, so the portal check cannot tell whose it is. After `20261176` only the server can point a workspace at it.
 
 ---
 
@@ -284,7 +503,7 @@ app/api/admin/archive-settings/route.ts:51-56 — `const { error } = await actor
 ## BILL-8 · Checkout can mint a duplicate Stripe customer and a second live subscription — nothing checks for an existing subscription before creating one
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/stripe/checkout/route.ts:53-67`, `app/api/stripe/checkout/route.ts:72-84`, `app/(protected)/admin/billing/page.tsx:184`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The load-bearing claim — a second live subscription on the same customer, with no existing-subscription check — is confirmed. One correction to the title, not the severity: the duplicate-*customer* half only occurs under a concurrent race, since :53-67 reuses `org.stripe_customer_id` when present and only creates a customer when it is null.
@@ -307,6 +526,39 @@ app/api/stripe/checkout/route.ts:72-84 — `const session = await stripe.checkou
 - [ ] The customer-id write is checked, and a unique index on orgs(stripe_customer_id) makes the concurrent-create race fail loudly
 - [ ] Customer creation uses a Stripe idempotency key derived from the org id
 
+**Resolution (2026-10-02, admin-and-org Round G).** Package P4. Reproduced on `f5073fc`: checkout created a session with no read of `stripe_subscription_id` or `subscription_status` (`app/api/stripe/checkout/route.ts:72-84`). The customer-id write was unchecked (`:63-66`), and the customer was created with no idempotency key (`:57-61`). The billing page showed the plans grid for every status but `active` (`app/(protected)/admin/billing/page.tsx:185`). Three tests ("checkout refuses 409…", "a refused customer-id write…", "customer creation carries an idempotency key…") and three rendered tests (past due, unpaid / paused, a Stripe trial: plans shown) failed against the base.
+
+Fix (`DEC-98` §7):
+- **The server refusal.** `lib/stripe.ts liveSubscriptionRefusal` (`:137`), called at checkout `:64`:
+  - A row with no subscription id, or a canceled one, makes no Stripe call: the trial path is exactly as before (pinned).
+  - A row naming a subscription in any other status is confirmed with Stripe. A subscription Stripe still bills (active, trialing, past_due, unpaid — `BILLED_STRIPE_STATUSES`) is refused **409**, with the portal pointer, and nothing is minted. *(Corrected at the review fix pass: paused was refused too, below.)*
+  - A subscription Stripe has ended, or no longer knows, does not block, so a stale row cannot lock out a legitimate subscribe.
+  - A Stripe outage is 502.
+  - The org read is checked: a 500, never "not found".
+- **The page.** A workspace that holds a billed subscription (`lib/subscription.ts holdsLiveSubscription`: an id, and any status but canceled or paused) sees "Manage subscription / payment" and no plans grid. That covers past due, unpaid from the red card (`app/(protected)/admin/billing/page.tsx:194-208`), and a Stripe trial (`:147`). The app's own trial, a canceled workspace, a paused one and an incomplete first checkout (no id written, `BILL-1`) still see the plans.
+- **The customer.** It is created under `customerIdempotencyKey(orgId)` (`org-customer:<org>`, `lib/stripe.ts:98`), so two clicks, or a retry, get one customer for 24 hours. A Stripe refusal is 502.
+- **The write is checked.** A refused write is a 500, and no session is minted, so a payment never lands on a customer the workspace does not record. The unique index (`20261175`) refuses a second workspace on one customer.
+- Files: `app/api/stripe/checkout/route.ts`, `lib/stripe.ts`, `lib/subscription.ts`, `app/(protected)/admin/billing/page.tsx`.
+- Tests:
+  - `lib/__tests__/stripeWebhook.test.ts`: "BILL-8 — one live subscription per workspace…" and "…the checkout refusal is confirmed with Stripe…" (each live status 409; ended, incomplete or gone allowed; outage 502; the trial path makes no extra call; the key; checked reads; checkout's audit row said in the answer); the checkout regressions (a trial workspace's customer created, recorded and the session minted with the org's metadata; a canceled workspace reuses its customer).
+  - `lib/__tests__/billingPageRender.test.ts` (rendered): portal and no plans for past due, unpaid, paused, a Stripe trial and active; plans for the app's trial, canceled and an incomplete first checkout; a Viewer sees neither.
+
+*Review fix pass (2026-10-02, admin-and-org Round G, P4).* A paused workspace may subscribe again.
+- **The gap.** `paused` was in the refusal set, with the copy "subscribing again would bill the workspace twice". A paused subscription raises no invoice, and the Customer Portal cannot resume one. So a paused workspace was refused 409, sent to a portal that cannot help it, and shown no plans: it lost its only self-serve path. Before P4 it could subscribe again. (This app's checkout sets no trial, so `paused` is rare.)
+- **The fix.** Checkout refuses only the statuses under which Stripe keeps billing the subscription or raising its invoices: `lib/subscription.ts BILLED_STRIPE_STATUSES` (active, trialing, past_due, unpaid; `lib/stripe.ts:150`). `holdsLiveSubscription` excludes paused, so a row on a paused subscription makes no Stripe call. The billing page shows a paused workspace the plans, with the line "Stripe raises no invoice on a paused subscription, and the billing portal cannot resume it. Pick a plan below to subscribe again, or ask support to resume it." The webhook still records a paused subscription's id (`LIVE_STRIPE_STATUSES` is unchanged). `unpaid` stays refused, as this record asks, with its own copy (`:151`). Stripe keeps an unpaid subscription and keeps raising its invoices without charging them, so the answer says to pay the open invoice or cancel in the portal, and does not say "bill twice".
+- **Tests.** `lib/__tests__/stripeWebhook.test.ts`: "a row on a paused subscription: checkout makes no subscription call and mints the session"; "every billed Stripe status is refused 409…" (unpaid's copy, without "bill twice"); "…or paused does not block". `lib/__tests__/billingPageRender.test.ts`: "paused on a Stripe subscription (review fix pass): the plans…"; unpaid keeps the portal. Each fails on the reviewed head.
+
+**Done-when.**
+- [x] Checkout refuses (409) when the org already has a stripe_subscription_id in a live state, and the UI directs past_due/unpaid orgs to the portal instead of the plans grid ✓ (a Stripe trial too). A paused subscription is not refused, because Stripe does not bill it and the portal cannot resume it. *(Corrected at the review fix pass: this read "paused and a Stripe trial too".)*
+- [x] The customer-id write is checked, and a unique index on orgs(stripe_customer_id) makes the concurrent-create race fail loudly ✓. The index is pending `20261175`; the idempotency key below also returns one customer to concurrent clicks.
+- [x] Customer creation uses a Stripe idempotency key derived from the org id ✓.
+
+**Scope / residual.**
+- **Pending migration:** `20261175` (the unique index).
+- **Within the key's 24 hours.** A second admin whose click carries other customer details (another email) is refused by Stripe and answered 502 ("try again in a moment"). After 24 hours a new key applies.
+- **Doubled subscriptions from before this fix.** A workspace already billed twice (the failure scenario) is not unwound here; its second subscription is cancelled in the Stripe portal or dashboard.
+- **SURF-19.** `ADMIN_ROLES` in checkout and the portal is unchanged. Its stripe limb is A&O P5's.
+
 ---
 
 <a id="bill-9"></a>
@@ -314,7 +566,7 @@ app/api/stripe/checkout/route.ts:72-84 — `const session = await stripe.checkou
 ## BILL-9 · Every Stripe billing audit_logs insert fails silently — `user_id: "stripe"` is written into a UUID column and the error is never read, so subscription changes leave no record
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/stripe/webhook/route.ts:68-76`, `app/api/stripe/webhook/route.ts:88-93`, `app/api/stripe/webhook/route.ts:116-121`, `supabase/schema.sql:777`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed. PostgREST rejects the literal 'stripe' with `invalid input syntax for type uuid`, supabase-js surfaces that as a returned `error` (not a throw, so the catch at :129 never fires), and nothing reads it. A repo-wide grep of supabase/migrations/*.sql finds no ALTER changing audit_logs.user_id to TEXT and no cast. Worth noting the gap is slightly wider than stated: `invoice.payment_succeeded` (:97-106) attempts no audit row at all.
@@ -338,6 +590,25 @@ app/api/stripe/webhook/route.ts:73 — `user_id: "stripe",` ; supabase/schema.sq
 - [ ] The webhook writes a NULL user_id (or a dedicated system UUID) rather than the string 'stripe'
 - [ ] All three inserts destructure and log `error`, and a failed audit write is surfaced (non-200 so Stripe retries, or an alert)
 - [ ] A row appears in audit_logs for a simulated subscription.created, subscription.deleted and invoice.payment_failed against a real schema
+
+**Resolution (2026-10-02, admin-and-org Round G).** Package P4. Reproduced on `f5073fc`: the three webhook audit inserts passed `user_id: "stripe"` into the uuid column with no `{ error }` read (`app/api/stripe/webhook/route.ts:72-80, :92-97, :120-125`), `invoice.payment_succeeded` wrote none, and the route answered 200 on every path (`:138`). On PostgreSQL 16 against `schema.sql`'s `audit_logs`, that row shape is refused `22P02`. The tests "subscription.created writes user_id NULL…" and "a refused audit row answers non-2xx…" failed against the base.
+
+Fix — `DEC-87` §2, taken as it stands (no new convention):
+- **One machine row.** `auditRow` (route `:519`) writes `user_id` NULL, `user_email` `system:stripe-webhook`, `user_role` `system` (`STRIPE_WEBHOOK_ACTOR`, `:63`) and `details.channel` `stripe-webhook`, with the event id. It is the route's only `audit_logs` insert (pinned).
+- **Every handled write has a row.** That covers `invoice.payment_succeeded`, which had none: `STRIPE_INVOICE_PAYMENT_SUCCEEDED`, written when it promotes.
+- **Checked.** A refused row answers 500 (`auditRefused`), so Stripe retries. The ledger row (`BILL-4`) is written last, so the retry applies the event again (an idempotent orgs write) and writes the row.
+- **Checkout's row checked too.** `STRIPE_CHECKOUT_CREATED` (`app/api/stripe/checkout/route.ts:108-123`) is checked: the session stands, and a refused row is said in the answer (`warning`) and the log.
+- Files: `app/api/stripe/webhook/route.ts`, `app/api/stripe/checkout/route.ts`.
+- Tests (`lib/__tests__/stripeWebhook.test.ts`):
+  - "BILL-9 — the webhook's audit rows are checked machine rows";
+  - "BILL-9 — every handled event writes its machine row": deleted, succeeded and failed rows; the retry after a refused row; the source pin.
+
+**Done-when.**
+- [x] The webhook writes a NULL user_id rather than the string 'stripe' ✓.
+- [x] All inserts destructure `error`, and a failed audit write is surfaced as a non-200 so Stripe retries ✓. Checkout's row is surfaced in its answer, because its session already stands.
+- [x] A row appears in audit_logs for a simulated subscription.created, subscription.deleted and invoice.payment_failed against a real schema ✓. This ran on PostgreSQL 16 with `schema.sql`'s `audit_logs` and `20260813`'s insert policy, writing as the service role: all three machine rows inserted, and the old `user_id 'stripe'` shape was refused `22P02`. It was a scratch cluster, not production (`DEC-30`).
+
+**Scope / residual.** None for this finding. `ALOG-7`'s planned trigger (P7) must leave a service-role insert's `user_id` NULL (`DEC-87` §3 already asks this for the export ledger).
 
 ---
 

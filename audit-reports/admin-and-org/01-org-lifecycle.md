@@ -513,6 +513,26 @@ SubscriptionGate.tsx:46-48 — `const ENFORCE = false;` / `if (!ENFORCE || loadi
 - [ ] `stripe_customer_id` gets a UNIQUE partial index so two orgs can never claim one customer
 - [ ] Either the three enforcement points are wired up, or the dead ones are deleted and the comments claiming enforcement are removed
 
+**Partial (2026-10-02, admin-and-org Round G).** Package P4: Done-when 1 and 2, the RLS and UNIQUE halves the fleet plan assigns it. Done-when 3 (the enforcement half) is A&O P5's (`BILL-10`), so the status stays OPEN for it.
+
+**Reproduced.** In the sequence on `f5073fc`:
+- no trigger, column grant or RESTRICTIVE policy on orgs (`orgs_admin_write`, `20261046:136-138`, is the only write policy);
+- only the non-unique `orgs_stripe_customer_idx` (`20260601:31`);
+- the webhook's `.maybeSingle()` lookup discarding its error (`app/api/stripe/webhook/route.ts:142-150`).
+
+On PostgreSQL 16, before either paste, an Admin's member session updated its own billing columns (1 row), and a second workspace took a customer id another already held.
+
+**What landed.**
+- `supabase/migrations/20261176_ao_roundG_orgs_billing_columns_guard.sql`: a BEFORE UPDATE trigger refuses (`42501`) any non-service-role change to `subscription_status`, `subscribed_plan`, `trial_ends_at`, `current_period_end`, `stripe_customer_id` and `stripe_subscription_id`. The record and its tests are under `BILL-2`.
+- `supabase/migrations/20261175_ao_roundG_stripe_events_ledger.sql`: `orgs_stripe_customer_unique` (UNIQUE partial), built only in the world with no duplicates. Two workspaces on one customer is now a 409 from the webhook, never a silent drop. The record and its tests are under `BILL-6`.
+
+**Done-when.**
+- [x] A RESTRICTIVE UPDATE policy (or a trigger) blocks non-service-role writes to the billing columns ✓ — a trigger, **pending the paste of 20261176**.
+- [x] `stripe_customer_id` gets a UNIQUE partial index so two orgs can never claim one customer ✓ — **pending the paste of 20261175** (built where no duplicates exist; otherwise they are counted).
+- [ ] The three enforcement points are wired up, or the dead ones deleted — **not done here**: A&O P5 (`BILL-10`, "ORG-9 (enforcement half)").
+
+**Scope / residual.** OPEN for Done-when 3 (A&O P5). The chain reaction's other columns on orgs (`ticket_prefix` / `ticket_record_code` / `ticket_number_pad`, `name`) stay Admin-writable, by design. They are the settings page's and the restore's, and are not billing state.
+
 ---
 
 <a id="org-10"></a>

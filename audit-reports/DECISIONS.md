@@ -131,6 +131,7 @@ about the system.
 | [DEC-95](#dec-95) | The contractor door's identity in the database: its content writes (new document, submission, pending pointer, trusted promote, quote) go through service-role-only door functions that resolve the link **from its token hash**, refuse a write outside the link's scope, and bind a transaction-local identity — `sub` the **link** (the promote's: the link's **creator**, `DEC-56` item 2) with role `intake_door` — so every guard judges the door's write; the new document and the quote also run **under row-level security** as the NOLOGIN role `intake_door` (granted to `authenticator`; the INVOKER door function switches to it for the one INSERT — no JWT, no signing secret) under policies keyed on the bound link; the submission, pointer and promote do not yet (`SEC-22`: the submission waits on `20261037`'s 42P17); the promote publishes an allow-listed version; INTK-16's rail admits that identity for its **own** link only; the redline goes through the ticket rails' service-only append for a ticket naming the link; the route falls back to its service-role write only when the functions are not there, decided by the error **code** (PGRST202, or 42883 naming one at the start of its message — never a guard's message); a privilege gap on the role's INSERT, or a restrictive policy for all roles that the link may fail, keeps that write's bound identity and never refuses the upload (readiness read from the live catalogs before the switch; after it, a "permission denied" or another policy's refusal runs the write again) — only the door's own policies refuse after the switch, and a fourth paste row and a shape test report such a policy; door uploads are signed for `UNTRUSTED_CONTENT_ORIGIN` (storage's path-style account host, the only value accepted) by the workspace export now and by download-url / resolve once they adopt `signStorageGet` (owner: the integrator at the J16 / P6 merge), and the operator's cross-origin check covers the Full ZIP now and the in-app viewer from then | low | `GAP-401`, `SEC-4`, `SEC-22`, `INTK-16`, `DEC-56`, `DEC-49` |
 | [DEC-96](#dec-96) | The Bridge and the document↔equipment relation: a document the caller cannot read is **skipped and counted, never widened**; a tag that leaves the current revision is **marked for review, never auto-removed**; the knowledge door is a **person's pick, unit-less and said**; the coverage report is **per unit on the Operating Areas page and org-wide from the sweep**; a dismissal lapses only on a **later** revision; the relation is **fail-safe** (a person never writes or removes a 'drawing' row, and a join row is read only with its document); the **relation is the record, the column is kept**; with no column, auto-apply **waits for the first review**; an automatic discovery's creator is **who turned auto-apply on**, else the drawing's filer | low | `BR-1`, `BR-5`, `BR-8`, `BR-9`, `GAP-307`, `GAP-308`, `GAP-309`, `AREA-2`, `AREA-4`, `DACL-11`, `GAP-304` |
 | [DEC-97](#dec-97) | A copy, and a work package's cover, draw the characters the stamp's font prints as typed (the en and em dash, the curly quotes, the no-break space); only a character it cannot print is replaced, and a format character (no glyph) is removed and named on the copy — `PHYS-15` done-when 1 so amended by the integrator under the user's delegation, 2026-10-08 | low | `PHYS-15`, `PHYS-16` |
+| [DEC-98](#dec-98) | The Stripe webhook: an unpaid (`incomplete`) or unknown Stripe status maps to `unpaid`, never to access, the plan is written only on a paying status, and an ended subscription clears it; Stripe reconciliation is WONTFIX for now (owner: the user); the `stripe_events` ledger keys on the event id, a subscription event older than a newer one recorded for its subscription is stale (a newer invoice event holds back only its status; a late incomplete snapshot never overwrites a later one; a deletion is final), and one event per Stripe customer is applied at a time; machine audit rows are `DEC-87` §2; only the service role writes the six billing columns (refused, never reset); a subscription the workspace is not on, or one that never started, cannot take its access away, and a failed invoice only demotes; one billed subscription per workspace | low–medium | `BILL-1`, `BILL-2`, `BILL-3`, `BILL-4`, `BILL-6`, `BILL-8`, `BILL-9`, `ORG-9` |
 
 ---
 
@@ -5530,6 +5531,8 @@ Before such a modal starts an upload, once the run's cards clear, and whenever n
 
 *Landed 2026-10-02 (admin-and-org Round G): A&O P3 fix pass 8, corrected in place with `BKP-6`, `BKP-8`, `BKP-13` and `BILL-3`. §3: a recall reads a record's `DATA_EXPORT_UNDELIVERED` row up to a day after it (`UNDELIVERED_READ_WINDOW_MS`); the 15-minute bound assumed the routes' 300 s `maxDuration`, which the Docker self-host (`next start`) does not enforce, so a failed slow delivery read as delivered. `undelivered: null` means no failure is recorded, never "arrived". `audit_logs_insert` checks the uid and the org, never the email or role. §1: Run Now, the sweep's plan limb and its disable-on-lapse test a bucket destination as PATCH does, s3 / r2 with a bucket (`pushesToBucket`), so the converted webhook fix pass 7 allowed is no longer disabled that night or refused 402. Implementation, Acceptance and Risk are updated to match.*
 
+*Landed 2026-10-02 (admin-and-org Round G): package P4's Stripe webhook takes §2 as it stands — `user_id` NULL, `user_email` `system:stripe-webhook`, `user_role` `system`, `details.channel` `stripe-webhook`, every row checked and a refused row answered 500 so Stripe retries (`app/api/stripe/webhook/route.ts auditRow`; `BILL-9`). No second convention was minted. §1's create gate now tests a bucket destination as PATCH, Run Now and the sweep do (`pushesToBucket`), so a webhook created with a leftover bucket name is not 402 off plan (`BILL-3`).*
+
 <a id="dec-88"></a>
 ## DEC-88 · The graph's view: lenses named for what they show, direction drawn, and what lives in the URL
 
@@ -5902,3 +5905,112 @@ Shape: `lib/__tests__/prjRoundGJ16DoorIdentity.test.ts`. Origin: `lib/__tests__/
 **Reversal.** How to reverse: three groups of `PLAIN_FORM` entries (U+2013 and U+2014 → "-"; U+2018 and U+2019 → "'" and U+201C and U+201D → '"'; U+00A0 → " ") plus narrowing `stampFontPrints` (and `stampFooterUnprintable`'s copy) by the same code points. Every stamp then changes, the stamper's own "—" included, so the two regression records (`psP7StampPlain.golden.json`, `psP7CoverPlain.golden.json`) change by design and are re-recorded on purpose; every copy with such a character then carries the note. Drawing a format character as "?" again is removing the `FORMAT_CHARACTER` branch in `stampText`.
 
 **Risk:** low. Nothing changes for a stamp that printed before; the fix pass changes only how a format character, which never printed (it threw on `b154823`), is drawn.
+
+<a id="dec-98"></a>
+## DEC-98 · The Stripe webhook: which statuses grant access, which event wins, and who may write the billing columns
+
+*Renumbered from the provisional `DEC-44 (A&O P4)` by the integrator at the A&O P4 merge, 2026-10-13.*
+
+*Minted by admin-and-org Round G, package P4 (2026-10-02), under the protocol's fail-safe rule, as a provisional "DEC-44 (A&O P4)", distinct from the download-record DEC-44; the integrator renumbers it at merge (DEC-44 to DEC-87 are taken on the integration branch). It takes the fleet plan's stated defaults (`audit-reports/fleet-plans/admin-and-org.json`, P4 decisionsNeeded): "BILL-1: map incomplete/unknown to which non-access value"; "BILL-2 dw3: Stripe reconciliation now vs WONTFIX-for-now"; "BILL-4 ledger shape / ordering key"; "BILL-9 system audit row convention". Where a record states no default, it takes the conservative choice the brief names. References: `BILL-1`, `BILL-2`, `BILL-3`, `BILL-4`, `BILL-6`, `BILL-8`, `BILL-9`, `ORG-9` (admin-and-org); `XEDGE-14`, `XEDGE-8` (document-control).*
+
+**Decision. Seven calls.**
+
+1. **No unpaid or unknown status grants access.**
+   - `lib/subscription.ts mapStripeStatus` is the one map. `incomplete` (the first invoice never paid) maps to `unpaid`; `incomplete_expired` and `canceled` map to `canceled`; any status this code does not know maps to `unpaid`, logged and recorded on the audit row. None maps to `active` or `trialing`. Every value is one of the orgs CHECK's six.
+   - The plan is written only on `active`, `trialing` or `past_due`, from `XEDGE-14`'s price-derived plan, which is kept. Any event that ends the subscription (`canceled`, `incomplete_expired`, `subscription.deleted`) clears it, and `20261176` clears it on the canceled workspaces the old code left.
+   - A subscription Stripe will not bill (incomplete, ended) does not become the workspace's `stripe_subscription_id`.
+2. **Stripe reconciliation is WONTFIX for now; owner: the user.** `BILL-2` Done-when 3 asks for a path that re-derives state from the Stripe API. It is not built, and three things close the gap it guarded:
+   - the billing columns are server-only (§5);
+   - every webhook write is checked and ledgered (§3), and Stripe retries a refused delivery for three days, showing it in its dashboard;
+   - the one decision that can bill twice, a second checkout, asks Stripe (§7).
+   With enforcement off (`DEC-18`), a drifted row changes only the billing page and the cloud-backup gate. The user decides whether a scheduled reconciliation is wanted.
+3. **The ledger.**
+   - `stripe_events` (`20261175`) is keyed on Stripe's event id. A redelivery is a no-op.
+   - The ordering key is the event's `created` time, per subscription (an invoice's subscription for invoice events).
+     - A subscription event is a full snapshot. One strictly older than a newer `customer.subscription.*` event recorded for that subscription, applied or superseded, is recorded `stale` and not applied.
+     - An invoice event moves only the status. One strictly older than a newer event of either kind, applied, is stale.
+     - A subscription event older only than an applied invoice event still writes its plan, period end and subscription id. Only its status is held back, unless it ends the subscription: an ended status is final.
+     - Within one second (Stripe's resolution), events are applied in the order they are handled, with two exceptions that follow from Stripe's own transitions:
+       - an `incomplete` snapshot is stale beside a recorded snapshot of its own second, because a subscription never goes back to incomplete;
+       - once a `customer.subscription.deleted` is recorded for a subscription (applied or superseded), no snapshot of it but an ended one applies, at any time, because Stripe never revives an ended subscription.
+   - One event per Stripe customer is applied at a time. `stripe_event_locks` (`20261175`) is a row keyed on the customer, inserted first and deleted when done. A second delivery waits up to 8 s, backing off with jitter, then answers 503 and Stripe retries it. The route's `maxDuration` is 30 s. A lock older than 60 s is a run that died, and the next delivery breaks it. So two deliveries Stripe makes at once cannot both pass the ordering read.
+   - Every handled event is recorded with its outcome: `applied`, `stale`, `unresolved`, `superseded` or `ignored`. It is recorded last, so a refusal earlier in the run is retried whole. An orgs update that writes no row is never recorded `applied`. With no guard, no row means the workspace the metadata names does not exist: the event is recorded `unresolved`, with no audit row.
+   - Until `20261175` is pasted, the webhook applies every event as before, with no lock, and says the ledger is absent.
+4. **Machine audit rows are `DEC-87` §2.** `system:stripe-webhook`, checked; a refused row answers 500.
+5. **Only the service role writes the billing columns.** `20261176`'s BEFORE UPDATE trigger refuses (`42501`) a change to `subscription_status`, `subscribed_plan`, `trial_ends_at`, `current_period_end`, `stripe_customer_id` or `stripe_subscription_id` unless the request role is `service_role` or absent (the SQL editor).
+   - The columns are pinned by refusal, never silently reset: a forged write fails as a whole.
+   - `orgs_admin_write` (`20261046`) is unchanged.
+   - A member's update that leaves the six alone passes. The settings page's ticket numbering is the only one the app makes.
+6. **A subscription the workspace is not on cannot take its access away.**
+   - A canceled, unpaid or paused status, `subscription.deleted` included, applies only while the workspace is on that subscription or on none.
+   - A subscription that never started (`incomplete`, `incomplete_expired`) or a status this code does not know applies only while the workspace is on that subscription, whether it arrives as an update or as `subscription.deleted`. So a declined first checkout never touches the app's own trial.
+   - On a workspace already on the subscription, an `incomplete` snapshot moves only the row the old code wrote (`trialing`) or an earlier incomplete snapshot's `unpaid`. Stripe never moves a subscription back to incomplete, so a workspace on it in any other state is newer.
+   - An invoice moves the status (`active` on payment, `past_due` on failure) only for the workspace's current subscription. A one-off invoice moves nothing. A failed payment moves only a workspace that has access (`active`, `trialing`, `past_due`), never `unpaid` back to `past_due`. A paid one never revives a `canceled` row.
+   - The subscription is read from `invoice.subscription` or, from Stripe's 2025-03 API on, `invoice.parent.subscription_details.subscription`.
+   - `subscription.deleted` clears the plan.
+7. **One live subscription per workspace.**
+   - Checkout refuses 409 when the row names a subscription Stripe confirms it still bills or raises invoices on: active, trialing, past_due or unpaid. A row with no subscription, or a canceled or paused one, makes no Stripe call. A paused subscription raises no invoice and the portal cannot resume it, so a paused workspace may subscribe again.
+   - The billing page sends such a workspace to the portal instead of the plans grid. A paused workspace sees the plans.
+   - The customer is created under an idempotency key derived from the org id, and its id is written as a checked write.
+   - The portal opens only for a customer whose `metadata.org_id` is this workspace, or absent (a legacy customer).
+
+**Rationale.** Billing state decides a paid feature (the cloud-backup gate) today and access tomorrow (`DEC-18`), so it must come only from Stripe, through the one server path, in Stripe's order, with a record when it does not apply. The conservative direction is "unpaid stays out", without taking away what the workspace already had: a declined first checkout leaves the app's trial as it was. The alternative was an unpaid workspace on a paid plan with open-ended access. Refusing a forged write, rather than resetting it, keeps the rule of checked writes: no silent success.
+
+**Implementation.**
+- `lib/subscription.ts`: `mapStripeStatus`, `ACCESS_STATUSES`, `LIVE_STRIPE_STATUSES`, `BILLED_STRIPE_STATUSES`, `PLAN_HOLDING_STRIPE_STATUSES`, `UNSTARTED_STRIPE_STATUSES`, `holdsLiveSubscription`.
+- `lib/stripe.ts`: `customerIdempotencyKey`, `customerOwnershipRefusal`, `liveSubscriptionRefusal`.
+- `app/api/stripe/webhook/route.ts`: `acquireLock`, `releaseLock`, `readLedger`, `resolveOrgFromCustomer`, `writeOrg`, `auditRow`, `invoiceSubscriptionId`.
+- `app/api/stripe/checkout/route.ts`, `app/api/stripe/portal/route.ts`, `app/(protected)/admin/billing/page.tsx`.
+- Migrations: `supabase/migrations/20261175_ao_roundG_stripe_events_ledger.sql` (the ledger; the per-customer lock table; the UNIQUE partial index on `orgs(stripe_customer_id)`, built only where no duplicates exist) and `supabase/migrations/20261176_ao_roundG_orgs_billing_columns_guard.sql` (the guard, with a rolled-back self-test; the plan cleared on canceled workspaces, counted before and probed after).
+- `lib/schemaExpectations.ts` names `stripe_events` and `stripe_event_locks`. `lib/exportTables.ts` excludes both from exports, with the reasons.
+- Tests:
+  - `lib/__tests__/stripeWebhook.test.ts` (the webhook, checkout and portal, through the real routes; the census of orgs writes);
+  - `lib/__tests__/billingPageRender.test.ts` (the page, rendered);
+  - `lib/__tests__/aoRoundGStripeBillingMigrations.test.ts` (both files' shape).
+
+**Acceptance.**
+- Each Stripe status, and one unknown, stores the mapped value; incomplete and unknown grant no access and write no plan.
+- A redelivered event writes nothing. An older subscription event after a newer one for the same subscription (applied or superseded) is recorded `stale` and changes nothing. One older only than an applied invoice event writes its plan and period end and keeps the invoice's status. Two deliveries for one customer made at once are applied one after the other.
+- A failed payment in the same second as the update that makes the subscription unpaid leaves it unpaid, in either order.
+- An old subscription's deletion leaves the workspace on its new one. An invoice for another subscription, or a one-off, moves nothing.
+- A refused orgs write, audit row or ledger row answers non-2xx.
+- Two workspaces on one customer answer 409. Before `20261175`, every event applies as before.
+- On PostgreSQL 16, after `20261176`, an Admin's member session changing any billing column is refused `42501`; the numbering save, the service role and the SQL editor pass; a Viewer still updates 0 rows.
+- Checkout for a workspace with a live subscription is 409; the trial path makes no extra Stripe call; the portal refuses another workspace's customer.
+- Every legitimate event for the workspace's own subscription writes the orgs row as before. Delivered out of order, the newest state wins:
+  - across seconds, by `event.created`;
+  - within one second, a late `incomplete` snapshot never overwrites a later state, and a deletion is never undone;
+  - a plan change or period end is never dropped behind a newer invoice event.
+  `subscription.deleted`, and any update that ends the subscription, now also clears the plan.
+- Checkout's `created` (incomplete) handled after the same-second `updated` (active) leaves the workspace active. That holds with the paid invoice between them, and when `created`'s first delivery was answered 500 and retried.
+- A declined first checkout, and its expiry, leave the app's trial exactly as it was, whether the expiry arrives as an update or as a deletion.
+- A subscription event naming a workspace that does not exist is recorded `unresolved`, with no audit row.
+
+**Reversal.**
+- §1 is one line per status in `mapStripeStatus`.
+- §2 reverses by building the reconciliation, e.g. a daily `subscriptions.retrieve` per workspace with a subscription id, in the maintenance cron.
+- §5 rolls back with `DROP TRIGGER trg_orgs_billing_columns_guard ON orgs`.
+- The ledger can be dropped; the webhook then runs as before its paste.
+
+**Risk:** low to medium.
+- A delivery that finds its customer's lock held for 8 s answers 503 and is applied on Stripe's retry; until then Stripe's dashboard shows it as failed.
+- Two different live statuses of one subscription in the same second apply in the order they are handled.
+- Until a checkout's activating event is applied, the row reads trial with no subscription id, so a second Subscribe click could open a second subscription (§7 asks Stripe only when the row names one).
+- Across two subscriptions of one workspace, ordering rests on the guards in §6. A late access-granting event for an older subscription, with nothing newer recorded for it, still re-points the workspace, as before P4.
+- Within the idempotency key's 24 hours, a second admin creating the customer with other details is refused by Stripe (502, "try again").
+- Until `20261176` is pasted, workspaces canceled before this deploy keep their plan, and with it the Growth bucket create gate. If it is pasted before the deploy, paste it again after.
+- A customer with no org metadata cannot be checked by the portal; after `20261176`, only the server can point a workspace at one.
+
+*Corrected at the P4 review fix pass (2026-10-02, admin-and-org Round G).*
+- §3: the first ordering guard counted an applied invoice event as a barrier for the subscription's older snapshots, so a portal plan change or a renewal's period end handled after its invoice was dropped. That undid `XEDGE-14`'s price-derived plan in that delivery order. A superseded deletion did not order anything. The guard was check-then-act under concurrent delivery. Now the barriers are split by kind, superseded subscription events count, and `stripe_event_locks` serialises each customer's events.
+- §6: a declined first checkout set the app's trial to `unpaid`, then `canceled`, against this section's own rule. A subscription that never started, or an unknown status, now changes only a workspace already on it. A same-second `payment_failed` wrote `past_due` over `unpaid`; a failed payment now only demotes.
+- §7: `paused` is no longer refused.
+- §1: an update that ends the subscription clears the plan, and `20261176` clears the plans the old code left on canceled workspaces. The Acceptance line "every legitimate event … writes as before" was not true behind an invoice event; it is now, and it is pinned by test. The Rationale's and Risk's "reads Payment Failed for at most a day" is withdrawn.
+
+*Corrected at the P4 second review fix pass (2026-10-02, admin-and-org Round G).*
+- §3: the same-second rule said "An event in the same second is applied". The Acceptance line said every legitimate event writes as before "in any delivery order". Neither held:
+  - Checkout's `created` (incomplete), handled after the same-second `updated` (active), wrote `unpaid` over a workspace that had paid;
+  - a same-second `updated` (active), handled after `deleted`, revived the subscription.
+  Both are now ordered (§3, §6), and the Acceptance line states the rule it meets.
+- §3: the lock wait was about 1.6 s, shorter than one event's work when the database is a region away. It is now 8 s. An update that writes no row is no longer recorded `applied`.
+- §6: `subscription.deleted` ignored the rule for a subscription that never started, so a declined checkout's deletion could cancel the app's trial. It now follows the rule.

@@ -2782,3 +2782,40 @@ describe("A&O P3 fix pass 8 — a webhook that still carries a bucket name is no
     expect(sweepSrc).not.toMatch(/!!dest\.bucket/);
   });
 });
+
+describe("A&O P4 (BILL-3 Scope / residual, P3 fix pass 8 item 1) — creating a webhook is never the Growth act, whatever bucket name the form still carries", () => {
+  const offPlanOrg = () => { Object.assign(db.rows.orgs[0], { subscribed_plan: "starter", subscription_status: "active" }); };
+  // What the data-export page's create form sent: the type switched to
+  // webhook after a bucket was typed for s3.
+  const formBody = { orgId: ORG, name: "Hook", destination_type: "webhook", webhook_url: "https://hooks.example.com/x", webhook_secret: "s", bucket: "typed-before-switching", region: "us-east-1" };
+
+  it("off plan, a webhook created with a leftover bucket name is 200 and stores no bucket", async () => {
+    offPlanOrg();
+    const res = await destinationsPOST(req("/api/data-export/destinations", { method: "POST", body: formBody }));
+    expect(res.status).toBe(200);
+    const row = rowsOf("export_destinations")[0];
+    expect(row).toMatchObject({ destination_type: "webhook", webhook_url: "https://hooks.example.com/x" });
+    expect(row.bucket ?? null).toBeNull();
+    expect(pushesToBucket(row as { destination_type?: string | null; bucket?: string | null })).toBe(false);
+  });
+
+  it("off plan, an s3 / r2 create with a bucket is still 402 and writes nothing (XEDGE-8's create gate)", async () => {
+    offPlanOrg();
+    for (const destination_type of ["s3", "r2"]) {
+      const res = await destinationsPOST(req("/api/data-export/destinations", { method: "POST", body: { ...formBody, destination_type } }));
+      expect(res.status, destination_type).toBe(402);
+    }
+    expect(rowsOf("export_destinations")).toEqual([]);
+  });
+
+  it("on Growth, an s3 create keeps its bucket, as before", async () => {
+    const res = await destinationsPOST(req("/api/data-export/destinations", { method: "POST", body: { ...formBody, destination_type: "s3", access_key_id: "AK", secret_access_key: "SK" } }));
+    expect(res.status).toBe(200);
+    expect(rowsOf("export_destinations")[0]).toMatchObject({ destination_type: "s3", bucket: "typed-before-switching" });
+  });
+
+  it("the page's create form sends no bucket for a webhook", () => {
+    const page = readFileSync(join(process.cwd(), "app", "(protected)", "admin", "data-export", "page.tsx"), "utf8");
+    expect(page).toMatch(/bucket: type === "webhook" && mode === "create" \? undefined : bucket \|\| undefined,/);
+  });
+});

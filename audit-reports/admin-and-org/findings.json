@@ -17,8 +17,8 @@
       "LOW": 9
     },
     "by_status": {
-      "RESOLVED": 25,
-      "OPEN": 34
+      "RESOLVED": 32,
+      "OPEN": 27
     }
   },
   "status_vocabulary": [
@@ -289,7 +289,7 @@
       "id": "BILL-1",
       "title": "A Stripe subscription whose first payment never completed is written as 'trialing' with a paid plan — mapStripeStatus's default branch grants access for `incomplete` and for any future Stripe status",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -316,7 +316,7 @@
       "id": "BILL-2",
       "title": "Any org Admin can rewrite their own subscription state from the browser — the orgs UPDATE policy has no column restriction, so billing is enforced against a client-writable column",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -342,7 +342,7 @@
       "id": "BILL-3",
       "title": "Plan entitlement is read from immutable checkout metadata and never cleared on cancellation — a Customer Portal downgrade keeps Growth features and a canceled org keeps them forever",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -370,7 +370,7 @@
       "id": "BILL-4",
       "title": "The Stripe webhook discards every write result and always returns 200, and there is no event ledger — a dropped update is invisible and out-of-order events resurrect canceled subscriptions",
       "severity": "HIGH",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -873,7 +873,7 @@
       "id": "BILL-6",
       "title": "A Stripe customer id an org Admin can write is trusted to open a Customer Portal session and to route invoice webhooks",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "SUSPECTED",
       "verification_note": null,
       "blast_radius": null,
@@ -925,7 +925,7 @@
       "id": "BILL-8",
       "title": "Checkout can mint a duplicate Stripe customer and a second live subscription — nothing checks for an existing subscription before creating one",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -950,7 +950,7 @@
       "id": "BILL-9",
       "title": "Every Stripe billing audit_logs insert fails silently — `user_id: \"stripe\"` is written into a UUID column and the error is never read, so subscription changes leave no record",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,

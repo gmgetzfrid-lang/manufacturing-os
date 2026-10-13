@@ -240,6 +240,10 @@ export const EXPORT_EXCLUDED_TABLES: Record<string, string> = {
     "intelligence I-23 (20261194): the mention index's run state (last build, last failure, a stopped rebuild's place) — operational, re-derived by the next build, and it names knowledge-document ids a restore re-keys; a restore starts with none",
   document_share_accesses:
     "per-access IP / user-agent trail behind a share link's counter (P1 SHARE, 20261081) — service-role written, controller-readable; the exported distribution record of what LEFT is download_audits; a restored share is revoked (DEC-45) so its access trail has nothing to attach to",
+  stripe_events:
+    "the Stripe webhook's delivery ledger (event id, type, Stripe's created time, subscription / customer ids, outcome; admin-and-org P4, 20261175) — service-role only, a duplicate and ordering guard for Stripe's deliveries to this deployment, not org data; the billing record is the exported STRIPE_* audit_logs rows, and a restored ledger would make another deployment treat Stripe's events as already handled",
+  stripe_event_locks:
+    "the Stripe webhook's one-event-per-customer lock (customer id, the delivery holding it, when; admin-and-org P4, 20261175) — service-role only, a row lives only while a delivery runs (60-second lease), not org data; nothing to restore",
 };
 
 /** EGR-7 / XEDGE-10: columns whose VALUE is a live credential. The same rule
