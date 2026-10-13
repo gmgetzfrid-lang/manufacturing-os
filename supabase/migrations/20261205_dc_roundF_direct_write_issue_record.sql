@@ -28,7 +28,9 @@
 --     put-back: supersede_rollback | lifecycle_rollback | reversal_rollback;
 --     the legacy reversal's restore by its request path, reversal_restore;
 --     'direct' otherwise), the statuses, the revision, `putBack`
---     (three-state, P14's rule), `entryIntoForce` (P25's), the policy
+--     (three-state, P14's rule), `entryIntoForce` (P25's), `compensation:
+--     true` on a rollback door's row (the put-back undoes a failed saga, so
+--     a count of issues can leave it out), the policy
 --     decision (`reviewPolicyMode`, `rosterComplete`,
 --     `issuedWithoutSignOff` — read here, the roster counted exactly as the
 --     guard counts it), the actor's headline role (`user_role`, as the
@@ -341,6 +343,10 @@ BEGIN
             'putBack', v_put_back
           )
           || CASE WHEN v_entry THEN jsonb_build_object('entryIntoForce', true) ELSE '{}'::jsonb END
+          -- A rollback's put-back undoes a failed supersede / split / merge /
+          -- reversal (a compensation): marked, so a history, a viewer or an
+          -- export can leave it out of a count of issues.
+          || CASE WHEN v_door IN ('supersede_rollback', 'lifecycle_rollback', 'reversal_rollback') THEN jsonb_build_object('compensation', true) ELSE '{}'::jsonb END
           || jsonb_build_object(
             'reviewPolicyMode', v_mode,
             'rosterComplete', v_roster,
@@ -441,7 +447,7 @@ SELECT 'REV-19 (a): an AFTER UPDATE OF status trigger on documents records every
        NULL::text AS n
 UNION ALL
 SELECT 'REV-19 (a): the record is DOCUMENT_ISSUED in the app doors'' shape — door (the x-mos-issue-door header, a rollback''s door included, else direct), statuses, revision, putBack, entryIntoForce, the policy decision, what the clocks are owed (never that they started) — recordedBy database',
-       (SELECT prosrc LIKE '%''x-mos-issue-door''%''supersede_rollback'', ''lifecycle_rollback'', ''reversal_rollback''%INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, user_email, user_role, details)%VALUES (''DOCUMENT_ISSUED''%''door'', v_door%''putBack'', v_put_back%''entryIntoForce'', true%''reviewPolicyMode'', v_mode%''rosterComplete'', v_roster%''issuedWithoutSignOff''%''complianceClocksStarted'', NULL::boolean%''complianceClocksOwed''%''complianceClocksNote'', v_note%''actorRoles''%''recordedBy'', ''database''%'
+       (SELECT prosrc LIKE '%''x-mos-issue-door''%''supersede_rollback'', ''lifecycle_rollback'', ''reversal_rollback''%INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, user_email, user_role, details)%VALUES (''DOCUMENT_ISSUED''%''door'', v_door%''putBack'', v_put_back%''entryIntoForce'', true%''compensation'', true%''reviewPolicyMode'', v_mode%''rosterComplete'', v_roster%''issuedWithoutSignOff''%''complianceClocksStarted'', NULL::boolean%''complianceClocksOwed''%''complianceClocksNote'', v_note%''actorRoles''%''recordedBy'', ''database''%'
           FROM pg_proc WHERE proname = 'record_document_status_issue'),
        NULL
 UNION ALL

@@ -439,7 +439,9 @@ describe("REV-29 — putBackRetiredIssue: a NULL is asked for; an older body's b
     sup("r1");
     expect(await putBackRetiredIssue({ documentId: "r1", status: null, door: "supersede_rollback", olderBodyStatus: "Issued" })).toEqual({ kind: "landed", recorded: false });
     expect(docRow("r1").status).toBeNull();
-    expect(state.rpcCalls.map((c) => c.args.p_status)).toEqual([null]);
+    // REV-19 (a) (P23 fix pass): each put-back first asks the probe (document_status_issue_recorded_by_database) — the put_back_retired_issue calls are pinned exactly.
+    expect(state.rpcCalls.filter((c) => c.fn === "put_back_retired_issue").map((c) => c.args.p_status)).toEqual([null]);
+    expect(state.rpcCalls.filter((c) => c.fn === "document_status_issue_recorded_by_database")).toHaveLength(1);
   });
 
   it("before 20261192 (the older body refuses the NULL in its blank-status sentence, before any write): put back as 'Issued' — today's path — and said so (putBackAs)", async () => {
@@ -447,7 +449,8 @@ describe("REV-29 — putBackRetiredIssue: a NULL is asked for; an older body's b
     sup("r2");
     expect(await putBackRetiredIssue({ documentId: "r2", status: null, door: "lifecycle_rollback", olderBodyStatus: "Issued" })).toEqual({ kind: "landed", recorded: false, putBackAs: "Issued" });
     expect(docRow("r2").status).toBe("Issued");
-    expect(state.rpcCalls.map((c) => c.args.p_status)).toEqual([null, "Issued"]);
+    expect(state.rpcCalls.filter((c) => c.fn === "put_back_retired_issue").map((c) => c.args.p_status)).toEqual([null, "Issued"]);
+    expect(state.rpcCalls.filter((c) => c.fn === "document_status_issue_recorded_by_database")).toHaveLength(1); // asked once, never again for the retry
     expect(PUT_BACK_BLANK_STATUS_REFUSAL).toBe(PB_BLANK);
   });
 
@@ -456,7 +459,7 @@ describe("REV-29 — putBackRetiredIssue: a NULL is asked for; an older body's b
     sup("r3");
     expect(await putBackRetiredIssue({ documentId: "r3", status: null, door: "unarchive" })).toEqual({ kind: "refused", reason: PB_BLANK });
     expect(await putBackRetiredIssue({ documentId: "r3", status: "", door: "supersede_rollback", olderBodyStatus: "Issued" })).toEqual({ kind: "refused", reason: PB_BLANK });
-    expect(state.rpcCalls).toHaveLength(2);
+    expect(state.rpcCalls.filter((c) => c.fn === "put_back_retired_issue")).toHaveLength(2);
     expect(docRow("r3").status).toBe("Superseded");
   });
 

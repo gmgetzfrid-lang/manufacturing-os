@@ -152,11 +152,13 @@ function emulateTrigger(next: Row, old: Row, header: string | null) {
   const issuing = (!isControlledIssueStatus(from) && isControlledIssueStatus(to))
     || isUnguardedEntryIntoForce({ fromStatus: from, toStatus: to, hasCurrentRevision: true });
   if (!issuing) return;
+  const door = header && (["metadata", "bulk"].includes(header) || (header === "unarchive" && from === "Archived")
+    || (["supersede_rollback", "lifecycle_rollback", "reversal_rollback"].includes(header) && RETIRED.includes(String(from)))) ? header : "direct";
   T("audit_logs").push({
     id: `db-${++state.db.seq}`, action: "DOCUMENT_ISSUED", resource_id: next.id, resource_type: "document", org_id: next.org_id, user_id: ME,
     details: {
-      door: header && (["metadata", "bulk"].includes(header) || (header === "unarchive" && from === "Archived")
-        || (["supersede_rollback", "lifecycle_rollback", "reversal_rollback"].includes(header) && RETIRED.includes(String(from)))) ? header : "direct",
+      door,
+      ...(["supersede_rollback", "lifecycle_rollback", "reversal_rollback"].includes(door) ? { compensation: true } : {}),
       fromStatus: from, toStatus: to, complianceClocksStarted: null, recordedBy: "database",
     },
   });
@@ -276,6 +278,7 @@ describe("REV-19 (a) (P23) — each app door leaves exactly one DOCUMENT_ISSUED"
     expect(state.rpcHeaders).toEqual([{ fn: "put_back_retired_issue", name: ISSUE_DOOR_HEADER, value: "unarchive" }]);
     expect(issuedRows("d5")).toHaveLength(1);
     expect(issuedRows("d5")[0].details).toMatchObject({ door: "unarchive", recordedBy: "database" });
+    expect((issuedRows("d5")[0].details as Row).compensation).toBeUndefined(); // the un-archive is a person's restore, not a compensation
     expect(followUps("d5")).toHaveLength(0);
     expect(startedRows("d5")).toHaveLength(0);
     expect(state.probeCalls).toBe(1); // asked once, before the write
@@ -289,6 +292,7 @@ describe("REV-19 (a) (P23) — each app door leaves exactly one DOCUMENT_ISSUED"
       expect(r, via).toEqual({ kind: "landed", recorded: false });
       expect(state.rpcHeaders, via).toEqual([{ fn: "put_back_retired_issue", name: ISSUE_DOOR_HEADER, value: via }]);
       expect(issuedRows(id).map((x) => (x.details as Row).door), via).toEqual([via]);
+      expect((issuedRows(id)[0].details as Row).compensation, via).toBe(true); // marked, so a count of issues can leave it out
     }
   });
 

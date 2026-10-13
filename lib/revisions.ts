@@ -2420,7 +2420,8 @@ export async function unarchiveDocument(input: ArchiveInput & {
   const recordedByDatabase = before ? await isStatusIssueRecordedByDatabase() : false;
   const door = await putBackRetiredIssue({
     documentId: doc.id, status: restoredStatus, door: "unarchive", reason: reason?.trim() || "Restored from archive",
-    forceHold: input.forceHold === true, nameDoor: recordedByDatabase,
+    nameDoor: recordedByDatabase,
+    forceHold: input.forceHold === true,
   });
   if (door.kind === "refused") {
     throw new Error(door.noRow ? notRestored : `The document was NOT restored (${door.reason}) — nothing was changed.`);

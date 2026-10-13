@@ -145,12 +145,14 @@ describe("20261205 §1 — REV-19 (a): the database's record of a status-change 
     const rev = src("lib/revisions.ts");
     const vias = /export type RetiredIssuePutBackDoor = ([^;]+);/.exec(rev)![1].split("|").map((x) => x.trim().replace(/"/g, "")).filter((x) => x !== "unarchive");
     expect(FN).toContain(`WHEN v_header IN (${vias.map((v) => `'${v}'`).join(", ")}) AND v_retired THEN v_header`);
-    for (const k of ["door", "fromStatus", "toStatus", "versionId", "rev", "putBack", "entryIntoForce", "reviewPolicyMode", "rosterComplete", "issuedWithoutSignOff",
+    for (const k of ["door", "fromStatus", "toStatus", "versionId", "rev", "putBack", "entryIntoForce", "compensation", "reviewPolicyMode", "rosterComplete", "issuedWithoutSignOff",
       "complianceClocksStarted", "reviewClockReset", "acknowledgmentRosterOpened", "complianceClocksOwed", "complianceClocksNote", "complianceClockErrors", "complianceClocksBy",
       "actorRoles", "recordedBy", "requestPath"]) {
       expect(FN, k).toContain(`'${k}'`);
     }
     expect(FN).toContain("VALUES ('DOCUMENT_ISSUED', NEW.id::text, 'document', NEW.org_id, v_actor, v_email, v_role,");
+    // P23 second review fix: a rollback's put-back (a compensation of a failed saga) is marked, exactly for the rollback doors, so a count of issues can leave it out
+    expect(FN).toContain(`|| CASE WHEN v_door IN (${vias.map((v) => `'${v}'`).join(", ")}) THEN jsonb_build_object('compensation', true) ELSE '{}'::jsonb END`);
     // P23 fix pass: user_role is the headline role, as the app's doors wrote it; the collection rides in details
     expect(FN).toContain("SELECT m.email, m.role, COALESCE(NULLIF(m.roles, '{}'), ARRAY[m.role]) INTO v_email, v_role, v_roles");
     expect(FN).toContain("'actorRoles', to_jsonb(v_roles),");
@@ -197,6 +199,8 @@ describe("20261205 §1 — REV-19 (a): the database's record of a status-change 
     expect(rev).toContain('    .select("id"), recordedByDatabase ? input.door : null);');
     expect(rev).toContain('  }), nameDoor ? input.door : null);');
     expect(rev).toContain("  const nameDoor = input.nameDoor ?? await isStatusIssueRecordedByDatabase();");
+    // the un-archive passes its own probe answer — on its own line, so P19's pinned `forceHold` line stays byte for byte
+    expect(rev).toContain("    nameDoor: recordedByDatabase,\n    forceHold: input.forceHold === true,\n  });");
     expect(rev).toContain('      .select("id"), recordedByDatabase ? "unarchive" : null);');
     expect(rev).toContain("  const recordedByDatabase = isControlledIssueStatus(input.toStatus) ? await isStatusIssueRecordedByDatabase() : false;");
   });
