@@ -56,6 +56,8 @@ import { NextRequest } from "next/server";
 import { NOT_CURRENT_STATUSES } from "@/lib/aiBoundary";
 import { shareExpiryFor, shareStatusRefusal, versionServable, SHARE_MAX_DAYS, SHARE_DEFAULT_DAYS } from "@/lib/shareRules";
 import { shareFooterNotice, requestMeta, publicShareHoldReason } from "@/lib/shareServe";
+import { PDFDocument } from "pdf-lib";
+import { applyStampToPdfDoc } from "@/lib/stamping";
 
 const root = process.cwd();
 const src = (p: string) => readFileSync(join(root, p), "utf8");
@@ -177,7 +179,9 @@ const r2 = vi.hoisted(() => ({ send: vi.fn(async () => { state.seq.push("r2"); r
 vi.mock("@/lib/r2", () => ({ r2, R2_BUCKET: "bucket" }));
 const stamp = vi.hoisted(() => ({ calls: [] as Row[] }));
 vi.mock("@/lib/stamping", () => ({ applyStampToPdfDoc: vi.fn(async (_d: unknown, opts: Row) => { stamp.calls.push(opts); state.seq.push("stamp"); }) }));
-vi.mock("pdf-lib", () => ({ PDFDocument: { load: vi.fn(async () => ({ save: async () => new Uint8Array([1, 2, 3]) })) } }));
+// the real pdf-lib behind a fake load (PHYS-15: the real stamper, run by the
+// tests below, draws with pdf-lib's own rgb / StandardFonts / degrees)
+vi.mock("pdf-lib", async (orig) => ({ ...(await orig<typeof import("pdf-lib")>()), PDFDocument: { load: vi.fn(async () => ({ save: async () => new Uint8Array([1, 2, 3]) })) } }));
 
 const TOKEN = "t".repeat(32);
 const liveShare = (): Row => ({ id: "s1", org_id: "orgA", document_id: "docA", created_by: "u1", expires_at: null, revoked_at: null });
@@ -1173,5 +1177,60 @@ describe("ShareLinkModal / the landing page — the stated model", () => {
     for (const f of ["components/documents/ShareLinkModal.tsx", "app/share/[token]/page.tsx", "lib/documentShares.ts"]) {
       expect(src(f), f).not.toMatch(/window\.location\.origin/);
     }
+  });
+});
+
+// ── public-surfaces Round G, PS-P7 (PHYS-15) ─────────────────────────────────
+// The stamp's font (pdf-lib's Helvetica-Bold, WinAnsi) cannot print a Unicode
+// hyphen or a Greek delta; the stamp threw, and this route's catch released
+// the copy UNSTAMPED ("share_link_unstamped"). The stamp now draws such a
+// character in a form the font prints (lib/stamping.ts stampText), so the
+// copy leaves stamped. Here the REAL pdf-lib and the REAL stamper run.
+describe("PHYS-15 — a shared document numbered \"P‐101\" at revision \"Δ1\" leaves STAMPED", () => {
+  async function realStampOnce() {
+    const realPdf = await vi.importActual<typeof import("pdf-lib")>("pdf-lib");
+    const realStamping = await vi.importActual<typeof import("@/lib/stamping")>("@/lib/stamping");
+    const d = await realPdf.PDFDocument.create();
+    d.addPage([1224, 792]);
+    const bytes = await d.save();
+    r2.send.mockImplementationOnce(async () => { state.seq.push("r2"); return { Body: { transformToByteArray: async () => new Uint8Array(bytes) } }; });
+    vi.mocked(PDFDocument.load).mockImplementationOnce(((b: Uint8Array) => realPdf.PDFDocument.load(b)) as unknown as typeof PDFDocument.load);
+    const results: Array<Awaited<ReturnType<typeof realStamping.applyStampToPdfDoc>>> = [];
+    vi.mocked(applyStampToPdfDoc).mockImplementationOnce(async (doc, opts) => {
+      stamp.calls.push(opts as Row);
+      const r = await realStamping.applyStampToPdfDoc(doc, opts);
+      results.push(r);
+      return r;
+    });
+    return { bytes, results };
+  }
+
+  it("the download is stamped and recorded as stamped (share_link) — never released unmarked; the stamp says what it replaced", async () => {
+    state.doc = issuedDoc({ document_number: "P‐101" });
+    state.versionById = { "v-cur": publishedVersion({ revision_label: "Δ1" }) };
+    const { bytes, results } = await realStampOnce();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const res = await fileGet();
+      expect(res.status).toBe(200);
+      const out = new Uint8Array(await res.arrayBuffer());
+      expect(out.length).toBeGreaterThan(bytes.length); // the stamped bytes, not the source
+      expect(warn).not.toHaveBeenCalledWith(expect.stringMatching(/stamping failed/), expect.anything());
+    } finally {
+      warn.mockRestore();
+    }
+    expect(inserted("download_audits")).toEqual([expect.objectContaining({ source: "share_link", share_id: "s1", user_id: null })]);
+    // the footer the route built carries the number and revision as on record …
+    expect(String(stamp.calls[0].footerNotice)).toMatch(/^P‐101 Rev Δ1 \(Issued\) at time of download/);
+    // … and the stamp drew them in characters its font prints
+    expect(results[0]).toEqual({ mapped: [{ char: "‐", codePoint: "U+2010", printedAs: "-" }, { char: "Δ", codePoint: "U+0394", printedAs: "Delta" }] });
+  });
+
+  it("REGRESSION: a plain number and revision stamp exactly as before — nothing replaced", async () => {
+    const { results } = await realStampOnce();
+    const res = await fileGet();
+    expect(res.status).toBe(200);
+    expect(inserted("download_audits")).toEqual([expect.objectContaining({ source: "share_link" })]);
+    expect(results[0]).toEqual({ mapped: [] });
   });
 });

@@ -33,12 +33,17 @@
 //                  recorded as delivered, the refusal on the issuer's trail.
 //                  `&nav=1` answers a refusal as plain text for the portal
 //                  page's download frame.
+//   PHYS-15        (public-surfaces PS-P7) the route stamps portalStampText;
+//                  a character the stamp's font cannot print (a Unicode
+//                  hyphen, a Greek delta) is drawn in a form it prints, the
+//                  copy says so, and the delivery's trail records it
+//                  (`stampMapped`) — such an item is armed and stamped.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, PDFPage } from "pdf-lib";
 
 const state = vi.hoisted(() => ({
   transmittal: null as Record<string, unknown> | null,
@@ -620,7 +625,7 @@ describe("TRX-15 — a PDF that cannot be stamped: released recorded-unstamped w
   const arm = () => { (state.transmittal!.items as Array<Record<string, unknown>>)[0].stampable = true; };
   const restoreStamp = () => {
     vi.mocked(applyStampToPdfDoc).mockReset();
-    vi.mocked(applyStampToPdfDoc).mockImplementation(async (_doc: unknown, opts: Record<string, unknown>) => { state.order.push("stamp"); state.stamps.push(opts); });
+    vi.mocked(applyStampToPdfDoc).mockImplementation(async (_doc: unknown, opts: Record<string, unknown>) => { state.order.push("stamp"); state.stamps.push(opts); return { mapped: [] }; });
   };
   beforeEach(() => {
     state.versionRow = { file_url: `orgs/orgA/d/${DOC}.pdf`, org_id: "orgA", record_id: DOC, revision_label: "3" };
@@ -859,7 +864,7 @@ describe("TRX-15 (P22) — an item the issue armed (armCheckedItems, then the is
   const stamperRefuses = () => vi.mocked(applyStampToPdfDoc).mockImplementation(async () => { throw new Error("Input document to `PDFDocument.load` is encrypted."); });
   const restoreStamp = () => {
     vi.mocked(applyStampToPdfDoc).mockReset();
-    vi.mocked(applyStampToPdfDoc).mockImplementation(async (_doc: unknown, opts: Record<string, unknown>) => { state.order.push("stamp"); state.stamps.push(opts); });
+    vi.mocked(applyStampToPdfDoc).mockImplementation(async (_doc: unknown, opts: Record<string, unknown>) => { state.order.push("stamp"); state.stamps.push(opts); return { mapped: [] }; });
   };
 
   it("checked stampable at issue, then the stamp fails at download → 422 unstampable / stamp_failed; nothing recorded as delivered, no download counted, the refusal on the issuer's trail", async () => {
@@ -937,26 +942,63 @@ describe("TRX-15 (P22) — an item the issue armed (armCheckedItems, then the is
     }));
   });
 
-  it("P22 review fix: an item whose revision label the stamp cannot print is never armed — a stamp failure at download releases it recorded-unstamped with the issuer told (as on b0a03b1), never refused on every download", async () => {
-    // the item as the issue writes it (armCheckedItems), then the trigger's merge
-    // (20261133 keeps the item's own non-empty rev): even a check that said
-    // stampable — one that did not stamp the revision — does not arm it.
-    const draft = [{ documentId: DOC, number: "P-101", rev: "Δ1", versionId: VER }];
-    const armed = armCheckedItems(draft, [{ documentId: DOC, number: "P-101", verdict: "stampable" }]);
-    expect(armed.armed).toBe(0);
+  // PHYS-15 (public-surfaces PS-P7) replaces P22's rule here: the stamp
+  // draws a character its font cannot print in a form it prints (lib/
+  // stamping.ts stampText), so an item whose number or revision label has
+  // one is armed again — and the download STAMPS it, never refuses it.
+  it("PHYS-15: an item numbered \"P‐101\" with a revision label \"Δ1\" is armed, and every download STAMPS it — the replacement printed on the copy and recorded on the delivery's trail", async () => {
+    const draft = [{ documentId: DOC, number: "P‐101", rev: "Δ1", versionId: VER }];
+    const armed = armCheckedItems(draft, [{ documentId: DOC, number: "P‐101", verdict: "stampable" }]);
+    expect(armed.armed).toBe(1);
     state.transmittal!.items = (armed.items as Array<Record<string, unknown>>).map((it) => ({ ...it, fileHash: sha(state.bytes), statusAsSent: "Issued" }));
-    expect((state.transmittal!.items as Array<Record<string, unknown>>)[0]).not.toHaveProperty("stampable");
+    expect((state.transmittal!.items as Array<Record<string, unknown>>)[0].stampable).toBe(true);
     state.versionRow = { file_url: `orgs/orgA/d/${DOC}.pdf`, org_id: "orgA", record_id: DOC, revision_label: "Δ1" };
-    vi.mocked(applyStampToPdfDoc).mockImplementation(async () => { throw new Error('WinAnsi cannot encode "Δ" (0x0394)'); });
+    const real = await vi.importActual<typeof import("@/lib/stamping")>("@/lib/stamping");
+    const drawn: string[] = [];
+    const proto = PDFPage.prototype as unknown as Record<string, (...a: unknown[]) => unknown>;
+    const draw = proto.drawText;
+    const spy = vi.spyOn(proto, "drawText").mockImplementation(function (this: PDFPage, ...a: unknown[]) { drawn.push(a[0] as string); return draw.apply(this, a); });
+    vi.mocked(applyStampToPdfDoc).mockImplementation(async (doc, opts) => { state.stamps.push(opts as Record<string, unknown>); return real.applyStampToPdfDoc(doc, opts); });
     try {
       for (let attempt = 0; attempt < 2; attempt++) {
         const res = await get(DOC);
         expect(res.status).toBe(200);
-        expect(sha(new Uint8Array(await res.arrayBuffer()))).toBe(sha(state.bytes));
+        expect(res.headers.get("x-transmittal-stamped")).toBe("1");
+        expect(sha(new Uint8Array(await res.arrayBuffer()))).not.toBe(sha(state.bytes));
       }
-      expect(state.downloads.map((d) => d.source)).toEqual(["transmittal_portal_unstamped", "transmittal_portal_unstamped"]);
+      expect(state.downloads.map((d) => d.source)).toEqual(["transmittal_portal", "transmittal_portal"]);
       expect(state.audits.some((a) => a.action === "TRANSMITTAL_PORTAL_UNSTAMPABLE_REFUSED")).toBe(false);
-      expect(state.notifications[0]).toMatchObject({ metadata: { documentId: DOC, reason: "stamp_failed", outcome: "released" } });
+      expect(state.notifications).toHaveLength(0);
+      // the stamp's text is the item's, as on record …
+      expect(String(state.stamps[0].footerNotice)).toContain("P‐101 Rev Δ1 as issued on transmittal TR-0001");
+      // … drawn in characters the font prints, the copy saying what was replaced
+      const all = drawn.join(" "); // the footer is word-wrapped: lines joined back with the space they were split on
+      expect(all).toContain("P-101 Rev Delta1 as issued on transmittal TR-0001");
+      expect(all).toContain('Printed in plain characters: U+2010 as "-", U+0394 as "Delta".');
+      expect(all).not.toMatch(/[‐Δ]/);
+      // … and recorded where the delivery already records the number and revision it stamped
+      const delivered = state.audits.filter((a) => a.action === "TRANSMITTAL_PORTAL_DOWNLOAD");
+      expect(delivered).toHaveLength(2);
+      expect(delivered[0].details).toMatchObject({
+        docNumber: "P‐101", rev: "Δ1", stamped: true, unstampedReason: null,
+        stampMapped: [{ char: "‐", codePoint: "U+2010", printedAs: "-" }, { char: "Δ", codePoint: "U+0394", printedAs: "Delta" }],
+      });
+    } finally {
+      spy.mockRestore();
+      restoreStamp();
+    }
+  });
+
+  it("PHYS-15 REGRESSION: an item in plain characters is stamped as before, and its delivery record carries no stampMapped key", async () => {
+    state.transmittal!.items = issued(draftItems, [{ documentId: DOC, number: "P-101", verdict: "stampable" }]);
+    const real = await vi.importActual<typeof import("@/lib/stamping")>("@/lib/stamping");
+    vi.mocked(applyStampToPdfDoc).mockImplementation(async (doc, opts) => { state.stamps.push(opts as Record<string, unknown>); return real.applyStampToPdfDoc(doc, opts); });
+    try {
+      const res = await get(DOC);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("x-transmittal-stamped")).toBe("1");
+      const details = state.audits.find((a) => a.action === "TRANSMITTAL_PORTAL_DOWNLOAD")!.details as Record<string, unknown>;
+      expect(Object.keys(details).sort()).toEqual(["docNumber", "documentId", "hashVerified", "issuedBy", "number", "rev", "servedSha256", "stamped", "unstampedReason", "versionId"]);
     } finally {
       restoreStamp();
     }

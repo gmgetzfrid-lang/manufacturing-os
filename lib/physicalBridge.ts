@@ -21,6 +21,8 @@
 
 import { PDFDocument, StandardFonts, rgb, PDFFont, PDFPage, PDFImage } from "pdf-lib";
 import { publicOrigin } from "@/lib/publicOrigin";
+import { stampText, stampTextNote, type StampTextMapping } from "@/lib/stamping";
+import { wrapToWidth } from "@/lib/stampLayout";
 
 const INK = rgb(0.09, 0.12, 0.16);
 const MUTED = rgb(0.42, 0.47, 0.53);
@@ -320,6 +322,21 @@ export interface PackageCoverInput {
   docs: Array<{ label: string; rev: string | null }>;
 }
 
+/** The cover's note of what it drew in another form (PHYS-15): at most this
+ *  many lines under the by-line, above the contents header. */
+export const COVER_NOTE_LINES = 2;
+
+/** PHYS-15: the cover's note wrapped to its text width at 8 pt — at most
+ *  COVER_NOTE_LINES lines, the last cut with "…" should it run over
+ *  (stampTextNote names at most twelve replacements, which fits two).
+ *  Exported for tests. */
+export function coverNoteLines(note: string, font: PDFFont): string[] {
+  const lines = wrapToWidth(note, 520, (s) => font.widthOfTextAtSize(s, 8));
+  return lines.length > COVER_NOTE_LINES
+    ? [...lines.slice(0, COVER_NOTE_LINES - 1), fit(lines.slice(COVER_NOTE_LINES - 1).join(" "), font, 8, 520)]
+    : lines;
+}
+
 /** Cover page (returned as a PDFDocument so callers can prepend it to the
  *  merged drawing pack). Scan → the live pack verdict (COVER_SCAN_LINES). */
 export async function buildPackageCover(input: PackageCoverInput): Promise<PDFDocument> {
@@ -328,17 +345,45 @@ export async function buildPackageCover(input: PackageCoverInput): Promise<PDFDo
   const regular = await doc.embedFont(StandardFonts.Helvetica);
   const page = doc.addPage([612, 792]);
 
+  // PHYS-15 / PHYS-16: every text the cover draws from data — the package's
+  // name and description, the owner and printer, each sheet's number and
+  // revision — in characters its fonts (WinAnsi) print, through the stamp's
+  // own helper (lib/stamping.ts stampText). Text they print comes back as the
+  // same string, so a cover that printed before is drawn exactly as before;
+  // any other character is drawn in a plain form ("P‐101" as "P-101", "Δ1"
+  // as "Delta1") or as a visible "?". It used to throw ("WinAnsi cannot
+  // encode …") and fail the whole /packages print once its sheets stamped.
+  // Mapped once, up front, so the first page's note names every replacement.
+  const mapped: StampTextMapping[] = [];
+  const drawable = (text: string): string => {
+    const out = stampText(text);
+    for (const m of out.mapped) if (!mapped.some((x) => x.char === m.char)) mapped.push(m);
+    return out.text;
+  };
+  const name = drawable(input.name);
+  const description = input.description ? drawable(input.description) : null;
+  const byLine = drawable(
+    `Owner: ${input.ownerName || "—"}   ·   Printed ${new Date().toLocaleDateString()}${input.printedByName ? ` by ${input.printedByName}` : ""}`,
+  );
+  const rows = input.docs.map((d) => ({ label: drawable(d.label), rev: drawable(`Rev ${d.rev ?? "—"}`) }));
+  const note = stampTextNote(mapped);
+
   page.drawRectangle({ x: 36, y: 690, width: 540, height: 66, color: INK });
   page.drawText("WORK PACKAGE", { x: 52, y: 726, size: 14, font: bold, color: rgb(0.7, 0.78, 0.86) });
-  page.drawText(fit(input.name, bold, 22, 500), { x: 52, y: 700, size: 22, font: bold, color: rgb(1, 1, 1) });
+  page.drawText(fit(name, bold, 22, 500), { x: 52, y: 700, size: 22, font: bold, color: rgb(1, 1, 1) });
 
-  if (input.description) {
-    page.drawText(fit(input.description, regular, 11, 520), { x: 52, y: 662, size: 11, font: regular, color: INK });
+  if (description) {
+    page.drawText(fit(description, regular, 11, 520), { x: 52, y: 662, size: 11, font: regular, color: INK });
   }
-  page.drawText(
-    `Owner: ${input.ownerName || "—"}   ·   Printed ${new Date().toLocaleDateString()}${input.printedByName ? ` by ${input.printedByName}` : ""}`,
-    { x: 52, y: 640, size: 9, font: regular, color: MUTED },
-  );
+  page.drawText(byLine, { x: 52, y: 640, size: 9, font: regular, color: MUTED });
+  // PHYS-15: only when a character was replaced — the paper says its
+  // contents are not exactly the numbers on record ("Printed in plain
+  // characters: U+2010 as "-", …").
+  if (note) {
+    coverNoteLines(note, regular).forEach((line, i) => {
+      page.drawText(line, { x: 52, y: 628 - i * 9, size: 8, font: regular, color: AMBER });
+    });
+  }
 
   // PKG-12: EVERY sheet is listed, in pack order — continuation pages carry
   // the rest (the cover used to list 24 and summarise the remainder as
@@ -352,16 +397,16 @@ export async function buildPackageCover(input: PackageCoverInput): Promise<PDFDo
   );
   const drawRows = (p: PDFPage, from: number, to: number, topY: number) => {
     for (let i = from; i < to; i++) {
-      const d = input.docs[i];
+      const d = rows[i];
       const y = topY - (i - from) * COVER_ROW_HEIGHT;
       p.drawText(fit(`${i + 1}.  ${d.label}`, regular, 10, 380), { x: 52, y, size: 10, font: regular, color: INK });
-      p.drawText(`Rev ${d.rev ?? "—"}`, { x: 460, y, size: 10, font: bold, color: INK });
+      p.drawText(d.rev, { x: 460, y, size: 10, font: bold, color: INK });
     }
   };
   if (chunks.length) drawRows(page, chunks[0][0], chunks[0][1], 580);
   chunks.slice(1).forEach(([from, to], k) => {
     const cont = doc.addPage([612, 792]);
-    cont.drawText(fit(`WORK PACKAGE — ${input.name}`, bold, 12, 500), { x: 52, y: 750, size: 12, font: bold, color: INK });
+    cont.drawText(fit(`WORK PACKAGE — ${name}`, bold, 12, 500), { x: 52, y: 750, size: 12, font: bold, color: INK });
     cont.drawText(`CONTENTS (continued) — revisions as printed · page ${k + 2} of ${totalPages}`, { x: 52, y: 730, size: 10, font: bold, color: MUTED });
     drawRows(cont, from, to, 706);
   });

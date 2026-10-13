@@ -8,16 +8,16 @@
     "audit-reports/public-surfaces/04-offline-pwa.md"
   ],
   "totals": {
-    "findings": 64,
+    "findings": 65,
     "gaps": 0,
     "by_severity": {
       "CRITICAL": 4,
       "HIGH": 13,
       "MEDIUM": 21,
-      "LOW": 26
+      "LOW": 27
     },
     "by_status": {
-      "RESOLVED": 52,
+      "RESOLVED": 53,
       "OPEN": 11,
       "WONTFIX": 1
     }
@@ -1301,7 +1301,7 @@
       "id": "PHYS-15",
       "title": "A document number or revision label with a character the stamp font cannot print fails every stamp path — the copy goes out unmarked, or not at all",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -1321,6 +1321,29 @@
       ],
       "refuted": false,
       "summary": "A drawing numbered \"P‐101\" (U+2010, pasted from Word) is shared by link. Every /api/share/file download leaves without its UNCONTROLLED marking; the in-app controlled download fails to stamp on the same text; the transmittal portal warns at issue and sends it unstamped. No path can ever stamp that document.",
+      "area": "public-surfaces",
+      "report": "audit-reports/public-surfaces/03-physical-bridge.md"
+    },
+    {
+      "id": "PHYS-16",
+      "title": "The physical bridge's own printed artifacts — the hold card, the equipment label, the drafting traveler (and, as opened, the work-package cover) — draw text with the standard fonts directly, and a character WinAnsi cannot print fails the print",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": "CONFIRMED",
+      "verification_note": "CONFIRMED. Reproduced after PS-P7's review fix (2026-10-07): `printHoldCard({ docLabel: \"P‐101\", docRev: \"Δ1\", … })` rejects `WinAnsi cannot encode \"‐\" (0x2010)`; `printEquipmentLabels([{ tag: \"P-101\", description: \"Motor 5 kΩ\" }])` rejects on `\"Ω\" (0x03a9)`; `printTicketTraveler({ ticketNumber: \"KE‐0001\", … })` rejects on U+2010. Each resolves with plain text. As opened, `buildPackageCover({ packageId, name, docs: [{ label: \"P‐101\", rev: \"Δ1\" }] })` rejected the same way on `b154823` and at `43cb45c`; it resolves since PS-P7's review fix.",
+      "blast_radius": null,
+      "related": [],
+      "locations": [
+        "lib/physicalBridge.ts:63",
+        "app/(protected)/packages/page.tsx"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A drawing numbered \"P‐101\" (U+2010, pasted from Word), or at revision \"Δ1\", goes on hold. Its hold card cannot be printed: printHoldCard throws and nothing downloads, so the red tag the hold exists to hang is never made. An equipment label whose description carries \"Ω\", or a traveler for a ticket whose number or title carries such a character, fails the same way. (As opened, the scenario was a /pa",
       "area": "public-surfaces",
       "report": "audit-reports/public-surfaces/03-physical-bridge.md"
     },

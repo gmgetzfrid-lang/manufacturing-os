@@ -22,6 +22,7 @@ import { emit } from "@/lib/notify/dispatch";
 import { logAuditAction } from "@/lib/audit";
 import { isPackLeftOutCode, type PackLeftOutCode } from "@/lib/packLeftOut";
 import type { PackSheetRef, PackSkip } from "@/lib/docPack";
+import type { StampTextMapping } from "@/lib/stamping";
 
 /** PKG-7: a member's freshness as the READER can know it. `unknown` = the
  *  document row is not readable by this person (RLS hides a private /
@@ -374,9 +375,13 @@ export class PackagePrintNotRecordedError extends Error {
   }
 }
 
-/** One sheet of a printed pack, as the snapshot records it. */
+/** One sheet of a printed pack, as the snapshot records it. `stampMapped`
+ *  (PHYS-15, only when the sheet's stamp drew a character in another form):
+ *  each such character, its code point and what the paper shows instead —
+ *  in the recorded number or revision, or a name the stamp carries. */
 export interface PrintSnapshotSheet {
   documentId: string; versionId: string | null; revLabel: string | null; label: string;
+  stampMapped?: StampTextMapping[];
 }
 
 /** VFY-19: one sheet the print LEFT OUT, as the snapshot records it — the

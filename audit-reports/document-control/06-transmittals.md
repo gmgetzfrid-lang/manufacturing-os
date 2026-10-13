@@ -962,6 +962,12 @@ Tests: `lib/__tests__/transmittalPortalRoute.test.ts`:
 - The download route still builds its own stamp text (`app/api/transmittal/route.ts`, notifications N8's file). A test pins it equal to `portalStampText`, the text the check stamps. **Owner of the switch to `portalStampText`:** notifications N8; failing that, the integrator at the P22 / N8 merge. The same file's after-the-fact notice for an issuer-accepted item whose label cannot be printed gives the restricted-PDF reason ("most often a PDF saved with security or permission restrictions"). The issuer was already told the right reason at issue. Same owner.
 - No migration.
 
+**Cross-area note (2026-10-07, public-surfaces Round G, PS-P7 STAMP TEXT ENCODING — [`PHYS-15`](../public-surfaces/03-physical-bridge.md#phys-15)).** Recorded here, not claimed for `TRX-15`: its status and done-whens are unchanged. The stamp now draws a character its font cannot print in a form it prints (`lib/stamping.ts` `stampText`: a Unicode hyphen as "-", a Greek delta as "Delta", else a visible "?"), never fails on one, and the copy says what it replaced. So, in the second review fix above:
+- `armCheckedItems` no longer leaves an item unarmed for its own number or revision label. Such an item is armed on its check's `stampable` verdict, like any other, and stamps at download (`lib/__tests__/transmittalPortalRoute.test.ts`, "PHYS-15: …"). The "never armed" sentences above describe P22's rule as it shipped.
+- The issue-time check stamps such a label (`stampable`), so the warning "change it to plain characters" is no longer given for it. The `unprintable` branch remains for a stamp that still refuses a character (none, by a code-point test) and now names the character pdf-lib refused.
+- The download route now stamps `portalStampText` (the switch P22 left to notifications N8 or the integrator). Its `TRANSMITTAL_PORTAL_DOWNLOAD` row records `stampMapped` when a character was replaced. Still with notifications N9, as P22 left them: the route's stale header comment (`:34`–`:36`). The label case of the after-the-fact notice's reason no longer arises.
+- Done-when 1's sentence "an item whose number or revision label the stamp cannot print is never armed, so a PDF checked stampable is no longer refused for good over its own label" now reads: every such label stamps, so such an item is armed and is not refused over its label. The rest of done-when 1 and its exceptions (`TRX-17`) are unchanged.
+
 ---
 
 <a id="trx-16"></a>

@@ -377,6 +377,9 @@ describe("TRX-15 (P22, DEC-90 A5) — the issue writes `stampable: true` on each
   // number or revision label the stamp's font cannot print (a Greek delta,
   // a Unicode hyphen pasted from Word) passed it and the item was armed —
   // then refused at every download, for good.
+  // PHYS-15 (public-surfaces PS-P7): a current server's check no longer
+  // answers `unprintable` for a label (the stamp prints every character);
+  // this pins how the browser still reads such an answer (an older server).
   it("P22 review fix: a check that finds the item's label unprintable stops the issue naming the characters; Issue anyway leaves that item unarmed (released recorded-unstamped, as before P22)", async () => {
     const LABEL: ItemStampCheck = { documentId: "d2", number: "VDS-7", verdict: "unloadable", detail: "its number or revision label has a character the portal's stamp cannot print (‐)", unprintable: "‐" };
     stampAnswer = { status: 200, body: { items: [OK, LABEL] } };
@@ -392,16 +395,21 @@ describe("TRX-15 (P22, DEC-90 A5) — the issue writes `stampable: true` on each
     expect(db.audits[0]).toMatchObject({ details: expect.objectContaining({ unstampableAccepted: [{ documentId: "d2", number: "VDS-7", verdict: "unloadable" }] }) });
   });
 
-  it("P22 review fix: an item whose own number or revision the stamp cannot print is never armed, even when its check said stampable (a check that did not stamp the label) — and a mark already on it is stripped", async () => {
+  // PHYS-15 (public-surfaces PS-P7) replaces P22's label guard: the stamp
+  // now draws a character its font cannot print in a form it prints
+  // (lib/stamping.ts stampText) and never fails on it, so an item P22 left
+  // unarmed for its label is armed again — on its check alone.
+  it("PHYS-15: an item whose own number or revision has a character the font cannot print is ARMED again when its check said stampable — the arming still requires the check", async () => {
     readRow = { ...stored, items: [{ ...rawItems[0], rev: "Δ1", stampable: true }, { ...rawItems[1], number: "VDS‐7" }, { documentId: "d3", number: "P-103", rev: "Rév B" }] };
     db.handlers.documents = () => ({ data: ["d1", "d2", "d3"].map((d, i) => ({ id: d, status: "Issued", archived_at: null, current_version_id: `v${i + 1}` })), error: null });
     stampAnswer = { status: 200, body: { items: [OK, { ...OK, documentId: "d2", number: "VDS‐7" }, { ...OK, documentId: "d3", number: "P-103" }] } };
     await issueTransmittal("t1", actor);
     const items = lastUpdate().patch.items as Array<Record<string, unknown>>;
-    expect(items[0]).toEqual({ ...rawItems[0], rev: "Δ1" });
-    expect(items[1]).toEqual({ ...rawItems[1], number: "VDS‐7" });
+    expect(items[0]).toEqual({ ...rawItems[0], rev: "Δ1", stampable: true });
+    expect(items[1]).toEqual({ ...rawItems[1], number: "VDS‐7", stampable: true });
     // REGRESSION: Latin-1 (é) prints — armed as before
     expect(items[2]).toEqual({ documentId: "d3", number: "P-103", rev: "Rév B", stampable: true });
+    // (the arming still requires the check: pinned in the pure rule below)
   });
 
   it("armCheckedItems — the pure rule", () => {
@@ -416,12 +424,13 @@ describe("TRX-15 (P22, DEC-90 A5) — the issue writes `stampable: true` on each
     // a document with a stampable and a non-stampable verdict is not armed
     expect(armCheckedItems([{ documentId: "d1" }], [OK, { ...OK, verdict: "unchecked" }]).armed).toBe(0);
     expect(armCheckedItems("not an array", [OK])).toEqual({ items: [], changed: false, armed: 0 });
-    // P22 review fix: a number or revision the stamp cannot print is never armed
-    for (const bad of [{ rev: "Δ1" }, { rev: "P‐01" }, { rev: "A→B" }, { number: "P‐101" }, { number: "Ω-1" }]) {
-      expect(armCheckedItems([{ documentId: "d1", number: "P-101", ...bad }], [OK]).armed).toBe(0);
-    }
-    for (const ok of [{ rev: "A" }, { rev: "1.2" }, { rev: " C " }, { rev: null }, { rev: "Rév B" }, { number: "P–101" }]) {
-      expect(armCheckedItems([{ documentId: "d1", number: "P-101", ...ok }], [OK]).armed).toBe(1);
+    // PHYS-15 (replacing P22's label guard): a number or revision the font
+    // cannot print as typed is stamped in plain characters, so it is armed
+    // on its check like any other — and never without one
+    for (const label of [{ rev: "Δ1" }, { rev: "P‐01" }, { rev: "A→B" }, { number: "P‐101" }, { number: "Ω-1" }, { rev: "A" }, { rev: "1.2" }, { rev: " C " }, { rev: null }, { rev: "Rév B" }, { number: "P–101" }]) {
+      expect(armCheckedItems([{ documentId: "d1", number: "P-101", ...label }], [OK]).armed).toBe(1);
+      expect(armCheckedItems([{ documentId: "d1", number: "P-101", ...label }], null).armed).toBe(0);
+      expect(armCheckedItems([{ documentId: "d1", number: "P-101", ...label }], [{ ...OK, verdict: "unchecked" }]).armed).toBe(0);
     }
     expect(stampFooterUnprintable("P‐01 Δ1 Δ2")).toBe("‐Δ");
     expect(stampFooterUnprintable("Rev A — 1.2 (é, €, “x”)")).toBe("");

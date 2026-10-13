@@ -65,9 +65,9 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { PDFDocument } from "pdf-lib";
-import { applyStampToPdfDoc } from "@/lib/stamping";
+import { applyStampToPdfDoc, type StampTextMapping } from "@/lib/stamping";
 import { publicOrigin } from "@/lib/publicOrigin";
-import { portalKeyAllowed, portalRowRefusal } from "@/lib/transmittals";
+import { portalKeyAllowed, portalRowRefusal, portalStampText } from "@/lib/transmittals";
 import { effectiveStatusFor } from "@/lib/effectiveDate";
 import { isPdfFile } from "@/lib/verifyVerdict";
 import { notifyChecked, notifyWithReason } from "@/lib/inAppNotifications";
@@ -544,18 +544,23 @@ export async function GET(req: NextRequest) {
     const isPdf = looksLikePdf(head);
     let outBytes: Uint8Array | null = source;
     let stamped = false;
+    // PHYS-15: what the stamp drew in another form (a character its font
+    // cannot print), recorded on the delivery's trail beside the number and
+    // revision it stamped.
+    let stampMapped: StampTextMapping[] = [];
     let unstampedReason: "not_pdf" | "oversize" | "stamp_failed" | null = !isPdf ? "not_pdf" : source ? null : "oversize";
     if (isPdf && !source && armed) return refuseUnstampable("oversize", null);
     if (isPdf && source) {
       try {
         const pdfDoc = await PDFDocument.load(source);
-        await applyStampToPdfDoc(pdfDoc, {
-          userLabel: `transmittal ${String(t.number ?? "")}`.trim(),
+        // TRX-15 (P22) / PHYS-15: the text the issue-time check stamps
+        // (lib/transmittals.ts portalStampText), drawn in characters the
+        // stamp's font prints.
+        const result = await applyStampToPdfDoc(pdfDoc, {
+          ...portalStampText({ docNumber: label, rev, transmittalNumber: t.number == null ? null : String(t.number), issuedOn, verifyUrl }),
           timestamp: new Date(),
-          watermarkText: "UNCONTROLLED — TRANSMITTAL COPY",
-          footerNotice: `${label} Rev ${rev ?? "?"} as issued on transmittal ${String(t.number ?? "")}${issuedOn ? ` (${issuedOn})` : ""}. ${verifyUrl ? "Scan the QR to confirm it is still current." : "Confirm the current revision with the issuer before use."}`,
-          verifyUrl,
         });
+        stampMapped = result?.mapped ?? [];
         outBytes = await pdfDoc.save();
         stamped = true;
       } catch (e) {
@@ -625,6 +630,7 @@ export async function GET(req: NextRequest) {
       details: {
         number: t.number, documentId: fileDoc, docNumber: item.number, rev, versionId: file.versionId,
         issuedBy: t.created_by ?? null, stamped, unstampedReason, servedSha256, hashVerified: !!recorded,
+        ...(stamped && stampMapped.length > 0 ? { stampMapped } : {}),
       },
     }).then(() => undefined, () => undefined);
     await bumpUse(String(t.id), "download");

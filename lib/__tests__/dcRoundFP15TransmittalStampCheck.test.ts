@@ -24,6 +24,11 @@
 // stamped a fixed text with no revision, so a revision label the stamp's
 // font cannot print (a Greek delta, a Unicode hyphen) passed the check, the
 // issue armed the item, and every download of it was refused for good.
+//
+// public-surfaces PS-P7 (PHYS-15): the stamp now draws a character its font
+// cannot print in a form it prints (lib/stamping.ts stampText) and never
+// fails on it, so such a label is stampable — the P22 test that pinned it
+// `unloadable` is rewritten to the new rule.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
@@ -456,27 +461,45 @@ describe("TRX-15 (P22 review fix) — the check stamps the text the download sta
     expect(String(st.stamps[0].footerNotice)).toMatch(/Confirm the current revision with the issuer before use\.$/);
   });
 
-  it("a revision label the stamp cannot print is unloadable, naming the characters — it passed the old check (fixed text) and was refused at every download", async () => {
-    // the reviewer's reproduction: the old check's text stamps, the download's text with rev "P‐01" does not
+  // PHYS-15 (public-surfaces PS-P7) replaces P22's rule here: the stamp
+  // draws a character its font cannot print in a form it prints (lib/
+  // stamping.ts stampText), so such a label no longer fails the check — it
+  // is stampable (and armed), never warned "change it to plain characters".
+  it("PHYS-15: a number or revision label with a character the font cannot print now STAMPS — stampable, no warning; the stamp says what it replaced", async () => {
+    // the reviewer's reproduction, after PHYS-15: the download's text with rev "P‐01" stamps
     const loaded = () => PDFDocument.load(GOOD);
-    await expect(realStamp(await loaded(), { userLabel: "transmittal stamp check", timestamp: new Date(), watermarkText: "UNCONTROLLED — TRANSMITTAL COPY", footerNotice: "P-101 as issued on a transmittal (issue-time stamp check).", verifyUrl: "https://stamp-check.invalid/verify" })).resolves.toBeUndefined();
-    await expect(realStamp(await loaded(), { ...portalStampText({ docNumber: "P-101", rev: "P‐01", transmittalNumber: "TR-0042", issuedOn: "2026-10-07" }), timestamp: new Date() })).rejects.toThrow(/WinAnsi cannot encode/);
+    await expect(realStamp(await loaded(), { userLabel: "transmittal stamp check", timestamp: new Date(), watermarkText: "UNCONTROLLED — TRANSMITTAL COPY", footerNotice: "P-101 as issued on a transmittal (issue-time stamp check).", verifyUrl: "https://stamp-check.invalid/verify" })).resolves.toEqual({ mapped: [] });
+    await expect(realStamp(await loaded(), { ...portalStampText({ docNumber: "P-101", rev: "P‐01", transmittalNumber: "TR-0042", issuedOn: "2026-10-07" }), timestamp: new Date() }))
+      .resolves.toEqual({ mapped: [{ char: "‐", codePoint: "U+2010", printedAs: "-" }] });
+    st.stamps = [];
 
     file("d1"); label("d1", "Δ1"); // the item records no rev: the current file's label is stamped
     file("d2"); label("d2", "A");
     file("d3"); label("d3", "A");
     const out = await runFor([item("d1", "P-101"), { ...item("d2", "P-102"), rev: "P‐01" }, item("d3", "P‐103")]);
     expect(out).toEqual([
-      { documentId: "d1", number: "P-101", verdict: "unloadable", detail: "its number or revision label has a character the portal's stamp cannot print (Δ)", unprintable: "Δ" },
-      { documentId: "d2", number: "P-102", verdict: "unloadable", detail: "its number or revision label has a character the portal's stamp cannot print (‐)", unprintable: "‐" },
-      { documentId: "d3", number: "P‐103", verdict: "unloadable", detail: "its number or revision label has a character the portal's stamp cannot print (‐)", unprintable: "‐" },
+      { documentId: "d1", number: "P-101", verdict: "stampable" },
+      { documentId: "d2", number: "P-102", verdict: "stampable" },
+      { documentId: "d3", number: "P‐103", verdict: "stampable" },
     ]);
-    // warned at issue, with the right reason and remedy (not "re-save it without restrictions")
-    expect(unstampableItems(out)).toHaveLength(3);
-    const warning = describeUnstampable(out)!;
-    expect(warning).toContain("P-101: its number or revision label contains “Δ” (U+0394), which the portal's stamp cannot print");
-    expect(warning).toContain("P-102: its number or revision label contains “‐” (U+2010)");
-    expect(warning).not.toMatch(/re-save it without restrictions/);
+    expect(unstampableItems(out)).toEqual([]);
+    expect(describeUnstampable(out)).toBeNull();
+    // the check stamped the download's text, characters as they are on record
+    expect(String(st.stamps[0].footerNotice)).toContain("P-101 Rev Δ1 as issued on transmittal TR-0042");
+    expect(String(st.stamps[2].footerNotice)).toContain("P‐103 Rev A as issued");
+  });
+
+  it("PHYS-15: should the stamp still refuse a character (a defect), the check names the one pdf-lib refused — unloadable, warned at issue", async () => {
+    file("d1"); label("d1", "Δ1");
+    const real = await import("@/lib/stamping");
+    const spy = vi.spyOn(real, "applyStampToPdfDoc").mockRejectedValueOnce(new Error('WinAnsi cannot encode "Ж" (0x0416)'));
+    try {
+      expect(await runFor([item("d1", "P‐101")])).toEqual([
+        { documentId: "d1", number: "P‐101", verdict: "unloadable", detail: "its number or revision label has a character the portal's stamp cannot print (Ж)", unprintable: "Ж" },
+      ]);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("REGRESSION: plain, Latin-1 and cp1252 labels still stamp; a non-PDF or oversize file is not stamped, so its label never matters; an encrypted PDF keeps its own reason", async () => {
@@ -539,7 +562,7 @@ describe("TRX-15 (P22 review fix) — the check stamps the text the download sta
     }
     expect(mismatches).toEqual([]);
     expect(printable).toBeGreaterThan(218); // the 218 WinAnsi characters, plus whitespace (printed as a space)
-  });
+  }, 60_000); // PHYS-15: 65,536 encodes — over the 5 s default on a loaded machine (P22 recorded it timing out)
 });
 
 describe("TRX-16 — /api/transmittal/stamp-check", () => {

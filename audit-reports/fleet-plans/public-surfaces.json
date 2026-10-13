@@ -195,6 +195,21 @@
     "document-control P22 merged (portalStampText, stampFooterUnprintable, armCheckedItems)"
    ],
    "sequencingNotes": "Added by the integrator 2026-10-07 at the P22 merge (DEC-31). Can run once P22 is merged."
+  },
+  {
+   "name": "PS-P8 PHYSICAL BRIDGE TEXT \u2014 the hold card, the equipment label and the drafting traveler draw caller text through stampText (PHYS-16)",
+   "findings": [
+    "PHYS-16 (assigned by the integrator 2026-10-13 at the PS-P7 merge, DEC-31: lib/physicalBridge.ts printEquipmentLabels, printHoldCard and the drafting traveler draw caller text with the standard fonts through fit(), which throws on a character WinAnsi cannot print and fails the whole print; map once up front through lib/stamping.ts stampText as buildPackageCover's drawable does, and add the substitution note where the text is a document's identity)"
+   ],
+   "files": [
+    "lib/physicalBridge.ts (the three generators; fit())",
+    "tests: a tag, description, reason or name carrying a character WinAnsi cannot print yields a printable PDF with the mapped text; regression \u2014 every ASCII print unchanged in its text runs"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "PS-P7 merged (DEC-97; stampText and buildPackageCover's drawable pattern)"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-13 at the PS-P7 merge (DEC-31): PS-P7 proposed it as 'PS-P7b'. One file; no migration; runs any time."
   }
  ],
  "crossAreaFileOverlaps": [
