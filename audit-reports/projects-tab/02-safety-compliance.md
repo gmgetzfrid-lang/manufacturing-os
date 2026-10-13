@@ -1015,7 +1015,7 @@ project history for the document will be hidden.
 *Numbered SAF-19 on this branch (opened by projects-joint J14 PROJECTS FOLLOW-UPS as `SAF-9`'s remainder, per `DEC-31`). If the number collides at merge the integrator renumbers.*
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** document-control, the owner of `components/documents/ReviewGateSection.tsx`: its next package that edits the review promote. Proposed by projects-joint J14 PROJECTS FOLLOW-UPS, 2026-10-07, in its review's fix pass (DEC-31). The integrator names the package at the J14 merge.
 - **Assigned:** document-control P23 DIRECT-WRITE ISSUE RECORD (the next document-control package; ReviewGateSection is document-control's) — by the integrator, 2026-10-07 (J14 merge; fleet plan `document-control.json`).
 - **Verification:** READ (by reading `ReviewGateSection` and the notice route at J14's HEAD; not exercised against a live database)
@@ -1035,6 +1035,16 @@ project history for the document will be hidden.
 **Done when.**
 - A submission approved from the review surface tells the link's contact, through the same route, once.
 - A rendered test drives the review surface's approval of an intake-born version and of an ordinary one (no notice).
+
+**Resolution (2026-10-13, document-control Round F wave 3).** Package **P23 DIRECT-WRITE ISSUE RECORD**. Reproduced on `596d34e`: `components/documents/ReviewGateSection.tsx` `publish()` called `finalizeReviewedRevision` and refreshed; no path called `notifyIntakeOutcome` (grep: only `components/projects/IntakePanel.tsx` did), so approving a contractor's submission from the document's review surface emailed nobody (the rendered case below fails against the base panel: the route is never asked).
+- `components/documents/ReviewGateSection.tsx`: `publish()` keeps the version it promotes (`promoting`, the one on screen) and, once the publish landed, calls `tellContractor` without awaiting it (`:228`) — the decision's refresh and `onChanged` are never held up. `tellContractor` (`:188`) reads the document's `current_version_id` (the approved version must now be current — IntakePanel's "landed" test) and the version's `intake_link_id` (the key the notice route keys on — `app/api/intake/outcome-notice/route.ts:99`); for an intake-born version it asks `notifyIntakeOutcome(orgId, versionId)` — the same route, which reads the outcome from the version, claims one send per submission and emails only the link's contact (DEC-56), so the Intake tab's call and this one never both send — and shows its answer in a `role="status"` line (`review-intake-notice`) above whatever the panel shows next, worded as the Intake tab words the same answers (`intakeNoticeSentence`, `:51` — the words of `IntakePanel.tsx` `outcomeNoticeSentence`, not imported: that module is the whole Intake tab). An ordinary revision asks nothing and shows nothing; a version that is not current after the promote, or a refused publish, tells nobody; an unreadable intake link is said ("… could not be read — if it did, its contact was not emailed …; the project's Intake tab can tell them"), never a silent success.
+- Tests: `lib/__tests__/dcRoundFReviewIntakeNotice.test.ts` (6, rendered): an intake-born version approved here asks the route once, for that version, and says "The company's contact was emailed the outcome."; the route's other answers worded as the Intake tab's (no contact; already told — nothing more); the decision is not held up (the panel has refreshed while the route is pending; the answer is appended when it arrives); an ordinary revision asks nothing and says nothing; a promote that did not make the version current, and a refused publish, tell nobody; an unreadable intake link is said. The existing review-surface tests (`dcRoundFReviewHoldForce`, `dcRoundFReviewGate`, `dcRoundFP15InspectorStaleRendered`) pass unchanged.
+
+**Done-when.**
+1. ✓ A submission approved from the review surface tells the link's contact, through the same route (`notifyIntakeOutcome` → `/api/intake/outcome-notice`), once (the route's claim — and this surface calls it once per approval).
+2. ✓ A rendered test drives the review surface's approval of an intake-born version (the notice asked and said) and of an ordinary one (no notice).
+
+**Scope / residual.** The route's own claim-once and send are projects-tab SAF-9's (J12 / J14), unchanged. A rejection is not made from this surface (the review panel publishes or not; the Intake tab rejects), so it sends no "not accepted" notice — nothing to wire.
 
 ---
 
