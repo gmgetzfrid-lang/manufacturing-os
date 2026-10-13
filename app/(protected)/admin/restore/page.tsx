@@ -60,6 +60,9 @@ interface FilesProgress {
   reasons?: Array<{ reason: string; files: number }>;
   /** A workspace logo the server will not sign (ORG-5), named with why. */
   logoNotRestored?: string | null;
+  /** Folder / library covers and backgrounds the server will not sign
+   *  (ORG-16: an SVG, HEIC or TIFF from before the rule), by file name. */
+  nodeImagesNotRestored?: string[];
 }
 
 function fmtNum(n: number) { return n >= 1000 ? n.toLocaleString() : String(n); }
@@ -250,9 +253,11 @@ export default function RestorePage() {
     // the panel says why instead of a bare count.
     const reasons = new Map<string, number>();
     let logoNotRestored: string | null = null;
+    const nodeImagesNotRestored: string[] = [];
     const detail = () => ({
       reasons: [...reasons].map(([reason, files]) => ({ reason, files })),
       logoNotRestored,
+      nodeImagesNotRestored: [...nodeImagesNotRestored],
     });
     const bump = () => setFilesProgress({ running: true, total: entries.length, ...counters, error: null, ...detail() });
 
@@ -285,6 +290,13 @@ export default function RestorePage() {
         const req = restoreUploadRequest(key, blob.size, head);
         if (req.logoProblem) {
           logoNotRestored = `${key.split("/").pop()}: ${req.logoProblem}`;
+          return;
+        }
+        // ORG-16: a cover or background the server will not sign (an SVG,
+        // HEIC or TIFF from before the rule) is not asked for either; the
+        // panel names it so the node can be given its image again.
+        if (req.nodeImageProblem) {
+          nodeImagesNotRestored.push(key.split("/").slice(-2).join("/"));
           return;
         }
         const up = await fetch(`/api/storage/upload-url`, {
@@ -543,6 +555,16 @@ export default function RestorePage() {
                       The workspace logo in this backup was not put back ({filesProgress.logoNotRestored}). Upload it again
                       as a PNG, JPEG or WebP of at most 5 MB under <Link href="/admin/branding" className="font-bold underline">Admin → Branding</Link>;
                       until then the workspace&apos;s logo does not load.
+                    </div>
+                  )}
+                  {(filesProgress.nodeImagesNotRestored ?? []).length > 0 && (
+                    <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-800">
+                      {fmtNum(filesProgress.nodeImagesNotRestored!.length)} folder or library cover / background image(s) in this
+                      backup were not put back ({filesProgress.nodeImagesNotRestored!.slice(0, 5).join(", ")}
+                      {filesProgress.nodeImagesNotRestored!.length > 5 ? ", …" : ""}): a cover or background must now be a PNG, JPEG,
+                      WebP, GIF, AVIF or BMP image (SVG, HEIC and TIFF are not accepted). Open the folder or library under{" "}
+                      <Link href="/documents" className="font-bold underline">Documents</Link> → Customize and pick the image again;
+                      until then it shows no cover or background.
                     </div>
                   )}
                 </div>

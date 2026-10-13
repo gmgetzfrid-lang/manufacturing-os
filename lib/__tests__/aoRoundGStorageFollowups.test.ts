@@ -152,6 +152,7 @@ vi.mock("@/lib/r2", async () => {
 import { runStorageAlerts } from "@/lib/storageAlerts";
 import {
   runPlatformStorageAlerts, PLATFORM_OPERATORS_KEY, STORAGE_LIMITS_KEY, r2PlanBand, soleTenantId, isSoleTenant, quotaBellCoversR2Bell,
+  timestampMs,
 } from "@/lib/storageUsage";
 import { POST as uploadUrl } from "@/app/api/storage/upload-url/route";
 import { POST as multipart } from "@/app/api/storage/multipart/route";
@@ -342,7 +343,7 @@ describe("BILL-15 — one storage bell per day on a single-workspace server", ()
     expect(r2PlanBand(95, true, 100)).toEqual({ pct: 95, band: "crit" });
   });
 
-  it("review fix (major): the quota step's plan walk stops early (a floor, banded warn) while the R2 step's walk finishes at crit — the R2 bell still goes the same day", async () => {
+  it("review fix (major), fix pass 2: the quota step's plan walk stops early (a floor, banded warn) while the R2 step's walk finishes at crit — the R2 bell goes the NEXT day (never two percentages in one day), and the floor never hides it", async () => {
     // keys outside the workspace sort before orgs/: the quota step's whole walk lists "a-root" and runs out of time
     state.rows.orgs = [{ id: O1 }];
     state.rows.platform_settings = [planCeiling(10_000)];
@@ -360,14 +361,34 @@ describe("BILL-15 — one storage bell per day on a single-workspace server", ()
     }
     // the quota figure is the prefix walk's — exact, measured, although the whole walk never reached orgs/
     expect(quota).toEqual({ alerts: 1, orgsChecked: 1, unmeasured: 0 });
+    // today: the one bell — the floor: the workspace's 900 plus the 3,000 the whole walk saw outside it — 39%, never banded below warn
     expect(bells().map((b) => [b.kind, b.title, b.metadata])).toEqual([
-      // the floor: the workspace's 900 plus the 3,000 the whole walk saw outside it — 39%, never banded below warn
       ["storage_alert", "Storage critical — 90% of the set limit, at least 39% of plan", { r2PlanBand: "warn", r2PlanPct: 39, r2PlanTruncated: true }],
-      // before the fix: dropped for the week by the floor's "warn"
-      ["storage_platform_r2", "File storage critical — 95% of plan", null],
     ]);
     expect(String(bells()[0].body)).toContain("This workspace's files are at 90% of the storage limit an admin set");
     expect(String(bells()[0].body)).toContain("at least 39% of its Cloudflare R2 plan ceiling (at least 0 MB of 0 MB, every file on the server");
+    // review fix (issue 2): a floor below 70% (lifted to warn only because the walk stopped) never advises buying a plan
+    expect(String(bells()[0].body)).not.toContain("Upgrade the R2 plan");
+    expect(String(bells()[0].body)).toContain("Take a full backup");
+    // the next day: the floor does not cover the R2 bell's week (first review's major), so the measured crit goes
+    bells()[0].created_at = new Date(Date.now() - 86_400_000).toISOString();
+    await cronStorageSteps();
+    expect(bells().slice(1).map((b) => [b.kind, b.title, b.metadata])).toEqual([["storage_platform_r2", "File storage critical — 95% of plan", null]]);
+  });
+
+  it("review fix (issue 2): the 'upgrade the plan' line follows the MEASURED plan figure — a floor that itself reads 70% or more still says it", async () => {
+    state.rows.orgs = [{ id: O1 }];
+    state.rows.platform_settings = [planCeiling(10_000)];
+    state.rows.archive_settings = [{ org_id: O1, quota_bytes: 1_000 }];
+    state.rows.org_members = [{ org_id: O1, uid: "admin", role: "Admin", roles: ["Admin"], status: "active" }];
+    state.objects = [{ Key: "a-root", Size: 7_500 }, { Key: "b-root", Size: 1_000 }, { Key: `orgs/${O1}/a`, Size: 900 }];
+    state.stallWholeWalk = 1;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try { await runStorageAlerts(sb as never); } finally { warn.mockRestore(); }
+    expect(bells().map((b) => [b.title, b.metadata])).toEqual([
+      ["Storage critical — 90% of the set limit, at least 84% of plan", { r2PlanBand: "warn", r2PlanPct: 84, r2PlanTruncated: true }],
+    ]);
+    expect(String(bells()[0].body)).toContain("Upgrade the R2 plan, or take a full backup");
   });
 
   it("review fix: a complete plan figure stated below the band the R2 step measures does not cover its week — but one stated earlier TODAY holds the R2 bell to the next day (one measured plan percentage a day)", async () => {
@@ -385,7 +406,7 @@ describe("BILL-15 — one storage bell per day on a single-workspace server", ()
     expect(bells().slice(1).map((b) => [b.kind, b.title])).toEqual([["storage_platform_r2", "File storage high — 70% of plan"]]);
   });
 
-  it("review fix: a floor stated earlier today never holds the R2 bell (the measured figure corrects 'at least N%')", async () => {
+  it("fix pass 2: a floor stated earlier today holds the R2 bell to the next day (one percentage a day); the next day the measured figure goes (a floor never covers the week)", async () => {
     state.rows.orgs = [{ id: O1 }];
     state.rows.platform_settings = [planCeiling(10_000)];
     state.rows.archive_settings = [{ org_id: O1, quota_bytes: 100_000 }];
@@ -396,10 +417,13 @@ describe("BILL-15 — one storage bell per day on a single-workspace server", ()
       metadata: { r2PlanBand: "warn", r2PlanPct: 31, r2PlanTruncated: true }, created_at: new Date().toISOString(),
     }];
     await cronStorageSteps();
+    expect(bells()).toHaveLength(1); // not "75% of plan" the same day as "at least 31% of plan"
+    bells()[0].created_at = new Date(Date.now() - 86_400_000).toISOString();
+    await cronStorageSteps();
     expect(bells().slice(1).map((b) => [b.kind, b.title])).toEqual([["storage_platform_r2", "File storage high — 75% of plan"]]);
   });
 
-  it("the plan walk fails outright: the quota bell alone, as on a shared server (no plan figure), and the R2 step sends its own", async () => {
+  it("fix pass 2: the plan walk fails outright: the quota bell alone today (no plan figure); the R2 step holds its bell to the next day, then sends it", async () => {
     state.rows.orgs = [{ id: O1 }];
     state.rows.platform_settings = [planCeiling(10_000)];
     state.rows.archive_settings = [{ org_id: O1, quota_bytes: 5_000 }];
@@ -407,13 +431,26 @@ describe("BILL-15 — one storage bell per day on a single-workspace server", ()
     state.objects = [{ Key: `orgs/${O1}/a`, Size: 7_100 }, { Key: "root", Size: 100 }];
     state.failWholeWalk = 1;
     await cronStorageSteps();
-    expect(bells().map((b) => [b.kind, b.title, b.metadata])).toEqual([
-      ["storage_alert", "Storage critical — 142% full", null],
-      ["storage_platform_r2", "File storage high — 72% of plan", null],
-    ]);
+    // before fix pass 2: "142% full" and "72% of plan" the same day (the review's second exception)
+    expect(bells().map((b) => [b.kind, b.title, b.metadata])).toEqual([["storage_alert", "Storage critical — 142% full", null]]);
+    bells()[0].created_at = new Date(Date.now() - 86_400_000).toISOString();
+    await cronStorageSteps();
+    expect(bells().slice(1).map((b) => [b.kind, b.title, b.metadata])).toEqual([["storage_platform_r2", "File storage high — 72% of plan", null]]);
   });
 
-  it("quotaBellCoversR2Bell: only a complete plan figure counts; at or above the measured band it covers the week, below it only today", () => {
+  it("fix pass 2: an R2 bell sent earlier today holds the quota bell even when the plan walk fails (no quota-only bell the same day either)", async () => {
+    state.rows.orgs = [{ id: O1 }];
+    state.rows.platform_settings = [planCeiling(10_000)];
+    state.rows.archive_settings = [{ org_id: O1, quota_bytes: 5_000 }];
+    state.rows.org_members = [{ org_id: O1, uid: "admin", role: "Admin", roles: ["Admin"], status: "active" }];
+    state.objects = [{ Key: `orgs/${O1}/a`, Size: 7_100 }, { Key: "root", Size: 100 }];
+    state.rows.notifications = [{ org_id: O1, user_id: "admin", kind: "storage_platform_r2", title: "File storage high — 72% of plan", metadata: null, created_at: new Date().toISOString() }];
+    state.failWholeWalk = 1;
+    await cronStorageSteps();
+    expect(bells()).toHaveLength(1);
+  });
+
+  it("quotaBellCoversR2Bell: any quota bell today holds the R2 bell to the next day; only a complete plan figure at or above the measured band covers the week", () => {
     const today = new Date(Math.floor(Date.now() / 86_400_000) * 86_400_000).toISOString();
     const now = new Date().toISOString();
     const yesterday = new Date(Date.now() - 86_400_000).toISOString();
@@ -423,12 +460,33 @@ describe("BILL-15 — one storage bell per day on a single-workspace server", ()
     expect(quotaBellCoversR2Bell([row("warn", false)], "crit", today)).toBe(false);
     expect(quotaBellCoversR2Bell([row("warn", false, now)], "crit", today)).toBe(true); // held to the next day
     expect(quotaBellCoversR2Bell([row("ok", false, now)], "warn", today)).toBe(true);
-    expect(quotaBellCoversR2Bell([row("crit", true)], "warn", today)).toBe(false); // a floor never counts
-    expect(quotaBellCoversR2Bell([row("warn", true, now)], "warn", today)).toBe(false);
+    expect(quotaBellCoversR2Bell([row("crit", true)], "warn", today)).toBe(false); // a floor never covers the week
     expect(quotaBellCoversR2Bell([row("warn", undefined)], "warn", today)).toBe(false); // no flag: not known complete
-    expect(quotaBellCoversR2Bell([{ metadata: null, created_at: now }], "warn", today)).toBe(false); // a quota-only bell
-    expect(quotaBellCoversR2Bell([row("hot", false, now)], "warn", today)).toBe(false);
+    expect(quotaBellCoversR2Bell([{ metadata: null, created_at: yesterday }], "warn", today)).toBe(false); // a quota-only bell
+    // fix pass 2: TODAY any quota bell holds the R2 bell to the next day — a floor, a quota-only bell, anything
+    expect(quotaBellCoversR2Bell([row("warn", true, now)], "crit", today)).toBe(true);
+    expect(quotaBellCoversR2Bell([{ metadata: null, created_at: now }], "warn", today)).toBe(true);
+    expect(quotaBellCoversR2Bell([row("hot", false, now)], "warn", today)).toBe(true);
+    expect(quotaBellCoversR2Bell([row("hot", false)], "warn", today)).toBe(false);
     expect(quotaBellCoversR2Bell(null, "warn", today)).toBe(false);
+  });
+
+  it("review fix (issue 4): 'sent today' compares instants, not strings — a '+00:00' timestamp at midnight, a non-UTC offset, psql's shape", () => {
+    const day = "2026-10-13T00:00:00.000Z";
+    const quotaOnly = (at: string) => [{ metadata: null, created_at: at }];
+    // midnight with no fraction: '+' sorts before '.' as text, but it is the same instant
+    expect(quotaBellCoversR2Bell(quotaOnly("2026-10-13T00:00:00+00:00"), "warn", day)).toBe(true);
+    // a database in America/Chicago: 19:30 -05:00 on the 12th is 00:30 UTC on the 13th — today
+    expect(quotaBellCoversR2Bell(quotaOnly("2026-10-12T19:30:00-05:00"), "warn", day)).toBe(true);
+    // and 18:30 -05:00 is 23:30 UTC on the 12th — yesterday
+    expect(quotaBellCoversR2Bell(quotaOnly("2026-10-12T18:30:00-05:00"), "warn", day)).toBe(false);
+    expect(quotaBellCoversR2Bell(quotaOnly("2026-10-13 05:30:00+05"), "warn", day)).toBe(true);
+    expect(quotaBellCoversR2Bell(quotaOnly("2026-10-13T05:29:59.999999+05:30"), "warn", day)).toBe(false);
+    // an unreadable timestamp never counts as today (the week rule still applies)
+    expect(quotaBellCoversR2Bell(quotaOnly("yesterday-ish"), "warn", day)).toBe(false);
+    expect(timestampMs("2026-10-13T00:00:00+00:00")).toBe(Date.parse(day));
+    expect(timestampMs("2026-10-13 00:00:00+00")).toBe(Date.parse(day));
+    expect(timestampMs(null)).toBeNaN();
   });
 
   it("the R2 step's read of the quota bell is a filter, not a write: lib/storageUsage.ts names storage_alert exactly once, in that read", () => {
@@ -643,12 +701,29 @@ describe("ORG-16 — a backup restore (Admin) puts covers and backgrounds back a
       expect(signedHeaders((await res.json()).url), ext).toEqual(expect.arrayContaining(["content-type", "host"]));
     }
   });
-  it("named residual: a legacy SVG (or an unnamed extension) background is refused with the route's reason, which the restore lists", async () => {
+  it("review fix (issue 3): a legacy SVG / HEIC / TIFF cover or background is not asked for — the restore names it (nodeImageProblem), as it names a logo it cannot put back", async () => {
     state.member = ADMIN;
-    for (const key of [`orgs/${ORG}/branding/backgrounds/b.svg`, `orgs/${ORG}/branding/backgrounds/b.heic`]) {
-      const res = await post(restoreUploadRequest(key, 10).body);
-      expect(res.status, key).toBe(415);
+    for (const key of [`orgs/${ORG}/branding/backgrounds/b.svg`, `orgs/${ORG}/branding/backgrounds/b.heic`, `orgs/${ORG}/branding/covers/c.tiff`]) {
+      const req = restoreUploadRequest(key, 10);
+      expect(req.nodeImageProblem, key).toBe(nodeImageUploadProblem(req.contentType)!.error);
+      expect(req.logoProblem, key).toBeNull();
+      // the route would refuse it: the page does not ask
+      expect((await post(req.body)).status, key).toBe(415);
     }
     expect(contentTypeForKey("x.heic")).toBe("application/octet-stream");
+    // an allowed cover, a logo and a document carry no node-image problem
+    expect(restoreUploadRequest(COVER, 10).nodeImageProblem).toBeNull();
+    expect(restoreUploadRequest(`orgs/${ORG}/branding/logo.svg`, 10).nodeImageProblem).toBeNull();
+    expect(restoreUploadRequest(`orgs/${ORG}/libraries/l/a.svg`, 10).nodeImageProblem).toBeNull();
+  });
+
+  it("review fix (issue 3): the restore page skips such a cover and lists it in a named notice (re-pick under Customize), not among generic failures", () => {
+    const page = readFileSync(join(process.cwd(), "app/(protected)/admin/restore/page.tsx"), "utf8");
+    expect(page).toMatch(/if \(req\.nodeImageProblem\) \{\n\s+nodeImagesNotRestored\.push\(key\.split\("\/"\)\.slice\(-2\)\.join\("\/"\)\);\n\s+return;\n\s+\}/);
+    // the skip comes before the presign request, so nothing is counted as failed
+    expect(page.indexOf("if (req.nodeImageProblem)")).toBeLessThan(page.indexOf("const up = await fetch(`/api/storage/upload-url`"));
+    expect(page).toContain("nodeImagesNotRestored: [...nodeImagesNotRestored],");
+    expect(page).toContain("folder or library cover / background image(s) in this");
+    expect(page).toContain("→ Customize and pick the image again;");
   });
 });

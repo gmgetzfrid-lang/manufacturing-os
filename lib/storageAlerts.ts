@@ -113,9 +113,11 @@ export async function runStorageAlerts(sb: SupabaseClient, opts: { budgetMs?: nu
   // Admin / DocCtrl. There the bell states both figures, each with what it
   // measured and against which limit, and the R2 step counts it as its own
   // bell when its plan figure was complete and not below the band the R2
-  // step measures. The quota figure is the workspace prefix walk's, exactly
-  // as on a shared server (a whole-bucket walk would list root-level and
-  // other top-level keys first, and could stop before the workspace's own);
+  // step measures; any storage bell sent today (a floor, or a quota-only
+  // bell) holds the R2 bell to the next day. The quota figure is the
+  // workspace prefix walk's, exactly as on a shared server (a whole-bucket
+  // walk would list root-level and other top-level keys first, and could
+  // stop before the workspace's own);
   // the plan figure is a second, whole-bucket walk with whatever budget is
   // left, a floor when it stops early. A shared server keeps the two alerts
   // apart (they reach different people). Unreadable orgs: not sole, as
@@ -147,8 +149,12 @@ export async function runStorageAlerts(sb: SupabaseClient, opts: { budgetMs?: nu
     // Sole: the whole bucket against the R2 plan ceiling, banded exactly as
     // the platform watchdog bands a walk (a partial walk is never below
     // warn). A walk that cannot run, or limits that cannot be read: the
-    // quota-only bell, as before, and the R2 step sends its own.
-    let plan: { pct: number; band: AlertBand; bytes: number; limitBytes: number; truncated: boolean } | null = null;
+    // quota-only bell, as before, and the R2 step sends its own the next day
+    // (one storage percentage per person per day, BILL-15).
+    // `measuredBand` is the band of the figure itself, before r2PlanBand
+    // lifts a floor to warn: the "upgrade the plan" advice rests on it, never
+    // on a band the walk's early stop forced (BILL-15 review fix).
+    let plan: { pct: number; band: AlertBand; measuredBand: AlertBand; bytes: number; limitBytes: number; truncated: boolean } | null = null;
     if (sole) {
       try {
         const whole = await measureR2Usage({
@@ -161,7 +167,11 @@ export async function runStorageAlerts(sb: SupabaseClient, opts: { budgetMs?: nu
         // what it saw outside them.
         const seenFiles = whole.org?.bytes ?? 0;
         const bytes = whole.truncated ? Math.max(usage.bytes, seenFiles) + (whole.bytes - seenFiles) : whole.bytes;
-        plan = { ...r2PlanBand(bytes, whole.truncated, limits.r2Bytes), bytes, limitBytes: limits.r2Bytes, truncated: whole.truncated };
+        plan = {
+          ...r2PlanBand(bytes, whole.truncated, limits.r2Bytes),
+          measuredBand: alertBand(bytes, limits.r2Bytes).band,
+          bytes, limitBytes: limits.r2Bytes, truncated: whole.truncated,
+        };
       } catch {
         plan = null;
       }
@@ -177,12 +187,13 @@ export async function runStorageAlerts(sb: SupabaseClient, opts: { budgetMs?: nu
         .from("notifications").select("id", { count: "exact", head: true })
         .eq("org_id", s.org_id).eq("user_id", a.uid).eq("kind", "storage_alert").gte("created_at", sevenDaysAgo);
       if ((count ?? 0) > 0) continue;
-      if (plan) {
+      if (sole) {
         // BILL-15, the shared per-day key: a person the R2 step already
         // belled with the plan's figure TODAY (UTC; a second cron run the
-        // same day) is not sent a second percentage for the same files now.
-        // The next day's run sends this bell, stating both figures. (A
-        // server-only kind once 20261160 is live; see below.)
+        // same day) is not sent a second percentage for the same files now —
+        // whether this bell would state the plan figure or (its walk failed)
+        // only the quota's. The next day's run sends it. (A server-only kind
+        // once 20261160 is live; see below.)
         const { count: planToday } = await sb
           .from("notifications").select("id", { count: "exact", head: true })
           .eq("org_id", s.org_id).eq("user_id", a.uid).eq("kind", "storage_platform_r2").gte("created_at", utcDayStart);
@@ -205,10 +216,13 @@ export async function runStorageAlerts(sb: SupabaseClient, opts: { budgetMs?: nu
             `(${planAtLeast}${fmtSize(plan.bytes)} of ${fmtSize(plan.limitBytes)}, every file on the server; this is its only workspace). ` +
             "The limit is advisory: uploads are not blocked when it is reached. This app does not stop uploads at the plan ceiling " +
             "either: past it, Cloudflare bills the overage, or refuses writes on an account without billing. " +
-            (plan.band !== "ok" ? "Upgrade the R2 plan, or take" : "Take") +
+            // The advice follows the MEASURED figure: a floor below 70% that
+            // r2PlanBand lifted to warn never tells anyone to buy a plan.
+            (plan.measuredBand !== "ok" ? "Upgrade the R2 plan, or take" : "Take") +
             " a full backup and free up space from Admin → Storage (archive superseded revisions or closed tickets, delete orphaned files).",
           // r2PlanTruncated: the plan figure was a floor (the walk stopped
-          // early); the R2 step never counts such a bell as its own.
+          // early); the R2 step never counts such a bell for its week (only
+          // for today: one percentage a day).
           metadata: { r2PlanBand: plan.band, r2PlanPct: plan.pct, r2PlanTruncated: plan.truncated },
         }
         : {

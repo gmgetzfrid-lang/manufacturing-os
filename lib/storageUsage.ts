@@ -26,9 +26,9 @@
 // workspace's Admins get a notice that carries no figures, and the cron
 // reports it in its errors (BILL-5 fix pass). On a single-workspace
 // deployment the quota alert states the R2 figure too and, when that figure
-// was measured in full, stands in for the R2 bell (BILL-15), so its Admin /
-// DocCtrl get one storage bell, not two different measured percentages for
-// the same files on the same day.
+// was measured in full, stands in for the R2 bell (BILL-15); any quota bell
+// sent today holds the R2 bell to the next day, so its Admin / DocCtrl never
+// get two different percentages for the same files on the same day.
 //
 // admin-and-org BILL-5 / BILL-12 (Round G, P6; DEC-99): the plan
 // ceilings and the bucket walk are DEPLOYMENT facts — one bucket, one
@@ -456,24 +456,42 @@ export type QuotaBellRow = { metadata?: Record<string, unknown> | null; created_
 
 const BAND_RANK: Record<AlertBand, number> = { ok: 0, warn: 1, crit: 2 };
 
+/** A timestamp as epoch ms, or NaN. PostgREST returns timestamptz as ISO
+ *  8601 with an offset ("…+00:00", or the session's own offset when the
+ *  database's time zone is not UTC), sometimes without fractional seconds;
+ *  a bare "YYYY-MM-DD HH:MM:SS+00" (psql's shape) is read too. Instants are
+ *  compared, never strings: "…T00:00:00+00:00" sorts before
+ *  "…T00:00:00.000Z" as text, and "…T19:30:00-05:00" is the next UTC day. */
+export function timestampMs(value: unknown): number {
+  if (typeof value !== "string" || !value) return NaN;
+  const iso = value.trim().replace(/^(\d{4}-\d{2}-\d{2}) /, "$1T").replace(/(T[\d:.]+[+-]\d{2})$/, "$1:00");
+  return Date.parse(iso);
+}
+
 /** BILL-15 (DEC-99 §3), single-workspace server: does a this-week quota
- *  bell that stated the R2 plan figure stand in for the R2 bell the
- *  platform step would send now at `measured`? Only a COMPLETE plan figure
- *  counts (metadata.r2PlanTruncated === false; a floor — "at least N%",
- *  banded warn because the walk stopped early — never hides a measured
- *  figure). Such a bell covers the R2 bell's week when the band it stated
- *  ranks at or above `measured` (ok < warn < crit). One that went out
- *  today (UTC, at or after `dayStartIso`) holds the R2 bell to the next day
- *  whatever band it stated: one measured plan percentage per person per
- *  day. */
+ *  bell (`storage_alert`) stand in for, or hold back, the R2 bell the
+ *  platform step would send now at `measured`?
+ *  - Any quota bell that went out TODAY (UTC, at or after `dayStartIso`)
+ *    holds the R2 bell to the next day, whatever it stated — a complete
+ *    plan figure, a floor ("at least N%"), or none (its plan walk failed):
+ *    the person has had a storage percentage today, and a second, different
+ *    one for the same files is what the finding rules out. The next day the
+ *    R2 bell goes unless the rule below covers it.
+ *  - A bell whose plan figure was COMPLETE (metadata.r2PlanTruncated ===
+ *    false) covers the R2 bell's week when the band it stated ranks at or
+ *    above `measured` (ok < warn < crit). A floor (banded warn because the
+ *    walk stopped early) or a quota-only bell never covers the week, so it
+ *    delays a measured plan figure by at most a day and never hides it. */
 export function quotaBellCoversR2Bell(rows: readonly QuotaBellRow[] | null | undefined, measured: AlertBand, dayStartIso: string): boolean {
+  const dayStart = timestampMs(dayStartIso);
   for (const r of rows ?? []) {
+    const at = timestampMs(r.created_at);
+    if (Number.isFinite(at) && Number.isFinite(dayStart) && at >= dayStart) return true;
     const m = r.metadata;
     if (!m || m.r2PlanTruncated !== false) continue;
     const stated = m.r2PlanBand;
     if (stated !== "ok" && stated !== "warn" && stated !== "crit") continue;
     if (BAND_RANK[stated] >= BAND_RANK[measured]) return true;
-    if (typeof r.created_at === "string" && r.created_at >= dayStartIso) return true;
   }
   return false;
 }
@@ -553,8 +571,9 @@ export async function runPlatformStorageAlerts(sb: SupabaseClient): Promise<{
       // against the limit an admin set, and the whole bucket against this R2
       // plan ceiling — so it can be this bell too (quotaBellCoversR2Bell:
       // only a COMPLETE plan figure, stated at or above the band measured
-      // now, covers this bell's week; one stated earlier today holds it to
-      // the next day). A shared server keeps both (different people). A read
+      // now, covers this bell's week; any quota bell sent earlier today — a
+      // floor or a quota-only one included — holds it to the next day). A
+      // shared server keeps both (different people). A read
       // that fails skips nothing: the R2 bell goes. storage_alert is a
       // server-only kind once 20261160 is live (rule 2); before that paste
       // a forged row could feed this read, as each kind's own weekly dedupe

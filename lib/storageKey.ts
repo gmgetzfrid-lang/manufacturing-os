@@ -241,6 +241,9 @@ export function contentTypeForKey(key: string): string {
  *  type). `logoProblem` is set only for a workspace logo upload-url will not
  *  sign — an SVG or GIF logo uploaded before ORG-5, or one over 5 MB. The
  *  page does not ask for it, and says the logo must be uploaded again.
+ *  `nodeImageProblem` is the same for a folder's or library's cover or
+ *  background that upload-url will not sign (ORG-16): the page names it and
+ *  says to pick the image again under Customize.
  *
  *  `head` (a logo's first bytes) decides a logo's type when they are a known
  *  image: logo keys used to be minted from the file's NAME, so a real JPEG
@@ -254,11 +257,20 @@ export function restoreUploadRequest(key: string, size: number, head?: Uint8Arra
   contentType: string;
   body: { path: string; contentType: string; size: number };
   logoProblem: string | null;
+  nodeImageProblem: string | null;
 } {
   const sniffed = isWorkspaceLogoKey(key) ? sniffImageType(head)
     : isNodeImageKey(key) ? sniffNodeImageType(head)
     : null;
   const contentType = sniffed ?? contentTypeForKey(key);
   const problem = isWorkspaceLogoKey(key) ? logoUploadProblem(contentType, size) : null;
-  return { contentType, body: { path: key, contentType, size }, logoProblem: problem?.error ?? null };
+  // A cover or background upload-url will not sign (an SVG, HEIC or TIFF
+  // stored before ORG-16, or bytes that are no allowed image under an
+  // extension the table does not name) is not asked for: the restore page
+  // names it, as it names a logo it cannot put back (ORG-16 review fix).
+  const nodeProblem = isNodeImageKey(key) ? nodeImageUploadProblem(contentType) : null;
+  return {
+    contentType, body: { path: key, contentType, size },
+    logoProblem: problem?.error ?? null, nodeImageProblem: nodeProblem?.error ?? null,
+  };
 }
