@@ -615,6 +615,52 @@ export async function clearProjectSchedule(input: {
   return { deleted };
 }
 
+/** Put every task on a project back to "not started" so the real run
+ *  starts clean after a rehearsal: 0 %, status planned, and the actual
+ *  start / completion stamps cleared (the first-completion stamp is
+ *  sticky, so a test completion would otherwise date a real one). Planned
+ *  dates, the baseline, dependencies and free-text notes stay; the
+ *  status-change notes written during the rehearsal are removed. */
+export async function resetProjectProgress(input: {
+  orgId: string; projectId: string;
+  actorUserId: string; actorUserEmail?: string; actorUserRole?: string;
+}): Promise<{ reset: number }> {
+  const { data: rows, error: loadErr } = await supabase
+    .from("milestones").select("id").eq("org_id", input.orgId).eq("project_id", input.projectId);
+  if (loadErr) throw new Error(loadErr.message);
+  const ids = ((rows ?? []) as Array<{ id: string }>).map((r) => r.id);
+  if (ids.length === 0) return { reset: 0 };
+  const { error } = await supabase
+    .from("milestones")
+    .update({
+      percent_complete: 0,
+      status: "planned",
+      status_reason: null,
+      actual_at: null,
+      actual_start_at: null,
+      first_completed_at: null,
+      completed_by: null,
+      completed_by_name: null,
+      updated_at: new Date().toISOString(),
+      updated_by: input.actorUserId,
+    })
+    .eq("org_id", input.orgId)
+    .eq("project_id", input.projectId);
+  if (error) throw new Error(error.message);
+  // Status-change notes from the rehearsal would read as history; drop them.
+  for (let i = 0; i < ids.length; i += 200) {
+    await supabase.from("milestone_notes").delete().eq("kind", "status").in("milestone_id", ids.slice(i, i + 200));
+  }
+  await logAuditAction({
+    action: "SCHEDULE_PROGRESS_RESET",
+    resourceId: input.projectId, resourceType: "project",
+    orgId: input.orgId, userId: input.actorUserId,
+    userEmail: input.actorUserEmail, userRole: input.actorUserRole,
+    details: { reset: ids.length },
+  });
+  return { reset: ids.length };
+}
+
 // ─── Reads ──────────────────────────────────────────────────────
 
 export interface ListMilestonesParams {

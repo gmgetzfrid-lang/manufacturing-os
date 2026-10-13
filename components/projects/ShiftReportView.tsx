@@ -65,7 +65,10 @@ export default function ShiftReportView({ milestones, progress, criticalIds, pro
     try { localStorage.setItem(`shiftTimes:${projectId}`, JSON.stringify(t)); } catch { /* ignore */ }
   };
 
-  const [now] = useState(() => Date.now());
+  // Re-evaluated every minute so a tab left open rolls over a shift
+  // boundary (and "as of now" stays current) without a reload.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const id = setInterval(() => setNow(Date.now()), 60_000); return () => clearInterval(id); }, []);
   const [sel, setSel] = useState<{ dayKey: string; kind: "day" | "night" } | null>(null);
   const shift: ShiftWindow = useMemo(
     () => (sel ? shiftWindow(sel.dayKey, sel.kind, tz, times) : defaultReviewShift(milestones, now, tz, times)),
