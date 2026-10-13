@@ -5929,6 +5929,8 @@ Shape: `lib/__tests__/prjRoundGJ16DoorIdentity.test.ts`. Origin: `lib/__tests__/
 
 **Risk:** low. Nothing changes for a stamp that printed before; the fix pass changes only how a format character, which never printed (it threw on `b154823`), is drawn.
 
+*Landed 2026-10-13 (public-surfaces Round G, PS-P8 PHYSICAL BRIDGE TEXT, `PHYS-16`): the same rule now governs the physical bridge's other printed artifacts. `lib/physicalBridge.ts` `printEquipmentLabels` (tag, description, location), `printHoldCard` (document number and revision, reason, notes, placed-by line) and `printTicketTraveler` (number, title, status, revision, people, date) map their data once, up front, through `stampText` (one module-private `textMapper`, shared with `buildPackageCover`). Characters the fonts print, the en and em dash, the curly quotes and the no-break space among them, are drawn as typed: a plain-text label, hold card or traveler is byte-identical to `6503ea7` (`lib/__tests__/psP8BridgePlain.golden.json`). The hold card and the traveler carry `stampTextNote`'s line when anything was replaced. The 3.5"×2" label does not (no room, and its QR resolves the tag on record). QR targets and file names keep the values on record.*
+
 <a id="dec-98"></a>
 ## DEC-98 · The Stripe webhook: which statuses grant access, which event wins, and who may write the billing columns
 
