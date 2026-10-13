@@ -89,7 +89,9 @@ export interface KindMeta {
   icon: KindIcon;
   tone: KindTone;
   group: KindGroup;
-  /** Which toast category switch governs the pop-up (RT-10). */
+  /** Which toast category switch governs the pop-up (RT-10). Required: a
+   *  kind added without one fails the `satisfies` check — give it the
+   *  category its emit() passes for the email, never a guess. */
   category: ToastCategory;
   pushWorthy?: boolean;
 }
@@ -122,7 +124,10 @@ export interface KindMeta {
 // hold is released (TRAIL-9). Everything else is false, as on b9cdfdc:
 // someone else's sign-off, a completion, and effective_now ("now in effect" —
 // nothing to do). The flag is per kind, whoever receives the row. An action notification stays red, pulsing
-// and in the Action count until its row is read or cleared. Flipping another
+// and in the Action count until its row is read or cleared. (The surfaces
+// read the flag per row through lib/notificationReconcile.ts isActionRow,
+// which keeps a row nothing clears — the cron's review-health nudge — FYI.)
+// Flipping another
 // kind to true is one line here, and lands with the clearing of its row —
 // DEC-81 §2.
 

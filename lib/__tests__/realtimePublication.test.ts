@@ -133,16 +133,36 @@ const RT4_PENDING: Record<string, string> = {
   "app/(protected)/documents/[libraryId]/page.tsx:documents": "document-control (the library page's holder): add the unfiltered documents DELETE companion, acting on a document the page lists (RT-4)",
 };
 
-/** A table no application path hard-deletes a row of: its rows go only when
- *  a parent row is deleted (ON DELETE CASCADE from the document, the org or
- *  the person). A filtered listener on it misses nothing the app does — the
- *  soft-delete route, RT-4 done-when 3, for these tables. The test below
- *  fails the moment app code deletes one directly. */
+/** A table whose rows no application path hard-deletes while a filtered
+ *  listener could still care about them: its rows go when a parent row is
+ *  deleted (ON DELETE CASCADE from the document, the org or the person) or,
+ *  for notifications, by the admin purge — which deletes only READ, aged
+ *  rows (app/api/admin/purge/route.ts floorOf), rows the attention feed's
+ *  unread-filtered window never holds, so a DELETE it misses changes no
+ *  number. A filtered listener on these misses nothing that matters — the
+ *  soft-delete route, RT-4 done-when 3, for these tables. The tests below
+ *  fail the moment app code deletes one directly, or a dynamic delete (the
+ *  purge route's TARGETS) reaches one this map does not name as purged. */
 const NO_APP_HARD_DELETE: Record<string, string> = {
   checkout_sessions: "a session ends by status (checked in / released) — an UPDATE the filtered listeners hear; only its document's delete cascades",
   checkout_messages: "a message is never deleted by the app; only its document's delete cascades",
   checkout_episodes: "an episode is sealed, never deleted by the app (20261075); only its document's delete cascades",
-  notifications: "a notification is read, superseded or tombstoned (20261161) — UPDATEs; only an org or person delete cascades",
+  notifications: "a notification is read, superseded or tombstoned (20261161) — UPDATEs; the admin purge hard-deletes only read, aged rows, which the unread-filtered feed never holds; otherwise only an org or person delete cascades",
+};
+
+/** The app's dynamic deletes (.from(<expression>).delete()) — a literal-name
+ *  scan cannot see which table they reach, so each file's tables are read
+ *  from its source here. */
+const DYNAMIC_DELETES: Record<string, (source: string) => string[]> = {
+  // the admin purge: the tables its TARGETS list names
+  "app/api/admin/purge/route.ts": (s) => {
+    const at = s.indexOf("const TARGETS");
+    return [...s.slice(at, s.indexOf("];", at)).matchAll(/\btable:\s*"(\w+)"/g)].map((m) => m[1]);
+  },
+  // a superseded ingest batch withdraws the rows it inserted
+  "lib/knowledgeIngest.ts": (s) => [...(s.match(/for \(const \[table, ids\] of \[([^\n]*)\] as const\)/)?.[1] ?? "").matchAll(/\["(\w+)"/g)].map((m) => m[1]),
+  // the saved table views (its TABLE constant)
+  "lib/tableViews.ts": (s) => [s.match(/const TABLE = "(\w+)"/)?.[1] ?? "?"],
 };
 
 describe("RT-4 — a filtered subscription that can see DELETEs hears them", () => {
@@ -166,13 +186,41 @@ describe("RT-4 — a filtered subscription that can see DELETEs hears them", () 
 
   it("the tables named as never hard-deleted are not deleted by any app code", () => {
     const deleting: string[] = [];
+    const dynamic: string[] = [];
     for (const f of appSources()) {
       const s = readFileSync(f, "utf8");
       for (const t of Object.keys(NO_APP_HARD_DELETE)) {
         if (new RegExp(`from\\(\\s*["']${t}["']\\s*\\)\\s*\\.delete\\(`).test(s)) deleting.push(`${relative(ROOT, f)}:${t}`);
       }
+      // A delete whose table is an expression, not a literal.
+      if (/\.from\(\s*[A-Za-z_$][\w$.]*\s*\)\s*\.delete\(/.test(s)) dynamic.push(relative(ROOT, f));
     }
     expect(deleting).toEqual([]);
+    // Every dynamic delete is one this test reads (a new one must be added
+    // to DYNAMIC_DELETES), and none reaches a table named above except the
+    // purge's read-rows notifications line (checked in the next test).
+    expect(dynamic.sort()).toEqual(Object.keys(DYNAMIC_DELETES).sort());
+    const reached: string[] = [];
+    for (const [file, tablesOf] of Object.entries(DYNAMIC_DELETES)) {
+      const tables = tablesOf(src(file));
+      expect(tables.length, file).toBeGreaterThan(0);
+      expect(tables, file).not.toContain("?");
+      for (const t of tables) if (t in NO_APP_HARD_DELETE) reached.push(`${file}:${t}`);
+    }
+    expect(reached).toEqual(["app/api/admin/purge/route.ts:notifications"]);
+  });
+
+  it("the admin purge reaches a never-hard-deleted table only as a read-rows purge the unread feed never holds", () => {
+    const route = src("app/api/admin/purge/route.ts");
+    const tables = DYNAMIC_DELETES["app/api/admin/purge/route.ts"](route);
+    expect(tables).toEqual(expect.arrayContaining(["notifications", "email_notifications", "ai_usage_events"]));
+    const reached = tables.filter((t) => t in NO_APP_HARD_DELETE);
+    // Each such table's reason says so — a purge reaching checkout_* (or
+    // any other table named here) fails until its reason is reconsidered.
+    for (const t of reached) expect(NO_APP_HARD_DELETE[t], t).toMatch(/purge hard-deletes only read/);
+    expect(reached).toEqual(["notifications"]);
+    // …and the purge's notifications floor is read rows only.
+    expect(route).toMatch(/if \(key === "notifications"\) \{\s*let n = q\.not\("read_at", "is", null\)/);
   });
 
   it("the attention feed's tickets companion acts only on a ticket the feed holds (Supabase sends every tenant's DELETEs to an unfiltered listener)", () => {

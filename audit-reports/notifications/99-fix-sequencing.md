@@ -523,9 +523,25 @@ the integrator, drafting-flow, document-control, N13, `lib/tableViews.ts`'s hold
   saver, or give the table an opaque key; the tripwire's `NOT_PUBLISHED`
   entry goes with it.*
 - *Whoever next holds `components/notifications/NotificationBell.tsx` /
-  `components/navigation/Sidebar.tsx`: the "reconnecting — counts may be out
-  of date" line shows in the feed surfaces (center, `/inbox`, the dashboard
-  widget); the bell and the rail can read `useAttentionStatus().stale` too.*
+  `components/navigation/Sidebar.tsx`: `RT-1` is OPEN (Partial) for its
+  done-when 4 on these two — the "reconnecting — counts may be out of date"
+  state shows in the feed surfaces (center, `/inbox`, the dashboard widget)
+  only; the bell and the rail read `useAttentionStatus().stale` and show it
+  (the integrator assigns the holder).*
+- *Integrator, at every merge that touches `lib/notificationKinds.ts` (N10,
+  N12, N14 add kinds this round): `KindMeta.category` is required since N4,
+  so a kind added in the old shape fails `tsc` at the `satisfies` check —
+  give it the category its `emit()` passes for the email (never a guess;
+  `lib/__tests__/toastCategories.test.ts` pins one of the five per kind). An
+  action kind also needs its discharge check (`DEC-81` §2) — or reads FYI per
+  row through `lib/notificationReconcile.ts` `isActionRow`.*
+- *`lib/reviewControl.ts`'s holder: the reconcile pass infers which
+  `review_requested` / `review_invalidated` rows a sign-off roster wrote
+  from the notice's actor and the roster row's stamps (`rosterWrote`). A
+  metadata marker on the roster notices (`openReviewRoster`, the reminder
+  scan, `invalidateDraftSignoffs`) would replace the inference; the one
+  shape it still misreads is a check-in notice by the roster's own opener
+  within 10 minutes of opening it.*
 - *Still open from N3's hand-off (not N4's to change): `markRead`,
   `markManyRead` and `markAllRead` in `lib/inAppNotifications.ts` do not read
   `{ error }` — several callers `void` them, so making them throw needs those

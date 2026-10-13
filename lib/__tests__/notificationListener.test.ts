@@ -136,8 +136,8 @@ vi.mock("@/components/providers/ToastProvider", async (orig) => {
 });
 
 import {
-  NotificationListener, toastForRow, burstSummary, createNotificationToaster, notificationCoalesceKey,
-  BURST_WINDOW_MS, BURST_SHOWN_MAX, PREF_FRESH_MS, PREF_READ_TIMEOUT_MS, SEEN_IDS_MAX, NOTIFICATION_TOAST_MS,
+  NotificationListener, toastForRow, burstSummary, actionSummary, createNotificationToaster, notificationCoalesceKey, isActionRow,
+  BURST_WINDOW_MS, BURST_SHOWN_MAX, ACTION_SHOWN_MAX, PREF_FRESH_MS, PREF_READ_TIMEOUT_MS, SEEN_IDS_MAX, NOTIFICATION_TOAST_MS,
 } from "@/components/providers/NotificationListener";
 import { postActivity } from "@/lib/activityThread";
 import { TOAST_PREFERENCE_HONOURED } from "@/lib/notificationPrefs";
@@ -338,6 +338,36 @@ describe("TAX-9 dw4 — a burst is one summary, never one card per row", () => {
     expect(toastsOf("u1").at(-1)!.title).toBe("New comment");
   });
 
+  it("20 action rows in one window (a scan's 'Still unconfirmed' run) are at most ACTION_SHOWN_MAX sticky cards and ONE sticky 'N more actions need you' card — never folded into the informational summary (review fix)", async () => {
+    const shown: Array<{ type: string; title: string; duration: number; coalesceKey?: string }> = [];
+    const fires: Array<() => void> = [];
+    const t = createNotificationToaster({
+      show: (s) => shown.push({ type: s.type, title: s.title, duration: s.duration, coalesceKey: s.coalesceKey }), readPreference: async () => true, now: () => 0,
+      setTimer: (cb, ms) => { if (ms === BURST_WINDOW_MS) fires.push(cb); return fires.length; }, clearTimer: () => {},
+    });
+    for (let i = 0; i < 20; i++) t.receive({ id: `a${i}`, kind: "ack_overdue", title: "Still unconfirmed", body: `DOC-${i}`, resource_id: `d${i}` });
+    for (let i = 0; i < 4; i++) t.receive({ id: `i${i}`, kind: "review_due", title: `due ${i}`, body: null, resource_id: `r${i}` });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(ACTION_SHOWN_MAX).toBe(2);
+    expect(shown.map((x) => x.title)).toEqual(["Still unconfirmed", "Still unconfirmed", "due 0", "due 1"]);
+    for (const f of fires) f();
+    const actions = shown.filter((x) => x.type === "warning");
+    expect(actions.length).toBeLessThanOrEqual(3);
+    expect(actions.at(-1)).toMatchObject({ title: "18 more actions need you", duration: 0 });
+    expect(actions.at(-1)!.coalesceKey).toBeTruthy();
+    // the informational burst keeps its own summary
+    expect(shown.filter((x) => x.title === "2 more notifications")).toHaveLength(1);
+    expect(shown).toHaveLength(6);
+    expect(actionSummary(1).title).toBe("1 more action needs you");
+  });
+
+  it("the cron's review-health nudge (review_overdue with metadata.reviewHealth) is not an action toast — the row-level rule the feed's counts read", () => {
+    expect(isActionRow({ kind: "review_overdue", metadata: { reviewHealth: true, reviewHealthDay: "2026-10-13" } })).toBe(false);
+    expect(isActionRow({ kind: "review_overdue", metadata: null })).toBe(true);
+    const spec = toastForRow({ id: "h", kind: "review_overdue", title: "Review health", body: null, metadata: { reviewHealth: true } });
+    expect(spec).toMatchObject({ type: "info", duration: NOTIFICATION_TOAST_MS });
+  });
+
   it("a window that holds one extra row shows it as itself, not as a summary", () => {
     const shown: string[] = [];
     let fire: (() => void) | null = null;
@@ -394,7 +424,8 @@ describe("TAX-9 dw4 — a burst is one summary, never one card per row", () => {
   it("the remembered ids are bounded (RT-5 dw2)", async () => {
     const shown: string[] = [];
     const t = createNotificationToaster({ show: (s) => shown.push(s.title), readPreference: async () => true, setTimer: () => 1, clearTimer: () => {} });
-    for (let i = 0; i < SEEN_IDS_MAX + 10; i++) t.receive({ id: `n${i}`, kind: "checkout_conflict", title: `x${i}`, body: null });
+    // one statement repeated (it joins its card, so the action cap never holds it)
+    for (let i = 0; i < SEEN_IDS_MAX + 10; i++) t.receive({ id: `n${i}`, kind: "checkout_conflict", title: "x", body: null });
     await new Promise((r) => setTimeout(r, 0));
     expect(shown).toHaveLength(SEEN_IDS_MAX + 10);
     // the oldest id fell out of the window: a replay of it is a new delivery;

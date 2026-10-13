@@ -33,7 +33,14 @@
 //     "N more notifications" card when it closes (TAX-9 dw4 — two cards plus
 //     one summary, not one summary alone). A repeat of an event already on
 //     screen in the window joins its card (a count, no new card) and is not
-//     held. Action rows are never folded into the summary.
+//     held. Action rows are never folded into the informational summary:
+//     they have their own cap (notifications N4 review fix) — at most
+//     ACTION_SHOWN_MAX sticky amber cards per window, the rest of that
+//     window's actions becoming ONE sticky "N more actions need you" card
+//     (actionSummary) when it closes. A scan that writes twenty "Still
+//     unconfirmed" rows at once is two cards and one summary, never twenty
+//     cards with no timer. Whether a row is an action is lib/notificationReconcile.ts
+//     isActionRow — the one place the feed's counts read it too.
 //   * The member's "Pop-up toasts" switch (`toast_enabled`) is read through
 //     `readToastPreference` — on mount, whenever the tab comes back, and
 //     before any toast once the last read is older than PREF_FRESH_MS. A read
@@ -52,7 +59,7 @@
 
 import { useEffect } from "react";
 import { supabase } from "@/lib/supabase";
-import { kindMeta } from "@/lib/notificationKinds";
+import { isActionRow as isActionNotification } from "@/lib/notificationReconcile";
 import {
   readToastPreferences, normalizeToastPreference, toastAllowed, type ToastPreference,
 } from "@/lib/notificationPrefs";
@@ -66,6 +73,8 @@ export interface ListenedRow {
   title: string;
   body: string | null;
   resource_id?: string | null;
+  /** Read for the row-level action rule (the review-health nudge is FYI). */
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface ToastSpec {
@@ -82,6 +91,8 @@ export const NOTIFICATION_TOAST_MS = 6000;
 export const BURST_WINDOW_MS = 6000;
 /** Informational toasts shown one by one per window; the rest are summed. */
 export const BURST_SHOWN_MAX = 2;
+/** Action toasts shown one by one per window; the rest are one sticky card. */
+export const ACTION_SHOWN_MAX = 2;
 /** A toast-preference read younger than this is reused. */
 export const PREF_FRESH_MS = 5000;
 /** A toast-preference read that has not answered by then fails open. */
@@ -89,10 +100,12 @@ export const PREF_READ_TIMEOUT_MS = 3000;
 /** The newest row ids remembered against a duplicate delivery. */
 export const SEEN_IDS_MAX = 500;
 
-/** Whether a row's kind needs the member to act (KIND_META); a legacy kind
- *  no union declares is FYI. */
-export function isActionRow(row: Pick<ListenedRow, "kind">): boolean {
-  return kindMeta(row.kind)?.actionRequired ?? false;
+/** Whether a row needs the member to act — lib/notificationReconcile.ts
+ *  isActionRow, the rule the feed's counts read (the kind's
+ *  KIND_META.actionRequired, except a row nothing clears, such as the cron's
+ *  review-health nudge); a legacy kind no union declares is FYI. */
+export function isActionRow(row: Pick<ListenedRow, "kind" | "metadata">): boolean {
+  return isActionNotification(row);
 }
 
 /** One card per statement (RT-11 dw2 / OS-4 dw2): the kind and resource it
@@ -118,6 +131,16 @@ export function toastForRow(row: ListenedRow): ToastSpec {
     // One card per statement (RT-11 dw2 / OS-4 dw2): the merged card keeps
     // the first row's words, so only rows with the same words may merge.
     coalesceKey: notificationCoalesceKey(row),
+  };
+}
+
+/** The one sticky card a window's actions past ACTION_SHOWN_MAX become. */
+export function actionSummary(n: number): ToastSpec {
+  return {
+    type: "warning",
+    title: `${n} more action${n === 1 ? "" : "s"} need${n === 1 ? "s" : ""} you`,
+    message: "They arrived together — the bell's Action filter lists every one.",
+    duration: 0,
   };
 }
 
@@ -167,6 +190,12 @@ export function createNotificationToaster(deps: ToasterDeps) {
   let burstSeq = 0;
   let held: ListenedRow[] = [];
   let timer: unknown = null;
+  // The action window: its own cap and its own summary (never mixed with
+  // the informational summary — an action is never told as "notifications").
+  let actionTimer: unknown = null;
+  let actionsShown = 0;
+  const actionKeys = new Set<string>();
+  let heldActions: ListenedRow[] = [];
   let stopped = false;
 
   /** One read of the switch. A read that rejects, or has not answered
@@ -218,10 +247,40 @@ export function createNotificationToaster(deps: ToasterDeps) {
     deps.show(rows.length === 1 ? toastForRow(rows[0]) : { ...burstSummary(rows.length), coalesceKey: `notification-burst:${++burstSeq}` });
   };
 
+  const flushActions = () => {
+    actionTimer = null;
+    actionsShown = 0;
+    actionKeys.clear();
+    const rows = pref ? heldActions.filter((r) => toastAllowed(pref!.value, r.kind)) : heldActions;
+    heldActions = [];
+    if (stopped || rows.length === 0) return;
+    deps.show(rows.length === 1 ? toastForRow(rows[0]) : { ...actionSummary(rows.length), coalesceKey: `notification-action-burst:${++burstSeq}` });
+  };
+
+  const routeAction = (row: ListenedRow, spec: ToastSpec) => {
+    if (actionTimer === null) {
+      actionsShown = 0;
+      actionKeys.clear();
+      actionTimer = setTimer(flushActions, BURST_WINDOW_MS);
+    }
+    // A repeat of an action already on screen joins its card (a count).
+    const key = toastCoalesceKey(spec);
+    if (actionKeys.has(key)) { deps.show(spec); return; }
+    if (actionsShown < ACTION_SHOWN_MAX) {
+      actionsShown++;
+      actionKeys.add(key);
+      deps.show(spec);
+      return;
+    }
+    // Never folded into the informational summary: held for the action one.
+    heldActions.push(row);
+  };
+
   const route = (row: ListenedRow) => {
     const spec = toastForRow(row);
-    // An action is never folded into a summary, and never waits.
-    if (isActionRow(row)) { deps.show(spec); return; }
+    // An action is never folded into the informational summary; past its own
+    // cap it waits for the window's one sticky action summary.
+    if (isActionRow(row)) { routeAction(row, spec); return; }
     if (!windowOpen) {
       windowOpen = true;
       shownInWindow = 0;
@@ -267,6 +326,9 @@ export function createNotificationToaster(deps: ToasterDeps) {
       if (timer !== null) clearTimer(timer);
       timer = null;
       held = [];
+      if (actionTimer !== null) clearTimer(actionTimer);
+      actionTimer = null;
+      heldActions = [];
       for (const t of prefTimers) clearTimer(t);
       prefTimers.clear();
     },

@@ -6,14 +6,15 @@ import {
   listMyNotifications, countUnread, listUnreadKindsBeyond, markRead, markAllRead,
   NOTIFICATION_PAGE_SIZE, type NotificationRow, type NotificationCursor, type UnreadBeyondRow,
 } from '@/lib/inAppNotifications';
-import { reconcileClassOf, requestReconcile, RECONCILE_MAX_IDS } from '@/lib/notificationReconcile';
+import { isActionRow, reconcileClassOf, requestReconcile, RECONCILE_MAX_IDS } from '@/lib/notificationReconcile';
+import { isTerminalTicketStatus, TERMINAL_TICKET_STATUSES } from '@/lib/ticketShed';
 import {
   isActionRequired, attentionLabel, isQueueViewer, isEngineerRole,
 } from '@/lib/ticketAttention';
 import { loadCapabilityPolicy, type CapabilityPolicy } from '@/lib/capabilityPolicy';
 import { flaggedRequestTypes } from '@/lib/requestTypes';
 import {
-  KIND_META, NOTIFICATION_SECTIONS, isNotificationKind, kindMeta, type NotificationSection,
+  KIND_META, NOTIFICATION_SECTIONS, isNotificationKind, type NotificationSection,
 } from '@/lib/notificationKinds';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -277,19 +278,28 @@ type TicketQuery = PromiseLike<{ data: unknown; error: { code?: string; message?
 /** One ticket scope, read a page at a time (see OPEN_TICKET_CAP). `build`
  *  starts a fresh query each call (the select with its count, then the
  *  scope's filters and order). A database without one of the attention
- *  columns (42703) is read with '*', as it always was. */
+ *  columns (42703) is read with '*', as it always was. `single`: one capped
+ *  read, uncounted and never paged (a scope that holds closed tickets, read
+ *  as it was before the paging — it is not "open requests").
+ *
+ *  Range pages over a last_modified order can return a ticket twice when it
+ *  is modified between two page reads (it moves up into a page already
+ *  read), so the rows are deduplicated by id — the first (newest) copy kept
+ *  — and the next page starts after the rows read, duplicates included. */
 async function loadTicketScope(
   build: (cols: string, counted: boolean) => TicketQuery,
+  opts?: { single?: boolean },
 ): Promise<{ rows: Record<string, unknown>[]; total: number | null; failed: boolean }> {
+  const single = opts?.single === true;
   let cols = TICKET_ATTENTION_COLUMNS;
-  let first = await build(cols, true).limit(OPEN_TICKET_CAP);
+  let first = await build(cols, !single).limit(OPEN_TICKET_CAP);
   if (first.error && first.error.code === '42703') {
     cols = '*';
-    first = await build(cols, true).limit(OPEN_TICKET_CAP);
+    first = await build(cols, !single).limit(OPEN_TICKET_CAP);
   }
   if (first.error) return { rows: [], total: null, failed: true };
   const rows = [...((first.data as Record<string, unknown>[] | null) ?? [])];
-  const total = typeof first.count === 'number' ? first.count : null;
+  const total = !single && typeof first.count === 'number' ? first.count : null;
   while (total !== null && rows.length < total && rows.length < TICKET_SCAN_CEILING && rows.length % OPEN_TICKET_CAP === 0) {
     const page = await build(cols, false).range(rows.length, Math.min(rows.length + OPEN_TICKET_CAP, TICKET_SCAN_CEILING) - 1);
     if (page.error) break;
@@ -297,8 +307,19 @@ async function loadTicketScope(
     if (got.length === 0) break;
     rows.push(...got);
   }
-  return { rows, total, failed: false };
+  const seen = new Set<unknown>();
+  const unique = rows.filter((r) => {
+    if (r.id == null) return true;
+    if (seen.has(r.id)) return false;
+    seen.add(r.id);
+    return true;
+  });
+  return { rows: unique, total, failed: false };
 }
+
+/** A ticket the feed counts as an open request (the scopes' status filter;
+ *  WF-17: CLOSED and CANCELED are both terminal). */
+const isOpenTicket = (t: Pick<Ticket, 'status'>) => !isTerminalTicketStatus(t.status);
 
 /**
  * The feed itself — state, fetch, realtime — for ONE consumer: the
@@ -499,21 +520,27 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
           const scope = await loadTicketScope((cols, counted) => supabase.from('tickets').select(cols, counted ? { count: 'exact' } : undefined).eq('org_id', activeOrgId).not('status', 'in', '("CLOSED","CANCELED")').order('last_modified', { ascending: false }) as unknown as TicketQuery);
           if (!scope.failed) { list = scope.rows.map((r) => fromDbTicket(r)); total = scope.total; }
         } else if (roles.includes('Drafter')) {
-          const [assigned, pool] = await Promise.all([
-            loadTicketScope((cols, counted) => supabase.from('tickets').select(cols, counted ? { count: 'exact' } : undefined).eq('org_id', activeOrgId).eq('assigned_drafter_id', uid).order('last_modified', { ascending: false }) as unknown as TicketQuery),
+          // The drafter's assigned tickets: the OPEN ones paged with a count
+          // (TRAIL-7), and the closed ones in one capped, uncounted read as
+          // before the paging (a closed ticket enters the feed only while it
+          // is unread) — a long-tenured drafter's thousands of closed tickets
+          // are never paged on every refetch.
+          const [assigned, assignedClosed, pool] = await Promise.all([
+            loadTicketScope((cols, counted) => supabase.from('tickets').select(cols, counted ? { count: 'exact' } : undefined).eq('org_id', activeOrgId).eq('assigned_drafter_id', uid).not('status', 'in', '("CLOSED","CANCELED")').order('last_modified', { ascending: false }) as unknown as TicketQuery),
+            loadTicketScope((cols, counted) => supabase.from('tickets').select(cols, counted ? { count: 'exact' } : undefined).eq('org_id', activeOrgId).eq('assigned_drafter_id', uid).in('status', [...TERMINAL_TICKET_STATUSES]).order('last_modified', { ascending: false }) as unknown as TicketQuery, { single: true }),
             loadTicketScope((cols, counted) => supabase.from('tickets').select(cols, counted ? { count: 'exact' } : undefined).eq('org_id', activeOrgId).eq('status', 'PENDING_ASSIGNMENT').order('last_modified', { ascending: false }) as unknown as TicketQuery),
           ]);
-          if (!assigned.failed && !pool.failed) {
+          if (!assigned.failed && !assignedClosed.failed && !pool.failed) {
             const map = new Map<string, Ticket>();
-            for (const row of [...assigned.rows, ...pool.rows]) {
+            for (const row of [...assigned.rows, ...pool.rows, ...assignedClosed.rows]) {
               const t = fromDbTicket(row);
-              map.set(t.id!, t);
+              if (!map.has(t.id!)) map.set(t.id!, t);
             }
             list = Array.from(map.values());
-            // The two scopes can overlap, so their counts are summed only
-            // when one was cut at the ceiling.
+            // The two open scopes can overlap, so their counts are summed
+            // only when one was cut at the ceiling.
             const cut = (x: { rows: unknown[]; total: number | null }) => x.total !== null && x.rows.length < x.total;
-            total = cut(assigned) || cut(pool) ? (assigned.total ?? 0) + (pool.total ?? 0) : list.length;
+            total = cut(assigned) || cut(pool) ? (assigned.total ?? 0) + (pool.total ?? 0) : list.filter(isOpenTicket).length;
           }
         } else {
           const scope = await loadTicketScope((cols, counted) => supabase.from('tickets').select(cols, counted ? { count: 'exact' } : undefined).eq('org_id', activeOrgId).eq('requester_id', uid).not('status', 'in', '("CLOSED","CANCELED")').order('last_modified', { ascending: false }) as unknown as TicketQuery);
@@ -786,9 +813,11 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
       const section = sectionForKind(n.kind);
       // KIND_META decides what is an action: the conflict class (a stale-base
       // branch, a lost checkout, an edit overlap) and the PSM obligations
-      // whose rows the reconcile pass clears once discharged (DEC-81 §2). A
-      // legacy kind no union declares is FYI.
-      const actionRequired = kindMeta(n.kind)?.actionRequired ?? false;
+      // whose rows the reconcile pass clears once discharged (DEC-81 §2) —
+      // per row through isActionRow, which keeps the cron's review-health
+      // nudge (a review_overdue nothing clears) FYI (DEC-90 A11). A legacy
+      // kind no union declares is FYI.
+      const actionRequired = isActionRow(n);
       const library = n.resourceId ? docLibrary[n.resourceId] : undefined;
       out.push({
         key: `notif:${n.id}`,
@@ -832,7 +861,7 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
         tallied++;
         if (r.resourceId && ticketIds.has(r.resourceId)) continue;
         const section = sectionForKind(r.kind as NotificationRow['kind']);
-        const actionReq = kindMeta(r.kind)?.actionRequired ?? false;
+        const actionReq = isActionRow(r);
         all++; notifications++;
         if (actionReq) action++;
         if (section) tally(section, actionReq);
@@ -876,6 +905,9 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
     setLoadingMore(true);
     requestNowRef.current();
   }, []);
+  // The feed's ticket list can hold a drafter's closed (unread) tickets; the
+  // "N of M open requests" line counts the open ones.
+  const openTicketsLoaded = useMemo(() => tickets.filter(isOpenTicket).length, [tickets]);
   const status = useMemo<AttentionStatus>(() => ({
     stale,
     error: loadError,
@@ -884,9 +916,9 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
     hasMoreNotifications: notifTotal !== null && notifTotal > rawNotifs.length,
     loadMoreNotifications,
     loadingMore,
-    ticketsLoaded: tickets.length,
+    ticketsLoaded: openTicketsLoaded,
     ticketsTotal: ticketTotal,
-  }), [stale, loadError, notifs.length, notifTotal, hidden.size, rawNotifs.length, loadMoreNotifications, loadingMore, tickets.length, ticketTotal]);
+  }), [stale, loadError, notifs.length, notifTotal, hidden.size, rawNotifs.length, loadMoreNotifications, loadingMore, openTicketsLoaded, ticketTotal]);
 
   return useMemo(() => ({ value, status }), [value, status]);
 }

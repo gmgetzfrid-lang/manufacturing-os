@@ -28,6 +28,8 @@ const fx = vi.hoisted(() => ({
   calls: [] as Array<{ table: string; method: string; args: unknown[] }>,
   tickets: [] as Array<Record<string, unknown>>,
   ticketCount: null as number | null,
+  /** When set: the tickets result for one query, from the calls made on it. */
+  ticketQuery: null as null | ((own: Array<{ method: string; args: unknown[] }>) => { data: unknown; error: unknown; count?: number | null }),
   documents: [] as Array<Record<string, unknown>>,
   pages: [] as Array<Array<Record<string, unknown>>>,
   listCalls: [] as Array<Record<string, unknown>>,
@@ -46,14 +48,15 @@ vi.mock("@/lib/supabase", () => {
   const chain = (table: string): Record<string, unknown> => {
     const q: Record<string, unknown> = {};
     let isUpdate = false;
+    const own: Array<{ method: string; args: unknown[] }> = [];
     for (const m of ["select", "eq", "not", "in", "order", "limit", "range", "is", "or", "gte", "lt"]) {
-      q[m] = (...args: unknown[]) => { fx.calls.push({ table, method: m, args }); return q; };
+      q[m] = (...args: unknown[]) => { fx.calls.push({ table, method: m, args }); own.push({ method: m, args }); return q; };
     }
     q.update = (...args: unknown[]) => { isUpdate = true; fx.calls.push({ table, method: "update", args }); return q; };
     q.maybeSingle = async () => ({ data: null, error: null });
     q.then = (ok: (v: unknown) => unknown, ko?: (e: unknown) => unknown) => {
       const result = isUpdate ? { data: null, error: null }
-        : table === "tickets" ? (fx.ticketsFail ? { data: null, error: { message: "tickets down" }, count: null } : { data: fx.tickets, error: null, count: fx.ticketCount })
+        : table === "tickets" ? (fx.ticketsFail ? { data: null, error: { message: "tickets down" }, count: null } : fx.ticketQuery ? fx.ticketQuery(own) : { data: fx.tickets, error: null, count: fx.ticketCount })
         : table === "documents" ? { data: fx.documents, error: null }
         : { data: [], error: null, count: 0 };
       return Promise.resolve(result).then(ok, ko);
@@ -141,7 +144,7 @@ beforeEach(() => {
   document.body.appendChild(host);
   root = createRoot(host);
   seen.length = 0; statuses.length = 0;
-  fx.calls = []; fx.tickets = []; fx.ticketCount = null; fx.documents = [];
+  fx.calls = []; fx.tickets = []; fx.ticketCount = null; fx.ticketQuery = null; fx.documents = [];
   fx.pages = [[]]; fx.listCalls = []; fx.listFails = false; fx.total = 0; fx.beyond = []; fx.beyondCalls = []; fx.ticketsFail = false;
   fx.role = { roles: ["Viewer"], activeOrgId: "o1", uid: "u1", membershipState: "member" };
   fx.reconcileCalls = []; fx.retire = []; fx.channels = [];
@@ -255,6 +258,22 @@ describe("TAX-6 / DELIV-10 / TRAIL-7 / PROD-7 — a true count, older pages, a f
     expect(last().count).toBe(52);
     expect(last().counts.action).toBe(1);
     expect(last().sectionCounts.documents).toEqual({ total: 52, actionRequired: 1 });
+  });
+
+  it("the cron's review-health nudge (review_overdue + metadata.reviewHealth) counts as activity, not action — in the window and below it (DEC-90 A11, review fix)", async () => {
+    fx.pages = [[row(1, { kind: "review_overdue", metadata: { reviewHealth: true, reviewHealthDay: "2026-10-13" } }), row(2, { kind: "review_overdue", metadata: null }), ...page(3, 48)]];
+    fx.total = 52;
+    fx.beyond = [
+      { id: "h1", kind: "review_overdue", resourceType: "document", resourceId: "d-h", metadata: { reviewHealth: true, reviewHealthDay: "2026-10-12" }, createdAt: "2026-10-01T00:00:00Z" },
+      { id: "h2", kind: "review_overdue", resourceType: "document", resourceId: "d-e", metadata: null, createdAt: "2026-10-01T00:00:00Z" },
+    ];
+    await mount(withProvider(1));
+    const health = last().items.find((i) => i.key === "notif:n1")!;
+    expect(health.actionRequired).toBe(false);
+    expect(last().items.find((i) => i.key === "notif:n2")!.actionRequired).toBe(true);
+    // n2 in the window and h2 below it are actions; the two review-health rows are activity
+    expect(last().counts).toEqual({ all: 52, action: 2, activity: 50, notifications: 52 });
+    expect(last().sectionCounts.documents.actionRequired).toBe(2);
   });
 
   it("'Load older' pages the created_at cursor; marking one read moves the badge down by one", async () => {
@@ -400,5 +419,50 @@ describe("TRAIL-12 — a document row without a link opens its library", () => {
     expect(links.n2).toBe("/documents");
     expect(fx.calls.filter((c: Call) => c.table === "documents" && c.method === "in").length).toBe(1);
     for (const l of Object.values(links)) expect(l).not.toMatch(/^\/search/);
+  });
+});
+
+describe("TRAIL-7 — ticket paging (review fix): no duplicates across pages; a drafter's closed tickets are one capped read", () => {
+  const trow = (i: number, over: Record<string, unknown> = {}) => ({ id: `t${i}`, org_id: "o1", ticket_id: `DR-${i}`, title: `T ${i}`, status: "DRAFTING", requester_id: "u1", unread_by: ["u1"], last_modified: "2026-10-13T00:00:00Z", ...over });
+
+  it("a ticket modified between two page reads (it moves into a page already read) appears once — one item, counted once", async () => {
+    fx.ticketQuery = (own) => {
+      const range = own.find((c) => c.method === "range");
+      if (!range) return { data: Array.from({ length: 500 }, (_, i) => trow(i)), error: null, count: 600 };
+      // page 2: t499 was modified meanwhile and is read again, then 99 more
+      return { data: [trow(499), ...Array.from({ length: 99 }, (_, i) => trow(500 + i))], error: null, count: null };
+    };
+    await mount(withProvider(1));
+    const keys = last().items.filter((i) => i.source === "ticket").map((i) => i.key);
+    expect(keys.length).toBe(599);
+    expect(new Set(keys).size).toBe(599);
+    expect(last().sectionCounts.requests.total).toBe(599);
+    expect(lastStatus()).toMatchObject({ ticketsLoaded: 599, ticketsTotal: 600 });
+  });
+
+  it("a drafter: the assigned OPEN tickets are paged with a count, the assigned closed ones are ONE uncounted, unpaged read (an unread closed ticket still shows), and 'N of M open requests' counts open ones", async () => {
+    fx.role = { roles: ["Drafter"], activeOrgId: "o1", uid: "u1", membershipState: "member" };
+    const kindOf = (own: Array<{ method: string; args: unknown[] }>) =>
+      own.some((c) => c.method === "in" && c.args[0] === "status") ? "closed"
+        : own.some((c) => c.method === "eq" && c.args[0] === "assigned_drafter_id") ? "open" : "pool";
+    fx.ticketQuery = (own) => {
+      const k = kindOf(own);
+      if (k === "closed") return { data: Array.from({ length: 500 }, (_, i) => trow(9000 + i, { status: "CLOSED", unread_by: i === 0 ? ["u1"] : [] })), error: null, count: 4000 };
+      if (k === "open") return { data: [trow(1, { assigned_drafter_id: "u1" })], error: null, count: 1 };
+      return { data: [], error: null, count: 0 };
+    };
+    await mount(withProvider(1));
+    const ticketCalls = fx.calls.filter((c: Call) => c.table === "tickets");
+    // the open assigned scope carries the status filter
+    expect(ticketCalls.some((c) => c.method === "not" && c.args[0] === "status")).toBe(true);
+    // the closed scope: exactly one read, no count, never ranged
+    const closedSelects = ticketCalls.filter((c, i) => c.method === "select" && ticketCalls.slice(i, i + 6).some((x) => x.method === "in" && x.args[0] === "status"));
+    expect(closedSelects.length).toBe(1);
+    expect(closedSelects[0].args[1]).toBeUndefined();
+    expect(ticketCalls.filter((c) => c.method === "range").length).toBe(0);
+    // the unread closed ticket is in the feed, as before the paging
+    expect(last().items.some((i) => i.key === "ticket:t9000")).toBe(true);
+    // 'of M open requests': the closed rows are not counted as open requests, and nothing reads as cut
+    expect(lastStatus()).toMatchObject({ ticketsLoaded: 1, ticketsTotal: 1 });
   });
 });

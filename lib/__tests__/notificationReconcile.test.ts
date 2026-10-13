@@ -113,6 +113,23 @@ describe("reconcileClassOf — which condition retires which row", () => {
   });
 });
 
+describe("isActionRow — the one row-level action rule (DEC-81 §2, DEC-90 A11)", () => {
+  it("follows the kind, except the cron's review-health nudge (a review_overdue nothing clears), which is FYI", async () => {
+    const { isActionRow } = await import("@/lib/notificationReconcile");
+    expect(isActionRow({ kind: "review_overdue", metadata: null })).toBe(true);
+    expect(isActionRow({ kind: "review_overdue", metadata: { reviewHealth: true, reviewHealthDay: "2026-10-13" } })).toBe(false);
+    expect(isActionRow({ kind: "review_overdue", metadata: { reviewHealthDay: "2026-10-13" } })).toBe(false);
+    expect(isActionRow({ kind: "ack_requested" })).toBe(true);
+    expect(isActionRow({ kind: "checkout_conflict", metadata: { reviewHealth: true } })).toBe(true);
+    expect(isActionRow({ kind: "library_doc_revised", metadata: null })).toBe(false);
+    expect(isActionRow({ kind: "some_legacy_kind" })).toBe(false);
+    // every action row the reconcile pass can classify is one it can clear; the review-health row is neither
+    const health = { kind: "review_overdue", resourceType: "document", resourceId: "d", metadata: { reviewHealth: true } };
+    expect(reconcileClassOf(health)).toBe(null);
+    expect(isActionRow(health)).toBe(false);
+  });
+});
+
 describe("retireStaleAlerts — the server re-checks, then marks only the gone ones", () => {
   it("workflow: a ticket that moved on or left the workspace is retired; a live one, and a non-ticket id, are kept", async () => {
     const { retireStaleAlerts } = await import("@/lib/notificationReconcileServer");
@@ -291,6 +308,52 @@ describe("retireStaleAlerts — the server re-checks, then marks only the gone o
     const a = await retireStaleAlerts(fakeDb, { orgId: ORG, uid: U, ids: [id(1), id(2)], now: NOW });
     expect(a).toEqual({ retired: [], kept: 2, failed: 0 });
     expect(db.updates).toEqual([]);
+  });
+
+  it("review (review fix): a check-in notice written minutes after the reminder scan stamped the owner's roster row is KEPT once the owner signs — the roster row's time alone is not proof", async () => {
+    const { retireStaleAlerts } = await import("@/lib/notificationReconcileServer");
+    const D = id(731);
+    const SUBMITTER = "44444444-4444-4444-8444-444444444444";
+    const FIELD_TECH = "55555555-5555-4555-8555-555555555555";
+    // The owner's slot on draft 2B: opened by the submitter at 06:00, the reminder scan stamped notified_at at 07:00,
+    // and the owner signed at 09:00 (updated_at — moved by the sign-off itself).
+    db.tables.document_review_signoffs = [
+      { org_id: ORG, reviewer_user_id: U, document_id: D, document_version_id: "draft-2B", status: "signed", assigned_by: SUBMITTER, assigned_at: "2026-10-13T06:00:00.000Z", notified_at: "2026-10-13T07:00:00.000Z", updated_at: "2026-10-13T09:00:00.000Z" },
+    ];
+    db.tables.documents = [{ id: D, org_id: ORG, pending_version_id: "draft-2B" }];
+    db.tables.notifications = [
+      // 07:04 — CheckInPanel notify_owner: review_requested "Change proposed to …", actor = the field tech
+      notif(1, { kind: "review_requested", resource_type: "document", resource_id: D, created_at: "2026-10-13T07:04:00.000Z", actor_user_id: FIELD_TECH, title: "Change proposed to DOC-1" }),
+      // 09:03 — a check-in by someone else right after the owner's sign-off moved updated_at
+      notif(2, { kind: "review_requested", resource_type: "document", resource_id: D, created_at: "2026-10-13T09:03:00.000Z", actor_user_id: FIELD_TECH, title: "Change proposed to DOC-1" }),
+      // controls the roster DID write: the reminder (no actor, at notified_at) and openReviewRoster's (the submitter, at assigned_at)
+      notif(3, { kind: "review_requested", resource_type: "document", resource_id: D, created_at: "2026-10-13T06:59:58.000Z", actor_user_id: null, title: "Reminder — review 2B" }),
+      notif(4, { kind: "review_requested", resource_type: "document", resource_id: D, created_at: "2026-10-13T06:00:01.000Z", actor_user_id: SUBMITTER, title: "Review requested: 2B" }),
+      // the submitter's own check-in, far from the roster they opened: kept
+      notif(5, { kind: "review_requested", resource_type: "document", resource_id: D, created_at: "2026-10-13T07:04:00.000Z", actor_user_id: SUBMITTER, title: "Change proposed to DOC-1" }),
+    ];
+    const a = await retireStaleAlerts(fakeDb, { orgId: ORG, uid: U, ids: [1, 2, 3, 4, 5].map(id), now: new Date("2026-10-13T10:00:00.000Z") });
+    expect(a.retired.sort()).toEqual([id(3), id(4)]);
+    expect(a.kept).toBe(3);
+    expect(db.tables.notifications.find((r) => r.id === id(1))!.metadata).toBe(null);
+  });
+
+  it("review (review fix): rosterWrote — an actor must be the roster's opener at its assigned_at; no actor matches assigned_at / notified_at, and updated_at only on an invalidated row of a review_invalidated", async () => {
+    const { rosterWrote } = await import("@/lib/notificationReconcileServer");
+    const T = "2026-10-13T08:00:00.000Z";
+    const r = (over: Record<string, unknown>) => ({ status: "pending", assigned_by: "opener", assigned_at: null, notified_at: null, updated_at: null, ...over });
+    expect(rosterWrote({ kind: "review_requested", created_at: T, actor_user_id: "opener" }, [r({ assigned_at: "2026-10-13T08:00:03.000Z" })])).toBe(true);
+    expect(rosterWrote({ kind: "review_requested", created_at: T, actor_user_id: "someone-else" }, [r({ assigned_at: "2026-10-13T08:00:03.000Z" })])).toBe(false);
+    // an actor-bearing notice near a reminder stamp only (notified_at) is not openReviewRoster's
+    expect(rosterWrote({ kind: "review_requested", created_at: T, actor_user_id: "opener" }, [r({ assigned_at: "2026-10-01T00:00:00.000Z", notified_at: T })])).toBe(false);
+    expect(rosterWrote({ kind: "review_requested", created_at: T, actor_user_id: null }, [r({ notified_at: "2026-10-13T08:00:02.000Z" })])).toBe(true);
+    // updated_at on a live row (a sign-off, an activation) is never evidence
+    expect(rosterWrote({ kind: "review_requested", created_at: T, actor_user_id: null }, [r({ status: "signed", updated_at: T })])).toBe(false);
+    expect(rosterWrote({ kind: "review_invalidated", created_at: T, actor_user_id: null }, [r({ status: "signed", updated_at: T })])).toBe(false);
+    expect(rosterWrote({ kind: "review_invalidated", created_at: T, actor_user_id: null }, [r({ status: "invalidated", updated_at: "2026-10-13T07:59:59.000Z" })])).toBe(true);
+    // outside the window, or no creation time: not proven
+    expect(rosterWrote({ kind: "review_requested", created_at: T, actor_user_id: null }, [r({ notified_at: "2026-10-13T08:11:00.000Z" })])).toBe(false);
+    expect(rosterWrote({ kind: "review_requested", created_at: null, actor_user_id: null }, [r({ notified_at: T })])).toBe(false);
   });
 
   it("review: a row younger than REVIEW_RECONCILE_GRACE_MS is kept — the voided-approval notice precedes the new draft's roster", async () => {

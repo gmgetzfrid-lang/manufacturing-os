@@ -16,8 +16,10 @@
 //
 // This module is shared: the classification below is read by the feed (which
 // rows to send) and by the route (which check each row gets). It imports no
-// client, so the route can use it too; the browser call is the one function
+// client (only the kind registry), so the route can use it too; the browser call is the one function
 // at the end, which reads the session lazily.
+
+import { kindMeta } from "@/lib/notificationKinds";
 
 /** The conditions a row can be retired on. */
 export type ReconcileClass =
@@ -42,7 +44,9 @@ export type ReconcileClass =
    *  proof, because the check-in panel's "Change proposed to …" notice to a
    *  document's owner is a review_requested row with no roster behind it
    *  (components/documents/CheckInPanel.tsx). lib/notificationReconcileServer.ts
-   *  keeps any row with no roster evidence, and any row younger than
+   *  keeps any row with no roster evidence (its actor must be the roster's
+   *  opener, or none, and its time the stamp that writer put on the
+   *  recipient's roster row), and any row younger than
    *  REVIEW_RECONCILE_GRACE_MS (the voided-approval notice is written before
    *  the new roster is). */
   | "review"
@@ -101,6 +105,21 @@ export function reconcileClassOf(row: ReconcilableRow): ReconcileClass | null {
   }
 }
 
+/** Whether a notification row asks its recipient to act — the ONE place
+ *  the feed's counts, the badges and the toast read it (DEC-81 §2, DEC-90
+ *  A11: no action flag that cannot clear). The kind decides
+ *  (KIND_META.actionRequired), except for a row of an action kind that
+ *  nothing clears: the maintenance cron's daily review-health nudge reuses
+ *  review_overdue (metadata.reviewHealth / reviewHealthDay), and
+ *  reconcileClassOf leaves it out, so it reads as FYI and stays until read.
+ *  A legacy kind no union declares is FYI. */
+export function isActionRow(row: { kind: string; metadata?: Record<string, unknown> | null }): boolean {
+  if (!(kindMeta(row.kind)?.actionRequired ?? false)) return false;
+  const meta = row.metadata ?? null;
+  if (row.kind === "review_overdue" && meta && (meta.reviewHealth != null || meta.reviewHealthDay != null)) return false;
+  return true;
+}
+
 /** The most ids one request may carry (the feed sends its loaded window's
  *  candidates first, then those among the rows below the window). */
 export const RECONCILE_MAX_IDS = 200;
@@ -112,11 +131,15 @@ export const RECONCILE_MAX_IDS = 200;
  *  "discharged". */
 export const REVIEW_RECONCILE_GRACE_MS = 2 * 60_000;
 
-/** How close a sign-off roster row's assigned_at / notified_at / updated_at
+/** How close the stamp a roster's writer put on the recipient's sign-off
+ *  row (assigned_at for openReviewRoster, notified_at for the reminder scan,
+ *  updated_at only on the row invalidateDraftSignoffs turned 'invalidated')
  *  must lie to a review row's created_at for the row to count as that
- *  roster's notice (lib/reviewControl.ts stamps the roster row and writes the
- *  notice in the same call; the assigned_at of a browser-opened roster is the
- *  browser's clock, hence the margin). */
+ *  roster's notice — with the notice's actor matching the roster's opener
+ *  (lib/notificationReconcileServer.ts rosterWrote). lib/reviewControl.ts
+ *  stamps the roster row and writes the notice in the same call; the
+ *  assigned_at of a browser-opened roster is the browser's clock, hence the
+ *  margin. */
 export const REVIEW_ROSTER_WINDOW_MS = 10 * 60_000;
 
 /** What the route answers. */

@@ -32,15 +32,19 @@
 //   review         the recipient has no pending sign-off on the document's
 //                  draft in review (document_review_signoffs 'pending' for
 //                  documents.pending_version_id) — checked only for a row
-//                  the roster provably wrote: one of the recipient's roster
-//                  rows on the document was assigned, notified or updated
-//                  within REVIEW_ROSTER_WINDOW_MS of the row's created_at
-//                  (openReviewRoster, the reminder scan and
-//                  invalidateDraftSignoffs each stamp the roster row in the
-//                  call that writes the notice). A review_requested row with
-//                  no such roster row — the check-in panel's "Change proposed
-//                  to …" notice to the owner — is kept, as is any row younger
-//                  than REVIEW_RECONCILE_GRACE_MS (a voided approval's notice
+//                  the roster provably wrote (rosterWrote below), tying the
+//                  notice's actor to the roster's and its time to the stamp
+//                  the writer put on the recipient's roster row in the same
+//                  call: openReviewRoster (actor = the roster's assigned_by,
+//                  at its assigned_at), the reminder scan (no actor, at the
+//                  notified_at it stamps after the notice) and
+//                  invalidateDraftSignoffs (no actor, on the row it turns
+//                  'invalidated'). updated_at is never evidence on a live row
+//                  — every sign-off and alternate activation moves it. A row
+//                  with no such evidence — the check-in panel's "Change
+//                  proposed to …" notice, whose actor is the person checking
+//                  in — is kept, as is any row younger than
+//                  REVIEW_RECONCILE_GRACE_MS (a voided approval's notice
 //                  precedes the new draft's roster).
 //   recert         the library's next recertification is no longer due
 //                  (lib/accessRecert.ts recertStatusFor: 'current' or 'none')
@@ -70,6 +74,47 @@ interface Row {
   resource_id: string | null;
   metadata: Record<string, unknown> | null;
   created_at?: string | null;
+  actor_user_id?: string | null;
+}
+
+/** A recipient's sign-off roster row, as the review check reads it. */
+export interface RosterStamp {
+  status: string | null;
+  assigned_by: string | null;
+  assigned_at: string | null;
+  notified_at: string | null;
+  updated_at: string | null;
+}
+
+const ms = (t: string | null | undefined) => (t ? Date.parse(t) : NaN);
+const near = (t: string | null | undefined, created: number) => {
+  const at = ms(t);
+  return Number.isFinite(at) && Math.abs(at - created) <= REVIEW_ROSTER_WINDOW_MS;
+};
+
+/** Whether a review_requested / review_invalidated row is provably the
+ *  notice a sign-off roster's writer sent (lib/reviewControl.ts), from the
+ *  recipient's roster rows on that document:
+ *    * a notice WITH an actor: openReviewRoster's — the actor opened the
+ *      roster (assigned_by) and the notice was written at its assigned_at.
+ *      The check-in panel's notice carries the person checking in, who is
+ *      not the roster's opener, so it never matches;
+ *    * a notice with NO actor: the reminder scan's (written just before it
+ *      stamps notified_at), an actor-less roster's (assigned_at =
+ *      notified_at), or invalidateDraftSignoffs' review_invalidated (the
+ *      row it turns 'invalidated', whose updated_at it stamps; an
+ *      invalidated row moves no further).
+ *  updated_at on a live row is never evidence: each sign-off, invalidation
+ *  and alternate activation moves it. Exported for the tests. */
+export function rosterWrote(row: Pick<Row, "kind" | "created_at" | "actor_user_id">, roster: RosterStamp[]): boolean {
+  const created = ms(row.created_at);
+  if (!Number.isFinite(created)) return false;
+  const actor = row.actor_user_id ?? null;
+  return roster.some((s) => {
+    if (actor !== null) return s.assigned_by === actor && near(s.assigned_at, created);
+    if (near(s.assigned_at, created) || near(s.notified_at, created)) return true;
+    return row.kind === "review_invalidated" && s.status === "invalidated" && near(s.updated_at, created);
+  });
 }
 
 type Read<T> = { ok: true; data: T } | { ok: false };
@@ -188,11 +233,11 @@ async function evaluate(db: ReconcileDb, orgId: string, uid: string, rows: Array
   // roster provably wrote (see the header)
   const reviews = of("review");
   if (reviews.length > 0) {
-    type Signoff = { document_id: string; document_version_id: string | null; status: string | null; assigned_at: string | null; notified_at: string | null; updated_at: string | null };
+    type Signoff = RosterStamp & { document_id: string; document_version_id: string | null };
     const docIds = uniq(reviews.map((r) => r.resource_id as string).filter(isUuid));
     const [signoffs, docs] = docIds.length > 0
       ? await Promise.all([
-          read<Signoff>(db.from("document_review_signoffs").select("document_id, document_version_id, status, assigned_at, notified_at, updated_at").eq("org_id", orgId).eq("reviewer_user_id", uid).in("document_id", docIds)),
+          read<Signoff>(db.from("document_review_signoffs").select("document_id, document_version_id, status, assigned_by, assigned_at, notified_at, updated_at").eq("org_id", orgId).eq("reviewer_user_id", uid).in("document_id", docIds)),
           read<{ id: string; pending_version_id: string | null }>(db.from("documents").select("id, pending_version_id").eq("org_id", orgId).in("id", docIds)),
         ])
       : [{ ok: true as const, data: [] as Signoff[] }, { ok: true as const, data: [] }];
@@ -207,19 +252,13 @@ async function evaluate(db: ReconcileDb, orgId: string, uid: string, rows: Array
         if (s.status === "pending" && pending && s.document_version_id === pending) owed.add(s.document_id);
       }
     }
-    const ms = (t: string | null | undefined) => (t ? Date.parse(t) : NaN);
     for (const r of reviews) {
       if (!readable || !isUuid(r.resource_id)) { verdict.set(r.id, null); continue; }
       const created = ms(r.created_at);
       // Too young (or no creation time to judge by): kept — never "gone".
       if (!Number.isFinite(created) || nowMs - created < REVIEW_RECONCILE_GRACE_MS) { verdict.set(r.id, false); continue; }
-      const fromRoster = (rosterByDoc.get(r.resource_id) ?? []).some((s) =>
-        [s.assigned_at, s.notified_at, s.updated_at].some((t) => {
-          const at = ms(t);
-          return Number.isFinite(at) && Math.abs(at - created) <= REVIEW_ROSTER_WINDOW_MS;
-        }));
-      // Not a roster's notice (the check-in panel's proposed change): kept.
-      if (!fromRoster) { verdict.set(r.id, false); continue; }
+      // Not provably a roster's notice (the check-in panel's proposed change): kept.
+      if (!rosterWrote(r, rosterByDoc.get(r.resource_id) ?? [])) { verdict.set(r.id, false); continue; }
       verdict.set(r.id, !owed.has(r.resource_id));
     }
   }
@@ -296,7 +335,7 @@ export async function retireStaleAlerts(
   if (ids.length === 0) return { retired: [], kept: 0, failed: 0 };
   const rowsRes = await read<Row>(
     db.from("notifications")
-      .select("id, kind, resource_type, resource_id, metadata, created_at")
+      .select("id, kind, resource_type, resource_id, metadata, created_at, actor_user_id")
       .eq("org_id", input.orgId)
       .eq("user_id", input.uid)
       .is("read_at", null)
