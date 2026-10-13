@@ -788,7 +788,7 @@ SELECT 'prune_removed_member_acl_index: SECURITY DEFINER, search_path pinned, Ad
        NULL
 UNION ALL
 SELECT 'drafting-flow EDGE-4 (DEC-103): this re-creation leaves the departure path where 20261195 put it — on org_members'' own AFTER triggers, not in revoke_member''s body; when 20261195 is pasted both triggers are present and enabled (either paste order)',
-       NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'revoke_member' AND prosrc LIKE '%return_departed_member_tickets%')
+       NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'revoke_member' AND (prosrc LIKE '%departed_member%' OR prosrc LIKE '%app.ticket_departure%'))
        AND (NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'org_member_departure_returns_tickets')
             OR (SELECT COUNT(*) = 2 FROM pg_trigger tg JOIN pg_proc p ON p.oid = tg.tgfoid
                  WHERE tg.tgrelid = 'public.org_members'::regclass AND NOT tg.tgisinternal AND tg.tgenabled = 'O'

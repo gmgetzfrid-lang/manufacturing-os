@@ -256,7 +256,9 @@ describe("20261204 — revoke_member from its NEWEST body + ALOG-15 + ORG-7; ALO
   it("MERGE (drafting-flow DF-P3, DEC-103): revoke_member's body carries no departure path — 20261195's org_members AFTER triggers do it — and the paste checks both triggers when 20261195 is in", () => {
     expect(next).not.toMatch(/return_departed_member_tickets|app\.ticket_departure|DROP TRIGGER[^;]*org_member_departure/);
     expect(B).not.toMatch(/org_member_departure_returns_tickets\(\)\s*(RETURNS|IS)|DROP TRIGGER IF EXISTS trg_org_member_departure/);
-    expect(B).toContain("NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'revoke_member' AND prosrc LIKE '%return_departed_member_tickets%')");
+    expect(B).toContain("NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'revoke_member' AND (prosrc LIKE '%departed_member%' OR prosrc LIKE '%app.ticket_departure%'))");
+    // memberDeparture.test.ts reads the newest revoke_member FILE whole: the name never appears in it
+    expect(B).not.toContain("return_departed_member_tickets");
     expect(B).toMatch(/tg\.tgname IN \('trg_org_member_departure_status', 'trg_org_member_departure_delete'\)/);
     // the triggers 20261195 creates are exactly the two the probe names, on org_members
     const df = read("20261195_df_roundG_outcome_and_departure.sql");

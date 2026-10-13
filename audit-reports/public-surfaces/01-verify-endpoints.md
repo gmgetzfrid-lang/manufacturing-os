@@ -783,7 +783,7 @@ DEC-63 §4 Reversal (4): "An org / library zone setting replaces the deployment 
 2. ✗ `/api/verify`, the badge, the suppression watermark and the daily scan do not pass the document's org.
 3. ✗ No two-org test yet.
 
-**Owner of the remainder:** admin-and-org, a P8 follow-up. The integrator schedules it once notifications N14 has merged `lib/effectiveDate.ts`, and decides whether it goes with document-control instead (the module's original owner, DC P3). The resolver reads `lib/workspaceTimeZone.ts` `readWorkspaceTimeZone` (or `lib/recordTime.ts` `orgTimeZone`) with the service client for the document's org. The finding stays OPEN.
+**Owner of the remainder:** admin-and-org, a P8 follow-up. The integrator schedules it once notifications N14 has merged `lib/effectiveDate.ts` *(N14 merged on the integration branch at `0cb6409`, 2026-10-13; this branch carries it since `e18cdd9` — the follow-up is unblocked, not built here: DEC-31)*, and decides whether it goes with document-control instead (the module's original owner, DC P3). The resolver reads `lib/workspaceTimeZone.ts` `readWorkspaceTimeZone` (or `lib/recordTime.ts` `orgTimeZone`) with the service client for the document's org. The finding stays OPEN.
 
 ---
 
