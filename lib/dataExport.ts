@@ -1171,6 +1171,11 @@ async function recordExport(
       startedAt: info.startedAt,
       presignedUrls: handedOut.length,
       presignedUrlExpiresIn: info.presignedUrlExpiresIn,
+      // intelligence IEDGE-10: an export is never filtered by the document
+      // ACL. It is a full-fidelity backup, taken only by an Admin (the
+      // data-export surface's entry set, DEC-87 §1), an ACL controller who may
+      // read every row; the row says so rather than leaving it implied.
+      aclFiltered: false,
       fileRecordRows: fileRows.length,
       fileRecord,
       ...(info.privateNotes > 0 ? { privateNotes: { carried: info.privateNotes } } : {}),

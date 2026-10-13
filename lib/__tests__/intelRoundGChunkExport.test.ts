@@ -219,6 +219,16 @@ function newestDefinition(fn: string): { file: string; body: string } {
   return found;
 }
 
+describe("IEDGE-10 criterion 3 — the DATA_EXPORT row records the exporter's role and that the dump was not ACL-filtered", () => {
+  it("user_role is the admitted role; details.aclFiltered is false (a full-fidelity Admin backup)", async () => {
+    seedSource([chunk(0)]);
+    await runOrgExport({ supabaseUrl: "https://x.supabase.co", serviceRoleKey: "svc", orgId: SRC, exporterUserId: "u-alice", exporterEmail: "alice@acme.com", exporterRole: "Admin" });
+    const row = rowsOf("audit_logs").find((r) => r.action === "DATA_EXPORT")!;
+    expect(row).toMatchObject({ user_role: "Admin", user_id: "u-alice" });
+    expect(row.details).toMatchObject({ aclFiltered: false });
+  });
+});
+
 describe("ILIFE-11 criterion 3 — a restore of a backup taken without embeddings leaves every chunk where the embed drain rebuilds it", () => {
   it("export → restore into a fresh workspace: every chunk lands with no embedding, and each meets the drain's claim predicate", async () => {
     seedSource([chunk(0), chunk(1, { embed_attempts: 1 }), chunk(2, { embedding: null, embedding_model: null })]);
