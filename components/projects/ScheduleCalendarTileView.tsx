@@ -6,10 +6,12 @@
 // colored by status. Drag a chip to another tile to reschedule the
 // whole task by that delta; click it to open the full detail panel.
 //
-// We render "main" tasks — leaves and tasks that have leaf children —
-// not the broad summary containers (a phase-of-phases would otherwise
-// smear a bar across the whole month). The detail panel surfaces a
-// main task's subtask accordion.
+// We render leaf tasks and bottom-level groups (a parent whose children
+// are all leaves) — never the broad containers (the project root or a
+// phase-of-phases would otherwise repeat down every day of the month).
+// Inside a tile, chips stack in time-of-day order. The rules live in
+// lib/calendarPlacement.ts so they're unit-tested. The detail panel
+// surfaces a group chip's subtask accordion.
 
 import React, { useCallback, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, CalendarDays, Crosshair, Layers, Info, GripVertical, CheckSquare, X as XIcon, Moon, Sunset } from "lucide-react";
@@ -18,6 +20,7 @@ import StatusControl from "@/components/projects/StatusControl";
 import ProgressControl from "@/components/projects/ProgressControl";
 import { GROUP_PALETTE } from "@/lib/scheduleColors";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
+import { placeableTasks, compareDayPlacements, startMsOf, finishMsOf } from "@/lib/calendarPlacement";
 
 // Use the shared palette so a group is the SAME hue here and on the
 // timeline. `.rail` is the solid accent (was `.bar` locally).
@@ -116,27 +119,16 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
     return out;
   }, [childrenByParent]);
 
-  // Which rows actually get placed on the grid. A "main" is a leaf, or
-  // a task with at least one leaf child (its bar). But when a main is
-  // expanded (or global subtask mode is on), we place its individual
-  // leaf children instead — so a single sub-item can be dragged on its
-  // own day while its siblings stay put.
-  const mains = useMemo(() => {
-    const out: Milestone[] = [];
-    for (const m of milestones) {
-      if (!m.plannedAt) continue;
-      const kids = m.id ? (childrenByParent.get(m.id) ?? []) : [];
-      const isMain = kids.length === 0 || kids.some((k) => !k.id || (childrenByParent.get(k.id) ?? []).length === 0);
-      if (!isMain) continue;
-      const exploded = kids.length > 0 && showSubtasks;
-      if (exploded) {
-        for (const leaf of leafDescendants(m)) if (leaf.plannedAt) out.push(leaf);
-      } else {
-        out.push(m);
-      }
-    }
-    return out;
-  }, [milestones, childrenByParent, showSubtasks, leafDescendants]);
+  // Which rows actually get placed on the grid: leaves, plus (in Tasks
+  // mode) bottom-level groups standing in for their steps. Containers
+  // such as the project root are never placed — they aren't specific
+  // to any one day. In Sub-tasks mode every leaf is placed exactly once
+  // so a single sub-item can be dragged on its own day while its
+  // siblings stay put. See lib/calendarPlacement.ts.
+  const mains = useMemo(
+    () => placeableTasks(milestones, childrenByParent, showSubtasks),
+    [milestones, childrenByParent, showSubtasks],
+  );
 
   // Distinct top-level groups that actually have rendered tasks beneath
   // them, in calendar order — used for the group color legend.
@@ -171,7 +163,8 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
     didSnap.current = true;
   }, [span]);
 
-  // Bucket every main task onto each UTC day it covers.
+  // Bucket every placed task onto each UTC day it covers, then order
+  // each tile by time of day (carry-overs first, then start time).
   const byDay = useMemo(() => {
     const m = new Map<string, Array<{ ms: Milestone; dayIndex: number; spanDays: number }>>();
     for (const ms of mains) {
@@ -186,7 +179,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
         m.set(key, arr);
       }
     }
-    for (const arr of m.values()) arr.sort((a, b) => startMs(a.ms) - startMs(b.ms));
+    for (const arr of m.values()) arr.sort(compareDayPlacements);
     return m;
   }, [mains]);
 
@@ -435,33 +428,26 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
               <div className="font-bold text-[var(--color-text)] text-sm">{ymdToDate(overflowDay).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" })}</div>
               <span className="ml-auto text-[11px] text-[var(--color-text-faint)]">{(byDay.get(overflowDay) ?? []).length} tasks</span>
             </div>
-            <div className="max-h-[60vh] overflow-y-auto p-2 space-y-3">
-              {groupByTop(byDay.get(overflowDay) ?? [], topGroupOf).map((grp) => {
-                const color = GROUP_COLORS[(grp.unit.id ? groupColorIndex.get(grp.unit.id) : undefined) ?? 0];
+            <div className="max-h-[60vh] overflow-y-auto p-2 space-y-1">
+              {/* Same time-of-day order as the tile; the color stripe and
+                  parent label on each chip say which group it belongs to. */}
+              {(byDay.get(overflowDay) ?? []).map((p) => {
+                const unit = topGroupOf(p.ms);
+                const color = GROUP_COLORS[(unit.id ? groupColorIndex.get(unit.id) : undefined) ?? 0];
                 return (
-                  <div key={grp.unit.id ?? grp.unit.name}>
-                    <div className="flex items-center gap-1.5 px-1 mb-1">
-                      <span className={`w-2 h-2 rounded-sm ${color.dot}`} />
-                      <span className={`text-[11px] font-black uppercase tracking-wider ${color.text}`}>{grp.unit.name}</span>
-                    </div>
-                    <div className="space-y-1 pl-1">
-                      {grp.items.map((p) => (
-                        <Chip
-                          key={`${p.ms.id}-${p.dayIndex}`}
-                          ms={p.ms} dayIndex={p.dayIndex} spanDays={p.spanDays}
-                          childrenByParent={childrenByParent}
-                          ancestors={ancestorsOf(p.ms)} color={color}
-                          canEdit={canEdit}
-                          draggable={false}
-                          onClick={() => { setOverflowDay(null); onOpenDetail(p.ms); }}
-                          onSetStatus={onSetStatus}
-                          onSetProgress={onSetProgress}
-                          progress={progress}
-                          full
-                        />
-                      ))}
-                    </div>
-                  </div>
+                  <Chip
+                    key={`${p.ms.id}-${p.dayIndex}`}
+                    ms={p.ms} dayIndex={p.dayIndex} spanDays={p.spanDays}
+                    childrenByParent={childrenByParent}
+                    ancestors={ancestorsOf(p.ms)} color={color}
+                    canEdit={canEdit}
+                    draggable={false}
+                    onClick={() => { setOverflowDay(null); onOpenDetail(p.ms); }}
+                    onSetStatus={onSetStatus}
+                    onSetProgress={onSetProgress}
+                    progress={progress}
+                    full
+                  />
                 );
               })}
             </div>
@@ -559,6 +545,10 @@ function Chip({
   const effStatus = !isLeaf && info ? info.status : ms.status;
   const tone = chipTone(effStatus);
   const time = timeLabel(ms);
+  // Short clock shown on the chip itself so the tile's time order is
+  // visible at a glance: the start time on the day it starts, "cont."
+  // on later days of a multi-day task.
+  const clock = dayIndex > 0 ? "cont." : startClock(ms);
 
   // The immediate parent (e.g. "Shut Down Transmix 1") and the full
   // path up to the unit, so the chip is never context-free.
@@ -640,6 +630,7 @@ function Chip({
         )}
         {hasSubs && !canExpand && <Layers className="w-2.5 h-2.5 shrink-0 opacity-70" />}
         {ms.shift === "night" ? <Moon className="w-2.5 h-2.5 shrink-0 opacity-70" /> : ms.shift === "swing" ? <Sunset className="w-2.5 h-2.5 shrink-0 opacity-70" /> : null}
+        {clock && <span className="shrink-0 text-[9px] font-mono opacity-70 tabular-nums">{clock}</span>}
         <span className={`text-[10.5px] font-semibold leading-tight ${full ? "" : "truncate"} ${effStatus === "completed" ? "line-through opacity-70" : ""}`}>{ms.name}</span>
         {spanDays > 1 && (
           <span className="ml-auto shrink-0 text-[8.5px] font-bold px-1 rounded bg-black/10" title={`Day ${dayIndex + 1} of ${spanDays}`}>
@@ -694,25 +685,6 @@ function Chip({
   );
 }
 
-// Group a day's placements by their top-level unit, preserving unit
-// order by earliest start, and tasks within a unit by start time.
-function groupByTop(
-  items: Array<{ ms: Milestone; dayIndex: number; spanDays: number }>,
-  topGroupOf: (m: Milestone) => Milestone,
-): Array<{ unit: Milestone; items: typeof items }> {
-  const groups = new Map<string, { unit: Milestone; items: typeof items }>();
-  for (const it of items) {
-    const unit = topGroupOf(it.ms);
-    const key = unit.id ?? unit.name;
-    if (!groups.has(key)) groups.set(key, { unit, items: [] });
-    groups.get(key)!.items.push(it);
-  }
-  const out = Array.from(groups.values());
-  out.sort((a, b) => startMs(a.unit) - startMs(b.unit));
-  for (const g of out) g.items.sort((a, b) => startMs(a.ms) - startMs(b.ms));
-  return out;
-}
-
 function chipTone(s: MilestoneStatus): string {
   switch (s) {
     case "completed":   return "bg-emerald-50 border-emerald-200 text-emerald-900";
@@ -733,11 +705,20 @@ function dayDiff(a: Date, b: Date): number { return Math.round((startOfDayUTC(b)
 function sameDayUTC(a: Date, b: Date): boolean { return ymd(a) === ymd(b); }
 function ymd(d: Date): string { return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`; }
 function ymdToDate(s: string): Date { return new Date(`${s}T00:00:00Z`); }
-function startMs(m: Milestone): number { return Date.parse((m.plannedStartAt as string | undefined) ?? (m.plannedAt as string)); }
-function finishMs(m: Milestone): number { return Date.parse(m.plannedAt as string); }
+function startMs(m: Milestone): number { return startMsOf(m); }
+function finishMs(m: Milestone): number { return finishMsOf(m); }
 
 function statusLabel(s: MilestoneStatus): string {
   return s === "in_progress" ? "In progress" : s === "on_hold" ? "On hold" : s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+// "6:00" when the task carries a start time-of-day, else "" (a start
+// at exactly midnight is treated as date-only, matching timeLabel).
+function startClock(m: Milestone): string {
+  const iso = (m.plannedStartAt as string | undefined) ?? (m.plannedAt as string);
+  const d = new Date(iso);
+  if (isNaN(d.getTime()) || (d.getUTCHours() === 0 && d.getUTCMinutes() === 0)) return "";
+  return `${d.getUTCHours()}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
 }
 
 // A "6am–2pm" style label when the task carries times-of-day, else "".
