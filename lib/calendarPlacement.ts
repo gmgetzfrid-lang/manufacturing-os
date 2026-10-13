@@ -39,6 +39,46 @@ export interface DayPlacement<T extends PlaceableTask = PlaceableTask> {
   /** 0 = the task starts on this tile; n = its (n+1)th day. */
   dayIndex: number;
   spanDays: number;
+  /** When the work under this chip is actually active ON THIS DAY, as
+   *  instants clipped to the day: for a leaf its own span; for a group
+   *  chip the envelope of its steps that fall on the day. Drives both
+   *  the chip's clock and the tile's order, so a 4-day exchanger whose
+   *  only step today runs 14:00–18:00 sorts and reads as 14:00, not as
+   *  "continuing since Monday". */
+  todayStart?: number;
+  todayEnd?: number;
+  /** True when nothing under a group chip is scheduled on this day (a
+   *  gap day inside its span). */
+  idleToday?: boolean;
+}
+
+/** The active window of a chip on one day. `steps` are the leaf rows a
+ *  group chip stands in for (empty for a leaf chip). */
+export function activeWindowOnDay(
+  ms: PlaceableTask,
+  steps: PlaceableTask[],
+  dayStart: number,
+  dayEnd: number,
+): { start: number; end: number; idle: boolean } {
+  const clip = (s: number, f: number) => ({ s: Math.max(s, dayStart), f: Math.min(Math.max(f, s), dayEnd) });
+  if (steps.length === 0) {
+    const { s, f } = clip(startMsOf(ms), finishMsOf(ms));
+    return { start: s, end: f, idle: false };
+  }
+  let start = Infinity, end = -Infinity;
+  for (const st of steps) {
+    const s0 = startMsOf(st), f0 = finishMsOf(st);
+    if (!Number.isFinite(s0) || !Number.isFinite(f0)) continue;
+    if (s0 >= dayEnd || f0 <= dayStart) {
+      // A step that starts or ends exactly at a boundary still counts on
+      // the day it touches when it is a zero-length milestone.
+      if (!(s0 === f0 && s0 >= dayStart && s0 < dayEnd)) continue;
+    }
+    const { s, f } = clip(s0, f0);
+    start = Math.min(start, s); end = Math.max(end, f);
+  }
+  if (!Number.isFinite(start)) return { start: dayStart, end: dayEnd, idle: true };
+  return { start, end, idle: false };
 }
 
 export interface BandPlacement<T extends PlaceableTask = PlaceableTask> extends DayPlacement<T> {
@@ -111,11 +151,22 @@ export function placeableTasks<T extends PlaceableTask>(
   return splitPlacements(milestones, childrenByParent, showSubtasks).chips;
 }
 
-/** Time-of-day order for the chips inside one day tile. */
+/** Time-of-day order for the chips inside one day tile: by when the work
+ *  is active on THAT day (todayStart/todayEnd when known), so a carry-over
+ *  that is busy from 00:00 leads and a 14:00 step sorts after a 6:00 one
+ *  whatever day their parent began. Idle gap-days sink to the bottom. */
 export function compareDayPlacements(a: DayPlacement, b: DayPlacement): number {
-  // Carry-overs (already running at 00:00) lead the day.
-  const aCarry = a.dayIndex > 0, bCarry = b.dayIndex > 0;
-  if (aCarry !== bCarry) return aCarry ? -1 : 1;
+  if (!!a.idleToday !== !!b.idleToday) return a.idleToday ? 1 : -1;
+  if (a.todayStart != null && b.todayStart != null) {
+    const s0 = cmpNum(a.todayStart, b.todayStart);
+    if (s0) return s0;
+    const f0 = cmpNum(a.todayEnd ?? NaN, b.todayEnd ?? NaN);
+    if (f0) return f0;
+  } else {
+    // Carry-overs (already running at 00:00) lead the day.
+    const aCarry = a.dayIndex > 0, bCarry = b.dayIndex > 0;
+    if (aCarry !== bCarry) return aCarry ? -1 : 1;
+  }
   const s = cmpNum(startMsOf(a.ms), startMsOf(b.ms));
   if (s) return s;
   const f = cmpNum(finishMsOf(a.ms), finishMsOf(b.ms));

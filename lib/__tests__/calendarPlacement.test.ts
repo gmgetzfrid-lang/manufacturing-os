@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { placeableTasks, splitPlacements, compareDayPlacements, compareBandPlacements, type DayPlacement, type BandPlacement, type PlaceableTask } from "@/lib/calendarPlacement";
+import { placeableTasks, splitPlacements, compareDayPlacements, compareBandPlacements, activeWindowOnDay, type DayPlacement, type BandPlacement, type PlaceableTask } from "@/lib/calendarPlacement";
 
 type T = PlaceableTask & { id: string; parentId: string | null };
 
@@ -114,5 +114,42 @@ describe("compareDayPlacements", () => {
     const ok = p(t("ok", null, "2026-10-02T08:00:00Z", "2026-10-02T09:00:00Z"));
     const ok2 = p(t("ok2", null, "2026-10-02T07:00:00Z", "2026-10-02T09:00:00Z"));
     expect([bad, ok, ok2].sort(compareDayPlacements).map((x) => x.ms.id)).toEqual(["ok2", "ok", "bad"]);
+  });
+});
+
+describe("activeWindowOnDay + day ordering by today's work", () => {
+  const D = Date.parse("2026-10-27T00:00:00Z"), DE = Date.parse("2026-10-28T00:00:00Z");
+  it("a group chip's window on a day is the envelope of its steps that day", () => {
+    const grp = t("e12", null, "2026-10-26T06:00:00Z", "2026-10-29T10:00:00Z");
+    const steps = [
+      t("s1", "e12", "2026-10-26T06:00:00Z", "2026-10-26T18:00:00Z"), // yesterday
+      t("s2", "e12", "2026-10-27T14:00:00Z", "2026-10-27T18:00:00Z"), // today
+      t("s3", "e12", "2026-10-27T16:00:00Z", "2026-10-28T09:00:00Z"), // runs into tomorrow
+    ];
+    const w = activeWindowOnDay(grp, steps, D, DE);
+    expect(new Date(w.start).toISOString()).toBe("2026-10-27T14:00:00.000Z");
+    expect(new Date(w.end).toISOString()).toBe("2026-10-28T00:00:00.000Z");
+    expect(w.idle).toBe(false);
+  });
+  it("a gap day inside a group's span is idle", () => {
+    const grp = t("g", null, "2026-10-26T06:00:00Z", "2026-10-29T10:00:00Z");
+    const steps = [t("a", "g", "2026-10-26T06:00:00Z", "2026-10-26T18:00:00Z"), t("b", "g", "2026-10-29T06:00:00Z", "2026-10-29T10:00:00Z")];
+    expect(activeWindowOnDay(grp, steps, D, DE).idle).toBe(true);
+  });
+  it("a leaf carrying over is active from midnight", () => {
+    const leaf = t("l", null, "2026-10-26T20:00:00Z", "2026-10-27T08:00:00Z");
+    const w = activeWindowOnDay(leaf, [], D, DE);
+    expect(w.start).toBe(D);
+    expect(new Date(w.end).toISOString()).toBe("2026-10-27T08:00:00.000Z");
+  });
+  it("orders a tile by today's window, not by when the parent began", () => {
+    const p = (id: string, start: string, todayStart: string, todayEnd: string, idle = false): DayPlacement =>
+      ({ ms: t(id, null, start, "2026-10-29T00:00:00Z"), dayIndex: 1, spanDays: 4, todayStart: Date.parse(todayStart), todayEnd: Date.parse(todayEnd), idleToday: idle });
+    const early = p("early-parent-late-today", "2026-10-25T06:00:00Z", "2026-10-27T14:00:00Z", "2026-10-27T18:00:00Z");
+    const late = p("late-parent-early-today", "2026-10-26T06:00:00Z", "2026-10-27T06:00:00Z", "2026-10-27T10:00:00Z");
+    const carry = p("busy-since-midnight", "2026-10-26T06:00:00Z", "2026-10-27T00:00:00Z", "2026-10-27T08:00:00Z");
+    const gap = p("gap-day", "2026-10-24T06:00:00Z", "2026-10-27T00:00:00Z", "2026-10-28T00:00:00Z", true);
+    expect([early, gap, late, carry].sort(compareDayPlacements).map((x) => x.ms.id))
+      .toEqual(["busy-since-midnight", "late-parent-early-today", "early-parent-late-today", "gap-day"]);
   });
 });

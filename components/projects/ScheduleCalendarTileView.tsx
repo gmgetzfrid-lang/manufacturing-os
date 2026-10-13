@@ -22,7 +22,7 @@ import StatusControl from "@/components/projects/StatusControl";
 import ProgressControl from "@/components/projects/ProgressControl";
 import { GROUP_PALETTE } from "@/lib/scheduleColors";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
-import { splitPlacements, compareDayPlacements, compareBandPlacements, startMsOf, finishMsOf, type BandPlacement } from "@/lib/calendarPlacement";
+import { splitPlacements, compareDayPlacements, compareBandPlacements, activeWindowOnDay, startMsOf, finishMsOf, type BandPlacement, type DayPlacement } from "@/lib/calendarPlacement";
 import { addDays as addDaysTz, addMonths as addMonthsTz, clockLabel, dayDiff as dayDiffTz, dayKey, dayKeyToMs, dayOfWeek, fmtInTz, hasTimeOfDay, tzAbbrev, startOfDay as startOfDayTz, startOfMonth as startOfMonthTz, wallClock } from "@/lib/scheduleTz";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
 import DayAgendaPanel from "@/components/projects/DayAgendaPanel";
@@ -179,22 +179,28 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
   // Bucket every placed task onto each UTC day it covers, then order
   // each tile by time of day (carry-overs first, then start time).
   const byDay = useMemo(() => {
-    const m = new Map<string, Array<{ ms: Milestone; dayIndex: number; spanDays: number }>>();
+    const m = new Map<string, DayPlacement<Milestone>[]>();
     for (const ms of mains) {
       const start = startOfDayUTC(new Date(startMs(ms)), tz);
       const finish = startOfDayUTC(new Date(finishMs(ms)), tz);
       const total = Math.max(1, dayDiff(start, finish, tz) + 1);
+      // A group chip stands in for its leaf steps: its clock and order on
+      // each day come from the steps that actually fall on that day.
+      const steps = ms.id ? leafDescendants(ms) : [];
       for (let i = 0; i < total; i++) {
         const d = addDaysUTC(start, i, tz);
         const key = ymd(d, tz);
+        const dayStartMs = d.getTime();
+        const dayEndMs = addDaysUTC(d, 1, tz).getTime();
+        const w = activeWindowOnDay(ms, steps, dayStartMs, dayEndMs);
         const arr = m.get(key) ?? [];
-        arr.push({ ms, dayIndex: i, spanDays: total });
+        arr.push({ ms, dayIndex: i, spanDays: total, todayStart: w.start, todayEnd: w.end, idleToday: w.idle });
         m.set(key, arr);
       }
     }
     for (const arr of m.values()) arr.sort(compareDayPlacements);
     return m;
-  }, [mains, tz]);
+  }, [mains, tz, leafDescendants]);
 
   // Bucket every group (band) onto each day it covers, root-first, and
   // note whether any chip placed that day sits beneath it.
@@ -448,6 +454,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
                       <Chip
                         key={`${p.ms.id}-${p.dayIndex}`}
                         ms={p.ms} dayIndex={p.dayIndex} spanDays={p.spanDays}
+                        todayStart={p.todayStart} todayEnd={p.todayEnd} idleToday={p.idleToday}
                         childrenByParent={childrenByParent}
                         ancestors={chain} color={color}
                         canEdit={canEdit}
@@ -507,6 +514,7 @@ export default function ScheduleCalendarTileView({ milestones, childrenByParent,
                   <Chip
                     key={`${p.ms.id}-${p.dayIndex}`}
                     ms={p.ms} dayIndex={p.dayIndex} spanDays={p.spanDays}
+                    todayStart={p.todayStart} todayEnd={p.todayEnd} idleToday={p.idleToday}
                     childrenByParent={childrenByParent}
                     ancestors={ancestorsOf(p.ms)} color={color}
                     canEdit={canEdit}
@@ -690,10 +698,12 @@ function Band({ band, color, onClick, full }: {
 }
 
 function Chip({
-  ms, dayIndex, spanDays, childrenByParent, ancestors, color, canEdit, draggable, onDragStart, onTouchDragStart, onClick,
+  ms, dayIndex, spanDays, todayStart, todayEnd, idleToday, childrenByParent, ancestors, color, canEdit, draggable, onDragStart, onTouchDragStart, onClick,
   onSetStatus, onSetProgress, progress, canExpand, isExpanded, onToggleExpand, selectable, selected, onToggleSelect, dimmed, full,
 }: {
   ms: Milestone; dayIndex: number; spanDays: number;
+  /** This day's active window (see DayPlacement). */
+  todayStart?: number; todayEnd?: number; idleToday?: boolean;
   childrenByParent: Map<string, Milestone[]>;
   ancestors?: Milestone[];
   color?: { bar: string; soft: string; text: string; dot: string };
@@ -724,9 +734,24 @@ function Chip({
   const tone = chipTone(effStatus);
   const time = timeLabel(ms, tz);
   // Short clock shown on the chip itself so the tile's time order is
-  // visible at a glance: the start time on the day it starts, "cont."
-  // on later days of a multi-day task.
-  const clock = dayIndex > 0 ? "cont." : startClock(ms, tz);
+  // visible at a glance: THIS DAY's work window — "6:00" when work under
+  // the chip starts today, "→14:00" when it only wraps up today,
+  // "all day" when it runs straight through, "no work today" on a gap
+  // day inside a multi-day span.
+  const clock = (() => {
+    if (idleToday) return "no work today";
+    if (todayStart == null || todayEnd == null) return dayIndex > 0 ? "cont." : startClock(ms, tz);
+    const dayStartMs = startOfDayTz(todayStart, tz);
+    const dayEndMs = addDaysTz(dayStartMs, 1, tz);
+    const startsToday = todayStart > dayStartMs;
+    const endsToday = todayEnd < dayEndMs;
+    const s = clockLabel(todayStart, tz) || "0:00";
+    const e = clockLabel(todayEnd, tz) || "24:00";
+    if (startsToday && endsToday) return `${s}–${e}`;
+    if (startsToday) return `${s}→`;
+    if (endsToday) return `→${e}`;
+    return "all day";
+  })();
 
   // The immediate parent (e.g. "Shut Down Transmix 1") and the full
   // path up to the unit, so the chip is never context-free.
