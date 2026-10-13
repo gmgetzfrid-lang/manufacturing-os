@@ -91,6 +91,22 @@ describe("ALOG-7 — 20261201: the database names a signed-in caller on their ow
     expect(fnBody).toContain("NEW.metadata || jsonb_build_object('asserted', v_asserted)");
   });
 
+  it("P7 review: metadata.asserted is the database's key — a writer's own is moved to asserted_by_writer BEFORE the merge, so a member cannot plant a discrepancy", () => {
+    const strip = fnBody.indexOf("IF NEW.metadata IS NOT NULL AND jsonb_typeof(NEW.metadata) = 'object' AND NEW.metadata ? 'asserted' THEN");
+    const moved = fnBody.indexOf("NEW.metadata := (NEW.metadata - 'asserted') || jsonb_build_object('asserted_by_writer', NEW.metadata -> 'asserted');");
+    const merge = fnBody.indexOf("IF v_asserted <> '{}'::jsonb THEN");
+    expect(strip).toBeGreaterThan(0);
+    expect(moved).toBeGreaterThan(strip);
+    expect(merge).toBeGreaterThan(moved);
+    // ...and only on the member branch (after the three early returns that keep a server's / function's row as written)
+    expect(strip).toBeGreaterThan(fnBody.indexOf("IF NEW.user_id <> v_uid THEN"));
+    // the self-test plants one and the probe reads it back moved
+    expect(sql).toContain("jsonb_build_object('asserted', jsonb_build_object('user_email', 'ceo@example.invalid', 'user_role', 'Admin'))");
+    expect(sql).toContain("AND NOT (v_plant.metadata ? 'asserted')");
+    expect(sql).toContain("(SELECT ok FROM _ao_g201_selftest WHERE probe = 'planted')");
+    expect(sql).toContain("expect ok = true × 14");
+  });
+
   it("the trigger is BEFORE INSERT FOR EACH ROW, and no other file defines the function or the trigger", () => {
     expect(sql).toMatch(/CREATE TRIGGER trg_audit_logs_identity\s+BEFORE INSERT ON audit_logs\s+FOR EACH ROW\s+EXECUTE FUNCTION public\.audit_logs_stamp_identity\(\);/);
     const definers = files.filter((f) => /audit_logs_stamp_identity\(\)\s*\nRETURNS/.test(stripComments(mig(f))) || /CREATE TRIGGER trg_audit_logs_identity/.test(stripComments(mig(f))));
@@ -143,6 +159,12 @@ describe("ALOG-10 — 20261202: no audit row without a workspace", () => {
     expect(code).toContain("ALTER TABLE audit_logs ADD CONSTRAINT audit_logs_org_id_present CHECK (org_id IS NOT NULL) NOT VALID;");
     expect(code).toMatch(/RAISE EXCEPTION 'ALOG-10 \(20261202\): % audit row\(s\) name no workspace \(org_id IS NULL\)\. Nothing was changed and nothing was deleted\./);
     expect(code).toContain("current_setting('alog10.keep_unscoped_rows', true)");
+    // P7 review: the lock is said, and the WAIT for it bounded inside the transaction.
+    expect(sql).toMatch(/LOCKS AND HOW LONG[\s\S]*ACCESS EXCLUSIVE on audit_logs and reads every row/);
+    const begin = code.indexOf("\nBEGIN;");
+    expect(code.indexOf("SET LOCAL lock_timeout = '5s';")).toBeGreaterThan(begin);
+    expect(code.indexOf("SET LOCAL lock_timeout = '5s';")).toBeLessThan(code.indexOf("ALTER TABLE audit_logs ALTER COLUMN org_id SET NOT NULL;"));
+    expect(code).toContain("'inventory: audit_logs rows in all (SET NOT NULL reads each of them while it holds ACCESS EXCLUSIVE");
     // Audit rows are never deleted or rewritten.
     expect(code).not.toMatch(/DELETE\s+FROM\s+(public\.)?audit_logs/i);
     expect(code).not.toMatch(/UPDATE\s+(public\.)?audit_logs/i);
@@ -211,12 +233,15 @@ describe("lib/audit.ts logAuditAction — ALOG-10 done-when 2 and ALOG-7 done-wh
     }]);
   });
 
-  it("ALOG-7 done-when 3: the writer's entry has no timestamp (AuditWriteEntry); the stored time stays the readers' field", () => {
+  it("ALOG-7 done-when 3: the exported signature is kept (logAuditAction(entry: AuditEntry)) and a timestamp a writer passes is never written — the database clocks the row", async () => {
     const audit = readFileSync(join(root, "lib/audit.ts"), "utf8");
-    expect(audit).toContain('export type AuditWriteEntry = Omit<AuditEntry, "timestamp">;');
-    expect(audit).toMatch(/export async function logAuditAction\(entry: AuditWriteEntry\)/);
+    expect(audit).toMatch(/export async function logAuditAction\(entry: AuditEntry\): Promise<\{ error: string \| null; ok: boolean \}>/);
+    expect(audit).not.toContain("AuditWriteEntry");
     const body = audit.slice(audit.indexOf("export async function logAuditAction("), audit.indexOf("\n}\n", audit.indexOf("export async function logAuditAction(")));
     expect(body).not.toMatch(/timestamp/);
+    const { logAuditAction } = await import("@/lib/audit");
+    await logAuditAction({ action: "VIEW", resourceId: "d1", resourceType: "document", orgId: "o1", userId: "u1", timestamp: "2020-01-01T00:00:00Z" });
+    expect(h.inserts[0]).not.toHaveProperty("timestamp");
   });
 
   it("the DF-P1 stand-in rule is unchanged: a sentinel actor writes user_id NULL with metadata.actor_kind system", async () => {

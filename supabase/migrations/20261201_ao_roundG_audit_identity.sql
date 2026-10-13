@@ -45,6 +45,11 @@
 --          "timestamp" := now(). A value the caller sent that differs is not
 --          lost: it is kept under metadata.asserted (user_email / user_role /
 --          timestamp), so a stored-vs-sent discrepancy is detectable.
+--          metadata.asserted is the DATABASE's key: an "asserted" object the
+--          caller put in metadata is moved, first, to
+--          metadata.asserted_by_writer (kept, never dropped, never trusted),
+--          so a member cannot plant a discrepancy the database did not see
+--          (P7 review fix).
 --          actor_kind = 'member'.
 --          A caller's own row in an org they are not a member of can only
 --          come from a definer function — kept as written, 'server'. A row
@@ -82,11 +87,11 @@
 --
 -- ⚠ APPLIED BY HAND (DEC-30). Idempotent: paste the whole file once into the
 -- Supabase SQL editor. The editor shows only the LAST result set — the final
--- SELECT carries every probe (ok true/false, n NULL; expect ok = true × 12)
+-- SELECT carries every probe (ok true/false, n NULL; expect ok = true × 14)
 -- and the inventory counts (ok NULL, n the count — aggregate counts only,
--- never a row). The self-test probes insert one row as an active member
--- inside a sub-transaction and roll it back: nothing is kept (they read NULL
--- on a database with no active member).
+-- never a row). The self-test probes insert two rows as an active member
+-- and one as the service pass inside a sub-transaction and roll them back:
+-- nothing is kept (they read NULL on a database with no active member).
 
 -- ── Before-apply inventory (aggregate counts only, read BEFORE the change) ──
 DROP TABLE IF EXISTS pg_temp._ao_g201_before;
@@ -192,6 +197,11 @@ BEGIN
   IF NEW."timestamp" IS NOT NULL AND NEW."timestamp" IS DISTINCT FROM now() THEN
     v_asserted := v_asserted || jsonb_build_object('timestamp', NEW."timestamp");
   END IF;
+  -- metadata.asserted is the database's key: a writer's own "asserted" is
+  -- moved aside first (kept as asserted_by_writer), never passed through.
+  IF NEW.metadata IS NOT NULL AND jsonb_typeof(NEW.metadata) = 'object' AND NEW.metadata ? 'asserted' THEN
+    NEW.metadata := (NEW.metadata - 'asserted') || jsonb_build_object('asserted_by_writer', NEW.metadata -> 'asserted');
+  END IF;
   IF v_asserted <> '{}'::jsonb THEN
     NEW.metadata := CASE
       WHEN NEW.metadata IS NULL THEN jsonb_build_object('asserted', v_asserted)
@@ -208,7 +218,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION public.audit_logs_stamp_identity() IS
-  'ALOG-7 (20261201): BEFORE INSERT on audit_logs. A signed-in caller''s own row gets user_email from the membership (else the sign-in email), user_role = the role sent when the membership holds it (else the headline), "timestamp" = now(), actor_kind member; a differing sent value is kept in metadata.asserted. The service role''s rows, a database function''s machine rows and its rows naming another person keep what was written (actor_kind server / system). Nobody may call it.';
+  'ALOG-7 (20261201): BEFORE INSERT on audit_logs. A signed-in caller''s own row gets user_email from the membership (else the sign-in email), user_role = the role sent when the membership holds it (else the headline), "timestamp" = now(), actor_kind member; a differing sent value is kept in metadata.asserted (a writer''s own metadata.asserted is moved to asserted_by_writer). The service role''s rows, a database function''s machine rows and its rows naming another person keep what was written (actor_kind server / system). Nobody may call it.';
 
 REVOKE ALL ON FUNCTION public.audit_logs_stamp_identity() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.audit_logs_stamp_identity() FROM anon;
@@ -224,20 +234,24 @@ CREATE TRIGGER trg_audit_logs_identity
 COMMIT;
 
 -- ── Self-test (rolled back; booleans only, never a row) ─────────────────────
--- One active member's own row with a forged email, role and time, and one
--- service-pass row, each inserted inside a sub-transaction that is undone.
+-- One active member's own row with a forged email, role and time; one with
+-- their true email and a PLANTED metadata.asserted; and one service-pass
+-- row — each inserted inside a sub-transaction that is undone.
 DROP TABLE IF EXISTS pg_temp._ao_g201_selftest;
 CREATE TEMP TABLE _ao_g201_selftest (probe text, ok boolean);
 DO $selftest$
 DECLARE
   v_org uuid;
   v_uid uuid;
+  v_mail text;
   v_row audit_logs%ROWTYPE;
+  v_plant audit_logs%ROWTYPE;
   v_srv audit_logs%ROWTYPE;
   v_member_ok boolean;
   v_service_ok boolean;
+  v_plant_ok boolean;
 BEGIN
-  SELECT m.org_id, m.uid INTO v_org, v_uid
+  SELECT m.org_id, m.uid, m.email INTO v_org, v_uid, v_mail
     FROM org_members m WHERE m.status = 'active' AND m.email IS NOT NULL LIMIT 1;
   IF v_uid IS NOT NULL THEN
     BEGIN
@@ -246,6 +260,10 @@ BEGIN
       INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, user_email, user_role, "timestamp")
       VALUES ('ALOG7_SELF_TEST', 'self-test', 'org', v_org, v_uid, 'forged@example.invalid', 'NotARole', now() - interval '180 days')
       RETURNING * INTO v_row;
+      INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, user_email, metadata)
+      VALUES ('ALOG7_SELF_TEST', 'self-test', 'org', v_org, v_uid, v_mail,
+              jsonb_build_object('asserted', jsonb_build_object('user_email', 'ceo@example.invalid', 'user_role', 'Admin')))
+      RETURNING * INTO v_plant;
       PERFORM set_config('request.jwt.claims', '', true);
       INSERT INTO audit_logs (action, resource_id, resource_type, org_id, user_id, user_email, user_role)
       VALUES ('ALOG7_SELF_TEST', 'self-test', 'org', v_org, NULL, 'system:self-test', 'system')
@@ -257,6 +275,9 @@ BEGIN
                      AND v_row.metadata -> 'asserted' ->> 'user_email' = 'forged@example.invalid'
                      AND v_row.metadata -> 'asserted' ->> 'user_role' = 'NotARole'
                      AND v_row.metadata -> 'asserted' ? 'timestamp';
+      v_plant_ok := v_plant.actor_kind = 'member'
+                    AND NOT (v_plant.metadata ? 'asserted')
+                    AND v_plant.metadata -> 'asserted_by_writer' ->> 'user_email' = 'ceo@example.invalid';
       v_service_ok := v_srv.actor_kind = 'system' AND v_srv.user_id IS NULL
                       AND v_srv.user_email = 'system:self-test' AND v_srv.user_role = 'system';
       RAISE EXCEPTION 'ao_g201_selftest_rollback';
@@ -264,12 +285,12 @@ BEGIN
       IF SQLERRM <> 'ao_g201_selftest_rollback' THEN RAISE; END IF;
     END;
   END IF;
-  INSERT INTO _ao_g201_selftest VALUES ('member', v_member_ok), ('service', v_service_ok);
+  INSERT INTO _ao_g201_selftest VALUES ('member', v_member_ok), ('planted', v_plant_ok), ('service', v_service_ok);
 END
 $selftest$;
 
 -- ── Verification + inventory (the only result set the SQL editor shows) ──
--- Probes: ok = true × 12 (n NULL; the two self-tests read NULL on a database
+-- Probes: ok = true × 14 (n NULL; the three self-tests read NULL on a database
 -- with no active member). Inventory rows: ok NULL, n = the count.
 SELECT 'audit_logs.actor_kind exists (text, nullable)' AS check,
        EXISTS (SELECT 1 FROM information_schema.columns
@@ -304,6 +325,9 @@ UNION ALL SELECT 'a signed-in caller''s own row: email and role from org_members
 UNION ALL SELECT 'a differing sent value is kept under metadata.asserted, never dropped',
        EXISTS (SELECT 1 FROM pg_proc p WHERE p.proname = 'audit_logs_stamp_identity'
                   AND p.prosrc LIKE '%jsonb_build_object(''asserted'', v_asserted)%'), NULL
+UNION ALL SELECT 'metadata.asserted is the database''s key: a writer''s own is moved to asserted_by_writer before the merge',
+       EXISTS (SELECT 1 FROM pg_proc p WHERE p.proname = 'audit_logs_stamp_identity'
+                  AND p.prosrc LIKE '%NEW.metadata ? ''asserted''%(NEW.metadata - ''asserted'') || jsonb_build_object(''asserted_by_writer'', NEW.metadata -> ''asserted'');%IF v_asserted <> ''{}''::jsonb THEN%'), NULL
 UNION ALL SELECT 'trg_audit_logs_identity fires BEFORE INSERT FOR EACH ROW on audit_logs and is enabled',
        EXISTS (SELECT 1 FROM pg_trigger t
                 WHERE t.tgrelid = 'public.audit_logs'::regclass AND t.tgname = 'trg_audit_logs_identity'
@@ -314,6 +338,8 @@ UNION ALL SELECT 'audit_logs is still append-only for signed-in callers (no UPDA
                     WHERE schemaname = 'public' AND tablename = 'audit_logs' AND cmd IN ('UPDATE', 'DELETE', 'ALL')), NULL
 UNION ALL SELECT 'self-test: a member''s forged email, role and back-dated time are replaced and kept under metadata.asserted (rolled back)',
        (SELECT ok FROM _ao_g201_selftest WHERE probe = 'member'), NULL
+UNION ALL SELECT 'self-test: a member''s planted metadata.asserted (true email, nothing differing) is moved to asserted_by_writer — no discrepancy the database did not see (rolled back)',
+       (SELECT ok FROM _ao_g201_selftest WHERE probe = 'planted'), NULL
 UNION ALL SELECT 'self-test: a service-pass machine row keeps user_id NULL, its label and its role — kind system (rolled back)',
        (SELECT ok FROM _ao_g201_selftest WHERE probe = 'service'), NULL
 UNION ALL SELECT inventory, NULL, n FROM _ao_g201_before

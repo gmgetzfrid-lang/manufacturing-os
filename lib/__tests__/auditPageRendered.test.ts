@@ -18,7 +18,8 @@ const h = vi.hoisted(() => ({
   audit: [] as Array<Record<string, unknown>>,
   libraries: [] as Array<Record<string, unknown>>,
   documents: [] as Array<Record<string, unknown>>,
-  ranges: [] as Array<[number, number]>,
+  limits: [] as number[],
+  lte: [] as string[],
   logged: [] as Array<Record<string, unknown>>,
   logResult: { ok: true, error: null } as { ok: boolean; error: string | null },
   downloads: 0,
@@ -37,9 +38,10 @@ vi.mock("@/lib/supabase", () => {
       select: () => b, order: () => b,
       eq: (k: string, v: unknown) => { filters.push((r) => r[k] === v); return b; },
       in: (k: string, v: unknown[]) => { filters.push((r) => v.includes(r[k])); return b; },
-      gte: () => b, like: () => b, ilike: () => b,
-      limit: (n: number) => { lim = n; return b; },
-      range: (a: number, z: number) => { h.ranges.push([a, z]); return Promise.resolve({ data: data().slice(a, z + 1), error: null }); },
+      gte: () => b, like: () => b, ilike: () => b, or: () => b, lt: () => b,
+      lte: (k: string, v: string) => { if (table === "audit_logs") h.lte.push(v); filters.push((r) => r[k] != null && String(r[k]) <= v); return b; },
+      is: (k: string, v: unknown) => { filters.push((r) => (r[k] ?? null) === v); return b; },
+      limit: (n: number) => { lim = n; if (table === "audit_logs") h.limits.push(n); return b; },
       then: (res: (v: unknown) => unknown) => Promise.resolve({ data: lim === null ? data() : data().slice(0, lim), error: null }).then(res),
     };
     return b;
@@ -70,7 +72,7 @@ beforeEach(() => {
   ];
   h.libraries = [{ id: "L1", name: "Piping", org_id: "o1" }];
   h.documents = [{ id: "d1", document_number: "P-101", title: "P&ID", name: null, library_id: "L1" }];
-  h.ranges = []; h.logged = []; h.logResult = { ok: true, error: null }; h.downloads = 0; h.order = [];
+  h.limits = []; h.lte = []; h.logged = []; h.logResult = { ok: true, error: null }; h.downloads = 0; h.order = [];
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   (URL as unknown as { createObjectURL: () => string }).createObjectURL = () => { h.downloads++; h.order.push("download"); return "blob:x"; };
   (URL as unknown as { revokeObjectURL: () => void }).revokeObjectURL = () => undefined;
@@ -121,7 +123,10 @@ describe("/admin/audit (rendered)", () => {
     await render();
     await act(async () => { exportBtn().click(); });
     await flush();
-    expect(h.ranges[0]).toEqual([0, 999]);
+    // Keyset pages of 1000 over the snapshot "dated at or before the export's start".
+    expect(h.limits).toContain(1000);
+    expect(h.lte).toHaveLength(1);
+    expect(Date.parse(h.lte[0])).toBeGreaterThanOrEqual(now);
     expect(h.logged).toEqual([expect.objectContaining({
       action: "AUDIT_LOG_EXPORTED", orgId: "o1", resourceType: "org", userId: "u-aud", userRole: "Auditor",
       details: expect.objectContaining({ rows: 4, complete: true }),

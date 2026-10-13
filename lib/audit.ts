@@ -11,17 +11,14 @@ export interface AuditEntry {
   details?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
   /** The STORED row's time, for readers that build an AuditEntry from a row
-   *  (HistoryDrawer, InspectorPanel). A writer never sets it: logAuditAction
-   *  takes an AuditWriteEntry, which has no timestamp — the database clocks
-   *  every row (DEFAULT now(); for a signed-in caller's own row
-   *  20261201's audit_logs_stamp_identity, ALOG-7). */
+   *  (HistoryDrawer, InspectorPanel). It is never the writer's: logAuditAction
+   *  does not send it (the insert below names no timestamp), so the database
+   *  clocks every row — DEFAULT now(), and for a signed-in caller's own row
+   *  20261201's audit_logs_stamp_identity (admin-and-org ALOG-7). A value a
+   *  writer puts here is not written. The exported signature is kept
+   *  (logAuditAction(entry: AuditEntry), the P7 brief: every writer unchanged). */
   timestamp?: string;
 }
-
-/** What a writer hands logAuditAction: an AuditEntry without the stored
- *  time (admin-and-org ALOG-7 done-when 3 — the field is not the writer's).
- *  Every existing call is unchanged: none passed a timestamp. */
-export type AuditWriteEntry = Omit<AuditEntry, "timestamp">;
 
 /** The stand-ins call sites pass when there is no member to name (a cron
  *  pass, a signed-out page): never a uid, so never sent into the UUID column. */
@@ -41,7 +38,7 @@ const AUDIT_ACTOR_SENTINELS: ReadonlySet<string> = new Set(["", "unknown", "syst
  *  the routes) that row lands; under a browser session the insert policy
  *  (user_id = auth.uid()) refuses it, and the refusal is returned, not
  *  swallowed. */
-export async function logAuditAction(entry: AuditWriteEntry): Promise<{ error: string | null; ok: boolean }> {
+export async function logAuditAction(entry: AuditEntry): Promise<{ error: string | null; ok: boolean }> {
   try {
     // ALOG-10 (admin-and-org P7): a row with no workspace is readable by no
     // signed-in reader (every SELECT policy and both viewers read org_id), so

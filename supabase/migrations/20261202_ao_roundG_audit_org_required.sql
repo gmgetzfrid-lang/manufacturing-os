@@ -57,6 +57,23 @@
 -- APP BEFORE AND AFTER THE PASTE: identical. No column, function or table
 -- is added, so there is no 42703 / 42883 / PGRST20x path.
 --
+-- LOCKS AND HOW LONG (P7 review fix — say it before the paste):
+--   SET NOT NULL takes ACCESS EXCLUSIVE on audit_logs and reads every row to
+--   prove none is NULL; DROP / CREATE POLICY take the same lock, briefly.
+--   The lock is held from that statement to COMMIT, so for the length of ONE
+--   sequential scan of audit_logs every audit insert and every audit read
+--   waits — server routes that write their audit row first (the ticket
+--   workflow action, a checkout) stall for that long. On a few million rows
+--   that is seconds; the inventory's first row gives the row count to judge
+--   by. Paste at a quiet time. `SET LOCAL lock_timeout = '5s'` bounds the
+--   WAIT for the lock: if a long reader holds the table, the paste stops
+--   ("canceling statement due to lock timeout"), nothing is changed, and it
+--   can simply be pasted again — it never queues every writer behind itself.
+--   The lighter form (ADD CHECK … NOT VALID, VALIDATE under SHARE UPDATE
+--   EXCLUSIVE, then SET NOT NULL using the validated check) needs three
+--   separate transactions, which the one-transaction paste (DEC-30) does
+--   not allow; at this table's size the single scan is the simpler risk.
+--
 -- PASTE AND DEPLOY ORDER: deploy the app first (its logAuditAction refuses
 -- an entry with no workspace — a page that wrote one during sign-in now
 -- writes nothing, as the database will require), then paste. Independent of
@@ -84,8 +101,11 @@
 -- ── Before-apply inventory (aggregate counts only, read BEFORE the change) ──
 DROP TABLE IF EXISTS pg_temp._ao_g202_before;
 CREATE TEMP TABLE _ao_g202_before AS
-SELECT 'inventory: audit rows with no workspace (org_id IS NULL) — kept, never deleted' AS inventory,
-       COUNT(*)::text AS n FROM audit_logs WHERE org_id IS NULL
+SELECT 'inventory: audit_logs rows in all (SET NOT NULL reads each of them while it holds ACCESS EXCLUSIVE — see LOCKS in the header)' AS inventory,
+       COUNT(*)::text AS n FROM audit_logs
+UNION ALL
+SELECT 'inventory: audit rows with no workspace (org_id IS NULL) — kept, never deleted',
+       COUNT(*)::text FROM audit_logs WHERE org_id IS NULL
 UNION ALL
 SELECT 'inventory: of them, rows naming a person (user_id set)',
        COUNT(*)::text FROM audit_logs WHERE org_id IS NULL AND user_id IS NOT NULL
@@ -103,6 +123,11 @@ SELECT 'inventory: audit_logs_insert admitted a row with no workspace before thi
           AND with_check LIKE '%org_id IS NULL%';
 
 BEGIN;
+
+-- Bound the WAIT for audit_logs' lock (LOCKS in the header): a paste that
+-- cannot take it within 5 s stops with nothing changed, never queueing every
+-- audit writer behind itself.
+SET LOCAL lock_timeout = '5s';
 
 -- ── 1. the world: NOT NULL, or stop with the count ──────────────────────────
 DO $world$

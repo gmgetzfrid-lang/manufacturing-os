@@ -197,7 +197,7 @@ app/d/[number]/route.ts:6-7 comment claims `The target page enforces auth + RLS 
 ## DACL-5 · ACL rules addressed to a member's secondary role are inert everywhere except the download-deny check — grants silently do nothing, denies partially bite
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/acl.ts:72-74`, `components/providers/RoleContext.tsx:11-12`, `app/(protected)/documents/[libraryId]/page.tsx:1650-1657`, `app/api/storage/download-url/route.ts:99-107`, `supabase/migrations/20260708_acl_rls_enforcement.sql:58-59`, `supabase/migrations/20260722_member_roles_collection.sql:12-13`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Repo-wide search for evaluateAcl/evaluateAclChain/canDiscover callers turned up no other site that expands org_members.roles into the ACL principal, so the asymmetry is real: secondary-role allow grants are inert, and a secondary-role deny binds only on download-URL issuance. 20260722_member_roles_collection.sql:5-8 even states the design intent ("every existing single-role check and every RLS policy reads `role`"), which is the cause, not a refutation.
@@ -237,6 +237,22 @@ lib/acl.ts:73 — `return !!ctx.role && ctx.role === (id as Role);`. app/(protec
 3. ✗ in part: the simulator states which held role (or team) a rule matches for a given member; the Permissions DRAWER does not yet — `components/permissions/PermissionDrawer.tsx` is admin-and-org P7's file and was not edited here.
 
 **Remaining / owner.** Criterion 3's drawer half only — admin-and-org P7 (owner of `PermissionDrawer.tsx`); status stays OPEN.
+
+**Resolution (2026-10-13, admin-and-org Round G).** Package P7 (owner of `PermissionDrawer.tsx`), at its review fix pass — criterion 3's drawer half, the last remainder (criteria 1 and 2: intelligence Round G; the simulator half: admin-and-org P9). Reproduced on base `6503ea7` (DEC-29): the drawer read members as `uid, display_name, email` only and its rules list and role picker said nothing about who a role rule reaches.
+
+Landed — `components/permissions/PermissionDrawer.tsx`:
+- The member read now takes each active member's whole collection (`select("uid, display_name, email, role, roles")`, `:197`; `heldRoles` from `lib/roleHeld.ts`); a failed read is kept (`membersError`), never shown as "nobody".
+- Each role rule in the list states whom it reaches today (`roleReachSentence`, `:224`; `data-role-reach`, `:610`): "Reaches 2 active members holding Safety — as their headline role: Sam Safety; as an additional role: Erin Eng." — the same match the evaluators make (`lib/acl.ts` subject match over the collection; `node_visible`'s `COALESCE(roles, ARRAY[role])`); a role nobody holds says the rule reaches no one; an unreadable member list says so instead of guessing.
+- The role picker states the rule ("A role rule reaches every active member who holds the role — as their headline role or as any additional role.") and who holds the picked role (`:732`).
+
+Tests: `lib/__tests__/auditDrawerRendered.test.ts` "intelligence DACL-5 criterion 3 — the drawer says which members a role rule reaches" (rendered: headline and additional holders named; a role nobody holds; a failed member read said; the picker's rule and holders, following the pick).
+
+**Done-when.**
+1. ✓ (intelligence Round G, unchanged).
+2. ✓ (intelligence Round G, unchanged).
+3. ✓ Both halves: the simulator states which held role (or team) a rule matches for a given member (P9), and the Permissions drawer states, for each role rule and for the role being picked, which active members it matches and whether by their headline or an additional role (P7).
+
+**Scope / residual.** None. The drawer's statement is about role rules (the criterion's subject); team rules name the team as before, and a person's own view is the simulator's.
 
 ---
 

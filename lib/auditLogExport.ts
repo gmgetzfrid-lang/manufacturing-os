@@ -5,10 +5,22 @@
 // a complete export, and dropped `metadata`. Ruled (DEC-90, the integrator's
 // ruling for this package): server-side paging, with the export audited.
 //   * The export runs the SAME query the page runs (applyAuditFilters) and
-//     pages through every matching row with .range() — in the reader's own
-//     session, so the database's audit read policies decide what is in the
-//     file exactly as they decide what is on screen (no service-role read,
-//     nothing widened).
+//     pages through every matching row — in the reader's own session, so the
+//     database's audit read policies decide what is in the file exactly as
+//     they decide what is on screen (no service-role read, nothing widened).
+//   * Keyset paging over a fixed snapshot (P7 review fix): every page is
+//     bounded above by the moment the export began ("timestamp" <= it), is
+//     ordered by ("timestamp" DESC, id DESC) — id is the primary key, so the
+//     order is total even where many rows share one timestamp (a chunked
+//     ledger write, a definer function's several rows in one transaction,
+//     every member row of one transaction after 20261201) — and the next page
+//     starts strictly after the last row read. OFFSET paging over the
+//     non-unique timestamp could skip or repeat tied rows at a page boundary,
+//     repeat a row whenever one was written mid-export, and re-ran the read
+//     policies over every skipped row (n² work on a deep export). Rows with
+//     no timestamp (only an explicit NULL written by the service role can
+//     leave one) follow, by id, when the range is "all time" — the date
+//     filters exclude them on screen and in the file alike.
 //   * It stops at AUDIT_EXPORT_ROW_CEILING rows; the file says so inside it.
 //   * The file opens with its bounds (workspace, filters, time of export, how
 //     many rows, complete or stopped at the ceiling, which filters were
@@ -91,19 +103,36 @@ export function mapAuditRow(r: Record<string, unknown>): AuditExportRow {
     userEmail: (r.user_email as string | null) ?? null, userRole: (r.user_role as string | null) ?? null,
     actorKind: (r.actor_kind as string | null | undefined) ?? null,
     details: (r.details as Record<string, unknown> | null) ?? null, metadata: (r.metadata as Record<string, unknown> | null) ?? null,
-    timestamp: String(r.timestamp),
+    timestamp: r.timestamp == null ? "" : String(r.timestamp),
   };
 }
 
+type PageResult = PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>;
 type PageBuilder = AuditQuery & {
+  lte(col: string, v: string): PageBuilder;
+  lt(col: string, v: string): PageBuilder;
+  is(col: string, v: null): PageBuilder;
+  or(filter: string): PageBuilder;
   order(col: string, o: { ascending: boolean }): PageBuilder;
-  range(from: number, to: number): PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>;
+  limit(n: number): PageResult;
 };
 
+/** A value inside a PostgREST logic-tree filter (`or=(…)`), double-quoted so
+ *  a timestamp's `.` / `:` / `+` never reads as syntax. */
+function pgrstValue(v: string): string {
+  return `"${v.replace(/["\\]/g, (c) => `\\${c}`)}"`;
+}
+
+/** The keyset condition for the page after (ts, id), newest first. */
+export function afterCursorFilter(ts: string, id: string): string {
+  return `timestamp.lt.${pgrstValue(ts)},and(timestamp.eq.${pgrstValue(ts)},id.lt.${pgrstValue(id)})`;
+}
+
 /** Pages through every row the filters select, newest first, up to the
- *  ceiling. `start()` returns a fresh `.from("audit_logs").select("*").eq(
- *  "org_id", …)` builder for each page. A read that fails stops the export
- *  with the error (never a partial file presented as whole). */
+ *  ceiling, over the snapshot "dated at or before nowMs" (keyset paging —
+ *  see the header). `start()` returns a fresh `.from("audit_logs").select(
+ *  "*").eq("org_id", …)` builder for each page. A read that fails stops the
+ *  export with the error (never a partial file presented as whole). */
 export async function fetchAuditRowsForExport(
   start: () => PageBuilder,
   f: AuditFilters & { userQuery?: string },
@@ -114,17 +143,44 @@ export async function fetchAuditRowsForExport(
   const page = opts.page ?? AUDIT_EXPORT_PAGE;
   const rows: AuditExportRow[] = [];
   const pattern = userEmailPattern(f.userQuery ?? "");
-  for (let from = 0; ; from += page) {
+  const upper = new Date(nowMs).toISOString();
+  const base = (): PageBuilder => {
     let q = applyAuditFilters(start(), f, nowMs) as PageBuilder;
     if (pattern) q = q.ilike("user_email", pattern) as PageBuilder;
+    return q;
+  };
+  // Pass 1: dated rows, ("timestamp" DESC, id DESC), at or before the start.
+  let cursor: { ts: string; id: string } | null = null;
+  for (;;) {
+    let q = base().lte("timestamp", upper);
+    if (cursor) q = q.or(afterCursorFilter(cursor.ts, cursor.id));
     const want = Math.min(page, ceiling + 1 - rows.length);
-    const { data, error } = await q.order("timestamp", { ascending: false }).range(from, from + want - 1);
+    const { data, error } = await q.order("timestamp", { ascending: false }).order("id", { ascending: false }).limit(want);
     if (error) return { ok: false, error: error.message };
     const got = (data ?? []) as Array<Record<string, unknown>>;
     for (const r of got) rows.push(mapAuditRow(r));
     if (rows.length > ceiling) return { ok: true, rows: rows.slice(0, ceiling), complete: false };
-    if (got.length < want) return { ok: true, rows, complete: true };
+    if (got.length < want) break;
+    const last = got[got.length - 1];
+    cursor = { ts: String(last.timestamp), id: String(last.id) };
   }
+  // Pass 2 (all time only): rows with no timestamp, by id DESC.
+  if (rangeStartIso(f.range, nowMs) === null) {
+    let lastId: string | null = null;
+    for (;;) {
+      let q = base().is("timestamp", null);
+      if (lastId) q = q.lt("id", lastId);
+      const want = Math.min(page, ceiling + 1 - rows.length);
+      const { data, error } = await q.order("id", { ascending: false }).limit(want);
+      if (error) return { ok: false, error: error.message };
+      const got = (data ?? []) as Array<Record<string, unknown>>;
+      for (const r of got) rows.push(mapAuditRow(r));
+      if (rows.length > ceiling) return { ok: true, rows: rows.slice(0, ceiling), complete: false };
+      if (got.length < want) break;
+      lastId = String(got[got.length - 1].id);
+    }
+  }
+  return { ok: true, rows, complete: true };
 }
 
 export interface AuditExportBounds {
@@ -149,6 +205,7 @@ export function buildAuditCsv(
     ["Audit log export"],
     ["Workspace", b.orgId],
     ["Exported at (UTC)", b.exportedAtIso],
+    ["Snapshot", `rows dated at or before ${b.exportedAtIso}; a row written after the export began is not in this file`],
     ["Date range", f.range === "all" ? "All time" : f.range],
     ["Action filter", f.action === "ALL" ? "All actions" : f.action],
     ["Resource filter", f.resource === "ALL" ? "Any resource" : f.resource],
@@ -166,7 +223,7 @@ export function buildAuditCsv(
   for (const r of rows) {
     const dm = r.resourceType === "document" ? docMeta.get(r.resourceId) : undefined;
     lines.push([
-      r.timestamp, prettyAuditAction(r.action), r.action, r.resourceType, r.resourceId,
+      r.timestamp || "(no timestamp)", prettyAuditAction(r.action), r.action, r.resourceType, r.resourceId,
       dm ? [dm.documentNumber, dm.title].filter(Boolean).join(" · ") : "",
       r.userId ?? "", r.userEmail ?? "", r.userRole ?? "", r.actorKind ?? "(before 20261201: as sent)",
       r.details ? JSON.stringify(r.details) : "", r.metadata ? JSON.stringify(r.metadata) : "",

@@ -30,6 +30,7 @@ import type {
   NodeVisibility,
 } from "@/types/schema";
 import { isDormantRole, roleDisplayNote, DORMANT_ROLE_NOTE } from "@/lib/roleCapabilities";
+import { heldRoles } from "@/lib/roleHeld";
 
 export type NodeType = "library" | "collection" | "document" | "set";
 
@@ -180,22 +181,56 @@ export default function PermissionsDrawer(props: {
 
   // Real people & teams so admins pick by NAME instead of typing UUIDs.
   const { activeOrgId } = useRole();
-  const [orgMembers, setOrgMembers] = useState<{ uid: string; name: string; email: string | null }[]>([]);
+  // intelligence DACL-5 criterion 3 (drawer half, admin-and-org P7): each
+  // member's WHOLE role collection is read too, so the drawer can say which
+  // members a role rule reaches — a role rule matches every holder of the
+  // role, as their headline role or as any additional role (lib/acl.ts
+  // subjectMatches; node_visible reads COALESCE(roles, ARRAY[role])).
+  const [orgMembers, setOrgMembers] = useState<{ uid: string; name: string; email: string | null; headline: string | null; held: string[] }[]>([]);
+  const [membersError, setMembersError] = useState<string | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
   useEffect(() => {
     if (!isOpen || !activeOrgId) return;
     let cancelled = false;
     (async () => {
-      const [{ data: m }, t] = await Promise.all([
-        supabase.from("org_members").select("uid, display_name, email").eq("org_id", activeOrgId).eq("status", "active"),
+      const [{ data: m, error: mErr }, t] = await Promise.all([
+        supabase.from("org_members").select("uid, display_name, email, role, roles").eq("org_id", activeOrgId).eq("status", "active"),
         listTeams(activeOrgId).catch(() => [] as Team[]),
       ]);
       if (cancelled) return;
-      setOrgMembers((m ?? []).map((r) => ({ uid: (r as { uid: string }).uid, name: ((r as { display_name: string | null }).display_name) || ((r as { email: string | null }).email) || (r as { uid: string }).uid, email: (r as { email: string | null }).email })));
+      setMembersError(mErr ? mErr.message || "the member list could not be read" : null);
+      setOrgMembers((m ?? []).map((r) => {
+        const row = r as { uid: string; display_name: string | null; email: string | null; role: string | null; roles: string[] | null };
+        return { uid: row.uid, name: row.display_name || row.email || row.uid, email: row.email, headline: row.role ?? null, held: heldRoles(row) };
+      }));
       setTeams(t);
     })();
     return () => { cancelled = true; };
   }, [isOpen, activeOrgId]);
+
+  /** DACL-5 criterion 3: who a role rule reaches today — the active members
+   *  holding the role, split by whether it is their headline or an
+   *  additional role (both match). */
+  const roleReach = (role: string): { headline: string[]; additional: string[] } => {
+    const headline: string[] = [];
+    const additional: string[] = [];
+    for (const m of orgMembers) {
+      if (!m.held.includes(role)) continue;
+      (m.headline === role ? headline : additional).push(m.name);
+    }
+    return { headline, additional };
+  };
+  const nameList = (names: string[]) => (names.length <= 4 ? names.join(", ") : `${names.slice(0, 4).join(", ")} and ${names.length - 4} more`);
+  const roleReachSentence = (role: string): string => {
+    if (membersError) return `Who holds ${role} could not be read (${membersError}) — this rule reaches every active member holding it.`;
+    const { headline, additional } = roleReach(role);
+    const n = headline.length + additional.length;
+    if (n === 0) return `No active member holds ${role} today — this rule reaches no one until someone does.`;
+    const parts: string[] = [];
+    if (headline.length) parts.push(`as their headline role: ${nameList(headline)}`);
+    if (additional.length) parts.push(`as an additional role: ${nameList(additional)}`);
+    return `Reaches ${n} active member${n === 1 ? "" : "s"} holding ${role} — ${parts.join("; ")}.`;
+  };
 
   // Resolve a subject id to a friendly label for display in the rules list.
   const subjectLabel = (type: PermissionSubjectType, id: string): string => {
@@ -290,9 +325,27 @@ export default function PermissionsDrawer(props: {
       // admin-and-org ALOG-8 (P7): who is changing the permissions is resolved
       // BEFORE anything is written. A permission change must always be
       // reconstructable, so one that could not be recorded against a person
-      // and a workspace is refused, never saved unaudited.
-      const { data: authData } = await supabase.auth.getUser();
-      const actor = authData?.user ?? null;
+      // and a workspace is refused, never saved unaudited. The actor comes
+      // from the LOCAL session first (no network round trip — the ACL update
+      // below runs under that same session); the auth server's getUser() is
+      // asked only when no session is held locally, so a slow auth server or
+      // a failed token refresh does not refuse a save a valid session can
+      // make (P7 review fix).
+      let actor: { id: string; email?: string | null } | null = null;
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        actor = sessionData?.session?.user ?? null;
+      } catch {
+        actor = null;
+      }
+      if (!actor?.id) {
+        try {
+          const { data: authData } = await supabase.auth.getUser();
+          actor = authData?.user ?? null;
+        } catch {
+          actor = null;
+        }
+      }
       if (!actor?.id) {
         throw new Error("Permissions were NOT saved — your session could not be confirmed, so the change could not be recorded against you. Sign in again and retry.");
       }
@@ -553,6 +606,12 @@ export default function PermissionsDrawer(props: {
                           )}
                         </div>
 
+                        {r.subject.type === "role" && (
+                          <div className="mt-2 text-[11px] text-zinc-400" data-role-reach={r.subject.id}>
+                            {roleReachSentence(r.subject.id)}
+                          </div>
+                        )}
+
                         <div className="mt-2 flex flex-wrap gap-2">
                           {(r.actions || []).map((a) => (
                             <span
@@ -670,6 +729,9 @@ export default function PermissionsDrawer(props: {
                           ))}
                         </optgroup>
                       </select>
+                      <div className="mt-1 text-[11px] text-zinc-400" data-role-reach-pick={rolePick}>
+                        A role rule reaches every active member who holds the role — as their headline role or as any additional role. {roleReachSentence(String(rolePick))}
+                      </div>
                     </div>
                   ) : subjectType === "user" ? (
                     <div className="sm:col-span-2">

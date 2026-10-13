@@ -151,37 +151,127 @@ import {
   AUDIT_EXPORT_ROW_CEILING, type AuditExportRow,
 } from "@/lib/auditLogExport";
 
-/** A PostgREST stand-in over `n` rows that records each call and honours .range(). */
-function pager(n: number, failAt?: number) {
+/** A PostgREST stand-in for audit_logs that records each call and honours the
+ *  keyset reads the export makes: lte / or(after-cursor) / is / lt / order /
+ *  limit. Like PostgreSQL, rows that tie on every ORDER BY column come back
+ *  in a DIFFERENT order on each query (the fake shuffles ties per query), so
+ *  only a total order — "timestamp" DESC, id DESC — pages without loss. */
+function pager(n: number, failAt?: number, opts: { tieEvery?: number; undated?: number; seed?: number } = {}) {
   const calls: Array<[string, unknown[]]> = [];
-  const all = Array.from({ length: n }, (_, i) => ({
-    id: `r${i}`, action: "VIEW", resource_type: "document", resource_id: `d${i % 3}`, org_id: "o1", user_id: "u1",
+  const tieEvery = opts.tieEvery ?? 1;
+  const iso = (i: number) => new Date(Date.UTC(2026, 9, 1) - Math.floor(i / tieEvery) * 1000).toISOString();
+  const all: Array<Record<string, unknown>> = Array.from({ length: n }, (_, i) => ({
+    id: `r${String(i).padStart(6, "0")}`, action: "VIEW", resource_type: "document", resource_id: `d${i % 3}`, org_id: "o1", user_id: "u1",
     user_email: "a@b.c", user_role: "Drafter", actor_kind: i % 2 ? "member" : null, details: { i }, metadata: i === 0 ? { asserted: { user_role: "Admin" } } : null,
-    timestamp: new Date(Date.UTC(2026, 9, 1) - i * 1000).toISOString(),
+    timestamp: iso(i),
   }));
+  for (let j = 0; j < (opts.undated ?? 0); j++) all.push({ ...all[0], id: `u${String(j).padStart(6, "0")}`, details: { undated: j }, metadata: null, timestamp: null });
+  let seed = opts.seed ?? 7;
+  const rand = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
   let pages = 0;
   const start = () => {
+    const preds: Array<(r: Record<string, unknown>) => boolean> = [];
+    const orderBy: string[] = [];
     const b: Record<string, unknown> = {};
-    for (const m of ["gte", "eq", "in", "like", "ilike", "order"]) b[m] = (...a: unknown[]) => { calls.push([m, a]); return b; };
-    b.range = (from: number, to: number) => {
-      calls.push(["range", [from, to]]);
+    for (const m of ["gte", "eq", "in", "like", "ilike"]) b[m] = (...a: unknown[]) => { calls.push([m, a]); return b; };
+    b.lte = (k: string, v: string) => { calls.push(["lte", [k, v]]); preds.push((r) => r[k] != null && String(r[k]) <= v); return b; };
+    b.lt = (k: string, v: string) => { calls.push(["lt", [k, v]]); preds.push((r) => String(r[k]) < v); return b; };
+    b.is = (k: string, v: null) => { calls.push(["is", [k, v]]); preds.push((r) => (r[k] ?? null) === v); return b; };
+    b.or = (f: string) => {
+      calls.push(["or", [f]]);
+      const m = /^timestamp\.lt\."([^"]+)",and\(timestamp\.eq\."([^"]+)",id\.lt\."([^"]+)"\)$/.exec(f);
+      if (!m || m[1] !== m[2]) throw new Error(`unexpected or filter ${f}`);
+      preds.push((r) => r.timestamp != null && (String(r.timestamp) < m[1] || (r.timestamp === m[1] && String(r.id) < m[3])));
+      return b;
+    };
+    b.order = (k: string, o: { ascending: boolean }) => { calls.push(["order", [k, o]]); orderBy.push(k); return b; };
+    b.limit = (lim: number) => {
+      calls.push(["limit", [lim]]);
       pages++;
       if (failAt !== undefined && pages === failAt) return Promise.resolve({ data: null, error: { message: "timeout" } });
-      return Promise.resolve({ data: all.slice(from, to + 1), error: null });
+      const keyed = all.filter((r) => preds.every((p) => p(r))).map((r) => ({ r, tie: rand() }));
+      keyed.sort((x, y) => {
+        for (const k of orderBy) {
+          const a = x.r[k] == null ? "" : String(x.r[k]); const c = y.r[k] == null ? "" : String(y.r[k]);
+          if (a !== c) return a < c ? 1 : -1; // DESC
+        }
+        return x.tie - y.tie; // ties: no stable order across queries
+      });
+      return Promise.resolve({ data: keyed.slice(0, lim).map((k) => k.r), error: null });
     };
     return b as never;
   };
-  return { start, calls, pages: () => pages };
+  return { start, calls, pages: () => pages, all };
 }
 const F = { range: "all" as const, action: "ALL", resource: "ALL" };
 
 describe("ALOG-6 — the export holds every row the filters select, says its bounds, and is audited", () => {
-  it("pages on the server until the rows run out: 2,345 rows in three .range() pages, all in the file", async () => {
+  it("pages on the server until the rows run out: 2,345 rows in three keyset pages, all in the file", async () => {
     const p = pager(2345);
     const got = await fetchAuditRowsForExport(p.start, F, Date.now());
     expect(got).toMatchObject({ ok: true, complete: true });
     if (got.ok) expect(got.rows).toHaveLength(2345);
-    expect(p.calls.filter(([m]) => m === "range").map(([, a]) => a)).toEqual([[0, 999], [1000, 1999], [2000, 2999]]);
+    // three dated pages of up to 1000, then the (empty) undated pass of "all time"
+    expect(p.calls.filter(([m]) => m === "limit").map(([, a]) => a)).toEqual([[1000], [1000], [1000], [1000]]);
+    expect(p.calls.filter(([m]) => m === "order").slice(0, 2)).toEqual([["order", ["timestamp", { ascending: false }]], ["order", ["id", { ascending: false }]]]);
+  });
+
+  it("P7 review: tied timestamps across page boundaries — no row missing, none repeated (ties come back in a new order on every query)", async () => {
+    // 2,500 rows, 25 to a timestamp (a chunked ledger write, one transaction's rows); pages of 40 cut through tie groups.
+    for (const seed of [1, 2, 3]) {
+      const p = pager(2500, undefined, { tieEvery: 25, seed });
+      const got = await fetchAuditRowsForExport(p.start, F, Date.UTC(2026, 9, 2), { page: 40 });
+      expect(got).toMatchObject({ ok: true, complete: true });
+      const ids = (got as { rows: AuditExportRow[] }).rows.map((r) => r.id);
+      expect(new Set(ids).size).toBe(ids.length);
+      expect(new Set(ids)).toEqual(new Set(p.all.map((r) => String(r.id))));
+      // newest first, then id DESC inside a timestamp
+      const sorted = [...(got as { rows: AuditExportRow[] }).rows].sort((x, y) => (x.timestamp === y.timestamp ? (x.id < y.id ? 1 : -1) : x.timestamp < y.timestamp ? 1 : -1));
+      expect(ids).toEqual(sorted.map((r) => r.id));
+    }
+  });
+
+  it("P7 review: the export is a snapshot — a row written after it began (dated later) is not in it, and nothing shifts or repeats", async () => {
+    const p = pager(150);
+    const startMs = Date.UTC(2026, 9, 2);
+    let injected = false;
+    const start = () => {
+      if (p.pages() === 1 && !injected) {
+        injected = true;
+        p.all.unshift({ ...p.all[0], id: "zz-late", timestamp: new Date(startMs + 5_000).toISOString() });
+      }
+      return p.start();
+    };
+    const got = await fetchAuditRowsForExport(start as never, F, startMs, { page: 50 });
+    const ids = (got as { rows: AuditExportRow[] }).rows.map((r) => r.id);
+    expect(injected).toBe(true);
+    expect(ids).toHaveLength(150);
+    expect(ids).not.toContain("zz-late");
+    expect(new Set(ids).size).toBe(150);
+    expect(p.calls).toEqual(expect.arrayContaining([["lte", ["timestamp", new Date(startMs).toISOString()]]]));
+  });
+
+  it("the next page starts strictly after the last row read (keyset, never an offset)", async () => {
+    const p = pager(120, undefined, { tieEvery: 10 });
+    await fetchAuditRowsForExport(p.start, F, Date.UTC(2026, 9, 2), { page: 50 });
+    const ors = p.calls.filter(([m]) => m === "or").map(([, a]) => (a as string[])[0]);
+    expect(ors).toHaveLength(2);
+    expect(ors[0]).toMatch(/^timestamp\.lt\."[^"]+",and\(timestamp\.eq\."[^"]+",id\.lt\."r\d{6}"\)$/);
+    expect(p.calls.some(([m]) => m === "range")).toBe(false);
+  });
+
+  it("all time: rows with no timestamp follow, by id — counted and in the file; a date range leaves them out as the screen does", async () => {
+    const p = pager(30, undefined, { undated: 3 });
+    const got = await fetchAuditRowsForExport(p.start, F, Date.UTC(2026, 9, 2), { page: 10 });
+    const rows = (got as { rows: AuditExportRow[] }).rows;
+    expect(rows).toHaveLength(33);
+    expect(rows.slice(30).map((r) => r.id)).toEqual(["u000002", "u000001", "u000000"]);
+    expect(rows[32].timestamp).toBe("");
+    expect(buildAuditCsv(rows.slice(32), new Map(), { orgId: "o1", filters: F, exportedAtIso: "x", rows: 1, complete: true, ceiling: 50_000 })).toContain("(no timestamp)");
+    const ranged = pager(30, undefined, { undated: 3 });
+    const got7 = await fetchAuditRowsForExport(ranged.start, { ...F, range: "30d" }, Date.UTC(2026, 9, 2), { page: 10 });
+    expect((got7 as { rows: AuditExportRow[] }).rows).toHaveLength(30);
+    expect(ranged.calls.some(([m]) => m === "is")).toBe(false);
   });
   it("stops at the ceiling and says it is not complete", async () => {
     const p = pager(30);
@@ -220,6 +310,7 @@ describe("ALOG-6 — the export holds every row the filters select, says its bou
     const lines = csv.split("\n");
     expect(lines[0]).toBe("Audit log export");
     expect(csv).toContain("Rows in this file,2");
+    expect(csv).toContain("Snapshot,rows dated at or before 2026-10-13T00:00:00.000Z; a row written after the export began is not in this file");
     expect(csv).toMatch(/Complete,Yes — every row the filters select that you may read/);
     expect(lines).toContain("Timestamp,Action,Action code,Resource Type,Resource ID,Resource Label,User ID,User Email,User Role,Actor kind,Details JSON,Metadata JSON");
     expect(csv).toContain("P-101 · P&ID");
