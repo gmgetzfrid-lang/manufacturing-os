@@ -472,18 +472,27 @@ export function useAttentionFeedState(enabled: boolean): AttentionFeedState {
       const ids = [...fromWindow, ...fromBelow].slice(0, RECONCILE_MAX_IDS);
       if (ids.length === 0) return;
       reconcilingRef.current = true;
+      // The server marks each row BEFORE it answers, so a mark's realtime
+      // UPDATE can arrive while the request is still in flight: every
+      // candidate is registered as an expected echo first, and the ones the
+      // server did not retire are taken off once it answers (RT-8 dw2). An
+      // unrelated UPDATE to a candidate in that gap is absorbed once; the
+      // next trigger or the visible poll still reads it.
+      const echo = echoRef.current;
+      const sentAt = Date.now();
+      for (const id of ids) echo.set(id, sentAt + RECONCILE_ECHO_MS);
       try {
         const answer = await requestReconcile(activeOrgId, ids);
         const at = Date.now();
         // Not answered (offline, no session, a route not deployed): nothing
         // is retired and every row keeps showing; it is asked again after
         // RECONCILE_KEEP_MS, not on every refetch.
-        if (!answer) { for (const id of ids) kept.set(id, at); return; }
+        if (!answer) { for (const id of ids) { kept.set(id, at); echo.delete(id); } return; }
         if (!alive) return;
         const retired = new Set(answer.retired);
-        for (const id of ids) if (!retired.has(id)) kept.set(id, at);
+        for (const id of ids) if (!retired.has(id)) { kept.set(id, at); echo.delete(id); }
         if (retired.size === 0) return;
-        for (const id of retired) echoRef.current.set(id, at + RECONCILE_ECHO_MS);
+        for (const id of retired) if (echo.has(id)) echo.set(id, at + RECONCILE_ECHO_MS);
         const current = rawRef.current;
         const gone = current.filter((r) => retired.has(r.id)).length;
         const goneBelow = remainderRef.current.filter((r) => retired.has(r.id)).length;

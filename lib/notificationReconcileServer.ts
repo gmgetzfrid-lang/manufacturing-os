@@ -19,7 +19,7 @@
 // What "gone" means, per class (every read scoped to the org):
 //   workflow       the ticket's status is no longer the alert's recorded
 //                  status, or the ticket is not in the workspace any more
-//   hold           a hold_opened row: no open hold on the document (an aging
+//   hold           a hold_opened row on a document: no open hold on it (an aging
 //                  nudge, metadata.staleHoldId: that hold is released)
 //   branch         the branch (metadata.branchId) is resolved
 //   stale_checkout the escalated session (metadata.staleSessionId) has ended
@@ -37,7 +37,10 @@
 //                  the writer put on the recipient's roster row in the same
 //                  call: openReviewRoster (actor = the roster's assigned_by,
 //                  at its assigned_at), the reminder scan (no actor, at the
-//                  notified_at it stamps after the notice) and
+//                  notified_at it stamps after the notice — or, for every
+//                  earlier reminder, any time after the recipient's roster
+//                  row was opened: an actor-less review_requested is never
+//                  the check-in panel's notice) and
 //                  invalidateDraftSignoffs (no actor, on the row it turns
 //                  'invalidated'). updated_at is never evidence on a live row
 //                  — every sign-off and alternate activation moves it. A row
@@ -103,7 +106,16 @@ const near = (t: string | null | undefined, created: number) => {
  *      stamps notified_at), an actor-less roster's (assigned_at =
  *      notified_at), or invalidateDraftSignoffs' review_invalidated (the
  *      row it turns 'invalidated', whose updated_at it stamps; an
- *      invalidated row moves no further).
+ *      invalidated row moves no further);
+ *    * an actor-less review_requested written at or after the recipient's
+ *      roster row was opened (assigned_at − the window): every reminder the
+ *      scan wrote, not only the latest — each scan moves notified_at
+ *      forward, so the day-5 reminder lies near neither assigned_at (day 0)
+ *      nor notified_at (day 10). The only other review_requested writer,
+ *      the check-in panel's "Change proposed to …" notice, always carries
+ *      the person checking in as its actor
+ *      (components/documents/CheckInPanel.tsx), so an actor-less one is
+ *      never that notice.
  *  updated_at on a live row is never evidence: each sign-off, invalidation
  *  and alternate activation moves it. Exported for the tests. */
 export function rosterWrote(row: Pick<Row, "kind" | "created_at" | "actor_user_id">, roster: RosterStamp[]): boolean {
@@ -113,6 +125,10 @@ export function rosterWrote(row: Pick<Row, "kind" | "created_at" | "actor_user_i
   return roster.some((s) => {
     if (actor !== null) return s.assigned_by === actor && near(s.assigned_at, created);
     if (near(s.assigned_at, created) || near(s.notified_at, created)) return true;
+    if (row.kind === "review_requested") {
+      const opened = ms(s.assigned_at);
+      if (Number.isFinite(opened) && created >= opened - REVIEW_ROSTER_WINDOW_MS) return true;
+    }
     return row.kind === "review_invalidated" && s.status === "invalidated" && near(s.updated_at, created);
   });
 }

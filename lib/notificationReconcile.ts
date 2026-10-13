@@ -26,7 +26,8 @@ export type ReconcileClass =
   /** A ticket workflow alert ("the ticket is in state X — act"): retired once
    *  the ticket has left state X or is no longer live in the workspace. */
   | "workflow"
-  /** hold_opened: retired once the hold is released (TRAIL-9 dw1). */
+  /** hold_opened on a document: retired once the hold is released (TRAIL-9
+   *  dw1). A hold_opened row about any other resource is never reconciled. */
   | "hold"
   /** branch_open: retired once the branch is resolved (TRAIL-9 dw2; the
    *  DocCtrl copies too — DEC-81 Risk). */
@@ -46,7 +47,8 @@ export type ReconcileClass =
    *  (components/documents/CheckInPanel.tsx). lib/notificationReconcileServer.ts
    *  keeps any row with no roster evidence (its actor must be the roster's
    *  opener, or none, and its time the stamp that writer put on the
-   *  recipient's roster row), and any row younger than
+   *  recipient's roster row — for an actor-less review_requested, any time
+   *  since that row was opened), and any row younger than
    *  REVIEW_RECONCILE_GRACE_MS (the voided-approval notice is written before
    *  the new roster is). */
   | "review"
@@ -81,7 +83,11 @@ export function reconcileClassOf(row: ReconcilableRow): ReconcileClass | null {
   if (row.resourceId && meta && typeof meta.status === "string" && meta.action != null) return "workflow";
   switch (row.kind) {
     case "hold_opened":
-      return row.resourceId ? "hold" : null;
+      // The check reads document_holds by document id: a row about anything
+      // but a document (a legacy row, another producer, a future
+      // project-scoped hold) would read "no open hold" and be retired while
+      // its hold still stands — so it is left alone (it stays until read).
+      return row.resourceId && row.resourceType === "document" ? "hold" : null;
     case "branch_open":
       return meta && typeof meta.branchId === "string" && meta.branchId ? "branch" : null;
     case "checkout_released":
@@ -136,10 +142,12 @@ export const REVIEW_RECONCILE_GRACE_MS = 2 * 60_000;
  *  updated_at only on the row invalidateDraftSignoffs turned 'invalidated')
  *  must lie to a review row's created_at for the row to count as that
  *  roster's notice — with the notice's actor matching the roster's opener
- *  (lib/notificationReconcileServer.ts rosterWrote). lib/reviewControl.ts
- *  stamps the roster row and writes the notice in the same call; the
- *  assigned_at of a browser-opened roster is the browser's clock, hence the
- *  margin. */
+ *  (lib/notificationReconcileServer.ts rosterWrote). An actor-less
+ *  review_requested needs only to be written no earlier than this before
+ *  the recipient's roster row was opened (every reminder, not only the one
+ *  whose notified_at is current). lib/reviewControl.ts stamps the roster row
+ *  and writes the notice in the same call; the assigned_at of a
+ *  browser-opened roster is the browser's clock, hence the margin. */
 export const REVIEW_ROSTER_WINDOW_MS = 10 * 60_000;
 
 /** What the route answers. */

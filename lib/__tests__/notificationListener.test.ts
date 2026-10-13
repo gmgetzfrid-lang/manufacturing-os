@@ -136,7 +136,7 @@ vi.mock("@/components/providers/ToastProvider", async (orig) => {
 });
 
 import {
-  NotificationListener, toastForRow, burstSummary, actionSummary, createNotificationToaster, notificationCoalesceKey, isActionRow,
+  NotificationListener, toastForRow, burstSummary, actionSummary, createNotificationToaster, notificationCoalesceKey, isActionRow, isConflictAction,
   BURST_WINDOW_MS, BURST_SHOWN_MAX, ACTION_SHOWN_MAX, PREF_FRESH_MS, PREF_READ_TIMEOUT_MS, SEEN_IDS_MAX, NOTIFICATION_TOAST_MS,
 } from "@/components/providers/NotificationListener";
 import { postActivity } from "@/lib/activityThread";
@@ -359,6 +359,28 @@ describe("TAX-9 dw4 — a burst is one summary, never one card per row", () => {
     expect(shown.filter((x) => x.title === "2 more notifications")).toHaveLength(1);
     expect(shown).toHaveLength(6);
     expect(actionSummary(1).title).toBe("1 more action needs you");
+  });
+
+  it("third review fix: 2 ack_requested + 1 checkout_conflict in one window — the conflict gets its OWN card (outside the action cap), never folded into 'N more actions need you'", async () => {
+    const shown: Array<{ type: string; title: string; duration: number }> = [];
+    const fires: Array<() => void> = [];
+    const t = createNotificationToaster({
+      show: (s) => shown.push({ type: s.type, title: s.title, duration: s.duration }), readPreference: async () => true, now: () => 0,
+      setTimer: (cb, ms) => { if (ms === BURST_WINDOW_MS) fires.push(cb); return fires.length; }, clearTimer: () => {},
+    });
+    t.receive({ id: "a1", kind: "ack_requested", title: "Please confirm DOC-1", body: null, resource_id: "d1" });
+    t.receive({ id: "a2", kind: "ack_requested", title: "Please confirm DOC-2", body: null, resource_id: "d2" });
+    t.receive({ id: "c1", kind: "checkout_conflict", title: "Someone published over your checkout", body: "DOC-7", resource_id: "d7" });
+    t.receive({ id: "a3", kind: "ack_requested", title: "Please confirm DOC-3", body: null, resource_id: "d3" });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(shown.map((x) => x.title)).toEqual(["Please confirm DOC-1", "Please confirm DOC-2", "Someone published over your checkout"]);
+    expect(shown[2]).toMatchObject({ type: "warning", duration: 0 });
+    for (const f of fires) f();
+    // the third PSM row is the held one; the conflict was never held
+    expect(shown.map((x) => x.title)).toEqual(["Please confirm DOC-1", "Please confirm DOC-2", "Someone published over your checkout", "Please confirm DOC-3"]);
+    // the conflict class: the non-PSM action kinds; the PSM obligations and FYI kinds are not
+    for (const k of ["checkout_conflict", "checkout_released", "checkout_force_released", "checkout_auto_released", "overlap_advisory", "branch_open"]) expect(isConflictAction({ kind: k }), k).toBe(true);
+    for (const k of ["ack_requested", "review_requested", "review_invalidated", "ack_overdue", "review_overdue", "access_recert_due", "ticket_comment", "hold_opened"]) expect(isConflictAction({ kind: k }), k).toBe(false);
   });
 
   it("the cron's review-health nudge (review_overdue with metadata.reviewHealth) is not an action toast — the row-level rule the feed's counts read", () => {

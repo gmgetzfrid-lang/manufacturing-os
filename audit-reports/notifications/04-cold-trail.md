@@ -550,7 +550,7 @@ hooks/useTicketNotifications.ts:93-95:
 
 What landed — on the server, because a browser may change only `read_at` since `20261161` (`NEDGE-18`):
 - `lib/notificationReconcile.ts` `reconcileClassOf` names `hold_opened` and `branch_open` (with `metadata.branchId`) as reconcilable; the feed sends them to `POST /api/notifications/reconcile` (new), and `lib/notificationReconcileServer.ts` `retireStaleAlerts` marks them `metadata.superseded_at` when the condition is gone:
-  - `hold_opened` — no open hold on the document (`document_holds.released_at` null for none); an aging nudge (`metadata.staleHoldId`) — that hold is released. This is the database's answer, so it holds for every recipient, including one who never received the `hold_released` row; two holds on one document keep the row until both are released.
+  - `hold_opened` — no open hold on the document (`document_holds.released_at` null for none); an aging nudge (`metadata.staleHoldId`) — that hold is released. Third review fix: only a row whose `resource_type` is `document` is reconciled — the check reads `document_holds` by document id, so a legacy row, another producer's or a future project-scoped hold's would have read "no open hold" and been retired while its hold still stood; such a row now stays until read (`reconcileClassOf`; test "a hold_opened row whose resource is not a document is KEPT"). This is the database's answer, so it holds for every recipient, including one who never received the `hold_released` row; two holds on one document keep the row until both are released.
   - `branch_open` — its branch (`revision_branches.resolved_at`) is resolved. That clears the DocCtrl pool's copies too (the `DEC-81` Risk paragraph's controller copies), beside N8's `clear_resolved_branch_alerts`.
   - The same pass clears the stale-checkout escalation (`checkout_released` with `metadata.staleSessionId`) once its session has ended — `DEC-81` Risk's other uncleared controller copy.
 - The header comment says what is reconciled and that every other kind stays until read (`hooks/useTicketNotifications.ts` header).
@@ -558,7 +558,7 @@ What landed — on the server, because a browser may change only `read_at` since
 - Verified: loop on `fleet/N4-feed-provider`: `npx tsc --noEmit` exit 0; `npx eslint` on the 24 changed code and test files `--max-warnings=0` exit 0; `npx vitest run` (full suite) exit 1 — 514 files, 11,352 passed, 10 expected fail, 4 failed, every one "Test timed out in 5000ms" in a file this package does not touch (`dcRoundFOwnerStamp`, `dcRoundFShareInventory`, `exportContractRoundTrip`, `notificationDispatchMembership`; load average 18–29 on the shared box), each exit 0 when rerun alone. `next build` is the integrator's.
 
 **Done-when.**
-- ✓ A `hold_opened` row is retired once its hold is released (no open hold on that document), for the recipient's own row on that document.
+- ✓ A `hold_opened` row is retired once its hold is released (no open hold on that document), for the recipient's own row on that document; a `hold_opened` about anything but a document is never retired by this check (third review fix).
 - ✓ `branch_open` is retired once its branch is resolved.
 - ✓ The reconciler covers these document kinds, and the header comment is narrowed to what is true.
 

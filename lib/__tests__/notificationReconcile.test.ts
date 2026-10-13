@@ -91,6 +91,9 @@ describe("reconcileClassOf — which condition retires which row", () => {
     expect(r("ticket_status", "ticket", "t", { action: "assign", status: "DRAFTING" })).toBe("workflow");
     expect(r("hold_opened", "document", "d", null)).toBe("hold");
     expect(r("hold_opened", "document", "d", { staleHoldId: "h", staleFor: "age", escalation: true })).toBe("hold");
+    // a hold_opened about anything but a document is never reconciled (the check reads document_holds by document id)
+    expect(r("hold_opened", "project", "p", null)).toBe(null);
+    expect(r("hold_opened", null, "d", null)).toBe(null);
     expect(r("branch_open", "document", "d", { branchId: "b" })).toBe("branch");
     expect(r("branch_open", "document", "d", null)).toBe(null);
     expect(r("checkout_released", "document", "d", { staleSessionId: "s", escalation: true })).toBe("stale_checkout");
@@ -204,6 +207,19 @@ describe("retireStaleAlerts — the server re-checks, then marks only the gone o
     const a = await retireStaleAlerts(fakeDb, { orgId: ORG, uid: U, ids: [1, 2, 3, 4, 5].map(id) });
     expect(a.retired.sort()).toEqual([id(2), id(3)]);
     expect(a.kept).toBe(3);
+  });
+
+  it("TRAIL-9 (third review fix): a hold_opened row whose resource is not a document is KEPT — no document_holds row for it proves nothing", async () => {
+    const { retireStaleAlerts } = await import("@/lib/notificationReconcileServer");
+    const P = id(211);
+    db.tables.document_holds = [];
+    db.tables.notifications = [
+      notif(1, { kind: "hold_opened", resource_type: "project", resource_id: P }),
+      notif(2, { kind: "hold_opened", resource_type: null, resource_id: P }),
+    ];
+    const a = await retireStaleAlerts(fakeDb, { orgId: ORG, uid: U, ids: [id(1), id(2)] });
+    expect(a).toEqual({ retired: [], kept: 2, failed: 0 });
+    expect(db.updates).toEqual([]);
   });
 
   it("TRAIL-9 / DEC-81 Risk: branch_open is retired once its branch is resolved; a stale-checkout escalation once its session ended", async () => {
@@ -354,6 +370,62 @@ describe("retireStaleAlerts — the server re-checks, then marks only the gone o
     // outside the window, or no creation time: not proven
     expect(rosterWrote({ kind: "review_requested", created_at: T, actor_user_id: null }, [r({ notified_at: "2026-10-13T08:11:00.000Z" })])).toBe(false);
     expect(rosterWrote({ kind: "review_requested", created_at: null, actor_user_id: null }, [r({ notified_at: T })])).toBe(false);
+  });
+
+  it("review (third review fix): rosterWrote — an actor-less review_requested written any time after the recipient's roster row was opened is that roster's (every reminder, not only the latest)", async () => {
+    const { rosterWrote } = await import("@/lib/notificationReconcileServer");
+    const T = "2026-10-13T08:00:00.000Z";
+    const r = (over: Record<string, unknown>) => ({ status: "pending", assigned_by: "opener", assigned_at: null, notified_at: null, updated_at: null, ...over });
+    // opened ten days earlier; the current notified_at is far from T too
+    const opened = r({ assigned_at: "2026-10-03T08:00:00.000Z", notified_at: "2026-10-13T09:00:00.000Z" });
+    expect(rosterWrote({ kind: "review_requested", created_at: T, actor_user_id: null }, [opened])).toBe(true);
+    // the margin before assigned_at holds; earlier than that, no roster existed
+    expect(rosterWrote({ kind: "review_requested", created_at: "2026-10-03T07:55:00.000Z", actor_user_id: null }, [opened])).toBe(true);
+    expect(rosterWrote({ kind: "review_requested", created_at: "2026-10-03T07:40:00.000Z", actor_user_id: null }, [opened])).toBe(false);
+    // the actor-bearing rule is unchanged (the check-in panel's notice always carries an actor)
+    expect(rosterWrote({ kind: "review_requested", created_at: T, actor_user_id: "opener" }, [opened])).toBe(false);
+    expect(rosterWrote({ kind: "review_requested", created_at: T, actor_user_id: "field-tech" }, [opened])).toBe(false);
+    // review_invalidated keeps its own rule
+    expect(rosterWrote({ kind: "review_invalidated", created_at: T, actor_user_id: null }, [opened])).toBe(false);
+    // a roster row with no assigned_at proves nothing by this rule
+    expect(rosterWrote({ kind: "review_requested", created_at: T, actor_user_id: null }, [r({})])).toBe(false);
+  });
+
+  it("review (third review fix): reminders on day 5 and day 10 are BOTH retired once the reviewer signs on day 11; a check-in notice on the same document stays", async () => {
+    const { retireStaleAlerts } = await import("@/lib/notificationReconcileServer");
+    const D = id(741);
+    const SUBMITTER = "44444444-4444-4444-8444-444444444444";
+    const FIELD_TECH = "55555555-5555-4555-8555-555555555555";
+    // Rostered on day 0 (Oct 1), the scan reminded on day 5 then day 10 (notified_at moved to day 10), signed on day 11.
+    db.tables.document_review_signoffs = [
+      { org_id: ORG, reviewer_user_id: U, document_id: D, document_version_id: "draft-2B", status: "signed", assigned_by: SUBMITTER, assigned_at: "2026-10-01T06:00:00.000Z", notified_at: "2026-10-11T06:00:01.000Z", updated_at: "2026-10-12T09:00:00.000Z" },
+    ];
+    db.tables.documents = [{ id: D, org_id: ORG, pending_version_id: "draft-2B" }];
+    db.tables.notifications = [
+      notif(1, { kind: "review_requested", resource_type: "document", resource_id: D, created_at: "2026-10-01T06:00:01.000Z", actor_user_id: SUBMITTER, title: "Review requested: 2B" }),
+      notif(2, { kind: "review_requested", resource_type: "document", resource_id: D, created_at: "2026-10-06T06:00:00.000Z", actor_user_id: null, title: "Reminder — review 2B" }),
+      notif(3, { kind: "review_requested", resource_type: "document", resource_id: D, created_at: "2026-10-11T06:00:00.000Z", actor_user_id: null, title: "Reminder — review 2B" }),
+      notif(4, { kind: "review_requested", resource_type: "document", resource_id: D, created_at: "2026-10-08T10:00:00.000Z", actor_user_id: FIELD_TECH, title: "Change proposed to DOC-1" }),
+    ];
+    const a = await retireStaleAlerts(fakeDb, { orgId: ORG, uid: U, ids: [1, 2, 3, 4].map(id), now: new Date("2026-10-12T10:00:00.000Z") });
+    expect(a.retired.sort()).toEqual([id(1), id(2), id(3)]);
+    expect(a.kept).toBe(1);
+    expect(db.tables.notifications.find((r) => r.id === id(4))!.metadata).toBe(null);
+  });
+
+  it("review (third review fix): while the sign-off is still owed, every reminder is kept", async () => {
+    const { retireStaleAlerts } = await import("@/lib/notificationReconcileServer");
+    const D = id(742);
+    db.tables.document_review_signoffs = [
+      { org_id: ORG, reviewer_user_id: U, document_id: D, document_version_id: "draft-2B", status: "pending", assigned_by: null, assigned_at: "2026-10-01T06:00:00.000Z", notified_at: "2026-10-11T06:00:01.000Z", updated_at: "2026-10-01T06:00:00.000Z" },
+    ];
+    db.tables.documents = [{ id: D, org_id: ORG, pending_version_id: "draft-2B" }];
+    db.tables.notifications = [
+      notif(1, { kind: "review_requested", resource_type: "document", resource_id: D, created_at: "2026-10-06T06:00:00.000Z", actor_user_id: null }),
+      notif(2, { kind: "review_requested", resource_type: "document", resource_id: D, created_at: "2026-10-11T06:00:00.000Z", actor_user_id: null }),
+    ];
+    const a = await retireStaleAlerts(fakeDb, { orgId: ORG, uid: U, ids: [id(1), id(2)], now: new Date("2026-10-12T10:00:00.000Z") });
+    expect(a).toEqual({ retired: [], kept: 2, failed: 0 });
   });
 
   it("review: a row younger than REVIEW_RECONCILE_GRACE_MS is kept — the voided-approval notice precedes the new draft's roster", async () => {

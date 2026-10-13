@@ -40,7 +40,10 @@
 //     (actionSummary) when it closes. A scan that writes twenty "Still
 //     unconfirmed" rows at once is two cards and one summary, never twenty
 //     cards with no timer. Whether a row is an action is lib/notificationReconcile.ts
-//     isActionRow — the one place the feed's counts read it too.
+//     isActionRow — the one place the feed's counts read it too. The
+//     conflict class (isConflictAction: an action kind that is not a PSM
+//     obligation — checkout_conflict and its neighbours) is outside that
+//     cap: each always gets its own card, as before N4 (third review fix).
 //   * The member's "Pop-up toasts" switch (`toast_enabled`) is read through
 //     `readToastPreference` — on mount, whenever the tab comes back, and
 //     before any toast once the last read is older than PREF_FRESH_MS. A read
@@ -60,6 +63,7 @@
 import { useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import { isActionRow as isActionNotification } from "@/lib/notificationReconcile";
+import { kindMeta } from "@/lib/notificationKinds";
 import {
   readToastPreferences, normalizeToastPreference, toastAllowed, type ToastPreference,
 } from "@/lib/notificationPrefs";
@@ -106,6 +110,18 @@ export const SEEN_IDS_MAX = 500;
  *  review-health nudge); a legacy kind no union declares is FYI. */
 export function isActionRow(row: Pick<ListenedRow, "kind" | "metadata">): boolean {
   return isActionNotification(row);
+}
+
+/** Whether an action row is of the conflict class — the action kinds that
+ *  are not PSM obligations (KIND_META.compliance false: checkout_conflict,
+ *  the checkout releases, overlap_advisory, branch_open). Each of these
+ *  always had its own sticky card before N4 made the PSM obligations
+ *  actions, and keeps it: it is never held for the "N more actions" summary
+ *  and does not use up the window's ACTION_SHOWN_MAX, so a "someone
+ *  published over your checkout" is never folded behind two
+ *  acknowledgment requests (third review fix). */
+export function isConflictAction(row: Pick<ListenedRow, "kind" | "metadata">): boolean {
+  return isActionRow(row) && kindMeta(row.kind)?.compliance === false;
 }
 
 /** One card per statement (RT-11 dw2 / OS-4 dw2): the kind and resource it
@@ -266,6 +282,8 @@ export function createNotificationToaster(deps: ToasterDeps) {
     // A repeat of an action already on screen joins its card (a count).
     const key = toastCoalesceKey(spec);
     if (actionKeys.has(key)) { deps.show(spec); return; }
+    // The conflict class always gets its own card, outside the cap.
+    if (isConflictAction(row)) { actionKeys.add(key); deps.show(spec); return; }
     if (actionsShown < ACTION_SHOWN_MAX) {
       actionsShown++;
       actionKeys.add(key);

@@ -40,6 +40,8 @@ const fx = vi.hoisted(() => ({
   ticketsFail: false,
   reconcileCalls: [] as Array<{ orgId: string; ids: string[] }>,
   retire: [] as string[],
+  /** When set: runs while the reconcile request is in flight (before it answers). */
+  onReconcile: null as null | ((ids: string[]) => void),
   channels: [] as Array<{ name: string; ons: Array<{ cfg: Record<string, unknown>; cb: (p: unknown) => void }>; status?: (s: string) => void }>,
   role: { roles: ["Viewer"], activeOrgId: "o1", uid: "u1", membershipState: "member" },
 }));
@@ -102,6 +104,7 @@ vi.mock("@/lib/notificationReconcile", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   requestReconcile: async (orgId: string, ids: string[]) => {
     fx.reconcileCalls.push({ orgId, ids });
+    if (fx.onReconcile) { fx.onReconcile(ids); await new Promise((r) => setTimeout(r, 20)); }
     return { retired: ids.filter((i) => fx.retire.includes(i)), kept: 0, failed: 0 };
   },
 }));
@@ -147,7 +150,7 @@ beforeEach(() => {
   fx.calls = []; fx.tickets = []; fx.ticketCount = null; fx.ticketQuery = null; fx.documents = [];
   fx.pages = [[]]; fx.listCalls = []; fx.listFails = false; fx.total = 0; fx.beyond = []; fx.beyondCalls = []; fx.ticketsFail = false;
   fx.role = { roles: ["Viewer"], activeOrgId: "o1", uid: "u1", membershipState: "member" };
-  fx.reconcileCalls = []; fx.retire = []; fx.channels = [];
+  fx.reconcileCalls = []; fx.retire = []; fx.onReconcile = null; fx.channels = [];
 });
 afterEach(() => { act(() => root.unmount()); host.remove(); });
 
@@ -394,6 +397,28 @@ describe("RT-8 / NEDGE-18 / TRAIL-9 — the reconcile pass: after the read, on t
     await wait(FETCH_DEBOUNCE_MS + 150);
     expect(ticketFetches()).toBe(before);
     act(() => notifs.cb({ eventType: "UPDATE", new: { id: "n6" } }));
+    await wait(FETCH_DEBOUNCE_MS + 150);
+    expect(ticketFetches()).toBe(before + 1);
+  });
+
+  it("RT-8 (third review fix): the echo of a mark that arrives BEFORE the reconcile answer is not a refetch; a kept candidate's later change is", async () => {
+    fx.pages = [[row(3, { kind: "hold_opened" }), row(5, { kind: "ack_requested" }), row(6, { kind: "library_doc_revised" })]];
+    fx.total = 3;
+    fx.retire = ["n3"];
+    // The server writes before it answers: the UPDATE for n3 lands while the POST is still in flight.
+    fx.onReconcile = () => {
+      const notifs = fx.channels[0].ons.find((o) => o.cfg.table === "notifications")!;
+      notifs.cb({ eventType: "UPDATE", new: { id: "n3" } });
+    };
+    await mount(withProvider(1));
+    const before = ticketFetches();
+    await wait(FETCH_DEBOUNCE_MS + 150);
+    expect(fx.reconcileCalls[0].ids).toEqual(["n3", "n5"]);
+    expect(ticketFetches()).toBe(before);
+    expect(last().items.map((i) => i.notificationId)).toEqual(["n5", "n6"]);
+    // n5 was kept: it is no longer an expected echo, so its change refetches
+    const notifs = fx.channels[0].ons.find((o) => o.cfg.table === "notifications")!;
+    act(() => notifs.cb({ eventType: "UPDATE", new: { id: "n5" } }));
     await wait(FETCH_DEBOUNCE_MS + 150);
     expect(ticketFetches()).toBe(before + 1);
   });
