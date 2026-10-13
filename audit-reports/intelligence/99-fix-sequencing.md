@@ -653,6 +653,22 @@ The integrator adds at merge:
 - the `lib/exportTables.ts` `EXPORT_EXCLUDED_TABLES` entry, after AO-P4. Reason: the run state is operational, re-derived by the next build, and names knowledge-document ids a restore re-keys, so a restore starts with none.
 - In the same commit that adds those two rows, it removes the table from the tripwires' at-merge lists: `ROW_AT_MERGE` in `lib/__tests__/schemaExpectations.test.ts` and `DECISION_AT_MERGE` in `lib/__tests__/exportCoverage.test.ts`. Each list fails once the real row exists. With no other entry, the two mechanisms (the lists, their filter clauses and their self-check tests) can be deleted in that commit too.
 - Optional, the integrator's call: a "Start over" control beside "Continue the rebuild" needs `app/api/graph/mentions/route.ts` to accept a flag that makes `backfillOrgMentions` ignore the saved place (IRLS-14's residual).
+**Paste / deploy order — intelligence Round G I-16 (`20261178`, CB-5 / CB-6 / ASK-8).** The paste and the deploy can come in either order. `20261178` needs `20261128`, `20261138`, `20261155` and `20261121` pasted first. Until it is pasted:
+- the in-place rename answers "needs migration 20261178", and the codebook page says to use today's way (add the new code, refile, remove the old one);
+- the server re-decode works and shows no version;
+- legend ids are checked by the app before it writes, by the codebook save and by the library toggles save (before 20261121's RPC, which checks nothing itself).
+
+**Re-creation chain.** `20261178` re-creates two functions:
+- `process_flows_guard`, from `20261155` plus the CB-5 rename block;
+- `knowledge_library_save_ai_features`, from `20261121` plus the legend-id line.
+
+A later package that re-creates either starts from `20261178`'s body and keeps the added lines. Each has a lineDiff test that scans for the newest earlier definer (`intelRoundGCodebookLifecycleMigration.test.ts`). The setting `app.codebook_rename` is set by `rename_codebook_code` only, around its own writes, and that is pinned: no other migration may set it. It names the kind; `process_flows_guard`'s block reads it for a unit rename only, and `codebook_entries_version_stamp` reads it so a rename is one new version. A later re-creation of either keeps that read. `codebook_entries_version_stamp` also owns `app.codebook_version_bumped` (the service role's one bump per org per transaction); no other migration names it (pinned).
+
+**Merge conflict point — I-16 with I-18 and I-13 (test censuses).** I-16 edits two test files outside its own list, one census line each, because `20261178` joins censuses that scan the whole migration sequence:
+- `lib/__tests__/embedDrain.test.ts` (I-18's area): the "20261121 is the last definer" for-loop drops `knowledge_library_save_ai_features`, and the BEFORE-trigger census names `trg_knowledge_libraries_embed_build_guard`. If I-18 also edits that for-loop line, keep both: I-18's names, without `knowledge_library_save_ai_features`. Or merge I-16 after I-18 and re-apply the two lines.
+- `lib/__tests__/intelRoundGUnitIdentity.test.ts` (I-13's census): the "every object it creates is new" scan reads earlier files only (`f < FILE`).
+
+The assertions those lines stopped covering for later files live in I-16's `intelRoundGCodebookLifecycleMigration.test.ts` ("censuses held for neighbouring migrations"). See CB-5, fix pass 3.
 
 ---
 

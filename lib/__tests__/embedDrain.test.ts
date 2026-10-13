@@ -1436,10 +1436,11 @@ describe("20261121 — the paste contract, byte fidelity, the census", () => {
   it("census: 20261121 is the last definer of semantic_search, semantic_coverage, semantic_coverage_detail, embed_claim_batch and the two marker-safe writers", () => {
     const files = readdirSync(join(process.cwd(), "supabase", "migrations")).filter((f) => /^\d{8}.*\.sql$/.test(f)).sort();
     const last = (re: RegExp) => files.filter((f) => re.test(strip(mig(f)))).pop();
-    for (const name of ["semantic_search", "semantic_coverage", "semantic_coverage_detail", "embed_claim_batch", "embed_build_marker_write", "knowledge_library_save_ai_features", "knowledge_libraries_embed_build_guard"]) {
+    // I-16: 20261178 re-creates knowledge_library_save_ai_features and adds a BEFORE trigger on knowledge_libraries (census in intelRoundGCodebookLifecycleMigration.test.ts)
+    for (const name of ["semantic_search", "semantic_coverage", "semantic_coverage_detail", "embed_claim_batch", "embed_build_marker_write", "knowledge_libraries_embed_build_guard"]) {
       expect(last(new RegExp(`CREATE (OR REPLACE )?FUNCTION ${name}\\(`))).toBe(FILE);
     }
-    expect(last(/CREATE TRIGGER \w+\s+BEFORE [\w ,]*\bON knowledge_libraries\b/)).toBe(FILE);
+    expect(last(/CREATE TRIGGER trg_knowledge_libraries_embed_build_guard\b/)).toBe(FILE);
   });
   it("review fix pass 4 (SEM-8 / GOV-14 limb): only the service role changes the consent marker — a controller's direct PostgREST write of ai_features.embedBuild is refused", () => {
     // knowledge_libraries_write lets every controller UPDATE the row; the

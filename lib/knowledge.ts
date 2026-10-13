@@ -12,6 +12,7 @@ import { supabase } from "@/lib/supabase";
 import { uploadToPath, type UploadProgress } from "@/lib/storage";
 import { ALLOWED_PROVIDERS } from "@/lib/ai/pricing";
 import type { AiProviderId } from "@/lib/ai/providerCall";
+import { assertOrgKnowledgeDocIds, legendIdsAdded } from "@/lib/codebook";
 
 export interface KnowledgeLibrary {
   id: string;
@@ -364,6 +365,10 @@ export async function saveLibraryAiFeatures(libraryId: string, features: Knowled
   const toggles = { ...(features as Record<string, unknown>) };
   delete toggles.embedBuild;
   const fail = (error: { code?: string; message: string }): never => {
+    // ASK-8 (20261178): the database refused a legend sheet it does not hold.
+    if (/legend_doc_ids_invalid/.test(error.message)) {
+      throw new Error(`Library AI setup was not saved — a legend sheet must be a document indexed in this workspace (${error.message.replace(/^[\s\S]*?legend_doc_ids_invalid:\s*/, "").trim()}).`);
+    }
     throw new Error(
       error.code === "PGRST204" || /ai_features/.test(error.message)
         ? "AI features need migration 20260918 — run it in Supabase first."
@@ -371,6 +376,25 @@ export async function saveLibraryAiFeatures(libraryId: string, features: Knowled
     );
   };
   const notSaved = "Library AI setup was not saved — only Admin or Doc Control can change it.";
+
+  // ASK-8 done-when 2: a legend id this save ADDS must name a knowledge
+  // document of the library's own workspace (a stored one is kept as it is).
+  // Checked here, before any write, on every database: 20261121's save
+  // stores what it is given, and only 20261178 makes the database say the
+  // same. A save that names no legend sheet reads nothing more.
+  const nextLegend = Array.isArray(toggles.legendDocIds) ? (toggles.legendDocIds as unknown[]) : [];
+  if (nextLegend.length > 0) {
+    const { data: lib, error: libErr } = await supabase.from("knowledge_libraries")
+      .select("org_id, ai_features").eq("id", libraryId).maybeSingle();
+    if (libErr) fail(libErr);
+    const row = lib as { org_id?: string; ai_features?: Record<string, unknown> | null } | null;
+    const priorLegend = (row?.ai_features ?? {}).legendDocIds;
+    const added = legendIdsAdded(nextLegend, Array.isArray(priorLegend) ? priorLegend : []);
+    if (added.length > 0) {
+      if (!row?.org_id) throw new Error(notSaved);
+      await assertOrgKnowledgeDocIds(row.org_id, added);
+    }
+  }
 
   const rpc = await supabase.rpc("knowledge_library_save_ai_features", { p_library_id: libraryId, p_features: toggles });
   if (!rpc.error) {

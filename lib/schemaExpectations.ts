@@ -270,6 +270,10 @@ export const EXPECTED_COLUMNS: readonly ColumnExpectation[] = [
   { table: "document_assets", column: "vanished_at", migration: "20261171_intel_roundG_provenance.sql", feature: "Revision truth: a tag that left its sheet, for review (GAP-309)" },
   { table: "document_equipment_suggestions", column: "applied_columns", migration: "20261171_intel_roundG_provenance.sql", feature: "The Bridge remembers which equipment columns it wrote on each document (BR-11)" },
   { table: "document_equipment_suggestions", column: "dismissed", migration: "20261171_intel_roundG_provenance.sql", feature: "The Bridge remembers a dismissed tag (BR-9)" },
+  // intelligence I-16 (CB-6): the codebook version a site code was filed under.
+  { table: "codebook_config", column: "codebook_version", migration: "20261178_intel_roundG_codebook_lifecycle.sql", feature: "The Site Codebook's version, moved once per change (CB-6)" },
+  { table: "codebook_entries", column: "codebook_version", migration: "20261178_intel_roundG_codebook_lifecycle.sql", feature: "The codebook version each code was written in (CB-6)" },
+  { table: "assets", column: "codebook_version", migration: "20261178_intel_roundG_codebook_lifecycle.sql", feature: "The codebook version an asset's site code was filed under — what a re-decode compares (CB-6)" },
 ];
 
 export const EXPECTED_FUNCTIONS: readonly FunctionExpectation[] = [
@@ -380,5 +384,15 @@ export const EXPECTED_FUNCTIONS: readonly FunctionExpectation[] = [
     probeArgs: { p_token_hash: "schema-health-probe", p_doc: "schema-health-probe", p_version: "schema-health-probe", p_from: null },
     migration: "20261184_prj_roundG_intake_door_identity.sql",
     feature: "The intake door's submissions written as the link's identity, scoped to the link (app/api/intake/upload; GAP-401)",
+  },
+  // intelligence I-16 (CB-5): a Site Codebook code renamed in place. The
+  // uuid argument refuses "schema-health-probe" (22P02), so the body never
+  // runs; until 20261178 is pasted the route answers needsMigration (409).
+  {
+    signature: "rename_codebook_code(uuid, text, text, text, boolean, jsonb)",
+    fn: "rename_codebook_code",
+    probeArgs: { p_org_id: "schema-health-probe", p_kind: "unit", p_old_code: "x", p_new_code: "y", p_dry_run: true },
+    migration: "20261178_intel_roundG_codebook_lifecycle.sql",
+    feature: "Renaming a Site Codebook code in place, every filing moved with it (/admin/codebook; CB-5)",
   },
 ];

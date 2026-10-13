@@ -839,7 +839,8 @@ describe("20261138 — one paste, counts only, every object new", () => {
   });
 
   it("every object it creates is new — no earlier migration defines it, so nothing is re-created (no lineDiff owed)", () => {
-    const others = readdirSync(MIG_DIR).filter((f) => /^\d{8}.*\.sql$/.test(f) && f !== FILE)
+    // EARLIER files only (I-16's later 20261178 uses units.codebook_code; that it re-creates none of these is held in intelRoundGCodebookLifecycleMigration.test.ts)
+    const others = readdirSync(MIG_DIR).filter((f) => /^\d{8}.*\.sql$/.test(f) && f < FILE)
       .map((f) => readFileSync(join(MIG_DIR, f), "utf8").replace(/--[^\n]*/g, ""));
     for (const name of [
       "documents_total_for_org", "documents_unit_code_guard", "trg_documents_unit_code_guard",

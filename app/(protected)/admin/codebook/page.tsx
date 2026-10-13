@@ -18,7 +18,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   BookMarked, Plus, Trash2, Loader2, Sparkles, Check, X, FileText,
   Boxes, Factory, FileDigit, ScanLine, BookOpen, AlertTriangle, Save,
-  GraduationCap,
+  GraduationCap, Pencil, RefreshCw,
 } from "lucide-react";
 import { useRole } from "@/components/providers/RoleContext";
 import { supabase } from "@/lib/supabase";
@@ -26,11 +26,13 @@ import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
-import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
+import { appAlert, appConfirm, appPrompt } from "@/components/providers/DialogProvider";
 import {
   loadCodebook, upsertEntry, deleteEntry, saveConfig, applyImport, diffImport, parseDrawingNumber,
   codeProblem, codebookProblems, prefixClaimsElsewhere, explainDrawingNumberMiss, unitFlowReferenceCount,
+  renameCodebookCode, renameSummary, previewRedecode, applyRedecode,
   type Codebook, type CodebookEntry, type CodebookKind, type DrawingSegment, type ProposedEntry, type ImportDiff,
+  type RedecodePreview,
 } from "@/lib/codebook";
 import { listAssetIdentities } from "@/lib/assets";
 import { entryAssetReferences, rederivationImpact } from "@/lib/assetCategorize";
@@ -53,7 +55,7 @@ async function confirmRederivation(orgId: string, before: Codebook, after: Codeb
   const eg = impact.examples.map((e) => `${e.tag}: ${e.from} → ${e.to ?? "no code"}`).join(", ");
   return appConfirm({
     title: `${impact.changed} existing asset${impact.changed === 1 ? "" : "s"} carry codes derived under the current rule`,
-    message: `Saving ${what} does NOT rewrite them (e.g. ${eg}). They will show under Operating areas → Identity review, where each can be re-derived or kept.`,
+    message: `Saving ${what} does NOT rewrite them (e.g. ${eg}). They will show under Operating areas → Identity review, where each can be re-derived or kept — or re-derive them all at once here, under Re-decode site codes.`,
     confirmLabel: "Save",
   });
 }
@@ -157,6 +159,9 @@ export default function CodebookPage() {
           <AlertTriangle className="w-4 h-4 shrink-0" /> {error}
         </div>
       )}
+
+      {/* CB-6: the server re-decode — previewed, then applied as shown. */}
+      {canWrite && activeOrgId && <RedecodePanel orgId={activeOrgId} onError={setError} />}
 
       <div className="inline-flex items-center gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-1 mb-4 flex-wrap">
         {TABS.map((t) => (
@@ -266,7 +271,7 @@ function EntryTable({ kind, title, entries, canWrite, codeHint, labelHint, withP
 
   // CB-5: a removal names exactly what it strands. A unit or type that
   // registry equipment (or a process flow) still references is REFUSED with
-  // the counts — refile first; the code is not editable in place yet.
+  // the counts — refile first, or rename the code in place (EntryRow, 20261178).
   const remove = async (e: CodebookEntry) => {
     onError(null);
     let assetRefs = 0;
@@ -285,7 +290,7 @@ function EntryTable({ kind, title, entries, canWrite, codeHint, labelHint, withP
       ].filter(Boolean).join(" and ");
       await appAlert({
         title: `${e.code} — ${e.label} is still in use`,
-        message: `${parts}. Removing the code would strand them under a code the decoder no longer knows. Refile them first (Operating areas), then remove it.`,
+        message: `${parts}. Removing the code would strand them under a code the decoder no longer knows. Refile them first (Operating areas), then remove it — or, if the code itself is wrong, rename it in place (the pencil beside it): everything that references it follows.`,
         tone: "danger",
       });
       return;
@@ -361,6 +366,43 @@ function EntryRow({ entry, withPrefixes, canWrite, flagged, book, siblings, orgI
   const [label, setLabel] = useState(entry.label);
   const [prefixes, setPrefixes] = useState((entry.meta.tagPrefixes ?? []).join(", "));
 
+  // CB-5: the code is renamed IN PLACE (20261178 rename_codebook_code): a
+  // preview says what follows it, then one transaction rewrites the filing,
+  // the site codes, the process flows and the operational-unit mapping. The
+  // apply carries the previewed counts, so it refuses if anything moved.
+  const renameCode = async () => {
+    if (entry.kind === "drawing_type") return;
+    onError(null);
+    const answer = await appPrompt({
+      title: `Rename ${entry.code} — ${entry.label}`,
+      message: "The new code. Everything that references this code follows it, in one step; you see what before anything changes.",
+      defaultValue: entry.code, required: true, confirmLabel: "Preview",
+    });
+    if (answer === null) return;
+    const to = answer.trim();
+    if (to === entry.code.trim()) return;
+    const shape = codeProblem(entry.kind, to);
+    if (shape) { onError(shape); return; }
+    const clash = siblings.find((x) => x.id !== entry.id && x.code.trim() === to);
+    if (clash) { onError(`${to} already exists (${clash.label}) — a code is renamed onto a free code only.`); return; }
+    const kind = entry.kind;
+    const preview = await renameCodebookCode(orgId, { kind, from: entry.code, to, dryRun: true });
+    if (!preview.ok) {
+      if (preview.needsMigration) await appAlert({ title: "Renaming in place is not available yet", message: preview.error });
+      else onError(preview.error);
+      return;
+    }
+    const p = preview.value;
+    if (p.blockers.length > 0) {
+      await appAlert({ title: `${entry.code} cannot be renamed to ${to} yet`, message: `${p.blockers.join(" · ")}. Nothing was changed.`, tone: "danger" });
+      return;
+    }
+    if (!(await appConfirm({ title: `Rename ${entry.code} → ${to}?`, message: renameSummary(p), confirmLabel: "Rename" }))) return;
+    const done = await renameCodebookCode(orgId, { kind, from: entry.code, to, dryRun: false, expected: p });
+    if (!done.ok) { onError(done.error); return; }
+    onChanged();
+  };
+
   const save = async () => {
     onError(null);
     const tagPrefixes = prefixes.split(",").map((p) => p.trim().toUpperCase()).filter(Boolean);
@@ -417,12 +459,111 @@ function EntryRow({ entry, withPrefixes, canWrite, flagged, book, siblings, orgI
                 <button onClick={() => { setEditing(false); setLabel(entry.label); setPrefixes((entry.meta.tagPrefixes ?? []).join(", ")); }} className="p-1 text-[var(--color-text-muted)] hover:bg-[var(--color-surface-2)] rounded" title="Cancel"><X className="w-3.5 h-3.5" /></button>
               </>
             ) : (
-              <button onClick={onRemove} className="p-1 text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-50 rounded" title="Remove"><Trash2 className="w-3.5 h-3.5" /></button>
+              <>
+                {entry.kind !== "drawing_type" && (
+                  <button onClick={() => void renameCode()} className="p-1 text-[var(--color-text-faint)] hover:text-[var(--color-accent)] hover:bg-[var(--color-surface-2)] rounded" title="Rename the code in place"><Pencil className="w-3.5 h-3.5" /></button>
+                )}
+                <button onClick={onRemove} className="p-1 text-[var(--color-text-faint)] hover:text-rose-600 hover:bg-rose-50 rounded" title="Remove"><Trash2 className="w-3.5 h-3.5" /></button>
+              </>
             )}
           </div>
         </td>
       )}
     </tr>
+  );
+}
+
+// ─── CB-6: the server re-decode ─────────────────────────────────────────────
+
+/** Every stored site code the codebook as it stands derives differently,
+ *  re-derived on the server in one admin-triggered job. The preview lists
+ *  the rows; Apply writes exactly those (the route refuses a plan that moved
+ *  since, and each write lands only while the asset still carries the code
+ *  shown). A code naming another unit, or one another asset would take, is
+ *  left to a person under Operating areas → Identity review. */
+function RedecodePanel({ orgId, onError }: { orgId: string; onError: (m: string | null) => void }) {
+  const [preview, setPreview] = useState<RedecodePreview | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+
+  const load = async () => {
+    setBusy(true); onError(null);
+    const r = await previewRedecode(orgId);
+    setBusy(false);
+    if (!r.ok) { onError(r.error); return; }
+    setPreview(r.value);
+  };
+
+  const apply = async () => {
+    if (!preview || preview.rows.length === 0) return;
+    if (!(await appConfirm({
+      title: `Re-derive ${preview.rows.length} site code${preview.rows.length === 1 ? "" : "s"}?`,
+      message: "Exactly the rows listed are rewritten to the code the codebook derives now. A row that changed since this preview is left as it is.",
+      confirmLabel: "Re-derive",
+    }))) return;
+    setBusy(true); onError(null); setResult(null);
+    const r = await applyRedecode(orgId, preview.token);
+    if (!r.ok) {
+      setBusy(false);
+      onError(r.error);
+      if (r.changed) void load();
+      return;
+    }
+    const v = r.value;
+    setResult([
+      `Re-derived ${v.written} site code${v.written === 1 ? "" : "s"}.`,
+      v.changed > 0 ? `${v.changed} changed since the preview and were left as they are.` : null,
+      v.taken > 0 ? `${v.taken} would take a code another asset now carries — left for Identity review.` : null,
+      v.refused > 0 ? `${v.refused} refused: ${v.firstError ?? "no reason given"}.` : null,
+      v.remaining > 0 ? `${v.remaining} more are listed below — review them and apply again.` : null,
+    ].filter(Boolean).join(" "));
+    setBusy(false);
+    void load();
+  };
+
+  const names = preview?.skipped.filter((x) => x.reason === "names_other_unit").length ?? 0;
+  const taken = preview?.skipped.filter((x) => x.reason === "taken").length ?? 0;
+  return (
+    <div className="mb-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+      <div className="flex items-center gap-2 flex-wrap">
+        <RefreshCw className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
+        <div className="text-xs font-black text-[var(--color-text)]">Re-decode site codes</div>
+        <span className="text-[11px] text-[var(--color-text-muted)]">After a padding, type-code or prefix edit: re-derive every stored code the codebook now derives differently.</span>
+        <Button variant="secondary" size="sm" className="ml-auto" onClick={() => void load()} disabled={busy}>
+          {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} {preview ? "Preview again" : "Preview"}
+        </Button>
+      </div>
+      {result && <div className="mt-2 text-[11px] text-emerald-800">{result}</div>}
+      {preview && (
+        <div className="mt-2 space-y-1.5 text-[11px] text-[var(--color-text-muted)]">
+          <div>
+            <b className="text-[var(--color-text)]">{preview.rows.length}</b> asset{preview.rows.length === 1 ? "" : "s"} carry a code the codebook now derives differently.
+            {names + taken > 0 && <> {names + taken} more {names + taken === 1 ? "is" : "are"} left to a person under Operating areas → Identity review{names > 0 ? ` (${names} name another unit than their filing` : " ("}{names > 0 && taken > 0 ? "; " : ""}{taken > 0 ? `${taken} would take a code another asset carries` : ""}).</>}
+          </div>
+          <div>
+            {preview.codebookVersion === null
+              ? "Codebook versions start once migration 20261178 is applied; the re-decode itself works now."
+              : <>Codebook version {preview.codebookVersion}{preview.writtenUnderEarlier !== null ? ` — ${preview.writtenUnderEarlier} coded asset${preview.writtenUnderEarlier === 1 ? " was" : "s were"} written under an earlier version.` : "."}</>}
+          </div>
+          {preview.rows.length > 0 && (
+            <>
+              <div className="max-h-48 overflow-y-auto rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)]">
+                {preview.rows.slice(0, 200).map((r) => (
+                  <div key={r.assetId} className="px-3 py-1 flex items-center gap-2 font-mono">
+                    <span className="font-bold text-[var(--color-text)] w-24 truncate">{r.tag}</span>
+                    <span>{r.from}</span><span>→</span><span className="font-bold text-emerald-800">{r.to}</span>
+                  </div>
+                ))}
+                {preview.rows.length > 200 && <div className="px-3 py-1 italic">…and {preview.rows.length - 200} more.</div>}
+              </div>
+              <Button size="sm" onClick={() => void apply()} disabled={busy}>
+                {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Re-derive {preview.rows.length} code{preview.rows.length === 1 ? "" : "s"}
+              </Button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

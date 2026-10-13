@@ -170,75 +170,16 @@ export async function applyCategorization(
 // disagrees with the codebook AS IT STANDS, and a person accepts per asset
 // (never a silent rewrite — the CB-6 decision).
 
-type IdentityFields = Pick<Asset, "id" | "tag" | "unit_code" | "code">;
-
-/** AREA-11: the unit a stored site code names, when it contradicts the
- *  asset's filing. Null when they agree, when either is blank, or when the
- *  codebook cannot place the code (no opinion is not a conflict). */
-export function codeUnitConflict(a: IdentityFields, book: Codebook): { codeUnit: string; unitCode: string } | null {
-  if (!a.code || !a.unit_code) return null;
-  const decoded = codeToTag(a.code, book);
-  if (!decoded) return null;
-  return decoded.unitCode !== a.unit_code ? { codeUnit: decoded.unitCode, unitCode: a.unit_code } : null;
-}
-
-export interface IdentityReviewRow {
-  assetId: string;
-  tag: string;
-  unitCode: string | null;
-  code: string | null;
-  /** code_names_other_unit — AREA-11: the code says one unit, the filing another.
-   *  code_rederives — CB-6: the codebook as it stands derives a different code
-   *  (a padding, type-code or prefix edit since the code was written).
-   *  derived_code_taken — CB-10: filed, no code, and the code the codebook
-   *  derives is already carried by another asset (one site code is one
-   *  asset) — a person gives this one its own code. */
-  kind: "code_names_other_unit" | "code_rederives" | "derived_code_taken";
-  /** The unit the stored code names (code_names_other_unit). */
-  codeUnit: string | null;
-  /** What the current codebook derives for (tag, unit_code); null = it cannot. */
-  derivedCode: string | null;
-  /** derived_code_taken: the asset that already carries derivedCode. */
-  heldBy?: { id: string; tag: string; archived: boolean } | null;
-}
-
-/** The re-decode plan: every asset whose stored identity disagrees with the
- *  codebook as it stands. Pure. A blank code the codebook can derive is the
- *  categorizer's fill-blank job (codeAssignments), not a disagreement —
- *  unless another asset already carries that code (CB-10: derived_code_taken;
- *  `codeHolders`, every asset of the org with archived ones included,
- *  defaults to `assets`). */
-export function planIdentityReview(
-  assets: ReadonlyArray<IdentityFields>,
-  book: Codebook,
-  codeHolders: ReadonlyArray<IdentityFields & { archived?: boolean }> = assets,
-): IdentityReviewRow[] {
-  const out: IdentityReviewRow[] = [];
-  const holderOf = new Map<string, { id: string; tag: string; archived: boolean }>();
-  for (const h of codeHolders) {
-    const c = (h.code ?? "").trim() ? h.code! : null;
-    if (c && !holderOf.has(c)) holderOf.set(c, { id: h.id, tag: h.tag, archived: !!h.archived });
-  }
-  for (const a of assets) {
-    if (a.unit_code && !(a.code ?? "").trim()) {
-      const derived = tagToCode(a.tag, a.unit_code, book);
-      const holder = derived ? holderOf.get(derived) : undefined;
-      if (derived && holder && holder.id !== a.id) {
-        out.push({ assetId: a.id, tag: a.tag, unitCode: a.unit_code, code: null, kind: "derived_code_taken", codeUnit: null, derivedCode: derived, heldBy: holder });
-      }
-      continue;
-    }
-    if (!a.unit_code || !a.code) continue;
-    const derived = tagToCode(a.tag, a.unit_code, book);
-    const conflict = codeUnitConflict(a, book);
-    if (conflict) {
-      out.push({ assetId: a.id, tag: a.tag, unitCode: a.unit_code, code: a.code, kind: "code_names_other_unit", codeUnit: conflict.codeUnit, derivedCode: derived });
-    } else if (derived && derived !== a.code) {
-      out.push({ assetId: a.id, tag: a.tag, unitCode: a.unit_code, code: a.code, kind: "code_rederives", codeUnit: null, derivedCode: derived });
-    }
-  }
-  return out;
-}
+import {
+  codeUnitConflict, planIdentityReview, planRedecode, redecodeDigest,
+  type IdentityFields, type IdentityReviewRow, type RedecodeRow, type RedecodeSkip, type RedecodePlan,
+} from "@/lib/assetIdentity";
+// The identity review and the re-decode plan live in lib/assetIdentity.ts
+// (pure; no lib/assets runtime import) — re-exported so callers are unchanged.
+export {
+  codeUnitConflict, planIdentityReview, planRedecode, redecodeDigest,
+  type IdentityFields, type IdentityReviewRow, type RedecodeRow, type RedecodeSkip, type RedecodePlan,
+};
 
 /** CB-10: site codes STORED on more than one asset of the org — what keeps
  *  the unique index (assets_org_code_unique, 20261128) from being created,

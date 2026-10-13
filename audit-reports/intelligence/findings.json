@@ -34,8 +34,8 @@
       "LOW": 51
     },
     "by_status": {
-      "RESOLVED": 210,
-      "OPEN": 51,
+      "RESOLVED": 213,
+      "OPEN": 48,
       "REFUTED": 2,
       "WONTFIX": 3,
       "INVALID": 1
@@ -2149,7 +2149,7 @@
       "id": "ASK-8",
       "title": "The legend-sheet prompt block reads knowledge_chunks by document id alone — no org and no library scope",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "SUSPECTED",
       "verification_note": null,
       "blast_radius": null,
@@ -2567,7 +2567,7 @@
       "id": "CB-5",
       "title": "Deleting or re-adding a codebook entry has no referential integrity and the confirm text understates the blast radius",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
@@ -2594,7 +2594,7 @@
       "id": "CB-6",
       "title": "Derived identity is a frozen snapshot: editing the codebook never re-decodes existing assets, so codes and units drift silently forever",
       "severity": "MEDIUM",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": null,
       "blast_radius": null,
