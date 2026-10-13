@@ -8,6 +8,8 @@
 // activity trail.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
+import { fmtInTz, fromDateTimeInput, hasTimeOfDay, toDateTimeInput, tzAbbrev } from "@/lib/scheduleTz";
 import {
   X as XIcon, Pencil, Trash2, Loader2, Save, Clock, MapPin, Hash,
   User, HardHat, AlertTriangle, Sun, Moon, Sunset,
@@ -53,6 +55,7 @@ export default function TaskDetailPanel({
   milestone, subtasks, allTasks, childCount, ancestors, canEdit, userId, userName, userEmail, userRole,
   onClose, onChanged, onSelectSubtask, onSelectMilestone, onMoveDays,
 }: Props) {
+  const tz = useScheduleTz();
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [busyStatus, setBusyStatus] = useState(false);
@@ -241,7 +244,7 @@ export default function TaskDetailPanel({
               {/* Metadata */}
               <div className="px-4 py-3 border-b border-[var(--color-border)] space-y-2.5">
                 <Field icon={<CalendarDays className="w-3.5 h-3.5" />} label="Scheduled">
-                  {fmtRange(m)}
+                  {fmtRange(m, tz)}
                 </Field>
                 {m.durationHours != null && (
                   <Field icon={<Clock className="w-3.5 h-3.5" />} label="Planned work">{m.durationHours} h</Field>
@@ -338,7 +341,7 @@ export default function TaskDetailPanel({
                         </span>
                         <button onClick={() => onSelectSubtask?.(s)} className="flex-1 min-w-0 text-left" title="Open subtask">
                           <span className={`block text-[12px] truncate ${sStatus === "completed" ? "line-through text-[var(--color-text-faint)]" : "text-[var(--color-text)]"}`}>{s.name}</span>
-                          <span className="block text-[9px] text-[var(--color-text-faint)] font-mono">{shortDate(s.plannedAt as string)}{sInfo ? ` · ${sInfo.percent}%` : ""}</span>
+                          <span className="block text-[9px] text-[var(--color-text-faint)] font-mono">{shortDate(s.plannedAt as string, tz)}{sInfo ? ` · ${sInfo.percent}%` : ""}</span>
                         </button>
                         {canEdit && onMoveDays && s.id && (
                           <span className="shrink-0 flex items-center gap-0.5">
@@ -435,10 +438,11 @@ function EditForm({
   userId: string; userName?: string; userEmail?: string; userRole?: string;
   onDone: () => void; onCancel: () => void;
 }) {
+  const tz = useScheduleTz();
   const m = milestone;
   const [name, setName] = useState(m.name);
-  const [start, setStart] = useState(toLocalInput(m.plannedStartAt as string | null | undefined));
-  const [finish, setFinish] = useState(toLocalInput(m.plannedAt as string));
+  const [start, setStart] = useState(toLocalInput(m.plannedStartAt as string | null | undefined, tz));
+  const [finish, setFinish] = useState(toLocalInput(m.plannedAt as string, tz));
   const [durationHours, setDurationHours] = useState(m.durationHours != null ? String(m.durationHours) : "");
   const [workOrderRef, setWorkOrderRef] = useState(m.workOrderRef ?? "");
   const [responsibleParty, setResponsibleParty] = useState(m.responsibleParty ?? "");
@@ -490,8 +494,8 @@ function EditForm({
     try {
       const patch: MilestonePatch = {
         name: name.trim(),
-        plannedStartAt: start ? new Date(start).toISOString() : null,
-        plannedAt: finish ? new Date(finish).toISOString() : m.plannedAt,
+        plannedStartAt: fromDateTimeInput(start, tz),
+        plannedAt: fromDateTimeInput(finish, tz) ?? m.plannedAt,
         durationHours: durationHours ? Number(durationHours) : null,
         workOrderRef, responsibleParty, responsibleOrg, responsibleKind,
         actualParty, actualOrg, actualKind, location, description,
@@ -513,8 +517,8 @@ function EditForm({
     <div className="p-4 space-y-3">
       <L label="Task name"><input value={name} onChange={(e) => setName(e.target.value)} className={cls("name")} /><Note err={v.errors.name} warn={v.warnings.name} /></L>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-        <L label="Start"><input type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} className={cls("start")} /><Note err={v.errors.start} warn={v.warnings.start} /></L>
-        <L label="Finish"><input type="datetime-local" value={finish} onChange={(e) => setFinish(e.target.value)} className={cls("finish")} /><Note err={v.errors.finish} warn={v.warnings.finish} /></L>
+        <L label={`Start (${tzAbbrev(tz)})`}><input type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} className={cls("start")} /><Note err={v.errors.start} warn={v.warnings.start} /></L>
+        <L label={`Finish (${tzAbbrev(tz)})`}><input type="datetime-local" value={finish} onChange={(e) => setFinish(e.target.value)} className={cls("finish")} /><Note err={v.errors.finish} warn={v.warnings.finish} /></L>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <L label="Work hours"><input type="number" min={0} value={durationHours} onChange={(e) => setDurationHours(e.target.value)} className={cls("durationHours")} /><Note err={v.errors.durationHours} warn={v.warnings.durationHours} /></L>
@@ -619,29 +623,27 @@ function labelOf(s: MilestoneStatus): string {
   return s === "in_progress" ? "In progress" : s === "on_hold" ? "On hold" : s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-function shortDate(iso?: string): string {
+function shortDate(iso: string | undefined, tz: string): string {
   if (!iso) return "";
-  try { return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" }); }
-  catch { return ""; }
+  return fmtInTz(iso, tz, { month: "short", day: "numeric" });
 }
 
-// One end of a planned span. Schedule dates are wall-clock-as-UTC, so format in
-// UTC (a task entered as 08:00 in MS Project reads as 08:00, not shifted into
-// the viewer's timezone). Tasks with no meaningful time-of-day (stored at
-// midnight UTC, e.g. a date-only import) show just the date — no "12:00 AM".
-function fmtSchedulePoint(d: Date): string {
-  const hasTime = d.getUTCHours() !== 0 || d.getUTCMinutes() !== 0;
+// One end of a planned span, in the plant's zone (a task entered as 08:00
+// reads as 08:00 for every viewer). Tasks with no meaningful time-of-day
+// (plant midnight, e.g. a date-only import) show just the date — no "12:00 AM".
+function fmtSchedulePoint(d: Date, tz: string): string {
+  const hasTime = hasTimeOfDay(d.getTime(), tz);
   const opt: Intl.DateTimeFormatOptions = hasTime
-    ? { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "UTC" }
-    : { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" };
-  return d.toLocaleString(undefined, opt);
+    ? { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }
+    : { weekday: "short", month: "short", day: "numeric" };
+  return fmtInTz(d, tz, opt);
 }
 
-function fmtRange(m: Milestone): string {
+function fmtRange(m: Milestone, tz: string): string {
   const s = m.plannedStartAt ? new Date(m.plannedStartAt as string) : null;
   const f = new Date(m.plannedAt as string);
-  if (s && s.getTime() !== f.getTime()) return `${fmtSchedulePoint(s)}  →  ${fmtSchedulePoint(f)}`;
-  return fmtSchedulePoint(f);
+  if (s && s.getTime() !== f.getTime()) return `${fmtSchedulePoint(s, tz)}  →  ${fmtSchedulePoint(f, tz)}`;
+  return fmtSchedulePoint(f, tz);
 }
 
 function fmtWhen(iso?: string | number | Date | null): string {
@@ -650,13 +652,9 @@ function fmtWhen(iso?: string | number | Date | null): string {
   catch { return ""; }
 }
 
-// datetime-local wants "YYYY-MM-DDTHH:mm" in LOCAL time.
-function toLocalInput(iso?: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+// datetime-local wants "YYYY-MM-DDTHH:mm" — shown and typed in PLANT time.
+function toLocalInput(iso: string | null | undefined, tz: string): string {
+  return toDateTimeInput(iso, tz);
 }
 
 // ─── Dependency editor (finish-to-start links) ─────────────────

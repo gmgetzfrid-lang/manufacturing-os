@@ -1,3 +1,4 @@
+import { addDays, dayDiff, DEFAULT_SCHEDULE_TZ, startOfDay } from "@/lib/scheduleTz";
 // lib/scheduleReflow.ts
 //
 // The math behind on-the-fly rescheduling in the Execution views.
@@ -87,6 +88,10 @@ export interface MoveImpact {
 
 const DAY_MS = 86_400_000;
 
+// Day arithmetic runs in the PLANT's zone (the project timezone) so a
+// move of "+1 day" keeps a task's clock time across a daylight-saving
+// change, and day snapping lands on plant midnight, not UTC midnight.
+
 function startMsOf(n: ReflowNode): number {
   const s = n.plannedStartAt ?? n.plannedAt;
   return Date.parse(s);
@@ -106,6 +111,7 @@ export function computeTreeMove(
   id: string,
   deltaDays: number,
   mode: MoveMode = "defer",
+  tz: string = DEFAULT_SCHEDULE_TZ,
 ): DateChange[] {
   if (!Number.isFinite(deltaDays) || deltaDays === 0) return [];
 
@@ -128,7 +134,7 @@ export function computeTreeMove(
   // parent still moves the unlocked work inside it (handled below).
   if (isLeaf(id) && isLocked(byId.get(id))) return [];
 
-  const delta = deltaDays * DAY_MS;
+  const shift = (ms: number) => addDays(ms, deltaDays, tz);
 
   // Working copies of every node's start/finish in ms. We mutate these
   // as we shift the subtree and reflow parents, then diff at the end.
@@ -160,10 +166,10 @@ export function computeTreeMove(
     if (!isLeaf(sid)) continue;            // parents re-envelope in step 2
     if (isLocked(byId.get(sid))) continue; // actuals don't move
     if (mode === "extend" && sid === id) {
-      finish.set(sid, finish.get(sid)! + delta);
+      finish.set(sid, shift(finish.get(sid)!));
     } else {
-      start.set(sid, start.get(sid)! + delta);
-      finish.set(sid, finish.get(sid)! + delta);
+      start.set(sid, shift(start.get(sid)!));
+      finish.set(sid, shift(finish.get(sid)!));
     }
   }
 
@@ -208,8 +214,8 @@ export function computeTreeMove(
 }
 
 /** Days in a node's calendar span (finish − start + 1, min 1). */
-function spanDays(n: ReflowNode): number {
-  const d = Math.round((finishMsOf(n) - startMsOf(n)) / DAY_MS) + 1;
+function spanDays(n: ReflowNode, tz: string = DEFAULT_SCHEDULE_TZ): number {
+  const d = dayDiff(startMsOf(n), finishMsOf(n), tz) + 1;
   return Math.max(1, d);
 }
 
@@ -293,7 +299,7 @@ export function wouldCreateCycle(nodes: ReflowNode[], taskId: string, newPredId:
  * FORWARD (never pulls a task earlier), carries each pushed task's subtree,
  * re-envelopes ancestors, and is cycle-safe (bounded). Pure.
  */
-export function cascadeDependents(nodes: ReflowNode[], changedIds: string[]): DateChange[] {
+export function cascadeDependents(nodes: ReflowNode[], changedIds: string[], tz: string = DEFAULT_SCHEDULE_TZ): DateChange[] {
   const byId = new Map<string, ReflowNode>();
   const childrenByParent = new Map<string, ReflowNode[]>();
   for (const n of nodes) byId.set(n.id, n);
@@ -349,7 +355,7 @@ export function cascadeDependents(nodes: ReflowNode[], changedIds: string[]): Da
       if (isLocked(s)) continue;
       let req = -Infinity;
       for (const pred of s.dependsOn ?? []) {
-        if (finish.has(pred)) req = Math.max(req, finish.get(pred)! + DAY_MS);
+        if (finish.has(pred)) req = Math.max(req, addDays(finish.get(pred)!, 1, tz));
       }
       if (!Number.isFinite(req)) continue;
       const curStart = start.get(sid)!;
@@ -396,7 +402,7 @@ export function cascadeDependents(nodes: ReflowNode[], changedIds: string[]): Da
  * subtree along. This is the classic "these steps are sequential — the next
  * can't start until the prior finishes." Ancestors re-envelope. Pure.
  */
-export function sequenceSiblings(nodes: ReflowNode[], parentId: string): DateChange[] {
+export function sequenceSiblings(nodes: ReflowNode[], parentId: string, tz: string = DEFAULT_SCHEDULE_TZ): DateChange[] {
   const byId = new Map<string, ReflowNode>();
   const childrenByParent = new Map<string, ReflowNode[]>();
   for (const n of nodes) byId.set(n.id, n);
@@ -435,7 +441,7 @@ export function sequenceSiblings(nodes: ReflowNode[], parentId: string): DateCha
     // and sequence the rest around it; the cursor still advances past it.
     if (isLocked(kid)) { cursor = Math.max(cursor ?? -Infinity, finish.get(kid.id)!); continue; }
     const curStart = start.get(kid.id)!;
-    const desiredStart = cursor === null ? curStart : cursor + DAY_MS;
+    const desiredStart = cursor === null ? curStart : addDays(cursor, 1, tz);
     const delta = desiredStart - curStart;
     if (delta !== 0) {
       for (const sid of subtreeOf(kid.id)) {
@@ -486,6 +492,7 @@ export function computeSummaryResize(
   id: string,
   edge: "start" | "finish",
   deltaDays: number,
+  tz: string = DEFAULT_SCHEDULE_TZ,
 ): DateChange[] {
   if (!Number.isFinite(deltaDays) || deltaDays === 0) return [];
   const byId = new Map<string, ReflowNode>();
@@ -528,7 +535,8 @@ export function computeSummaryResize(
   const finish = new Map<string, number>();
   for (const n of nodes) { start.set(n.id, startMsOf(n)); finish.set(n.id, finishMsOf(n)); }
 
-  const snap = (ms: number) => Math.round(ms / DAY_MS) * DAY_MS;
+  // Snap to the nearest plant midnight (half a day forward, then floor).
+  const snap = (ms: number) => startOfDay(ms + DAY_MS / 2, tz);
   for (const l of leaves) {
     if (isLocked(l)) continue; // a completed leaf is an actual — never rescale it
     let s: number, f: number;
@@ -581,10 +589,11 @@ export function previewMove(
   id: string,
   deltaDays: number,
   mode: MoveMode,
+  tz: string = DEFAULT_SCHEDULE_TZ,
 ): MoveImpact {
   const node = nodes.find((n) => n.id === id);
-  const before = node ? spanDays(node) : 1;
-  const changes = computeTreeMove(nodes, id, deltaDays, mode);
+  const before = node ? spanDays(node, tz) : 1;
+  const changes = computeTreeMove(nodes, id, deltaDays, mode, tz);
   const after = mode === "extend" ? Math.max(1, before + deltaDays) : before;
   return {
     changes,
@@ -609,6 +618,7 @@ export function computeEdgeResize(
   id: string,
   edge: "start" | "finish",
   deltaDays: number,
+  tz: string = DEFAULT_SCHEDULE_TZ,
 ): DateChange[] {
   if (!Number.isFinite(deltaDays) || deltaDays === 0) return [];
   const byId = new Map<string, ReflowNode>();
@@ -629,10 +639,9 @@ export function computeEdgeResize(
   const finish = new Map<string, number>();
   for (const n of nodes) { start.set(n.id, startMsOf(n)); finish.set(n.id, finishMsOf(n)); }
 
-  const delta = deltaDays * DAY_MS;
   let s = start.get(id)!, f = finish.get(id)!;
-  if (edge === "start") s = Math.min(s + delta, f);       // can't cross finish
-  else f = Math.max(f + delta, s);                        // can't cross start
+  if (edge === "start") s = Math.min(addDays(s, deltaDays, tz), f);  // can't cross finish
+  else f = Math.max(addDays(f, deltaDays, tz), s);                   // can't cross start
   // Guarantee a >= 1-day span.
   if (f - s < 0) { if (edge === "start") s = f; else f = s; }
   start.set(id, s);

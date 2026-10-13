@@ -21,7 +21,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Flag, Plus, Loader2, AlertTriangle, Check, X, Calendar, ChevronDown, Upload, ArrowRight, Eye, EyeOff, Layers } from "lucide-react";
+import { Flag, Plus, Loader2, AlertTriangle, Check, X, Calendar, ChevronDown, Upload, ArrowRight, Eye, EyeOff, Layers, Clock } from "lucide-react";
 import {
   listMilestones, createMilestone, setMilestoneStatus, setMilestoneProgress, deleteMilestone,
   applyMilestoneMoves, computeScheduleMetrics, setBaseline,
@@ -39,6 +39,8 @@ import ScheduleFilterBar from "@/components/projects/ScheduleFilterBar";
 import { filterMilestones, isFilterActive, EMPTY_FILTER, type ScheduleFilter } from "@/lib/scheduleFilter";
 import { buildProgressIndex, type ProgressInfo } from "@/lib/scheduleProgress";
 import RebaseScheduleModal from "@/components/projects/RebaseScheduleModal";
+import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
+import { DEFAULT_SCHEDULE_TZ, fmtInTz, fromDateInput, tzLabel } from "@/lib/scheduleTz";
 import { ClipboardList, PlayCircle } from "lucide-react";
 import ExecutionView from "@/components/projects/ExecutionView";
 
@@ -69,6 +71,7 @@ interface ScheduleTabProps {
 }
 
 export default function ScheduleTab({ orgId, projectId, projectName, projectStatus, userId, userName, userEmail, userRole, isProjectOwner }: ScheduleTabProps) {
+  const tz = useScheduleTz();
   const canEdit = !!isProjectOwner || (!!userRole && ADMIN_ROLES.has(userRole));
 
   const [milestones, setMilestones] = useState<Milestone[]>([]);
@@ -231,6 +234,17 @@ export default function ScheduleTab({ orgId, projectId, projectName, projectStat
 
       {/* Progress dashboard — always on top, summarizes everything */}
       <ScheduleProgress milestones={milestones} metrics={metrics} />
+
+      {/* Which clock the schedule runs on. Every date and time below is the
+          plant's; a project without a zone still reads as UTC, so say so. */}
+      <div className="flex items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
+        <Clock className="w-3.5 h-3.5 text-[var(--color-accent)] shrink-0" />
+        {tz === DEFAULT_SCHEDULE_TZ ? (
+          <span>Schedule times are shown in <b className="text-[var(--color-text)]">UTC</b>. Set the plant&apos;s timezone under <b className="text-[var(--color-text)]">Edit project</b> so days and shifts line up for everyone.</span>
+        ) : (
+          <span>Schedule times are shown in plant time: <b className="text-[var(--color-text)]">{tzLabel(tz)}</b>.</span>
+        )}
+      </div>
 
       {/* View tabs */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -505,6 +519,7 @@ function MilestoneRow({ m, depth = 0, info, canEdit, busy, onSetStatus, onDelete
   onSetStatus: (id: string, s: MilestoneStatus) => void;
   onDelete: (id: string) => void;
 }) {
+  const tz = useScheduleTz();
   // Capture "now" once per mount — render stays pure (React 19 strict).
   const [nowMs] = useState<number>(() => Date.now());
   // A phase/summary's status + % are DERIVED from its children — shown, not
@@ -522,7 +537,7 @@ function MilestoneRow({ m, depth = 0, info, canEdit, busy, onSetStatus, onDelete
   // Planned/baseline dates are wall-clock-as-UTC → render in UTC so the day
   // matches the schedule. (The actual-completion date below is a real instant,
   // so it stays in the viewer's local time.)
-  const fmt = (d: Date) => d.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+  const fmt = (d: Date) => fmtInTz(d, tz, { month: "short", day: "numeric" });
 
   const tone =
     effStatus === "completed" ? "border-emerald-300 bg-emerald-50/50" :
@@ -689,6 +704,7 @@ function AddMilestoneForm({
   userName?: string; userEmail?: string; userRole?: string;
   onCancel: () => void; onCreated: () => void;
 }) {
+  const tz = useScheduleTz();
   const [name, setName] = useState("");
   const [plannedAt, setPlannedAt] = useState("");
   const [weight, setWeight] = useState("1");
@@ -706,7 +722,7 @@ function AddMilestoneForm({
         orgId, projectId,
         name, description,
         weight: Number(weight) || 1,
-        plannedAt: new Date(plannedAt).toISOString(),
+        plannedAt: fromDateInput(plannedAt, tz) ?? new Date(plannedAt).toISOString(),
         linkedRevisionLabel: linkedRev || undefined,
         createdBy: userId,
         createdByName: userName,

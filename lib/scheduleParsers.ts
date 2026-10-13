@@ -1,6 +1,7 @@
 // lib/scheduleParsers.ts
 //
 // Parsers for the schedule-import path. Replaces the previous
+import { naiveToIso, normalizeTimeZone } from "@/lib/scheduleTz";
 // "paste CSV in a textarea" UX with real file support for the
 // formats project managers actually export from their tools:
 //
@@ -125,20 +126,25 @@ export function detectFormatFromBytes(filename: string, bytes: Uint8Array): Sche
 
 // ─── Dispatcher ─────────────────────────────────────────────────
 
-export function parseScheduleFile(filename: string, text: string): ParseResult {
+/** Options for a parse. `timeZone` is the project's IANA zone: bare dates
+ *  and naive times in the file ("2026-08-15 08:00") are plant wall-clock
+ *  time, so they are converted into instants in that zone. Omitted = UTC. */
+export interface ParseOptions { timeZone?: string | null }
+
+export function parseScheduleFile(filename: string, text: string, options: ParseOptions = {}): ParseResult {
   const format = detectFormat(filename, text);
-  return runParser(format, filename, text);
+  return runParser(format, filename, text, normalizeTimeZone(options.timeZone));
 }
 
 /** Byte-aware entry point. Preferred when the caller has the raw
  *  file — handles MPP detection before falling through to text. */
-export function parseScheduleFileFromBytes(filename: string, bytes: Uint8Array): ParseResult {
+export function parseScheduleFileFromBytes(filename: string, bytes: Uint8Array, options: ParseOptions = {}): ParseResult {
   const format = detectFormatFromBytes(filename, bytes);
   if (format === "msproject-mpp" || format === "msproject-mpx") {
     return { format, rows: [], warnings: [xmlDemand(filename, format)] };
   }
   const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-  return runParser(format, filename, text);
+  return runParser(format, filename, text, normalizeTimeZone(options.timeZone));
 }
 
 /** The enforcement message for refused MS Project formats. Detection is kept
@@ -151,14 +157,14 @@ function xmlDemand(filename: string, format: "msproject-mpp" | "msproject-mpx"):
   return `"${filename}" is ${kind}. This format is not accepted — export the XML instead: open the schedule in Microsoft Project, File → Save As → choose "XML Format (*.xml)", then drop that file here. The XML import is a true 1:1 copy (every date, dependency, resource, and the full hierarchy).`;
 }
 
-function runParser(format: ScheduleFormat, filename: string, text: string): ParseResult {
+function runParser(format: ScheduleFormat, filename: string, text: string, tz: string): ParseResult {
   try {
     switch (format) {
-      case "msproject-xml": return { format, ...parseMsProjectXml(text) };
-      case "p6-xml":        return { format, ...parseP6Xml(text) };
-      case "p6-xer":        return { format, ...parseP6Xer(text) };
-      case "msproject-csv": return { format, ...parseMsProjectCsv(text) };
-      case "generic-csv":   return { format, ...parseGenericCsv(text) };
+      case "msproject-xml": return { format, ...parseMsProjectXml(text, tz) };
+      case "p6-xml":        return { format, ...parseP6Xml(text, tz) };
+      case "p6-xer":        return { format, ...parseP6Xer(text, tz) };
+      case "msproject-csv": return { format, ...parseMsProjectCsv(text, tz) };
+      case "generic-csv":   return { format, ...parseGenericCsv(text, tz) };
       case "msproject-mpp":
       case "msproject-mpx":
         return { format, rows: [], warnings: [xmlDemand(filename, format)] };
@@ -176,7 +182,7 @@ function runParser(format: ScheduleFormat, filename: string, text: string): Pars
 // We accept all tasks but flag Milestone=1 as weight=1 (others
 // also weight=1 unless duration extracted — keeping naive for now).
 
-function parseMsProjectXml(text: string): { rows: ParsedMilestone[]; warnings: string[] } {
+function parseMsProjectXml(text: string, tz: string): { rows: ParsedMilestone[]; warnings: string[] } {
   const warnings: string[] = [];
   const rows: ParsedMilestone[] = [];
 
@@ -288,7 +294,7 @@ function parseMsProjectXml(text: string): { rows: ParsedMilestone[]; warnings: s
 
     // Deadline (MS Project <Deadline>). Sentinel "NA"/empty/absent → ignore.
     const deadlineRaw = childText(t, "Deadline");
-    const deadlineIso = deadlineRaw && !/^NA$/i.test(deadlineRaw) ? coerceIso(deadlineRaw) : null;
+    const deadlineIso = deadlineRaw && !/^NA$/i.test(deadlineRaw) ? coerceIso(deadlineRaw, tz) : null;
     const attributes: Record<string, string> = {};
     if (deadlineIso) attributes.deadline_at = deadlineIso;
     if (isMilestone) attributes.milestone = "1"; // so the Gantt can draw a diamond
@@ -303,8 +309,8 @@ function parseMsProjectXml(text: string): { rows: ParsedMilestone[]; warnings: s
 
     rows.push({
       name: name.trim(),
-      plannedAt: coerceIso(plannedRaw),
-      plannedStartAt: start ? coerceIso(start) : null,
+      plannedAt: coerceIso(plannedRaw, tz),
+      plannedStartAt: start ? coerceIso(start, tz) : null,
       weight: 1,
       externalRef,
       description: descParts.length > 0 ? descParts.join(" · ") : null,
@@ -332,7 +338,7 @@ function parseMsProjectXml(text: string): { rows: ParsedMilestone[]; warnings: s
 // The wrapper varies (APIBusinessObjects, Project, etc.). We just
 // grab every <Activity> we can find.
 
-function parseP6Xml(text: string): { rows: ParsedMilestone[]; warnings: string[] } {
+function parseP6Xml(text: string, tz: string): { rows: ParsedMilestone[]; warnings: string[] } {
   const warnings: string[] = [];
   const rows: ParsedMilestone[] = [];
 
@@ -401,8 +407,8 @@ function parseP6Xml(text: string): { rows: ParsedMilestone[]; warnings: string[]
     if (preds.length) relationCount += preds.length;
     rows.push({
       name: name.trim(),
-      plannedAt: coerceIso(plannedRaw),
-      plannedStartAt: start ? coerceIso(start) : null,
+      plannedAt: coerceIso(plannedRaw, tz),
+      plannedStartAt: start ? coerceIso(start, tz) : null,
       weight: 1,
       externalRef: objId ? `p6-act:${objId}` : (idTxt ? `p6-id:${idTxt}` : null),
       parentExternalRef: wbsId ? `p6-wbs:${wbsId}` : null,
@@ -457,7 +463,7 @@ function readXerTables(text: string): Map<string, XerTable> {
   return tables;
 }
 
-function parseP6Xer(text: string): { rows: ParsedMilestone[]; warnings: string[] } {
+function parseP6Xer(text: string, tz: string): { rows: ParsedMilestone[]; warnings: string[] } {
   const warnings: string[] = [];
   const rows: ParsedMilestone[] = [];
 
@@ -545,8 +551,8 @@ function parseP6Xer(text: string): { rows: ParsedMilestone[]; warnings: string[]
     if (preds.length) relationCount += preds.length;
     rows.push({
       name,
-      plannedAt: coerceIso(planned),
-      plannedStartAt: start ? coerceIso(start) : null,
+      plannedAt: coerceIso(planned, tz),
+      plannedStartAt: start ? coerceIso(start, tz) : null,
       weight: 1,
       externalRef: id ? `p6-task:${id}` : null,
       parentExternalRef: wbsId ? `p6-wbs:${wbsId}` : null,
@@ -576,8 +582,8 @@ function parseP6Xer(text: string): { rows: ParsedMilestone[]; warnings: string[]
 // We accept comma OR tab delimited (MS Project Save As often uses
 // tabs depending on the locale).
 
-function parseMsProjectCsv(text: string): { rows: ParsedMilestone[]; warnings: string[] } {
-  return parseCsvLikeWithSynonyms(text, {
+function parseMsProjectCsv(text: string, tz: string): { rows: ParsedMilestone[]; warnings: string[] } {
+  return parseCsvLikeWithSynonyms(text, tz, {
     name:     ["task name", "name"],
     planned:  ["finish", "finish date", "end", "due date", "due", "planned_at"],
     start:    ["start", "start date", "planned_start", "planned start"],
@@ -592,8 +598,8 @@ function parseMsProjectCsv(text: string): { rows: ParsedMilestone[]; warnings: s
 
 // ─── Generic CSV (our own convention, still backward-compatible) ─
 
-function parseGenericCsv(text: string): { rows: ParsedMilestone[]; warnings: string[] } {
-  return parseCsvLikeWithSynonyms(text, {
+function parseGenericCsv(text: string, tz: string): { rows: ParsedMilestone[]; warnings: string[] } {
+  return parseCsvLikeWithSynonyms(text, tz, {
     name:     ["name", "task name", "milestone", "title"],
     planned:  ["planned_at", "due", "due date", "finish", "finish date", "end", "date"],
     start:    ["planned_start_at", "planned_start", "start", "start date"],
@@ -620,7 +626,7 @@ interface SynonymSpec {
   pred?: string[];
 }
 
-function parseCsvLikeWithSynonyms(text: string, syn: SynonymSpec, refTag: string): { rows: ParsedMilestone[]; warnings: string[] } {
+function parseCsvLikeWithSynonyms(text: string, tz: string, syn: SynonymSpec, refTag: string): { rows: ParsedMilestone[]; warnings: string[] } {
   const warnings: string[] = [];
   const rows: ParsedMilestone[] = [];
   const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
@@ -702,8 +708,8 @@ function parseCsvLikeWithSynonyms(text: string, syn: SynonymSpec, refTag: string
 
     rows.push({
       name,
-      plannedAt: coerceIso(planned),
-      plannedStartAt: startRaw ? coerceIso(startRaw) : null,
+      plannedAt: coerceIso(planned, tz),
+      plannedStartAt: startRaw ? coerceIso(startRaw, tz) : null,
       weight: isNaN(weight) ? 1 : weight,
       // Always give CSV rows a stable ref so hierarchy can be wired up
       // even when the file has no id column.
@@ -908,22 +914,27 @@ function childText(parent: Element, tag: string): string {
 //   2026-08-15 00:00
 //   8/15/2026
 //   15/08/2026 (ambiguous — we treat as M/D/Y if first part ≤ 12)
-function coerceIso(s: string): string {
+// Schedule files write wall-clock times at the plant ("2026-08-15 08:00",
+// MS Project's "2026-08-15T08:00:00" with no offset). Those become instants
+// in the project's zone; values that carry their own offset are kept.
+function coerceIso(s: string, tz: string): string {
   const trimmed = s.trim();
-  if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) return trimmed;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return `${trimmed}T00:00:00Z`;
-  // "2026-08-15 00:00" / "2026-08-15 00:00:00"
-  const m1 = trimmed.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/);
-  if (m1) return `${m1[1]}T${m1[2]}:${m1[3]}:${m1[4] ?? "00"}Z`;
-  // M/D/YYYY or D/M/YYYY (assume the first form when ambiguous)
-  const m2 = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  // ISO date-time (with or without an offset) or a bare date.
+  if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
+    const iso = naiveToIso(trimmed, tz);
+    if (iso) return iso;
+  }
+  // M/D/YYYY or D/M/YYYY (assume the first form when ambiguous), optional " HH:MM".
+  const m2 = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})(?:[ T](\d{1,2}):(\d{2}))?$/);
   if (m2) {
     const a = Number(m2[1]); const b = Number(m2[2]);
     const yRaw = Number(m2[3]); const y = yRaw < 100 ? 2000 + yRaw : yRaw;
     const month = a; const day = b; // M/D first
-    return `${y.toString().padStart(4, "0")}-${month.toString().padStart(2, "0")}-${day.toString().padStart(2, "0")}T00:00:00Z`;
+    const iso = `${y.toString().padStart(4, "0")}-${month.toString().padStart(2, "0")}-${day.toString().padStart(2, "0")}`
+      + (m2[4] ? `T${m2[4].padStart(2, "0")}:${m2[5]}:00` : "");
+    return naiveToIso(iso, tz) ?? trimmed;
   }
-  // Last resort — let Date try.
+  // Last resort — let Date try (browser-local for offset-less text).
   const d = new Date(trimmed);
   if (!isNaN(d.getTime())) return d.toISOString();
   return trimmed; // hand it to the importer; if invalid, Supabase will reject.

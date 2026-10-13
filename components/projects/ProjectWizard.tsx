@@ -10,6 +10,8 @@
 // its life.
 
 import React, { useEffect, useMemo, useState } from "react";
+import TimeZoneSelect from "@/components/projects/TimeZoneSelect";
+import { browserTimeZone, fromDateInput } from "@/lib/scheduleTz";
 import {
   Briefcase, Loader2, Plus, X, ChevronLeft, ChevronRight, Check,
   Target, FileText, CircleDollarSign, Flag, HardHat, Search, AlertTriangle,
@@ -57,6 +59,9 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
   const [jobKind, setJobKind] = useState<string>("standard");
   const [moc, setMoc] = useState("");
   const [targetDate, setTargetDate] = useState("");
+  // The plant's zone — prefilled from this device, which is usually at the
+  // plant when a project is set up. Editable later under Edit project.
+  const [timezone, setTimezone] = useState<string>(() => browserTimeZone());
   const [visibility, setVisibility] = useState<ProjectVisibility>("public");
   // Purpose
   const [purpose, setPurpose] = useState("");
@@ -126,7 +131,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
     setBusy(true); setError(null);
     try {
       const project = await createProject({
-        orgId, name, description, mocReference: moc, visibility,
+        orgId, name, description, mocReference: moc, visibility, timezone,
         targetCompletionDate: targetDate ? new Date(targetDate).toISOString() : undefined,
         actorUserId, actorEmail, actorRole,
       });
@@ -167,7 +172,7 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
       if (ms.length > 0) {
         await supabase.from("milestones").insert(ms.map((r) => ({
           org_id: orgId, project_id: projectId,
-          name: r.name.trim(), planned_at: new Date(`${r.date}T12:00:00`).toISOString(),
+          name: r.name.trim(), planned_at: fromDateInput(r.date, timezone, 12) ?? new Date(`${r.date}T12:00:00`).toISOString(),
           status: "planned", created_by: actorUserId,
         }))).then(() => undefined, () => undefined);
       }
@@ -267,6 +272,10 @@ export default function ProjectWizard({ orgId, actorUserId, actorEmail, actorRol
                     className="w-full px-3 py-2 border border-[var(--color-border-strong)] rounded-lg text-sm bg-[var(--color-surface)] [color-scheme:light] dark:[color-scheme:dark]" />
                 </Field>
               </div>
+              <Field label="Plant timezone">
+                <TimeZoneSelect value={timezone} onChange={setTimezone} />
+                <div className="mt-1 text-[10px] text-[var(--color-text-faint)]">Schedule days, times and shifts are shown in this zone for everyone on the project.</div>
+              </Field>
               <Field label="Visibility">
                 <div className="flex bg-[var(--color-surface-2)] p-1 rounded-lg">
                   <button onClick={() => setVisibility("public")} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${visibility === "public" ? "bg-[var(--color-surface)] shadow text-[var(--color-text)]" : "text-[var(--color-text-muted)]"}`}>Public (everyone in org)</button>

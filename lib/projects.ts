@@ -7,6 +7,8 @@
 
 import { supabase } from "@/lib/supabase";
 import { logAuditAction } from "@/lib/audit";
+import { DEFAULT_SCHEDULE_TZ, isValidTimeZone, normalizeTimeZone } from "@/lib/scheduleTz";
+import { shiftScheduleTimeZone } from "@/lib/milestones";
 import { notify, notifyMany } from "@/lib/inAppNotifications";
 import { listFollowerIds } from "@/lib/subscriptions";
 import {
@@ -41,6 +43,7 @@ export function rowToProject(r: Record<string, unknown>): Project {
     linkedTicketId: r.linked_ticket_id as string | undefined,
     startedAt: r.started_at as Timestamp,
     targetCompletionDate: r.target_completion_date as Timestamp,
+    timezone: (r.timezone as string | null | undefined) ?? null,
     completedAt: r.completed_at as Timestamp,
     cancelledAt: r.cancelled_at as Timestamp,
     cancelledReason: r.cancelled_reason as string | undefined,
@@ -89,37 +92,50 @@ export type CreateProjectInput = {
   mocReference?: string;
   linkedTicketId?: string;
   targetCompletionDate?: string;
+  /** The plant's IANA zone. Omitted/invalid = UTC. */
+  timezone?: string | null;
   actorUserId: string;
   actorEmail?: string;
   actorRole?: string;
 };
 
+/** True when a Supabase error says a column we tried to write doesn't
+ *  exist yet (migration not applied). Lets a write degrade gracefully. */
+function isUnknownColumnError(message: string | undefined, column: string): boolean {
+  return !!message && message.includes(column) && /column|schema cache/i.test(message);
+}
+
 export async function createProject(input: CreateProjectInput): Promise<Project> {
   if (!input.name.trim()) throw new Error("Project name is required");
   if (!input.description?.trim()) throw new Error("Project description is required — explain what the team will be doing");
   const now = new Date().toISOString();
-  const { data, error } = await supabase
-    .from("projects")
-    .insert({
-      org_id: input.orgId,
-      name: input.name.trim(),
-      description: input.description?.trim() || null,
-      status: "active",
-      owner_user_id: input.actorUserId,
-      owner_user_name: input.actorEmail || input.actorUserId,
-      visibility: input.visibility || "public",
-      moc_reference: input.mocReference?.trim() || null,
-      linked_ticket_id: input.linkedTicketId || null,
-      target_completion_date: input.targetCompletionDate || null,
-      started_at: now,
-      last_activity_at: now,
-      created_at: now,
-      created_by: input.actorUserId,
-      updated_at: now,
-      updated_by: input.actorUserId,
-    })
-    .select("*")
-    .single();
+  const timezone = isValidTimeZone(input.timezone) && input.timezone !== DEFAULT_SCHEDULE_TZ ? input.timezone : null;
+  const row: Record<string, unknown> = {
+    org_id: input.orgId,
+    name: input.name.trim(),
+    description: input.description?.trim() || null,
+    status: "active",
+    owner_user_id: input.actorUserId,
+    owner_user_name: input.actorEmail || input.actorUserId,
+    visibility: input.visibility || "public",
+    moc_reference: input.mocReference?.trim() || null,
+    linked_ticket_id: input.linkedTicketId || null,
+    target_completion_date: input.targetCompletionDate || null,
+    started_at: now,
+    last_activity_at: now,
+    created_at: now,
+    created_by: input.actorUserId,
+    updated_at: now,
+    updated_by: input.actorUserId,
+  };
+  if (timezone) row.timezone = timezone;
+  let { data, error } = await supabase.from("projects").insert(row).select("*").single();
+  if (error && timezone && isUnknownColumnError(error.message, "timezone")) {
+    // Pre-migration DB: create the project without the zone (it reads as
+    // UTC) rather than failing the whole wizard.
+    delete row.timezone;
+    ({ data, error } = await supabase.from("projects").insert(row).select("*").single());
+  }
   if (error || !data) throw new Error(error?.message || "Failed to create project");
 
   // Owner is automatically a member with role 'owner'.
@@ -717,12 +733,19 @@ export async function updateProjectMeta(input: {
   patch: {
     name?: string; description?: string | null; mocReference?: string | null;
     targetCompletionDate?: string | null; visibility?: ProjectVisibility;
+    /** IANA zone; null/"UTC" clears it. */
+    timezone?: string | null;
   };
+  /** When the zone changes, re-anchor every planned/baseline time so the
+   *  wall clock the team sees stays as written ("8:00 stays 8:00").
+   *  Default true; pass false to keep the instants and let the clock
+   *  readings move instead. */
+  keepWallClock?: boolean;
   actorUserId: string; actorEmail?: string; actorRole?: string;
 }): Promise<void> {
   const proj = await assertCanManageProject(input.projectId, input.actorUserId);
   const { data: beforeRow } = await supabase.from("projects")
-    .select("name, description, moc_reference, target_completion_date, visibility")
+    .select("name, description, moc_reference, target_completion_date, visibility, timezone")
     .eq("id", input.projectId).maybeSingle();
   const update: Record<string, unknown> = {
     updated_at: new Date().toISOString(),
@@ -737,8 +760,26 @@ export async function updateProjectMeta(input: {
   if (input.patch.mocReference !== undefined) update.moc_reference = input.patch.mocReference?.trim() || null;
   if (input.patch.targetCompletionDate !== undefined) update.target_completion_date = input.patch.targetCompletionDate || null;
   if (input.patch.visibility !== undefined) update.visibility = input.patch.visibility;
+  // Zone: validate, store null for UTC, and remember before/after so the
+  // schedule can be re-anchored below.
+  const prevTz = normalizeTimeZone((beforeRow as { timezone?: string | null } | null)?.timezone);
+  let nextTz = prevTz;
+  if (input.patch.timezone !== undefined) {
+    if (input.patch.timezone && !isValidTimeZone(input.patch.timezone)) throw new Error(`Unknown timezone "${input.patch.timezone}".`);
+    nextTz = normalizeTimeZone(input.patch.timezone);
+    update.timezone = nextTz === DEFAULT_SCHEDULE_TZ ? null : nextTz;
+  }
   const { error } = await supabase.from("projects").update(update).eq("id", input.projectId);
-  if (error) throw new Error(error.message);
+  if (error) {
+    if ("timezone" in update && isUnknownColumnError(error.message, "timezone")) {
+      throw new Error("This database doesn't have the project timezone column yet — run migration 20261018_project_timezone.sql, then try again.");
+    }
+    throw new Error(error.message);
+  }
+  if (nextTz !== prevTz && input.keepWallClock !== false) {
+    const res = await shiftScheduleTimeZone({ orgId: proj.orgId, projectId: input.projectId, fromTimeZone: prevTz, toTimeZone: nextTz });
+    if (res.errors.length > 0) throw new Error(`Timezone saved, but ${res.errors.length} task(s) couldn't be re-anchored: ${res.errors[0]}`);
+  }
 
   await writeActivity({
     projectId: input.projectId, orgId: proj.orgId,

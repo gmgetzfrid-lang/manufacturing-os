@@ -14,6 +14,8 @@
 // represent history and must stay where they happened.
 
 import React, { useEffect, useMemo, useState } from "react";
+import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
+import { dayKey, fmtInTz, fromDateTimeInput, toDateTimeInput, tzAbbrev } from "@/lib/scheduleTz";
 import { CalendarClock, X, ArrowRight, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { rebaseSchedule, type RebaseResult } from "@/lib/milestones";
 
@@ -39,6 +41,7 @@ export default function RebaseScheduleModal({
   actorUserId, actorUserName, actorUserEmail, actorUserRole,
   onClose, onDone,
 }: Props) {
+  const tz = useScheduleTz();
   const [target, setTarget] = useState<string>("");      // YYYY-MM-DD
   const [targetTime, setTargetTime] = useState<string>("08:00"); // HH:MM
   const [busy, setBusy] = useState(false);
@@ -46,26 +49,26 @@ export default function RebaseScheduleModal({
 
   // Default target = today (or the current anchor's time-of-day).
   useEffect(() => {
-    const now = new Date();
-    setTarget(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`);
+    // Today and the anchor's time-of-day, both on the plant's clock.
+    setTarget(dayKey(Date.now(), tz));
     if (currentAnchorIso) {
-      try {
-        const d = new Date(currentAnchorIso);
-        setTargetTime(`${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`);
-      } catch { /* keep default */ }
+      const t = toDateTimeInput(currentAnchorIso, tz).slice(11, 16);
+      if (t) setTargetTime(t);
     }
-  }, [currentAnchorIso]);
+  }, [currentAnchorIso, tz]);
 
   // Preview: what's the day-delta?
   const previewDelta = useMemo(() => {
     if (!target || !currentAnchorIso) return null;
     try {
       const oldA = new Date(currentAnchorIso);
-      const newA = new Date(`${target}T${targetTime}:00`);
+      const iso = fromDateTimeInput(`${target}T${targetTime}`, tz);
+      if (!iso) return null;
+      const newA = new Date(iso);
       const days = Math.round((newA.getTime() - oldA.getTime()) / 86400000);
       return { days, oldA, newA };
     } catch { return null; }
-  }, [target, targetTime, currentAnchorIso]);
+  }, [target, targetTime, currentAnchorIso, tz]);
 
   const submit = async () => {
     if (!target) return;
@@ -73,7 +76,7 @@ export default function RebaseScheduleModal({
     try {
       const res = await rebaseSchedule({
         orgId, projectId,
-        newStartIso: new Date(`${target}T${targetTime}:00`).toISOString(),
+        newStartIso: fromDateTimeInput(`${target}T${targetTime}`, tz) ?? new Date(`${target}T${targetTime}:00`).toISOString(),
         actorUserId, actorUserName, actorUserEmail, actorUserRole,
       });
       setResult(res);
@@ -121,7 +124,7 @@ export default function RebaseScheduleModal({
               />
             </div>
             <div>
-              <label className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Start time</label>
+              <label className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Start time ({tzAbbrev(tz)})</label>
               <input
                 type="time"
                 value={targetTime}
@@ -136,9 +139,9 @@ export default function RebaseScheduleModal({
             <div className="rounded-xl border border-[var(--color-accent-ring)]/40 bg-[var(--color-accent-soft)]/60 p-3 text-xs">
               <div className="font-black text-[var(--color-accent)] mb-1 uppercase tracking-widest text-[10px]">Preview</div>
               <div className="flex items-center gap-2 text-[var(--color-text)]">
-                <span className="font-mono">{new Date(currentAnchorIso).toLocaleString()}</span>
+                <span className="font-mono">{fmtInTz(currentAnchorIso, tz, { dateStyle: "medium", timeStyle: "short" })}</span>
                 <ArrowRight className="w-3 h-3 text-[var(--color-accent)]" />
-                <span className="font-mono font-bold">{previewDelta?.newA?.toLocaleString() ?? "—"}</span>
+                <span className="font-mono font-bold">{previewDelta ? fmtInTz(previewDelta.newA, tz, { dateStyle: "medium", timeStyle: "short" }) : "—"}</span>
               </div>
               {previewDelta && (
                 <div className={`mt-1 text-[11px] font-bold ${

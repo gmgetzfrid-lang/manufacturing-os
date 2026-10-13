@@ -15,6 +15,8 @@
 // by lib/milestones.ts:computeScheduleMetrics().
 
 import React from "react";
+import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
+import { dayDiff as dayDiffTz, fmtInTz } from "@/lib/scheduleTz";
 import {
   TrendingUp, TrendingDown, Flag, AlertTriangle, CalendarClock,
   CheckCircle2, Circle, PauseCircle, MinusCircle, XCircle,
@@ -37,6 +39,7 @@ const STATUS_META: Record<MilestoneStatus, { label: string; tone: string; bar: s
 };
 
 export default function ScheduleProgress({ milestones, metrics }: Props) {
+  const tz = useScheduleTz();
   const total = milestones.length;
   const today = new Date(); today.setHours(0,0,0,0);
   const in14 = new Date(today.getTime() + 14 * 86400000);
@@ -115,7 +118,7 @@ export default function ScheduleProgress({ milestones, metrics }: Props) {
         }`}>
           <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-muted)]">Forecast end</div>
           <div className="text-lg font-black text-[var(--color-text)] mt-1">
-            {metrics.forecastEndAt ? humanDate(metrics.forecastEndAt) : metrics.plannedEndAt ? humanDate(metrics.plannedEndAt) : "—"}
+            {metrics.forecastEndAt ? humanDate(metrics.forecastEndAt, tz) : metrics.plannedEndAt ? humanDate(metrics.plannedEndAt, tz) : "—"}
           </div>
           <div className={`text-[11px] mt-1 inline-flex items-center gap-1 ${slipDays > 0 ? "text-rose-700" : "text-emerald-700"}`}>
             {slipDays > 0
@@ -146,7 +149,7 @@ export default function ScheduleProgress({ milestones, metrics }: Props) {
                   <div className="min-w-0 flex-1">
                     <div className="font-bold text-[var(--color-text)] truncate">{m.name}</div>
                     <div className="text-[10px] text-[var(--color-text-muted)] inline-flex items-center gap-1">
-                      <CalendarClock className="w-2.5 h-2.5" /> {humanRelative(due)}
+                      <CalendarClock className="w-2.5 h-2.5" /> {humanRelative(due, tz)}
                     </div>
                   </div>
                 </li>
@@ -177,21 +180,20 @@ function StackedBar({ counts }: { counts: Record<MilestoneStatus, number> }) {
   );
 }
 
-// Planned/forecast dates are stored as wall-clock-as-UTC; format in UTC so the
-// day shown matches the schedule (and the source file) regardless of viewer TZ.
-function humanDate(iso: string): string {
+// Planned/forecast dates are shown in the plant's zone so the day matches
+// the schedule for every viewer.
+function humanDate(iso: string, tz: string): string {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" });
+  return fmtInTz(d, tz, { year: "numeric", month: "short", day: "numeric" });
 }
 
-function humanRelative(d: Date): string {
-  // Compare on UTC day boundaries so "today"/"tomorrow" line up with the
-  // UTC-rendered dates rather than drifting a day in non-UTC timezones.
-  const toUtcDay = (x: Date) => Date.UTC(x.getUTCFullYear(), x.getUTCMonth(), x.getUTCDate());
-  const diff = Math.round((toUtcDay(d) - toUtcDay(new Date())) / 86400000);
+function humanRelative(d: Date, tz: string): string {
+  // Compare on plant day boundaries so "today"/"tomorrow" line up with the
+  // dates rendered beside them.
+  const diff = dayDiffTz(Date.now(), d.getTime(), tz);
   if (diff === 0) return "today";
   if (diff === 1) return "tomorrow";
   if (diff > 1 && diff < 7) return `in ${diff} days`;
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+  return fmtInTz(d, tz, { month: "short", day: "numeric" });
 }

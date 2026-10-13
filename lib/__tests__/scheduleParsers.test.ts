@@ -41,8 +41,8 @@ describe("parseP6Xer", () => {
     const res = parseScheduleFile("schedule.xer", xer);
     const dig = res.rows.find((r) => r.name === "Dig trench")!;
     expect(dig).toBeTruthy();
-    expect(dig.plannedStartAt).toBe("2026-03-01T08:00:00Z");
-    expect(dig.plannedAt).toBe("2026-03-03T17:00:00Z");
+    expect(Date.parse(dig.plannedStartAt!)).toBe(Date.parse("2026-03-01T08:00:00Z"));
+    expect(Date.parse(dig.plannedAt!)).toBe(Date.parse("2026-03-03T17:00:00Z"));
     expect(dig.percentComplete).toBe(0);
   });
 
@@ -84,8 +84,8 @@ describe("parseMsProjectCsv with outline column", () => {
   it("captures start dates", () => {
     const res = parseScheduleFile("plan.csv", csv);
     const a = res.rows.find((r) => r.name === "Task A")!;
-    expect(a.plannedStartAt).toBe("2026-01-01T00:00:00Z");
-    expect(a.plannedAt).toBe("2026-01-05T00:00:00Z");
+    expect(Date.parse(a.plannedStartAt!)).toBe(Date.parse("2026-01-01T00:00:00Z"));
+    expect(Date.parse(a.plannedAt!)).toBe(Date.parse("2026-01-05T00:00:00Z"));
   });
 
   it("carries unmapped columns into attributes and lifts WO#/location", () => {
