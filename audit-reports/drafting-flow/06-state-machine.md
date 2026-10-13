@@ -302,6 +302,18 @@ app/api/verify-ticket/route.ts:82-83 (verdict from deliverable_rev alone) —
 
 **Scope / residual.** → **DF-P10** (owns the issue cases of `lib/ticketTransitions.ts` and the verify-ticket verdict): an explicit refusal (or re-cycle) when an issuing action would write a label already in the ticket's history, and the attachment-identity verdict (`PHYS-2`'s per-attachment rev). Not in the handed-on list — found on re-verification. DF-P10 also owns the data repair of any row the inventory's (a) finds (bump `revision_count`, null `deliverable_rev`, reset `draft_iteration`, with a history line — a `DEC-30` migration); rows in (b) and (c) cannot be repaired by counters — both prints read Rev N — and wait on the attachment-identity verdict above. [`LEAK-7`](./04-flow-leaks.md) is `BLOCKED` on the same inventory query (its Blocker block carries it in the paste-ready `check, ok, n` shape) and closes only when all three rows return 0, or when the (a) rows are repaired and (b) and (c) are 0.
 
+**Partial (2026-10-13, drafting-flow Round G).** DF-P10 DELIVERABLE-PRINT — re-verified; this finding is not among DF-P10's brief findings (`audit-reports/fleet-plans/drafting-flow.json`), but the Scope line above names DF-P10, so what DF-P10 changed is recorded here.
+- Per-file revision (public-surfaces `PHYS-2`): every Draft and Final now carries its own `rev`, stamped server-side in `lib/ticketTransitions.ts` (`joiningFileRev`, `stampIssuedFinals`, `submit_draft`), and the print / download QR names the FILE's revision (`lib/ticketDeliverableCopy.ts`). A Rev 1 package printed after Rev 2 issues now scans `superseded`, not `current`.
+- Not built: the explicit history check (done-when 2 — an issuing action that would write a label already issued), and attachment identity on the QR (done-when 3's remainder — two files issued under the same label still read alike). Both concern only rows a pre-Round-E reopen left behind (`LEAK-7`'s inventory (a) / (b)); for every later ticket labels are distinct by construction.
+
+**Done-when.**
+- ✓ Unchanged.
+- ✗ Unchanged — not built.
+- ✗ (in part) The verify route now compares the printed FILE's revision (per-file `rev`), not the ticket's live label; re-issues of one label are still told apart by label only.
+- ✓ Unchanged.
+
+**Scope / residual.** Done-when 2, done-when 3's attachment identity (`?a=<attachment id>` on the QR, recorded as the scan's `printed_ref`) and `LEAK-7`'s (a)-row repair migration need an owner and a migration number: DF-P10's brief carried neither this finding nor a number, so they go back to the integrator to assign (DEC-31).
+
 ---
 
 <a id="sm-6"></a>

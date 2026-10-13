@@ -126,7 +126,7 @@ lib/notify/dispatch.ts:105-106
 ## EDGE-2 · Public field QR verification computes its verdict from `deliverable_rev` alone and never reads the ticket's status, so a reopened or withdrawn deliverable still scans green as "LATEST ISSUE"
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/verify-ticket/route.ts:71-88`, `app/api/verify-ticket/route.ts:100`, `app/verify-ticket/[ticketId]/page.tsx:26`, `app/verify-ticket/[ticketId]/page.tsx:35-38`
 - **Re-verified:** hardening pass — **SURVIVES** — and this is the eighth instance of the field-verdict cluster. The verdict chain at `verify-ticket/route.ts:72-88` is built entirely from `printedRev`, `currentRev`, `latestIssued` and `inReview`. There is **no status term anywhere in it**: nothing consults whether the ticket was cancelled or the document voided or held, so a cancelled ticket's deliverable still scans `current`.
@@ -189,6 +189,20 @@ app/verify-ticket/[ticketId]/page.tsx:35-38
 - [ ] The route returns a distinct verdict (e.g. 'withdrawn') when the ticket status is CANCELED, regardless of rev math
 - [ ] The public page renders ticketStatus on the facts card and never gives a non-live ticket the emerald 'LATEST ISSUE' treatment
 - [ ] A test covers { status: 'CANCELED', deliverable_rev: '1', printedRev: '1' } and asserts the verdict is not 'current'
+
+**Resolution (2026-10-13, drafting-flow Round G).** DF-P10 DELIVERABLE-PRINT. The reopened half was already closed by roles-and-permissions `WF-21` / `DEC-15` (the reopen-aware ladder, kept byte-for-byte in logic). Reproduced the rest on `596d34e`: `app/api/verify-ticket/route.ts:132-147` branched on revs only — `{ status: "CANCELED", deliverable_rev: "1" }` printed `1` answered `current` (`:142`); the response carried `ticketStatus` (`:160`) and the page never read it.
+- `lib/verifyTicketVerdict.ts` (new) `ticketVerdict(row, printedRev)` — the verdict moved out of the route (a route file may export only its handlers) so the route and the tests share it: an **archived** ticket → `unknown` with every revision fact withheld; **`CANCELED`**, or a terminal status with no issued label on the row (closed never-issued; closed again after a reopen with no new issue) → **`withdrawn`**, whatever the rev arithmetic; every other case runs the existing ladder unchanged. A `CLOSED` ticket whose label is an issued number closed on that issue and keeps `current` / `superseded` / `draft_copy`.
+- `app/api/verify-ticket/route.ts` calls it (`:84`); the scan row records `withdrawn` as shown (PS-VERIFY's `recordVerifyScan`, consumed).
+- `app/verify-ticket/[ticketId]/page.tsx`: `withdrawn` paints red "WITHDRAWN — DO NOT USE" ("This request was withdrawn or closed without an issued deliverable. Do not work from this copy — contact the requester."), with a "mark it WITHDRAWN or destroy it" line; an unrecognised verdict paints as `unknown`, never green.
+- **Changed answer, stated:** a ticket closed again after a reopen with no new issue scanned `unknown` (grey) and now scans `withdrawn` (red) — the brief's rule ("any terminal status without an issue ⇒ withdrawn"); the fail-safe side (DEC-90: red means "do not work from this"). `sweepRoundE_A.test.ts`'s case is re-pinned with that note.
+- Tests: `lib/__tests__/verifyTicketVerdict.test.ts` "EDGE-2 — the verdict reads the request's state …" (the done-when's case, every printed rev on a canceled ticket, closed-without-issue, closed-on-issue, WF-21 cases unchanged, archived) and the route cases ("a CANCELED ticket's issued deliverable scans 'withdrawn', logged as shown").
+
+**Done-when.**
+1. ✓ A distinct verdict, `withdrawn`, when the status is `CANCELED`, regardless of rev math (and for a request that ended with nothing issued).
+2. ✓ as amended by the integrator's `AUTHZ-12` ruling (DEC-90 practice, 2026-10-13): no non-live ticket gets the emerald treatment (pinned); the raw `ticketStatus` is NOT rendered — the ruling removes it from the public payload, and the facts card shows the coarse state the verdict carries (Withdrawn / Revision underway / Latest issue / Cannot confirm) — `AUTHZ-12` done-when 1's own alternative ("mapped to the same coarse verdict vocabulary the page renders").
+3. ✓ A test covers `{ status: 'CANCELED', deliverable_rev: '1', printedRev: '1' }` → not `current` (`withdrawn`).
+
+**Scope / residual.** None. (`SM-8`: `CANCELED` is now reachable through `cancel_request`, DEC-14 — this verdict covers it.)
 
 ---
 

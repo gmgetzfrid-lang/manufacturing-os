@@ -291,6 +291,19 @@ components/viewers/SecureDocViewer.tsx:52-59 —
 - [ ] No download or print record is written with `void` or a discarded promise
 - [ ] A test proves a member session cannot DELETE a download_audits row
 
+**Partial (2026-10-13, drafting-flow Round G).** DF-P10 DELIVERABLE-PRINT — the ticket print / download half (this record's evidence quotes `requests/[id]/page.tsx:592-600`). Reproduced on `596d34e`: `void supabase.from("download_audits").insert({ … ticket_id, attachment_id, attachment_type, filename, watermark_text … }).then(() => {}, () => {})` at `page.tsx:607-614` (print) and `:689-697` (download) — unawaited, outcome discarded, and naming columns no migration adds, so every row was refused (public-surfaces `PHYS-8`).
+- `lib/ticketDeliverableCopy.ts` (new) `recordTicketCopy` writes the distribution row in the table's real columns (with `20261068`'s `source`, retried once in the original shape before that paste) and the row naming the file (`audit_logs` `DOWNLOAD` on the ticket); both are awaited, their `{ error }` read, and the page says a refusal in words after the copy (`page.tsx:583-596`, `:626`, `:698`) — the DEC-44 member-writer rule ("a refused record never blocks the copy — it is said"), as document-control P8 applied it to `lib/downloads.ts`.
+- The policy half is document-control P2 EGRESS by pointer (this plan's `alreadyResolvedElsewhere`): `supabase/migrations/20261068_dc_roundF_download_audits_record.sql` replaces `download_audits_org_access FOR ALL` with `download_audits_select` (SELECT) and `download_audits_insert_own` (INSERT, `user_id = auth.uid()`), and no UPDATE / DELETE policy. **Pending migration** — `MIGRATION-PASTE-ORDER.md` records it as not applied.
+- Tests: `lib/__tests__/verifyTicketVerdict.test.ts` "EVID-5 / PHYS-8 — …" and the page pins.
+
+**Done-when.**
+1. ✗ Not as written. The ticket copy's record is written from the browser in the same click as the copy, after the stamp (the bytes are stamped client-side from a presigned URL; there is no server request that issues the stamped file to write it in). It is no longer silent: a refusal is shown. Moving the stamp and its record server-side is a new route — not built.
+2. ✓ by pointer (document-control P2, `20261068`) — the database half holds only once it is pasted.
+3. ◐ The two ticket writes are awaited and checked (this pass); `MultiDocViewer` checks its insert (P8); `components/assets/FileReferenceModal.tsx:189` awaits but discards `{ error }`, and `components/viewers/SecureDocViewer.tsx:83-92` still fires the VIEW row with an un-awaited `.catch` — neither is in DF-P10's files.
+4. ◐ `lib/__tests__/downloadAudits.test.ts` pins the policy set by shape; no test runs a member session against a database (none in CI). `20261068`'s own probes check the live policy set at paste.
+
+**Scope / residual.** Remainders, for the integrator to own (DEC-31): the two viewer sites in done-when 3 (`FileReferenceModal.tsx:189`, `SecureDocViewer.tsx:83-92` — proposed owner: document-control, the viewer surfaces; no current package lists either file); done-when 1's server-side write (a design call: a server stamping route for ticket files); done-when 2 closes on the `20261068` paste.
+
 ---
 
 <a id="evid-6"></a>

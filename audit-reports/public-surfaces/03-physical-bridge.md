@@ -87,7 +87,7 @@ verify/route.ts:89-90 `const docRetired = d.status === "Superseded" || d.status 
 ## PHYS-2 · Printing an older ticket deliverable stamps it with the ticket's CURRENT revision and encodes that rev in the QR — the scan then certifies a superseded print as "LATEST ISSUE" in green
 
 - **Severity:** CRITICAL
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/requests/[id]/page.tsx:1391`, `app/(protected)/requests/[id]/page.tsx:569`, `app/(protected)/requests/[id]/page.tsx:577-578`, `app/(protected)/requests/[id]/page.tsx:637`, `app/(protected)/requests/[id]/page.tsx:649-650`, `app/(protected)/requests/[id]/page.tsx:1008-1011`, `app/(protected)/requests/[id]/page.tsx:1360`, `app/api/verify-ticket/route.ts:78-83`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed, and there is no defence available: types/schema.ts:1038-1047 `interface TicketAttachment` carries no rev field at all, so the modal has nothing per-file to stamp with, and nothing in lib/ticketTransitions.ts removes or re-types prior Final attachments when deliverable_rev advances (:214-251 only write the new label). Printing a superseded Final produces paper and a QR that both certify the current rev. CRITICAL stands.
@@ -109,6 +109,20 @@ page.tsx:1391 `deliverableRev={ticket?.deliverableRev}`; page.tsx:1360 `const fi
 - [ ] The rev encoded in the QR and printed in the footer comes from the attachment being viewed, not from tickets.deliverable_rev
 - [ ] An attachment with no recorded rev produces NO `?r=` param (so /api/verify-ticket returns `unknown`, not a green `current`)
 - [ ] A test opens a historical Final attachment on a ticket at a later rev and asserts the built verifyUrl does not contain the ticket's current rev
+
+**Resolution (2026-10-13, drafting-flow Round G).** DF-P10 DELIVERABLE-PRINT (public-surfaces `PKG-5`, folded in — `PKG-5` is closed by DF-P10). Reproduced on `596d34e`: `FileViewerModal` received `deliverableRev={ticket?.deliverableRev}` (`app/(protected)/requests/[id]/page.tsx:1690`) and both the print (`:582-583`, footer `:591-593`) and the download (`:650-651`, footer `:663-665`) built `?r=<ticket's live label>`; `TicketAttachment` had no revision field (`types/schema.ts:1101-1110`).
+- `types/schema.ts` — `TicketAttachment.rev?: string | null` (additive): the revision of THAT file; `null` = joined with no label yet; absent = recorded before per-file revisions.
+- `lib/ticketTransitions.ts` (the server computes it; the route runs this function, and a client's own `rev` on a file it asks the route to append is never kept): `submit_draft` stamps the review label onto the Drafts it submits (`:321-328`); `submit_final` stamps the issued label in force onto the package (`:400`, `joiningFileRev`, `:150`); `attach_file` stamps a Final added at `PENDING_IFC` / `FINAL_DRAFT` with that label and any other file `null` (`:255`); a redline is `null` (`:232`); `approve_draft_ifc` / `approve_minor_correction` / `engineer_approve_final` stamp the new label onto the Finals waiting for it — `rev: null` only (`stampIssuedFinals`, `:160`; `:335`, `:345`, `:368`). A file recorded before this change (no key) is never stamped after the fact: nothing on the row says which cycle it belonged to. *Departure from the brief's wording, stated:* the brief said the issue cases stamp "the Final attachment(s) at issue"; in the workflow the issued package is uploaded AFTER the issue (`submit_final` is offered only at `PENDING_IFC`, `lib/workflow.ts:500-513`), so the package is stamped when it joins, and the issue cases stamp only Finals that joined earlier in the cycle.
+- `lib/ticketDeliverableCopy.ts` (new) `ticketCopyPlan` — the QR is `lib/verifyTicketVerdict.ts` `ticketVerifyUrl(origin, ticketRowId, file.rev)`; a file with no revision gets no `?r=` and the footer "… no deliverable revision is recorded for this file, so which printing this is cannot be confirmed. Not a controlled document revision."
+- The page (FileViewerModal region only): the `deliverableRev` prop and its pass are gone; both paths stamp from `planFor(channel)` (`page.tsx:578`, `:611`, `:670`). The ticket traveler (`lib/physicalBridge.ts`) still uses `ticket.deliverableRev`, as this record's chain reaction says it should.
+- Tests: `lib/__tests__/verifyTicketVerdict.test.ts` "PHYS-2 — the QR and footer carry the printed FILE's revision" (a Rev 1 Final on a ticket at Rev 2 builds `?r=1`, never `r=2`, and that print scans `superseded`; a rev-less file builds no `?r=` and the endpoint answers `unknown`), and the page source pins; `lib/__tests__/ticketTransitions.test.ts` "PHYS-2 — per-file revision, stamped server-side" (each stamping case, forged client revs dropped, legacy files untouched, and the walk issue Rev 1 → close → reopen → Rev 2 keeping Rev 1's package at Rev 1).
+
+**Done-when.**
+1. ✓ The rev in the QR and the footer comes from the attachment being viewed (`file.rev`), never from `tickets.deliverable_rev`.
+2. ✓ An attachment with no recorded rev produces no `?r=`; `/api/verify-ticket` then answers `unknown` for a live ticket (a withdrawn request answers `withdrawn` — also non-green, `EDGE-2`).
+3. ✓ A test opens a historical Final on a ticket at a later rev and asserts the verifyUrl does not carry the ticket's current rev.
+
+**Scope / residual.** Prints of Finals recorded before this change (no `rev`) answer "cannot confirm", by design (the stated default: no `?r=`). Two files issued under the same label (a pre-Round-E reopen, drafting-flow `SM-5` / `LEAK-7`) still cannot be told apart by label; the QR does not yet carry the attachment's identity — that is `SM-5` done-when 3, not this finding.
 
 ---
 
@@ -385,6 +399,19 @@ schema.sql:789-799 (nine columns, no `source`, no `ticket_id`); share/file/route
 
 **Scope / residual.** Stays OPEN for the drafting limb (PKG-5 / P8). Pending migration: `supabase/migrations/20261068_dc_roundF_download_audits_record.sql` (P2 — not applied).
 
+**Partial (2026-10-13, drafting-flow Round G).** DF-P10 DELIVERABLE-PRINT — the drafting-portal limb (public-surfaces `PKG-5`, closed by DF-P10). Reproduced on `596d34e`: both inserts (`app/(protected)/requests/[id]/page.tsx:607-614` print, `:689-697` download) named `ticket_id`, `attachment_id`, `attachment_type`, `filename`, `watermark_text` — columns no migration adds (`20261068` added only `source`, `share_id`, `transmittal_id`) — and were fired with `void … .then(() => {}, () => {})`.
+- `lib/ticketDeliverableCopy.ts` (new) `recordTicketCopy(client, logAudit, input)`: one `download_audits` row in the columns the table has — `org_id`, `user_id` (the caller, so `20261068`'s `download_audits_insert_own` admits it), `user_email`, `expires_at`, `source` (`drafting` / `drafting_print`, `_unstamped` when the stamp failed — the values `20261068`'s column comment names). Before `20261068` the `source` column is absent (`PGRST204` / `42703` naming it): the row is retried once in the table's original shape and the deploy order is logged — the pull is still recorded, without its channel. WHICH file left is written beside it on an `audit_logs` `DOWNLOAD` row on the ticket (`resource_type 'ticket'`; details: attachment id, type, file name, the file's `rev`, the printed watermark or "UNSTAMPED (stamping failed)", the channel, the expiry) through `logAuditAction`. Both writes are awaited and their `{ error }` read; the result is `{ recorded, error }`.
+- The page awaits it on both paths (`page.tsx:583-596`, `:626`, `:698`); a refusal never blocks the copy and is said: "This print/download is not fully recorded: … Tell Document Control which file you took …".
+- Tests: `verifyTicketVerdict.test.ts` "EVID-5 / PHYS-8 — the copy's record is awaited, checked and in the table's real columns" (the row's keys are exactly the five; the audit row names the file; the pre-`20261068` retry; a refused distribution row, a refused audit row and a thrown insert each report `recorded: false`); page pins (no `void` insert, no swallowed promise, none of the five non-existent columns).
+
+**Done-when (this pass).**
+1. ✓ The drafting inserts are rewritten to the existing schema (no migration).
+2. ✓ for every insert this record names: the share route (P2/P1), `lib/downloads.ts` (document-control P8, `logDownloadAudit` returns `{ recorded }`) and now both drafting inserts check `{ error }` and surface a refusal.
+3. ✗ Drafting rows carry no `document_id` / `version_id`: a ticket file is not a register version (it is "not a controlled document revision" — `HAND-3`), so there is no true value to write, and `lib/staleCopies.ts` cannot list a ticket copy. Its staleness is answered by the ticket QR (`/verify-ticket`, now per-file — `PHYS-2`).
+4. ✓ (P2) The share-link test.
+
+**Scope / residual.** Stays OPEN for done-when 3. **Proposal for the integrator (no migration added — DF-P10's brief reserved none):** a follow-up to `20261068` adding `download_audits.ticket_id UUID` and `attachment_id TEXT` (plain columns, not foreign keys — the record outlives the ticket's archive shed, as `share_id` outlives its share), the `insert_own` policy unchanged, `recordTicketCopy` then writing them (with today's audit row kept), and `lib/staleCopies.ts` gaining a ticket arm keyed on `(ticket_id, attachment_id)` against the ticket's newer issued `rev`. Owner: to be assigned by the integrator with the migration number (a DEC-30 one-paste, not widening; the app keeps working before it — `42703` / `PGRST204` on the two columns → today's row).
+
 ---
 
 <a id="phys-9"></a>
@@ -392,7 +419,7 @@ schema.sql:789-799 (nine columns, no `source`, no `ticket_id`); share/file/route
 ## PHYS-9 · The drafting download watermark asserts "CONTROLLED COPY" while the footer stamped on the same page by the same call says "UNCONTROLLED COPY" — and nothing registers, numbers, or recalls the copy it claims is controlled
 
 - **Severity:** HIGH
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `app/(protected)/requests/[id]/page.tsx:647`, `app/(protected)/requests/[id]/page.tsx:575`, `lib/stamping.ts:211`, `lib/stamping.ts:56-64`, `lib/downloads.ts:30-37`, `lib/downloads.ts:222-226`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Both marks land on the same page from the same call — the footer literal at stamping.ts:211 is unconditional. The document path never has this problem because lib/downloads.ts:30-36 gives a controlled copy as an unstamped pass-through and only ever stamps "UNCONTROLLED — FOR REVIEW ONLY" (:236); 'CONTROLLED COPY' as a watermark exists only on this drafting-portal branch. The registration half is right too: the audit row for this very download (:675-684) names columns that do not exist (see PHYS-8), so nothing records the copy at all.
@@ -437,6 +464,19 @@ requests/[id]/page.tsx:647 `watermarkText: file.type === "Draft" ? "REVIEW ONLY 
 3. ✓ for every print that goes through the stamper: neither the footer's main line nor the watermark can carry "CONTROLLED COPY", whatever the caller passes. `requests/[id]/page.tsx:661` still passes the literal, and the stamper prints "UNCONTROLLED COPY" in its place (the stated default, "UNCONTROLLED COPY everywhere"). Only a caller's free-text `footerNotice` is not checked.
 
 **Scope / residual.** Closer: drafting-flow DF-P10 (`PKG-5` DELIVERABLE-PRINT). It should pass `controlState: file.type === "Draft" ? "review" : "uncontrolled"` on both paths and drop the `watermarkText` literals. The audit row already records the printed watermark; when DF-P10 drops the literals, it records the state's watermark the same way (`stampWatermark(undefined, state)`).
+
+**Resolution (2026-10-13, drafting-flow Round G).** DF-P10 DELIVERABLE-PRINT — the drafting caller the Round F Partial handed on. Public-surfaces `PKG-5` is closed by DF-P10. Reproduced on `596d34e`: the download passed `watermarkText: … : "CONTROLLED COPY"` (`app/(protected)/requests/[id]/page.tsx:661`; the stamper's backstop printed it as "UNCONTROLLED COPY") and the print `"UNCONTROLLED COPY"` (`:589`) — two literals for one file.
+- `lib/ticketDeliverableCopy.ts` (new) `ticketCopyControlState(file)` — a Draft is `"review"`, every other file `"uncontrolled"` (never "controlled", DEC-64 §5) — and `ticketCopyPlan(...).watermark = stampWatermark(undefined, controlState)`.
+- The page: both paths pass `controlState: plan.controlState` and NO `watermarkText` (`page.tsx:611`, `:670`), so the stamper derives the watermark and the footer's main line from the one state; the record names `plan.watermark` — the stamper's rule, never a literal (the sequencing note's instruction). The import line drops `stampWatermark`.
+- A Draft's watermark now reads "REVIEW ONLY — DO NOT DISTRIBUTE" (the state's text, an em dash) where the literal had "REVIEW ONLY - DO NOT DISTRIBUTE"; its footer leads "UNCONTROLLED COPY — REVIEW ONLY".
+- Tests: `verifyTicketVerdict.test.ts` "PHYS-9 / HAND-3 — one control state per file …" (print and download agree for every type; the watermark is the state's; never "CONTROLLED COPY") and the page pins (no `watermarkText:`, no watermark literal); `psStampRoundF.test.ts`'s audit-row test re-pinned to the new shape.
+
+**Done-when.**
+1. ✓ The drafting download and print agree on one control state for the same file (one function, `ticketCopyControlState`).
+2. ✓ The footer's main line derives from the same control state as the watermark (PS-STAMP's `stampMainLine`, now fed by the caller's state; no contradicting `watermarkText`).
+3. ✓ No print path emits "CONTROLLED COPY": the stamper's backstop (Round F) plus no caller literal in the drafting paths (pinned).
+
+**Scope / residual.** None for this finding. A registered, numbered, recallable controlled copy would be a new `controlState` member (DEC-64's reversal) — not built, as decided.
 
 ---
 
