@@ -1,0 +1,3735 @@
+{
+ "label: one sticker, every field": {
+  "calls": [
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "borderColor": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "borderWidth": 0.75,
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "height": 144,
+      "width": 252,
+      "x": 0,
+      "y": 0
+     }
+    ]
+   },
+   {
+    "op": "drawImage",
+    "args": [
+     "<image>",
+     {
+      "height": 128,
+      "width": 128,
+      "x": 8,
+      "y": 8
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "P-101A",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 20,
+      "x": 144,
+      "y": 116
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Feed pump, west header",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 144,
+      "y": 102
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Unit 3 · Bay 2",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 8,
+      "x": 144,
+      "y": 90
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "SCAN — STAFF SIGN-IN",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 7,
+      "x": 144,
+      "y": 28
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "drawings · holds ·",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 7,
+      "x": 144,
+      "y": 19
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "report a problem",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 7,
+      "x": 144,
+      "y": 10
+     }
+    ]
+   }
+  ],
+  "filename": "QR_Label_P-101A.pdf",
+  "pages": 1,
+  "sha256": "d15c6eaafc0f3b04bd0456f4ffc17a80df9177d7b559604b5bc9a5504d966aea"
+ },
+ "label: one sticker, a long tag, description and location cut with an ellipsis; Latin-1 and cp1252": {
+  "calls": [
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "borderColor": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "borderWidth": 0.75,
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "height": 144,
+      "width": 252,
+      "x": 0,
+      "y": 0
+     }
+    ]
+   },
+   {
+    "op": "drawImage",
+    "args": [
+     "<image>",
+     {
+      "height": 128,
+      "width": 128,
+      "x": 8,
+      "y": 8
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "FV-2201…",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 20,
+      "x": 144,
+      "y": 116
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Válvula de aislamiento…",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 144,
+      "y": 102
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Área 3 – rack Ø 12 in … l…",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 8,
+      "x": 144,
+      "y": 90
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "SCAN — STAFF SIGN-IN",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 7,
+      "x": 144,
+      "y": 28
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "drawings · holds ·",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 7,
+      "x": 144,
+      "y": 19
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "report a problem",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 7,
+      "x": 144,
+      "y": 10
+     }
+    ]
+   }
+  ],
+  "filename": "QR_Label_FV-2201-WEST-HEADER-ISOLATION.pdf",
+  "pages": 1,
+  "sha256": "02ea9a4d9e9a71a970bcb868fd53124bf155bb811fb9a66b21c178ec3b6e39e6"
+ },
+ "label: one sticker, tag only (no description, no location)": {
+  "calls": [
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "borderColor": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "borderWidth": 0.75,
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "height": 144,
+      "width": 252,
+      "x": 0,
+      "y": 0
+     }
+    ]
+   },
+   {
+    "op": "drawImage",
+    "args": [
+     "<image>",
+     {
+      "height": 128,
+      "width": 128,
+      "x": 8,
+      "y": 8
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "E-7",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 20,
+      "x": 144,
+      "y": 116
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "SCAN — STAFF SIGN-IN",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 7,
+      "x": 144,
+      "y": 28
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "drawings · holds ·",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 7,
+      "x": 144,
+      "y": 19
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "report a problem",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 7,
+      "x": 144,
+      "y": 10
+     }
+    ]
+   }
+  ],
+  "filename": "QR_Label_E-7.pdf",
+  "pages": 1,
+  "sha256": "198ba011e23bcfe00edd6ac2fefb9e9d422d8cebed0a240049c6db79a2270807"
+ },
+ "labels: a bulk sheet of 12 (two pages), mixed fields": {
+  "calls": [
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "borderColor": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "borderWidth": 0.75,
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "height": 144,
+      "width": 288,
+      "x": 18,
+      "y": 612
+     }
+    ]
+   },
+   {
+    "op": "drawImage",
+    "args": [
+     "<image>",
+     {
+      "height": 128,
+      "width": 128,
+      "x": 26,
+      "y": 620
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "TT-300",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 20,
+      "x": 162,
+      "y": 728
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Unit 1",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 8,
+      "x": 162,
+      "y": 702
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "SCAN — STAFF SIGN-IN",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 7,
+      "x": 162,
+      "y": 640
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "drawings · holds ·",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 7,
+      "x": 162,
+      "y": 631
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "report a problem",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 7,
+      "x": 162,
+      "y": 622
+     }
+    ]
+   },
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "borderColor": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "borderWidth": 0.75,
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "height": 144,
+      "width": 288,
+      "x": 306,
+      "y": 612
+     }
+    ]
+   },
+   {
+    "op": "drawImage",
+    "args": [
+     "<image>",
+     {
+      "height": 128,
+      "width": 128,
+      "x": 314,
+      "y": 620
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "TT-301",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 20,
+      "x": 450,
+      "y": 728
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Temperature transmitter 1 – ‘ski…",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 450,
+      "y": 714
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "SCAN — STAFF SIGN-IN",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 7,
+      "x": 450,
+      "y": 640
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "drawings · holds ·",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 7,
+      "x": 450,
+      "y": 631
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "report a problem",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 7,
+      "x": 450,
+      "y": 622
+     }
+    ]
+   },
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "borderColor": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "borderWidth": 0.75,
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "height": 144,
+      "width": 288,
+      "x": 18,
+      "y": 468
+     }
+    ]
+   },
+   {
+    "op": "drawImage",
+    "args": [
+     "<image>",
+     {
+      "height": 128,
+      "width": 128,
+      "x": 26,
+      "y": 476
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "TT-302",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 20,
+      "x": 162,
+      "y": 584
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Temperature transmitter 2 – ‘ski…",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 162,
+      "y": 570
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Unit 3",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 8,
+      "x": 162,
+      "y": 558
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "SCAN — STAFF SIGN-IN",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 7,
+      "x": 162,
+      "y": 496
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "drawings · holds ·",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 7,
+      "x": 162,
+      "y": 487
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "report a problem",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 7,
+      "x": 162,
+      "y": 478
+     }
+    ]
+   },
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "borderColor": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "borderWidth": 0.75,
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "height": 144,
+      "width": 288,
+      "x": 306,
+      "y": 468
+     }
+    ]
+   },
+   {
+    "op": "drawImage",
+    "args": [
+     "<image>",
+     {
+      "height": 128,
+      "width": 128,
+      "x": 314,
+      "y": 476
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "TT-303",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 20,
+      "x": 450,
+      "y": 584
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Unit 1",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 8,
+      "x": 450,
+      "y": 558
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "SCAN — STAFF SIGN-IN",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 7,
+      "x": 450,
+      "y": 496
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "drawings · holds ·",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 7,
+      "x": 450,
+      "y": 487
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "report a problem",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 7,
+      "x": 450,
+      "y": 478
+     }
+    ]
+   },
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "borderColor": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "borderWidth": 0.75,
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "height": 144,
+      "width": 288,
+      "x": 18,
+      "y": 324
+     }
+    ]
+   },
+   {
+    "op": "drawImage",
+    "args": [
+     "<image>",
+     {
+      "height": 128,
+      "width": 128,
+      "x": 26,
+      "y": 332
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "TT-304",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 20,
+      "x": 162,
+      "y": 440
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Temperature transmitter 4 – ‘ski…",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 162,
+      "y": 426
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Unit 2",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 8,
+      "x": 162,
+      "y": 414
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "SCAN — STAFF SIGN-IN",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 7,
+      "x": 162,
+      "y": 352
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "drawings · holds ·",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 7,
+      "x": 162,
+      "y": 343
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "report a problem",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 7,
+      "x": 162,
+      "y": 334
+     }
+    ]
+   },
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "borderColor": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "borderWidth": 0.75,
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "height": 144,
+      "width": 288,
+      "x": 306,
+      "y": 324
+     }
+    ]
+   },
+   {
+    "op": "drawImage",
+    "args": [
+     "<image>",
+     {
+      "height": 128,
+      "width": 128,
+      "x": 314,
+      "y": 332
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "TT-305",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 20,
+      "x": 450,
+      "y": 440
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Temperature transmitter 5 – ‘ski…",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 450,
+      "y": 426
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "SCAN — STAFF SIGN-IN",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 7,
+      "x": 450,
+      "y": 352
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "drawings · holds ·",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 7,
+      "x": 450,
+      "y": 343
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "report a problem",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 7,
+      "x": 450,
+      "y": 334
+     }
+    ]
+   },
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "borderColor": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "borderWidth": 0.75,
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "height": 144,
+      "width": 288,
+      "x": 18,
+      "y": 180
+     }
+    ]
+   },
+   {
+    "op": "drawImage",
+    "args": [
+     "<image>",
+     {
+      "height": 128,
+      "width": 128,
+      "x": 26,
+      "y": 188
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "TT-306",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 20,
+      "x": 162,
+      "y": 296
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Unit 1",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 8,
+      "x": 162,
+      "y": 270
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "SCAN — STAFF SIGN-IN",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 7,
+      "x": 162,
+      "y": 208
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "drawings · holds ·",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 7,
+      "x": 162,
+      "y": 199
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "report a problem",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 7,
+      "x": 162,
+      "y": 190
+     }
+    ]
+   },
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "borderColor": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "borderWidth": 0.75,
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "height": 144,
+      "width": 288,
+      "x": 306,
+      "y": 180
+     }
+    ]
+   },
+   {
+    "op": "drawImage",
+    "args": [
+     "<image>",
+     {
+      "height": 128,
+      "width": 128,
+      "x": 314,
+      "y": 188
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "TT-307",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 20,
+      "x": 450,
+      "y": 296
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Temperature transmitter 7 – ‘ski…",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 450,
+      "y": 282
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Unit 2",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 8,
+      "x": 450,
+      "y": 270
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "SCAN — STAFF SIGN-IN",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 7,
+      "x": 450,
+      "y": 208
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "drawings · holds ·",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 7,
+      "x": 450,
+      "y": 199
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "report a problem",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 7,
+      "x": 450,
+      "y": 190
+     }
+    ]
+   },
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "borderColor": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "borderWidth": 0.75,
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "height": 144,
+      "width": 288,
+      "x": 18,
+      "y": 36
+     }
+    ]
+   },
+   {
+    "op": "drawImage",
+    "args": [
+     "<image>",
+     {
+      "height": 128,
+      "width": 128,
+      "x": 26,
+      "y": 44
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "TT-308",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 20,
+      "x": 162,
+      "y": 152
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Temperature transmitter 8 – ‘ski…",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 162,
+      "y": 138
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Unit 3",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 8,
+      "x": 162,
+      "y": 126
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "SCAN — STAFF SIGN-IN",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 7,
+      "x": 162,
+      "y": 64
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "drawings · holds ·",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 7,
+      "x": 162,
+      "y": 55
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "report a problem",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 7,
+      "x": 162,
+      "y": 46
+     }
+    ]
+   },
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "borderColor": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "borderWidth": 0.75,
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "height": 144,
+      "width": 288,
+      "x": 306,
+      "y": 36
+     }
+    ]
+   },
+   {
+    "op": "drawImage",
+    "args": [
+     "<image>",
+     {
+      "height": 128,
+      "width": 128,
+      "x": 314,
+      "y": 44
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "TT-309",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 20,
+      "x": 450,
+      "y": 152
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "SCAN — STAFF SIGN-IN",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 7,
+      "x": 450,
+      "y": 64
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "drawings · holds ·",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 7,
+      "x": 450,
+      "y": 55
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "report a problem",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 7,
+      "x": 450,
+      "y": 46
+     }
+    ]
+   },
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "borderColor": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "borderWidth": 0.75,
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "height": 144,
+      "width": 288,
+      "x": 18,
+      "y": 612
+     }
+    ]
+   },
+   {
+    "op": "drawImage",
+    "args": [
+     "<image>",
+     {
+      "height": 128,
+      "width": 128,
+      "x": 26,
+      "y": 620
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "TT-310",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 20,
+      "x": 162,
+      "y": 728
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Temperature transmitter 10 – ‘s…",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 162,
+      "y": 714
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Unit 2",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 8,
+      "x": 162,
+      "y": 702
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "SCAN — STAFF SIGN-IN",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 7,
+      "x": 162,
+      "y": 640
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "drawings · holds ·",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 7,
+      "x": 162,
+      "y": 631
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "report a problem",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 7,
+      "x": 162,
+      "y": 622
+     }
+    ]
+   },
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "borderColor": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "borderWidth": 0.75,
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "height": 144,
+      "width": 288,
+      "x": 306,
+      "y": 612
+     }
+    ]
+   },
+   {
+    "op": "drawImage",
+    "args": [
+     "<image>",
+     {
+      "height": 128,
+      "width": 128,
+      "x": 314,
+      "y": 620
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "TT-311",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 20,
+      "x": 450,
+      "y": 728
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Temperature transmitter 11 – ‘s…",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 450,
+      "y": 714
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Unit 3",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 8,
+      "x": 450,
+      "y": 702
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "SCAN — STAFF SIGN-IN",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 7,
+      "x": 450,
+      "y": 640
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "drawings · holds ·",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 7,
+      "x": 450,
+      "y": 631
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "report a problem",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 7,
+      "x": 450,
+      "y": 622
+     }
+    ]
+   }
+  ],
+  "filename": "QR_Labels_12_tags_2026-10-13.pdf",
+  "pages": 2,
+  "sha256": "0c616ecf217938be36cbc1eb4e75a49ecaccf5ad0c51bb492e15f436d4201ad4"
+ },
+ "hold card: every field": {
+  "calls": [
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "height": 396,
+      "width": 612,
+      "x": 0,
+      "y": 0
+     }
+    ]
+   },
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "borderColor": {
+       "blue": 0.11,
+       "green": 0.11,
+       "red": 0.75,
+       "type": "RGB"
+      },
+      "borderWidth": 6,
+      "height": 376,
+      "width": 592,
+      "x": 10,
+      "y": 10
+     }
+    ]
+   },
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "color": {
+       "blue": 0.11,
+       "green": 0.11,
+       "red": 0.75,
+       "type": "RGB"
+      },
+      "height": 70,
+      "width": 592,
+      "x": 10,
+      "y": 316
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "HOLD — DO NOT ADVANCE",
+     {
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 30,
+      "x": 32,
+      "y": 338
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "P-101  ·  Rev B",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 18,
+      "x": 32,
+      "y": 280
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Reason: Engineering review",
+     {
+      "color": {
+       "blue": 0.11,
+       "green": 0.11,
+       "red": 0.75,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 13,
+      "x": 32,
+      "y": 252
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Awaiting stress calc on the west header tie-in.",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 32,
+      "y": 232
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Placed by Jane Doe on 10/13/2026",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 32,
+      "y": 208
+     }
+    ]
+   },
+   {
+    "op": "drawImage",
+    "args": [
+     "<image>",
+     {
+      "height": 130,
+      "width": 130,
+      "x": 452,
+      "y": 60
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "SCAN: is this hold",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 9,
+      "x": 452,
+      "y": 46
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "still active?",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 9,
+      "x": 452,
+      "y": 35
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "GREEN when scanned = no hold remains on this document — this tag comes down.",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 32,
+      "y": 50
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "AMBER = this hold is released but another is still active — leave the equipment tagged.",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 32,
+      "y": 38
+     }
+    ]
+   }
+  ],
+  "filename": "HOLD_P-101.pdf",
+  "pages": 1,
+  "sha256": "082f13967da1211d7da8519f15bdd296b7fed6deb2b16f35724a2a7707a76e93"
+ },
+ "hold card: no revision, no notes, no name (Document Control)": {
+  "calls": [
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "height": 396,
+      "width": 612,
+      "x": 0,
+      "y": 0
+     }
+    ]
+   },
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "borderColor": {
+       "blue": 0.11,
+       "green": 0.11,
+       "red": 0.75,
+       "type": "RGB"
+      },
+      "borderWidth": 6,
+      "height": 376,
+      "width": 592,
+      "x": 10,
+      "y": 10
+     }
+    ]
+   },
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "color": {
+       "blue": 0.11,
+       "green": 0.11,
+       "red": 0.75,
+       "type": "RGB"
+      },
+      "height": 70,
+      "width": 592,
+      "x": 10,
+      "y": 316
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "HOLD — DO NOT ADVANCE",
+     {
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 30,
+      "x": 32,
+      "y": 338
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "PID-0001",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 18,
+      "x": 32,
+      "y": 280
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Reason: Quality",
+     {
+      "color": {
+       "blue": 0.11,
+       "green": 0.11,
+       "red": 0.75,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 13,
+      "x": 32,
+      "y": 252
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Placed by Document Control on 10/13/2026",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 32,
+      "y": 208
+     }
+    ]
+   },
+   {
+    "op": "drawImage",
+    "args": [
+     "<image>",
+     {
+      "height": 130,
+      "width": 130,
+      "x": 452,
+      "y": 60
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "SCAN: is this hold",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 9,
+      "x": 452,
+      "y": 46
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "still active?",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 9,
+      "x": 452,
+      "y": 35
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "GREEN when scanned = no hold remains on this document — this tag comes down.",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 32,
+      "y": 50
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "AMBER = this hold is released but another is still active — leave the equipment tagged.",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 32,
+      "y": 38
+     }
+    ]
+   }
+  ],
+  "filename": "HOLD_PID-0001.pdf",
+  "pages": 1,
+  "sha256": "920ab8f2f34920b9f60d1969c619ccda8cec43dceeb9fd90f71549f6733bbfa2"
+ },
+ "hold card: long label, reason and notes cut with an ellipsis; Latin-1 and cp1252": {
+  "calls": [
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "height": 396,
+      "width": 612,
+      "x": 0,
+      "y": 0
+     }
+    ]
+   },
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "borderColor": {
+       "blue": 0.11,
+       "green": 0.11,
+       "red": 0.75,
+       "type": "RGB"
+      },
+      "borderWidth": 6,
+      "height": 376,
+      "width": 592,
+      "x": 10,
+      "y": 10
+     }
+    ]
+   },
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "color": {
+       "blue": 0.11,
+       "green": 0.11,
+       "red": 0.75,
+       "type": "RGB"
+      },
+      "height": 70,
+      "width": 592,
+      "x": 10,
+      "y": 316
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "HOLD — DO NOT ADVANCE",
+     {
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 30,
+      "x": 32,
+      "y": 338
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-…",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 18,
+      "x": 32,
+      "y": 280
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Reason: Safety — “do not use” pending HAZOP; the relief v…",
+     {
+      "color": {
+       "blue": 0.11,
+       "green": 0.11,
+       "red": 0.75,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 13,
+      "x": 32,
+      "y": 252
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Café line: see ‘notes’ … € 12,000 • 50 ‰ ™; Café line: see ‘notes’ … € 12,000 • 50 …",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 32,
+      "y": 232
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Placed by José Núñez on 10/13/2026",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 32,
+      "y": 208
+     }
+    ]
+   },
+   {
+    "op": "drawImage",
+    "args": [
+     "<image>",
+     {
+      "height": 130,
+      "width": 130,
+      "x": 452,
+      "y": 60
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "SCAN: is this hold",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 9,
+      "x": 452,
+      "y": 46
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "still active?",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 9,
+      "x": 452,
+      "y": 35
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "GREEN when scanned = no hold remains on this document — this tag comes down.",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 32,
+      "y": 50
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "AMBER = this hold is released but another is still active — leave the equipment tagged.",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 9,
+      "x": 32,
+      "y": 38
+     }
+    ]
+   }
+  ],
+  "filename": "HOLD_PID-UNIT3-WEST-HEADER-TIE-IN-SPOOL-REPLACEMENT-HOT-TAP-0001.pdf",
+  "pages": 1,
+  "sha256": "548e40bf9e33ffcfc926c76e5e1a365e70300efc5f332949fd0cf6dc69ef61b8"
+ },
+ "traveler: every field": {
+  "calls": [
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "height": 56,
+      "width": 540,
+      "x": 36,
+      "y": 700
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "DRAFTING TRAVELER",
+     {
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 20,
+      "x": 52,
+      "y": 728
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "KE-DDRT-26-0001",
+     {
+      "color": {
+       "blue": 0.9,
+       "green": 0.85,
+       "red": 0.8,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 11,
+      "x": 52,
+      "y": 710
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Re-route cooling water to E-201",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 15,
+      "x": 52,
+      "y": 660
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Status at printing:",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 52,
+      "y": 620
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "in review",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 170,
+      "y": 620
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Deliverable rev:",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 52,
+      "y": 598
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 1A",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 170,
+      "y": 598
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Requested by:",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 52,
+      "y": 576
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Jane Doe",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 170,
+      "y": 576
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Drafter:",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 52,
+      "y": 554
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Sam Lee",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 170,
+      "y": 554
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Opened:",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 52,
+      "y": 532
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "10/13/2026",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 170,
+      "y": 532
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Paper goes stale — the QR doesn't. Anyone can scan it, no",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 500
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "login: it answers whether this ticket's deliverable is still",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 487
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "the latest issued revision.",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 474
+     }
+    ]
+   },
+   {
+    "op": "drawImage",
+    "args": [
+     "<image>",
+     {
+      "height": 150,
+      "width": 150,
+      "x": 420,
+      "y": 520
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "SCAN TO VERIFY REVISION",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 9,
+      "x": 424,
+      "y": 505
+     }
+    ]
+   }
+  ],
+  "filename": "Traveler_KE-DDRT-26-0001.pdf",
+  "pages": 1,
+  "sha256": "abddf744e6842083e55ae8c522ded2f1e4283d537b38b048db9f815ec02d3a23"
+ },
+ "traveler: no number, people, date or revision": {
+  "calls": [
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "height": 56,
+      "width": 540,
+      "x": 36,
+      "y": 700
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "DRAFTING TRAVELER",
+     {
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 20,
+      "x": 52,
+      "y": 728
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "",
+     {
+      "color": {
+       "blue": 0.9,
+       "green": 0.85,
+       "red": 0.8,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 11,
+      "x": 52,
+      "y": 710
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "New request",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 15,
+      "x": 52,
+      "y": 660
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Status at printing:",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 52,
+      "y": 620
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "new",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 170,
+      "y": 620
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Deliverable rev:",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 52,
+      "y": 598
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "— (none issued yet)",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 170,
+      "y": 598
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Requested by:",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 52,
+      "y": 576
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "—",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 170,
+      "y": 576
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Drafter:",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 52,
+      "y": 554
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "—",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 170,
+      "y": 554
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Opened:",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 52,
+      "y": 532
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "—",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 170,
+      "y": 532
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Paper goes stale — the QR doesn't. Anyone can scan it, no",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 500
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "login: it answers whether this ticket's deliverable is still",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 487
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "the latest issued revision.",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 474
+     }
+    ]
+   },
+   {
+    "op": "drawImage",
+    "args": [
+     "<image>",
+     {
+      "height": 150,
+      "width": 150,
+      "x": 420,
+      "y": 520
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "SCAN TO VERIFY REVISION",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 9,
+      "x": 424,
+      "y": 505
+     }
+    ]
+   }
+  ],
+  "filename": "Traveler_dddddddd-dddd-4ddd-8ddd-dddddddddddd.pdf",
+  "pages": 1,
+  "sha256": "c937d9dcd215ec3b904aa928f665fd8c16332d5f29d0692f045b9ef04e884cc8"
+ },
+ "traveler: a long title and names cut with an ellipsis; Latin-1 and cp1252": {
+  "calls": [
+   {
+    "op": "drawRectangle",
+    "args": [
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "height": 56,
+      "width": 540,
+      "x": 36,
+      "y": 700
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "DRAFTING TRAVELER",
+     {
+      "color": {
+       "blue": 1,
+       "green": 1,
+       "red": 1,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 20,
+      "x": 52,
+      "y": 728
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "KE–DDRT–26–0099",
+     {
+      "color": {
+       "blue": 0.9,
+       "green": 0.85,
+       "red": 0.8,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 11,
+      "x": 52,
+      "y": 710
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Turnaround 2026 — crude unit “west header” tie-ins, h…",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 15,
+      "x": 52,
+      "y": 660
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Status at printing:",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 52,
+      "y": 620
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "waiting on requester feedback",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 170,
+      "y": 620
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Deliverable rev:",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 52,
+      "y": 598
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Rev 2 • IFC € ™",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 170,
+      "y": 598
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Requested by:",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 52,
+      "y": 576
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Zoë O’Brien",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 170,
+      "y": 576
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Drafter:",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 52,
+      "y": 554
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Ånne Ørsted-Ånne Ørsted-Ånne Ørsted-Ånne Ørsted-Ånne …",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 170,
+      "y": 554
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Opened:",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 10,
+      "x": 52,
+      "y": 532
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "10/13/2026",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 170,
+      "y": 532
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "Paper goes stale — the QR doesn't. Anyone can scan it, no",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 500
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "login: it answers whether this ticket's deliverable is still",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 487
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "the latest issued revision.",
+     {
+      "color": {
+       "blue": 0.53,
+       "green": 0.47,
+       "red": 0.42,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica>",
+      "size": 10,
+      "x": 52,
+      "y": 474
+     }
+    ]
+   },
+   {
+    "op": "drawImage",
+    "args": [
+     "<image>",
+     {
+      "height": 150,
+      "width": 150,
+      "x": 420,
+      "y": 520
+     }
+    ]
+   },
+   {
+    "op": "drawText",
+    "args": [
+     "SCAN TO VERIFY REVISION",
+     {
+      "color": {
+       "blue": 0.16,
+       "green": 0.12,
+       "red": 0.09,
+       "type": "RGB"
+      },
+      "font": "<font Helvetica-Bold>",
+      "size": 9,
+      "x": 424,
+      "y": 505
+     }
+    ]
+   }
+  ],
+  "filename": "Traveler_KE_DDRT_26_0099.pdf",
+  "pages": 1,
+  "sha256": "001c451181feaf00ff4374c20c664fd910e94a9aed0b92b636e800336cb29124"
+ }
+}

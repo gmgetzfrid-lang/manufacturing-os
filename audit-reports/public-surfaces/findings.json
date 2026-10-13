@@ -17,8 +17,8 @@
       "LOW": 27
     },
     "by_status": {
-      "RESOLVED": 54,
-      "OPEN": 10,
+      "RESOLVED": 55,
+      "OPEN": 9,
       "WONTFIX": 1
     }
   },
@@ -1328,7 +1328,7 @@
       "id": "PHYS-16",
       "title": "The physical bridge's own printed artifacts — the hold card, the equipment label, the drafting traveler (and, as opened, the work-package cover) — draw text with the standard fonts directly, and a character WinAnsi cannot print fails the print",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED. Reproduced after PS-P7's review fix (2026-10-07): `printHoldCard({ docLabel: \"P‐101\", docRev: \"Δ1\", … })` rejects `WinAnsi cannot encode \"‐\" (0x2010)`; `printEquipmentLabels([{ tag: \"P-101\", description: \"Motor 5 kΩ\" }])` rejects on `\"Ω\" (0x03a9)`; `printTicketTraveler({ ticketNumber: \"KE‐0001\", … })` rejects on U+2010. Each resolves with plain text. As opened, `buildPackageCover({ packageId, name, docs: [{ label: \"P‐101\", rev: \"Δ1\" }] })` rejected the same way on `b154823` and at `43cb45c`; it resolves since PS-P7's review fix.",
       "blast_radius": null,
