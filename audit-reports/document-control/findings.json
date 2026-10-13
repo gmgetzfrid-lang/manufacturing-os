@@ -24,8 +24,8 @@
       "LOW": 25
     },
     "by_status": {
-      "RESOLVED": 159,
-      "OPEN": 11
+      "RESOLVED": 160,
+      "OPEN": 10
     }
   },
   "status_vocabulary": [
@@ -4555,9 +4555,9 @@
       "id": "TRX-17",
       "title": "A PDF can still leave the portal unmarked with no warning at issue and no recorded yes: one the issue-time check could not decide, and any issue made outside the app's issue path",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
-      "verification_note": "CONFIRMED (by reading; the client half is pinned in `lib/__tests__/dcRoundFP15TransmittalIssueWarn.test.ts`: an `unchecked` file is not warned and carries no mark, and a check that cannot run never blocks an issue)",
+      "verification_note": "CONFIRMED (by reading; the client half is pinned in `lib/__tests__/dcRoundFP15TransmittalIssueWarn.test.ts`: an `unchecked` file is not warned and carries no mark, and a check that cannot run never blocks an issue). *(This is the pre-fix state, reproduced on `49cd27e`. P24 rewrote those pins to the new rule: an unchecked file now warns, and a check that cannot run now stops the issue. See the Resolution.)*",
       "blast_radius": "document-control integrity (an uncontrolled copy without its marking, and no recorded yes for it)",
       "related": [
         "TRX-15",

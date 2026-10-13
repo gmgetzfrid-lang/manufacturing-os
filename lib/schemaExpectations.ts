@@ -197,6 +197,7 @@ export const RETIRED_TABLES: readonly RetiredTable[] = [
 
 export const EXPECTED_COLUMNS: readonly ColumnExpectation[] = [
   { table: "transmittals", column: "portal_token", migration: "20260910_transmittal_portal.sql", feature: "Transmittal recipient portal + issue emails" },
+  { table: "transmittals", column: "stamp_check", migration: "20261199_dc_roundF_transmittal_issue_verdict.sql", feature: "The transmittal issue verdict the server recorded for each PDF of the draft as issued (TRX-17)" },
   { table: "ai_connections", column: "embedding_api_key", migration: "20260930_semantic_layer.sql", feature: "Meaning-based (semantic) search" },
   { table: "knowledge_chunks", column: "embedding", migration: "20260930_semantic_layer.sql", feature: "pgvector semantic index" },
   { table: "documents", column: "ai_excluded", migration: "20260807_link_proposals.sql", feature: "Per-document AI exclusion (Pillar A)" },

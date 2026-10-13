@@ -886,3 +886,51 @@ before that paste the modal behaves as before and logs why (`SHR-14`).
 **Handoffs from admin-and-org Round G P2 (2026-10-01).** Two more byte-freeing checks were left unowned when P9 merged. Admin-and-org P2 could not land them: neither is in P2's brief. Both are handed off; the integrator assigns the owner at the P2 merge (proposed: admin-and-org P3, after document-control P14 merges). (This paragraph first said both were P14's; P14's brief lists neither.) Each is recorded with its exact hunk and test shape:
 1. **Intelligence `ILIFE-5`, the direct storage delete.** `app/api/storage/delete/route.ts` must refuse with 409 a key that a knowledge-library mirror still names, or that any other registered key column outside `document_versions` names. It must fail closed with 503 when the read errors. The check is `lib/storageKeyRegistry.ts keysReferencedOutside(supabaseAdmin, [path], ["document_versions.file_url", "document_versions.source_file_key"])`, placed after the hold / retention refusal and before the custody row. The hunk is in `audit-reports/intelligence/18-lifecycle.md`, `ILIFE-5`, "the second call site". The shed's two call sites have landed in A&O P2.
 2. **Intelligence `ILIFE-6` criterion 3, the purge side.** `lib/storageOrphans.ts deleteOrphans` must re-check each candidate key just before its `DeleteObjects` batch, against every registered key column: `keysReferencedOutside` for the plain columns, and one containment read per key for the JSON-embedded ones. Any key still named is kept, and a read error deletes nothing. The scan reads its reference set page by page, so a reference that moves behind the cursor can be missing from it. The hunk is on `ILIFE-6`. A&O P2 owns the collector half of that file (`collectReferencedKeys`, keyset-paged); the purge half was P9's (`RET-7`).
+
+⚠ **Deploy then paste — P24 TRANSMITTAL ISSUE VERDICT (2026-10-13, `TRX-17`).**
+One one-paste migration, `20261199_dc_roundF_transmittal_issue_verdict.sql`.
+It goes after `20261133`, which it re-creates `transmittals_guard` from (it
+raises and changes nothing without it). **Never re-paste `20261133` after
+it**, or the verdict rule is dropped.
+- **Deploy the P24 app FIRST, then paste.** The P24 app works before the
+  paste: the stamp-check route meets the missing `stamp_check` column and
+  answers as before, unrecorded. The issuer's yes for an undecided file is
+  written on the item, which the older trigger keeps as item JSON.
+- **Pasted ahead of the app**, the old stamp-check route records nothing and
+  the old issue writes no yes. Every issue from the register is then refused
+  with the TRX-17 sentence until the app deploys. This fails closed (nothing
+  leaves unchecked), but keep that window at zero.
+- **Browser tabs left open across the deploy** run the old register code.
+  After the paste their issues are refused with the TRX-17 sentence (fail
+  closed) until the tab is refreshed. Say so in the deploy note. *(Added at
+  P24's review fix, at the reviewer's suggestion.)*
+- **The result set's inventory** counts the issued / acknowledged
+  transmittals (none carries a server verdict, and none is changed), their
+  armed and unmarked items, and the drafts that from now on need a recorded
+  check or a yes.
+- **Records (P24's integrator fix pass, 2026-10-13).** `TRX-17` is RESOLVED
+  for the code half. Its header now carries DEC-30's `Pending migration:`
+  line for `20261199`: paste after `20261133` and after the P24 app
+  deploys. Until then, done-when 2 holds in the file only. `TRX-15` is
+  restated: done-when 1's remainder is closed in code by P24, and the record
+  stays OPEN for its device check (`userHeld.TRX-15`).
+- **The confirm when the check could not run** now says the reason once,
+  above a list naming each file once (`describeUnstampable`'s
+  `notRunReason`). Before, the route's whole 503 / 409 sentence was copied
+  into every file's line.
+- **AUTHZ-15 under the integrator's ruling (2026-10-13, recorded under
+  DEC-89).** `stale` is the last good policy and is drawn as is, with no
+  label. Only `unreadable`, or a read that throws, holds the
+  policy-dependent controls back, with "Permissions could not be read — …"
+  and Try again. The integrator names P24 the owner of `HoldStrip`,
+  `/admin/holds`, `InspectorPanel` and `CheckoutStatusCell` (DEC-31), and
+  all five document-control surfaces follow the ruling. The Inspector
+  decides Force Release Lock, its hold controls and its notice from one
+  read. Only drafting-flow DF-P9's request surfaces stay open. This part of
+  P24 needs no migration.
+- **For the integrator at merge, not edited by P24:**
+  - the `20261199` row in `MIGRATION-PASTE-ORDER.md`;
+  - the optional `lib/schemaExpectations.ts` probe on
+    `transmittals.stamp_check`;
+  - restating `lib/capabilityPolicy.ts`'s `loadCapabilityPolicy` comment,
+    which still names these five surfaces as its readers.

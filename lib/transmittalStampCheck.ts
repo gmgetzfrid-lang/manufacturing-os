@@ -118,14 +118,17 @@ function unencodableCharacter(e: unknown): string | null {
   return m ? m[1] : null;
 }
 
-/** One item: the file the issue will pin, tested as the portal stamps it. */
-async function checkOne(sb: Reader, orgId: string, it: TransmittalItem, transmittalNumber: string | null, outOfTime: () => boolean): Promise<ItemStampCheck> {
+/** One item: the file the issue will pin, tested as the portal stamps it.
+ *  TRX-17: `file.versionId` is set to the version checked (the document's
+ *  current one), so the route can record the verdict for that very file. */
+async function checkOne(sb: Reader, orgId: string, it: TransmittalItem, transmittalNumber: string | null, outOfTime: () => boolean, file: { versionId: string | null } = { versionId: null }): Promise<ItemStampCheck> {
   const base = { documentId: it.documentId, number: it.number || "This document" };
   const unchecked = (detail: string): ItemStampCheck => ({ ...base, verdict: "unchecked", detail });
   const { data: doc, error: docErr } = await sb.from("documents").select("id, current_version_id").eq("id", it.documentId).eq("org_id", orgId).maybeSingle();
   if (docErr) return unchecked("the document could not be read");
   const current = (doc as { current_version_id?: string | null } | null)?.current_version_id ?? null;
   if (!current) return unchecked("no published file to check"); // the issue gate refuses it anyway
+  file.versionId = current;
   const { data: ver, error: verErr } = await sb.from("document_versions").select("id, file_url, size, revision_label").eq("id", current).eq("org_id", orgId).maybeSingle();
   if (verErr) return unchecked("the file's record could not be read");
   const v = ver as { file_url?: string | null; size?: number | null; revision_label?: string | null } | null;
@@ -242,6 +245,16 @@ async function checkOne(sb: Reader, orgId: string, it: TransmittalItem, transmit
  *  budget. Each document is checked once even if it is listed twice. */
 export async function checkItemsStampable(
   sb: Reader,
+  input: Parameters<typeof checkItemsStampableWithFiles>[1],
+): Promise<ItemStampCheck[]> {
+  return (await checkItemsStampableWithFiles(sb, input)).map((c) => c.check);
+}
+
+/** TRX-17: the same check, each verdict with the version it was decided on
+ *  (null when no file was found) — what /api/transmittal/stamp-check records
+ *  on the draft for the issue trigger (20261199). */
+export async function checkItemsStampableWithFiles(
+  sb: Reader,
   input: {
     orgId: string;
     items: TransmittalItem[];
@@ -250,16 +263,18 @@ export async function checkItemsStampable(
     transmittalNumber?: string | null;
     now?: () => number;
   },
-): Promise<ItemStampCheck[]> {
+): Promise<Array<{ check: ItemStampCheck; versionId: string | null }>> {
   const now = input.now ?? Date.now;
   const deadline = now() + STAMP_CHECK_TIME_BUDGET_MS;
   const outOfTime = () => now() > deadline;
-  const out: ItemStampCheck[] = [];
+  const out: Array<{ check: ItemStampCheck; versionId: string | null }> = [];
   const seen = new Set<string>();
   for (const it of input.items) {
     if (!it?.documentId || seen.has(it.documentId)) continue;
     seen.add(it.documentId);
-    out.push(await checkOne(sb, input.orgId, it, input.transmittalNumber ?? null, outOfTime));
+    const file = { versionId: null as string | null };
+    const check = await checkOne(sb, input.orgId, it, input.transmittalNumber ?? null, outOfTime, file);
+    out.push({ check, versionId: file.versionId });
   }
   return out;
 }

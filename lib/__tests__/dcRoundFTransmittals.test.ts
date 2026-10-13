@@ -124,7 +124,8 @@ describe("TRX-1 — transmit authority is a capability, default the controller p
     const page = src("app/(protected)/transmittals/page.tsx");
     expect(page).not.toMatch(/"Admin"|"DocCtrl"|'Admin'|'DocCtrl'/);
     expect(page).toMatch(/mayTransmit\(policy, principal, t\.items\.map/);
-    expect(page).toMatch(/loadCapabilityPolicy\(activeOrgId\)/);
+    // AUTHZ-15 (P24): read through the entry, so an unreadable policy is held back, not drawn from the defaults
+    expect(page).toMatch(/loadCapabilityPolicyEntry\(activeOrgId\)/);
     // Issue is disabled for a principal without transmit authority
     expect(page).toMatch(/disabled=\{!!saving \|\| !issuable \|\| !canIssue\}/);
     // receipt / revoke / void render only for a transmit authority
@@ -249,9 +250,14 @@ describe("TRX-7 / TRX-10 — every mutation is checked; issue returns the row th
     db.handlers["browser:document_holds"] = () => ({ data: [], error: null });
   });
   afterEach(() => { vi.unstubAllGlobals(); });
+  // TRX-17 (P24): the issue-time check answers (the file is stampable) — a
+  // check that cannot run no longer issues silently, it asks the issuer.
+  const STAMP_OK = () => new Response(JSON.stringify({ items: [{ documentId: "d1", number: "P-1", verdict: "stampable" }] }), { status: 200 });
+  const withCheck = (rest: (url: string) => Response) => vi.fn(async (url: string) => (String(url) === "/api/transmittal/stamp-check" ? STAMP_OK() : rest(String(url))));
 
   it("an issue that changed no row throws and writes NO audit row (it used to log TRANSMITTAL_ISSUED regardless)", async () => {
     db.handlers["browser:transmittals"] = (ops) => has(ops, "update") ? { data: null, error: null } : { data: draftRow, error: null };
+    vi.stubGlobal("fetch", withCheck(() => new Response("{}", { status: 200 })));
     await expect(issueTransmittal("t1", actor)).rejects.toThrow(/was not issued — it is no longer a draft, or you do not hold transmit authority/);
     expect(db.audits).toEqual([]);
   });
@@ -260,7 +266,7 @@ describe("TRX-7 / TRX-10 — every mutation is checked; issue returns the row th
     db.handlers["browser:transmittals"] = (ops) => has(ops, "update")
       ? { data: { ...draftRow, status: "issued", issued_at: "2026-10-01T00:00:00Z", portal_token: "tok", portal_expires_at: "2026-12-30T00:00:00Z", items: [{ documentId: "d1", number: "P-1", versionId: "v1", fileHash: "abc", statusAsSent: "Issued" }] }, error: null }
       : { data: draftRow, error: null };
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ok: false, sent: false, reason: "this deployment has no public site URL" }), { status: 200 })));
+    vi.stubGlobal("fetch", withCheck(() => new Response(JSON.stringify({ ok: false, sent: false, reason: "this deployment has no public site URL" }), { status: 200 })));
     const out = await issueTransmittal("t1", actor);
     expect(out.transmittal.portalToken).toBe("tok");
     expect(out.transmittal.items[0].fileHash).toBe("abc");
@@ -274,7 +280,7 @@ describe("TRX-7 / TRX-10 — every mutation is checked; issue returns the row th
 
   it("a row with no portal token reports portal: missing (pre-20260910), and no email is attempted", async () => {
     db.handlers["browser:transmittals"] = (ops) => has(ops, "update") ? { data: { ...draftRow, status: "issued" }, error: null } : { data: draftRow, error: null };
-    const f = vi.fn();
+    const f = withCheck(() => new Response("{}", { status: 200 }));
     vi.stubGlobal("fetch", f);
     const out = await issueTransmittal("t1", actor);
     expect(out.portal).toBe("missing");

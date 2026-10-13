@@ -1,10 +1,10 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine, Archive, ArchiveRestore, Send, GitBranch, GitCompare, ShieldCheck, Wrench, StickyNote, PenLine } from "lucide-react";
+import { Search, Pencil, History, ArrowRight, Lock, Trash2, Maximize2, Shield, Layers, LogIn, LogOut, FileText, User, Calendar, ArrowUpFromLine, Archive, ArchiveRestore, Send, GitBranch, GitCompare, ShieldCheck, Wrench, StickyNote, PenLine, RefreshCw } from "lucide-react";
 import NextLink from "next/link";
 import SecureDocViewer from "@/components/viewers/SecureDocViewer";
-import CheckoutStatusCell, { useForceReleaseAllowed } from "@/components/documents/CheckoutStatusCell";
+import CheckoutStatusCell from "@/components/documents/CheckoutStatusCell";
 import VersionHistoryPanel from "@/components/documents/VersionHistoryPanel";
 import HoldStrip from "@/components/documents/HoldStrip";
 import WatchButton from "@/components/ui/WatchButton";
@@ -43,8 +43,8 @@ import { appAlert, appPrompt } from "@/components/providers/DialogProvider";
 import { supabase } from "@/lib/supabase";
 import { openEvidencePack } from "@/lib/evidencePack";
 import { isDocumentCheckedOut } from "@/lib/documentGuards";
-import { loadCapabilityPolicy, type CapabilityPolicy } from "@/lib/capabilityPolicy";
-import { holdAffordances } from "@/lib/checkoutAffordances";
+import { loadCapabilityPolicyEntry, type CapabilityPolicy } from "@/lib/capabilityPolicy";
+import { holdAffordances, canForceReleaseCheckout, affordancePolicyFault } from "@/lib/checkoutAffordances";
 import { collectTagGroups } from "@/lib/documentTags";
 import type { DocumentRecord, DocumentVersion, LibraryCustomColumn } from "@/types/schema";
 import { AuditEntry } from "@/lib/audit";
@@ -176,17 +176,40 @@ export default function InspectorPanel({
   // holds.release) — role tokens, the additive collection AND live
   // per-person grants — exactly what the database enforces. A hardcoded
   // role list made a widened policy inert and a narrowed one a lie.
-  const canForceRelease = useForceReleaseAllowed(selectedDoc?.orgId ?? null, activeRole ?? null, activeRoles ?? null, uid ?? null);
-  const [capLoaded, setCapLoaded] = useState<{ orgId: string; policy: CapabilityPolicy } | null>(null);
+  // AUTHZ-15 (DEC-90 A26; the integrator's ruling of 2026-10-13, DEC-89): a
+  // read with no last good entry (`unreadable`) or a read that throws holds
+  // the hold controls and Force Release Lock back (never the shipped
+  // defaults, which a null policy would evaluate) and the ALERTS zone says
+  // why, with a Try again that re-reads. A `stale` answer (the last good
+  // policy, served because the refresh failed) is drawn as is, with no
+  // label. ONE read decides all three controls and the notice (P24
+  // integrator fix pass: Force Release Lock read a second policy load whose
+  // fault the notice never saw, so it could vanish with nothing on screen).
+  // Until the first read lands, the shipped defaults apply, as before.
+  const [policyTry, setPolicyTry] = useState(0);
+  const [capLoaded, setCapLoaded] = useState<{ orgId: string; policy: CapabilityPolicy | null; fault: string | null } | null>(null);
   useEffect(() => {
     let alive = true;
     const orgIdForPolicy = selectedDoc?.orgId;
     if (!orgIdForPolicy) return;
-    void loadCapabilityPolicy(orgIdForPolicy).then((p) => { if (alive) setCapLoaded({ orgId: orgIdForPolicy, policy: p }); }).catch(() => undefined);
+    void loadCapabilityPolicyEntry(orgIdForPolicy).then((e) => {
+      if (!alive) return;
+      const fault = affordancePolicyFault(e);
+      setCapLoaded(fault ? { orgId: orgIdForPolicy, policy: null, fault } : { orgId: orgIdForPolicy, policy: e.policy, fault: null });
+    }).catch((err: unknown) => {
+      if (alive) setCapLoaded({ orgId: orgIdForPolicy, policy: null, fault: (err as Error)?.message || "the capability policy could not be read" });
+    });
     return () => { alive = false; };
-  }, [selectedDoc?.orgId]);
-  const capPolicy = capLoaded && capLoaded.orgId === selectedDoc?.orgId ? capLoaded.policy : null;
-  const { canOpen: canOpenHold, canRelease: canReleaseHold } = holdAffordances(capPolicy, activeRole ?? null, activeRoles ?? null, uid ?? null);
+  }, [selectedDoc?.orgId, policyTry]);
+  const capMine = capLoaded && capLoaded.orgId === selectedDoc?.orgId ? capLoaded : null;
+  const capPolicy = capMine?.policy ?? null;
+  const capFault = capMine?.fault ?? null;
+  const { canOpen: canOpenHold, canRelease: canReleaseHold } = capFault
+    ? { canOpen: false, canRelease: false }
+    : holdAffordances(capPolicy, activeRole ?? null, activeRoles ?? null, uid ?? null);
+  const canForceRelease = capFault
+    ? false
+    : canForceReleaseCheckout(capPolicy, activeRole ?? null, activeRoles ?? null, uid ?? null);
 
   // Cheap per-selection counts: they let the ALERTS zone render only when
   // something is actually wrong, and give drawer headers honest summaries
@@ -493,6 +516,17 @@ export default function InspectorPanel({
           refreshKey={holdsRefresh}
           onChange={() => setHoldsRefresh((k) => k + 1)}
         />
+      )}
+      {capFault && uid && (
+        // AUTHZ-15: the policy behind the hold and force-release controls
+        // could not be read — they are held back, and this says why.
+        <div role="alert" data-testid="inspector-policy-fault" className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs text-amber-900 flex items-start gap-2">
+          <Lock className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <span className="flex-1"><b>Permissions could not be read</b> — placing or releasing a hold and force-releasing a checkout are not offered until they can be.</span>
+          <button onClick={() => setPolicyTry((n) => n + 1)} className="shrink-0 inline-flex items-center gap-1 font-bold hover:underline">
+            <RefreshCw className="w-3 h-3" /> Try again
+          </button>
+        </div>
       )}
       {staleUnknown && (
         // DIST-9 dw3: an unreadable distribution record is a gap — said, never

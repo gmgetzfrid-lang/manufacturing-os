@@ -9,14 +9,15 @@ import {
   Shield,
   Loader2,
   Zap,
-  Check
+  Check,
+  RefreshCw
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { logCheckoutEvent } from "@/lib/audit";
 import { isDocumentCheckedOut } from "@/lib/documentGuards";
 import { forceReleaseDocument, quickHold } from "@/lib/checkoutEpisodes";
-import { loadCapabilityPolicy, type CapabilityPolicy } from "@/lib/capabilityPolicy";
-import { canForceReleaseCheckout } from "@/lib/checkoutAffordances";
+import { loadCapabilityPolicyEntry, type CapabilityPolicy } from "@/lib/capabilityPolicy";
+import { canForceReleaseCheckout, affordancePolicyFault } from "@/lib/checkoutAffordances";
 import UserAvatar from "@/components/ui/UserAvatar";
 import type { DocumentRecord, CheckoutSession } from "@/types/schema";
 
@@ -49,25 +50,56 @@ function timeAgo(date: Date) {
 /** DCK-13: may this member force-release a checkout in this org? Reads the
  *  org's capability policy (browser-cached a minute) and evaluates it the
  *  way lib/holds.ts and the workflow route do — role tokens, additive
- *  roles[], live per-person grants. Exported so the Inspector drawer draws
- *  its "Force Release Lock" button from the same answer. */
+ *  roles[], live per-person grants. The Inspector drawer's "Force Release
+ *  Lock" evaluates the same rule (canForceReleaseCheckout) on its own single
+ *  policy read, so its button and its fault notice never disagree.
+ *
+ *  AUTHZ-15 (DEC-90 A26; the integrator's ruling of 2026-10-13, DEC-89): a
+ *  read with no last good entry (`unreadable`) or a read that throws answers
+ *  `allowed: false` with the fault's words, never the shipped defaults. A
+ *  `stale` answer (the last good policy, served because the refresh failed)
+ *  is evaluated as is, with no fault. Until the first read lands, the
+ *  shipped default applies, as before. `retryKey` re-reads when the
+ *  caller's Try again bumps it. */
+export function useForceReleasePolicy(
+  orgId: string | null,
+  role: string | null,
+  roles: string[] | null,
+  uid: string | null,
+  retryKey = 0,
+): { allowed: boolean; fault: string | null } {
+  // Keyed by org so a switch never evaluates the previous org's policy
+  // (no synchronous reset inside the effect).
+  const [loaded, setLoaded] = useState<{ orgId: string; policy: CapabilityPolicy | null; fault: string | null } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    if (!orgId) return;
+    void loadCapabilityPolicyEntry(orgId).then((e) => {
+      if (!alive) return;
+      const fault = affordancePolicyFault(e);
+      setLoaded(fault ? { orgId, policy: null, fault } : { orgId, policy: e.policy, fault: null });
+    }).catch((err: unknown) => {
+      if (alive) setLoaded({ orgId, policy: null, fault: (err as Error)?.message || "the capability policy could not be read" });
+    });
+    return () => { alive = false; };
+  }, [orgId, retryKey]);
+  const mine = loaded && loaded.orgId === orgId ? loaded : null;
+  if (mine?.fault) return { allowed: false, fault: mine.fault };
+  return { allowed: canForceReleaseCheckout(mine?.policy ?? null, role, roles, uid), fault: null };
+}
+
+/** The force-release answer alone (see useForceReleasePolicy). Since P24's
+ *  integrator fix pass the Inspector no longer calls it — it derives Force
+ *  Release Lock from its own single policy read, so a fault in a second read
+ *  can never hide the button without its notice; kept for its signature. */
 export function useForceReleaseAllowed(
   orgId: string | null,
   role: string | null,
   roles: string[] | null,
   uid: string | null,
+  retryKey = 0,
 ): boolean {
-  // Keyed by org so a switch never evaluates the previous org's policy
-  // (no synchronous reset inside the effect).
-  const [loaded, setLoaded] = useState<{ orgId: string; policy: CapabilityPolicy } | null>(null);
-  useEffect(() => {
-    let alive = true;
-    if (!orgId) return;
-    void loadCapabilityPolicy(orgId).then((p) => { if (alive) setLoaded({ orgId, policy: p }); }).catch(() => undefined);
-    return () => { alive = false; };
-  }, [orgId]);
-  const policy = loaded && loaded.orgId === orgId ? loaded.policy : null;
-  return canForceReleaseCheckout(policy, role, roles, uid);
+  return useForceReleasePolicy(orgId, role, roles, uid, retryKey).allowed;
 }
 
 // Custom Tooltip/Popover Component
@@ -274,8 +306,10 @@ const CheckoutInfoPopover = ({
   // (checkout.force_release, read by enforce_checkout_release_guard), against
   // the full role collection and any live per-person grant — never a
   // hardcoded role pair. Until the policy loads, the shipped default applies
-  // (byte-identical to the old pair for an unconfigured org).
-  const canAdmin = useForceReleaseAllowed(docRecord.orgId ?? null, userRole ?? null, userRoles ?? null, currentUserId ?? null);
+  // (byte-identical to the old pair for an unconfigured org). AUTHZ-15: a
+  // policy that cannot be read holds the button back and says why.
+  const [policyTry, setPolicyTry] = useState(0);
+  const { allowed: canAdmin, fault: policyFault } = useForceReleasePolicy(docRecord.orgId ?? null, userRole ?? null, userRoles ?? null, currentUserId ?? null, policyTry);
 
   return (
     <div 
@@ -371,6 +405,17 @@ const CheckoutInfoPopover = ({
             {releasing ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Check className="w-3.5 h-3.5 mr-1.5" />}
             {releasing ? "Releasing…" : "Release my checkout — no changes"}
           </button>
+        )}
+
+        {/* AUTHZ-15: the policy behind the admin action could not be read */}
+        {policyFault && (
+          <div role="alert" data-testid="checkout-policy-fault" className="pt-3 border-t border-[var(--color-border)] text-[11px] text-amber-800 flex items-start gap-1.5">
+            <Lock className="w-3 h-3 mt-0.5 shrink-0" />
+            <span className="flex-1"><b>Permissions could not be read</b> — force release is not offered until it can be.</span>
+            <button onClick={() => setPolicyTry((n) => n + 1)} className="shrink-0 inline-flex items-center gap-1 font-bold hover:underline">
+              <RefreshCw className="w-3 h-3" /> Try again
+            </button>
+          </div>
         )}
 
         {/* ADMIN ACTION */}

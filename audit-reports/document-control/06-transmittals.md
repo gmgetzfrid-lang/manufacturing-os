@@ -968,6 +968,17 @@ Tests: `lib/__tests__/transmittalPortalRoute.test.ts`:
 - The download route now stamps `portalStampText` (the switch P22 left to notifications N8 or the integrator). Its `TRANSMITTAL_PORTAL_DOWNLOAD` row records `stampMapped` when a character was replaced. Still with notifications N9, as P22 left them: the route's stale header comment (`:34`–`:36`). The label case of the after-the-fact notice's reason no longer arises.
 - Done-when 1's sentence "an item whose number or revision label the stamp cannot print is never armed, so a PDF checked stampable is no longer refused for good over its own label" now reads: every such label stamps, so such an item is armed and is not refused over its label. The rest of done-when 1 and its exceptions (`TRX-17`) are unchanged.
 
+**Restated at P24's integrator fix pass (2026-10-13), as `TRX-17`'s Resolution asked.** `TRX-15` stays **OPEN**, for done-when 2's device check alone (`userHeld.TRX-15`). Done-when 1's remainder, its "exceptions, named" (a) and (b) above, owned by `TRX-17`, is closed **in code** by document-control P24. Each limb goes live at its own step:
+- (a) A PDF the check could not decide now stops the issue and asks the issuer's yes, which is recorded on the item. This is live from the P24 app deploy.
+  - `lib/transmittals.ts:1031` `unstampableItems` includes `unchecked`.
+  - `lib/transmittals.ts:1297-1303`: a check that could not run throws `UnstampableItemsError` over the stand-in check (`checkNotRunItems`, `:1099`) instead of issuing.
+  - `lib/transmittals.ts:1154-1186` `armCheckedItems` writes `stampAccepted: true` on each accepted item in the issue UPDATE.
+- (b) The database requires a server-recorded verdict for the draft as issued, or a recorded yes, and arms from the server verdict alone. This is live **only once `20261199` is pasted**, after the P24 app deploys (`TRX-17`'s `Pending migration:` line).
+  - `app/api/transmittal/stamp-check/route.ts:99-118` records the verdicts on `transmittals.stamp_check`.
+  - `supabase/migrations/20261199_dc_roundF_transmittal_issue_verdict.sql:458-471` holds the refusal (`:461`), the server mark and the stamped yes.
+
+So done-when 1 reads ✓ in code. The literal first limb ("whatever its size") is still not claimed: a PDF over 64 MiB is warned at issue, not stamped. Until the paste, (b) holds in the file only (DEC-29, DEC-30). No code changed for `TRX-15` in this pass.
+
 ---
 
 <a id="trx-16"></a>
@@ -1020,6 +1031,7 @@ Arming the refusal changes `DEC-61` §5, so it lands with the user's ratificatio
 2. ✓ A test pins the check for an encrypted PDF and for one over the bound (by object length — the final review fix: a recorded size alone no longer makes a PDF `oversize`).
 
 **Scope / residual.** RESOLVED. The stricter rule — refusing at issue, or arming the portal's download-time refusal with `stampable: true` — is `TRX-15`'s: the DEC-61 §5 amendment was ratified by the integrator under the user's delegation, 2026-10-07 (DEC-90), and document-control P22 arms it. Every issue now waits on the server's check (up to 80 s, said in the composer); a large multi-PDF transmittal issues noticeably slower than before, and items past the budget are reported unchecked and never block. Files: `lib/transmittals.ts`, `lib/transmittalStampCheck.ts` (new), `app/api/transmittal/stamp-check/route.ts` (new), `app/(protected)/transmittals/page.tsx`.
+*(2026-10-13, document-control P24, recorded under `TRX-17`: "never block" is superseded. An item past the budget, reported `unchecked`, and a check that could not run now stop the issue and ask the issuer's recorded yes.)*
 *(2026-10-07, document-control P22's second review fix, recorded under `TRX-15`: the check now stamps the text the download stamps — `portalStampText`, with the item's number, the revision the issue pins, the transmittal number and the date — so a number or revision label the stamp's font cannot print is `unloadable` at issue, with the characters named, instead of `stampable`.)*
 
 ---
@@ -1029,10 +1041,11 @@ Arming the refusal changes `DEC-61` §5, so it lands with the user's ratificatio
 ## TRX-17 · A PDF can still leave the portal unmarked with no warning at issue and no recorded yes: one the issue-time check could not decide, and any issue made outside the app's issue path
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
+- **Pending migration:** `supabase/migrations/20261199_dc_roundF_transmittal_issue_verdict.sql` (DEC-30: RESOLVED is for the code half; the finding is not fully closed until this is pasted) — paste AFTER `20261133` (its first statement raises otherwise and adds nothing) and AFTER the P24 app deploys; never re-paste `20261133` after it. Until it is pasted, done-when 1 holds on the app's issue path and done-when 2 holds in the file only: a direct draft → issued UPDATE is still admitted with no check and no yes. *(Added at P24's integrator fix pass, 2026-10-13: the record first said RESOLVED with the pending paste only in its done-when prose.)*
 - **Assigned:** the integrator, to schedule as a document-control follow-up (`lib/transmittals.ts`'s issue path, `app/api/transmittal/stamp-check/route.ts`, `lib/transmittalStampCheck.ts`, and a migration re-creating `transmittals_guard` from `20261133`) — opened 2026-10-07 at document-control P22's review fix pass per `DEC-31`, at the reviewer's request (the remainder of `TRX-15` done-when 1 as amended, DEC-90 A5).
 - **Assigned:** document-control P24 TRANSMITTAL ISSUE VERDICT — by the integrator, 2026-10-07 (P22 merge; fleet plan `document-control.json`).
-- **Verification:** CONFIRMED (by reading; the client half is pinned in `lib/__tests__/dcRoundFP15TransmittalIssueWarn.test.ts`: an `unchecked` file is not warned and carries no mark, and a check that cannot run never blocks an issue)
+- **Verification:** CONFIRMED (by reading; the client half is pinned in `lib/__tests__/dcRoundFP15TransmittalIssueWarn.test.ts`: an `unchecked` file is not warned and carries no mark, and a check that cannot run never blocks an issue). *(This is the pre-fix state, reproduced on `49cd27e`. P24 rewrote those pins to the new rule: an unchecked file now warns, and a check that cannot run now stops the issue. See the Resolution.)*
 - **Blast radius:** document-control integrity (an uncontrolled copy without its marking, and no recorded yes for it)
 - **Locations:**
   - `lib/transmittals.ts` `unstampableItems`: only `oversize` / `unloadable`, so an `unchecked` PDF opens no confirm. `issueTransmittal`: a check that could not run is logged ("issuing without it") and the issue proceeds. `armCheckedItems`: an `unchecked` item carries no mark.
@@ -1055,6 +1068,67 @@ Arming the refusal changes `DEC-61` §5, so it lands with the user's ratificatio
 **Done when.**
 - A PDF the issue-time check could not decide (an `unchecked` verdict, or a check that did not run) is not issued unless the issuer said yes to it, and that yes is recorded.
 - The database refuses the draft → issued transition unless every PDF item carries a server-recorded verdict for the draft as issued, or a recorded acceptance. The browser-written mark is no longer the only source.
+
+**Resolution (2026-10-13, document-control Round F wave 3).** Package P24 TRANSMITTAL ISSUE VERDICT. Both limbs reproduced on `49cd27e` before the fix: `unstampableItems` (`lib/transmittals.ts:1026-1028` at base) returned only `oversize` / `unloadable`; `issueTransmittal` logged a check that could not run and issued (`lib/transmittals.ts:1214-1216` at base); and on a throwaway PostgreSQL 16 cluster with `20261133` live, a DocCtrl's direct `UPDATE transmittals SET status = 'issued'` issued a draft with no check, no mark and no yes (case P0 below). What landed:
+- **Limb 1, the app's issue path** (`lib/transmittals.ts`).
+  - `unstampableItems` now includes `unchecked`, so a file the check could not decide stops the issue with the same `UnstampableItemsError` as an unstampable one.
+  - A check that could not run (the route refused, errored, timed out, or answered no items) no longer issues. `checkNotRunItems` builds a stand-in check (every document on the draft, `unchecked`), bound to the draft read, and the issue stops naming every file. *(P24 integrator fix pass, 2026-10-13: the reason the check could not run is no longer copied into every file's line. It rides once on the error, `UnstampableItemsError.notRunReason` (`lib/transmittals.ts:1127`), and `describeUnstampable(checks, notRunReason)` (`lib/transmittals.ts:1043-1054`) says it once, "What happened: …", above a "Not checked:" list naming each file once. `checkNotRunItems` (`lib/transmittals.ts:1099`) now takes the items alone and writes the short detail "the check could not run". Before, a 12-file draft meeting the route's 503 read the route's whole sentence twelve times, each line opening "the check could not run: The check ran, …". Test: `lib/__tests__/dcRoundFP15TransmittalIssueWarn.test.ts`, "P24 integrator fix pass (re-review minor): …", which uses a 3-file stand-in to assert the reason appears exactly once, each file once, and the 503 sentence once on the issue path.)*
+  - `describeUnstampable` names undecided files in their own paragraph ("The issue-time check could not confirm that the recipient's portal can stamp …"). When every named file is one the portal cannot mark, the text is byte-identical to P22's.
+  - `unstampableConfirmTitle` / `unstampableDeclinedMessage` give the composer its words (`app/(protected)/transmittals/page.tsx`): "Files the check could not confirm" and "Not issued — nothing was sent. Issue again to re-run the check." when only undecided files are named; as before otherwise.
+  - The yes is recorded on each accepted item: `armCheckedItems(raw, checks, accepted)` writes `stampAccepted: true` on every accepted item that is not armed, in the issue UPDATE itself, under the `updated_at` match on the draft read. A yes already on a draft item is removed (only this issue's yes counts). It stays on `TRANSMITTAL_ISSUED` (`unstampableAccepted`) as before.
+- **Limb 2, the server's record and the database rule.**
+  - `/api/transmittal/stamp-check` (`app/api/transmittal/stamp-check/route.ts`) now records its verdicts on the draft row: `transmittals.stamp_check = { draftUpdatedAt, checkedAt, checkedBy, items: [{ documentId, versionId, verdict, detail? }] }`, with the service role and only on the draft as it read it (`.eq("status", "draft").eq("updated_at", <read>)`, row count checked). This is the route's one write.
+  - `lib/transmittalStampCheck.ts` `checkItemsStampableWithFiles` returns each verdict with the version it was decided on. `checkItemsStampable` keeps its signature and output.
+  - Before `20261199` the column is missing (`PGRST204` / `42703`, `isMissingSchemaError`): the route answers exactly as before, unrecorded (`recorded: false`), because the older trigger does not ask. Any other record failure answers 503. A draft saved during the check (no row matched) answers 409. The browser reads both as a check that could not run, so the issuer is asked for a yes on every file. *(P24 review fix: the 503 no longer shows the database's own text. It goes through `lib/userFacingError` (REL-3), the raw message is logged on the server, and the 503 says that a yes given now sends every file unarmed; see Scope / residual.)*
+  - Migration `20261199_dc_roundF_transmittal_issue_verdict.sql` (one paste, DEC-30) adds `transmittals.stamp_check` (JSONB). It re-creates `transmittals_guard()` from its NEWEST definition (`20261133`), every line kept verbatim, plus six marked insertions:
+    - a member session never writes the check;
+    - a member INSERT starts it empty;
+    - once issued the check is frozen for every caller;
+    - on draft → issued the check counts only when its `draftUpdatedAt` is the draft row's `updated_at` (the draft as issued), and a malformed one counts as none;
+    - each item's verdict counts only for the version the issue pins. An item needs `stampable` or `not_pdf`, or the issuer's yes (`stampAccepted`); otherwise the issue is refused naming the item (`check_violation`);
+    - the snapshot records `stampVerdict` (the server's, `none` when no check counted), sets the portal's arming mark `stampable: true` from the server verdict ALONE (a browser-written mark is dropped), and stamps a yes with `stampAcceptedBy` (`auth.uid()`) and `stampAcceptedAt` (`now()`).
+    - Invoker rights and `search_path = public` as before. No SECURITY DEFINER is created (DRLS-16 has nothing to pin). The trigger is unchanged. The first statement in the transaction raises when `20261133` is not live.
+  - Inventory before the transaction (counts only): issued / acknowledged transmittals (none has a server verdict; they are unchanged), their armed items, their unmarked items, the drafts, and the items on drafts. One AFTER row: drafts carrying a recorded check (expect 0).
+- **Exercised on a throwaway PostgreSQL 16** (stub schema; the real `20260717` / `20260910` / `20261133`, then `20261199` pasted twice, idempotent; cluster deleted afterwards).
+  - P0, before the paste: the direct PATCH issues unchecked (the defect).
+  - C1: after the paste the same PATCH is refused: "P-101 was not issued: no stamp check is recorded for its file as issued (Rev C), and no yes is recorded …".
+  - C2, regression: a recorded check (stampable + not_pdf) issues. The server's mark lands on P-101 and a forged browser mark on the non-PDF is dropped.
+  - C3 / C4: an `unloadable` / `unchecked` verdict is refused without the yes ("the stamp check answered unloadable …") and issued with it, with `stampAcceptedBy` = the issuer.
+  - C5 / C6 / C9: a check recorded before the draft's last save, one naming another version, and a malformed one each count as none (refused; issued once every file is accepted, `stampVerdict: none`).
+  - C7: a member's write of the check is refused, and a member INSERT stores it empty.
+  - C8: an issued row's check cannot move, even by the service role.
+  - C11: an Engineer is refused by TRX-1 first.
+  - C10 / C12 / C13, regression: revoke, receipt, void, a draft save, a draft delete and the DEC-45 restore arm behave as before.
+  - The inventory read 1 / 1 / 0 / 1 / 2 on seeded rows.
+  - On a database without `20261133` the file raises "Apply 20261133 … first" and adds nothing.
+- **Tests.**
+  - `lib/__tests__/dcRoundFTransmittalIssueVerdict.test.ts` (new): the newest-definition scan; lineDiff; cutting the six insertions gives the `20261133` body byte for byte; the rule's lines; the DEC-30 shape; no SECURITY DEFINER; the deploy order.
+  - `lib/__tests__/dcRoundFP15TransmittalIssueWarn.test.ts`:
+    - an unchecked file stops the issue, and Issue anyway records the yes with the stampable item still armed;
+    - a check that cannot run (500 / 403 / no items / network) stops it naming every file, and Issue anyway records the yes on each under the `updated_at` match;
+    - the message and title texts, and `checkNotRunItems`;
+    - `armCheckedItems`' accepted rule;
+    - **regression:** every PDF stampable sends exactly P22's UPDATE, and "Issue anyway" on an unloadable file still arms the stampable one and records `unstampableAccepted`.
+  - `lib/__tests__/dcRoundFP15TransmittalStampCheck.test.ts`:
+    - the record's payload and filters, including an undecided file's null version;
+    - missing column → 200 unrecorded;
+    - another error → 503, worded through `userFacingError` with the raw text logged and never shown (P24 review fix);
+    - no row → 409;
+    - no save time → 503 with nothing written;
+    - a refused caller records nothing.
+  - Tests that pinned the old pass-through are rewritten, each saying so. That covers P15's "a check that cannot run never blocks an issue", P22's "proceeds status / time only", "accepted re-issue writes no items", and the unchecked `unstampableItems` pins. `dcRoundFTransmittals.test.ts`'s three issue tests now answer the check (they relied on the check failing). `dcRoundFTransmittalMigrations.test.ts`'s definer list now ends with `20261199`.
+
+**Done-when.**
+1. ✓ (in code, on the app's issue path). A PDF the check could not decide (`unchecked`, or a check that did not run, including a check whose record could not be written) is not issued unless the issuer says yes to it. The yes is recorded on the item (`stampAccepted`) in the issue UPDATE, and on `TRANSMITTAL_ISSUED`. With `20261199` pasted, the database also requires that yes and stamps it with who and when.
+2. ✓ in code; **live once `20261199` is pasted, after the P24 app deploys**. The database refuses draft → issued unless every item (so every PDF item) carries a server-recorded verdict for the draft as issued (`stampable` or `not_pdf`, for the version pinned), or a recorded acceptance. The arming mark is set from the server verdict alone, so the browser-written mark is no longer a source at all.
+
+**Scope / residual.**
+- The yes is the issuer's statement, sent in the issue UPDATE. A transmit authority issuing from a script can still send a PDF out unmarked, but only by stating `stampAccepted: true` for it. The record then carries that yes with their uid and the database's time, and the portal treats such an item as §5's release (recorded unstamped, the issuer told). That is the "recorded acceptance" the done-when names; no further owner is needed.
+- When the record write fails for a reason other than a missing column, the route answers 503 without the verdicts it computed. The browser then asks the issuer's yes for every file, and the trigger arms a file from the RECORDED verdict alone. So an "Issue anyway" after a 503 sends every file unarmed, even one the check had just found stampable: if the portal later cannot stamp it, it is released under §5 and not refused. Returning the verdicts with the 503 would not change this, because the trigger never arms without a recorded verdict. The 503 tells the issuer to issue again to re-run the check before saying yes. *(Stated at P24's review fix.)* This is a degradation during a database fault, not a widening: every such file carries the issuer's recorded yes.
+- Transmittals issued before the paste carry no server verdict. They keep what they were issued with (the inventory counts them), and nothing is rewritten.
+- Deploy order (stated in the file's header and in `99-fix-sequencing.md`): the P24 app first, then the paste. Pasted before the app deploys, every issue from the old register is refused with the TRX-17 sentence (fail closed) until the app deploys.
+- For the integrator, not edited here: a `lib/schemaExpectations.ts` column probe (`{ table: "transmittals", column: "stamp_check", migration: "20261199_dc_roundF_transmittal_issue_verdict.sql" }`) and the paste-order row in `MIGRATION-PASTE-ORDER.md`. No new table, so `exportCoverage` needs no decision.
+- `TRX-15` done-when 1's remainder (its "exceptions, named", owned here) is closed by this resolution in code and goes live with the paste. `TRX-15` itself stays OPEN for its device check (`userHeld.TRX-15`), which is the integrator's to restate at merge.
 
 ---
 
