@@ -57,6 +57,13 @@ export const SLA_WARN_FRACTION = 0.75;
 export const SLA_CLOCK_MIGRATION = "20261195";
 export const SLA_CLOCK_COLUMN = "outcome";
 
+/** The `metadata.action` the clock's notices carry ("Due soon" / "Overdue").
+ *  They say the request is LATE, not "act on state X": the workflow route's
+ *  supersede step retires them only when the request exits (CLOSED /
+ *  CANCELED) — an open-to-open transition leaves it as late as it was. */
+export const SLA_ACTION = { warn: "sla_warning", breach: "sla_breach" } as const;
+export const SLA_NOTICE_ACTIONS: ReadonlySet<string> = new Set<string>([SLA_ACTION.warn, SLA_ACTION.breach]);
+
 const DAY_MS = 24 * 3600 * 1000;
 const TERMINAL: readonly string[] = ["CLOSED", "CANCELED"];
 
@@ -381,7 +388,7 @@ export async function runTicketSlaScan(deps: SlaScanDeps): Promise<SlaScanReport
           title: notice.title, body: notice.body, link: `/requests/${t.id}`,
           resource: { type: "ticket", id: t.id }, actorName: "System",
           audience: { involved: recipients },
-          metadata: { action: stage === "breach" ? "sla_breach" : "sla_warning", status: t.status, sla: stage, target: new Date(target).toISOString() },
+          metadata: { action: stage === "breach" ? SLA_ACTION.breach : SLA_ACTION.warn, status: t.status, sla: stage, target: new Date(target).toISOString() },
         });
         resolved = r.recipients;
         if (resolved > 0 && r.inapp && r.inapp.sent === 0) {

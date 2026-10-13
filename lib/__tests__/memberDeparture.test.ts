@@ -136,8 +136,9 @@ describe("20261195 — EDGE-4: the departure triggers", () => {
     // a member still (or again) active departs nothing
     expect(fn).toContain("IF EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = p_org AND m.uid = p_uid AND m.status = 'active') THEN\n    RETURN 0;");
     // the notice and the audit row are best-effort, each in its OWN sub-block:
-    // a refused audit row never rolls the bell rows back
-    expect(fn).toContain("          FROM unnest(v_tell) AS x(u);\n      END IF;\n    EXCEPTION WHEN OTHERS THEN\n      RAISE WARNING 'return_departed_member_tickets: ticket % was handed back, but its notice was not written: %', v_t.id, SQLERRM;\n    END;\n    BEGIN\n      INSERT INTO audit_logs");
+    // a refused audit row never rolls the bell rows back (fix pass 3: the
+    // per-ticket notice is the requester's, at their review, only)
+    expect(fn).toContain("                jsonb_build_object('action', 'member_departed', 'status', v_status));\n      END IF;\n    EXCEPTION WHEN OTHERS THEN\n      RAISE WARNING 'return_departed_member_tickets: ticket % was handed back, but its notice was not written: %', v_t.id, SQLERRM;\n    END;\n    BEGIN\n      INSERT INTO audit_logs");
     expect(fn).toContain("EXCEPTION WHEN OTHERS THEN\n      RAISE WARNING 'return_departed_member_tickets: ticket % was handed back, but its audit row was not written: %', v_t.id, SQLERRM;\n    END;\n    v_n := v_n + 1;");
     // the hand-back itself is guarded: a refusal (a later guard that dropped
     // the departure pass) is a WARNING and a skipped ticket, never a refused removal
@@ -146,7 +147,7 @@ describe("20261195 — EDGE-4: the departure triggers", () => {
     expect(fn).toContain("      CONTINUE;\n    END;");
     expect(fn).toContain("      BEGIN\n        DELETE FROM document_intents WHERE ticket_id = v_t.id AND user_id = p_uid AND source = 'ticket';\n      EXCEPTION WHEN OTHERS THEN");
     // nothing in the function writes outside a handler except the mark and the read
-    expect(fn.match(/EXCEPTION WHEN OTHERS THEN/g)).toHaveLength(4);
+    expect(fn.match(/EXCEPTION WHEN OTHERS THEN/g)).toHaveLength(5);
     // fix pass 2: never a WAIT that the API's statement timeout could cancel —
     // a row another write holds is skipped, one call is bounded, and what it
     // leaves is counted in a WARNING (never silent, never a refusal)
@@ -213,13 +214,13 @@ describe("20261195 — DEC-30 one-paste shape", () => {
     expect(selects.length).toBe(7);
     expect(inv.match(/COUNT\(\*\)::text/g)).toHaveLength(7);
   });
-  it("the final SELECT carries 11 probes — and none that cannot fail (fix pass 2: the transaction-local departure mark read after COMMIT is gone; the function's own text is checked instead)", () => {
+  it("the final SELECT carries 13 probes — and none that cannot fail (fix pass 2: the transaction-local departure mark read after COMMIT is gone; the function's own text is checked instead)", () => {
     const commit = M.indexOf("\nCOMMIT;\n");
     const tail = stripComments(M.slice(commit));
-    expect(tail.match(/\n\s*NULL(::text AS n)?\n/g)).toHaveLength(11);
+    expect(tail.match(/\n\s*NULL(::text AS n)?\n/g)).toHaveLength(13);
     expect(tail).not.toContain("COALESCE(current_setting('app.ticket_departure', true), '') = ''");
     expect(tail).toContain("prosrc LIKE '%PERFORM set_config(''app.ticket_departure'', p_uid::text, true);%END LOOP;%PERFORM set_config(''app.ticket_departure'', '''', true);%'");
-    expect(M).toContain("-- Probes: ok = true × 11.");
+    expect(M).toContain("-- Probes: ok = true × 13.");
   });
   it("the stragglers move with a history line and a bell row, and a probe checks none is left", () => {
     const moved = between(M, "-- (b) SM-6 / ROUTE-1", "END\n$$;");
@@ -245,15 +246,17 @@ describe("20261195 — DEC-30 one-paste shape", () => {
     const marker = M.indexOf("CREATE TEMP TABLE df_round_g_195_clock AS");
     expect(marker).toBeGreaterThan(M.indexOf("RAISE EXCEPTION '20261195 needs 20261166"));
     expect(marker).toBeLessThan(M.indexOf("\nBEGIN;\n"));
-    expect(M).toContain("SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns\n                    WHERE table_schema = 'public' AND table_name = 'tickets' AND column_name = 'outcome') AS first_paste;");
+    expect(M).toContain("SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns\n                    WHERE table_schema = 'public' AND table_name = 'tickets' AND column_name = 'outcome') AS first_paste,");
     const clock = between(M, "-- ── 5. GAP-106 / EDGE-7: the SLA clock starts at this paste", "END\n$$;");
     expect(clock.indexOf("\nCOMMIT;")).toBe(-1);
     expect(M.indexOf("-- ── 5. GAP-106 / EDGE-7")).toBeLessThan(M.indexOf("\nCOMMIT;\n"));
     expect(clock).toContain("IF NOT COALESCE((SELECT c.first_paste FROM df_round_g_195_clock c LIMIT 1), false) THEN\n    RETURN;");
     expect(clock).toContain("SET sla_breached_at      = now(),\n           sla_breach_warned_at = COALESCE(t.sla_breach_warned_at, now())");
     // the same "past its target" as lib/ticketSla.ts: its own target, else its org's sla_defaults window
-    expect(clock).toContain("t.created_at + make_interval(days => d.default_days) < now()");
-    expect(clock.match(/t\.target_completion_at < now\(\)/g)).toHaveLength(2);
+    // …judged against ONE instant captured before the transaction (fix pass 3)
+    expect(clock).toContain("t.created_at + make_interval(days => d.default_days) < v_at");
+    expect(clock.match(/t\.target_completion_at < v_at/g)).toHaveLength(2);
+    expect(clock).not.toMatch(/< now\(\)/);
     // nothing per ticket: no history line, no per-ticket bell row — one row per queue member per workspace
     expect(clock).not.toContain("history");
     expect(clock).toContain("'/requests', NULL, NULL, 'System',");
@@ -267,5 +270,130 @@ describe("20261195 — DEC-30 one-paste shape", () => {
     expect(M).toContain("DEPLOY THE DF-P3 APP FIRST, THEN\n-- PASTE THIS.");
     expect(M).toContain("admin-and-org P8 re-creates");
     expect(M).toContain("never re-paste 20261166 after this");
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Fix pass 3 (the third adversarial review).
+describe("20261195 fix pass 3 — the departure's notices are bounded: one summary per queue owner per call", () => {
+  const fn = between(M, "CREATE OR REPLACE FUNCTION return_departed_member_tickets(", "\n$$;");
+  const loop = between(fn, "  LOOP\n    v_drafter  :=", "  END LOOP;");
+  const after = fn.slice(fn.indexOf("  END LOOP;"));
+  it("inside the loop, the only bell row is the requester's (a request back at their review) — never one per ticket per pool member", () => {
+    expect(loop.match(/INSERT INTO notifications/g)).toHaveLength(1);
+    expect(loop).not.toContain("FROM unnest(v_tell) AS x(u);");
+    expect(loop).toContain("IF v_status = 'PENDING_REVIEW' AND v_engineer\n         AND v_t.requester_id IS NOT NULL AND v_t.requester_id IS DISTINCT FROM p_uid THEN");
+    expect(loop).toContain("VALUES (p_org, v_t.requester_id, 'ticket_status',");
+    // each ticket still gets its history line, its unread markers and its audit row
+    expect(loop).toContain("'action', v_action, 'user', 'system', 'role', 'System',");
+    expect(loop).toContain("unread_by                    = ARRAY(SELECT DISTINCT u FROM unnest(COALESCE(t.unread_by, '{}'::uuid[]) || v_tell) AS x(u)");
+    expect(loop).toContain("VALUES ('TICKET_RETURNED_ON_DEPARTURE'");
+  });
+  it("after the loop, ONE summary row per queue owner — counted by kind, linked to /requests, in its own sub-block", () => {
+    expect(after.match(/INSERT INTO notifications/g)).toHaveLength(1);
+    expect(after).toContain("  IF v_n > 0 THEN");
+    expect(after).toContain("        FROM unnest(v_pool) AS x(u)\n       WHERE u IS NOT NULL AND u IS DISTINCT FROM p_uid;");
+    expect(after).toContain("v_who || ' left · ' || v_n || ' request(s) handed back',");
+    expect(after).toContain("v_summary, '/requests', NULL, NULL, 'System',");
+    expect(after).toContain("jsonb_build_object('action', 'member_departed', 'count', v_n, 'queue', v_queue_n,");
+    expect(after).toContain("    EXCEPTION WHEN OTHERS THEN\n      RAISE WARNING 'return_departed_member_tickets: % ticket(s) were handed back, but the queue''s summary notice was not written: %', v_n, SQLERRM;");
+    // the counters move only after a hand-back landed
+    expect(loop.indexOf("v_queue_n := v_queue_n + 1;")).toBeGreaterThan(loop.indexOf("      CONTINUE;\n    END;"));
+  });
+  it("model: a 200-ticket hand-back writes at most |pool| + 200 rows (requesters only), never 200 × |pool| — below every 20261160 per-actor cap for a pool of 16", () => {
+    const pool = 16, tickets = 200;
+    const worst = pool + tickets; // a summary per pool member + one requester row per ticket (all at PENDING_FINAL_APPROVAL)
+    expect(worst).toBeLessThan(600);  // per actor per recipient per minute
+    expect(worst).toBeLessThan(3000); // per actor across recipients per minute
+    expect(tickets * pool).toBeGreaterThan(3000); // what the per-ticket form wrote
+  });
+  it("the WARNING for what a call leaves points at the cron, not at a hand re-paste", () => {
+    expect(fn).toContain("— the maintenance cron (step 5b) hands them back on its next run'");
+    expect(M).not.toContain("a re-paste of 20261195 hands them back");
+  });
+});
+
+describe("20261195 fix pass 3 — EDGE-4's recurring backstop: departed_member_ticket_holders, read by the maintenance cron", () => {
+  const holders = between(M, "CREATE OR REPLACE FUNCTION departed_member_ticket_holders(p_limit integer)", "\n$$;");
+  it("lists exactly the pairs (4)(a) moves: open tickets whose drafter, or whose engineer at PENDING_ENG_TEAM / PENDING_FINAL_APPROVAL, is not an active member of the ticket's org", () => {
+    expect(holders).toContain("RETURNS TABLE (org_id uuid, uid uuid, label text, held integer)\nLANGUAGE sql STABLE SET search_path = public AS $$");
+    expect(holders).toContain("WHERE t.status NOT IN ('CLOSED', 'CANCELED') AND t.archived_at IS NULL AND t.assigned_drafter_id IS NOT NULL");
+    expect(holders).toContain("WHERE t.status IN ('PENDING_ENG_TEAM', 'PENDING_FINAL_APPROVAL') AND t.archived_at IS NULL");
+    expect(holders).toContain("WHERE NOT EXISTS (SELECT 1 FROM org_members m WHERE m.org_id = s.org_id AND m.uid = s.uid AND m.status = 'active')");
+    expect(holders).toContain("LIMIT p_limit");
+    expect(stripComments(holders)).not.toMatch(/\b(UPDATE|INSERT|DELETE)\b/);
+    // (4)(a) reads the same list (one predicate, not two)
+    expect(between(M, "-- (a) open tickets already held by a uid", "END\n$$;")).toContain("SELECT h.org_id, h.uid, h.label FROM departed_member_ticket_holders(NULL) AS h");
+  });
+  it("DRLS-16: service role only", () => {
+    expect(M).toContain("REVOKE ALL ON FUNCTION departed_member_ticket_holders(integer) FROM PUBLIC, anon, authenticated;");
+    expect(M).toContain("GRANT EXECUTE ON FUNCTION departed_member_ticket_holders(integer) TO service_role;");
+    expect(M).toContain("SELECT 'EDGE-4: departed_member_ticket_holders (the maintenance cron''s backstop list) exists");
+  });
+  it("the cron reads it and hands each pair back through the same function, before the SLA scan", () => {
+    const lib = readFileSync(join(process.cwd(), "lib", "ticketDepartureBackstop.ts"), "utf8");
+    expect(lib).toContain('export const DEPARTURE_HOLDERS_RPC = "departed_member_ticket_holders";');
+    expect(lib).toContain('export const DEPARTURE_RETURN_RPC = "return_departed_member_tickets";');
+    expect(lib).toContain("export const DEPARTURE_CALL_BOUND = 200;");
+    expect(fn200()).toContain("  v_max      integer := 200;");
+    const cron = readFileSync(join(process.cwd(), "app", "api", "cron", "maintenance", "route.ts"), "utf8");
+    expect(cron.indexOf("runDepartureBackstop({")).toBeGreaterThan(0);
+    expect(cron.indexOf("runDepartureBackstop({")).toBeLessThan(cron.indexOf("runTicketSlaScan({"));
+  });
+  const fn200 = () => between(M, "CREATE OR REPLACE FUNCTION return_departed_member_tickets(", "\n$$;");
+});
+
+describe("20261195 fix pass 3 — ticket_insert_integrity re-created from its NEWEST earlier body (found by scanning)", () => {
+  const HEAD = "CREATE OR REPLACE FUNCTION ticket_insert_integrity()";
+  const definers = files.filter((f) => stripComments(mig(f)).includes(HEAD));
+  const prev = definers[definers.indexOf(FILE) - 1];
+  const live = between(mig(prev), HEAD, "\n$$;");
+  const next = between(M, HEAD, "\n$$;");
+  it("the base is the newest earlier definition (20261038 today — the scan decides)", () => {
+    expect(definers).toContain(FILE);
+    expect(prev < FILE).toBe(true);
+    expect(prev >= "20261038_rp_phase4_ticket_workflow_rails.sql").toBe(true);
+  });
+  it("lineDiff: nothing of the base is removed; the added lines are exactly the three stamps cleared", () => {
+    const { onlyInA, onlyInB } = lineDiff(live, next);
+    expect(onlyInA).toEqual([]);
+    expect(code(onlyInB)).toEqual([
+      "  NEW.sla_breached_at := NULL;",
+      "  NEW.sla_breach_warned_at := NULL;",
+      "  NEW.outcome := NULL;",
+    ]);
+  });
+  it("the body minus the insertion IS the base, byte for byte, and the insertion sits with the other born-empty columns", () => {
+    const start = next.indexOf("  -- DF-P3 (drafting-flow GAP-106 / LEAK-9)");
+    const end = next.indexOf("  NEW.outcome := NULL;\n") + "  NEW.outcome := NULL;\n".length;
+    expect(start).toBeGreaterThan(0);
+    expect(next.slice(0, start).endsWith("  NEW.archive_id := NULL;\n")).toBe(true);
+    expect(next.slice(0, start) + next.slice(end)).toBe(live);
+  });
+  it("definer, search_path pinned, the trigger restated, DRLS-16 revoke; the columns exist before it (§0)", () => {
+    expect(next).toContain("RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$");
+    expect(M).toContain("CREATE TRIGGER trg_ticket_insert_integrity\n  BEFORE INSERT ON tickets\n  FOR EACH ROW EXECUTE FUNCTION ticket_insert_integrity();");
+    expect(M).toContain("REVOKE ALL ON FUNCTION ticket_insert_integrity() FROM PUBLIC, anon, authenticated, service_role;");
+    expect(M.indexOf("ADD COLUMN IF NOT EXISTS outcome TEXT")).toBeLessThan(M.indexOf(HEAD));
+    expect(M).toContain("SELECT 'ticket_insert_integrity clears sla_breached_at, sla_breach_warned_at and outcome on a client insert");
+  });
+  it("every re-creation from 20261195 on keeps the three (found by scanning) — without them a client insert could keep a request off the SLA clock", () => {
+    for (const f of definers.filter((x) => x >= FILE)) {
+      const body = between(mig(f), HEAD, "\n$$;");
+      expect(body, f).toContain("  NEW.sla_breached_at := NULL;\n  NEW.sla_breach_warned_at := NULL;\n  NEW.outcome := NULL;\n");
+    }
+  });
+});
+
+describe("20261195 fix pass 3 — GAP-106: the stamp and the probe judge 'past its target' against ONE captured instant", () => {
+  it("clock_at is clock_timestamp() captured in the TEMP table before BEGIN; §5 reads it; the probe reads it; no 'now() - 1 minute' slack is left", () => {
+    expect(M).toContain("WHERE table_schema = 'public' AND table_name = 'tickets' AND column_name = 'outcome') AS first_paste,\n       clock_timestamp() AS clock_at;");
+    expect(M.indexOf("clock_timestamp() AS clock_at")).toBeLessThan(M.indexOf("\nBEGIN;\n"));
+    const clock = between(M, "-- ── 5. GAP-106 / EDGE-7: the SLA clock starts at this paste", "END\n$$;");
+    expect(clock).toContain("SELECT c.clock_at INTO v_at FROM df_round_g_195_clock c LIMIT 1;");
+    const probe = between(M, "SELECT 'GAP-106: the SLA clock started at the first paste", "       NULL\n");
+    expect(probe).toContain("FROM tickets t, df_round_g_195_clock c");
+    expect(probe.match(/< c\.clock_at/g)).toHaveLength(2);
+    expect(stripComments(M)).not.toContain("interval '1 minute'");
   });
 });

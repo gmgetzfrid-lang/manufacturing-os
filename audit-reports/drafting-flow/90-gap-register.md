@@ -546,6 +546,7 @@ creation.
 **Related findings:** `FRIC-1`, `LEAK-1`, `LEAK-2`, `LIFE-9`.
 
 *Landed 2026-10-13 (drafting-flow Round G, DF-P3): acceptance 1 and 3 — `lib/ticketSla.ts` + step 5b of the maintenance cron warn the owner of the current status at 75 % of the window and escalate a breach to them, the assignment queue and the requester, once each, through `emit()` (bell + email). Acceptance 2 holds in that form (the breach reaches the queue that can reassign). Acceptance 4 (a collision ticket gets a due date) → DF-P2's create route. The clock starts at the first paste of `20261195`, which records the backlog already past its target without a notice each (fix pass 2). See [`DEC-44 (DF-P3)`](../DECISIONS.md#dec-44-df-p3), `EDGE-7`, `ROUTE-9`.*
+*Amended 2026-10-13 (DF-P3 fix pass 3): the workflow route no longer retires the clock's notices on a transition that leaves the request open (the bell's client-side reconcile still does on a status change — DF-P9, on `EDGE-7`), and a client-created ticket is born with no SLA stamp (`ticket_insert_integrity`, `20261195` §2b), so no insert keeps a request off the clock. See `EDGE-7`.*
 
 ---
 
@@ -595,6 +596,7 @@ the flow.
 **Related findings:** `LEAK-9`, `WF-17`.
 
 *Landed 2026-10-13 (drafting-flow Round G, DF-P3): acceptance 2 and 3 — `tickets.outcome` (`20261195`, pending paste) and "How Requests Ended" on `/admin/analytics`. Acceptance 1 holds at the route; the request page's picker is DF-P9's (until then a cancel without a category records none — never a guessed `withdrawn` — so the leak rate counts only outcomes someone named). The list is the ratified five, in code and a CHECK; org-configurable later. See [`DEC-44 (DF-P3)`](../DECISIONS.md#dec-44-df-p3), `LEAK-9`.*
+*Amended 2026-10-13 (DF-P3 fix pass 3): acceptance 2 is an instrument, not yet a number — until DF-P9's picker ships, a UI cancel names no category, so wherever no cancel named one the block shows the leak rate as "—" ("not measured yet: N cancels named no category") rather than a 0 % made of closes; once some cancels carry a category the rate is shown with the uncategorized ones counted beside it. See `LEAK-9` done-when 2.*
 
 ---
 

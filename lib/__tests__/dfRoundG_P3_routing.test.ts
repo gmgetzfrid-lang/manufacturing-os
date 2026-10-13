@@ -298,6 +298,43 @@ describe("ROUTE-6 — followers hear every transition; the queue's alerts retire
       warn.mockRestore();
     }
   });
+  // Fix pass 3: the SLA clock's "Overdue" / "Due soon" rows (lib/ticketSla.ts,
+  // metadata.action sla_breach / sla_warning) say "this request is late", not
+  // "act on state X": a transition that leaves the request open leaves it as
+  // late as it was, so only an exit (CLOSED / CANCELED) retires them.
+  const slaRows = () => [
+    { id: "n-wf", org_id: "o1", resource_id: "t1", user_id: "sup-1", read_at: null, metadata: { action: "assign", status: "DRAFTING" } },
+    { id: "n-breach", org_id: "o1", resource_id: "t1", user_id: "sup-1", read_at: null, metadata: { action: "sla_breach", sla: "breach", status: "DRAFTING" } },
+    { id: "n-warn", org_id: "o1", resource_id: "t1", user_id: "req-1", read_at: null, metadata: { action: "sla_warning", sla: "warn", status: "DRAFTING" } },
+  ];
+  const supersededActions = () => updateOf("notifications").map((u) => (u.metadata as Record<string, unknown>).action).sort();
+  it("an open-to-open transition (save_progress, reassign_drafter) on an overdue request retires the workflow alerts but KEEPS the SLA 'Overdue' / 'Due soon' rows", async () => {
+    for (const [actor, body] of [["d-1", { actionType: "save_progress" }], ["a-1", { actionType: "reassign_drafter", comment: "leave", assignment: { id: "d-2", name: "x" } }]] as const) {
+      state.calls = [];
+      state.user = { id: actor };
+      state.rows.org_members = ORG;
+      state.rows.tickets = [ticketRow({ status: "DRAFTING", sla_breached_at: LM })];
+      state.rows.notifications = slaRows();
+      const res = await post({ ticketId: "t1", ...body });
+      expect(res.status, body.actionType).toBe(200);
+      expect(supersededActions(), body.actionType).toEqual(["assign"]);
+    }
+  });
+  it("an exit (close / cancel) retires the SLA rows too — the request is no longer late", async () => {
+    for (const [status, actor, body] of [
+      ["FINAL_DRAFT", "req-1", { actionType: "close_ticket" }],
+      ["DRAFTING", "req-1", { actionType: "cancel_request", comment: "not needed" }],
+    ] as const) {
+      state.calls = [];
+      state.user = { id: actor };
+      state.rows.org_members = ORG;
+      state.rows.tickets = [ticketRow({ status, sla_breached_at: LM })];
+      state.rows.notifications = slaRows();
+      const res = await post({ ticketId: "t1", ...body });
+      expect(res.status, body.actionType).toBe(200);
+      expect(supersededActions(), body.actionType).toEqual(["assign", "sla_breach", "sla_warning"]);
+    }
+  });
   it("thread activity with nobody to tell does nothing (no supersede — an attachment does not retire workflow alerts)", async () => {
     state.user = { id: "req-1" };
     state.rows.org_members = ORG;
@@ -415,8 +452,8 @@ describe("LEAK-9 / GAP-107 — how a request ended is a typed fact", () => {
     expect(s.byOutcome).toMatchObject({ completed: 1, withdrawn: 1, handled_out_of_band: 1, duplicate: 1, unrecorded: 1 });
     expect(s.leakRate).toBe(0.5);
     expect(s.byType).toEqual([
-      { requestType: "MOC", ended: 3, leaked: 1, leakRate: 0.5 },
-      { requestType: "ISO", ended: 2, leaked: 1, leakRate: 0.5 },
+      { requestType: "MOC", ended: 3, leaked: 1, leakRate: 0.5, notMeasured: false, uncategorizedCancels: 0 },
+      { requestType: "ISO", ended: 2, leaked: 1, leakRate: 0.5, notMeasured: false, uncategorizedCancels: 0 },
     ]);
     expect(summarizeOutcomes([]).leakRate).toBeNull();
   });
@@ -424,11 +461,14 @@ describe("LEAK-9 / GAP-107 — how a request ended is a typed fact", () => {
     const p = src("app/(protected)/admin/analytics/page.tsx");
     expect(p).toContain("summarizeOutcomes(tickets.map((t) => ({ status: t.status, outcome: t.outcome ?? null, requestType: t.requestType })))");
     expect(p).toContain("outcome: r.outcome ?? null,");
-    expect(p).toContain('How Requests Ended');
+    // fix pass 3: the block is components/requests/RequestOutcomes.tsx (rendered in dfRoundG_P3_outcomesRender.test.ts)
+    expect(p).toContain("<RequestOutcomes summary={outcomes} />");
+    const block = src("components/requests/RequestOutcomes.tsx");
+    expect(block).toContain('How Requests Ended');
     // it is all time, and says so (the range control belongs to the volume chart), and names the row cap
-    expect(p).toContain('(all time — not the Request Volume range)');
-    expect(p).toContain('the page loads at most the server&rsquo;s row limit');
-    expect(p).toContain('cancels that named no category; none of them is in the leak rate');
+    expect(block).toContain('(all time — not the Request Volume range)');
+    expect(block).toContain('the page loads at most the server&rsquo;s row limit');
+    expect(block).toContain('cancels that named no category; none of them is in the leak rate');
     expect(src("app/api/admin/analytics/route.ts")).toContain('asCaller.from("tickets").select("*").eq("org_id", orgId)');
   });
 });

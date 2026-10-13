@@ -96,11 +96,30 @@ export interface OutcomeSummary {
   /** Count per outcome, plus `unrecorded` (ended before 20261195, a force
    *  close that named none, or a cancel that named no category). */
   byOutcome: Record<TicketOutcome | "unrecorded", number>;
+  /** Cancels that named no category (the leak exit, with nothing recorded):
+   *  every cancel from the request page until DF-P9 ships the picker, and
+   *  every cancel that ended before 20261195. */
+  uncategorizedCancels: number;
   /** (withdrawn + handled_out_of_band) / ended with a recorded outcome — the
-   *  leak rate; null when nothing ended with an outcome yet. */
+   *  leak rate; null when nothing ended with an outcome yet, or when it is
+   *  NOT MEASURED (`notMeasured`). */
   leakRate: number | null;
+  /** Fix pass 3 (DEC-29): true when some cancels named no category and none
+   *  named one. Every recorded row is then a close (mostly "completed"), so a
+   *  rate over them would read 0 % by construction — the opposite of what
+   *  the instrument exists to show. The rate is withheld, never shown as 0. */
+  notMeasured: boolean;
   /** The same, per request type (the queue a request entered by). */
-  byType: Array<{ requestType: string; ended: number; leaked: number; leakRate: number | null }>;
+  byType: Array<{ requestType: string; ended: number; leaked: number; leakRate: number | null; notMeasured: boolean; uncategorizedCancels: number }>;
+}
+
+interface Tally { ended: number; recorded: number; leaked: number; cancelsNamed: number; cancelsUnnamed: number }
+
+/** The rate over the recorded rows — withheld when only uncategorized cancels
+ *  could have carried a leak (fix pass 3). */
+function rateOf(t: Tally): { leakRate: number | null; notMeasured: boolean } {
+  const notMeasured = t.cancelsUnnamed > 0 && t.cancelsNamed === 0;
+  return { notMeasured, leakRate: !notMeasured && t.recorded > 0 ? t.leaked / t.recorded : null };
 }
 
 /** GAP-107 acceptance 2: a queue's leak rate is a number someone can look at. */
@@ -108,32 +127,34 @@ export function summarizeOutcomes(rows: readonly OutcomeRow[]): OutcomeSummary {
   const byOutcome: OutcomeSummary["byOutcome"] = {
     completed: 0, withdrawn: 0, duplicate: 0, handled_out_of_band: 0, rejected: 0, unrecorded: 0,
   };
-  const types = new Map<string, { ended: number; recorded: number; leaked: number }>();
-  let ended = 0;
-  let recorded = 0;
-  let leaked = 0;
+  const blank = (): Tally => ({ ended: 0, recorded: 0, leaked: 0, cancelsNamed: 0, cancelsUnnamed: 0 });
+  const types = new Map<string, Tally>();
+  const all = blank();
   for (const r of rows) {
     if (r.status !== "CLOSED" && r.status !== "CANCELED") continue;
-    ended += 1;
     const type = (r.requestType ?? "").trim() || "(none)";
-    const t = types.get(type) ?? { ended: 0, recorded: 0, leaked: 0 };
-    t.ended += 1;
-    if (isTicketOutcome(r.outcome)) {
-      byOutcome[r.outcome] += 1;
-      recorded += 1;
-      t.recorded += 1;
-      if (LEAK_OUTCOMES.includes(r.outcome)) { leaked += 1; t.leaked += 1; }
-    } else {
-      byOutcome.unrecorded += 1;
+    const t = types.get(type) ?? blank();
+    const named = isTicketOutcome(r.outcome);
+    for (const x of [all, t]) {
+      x.ended += 1;
+      if (named) {
+        x.recorded += 1;
+        if (LEAK_OUTCOMES.includes(r.outcome as TicketOutcome)) x.leaked += 1;
+      }
+      if (r.status === "CANCELED") {
+        if (named) x.cancelsNamed += 1; else x.cancelsUnnamed += 1;
+      }
     }
+    if (named) byOutcome[r.outcome as TicketOutcome] += 1; else byOutcome.unrecorded += 1;
     types.set(type, t);
   }
   return {
-    ended,
+    ended: all.ended,
     byOutcome,
-    leakRate: recorded > 0 ? leaked / recorded : null,
+    uncategorizedCancels: all.cancelsUnnamed,
+    ...rateOf(all),
     byType: Array.from(types.entries())
-      .map(([requestType, t]) => ({ requestType, ended: t.ended, leaked: t.leaked, leakRate: t.recorded > 0 ? t.leaked / t.recorded : null }))
+      .map(([requestType, t]) => ({ requestType, ended: t.ended, leaked: t.leaked, ...rateOf(t), uncategorizedCancels: t.cancelsUnnamed }))
       .sort((a, b) => b.ended - a.ended || a.requestType.localeCompare(b.requestType)),
   };
 }

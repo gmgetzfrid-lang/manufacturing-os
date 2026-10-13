@@ -140,7 +140,7 @@ function makeClient() {
   };
   return {
     from,
-    rpc: async (fn: string) => (Object.hasOwn(db.rpcs, fn)
+    rpc: async (fn: string, args?: unknown) => (db.calls.push({ table: "rpc", op: fn, args: [args] }), Object.hasOwn(db.rpcs, fn)
       ? { data: db.rpcs[fn], error: null }
       : { data: null, error: { code: "PGRST202", message: `Could not find the function public.${fn}` } }),
     auth: { getUser: async () => ({ data: { user: null } }) },
@@ -210,7 +210,7 @@ import { emit } from "@/lib/notify/dispatch";
 const runCron = async () => {
   const res = await cronGET(new NextRequest("http://cron.local/api/cron/maintenance", { headers: { authorization: "Bearer cron-secret" } }));
   expect(res.status).toBe(200);
-  return res.json() as Promise<Record<string, unknown> & { errors: string[]; ticketSla?: Record<string, unknown> }>;
+  return res.json() as Promise<Record<string, unknown> & { errors: string[]; ticketSla?: Record<string, unknown>; ticketDeparture?: Record<string, unknown> }>;
 };
 
 /** RUN_BUDGET_MS (maxDuration 300 s) less RUN_TAIL_MS (10 s). */
@@ -316,5 +316,49 @@ describe("GAP-106 fix pass 2 — step 5b never takes the time the steps after it
     expect(vi.mocked(emit)).toHaveBeenCalledTimes(3);
     expect(r.embedDrain).toBeDefined();
     expect(r.platformStorage).toBeDefined();
+  });
+});
+
+// Fix pass 3 (EDGE-4): what a departure left on a uid that cannot sign in
+// (row-locked, refused, past the 200 bound) is handed back by step 5b, before
+// the SLA scan, through the same function — no new cron entry.
+describe("EDGE-4 fix pass 3 — step 5b hands back what a departure left, before the SLA scan", () => {
+  it("lists the departed holders and hands each back through return_departed_member_tickets, before the SLA scan reads a ticket", async () => {
+    seedOverdue(Date.now());
+    db.tables.tickets = db.tables.tickets.slice(0, 1);
+    db.rpcs = {
+      departed_member_ticket_holders: [{ org_id: ORG, uid: "u-gone", label: "Dana", held: 2 }],
+      return_departed_member_tickets: 2,
+    };
+    const r = await runCron();
+    expect(r.ticketDeparture).toMatchObject({ installed: true, holders: 1, handedBack: 2, left: 0, truncated: false });
+    expect(r.errors.filter((e) => e.startsWith("ticket-departure"))).toEqual([]);
+    const ret = db.calls.findIndex((c) => c.table === "rpc" && c.op === "return_departed_member_tickets");
+    expect(ret).toBeGreaterThanOrEqual(0);
+    expect(db.calls[ret].args[0]).toEqual({ p_org: ORG, p_uid: "u-gone", p_label: "Dana" });
+    // before the SLA scan: its first tickets read comes after the hand-back
+    expect(db.calls.findIndex((c) => c.table === "tickets")).toBeGreaterThan(ret);
+    expect(r.ticketSla).toMatchObject({ clockStarted: true, breached: 1 });
+  });
+  it("before 20261195 (no function) it does nothing and adds no error line; the SLA scan runs as before", async () => {
+    seedOverdue(Date.now());
+    db.tables.tickets = db.tables.tickets.slice(0, 1);
+    const r = await runCron();
+    expect(r.ticketDeparture).toMatchObject({ installed: false, handedBack: 0 });
+    expect(r.errors.filter((e) => e.startsWith("ticket-departure"))).toEqual([]);
+    expect(r.ticketSla).toMatchObject({ clockStarted: true, breached: 1 });
+  });
+  it("with too little of the run left it is not run, and says so", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const start = Date.parse("2026-10-13T03:00:00.000Z");
+    vi.setSystemTime(start);
+    seedOverdue(start);
+    db.rpcs = { departed_member_ticket_holders: [{ org_id: ORG, uid: "u-gone", label: "Dana", held: 2 }], return_departed_member_tickets: 2 };
+    let jumped = false;
+    db.onExec = (table) => { if (table === "document_intents" && !jumped) { jumped = true; vi.setSystemTime(Date.now() + 170_000); } };
+    const r = await runCron();
+    expect(r.ticketDeparture).toBeUndefined();
+    expect(r.errors.some((e) => e.startsWith("ticket-departure: not run"))).toBe(true);
+    expect(db.calls.some((c) => c.table === "rpc" && c.op === "return_departed_member_tickets")).toBe(false);
   });
 });

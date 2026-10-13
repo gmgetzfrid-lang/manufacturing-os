@@ -22,6 +22,7 @@ import { heldRoles } from "@/lib/roleHeld";
 import { noteDeliverableNotInRegister, deliverableStateOf } from "@/lib/ticketHandback";
 import { resolveTicketRecipients, isRoutedStatus } from "@/lib/ticketRouting";
 import { isTicketOutcome, outcomesFor } from "@/lib/ticketOutcome";
+import { SLA_NOTICE_ACTIONS } from "@/lib/ticketSla";
 import { ticketReadScope } from "@/lib/ticketReadScope";
 
 // POST /api/tickets/workflow-action
@@ -1190,6 +1191,12 @@ async function fanOut(params: {
   //    read_at is never touched — read_at means the recipient opened it, and
   //    is the only "did they see it" signal there is. The bell's unread list
   //    leaves superseded rows out (lib/inAppNotifications.ts).
+  //    DF-P3 fix pass 3: the SLA clock's "Overdue" / "Due soon" rows
+  //    (lib/ticketSla.ts — metadata.action sla_breach / sla_warning) say "this
+  //    request is late", which an open-to-open transition (save progress, a
+  //    reassignment) does not change; only an exit (CLOSED / CANCELED) clears
+  //    it, so only an exit retires them.
+  const exits = newStatus === "CLOSED" || newStatus === "CANCELED";
   try {
     const supersededAt = new Date().toISOString();
     const { data: stale } = await supabaseAdmin.from("notifications")
@@ -1200,6 +1207,7 @@ async function fanOut(params: {
       .not("metadata->>action", "is", null)
       .is("metadata->>superseded_at", null);
     for (const row of (stale ?? []) as Array<{ id: string; metadata: Record<string, unknown> | null }>) {
+      if (!exits && SLA_NOTICE_ACTIONS.has(String(row.metadata?.action ?? ""))) continue;
       await supabaseAdmin.from("notifications")
         .update({ metadata: { ...(row.metadata ?? {}), superseded_at: supersededAt, superseded_by: action.type } })
         .eq("id", row.id)
