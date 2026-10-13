@@ -277,6 +277,17 @@ describe("PHYS-16 — source pins: no generator draws caller text past the mappe
     const bridge = src("lib/physicalBridge.ts");
     expect(bridge).not.toMatch(/fit\((?:input|asset)\./);
     expect(bridge).not.toMatch(/drawText\((?:input|asset)\./);
+    // Nor through a template literal: 6503ea7 drew the hold card's document
+    // line and reason as fit(`…${input.docLabel}…`) / fit(`Reason: ${input.reason}`).
+    // A count (`${input.docs.length}`) is a number, not caller text.
+    const rawInTemplate = /(?:fit|drawText)\([^;]*\$\{(?:input|asset)\.(?![\w.]*\.length\})/;
+    expect(bridge).not.toMatch(rawInTemplate);
+    // the pin itself catches the shapes it exists for
+    expect("page.drawText(fit(`Reason: ${input.reason}`, bold, 13, 380), { x: 32 });").toMatch(rawInTemplate);
+    expect("page.drawText(fit(`${input.docLabel}${input.docRev ? `  ·  Rev ${input.docRev}` : \"\"}`, bold, 18, 380), {\n x: 32 });").toMatch(rawInTemplate);
+    expect("p.drawText(`Tag ${asset.tag}`, { x: 1 });").toMatch(rawInTemplate);
+    expect("page.drawText(`(${input.docs.length} sheets) ${input.name}`, { x: 1 });").toMatch(rawInTemplate);
+    expect("page.drawText(`(${input.docs.length} sheets)`, { x: 1 });").not.toMatch(rawInTemplate);
     // one mapper, shared by every generator and the cover
     expect(bridge.match(/textMapper\(\)/g)?.length).toBe(5); // definition + four generators
     expect(bridge).toContain("const out = stampText(text);");

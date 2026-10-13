@@ -244,9 +244,10 @@ export async function printHoldCard(input: HoldCardInput): Promise<void> {
     page.drawText(fit(notes, regular, 10, 380), { x: 32, y: 232, size: 10, font: regular, color: INK });
   }
   page.drawText(placedBy, { x: 32, y: 208, size: 10, font: regular, color: MUTED });
-  // PHYS-16: only when a character was replaced — the card says the
-  // document line is not exactly the number on record ("Printed in plain
-  // characters: U+2010 as "-", …"); the QR verifies the hold itself.
+  // PHYS-16: only when a character was replaced — the card names every
+  // replacement on it (document line, reason, notes, placed-by line:
+  // "Printed in plain characters: U+2010 as "-", …"); the QR verifies the
+  // hold itself.
   if (note) {
     plainNoteLines(note, regular, HOLD_CARD_TEXT_WIDTH, HOLD_NOTE_LINES).forEach((line, i) => {
       page.drawText(line, { x: 32, y: 194 - i * 9, size: 8, font: regular, color: AMBER });
@@ -324,8 +325,8 @@ export async function printTicketTraveler(input: TravelerInput): Promise<void> {
   page.drawText("Paper goes stale — the QR doesn't. Anyone can scan it, no", { x: 52, y: 500, size: 10, font: regular, color: MUTED });
   page.drawText("login: it answers whether this ticket's deliverable is still", { x: 52, y: 487, size: 10, font: regular, color: MUTED });
   page.drawText("the latest issued revision.", { x: 52, y: 474, size: 10, font: regular, color: MUTED });
-  // PHYS-16: only when a character was replaced — the traveler says its
-  // number or title is not exactly the one on record.
+  // PHYS-16: only when a character was replaced — the traveler names every
+  // replacement on the page (its number, its title and the row values).
   if (note) {
     plainNoteLines(note, regular, 520, TRAVELER_NOTE_LINES).forEach((line, i) => {
       page.drawText(line, { x: 52, y: 456 - i * 9, size: 8, font: regular, color: AMBER });
