@@ -118,6 +118,7 @@ export interface ShiftRow {
   path: string[];
   /** Immediate parent (the equipment / step group), if any. */
   parentName: string | null;
+  parentId: string | null;
   start: number;
   finish: number;
   percent: number;
@@ -220,6 +221,7 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
       leaf: m,
       path: chain.slice().reverse().map((a) => a.name),
       parentName: chain[0]?.name ?? null,
+      parentId: chain[0]?.id ?? null,
       start: s, finish: f, percent,
       status: m.status,
       carryOver: false,
