@@ -728,7 +728,8 @@ export async function forceReleaseDocument(input: {
     fileId: input.documentId,
     userId: input.actorUserId,
     userEmail: input.actorEmail || "unknown",
-    userRole: input.actorRole || "unknown",
+    // SESS-6 residual (document-control P23, DEC-91 §1): no role known is omitted, never "unknown" (an empty role is written NULL — lib/audit.ts logAuditAction).
+    userRole: input.actorRole ?? "",
     type: "FORCE_RELEASE",
     details: {
       reason: input.reason ?? null,

@@ -14,6 +14,17 @@
 // then passes the force, which finalize_reviewed_promote records
 // (REV_HOLD_OVERRIDDEN) in the same transaction. Anyone else is told to
 // release the hold (finalizeReasonMessage).
+//
+// projects-tab SAF-19 (document-control P23): approving a contractor's
+// submission here tells the contractor, as the project's Intake tab does
+// (SAF-9). After a publish whose promoted version is now current and came
+// through an intake link (its intake_link_id), the panel asks the same notice
+// route (/api/intake/outcome-notice through notifyIntakeOutcome — DEC-56: it
+// reads the outcome from the version, claims one send per submission and
+// emails only the link's contact, so the Intake tab's call and this one never
+// both send) and says its answer. The decision is never held up: the notice
+// is sent after the publish landed, without being awaited by it. An ordinary
+// revision asks nothing.
 
 import React, { useCallback, useEffect, useState } from "react";
 import { appAlert } from "@/components/providers/DialogProvider";
@@ -32,6 +43,21 @@ import {
 import HeldSourceNotice from "@/components/documents/lifecycle/HeldSourceNotice";
 import type { DocumentRecord, ReviewControl } from "@/types/schema";
 import { describeProjectSweep } from "@/lib/checklists";
+import { notifyIntakeOutcome } from "@/lib/intakeOutcomeNotice";
+
+/** SAF-19 (P23): the notice route's answer, in the words the Intake tab uses
+ *  for the same answers (components/projects/IntakePanel.tsx
+ *  outcomeNoticeSentence — not imported: that module is the whole Intake tab). */
+function intakeNoticeSentence(res: { sent: true } | { sent: false; reason: string }): string {
+  if (res.sent) return " The company's contact was emailed the outcome.";
+  switch (res.reason) {
+    case "already": return "";
+    case "no_contact": return " Their link carries no contact email, so they see the outcome on their portal only.";
+    case "not_configured": return " Email is not configured here, so they see the outcome on their portal only.";
+    case "in_progress": return " The email to the company's contact is already being sent.";
+    default: return ` The email to the company's contact could not be sent (${res.reason}) — they still see the outcome on their portal.`;
+  }
+}
 
 export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: {
   doc: DocumentRecord;
@@ -59,6 +85,9 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
   const [holdRefusedFor, setHoldRefusedFor] = useState<string | null>(null);
   const [holdAck, setHoldAck] = useState(false);
   const [holdReason, setHoldReason] = useState("");
+  // SAF-19 (P23): what the contractor was told after an approval here.
+  const [intakeNotice, setIntakeNotice] = useState<string | null>(null);
+  useEffect(() => { setIntakeNotice(null); }, [doc.id]);
 
   const load = useCallback(async () => {
     if (!doc.id) return;
@@ -152,9 +181,32 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
     const url = await resolveFileUrl(draftFileUrl);
     if (url) window.open(url, "_blank", "noopener");
   };
+  /** SAF-19 (P23): after an approval landed — when the version it promoted is
+   *  now current and came through a contractor's intake link — tell the
+   *  link's contact through the notice route, and say its answer. Never
+   *  awaited by the publish. */
+  const tellContractor = useCallback(async (versionId: string) => {
+    if (!doc.id) return;
+    const { data: d, error: dErr } = await supabase.from("documents").select("current_version_id").eq("id", doc.id).maybeSingle();
+    if (dErr || String(d?.current_version_id ?? "") !== versionId) return;
+    const { data: v, error: vErr } = await supabase.from("document_versions").select("intake_link_id").eq("id", versionId).maybeSingle();
+    if (vErr) {
+      setIntakeNotice("The approval went through, but whether this revision came through a contractor's intake link could not be read — if it did, its contact was not emailed (their portal shows the outcome); the project's Intake tab can tell them.");
+      return;
+    }
+    if (!v?.intake_link_id) return; // an ordinary revision: nobody outside is told
+    const shown = "The contractor's submission was approved — it is now the current revision.";
+    setIntakeNotice(shown);
+    const res = await notifyIntakeOutcome(orgId, versionId);
+    setIntakeNotice((cur) => (cur === shown ? shown + intakeNoticeSentence(res) : cur));
+  }, [doc.id, orgId]);
+
   const publish = async (forceHold = false) => {
     if (!doc.id) return;
     setBusy(true);
+    // SAF-19 (P23): the version this approval promotes (the one on screen).
+    const promoting = pendingVersionId;
+    setIntakeNotice(null);
     try {
       // The call without a force is exactly the call it always was.
       const res = forceHold
@@ -171,6 +223,9 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
         }
       } else {
         setHoldRefusedFor(null); setHoldAck(false); setHoldReason("");
+        // SAF-19 (P23): the decision landed — the contractor is told, without
+        // holding up the refresh.
+        if (promoting) void tellContractor(promoting);
       }
       // UX-16: the publish swept the open checklists of the projects citing
       // this document; a sweep that could not finish is said, never silent.
@@ -186,17 +241,26 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
     return <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-600"><Clock className="w-3 h-3" /> Pending</span>;
   };
 
+  // SAF-19 (P23): what the contractor was told — shown above whatever the
+  // panel shows next (after the publish there is usually nothing in review).
+  const noticeEl = intakeNotice ? (
+    <div role="status" data-testid="review-intake-notice" className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-[11px] text-emerald-800">{intakeNotice}</div>
+  ) : null;
+
   // Nothing in review: show the effective mode (and stay quiet if none).
   if (!loading && !pendingVersionId) {
     if (policyUnknown) {
       return (
+        <>{noticeEl}
         <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-[11px] text-red-800">
           <b>Pre-publish review policy could not be read</b> ({policyUnknown}). Until it can, this document is treated as gated — a revision can&apos;t be published directly.
         </div>
+        </>
       );
     }
-    if (!control || control.mode === "none") return null;
+    if (!control || control.mode === "none") return noticeEl;
     return (
+      <>{noticeEl}
       <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
         <div className="flex items-center gap-2">
           <ShieldCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
@@ -206,6 +270,7 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
           {control.mode === "require" ? "Revisions in this library require reviewer sign-off before they publish." : "The publisher may route a revision through review before it publishes."}
         </div>
       </div>
+      </>
     );
   }
 
@@ -213,6 +278,7 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
   // that a review is in progress; the live rev stays controlled.
   if (!loading && pendingVersionId && !canSeeDraft) {
     return (
+      <>{noticeEl}
       <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
         <div className="flex items-center gap-2">
           <ShieldCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
@@ -220,10 +286,12 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
         </div>
         <div className="text-[11px] text-[var(--color-text-muted)] mt-1.5">A new revision is in review by the assigned reviewers. The current Rev {doc.rev || "—"} remains the controlled copy.</div>
       </div>
+      </>
     );
   }
 
   return (
+    <>{noticeEl}
     <div className="rounded-xl border border-violet-300 bg-violet-50/40 p-3 space-y-2.5">
       <div className="flex items-center gap-2">
         <ShieldCheck className="w-4 h-4 text-violet-600" />
@@ -324,5 +392,6 @@ export default function ReviewGateSection({ doc, orgId, canManage, onChanged }: 
         />
       )}
     </div>
+    </>
   );
 }

@@ -422,4 +422,25 @@ export const EXPECTED_FUNCTIONS: readonly FunctionExpectation[] = [
     migration: "20261204_ao_roundG_revoke_member_acl_prune.sql",
     feature: "A removed member's access is stripped from every inherited folder and document entry (/admin/users removal; ORG-7)",
   },
+  // document-control P23 (REV-19 (a), DEC-104): the app asks this after each
+  // status-change issue. No arguments: the call runs a read-only pg_trigger
+  // lookup and returns a boolean, nothing is written. Missing until 20261205
+  // is pasted — the doors then write DOCUMENT_ISSUED themselves, as before.
+  {
+    signature: "document_status_issue_recorded_by_database()",
+    fn: "document_status_issue_recorded_by_database",
+    probeArgs: {},
+    migration: "20261205_dc_roundF_direct_write_issue_record.sql",
+    feature: "The database writes the one issue record for every status-change issue (REV-19; the metadata and bulk editors, un-archive, rollbacks)",
+  },
+  // projects-tab SEC-23 (20261205 §2): the document_versions insert policy's
+  // first-version test reads through this helper. The uuid argument refuses
+  // "schema-health-probe" (22P02), so the body never runs.
+  {
+    signature: "document_has_versions(uuid)",
+    fn: "document_has_versions",
+    probeArgs: { p_record: "schema-health-probe" },
+    migration: "20261205_dc_roundF_direct_write_issue_record.sql",
+    feature: "A member's revision upload is judged by the policy's own limbs, without the recursive first-version read (SEC-23)",
+  },
 ];

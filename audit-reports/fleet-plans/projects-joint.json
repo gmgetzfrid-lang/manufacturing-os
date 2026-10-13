@@ -1217,14 +1217,16 @@
     "projects-tab GAP-401 (the door as a real boundary \u2014 its remaining limbs are SEC-22's)",
     "projects-tab SEC-24 (MEDIUM, opened by J19's review fix pass: milestones a document-only re-import moved off their project before J19 stay off it and a re-import then fails on them \u2014 find them from 20261198's inventory row 2 and repair by a counts-first, operator-confirmed path; never a blind rewrite)",
     "projects-tab SEC-21 (the status only: exceptions (i) and (ii) ruled accepted at the J19 merge; resolve by record once SEC-24 is resolved)",
-    "projects-tab UX-17 (LOW, opened by J19 from intelligence AREA-2's residual: TransitionInPanel never shows linkAdoptedEquipment's equipmentNote \u2014 say when the adopted sheet's equipment links were not recorded)"
+    "projects-tab UX-17 (LOW, opened by J19 from intelligence AREA-2's residual: TransitionInPanel never shows linkAdoptedEquipment's equipmentNote \u2014 say when the adopted sheet's equipment links were not recorded)",
+    "projects-tab SAF-19 remainder (assigned by the integrator 2026-10-13 at the document-control P23 merge, DEC-31): app/api/intake/outcome-notice/route.ts admits, beside Admin / DocCtrl / the project owner, an approver whose user_can_publish_doc holds on the version's record \u2014 every approver the review surface admits can tell the contact; the claim-once and send unchanged; pin a publisher-approver case and a non-publisher refusal"
    ],
    "files": [
     "supabase/migrations: new intake_door policies and 20261184's four definer door functions re-created from their NEWEST bodies (lineDiff-pinned), DEC-30, DRLS-16",
     "app/api/intake/upload/route.ts (the door's writes under the bound identity)",
     "lib/milestones.ts / a repair route or script for SEC-24 (counts first)",
     "components/projects/TransitionInPanel.tsx (equipmentNote)",
-    "tests: each limb, the repair's dry run and apply, the panel sentence; regression \u2014 every door path that works today works the same"
+    "tests: each limb, the repair's dry run and apply, the panel sentence; regression \u2014 every door path that works today works the same",
+    "app/api/intake/outcome-notice/route.ts (SAF-19 remainder: the approver authority only)"
    ],
    "migrationsLikely": 2,
    "dependsOn": [

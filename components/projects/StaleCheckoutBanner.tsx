@@ -102,7 +102,8 @@ export default function StaleCheckoutBanner({ userId }: StaleCheckoutBannerProps
         fileId: row.documentId,
         userId,
         userEmail: userEmail || "unknown",
-        userRole: activeRole || "unknown",
+        // SESS-6 residual (document-control P23, DEC-91 §1): no role known is omitted, never "unknown" (an empty role is written NULL — lib/audit.ts logAuditAction).
+        userRole: activeRole ?? "",
         type: "CHECK_IN",
         details: { via: "stale_checkout_banner", outcome: "all_clear", sessionId: row.id, docNumber: row.docNumber ?? null },
       });

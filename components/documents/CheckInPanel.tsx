@@ -237,7 +237,7 @@ export default function CheckInPanel({
       fileId: doc.id!,
       userId: currentUser.uid,
       userEmail: currentUser.email || "unknown",
-      userRole: currentUser.role || "unknown",
+      userRole: currentUser.role ?? "", // SESS-6 residual (P23, DEC-91 §1): no role known is omitted (written NULL)
       type: "CHECK_IN",
       details: {
         outcome, note: recordNote, ref: ref ?? null,
