@@ -123,9 +123,14 @@ export default function BulkEditModal({
      *  (already issued, or no current revision) — nothing is owed for them. */
     notIssued: Array<{ doc: string; note: string }>;
     /** REV-19 (b) (P23): rows this page showed issued (or with no revision)
-     *  whose database row this change found otherwise — issued by it, or
-     *  unreadable just before the write. */
+     *  whose database row this change found otherwise — issued by it. */
     unseen: Array<{ doc: string; note: string }>;
+    /** REV-19 (b) (P23 review 3): rows this page showed issued (or with no
+     *  revision) whose state just before the write could not be read —
+     *  nobody is known to have changed them; whether this change issued
+     *  them is unknown. Kept apart from `unseen` so neither heading says
+     *  more than the code knows (DEC-29). */
+    unchecked: Array<{ doc: string; note: string }>;
   } | null>(null);
 
   if (!isOpen) return null;
@@ -151,6 +156,7 @@ export default function BulkEditModal({
     const followUps: Array<{ doc: string; problems: string[] }> = [];
     const notIssued: Array<{ doc: string; note: string }> = [];
     const unseen: Array<{ doc: string; note: string }> = [];
+    const unchecked: Array<{ doc: string; note: string }> = [];
     const issuingIds = new Set(issuingRows.map((d) => d.id));
     const enteringForceIds = new Set(enteringForceRows.map((d) => d.id));
     let ok = 0;
@@ -217,7 +223,7 @@ export default function BulkEditModal({
           // this page saw nothing to issue — whether this change issued it is
           // unknown: said so, never guessed.
           if (!pageSawIssue && !outcome.issued) {
-            unseen.push({ doc: label, note: "it was changed, but its state just before the change could not be read, so whether this change issued it is unknown: if another change after this page loaded had moved it out of issue (or given it its first revision), it is now issued and may carry no review clock or acknowledgment roster — check its history." });
+            unchecked.push({ doc: label, note: "it was changed, but its state just before the change could not be read, so whether this change issued it is unknown: if another change after this page loaded had moved it out of issue (or given it its first revision), it is now issued and may carry no review clock or acknowledgment roster — check its history." });
             // P23 fix pass: the follow-up row saying no clock was started could not be written.
             if (outcome.recordError) followUps.push({ doc: label, problems: [`The record that no clock was started could not be written (${outcome.recordError}), so the document's history does not say so.`] });
             ok += 1;
@@ -277,7 +283,7 @@ export default function BulkEditModal({
         failed.push({ doc: doc.documentNumber || doc.title || doc.id || "?", reason, issue: (issuingIds.has(doc.id) || enteringForceIds.has(doc.id) || (target.kind === "status" && isControlledIssueStatus(newValue))) && isIssueRefusal(reason) });
       }
     }
-    setResults({ ok, failed, followUps, notIssued, unseen });
+    setResults({ ok, failed, followUps, notIssued, unseen, unchecked });
     setBusy(false);
     if (ok > 0) onApplied?.();
   };
@@ -411,6 +417,19 @@ export default function BulkEditModal({
                   </div>
                   <ul className="ml-5 list-disc space-y-0.5 max-h-48 overflow-y-auto">
                     {results.unseen.map((f, i) => (
+                      <li key={i}><span className="font-mono">{f.doc}</span> — {f.note}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {results.unchecked.length > 0 && (
+                // REV-19 (b) (P23 review 3): the row's state just before the write could not be read.
+                <div data-testid="bulk-unchecked-issue-rows" className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-900">
+                  <div className="font-bold mb-1">
+                    {results.unchecked.length} row{results.unchecked.length === 1 ? "" : "s"}: whether this change issued {results.unchecked.length === 1 ? "it" : "them"} could not be told
+                  </div>
+                  <ul className="ml-5 list-disc space-y-0.5 max-h-48 overflow-y-auto">
+                    {results.unchecked.map((f, i) => (
                       <li key={i}><span className="font-mono">{f.doc}</span> — {f.note}</li>
                     ))}
                   </ul>

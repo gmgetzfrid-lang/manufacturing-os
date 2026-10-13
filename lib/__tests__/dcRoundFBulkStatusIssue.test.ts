@@ -417,6 +417,7 @@ describe("REV-19 (P17) — REGRESSION: every bulk edit that issues nothing is wr
 // reads first decides — as the metadata editor's save does (identity IS-P1).
 describe("REV-19 (b) (P23) — the bulk editor routes each issue-status write from the database row, not the page's copy", () => {
   const unseenBox = () => host.querySelector('[data-testid="bulk-unseen-issue-rows"]');
+  const uncheckedBox = () => host.querySelector('[data-testid="bulk-unchecked-issue-rows"]');
 
   it("the stale copy: a row the page shows Issued, which another change moved back to Draft, is issued by this change WITH its clocks and record, and named", async () => {
     const d = seedDoc("s1", { status: "Draft" });
@@ -461,7 +462,12 @@ describe("REV-19 (b) (P23) — the bulk editor routes each issue-status write fr
     await applyStatus([asRecord(d)], "Issued");
     expect(docRow("s4").status).toBe("Issued");
     expect(issuedRecords()).toEqual([]);
-    expect(unseenBox()?.textContent).toContain("S4 — it was changed, but its state just before the change could not be read, so whether this change issued it is unknown");
+    expect(uncheckedBox()?.textContent).toContain("S4 — it was changed, but its state just before the change could not be read, so whether this change issued it is unknown");
+    // P23 review 3: the read failed, so nobody is known to have changed it —
+    // its own heading says only what is known, and the "changed by someone
+    // else" box is not shown for it.
+    expect(uncheckedBox()?.textContent).toContain("1 row: whether this change issued it could not be told");
+    expect(unseenBox()).toBeNull();
     expect(host.textContent).not.toMatch(/start its clocks from the document/);
   });
 

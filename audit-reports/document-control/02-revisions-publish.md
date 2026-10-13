@@ -1708,13 +1708,14 @@ Not touched here:
 
 <a id="rev-30"></a>
 
-## REV-30 · After 20261205 the metadata editor's read-failed sentence says no issue record was written, though the database wrote one
+## REV-30 · After 20261205 the metadata editor's two read-failed sentences say no issue record was written, though the database wrote one
 
 - **Severity:** LOW
 - **Status:** OPEN
 - **Assigned:** the next package that edits `app/(protected)/documents/[libraryId]/page.tsx` — proposed: intelligence **I-12** (the page's next editor); opened 2026-10-13 by document-control P23 DIRECT-WRITE ISSUE RECORD under DEC-31 (the page is not P23's file); the integrator confirms the owner at the P23 merge.
+- **Assigned:** intelligence I-12 (the page's next editor; both sentences, `:2847` and `:2861`) — confirmed by the integrator at the document-control P23 merge, 2026-10-13 (DEC-31; fleet plan `audit-reports/fleet-plans/intelligence.json`).
 - **Verification:** READ (the sentence at `app/(protected)/documents/[libraryId]/page.tsx:2847` on `596d34e`; 20261205's trigger driven on PostgreSQL 16 — `REV-19`'s record)
-- **Locations:** `app/(protected)/documents/[libraryId]/page.tsx:2847` (`saveMetadata`'s problem for `notRecordedBecause === "read_failed"` where the page expected an issue)
+- **Locations:** `app/(protected)/documents/[libraryId]/page.tsx:2847` (`saveMetadata`'s problem for `notRecordedBecause === "read_failed"` where the page expected an issue) and `:2861` (its twin where the page saw nothing to issue: "… it is now issued with no review clock, acknowledgment roster or issue record — check its history") — the second added at P23's third review, 2026-10-13
 - **Related:** `REV-19` (a) — the database records every status-change issue since `20261205`; DEC-44 (P23)
 - **Independently verified:** — opened by P23 from its own change; not yet challenged.
 
@@ -1723,7 +1724,7 @@ Not touched here:
 **Failure scenario.** Document Control saves a Draft drawing as Issued in the metadata editor while the network drops the read just before the write. The page says no issue record was written; the history shows the database's `DOCUMENT_ISSUED`. The advice that follows (check its history, start its clocks) is still right; only the clause is wrong.
 
 **Done when.**
-- [ ] The page's read-failed sentence is true before and after `20261205` (the bulk editor's wording), and its test (`lib/__tests__/isP1LibraryPage.test.ts`, the failed-read case) pins it.
+- [ ] Both of the page's read-failed sentences (`:2847` and `:2861`) are true before and after `20261205` (the bulk editor's wording: "this editor wrote no issue record (since database update 20261205 the database records the issue itself, if it was one)"), and its test (`lib/__tests__/isP1LibraryPage.test.ts`, the failed-read cases) pins both.
 - [ ] The page's read-failed branch also names a `recordError` (the follow-up row refused), as the bulk editor does — added by P23's fix pass, 2026-10-13.
 
 ---
