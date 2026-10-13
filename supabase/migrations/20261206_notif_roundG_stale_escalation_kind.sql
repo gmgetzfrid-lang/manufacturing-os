@@ -11,6 +11,13 @@
 --            checkout_released: an action, not a compliance kind) and reads
 --            BOTH kinds for its dedupe. checkout_released stays declared for
 --            legacy rows only.
+--   PROD-17  a document's WATCHERS are told when it is retired
+--            (lib/staleCopies.ts recallRetiredDocument). Their FYI has its
+--            own kind, doc_retired — NOT a compliance kind, unlike the copy
+--            holders' doc_recalled — so it stays out of the daily compliance
+--            digest, a watcher may delete it once read (20261161 keeps only
+--            compliance kinds dismiss-only), and its email rides the
+--            watcher's own toggle.
 --   DELIV-16 a compliance notice a browser writes to ANOTHER member could not
 --            be read back (notifications_own_select shows a member only the
 --            rows addressed to them), so lib/complianceNotify.ts did not retry
@@ -22,8 +29,10 @@
 --
 -- What this file does:
 --   · notification_kinds() RE-CREATED from its NEWEST definition (20261191,
---     found by scanning the sequence) with ONE row added, in KIND_META order
---     (right after checkout_released), none removed. EXECUTE restated.
+--     found by scanning the sequence) with TWO rows added, in KIND_META order
+--     (checkout_stale_escalation right after checkout_released, doc_retired
+--     right after doc_recalled; neither a compliance kind), none removed.
+--     EXECUTE restated.
 --   · notification_i_wrote(uuid, uuid, text, text, text, timestamptz) — NEW,
 --     STABLE SECURITY DEFINER, search_path pinned, EXECUTE to authenticated
 --     only (DRLS-16). An active member of p_org only; a kind
@@ -44,7 +53,9 @@
 --
 -- PASTE AND DEPLOY ORDER:
 --   1. 20261160, 20261161 and 20261191 first (this file stops with a message
---      when 20261160's allow-list or insert rail is missing). Its list is
+--      when 20261160's allow-list or insert rail is missing, or when the
+--      allow-list is older than 20261191's — it lacks transmittal_issued /
+--      doc_recalled, the kinds 20261191 added). Its list is
 --      20261191's plus one, so never re-paste 20261160 / 20261181 / 20261191
 --      after it — their lists are shorter. Paste this file again instead.
 --   2. DEPLOY the N15 app FIRST, then paste this file. The escalation is
@@ -54,6 +65,13 @@
 --      way round — this paste first, under the OLD cron — the re-filed rows
 --      leave the old cron's dedupe (which reads checkout_released only) and
 --      every session already escalated is escalated again on its next run.
+--      The cost of deploying first: until this paste, the watchers'
+--      retirement FYI (doc_retired, written from the browser by the
+--      supersede door) is refused by 20261160's rail as an undeclared kind
+--      and only logged — the watchers miss that FYI for retirements in the
+--      window. The copy holders' recall (doc_recalled), the checkout
+--      holder's and the package owners' notices are declared kinds and
+--      unaffected. Keep the window short: paste right after the deploy.
 --   3. Before this paste the app keeps today's paths: lib/complianceNotify.ts
 --      asks notification_i_wrote, finds it missing (PGRST202 / 42883) and
 --      does not retry a browser notice to another member (dead-lettered at
@@ -68,6 +86,10 @@ DO $$
 BEGIN
   IF to_regprocedure('public.enforce_notification_insert()') IS NULL OR to_regprocedure('public.notification_kinds()') IS NULL THEN
     RAISE EXCEPTION '20261206 needs 20261160 (notification_kinds() and the insert rail) — paste 20261160_notif_roundG_write_rails.sql, 20261161_notif_roundG_read_scope.sql and 20261191_notif_roundG_kind_split.sql first';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM notification_kinds() k WHERE k.kind = 'transmittal_issued')
+     OR NOT EXISTS (SELECT 1 FROM notification_kinds() k WHERE k.kind = 'doc_recalled') THEN
+    RAISE EXCEPTION '20261206 needs 20261191 (the kind split: its notification_kinds() declares transmittal_issued and doc_recalled, and its re-file and email gate must run first) — paste 20261191_notif_roundG_kind_split.sql first';
   END IF;
 END;
 $$;
@@ -89,7 +111,7 @@ SELECT 4, 'BEFORE: rows written in the last hour by a member to another member (
 
 BEGIN;
 
--- ── 1. notification_kinds(): the newest body (20261191) + one row ──────────
+-- ── 1. notification_kinds(): the newest body (20261191) + two rows ─────────
 CREATE OR REPLACE FUNCTION notification_kinds()
 RETURNS TABLE (kind text, compliance boolean)
 LANGUAGE sql IMMUTABLE SET search_path = public AS $$
@@ -111,6 +133,7 @@ LANGUAGE sql IMMUTABLE SET search_path = public AS $$
     ('branch_resolved',                  false),
     ('doc_superseded',                   true),
     ('doc_recalled',                     true),
+    ('doc_retired',                      false),
     ('doc_upstream_changed',             true),
     ('package_doc_stale',                true),
     ('package_doc_retired',              true),
@@ -162,7 +185,7 @@ LANGUAGE sql IMMUTABLE SET search_path = public AS $$
 $$;
 
 COMMENT ON FUNCTION notification_kinds() IS
-  'The notification kind registry (lib/notificationKinds.ts KIND_META): every kind a browser may write, and whether it is a compliance kind. Re-created by a migration whenever the registry changes; lib/__tests__/notificationWriteRails.test.ts pins the two equal. notifications Round G, 20261160; four kinds added by 20261181 (N8); nine by 20261191 (N9 — the kind split and transmittal_issued); one by 20261206 (N15 — checkout_stale_escalation, TAX-17).';
+  'The notification kind registry (lib/notificationKinds.ts KIND_META): every kind a browser may write, and whether it is a compliance kind. Re-created by a migration whenever the registry changes; lib/__tests__/notificationWriteRails.test.ts pins the two equal. notifications Round G, 20261160; four kinds added by 20261181 (N8); nine by 20261191 (N9 — the kind split and transmittal_issued); two by 20261206 (N15 — checkout_stale_escalation, TAX-17; doc_retired, PROD-17).';
 
 REVOKE ALL ON FUNCTION notification_kinds() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION notification_kinds() TO authenticated, service_role;
@@ -200,18 +223,20 @@ UPDATE notifications SET kind = 'checkout_stale_escalation'
 COMMIT;
 
 -- ── Verification + inventory (ONE result set): expect ok = true × 7 ─────────
-SELECT 'notification_kinds() is IMMUTABLE, search_path pinned, and declares 65 kinds — 21 of them compliance kinds — each once' AS check,
+SELECT 'notification_kinds() is IMMUTABLE, search_path pinned, and declares 66 kinds — 21 of them compliance kinds — each once' AS check,
        EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
                 WHERE ns.nspname = 'public' AND p.proname = 'notification_kinds'
                   AND pg_get_function_identity_arguments(p.oid) = ''
                   AND p.provolatile = 'i' AND NOT p.prosecdef
                   AND p.proconfig @> ARRAY['search_path=public'])
-       AND (SELECT COUNT(*) = 65 AND COUNT(DISTINCT kind) = 65 AND COUNT(*) FILTER (WHERE compliance) = 21
+       AND (SELECT COUNT(*) = 66 AND COUNT(DISTINCT kind) = 66 AND COUNT(*) FILTER (WHERE compliance) = 21
               FROM notification_kinds()) AS ok,
        NULL::text AS n
 UNION ALL
-SELECT 'notification_kinds() declares checkout_stale_escalation (not a compliance kind) and still declares checkout_released (legacy rows)',
+SELECT 'notification_kinds() declares checkout_stale_escalation and doc_retired (neither a compliance kind), and still declares checkout_released (legacy rows) and doc_recalled (a compliance kind)',
        (SELECT COUNT(*) FILTER (WHERE kind = 'checkout_stale_escalation' AND NOT compliance) = 1
+               AND COUNT(*) FILTER (WHERE kind = 'doc_retired' AND NOT compliance) = 1
+               AND COUNT(*) FILTER (WHERE kind = 'doc_recalled' AND compliance) = 1
                AND COUNT(*) FILTER (WHERE kind = 'checkout_released') = 1
           FROM notification_kinds()),
        NULL

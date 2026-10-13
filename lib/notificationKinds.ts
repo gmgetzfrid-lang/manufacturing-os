@@ -163,6 +163,14 @@ export const KIND_META = {
   // ack_requested (lib/distributionAcks.ts). 20261191 re-files the rows
   // already written by their metadata discriminators.
   doc_recalled:             { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "documents" },
+  // doc_retired (notifications N15 — PROD-17): a document you WATCH was
+  //   retired — lib/staleCopies.ts recallRetiredDocument's follower notice.
+  //   doc_recalled's badge, icon and group, but NOT a compliance kind: a
+  //   watcher holds nothing to destroy, so the FYI stays out of the daily
+  //   compliance digest, is deletable once read (20261161 keeps only
+  //   compliance kinds dismiss-only) and is not retried as an obligation;
+  //   its email rides the watcher's own toggle (category 'watched').
+  doc_retired:              { section: "documents", actionRequired: false, compliance: false, icon: "Bell", tone: "slate", group: "documents" },
   doc_upstream_changed:     { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "documents" },
   package_doc_stale:        { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "documents" },
   package_doc_retired:      { section: "documents", actionRequired: false, compliance: true, icon: "Bell", tone: "slate", group: "documents" },

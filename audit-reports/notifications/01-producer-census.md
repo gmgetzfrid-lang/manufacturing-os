@@ -1111,22 +1111,27 @@ lib/inAppNotifications.ts:26 —
   - Kind `checkout_message`, category `watched`: the checkout thread's own system line, told to its watchers (FYI).
 - `lib/staleCopies.ts` `recallRetiredDocument`: before the copy-holder recall, an `emit()` to `audience: { followers: true, exclude: <the copy holders> }`.
   - Title "<doc> was retired (<status>)"; the body says who retired it and any replacement note, and never "your copy".
-  - Kind `doc_recalled`, whose meaning per `DEC-100` item 1 is "the document was retired", on the `watched` category, so the watcher's own email toggle governs it.
+  - Kind `doc_retired` (fix pass — new, declared in `KIND_META`, the union and `20261206`'s `notification_kinds()`): `doc_recalled`'s badge, icon and group, but FYI and NOT a compliance kind, on the `watched` category. So the watcher's own email toggle governs its email, the daily compliance digest does not list it, a read one can be deleted (`20261161` keeps only compliance kinds dismiss-only), and `emit()` does not retry it as an obligation. *(Corrected at the fix pass: it rode `doc_recalled`, a compliance kind — so the FYI would have been in the compliance digest, gated by `compliance_digest` rather than the watcher's toggle, dismiss-only, and dead-lettered as an obligation; the claim that "the watcher's own email toggle governs it" held for the direct email only.)*
   - Sent even when nobody holds a copy.
+  - Excludes everyone a personal notice about the same retirement told: the download-copy holders, and (fix pass) the checkout holder (`documents.checked_out_by` — the supersede leaves the checkout open; `notifyHolderOfRetirement` told them) and the owners of OPEN work packages pinning the document (`notifyPackagesOfRetirement` told them), read by `recallRetiredDocument` itself (`personallyToldOfRetirement`) so `lib/revisions.ts` (document-control's) is unchanged. `personallyToldElsewhere: { checkoutHolder, packageOwners }` (both true by default) lets a door that sends neither personal notice keep those people in the watchers' audience. A read that fails leaves that person in the audience (a second notice, never none).
 - Both go through the dispatcher's discover filter (`NEDGE-6`): a watcher who may not discover the document is dropped.
 - `lib/notify/dispatch.ts`: `audience.exclude`.
 
 **Tests.**
 - `lib/__tests__/checkoutRoundF.test.ts` "PROD-17": the follower notice's audience, words, reason placement and kind.
-- `lib/__tests__/staleCopiesRecall.test.ts` "PROD-17": the retirement notice; the recall and its audit row unchanged.
-- `lib/__tests__/recipientDiscovery.test.ts`: a subscriptions row puts the watcher in `resolveRecipients` for these kinds.
+- `lib/__tests__/staleCopiesRecall.test.ts` "PROD-17": the retirement notice under `doc_retired`; (fix pass) the checkout holder and the open packages' owners excluded with the copy holders; a door that sends neither keeps them; the recall and its audit row unchanged.
+- `lib/__tests__/recipientDiscovery.test.ts`: a subscriptions row puts the watcher in `resolveRecipients` for these kinds. (Fix pass) "PROD-17 (fix pass)", through the real dispatcher: a watcher who holds the checkout and a watcher who owns a pinning package each get exactly their personal notice, the plain watcher exactly one `doc_retired`; `doc_retired` is not in the digest set and the delete policy's registry flags it non-compliance.
+- `lib/__tests__/maintenanceDrain.test.ts` "PROD-17 (notifications N15 fix pass)": the cron's compliance digest does not list a watcher's `doc_retired`; it still lists a copy holder's `doc_recalled`.
+- `lib/__tests__/notifStaleEscalationMigration.test.ts`: `doc_retired` is the second added row (after `doc_recalled`, `false`), lineDiff-pinned.
+- `20261206` on a throwaway PostgreSQL 16 (fix pass): before the paste a browser row of `doc_retired` is refused by the rail stand-in; after it, it is written, and a READ `doc_retired` row is deleted by its recipient under `20261161`'s `notifications_own_delete` while a read `doc_recalled` row and an unread `doc_retired` row are not.
 
 **Done-when.**
-- Done-when 1 is met for a force-release and for a retirement by SUPERSEDE (`lib/revisions.ts` `supersedeDocument` → `recallRetiredDocument`). **Not met** for a retirement through the other doors, which never call `recallRetiredDocument`, so no recall and no follower notice go out today:
+- Done-when 1 is met for a force-release and for a retirement by SUPERSEDE (`lib/revisions.ts` `supersedeDocument` → `recallRetiredDocument`), minus every person that door's personal notices told (download holders, checkout holder, open packages' owners). **Not met** for a retirement through the other doors, which never call `recallRetiredDocument`, so no recall and no follower notice go out today:
   - a Void / Archived status change (`lib/revisions.ts` `changeDocumentStatus`, document-control P23's this round);
   - a split or merge retiring its sources (`lib/documentLifecycle/split.ts`, `merge.ts`).
 - ✓ Done-when 2: a test asserts a subscriptions row puts the watcher in the notice's recipients.
 
-**Scope / residual.** Stays OPEN on done-when 1's other retirement doors. Owner: document-control (P23 holds `changeDocumentStatus`; the integrator routes split / merge). One call fixes each door: `lib/staleCopies.ts` `recallRetiredDocument({ … newStatus })`, which now carries the follower notice.
+**Scope / residual.** Stays OPEN on done-when 1's other retirement doors. Owner: document-control (P23 holds `changeDocumentStatus`; the integrator routes split / merge). One call fixes each door: `lib/staleCopies.ts` `recallRetiredDocument({ … newStatus })`, which now carries the follower notice; a door that does not tell the checkout holder or the package owners passes `personallyToldElsewhere: { checkoutHolder: false, packageOwners: false }`.
+- For the integrator to ratify: `doc_retired` is a second row in `20261206`, whose number the brief reserved for `notification_kinds()` plus one kind. Until `20261206` is pasted (it is pasted AFTER the N15 deploy, `TAX-17`), the browser's `doc_retired` rows are refused by `20261160`'s rail and only logged, so watchers miss the retirement FYI in that window.
 
 ---

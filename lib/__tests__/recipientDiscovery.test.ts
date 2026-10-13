@@ -295,11 +295,89 @@ describe("TAX-4 done-when 3 — the checkout thread's notice (and so its toast) 
     expect(bell()).toEqual(["w-admin", "w-dc", "w-hidden", "w-sees"]);
   });
 
-  it("a check that fails keeps only the controllers", async () => {
+  it("a check that fails keeps the controllers (and the session holders, here a controller too); participants and watchers are withheld", async () => {
     seedThread();
     __registerServerDiscoverCheck(async () => ({ ok: false, error: "unreadable" }));
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     await post();
     expect(bell()).toEqual(["w-admin", "w-dc"]);
+  });
+
+  it("fix pass: a TRANSIENT failure of the check (a 503) does not cut off the person doing the work — a non-controller session holder still gets the notice", async () => {
+    seedThread();
+    // Bob (named, an Engineer) holds the checkout; the check answers 503
+    h.state.tables.checkout_sessions = [
+      { document_id: "doc-1", user_id: "w-dc", status: "active" },
+      { document_id: "doc-1", user_id: "named", status: "active" },
+    ];
+    __registerServerDiscoverCheck(async () => ({ ok: false, error: "the discover check answered 503" }));
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await post();
+    // the session holder and the controllers; the participant (w-hidden) and the watcher (w-sees) withheld
+    expect(bell()).toEqual(["named", "w-admin", "w-dc"]);
+  });
+
+  it("REGRESSION: a check that ANSWERS still drops a session holder who may not discover the document (the session exemption is for a failed check only)", async () => {
+    seedThread();
+    h.state.tables.checkout_sessions = [{ document_id: "doc-1", user_id: "w-hidden", status: "active" }];
+    __registerServerDiscoverCheck(hiddenDoc);
+    await post();
+    expect(bell()).toEqual(["w-admin", "w-sees"]);
+  });
+});
+
+describe("PROD-17 (fix pass) — one retirement, one notice per person: a watcher the supersede door told personally gets no second FYI", () => {
+  const settle = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0)); };
+  function seedRetirement() {
+    h.state.tables.org_members = [
+      ...(h.state.tables.org_members ?? []),
+      { org_id: ORG, uid: "holder", status: "active", role: "Engineer", roles: null, email: "holder@x.com" },
+      { org_id: ORG, uid: "pkowner", status: "active", role: "Engineer", roles: null, email: "pkowner@x.com" },
+    ];
+    h.state.tables.subscriptions = ["holder", "pkowner", "w-sees"].map((u) => ({
+      org_id: ORG, user_id: u, resource_type: "document", resource_id: "doc-1",
+    }));
+    // the supersede leaves the checkout open
+    h.state.tables.documents = [{ id: "doc-1", org_id: ORG, library_id: "lib-1", document_number: "P-101", checked_out_by: "holder" }];
+    h.state.tables.work_package_documents = [{ package_id: "pk-1", document_id: "doc-1" }];
+    h.state.tables.work_packages = [{ id: "pk-1", org_id: ORG, name: "Turnaround 3", owner_user_id: "pkowner", status: "open" }];
+    h.state.tables.download_audits = [];
+  }
+
+  it("the checkout holder and the package owner (both watching) each get exactly their personal notice; the plain watcher gets the FYI, under doc_retired", async () => {
+    seedRetirement();
+    __registerServerDiscoverCheck(openDoc);
+    const { notifyPackagesOfRetirement } = await import("@/lib/postPublish");
+    const { recallRetiredDocument } = await import("@/lib/staleCopies");
+    // the supersede door's personal notices (lib/revisions.ts): the checkout
+    // holder's (revision_published_over_checkout — written here as that
+    // door's notify() writes it) and the open packages' owners'
+    const { notify } = await import("@/lib/inAppNotifications");
+    await notify({
+      orgId: ORG, userId: "holder", kind: "revision_published_over_checkout",
+      title: "Document superseded while you're checked out", body: "Superseded by Dana: replaced",
+      resourceType: "document", resourceId: "doc-1", actorUserId: "actor", actorName: "Dana",
+    });
+    await notifyPackagesOfRetirement({ orgId: ORG, documentId: "doc-1", docLabel: "P-101", newStatus: "Superseded", actorUserId: "actor", actorName: "Dana" });
+    await recallRetiredDocument({ orgId: ORG, documentId: "doc-1", libraryId: "lib-1", docLabel: "P-101", newStatus: "Superseded", actorUserId: "actor", actorName: "Dana" });
+    await settle();
+    const rows = (h.state.tables.notifications ?? []) as Array<{ user_id: string; kind: string }>;
+    const per = (u: string) => rows.filter((r) => r.user_id === u).map((r) => r.kind);
+    expect(per("holder")).toEqual(["revision_published_over_checkout"]);
+    expect(per("pkowner")).toEqual(["package_doc_retired"]);
+    expect(per("w-sees")).toEqual(["doc_retired"]);
+    expect(per("actor")).toEqual([]);
+  });
+
+  it("the watcher's FYI is not a compliance kind: the cron's digest set leaves it out, and the delete policy's registry lets a read one be cleared", async () => {
+    const { KIND_META } = await import("@/lib/notificationKinds");
+    const digestKinds = (Object.keys(KIND_META) as Array<keyof typeof KIND_META>).filter((k) => KIND_META[k].compliance);
+    expect(digestKinds).not.toContain("doc_retired");
+    expect(digestKinds).toContain("doc_recalled");
+    // 20261161's notifications_own_delete refuses only kinds notification_kinds() flags compliance
+    const sql = readFileSync(join(ROOT, "supabase/migrations/20261206_notif_roundG_stale_escalation_kind.sql"), "utf8");
+    expect(sql).toMatch(/\('doc_retired',\s+false\),/);
+    expect(readFileSync(join(ROOT, "supabase/migrations/20261161_notif_roundG_read_scope.sql"), "utf8"))
+      .toMatch(/AND NOT EXISTS \(SELECT 1 FROM notification_kinds\(\) k WHERE k\.kind = notifications\.kind AND k\.compliance\)/);
   });
 });

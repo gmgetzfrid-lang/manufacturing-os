@@ -131,7 +131,9 @@ describe("recallRetiredDocument (DIST-1)", () => {
     });
     const f = state.emits.find((x) => (x.audience as { followers?: boolean }).followers) as Record<string, unknown>;
     expect(f).toMatchObject({
-      kind: "doc_recalled", category: "watched",
+      // fix pass: its own NON-compliance kind (doc_recalled is a compliance
+      // kind — the digest, dismiss-only, retried as an obligation)
+      kind: "doc_retired", category: "watched",
       title: "P-101 was retired (Void)",
       resource: { type: "document", id: "d1" }, actorUserId: "actor",
       audience: { followers: true, exclude: ["u1"] },
@@ -140,6 +142,37 @@ describe("recallRetiredDocument (DIST-1)", () => {
     expect(String(f.body)).toContain("doccontrol retired P-101 (void)");
     expect(String(f.body)).not.toMatch(/your copy/i);
     expect(String(f.body)).toContain("Replaced by P-101A.");
+  });
+
+  it("PROD-17 (fix pass): the watchers' FYI also leaves out the checkout holder and the open packages' owners — the people the supersede door's personal notices told", async () => {
+    state.tables.download_audits = [{ user_id: "u1" }];
+    // the supersede leaves the checkout open: documents.checked_out_by still names the holder
+    (state.tables as Record<string, unknown>).documents = { checked_out_by: "holder" };
+    state.tables.work_package_documents = [{ package_id: "pk1" }, { package_id: "pk2" }];
+    state.tables.work_packages = [{ owner_user_id: "pkowner" }, { owner_user_id: "actor" }, { owner_user_id: null }];
+    await recallRetiredDocument({
+      orgId: "org1", documentId: "d1", libraryId: "lib1", docLabel: "P-101",
+      newStatus: "Superseded", actorUserId: "actor", actorName: "doccontrol",
+    });
+    const f = state.emits.find((x) => (x.audience as { followers?: boolean }).followers) as { kind: string; audience: { exclude: string[] } };
+    expect(f.kind).toBe("doc_retired");
+    expect([...f.audience.exclude].sort()).toEqual(["holder", "pkowner", "u1"]);
+    // the copy holders' recall is unchanged
+    const recall = state.emits.find((x) => x.category === "recall") as { kind: string; audience: { involved: string[] } };
+    expect(recall).toMatchObject({ kind: "doc_recalled", audience: { involved: ["u1"] } });
+  });
+
+  it("PROD-17 (fix pass): a door that sends neither personal notice says so, and those people stay in the watchers' audience", async () => {
+    state.tables.download_audits = [];
+    (state.tables as Record<string, unknown>).documents = { checked_out_by: "holder" };
+    state.tables.work_package_documents = [{ package_id: "pk1" }];
+    state.tables.work_packages = [{ owner_user_id: "pkowner" }];
+    await recallRetiredDocument({
+      orgId: "org1", documentId: "d1", docLabel: "P-101", newStatus: "Void", actorUserId: "actor",
+      personallyToldElsewhere: { checkoutHolder: false, packageOwners: false },
+    });
+    expect(state.emits).toHaveLength(1);
+    expect((state.emits[0] as { audience: { exclude: string[] } }).audience.exclude).toEqual([]);
   });
 
   it("puts the retirement recall on the audit trail (DIST-10)", async () => {

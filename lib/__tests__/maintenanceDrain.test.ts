@@ -1274,6 +1274,19 @@ describe("NEDGE-9 — the digest honours the member's preferences and lists unre
     expect(a.metadata).toMatchObject({ day: new Date().toISOString().slice(0, 10), count: 1 });
   });
 
+  it("PROD-17 (notifications N15 fix pass): a watcher's retirement FYI (doc_retired) is not listed — the copy holder's recall (doc_recalled) still is", async () => {
+    db.tables.org_members = [member(ORG_A, U(1)), member(ORG_A, U(2))];
+    db.tables.notifications = [
+      notice(ORG_A, U(1), "doc_retired", "P-101 was retired (Superseded)", minutesAgo(10)),
+      notice(ORG_A, U(2), "doc_recalled", "P-101 is now Superseded — your copy is dead paper", minutesAgo(10)),
+    ];
+    await runCron();
+    expect(digestFor(U(1))).toBeUndefined();
+    const d = digestFor(U(2))!;
+    expect(String(d.body_text)).toContain("your copy is dead paper");
+    expect(d.subject).toBe("Compliance items need you (1)");
+  });
+
   it("an unreadable preferences read sends the digest stamped pref_gate=unverified, and says so (DEC-74 §4)", async () => {
     seedThree();
     db.readError.notification_preferences = { message: "boom" };

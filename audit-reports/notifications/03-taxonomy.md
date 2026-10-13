@@ -256,17 +256,17 @@ Now `NotificationListener.tsx` listens only to the member's own `notifications` 
 
 **Reproduced first** on `89c9aaa`: `lib/activityThread.ts` `notifyCheckoutActivity` (:113-176) wrote its row, title and 140-character snippet to every participant, session holder and watcher, with no visibility check.
 
-**What landed.** `notifyCheckoutActivity` filters its whole audience through `lib/notify/recipients.ts` `discoveringAmong` before the bell row is written (`NEDGE-6`'s check: the route from the browser, the registered check on the server). A participant, session holder or watcher who may no longer discover the document gets no row, and so no toast. Controllers are never dropped (`DEC-43`). A check that fails keeps only the controllers.
+**What landed.** `notifyCheckoutActivity` filters its whole audience through `lib/notify/recipients.ts` `discoveringAmong` before the bell row is written (`NEDGE-6`'s check: the route from the browser, the registered check on the server). A participant, session holder or watcher who may no longer discover the document gets no row, and so no toast. Controllers are never dropped (`DEC-43`). A check that fails keeps the controllers and (fix pass) the document's active session holders — they hold the checkout the thread is about, so a transient failure (a 503, the network) does not cut the person doing the work off its notice; participants and watchers are withheld. *(Corrected at the fix pass: a failed check kept only the controllers, so a transient failure dropped a non-controller session holder, who always got the notice before N15.)*
 
 **Tests.**
-- `lib/__tests__/recipientDiscovery.test.ts` "TAX-4 done-when 3": a participant who lost access gets no row or snippet; the watcher who can see the document, the session holder and a controller do. REGRESSION: everyone with access gets exactly one row. A failed check keeps only the controllers.
+- `lib/__tests__/recipientDiscovery.test.ts` "TAX-4 done-when 3": a participant who lost access gets no row or snippet; the watcher who can see the document, the session holder and a controller do. REGRESSION, when the check answers: everyone with access gets exactly one row. A failed check keeps the controllers and the session holders; (fix pass) a 503 still reaches a non-controller session holder; a check that answers still drops a session holder who may not discover the document.
 - `lib/__tests__/notificationListener.test.ts` "TAX-4 dw4": one post, one toast per recipient. It now also pins the discover call the post makes.
 
 **Done-when.**
 - ✓ 1, 2, 4 (N3).
 - ✓ 3: no toast is shown for a resource the viewer lacks ACL on. The row the toast echoes is not written for them.
 
-**Scope / residual.** None for this finding. A system line (force-release) still notifies nobody through the thread. Its watchers' notice is `PROD-17`'s.
+**Scope / residual.** None for this finding. A system line (force-release) still notifies nobody through the thread. Its watchers' notice is `PROD-17`'s. When the check fails (logged), the thread's participants and watchers other than the controllers miss that one notice (fail closed, `DEC-90`).
 
 ---
 
@@ -1004,7 +1004,7 @@ Remaining step: move the in-flight counters that `hasUploadsInFlight()` reads (a
 - The cron writes `checkout_stale_escalation`. Its dedupe reads BOTH kinds (`STALE_ESCALATION_KINDS`), so a session escalated before the rename, and not yet re-filed, is never escalated twice.
 - `lib/notificationKinds.ts` `KIND_META` carries it with `checkout_released`'s flags (documents, an action, not compliance — one line), and the union carries it (`lib/inAppNotifications.ts`).
 - `checkout_released` stays declared for legacy rows only. Nothing writes it.
-- `20261206`: `notification_kinds()` re-created from its NEWEST definition (`20261191`, found by scanning) with the one row added after `checkout_released`. The escalation's backlog is re-filed: `checkout_released` + `metadata ? 'staleSessionId'` → `checkout_stale_escalation`. A pre-N9 force-release row keeps its kind. The same file carries `DELIV-16`'s `notification_i_wrote`.
+- `20261206`: `notification_kinds()` re-created from its NEWEST definition (`20261191`, found by scanning) with the one row added after `checkout_released` (and, since the fix pass, `PROD-17`'s `doc_retired` after `doc_recalled`, not a compliance kind: 66 kinds, 21 compliance). The guard stops without `20261160` and (fix pass) without `20261191` — its `notification_kinds()` must declare `transmittal_issued` and `doc_recalled` — so a paste on a database that skipped `20261191` creates nothing, and a later `20261191` paste cannot shrink the list back over it. The escalation's backlog is re-filed: `checkout_released` + `metadata ? 'staleSessionId'` → `checkout_stale_escalation`. A pre-N9 force-release row keeps its kind. The same file carries `DELIV-16`'s `notification_i_wrote`.
 
 **Exercised on a throwaway PostgreSQL 16** (pasted over `20261148` / `20261160` / `20261161` / `20261191` with a seeded backlog):
 - every probe true, `ok = true` × 7;
@@ -1013,10 +1013,10 @@ Remaining step: move the in-flight counters that `hasUploadsInFlight()` reads (a
 - re-pasted: idempotent, with the inventory counting the 2 re-filed rows;
 - a member's browser row of the new kind passes the insert rail, and the service role writes it;
 - on a fresh database without `20261160` the file stops at its guard and creates nothing.
-The scratch cluster was deleted afterwards.
+The scratch cluster was deleted afterwards. Re-run at the fix pass on a throwaway PostgreSQL 16 over stand-ins for the rail, the read-at trigger, `20261161`'s delete policy and `20261181`'s / `20261191`'s `notification_kinds()`: on the `20261181` list the file stops at the new guard and creates nothing (no `notification_i_wrote`, the list still 55); on the `20261191` list `ok = true` × 7 (66 kinds, 21 compliance), inventory 2 / 1 / 0 / 0, re-paste idempotent (0 / 1 / 2 / 0).
 
 **Tests.**
-- `lib/__tests__/notifStaleEscalationMigration.test.ts`: the one-paste shape; lineDiff against `20261191` (no line removed, exactly the one row, in `KIND_META` order); flags equal `checkout_released`'s; the probe's counts; the re-file's discriminator.
+- `lib/__tests__/notifStaleEscalationMigration.test.ts`: the one-paste shape; the `20261191` guard (fix pass); lineDiff against `20261191` (no line removed, exactly the one row, in `KIND_META` order); flags equal `checkout_released`'s; the probe's counts; the re-file's discriminator.
 - `lib/__tests__/maintenanceDrain.test.ts`: the escalation row, column for column, under the new kind; a pre-rename `checkout_released` row still dedupes.
 - `lib/__tests__/notificationKinds.test.ts`: the union, sections, action flag, icons, toast tone, the census; `checkout_released` legacy-only with no producer.
 - `lib/__tests__/kindSplitProducers.test.ts`: the cron is the new kind's only writer.
@@ -1027,6 +1027,7 @@ The scratch cluster was deleted afterwards.
 
 **Scope / residual.**
 - **Pending migration:** `20261206`. DEPLOY FIRST, then paste. The new cron writes the kind on the service role, which the rail passes, and reads both kinds; the old cron, after the paste, would re-escalate every re-filed session.
+- **For the integrator to ratify (two departures from the brief):** (a) the order — the brief, and `lib/notificationKinds.ts`'s header rule, say paste BEFORE the deploy that writes the kind; this file is pasted after it, for the reason above. Its cost: until the paste, the browser-written `doc_retired` (`PROD-17`) is refused by the rail and only logged, so watchers miss the retirement FYI in the window — paste right after the deploy. (b) the number was reserved for `notification_kinds()` plus one kind; the file also creates `DELIV-16`'s SECURITY DEFINER `notification_i_wrote` and (fix pass) a second kind row, `doc_retired`. Both recorded in `DEC-44 (N15)` items 4–6.
 - `components/notifications/**` (N4's) shows the new kind with `KIND_META`'s icon.
 
 ---

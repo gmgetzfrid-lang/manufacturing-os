@@ -203,8 +203,12 @@ const N9_ADDED: Record<string, "documents" | "projects"> = {
 // escalation's own name — checkout_released's last meaning, with its flags
 // (an action, documents, not compliance). checkout_released stays declared
 // for the rows written before (legacy only — nothing writes it now).
+// PROD-17: doc_retired, the watchers' retirement FYI — new vocabulary, not a
+// split: doc_recalled's badge, icon and group, but FYI and NOT compliance
+// (a watcher holds nothing to destroy; out of the digest, deletable).
 const N15_ADDED: Record<string, "documents"> = {
   checkout_stale_escalation: "documents", // app/api/cron/maintenance/route.ts escalateStaleCheckouts (was checkout_released)
+  doc_retired: "documents",               // lib/staleCopies.ts recallRetiredDocument's follower notice (PROD-17 — new)
 };
 /** Declared for legacy rows only: no producer writes it (TAX-17 dw2, PROD-8's rule). */
 const LEGACY_DECLARED = ["checkout_released"];

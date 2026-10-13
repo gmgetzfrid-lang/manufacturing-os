@@ -285,6 +285,13 @@ export async function recallRetiredDocument(input: {
   replacementNote?: string | null;   // e.g. "Replaced by P-101A, P-101B"
   actorUserId: string;
   actorName?: string | null;
+  /** PROD-17: which personal retirement notices the calling door sends, so
+   *  the watchers' FYI leaves those people out (one notice per person per
+   *  event). Both default to true — the supersede door
+   *  (lib/revisions.ts supersedeDocument) tells the checkout holder
+   *  (notifyHolderOfRetirement) and the open packages' owners
+   *  (notifyPackagesOfRetirement). A door that tells neither passes false. */
+  personallyToldElsewhere?: { checkoutHolder?: boolean; packageOwners?: boolean };
 }): Promise<number> {
   try {
     const since = new Date(Date.now() - DOC_RECALL_WINDOW_DAYS * 24 * 3600 * 1000).toISOString();
@@ -301,18 +308,25 @@ export async function recallRetiredDocument(input: {
     )];
     // PROD-17 (notifications N15): the document's WATCHERS are told it was
     // retired, in their own words ("your copy is dead paper" is false for a
-    // watcher who holds none), minus the copy holders the recall below
-    // tells. Its kind is doc_recalled — the kind whose meaning is "the
-    // document was retired" (DEC-100 item 1) — on the 'watched' category, so
-    // the watcher's email toggle governs its email (the copy holders' recall
-    // below is the safety category); the dispatcher drops a watcher who may
-    // not discover the document (NEDGE-6). Sent whether or not anyone holds a
-    // copy.
+    // watcher who holds none), minus everyone a personal notice about this
+    // same retirement already reached: the copy holders the recall below
+    // tells, and (personallyToldElsewhere, both on by default — the
+    // supersede door sends both) the checkout holder
+    // (lib/revisions.ts notifyHolderOfRetirement) and the owners of open work
+    // packages pinning it (lib/postPublish.ts notifyPackagesOfRetirement).
+    // Its kind is doc_retired — an FYI, NOT a compliance kind (doc_recalled
+    // is one): a watcher's notice must not ride the daily compliance digest,
+    // be dismiss-only or be retried as an obligation. On the 'watched'
+    // category, so the watcher's own email toggle governs its email (the
+    // copy holders' recall below is the safety category). The dispatcher
+    // drops a watcher who may not discover the document (NEDGE-6). Sent
+    // whether or not anyone holds a copy.
     try {
+      const toldElsewhere = await personallyToldOfRetirement(input);
       await emit({
         orgId: input.orgId,
         category: "watched",
-        kind: "doc_recalled",
+        kind: "doc_retired",
         title: `${input.docLabel} was retired (${input.newStatus})`,
         body: `${input.actorName || "Someone"} retired ${input.docLabel} (${input.newStatus.toLowerCase()}); there is no current revision to work from.` +
           (input.replacementNote ? ` ${input.replacementNote}` : ""),
@@ -320,7 +334,7 @@ export async function recallRetiredDocument(input: {
         resource: { type: "document", id: input.documentId },
         actorUserId: input.actorUserId,
         actorName: input.actorName ?? undefined,
-        audience: { followers: true, exclude: holders },
+        audience: { followers: true, exclude: [...new Set([...holders, ...toldElsewhere])] },
         metadata: { retirement: true, followerNotice: true, newStatus: input.newStatus },
       });
     } catch { /* the recall below still goes out */ }
@@ -361,6 +375,57 @@ export async function recallRetiredDocument(input: {
   } catch {
     return 0;
   }
+}
+
+/** PROD-17: the people a personal notice about this retirement already
+ *  reached, other than the copy holders — the document's checkout holder
+ *  (the supersede leaves the checkout open, so documents.checked_out_by
+ *  still names them) and the owners of OPEN work packages pinning it (the
+ *  set notifyPackagesOfRetirement tells). The actor is never in it (both
+ *  notices skip the actor; emit drops them anyway). Best-effort: a read that
+ *  fails leaves that person in the watchers' audience — a second notice is
+ *  better than none. */
+async function personallyToldOfRetirement(input: {
+  documentId: string;
+  actorUserId: string;
+  personallyToldElsewhere?: { checkoutHolder?: boolean; packageOwners?: boolean };
+}): Promise<string[]> {
+  const told = new Set<string>();
+  const want = input.personallyToldElsewhere ?? {};
+  if (want.checkoutHolder !== false) {
+    try {
+      const { data, error } = await supabase
+        .from("documents")
+        .select("checked_out_by")
+        .eq("id", input.documentId)
+        .maybeSingle();
+      const holder = error ? null : (data as { checked_out_by?: string | null } | null)?.checked_out_by ?? null;
+      if (holder) told.add(String(holder));
+    } catch { /* left in the audience */ }
+  }
+  if (want.packageOwners !== false) {
+    try {
+      const { data: memberRows, error } = await supabase
+        .from("work_package_documents")
+        .select("package_id")
+        .eq("document_id", input.documentId);
+      const pkgIds = error ? [] : [...new Set(((memberRows as Array<{ package_id: string }> | null) ?? []).map((r) => r.package_id))];
+      if (pkgIds.length > 0) {
+        const { data: pkgs, error: pkgErr } = await supabase
+          .from("work_packages")
+          .select("owner_user_id")
+          .in("id", pkgIds)
+          .neq("status", "closed");
+        if (!pkgErr) {
+          for (const p of (pkgs as Array<{ owner_user_id: string | null }> | null) ?? []) {
+            if (p.owner_user_id) told.add(String(p.owner_user_id));
+          }
+        }
+      }
+    } catch { /* left in the audience */ }
+  }
+  told.delete(input.actorUserId);
+  return [...told];
 }
 
 /** One-click recall nudge: tell everyone holding an outdated copy. */

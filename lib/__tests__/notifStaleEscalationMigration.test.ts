@@ -1,11 +1,13 @@
 // notifications Round G — N15 RECIPIENT VISIBILITY AND NAMES, the database
 // half: supabase/migrations/20261206_notif_roundG_stale_escalation_kind.sql.
 //
-//   · TAX-17: notification_kinds() re-created from its NEWEST definition
-//     (found by scanning the sequence below this file) with exactly ONE row
-//     added — checkout_stale_escalation, in KIND_META order, with the
-//     registry's compliance flag — nothing removed (lineDiff); the
-//     escalation's backlog re-filed by its discriminator (staleSessionId);
+//   · TAX-17 / PROD-17: notification_kinds() re-created from its NEWEST
+//     definition (found by scanning the sequence below this file) with
+//     exactly TWO rows added — checkout_stale_escalation and doc_retired, in
+//     KIND_META order, with the registry's compliance flags — nothing removed
+//     (lineDiff); the escalation's backlog re-filed by its discriminator
+//     (staleSessionId);
+//   · the guard stops without 20261160 AND without 20261191 (its kinds);
 //   · DELIV-16: notification_i_wrote(...) — SECURITY DEFINER, search_path
 //     pinned, EXECUTE to authenticated only (DRLS-16), a boolean about the
 //     caller's own rows only;
@@ -94,12 +96,24 @@ describe("20261206 — one paste for the SQL editor (DEC-30)", () => {
     expect(CODE).not.toMatch(/DROP TRIGGER|CREATE TRIGGER/);
   });
 
-  it("states the paste / deploy order: deploy first, then paste (the old cron's dedupe reads checkout_released only)", () => {
+  it("states the paste / deploy order: deploy first, then paste (the old cron's dedupe reads checkout_released only), and what that costs doc_retired", () => {
     expect(SQL).toMatch(/DEPLOY the N15 app FIRST, then paste this file/);
+    expect(SQL).toMatch(/retirement FYI \(doc_retired, written from the browser by the\s*\n--\s+supersede door\) is refused by 20261160's rail/);
+  });
+
+  it("the guard also stops when 20261191 has not been pasted (its notification_kinds() declares transmittal_issued and doc_recalled)", () => {
+    const guard = CODE.slice(0, CODE.indexOf("CREATE TEMP TABLE"));
+    expect(guard).toMatch(/IF NOT EXISTS \(SELECT 1 FROM notification_kinds\(\) k WHERE k\.kind = 'transmittal_issued'\)\s+OR NOT EXISTS \(SELECT 1 FROM notification_kinds\(\) k WHERE k\.kind = 'doc_recalled'\) THEN\s+RAISE EXCEPTION '20261206 needs 20261191/);
+    // the 20261191 check runs only after the to_regprocedure check has passed (its own IF)
+    expect(guard.indexOf("to_regprocedure('public.notification_kinds()')")).toBeLessThan(guard.indexOf("'transmittal_issued'"));
+    const v191 = valuesOf(definitionsOf("notification_kinds", ["20261191_notif_roundG_kind_split.sql"])[0][1]).map(([k]) => k);
+    const v181 = definitionsOf("notification_kinds", FILES.filter((f) => f < "20261191")).at(-1)!;
+    expect(v191).toEqual(expect.arrayContaining(["transmittal_issued", "doc_recalled"]));
+    expect(valuesOf(v181[1]).map(([k]) => k)).not.toContain("transmittal_issued");
   });
 });
 
-describe("20261206 — notification_kinds() from its NEWEST definition, plus checkout_stale_escalation (TAX-17)", () => {
+describe("20261206 — notification_kinds() from its NEWEST definition, plus checkout_stale_escalation (TAX-17) and doc_retired (PROD-17)", () => {
   const before = definitionsOf("notification_kinds", FILES.filter((f) => f < FILE)).at(-1)!;
   const mine = definitionsOf("notification_kinds", [FILE]);
 
@@ -108,12 +122,23 @@ describe("20261206 — notification_kinds() from its NEWEST definition, plus che
     expect(mine).toHaveLength(1);
   });
 
-  it("removes no line and adds exactly the one row, right after checkout_released, with the registry's flag", () => {
+  it("removes no line and adds exactly the two rows, each right after its neighbour in KIND_META, with the registry's flags", () => {
     const d = lineDiff(before[1], mine[0][1]);
     expect(d.onlyInA).toEqual([]);
-    expect(d.onlyInB.map((l) => l.trim())).toEqual([`('checkout_stale_escalation',        ${KIND_META.checkout_stale_escalation.compliance}),`]);
+    expect(d.onlyInB.map((l) => l.trim())).toEqual([
+      `('checkout_stale_escalation',        ${KIND_META.checkout_stale_escalation.compliance}),`,
+      `('doc_retired',                      ${KIND_META.doc_retired.compliance}),`,
+    ]);
     const kinds = valuesOf(mine[0][1]).map(([k]) => k);
     expect(kinds.indexOf("checkout_stale_escalation")).toBe(kinds.indexOf("checkout_released") + 1);
+    expect(kinds.indexOf("doc_retired")).toBe(kinds.indexOf("doc_recalled") + 1);
+  });
+
+  it("doc_retired is doc_recalled's badge, icon and group but NOT a compliance kind (PROD-17: a watcher's FYI stays out of the digest and is deletable)", () => {
+    const { section, actionRequired, icon, tone, group } = KIND_META.doc_recalled;
+    expect(KIND_META.doc_recalled.compliance).toBe(true);
+    expect(KIND_META.doc_retired).toEqual({ section, actionRequired, compliance: false, icon, tone, group });
+    expect(valuesOf(mine[0][1]).find(([k]) => k === "doc_retired")).toEqual(["doc_retired", false]);
   });
 
   it("the new kind carries checkout_released's flags (an action, not a compliance kind) — no badge, digest or dismiss rule moves", () => {
@@ -124,7 +149,7 @@ describe("20261206 — notification_kinds() from its NEWEST definition, plus che
   it("its own probe states its own list's counts", () => {
     const values = valuesOf(mine[0][1]);
     const n = values.length, c = values.filter(([, x]) => x).length;
-    expect(n).toBe(valuesOf(before[1]).length + 1);
+    expect(n).toBe(valuesOf(before[1]).length + 2);
     expect(SQL).toContain(`COUNT(*) = ${n} AND COUNT(DISTINCT kind) = ${n} AND COUNT(*) FILTER (WHERE compliance) = ${c}`);
   });
 

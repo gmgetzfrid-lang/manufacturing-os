@@ -110,7 +110,8 @@ export async function postActivity(input: PostInput): Promise<ActivityMessage | 
  * Notify everyone with a stake in THIS checkout's thread when someone posts:
  * the episode's participants (not people from long-closed checkouts), every
  * active session holder, and anyone watching the document — minus the author,
- * and minus anyone who may not discover the document (TAX-4 dw3).
+ * and minus anyone who may not discover the document (TAX-4 dw3; when that
+ * check fails, the controllers and the active session holders are kept).
  * Writes durable rows to the notifications inbox (bell + feed), so a
  * recipient who wasn't online still sees it.
  */
@@ -149,8 +150,17 @@ async function notifyCheckoutActivity(input: PostInput): Promise<void> {
     // only people who may DISCOVER the document get it. A participant, a
     // session holder or a watcher later taken off the document's ACL (or a
     // hidden / private document they cannot find) is left out; controllers
-    // never are (DEC-43). A check that fails keeps only the controllers.
-    const userIds = (await discoveringAmong(input.orgId, input.documentId, candidates)).uids;
+    // never are (DEC-43). A check that fails keeps the controllers AND the
+    // active session holders: they hold the checkout this thread is about
+    // right now (a checkout needs the document), so a transient failure of
+    // the check (a 503, the network) must not cut the person doing the work
+    // off the thread's notice; participants and watchers are withheld.
+    const filter = await discoveringAmong(input.orgId, input.documentId, candidates);
+    let userIds = filter.uids;
+    if (filter.outcome === "failed") {
+      const holding = new Set(((sessRes.data as Array<{ user_id: string }> | null) ?? []).map((r) => r.user_id));
+      userIds = [...new Set([...userIds, ...candidates.filter((u) => holding.has(u))])];
+    }
     if (userIds.length === 0) return;
 
     const doc = docRes.data as { library_id?: string; document_number?: string; title?: string } | null;

@@ -31,6 +31,7 @@ export type NotificationKind =
   | "markup_request"          // a markup request on a document: you were asked for markups, or markups were shared to its thread
   | "doc_superseded"          // a doc the user has open / follows was superseded: a new revision was published (one meaning since N9 — PROD-13 / TAX-13)
   | "doc_recalled"            // your downloaded copy of a document is out of date, or the document was retired — destroy old prints (lib/staleCopies.ts; was doc_superseded + metadata.recall)
+  | "doc_retired"             // a document you WATCH was retired (superseded / voided / archived) — an FYI, not a recall: the copy holders get doc_recalled (lib/staleCopies.ts recallRetiredDocument — PROD-17, N15)
   | "doc_upstream_changed"    // a document connected to work you have checked out was revised (lib/revisionImpact.ts; was doc_superseded)
   | "package_doc_stale"       // a document pinned in your work package moved past its pin (lib/workPackages.ts; was doc_superseded + metadata.workPackageId)
   | "package_doc_retired"     // a document pinned in your work package was superseded / voided (lib/postPublish.ts; was doc_superseded + metadata.retirement)
