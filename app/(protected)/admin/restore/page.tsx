@@ -36,7 +36,8 @@ import {
   type RestorePlan, type RestoreEnvelopeLike, type RestorePost, type ChunkedRestoreResult, type ChunkedRestorePreview,
   type BackupArchiveRead,
 } from "@/lib/dataRestore";
-import { restoreUploadRequest, isWorkspaceLogoKey } from "@/lib/storageKey";
+import { restoreUploadRequest, isWorkspaceLogoKey, isNodeImageKey } from "@/lib/storageKey";
+import { withRestoreMembershipCheck, restoreMembershipSentence, type RestoreMembershipCheck } from "@/lib/restoreMembership";
 
 type ZipLike = {
   files: Record<string, { dir: boolean }>;
@@ -60,6 +61,9 @@ interface FilesProgress {
   reasons?: Array<{ reason: string; files: number }>;
   /** A workspace logo the server will not sign (ORG-5), named with why. */
   logoNotRestored?: string | null;
+  /** Folder / library covers and backgrounds the server will not sign
+   *  (ORG-16: an SVG, HEIC or TIFF from before the rule), by file name. */
+  nodeImagesNotRestored?: string[];
 }
 
 function fmtNum(n: number) { return n >= 1000 ? n.toLocaleString() : String(n); }
@@ -88,6 +92,8 @@ export default function RestorePage() {
 
   const [applyProgress, setApplyProgress] = useState<ApplyProgress>({ phase: "idle", rowsDone: 0, rowsTotal: 0, tablesDone: 0, tablesTotal: 0 });
   const [applyResult, setApplyResult] = useState<ChunkedRestoreResult | null>(null);
+  // NEDGE-16: the restore ends with the workspace's membership state.
+  const [membershipCheck, setMembershipCheck] = useState<RestoreMembershipCheck | null>(null);
   const [preview, setPreview] = useState<ChunkedRestorePreview | null>(null);
   const idRemapRef = useRef<RestorePlan["idRemap"] | null>(null);
 
@@ -120,7 +126,7 @@ export default function RestorePage() {
   // ── 1. Read + plan (all local — nothing is written) ───────────────────────
   const handleFiles = useCallback(async (dropped: File[]) => {
     if (!activeOrgId || dropped.length === 0) return;
-    setError(null); setPlan(null); setApplyResult(null); setPreview(null);
+    setError(null); setPlan(null); setApplyResult(null); setMembershipCheck(null); setPreview(null);
     setFileName(dropped.length === 1 ? dropped[0].name : `${dropped.length} files: ${dropped.map((f) => f.name).join(", ")}`);
     setApplyProgress({ phase: "idle", rowsDone: 0, rowsTotal: 0, tablesDone: 0, tablesTotal: 0 });
     setFilesProgress({ running: false, done: 0, total: 0, uploaded: 0, skipped: 0, offline: 0, failed: 0 });
@@ -173,7 +179,7 @@ export default function RestorePage() {
   const applyRestore = async () => {
     const envelope = envelopeRef.current;
     if (!activeOrgId || !envelope || !plan) return;
-    setError(null);
+    setError(null); setMembershipCheck(null);
     // Fix pass 5: plan again against the members as they are NOW — a run
     // /begin stopped (a refused placeholder) kept the placeholders it made,
     // and a re-run links them, so the plan made at drop time would overstate
@@ -224,7 +230,12 @@ export default function RestorePage() {
         confirmLabel: "Apply restore",
       });
       if (!ok) return;
-      const result = await runChunkedRestore({ orgId: activeOrgId, envelope, plan: fresh, orgNameChoice: keepName, post, onProgress });
+      // NEDGE-16: the completion step — who is active now (restored people
+      // are inactive and hear nothing until reactivated), shown and audited
+      // — runs once the run has started, whether it returns or throws.
+      const result = await withRestoreMembershipCheck(activeOrgId, post,
+        async () => await runChunkedRestore({ orgId: activeOrgId, envelope, plan: fresh, orgNameChoice: keepName, post, onProgress }),
+        setMembershipCheck);
       idRemapRef.current = result.idRemap; // "Put the files back" follows the org remap
       setApplyProgress((p) => ({ ...p, phase: "done" }));
       setApplyResult(result);
@@ -250,9 +261,11 @@ export default function RestorePage() {
     // the panel says why instead of a bare count.
     const reasons = new Map<string, number>();
     let logoNotRestored: string | null = null;
+    const nodeImagesNotRestored: string[] = [];
     const detail = () => ({
       reasons: [...reasons].map(([reason, files]) => ({ reason, files })),
       logoNotRestored,
+      nodeImagesNotRestored: [...nodeImagesNotRestored],
     });
     const bump = () => setFilesProgress({ running: true, total: entries.length, ...counters, error: null, ...detail() });
 
@@ -278,11 +291,20 @@ export default function RestorePage() {
         // not sign (an SVG or GIF from before ORG-5, or over 5 MB) is not
         // asked for: the panel says to upload it again under Branding. A
         // logo's type is read from its first bytes — its key was once named
-        // after the file (".jfif", or no extension), not after its type.
-        const head = isWorkspaceLogoKey(key) ? new Uint8Array(await blob.slice(0, 12).arrayBuffer()) : null;
+        // after the file (".jfif", or no extension), not after its type. A
+        // folder's or library's cover / background likewise (ORG-16: signed
+        // only as an image type now).
+        const head = isWorkspaceLogoKey(key) || isNodeImageKey(key) ? new Uint8Array(await blob.slice(0, 12).arrayBuffer()) : null;
         const req = restoreUploadRequest(key, blob.size, head);
         if (req.logoProblem) {
           logoNotRestored = `${key.split("/").pop()}: ${req.logoProblem}`;
+          return;
+        }
+        // ORG-16: a cover or background the server will not sign (an SVG,
+        // HEIC or TIFF from before the rule) is not asked for either; the
+        // panel names it so the node can be given its image again.
+        if (req.nodeImageProblem) {
+          nodeImagesNotRestored.push(key.split("/").slice(-2).join("/"));
           return;
         }
         const up = await fetch(`/api/storage/upload-url`, {
@@ -512,6 +534,35 @@ export default function RestorePage() {
             </div>
           )}
 
+          {/* NEDGE-16: the membership check, shown whether the run returned or
+              threw — a /begin that stopped part-way keeps the inactive
+              placeholders it created. */}
+          {membershipCheck && (
+            <div
+              role="status"
+              data-testid="restore-membership-check"
+              className={`mt-3 rounded-2xl border p-4 text-[11px] leading-relaxed ${
+                !membershipCheck.ok || membershipCheck.summary.inactiveMembers > 0
+                  ? "border-amber-200 bg-amber-50 text-amber-900"
+                  : "border-emerald-200 bg-emerald-50 text-emerald-900"
+              }`}
+            >
+              {membershipCheck.ok ? (
+                <>
+                  <b>Members:</b> {restoreMembershipSentence(membershipCheck.summary)}
+                  {membershipCheck.summary.inactiveMembers > 0 && (
+                    <> <Link href="/admin/users" className="font-bold underline">Open Users</Link>.</>
+                  )}
+                  {membershipCheck.auditError && (
+                    <div className="mt-1 text-rose-800">The membership check could not be written to the audit log: {membershipCheck.auditError}</div>
+                  )}
+                </>
+              ) : (
+                <><b>Members:</b> {membershipCheck.error}</>
+              )}
+            </div>
+          )}
+
           {/* Put files back (ZIP only, after records) */}
           {applyResult && fileEntryCount > 0 && (
             <div className="rounded-2xl border border-violet-200 bg-violet-50/40 p-4">
@@ -541,6 +592,16 @@ export default function RestorePage() {
                       The workspace logo in this backup was not put back ({filesProgress.logoNotRestored}). Upload it again
                       as a PNG, JPEG or WebP of at most 5 MB under <Link href="/admin/branding" className="font-bold underline">Admin → Branding</Link>;
                       until then the workspace&apos;s logo does not load.
+                    </div>
+                  )}
+                  {(filesProgress.nodeImagesNotRestored ?? []).length > 0 && (
+                    <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-800">
+                      {fmtNum(filesProgress.nodeImagesNotRestored!.length)} folder or library cover / background image(s) in this
+                      backup were not put back ({filesProgress.nodeImagesNotRestored!.slice(0, 5).join(", ")}
+                      {filesProgress.nodeImagesNotRestored!.length > 5 ? ", …" : ""}): a cover or background must now be a PNG, JPEG,
+                      WebP, GIF, AVIF or BMP image (SVG, HEIC and TIFF are not accepted). Open the folder or library under{" "}
+                      <Link href="/documents" className="font-bold underline">Documents</Link> → Customize and pick the image again;
+                      until then it shows no cover or background.
                     </div>
                   )}
                 </div>

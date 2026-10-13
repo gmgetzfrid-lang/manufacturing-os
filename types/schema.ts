@@ -1095,6 +1095,12 @@ export type TicketStatus =
   | "CLOSED"
   | "CANCELED";
 
+/** drafting-flow LEAK-9 / GAP-107 (DF-P3): how a request ENDED — one
+ *  terminal status per exit (CLOSED / CANCELED) and this reason field, never
+ *  a status per reason. lib/ticketOutcome.ts holds the vocabulary; the
+ *  database CHECKs the same five (20261195). */
+export type TicketOutcome = "completed" | "withdrawn" | "duplicate" | "handled_out_of_band" | "rejected";
+
 export type TicketAttachmentStatus = "staged" | "submitted" | "approved" | "rejected";
 export type TicketAttachmentType = "Source" | "Reference" | "Draft" | "Final";
 
@@ -1217,6 +1223,9 @@ export interface Ticket {
   targetCompletionAt?: Timestamp | null;  // SLA deadline
   slaBreachWarnedAt?: Timestamp | null;
   slaBreachedAt?: Timestamp | null;
+  /** LEAK-9 / GAP-107: how the request ended (CLOSED / CANCELED only); null =
+   *  not recorded. Written by the workflow route; cleared by a reopen. */
+  outcome?: TicketOutcome | null;
 
   attachments?: TicketAttachment[];
   comments?: TicketComment[];

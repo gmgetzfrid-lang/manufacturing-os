@@ -1105,7 +1105,8 @@
    "projectsAndCostPackages": [],
    "findings": {
     "projects-tab": [
-     "SAF-18 (opened by projects-joint J12 as GAP-402's remainder, DEC-31; assigned by the integrator 2026-10-07 at the J12 merge: 177 unchecked .update( / .delete( sites in lib and on the Projects surface \u2014 the census lib/__tests__/checkedWrite.test.ts LIB_RATCHET / PROJECTS_UI_RATCHET names every file and count)"
+     "SAF-18 (opened by projects-joint J12 as GAP-402's remainder, DEC-31; assigned by the integrator 2026-10-07 at the J12 merge: 177 unchecked .update( / .delete( sites in lib and on the Projects surface \u2014 the census lib/__tests__/checkedWrite.test.ts LIB_RATCHET / PROJECTS_UI_RATCHET names every file and count)",
+     "projects-tab A11Y-16 (restated by the integrator 2026-10-13 at the J19 merge: J19's plan entry carried it and left it to J15's per-file pass \u2014 the project page's write buttons outside its Members tab take DECISION_TARGET)"
     ]
    },
    "files": [
@@ -1169,7 +1170,8 @@
    "name": "J18 APP SHELL BUDGET \u2014 a total-route JavaScript budget, and the app-wide shell's imports split or lazy (PERF-12)",
    "findings": {
     "projects-tab": [
-     "PERF-12 (opened by the integrator 2026-10-07, DEC-31 / DEC-90 A24: the app-wide shell ships ~618 KB of JavaScript to every route \u2014 1,092,416 bytes for /projects/[id], 474,342 of them the route's own; done when a total-route budget is checked from a built manifest and the shell's imports a route does not need on first paint are split or lazy)"
+     "PERF-12 (opened by the integrator 2026-10-07, DEC-31 / DEC-90 A24: the app-wide shell ships ~618 KB of JavaScript to every route \u2014 1,092,416 bytes for /projects/[id], 474,342 of them the route's own; done when a total-route budget is checked from a built manifest and the shell's imports a route does not need on first paint are split or lazy)",
+     "projects-tab PERF-5 remainder (restated by the integrator 2026-10-13 at the J19 merge: done-when 1 measured at 4x CPU on a quiet host with the committed harness scripts/perf/execution-drag/ \u2014 a measurement only, run when the fleet's load is gone)"
     ]
    },
    "files": [
@@ -1207,6 +1209,32 @@
     "J16 merged (app/api/intake/upload/route.ts)"
    ],
    "sequencingNotes": "Added by the integrator 2026-10-07 at the J14 merge (DEC-31: these three remainders had only proposed owners)."
+  },
+  {
+   "name": "J20 INTAKE DOOR UNDER RLS AND PROJECT REMAINDERS \u2014 the door's writes under row-level security (SEC-22 / GAP-401), the milestones the old import moved off their projects (SEC-24), SEC-21's status, and the transition-in equipment note (UX-17)",
+   "findings": [
+    "projects-tab SEC-22 (all three limbs; assigned by the integrator 2026-10-13 at the J19 merge, DEC-31 \u2014 J19 recorded each limb re-read and unbuilt: limb (a) the door's submission, pointer and promote under a bound identity (submission sub-limb after document-control P23 settles SEC-23), (b) the housekeeping writes under RLS, (c) the intake-pointer rail with its refusal sentence in the panel)",
+    "projects-tab GAP-401 (the door as a real boundary \u2014 its remaining limbs are SEC-22's)",
+    "projects-tab SEC-24 (MEDIUM, opened by J19's review fix pass: milestones a document-only re-import moved off their project before J19 stay off it and a re-import then fails on them \u2014 find them from 20261198's inventory row 2 and repair by a counts-first, operator-confirmed path; never a blind rewrite)",
+    "projects-tab SEC-21 (the status only: exceptions (i) and (ii) ruled accepted at the J19 merge; resolve by record once SEC-24 is resolved)",
+    "projects-tab UX-17 (LOW, opened by J19 from intelligence AREA-2's residual: TransitionInPanel never shows linkAdoptedEquipment's equipmentNote \u2014 say when the adopted sheet's equipment links were not recorded)",
+    "projects-tab SAF-19 remainder (assigned by the integrator 2026-10-13 at the document-control P23 merge, DEC-31): app/api/intake/outcome-notice/route.ts admits, beside Admin / DocCtrl / the project owner, an approver whose user_can_publish_doc holds on the version's record \u2014 every approver the review surface admits can tell the contact; the claim-once and send unchanged; pin a publisher-approver case and a non-publisher refusal"
+   ],
+   "files": [
+    "supabase/migrations: new intake_door policies and 20261184's four definer door functions re-created from their NEWEST bodies (lineDiff-pinned), DEC-30, DRLS-16",
+    "app/api/intake/upload/route.ts (the door's writes under the bound identity)",
+    "lib/milestones.ts / a repair route or script for SEC-24 (counts first)",
+    "components/projects/TransitionInPanel.tsx (equipmentNote)",
+    "tests: each limb, the repair's dry run and apply, the panel sentence; regression \u2014 every door path that works today works the same",
+    "app/api/intake/outcome-notice/route.ts (SAF-19 remainder: the approver authority only)"
+   ],
+   "migrationsLikely": 2,
+   "dependsOn": [
+    "projects J19 merged (2026-10-13)",
+    "document-control P23 merged (SEC-23 \u2014 limb (a)'s submission sub-limb)",
+    "drafting-flow DF-P3 merged (limb (c)'s panel sentence; components/projects/IntakePanel.tsx)"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-13 at the J19 merge (DEC-31): J19 proposed 'J20 INTAKE DOOR UNDER RLS' for SEC-22 and an unnamed projects-joint owner for SEC-24 and UX-17; one package owns them all."
   }
  ],
  "ownershipRule": "Where the two briefs disagree on a shared file, projects-and-cost's proposal applies: libs / API routes / migrations follow the projects-and-cost brief, components / pages follow the projects-tab brief; the schedule engine (lib/milestones.ts, criticalPath.ts, executionReport.ts) follows projects-tab's P6b brief with PC-4's rollup semantics folded in.",

@@ -13,7 +13,11 @@
 // owner + Admin/DocCtrl instead of quietly counting as "done".
 
 import { supabase } from "@/lib/supabase";
-import { notify } from "@/lib/inAppNotifications";
+// DELIV-16 / DELIV-7 dw1 (notifications N14): the bell notices here carry
+// document-control obligations — notify(), retried and dead-lettered when
+// it does not land (lib/complianceNotify.ts).
+import { notifyCompliance as notify } from "@/lib/complianceNotify";
+import { loadScanRetryPlan } from "@/lib/complianceNotify";
 import { logAuditAction } from "@/lib/audit";
 import { recordSignature, type SigningCredential } from "@/lib/eSignatures";
 import { resolveEffectiveOwner, effectiveOwnerForDocument, getOrgControllers, teamSupervisorMap } from "@/lib/ownership";
@@ -667,6 +671,8 @@ export async function scanAndNotifyAcks(orgId: string, opts?: { cooldownDays?: n
 
   const now = Date.now();
   const cooldownMs = cooldownDays * 86_400_000;
+  // DELIV-7 dw1 (notifications N14 integrator pass): what the last run lost
+  const plan = await loadScanRetryPlan(orgId, "read-understood", cooldownMs);
   let n = 0;
 
   for (const r of rows) {
@@ -676,13 +682,17 @@ export async function scanAndNotifyAcks(orgId: string, opts?: { cooldownDays?: n
     const label = (doc.document_number as string) || (doc.title as string) || (doc.name as string) || "Document";
     const rev = (r.revision_label as string) || "";
     const link = `/documents/${doc.library_id as string}?doc=${r.document_id as string}`;
+    // A row whose last run dead-lettered a notice sends only that notice now.
+    const retryKey = `read-understood:${r.id as string}`;
+    const wants = plan.only(retryKey, r.notified_at as string | null);
+    const landed: boolean[] = [];
 
-    await notify({
+    if (wants("ack_requested", r.assignee_user_id as string)) landed.push(await notify({
       orgId, userId: r.assignee_user_id as string, kind: "ack_requested",
       title: `Reminder — acknowledge ${label}${rev ? ` Rev ${rev}` : ""}`,
       body: "You still need to confirm you've read and understood this revision.",
       link, resourceType: "document", resourceId: r.document_id as string,
-    });
+    }, { retryKey }));
 
     const overdueDays = Math.floor((now - new Date(r.assigned_at as string).getTime()) / 86_400_000);
     if (overdueDays > graceDays) {
@@ -694,17 +704,21 @@ export async function scanAndNotifyAcks(orgId: string, opts?: { cooldownDays?: n
         teamSupervisors,
       );
       const escalateTo = uniq([...(owner.userId ? [owner.userId] : []), ...controllers]).filter((u) => u !== (r.assignee_user_id as string));
-      await Promise.all(escalateTo.map((uid) =>
+      landed.push(...await Promise.all(escalateTo.filter((uid) => wants("ack_overdue", uid)).map((uid) =>
         notify({
           orgId, userId: uid, kind: "ack_overdue",
           title: `Acknowledgment overdue: ${label}`,
           body: `${(r.assignee_name as string) || "Someone assigned"} hasn't acknowledged ${label}${rev ? ` Rev ${rev}` : ""} — ${overdueDays} days outstanding.`,
           link, resourceType: "document", resourceId: r.document_id as string,
-        })
-      ));
+        }, { retryKey })
+      )));
     }
 
-    await supabase.from("document_acknowledgments").update({ notified_at: new Date().toISOString() }).eq("id", r.id as string);
+    // DELIV-7 dw1: the cooldown is stamped only when every notice landed —
+    // a dead-lettered one is sent again on the next run, to its recipient only.
+    if (landed.every(Boolean)) {
+      await supabase.from("document_acknowledgments").update({ notified_at: new Date().toISOString() }).eq("id", r.id as string);
+    }
     n++;
   }
   return n;

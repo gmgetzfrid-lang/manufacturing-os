@@ -5,6 +5,7 @@ import { notifyMany, notifyBatchWithReason } from "@/lib/inAppNotifications";
 import { queueEmail } from "@/lib/notifications";
 import { resolveRoleRecipients } from "@/lib/notify/recipients";
 import { runWithServerClient } from "@/lib/serverClientScope";
+import { isMissingFunction } from "@/lib/intakeRateLimit";
 import {
   ACCESS_REQUEST_AUDIENCE, ACCESS_REQUEST_BURST_RESOURCE_TYPE, ACCESS_REQUEST_NOTICES_PER_ORG_HOUR,
   noticeSafeName, wellFormedAddress,
@@ -84,6 +85,27 @@ function burstNotice(orgName: string, recent: number | null): { title: string; b
  *  Admin → Users lists every request either way. Never throws. */
 async function notifyAccessRequestBurst(orgId: string, orgName: string, recipients: string[], recent: number | null): Promise<void> {
   const why = recent === null ? "the org's request count could not be read" : `${recent} requests to this org in the last hour`;
+  // PROD-16 (notifications N14): the open-row read and the insert run as ONE
+  // claim under a per-org lock in the database (20261197,
+  // claim_access_request_burst — service role only), so two over-cap
+  // requests that land together give a pool member one row, not two. The
+  // row is the one written below: same kind, words, link, resource, no
+  // actor, ACTIVE members only. Before the paste (42883 / PGRST202) today's
+  // two steps run, unserialised; any other error writes nothing, as an
+  // unreadable open-row read does.
+  const notice = burstNotice(orgName, recent);
+  const claim = await supabaseAdmin.rpc("claim_access_request_burst", {
+    p_org: orgId, p_recipients: recipients, p_title: notice.title, p_body: notice.body,
+  });
+  if (!claim.error) {
+    const out = (claim.data ?? {}) as { told?: unknown; already?: unknown };
+    console.warn(`[request-access] ${why} — this request gets no notice of its own; ${Number(out.told) || 0} pool member(s) newly told that more are waiting, ${Number(out.already) || 0} already were`);
+    return;
+  }
+  if (!isMissingFunction(claim.error)) {
+    console.warn(`[request-access] ${why}, and the pool's "more requests are waiting" notice could not be claimed (${claim.error.message}) — no notice was written for this request`);
+    return;
+  }
   const { data: open, error: openErr } = await supabaseAdmin
     .from("notifications")
     .select("user_id")
@@ -105,7 +127,7 @@ async function notifyAccessRequestBurst(orgId: string, orgName: string, recipien
       orgId,
       userId: uid,
       kind: "access_request_pending" as const,
-      ...burstNotice(orgName, recent),
+      ...notice,
       link: "/admin/users",
       resourceType: ACCESS_REQUEST_BURST_RESOURCE_TYPE,
       resourceId: orgId,
@@ -113,7 +135,7 @@ async function notifyAccessRequestBurst(orgId: string, orgName: string, recipien
     })), supabaseAdmin);
     if (error) console.warn(`[request-access] the pool's "more requests are waiting" notice was not written: ${error}`);
   }
-  console.warn(`[request-access] ${why} — this request gets no notice of its own; ${rest.length} pool member(s) newly told that more are waiting, ${told.size} already were`);
+  console.warn(`[request-access] ${why} — this request gets no notice of its own; ${rest.length} pool member(s) newly told that more are waiting, ${told.size} already were (unserialised: 20261197 is not pasted — PROD-16)`);
 }
 
 /** PROD-2: a request nobody hears about is a request nobody answers. After

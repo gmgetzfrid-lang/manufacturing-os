@@ -4,7 +4,16 @@
 //
 // Reads the audit_logs table and renders it as a chronological feed
 // with filters (action, resource type, user, date range, library).
-// Admin-class only; non-admins see a permission notice.
+// Who may open it is the admin.audit_view capability, decided by the admin
+// layout's server gate (see below); anyone else sees the layout's denial.
+//
+// admin-and-org P7: the action and resource filters, the icons' fallback and
+// the destructive KPI read ONE registry, lib/auditActions.ts (ALOG-11); the
+// export pages through every matching row in the reader's own session, says
+// its bounds inside the file and is audited (ALOG-6, lib/auditLogExport.ts);
+// each row says whose word its identity is (actor_kind, ALOG-7); a
+// TICKET_<ACTION> attempt row is paired with the row that names it
+// (drafting-flow EVID-12).
 //
 // Designed to answer "who did what, when?" — including deletes — in
 // one place rather than spreading evidence across the per-document
@@ -21,7 +30,15 @@ import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Input, Select as UiSelect } from "@/components/ui/Field";
 import { Spinner } from "@/components/ui/Spinner";
-import { csvCell } from "@/lib/csvSafe";
+import { logAuditAction } from "@/lib/audit";
+import {
+  AUDIT_RESOURCE_TYPES, auditActionFilterOptions, auditActorNote, isDestructiveAuditAction,
+  pairTicketAttempts, prettyAuditAction, ticketAttemptNote, DESTRUCTIVE_AUDIT_ACTIONS, type TicketAttemptOutcome,
+} from "@/lib/auditActions";
+import {
+  applyAuditFilters, buildAuditCsv, fetchAuditRowsForExport, filterByLibrary, AUDIT_EXPORT_ROW_CEILING, AUDIT_CSV_LINES_BEFORE_HEADER,
+  type AuditQuery, type AuditRange,
+} from "@/lib/auditLogExport";
 
 // Auditor included: the role exists FOR audit review — it was defined with an
 // "audit" capability yet locked out of the one page that shows the trail.
@@ -42,6 +59,8 @@ interface AuditRow {
   userId: string;
   userEmail: string | null;
   userRole: string | null;
+  /** ALOG-7 (20261201): member / server / system; null before that paste. */
+  actorKind: string | null;
   details: Record<string, unknown> | null;
   metadata: Record<string, unknown> | null;
   timestamp: string;
@@ -102,7 +121,7 @@ const RESOURCE_ICON: Record<string, React.ComponentType<{ className?: string }>>
 };
 
 export default function AuditLogPage() {
-  const { activeOrgId } = useRole();
+  const { activeOrgId, uid, userEmail, activeRole } = useRole();
 
   const [rows, setRows] = useState<AuditRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -115,8 +134,10 @@ export default function AuditLogPage() {
   const [resourceFilter, setResourceFilter] = useState<string>("ALL");
   const [libraryFilter, setLibraryFilter] = useState<string>("ALL");
   const [userQuery, setUserQuery] = useState("");
-  const [range, setRange] = useState<"24h" | "7d" | "30d" | "all">("7d");
+  const [range, setRange] = useState<AuditRange>("7d");
   const [limit, setLimit] = useState(200);
+  const [exporting, setExporting] = useState(false);
+  const [exportNote, setExportNote] = useState<string | null>(null);
 
   useEffect(() => {
     if (!activeOrgId) return;
@@ -135,22 +156,16 @@ export default function AuditLogPage() {
     setLoading(true);
     setError(null);
     try {
-      let q = supabase.from("audit_logs")
-        .select("*")
-        .eq("org_id", activeOrgId)
-        .order("timestamp", { ascending: false })
-        .limit(limit);
-      if (range !== "all") {
-        const ms = range === "24h" ? 86_400_000 : range === "7d" ? 7 * 86_400_000 : 30 * 86_400_000;
-        q = q.gte("timestamp", new Date(Date.now() - ms).toISOString());
-      }
-      if (actionFilter !== "ALL") q = q.eq("action", actionFilter);
-      if (resourceFilter !== "ALL") q = q.eq("resource_type", resourceFilter);
-      const { data, error: qErr } = await q;
+      // ALOG-11: the action filter is a registered action (a ticket action
+      // brings its EVID-12 follow-up rows) or a family (TICKET_…).
+      const base = supabase.from("audit_logs").select("*").eq("org_id", activeOrgId);
+      const q = applyAuditFilters(base as unknown as AuditQuery, { range, action: actionFilter, resource: resourceFilter }, Date.now()) as unknown as typeof base;
+      const { data, error: qErr } = await q.order("timestamp", { ascending: false }).limit(limit);
       if (qErr) throw qErr;
       const list: AuditRow[] = (data || []).map((r) => ({
         id: r.id, action: r.action, resourceType: r.resource_type, resourceId: r.resource_id,
         orgId: r.org_id, userId: r.user_id, userEmail: r.user_email, userRole: r.user_role,
+        actorKind: (r as { actor_kind?: string | null }).actor_kind ?? null,
         details: r.details, metadata: r.metadata, timestamp: r.timestamp,
       }));
       setRows(list);
@@ -176,19 +191,85 @@ export default function AuditLogPage() {
 
   useEffect(() => { fetchRows(); }, [activeOrgId, actionFilter, resourceFilter, range, limit]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const filtered = useMemo(() => {
+  // ALOG-11 done-when 2: the library filter keeps the library's document rows
+  // and the library's own rows, and SAYS how many other rows it leaves out.
+  const { filtered, libraryHidden } = useMemo(() => {
     const q = userQuery.trim().toLowerCase();
     let list = rows;
     if (q) list = list.filter((r) => (r.userEmail ?? "").toLowerCase().includes(q));
+    let hidden = 0;
     if (libraryFilter !== "ALL") {
-      list = list.filter((r) => {
-        if (r.resourceType !== "document") return false;
-        const meta = docMeta.get(r.resourceId);
-        return meta?.libraryId === libraryFilter;
-      });
+      const out = filterByLibrary(list, libraryFilter, (id) => docMeta.get(id)?.libraryId);
+      list = out.kept;
+      hidden = out.hidden;
     }
-    return list;
+    return { filtered: list, libraryHidden: hidden };
   }, [rows, userQuery, libraryFilter, docMeta]);
+
+  // drafting-flow EVID-12: an attempt row and the row that names it.
+  const pairing = useMemo(() => pairTicketAttempts(filtered), [filtered]);
+  const actionOptions = useMemo(() => auditActionFilterOptions(rows.map((r) => r.action)), [rows]);
+
+  // ALOG-6: every row the filters select, paged on the server in the
+  // reader's own session; audited BEFORE the file is handed over.
+  const exportAll = async () => {
+    if (!activeOrgId || exporting) return;
+    setExporting(true); setExportNote(null); setError(null);
+    try {
+      const filters = { range, action: actionFilter, resource: resourceFilter, userQuery };
+      const nowMs = Date.now();
+      const got = await fetchAuditRowsForExport(
+        () => supabase.from("audit_logs").select("*").eq("org_id", activeOrgId) as never,
+        filters, nowMs,
+      );
+      if (!got.ok) throw new Error(`The export could not read the audit log: ${got.error}. No file was made.`);
+      // Document labels (and the library filter, which needs each document's library).
+      const docIds = Array.from(new Set(got.rows.filter((r) => r.resourceType === "document").map((r) => r.resourceId)));
+      const meta = new Map<string, { documentNumber: string | null; title: string | null; libraryId: string }>();
+      for (let i = 0; i < docIds.length; i += 200) {
+        const { data: docs, error: dErr } = await supabase.from("documents").select("id, document_number, title, name, library_id").in("id", docIds.slice(i, i + 200));
+        if (dErr) throw new Error(`The export could not read the documents it names: ${dErr.message}. No file was made.`);
+        for (const d of (docs as Array<{ id: string; document_number: string | null; title: string | null; name: string | null; library_id: string }>) ?? []) {
+          meta.set(d.id, { documentNumber: d.document_number, title: d.title || d.name, libraryId: d.library_id });
+        }
+      }
+      let out = got.rows;
+      let hidden = 0;
+      // Rows dated after the start lead the list (lib/auditLogExport.ts pass 0).
+      const datedAfter = new Set(got.rows.slice(0, got.datedAfterStart).map((r) => r.id));
+      const library = libraryFilter !== "ALL" ? libraries.find((l) => l.id === libraryFilter) ?? { id: libraryFilter, name: libraryFilter } : null;
+      if (library) {
+        const f = filterByLibrary(out, library.id, (id) => meta.get(id)?.libraryId);
+        out = f.kept; hidden = f.hidden;
+      }
+      const datedAfterStart = out.filter((r) => datedAfter.has(r.id)).length;
+      const exportedAtIso = new Date(nowMs).toISOString();
+      const rec = await logAuditAction({
+        action: "AUDIT_LOG_EXPORTED", resourceType: "org", resourceId: activeOrgId, orgId: activeOrgId,
+        userId: uid ?? "", userEmail: userEmail ?? undefined, userRole: activeRole ?? undefined,
+        details: {
+          filters: { range, action: actionFilter, resource: resourceFilter, userQuery: userQuery.trim() || null, libraryId: library?.id ?? null },
+          rows: out.length, complete: got.complete, ceiling: AUDIT_EXPORT_ROW_CEILING, exportedAt: exportedAtIso,
+          datedAfterStart,
+        },
+      });
+      if (!rec.ok) throw new Error(`The export was not handed over: its own audit record could not be written (${rec.error}). Who took a copy of the audit log must be recorded.`);
+      const csv = buildAuditCsv(out, meta, {
+        orgId: activeOrgId, filters: { ...filters, library }, exportedAtIso, rows: out.length,
+        complete: got.complete, ceiling: AUDIT_EXPORT_ROW_CEILING, libraryHidden: hidden,
+        datedAfterStart,
+      });
+      downloadCsv(csv);
+      setExportNote((got.complete
+        ? `Exported ${out.length} row(s) — every row the filters select.`
+        : `Exported the newest ${out.length} row(s): the export stops at ${AUDIT_EXPORT_ROW_CEILING} rows, and the file says so. Narrow the date range or filters for the rest.`)
+        + ` ${CSV_SHAPE_NOTE}`);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const kpis = useMemo(() => {
     const byAction = new Map<string, number>();
@@ -200,7 +281,8 @@ export default function AuditLogPage() {
     }
     const topAction = [...byAction.entries()].sort((a, b) => b[1] - a[1])[0] ?? null;
     const topUser = [...byUser.entries()].sort((a, b) => b[1] - a[1])[0] ?? null;
-    const deletes = [...byAction.entries()].filter(([k]) => /DELET|ARCHIVE|REVERS|FORCE/.test(k)).reduce((s, [, n]) => s + n, 0);
+    // ALOG-11 done-when 3: a stated list (lib/auditActions.ts), never a regex.
+    const deletes = [...byAction.entries()].filter(([k]) => isDestructiveAuditAction(k)).reduce((s, [, n]) => s + n, 0);
     return { total: filtered.length, topAction, topUser, deletes };
   }, [filtered]);
 
@@ -222,11 +304,11 @@ export default function AuditLogPage() {
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={() => exportAuditCsv(filtered, docMeta)}
-                disabled={filtered.length === 0}
-                title="Download the currently-visible audit rows as a CSV (Excel opens it natively)."
+                onClick={() => void exportAll()}
+                disabled={exporting || !activeOrgId}
+                title={`Download EVERY row the filters select (not only the rows on screen), up to ${AUDIT_EXPORT_ROW_CEILING.toLocaleString()} — the file states its own bounds. ${CSV_SHAPE_NOTE} The export itself is recorded in the audit log.`}
               >
-                <Download className="w-3.5 h-3.5" /> Export CSV
+                <Download className="w-3.5 h-3.5" /> {exporting ? "Exporting…" : "Export CSV"}
               </Button>
               <Button variant="secondary" size="sm" onClick={fetchRows} disabled={loading}>
                 <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh
@@ -238,7 +320,8 @@ export default function AuditLogPage() {
         {/* KPI strip */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
           <Kpi label="Events" value={kpis.total.toString()} tone="slate" />
-          <Kpi label="Deletes / undo / force" value={kpis.deletes.toString()} tone={kpis.deletes > 0 ? "rose" : "slate"} />
+          <Kpi label="Destructive / undo / force" value={kpis.deletes.toString()} tone={kpis.deletes > 0 ? "rose" : "slate"}
+            title={`Counts these actions (lib/auditActions.ts): ${[...DESTRUCTIVE_AUDIT_ACTIONS].sort().join(", ")}`} />
           <Kpi
             label="Top action"
             value={kpis.topAction ? prettyAction(kpis.topAction[0]) : "—"}
@@ -266,15 +349,11 @@ export default function AuditLogPage() {
           ]} />
           <Select value={actionFilter} onChange={setActionFilter} options={[
             { value: "ALL", label: "All actions" },
-            ...Object.keys(ACTION_STYLE).sort().map((k) => ({ value: k, label: prettyAction(k) })),
+            ...actionOptions,
           ]} />
           <Select value={resourceFilter} onChange={setResourceFilter} options={[
             { value: "ALL", label: "Any resource" },
-            { value: "document", label: "Documents" },
-            { value: "project", label: "Projects" },
-            { value: "milestone", label: "Milestones" },
-            { value: "asset", label: "Assets" },
-            { value: "org", label: "Workspace" },
+            ...AUDIT_RESOURCE_TYPES,
           ]} />
           <Select value={libraryFilter} onChange={setLibraryFilter} options={[
             { value: "ALL", label: "Any library" },
@@ -296,6 +375,15 @@ export default function AuditLogPage() {
           </div>
         </div>
 
+        {libraryFilter !== "ALL" && libraryHidden > 0 && (
+          <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 flex items-start gap-2" role="status">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+            The library filter shows this library&apos;s document rows and the library&apos;s own rows: {libraryHidden} other loaded row{libraryHidden === 1 ? "" : "s"} (workspace, permission, project and other events) {libraryHidden === 1 ? "is" : "are"} hidden. Choose &ldquo;Any library&rdquo; to see them.
+          </div>
+        )}
+        {exportNote && (
+          <div className="mb-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-xs text-[var(--color-text-muted)]" role="status">{exportNote}</div>
+        )}
         {/* Feed */}
         {error && (
           <div className="mb-3 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800 flex items-start gap-2">
@@ -313,7 +401,8 @@ export default function AuditLogPage() {
           ) : (
             <ul className="divide-y divide-[var(--color-border)]">
               {filtered.map((r) => (
-                <AuditRowItem key={r.id} row={r} docMeta={docMeta.get(r.resourceId)} />
+                <AuditRowItem key={r.id} row={r} docMeta={docMeta.get(r.resourceId)}
+                  attempt={pairing.attempts.get(r.id)?.outcome} namesAttempt={pairing.followUps.get(r.id)} />
               ))}
             </ul>
           )}
@@ -322,8 +411,8 @@ export default function AuditLogPage() {
   );
 }
 
-interface KpiProps { label: string; value: string; sub?: string; tone: "slate" | "rose" | "indigo" | "emerald" }
-function Kpi({ label, value, sub, tone }: KpiProps) {
+interface KpiProps { label: string; value: string; sub?: string; tone: "slate" | "rose" | "indigo" | "emerald"; title?: string }
+function Kpi({ label, value, sub, tone, title }: KpiProps) {
   const ring = {
     slate:   "ring-[var(--color-border)] bg-[var(--color-surface)]",
     rose:    "ring-rose-200 bg-rose-50/40",
@@ -331,7 +420,7 @@ function Kpi({ label, value, sub, tone }: KpiProps) {
     emerald: "ring-emerald-200 bg-emerald-50/40",
   }[tone];
   return (
-    <div className={`rounded-2xl ring-1 shadow-sm p-4 ${ring}`}>
+    <div className={`rounded-2xl ring-1 shadow-sm p-4 ${ring}`} title={title}>
       <div className="text-[10px] font-black text-[var(--color-text-muted)] uppercase tracking-widest">{label}</div>
       <div className="mt-1 text-xl font-black text-[var(--color-text)] truncate">{value}</div>
       {sub && <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">{sub}</div>}
@@ -342,12 +431,20 @@ function Kpi({ label, value, sub, tone }: KpiProps) {
 interface SelectProps {
   value: string;
   onChange: (v: string) => void;
-  options: Array<{ value: string; label: string }>;
+  options: Array<{ value: string; label: string; group?: string }>;
 }
 function Select({ value, onChange, options }: SelectProps) {
+  // Grouped options (the action registry's categories) render as optgroups.
+  const ungrouped = options.filter((o) => !o.group);
+  const groups = Array.from(new Set(options.filter((o) => o.group).map((o) => o.group as string)));
   return (
     <UiSelect value={value} onChange={(e) => onChange(e.target.value)}>
-      {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      {ungrouped.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      {groups.map((g) => (
+        <optgroup key={g} label={g}>
+          {options.filter((o) => o.group === g).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </optgroup>
+      ))}
     </UiSelect>
   );
 }
@@ -355,8 +452,12 @@ function Select({ value, onChange, options }: SelectProps) {
 interface AuditRowItemProps {
   row: AuditRow;
   docMeta?: { documentNumber: string | null; title: string | null; libraryId: string };
+  /** EVID-12: this row is a ticket attempt; its outcome from the trail. */
+  attempt?: TicketAttemptOutcome;
+  /** EVID-12: this row names an attempt (its id). */
+  namesAttempt?: string;
 }
-function AuditRowItem({ row, docMeta }: AuditRowItemProps) {
+function AuditRowItem({ row, docMeta, attempt, namesAttempt }: AuditRowItemProps) {
   const style = ACTION_STYLE[row.action] ?? { icon: ScrollText, tone: "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] border-[var(--color-border)]" };
   const ResIcon = RESOURCE_ICON[row.resourceType] ?? FileText;
   const Icon = style.icon;
@@ -395,9 +496,22 @@ function AuditRowItem({ row, docMeta }: AuditRowItemProps) {
               Open <ArrowUpRight className="w-3 h-3" />
             </Link>
           )}
+          {attempt && (
+            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md border ${attempt === "applied" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-rose-50 text-rose-700 border-rose-200"}`}>
+              {ticketAttemptNote(attempt)}
+            </span>
+          )}
+          {namesAttempt && (
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md border bg-amber-50 text-amber-800 border-amber-200">
+              Names the attempt row {namesAttempt.slice(0, 8)}
+            </span>
+          )}
         </div>
         <div className="text-[11px] text-[var(--color-text-muted)] mt-1 flex items-center flex-wrap gap-x-2 gap-y-0.5">
-          <span>{row.userEmail || row.userId}{row.userRole ? ` (${row.userRole})` : ""}</span>
+          <span>{row.userEmail || row.userId || "—"}{row.userRole ? ` (${row.userRole})` : ""}</span>
+          <span className={row.actorKind ? "text-[var(--color-text-faint)]" : "text-amber-700"} title="ALOG-7: whose word the email and role on this row are">
+            · {auditActorNote(row.actorKind)}
+          </span>
           <span className="text-slate-300">·</span>
           <time className="text-[var(--color-text-muted)]" dateTime={row.timestamp}>{formatTime(row.timestamp)}</time>
         </div>
@@ -414,39 +528,15 @@ function AuditRowItem({ row, docMeta }: AuditRowItemProps) {
   );
 }
 
-// ─── CSV export ──────────────────────────────────────────────────────
-// Dumps the currently-visible audit rows to a single CSV. Hydrates doc
-// number + title for document rows so a compliance reviewer sees
-// human-readable identifiers instead of UUIDs. UTF-8 BOM so Excel
-// opens it correctly.
+// ALOG-6 changed the file's shape (P7 review): the column header is no longer
+// line 1. Say so wherever the file is offered, so an import is told.
+const CSV_SHAPE_NOTE = `The file opens with ${AUDIT_CSV_LINES_BEFORE_HEADER} lines of bounds before the column header (line ${AUDIT_CSV_LINES_BEFORE_HEADER + 1}); skip them when importing.`;
 
-function exportAuditCsv(
-  rows: AuditRow[],
-  docMeta: Map<string, { documentNumber: string | null; title: string | null; libraryId: string }>,
-) {
-  // PM-15: every cell through lib/csvSafe — a formula-leading value (an
-  // email, a detail, a document title) is written as text, never a formula.
-  const csvField = csvCell;
-  const header = ["Timestamp", "Action", "Resource Type", "Resource ID", "Resource Label", "User Email", "User Role", "Details JSON"];
-  const lines: string[] = [header.map(csvField).join(",")];
-  for (const r of rows) {
-    const dm = r.resourceType === "document" ? docMeta.get(r.resourceId) : undefined;
-    const resourceLabel = dm
-      ? [dm.documentNumber, dm.title].filter(Boolean).join(" · ")
-      : "";
-    lines.push([
-      r.timestamp,
-      prettyAction(r.action),
-      r.resourceType,
-      r.resourceId,
-      resourceLabel,
-      r.userEmail ?? "",
-      r.userRole ?? "",
-      r.details ? JSON.stringify(r.details) : "",
-    ].map(csvField).join(","));
-  }
-  const csv = lines.join("\n");
-  const blob = new Blob(["﻿", csv], { type: "text/csv;charset=utf-8" });
+// ─── CSV download ────────────────────────────────────────────────────
+// The file is built by lib/auditLogExport.ts buildAuditCsv (every cell
+// through lib/csvSafe, PM-15). UTF-8 BOM so Excel opens it correctly.
+function downloadCsv(csv: string) {
+  const blob = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -457,9 +547,7 @@ function exportAuditCsv(
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function prettyAction(action: string): string {
-  return action.toLowerCase().replace(/_/g, " ").replace(/(^|\s)\w/g, (c) => c.toUpperCase());
-}
+const prettyAction = prettyAuditAction;
 
 function formatTime(iso: string): string {
   try {

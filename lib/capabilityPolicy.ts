@@ -614,10 +614,13 @@ export async function loadCapabilityPolicyEntry(
 
 /** The policy alone — for NON-AUTHORITATIVE readers only: the affordance
  *  surfaces that decide which controls to draw while a server route, a
- *  strict gate or the database decides (ALOG-1's census: the requests and
- *  transmittals pages, HoldStrip, InspectorPanel, CheckoutStatusCell, the
- *  ticket-notification hook, /admin/holds, and the hold-notification
- *  audience in lib/holds.ts). Its contract on a failed read is DEC-89's for
+ *  strict gate or the database decides (ALOG-1's census, as of
+ *  document-control P24: the requests pages, the ticket-notification hook
+ *  and the hold-notification audience in lib/holds.ts — the transmittals
+ *  register, HoldStrip, InspectorPanel, CheckoutStatusCell and /admin/holds
+ *  now read loadCapabilityPolicyEntry and hold their controls back on
+ *  `unreadable`, drawing `stale` as the last good policy; AUTHZ-15, DEC-89).
+ *  Its contract on a failed read is DEC-89's for
  *  such a reader: the last good entry, else the shipped defaults. A caller
  *  that DECIDES authority, or that presents the policy as the org's, reads
  *  loadCapabilityPolicyEntry and its `unreadable` / `stale` markers (or the

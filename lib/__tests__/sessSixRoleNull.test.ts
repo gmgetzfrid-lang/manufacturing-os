@@ -335,13 +335,9 @@ describe("DEC-91 §1 — the role is omitted, never a placeholder", () => {
     // `currentUser.role` / `userRole` props) and StaleCheckoutBanner, and
     // unreachable today — with no role there is no principal, no listed
     // document and no inspector. Fixing one shrinks the list; adding one fails.
-    const KNOWN: Record<string, number> = {
-      "components/projects/StaleCheckoutBanner.tsx": 1,
-      "components/documents/CheckoutFlowModal.tsx": 3,
-      "components/documents/CheckInPanel.tsx": 1,
-      "components/documents/CheckoutStatusCell.tsx": 2,
-      "lib/checkoutEpisodes.ts": 1,
-    };
+    // document-control P23 (2026-10-13): every recorded site now omits the
+    // role (DEC-91 §1) — the census is empty, so any new fallback fails.
+    const KNOWN: Record<string, number> = {};
     const found: Record<string, number> = {};
     for (const f of ["app", "components", "hooks", "lib"].flatMap(walk)) {
       const n = [...src(f).matchAll(/[Rr]ole[^,\n]*(?:\|\||\?\?)\s*["']unknown["']/g)].length;
@@ -349,6 +345,22 @@ describe("DEC-91 §1 — the role is omitted, never a placeholder", () => {
     }
     for (const [f, n] of Object.entries(found)) expect(n, f).toBeLessThanOrEqual(KNOWN[f] ?? 0);
   }, CENSUS_TIMEOUT_MS);
+
+  it("SESS-6 residual (document-control P23): the checkout surfaces' audit role is omitted when none reached them — an empty role, which logAuditAction writes as NULL (DEC-91 §1)", () => {
+    const SITES: Record<string, { pattern: RegExp; count: number }> = {
+      "components/projects/StaleCheckoutBanner.tsx": { pattern: /userRole: activeRole \?\? "",/g, count: 1 },
+      "components/documents/CheckoutFlowModal.tsx": { pattern: /userRole: currentUser\.role \?\? "",/g, count: 3 },
+      "components/documents/CheckInPanel.tsx": { pattern: /userRole: currentUser\.role \?\? "",/g, count: 1 },
+      "components/documents/CheckoutStatusCell.tsx": { pattern: /userRole: userRole \?\? "",/g, count: 2 },
+      "lib/checkoutEpisodes.ts": { pattern: /userRole: input\.actorRole \?\? "",/g, count: 1 },
+    };
+    for (const [f, { pattern, count }] of Object.entries(SITES)) {
+      expect([...src(f).matchAll(pattern)].length, f).toBe(count);
+      expect(src(f), f).not.toMatch(/[Rr]ole[^,\n]*(?:\|\||\?\?)\s*["']unknown["']/);
+    }
+    // That an empty role lands as user_role NULL is driven in
+    // lib/__tests__/dcRoundFDirectWriteIssueRecord.test.ts (logCheckoutEvent).
+  });
 });
 
 // ── OFF-8 done-when 3: the per-key census ─────────────────────────────────

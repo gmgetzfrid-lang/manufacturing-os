@@ -15,7 +15,10 @@ import {
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { r2, R2_BUCKET } from "@/lib/r2";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { assertSafeStorageKey, isWorkspaceLogoKey } from "@/lib/storageKey";
+import {
+  assertSafeStorageKey, isWorkspaceLogoKey, isNodeImageKey, NODE_CUSTOMIZE_ROLES, nodeImageUploadProblem,
+} from "@/lib/storageKey";
+import { memberHoldsAny } from "@/lib/roleHeld";
 
 export const runtime = "nodejs";
 
@@ -44,12 +47,24 @@ export async function POST(req: NextRequest) {
   // Same key-level authorization as upload-url: org-prefixed keys demand
   // active membership in that org.
   const orgMatch = path.match(/^orgs\/([0-9a-fA-F-]{36})\//);
+  // ORG-16: a folder's or library's cover / background (a picture over 64 MB
+  // would come this way) is held to upload-url's rule — the node editor's
+  // authority, and an image type at create — so this route is not the way
+  // around it.
+  const nodeImage = isNodeImageKey(path);
   if (orgMatch) {
     const { data: member } = await supabaseAdmin
-      .from("org_members").select("uid")
+      .from("org_members").select(nodeImage ? "uid, role, roles" : "uid")
       .eq("org_id", orgMatch[1]).eq("uid", user.id).eq("status", "active")
       .maybeSingle();
     if (!member) return bad("Not a member of this workspace", 403);
+    if (nodeImage && !memberHoldsAny(member as { role?: unknown; roles?: unknown }, NODE_CUSTOMIZE_ROLES)) {
+      return bad("Only an Admin or a Document Controller can change a folder's or library's cover image or background.", 403);
+    }
+  }
+  if (nodeImage && action === "create") {
+    const problem = nodeImageUploadProblem(body.contentType);
+    if (problem) return bad(problem.error, problem.status);
   }
 
   try {

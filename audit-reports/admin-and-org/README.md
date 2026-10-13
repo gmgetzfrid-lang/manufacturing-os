@@ -22,13 +22,13 @@ Org lifecycle and membership, export/backup/restore, the audit log and admin rai
 
 ## Findings
 
-**61 findings** — 5 CRITICAL, 17 HIGH, 28 MEDIUM, 11 LOW.
+**64 findings** — 5 CRITICAL, 17 HIGH, 29 MEDIUM, 13 LOW.
 
 | # | Report | n | Note |
 |---|---|---|---|
-| 01 | [Org lifecycle, membership & teams](./01-org-lifecycle.md) | 16 | `ORG-14` opened at the projects Round G J2b integration, 2026-10-01; `ORG-15` opened by the integrator at the A&O P0 merge, 2026-10-02; `ORG-16` (LOW) opened at the A&O P6 review fix pass, 2026-10-02 |
+| 01 | [Org lifecycle, membership & teams](./01-org-lifecycle.md) | 18 | `ORG-14` opened at the projects Round G J2b integration, 2026-10-01; `ORG-15` opened by the integrator at the A&O P0 merge, 2026-10-02; `ORG-16` (LOW) opened at the A&O P6 review fix pass, 2026-10-02; `ORG-17` and `ORG-18` (LOW) opened by A&O P10, 2026-10-13 |
 | 02 | [Export, backup, restore & portability](./02-backup-restore.md) | 15 | `BKP-15` (LOW) opened at the intelligence I-09 merge, 2026-10-01 |
-| 03 | [The audit log & admin rails](./03-audit-log.md) | 15 | The critic — spans all four areas from this run. `ALOG-15` opened by the integrator at the A&O P0 merge, 2026-10-02 |
+| 03 | [The audit log & admin rails](./03-audit-log.md) | 16 | The critic — spans all four areas from this run. `ALOG-15` opened by the integrator at the A&O P0 merge, 2026-10-02; `ALOG-16` (MEDIUM) opened by the integrator at the A&O P7 merge, 2026-10-13 |
 | 04 | [Billing, quotas & platform limits](./04-billing.md) | 15 | `BILL-15` (LOW) opened at the A&O P6 second review fix pass, 2026-10-02 |
 
 Every report except the critic was **adversarially verified** — a second agent

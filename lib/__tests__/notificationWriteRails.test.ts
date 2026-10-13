@@ -351,7 +351,9 @@ describe("20261160 — enforce_notification_insert(): the insert rails", () => {
     const offenders: string[] = [];
     for (const f of sourceFiles()) {
       const src = readFileSync(f, "utf8");
-      if (!/\b(?:notify|notifyMany|notifyChecked|emit)\(|from\(["']notifications["']\)/.test(src)) continue;
+      // the typed sink's server forms too (N14: the moved raw sites write
+      // through notifyWithReason / notifyBatchWithReason, and are still judged)
+      if (!/\b(?:notify|notifyMany|notifyChecked|notifyWithReason|notifyBatchChecked|notifyBatchWithReason|notifyCompliance|emit)\(|from\(["']notifications["']\)/.test(src)) continue;
       const r = linkStarts(src, f);
       seen += r.seen;
       shorthand += r.shorthand;
@@ -570,14 +572,29 @@ const DEDUPE_READS: Record<string, Array<{ marks: string; keys?: string[]; kinds
   // creation notice reached a recipient's bell, because notify() swallows a refused insert.
   "app/api/tickets/create/route.ts": [{ marks: '.eq("metadata->>action", "created").in("user_id", recipients.map((m) => m.uid))', none: "not a dedupe: after emit(), the create route reads whether a creation bell row (metadata.action 'created') for the new ticket is in a queue recipient's bell — notify() logs and swallows a refused insert — to answer notified: false and leave metadata.created_notice_at unstamped when none is. A row a browser wrote there is in a recipient's bell all the same, so it cannot make a notice nobody received read as received; the requester's own bell is not read" }],
   "app/api/transmittal/route.ts": [{ marks: '.eq("kind", UNSTAMPABLE_NOTICE_KIND)', kinds: ["transmittal_unstampable"] }],
+  // notifications N14 integrator pass (re-review minor 3): before it retries a failed compliance
+  // notice, notifyCompliance reads back whether the row landed after all (a lost answer). Inside the
+  // cron (the service role) it takes only a row with the notice's own actor — none for the scans'
+  // notices — so a row a member forged from a browser (the rail stamps its writer) never stops a retry.
+  "lib/complianceNotify.ts": [{ marks: '.eq("title", input.title)', actorNull: "the compliance retry's read-back takes only a server row (actor_user_id IS NULL) for a notice that names no actor — every cron scan notice; a member's browser row is stamped with its writer, so it cannot stand in for the notice and stop its retry. In a browser it reads only the signed-in member's own row, whose actor the rail stamps as that member" }],
   // ackRequest (the nag's watermark) is written by browsers by design — a manual request or
   // re-nudge counts as the nag (the scan's own comment); only the escalation's key is server-only
   // N9 (PROD-13 / TAX-13): the manual distribution-ack requests write ack_requested now (were doc_superseded)
   "lib/distributionAcks.ts": [{ marks: '.in("kind", ["ack_requested", "ack_overdue"])', keys: ["ackEscalation"] }],
   "lib/holds.ts": [{ marks: '.contains("metadata", { staleHoldId: h.id, staleFor })', keys: ["staleHoldId"] }],
   "lib/intakeRateLimit.ts": [{ marks: '.contains("metadata", { reviewHealthDay: input.day })', keys: ["reviewHealthDay"] }],
-  "lib/storageAlerts.ts": [{ marks: '.eq("kind", "storage_alert")', kinds: ["storage_alert"] }],
-  "lib/storageUsage.ts": [{ marks: '.eq("kind", alert.kind)', kinds: ["storage_platform_r2", "storage_platform_db"] }],
+  "lib/storageAlerts.ts": [
+    { marks: '.eq("kind", "storage_alert")', kinds: ["storage_alert"] },
+    // admin-and-org BILL-15 (Round G, P10): on a single-workspace server the quota bell is not sent the
+    // same UTC day as an R2 plan bell (storage_platform_r2, server-only) — read by that kind
+    { marks: '.eq("kind", "storage_platform_r2")', kinds: ["storage_platform_r2"] },
+  ],
+  "lib/storageUsage.ts": [
+    // admin-and-org BILL-15 (Round G, P10): on a single-workspace server the R2 bell counts a quota bell
+    // (storage_alert, server-only) that already stated the bucket running hot — read by that kind
+    { marks: '.eq("kind", "storage_alert")', kinds: ["storage_alert"] },
+    { marks: '.eq("kind", alert.kind)', kinds: ["storage_platform_r2", "storage_platform_db"] },
+  ],
 };
 /** The recipient's own rows, read under RLS — the bell, the inbox count, the dashboard. */
 // components/documents/EditOverlapBanner.tsx (notifications N7, TAX-8 — merged after this
@@ -679,7 +696,11 @@ describe("20261160 — the server's dedupe watermarks: a browser can neither wri
       // The storage purge (notifications N6, DELIV-8 dw3) names the server-only kinds to
       // KEEP their rows out of a purge — a filter, not a write; maintenanceDrain.test.ts
       // pins its lists to this function's.
-      expect(where.filter((f) => f !== "lib/inAppNotifications.ts" && f !== "app/api/admin/purge/route.ts"), token).toEqual([w.file]);
+      // admin-and-org BILL-15 (Round G, P10): the two storage steps each name the other's kind in one
+      // read (DEDUPE_READS above) — a filter, not a write; each kind's writer is still its one function.
+      const readsOnly = (f: string) =>
+        (token === "storage_alert" && f === "lib/storageUsage.ts") || (token === "storage_platform_r2" && f === "lib/storageAlerts.ts");
+      expect(where.filter((f) => f !== "lib/inAppNotifications.ts" && f !== "app/api/admin/purge/route.ts" && !readsOnly(f)), token).toEqual([w.file]);
       const src = files.find(([f]) => f === w.file)![1];
       if (w.file.startsWith("app/api/")) continue;
       // in a lib file: every occurrence sits inside the named function, and only the cron calls it
@@ -1790,7 +1811,10 @@ describe("REGRESSION census — every app write to notifications fits the read_a
   }
 
   it("the census sees the app's notification calls (sanity)", () => {
-    expect(writes.filter((w) => w.op === "insert").length).toBeGreaterThan(5);
+    // N14 (TAX-11 done-when 2): every raw insert moved onto the typed sink,
+    // so the inserts left are the sink's own two (notifyWithReason,
+    // notifyBatchWithReason) — every app row goes through one of them
+    expect(writes.filter((w) => w.op === "insert").map((w) => w.file)).toEqual(["lib/inAppNotifications.ts", "lib/inAppNotifications.ts"]);
     expect(writes.filter((w) => w.op === "update").length).toBeGreaterThanOrEqual(4);
   });
 
@@ -1845,10 +1869,12 @@ describe("REGRESSION census — every app write to notifications fits the read_a
     }
     // N8 (TAX-11 done-when 2): five raw calls moved onto the typed sink
     // (the transmittal portal's two, the checkout sweep's, and — N8's review
-    // fix — the export alert's and the folded intake digest's), so six raw
-    // calls and the sink's two inserts (notifyWithReason, and
-    // notifyBatchWithReason) are examined
-    expect(examined).toBeGreaterThanOrEqual(8);
+    // fix — the export alert's and the folded intake digest's); N14 moved the
+    // last six, so the sink's two inserts (notifyWithReason, and
+    // notifyBatchWithReason) are what is examined — and its row mapper
+    // (notificationRow) sets no created_at
+    expect(examined).toBe(2);
+    expect(readFileSync(join(ROOT, "lib/inAppNotifications.ts"), "utf8")).not.toMatch(/created_at:/);
     expect(offenders).toEqual([]);
   });
 

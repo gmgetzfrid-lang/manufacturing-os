@@ -8,8 +8,9 @@
 // Behavioral contract: identical to the previous client-side computation.
 // lib/__tests__/ticketTransitions.test.ts freezes it.
 
-import type { Ticket, TicketAttachment, TicketComment, TicketHistoryEntry, TicketStatus } from "@/types/schema";
+import type { Ticket, TicketAttachment, TicketComment, TicketHistoryEntry, TicketOutcome, TicketStatus } from "@/types/schema";
 import { lastIssuedFromHistory } from "@/lib/verifyTicketVerdict";
+import { defaultOutcome } from "@/lib/ticketOutcome";
 
 export interface TransitionActor {
   uid?: string | null;
@@ -35,6 +36,10 @@ export interface TransitionInput {
   /** WF-9: the file an `attach_file` action adds (bytes already in storage;
    *  the ticket row's attachments/history write is what rides the route). */
   attachment?: TicketAttachment | null;
+  /** LEAK-9 / GAP-107 (DF-P3): how the request ended, for the actions that
+   *  end one (close_ticket, close_rfi, cancel_request) — validated by the
+   *  workflow route against lib/ticketOutcome.ts. Absent → defaultOutcome(). */
+  outcome?: TicketOutcome | null;
   actor: TransitionActor;
   now?: string;
 }
@@ -90,6 +95,11 @@ export function rowToTicket(row: Record<string, unknown>): Ticket {
     revisionCount: row.revision_count as number | undefined,
     deliverableRev: row.deliverable_rev as string | null | undefined,
     draftIteration: row.draft_iteration as number | undefined,
+    // DF-P3 (GAP-106 / GAP-107): the SLA clock and how the request ended.
+    targetCompletionAt: row.target_completion_at as string | null | undefined,
+    slaBreachWarnedAt: row.sla_breach_warned_at as string | null | undefined,
+    slaBreachedAt: row.sla_breached_at as string | null | undefined,
+    outcome: (row.outcome as Ticket["outcome"]) ?? null,
     createdAt: row.created_at as string,
     lastModified: row.last_modified as string | undefined,
   } as Ticket;
@@ -246,7 +256,18 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
     historyEntry.details = `Assigned to ${input.assignment.name}${input.comment ? ` [Reason: ${input.comment}]` : ""}`;
   }
 
-  if (input.actionType === "request_revision" || input.actionType === "reject" || input.actionType === "reject_final") {
+  // SM-6 / ROUTE-1 (DF-P3): a revision with NO drafter to do it goes back to
+  // the assignment queue — the state that exists to hold a ticket nobody
+  // owns — instead of REVISION_REQ, where nobody's queue showed it. "Return
+  // with Questions" from engineering review is the usual case (no drafter has
+  // been assigned yet); a ticket whose drafter left (EDGE-4) is the other.
+  // An engineering scope review is not a deliverable round, so it does not
+  // advance the revision cycle; every other revision does, as before.
+  const isRevision = input.actionType === "request_revision" || input.actionType === "reject"
+    || input.actionType === "reject_final" || input.actionType === "engineer_request_revision";
+  const revisionToQueue = isRevision && !ticket.assignedDrafterId;
+  const revisionRound = isRevision && ticket.status !== "PENDING_ENG_TEAM";
+  if (revisionRound && input.actionType !== "engineer_request_revision") {
     historyEntry.revisionRound = (ticket.revisionCount || 0) + 1;
   }
 
@@ -333,8 +354,10 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       break;
     case "cancel_request":
       // DEC-14: a terminal exit off the main flow, with the reason in the
-      // comment thread and the history line.
+      // comment thread and the history line. LEAK-9 / GAP-107 (DF-P3): and
+      // its category, typed, on the row.
       updates.status = "CANCELED";
+      updates.outcome = input.outcome ?? defaultOutcome(input.actionType, ticket.status);
       break;
     case "request_eng_review":
       // WF-22: the status may only advance WITH its engineer — an
@@ -357,7 +380,9 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       if (input.assignment) {
         updates.assigned_drafter_id = input.assignment.id;
         updates.assigned_drafter_name = input.assignment.name;
-        updates.status = "DRAFTING";
+        // SM-6 (DF-P3): a revision that lost its drafter is re-owned AS a
+        // revision; every other assignment starts drafting.
+        updates.status = ticket.status === "REVISION_REQ" ? "REVISION_REQ" : "DRAFTING";
         updates.unread_by = [input.assignment.id];
       }
       break;
@@ -436,7 +461,7 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       if (ticket.assignedDrafterId) updates.unread_by = [ticket.assignedDrafterId];
       break;
     case "engineer_request_revision":
-      updates.status = "REVISION_REQ";
+      updates.status = revisionToQueue ? "PENDING_ASSIGNMENT" : "REVISION_REQ";
       updates.revision_count = (ticket.revisionCount || 0) + 1;
       updates.draft_iteration = 0; // next submission starts the new cycle at A
       if (ticket.assignedDrafterId) updates.unread_by = [ticket.assignedDrafterId];
@@ -457,9 +482,11 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
     case "request_revision":
     case "reject":
     case "reject_final":
-      updates.status = "REVISION_REQ";
-      updates.revision_count = (ticket.revisionCount || 0) + 1;
-      updates.draft_iteration = 0; // next submission starts the new cycle at A
+      updates.status = revisionToQueue ? "PENDING_ASSIGNMENT" : "REVISION_REQ";
+      if (revisionRound) {
+        updates.revision_count = (ticket.revisionCount || 0) + 1;
+        updates.draft_iteration = 0; // next submission starts the new cycle at A
+      }
       break;
     case "submit_final":
       updates.status = "FINAL_DRAFT";
@@ -469,6 +496,10 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
     case "close_ticket":
     case "close_rfi":
       updates.status = "CLOSED";
+      // LEAK-9 / GAP-107 (DF-P3): how it ended — "completed" for the
+      // requester's acknowledgement and an answered RFI, nothing recorded for
+      // a force close that names none (lib/ticketOutcome.ts defaultOutcome).
+      updates.outcome = input.outcome ?? defaultOutcome(input.actionType, ticket.status);
       break;
     case "reopen_ticket":
       // WF-21 / DEC-15: a reopen starts a NEW revision cycle. Without this
@@ -479,6 +510,8 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
       updates.revision_count = (ticket.revisionCount || 0) + 1;
       updates.draft_iteration = 0;
       updates.deliverable_rev = null;
+      // A reopened request has not ended (LEAK-9).
+      updates.outcome = null;
       break;
   }
 
@@ -487,9 +520,12 @@ export function computeTransition(ticket: Ticket, input: TransitionInput): Trans
   // Acting on a ticket makes you a participant, so you follow future activity.
   if (actorUid) updates.watchers = Array.from(new Set([...(ticket.watchers ?? []), actorUid]));
 
-  // For meaningful transitions (ones that already notify someone), also notify
-  // everyone following the ticket — minus the actor.
-  if (Array.isArray(updates.unread_by) && (updates.unread_by as string[]).length > 0 && (ticket.watchers ?? []).length > 0) {
+  // Every transition also notifies everyone following the ticket — minus the
+  // actor. ROUTE-6 (DF-P3): unconditionally. The union used to run only when
+  // the transition already told someone, so a transition whose only personal
+  // stakeholder was the actor (a Drafter picking up their own request) told
+  // its followers nothing.
+  if (Array.isArray(updates.unread_by) && (ticket.watchers ?? []).length > 0) {
     updates.unread_by = Array.from(
       new Set([...(updates.unread_by as string[]), ...(ticket.watchers ?? [])]),
     ).filter((u) => u !== actorUid);

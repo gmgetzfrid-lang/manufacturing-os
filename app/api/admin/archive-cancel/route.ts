@@ -10,14 +10,26 @@
 // archive_id set and are excluded from future produce — stranded, un-archivable,
 // invisible. This is the operator's recovery handle: it makes a produce safely
 // revocable. It never touches committed stubs (archived_at set), so it can't undo
-// a real archive. Admin/DocCtrl only.
+// a real archive. The storage surface's writes set (Admin / DocCtrl), asked of
+// lib/adminGate.ts with the "write" intent (roles-and-permissions SURF-19,
+// admin-and-org P7).
+//
+// admin-and-org ALOG-8 (P7): every write is checked. A refused unlink or
+// catalog removal answers 500 naming what was already done; the
+// ARCHIVE_PRODUCE_CANCELED audit row is checked too — the cancel has happened
+// either way, so a row that could not be written is reported in the answer
+// (`auditError`) and logged, never a silent success (the purge's rule).
+// P7 review fix: a PARTIAL discard is recorded too. When the tickets were
+// unlinked but the revisions' unlink is refused, the route has changed data,
+// so it writes a checked ARCHIVE_PRODUCE_CANCELED row with `partial: true`
+// (how many tickets were freed, and the error) before it answers 500 — a
+// retry finds those tickets already unlinked and records 0, so without this
+// row the trail would never show which archive's tickets were freed.
 
 import { NextRequest, NextResponse } from "next/server";
-import { authorizeOrgRole } from "@/lib/serverAuth";
+import { authorizeAdminSurface } from "@/lib/adminGate";
 
 export const runtime = "nodejs";
-
-const SHED_ROLES = ["Admin", "DocCtrl"];
 
 export async function POST(req: NextRequest) {
   let body: { orgId?: string; archiveId?: string };
@@ -25,50 +37,84 @@ export async function POST(req: NextRequest) {
 
   const orgId = body.orgId || "";
   const archiveId = (body.archiveId || "").trim();
-  const actor = await authorizeOrgRole(req, orgId, SHED_ROLES);
+  const actor = await authorizeAdminSurface(req, orgId, "storage", "write");
   if ("error" in actor) return NextResponse.json({ error: actor.error }, { status: actor.status });
   if (!archiveId) return NextResponse.json({ error: "archiveId is required" }, { status: 400 });
   const sb = actor.admin;
 
+  /** The checked ARCHIVE_PRODUCE_CANCELED insert: null when written, else why not (logged). */
+  const writeCancelRow = async (details: Record<string, unknown>): Promise<string | null> => {
+    let auditError: string | null = null;
+    try {
+      const { error } = await sb.from("audit_logs").insert({
+        action: "ARCHIVE_PRODUCE_CANCELED",
+        resource_id: orgId, resource_type: "org", org_id: orgId,
+        user_id: actor.userId, user_email: actor.email, user_role: actor.admittedRole,
+        details,
+      });
+      if (error) auditError = error.message;
+    } catch (e) {
+      auditError = (e as Error).message || String(e);
+    }
+    if (auditError) console.error("[admin/archive-cancel] the ARCHIVE_PRODUCE_CANCELED audit row was not written", auditError);
+    return auditError;
+  };
+
   // Unlink only the UNCOMMITTED rows; .select() tells us how many we freed.
-  const { data: t } = await sb
+  const { data: t, error: tErr } = await sb
     .from("tickets")
     .update({ archive_id: null })
     .eq("org_id", orgId).eq("archive_id", archiveId).is("archived_at", null)
     .select("id");
-  const { data: d } = await sb
+  if (tErr) {
+    return NextResponse.json({ error: `The archive was not discarded: its tickets could not be unlinked (${tErr.message}). Nothing was changed.` }, { status: 500 });
+  }
+  const ticketsUnlinked = (t as Array<{ id: string }> | null)?.length ?? 0;
+  const { data: d, error: dErr } = await sb
     .from("document_versions")
     .update({ archive_id: null })
     .eq("org_id", orgId).eq("archive_id", archiveId).is("archived_at", null)
     .select("id");
-  const ticketsUnlinked = (t as Array<{ id: string }> | null)?.length ?? 0;
+  if (dErr) {
+    // Tickets already freed are a change: record it before answering (a retry would record 0).
+    const auditError = ticketsUnlinked > 0
+      ? await writeCancelRow({ archiveId, ticketsUnlinked, versionsUnlinked: 0, partial: true, error: dErr.message })
+      : null;
+    return NextResponse.json({
+      error: `The archive was only partly discarded: ${ticketsUnlinked} ticket(s) were unlinked, but its revisions could not be (${dErr.message}). Run Discard again.`,
+      ticketsUnlinked,
+      ...(auditError ? { auditError: `the ${ticketsUnlinked} ticket(s) unlinked were not recorded: the ARCHIVE_PRODUCE_CANCELED audit row was not written: ${auditError}` } : {}),
+    }, { status: 500 });
+  }
   const versionsUnlinked = (d as Array<{ id: string }> | null)?.length ?? 0;
 
   // Was anything ever COMMITTED under this archive? If not, it was a fully
   // abandoned produce — drop its catalog row too. If yes, leave the catalog (it's
-  // a real archive that holds committed stubs).
-  const { count: committed } = await sb
+  // a real archive that holds committed stubs). A count that cannot be read
+  // keeps the catalog row (never drop the record of a real archive on a guess).
+  const { count: committed, error: cErr } = await sb
     .from("tickets")
     .select("id", { count: "exact", head: true })
     .eq("org_id", orgId).eq("archive_id", archiveId).not("archived_at", "is", null);
-  const { count: committedDocs } = await sb
+  const { count: committedDocs, error: cdErr } = await sb
     .from("document_versions")
     .select("id", { count: "exact", head: true })
     .eq("org_id", orgId).eq("archive_id", archiveId).not("archived_at", "is", null);
   let catalogRemoved = false;
-  if ((committed ?? 0) === 0 && (committedDocs ?? 0) === 0) {
-    await sb.from("archives").delete().eq("org_id", orgId).eq("archive_id", archiveId);
-    catalogRemoved = true;
+  let catalogKeptReason: string | null = null;
+  if (cErr || cdErr) {
+    catalogKeptReason = `whether anything was committed under it could not be read (${(cErr ?? cdErr)!.message})`;
+  } else if ((committed ?? 0) === 0 && (committedDocs ?? 0) === 0) {
+    const { error: delErr } = await sb.from("archives").delete().eq("org_id", orgId).eq("archive_id", archiveId);
+    if (delErr) catalogKeptReason = `its catalog entry could not be removed (${delErr.message})`;
+    else catalogRemoved = true;
   }
 
-  try {
-    await sb.from("audit_logs").insert({
-      action: "ARCHIVE_PRODUCE_CANCELED",
-      resource_id: orgId, resource_type: "org", org_id: orgId,
-      user_id: actor.userId, user_email: actor.email,
-      details: { archiveId, ticketsUnlinked, versionsUnlinked, catalogRemoved },
-    });
-  } catch { /* best-effort */ }
+  const auditError = await writeCancelRow({ archiveId, ticketsUnlinked, versionsUnlinked, catalogRemoved, ...(catalogKeptReason ? { catalogKeptReason } : {}) });
 
-  return NextResponse.json({ ok: true, archiveId, ticketsUnlinked, versionsUnlinked, catalogRemoved });
+  return NextResponse.json({
+    ok: true, archiveId, ticketsUnlinked, versionsUnlinked, catalogRemoved,
+    ...(catalogKeptReason ? { catalogKept: `The catalog entry was kept: ${catalogKeptReason}.` } : {}),
+    ...(auditError ? { auditError: `the archive was discarded but its ARCHIVE_PRODUCE_CANCELED audit row was not written: ${auditError}` } : {}),
+  });
 }

@@ -66,6 +66,10 @@
 
 **Remaining / owner.** Criterion 1 (and the read-time half of 2) is the one-predicate question `IEDGE-12` carries — "a normal-visibility document carrying an explicit read deny is refused by every path … node_visible" — and belongs to I-12 (DOCUMENT ACL BOUNDARY), which already plans the `node_visible` re-creation for `DACL-12`. I-12's plan lists "DEC-10 acl_index cache + nightly rebuild (DACL-1 closed on it)" as verified sound; for criterion 1 this re-verification says otherwise, so criterion 1 is not in I-12's plan today — the integrator adds it. The decision it needs is `DOCACL-2`'s — whether a restricted container restricts its `normal` children at the database (the app's chain evaluation already does), weighed against the lockout the fail-safe default exists to avoid. The document-move re-index (criterion 3) is in no fleet plan; the nightly rebuild bounds it, and the owner named here is the same I-12 (it is `acl_index` maintenance on the document ACL boundary), for the integrator to confirm. The download step of the failure scenario is `KACL-5`'s (also I-12).
 
+**Partial (2026-10-13, intelligence Round G).** Package I-01 phase B, re-verified on base `596d34e`: unchanged. The newest `node_visible` body is still `20261041_rp_phase5_node_visible_additive.sql`, and it still opens with `IF p_visibility IS NULL OR p_visibility = 'normal' THEN` (`:38`); no later migration re-creates the function. `app/api/documents/move/route.ts` still writes no ACL column.
+
+**Remaining / owner.** As above: criterion 1 and the read-time half of 2, and criterion 3's document-move re-index. Owner: intelligence **I-12** (queued; it plans the `node_visible` re-creation for `DACL-12`). Its plan entry still lists "DEC-10 acl_index cache + nightly rebuild (DACL-1 closed on it)" as verified sound, which this re-verification contradicts for criterion 1, so the integrator adds `DACL-1` to I-12's findings.
+
 ---
 
 <a id="dacl-2"></a>
@@ -122,6 +126,7 @@ app/api/storage/delete/route.ts:26-40 — the entire authorization is `const org
 
 - **Severity:** HIGH
 - **Status:** OPEN
+- **Assigned:** intelligence I-12 DOCUMENT ACL BOUNDARY (criterion 3, by pointer through public-surfaces `VFY-16` done-when 3) — by the integrator, 2026-10-13 (I-01B merge, DEC-31; fleet plan `audit-reports/fleet-plans/intelligence.json`)
 - **Verification:** CONFIRMED
 - **Locations:** `app/d/[number]/route.ts:26-46`, `app/api/verify/route.ts:22-39`, `app/api/verify/route.ts:96-108`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. The claim is right and each route's own comment states the assumption the other one breaks. /d/[number]:6-7 says "The target page enforces auth + RLS as always — this route only translates a number into a location; it reveals nothing", but the redirect body is never fetched — the Location header IS the disclosure. /api/verify:5-7 rests on "Both IDs are unguessable UUIDs that only appear ON a printed copy the org itself issued", which /d/ falsifies by handing out real document UUIDs from any tenant to an unauthenticated caller supplying a 2-character substring.
@@ -153,6 +158,12 @@ app/d/[number]/route.ts:6-7 comment claims `The target page enforces auth + RLS 
 
 **Remaining / owner.** Criterion 3 → public-surfaces **PS-VERIFY** (owns the four verify endpoints: `VFY-2` / `VFY-3` per-print semantics, `VFY-14` narrow select). It is the same limb as `DACL-8` criteria 1–2 and is handed over there with the default (answer "current / superseded" without number or title for a private or hidden document). Cross-note added on `VFY-14`; PS-VERIFY's plan does not list it yet, and the integrator adds it with DACL-8's.
 
+**Partial (2026-10-13, intelligence Round G).** Package I-01 phase B, re-verified on base `596d34e`, after public-surfaces PS-VERIFY merged. Criteria 1 and 2 hold as recorded (`app/d/[number]/route.ts` does no database work and redirects every input alike, `:31`). Criterion 3 does not:
+- `/api/verify` still accepts `doc` alone (`app/api/verify/route.ts:74`). Since PS-VERIFY a QR with no `?v=` is never green: it answers `unverifiable` (`:195`, `DEC-65` §2).
+- But it still selects the document by id with no visibility column (`:81`) and returns its number and title (`:212-213`). No per-print token exists for a sheet.
+
+**Remaining / owner.** Criterion 3: public-surfaces **`VFY-16`** (OPEN, Assigned to intelligence **I-12**, queued), whose done-when 3 closes this criterion by pointer. The default it carries is this package's decision default: for a private or hidden document, answer the verdict without the number or title (fail-safe, less disclosure).
+
 ---
 
 <a id="dacl-4"></a>
@@ -161,6 +172,7 @@ app/d/[number]/route.ts:6-7 comment claims `The target page enforces auth + RLS 
 
 - **Severity:** HIGH
 - **Status:** OPEN
+- **Assigned:** intelligence I-12 DOCUMENT ACL BOUNDARY (as its record's Remaining names) — by the integrator, 2026-10-13 (I-01B merge, DEC-31; fleet plan `audit-reports/fleet-plans/intelligence.json`)
 - **Verification:** CONFIRMED
 - **Locations:** `supabase/migrations/20260623_document_shares.sql:37-54`, `lib/documentShares.ts:33-57`, `app/api/share/file/route.ts:42-58`, `app/api/share/file/route.ts:105-125`, `app/api/storage/download-url/route.ts:92-111`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed on every limb: RLS gates share creation on org membership only, and the file route is service-role with no ACL/legal-hold/download-deny/ack check. I looked for a compensating guard in /api/share/resolve and in ShareLinkModal and found none — the modal is pure UI, and the insert goes through PostgREST so any UI gating is bypassable. If anything the finding understates it: the WITH CHECK never verifies that document_id belongs to org_id, and share/file resolves the document by id with no org filter, so a member can also mint a link for a document in a DIFFERENT tenant.
@@ -190,6 +202,10 @@ app/d/[number]/route.ts:6-7 comment claims `The target page enforces auth + RLS 
 
 **Remaining / owner.** Two serve-time refusals — `documents.legal_hold = true`, and a document whose effective acknowledgment policy sets `hardGate` (whether that binds for the sharer or outright is the owner's call) — plus KACL-12 (I-12), plus criterion 3's database half: the tier and the expiry ceiling close when `20261080` is applied (`DIST-6`, pending apply), and an audit row for a direct insert (a trigger, or the INSERT policy refusing what `createShareLink` did not write) is not in `20261080`. Owner named: document-control **P1 SHARE's remainders** — P1 built `lib/shareServe.ts` and merged without these two; they go beside its other remainders (`SHR-14`, `DIST-15`), with the direct-insert audit. No queued package lists them today, so the integrator adds them to that follow-up.
 
+**Partial (2026-10-13, intelligence Round G).** Package I-01 phase B, re-verified on base `596d34e`: unchanged since the record above. Criterion 1 holds. Criterion 2: `lib/shareServe.ts` still reads neither `documents.legal_hold` nor a hard acknowledgment gate (no `legal_hold`, `hardGate` or `assertAckGate` in the file), and the creator's re-check still rides the seam `KACL-12` describes. Criterion 3's database half waits on `20261080`, still a pending paste (`audit-reports/MIGRATION-PASTE-ORDER.md`, row 72).
+
+**Remaining / owner.** No running or queued package lists the two serve-time refusals: document-control P1 SHARE and P12 have merged, and no later document-control package takes share serving. Proposed owner: intelligence **I-12** (queued), for the integrator to assign. I-12 already owns this path's `KACL-12` limb (`shareStillAuthorized`, through the seam), and its plan names share serving among the seam's callers whose fail-closed shape it keeps. The direct-insert audit row goes with them. The tier and the 90-day ceiling at the database close when `20261080` is pasted (operator).
+
 ---
 
 <a id="dacl-5"></a>
@@ -197,7 +213,7 @@ app/d/[number]/route.ts:6-7 comment claims `The target page enforces auth + RLS 
 ## DACL-5 · ACL rules addressed to a member's secondary role are inert everywhere except the download-deny check — grants silently do nothing, denies partially bite
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `lib/acl.ts:72-74`, `components/providers/RoleContext.tsx:11-12`, `app/(protected)/documents/[libraryId]/page.tsx:1650-1657`, `app/api/storage/download-url/route.ts:99-107`, `supabase/migrations/20260708_acl_rls_enforcement.sql:58-59`, `supabase/migrations/20260722_member_roles_collection.sql:12-13`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Repo-wide search for evaluateAcl/evaluateAclChain/canDiscover callers turned up no other site that expands org_members.roles into the ACL principal, so the asymmetry is real: secondary-role allow grants are inert, and a secondary-role deny binds only on download-URL issuance. 20260722_member_roles_collection.sql:5-8 even states the design intent ("every existing single-role check and every RLS policy reads `role`"), which is the cause, not a refutation.
@@ -238,6 +254,26 @@ lib/acl.ts:73 — `return !!ctx.role && ctx.role === (id as Role);`. app/(protec
 
 **Remaining / owner.** Criterion 3's drawer half only — admin-and-org P7 (owner of `PermissionDrawer.tsx`); status stays OPEN.
 
+**Partial (2026-10-13, intelligence Round G).** Package I-01 phase B, re-verified on base `596d34e`. Criteria 1 and 2 hold as recorded. Criterion 3's simulator half holds (admin-and-org P9). Its drawer half does not: `components/permissions/PermissionDrawer.tsx` still names no member's held roles beside a role rule (no `heldRoles` in the file).
+
+**Remaining / owner.** The drawer half only. Owner: admin-and-org **P7** (running now; it owns `components/permissions/**`). This package does not edit that file. *Landed by admin-and-org P7 — its Resolution below (merged before I-01 phase B, 2026-10-13); recorded by the integrator at the I-01B merge.*
+
+**Resolution (2026-10-13, admin-and-org Round G).** Package P7 (owner of `PermissionDrawer.tsx`), at its review fix pass — criterion 3's drawer half, the last remainder (criteria 1 and 2: intelligence Round G; the simulator half: admin-and-org P9). Reproduced on base `6503ea7` (DEC-29): the drawer read members as `uid, display_name, email` only and its rules list and role picker said nothing about who a role rule reaches.
+
+Landed — `components/permissions/PermissionDrawer.tsx`:
+- The member read now takes each active member's whole collection (`select("uid, display_name, email, role, roles")`, `:197`; `heldRoles` from `lib/roleHeld.ts`); a failed read is kept (`membersError`), never shown as "nobody".
+- Each role rule in the list states whom it reaches today (`roleReachSentence`, `:224`; `data-role-reach`, `:610`): "Reaches 2 active members holding Safety — as their headline role: Sam Safety; as an additional role: Erin Eng." — the same match the evaluators make (`lib/acl.ts` subject match over the collection; `node_visible`'s `COALESCE(roles, ARRAY[role])`); a role nobody holds says the rule reaches no one; an unreadable member list says so instead of guessing.
+- The role picker states the rule ("A role rule reaches every active member who holds the role — as their headline role or as any additional role.") and who holds the picked role (`:732`).
+
+Tests: `lib/__tests__/auditDrawerRendered.test.ts` "intelligence DACL-5 criterion 3 — the drawer says which members a role rule reaches" (rendered: headline and additional holders named; a role nobody holds; a failed member read said; the picker's rule and holders, following the pick).
+
+**Done-when.**
+1. ✓ (intelligence Round G, unchanged).
+2. ✓ (intelligence Round G, unchanged).
+3. ✓ Both halves: the simulator states which held role (or team) a rule matches for a given member (P9), and the Permissions drawer states, for each role rule and for the role being picked, which active members it matches and whether by their headline or an additional role (P7).
+
+**Scope / residual.** None. The drawer's statement is about role rules (the criterion's subject); team rules name the team as before, and a person's own view is the simulator's.
+
 ---
 
 <a id="dacl-6"></a>
@@ -276,6 +312,7 @@ lib/acl.ts:170 — `if (!chain.some(Boolean)) return null;` ; lib/permissions.ts
 
 - **Severity:** MEDIUM
 - **Status:** OPEN
+- **Assigned:** admin-and-org P14 EXPORT / RESTORE REMAINDERS (criteria 1-2, the legacy unconfirmed destination — the same bounded grace as `IEDGE-10`) — by the integrator, 2026-10-13 (I-01B merge, DEC-31; fleet plan `audit-reports/fleet-plans/admin-and-org.json`)
 - **Verification:** CONFIRMED
 - **Locations:** `app/api/data-export/run/route.ts:18`, `app/api/data-export/run/route.ts:74-76`, `app/api/data-export/structured/route.ts:55-58`, `lib/exportTables.ts:44`, `lib/dataExport.ts:95-96`, `lib/dataExport.ts:326-334`, `lib/permissions.ts:18-20`, `supabase/migrations/20260708_acl_rls_enforcement.sql:57-62`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. "Manager" is a real assignable role (types/schema.ts:8). The only compensating control I found is detective, not preventive, and it does not even notify the Manager tier: run/route.ts:47 `.in("role", ["Admin", "DocCtrl"])` in alertAdminsOfExport, plus a 12-runs/hour rate limit at :78-85. Neither blocks the export.
@@ -299,6 +336,21 @@ app/api/data-export/run/route.ts:18 — `const ADMIN_ROLES = ["Admin", "Manager"
 - [ ] A test asserts the export role list and isControllerRole() cannot drift apart
 
 **Partial (2026-09-30, intelligence Round G).** Pointer — re-verified at HEAD `1b71ca1`: nothing has landed and no criterion holds. Both export routes still admit Manager — `app/api/data-export/run/route.ts:18` (`ADMIN_ROLES = ["Admin", "Manager", "DocCtrl"]`, used at `:76`) and `app/api/data-export/structured/route.ts:56` (now read from the role collection, `memberHoldsAny`) — and so does `app/api/data-export/destinations/route.ts:14`; the manifest names no withheld rows. Owner: admin-and-org **P3** (`BKP-8`, Admin-only full export per `DEC-43`); the same fix closes `ILIFE-7` and `IEDGE-10`. Landed neighbour, not a criterion here: document-control `EGR-7` redacts bearer-token columns from every dump (`DEC-45`). Cross-note on `BKP-8`.
+
+**Partial (2026-10-13, intelligence Round G).** Package I-01 phase B, by pointer to admin-and-org `BKP-8` (RESOLVED, package P3; `DEC-87` §1), with one pin added here. Re-verified on base `596d34e`. *Corrected at the third review fix pass:* this block was first a Resolution marking criteria 1 and 2 ✓ ("✓, vacuously — every exporter is a controller"). That does not hold for one path, so the finding is back to OPEN (`DEC-29`):
+- The whole-workspace export is Admin-only: every `/api/data-export/*` route admits through `authorizeAdminSurface(req, orgId, "data-export")` (`structured/route.ts:47`, `run/route.ts:100`, `runs/route.ts:20`, and the destination routes, as recorded on `ILIFE-7`), and that surface's entry set is `["Admin"]` (`lib/adminSurfaces.ts:103`).
+- That is narrower than "Admin / DocCtrl", and it is inside the ACL controller tier (`isControllerRole`, `lib/permissions.ts:26-28`; `node_visible`'s controller branch). So no export a person starts carries a row its exporter could not read in the app (the scheduled path below is the exception).
+- Test, new on this pass: `lib/__tests__/intelRoundGLifecycleRecords.test.ts`, "DACL-7 criterion 3". Every role in the data-export entry set satisfies `isControllerRole`, and Manager is neither admitted nor a controller. `lib/__tests__/dataExportRoutes.test.ts:202` pins the set to the restore surface's.
+- The path still open: a scheduled destination a Manager or DocCtrl configured before P3 still RUNS every night (`DEC-87` §1, regression first; `app/api/data-export/run-scheduled/route.ts:222-226`, `destinationConfirmation`). Until an Admin saves (confirms) or disables it, the whole workspace, every `documents` row and, with files, every referenced object, goes to the bucket or webhook that non-controller chose, with no ACL filter and no withheld rows; the night's bell asks every Admin to act. Pinned by `lib/__tests__/dataExportRoutes.test.ts:1522` and `lib/__tests__/intelRoundGLifecycleRecords.test.ts` "IEDGE-10 / DACL-7 open residual". The drift test above pins only the entry set, not this confirmation rule. Recorded in full on `IEDGE-10`.
+
+**Done-when.**
+1. ◐ — every export a person starts is restricted to a role inside the controller tier (Admin). Not met for the scheduled push of a pre-P3 destination a non-controller configured and no Admin has confirmed: its target is that member's choice, and it is unfiltered.
+2. ◐ — for every export a controller starts, nothing is withheld from the exporter, so there are no withheld rows to name (vacuous). What the backup carries that the app scopes more tightly, standalone private notes, is named: the manifest note `PRIVATE_NOTES_CARRIED` and `details.privateNotes.carried` (`DEC-87` §4 option (c), ratified DEC-90 A25). Not met for the legacy unconfirmed destination: it delivers to a non-controller's choice, and its manifest names nothing withheld because nothing is.
+3. ✓ — the drift test above holds as written: the export role list and `isControllerRole()` cannot drift apart.
+
+**Remaining / owner.** Criteria 1 and 2, on the legacy unconfirmed destination only. As on `IEDGE-10`: either a bounded grace for an unconfirmed destination (amending `DEC-87` §1), or the integrator records it as accepted risk under `DEC-87` §1 with the nightly bell as its control and amends these criteria. Proposed owner: the NEW package the integrator must queue under DEC-31, **admin-and-org export/restore remainders** (item (7) under `ILIFE-11`'s Scope / residual).
+
+**Scope / residual.** `ILIFE-7`'s criteria hold as written (destination creation and editing are Admin-only); `IEDGE-10` stays OPEN on the same path.
 
 ---
 
@@ -340,6 +392,13 @@ app/api/verify/route.ts:5-10 asserts the threat model — `UNAUTHENTICATED by de
 3. ◐ With `?print=` the answer is exactly the printed sheets; without it (an older QR) it is the package's live membership (`:74-81`), not "what was actually issued in its distribution".
 
 **Remaining / owner.** Handed to public-surfaces **PS-VERIFY** (owns the four verify endpoints: `VFY-2` / `VFY-3` per-print semantics, `VFY-12` scan log, `VFY-14` narrow select) with the default this package was given: for a private or hidden document answer "current / superseded" without number or title (fail-safe — less disclosure). Cross-note added on `VFY-14`; the same limb closes `DACL-3` criterion 3. The cross-note is only a pointer: no VFY finding covers private / hidden refusal, and PS-VERIFY's plan (`audit-reports/fleet-plans/public-surfaces.json`) lists no visibility item, so the integrator adds DACL-8 criteria 1–3 and DACL-3 criterion 3 to PS-VERIFY with that default (or public-surfaces opens a VFY finding for them).
+
+**Partial (2026-10-13, intelligence Round G).** Package I-01 phase B, re-verified on base `596d34e`, after public-surfaces PS-VERIFY merged.
+1. ✗ — no verify route reads visibility. `/api/verify` selects with no visibility column (`app/api/verify/route.ts:81`) and returns `docNumber` / `title` (`:212-213`). `/api/verify-package` labels each sheet by number or title (`labelOf`, `app/api/verify-package/route.ts:236`). `/api/verify-hold` returns the held document's label (`app/api/verify-hold/route.ts:120`).
+2. ◐ — a pack QR is keyed to its recorded print (`?print=`, `verify-package/route.ts:87-90`, `:143-172`). A sheet QR names the printed version (`?v=`); one without it is never green (`verify/route.ts:195`, `DEC-65` §2). No per-print token exists for a sheet: the key is still the durable document UUID plus the version.
+3. ◐ — with `?print=` the answer is exactly the printed sheets. A legacy cover QR answers from the live membership and is never green (`DEC-65` §2; `verify-package/route.ts:28-29`, `:184`).
+
+**Remaining / owner.** Criterion 1 is public-surfaces **`VFY-16`** (OPEN, Assigned to intelligence **I-12**, queued), with this package's decision default: for a private or hidden document, answer the verdict without the number or title (fail-safe, less disclosure). Criteria 2 and 3: *corrected at the third review fix pass,* they first said they "need a ruling". Under DEC-90 they take a stated fail-safe default instead, and nothing waits on a ruling. **Default:** `DEC-65` §2 (a version-keyed sheet QR; a legacy QR never green) does NOT stand in for a per-print token, so criteria 2 and 3 stay ◐ as written, and I-12 builds them beside `VFY-16` to the less-disclosing reading: (2) a sheet QR keyed to a per-print id recorded at stamping, as a pack's `?print=` is; (3) a cover QR without `?print=` answers the verdict without the live membership's numbers and titles. Fail-safe because it discloses less and ticks nothing by decision alone (DEC-90's rationale, `DEC-29`). *Ratification note for the integrator (not blocking: I-12 can start on the default):* the other reading, that `DEC-65` §2 suffices once `VFY-16` withholds a private or hidden document's title, would close criteria 2 and 3 on `VFY-16` alone, with an amendment of their wording. Owner: I-12, beside `VFY-16`.
 
 ---
 

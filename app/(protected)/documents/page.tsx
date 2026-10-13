@@ -28,7 +28,10 @@ import RouteLoader from "@/components/ui/RouteLoader";
 import NodeCover from "@/components/documents/NodeCover";
 import CustomizeNodeModal, { type CustomizeValue } from "@/components/documents/CustomizeNodeModal";
 import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
-import { appAlert, appConfirm } from "@/components/providers/DialogProvider";
+import { appAlert } from "@/components/providers/DialogProvider";
+import DeleteSafetyModal from "@/app/(protected)/admin/libraries/DeleteSafetyModal";
+import type { LibraryDeleteImpact } from "@/lib/libraryDeleteImpact";
+import { postLibraryDelete, libraryDeleteError } from "@/lib/libraryDeleteClient";
 
 type UiLibrary = LibraryConfig & {
   _id: string;
@@ -74,6 +77,12 @@ export default function DocumentsHomePage() {
   const [orgName, setOrgName] = useState<string | null>(null);
   const [menuOpenForLibId, setMenuOpenForLibId] = useState<string | null>(null);
   const [deletingLibId, setDeletingLibId] = useState<string | null>(null);
+  // ALOG-3 (admin-and-org Round G): the tile menu's delete is the same door
+  // as /admin/libraries — the counted confirmation, then the route, which
+  // deletes as this user and records LIBRARY_DELETED with the counts.
+  const [libraryToDelete, setLibraryToDelete] = useState<UiLibrary | null>(null);
+  const [deleteImpact, setDeleteImpact] = useState<LibraryDeleteImpact | null>(null);
+  const [deleteImpactError, setDeleteImpactError] = useState<string | null>(null);
   // Track which library tile the user clicked so we can render a
   // pending state on it while the route transition + page mount work.
   // useTransition keeps the click handler from blocking the UI.
@@ -140,6 +149,54 @@ export default function DocumentsHomePage() {
     setLibraries((arr) => arr.map((l) => l._id === libId
       ? { ...l, color: v.color, icon: v.icon, coverImageUrl: v.coverImageUrl, coverTint: v.coverTint, description: v.description ?? l.description, pageConfig }
       : l));
+  };
+
+  // ALOG-3: what the cascade removes, counted on the server before anything
+  // is deleted; the confirmation refuses until the counts are known.
+  const loadDeleteImpact = async (lib: UiLibrary) => {
+    setDeleteImpact(null);
+    setDeleteImpactError(null);
+    if (!activeOrgId) { setDeleteImpactError("no active workspace"); return; }
+    try {
+      const r = await postLibraryDelete({ orgId: activeOrgId, libraryId: lib._id, preview: true });
+      if (!r.ok || !r.body.impact) throw new Error(libraryDeleteError(r, "the counts could not be read"));
+      setDeleteImpact(r.body.impact as LibraryDeleteImpact);
+    } catch (e) {
+      setDeleteImpactError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const initiateLibraryDelete = (lib: UiLibrary) => {
+    setMenuOpenForLibId(null);
+    setLibraryToDelete(lib);
+    void loadDeleteImpact(lib);
+  };
+
+  const confirmLibraryDelete = async () => {
+    const lib = libraryToDelete;
+    if (!lib || !activeOrgId) return;
+    setDeletingLibId(lib._id);
+    try {
+      // The route deletes AS THIS USER (RLS and every guard judge it as the
+      // browser's delete was judged) and refuses when the counts moved since
+      // they were shown (409, with the new counts).
+      const r = await postLibraryDelete({ orgId: activeOrgId, libraryId: lib._id, expected: deleteImpact ?? undefined });
+      if (!r.ok) {
+        if (r.body.changed === true && r.body.impact) setDeleteImpact(r.body.impact as LibraryDeleteImpact);
+        await appAlert({ message: `Delete failed: ${libraryDeleteError(r, "the library was not deleted")}`, tone: "danger" });
+        return;
+      }
+      setLibraries((arr) => arr.filter((l) => l._id !== lib._id));
+      setLibraryToDelete(null);
+      if (typeof r.body.auditError === "string") {
+        await appAlert({ message: `The library was deleted, but its audit record could not be written: ${r.body.auditError}`, tone: "danger" });
+      }
+    } catch (e) {
+      const why = e instanceof Error ? e.message : String(e);
+      await appAlert({ message: `Delete failed: ${why || "the library was not deleted."}`, tone: "danger" });
+    } finally {
+      setDeletingLibId(null);
+    }
   };
 
   // OWN-3: controller tier follows the full role collection.
@@ -452,17 +509,7 @@ export default function DocumentsHomePage() {
                     onClose={() => setMenuOpenForLibId(null)}
                     onCustomize={() => setCustomizeLib(lib)}
                     deleting={deletingLibId === lib._id}
-                    onDelete={async () => {
-                      setDeletingLibId(lib._id!);
-                      try {
-                        const { error } = await supabase.from("libraries").delete().eq("id", lib._id!);
-                        if (error) { await appAlert({ message: `Delete failed: ${error.message}`, tone: "danger" }); return; }
-                        setLibraries((arr) => arr.filter((l) => l._id !== lib._id));
-                      } finally {
-                        setDeletingLibId(null);
-                        setMenuOpenForLibId(null);
-                      }
-                    }}
+                    onDelete={() => initiateLibraryDelete(lib)}
                   />
                 )}
                 {isPending && (
@@ -505,6 +552,19 @@ export default function DocumentsHomePage() {
         )}
       </div>
 
+      {libraryToDelete && (
+        <DeleteSafetyModal
+          isOpen={!!libraryToDelete}
+          onClose={() => setLibraryToDelete(null)}
+          onConfirm={confirmLibraryDelete}
+          libraryName={libraryToDelete.name}
+          isLoading={deletingLibId === libraryToDelete._id}
+          impact={deleteImpact}
+          impactError={deleteImpactError}
+          onRetryImpact={() => void loadDeleteImpact(libraryToDelete)}
+        />
+      )}
+
       {customizeLib && (
         <CustomizeNodeModal
           key={customizeLib._id}
@@ -533,7 +593,7 @@ export default function DocumentsHomePage() {
 
 // LibraryAdminMenu — 3-dot menu overlay on library tiles. Admin-only.
 // Stops click propagation so opening the menu doesn't trigger the
-// tile's navigation. Delete prompts for confirm before firing.
+// tile's navigation. Delete opens the counted confirmation (ALOG-3).
 function LibraryAdminMenu({
   libId, libName, open, deleting,
   onToggle, onClose, onDelete, onCustomize,
@@ -587,9 +647,8 @@ function LibraryAdminMenu({
             </Link>
             <button
               type="button"
-              onClick={async (e) => {
+              onClick={(e) => {
                 e.stopPropagation();
-                if (!(await appConfirm({ message: `Delete library "${libName}"? Documents inside it will be orphaned. This action is audited and irreversible.`, tone: "danger" }))) return;
                 onDelete();
               }}
               disabled={deleting}

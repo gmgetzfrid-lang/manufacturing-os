@@ -815,6 +815,7 @@ Clusters of decisions are spaced 8 px (`gap-2` / `ml-2`), up from 4-6 px.
 - **Status:** OPEN
 - **Assigned:** projects-joint J15 CHECKED-WRITE SWEEP. It runs last and per file, after identity-and-session IS-P1's edit of `app/(protected)/projects/[id]/page.tsx` has merged, and its pass over that page's write handlers is where these class strings ride. Proposed by projects-joint J14 PROJECTS FOLLOW-UPS, 2026-10-07, in its review's fix pass (DEC-31). The integrator confirms or re-assigns at the J14 merge.
 - **Assigned:** projects-joint J15 CHECKED-WRITE SWEEP (its per-file pass over the project page) — by the integrator, 2026-10-07 (J14 merge; fleet plan `projects-joint.json`).
+- **Assigned:** projects-joint J15 CHECKED-WRITE SWEEP (restated at the J19 merge: J19 carried it in its plan entry and left it to J15's per-file pass over the project page) — by the integrator, 2026-10-13 (at the J19 merge, DEC-31; fleet plan `projects-joint.json`).
 - **Verification:** READ (each site read at J14's HEAD; sizes from the class strings, not measured)
 - **Blast radius:** accessibility / mobile
 - **Locations:** (all in `app/(protected)/projects/[id]/page.tsx`)

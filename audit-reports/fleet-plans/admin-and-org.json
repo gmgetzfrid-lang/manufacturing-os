@@ -320,7 +320,8 @@
     "ORG-15 (opened by the integrator 2026-10-02 at the A&O P0 merge: /admin/users checks { error } on the members and pending-requests reads and shows an error state, never an empty roster or a missing card)",
     "ORG-6 (remainder re-owned by the integrator 2026-10-02 at the A&O P0 merge: done-when 1 for 1 of 12 \u2014 acl_subject_in_bucket (20260708:21-39) has no SET search_path; one ALTER FUNCTION in P8's ORG-13 migration; flip the searchPathPin.test.ts it.fails tripwire)",
     "NEDGE-16 (notifications; opened by N5's second review fix 2026-10-02, owner assigned by the integrator at the N5 merge: after a restore every member is inactive and nothing asserts or repairs it \u2014 notifications reach nobody and, after 20261161, nobody can read their bell; a post-restore membership-integrity check that refuses or repairs an org left with no active Admin, with the restoring Admin kept active, and a test)",
-    "notifications NEDGE-19 (LOW; opened by notifications N6 2026-10-07, assigned by the integrator at the N6 merge beside VFY-15: an Admin sets the workspace's IANA time zone \u2014 a validated org_configurations row, key timezone, data.timeZone, the shape lib/recordTime.ts orgTimeZone already reads; decide and record whether the compliance digest's send time follows it (no new cron entry))"
+    "notifications NEDGE-19 (LOW; opened by notifications N6 2026-10-07, assigned by the integrator at the N6 merge beside VFY-15: an Admin sets the workspace's IANA time zone \u2014 a validated org_configurations row, key timezone, data.timeZone, the shape lib/recordTime.ts orgTimeZone already reads; decide and record whether the compliance digest's send time follows it (no new cron entry))",
+    "drafting-flow EDGE-4 done-when 1 (assigned by the integrator 2026-10-13 at the DF-P3 merge, DEC-31): the /admin/users remove / suspend confirm says the member's in-flight requests return to the queue or the requester; MERGE obligation \u2014 any revoke_member re-creation keeps DF-P3's departure triggers (20261195). The integrator checks both at the AO-P8 merge"
    ],
    "files": [
     "app/(protected)/admin/libraries/page.tsx:183-198",
@@ -399,21 +400,106 @@
    ]
   },
   {
-    "name": "P10 \u2014 Storage follow-ups: one storage bell per day on a single-workspace server, and node cover/background uploads gated like the node editor (BILL-15, ORG-16)",
-    "findings": [
-      "BILL-15 (assigned by the integrator 2026-10-13 at the A&O P6 merge, DEC-31; the product call ruled by the integrator under the user's delegation, DEC-90 practice: on a server with exactly one workspace, the quota alert and the platform R2 alert for the same day collapse into ONE bell that states both figures, each with what it measured and against which limit \u2014 lib/storageAlerts.ts runStorageAlerts and lib/storageUsage.ts runPlatformStorageAlerts share the per-day dedupe key; a multi-workspace server keeps both, since they reach different people)",
-      "ORG-16 (assigned by the integrator 2026-10-13 at the A&O P6 merge, DEC-31: app/api/storage/upload-url/route.ts signs branding/covers/ and branding/backgrounds/ keys only for a member holding the authority components/documents/CustomizeNodeModal.tsx's node customization requires (read it from the node editor's gate; do not invent a role list), and only for image Content-Types \u2014 ORG-5's rule on the smaller surface; regression: every member who can customise a node today still can)"
-    ],
-    "files": [
-      "lib/storageAlerts.ts, lib/storageUsage.ts (the shared dedupe; single-workspace detection)",
-      "app/api/storage/upload-url/route.ts (the covers/backgrounds gate and Content-Type allow-list)",
-      "tests: one bell on a single-workspace server, two on a multi-workspace one; a member without node-customize authority is refused a cover key, one with it is signed; a non-image Content-Type is refused"
-    ],
-    "migrationsLikely": 0,
-    "dependsOn": [
-      "P6 merged (DEC-99; the storage files and upload-url)"
-    ],
-    "sequencingNotes": "Added by the integrator 2026-10-13 at the A&O P6 merge (DEC-31). Small; no migration; runs after P6 (P5 also touches app/api/cron/maintenance/route.ts but not these files)."
+   "name": "P10 \u2014 Storage follow-ups: one storage bell per day on a single-workspace server, and node cover/background uploads gated like the node editor (BILL-15, ORG-16)",
+   "findings": [
+    "BILL-15 (assigned by the integrator 2026-10-13 at the A&O P6 merge, DEC-31; the product call ruled by the integrator under the user's delegation, DEC-90 practice: on a server with exactly one workspace, the quota alert and the platform R2 alert for the same day collapse into ONE bell that states both figures, each with what it measured and against which limit \u2014 lib/storageAlerts.ts runStorageAlerts and lib/storageUsage.ts runPlatformStorageAlerts share the per-day dedupe key; a multi-workspace server keeps both, since they reach different people)",
+    "ORG-16 (assigned by the integrator 2026-10-13 at the A&O P6 merge, DEC-31: app/api/storage/upload-url/route.ts signs branding/covers/ and branding/backgrounds/ keys only for a member holding the authority components/documents/CustomizeNodeModal.tsx's node customization requires (read it from the node editor's gate; do not invent a role list), and only for image Content-Types \u2014 ORG-5's rule on the smaller surface; regression: every member who can customise a node today still can)"
+   ],
+   "files": [
+    "lib/storageAlerts.ts, lib/storageUsage.ts (the shared dedupe; single-workspace detection)",
+    "app/api/storage/upload-url/route.ts (the covers/backgrounds gate and Content-Type allow-list)",
+    "tests: one bell on a single-workspace server, two on a multi-workspace one; a member without node-customize authority is refused a cover key, one with it is signed; a non-image Content-Type is refused"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "P6 merged (DEC-99; the storage files and upload-url)"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-13 at the A&O P6 merge (DEC-31). Small; no migration; runs after P6 (P5 also touches app/api/cron/maintenance/route.ts but not these files)."
+  },
+  {
+   "name": "P11 \u2014 Appearance rails: a library's cover and background change only for the node editor's authority, and a legacy-format cover that cannot be restored leaves no broken pointer (ORG-17, ORG-18)",
+   "findings": [
+    "ORG-17 (LOW, opened by A&O P10 under DEC-31: any member can repoint a library's cover image and page background \u2014 the appearance columns sit under the membership-wide libraries_org_access; add an UPDATE rail so only NODE_CUSTOMIZE_ROLES (Admin / DocCtrl, the node editor's gate) change them; every other column decided exactly as today)",
+    "ORG-18 (LOW, opened by A&O P10 fix pass 2 under DEC-31: a cover or background in SVG / HEIC / TIFF is no longer uploaded or restored and the node keeps pointing at the missing image \u2014 clear the pointer on a skipped restore and say so; SVG stays refused (script risk))"
+   ],
+   "files": [
+    "supabase/migrations: one DEC-30 file \u2014 a BEFORE UPDATE trigger on libraries (and folders if they carry appearance columns) for the cover / background columns; re-create any policy or function from its NEWEST definition, lineDiff-pinned, DRLS-16",
+    "lib/dataRestore.ts or the restore route (the skipped-image pointer)",
+    "tests: a Viewer's direct cover change refused, a DocCtrl's accepted, every other column unchanged for everyone; a skipped legacy cover leaves no pointer and is named"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "A&O P10 merged (2026-10-13; lib/storageKey.ts NODE_CUSTOMIZE_ROLES, the upload gate)",
+    "A&O P8 merged (it edits admin/libraries and libraries delete)"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-13 at the A&O P10 merge (DEC-31: ORG-17 and ORG-18 were opened with 'the integrator, to route')."
+  },
+  {
+   "name": "P12 \u2014 Member-removal and workspace time-zone follow-ups: the one-line remainders P8 could not reach, and the effective-date resolver reading the Admin's time zone (ORG-7 remainder, VFY-15 remainder)",
+   "findings": [
+    "ORG-7 (LOW; P8's Partial, 2026-10-13 \u2014 done-when 2's isActiveMember at app/(protected)/documents/[libraryId]/page.tsx (the signed-in principal) and components/permissions/ViewAsSimulator.tsx (pass the SIMULATED member's real status, never a hard-coded true \u2014 DEC-90: a simulation shows what the server would decide); done-when 3: lib/accessRecert.ts lists a SUSPENDED member's personal grant under their name with a 'suspended' mark, so the reviewer sees and can revoke it (never a bare uid, never hidden); done-when 4: lib/ownership.ts team-rung name read gets .eq('org_id', orgId); the re-add residual: /api/admin/create-user (or the re-add path) clears the person's stale inherited acl_index entries through prune_removed_member_acl_index before the membership is re-activated, within a time budget, else the nightly rebuild \u2014 said in the record)",
+    "VFY-15 (LOW; P8's Partial \u2014 lib/effectiveDate.ts effectiveDateTimeZone resolves the document's org's workspace time zone (lib/workspaceTimeZone.ts readWorkspaceTimeZone, service client) before the deployment variable; its four callers pass the document's org; an unreadable setting falls back to today's deployment variable, never to UTC silently)"
+   ],
+   "files": [
+    "lib/ownership.ts, lib/accessRecert.ts, lib/effectiveDate.ts and its callers (app/api/verify/route.ts and the compliance scan)",
+    "app/(protected)/documents/[libraryId]/page.tsx (one prop), components/permissions/ViewAsSimulator.tsx (one argument)",
+    "app/api/admin/create-user/route.ts (the re-add prune) and its shared test mocks",
+    "tests: each line pinned; a member in two workspaces names the right person; a suspended grant listed and named; a re-added member carries no stale inherited entry; the verify verdict follows the Admin's time zone and falls back to the deployment variable"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "A&O P8 merged (2026-10-13; prune_removed_member_acl_index, lib/workspaceTimeZone.ts)",
+    "A&O P7 merged (components/permissions/ViewAsSimulator.tsx)",
+    "notifications N14 merged (2026-10-13 at 0cb6409; lib/effectiveDate.ts, lib/accessRecert.ts, lib/ownership.ts)",
+    "document-control P25 merged (dd49a18; the documents page)"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-13 at the A&O P8 merge (DEC-31: P8 named both remainders 'a P8 follow-up the integrator schedules'). VFY-15 stays with admin-and-org (the package that built the setting), not document-control: the resolver's one input is the A&O setting, and DC P3's module change is a read of it. Rulings under DEC-90 are in the findings lines."
+  },
+  {
+   "name": "P13 \u2014 Audit follow-ups: every reader labels whose word an identity is, the last unchecked audit writes, the audit dead-letter outbox, and node-level authority rows readable only by those who may see them (ALOG-7 remainder, ALOG-8 remainder, ALOG-16, drafting-flow EVID-6 outbox)",
+   "findings": [
+    "ALOG-7 (MEDIUM; P7's Partial \u2014 done-when 2's labelled form on the three readers that show a stored user_email / user_role with no actor note: components/documents/HistoryDrawer.tsx, components/documents/InspectorPanel.tsx and app/(protected)/activity/page.tsx \u2014 carry actor_kind from the row and render lib/auditActions.ts auditActorNote beside the identity; an optional actorKind on AuditEntry keeps logAuditAction's signature)",
+    "ALOG-8 (MEDIUM; P7's Partial \u2014 app/api/admin/shed/commit, ticket-shed/commit and ticket-shed/restore: each try { insert } catch becomes a checked { error } carried into the answer, the archive-cancel pattern; app/(protected)/admin/storage/page.tsx shows purge / archive-cancel auditError instead of treating any 2xx as success. The orphans route's site goes with P14 beside ILIFE-1)",
+    "ALOG-16 (MEDIUM; opened by the integrator at the A&O P7 merge from P7's proposed finding: node-level authority rows \u2014 NODE_ACL_CHANGED (full before / after ACL in details), OWNER_ASSIGNED / OWNER_CLEARED / OWNER_TEAM_*, ACCESS_RECERTIFIED \u2014 are typed library / collection / document, so DEC-17's overlay does not cover them and every active member reads them on /activity and through PostgREST. DEC-90 ruling: they are readable only by holders of the Audit log permission or by those who may manage that node; re-create audit_logs_admin_trail from its NEWEST body (20261157 \u00a77 if pasted first, else 20261142 \u2014 found by scanning, lineDiff-pinned), narrowing; counts-only inventory; /activity's stated rule updated in the same change)",
+    "drafting-flow EVID-6 (HIGH; its remainder after DF-P1 and A&O P7: the audit dead-letter outbox \u2014 a table (export decision), a server route that writes the dead-letter row as the service role after verifying the caller, and a drain-and-alert step riding the existing maintenance sweep, no new cron entry. Re-owned by the integrator at the A&O P7 merge from DF-P3, which had merged)",
+    "admin-and-org ALOG-11's hand-off (P3 handoff 2 / fix-pass-8 item 2, carried by P7 as a dependsOn and NOT built): the /admin/audit viewer's 'who took which drawing' for a DATA_EXPORT row \u2014 a new server route behind authorizeAdminSurface(req, orgId, 'audit') calling lib/dataExport.ts rebuildExportList(sb, orgId, recordId); undelivered null reads 'no delivery failure recorded', never 'delivered'; the exporter shown as exporter.userId's current member, not the stored email"
+   ],
+   "files": [
+    "components/documents/HistoryDrawer.tsx, components/documents/InspectorPanel.tsx, app/(protected)/activity/page.tsx (the actor note only)",
+    "app/api/admin/shed/commit/route.ts, app/api/admin/ticket-shed/commit/route.ts, app/api/admin/ticket-shed/restore/route.ts, app/(protected)/admin/storage/page.tsx",
+    "supabase/migrations: one DEC-30 file for ALOG-16 (audit_logs_admin_trail re-created, narrowing) and the EVID-6 outbox table",
+    "app/api/cron/maintenance/route.ts (ONE drain step) and a new server route for the dead-letter write",
+    "tests: each reader's label; each checked write's refusal observable; a member who may not manage a node no longer reads its ACL change; the outbox write, drain and alert"
+   ],
+   "migrationsLikely": 1,
+   "dependsOn": [
+    "A&O P7 merged (2026-10-13; 20261201 actor_kind, lib/auditActions.ts auditActorNote, the registry)",
+    "notifications N15 merged (it edits app/api/cron/maintenance/route.ts this round)"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-13 at the A&O P7 merge (DEC-31: P7 proposed 'an A&O follow-up package' for ALOG-7 / ALOG-8 and left ALOG-16 for the integrator to open)."
+  },
+  {
+   "name": "P14 \u2014 Export / restore remainders: the export's size and streaming, derived vectors after a restore, the purge's deleted keys, the scan's scoped count, the restore's business-key pre-filter, and a bounded grace for an unconfirmed destination (intelligence ILIFE-1, ILIFE-8, ILIFE-10, ILIFE-11, IEDGE-10, DACL-7; ALOG-8 orphans site)",
+   "findings": [
+    "intelligence ILIFE-11 (MEDIUM; I-01B's remainder) \u2014 criterion 2: the server ZIP is streamed and the browser export shows a measured size warning before it builds (app/api/data-export/structured/route.ts, lib/exportRunner.ts); criteria 1 and 3: DEC-90 ruling \u2014 vectors are derived data and are NOT exported; after a restore each restored library that had vectors shows a 'meaning index needs a rebuild' prompt and the build is started by a person on their own key (criterion 1's side-file wording is amended by this ruling); the server ZIP's README.md gains an 'Omitted derived columns' section rendered from manifest omittedColumns",
+    "intelligence ILIFE-1 (HIGH; criterion 3) and admin-and-org ALOG-8 (its orphans site): app/api/admin/orphans/route.ts records the deleted keys (bounded list plus count) in the purge's audit row through a checked write",
+    "intelligence ILIFE-8 (MEDIUM): lib/storageOrphans.ts referencedKeys counts only keys under the caller's orgs/<orgId>/ prefix (never the deployment's total)",
+    "intelligence ILIFE-10 (MEDIUM; criteria 1-2): lib/dataRestore.ts pre-filters on the real business unique keys; on an is_explicit conflict the live row is kept exactly as it is and each backup row whose explicit link was not applied is reported per table and key (the default I-01B recorded under DEC-75 \u00a75)",
+    "intelligence IEDGE-10 and DACL-7 (MEDIUM; criteria 1-2, the legacy unconfirmed destination): DEC-90 ruling \u2014 a bounded grace, amending DEC-87 \u00a71: a pre-P3 destination a non-controller configured that no Admin has confirmed is paused after 7 consecutive unconfirmed nightly runs, with an Admin bell each night before and on pausing; an Admin's confirm resumes it; a nightly backup never stops the night the change deploys (app/api/data-export/run-scheduled/route.ts)"
+   ],
+   "files": [
+    "app/api/data-export/structured/route.ts, lib/exportRunner.ts (streaming, size warning, README section)",
+    "lib/dataRestore.ts, the restore routes and page (business-key pre-filter, the post-restore rebuild prompt)",
+    "app/api/admin/orphans/route.ts, lib/storageOrphans.ts",
+    "app/api/data-export/run-scheduled/route.ts (the bounded grace)",
+    "tests for each limb; regression \u2014 every export and restore that works today works the same"
+   ],
+   "migrationsLikely": 0,
+   "dependsOn": [
+    "intelligence I-01B merged (lib/dataExport.ts, lib/exportTables.ts)",
+    "A&O P3 merged (DEC-87: the destination confirmation)"
+   ],
+   "sequencingNotes": "Added by the integrator 2026-10-13 at the I-01B / A&O P7 merges (DEC-31: I-01B proposed 'admin-and-org export/restore remainders' as a NEW package, items (1)-(7) under ILIFE-11's Scope / residual)."
   }
  ],
  "crossAreaFileOverlaps": [

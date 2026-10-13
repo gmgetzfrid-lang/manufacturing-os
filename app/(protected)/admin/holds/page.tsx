@@ -20,7 +20,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   AlertOctagon, Clock, AlertTriangle, Check, X,
-  ChevronRight, Lock, TrendingUp, CalendarClock,
+  ChevronRight, Lock, TrendingUp, CalendarClock, RefreshCw,
 } from "lucide-react";
 import { PageShell, PageHeaderBar } from "@/components/ui/PageShell";
 import { Spinner } from "@/components/ui/Spinner";
@@ -29,7 +29,8 @@ import {
   listActiveHoldsForOrg, getHoldMetrics, releaseHold, updateHoldExpectedRelease, holdControlsFor,
   expectedReleaseIso, expectedReleaseDate, type HoldMetrics, type HoldRecord,
 } from "@/lib/holds";
-import { loadCapabilityPolicy, type CapabilityPolicy } from "@/lib/capabilityPolicy";
+import { loadCapabilityPolicyEntry, type CapabilityPolicy } from "@/lib/capabilityPolicy";
+import { affordancePolicyFault } from "@/lib/checkoutAffordances";
 import { supabase } from "@/lib/supabase";
 import ViewTabs, { DOCUMENT_VIEWS } from "@/components/navigation/ViewTabs";
 
@@ -43,17 +44,32 @@ export default function HoldsPage() {
   const { activeOrgId, activeRole, roles, uid, userEmail } = useRole();
   // HLD-8: the Release control follows the capability policy (role tokens,
   // the additive collection — never the headline alone — and live grants).
-  // Nothing is offered until the policy is read; a read error falls to the
-  // shipped defaults as every policy consumer does; the database enforces.
+  // Nothing is offered until the policy is read. AUTHZ-15 (DEC-90 A26; the
+  // integrator's ruling of 2026-10-13, DEC-89): a read with no last good
+  // entry (`unreadable`) or a read that throws keeps the policy null, so
+  // Release / Re-date stay held back instead of being drawn from the shipped
+  // defaults, and the page says why with a Try again. A `stale` answer (the
+  // last good policy, served because the refresh failed) is drawn as is,
+  // with no label. The database enforces.
   const [policy, setPolicy] = useState<CapabilityPolicy | null>(null);
+  const [policyFault, setPolicyFault] = useState<string | null>(null);
+  const [policyTry, setPolicyTry] = useState(0);
   useEffect(() => {
     if (!activeOrgId) return;
     let alive = true;
-    void loadCapabilityPolicy(activeOrgId)
-      .then((p) => { if (alive) setPolicy(p); })
-      .catch(() => { if (alive) setPolicy({}); });
+    void loadCapabilityPolicyEntry(activeOrgId)
+      .then((e) => {
+        if (!alive) return;
+        const fault = affordancePolicyFault(e);
+        if (fault) { setPolicy(null); setPolicyFault(fault); return; }
+        setPolicy(e.policy); setPolicyFault(null);
+      })
+      .catch((err: unknown) => {
+        if (!alive) return;
+        setPolicy(null); setPolicyFault((err as Error)?.message || "the capability policy could not be read");
+      });
     return () => { alive = false; };
-  }, [activeOrgId]);
+  }, [activeOrgId, policyTry]);
   const canRelease = policy ? holdControlsFor(policy, activeRole, roles, uid).canRelease : false;
 
   const [holds, setHolds] = useState<HoldRecord[]>([]);
@@ -151,6 +167,16 @@ export default function HoldsPage() {
       {error && (
         <div className="flex items-center gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
           <AlertTriangle className="w-3.5 h-3.5" /> {error}
+        </div>
+      )}
+
+      {policyFault && (
+        <div role="alert" data-testid="holds-policy-fault" className="flex items-start gap-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          <Lock className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <span className="flex-1"><b>Permissions could not be read</b> — releasing and re-dating holds are not offered until they can be.</span>
+          <button onClick={() => setPolicyTry((n) => n + 1)} className="shrink-0 inline-flex items-center gap-1 font-bold hover:underline">
+            <RefreshCw className="w-3 h-3" /> Try again
+          </button>
         </div>
       )}
 

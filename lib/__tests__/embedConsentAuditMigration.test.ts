@@ -102,15 +102,19 @@ describe("what 20261163 relies on", () => {
   function newest(policy: string): { file: string; body: string } {
     const files = numbered.filter((f) => f !== FILE && new RegExp(`CREATE POLICY ${policy} ON audit_logs`).test(readFileSync(join(MIGRATIONS, f), "utf8")));
     const file = files[files.length - 1];
-    const text = readFileSync(join(MIGRATIONS, file), "utf8");
+    // Comments stripped: a file's rollback block may quote the policy it replaces (20261202).
+    const text = readFileSync(join(MIGRATIONS, file), "utf8").replace(/--[^\n]*/g, "");
     const at = text.indexOf(`CREATE POLICY ${policy} ON audit_logs`);
     return { file, body: text.slice(at, text.indexOf(";", at)) };
   }
 
   it("reproduction: the newest audit_logs_insert lets a member insert ANY action for themselves — nothing in it names the action", () => {
     const { file, body } = newest("audit_logs_insert");
-    expect(file).toBe("20260813_acl_close_gaps_and_audit_scope.sql");
-    expect(body).toMatch(/FOR INSERT TO authenticated\s+WITH CHECK \(\s*user_id = auth\.uid\(\)\s+AND \(org_id IS NULL OR org_id IN \(SELECT my_org_ids\(\)\)\)\s*\)/);
+    // admin-and-org ALOG-10 (P7): 20261202 re-creates it without the
+    // `org_id IS NULL OR` branch — it still names no action, which is what
+    // this file relies on.
+    expect(["20260813_acl_close_gaps_and_audit_scope.sql", "20261202_ao_roundG_audit_org_required.sql"]).toContain(file);
+    expect(body).toMatch(/FOR INSERT TO authenticated\s+WITH CHECK \(\s*user_id = auth\.uid\(\)\s+AND (\(org_id IS NULL OR org_id IN \(SELECT my_org_ids\(\)\)\)|org_id IN \(SELECT my_org_ids\(\)\))\s*\)/);
     expect(body).not.toMatch(/action/);
   });
 
@@ -118,6 +122,13 @@ describe("what 20261163 relies on", () => {
     const after = numbered.filter((f) => f.slice(0, 8) > "20260813" && f !== FILE);
     for (const f of after) {
       const text = readFileSync(join(MIGRATIONS, f), "utf8").replace(/--[^\n]*/g, "");
+      // admin-and-org ALOG-10 (P7): 20261202 re-creates audit_logs_insert
+      // (workspace required) — a policy naming no action, so it restricts
+      // nothing about which actions a member may insert.
+      if (f === "20261202_ao_roundG_audit_org_required.sql") {
+        expect(/CREATE POLICY audit_logs_insert ON audit_logs[\s\S]*?\);/.exec(text)![0], f).not.toMatch(/action/);
+        continue;
+      }
       expect(text, f).not.toMatch(/CREATE POLICY \w+ ON audit_logs[\s\S]{0,80}FOR INSERT/);
     }
   });
@@ -126,8 +137,11 @@ describe("what 20261163 relies on", () => {
     const hits = execSync(
       "grep -rlE 'EMBED_BUILD_CONSENT_RECORDED|EMBED_CONSENT_AUDIT_ACTION' app lib components --include=*.ts --include=*.tsx | grep -v __tests__ || true",
       { cwd: root, encoding: "utf8" },
-    ).split("\n").filter(Boolean).sort();
+    ).split("\n").filter(Boolean).sort()
+      // admin-and-org ALOG-11 (P7): the audit viewer's registry names the action (it writes nothing).
+      .filter((f) => f !== "lib/auditActions.ts");
     expect(hits).toEqual(["app/api/knowledge/embed/route.ts"]);
+    expect(readFileSync(join(root, "lib/auditActions.ts"), "utf8")).not.toMatch(/from\(\s*["']audit_logs["']\s*\)/);
     expect(ROUTE).toMatch(/await supabaseAdmin\.from\("audit_logs"\)\.insert\(\{\s*action: EMBED_CONSENT_AUDIT_ACTION,/);
     // …and the route reads the rows back by that action (what a member-written row would pass for)
     expect(ROUTE).toMatch(/\.eq\("action", EMBED_CONSENT_AUDIT_ACTION\)\.eq\("user_id", userId\)/);

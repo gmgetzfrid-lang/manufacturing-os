@@ -286,7 +286,8 @@ describe("DCK-5 — forceReleaseDocument writes the audit row itself, after the 
 
   it("the real logAuditAction reads the insert's {error} instead of assuming: refused → { error }, landed → { error: null }", async () => {
     const real = await vi.importActual<typeof import("@/lib/audit")>("@/lib/audit");
-    const entry = { action: "FORCE_RELEASE", resourceId: "d1", resourceType: "document", userId: "ctl" };
+    // admin-and-org ALOG-10 (P7): an entry names its workspace — one with none is refused before any insert.
+    const entry = { action: "FORCE_RELEASE", resourceId: "d1", resourceType: "document", orgId: "o1", userId: "ctl" };
     // drafting-flow EVID-6 / PERS-7 (DF-P1): `ok` rides beside `error` (same fact, as a boolean)
     await expect(real.logAuditAction(entry)).resolves.toEqual({ error: null, ok: true });
     state.errors["audit_logs.insert"] = { message: "new row violates row-level security policy" };

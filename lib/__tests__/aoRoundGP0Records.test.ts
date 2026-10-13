@@ -375,7 +375,7 @@ describe("ALOG-13 — NOT holding at HEAD (owner admin-and-org P8)", () => {
   });
 });
 
-describe("revoke_member's grant strip — NOT holding at HEAD (proposed finding in ALOG-12's record; owner admin-and-org P8)", () => {
+describe("revoke_member's grant strip — ALOG-15, held since admin-and-org P8 (20261204)", () => {
   // The newest definition, as P8 must re-create it (20261043 on f1ac550;
   // 20261161 since notifications N5 — this test scans, so it follows).
   const newestRevokeMember = () => {
@@ -398,7 +398,8 @@ describe("revoke_member's grant strip — NOT holding at HEAD (proposed finding 
     expect(grantStrip(fn)).toMatch(/\bdata = jsonb_set\(data, '\{grants\}'/);
   });
 
-  it.fails("the grant strip stamps updated_at, so the policy route's compare-and-set sees it", () => {
+  // Flipped from it.fails by admin-and-org P8 (20261204, ALOG-15).
+  it("the grant strip stamps updated_at, so the policy route's compare-and-set sees it", () => {
     expect(grantStrip(newestRevokeMember().fn)).toMatch(/\bupdated_at\s*=/);
   });
 });

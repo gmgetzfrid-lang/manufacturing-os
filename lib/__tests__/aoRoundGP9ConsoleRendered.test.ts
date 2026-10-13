@@ -398,7 +398,8 @@ describe("PermissionsExplorer", () => {
     const sections = [...host.querySelectorAll("tr[data-section]")].map((r) => r.getAttribute("data-section"));
     expect(sections).toEqual(["policy", "surface", "snapshot"]);
     expect(text()).toContain("Action permissions — this org's policy");
-    expect(text()).toContain("Documentation snapshot — hand-maintained; rows marked SNAPSHOT were checked against the code on 2026-10-07, rows marked NOT RE-CHECKED were not");
+    // admin-and-org P7 (ALOG-14's remainder): every row re-checked on 2026-10-13.
+    expect(text()).toContain("Documentation snapshot — hand-maintained; rows marked SNAPSHOT were checked against the code on 2026-10-13, rows marked NOT RE-CHECKED were not");
     expect(host.querySelectorAll("span").length).toBeGreaterThan(0);
     // the stored narrowing is what the row shows
     const row = [...host.querySelectorAll("tr")].find((r) => r.querySelector("td")?.textContent?.startsWith("Place a hold"))!;
@@ -406,11 +407,12 @@ describe("PermissionsExplorer", () => {
     expect(marks[0]).toBe("✓");
     expect(marks[11]).toBe("—"); // Viewer
   });
-  it("fix pass 2: a snapshot row not checked against the code says so on screen; a checked one does not", async () => {
+  it("fix pass 2: a snapshot row not checked against the code says so on screen; a checked one does not (since P7 every row is checked)", async () => {
     h.db.tables.org_configurations = [policyRow({})];
     await mount();
     const rowOf = (cap: string) => [...host.querySelectorAll("tr")].find((r) => r.querySelector("td")?.textContent?.startsWith(cap))!;
-    expect(rowOf("Manage sets & binders").querySelector("[data-unchecked]")?.textContent).toBe("NOT RE-CHECKED");
+    // admin-and-org P7 (ALOG-14's remainder): no snapshot row is unchecked any more.
+    expect(host.querySelectorAll("[data-unchecked]").length).toBe(0);
     expect(rowOf("Per-library permission (ACL) drawer").querySelector("[data-unchecked]")).toBeNull();
     expect(rowOf("Per-library permission (ACL) drawer").textContent).toContain("SNAPSHOT");
     // the composed rows (blocker): a Manager approves drawings

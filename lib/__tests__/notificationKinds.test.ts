@@ -274,20 +274,24 @@ const NOT_NOTIFICATIONS: Record<string, string> = {
   "components/projects/QualityTab.tsx": "a checklist's kind",
   "lib/inAppNotifications.ts": "the typed sink itself (input.kind: NotificationKind) and its row mapper",
 };
-// Non-literal kinds at raw sites, resolved by reading the type that bounds
-// them — and (TAX-11 done-when 2) a raw site that STAYS raw would carry
+// Non-literal kinds, resolved by reading the type that bounds them — at a
+// raw site (where nothing else checks them) and, since N14, at a typed one
+// too (so a kind written only through a property read still counts as
+// written) — and (TAX-11 done-when 2) a raw site that STAYS raw would carry
 // `why` and the proof of it the census checks in the source. None does now:
 // N8's review fix moved the export alert and the folded intake digest onto
 // the typed batch sink (notifyBatchWithReason — one statement, the
-// database's count, the refusal's text), which is what their reasons asked.
+// database's count, the refusal's text), which is what their reasons asked,
+// and N14 moved the last six raw calls (below).
 const RAW_RESOLVED: Record<string, { kinds: string[]; proof: [string, string]; why?: string }> = {
   "app/api/tickets/workflow-action/route.ts|cls.inAppKind": {
     kinds: ["ticket_assigned", "ticket_status"],
     proof: ["lib/ticketTransitions.ts", 'inAppKind: "ticket_assigned" | "ticket_status";'],
   },
 };
-// TAX-11 done-when 2's sites another package still owns (the integrator,
-// 2026-10-07: N14 RAW-INSERT TAIL moves each once its owner has merged).
+// TAX-11 done-when 2's last sites (the integrator, 2026-10-07: N14 RAW-INSERT
+// TAIL moves each once its owner has merged). Moved by N14 (2026-10-13):
+// every one now writes through the typed sink on the client it holds.
 const RAW_N14 = [
   "app/api/ai/usage/route.ts", "lib/orchestrator/tools.ts", "app/api/cron/maintenance/route.ts",
   "app/api/tickets/comment/route.ts", "app/api/tickets/workflow-action/route.ts",
@@ -419,7 +423,7 @@ function scan() {
           const owners = calls.filter((c) => within(n, c.nodes));
           const raw = owners.length > 0;
           let kinds: string[] | "typed" | null = evalKind(expr, sf);
-          if (!kinds && raw) kinds = RAW_RESOLVED[`${file}|${expr.getText(sf)}`]?.kinds ?? null;
+          if (!kinds) kinds = RAW_RESOLVED[`${file}|${expr.getText(sf)}`]?.kinds ?? null;
           if (!kinds && !raw) kinds = "typed"; // a typed sink (notify / notifyMany / emit): the compiler checks it
           // the insert this payload rides is covered: its kind was evaluated
           if (raw && kinds !== null) for (const c of owners) c.covered = true;
@@ -443,15 +447,18 @@ const census = (): Payload[] => scan().payloads;
 // with their owners (TAX-11). N5's notification_kinds allowlist backs the
 // kind check up in the database.
 const RAW_SITES: Record<string, number> = {
-  "app/api/ai/usage/route.ts": 1,                 // ai_cap_changed — intelligence (N14)
-  "app/api/cron/maintenance/route.ts": 1,         // checkout_released escalation — N6 / DC (N14)
-  "app/api/tickets/comment/route.ts": 1,          // ticket_comment / ticket_mention — drafting-flow, N6 (N14)
-  "app/api/tickets/workflow-action/route.ts": 2,  // ticket_comment, ticket_assigned / ticket_status — drafting-flow, N6 (N14)
+  // EMPTY since notifications N14 (2026-10-13) — TAX-11 done-when 2 met.
   // app/api/transmittal/route.ts (2), lib/projects.ts (1), lib/exportAlerts.ts
   // (1) and lib/intakeRateLimit.ts (1): moved onto the typed sink by N8
   // (TAX-11) — notifyChecked / notifyWithReason / notifyBatchChecked /
   // notifyBatchWithReason, each on the client its writer holds.
-  "lib/orchestrator/tools.ts": 1,                 // orchestrator_message — intelligence (N14)
+  // app/api/ai/usage/route.ts (1, ai_cap_changed), lib/orchestrator/tools.ts
+  // (1, orchestrator_message), app/api/cron/maintenance/route.ts (1, the
+  // checkout_released escalation), app/api/tickets/comment/route.ts (1,
+  // ticket_comment / ticket_mention) and app/api/tickets/workflow-action/
+  // route.ts (2, ticket_comment / ticket_assigned / ticket_status): moved by
+  // N14 — notifyBatchWithReason / notifyWithReason on the service role or the
+  // cron's client, the same rows in the same one statement each.
 };
 
 // ── GAP-201 acceptance 1: an unclassified kind is a BUILD error ─────────────
@@ -896,6 +903,30 @@ describe("the producer census — every written kind is declared and classified"
     // the sweep's holder notices: ONE typed batch statement per batch of
     // released sessions, on the sweep's own client (N8's review fix)
     expect(src("lib/projects.ts")).toMatch(/notifyBatchChecked\(released\.map\(\(r\) => \(\{[\s\S]*?kind: "checkout_auto_released" as const,[\s\S]*?\}\)\), db\)/);
+  });
+
+  it("TAX-11 done-when 2 (N14): no raw notifications insert is left outside the typed sink — the last six calls write through it, each on the client it held", () => {
+    const { inserts } = scan();
+    // the census reads every app / lib / component / hook file but the sink
+    // itself: no `.from("notifications").insert(` call anywhere else
+    expect(inserts.map((c) => `${c.file}:${c.line}`)).toEqual([]);
+    expect(Object.keys(RAW_SITES)).toEqual([]);
+    for (const f of RAW_N14) expect(src(f), f).not.toMatch(/\.from\((["'])notifications\1\)\s*\.insert\(/);
+    // each moved call: ONE typed statement (or one row) on the client it held
+    expect(src("app/api/ai/usage/route.ts")).toMatch(/notifyBatchWithReason\(\[\.\.\.recipients\]\.map\(\(uid\) => \(\{[\s\S]*?kind: "ai_cap_changed" as const,[\s\S]*?\}\)\), supabaseAdmin\);\n\s+if \(error\) console\.warn\(/);
+    expect(src("lib/orchestrator/tools.ts")).toMatch(/notifyWithReason\(\{[\s\S]*?kind: "orchestrator_message",[\s\S]*?\}, supabaseAdmin\);\n\s+if \(!bell\.ok\) \{\n\s+return \{ data: \{ error: "The notification could not be sent/);
+    expect(src("app/api/cron/maintenance/route.ts")).toMatch(/notifyBatchWithReason\(recipients\.map\(\(uid\) => \(\{[\s\S]*?kind: "checkout_released" as const,[\s\S]*?metadata: \{ staleSessionId: row\.id, escalation: true \},\n\s+\}\)\), sb\);\n\s+if \(insErr\) \{[\s\S]*?errors\.push\(/);
+    expect(src("app/api/tickets/comment/route.ts")).toMatch(/notifyBatchWithReason\(\n\s+audience\.map\(\(uid\) => \(\{[\s\S]*?kind: mentionSet\.has\(uid\) \? "ticket_mention" as const : "ticket_comment" as const,[\s\S]*?\}\)\),\n\s+supabaseAdmin,\n\s+\);\n\s+if \(bellErr\) console\.error\(/);
+    const wf = src("app/api/tickets/workflow-action/route.ts");
+    expect(wf).toMatch(/notifyBatchWithReason\(\n\s+audience\.map\(\(uid\) => \(\{[\s\S]*?kind: "ticket_comment" as const,[\s\S]*?\}\)\),\n\s+supabaseAdmin,\n\s+\);\n\s+if \(activityErr\) console\.error\(/);
+    expect(wf).toMatch(/notifyBatchWithReason\(\n\s+audience\.map\(\(uid\) => \(\{[\s\S]*?kind: cls\.inAppKind,[\s\S]*?\}\)\),\n\s+supabaseAdmin,\n\s+\);\n\s+if \(bellErr\) console\.error\(/);
+    // the workflow route's property-read kind still counts as written, through
+    // the literal union that bounds it (RAW_RESOLVED, now read at typed sites)
+    const kindsAt = (file: string) => census().filter((p) => p.file === file).flatMap((p) => (p.kinds === "typed" ? [] : p.kinds));
+    expect(new Set(kindsAt("app/api/tickets/workflow-action/route.ts"))).toEqual(new Set(["ticket_comment", "ticket_assigned", "ticket_status"]));
+    expect(new Set(kindsAt("app/api/tickets/comment/route.ts"))).toEqual(new Set(["ticket_mention", "ticket_comment"]));
+    expect(kindsAt("app/api/cron/maintenance/route.ts")).toEqual(expect.arrayContaining(["checkout_released"]));
+    expect(kindsAt("lib/orchestrator/tools.ts")).toEqual(expect.arrayContaining(["orchestrator_message"]));
   });
 
   it("the census counts an insert call whose rows it cannot see — the drift it exists to stop (probe)", () => {

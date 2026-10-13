@@ -1085,6 +1085,7 @@ Tests — `lib/__tests__/prjRoundGJ11Migrations.test.ts`: "no other migration re
 - **Status:** OPEN
 - **Assigned:** projects-joint J14 PROJECTS FOLLOW-UPS — the done-when 2 remainder (the Partial block below: residuals 2 and 4); J14 runs after J12 — by J12's review fix pass 6, 2026-10-02, on the integrator's instruction. Also the done-when 1 exception (residual 3) — by J12's fix pass 7, 2026-10-02 (`DEC-31`). Earlier: projects-joint J12 SERVER REMAINDERS — by the integrator, 2026-10-01 (J11 merge; fleet plan `audit-reports/fleet-plans/`).
 - **Assigned:** projects-joint J19 PROJECTS REMAINDERS (residual 3: the import's match scope and the project_id rail) — by the integrator, 2026-10-07 (J14 merge; fleet plan `projects-joint.json`).
+- **Assigned:** projects-joint J20 INTAKE DOOR UNDER RLS AND PROJECT REMAINDERS (the status: resolve SEC-21 by record once `SEC-24` is resolved — exceptions (i) and (ii) are ruled accepted, below) — by the integrator, 2026-10-13 (at the J19 merge, DEC-31; fleet plan `projects-joint.json`).
 - **Verification:** CONFIRMED (by reading; not exercised against a live database)
 - **Blast radius:** data-confidentiality
 - **Locations:**
@@ -1161,6 +1162,41 @@ Tests — `lib/__tests__/prjRoundGJ11Migrations.test.ts`: "no other migration re
 
 **Scope / residual.** Residual 3 (owner above). Residuals 2 and 4: decided, above. Residual 1: as recorded (the inventory counts its rows). Pending migration: `20261157` (HOLD).
 
+**Partial (2026-10-13, projects Round G — J19 PROJECTS REMAINDERS).** Residual 3, the item the J14 merge owed here, is closed in both halves the J14 Partial named (the import's match scope, then a rail on `milestones.project_id`), for every move from the paste on. The finding stays OPEN on two exceptions proposed as accepted (below), which are the integrator's to rule under `DEC-90`, and on the rows the old import already moved off their projects, opened as `SEC-24` with an owner.
+- **Reproduced on HEAD first.** `lib/__tests__/scheduleImportWriters.test.ts` "SEC-21 residual 3 …": a schedule imported onto a project with a document, then re-imported with the document alone, moved every matched row to `project_id` NULL (the test fails against the HEAD `lib/milestones.ts`). On a scratch PostgreSQL 16 without the migration, a Viewer moved a milestone off its project, onto a project, and onto another org's project.
+- **The import keeps each matched row's own project** (`lib/milestones.ts`). The existing-row read now selects `project_id` (`EXISTING_READ_BASE`, `:1839`; `ExistingImportRow.project_id`, `:1744`). The upsert writes the matched row's own `project_id` instead of the import's scope (`upsertPayload`, `:2181`). The match itself is unchanged: a document-only import still finds the document's rows by `document_id`, because `milestones_external_ref_per_document_uniq` (20260704) makes the document their identity. A read limited to `project_id IS NULL` would instead have refused every such row with 23505. A project import matches only its project's rows, so it writes the same value it always did. The per-row fallback (`update(updateFields(p))`) carries no scope column, as before.
+- **The rail: `20261198` §1 (pending paste, DEC-30).** `enforce_milestone_project_move` is a BEFORE UPDATE OF `project_id` trigger on `milestones`, per row, `WHEN (OLD.project_id IS DISTINCT FROM NEW.project_id)`. It is SECURITY DEFINER with `search_path` pinned, and EXECUTE is revoked from PUBLIC, anon and authenticated (DRLS-16). A signed-in move onto, off or between projects is refused (42501) in each of these cases:
+  - a target project of another org;
+  - any move onto or off a PRIVATE project, whoever makes it. This is the limb that closes residual 3 as written: the rows a milestone wrote keep the reach of the scope they were written under (§6 of `20261157`), so such a move would leave its history readable outside the private project, or hide its stamped history from the new project's readers;
+  - otherwise, unless the caller holds `can_edit_project_schedule` (20261098: the Admin / DocCtrl / Manager / Supervisor role collection, or the project's owner) on EVERY project the move touches.
+- **What passes the rail.**
+  - The service role.
+  - The project's own delete: `milestones.project_id` is ON DELETE SET NULL, an UPDATE that runs with the project row already gone.
+  - `delete_project_record`'s purge (`app.record_purge`).
+  - Every write that leaves `project_id` unchanged, the app's upsert included.
+- **Regression.** No app path moves a milestone's project (`PATCH_COLUMN` has no `project_id`, and the import now writes each row's own). The app before J19, after the paste: a document-only re-import by someone without the authority, or of a private project's rows, has its chunk refused, and the importer's per-row fallback then lands each row without the scope columns. The rows take the file and keep their project (scratch case U2/U3).
+- **Scratch PostgreSQL 16.**
+  - Setup: a stub of the touched tables with RLS (`milestones_member_all`), the real `caller_holds_any_role` and `can_edit_project_schedule`, and the registry functions. The file was applied twice (idempotent), and all 6 probes read `t` both times.
+  - Refused (42501): a Viewer moving a milestone off its project, or a doc-only one onto a project; a project owner moving one onto a project they do not own, or back from it; an Admin moving one onto another org's project, or a doc-only one onto a private project; a private project's owner moving its milestone onto their own open project.
+  - Passed: a Viewer editing the name and date with `project_id` re-sent unchanged (today's upsert); an Admin moving between two open projects; the owner taking a milestone off their project onto its document alone; the service role (a restore) moving one off a private project and back.
+  - The project's own delete passed (milestones SET NULL), for an open and a private project, by a Viewer and by the owner. The purge passed.
+  - Before the file, every one of these moves passed.
+- **Tests.**
+  - `scheduleImportWriters.test.ts` "SEC-21 residual 3 — a matched milestone keeps its project on a re-import" has four cases: the document-only re-import updates in place and keeps the project, with every upsert row carrying it; the existing-row read selects `project_id`; and two regressions, a project re-import and a document-only import on no project, which behave as before. The first two fail on HEAD.
+  - `prjRoundGJ19Migration.test.ts` covers §1: the trigger's event and WHEN; the order of the passes and refusals; the authority being 20261098's predicate; the app half (the read, the upsert, a per-row fallback with no scope column, and `PATCH_COLUMN` with no `project_id`); and every probe fragment.
+
+**Done-when.**
+- ◐ Done-when 1 holds for every signed-in caller from the paste on (residual 3 closed): no signed-in write can now carry a milestone, or the history it wrote, onto or off a private project. It is not ✓ as written, because two exceptions remain. Both are proposed as accepted exceptions (not owed), on the pattern of the J14 decision on residual 4, for the integrator's `DEC-90` ruling at the J19 merge; this package does not accept them:
+  - (i) a move by the service role (an operator in the SQL editor, a restore), which the rail passes so a restore keeps its rows as written;
+  - (ii) milestones already moved onto a private project before the paste, whose earlier rows keep the reach they had. Which ones these are cannot be told apart from the database (the inventory counts the candidate rows), and back-filling their audit rows would rewrite append-only history, as residual 2 was decided.
+  - Not an exception, and owed: milestones the pre-J19 document-only re-import already moved OFF their project (inventory row 2's candidates). They stay at `project_id` NULL, missing from the project's schedule, and a re-import onto that project with the same document fails on them with 23505. The fix stops new moves only. Opened as `SEC-24` (owner projects-joint; the integrator names the package at the J19 merge or rules it under `DEC-90`).
+- ◐ (unchanged) Done-when 2: residuals 2 and 4 stay accepted exceptions (J14).
+
+**Scope / residual.** What is left: residuals 2 and 4 (accepted at J14), (i) and (ii) above (proposed as accepted, not owed, for the integrator's `DEC-90` ruling at the J19 merge), and the rows already moved off their projects (`SEC-24`, owed, owner projects-joint). Owner of the status: the integrator. Once (i) and (ii) are ruled and `SEC-24` is resolved or ruled, resolving SEC-21 is a record decision (DEC-90's form). Residual 1 is as recorded. Pending migrations: `20261157` (HOLD), `20261198` (after `20261179`).
+
+*Ruled by the integrator at the J19 merge, 2026-10-13, under the user's delegation (`DEC-90` practice — industry best practice, fail-safe): exceptions (i) and (ii) are **accepted, not owed**. (i) A service-role move is an operator's or a restore's, outside every signed-in path; the rail passes it so a restore keeps its rows as written, exactly as residual 2's service-role carve-out. (ii) Rows moved before the paste cannot be told apart in the database and back-filling their audit rows would rewrite append-only history, as residual 2 was decided; the stranded rows themselves are `SEC-24`'s, owned. SEC-21 stays OPEN only until `SEC-24` is resolved; its owner resolves it by record then.*
+
+
 ---
 
 ## SEC-22 · Only the contractor door's new documents and quotes run under row-level security; its submission, pointer and promote run under a bound identity, and its housekeeping writes still run as the service role
@@ -1170,6 +1206,7 @@ Tests — `lib/__tests__/prjRoundGJ11Migrations.test.ts`: "no other migration re
 - **Severity:** LOW
 - **Status:** OPEN
 - **Assigned:** projects-tab, next round, for all three limbs. None needs an operator step (review fix pass 2: the first version made limb (a) wait for the JWT signing secret, which it never needed). Limb (a)'s submission sub-limb first needs `SEC-23` settled (`20261037`'s 42P17 on `document_versions`, opened by J16's review fix pass 3 and assigned to roles-and-permissions). Named by J16's review fix passes (2026-10-07); the integrator may re-own it at merge (`DEC-31`).
+- **Assigned:** projects-joint J20 INTAKE DOOR UNDER RLS AND PROJECT REMAINDERS (all three limbs; limb (a)'s submission sub-limb after document-control P23 settles `SEC-23`; limb (c)'s panel sentence after drafting-flow DF-P3) — by the integrator, 2026-10-13 (at the J19 merge, DEC-31; fleet plan `projects-joint.json`).
 - **Verification:** CONFIRMED (scratch PostgreSQL 16 carrying the whole sequence, review fix pass 2, recorded on `GAP-401`)
 - **Blast radius:** document-control integrity
 - **Locations:**
@@ -1205,6 +1242,19 @@ Tests — `lib/__tests__/prjRoundGJ11Migrations.test.ts`: "no other migration re
 - The door's housekeeping writes run under the same identity, or are each pinned with the reason they cannot.
 - The intake pointers the door's scope reads cannot be moved under live links by a non-controller, and the folder is always a folder of the library.
 - Every flow that works for a contractor today still works: the multipart and direct uploads, the redline, the portal, and the intake review. The trusted promote is the deliberate exception (`DEC-56` item 2): after the 20261184 paste it is judged by the publish guard and the register rail as the creator, so the cases `GAP-401` lists under "Judged is not admitted" (a document-level review override, a race with a new hold, authority revoked mid-request) and a creator without DRLS-3 register authority go to review instead of publishing (review fix pass 4: the first statement of this bullet read as if nothing changed). The route tests pin the route's handling of each answer, not guard admission.
+
+**Partial (2026-10-13, projects Round G — J19 PROJECTS REMAINDERS).** No limb is built in this package, and nothing in this finding's code changed. Each limb was re-read on base `49cd27e` (J16 merged; `SEC-23` not settled) and still holds as the Mechanism says:
+- **(a)** In `supabase/migrations/20261184_prj_roundG_intake_door_identity.sql`, `intake_door_create_document` (`:628`) and `intake_door_file_quote` (`:889`) are SECURITY INVOKER and switch to `intake_door`. `intake_door_submit_version` (`:707`), `intake_door_point_pending` (`:761`), `intake_door_promote` (`:812`) and `intake_door_append_redline` (`:954`) are SECURITY DEFINER.
+- **(b)** In `app/api/intake/upload/route.ts`, `ensureIntakeFolder` (`:482`), `retireDisplacedFirst` (`:642`), `restoreDisplaced` (`:670`), `withdraw` (`:1693`), `discard` (`:1576`) and the `project_documents` upsert (`:1868`), cited on this branch's HEAD are still `supabaseAdmin` writes.
+- **(c)** `components/projects/IntakePanel.tsx:253` still writes `projects.intake_library_id` as the owner, with no database rail.
+
+Why each limb waits, and on what:
+- **(a), the submission sub-limb.** It waits on `SEC-23` (document-control P23, not merged on this base). Until `document_versions_insert_integrity` stops reading `document_versions` under the caller's row-level security, any `TO intake_door` INSERT on `document_versions` fails with 42P17.
+- **(a), the pointer, promote and redline sub-limbs; and (b).** Each needs new `TO intake_door` policies, the four definer door functions re-created from their newest bodies (20261184) behind a lineDiff test, and, for (b), new door functions with the route's housekeeping moved into them. That is a migration of its own with a scratch run over the whole door. This package's one reserved number (`20261198`) is the milestone and contractor rails' file, and `app/api/intake/upload/route.ts` was opened here only for `SAF-20`'s sentence (J16's limbs kept as they are).
+- **(c).** The rail on `projects.intake_library_id` / `intake_collection_id` refuses a write the project owner makes today from `components/projects/IntakePanel.tsx`. The panel must say that refusal, never swallow it. The panel is drafting-flow DF-P2 / DF-P3's file while they run, and `components/projects/**` is J17's, so the rail and the sentence ship together after those merge.
+
+**Owner:** projects-joint, as one new package (proposed name "J20 INTAKE DOOR UNDER RLS", with its own migration number). It runs after document-control P23 (`SEC-23`) for limb (a)'s submission, and after drafting-flow DF-P2 / DF-P3 and projects J17 for limb (c)'s panel sentence. The integrator names it at the J19 merge (DEC-31). Done-when bullets 1–3 are unchanged (not met). Bullet 4 still holds: no contractor flow changed here.
+
 
 ---
 
@@ -1249,6 +1299,50 @@ The same INSERT, in a transaction that first drops `document_versions_insert_int
 - No INSERT policy of `document_versions` reads `document_versions` under the caller's row-level security; a scratch run of the whole sequence shows a DocCtrl's and an Engineer's version insert as `authenticated` reaching the policies' own answer (admitted, or refused by a named limb), never 42P17.
 - A shape test pins that no `document_versions` INSERT policy holds a sublink on `document_versions`.
 
+**Partial (2026-10-13, document-control Round F wave 3).** Package **P23 DIRECT-WRITE ISSUE RECORD** (re-owned to document-control at the J16 merge). **Pending migration:** `supabase/migrations/20261205_dc_roundF_direct_write_issue_record.sql` §2 (DEC-30). Reproduced on `596d34e` on a throwaway PostgreSQL 16.13 carrying `schema.sql` and every numbered migration through `20261194` (Supabase stub roles, `auth.uid()` from `request.jwt.claims`; only the pgvector semantic-layer files do not apply): a DocCtrl's and an Engineer's `INSERT INTO document_versions …` as `authenticated` each failed with `ERROR: infinite recursion detected in policy for relation "document_versions"` — the finding holds on the repository's sequence.
+- **§2 of 20261205.** `document_versions_insert_integrity` re-created from its NEWEST body (`20261037`, found by scanning; lineDiff-pinned: exactly the two sublink lines replaced by one) with its first-version test read through `document_has_versions(record_id)` — new, SECURITY DEFINER, `search_path` pinned, EXECUTE for `authenticated` and `service_role` only (PUBLIC and anon revoked — DRLS-16). The helper reads as its owner (no row-level security, so no recursion) and counts EVERY version of the document — the sublink, had it run, saw only the versions the caller may read, so a caller who could not read a document's versions could have passed a later version off as its first; the helper closes that (fail-safe) — and answers NULL, never true or false, for a document outside the caller's active workspaces (`my_org_ids`, as `document_versions_org_access` reads it) or hidden from them (`doc_is_visible`): no existence oracle (case 18 below: first written gated by `doc_is_visible` alone, which answered `true` for another org's document — corrected before commit). Every other limb is byte for byte (the publisher tier; the author's own in-review draft; `doc_is_visible`). The DEC-30 inventory's first row is SEC-23's "verify live first": 1 when the live policy still carries the recursive sublink (the 42P17 world), 0 when the live text differs; it also counts the documents with no version (the first-version limb's population) and the version rows.
+- **Exercised on the throwaway PostgreSQL 16** (deleted afterwards), the paste sent as one query (the SQL editor's way): 7 probes `t`; re-paste idempotent. As `authenticated`: **13** a DocCtrl's version insert — admitted; **14** an Engineer's FIRST version of a visible document (the creation limb) — admitted; **15** the same Engineer's released-looking second version of that document (no publish authority) — refused by `document_versions_insert_integrity` (42501), not 42P17; **16** the Engineer's in-review draft on a document with history — admitted; **17** a version whose `created_by` names someone else — refused by the policy; **18** another org's document: `document_has_versions` answers NULL (own org: `true`), and a version insert into it is refused (`document_versions_org_access`); anon may not execute the helper.
+- **Tests.** `lib/__tests__/dcRoundFDirectWriteIssueRecordMigration.test.ts`: the policy re-created from the newest earlier body (scan) with exactly the one change (lineDiff), its comment verbatim; **no INSERT-capable policy of `document_versions`, at its newest definition across `schema.sql` and the whole sequence, reads `document_versions` in a sublink** (done-when 3's shape test); the helper's body (workspace and visibility gate, NULL otherwise); DRLS-16; the DEC-30 shape.
+
+**Done-when.**
+1. ◐ Not done — needs the operator: the live policy text is recorded by this paste's own result set (the inventory's first row: 1 = the repository's recursive text, 0 = different), and one DocCtrl revision upload must then be reported as saved (after the paste it must save; before it, it saves only if the live text differs). **Operator step:** paste `20261205` (after the app carrying P23 is deployed — the REV-19 limb's order), send back its result set, and upload one revision from a library page as Document Control.
+2. ✓ (pending paste) No INSERT policy of `document_versions` reads `document_versions` under the caller's row-level security; the scratch run of the whole sequence shows a DocCtrl's and an Engineer's insert as `authenticated` reaching the policies' own answer (admitted, or refused by a named policy — cases 13–18), never 42P17.
+3. ✓ A shape test pins that no `document_versions` INSERT policy holds a sublink on `document_versions`.
+
+**Scope / residual.** Stays OPEN for done-when 1 (the paste-back and one reported upload — operator, with the REV-19 paste). `SEC-22` (a)'s switch of the door's submission to `intake_door` under its own policies can follow once pasted; that role would then need EXECUTE on `document_has_versions` (not granted here: `intake_door` may not exist where `20261184` is not pasted, and granting it now would widen nothing that runs) — `SEC-22`'s owner. The fold into `20261205` (the one migration number this package holds) means SEC-23's paste waits on the REV-19 limb's deploy order; the integrator may split §2 into its own number at merge (it has no dependency on §1).
+
+---
+
+## SEC-24 · Milestones a document-only re-import already moved off their project before J19 stay off it, and a re-import onto that project then fails on them
+
+*Numbered SEC-24 on this branch (opened by projects-joint J19 PROJECTS REMAINDERS's review fix pass, 2026-10-13, from `SEC-21` residual 3's leftover rows, per `DEC-31`). If the number collides at merge the integrator renumbers.*
+
+- **Severity:** MEDIUM
+- **Severity qualifier:** per affected schedule; how many rows were moved is not known until `20261198`'s inventory row 2 is read and the candidates are told apart (below)
+- **Status:** OPEN
+- **Assigned:** projects-joint, the owner of `lib/milestones.ts` and the schedule rails. Proposed by projects-joint J19 PROJECTS REMAINDERS, 2026-10-13, in its review's fix pass (DEC-31). The integrator names the package at the J19 merge, or rules the rows an accepted exception under `DEC-90` instead.
+- **Assigned:** projects-joint J20 INTAKE DOOR UNDER RLS AND PROJECT REMAINDERS (find and repair the milestones the pre-J19 import moved off their projects, from `20261198`'s inventory row 2, by a counts-first, operator-confirmed repair — never a blind rewrite) — by the integrator, 2026-10-13 (at the J19 merge, DEC-31; fleet plan `projects-joint.json`).
+- **Verification:** READ (base `49cd27e` plus J19; the move itself reproduced by J19's `scheduleImportWriters.test.ts` "SEC-21 residual 3" against the pre-J19 `lib/milestones.ts`; the stranded rows' re-import collision found by reading, not run)
+- **Blast radius:** schedule integrity: a project's schedule, EVM and reports miss the moved tasks; a re-import onto the project fails on them
+- **Locations:**
+  - Pre-J19 `lib/milestones.ts` import upsert: a document-only re-import matched the document's rows by `document_id` and wrote `project_id: input.projectId ?? null` onto each, moving every matched row off its project (`SEC-21` residual 3; fixed by J19: a matched row keeps its own project).
+  - `lib/milestones.ts:1867` (`fetchExistingImportRows`): a project import matches only `project_id = P`, so it never finds the stranded rows.
+  - `supabase/migrations/20260704_milestones_project_scoped_unique.sql:27`: `milestones_external_ref_per_document_uniq` on `(org_id, document_id, source, external_ref)` — the import's insert of the same refs on the same document collides with the stranded rows (23505).
+  - `supabase/migrations/20261198_prj_roundG_milestone_project_and_party_delete.sql` §1: a signed-in move of `milestones.project_id` now needs schedule authority on every project it touches, and any move onto a private project is refused; `PATCH_COLUMN` has no `project_id`. So no app path can put them back.
+- **Related:** `SEC-21` (residual 3, closed by J19), `DEC-69`, `DEC-90`
+- **Independently verified:** — (`author`: raised by J19's reviewer; recorded by J19's fix pass; not yet challenged)
+
+**Mechanism.** J19 stops the move from happening again (the import keeps each row's own project; `20261198` §1 rails a signed-in move). It does not undo moves made before it is deployed. A row the old import moved has `project_id` NULL and keeps its `document_id`; nothing in the row says which project it left. `20261198`'s inventory row 2 counts imported document-only milestones, the candidates, without telling the moved ones from rows that were always document-only.
+
+**Failure scenario.** Before J19 is deployed, a schedule was imported onto project P with document D, then re-imported with document D alone. Every matched row moved to `project_id` NULL. After J19 those tasks are still missing from P's schedule, EVM and reports. When P's owner re-imports onto P with D, `fetchExistingImportRows` does not see the stranded rows and the insert of each `(org, D, source, ref)` fails with 23505.
+
+**Remediation.** (1) Tell the moved rows apart: from the `MILESTONE_*` audit rows that carry `details.projectId` (`20261157` §6 / §9, rows written from its paste on), and any milestone event rows written while the row sat on P. Whether the pre-J19 import wrote an audit row naming the project is to be established (not found by reading the import path). (2) Re-attach them through a controlled path that writes an audit row per row: an Admin-only definer RPC (checking `can_edit_project_schedule` on the target, and deciding the private-project case explicitly, since `20261198` §1 refuses a signed-in move onto one), or a reviewed service-role script. (3) Or put the rows to the integrator as an accepted exception under `DEC-90`, with the import's 23505 said to the user in words. In every case the re-import onto P must stop failing silently on them.
+
+**Done when.**
+- The rows a pre-J19 re-import moved off a project are identified (a counts query the user can paste), or ruled an accepted exception under `DEC-90`.
+- Identified rows are back on their project through an audited path, and a re-import onto that project with the same document updates them instead of failing with 23505.
+- A test pins the repair path, and a scratch run shows a stranded row restored and re-imported.
+
 ---
 
 ## Report progress
@@ -1278,3 +1372,4 @@ The same INSERT, in a transaction that first drops `document_versions_insert_int
 | SEC-21 | LOW | OPEN |
 | SEC-22 | LOW | OPEN |
 | SEC-23 | HIGH | OPEN |
+| SEC-24 | MEDIUM | OPEN |

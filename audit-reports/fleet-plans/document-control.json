@@ -740,6 +740,7 @@
  ],
  "notes": "Wave 1 (2026-09-17) implementations were lost to a container recycle before review; re-run 2026-09-23 as one workflow per package, merged and pushed individually. All 114 OPEN ids assigned exactly once.",
  "userHeld": {
+  "REV-19": "deploy the app carrying document-control P23, then paste 20261205 (paste guide row 157) and issue one document from the metadata editor \u2014 it must save (CORS admits x-mos-issue-door); closes REV-19 (a)'s database half",
   "DRLS-3": "deploy the app carrying P12's DRLS-15 / DRLS-17 commit, then paste 20261131",
   "DRLS-13": "deploy the app carrying P12's DRLS-15 / DRLS-17 commit, then paste 20261131",
   "REV-13": "deploy the app carrying P12's DRLS-15 / DRLS-17 commit, then paste 20261131",

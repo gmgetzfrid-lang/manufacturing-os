@@ -958,7 +958,8 @@ describe("Merge into an EXISTING target — the target is kept (never superseded
       target: { kind: "extend_existing", target: asRecord(t), libraryId: LIB, revUp, assetTagsUnion: [] },
       reason: "combine", orgId: ORG, actorUserId: ME,
     })).rejects.toThrow(/rolled back/);
-    expect(state.rpc).not.toHaveBeenCalled();
+    // REV-19 (a) (P23 fix pass): the rollback's put-back asks the database whether it records the issue itself (document_status_issue_recorded_by_database, the probe before any write) — the only call; the contract is never called.
+    expect(state.rpc.mock.calls.filter((c) => c[0] !== "document_status_issue_recorded_by_database")).toEqual([]);
     expect(docRow("t2").current_version_id).toBe("t2-v3");
     expect(docRow("a2").status).toBe("Issued");
   });

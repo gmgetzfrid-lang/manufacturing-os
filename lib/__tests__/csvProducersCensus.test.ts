@@ -76,6 +76,8 @@ const VIA_BUILDER: Record<string, { builder: string; module: string }> = {
   "app/(protected)/register/page.tsx": { builder: "registerToCsv", module: "lib/docControlRegister.ts" },
   "app/(protected)/admin/permissions/page.tsx": { builder: "ownershipRegisterToCsv", module: "lib/ownership.ts" },
   "app/api/knowledge/drawing/route.ts": { builder: "equipmentRegisterCsv", module: "lib/drawingText.ts" },
+  // admin-and-org ALOG-6 (P7): the audit export's file is built by lib/auditLogExport.ts.
+  "app/(protected)/admin/audit/page.tsx": { builder: "buildAuditCsv", module: "lib/auditLogExport.ts" },
 };
 
 describe("PM-15 census — a new text/csv producer must use lib/csvSafe", () => {
@@ -117,7 +119,8 @@ describe("PM-15 census — a new text/csv producer must use lib/csvSafe", () => 
   });
 
   it("the page-local exporters encode through csvCell / csvLine", () => {
-    expect(read("app/(protected)/admin/audit/page.tsx")).toMatch(/const csvField = csvCell;/);
+    // admin-and-org ALOG-6 (P7): the audit export's cells go through csvCell in its builder.
+    expect(read("lib/auditLogExport.ts")).toMatch(/\]\.map\(csvCell\)\.join\(","\)/);
     expect(read("components/cockpit/CommandDeck.tsx")).toMatch(/const csvField = csvCell;/);
     expect(read("app/(protected)/requests/page.tsx")).toMatch(/\[csvLine\(headers\), \.\.\.rows\.map\(r => csvLine\(r\)\)\]/);
   });

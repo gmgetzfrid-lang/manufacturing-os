@@ -542,8 +542,12 @@ describe("ALOG-14 — the permissions explorer tells the truth", () => {
     // (5) user management split: adding a member is Admin + DocCtrl; changing roles is the users surface's writes
     expect(SNAPSHOT_ROWS.find((r) => r.cap === "Add a member (invite)")!.m).toBe("yy----------");
     expect(row("Change member roles, suspend or restore members").cells.map((c) => c.v).join("")).toBe("y-y---------");
-    // (6) recertification: the owner (◐) plus the controllers, and nobody else — as 20261188 admits
-    expect(SNAPSHOT_ROWS.find((r) => r.cap === "Access recertification reviews")!.m).toBe("yycccccccccc");
+    // (6) recertification: the page offers it to the owner and the controllers; 20261188 (and 20261077's
+    // attestation arm) admit exactly them only once pasted — neither is LIVE, so the row draws every
+    // member and says the pending rule (admin-and-org P7 review fix; auditExplorerSnapshot.test.ts)
+    const recert = SNAPSHOT_ROWS.find((r) => r.cap === "Access recertification reviews")!;
+    expect(recert.m).toBe("yyyyyyyyyyyy");
+    expect(recert.warn).toContain("once 20261077 and 20261188 are pasted: a controller or the library's owner only");
   });
   // ── review fix: the rows the rewrite itself got wrong, pinned to the SQL ──
   const newestDefining = (re: RegExp) => readdirSync(join(process.cwd(), "supabase/migrations"))
@@ -584,7 +588,8 @@ describe("ALOG-14 — the permissions explorer tells the truth", () => {
   });
   it("removing a member is Admin only (revoke_member 'remove', newest body 20261161); suspend / restore stays Admin + Manager with the Admin-row rule said", () => {
     const newest = newestDefining(/CREATE OR REPLACE FUNCTION (public\.)?revoke_member\(/);
-    expect(newest).toBe("20261161_notif_roundG_read_scope.sql");
+    // 20261161 or a later re-creation from it (admin-and-org P8's 20261204 keeps these rules verbatim)
+    expect(newest >= "20261161_notif_roundG_read_scope.sql", newest).toBe(true);
     const fn = src(`supabase/migrations/${newest}`);
     expect(fn).toMatch(/IF p_mode = 'remove' THEN\s+IF NOT EXISTS \(SELECT 1 FROM org_members me WHERE me\.uid = v_actor AND me\.org_id = v_member\.org_id\s+AND me\.status = 'active' AND \(me\.role = 'Admin' OR me\.roles && ARRAY\['Admin'\]::text\[\]\)\) THEN\s+RAISE EXCEPTION 'Only an Admin can remove a member from the workspace\.';/);
     expect(fn).toMatch(/IF NOT is_org_admin_or_manager\(v_member\.org_id\) THEN\s+RAISE EXCEPTION 'Only an Admin or Manager can suspend or restore a member\.';/);
@@ -723,8 +728,13 @@ describe("ALOG-14 — the permissions explorer tells the truth", () => {
     "Reassign library ownership / owning team", "Per-library permission (ACL) drawer",
   ];
   it("exactly the rows checked against the code carry the review date; every other snapshot row is marked NOT RE-CHECKED", () => {
-    expect(SNAPSHOT_ROWS.filter((r) => r.checked).map((r) => r.cap).sort()).toEqual([...CHECKED].sort());
-    for (const r of rows.filter((x) => x.source === "snapshot")) expect(!!r.unchecked, r.cap).toBe(!CHECKED.includes(r.cap));
+    // admin-and-org P7 (ALOG-14's remainder, 2026-10-13): the other 23 rows
+    // were checked too (21 pinned in auditExplorerSnapshot.test.ts, 2
+    // removed), so every snapshot row now carries the date; the eight rows
+    // checked here on 2026-10-07 are still among them.
+    for (const cap of CHECKED) expect(SNAPSHOT_ROWS.find((r) => r.cap === cap)?.checked, cap).toBe(true);
+    for (const r of rows.filter((x) => x.source === "snapshot")) expect(!!r.unchecked, r.cap).toBe(!SNAPSHOT_ROWS.find((s) => s.cap === r.cap)?.checked);
+    expect(rows.filter((x) => x.source === "snapshot" && x.unchecked)).toEqual([]);
   });
   it("the ACL drawer row is the drawer's delegation contract (DEL-1 / GAP-3) and the library guard — owners and Manage Permissions holders, not controllers only", () => {
     const drawer = src("components/permissions/PermissionDrawer.tsx");
@@ -843,6 +853,6 @@ describe("integrator fix pass — pre-paste truth on the explorer, no placeholde
     const t = src("components/permissions/RoleModelTree.tsx");
     expect(t).not.toMatch(/the owner path is a known gap/);
     expect(t).not.toMatch(/only Admin\/DocCtrl can open the recertification flow/);
-    expect(src("components/permissions/PermissionsExplorer.tsx")).toMatch(/cap: "Access recertification reviews", m: "yycccccccccc", cond: "If library owner", checked: true/);
+    expect(src("components/permissions/PermissionsExplorer.tsx")).toMatch(/cap: "Access recertification reviews", m: "yyyyyyyyyyyy", checked: true,\s+cond: "The library page offers the review to a controller or the library's owner/);
   });
 });

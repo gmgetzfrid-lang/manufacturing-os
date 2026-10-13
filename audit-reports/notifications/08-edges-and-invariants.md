@@ -706,7 +706,7 @@ vercel.json:9-10  `      "path": "/api/cron/maintenance",\n      "schedule": "0 
 ## NEDGE-13 · Two declared digest kinds have full consumer support and no producer anywhere, while a live producer emits a kind that is not in the union at all
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** notifications N14 RAW-INSERT TAIL — by the integrator, 2026-10-07, at the N6 merge (DEC-31): done-when 3 is `TAX-11` done-when 2, which N14 owns.
 - **Verification:** CONFIRMED
 - **Locations:** `lib/inAppNotifications.ts:33-36`, `components/notifications/NotificationBell.tsx:41`, `hooks/useTicketNotifications.ts:80-83`, `lib/storageAlerts.ts:60-61`, `app/api/data-export/run/route.ts:54-58`
@@ -750,6 +750,17 @@ storageAlerts.ts:60-61  `      await sb.from("notifications").insert({\n        
 **Scope / residual.** Stays OPEN for done-when 3 only (as `TAX-11` done-when 2); record RESOLVED when the eleven raw inserts route through `notify()`, or on the integrator's ratification of the census as the ban. A legacy row of a retired kind still renders, bell-only and FYI — where its unrendered bucket left it. The only digest remains the cron's compliance email (N6).
 
 *Cross-note (integrator, at the admin-and-org P3 merge, 2026-10-02).* The location `app/api/data-export/run/route.ts:54-58` no longer holds the insert. Admin-and-org P3 moved the `security_export` bell rows into `lib/exportAlerts.ts` (`alertControllers`): still one raw service-role insert, now with a kind declared in the registry and links inside the app. The raw-insert census (`lib/__tests__/notificationKinds.test.ts` `RAW_SITES`) pins it there, and the link census (`notificationWriteRails.test.ts`) judges its two links. The finding itself is unchanged.
+
+**Resolution (2026-10-13, notifications Round G).** Package N14 RAW-INSERT TAIL. Done-when 3 is `TAX-11` done-when 2, and that work closes it (see `TAX-11`'s Resolution, commit `855152f`).
+
+**Reproduced first** on `5378ccb`: six raw insert calls remained, in five files (`RAW_SITES`). They now write through the typed sink on the client each held. `RAW_SITES` is empty, and the census fails on any new raw call.
+
+**Done-when.**
+- ✓ (Round G N2) `morning_digest` and `task_overdue_digest` are deleted from the union, the icon map and `sectionForKind`.
+- ✓ (Round G N2) `storage_alert` is in the union and is written through the typed sink.
+- ✓ Raw `.from("notifications").insert` call sites are migrated onto the typed sink (`notify()`'s module: `notifyWithReason` / `notifyBatchWithReason` for the server writers), so `kind` is type-checked at every producer. None is left outside `lib/inAppNotifications.ts`. The census in `lib/__tests__/notificationKinds.test.ts` is the ban's test arm.
+
+**Scope / residual.** None. A legacy row of a retired kind still renders bell-only, as recorded in N2's Partial.
 
 ---
 
@@ -837,7 +848,7 @@ There is no status predicate and no membership filter on `recipients`. `20261160
 ## NEDGE-16 · After a restore every member is inactive, and nothing asserts or repairs it: notifications reach nobody and, after 20261161, nobody can read their bell
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** unassigned. Opened 2026-10-02 by notifications Round G (N5's second review fix). It is the remainder of `NEDGE-3` done-when 3 ("a post-restore all-inactive org is caught by an explicit assertion or a restore-completion step that reactivates members"). The fleet plan pointed it at admin-and-org P1 (restore / apply), and that package merged without it (DEC-31). The integrator assigns it, most likely to admin-and-org.
 - **Assigned:** admin-and-org P8 (membership integrity: a post-restore check that refuses or repairs an org left with no active Admin) — by the integrator, 2026-10-02, at the N5 merge (DEC-31; fleet plan `audit-reports/fleet-plans/admin-and-org.json`).
 - **Verification:** CONFIRMED by reading `app/api/admin/restore/begin/route.ts:100` and `app/api/admin/restore/apply/route.ts:110 (deleted by admin-and-org P3, ILIFE-4)`: a restore's members are created with `status: "inactive"`. *(Integrator, at the admin-and-org P3 merge, 2026-10-02: P3 deleted the single-shot `/apply` route, which had no caller; `/begin` is now the only place that inserts placeholder members as `inactive`, so this finding runs through it alone.)* Combined with `NEDGE-3`'s active-member filter and `20261161`'s read policy.
@@ -854,6 +865,17 @@ There is no status predicate and no membership filter on `recipients`. `20261160
 - [ ] A test drives a restore to completion and asserts one of the two.
 
 **Closer:** unassigned (admin-and-org; the integrator assigns it).
+
+**Resolution (2026-10-13, admin-and-org Round G).** Package P8 (assigned at the N5 merge). Reproduced on `6503ea7` (DEC-29): `/api/admin/restore/begin:99-104` creates each unknown backup person as an `inactive` placeholder, and nothing after the run said so.
+- **The restore's completion step.** `app/api/admin/restore/complete/route.ts` (new, POST, the restore surface's Admin gate, as `/begin`) reads the workspace's members (`lib/restoreMembership.ts` `readRestoreMembership`, paged and checked): active members, members not active (they receive no notifications and read no bell), active Admins, and whether the restoring Admin is still active. It writes `RESTORE_MEMBERSHIP_CHECK` with those numbers (`receiveNoNotifications`), checked; a refused row is returned and shown on every answer. *Corrected at the review fix pass:* this read "A workspace with no active Admin is refused (409)". The restoring Admin is an active Admin by construction (the route admits only an active Admin, and the restore never changes an existing member's status), so "no active Admin" cannot arise from the restore itself. The route's 409 for it is a defensive REPORT, not a refusal: the restore has already been applied and the check changes nothing. It answers 409 rather than "fine" only so that a membership changed outside the restore is never shown as healthy, and the 409 carries `auditError` too.
+- **The page.** `app/(protected)/admin/restore/page.tsx` runs `runChunkedRestore` through `lib/restoreMembership.ts` `withRestoreMembershipCheck`, which calls `completeRestoreMembership` in a `finally` once the run has started: whether it finished, stopped at a table, or THREW. *Corrected at the review fix pass:* the page used to call the check only when `runChunkedRestore` returned, so a `/begin` that stopped part-way (a refused placeholder, or a response lost on the way back) kept the inactive placeholders it had created and nobody was told. The check now renders outside the result panel's branch, so a thrown run shows it beside the error: "N member(s) of this workspace are not active — restored people are created inactive — and will receive no notifications, and cannot read their notification bell, until an Admin reactivates them (Admin → Users → Restore). …", with a link to Users. A failed check is shown in words.
+- **Tests.** `lib/__tests__/aoRoundGP8RestoreMembership.test.ts` drives a restore to completion through the page's driver against the in-memory PostgREST. It asserts 2 inactive placeholders, the sentence, the audit row, and the restoring Admin still active. It also covers the defensive 409 for a workspace with no active Admin (reachable only with the gate mocked) and the `auditError` it carries, an unread member list said (never 0), a run whose `/begin` lands its 2 placeholders and then throws (the check still runs, counts them and is audited, and the error is rethrown), and a source pin that the page wraps the run in the check and renders it outside the result branch.
+
+**Done-when.**
+- ✓ The restore's completion step ends with an explicit, visible assertion that the workspace has N inactive members who will receive no notifications until reactivated, on the restore page and in its audit row (`RESTORE_MEMBERSHIP_CHECK`).
+- ✓ A test drives a restore to completion and asserts it.
+
+**Scope / residual.** Reactivation stays an Admin's choice per person (Admin → Users → Restore, `revoke_member` restore). A placeholder has no sign-in account until they are invited, so reactivating every placeholder automatically would make no one able to read anything, and is not done. No migration.
 
 ---
 
@@ -939,7 +961,7 @@ There is no status predicate and no membership filter on `recipients`. `20261160
 ## NEDGE-19 · No org-level timezone exists: every server-composed time and the compliance digest are in UTC, labelled, never the plant's own zone
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** admin-and-org P8 (the org settings page, beside `VFY-15`'s per-org time zone) — by the integrator, 2026-10-07, at the N6 merge (DEC-31). Opened 2026-10-07 by notifications Round G (N6 EMAIL-PIPELINE-AND-CRON) as `NEDGE-12` done-when 3, per the fleet plan's decision ("an org-level timezone setting is recorded as a new finding, not built here").
 - **Verification:** CONFIRMED by search at `2de62f1` + N6: no `timezone` / `time_zone` column or `org_configurations` key is written anywhere in `app/`, `lib/`, `components/` or `supabase/`.
 - **Locations:** `lib/recordTime.ts` (`orgTimeZone` reads `org_configurations` key `timezone`, `data.timeZone`; nothing writes it), `app/api/cron/maintenance/route.ts` (the digest's name and the escalation's date use it), `vercel.json` (`0 3 * * *`)
@@ -957,6 +979,20 @@ There is no status predicate and no membership filter on `recipients`. `20261160
 
 **Closer:** admin-and-org P8.
 
+**Resolution (2026-10-13, admin-and-org Round G).** Package P8 (assigned at the N6 merge). Reproduced on `6503ea7` (DEC-29): nothing wrote `org_configurations` key `timezone`, and the key fell to the permissive org policy (`20260818`'s per-key RESTRICTIVE policies name only `branding` and `drafting`).
+- **The setting.** `/admin/settings` (Admin-only) gains a "Workspace time zone" card. It lists the runtime's IANA zones plus "Not set (UTC)" and saves through `lib/workspaceTimeZone.ts` `saveWorkspaceTimeZone`. The zone is validated (`lib/recordTime.ts` `isValidTimeZone`; an unknown zone is refused before any write) and stored as `org_configurations` key `timezone`, `data.timeZone`, the shape `orgTimeZone` reads. The write is checked (`lib/checkedWrite.ts`; a refusal is said) and audited (`WORKSPACE_TIMEZONE_CHANGED`, before and after). "Not set" deletes the row.
+- **The key is an Admin's.** `supabase/migrations/20261203_ao_roundG_team_members_org_rail.sql` §5 re-creates the three RESTRICTIVE per-key policies from their newest definition (`20260818`) with one added line each: `WHEN 'timezone' THEN is_org_admin(org_id)`. Before it, any active member could set the zone every body is written in. NARROWS; PASTE pending.
+- **The digest's send time (DEC-90 ruling for this package).** It stays the one daily UTC run (`vercel.json` `0 3 * * *`); no cron entry per zone. Its body names its window in the workspace zone through `recordTime`. The card says so.
+- **Fix pass 3 (admin-and-org P8, 2026-10-13): the picker shows what is stored.** It listed only `Intl.supportedValuesOf('timeZone')`, so a stored zone the browser's list omits (an alias such as `US/Central`, a zone its ICU names differently, a stored `UTC`) rendered as "Not set (UTC)" while bodies were written in it, and Save stayed off. `lib/workspaceTimeZone.ts` `timeZoneOptions` now puts such a stored zone first, labelled "<zone> (stored)" (or "(stored — not a zone this browser knows)" when this runtime rejects it), and the card selects it (`app/(protected)/admin/settings/page.tsx:504`, `:547`); `readWorkspaceTimeZone` returns the value exactly as stored beside the validated one, and a change's audit row names that value as `before`. Tests: `lib/__tests__/adminOrgSurfaces.test.ts` (a stored `US/Central` shown as stored with Save off, then changed with `before: "US/Central"`; `timeZoneOptions` over listed, omitted, `UTC` and unknown values; the read's `stored`).
+- **Tests.** `lib/__tests__/adminOrgSurfaces.test.ts` (the rendered card saves `America/Chicago` as the row, audited; `orgTimeZone` then reads it and `formatRecordTime` writes `2026-03-20T18:15:15-05:00 (America/Chicago)`; an unknown zone refused, a refused write said, clearing an unset zone not a refusal, a read failure said). `lib/__tests__/aoRoundGP8Migrations.test.ts` (the three policies lineDiffed against `20260818`). PG16: a Manager's INSERT of the key refused; their UPDATE and DELETE touch nothing; an Admin's INSERT lands; another key is still open to a member.
+
+**Done-when.**
+- ✓ An Admin can set the workspace's IANA timezone: a validated `org_configurations` row, key `timezone`, `data.timeZone`.
+- ✓ Server-composed bodies then show that zone, with no change in `lib/recordTime.ts` or its callers (pinned through `orgTimeZone` / `formatRecordTime`).
+- ✓ Decided: the digest stays one daily run at 03:00 UTC, named for its window in the workspace zone (DEC-90).
+
+**Scope / residual.** Effective dates do not follow the zone yet: `lib/effectiveDate.ts` still reads only `NEXT_PUBLIC_FACILITY_TIME_ZONE`. *Named at the review fix pass:* DEC-90's ruling for this finding has two halves, and only the display half is live. Its effective-date half (the workspace zone also decides an effective date and "in effect" for `/api/verify`, the badge, the suppression watermark and the daily scan) is `VFY-15`'s remainder, with the owner recorded there (an admin-and-org P8 follow-up once notifications N14 has merged `lib/effectiveDate.ts`). This finding's own three done-when items are met, so it stays RESOLVED; the effective-date half is tracked open under `VFY-15`. The time-zone card says so: "Effective dates and whether a revision is "in effect" still follow the deployment's facility time zone, not this setting, until that change lands." (pinned in `adminOrgSurfaces.test.ts`). *Before the paste* the card's save works for an Admin (the key is open to every member); after it only an Admin's lands.
+
 ---
 
 <a id="nedge-20"></a>
@@ -964,7 +1000,7 @@ There is no status predicate and no membership filter on `recipients`. `20261160
 ## NEDGE-20 · A member can queue a forged "compliance digest" email row for a colleague whose `metadata.through` silences that colleague's next digests
 
 - **Severity:** LOW
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Assigned:** notifications N14 RAW-INSERT TAIL — by the integrator, 2026-10-07, at the N6 merge (DEC-31; the remaining notifications write-rail package).
 - **Verification:** CONFIRMED by reading at the N6 merge (N6 integrator fix pass `30bb540`, which reported it as out of scope): the digest reads a recipient's last digest by `org_id`, `to_user_id` and `event_type = 'compliance_digest'` only (`app/api/cron/maintenance/route.ts:1085-1091`), and trusts its `metadata.through` (`digestThrough`, `:893-899`); the `email_notif_insert` policy (`20261047`, `:208-209`) lets any active member of the org queue a row.
 - **Locations:** `app/api/cron/maintenance/route.ts` (`digestThrough` :893, the last-digest read :1085), `supabase/migrations/20261047_*.sql` (`email_notif_insert` :209), `20261183` (`email_notifications.queued_by`, pending paste)
@@ -981,6 +1017,49 @@ There is no status predicate and no membership filter on `recipients`. `20261160
 - [ ] A test: a forged row with a future `through` does not silence the next digest; a genuine digest row behaves exactly as today.
 
 **Closer:** notifications N14 RAW-INSERT TAIL.
+
+**Resolution (2026-10-13, notifications Round G).** Package N14 RAW-INSERT TAIL (commit `fed6288`). Both arms landed: the reader trusts only a server-queued row, and the insert rail refuses the row.
+
+**Reproduced first** on `5378ccb`. Against the committed `app/api/cron/maintenance/route.ts`, the new tests failed in three ways:
+- A `compliance_digest` row addressed to U1 with `metadata.through` a month ahead silenced U1's digest.
+- A row a signed-in member queued, carrying today's `day`, silenced it the same way.
+- The same held with `queued_by` absent.
+
+`email_notif_insert` (`20261047` §4, its newest definition) admitted such a row from any active member.
+
+**What landed.**
+- Reader (`app/api/cron/maintenance/route.ts` `queueComplianceDigests`):
+  - The last-digest read (`lastDigest`, :1118) adds `.is("queued_by", null)`. A signed-in writer's row is stamped with its queuer by `20261183`, so only a row the server queued counts.
+  - On 42703 / PGRST204, or a "queued_by does not exist" message (`isMissingQueuedBy`, :923: `20261183` not pasted), the read is retried without the filter. That is today's read, and the filter is dropped for the rest of the run.
+  - A row whose `metadata.through` runs more than `DIGEST_CLOCK_OVERLAP_MS` (5 min) past its own `created_at` is never trusted as a last digest (`digestTrusted`, :915). The read takes the recipient's last `DIGEST_LAST_ROWS` (10) rows, newest first, and the newest TRUSTED one is their last digest (N14 fix pass: the first landing read only the newest row and, when it was untrusted, dropped all history — so a forged newer row hid a genuine digest from today and the colleague got a second digest the same day). With no trusted row among them the list starts from the window's start. Either way the run says how many newer rows it did not trust in a `compliance-digest:` line.
+  - A genuine digest row writes `through` = the run's `asOf`, before it is queued, so it always passes.
+- Insert rail (`20261197`): `email_notif_insert` is re-created from `20261047`'s body, adding exactly one line, `AND event_type <> 'compliance_digest'`. The cron queues the digest on the service role, which RLS does not bind; no app path queues the event type from a browser (pinned).
+
+**Exercised on PostgreSQL 16** (the run recorded under `PROD-16`).
+- An `authenticated` member's `compliance_digest` row was refused: "new row violates row-level security policy".
+- The same member's `watcher_activity` row was admitted.
+- A service-role `compliance_digest` row landed.
+- The deparsed `with_check` carries `(event_type <> 'compliance_digest'::text)` beside the three conditions it had.
+- *Integrator fix pass (2026-10-13, the re-review's minor 1):* the paste's policy probe now checks the EXACT set on `email_notifications` — three policies in all, and the three names. A permissive policy is OR'd with `email_notif_insert`, so a fourth permissive INSERT or ALL policy re-admits a member's `compliance_digest` row. On PostgreSQL 16 a stray `FOR ALL` policy made the new probe read `false`, the old probe's text still read `true`, and the forged row was admitted (case B under `PROD-16`). **The rail arm of this resolution holds only on a database where that probe reads `true`.** A `false` names a policy to remove before NEDGE-20's rail is closed there; the reader half (`digestTrusted`, `queued_by`) is unaffected.
+
+**Tests.**
+- `lib/__tests__/maintenanceDrain.test.ts` "NEDGE-20 (notifications N14) — …" (5 cases):
+  - A forged future `through` does not silence the next digest, and the line says why.
+  - (fix pass) A genuine digest from today behind a forged newer row (before `20261183`) still means no second digest today; the read takes the last 10 rows.
+  - After `20261183`, a member-queued row is never the last digest, even with a plausible `through` and today's `day`.
+  - REGRESSION: a genuine row behaves exactly as today. Today's means no second digest; yesterday's starts the window where it stopped.
+  - Before `20261183` (42703), today's read runs, and the `through` check still holds.
+- N6's `20261183` test now pins that the cron reads `queued_by` only 42703-tolerantly and never writes it. The harness gained a "column not pasted" switch.
+- `lib/__tests__/notifRoundGBurstDigestMigration.test.ts` diffs the policy against the newest earlier definition, found by scanning `supabase/migrations`: no line removed, and exactly that one line added.
+
+**Done-when.**
+- ✓ The digest trusts only a row the server queued: `queued_by` set is ignored once `20261183` is pasted, and 42703 is tolerated while it is not. A `through` later than the row's `created_at` plus the clock margin is not trusted.
+- ✓ The email insert rail refuses a signed-in writer's `compliance_digest` row. It is re-created from the newest definition, with a lineDiff test.
+- ✓ A test shows a forged row with a future `through` does not silence the next digest, and a genuine digest row behaves exactly as today.
+
+**Scope / residual.** One window remains until either `20261183` or `20261197` is pasted. A member could still queue a row for a colleague with a plausible `through` (no later than its `created_at` plus 5 min) and today's `day`. That suppresses the colleague's digest for that one day; the bell is unaffected. In the same window, ten or more forged far-future rows queued after a genuine one push it out of the 10-row read, so the recipient is listed from the window's start (a wider list, never a silenced one). Either paste closes both.
+
+Paste and deploy order: either order is safe, and `20261183` and `20261197` are independent.
 
 ---
 
