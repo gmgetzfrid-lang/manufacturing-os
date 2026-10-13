@@ -131,6 +131,14 @@ The first three fail on the fix-pass-2 file.
 
 Residual: `components/projects/TransitionInPanel.tsx` (on the do-not-edit list, projects J12) shows `note` only. Showing `equipmentNote` is handed to projects; the panel's bulk path counts a `note` as "adopted without a uniqueness key", so the new sentence is not folded into `note`. AREA-2 stays OPEN on done-when 2: the graph's Connect and `components/graph/GraphShapeWizard.tsx` are I-14's.
 
+**Partial (2026-10-13, projects Round G — J19 PROJECTS REMAINDERS): the `lib/transitionIn.ts` limb, re-read and found holding.** The integrator assigned projects J19 "the `lib/transitionIn.ts` adopt hand-off" at the I-11 merge. On base `49cd27e` that hand-off is already built: fix pass 3 above built it. No code changed here (the drafting-flow DF-P2 hunk in that file is untouched, so nothing collides at merge):
+- `adoptDocument` links the matched equipment through `linkAdoptedEquipment` (`lib/transitionIn.ts:584`, `:618`). The insert stays `ON CONFLICT DO NOTHING` (`:624`), and its error is checked.
+- The pairs a 'drawing' row holds are read in batches of 100 ids. Each one goes through `POST /api/equipment-bridge` `action "adopt"` (`:651`; the route's branch is `app/api/equipment-bridge/route.ts:415`, `adoptDrawingRelation`). A refused link or adopt is returned as `equipmentNote` (`:604`).
+- `lib/__tests__/transitionIn.test.ts` pins it: the drawing-held pair adopted (`:627`), a refused write said (`:635`), a refused adopt said (`:644`), no held pair means nothing adopted (`:650`), batching of 250 (`:656`), and a failed batch said (`:674`). All pass in this package's full run.
+
+So the projects half of done-when 3's "a person's assertion is never lost to a machine row" holds for transition-in. The one remainder fix pass 3 named, `components/projects/TransitionInPanel.tsx` never showing `equipmentNote` (`:158`, `:178`), had no projects finding. It is opened as projects-tab `UX-17` (owner: projects-joint, after projects J17, which is editing `components/projects/**`; DEC-31). AREA-2 stays OPEN on done-when 2 (the graph's Connect gate; intelligence I-15).
+
+
 ---
 
 <a id="area-3"></a>

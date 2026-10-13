@@ -307,6 +307,7 @@ the loop the suppression prevents.
 - **Assigned:** projects-joint J18 APP SHELL BUDGET (the 4x CPU measurement with `scripts/perf/execution-drag/`, on a quiet host) — by the integrator, 2026-10-07 (J14 merge; fleet plan `projects-joint.json`).
 - **Assigned:** projects-joint J14 PROJECTS FOLLOW-UPS — the remainder (done-when 1 on a slow CPU: the drag's per-day-offset re-render in `components/projects/ExecutionView.tsx`; remediation 4, the dependency picker) — by the integrator, 2026-10-07, at the J12 merge (DEC-31).
 - **Assigned:** projects-joint, the remainder: done-when 1 at 4× CPU throttle, a measurement only, with no code owed. Re-run the harness committed at `scripts/perf/execution-drag/` (its `README.md`: `run-ab.sh`, six or more runs against the no-drag control) on a quiet host, or time a deployed build. *Corrected (J14 last review, 2026-10-07):* this line first pointed at `scratchpad/j14perf5/runab.sh`, which was in the package's scratch space only, not in the repository. Proposed by projects-joint J14 PROJECTS FOLLOW-UPS, 2026-10-07, in its review's fix pass (DEC-31). The integrator names the package, or takes the run itself, at the J14 merge.
+- **Assigned:** projects-joint J18 APP SHELL BUDGET (the done-when 1 measurement on a quiet host) — restated by the integrator, 2026-10-13 (at the J19 merge, DEC-31; fleet plan `projects-joint.json`).
 - **Verification:** CONFIRMED (structure); node counts estimated
 - **Blast radius:** performance
 - **Locations:**

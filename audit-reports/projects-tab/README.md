@@ -25,9 +25,9 @@ before and after.
 |---|---|
 | CRITICAL | 17 |
 | HIGH | 53 |
-| MEDIUM | 68 |
-| LOW | 12 |
-| **Total** | **150** |
+| MEDIUM | 69 |
+| LOW | 13 |
+| **Total** | **152** |
 
 Two findings here (`BID-5`, `UX-2`) carry `Status: REFUTED` — an independent pass
 disproved them. They are kept with the reason rather than deleted (`DEC-41`);
@@ -78,13 +78,13 @@ Work these in order. The numbering reflects priority, not just grouping —
 
 | # | Report | Findings | CRIT | Progress |
 |---|---|---|---|---|
-| 01 | [Security & access](./01-security-access.md) | 23 | 4 | 20 / 23 |
-| 02 | [Safety, compliance & the record](./02-safety-compliance.md) | 20 | 3 | 17 / 20 |
-| 03 | [Money & the ledger](./03-money-ledger.md) | 14 | 0 | 13 / 14 |
+| 01 | [Security & access](./01-security-access.md) | 24 | 4 | 20 / 24 |
+| 02 | [Safety, compliance & the record](./02-safety-compliance.md) | 20 | 3 | 18 / 20 |
+| 03 | [Money & the ledger](./03-money-ledger.md) | 14 | 0 | 14 / 14 |
 | 04 | [Bid tabulation & the award decision](./04-bid-tabulation.md) | 12 | 2 | 12 / 12 |
 | 05 | [Charts & the printed RFQ](./05-charts-and-rfq.md) | 8 | 0 | 8 / 8 |
 | 06 | [Schedule engine](./06-schedule-engine.md) | 18 | 5 | 18 / 18 |
-| 07 | [Truth in the interface](./07-interface-truth.md) | 16 | 1 | 16 / 16 |
+| 07 | [Truth in the interface](./07-interface-truth.md) | 17 | 1 | 16 / 17 |
 | 08 | [Reliability & failure modes](./08-reliability.md) | 11 | 0 | 11 / 11 |
 | 09 | [Performance & scale](./09-performance-scale.md) | 12 | 0 | 9 / 12 |
 | 10 | [Accessibility, mobile & dark mode](./10-accessibility-mobile.md) | 16 | 2 | 15 / 16 |

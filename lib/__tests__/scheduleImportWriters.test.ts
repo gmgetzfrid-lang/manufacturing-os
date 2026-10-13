@@ -998,3 +998,56 @@ describe("SURF-8 · baseline history is RPC-written, so restore never blind-impo
     expect(isSkippedTable("milestone_baseline_history")).toBe(true);
   });
 });
+
+// ── SEC-21 residual 3 (projects Round G J19): a re-import never moves a milestone off its project ──
+describe("SEC-21 residual 3 — a matched milestone keeps its project on a re-import", () => {
+  const DOC = "doc-1";
+  // Keyed by the file's own ID column, so a changed date is the SAME task.
+  const idFile = (finish: string) => ["ID,Name,Start,Finish,% Complete", `1,Mobilize,2026-01-01,${finish},0`, `2,Scaffold,2026-01-03,${finish},0`, `3,Hydrotest,2026-01-06,${finish},0`].join("\n");
+  const fileA2 = idFile("2026-01-08");
+  const fileB = idFile("2026-01-09");
+
+  it("a document-only re-import of a schedule first imported onto a project with that document updates its rows IN PLACE, each still on the project", async () => {
+    const first = await importMilestonesFromParsed({ ...scope, documentId: DOC, rows: rowsOf(fileA2) });
+    expect(first.inserted).toBe(3);
+    expect(milestones().every((r) => r.project_id === PROJECT && r.document_id === DOC)).toBe(true);
+
+    db.writes = [];
+    const again = await importMilestonesFromParsed({ orgId: ORG, documentId: DOC, source: "csv", createdBy: USER, rows: rowsOf(fileB) });
+    expect(again.errors).toEqual([]);
+    expect(again.inserted).toBe(0);
+    expect(again.updated).toBe(3);
+    expect(milestones()).toHaveLength(3);
+    // The rows took the file's new dates and kept their project.
+    expect(milestones().map((r) => [r.name, r.project_id, r.document_id])).toEqual([
+      ["Mobilize", PROJECT, DOC], ["Scaffold", PROJECT, DOC], ["Hydrotest", PROJECT, DOC],
+    ]);
+    expect(String(byName("Mobilize").planned_at)).toMatch(/^2026-01-09/);
+    // The upsert sent each row's OWN project, never the import's null scope.
+    const upserts = db.writes.filter((w) => w.table === "milestones" && w.method === "upsert");
+    expect(upserts.length).toBeGreaterThan(0);
+    for (const w of upserts) for (const r of w.payload as Row[]) expect(r.project_id).toBe(PROJECT);
+  });
+
+  it("the existing-row read selects project_id (so the write can keep it)", async () => {
+    const seen: string[] = [];
+    db.failSelect = (t, cols) => { if (t === "milestones") seen.push(cols); return null; };
+    await importMilestonesFromParsed({ ...scope, rows: rowsOf(fileA2) });
+    expect(seen.some((c) => c.split(",").map((x) => x.trim()).includes("project_id"))).toBe(true);
+  });
+
+  it("regression: a project re-import still updates its own rows, on its project (the value it always wrote)", async () => {
+    await importMilestonesFromParsed({ ...scope, rows: rowsOf(fileA2) });
+    const again = await importMilestonesFromParsed({ ...scope, rows: rowsOf(fileB) });
+    expect(again).toMatchObject({ inserted: 0, updated: 3 });
+    expect(milestones().every((r) => r.project_id === PROJECT)).toBe(true);
+  });
+
+  it("regression: a document-only import onto a document with no project rows still lands its rows on the document alone", async () => {
+    const first = await importMilestonesFromParsed({ orgId: ORG, documentId: DOC, source: "csv", createdBy: USER, rows: rowsOf(fileA2) });
+    expect(first.inserted).toBe(3);
+    const again = await importMilestonesFromParsed({ orgId: ORG, documentId: DOC, source: "csv", createdBy: USER, rows: rowsOf(fileB) });
+    expect(again).toMatchObject({ inserted: 0, updated: 3 });
+    expect(milestones().every((r) => r.project_id == null && r.document_id === DOC)).toBe(true);
+  });
+});

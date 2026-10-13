@@ -14,16 +14,16 @@
     "audit-reports/projects-tab/10-accessibility-mobile.md"
   ],
   "totals": {
-    "findings": 150,
+    "findings": 152,
     "gaps": 10,
     "by_severity": {
       "CRITICAL": 17,
       "HIGH": 53,
-      "MEDIUM": 68,
-      "LOW": 12
+      "MEDIUM": 69,
+      "LOW": 13
     },
     "by_status": {
-      "RESOLVED": 137,
+      "RESOLVED": 139,
       "REFUTED": 2,
       "OPEN": 11
     }
@@ -3627,6 +3627,35 @@
       "report": "audit-reports/projects-tab/01-security-access.md"
     },
     {
+      "id": "SEC-24",
+      "title": "Milestones a document-only re-import already moved off their project before J19 stay off it, and a re-import onto that project then fails on them",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "verification": null,
+      "verification_note": "READ (base `49cd27e` plus J19; the move itself reproduced by J19's `scheduleImportWriters.test.ts` \"SEC-21 residual 3\" against the pre-J19 `lib/milestones.ts`; the stranded rows' re-import collision found by reading, not run)",
+      "blast_radius": "schedule integrity: a project's schedule, EVM and reports miss the moved tasks; a re-import onto the project fails on them",
+      "related": [
+        "SEC-21",
+        "DEC-69",
+        "DEC-90"
+      ],
+      "locations": [
+        "lib/milestones.ts",
+        "lib/milestones.ts:1867",
+        "supabase/migrations/20260704_milestones_project_scoped_unique.sql:27",
+        "supabase/migrations/20261198_prj_roundG_milestone_project_and_party_delete.sql"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "Before J19 is deployed, a schedule was imported onto project P with document D, then re-imported with document D alone. Every matched row moved to projectid NULL. After J19 those tasks are still missing from P's schedule, EVM and reports. When P's owner re-imports onto P with D, fetchExistingImportRows does not see the stranded rows and the insert of each (org, D, source, ref) fails with 23505.",
+      "area": "projects-tab",
+      "report": "audit-reports/projects-tab/01-security-access.md"
+    },
+    {
       "id": "UX-12",
       "title": "Creating a project costs eight clicks, five of which are pure tax",
       "severity": "MEDIUM",
@@ -3832,7 +3861,7 @@
       "id": "MON-14",
       "title": "A direct delete of a flagged contractor clears its flag from its open quotes",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": "CONFIRMED",
       "verification_note": "CONFIRMED (on a private scratch PostgreSQL 16 with `20261157` and `20261179` applied — J14's `scenarios_j14.sql`)",
       "blast_radius": "process / governance",
@@ -3938,7 +3967,7 @@
       "id": "SAF-20",
       "title": "The quote portal promises the award decision to a contractor whose link has no contact",
       "severity": "LOW",
-      "status": "OPEN",
+      "status": "RESOLVED",
       "verification": null,
       "verification_note": "READ (the door's quote branch and the notice route at J14's HEAD; not exercised against a live database)",
       "blast_radius": "process / external communication",
@@ -4047,6 +4076,32 @@
       "summary": "(a) A future edit of the submission, pointer or promote door function that drops a scope check is not backstopped by a policy, so the door could write a version or move a pointer outside its link's documents until a test catches it. The new document and the quote are backstopped. If the hosted paste reports a false row-level-security probe, they are not either, and neither is a single write that f",
       "area": "projects-tab",
       "report": "audit-reports/projects-tab/01-security-access.md"
+    },
+    {
+      "id": "UX-17",
+      "title": "Transition-in tells nobody when the adopted sheet's equipment links were not recorded",
+      "severity": "LOW",
+      "status": "OPEN",
+      "verification": null,
+      "verification_note": "READ (base `49cd27e`; the lib half is pinned by `lib/__tests__/transitionIn.test.ts`; the panel was read, not rendered)",
+      "blast_radius": "copy-truth / registry integrity",
+      "related": [
+        "AREA-2",
+        "DEC-96"
+      ],
+      "locations": [
+        "lib/transitionIn.ts:584-604",
+        "components/projects/TransitionInPanel.tsx:158"
+      ],
+      "has_verifier_correction": false,
+      "verified_by": "author",
+      "challenges": [
+        "author"
+      ],
+      "refuted": false,
+      "summary": "A controller adopts a sheet whose matched tag FE-201 the sweep already read. The Bridge refuses the adopt (for example, the controller cannot read the document's library). The panel says \"adopted into the controlled register\". The link is still the machine's reading, so a later Dismiss of that reading removes it, and the controller never learns they had to Link it by hand.",
+      "area": "projects-tab",
+      "report": "audit-reports/projects-tab/07-interface-truth.md"
     }
   ],
   "gaps_note": "Gaps are build specs for capabilities that do not exist. They are work, but they carry a verdict and a dependency chain rather than a severity — check `verdict` and `depends_on` before starting one. DECLINE and FOLD_INTO_FINDING entries are NOT to be built; their `actionable` flag is false and the spec names what to do instead. Build order is in 99-fix-sequencing.md.",
