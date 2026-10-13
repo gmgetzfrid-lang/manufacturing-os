@@ -109,3 +109,21 @@ describe("opening shift", () => {
     expect(nextShiftWithWork([a], from, CHI)).toBeNull();
   });
 });
+
+describe("review lists reflect what actually happened, not only the plan", () => {
+  const shift = shiftWindow("2026-10-26", "day", CHI);
+  const early = mk({ id: "early", name: "Done early", plannedStartAt: at("2026-10-27", "06:00"), plannedAt: at("2026-10-27", "10:00"), status: "completed", percentComplete: 100, actualAt: new Date(at("2026-10-26", "15:00")).toISOString() });
+  const openElsewhere = mk({ id: "open", name: "Open from yesterday", plannedStartAt: at("2026-10-25", "06:00"), plannedAt: at("2026-10-25", "10:00"), status: "in_progress", percentComplete: 40 });
+  const planned = mk({ id: "p", name: "Planned today", plannedStartAt: at("2026-10-26", "08:00"), plannedAt: at("2026-10-26", "12:00"), status: "in_progress", percentComplete: 10 });
+  const r = buildShiftReport({ milestones: [early, openElsewhere, planned], tz: CHI, shift, now: shift.end });
+  it("counts a step completed during the shift even if it was scheduled for later", () => {
+    expect(r.review.done.map((x) => x.leaf.id)).toEqual(["early"]);
+    expect(r.review.done[0].offSchedule).toBe(true);
+    expect(r.review.scheduled.map((x) => x.leaf.id)).toEqual(["p"]);
+  });
+  it("lists all open work, this shift's first, then open work from other slots", () => {
+    expect(r.review.inProgress.map((x) => x.leaf.id)).toEqual(["p", "open"]);
+    expect(r.review.inProgress[1].offSchedule).toBe(true);
+    expect(r.review.inProgress[1].carryOver).toBe(true);
+  });
+});
