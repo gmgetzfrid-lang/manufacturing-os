@@ -184,13 +184,17 @@ function missingColumn(e: PgError, col: string): boolean {
  *  app/api/intake/resolve refuses an expired or revoked link, or a closed
  *  project, before it reads any quote. So the sentence names the link's own
  *  window (its expiry, "at the latest" because a revoke or a close can come
- *  sooner) and says who to ask after it. */
+ *  sooner) and says who to ask after it. The date itself is NOT formatted
+ *  here: a link closes at 23:59:59 in the issuer's local time
+ *  (lib/intakeLinks.ts intakeExpiryFor), so a server-side date (UTC on the
+ *  host) names the next day for every link minted west of UTC. The sentence
+ *  points at the expiry the portal header already shows, in the viewer's
+ *  own locale (app/submit/[token]/page.tsx). */
 function quoteReceivedMessage(projectName: string, contactEmail: string | null, expiresAt: string | null): string {
   const lead = `Your quote is in — ${projectName}'s team has been notified.`;
   if ((contactEmail ?? "").trim()) return `${lead} You'll be contacted about the award decision.`;
-  const t = expiresAt ? Date.parse(expiresAt) : NaN;
-  const until = Number.isFinite(t)
-    ? ` (until ${new Date(t).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" })} at the latest)`
+  const until = expiresAt && Number.isFinite(Date.parse(expiresAt))
+    ? " (until the link's expiry shown at the top of this page, at the latest)"
     : "";
   return `${lead} The decision will be shown on this page while this link stays open${until}; after that, ask ${projectName}'s team.`;
 }

@@ -1241,7 +1241,7 @@ Tests — `lib/__tests__/prjRoundGJ11Migrations.test.ts`: "no other migration re
 
 **Partial (2026-10-13, projects Round G — J19 PROJECTS REMAINDERS).** No limb is built in this package, and nothing in this finding's code changed. Each limb was re-read on base `49cd27e` (J16 merged; `SEC-23` not settled) and still holds as the Mechanism says:
 - **(a)** In `supabase/migrations/20261184_prj_roundG_intake_door_identity.sql`, `intake_door_create_document` (`:628`) and `intake_door_file_quote` (`:889`) are SECURITY INVOKER and switch to `intake_door`. `intake_door_submit_version` (`:707`), `intake_door_point_pending` (`:761`), `intake_door_promote` (`:812`) and `intake_door_append_redline` (`:954`) are SECURITY DEFINER.
-- **(b)** In `app/api/intake/upload/route.ts`, `ensureIntakeFolder` (`:471`), `retireDisplacedFirst` (`:631`), `restoreDisplaced` (`:659`), `withdraw` (`:1681`), `discard` (`:1564`) and the `project_documents` upsert (`:1856`) are still `supabaseAdmin` writes.
+- **(b)** In `app/api/intake/upload/route.ts`, `ensureIntakeFolder` (`:482`), `retireDisplacedFirst` (`:642`), `restoreDisplaced` (`:670`), `withdraw` (`:1693`), `discard` (`:1576`) and the `project_documents` upsert (`:1868`), cited on this branch's HEAD are still `supabaseAdmin` writes.
 - **(c)** `components/projects/IntakePanel.tsx:253` still writes `projects.intake_library_id` as the owner, with no database rail.
 
 Why each limb waits, and on what:

@@ -92,7 +92,7 @@ END $$;
 -- ── DEC-30 inventory, captured BEFORE the transaction (counts only) ───────
 DROP TABLE IF EXISTS pg_temp.prj_g_j19_inventory;
 CREATE TEMP TABLE prj_g_j19_inventory AS
-SELECT 'inventory: imported milestones on a project that also carry a document (a document-only re-import of that document''s schedule moved these off their project before the J19 app)' AS inventory,
+SELECT 'inventory: imported milestones on a project that also carry a document (still on their project: a document-only re-import of that document''s schedule by the app before J19 would move these off it; from this paste on, a signed-in move without the project''s schedule authority, or onto or off a private project, is refused, and the J19 app keeps each row''s own project)' AS inventory,
        (SELECT COUNT(*) FROM milestones
          WHERE project_id IS NOT NULL AND document_id IS NOT NULL AND external_ref IS NOT NULL)::text AS n
 UNION ALL

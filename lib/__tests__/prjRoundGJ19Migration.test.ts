@@ -69,6 +69,11 @@ describe("the one-paste protocol (DEC-30)", () => {
   it("the inventory says what it does not cover: row 2's already-moved rows are SEC-24's, row 5 is a lower bound of limb (b)", () => {
     const inv = between(C, "CREATE TEMP TABLE prj_g_j19_inventory AS", "\nBEGIN;");
     const parts = inv.split(/\nUNION ALL\n/);
+    // row 1 counts rows STILL on a project (project_id IS NOT NULL): ones an
+    // old re-import WOULD move, never ones it already moved (those are row 2)
+    expect(parts[0]).toContain("WHERE project_id IS NOT NULL AND document_id IS NOT NULL AND external_ref IS NOT NULL");
+    expect(parts[0]).toContain("(still on their project: a document-only re-import of that document''s schedule by the app before J19 would move these off it;");
+    expect(parts[0]).not.toMatch(/moved these off/);
     expect(parts[1]).toContain("restoring the moved ones is projects-tab SEC-24");
     expect(parts[4]).toContain("registry-linked flagged contractors");
     expect(parts[4]).toContain("a LOWER BOUND: contractors whose quote answers for a flagged company by vendor name or a do-not-use look-alike are refused too and not counted here");

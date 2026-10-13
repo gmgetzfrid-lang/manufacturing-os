@@ -2833,10 +2833,26 @@ describe("SAF-20 — the quote door's success sentence follows the link's contac
     seed({ link: { purpose: "quote", contact_email: null, expires_at: "2099-01-14T12:00:00Z" } });
     const body = await (await upload({})).json();
     expect(body).toMatchObject({ ok: true, status: "quote_received" });
-    expect(body.message).toBe("Your quote is in — Unit 4's team has been notified. The decision will be shown on this page while this link stays open (until Jan 14, 2099 at the latest); after that, ask Unit 4's team.");
+    expect(body.message).toBe("Your quote is in — Unit 4's team has been notified. The decision will be shown on this page while this link stays open (until the link's expiry shown at the top of this page, at the latest); after that, ask Unit 4's team.");
     expect(body.message).not.toMatch(/contacted/);
     // the quote is filed exactly as before — only the sentence differs
     expect(db.tables.cost_documents).toHaveLength(1);
+  });
+
+  it("a link minted west of UTC (Chicago, Jan 14 23:59:59 local = Jan 15 05:59:59Z) is never promised to Jan 15 — the server names no date at all", async () => {
+    seed({ link: { purpose: "quote", contact_email: null, expires_at: "2027-01-15T05:59:59Z" } });
+    const body = await (await upload({})).json();
+    expect(body).toMatchObject({ ok: true, status: "quote_received" });
+    expect(body.message).not.toMatch(/Jan(uary)?\s*15|1\/15|15 Jan|2027-01-15/);
+    expect(body.message).not.toMatch(/\b20\d\d\b/); // no year: no server-formatted date of any kind
+    expect(body.message).toContain("(until the link's expiry shown at the top of this page, at the latest)");
+    // the date the sentence points at is the portal header's own, formatted in the viewer's locale
+    const portal = readFileSync(join(process.cwd(), "app/submit/[token]/page.tsx"), "utf8");
+    expect(portal).toContain("link valid until {new Date(data.expiresAt).toLocaleDateString()}");
+    // and the helper formats no date on the server
+    const route = readFileSync(join(process.cwd(), "app/api/intake/upload/route.ts"), "utf8");
+    const helper = route.slice(route.indexOf("function quoteReceivedMessage("), route.indexOf("function asServiceRole"));
+    expect(helper).not.toMatch(/toLocaleDateString|toISOString|timeZone/);
   });
 
   it("a link with NO contact and no expiry (an older link) names no date, and still says who to ask once it closes", async () => {
