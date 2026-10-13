@@ -123,15 +123,22 @@ export function issuedRevLabel(revisionCount: number | undefined): string {
 
 /**
  * drafting-flow SM-5 / LEAK-7: the label an issuing action writes, checked
- * against the ticket's own history. Issued labels are monotonic: when the
- * cycle's label (issuedRevLabel) is at or below a number the history already
- * issued ("… — issued Rev N", the line every approval writes) — a ticket
- * reopened before Round E kept its revision_count, so its next approval
- * would issue the same Rev N a second time and both packages would scan
- * "current" — the issue is RE-CYCLED to the next number above the history
- * (revision_count moves to match, so the cycle and the label agree), with a
- * history note saying so. Never refused: refusing would block a legitimate
- * approval on a legacy row.
+ * against the ticket's own history. When the cycle's label (issuedRevLabel)
+ * was ALREADY issued ("… — issued Rev N", the line every approval writes) —
+ * a ticket reopened before Round E kept its revision_count, so its next
+ * approval would issue the same Rev N a second time and both packages would
+ * scan "current" — the issue is RE-CYCLED to the next number (revision_count
+ * moves to match, so the cycle and the label agree), with a history note
+ * saying so. Never refused: refusing would block a legitimate approval on a
+ * legacy row.
+ *
+ * Trust boundary: any org member may append a history entry in their own
+ * name (20261166's ticket_update_guard allows it), so only an EXACT
+ * collision re-cycles, and a line above revision_count + 1 is ignored
+ * (lastIssuedFromHistory's cap) — a forged "issued Rev 9" never makes the
+ * service-role route write revision_count 9 / Rev 10. A forged line naming
+ * the cycle's own label can still skip one number; the guard refusing a
+ * client-appended "issued Rev" entry closes that (a migration, proposed).
  */
 export function issueLabelFor(ticket: Pick<Ticket, "revisionCount" | "history">): {
   label: string;
@@ -141,9 +148,11 @@ export function issueLabelFor(ticket: Pick<Ticket, "revisionCount" | "history">)
   recycledFrom: string | null;
 } {
   const label = issuedRevLabel(ticket.revisionCount);
-  const last = lastIssuedFromHistory(ticket.history);
-  if (last === null || parseInt(label, 10) > parseInt(last, 10)) return { label, revisionCount: null, recycledFrom: null };
-  const next = parseInt(last, 10) + 1;
+  // Capped at revision_count + 1 (= label): the trusted maximum is the label
+  // itself exactly when the label was already issued.
+  const last = lastIssuedFromHistory(ticket.history, ticket.revisionCount ?? 0);
+  if (last !== label) return { label, revisionCount: null, recycledFrom: null };
+  const next = parseInt(label, 10) + 1;
   return { label: String(next), revisionCount: next - 1, recycledFrom: label };
 }
 

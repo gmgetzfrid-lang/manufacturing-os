@@ -1703,7 +1703,7 @@ export default function TicketDetailView() {
         userId={uid ?? undefined}
         archived={!!ticket?.archivedAt}
         archiveId={ticket?.archiveId}
-        liveTicket={ticket ? { status: ticket.status, deliverableRev: ticket.deliverableRev ?? null, history: ticket.history } : null}
+        liveTicket={ticket ? { status: ticket.status, deliverableRev: ticket.deliverableRev ?? null, history: ticket.history, revisionCount: ticket.revisionCount ?? null } : null}
         onApprove={(() => {
           const action = availableActions.find(a => a.action === 'approve_draft_ifc' && !a.disabledReason);
           return action ? () => { setViewerFile(null); initiateWorkflowAction(action); } : undefined;

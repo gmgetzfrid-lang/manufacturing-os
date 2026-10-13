@@ -29,7 +29,10 @@
 // every answered scan leaves a verify_scans row and counts toward a generous
 // per-IP cap (VFY-12), every answer is Cache-Control: no-store (VFY-13), and
 // the select names only the columns the verdict or the response reads
-// (VFY-14 — revision_count is not one of them: the verdict never reads it).
+// (VFY-14 done-when 3, "used in the verdict": revision_count is selected
+// because the verdict reads it — it caps which history "issued Rev N" lines
+// count as an issue, since any member may append history in their own name
+// — and it is never returned).
 
 import { NextRequest } from "next/server";
 import { createClient } from "@supabase/supabase-js";
@@ -67,7 +70,7 @@ export async function GET(req: NextRequest) {
 
   const { data: row, error: rowErr } = await sb
     .from("tickets")
-    .select("id, ticket_id, title, status, deliverable_rev, history, archived_at")
+    .select("id, ticket_id, title, status, deliverable_rev, history, revision_count, archived_at")
     .eq("id", ticketId)
     .maybeSingle();
   if (rowErr) {

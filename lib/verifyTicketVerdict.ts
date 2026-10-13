@@ -27,9 +27,15 @@
 //
 // A CLOSED ticket with an issue on it — its issued label, or the history
 // line of one after a reopen or a force close — keeps the ordinary ladder:
-// the last issue reads current, older issues superseded. A live ticket sent
-// back for rework while it carries an issued label (reject_final →
-// REVISION_REQ) is in review: the last issue reads revision_in_progress.
+// the last issue reads current, older issues superseded. A live issued label
+// is IN FORCE only where the workflow leaves one on an issued package
+// (PENDING_IFC after an approval, FINAL_DRAFT after submit_final); at every
+// other live status the drawing is being re-worked and the last issue reads
+// revision_in_progress — sent back on its label (reject_final →
+// REVISION_REQ), or a ticket reopened before Round E that kept its label
+// while a new revision is under review (LEAK-7 population (a): an issued
+// label at PENDING_REVIEW / PENDING_FINAL_APPROVAL, which the workflow never
+// writes — review statuses carry letter labels).
 //
 // WF-21 / DEC-15: a REOPENED ticket starts a new revision cycle — the
 // workflow nulls deliverable_rev and bumps revision_count, so the row no
@@ -46,6 +52,13 @@
 // revision is in review, and the verdict. The internal workflow status, the
 // unit and the last-activity time are not in it; an archived ticket answers
 // "cannot confirm" with no revision facts at all.
+//
+// Trust boundary (SM-5 / PHYS-2): any org member may append a history entry
+// in their own name (20261166's ticket_update_guard allows it), so an
+// "issued Rev N" line is evidence only up to the cycle the server-guarded
+// revision_count allows: a real issue N happens at revision_count N − 1 and
+// revision_count never goes down, so a line above revision_count + 1 was
+// not written by an approval and is ignored.
 
 export type TicketVerdict =
   | "current"
@@ -61,6 +74,9 @@ export interface VerifyTicketRowFacts {
   deliverable_rev: string | null;
   history: unknown;
   archived_at?: string | null;
+  /** The server-guarded cycle count — caps which history lines count as an
+   *  issue (the trust boundary above). Absent: no cap (an older caller). */
+  revision_count?: number | null;
 }
 
 export interface TicketVerdictResult {
@@ -75,20 +91,30 @@ export interface TicketVerdictResult {
 export const TICKET_REV_RE = /^\d+[A-Z]{0,3}$/;
 
 const TERMINAL = new Set(["CLOSED", "CANCELED"]);
-/** Live statuses where an issued label is being re-worked (reject_final). */
-const REWORK = new Set(["REVISION_REQ", "DRAFTING"]);
+/** Every live workflow status at which an issued label is being re-worked.
+ *  The workflow leaves an issued label in force only at PENDING_IFC and
+ *  FINAL_DRAFT; an issued label at a review status (PENDING_REVIEW,
+ *  PENDING_FINAL_APPROVAL) exists only on a LEAK-7 (a) row. */
+const REWORK = new Set(["REVISION_REQ", "DRAFTING", "PENDING_REVIEW", "PENDING_FINAL_APPROVAL", "PENDING_ENG_TEAM", "PENDING_ASSIGNMENT"]);
 const ISSUED_LINE = /\bissued Rev (\d+)\b/;
 const cycleOf = (rev: string): number => parseInt(rev, 10);
 export const isIssuedTicketRev = (rev: string | null | undefined): rev is string => typeof rev === "string" && /^\d+$/.test(rev);
 
 /** The highest issued number the ticket's history records, or null when no
- *  approval ever issued a deliverable (WF-21: the evidence a reopen needs). */
-export function lastIssuedFromHistory(history: unknown): string | null {
+ *  approval ever issued a deliverable (WF-21: the evidence a reopen needs).
+ *  With `revisionCount`, a line above revisionCount + 1 is ignored: no
+ *  approval could have written it (the trust boundary above). */
+export function lastIssuedFromHistory(history: unknown, revisionCount?: number | null): string | null {
   if (!Array.isArray(history)) return null;
+  const cap = typeof revisionCount === "number" && Number.isFinite(revisionCount) ? revisionCount + 1 : null;
   let best: number | null = null;
   for (const h of history) {
     const m = ISSUED_LINE.exec(String((h as { action?: unknown } | null)?.action ?? ""));
-    if (m) { const n = parseInt(m[1], 10); if (best === null || n > best) best = n; }
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (cap !== null && n > cap) continue;
+      if (best === null || n > best) best = n;
+    }
   }
   return best === null ? null : String(best);
 }
@@ -108,7 +134,7 @@ export function ticketVerdict(row: VerifyTicketRowFacts, printedRev: string): Ti
   const issuedLabel = isIssuedTicketRev(currentRev);
   const letterLabel = !!currentRev && !issuedLabel;
   // The EVIDENCE of an issue: the history line every approval writes.
-  const issuedInHistory = lastIssuedFromHistory(row.history);
+  const issuedInHistory = lastIssuedFromHistory(row.history, row.revision_count);
 
   // EDGE-2: a CANCELED request is withdrawn whatever the rev arithmetic —
   // never current, superseded or draft, even for a QR with no revision.
@@ -147,9 +173,12 @@ export function ticketVerdict(row: VerifyTicketRowFacts, printedRev: string): Ti
       else noRecord = true;
     }
   } else if (issuedLabel) {
-    // A live issued label. Sent back for rework (reject_final at FINAL_DRAFT
-    // → REVISION_REQ keeps the label and bumps the cycle): the issue is still
-    // the latest, but the drawing is being re-worked — never "current".
+    // A live issued label. In force only at PENDING_IFC / FINAL_DRAFT. Sent
+    // back for rework (reject_final → REVISION_REQ keeps the label and bumps
+    // the cycle), or reopened before Round E with the label kept while a new
+    // revision is reviewed (PENDING_REVIEW / PENDING_FINAL_APPROVAL — LEAK-7
+    // (a)): the issue is still the latest, but the drawing is being
+    // re-worked — never "current".
     latestIssued = currentRev;
     inReview = REWORK.has(status ?? "");
   } else if (letterLabel) {

@@ -8,8 +8,11 @@
 //   EDGE-2   CANCELED, and a request that ended on a review label with no issue
 //            anywhere, answer "withdrawn" — never current; a closed ticket with
 //            no revision record → "cannot confirm", one with an issue in its
-//            history keeps the ladder; reject_final rework → in review;
-//            archived → "cannot confirm".
+//            history keeps the ladder; reject_final rework → in review; a
+//            reopened legacy row (issued label at a review status) → in
+//            review; archived → "cannot confirm".
+//   SM-5 / PHYS-2 trust boundary: an "issued Rev N" history line above
+//            revision_count + 1 (a member's own append) never counts.
 //   AUTHZ-12 the public answer carries revision-status facts only (no workflow
 //            status, no unit, no activity time); scans stay logged.
 //   EVID-5 / PHYS-8  the copy's record is awaited and checked, written in the
@@ -70,6 +73,36 @@ describe("EDGE-2 — the verdict reads the request's state, not the label alone"
     expect(ticketVerdict(rejected2, "2").verdict).toBe("revision_in_progress");
     expect(ticketVerdict(rejected2, "1").verdict).toBe("superseded");
     expect(ticketVerdict({ status: "FINAL_DRAFT", deliverable_rev: "1", history: [issued(1)] }, "1").verdict).toBe("current");
+  });
+  it("LEAK-7 (a): a ticket reopened before Round E keeps its issued label while a new revision is reviewed — revision_in_progress, never current", () => {
+    for (const status of ["PENDING_REVIEW", "PENDING_FINAL_APPROVAL"]) {
+      const legacy = { status, deliverable_rev: "1", history: [{ action: "Approve — issued Rev 1" }, { action: "Reopen Ticket" }] };
+      expect(ticketVerdict(legacy, "1")).toMatchObject({ verdict: "revision_in_progress", latestIssuedRev: "1", inReview: true });
+      expect(ticketFactsState(ticketVerdict(legacy, "1"))).toEqual({ label: "In review now", value: "New revision" });
+      // the print / download footer and confirmation agree with the scan
+      expect(ticketCopyStanding("1", { status, deliverableRev: "1", history: legacy.history })).toEqual({ kind: "in_progress" });
+    }
+    // the statuses that leave an issued package in force still read current
+    for (const status of ["PENDING_IFC", "FINAL_DRAFT", "CLOSED"]) {
+      expect(ticketVerdict({ status, deliverable_rev: "1", history: [issued(1)] }, "1").verdict).toBe("current");
+    }
+  });
+  it("trust boundary: a history 'issued Rev N' line above revision_count + 1 is a member's own append, never an issue", () => {
+    const forged = { action: "note — issued Rev 9", user: "member@x.com" };
+    expect(lastIssuedFromHistory([issued(1), forged], 0)).toBe("1");
+    expect(lastIssuedFromHistory([issued(1), forged], 8)).toBe("9");
+    expect(lastIssuedFromHistory([forged], 0)).toBeNull();
+    // the issued Final in force stays current — never "superseded by Rev 9"
+    expect(ticketVerdict({ status: "FINAL_DRAFT", deliverable_rev: "1", history: [issued(1), forged], revision_count: 0 }, "1").verdict).toBe("current");
+    expect(ticketCopyStanding("1", { status: "FINAL_DRAFT", deliverableRev: "1", history: [issued(1), forged], revisionCount: 0 })).toBeNull();
+    // a closed ticket with only a forged line has no revision record: cannot confirm, never "current" for Rev 9
+    expect(ticketVerdict({ status: "CLOSED", deliverable_rev: null, history: [forged], revision_count: 0 }, "9").verdict).toBe("unknown");
+    // a reopened ticket's forged line neither invents an issue nor supersedes the real one
+    const reopened = { status: "PENDING_REVIEW", deliverable_rev: null, history: [issued(1), { action: "Reopen Ticket" }, forged], revision_count: 1 };
+    expect(ticketVerdict(reopened, "1")).toMatchObject({ verdict: "revision_in_progress", latestIssuedRev: "1" });
+    expect(ticketCopyStanding("1", { status: "PENDING_REVIEW", deliverableRev: null, history: reopened.history, revisionCount: 1 })).toEqual({ kind: "in_progress" });
+    // a review label's "last issue" is read under the same cap
+    expect(ticketVerdict({ status: "PENDING_REVIEW", deliverable_rev: "2A", history: [issued(1), forged], revision_count: 1 }, "1").latestIssuedRev).toBe("1");
   });
   it("no phantom issue: a review label after a reject before any issue reports no latest issue when the history shows none", () => {
     // 1A rejected (cycle bumped, nothing issued) → resubmitted as 2A: cycle − 1 = 1 was never issued
@@ -278,7 +311,7 @@ describe("the ticket page's FileViewerModal — wired to the rules above", () =>
     expect(modal).not.toMatch(/deliverableRev/);
     expect(page).not.toContain("deliverableRev={ticket?.deliverableRev}");
     expect(modal).toContain("ticketCopyPlan({ file, ticketNumber: ticketId, ticketRowId, origin: publicOrigin(), channel, live: liveTicket })");
-    expect(page).toContain("liveTicket={ticket ? { status: ticket.status, deliverableRev: ticket.deliverableRev ?? null, history: ticket.history } : null}");
+    expect(page).toContain("liveTicket={ticket ? { status: ticket.status, deliverableRev: ticket.deliverableRev ?? null, history: ticket.history, revisionCount: ticket.revisionCount ?? null } : null}");
   });
   it("a superseded or re-worked file is confirmed before stamping, on both paths", () => {
     expect(modal).toContain('!plan.confirmMessage || (await appConfirm({ message: plan.confirmMessage, tone: "danger" }))');
@@ -357,8 +390,15 @@ describe("AUTHZ-12 / EDGE-2 — /api/verify-ticket answers revision-status facts
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(Object.keys(body).sort()).toEqual(["checkedAt", "currentRev", "inReview", "latestIssuedRev", "printedRev", "ticketNumber", "title", "verdict"]);
     expect(body.verdict).toBe("current");
-    expect(state.selects).toEqual(["id, ticket_id, title, status, deliverable_rev, history, archived_at"]);
+    expect(state.selects).toEqual(["id, ticket_id, title, status, deliverable_rev, history, revision_count, archived_at"]);
     expect(scans()).toEqual(["current"]);
+  });
+  it("revision_count is read for the verdict, never returned: a member's forged history line cannot make a scan answer for it", async () => {
+    state.ticket = row({ status: "CLOSED", deliverable_rev: null, revision_count: 0, history: [{ action: "note — issued Rev 9", user: "member@x.com" }] });
+    const { body } = await call("9");
+    expect(body.verdict).toBe("unknown");
+    expect(body.latestIssuedRev).toBeNull();
+    expect("revisionCount" in body || "revision_count" in body).toBe(false);
   });
   it("a CANCELED ticket's issued deliverable scans 'withdrawn', logged as shown", async () => {
     state.ticket = row({ status: "CANCELED" });

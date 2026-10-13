@@ -479,8 +479,20 @@ describe("SM-5 — an issued label is never written twice: re-cycled from the hi
     expect(r.historyEntry.details).toBe("Looks good [Rev 1 was already issued on this ticket — issued as Rev 2 instead, so no two packages share a label.]");
   });
 
-  it("monotonic: a cycle label BELOW the highest issued number is re-cycled above it", () => {
-    expect(issueLabelFor({ revisionCount: 1, history: [issuedLine(1), issuedLine(3)] as TicketHistoryEntry[] })).toEqual({ label: "4", revisionCount: 3, recycledFrom: "2" });
+  it("trust boundary: only an EXACT collision re-cycles; a history line above revision_count + 1 (a member's own append) is ignored", () => {
+    const forged = (n: number) => ({ action: `note — issued Rev ${n}`, user: "member@x.com", role: "Viewer", date: NOW }) as TicketHistoryEntry;
+    // a forged higher number never moves the label or revision_count
+    expect(issueLabelFor({ revisionCount: 1, history: [issuedLine(1), forged(3)] as TicketHistoryEntry[] })).toEqual({ label: "2", revisionCount: null, recycledFrom: null });
+    expect(issueLabelFor({ revisionCount: 0, history: [forged(9)] })).toEqual({ label: "1", revisionCount: null, recycledFrom: null });
+    // the legacy collision still re-cycles by exactly one
+    expect(issueLabelFor({ revisionCount: 0, history: [issuedLine(1), forged(9)] as TicketHistoryEntry[] })).toEqual({ label: "2", revisionCount: 1, recycledFrom: "1" });
+    // through the route's pure core: no revision_count 9, no Rev 10
+    const r = computeTransition(mk({ status: "PENDING_REVIEW", revisionCount: 0, deliverableRev: "1A", history: [forged(9)] }), {
+      actionType: "approve_draft_ifc", actionLabel: "Approve (Issue for Construction)", actor: reviewer, now: NOW,
+    });
+    expect(r.updates.deliverable_rev).toBe("1");
+    expect("revision_count" in r.updates).toBe(false);
+    expect(r.historyEntry.details).toBeUndefined();
   });
 
   it("the ordinary path is untouched: a label the history never issued is written as before, with no revision_count write and no note", () => {

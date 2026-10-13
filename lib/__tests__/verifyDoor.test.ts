@@ -4,7 +4,9 @@
 //   VFY-12  migration 20261134 (verify_scans, RLS on / no policies, the
 //           90-day prune for the service role only) — one-paste protocol
 //           shape; the ONE cron step; schema-health and export coverage.
-//   VFY-14  verify-ticket no longer selects revision_count.
+//   VFY-14  verify-ticket selects revision_count only because the verdict
+//           reads it (done-when 3, "used in the verdict" — DF-P10's trust
+//           cap on history lines); it is never returned.
 //   VFY-3   buildVerifyUrl never stamps a document-only QR.
 //   PHYS-7 / HLD-13 (option b) the label keeps /assets/<tag>, its caption
 //           says staff sign-in and fits the label; the protected page sends
@@ -180,12 +182,14 @@ describe("VFY-12 — migration 20261134 (one-paste protocol, service role only)"
 });
 
 describe("VFY-14 — verify-ticket selects only what it reads (headers / select / limits only — the verdict is drafting-flow's)", () => {
-  it("revision_count is gone from the select and the row type", () => {
+  it("the select names only what the verdict or the response reads; revision_count is read by the verdict, never returned", () => {
     const s = src("app/api/verify-ticket/route.ts");
     // drafting-flow AUTHZ-12 (DF-P10): unit and last_modified left the payload, so they left the select;
-    // archived_at joined it (an archived stub answers "cannot confirm").
-    expect(s).toContain('.select("id, ticket_id, title, status, deliverable_rev, history, archived_at")');
-    expect(s).not.toContain("revision_count: number");
+    // archived_at joined it (an archived stub answers "cannot confirm"); revision_count is back because
+    // the verdict now reads it (SM-5 / PHYS-2 trust cap on history lines — VFY-14 done-when 3's "used").
+    expect(s).toContain('.select("id, ticket_id, title, status, deliverable_rev, history, revision_count, archived_at")');
+    expect(src("lib/verifyTicketVerdict.ts")).toContain("lastIssuedFromHistory(row.history, row.revision_count)");
+    expect(s).not.toMatch(/revisionCount:|revision_count:\s*(t|v|row)\./);
   });
   it("the read's error is checked: an outage is 503 + an 'error' scan row, never 'Unknown ticket' (behaviour: verifyTicketRead.test.ts)", () => {
     const s = src("app/api/verify-ticket/route.ts");

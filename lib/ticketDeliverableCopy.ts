@@ -66,11 +66,17 @@ export interface TicketCopyLiveFacts {
   status: string | null;
   deliverableRev: string | null;
   history: unknown;
+  /** The server-guarded cycle count: a history "issued Rev N" line above
+   *  revisionCount + 1 is not an approval's (any member may append history
+   *  in their own name) and never marks a file superseded. */
+  revisionCount?: number | null;
 }
 
 /** Where an issued file stands against the ticket as the page holds it.
  *  Superseded: a later number is issued — on the row (deliverable_rev) or in
- *  the history's "issued Rev N" lines, whichever is higher. In progress: the
+ *  the history's "issued Rev N" lines (only those at or below
+ *  revisionCount + 1 — the trust boundary in lib/verifyTicketVerdict.ts),
+ *  whichever is higher. In progress: the
  *  file IS the last issue and the verify ladder reads the ticket as being
  *  re-worked (ticketVerdict's revision_in_progress — reopened, sent back, or
  *  a review label on the row). A Draft / letter label or a rev-less file has
@@ -78,10 +84,10 @@ export interface TicketCopyLiveFacts {
 export function ticketCopyStanding(rev: string | null, live: TicketCopyLiveFacts | null | undefined): TicketCopyStanding | null {
   if (!live || !isIssuedTicketRev(rev)) return null;
   const fromRow = isIssuedTicketRev(live.deliverableRev) ? parseInt(live.deliverableRev, 10) : null;
-  const fromHistory = lastIssuedFromHistory(live.history);
+  const fromHistory = lastIssuedFromHistory(live.history, live.revisionCount);
   const latest = Math.max(fromRow ?? 0, fromHistory ? parseInt(fromHistory, 10) : 0);
   if (latest > parseInt(rev, 10)) return { kind: "superseded", by: String(latest) };
-  const v = ticketVerdict({ status: live.status, deliverable_rev: live.deliverableRev, history: live.history }, rev);
+  const v = ticketVerdict({ status: live.status, deliverable_rev: live.deliverableRev, history: live.history, revision_count: live.revisionCount }, rev);
   return v.verdict === "revision_in_progress" ? { kind: "in_progress" } : null;
 }
 
