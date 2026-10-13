@@ -79,6 +79,39 @@ export function previousShift(w: ShiftWindow, tz: string, times: ShiftTimes = DE
   return shiftWindow(prevDay, "night", tz, times);
 }
 
+/** The shift to open on: the one ending now while the job is running;
+ *  before the job starts, the first shift with scheduled work; after it
+ *  ends, the last one. Never an empty page by default. */
+export function defaultReviewShift(milestones: Milestone[], now: number, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES): ShiftWindow {
+  let first = Infinity, last = -Infinity;
+  for (const m of milestones) {
+    if (!m.plannedAt) continue;
+    const s = startMsOf(m), f = finishMsOf(m);
+    if (Number.isFinite(s)) first = Math.min(first, s);
+    if (Number.isFinite(f)) last = Math.max(last, f);
+  }
+  const current = shiftAt(now - 3600_000, tz, times);
+  if (!Number.isFinite(first)) return current;
+  if (now < first) return shiftAt(first, tz, times);
+  if (now > last) return shiftAt(last - 1, tz, times);
+  return current;
+}
+
+/** The next shift after `from` that has any scheduled work, or null. */
+export function nextShiftWithWork(milestones: Milestone[], from: ShiftWindow, tz: string, times: ShiftTimes = DEFAULT_SHIFT_TIMES, maxShifts = 400): ShiftWindow | null {
+  const byId = new Map<string, Milestone>();
+  for (const m of milestones) if (m.id) byId.set(m.id, m);
+  const hasKids = new Set<string>();
+  for (const m of milestones) if (m.parentId && byId.has(m.parentId)) hasKids.add(m.parentId);
+  const leaves = milestones.filter((m) => m.plannedAt && !(m.id && hasKids.has(m.id)));
+  let w = nextShift(from, tz, times);
+  for (let i = 0; i < maxShifts; i++) {
+    if (leaves.some((m) => startMsOf(m) < w.end && finishMsOf(m) > w.start)) return w;
+    w = nextShift(w, tz, times);
+  }
+  return null;
+}
+
 export interface ShiftRow {
   leaf: Milestone;
   /** Ancestors, outermost first ("Turnaround › Maintenance › Exchangers"). */

@@ -4,20 +4,27 @@
 //
 // The supervisor's loop: 05:30 meeting with the day crew, 17:30 update
 // progress and walk into the night meeting with overall status, what
-// carried over, the goals for the night and what gets the job back on
-// track. This view is that page. Pick the shift under review (defaults
-// to the one ending now), read it, print it.
-//
-// Everything is computed in lib/shiftReport.ts from the live schedule;
-// progress entered in the Day view or on the calendar shows up here as
-// soon as it saves.
+// got done, what carried over, and the goals for the night. This view
+// is that page, itemized by equipment so it reads like the crew works:
+//   • what the shift under review did — Completed / Still in progress /
+//     Not started, each step on its own line;
+//   • carry-over — due by now and not done;
+//   • goals for the next shift — carry-over first, then its planned
+//     work, critical-path items flagged, with a checkbox per line.
+// Opens on the shift ending now; before the job starts, on the first
+// shift with work, so it is never an empty page. A future shift is
+// measured "as of its end", so the report can be rehearsed before the
+// outage. Progress entered in the Day view shows here immediately.
 
 import React, { useEffect, useMemo, useState } from "react";
-import { Printer, ChevronLeft, ChevronRight, Sun, Moon, AlertTriangle, CheckCircle2, CircleDashed, Flag, Clock } from "lucide-react";
+import { Printer, ChevronLeft, ChevronRight, Sun, Moon, AlertTriangle, CheckCircle2, Flag, Clock, FastForward } from "lucide-react";
 import type { Milestone } from "@/types/schema";
 import type { ProgressInfo } from "@/lib/scheduleProgress";
 import { useScheduleTz } from "@/components/projects/ScheduleTzContext";
-import { buildShiftReport, shiftAt, shiftWindow, nextShift, previousShift, shiftLabel, DEFAULT_SHIFT_TIMES, type ShiftTimes, type ShiftRow, type ShiftWindow } from "@/lib/shiftReport";
+import {
+  buildShiftReport, shiftWindow, nextShift, previousShift, shiftLabel, defaultReviewShift, nextShiftWithWork,
+  DEFAULT_SHIFT_TIMES, type ShiftTimes, type ShiftRow, type ShiftWindow,
+} from "@/lib/shiftReport";
 import { clockLabel, fmtInTz, tzLabel } from "@/lib/scheduleTz";
 
 interface Props {
@@ -36,6 +43,19 @@ function loadTimes(projectId: string): ShiftTimes {
   return DEFAULT_SHIFT_TIMES;
 }
 
+/** Rows grouped under their equipment (immediate parent), in row order. */
+function byEquipment(rows: ShiftRow[]): Array<{ key: string; title: string; crumbs: string; rows: ShiftRow[] }> {
+  const out = new Map<string, { key: string; title: string; crumbs: string; rows: ShiftRow[] }>();
+  for (const r of rows) {
+    const title = r.parentName ?? r.leaf.name;
+    const key = r.parentName ? r.path.join("›") : `leaf:${r.leaf.id}`;
+    let g = out.get(key);
+    if (!g) { g = { key, title, crumbs: r.path.slice(0, -1).join(" › "), rows: [] }; out.set(key, g); }
+    g.rows.push(r);
+  }
+  return Array.from(out.values());
+}
+
 export default function ShiftReportView({ milestones, progress, criticalIds, projectId, projectName }: Props) {
   const tz = useScheduleTz();
   const [times, setTimes] = useState<ShiftTimes>(DEFAULT_SHIFT_TIMES);
@@ -45,22 +65,25 @@ export default function ShiftReportView({ milestones, progress, criticalIds, pro
     try { localStorage.setItem(`shiftTimes:${projectId}`, JSON.stringify(t)); } catch { /* ignore */ }
   };
 
-  // The shift under review: by default the one that contains "an hour ago",
-  // so from 17:30 to 18:30 you are still looking at the day shift you just
-  // finished updating, and from 05:30 to 06:30 at the night shift.
   const [now] = useState(() => Date.now());
   const [sel, setSel] = useState<{ dayKey: string; kind: "day" | "night" } | null>(null);
-  const shift: ShiftWindow = useMemo(() => {
-    if (sel) return shiftWindow(sel.dayKey, sel.kind, tz, times);
-    return shiftAt(now - 3600_000, tz, times);
-  }, [sel, now, tz, times]);
+  const shift: ShiftWindow = useMemo(
+    () => (sel ? shiftWindow(sel.dayKey, sel.kind, tz, times) : defaultReviewShift(milestones, now, tz, times)),
+    [sel, now, tz, times, milestones],
+  );
   const pick = (w: ShiftWindow) => setSel({ dayKey: w.dayKey, kind: w.kind });
 
+  // "As of": now while the shift is under way; the shift's end once it is
+  // over, and ALSO for a shift in the future so the page can be rehearsed
+  // before the outage with the plan measured at that shift's end.
+  const asOf = now >= shift.start && now < shift.end ? now : shift.end;
   const report = useMemo(
-    () => buildShiftReport({ milestones, progress, criticalIds, tz, times, shift, now: Math.min(now, shift.end) }),
-    [milestones, progress, criticalIds, tz, times, shift, now],
+    () => buildShiftReport({ milestones, progress, criticalIds, tz, times, shift, now: asOf }),
+    [milestones, progress, criticalIds, tz, times, shift, asOf],
   );
   const { overall, review, goals, blocked, next } = report;
+  const rehearsal = now < shift.start;
+  const jumpTarget = useMemo(() => (review.scheduled.length === 0 ? nextShiftWithWork(milestones, shift, tz, times) : null), [review.scheduled.length, milestones, shift, tz, times]);
 
   const rowTime = (r: ShiftRow, win: ShiftWindow) => {
     const s = r.start >= win.start && r.start < win.end ? (clockLabel(r.start, tz) || "0:00") : "…";
@@ -68,7 +91,7 @@ export default function ShiftReportView({ milestones, progress, criticalIds, pro
     if (s === "…" && f === "…") return "all shift";
     return `${s}–${f}`;
   };
-  const due = (r: ShiftRow) => fmtInTz(r.finish, tz, { month: "short", day: "numeric" }) + " " + (clockLabel(r.finish, tz) || "");
+  const due = (r: ShiftRow) => `${fmtInTz(r.finish, tz, { month: "short", day: "numeric" })} ${clockLabel(r.finish, tz) || ""}`.trim();
 
   const standingTone = overall.standing === "ahead" ? "text-emerald-700 bg-emerald-50 border-emerald-200"
     : overall.standing === "behind" ? "text-rose-700 bg-rose-50 border-rose-200"
@@ -76,13 +99,12 @@ export default function ShiftReportView({ milestones, progress, criticalIds, pro
 
   return (
     <div className="bg-[var(--color-surface)] rounded-2xl border border-[var(--color-border)] shadow-sm ring-1 ring-slate-900/[0.03] overflow-hidden">
-      {/* Print: show only the report. */}
       <style>{`@media print {
         body * { visibility: hidden !important; }
         .shift-report-print, .shift-report-print * { visibility: visible !important; }
         .shift-report-print { position: absolute !important; left: 0; top: 0; width: 100% !important; padding: 0 !important; }
         .shift-report-print .no-print { display: none !important; }
-        .shift-report-print section { break-inside: avoid; }
+        .shift-report-print section, .shift-report-print .equip { break-inside: avoid; }
       }`}</style>
 
       {/* Toolbar */}
@@ -122,9 +144,12 @@ export default function ShiftReportView({ milestones, progress, criticalIds, pro
             <div className="text-[10px] font-black uppercase tracking-widest text-[var(--color-text-faint)]">Shift change report</div>
             <h2 className="text-lg font-black leading-tight">{projectName ?? "Schedule"}</h2>
             <div className="text-[11px] text-[var(--color-text-muted)]">
-              Reviewing <b className="text-[var(--color-text)]">{shiftLabel(shift, tz)}</b> · planning <b className="text-[var(--color-text)]">{shiftLabel(next, tz)}</b>
+              <b className="text-[var(--color-text)]">{shiftLabel(shift, tz)}</b> → next: <b className="text-[var(--color-text)]">{shiftLabel(next, tz)}</b>
             </div>
-            <div className="text-[10px] text-[var(--color-text-faint)]">Plant time {tzLabel(tz)} · generated {fmtInTz(now, tz, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</div>
+            <div className="text-[10px] text-[var(--color-text-faint)]">
+              Plant time {tzLabel(tz)} · as of {fmtInTz(asOf, tz, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+              {rehearsal && <span className="ml-2 no-print font-bold text-amber-700">Rehearsal — this shift hasn&apos;t started; measured as of its end.</span>}
+            </div>
           </div>
           <div className={`rounded-xl border px-4 py-2 text-right ${standingTone}`}>
             <div className="text-[10px] font-black uppercase tracking-widest">Overall</div>
@@ -133,7 +158,6 @@ export default function ShiftReportView({ milestones, progress, criticalIds, pro
           </div>
         </header>
 
-        {/* Overall numbers */}
         <section className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           <Stat label="Actual complete" value={`${overall.actualPct}%`} />
           <Stat label="Plan said by now" value={`${overall.plannedPct}%`} />
@@ -141,68 +165,61 @@ export default function ShiftReportView({ milestones, progress, criticalIds, pro
           <Stat label="Schedule day" value={overall.daysTotal ? `${overall.daysElapsed} / ${overall.daysTotal}` : "—"} sub={overall.plannedFinish ? `finish ${fmtInTz(overall.plannedFinish, tz, { month: "short", day: "numeric" })} ${clockLabel(overall.plannedFinish, tz)}` : undefined} />
         </section>
 
-        {/* Shift review */}
+        {/* ── This shift ───────────────────────────────────────── */}
         <section>
-          <SectionTitle icon={<Clock className="w-3.5 h-3.5" />} title={`${shift.kind === "day" ? "Day" : "Night"} shift review`} sub={`${review.scheduled.length} step${review.scheduled.length === 1 ? "" : "s"} scheduled · ${review.done.length} done · ${review.inProgress.length} in progress · ${review.notStarted.length} not started`} />
-          {review.scheduled.length === 0 ? <Empty>Nothing was scheduled on this shift.</Empty> : (
-            <table className="w-full text-[11px]">
-              <thead><tr className="text-[9px] uppercase tracking-wider text-[var(--color-text-faint)] text-left"><th className="py-1 pr-2 w-20">Window</th><th className="py-1 pr-2">Step</th><th className="py-1 pr-2">Equipment</th><th className="py-1 pr-2 w-16 text-right">%</th><th className="py-1 w-24">Result</th></tr></thead>
-              <tbody className="divide-y divide-[var(--color-border)]">
-                {review.scheduled.map((r) => (
-                  <tr key={r.leaf.id} className={r.carryOver ? "bg-rose-50/60" : ""}>
-                    <td className="py-1 pr-2 font-mono text-[var(--color-text-muted)]">{rowTime(r, shift)}</td>
-                    <td className="py-1 pr-2 font-semibold">{r.leaf.name}{r.critical && <Flag className="inline w-3 h-3 ml-1 text-rose-600" aria-label="critical path" />}</td>
-                    <td className="py-1 pr-2 text-[var(--color-text-muted)] truncate max-w-[220px]">{r.path.join(" › ")}</td>
-                    <td className="py-1 pr-2 text-right font-mono">{r.percent}%</td>
-                    <td className="py-1"><Result r={r} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <SectionTitle icon={<Clock className="w-3.5 h-3.5" />} title={`This shift — ${shiftLabel(shift, tz)}`} sub={`${review.scheduled.length} step${review.scheduled.length === 1 ? "" : "s"} scheduled`} />
+          {review.scheduled.length === 0 ? (
+            <div className="py-3 flex items-center gap-3 flex-wrap text-[11px] text-[var(--color-text-muted)]">
+              <span>Nothing is scheduled on this shift.</span>
+              {jumpTarget && (
+                <button onClick={() => pick(jumpTarget)} className="no-print inline-flex items-center gap-1 text-[11px] font-bold text-[var(--color-accent)] hover:underline">
+                  <FastForward className="w-3.5 h-3.5" /> Jump to the next shift with work: {shiftLabel(jumpTarget, tz)}
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <ItemList title="Completed" tone="emerald" rows={review.done} empty="Nothing completed." render={(r) => (
+                <Line r={r} left={<CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />} time={rowTime(r, shift)} right="Done" />
+              )} />
+              <ItemList title="Still in progress" tone="blue" rows={review.inProgress} empty="Nothing part-way." render={(r) => (
+                <Line r={r} left={<Box />} time={rowTime(r, shift)} right={`${r.percent}%`} note={r.carryOver ? "carry-over" : undefined} />
+              )} />
+              <ItemList title="Not started" tone="slate" rows={review.notStarted} empty="Everything scheduled was at least started." render={(r) => (
+                <Line r={r} left={<Box />} time={rowTime(r, shift)} right={r.status === "blocked" ? "Blocked" : r.status === "on_hold" ? "On hold" : "0%"} note={r.carryOver ? "carry-over" : undefined} />
+              )} />
+            </div>
           )}
         </section>
 
-        {/* Carry-over */}
+        {/* ── Carry-over ───────────────────────────────────────── */}
         <section>
-          <SectionTitle icon={<AlertTriangle className="w-3.5 h-3.5 text-rose-600" />} title="Carry-over — due by now, not done" sub={review.carryOver.length === 0 ? "Nothing carried over." : `${review.carryOver.length} step${review.carryOver.length === 1 ? "" : "s"} roll into the next shift`} />
+          <SectionTitle icon={<AlertTriangle className="w-3.5 h-3.5 text-rose-600" />} title="Carry-over — due by the end of this shift, not done" sub={review.carryOver.length === 0 ? "Nothing carried over." : `${review.carryOver.length} step${review.carryOver.length === 1 ? "" : "s"} roll into the next shift`} />
           {review.carryOver.length > 0 && (
-            <ul className="divide-y divide-[var(--color-border)]">
-              {review.carryOver.map((r) => (
-                <li key={r.leaf.id} className="py-1.5 flex items-center gap-2 text-[11px]">
-                  {r.critical ? <Flag className="w-3.5 h-3.5 text-rose-600 shrink-0" /> : <CircleDashed className="w-3.5 h-3.5 text-[var(--color-text-faint)] shrink-0" />}
-                  <span className="font-semibold">{r.leaf.name}</span>
-                  <span className="text-[var(--color-text-muted)] truncate">{r.path.join(" › ")}</span>
-                  <span className="ml-auto font-mono text-[var(--color-text-muted)] shrink-0">{r.percent}% · due {due(r)}</span>
-                </li>
-              ))}
-            </ul>
+            <ItemList title="" tone="rose" rows={review.carryOver} empty="" render={(r) => (
+              <Line r={r} left={r.critical ? <Flag className="w-3.5 h-3.5 text-rose-600" /> : <Box />} time={`due ${due(r)}`} right={`${r.percent}%`} note={r.critical ? "critical path" : undefined} />
+            )} />
           )}
         </section>
 
-        {/* Next shift goals */}
+        {/* ── Next shift goals ─────────────────────────────────── */}
         <section>
-          <SectionTitle icon={<Flag className="w-3.5 h-3.5" />} title={`Goals for the ${next.kind} shift`} sub={`${goals.all.length} step${goals.all.length === 1 ? "" : "s"} · ${goals.carryOver.length} carried over · ${goals.critical.length} on the critical path`} />
+          <SectionTitle icon={<Flag className="w-3.5 h-3.5" />} title={`Goals — ${shiftLabel(next, tz)}`} sub={`${goals.all.length} step${goals.all.length === 1 ? "" : "s"} · ${goals.carryOver.length} carried over · ${goals.critical.length} on the critical path`} />
           {goals.all.length === 0 ? <Empty>Nothing is scheduled for the next shift.</Empty> : (
-            <table className="w-full text-[11px]">
-              <thead><tr className="text-[9px] uppercase tracking-wider text-[var(--color-text-faint)] text-left"><th className="py-1 pr-2 w-6" /><th className="py-1 pr-2 w-20">Window</th><th className="py-1 pr-2">Step</th><th className="py-1 pr-2">Equipment</th><th className="py-1 pr-2 w-28">Crew / WO</th><th className="py-1 w-14 text-right">Now</th></tr></thead>
-              <tbody className="divide-y divide-[var(--color-border)]">
-                {goals.all.map((r) => (
-                  <tr key={r.leaf.id} className={r.critical ? "bg-rose-50/60" : r.carryOver ? "bg-amber-50/60" : ""}>
-                    <td className="py-1 pr-2">{r.critical ? <Flag className="w-3.5 h-3.5 text-rose-600" aria-label="critical path" /> : r.carryOver ? <AlertTriangle className="w-3.5 h-3.5 text-amber-600" aria-label="carry-over" /> : null}</td>
-                    <td className="py-1 pr-2 font-mono text-[var(--color-text-muted)]">{r.carryOver ? "overdue" : rowTime(r, next)}</td>
-                    <td className="py-1 pr-2 font-semibold">{r.leaf.name}</td>
-                    <td className="py-1 pr-2 text-[var(--color-text-muted)] truncate max-w-[220px]">{r.path.join(" › ")}</td>
-                    <td className="py-1 pr-2 text-[var(--color-text-muted)] truncate max-w-[140px]">{[r.leaf.responsibleParty, r.leaf.workOrderRef ? `WO ${r.leaf.workOrderRef}` : null].filter(Boolean).join(" · ")}</td>
-                    <td className="py-1 text-right font-mono">{r.percent}%</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div className="space-y-3">
+              {goals.carryOver.length > 0 && (
+                <ItemList title="Clear these first — carried over" tone="amber" rows={goals.carryOver} empty="" render={(r) => (
+                  <Line r={r} left={r.critical ? <Flag className="w-3.5 h-3.5 text-rose-600" /> : <Box />} time={`due ${due(r)}`} right={`${r.percent}%`} note={r.critical ? "critical path" : undefined} crew />
+                )} />
+              )}
+              <ItemList title="Planned this shift" tone="slate" rows={goals.planned} empty="No new work starts on this shift." render={(r) => (
+                <Line r={r} left={r.critical ? <Flag className="w-3.5 h-3.5 text-rose-600" /> : <Box />} time={rowTime(r, next)} right={r.percent > 0 ? `${r.percent}%` : ""} note={r.critical ? "critical path" : undefined} crew />
+              )} />
+            </div>
           )}
-          <div className="mt-1 text-[10px] text-[var(--color-text-faint)]">Red = on the chain that drives the finish date. Amber = carried over. Clear these first to get back on track.</div>
+          <div className="mt-1 text-[10px] text-[var(--color-text-faint)]">Flag = on the chain that drives the finish date. Clear carry-overs and flagged items first to get back on track.</div>
         </section>
 
-        {/* Blocked */}
         {blocked.length > 0 && (
           <section>
             <SectionTitle icon={<AlertTriangle className="w-3.5 h-3.5 text-amber-600" />} title="Blocked / on hold" sub={`${blocked.length} step${blocked.length === 1 ? "" : "s"} need a decision`} />
@@ -218,13 +235,60 @@ export default function ShiftReportView({ milestones, progress, criticalIds, pro
           </section>
         )}
 
-        <footer className="pt-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-text-faint)] flex justify-between">
-          <span>Plan % = work the schedule expected complete by {fmtInTz(Math.min(now, shift.end), tz, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}, duration-weighted. Actual % = entered progress, duration-weighted.</span>
-          <span>Printed {fmtInTz(now, tz, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
+        <footer className="pt-2 border-t border-[var(--color-border)] text-[10px] text-[var(--color-text-faint)] flex justify-between gap-4">
+          <span>Plan % = work the schedule expected complete as of {fmtInTz(asOf, tz, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}, hour-weighted. Actual % = entered progress, hour-weighted.</span>
+          <span className="shrink-0">Printed {fmtInTz(now, tz, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
         </footer>
       </div>
     </div>
   );
+}
+
+/** A titled, equipment-grouped list of steps. */
+function ItemList({ title, tone, rows, empty, render }: {
+  title: string; tone: "emerald" | "blue" | "slate" | "rose" | "amber"; rows: ShiftRow[]; empty: string; render: (r: ShiftRow) => React.ReactNode;
+}) {
+  const toneCls = tone === "emerald" ? "text-emerald-700" : tone === "blue" ? "text-blue-700" : tone === "rose" ? "text-rose-700" : tone === "amber" ? "text-amber-700" : "text-[var(--color-text-muted)]";
+  return (
+    <div>
+      {title && <div className={`text-[10px] font-black uppercase tracking-widest ${toneCls}`}>{title} <span className="font-mono">({rows.length})</span></div>}
+      {rows.length === 0 ? (empty ? <div className="text-[11px] text-[var(--color-text-faint)] py-0.5">{empty}</div> : null) : (
+        <div className="mt-1 space-y-1.5">
+          {byEquipment(rows).map((g) => (
+            <div key={g.key} className="equip rounded-lg border border-[var(--color-border)]">
+              <div className="px-2 py-1 bg-[var(--color-surface-2)] rounded-t-lg">
+                {g.crumbs && <div className="text-[9px] uppercase tracking-wide text-[var(--color-text-faint)] truncate">{g.crumbs}</div>}
+                <div className="text-[11px] font-bold truncate">{g.title}</div>
+              </div>
+              <ul className="divide-y divide-[var(--color-border)]">
+                {g.rows.map((r) => <li key={r.leaf.id}>{render(r)}</li>)}
+              </ul>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One step on one line: marker · time · name · (crew/WO) · note · right. */
+function Line({ r, left, time, right, note, crew }: { r: ShiftRow; left: React.ReactNode; time: string; right: string; note?: string; crew?: boolean }) {
+  const who = crew ? [r.leaf.responsibleParty, r.leaf.workOrderRef ? `WO ${r.leaf.workOrderRef}` : null].filter(Boolean).join(" · ") : "";
+  return (
+    <div className="px-2 py-1 flex items-center gap-2 text-[11px]">
+      <span className="shrink-0 w-4 flex justify-center">{left}</span>
+      <span className="shrink-0 w-[84px] font-mono text-[var(--color-text-muted)] tabular-nums">{time}</span>
+      <span className={`flex-1 min-w-0 truncate ${r.status === "completed" || r.percent >= 100 ? "line-through text-[var(--color-text-faint)]" : "font-semibold"}`}>{r.leaf.name}</span>
+      {who && <span className="shrink-0 text-[10px] text-[var(--color-text-muted)] truncate max-w-[160px]">{who}</span>}
+      {note && <span className="shrink-0 text-[9px] font-bold uppercase tracking-wider text-rose-700">{note}</span>}
+      <span className="shrink-0 w-14 text-right font-mono text-[var(--color-text-muted)]">{right}</span>
+    </div>
+  );
+}
+
+/** A print-friendly checkbox square. */
+function Box() {
+  return <span className="inline-block w-3 h-3 rounded-[3px] border border-[var(--color-border-strong)]" aria-hidden />;
 }
 
 function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
@@ -239,7 +303,7 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
 
 function SectionTitle({ icon, title, sub }: { icon: React.ReactNode; title: string; sub?: string }) {
   return (
-    <div className="flex items-baseline gap-2 mb-1.5 border-b border-[var(--color-border)] pb-1">
+    <div className="flex items-baseline gap-2 mb-1.5 border-b border-[var(--color-border)] pb-1 flex-wrap">
       <span className="inline-flex items-center gap-1.5 text-[12px] font-black uppercase tracking-wide">{icon} {title}</span>
       {sub && <span className="text-[10px] text-[var(--color-text-muted)]">{sub}</span>}
     </div>
@@ -249,13 +313,3 @@ function SectionTitle({ icon, title, sub }: { icon: React.ReactNode; title: stri
 function Empty({ children }: { children: React.ReactNode }) {
   return <div className="py-2 text-[11px] text-[var(--color-text-faint)]">{children}</div>;
 }
-
-function Result({ r }: { r: ShiftRow }) {
-  if (r.status === "completed" || r.percent >= 100) return <span className="inline-flex items-center gap-1 text-emerald-700 font-bold"><CheckCircle2 className="w-3.5 h-3.5" /> Done</span>;
-  if (r.status === "blocked") return <span className="text-rose-700 font-bold">Blocked</span>;
-  if (r.status === "on_hold") return <span className="text-amber-700 font-bold">On hold</span>;
-  if (r.carryOver) return <span className="text-rose-700 font-bold">Carry-over</span>;
-  if (r.status === "in_progress" || r.percent > 0) return <span className="text-blue-700 font-bold">In progress</span>;
-  return <span className="text-[var(--color-text-muted)]">Not started</span>;
-}
-

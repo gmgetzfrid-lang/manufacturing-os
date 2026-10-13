@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildShiftReport, shiftWindow, shiftAt, nextShift, previousShift, shiftLabel } from "@/lib/shiftReport";
+import { buildShiftReport, shiftWindow, shiftAt, nextShift, previousShift, shiftLabel, defaultReviewShift, nextShiftWithWork } from "@/lib/shiftReport";
 import { wallClock } from "@/lib/scheduleTz";
 import type { Milestone } from "@/types/schema";
 
@@ -87,5 +87,25 @@ describe("buildShiftReport", () => {
 
   it("lists blocked work with its reason", () => {
     expect(report.blocked.map((r) => [r.leaf.id, r.reason])).toEqual([["old", "waiting on crane"]]);
+  });
+});
+
+describe("opening shift", () => {
+  const a = mk({ id: "a", name: "A", plannedStartAt: at("2026-10-26", "06:00"), plannedAt: at("2026-10-26", "10:00") });
+  const b = mk({ id: "b", name: "B", plannedStartAt: at("2026-10-28", "20:00"), plannedAt: at("2026-10-29", "02:00") });
+  it("before the job starts, opens on the first shift with work", () => {
+    expect(defaultReviewShift([a, b], at("2026-10-13", "15:00"), CHI)).toMatchObject({ kind: "day", dayKey: "2026-10-26" });
+  });
+  it("while running, opens on the shift ending now", () => {
+    expect(defaultReviewShift([a, b], at("2026-10-26", "17:45"), CHI)).toMatchObject({ kind: "day", dayKey: "2026-10-26" });
+    expect(defaultReviewShift([a, b], at("2026-10-27", "05:45"), CHI)).toMatchObject({ kind: "night", dayKey: "2026-10-26" });
+  });
+  it("after the job ends, opens on the last shift with work", () => {
+    expect(defaultReviewShift([a, b], at("2026-11-20", "12:00"), CHI)).toMatchObject({ kind: "night", dayKey: "2026-10-28" });
+  });
+  it("skips empty shifts to the next one with work", () => {
+    const from = shiftWindow("2026-10-26", "day", CHI);
+    expect(nextShiftWithWork([a, b], from, CHI)).toMatchObject({ kind: "night", dayKey: "2026-10-28" });
+    expect(nextShiftWithWork([a], from, CHI)).toBeNull();
   });
 });
