@@ -92,6 +92,8 @@ export default function ShiftReportView({ milestones, progress, criticalIds, pro
     return `${s}–${f}`;
   };
   const due = (r: ShiftRow) => `${fmtInTz(r.finish, tz, { month: "short", day: "numeric" })} ${clockLabel(r.finish, tz) || ""}`.trim();
+  // A step listed on this shift although its plan slot is elsewhere.
+  const slot = (r: ShiftRow) => (r.offSchedule ? `planned ${fmtInTz(r.start, tz, { month: "short", day: "numeric" })} ${clockLabel(r.start, tz) || ""}`.trim() : undefined);
 
   const standingTone = overall.standing === "ahead" ? "text-emerald-700 bg-emerald-50 border-emerald-200"
     : overall.standing === "behind" ? "text-rose-700 bg-rose-50 border-rose-200"
@@ -179,11 +181,11 @@ export default function ShiftReportView({ milestones, progress, criticalIds, pro
             </div>
           ) : (
             <div className="space-y-3">
-              <ItemList title="Completed" tone="emerald" rows={review.done} empty="Nothing completed." render={(r) => (
-                <Line r={r} left={<CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />} time={rowTime(r, shift)} right="Done" />
+              <ItemList title="Completed this shift" tone="emerald" rows={review.done} empty="Nothing completed." render={(r) => (
+                <Line r={r} left={<CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />} time={r.offSchedule ? "early/late" : rowTime(r, shift)} right="Done" note={slot(r)} />
               )} />
-              <ItemList title="Still in progress" tone="blue" rows={review.inProgress} empty="Nothing part-way." render={(r) => (
-                <Line r={r} left={<Box />} time={rowTime(r, shift)} right={`${r.percent}%`} note={r.carryOver ? "carry-over" : undefined} />
+              <ItemList title="In progress — all open work" tone="blue" rows={review.inProgress} empty="Nothing part-way." render={(r) => (
+                <Line r={r} left={<Box />} time={r.offSchedule ? "open" : rowTime(r, shift)} right={`${r.percent}%`} note={slot(r) ?? (r.carryOver ? "carry-over" : undefined)} />
               )} />
               <ItemList title="Not started" tone="slate" rows={review.notStarted} empty="Everything scheduled was at least started." render={(r) => (
                 <Line r={r} left={<Box />} time={rowTime(r, shift)} right={r.status === "blocked" ? "Blocked" : r.status === "on_hold" ? "On hold" : "0%"} note={r.carryOver ? "carry-over" : undefined} />
@@ -280,7 +282,7 @@ function Line({ r, left, time, right, note, crew }: { r: ShiftRow; left: React.R
       <span className="shrink-0 w-[84px] font-mono text-[var(--color-text-muted)] tabular-nums">{time}</span>
       <span className={`flex-1 min-w-0 truncate ${r.status === "completed" || r.percent >= 100 ? "line-through text-[var(--color-text-faint)]" : "font-semibold"}`}>{r.leaf.name}</span>
       {who && <span className="shrink-0 text-[10px] text-[var(--color-text-muted)] truncate max-w-[160px]">{who}</span>}
-      {note && <span className="shrink-0 text-[9px] font-bold uppercase tracking-wider text-rose-700">{note}</span>}
+      {note && <span className={`shrink-0 text-[9px] font-bold uppercase tracking-wider ${note.startsWith("planned") ? "text-[var(--color-text-faint)]" : "text-rose-700"}`}>{note}</span>}
       <span className="shrink-0 w-14 text-right font-mono text-[var(--color-text-muted)]">{right}</span>
     </div>
   );

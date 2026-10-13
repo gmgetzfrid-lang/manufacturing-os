@@ -130,6 +130,9 @@ export interface ShiftRow {
   dueInShift: boolean;
   /** Starts inside the shift being looked at. */
   startsInShift: boolean;
+  /** Listed on this shift although its schedule slot is elsewhere: done
+   *  early/late during the shift, or open work from another slot. */
+  offSchedule: boolean;
   reason: string | null;
 }
 
@@ -223,9 +226,12 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
       critical: !!m.id && criticalIds.has(m.id),
       dueInShift: f > win.start && f <= win.end,
       startsInShift: s >= win.start && s < win.end,
+      offSchedule: !(s < win.end && f > win.start),
       reason: m.statusReason ?? null,
     };
   };
+  const toMs = (v: unknown): number => (v == null ? NaN : v instanceof Date ? v.getTime() : typeof v === "number" ? v : Date.parse(String(v)));
+  const inWin = (ms: number, win: ShiftWindow) => Number.isFinite(ms) && ms >= win.start && ms < win.end;
 
   const leaves = milestones.filter((m) => isLeaf(m) && m.plannedAt && Number.isFinite(startMsOf(m)) && Number.isFinite(finishMsOf(m)));
   const overlaps = (m: Milestone, win: ShiftWindow) => startMsOf(m) < win.end && finishMsOf(m) > win.start;
@@ -252,11 +258,30 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
   const daysElapsed = hasSpan ? Math.max(0, Math.min(daysTotal, dayDiff(plannedStart, now, tz) + 1)) : 0;
 
   // ── 2. Review of the shift ───────────────────────────────────────
+  // "Scheduled" = the plan for this shift. "Done" = that plan's steps that
+  // are complete PLUS anything whose completion was recorded during the
+  // shift (finished early or late — it still got done on this shift).
+  // "In progress" = ALL open work on the job, this shift's first, because
+  // open work is what the next crew inherits wherever it was planned.
   const scheduled = leaves.filter((m) => overlaps(m, shift)).map((m) => rowFor(m, shift)).sort(cmp);
   for (const r of scheduled) r.carryOver = !DONE(r) && r.finish <= next.start;
-  const done = scheduled.filter(DONE);
-  const inProgress = scheduled.filter((r) => !DONE(r) && (r.status === "in_progress" || r.percent > 0));
-  const notStarted = scheduled.filter((r) => !DONE(r) && !(r.status === "in_progress" || r.percent > 0));
+  const seenDone = new Set<string>();
+  const done: ShiftRow[] = [];
+  for (const r of scheduled) if (DONE(r)) { done.push(r); if (r.leaf.id) seenDone.add(r.leaf.id); }
+  for (const m of leaves) {
+    if (!m.id || seenDone.has(m.id)) continue;
+    const row = rowFor(m, shift);
+    if (!DONE(row)) continue;
+    if (inWin(toMs(m.actualAt), shift)) { done.push(row); seenDone.add(m.id); }
+  }
+  done.sort(cmp);
+  const isOpen = (r: { status: MilestoneStatus; percent: number }) => !DONE(r) && (r.status === "in_progress" || r.percent > 0);
+  const inProgress = leaves
+    .map((m) => rowFor(m, shift))
+    .filter(isOpen)
+    .map((r) => { r.carryOver = r.finish <= next.start; return r; })
+    .sort((a, b) => Number(a.offSchedule) - Number(b.offSchedule) || cmp(a, b));
+  const notStarted = scheduled.filter((r) => !DONE(r) && !isOpen(r));
   // Carry-over also includes anything older that is still open: it was due
   // before this shift ended and nobody closed it.
   const carryOver = leaves
