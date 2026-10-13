@@ -1444,7 +1444,10 @@ async function readScoped(
   // columns are still dropped from every row (omitExportColumns below).
   let columns = exportSelectFor(table);
   const scoped = (head: boolean) => {
-    const q = head ? sb.from(table).select("*", { count: "exact", head: true }) : sb.from(table).select(columns);
+    // Every table but a declared omission is read whole (projects REL-9 relies on it).
+    const q = head
+      ? sb.from(table).select("*", { count: "exact", head: true })
+      : columns === "*" ? sb.from(table).select("*") : sb.from(table).select(columns);
     return arrayValue && Array.isArray(value) ? q.in(column, value) : q.eq(column, value as string);
   };
   const countNow = async (): Promise<number | null> => {
