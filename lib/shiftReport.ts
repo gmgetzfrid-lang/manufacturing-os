@@ -135,6 +135,10 @@ export interface ShiftRow {
    *  early/late during the shift, or open work from another slot. */
   offSchedule: boolean;
   reason: string | null;
+  /** Planned work-hours (duration_hours, else weight, else 1). */
+  hours: number;
+  /** Hours still to do = hours × (1 − percent). */
+  hoursLeft: number;
 }
 
 export interface ShiftReport {
@@ -165,12 +169,25 @@ export interface ShiftReport {
     carryOver: ShiftRow[];
   };
   goals: {
-    /** Everything the next shift should work: carry-overs first (critical
-     *  ones on top), then the shift's planned work in time order. */
+    /** MUST DO — everything the next shift should work to hold the plan:
+     *  carry-overs first (critical ones on top), then its planned work. */
     all: ShiftRow[];
     carryOver: ShiftRow[];
     planned: ShiftRow[];
     critical: ShiftRow[];
+    /** Work-hours still to do across the must-do list. */
+    mustDoHours: number;
+    /** STRETCH — work planned for the following shifts that is ready to
+     *  pull forward (its predecessors done or on the must-do list), in
+     *  schedule order. Doing it banks time or claws back a deficit. */
+    stretch: ShiftRow[];
+    /** How the job stands in work-hours: positive = behind the plan by
+     *  this many hours, negative = ahead. */
+    gapHours: number;
+    /** Index (1-based) of the stretch item at which the cumulative stretch
+     *  hours cover the deficit — "must-do plus stretch 1..N gets you back on
+     *  plan". Null when not behind or when stretch can't cover it. */
+    backOnTrackAt: number | null;
   };
   blocked: ShiftRow[];
 }
@@ -230,6 +247,8 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
       startsInShift: s >= win.start && s < win.end,
       offSchedule: !(s < win.end && f > win.start),
       reason: m.statusReason ?? null,
+      hours: effectiveWeight(m),
+      hoursLeft: Math.round(effectiveWeight(m) * (1 - Math.min(100, Math.max(0, percent)) / 100) * 10) / 10,
     };
   };
   const toMs = (v: unknown): number => (v == null ? NaN : v instanceof Date ? v.getTime() : typeof v === "number" ? v : Date.parse(String(v)));
@@ -301,6 +320,27 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
     .sort((a, b) => Number(b.critical) - Number(a.critical) || cmp(a, b));
   const all = [...goalsCarry, ...planned];
   const critical = all.filter((r) => r.critical);
+  const mustDoHours = Math.round(all.reduce((acc, r) => acc + r.hoursLeft, 0) * 10) / 10;
+
+  // Stretch: planned for the following shifts (up to ~2 shifts after the
+  // next one), not done, not already on the must-do list, and READY — every
+  // predecessor is done or is itself on the must-do list.
+  const mustIds = new Set(all.map((r) => r.leaf.id ?? ""));
+  const doneIds = new Set(leaves.filter((m) => DONE({ status: m.status, percent: pctOf(m) })).map((m) => m.id ?? ""));
+  const horizonEnd = nextShift(nextShift(next, tz, times), tz, times).end;
+  const stretch = leaves
+    .filter((m) => m.id && !mustIds.has(m.id) && !doneIds.has(m.id) && startMsOf(m) >= next.end && startMsOf(m) < horizonEnd)
+    .filter((m) => (m.dependsOn ?? []).every((d) => !byId.has(d) || doneIds.has(d) || mustIds.has(d)))
+    .map((m) => rowFor(m, next))
+    .sort((a, b) => Number(b.critical) - Number(a.critical) || cmp(a, b))
+    .slice(0, 12);
+  // Deficit in work-hours against the plan as of now.
+  const gapHours = Math.round(((plannedPct - actualPct) / 100) * wsum * 10) / 10;
+  let backOnTrackAt: number | null = null;
+  if (gapHours > 0) {
+    let acc = 0;
+    for (let i = 0; i < stretch.length; i++) { acc += stretch[i].hoursLeft; if (acc >= gapHours) { backOnTrackAt = i + 1; break; } }
+  }
 
   // ── 4. Blocked / on hold ─────────────────────────────────────────
   const blocked = leaves
@@ -315,7 +355,7 @@ export function buildShiftReport(input: BuildShiftReportInput): ShiftReport {
       daysElapsed, daysTotal,
     },
     review: { scheduled, done, inProgress, notStarted, carryOver },
-    goals: { all, carryOver: goalsCarry, planned, critical },
+    goals: { all, carryOver: goalsCarry, planned, critical, mustDoHours, stretch, gapHours, backOnTrackAt },
     blocked,
   };
 }

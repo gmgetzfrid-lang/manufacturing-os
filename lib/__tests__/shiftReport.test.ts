@@ -127,3 +127,35 @@ describe("review lists reflect what actually happened, not only the plan", () =>
     expect(r.review.inProgress[1].carryOver).toBe(true);
   });
 });
+
+describe("must-do vs stretch", () => {
+  // Day shift Oct 26 closing; night shift is next. Two steps planned for
+  // the night (must-do), two for the following day shift (stretch
+  // candidates), one of which waits on an unfinished predecessor.
+  const shift = shiftWindow("2026-10-26", "day", CHI);
+  const n1 = mk({ id: "n1", name: "Night step 1", plannedStartAt: at("2026-10-26", "18:00"), plannedAt: at("2026-10-26", "22:00"), durationHours: 4 });
+  const n2 = mk({ id: "n2", name: "Night step 2", plannedStartAt: at("2026-10-26", "22:00"), plannedAt: at("2026-10-27", "02:00"), durationHours: 4, percentComplete: 50, status: "in_progress" });
+  const s1 = mk({ id: "s1", name: "Tomorrow A", plannedStartAt: at("2026-10-27", "06:00"), plannedAt: at("2026-10-27", "12:00"), durationHours: 6, dependsOn: ["n1"] });
+  const s2 = mk({ id: "s2", name: "Tomorrow B", plannedStartAt: at("2026-10-27", "12:00"), plannedAt: at("2026-10-27", "18:00"), durationHours: 6, dependsOn: ["x"] });
+  const x = mk({ id: "x", name: "Unfinished predecessor", plannedStartAt: at("2026-10-28", "06:00"), plannedAt: at("2026-10-28", "10:00"), durationHours: 4 });
+  // A big step planned earlier and far from done keeps the job "behind".
+  const big = mk({ id: "big", name: "Big early step", plannedStartAt: at("2026-10-25", "06:00"), plannedAt: at("2026-10-26", "06:00"), durationHours: 24, percentComplete: 0 });
+  const r = buildShiftReport({ milestones: [n1, n2, s1, s2, x, big], tz: CHI, shift, now: shift.end });
+  it("must-do carries the next shift's work plus overdue work, with hours left", () => {
+    expect(r.goals.all.map((g) => g.leaf.id)).toEqual(["big", "n1", "n2"]);
+    expect(r.goals.mustDoHours).toBe(24 + 4 + 2);
+  });
+  it("stretch lists later work whose predecessors are done or on the must-do list", () => {
+    expect(r.goals.stretch.map((g) => g.leaf.id)).toEqual(["s1"]); // s2 waits on x
+  });
+  it("says how far behind in hours and where stretch closes the gap", () => {
+    expect(r.goals.gapHours).toBeGreaterThan(0);
+    // Behind by the whole un-started "big" step (24 h of 48 h total → 50 pts ≈ 24 h);
+    // a 6 h stretch item can't close that alone.
+    expect(r.goals.backOnTrackAt).toBeNull();
+    const small = mk({ id: "small", name: "Small early", plannedStartAt: at("2026-10-25", "06:00"), plannedAt: at("2026-10-26", "06:00"), durationHours: 4, percentComplete: 0 });
+    const r2 = buildShiftReport({ milestones: [n1, n2, s1, x, small], tz: CHI, shift, now: shift.end });
+    expect(r2.goals.gapHours).toBeGreaterThan(0);
+    expect(r2.goals.backOnTrackAt).toBe(1);
+  });
+});
