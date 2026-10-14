@@ -757,7 +757,7 @@ supabase/migrations/20260621_in_app_notifications.sql:17 -- `  kind TEXT NOT NUL
 ## TAX-12 · OS-level notification presence is a fully built shell with zero wiring: the service worker handles `push`, the `push_subscriptions` table and RLS exist, `push_enabled` is a stored preference - and nothing subscribes or sends
 
 - **Severity:** MEDIUM
-- **Status:** OPEN
+- **Status:** RESOLVED
 - **Verification:** CONFIRMED
 - **Locations:** `public/sw.js:226-240`, `public/sw.js:241-259`, `supabase/migrations/20260804_push_subscriptions.sql:1-36`, `supabase/migrations/20260723_notifications_unify.sql:85-87`, `lib/notify/dispatch.ts:20`, `components/pwa/ServiceWorkerManager.tsx:30-51`
 - **Independently verified:** ✓ **SURVIVES** — second independent adversarial pass. Confirmed with no mitigation found: nothing calls registration.pushManager.subscribe, no VAPID key exists anywhere, no sender writes to the Web Push endpoint, and settings/notifications/page.tsx's Prefs (:24-31) omits push_enabled entirely. lib/schemaExpectations.ts:99 additionally makes the health check demand a table for a feature that has no client or server half.
@@ -786,6 +786,29 @@ lib/notify/dispatch.ts:20 -- `export type NotifChannel = "inapp" | "email";`
 - [ ] A server sender (VAPID keys in env) reads `push_subscriptions` and delivers for a defined subset of kinds
 - [ ] `NotifChannel` gains `"push"`, `emit()` honors `push_enabled`, and /settings/notifications renders the toggle
 - [ ] Revoked/410 endpoints are pruned from `push_subscriptions`
+
+**Resolution (2026-10-14, notifications Round G).** Package N10 PUSH, branch `fleet/N10-push` (base `ce5a053`), commits `3f53779` (`web-push` 3.6.7), `b3358d9` (the channel) and `669afad` (no push for a registration older than the opt-in control). The build is recorded in full on `OS-2` / `OS-3` / `OS-9` / `OS-10` (`07-os-notifications-and-nudges.md`): one build closes the four lenses that found the same decapitated stack (the plan's sequencing note). It also closes drafting-flow `ROUTE-3` limb (c).
+**Reproduced first** on `ce5a053` with the finding's three search shapes:
+- no `web-?push`, `pushManager` or `requestPermission` in `.ts` / `.tsx` (only `public/sw.js`'s `showNotification`);
+- `push_subscriptions` only in `lib/schemaExpectations.ts:161`, `lib/exportTables.ts:319` and `lib/dataRestore.ts:160`;
+- no VAPID anywhere.
+`/settings/notifications` rendered no push control.
+
+**What landed.**
+- The client opt-in: `components/settings/PushOptIn.tsx` calls `Notification.requestPermission()`, then `registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey })`, then POSTs the subscription to `/api/push/subscribe`, which writes `push_subscriptions`.
+- The server sender: `lib/push/sendPush.ts`, keyed by VAPID. It reads `push_subscriptions` for the defined subset, `KIND_META.pushWorthy` — `checkout_force_released`, `hold_opened`, `ack_requested`, `review_requested`, `ticket_mention` and `ticket_assigned`, the SMALL default the integrator ruled (`DEC-90`), as one field in the one registry (no seventh map — `GAP-207`).
+- `NotifChannel` gains `"push"`. `emit()` honours `push_enabled` through the sender. `/settings/notifications` renders the toggle.
+- A 404 / 410 endpoint is pruned.
+- The service worker's push block comment now names the real sender (`public/sw.js`, comment only). Its claim "fires whether the app is open or closed" is true.
+- Verified (loop on `fleet/N10-push` at `669afad`, 2026-10-14): `npx tsc --noEmit` exit 0; `npx eslint` on the changed files `--max-warnings=0` exit 0; `npx vitest run --maxWorkers=2` in four shards (`--shard=N/4`), each exit 0 — 568 files, 12532 passed, 8 expected fail. `next build` is the integrator's.
+
+**Done-when.**
+- ✓ A client-side opt-in calls `Notification.requestPermission()` + `registration.pushManager.subscribe({applicationServerKey})` and POSTs the subscription into `push_subscriptions` (`pushOptIn.test.ts` "acceptance 1"; `pushChannel.test.ts` subscribe-route cases).
+- ✓ A server sender (VAPID keys in env) reads `push_subscriptions` and delivers for a defined subset of kinds (`pushChannel.test.ts` "KIND_META.pushWorthy marks exactly the six kinds …", "a person is pushed on each device they turned on …").
+- ✓ `NotifChannel` gains `"push"`, `emit()` honours `push_enabled`, and `/settings/notifications` renders the toggle (`pushChannel.test.ts` "NotifChannel includes \"push\" …", "acceptance 2"; `pushOptIn.test.ts` "OS-10 done-when 2 …").
+- ✓ Revoked / 410 endpoints are pruned from `push_subscriptions` (`pushChannel.test.ts` "acceptance 3 / OS-2 done-when 4").
+
+**Scope / residual.** The `20260804` migration's header ("The reminder cron (service role) reads every row") is not edited: a migration is never edited. The push-worthy producers outside `emit()` are `OS-14` (new).
 
 ---
 
